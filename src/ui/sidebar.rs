@@ -1,67 +1,312 @@
 use crate::app::AurawApp;
-use eframe::egui::{self, Slider, Ui};
+use crate::pipeline::{DemosaicMode, ExposureParams};
+use crate::ui::components::adjustment_slider::adjustment_slider;
+use crate::ui::layout::ScreenLayout;
+use eframe::egui::{self, Ui};
 
 pub struct Sidebar;
 
 impl Sidebar {
-    pub fn show(ui: &mut Ui, app: &mut AurawApp) {
-        ui.heading("Adjustments");
+    const SCROLLBAR_GUTTER: f32 = 18.0;
 
-        macro_rules! slider {
-            ($ui:ident, $field:ident, $range:expr, $text:expr, $decimals:expr) => {
-                if $ui
-                    .add(
-                        Slider::new(&mut app.exposure.$field, $range)
-                            .text($text)
-                            .fixed_decimals($decimals),
-                    )
-                    .changed()
-                {
-                    app.dirty = true;
+    pub fn show(ui: &mut Ui, app: &mut AurawApp, layout: ScreenLayout) {
+        // Keep interactive content clear of overlay scrollbars on every platform.
+        let content_width = (ui.available_width() - Self::SCROLLBAR_GUTTER).max(220.0);
+        ui.set_width(content_width);
+        ui.set_max_width(content_width);
+        ui.spacing_mut().item_spacing = egui::vec2(6.0, 3.0);
+
+        ui.horizontal(|ui| {
+            ui.heading("Adjustments");
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui.small_button("Reset all").clicked() {
+                    app.reset_develop_adjustments();
                 }
-            };
+            });
+        });
+        ui.label(
+            egui::RichText::new("Scene-referred controls")
+                .size(11.5)
+                .color(ui.visuals().weak_text_color()),
+        );
+        ui.add_space(2.0);
+        ui.separator();
+
+        let mut changed = false;
+        let use_columns = layout.is_vertical() && ui.available_width() >= 720.0;
+
+        if use_columns {
+            ui.columns(2, |columns| {
+                changed |= Self::show_basic(&mut columns[0], &mut app.exposure);
+                changed |= Self::show_hsl(&mut columns[0], &mut app.exposure);
+
+                changed |= Self::show_presence(&mut columns[1], &mut app.exposure);
+                changed |= Self::show_raw(&mut columns[1], &mut app.exposure);
+            });
+        } else {
+            changed |= Self::show_basic(ui, &mut app.exposure);
+            changed |= Self::show_presence(ui, &mut app.exposure);
+            changed |= Self::show_hsl(ui, &mut app.exposure);
+            changed |= Self::show_raw(ui, &mut app.exposure);
         }
 
-        egui::CollapsingHeader::new("Light")
+        if changed {
+            app.mark_pipeline_dirty();
+        }
+    }
+
+    fn show_basic(ui: &mut Ui, exposure: &mut ExposureParams) -> bool {
+        let mut changed = false;
+        egui::CollapsingHeader::new("Basic (Tone & Exposure)")
             .default_open(true)
             .show(ui, |ui| {
-                slider!(ui, exposure, -4.0..=4.0, "Exposure (EV)", 2);
-                slider!(ui, contrast, -1.0..=1.0, "Contrast", 2);
-                slider!(ui, brightness, -1.0..=1.0, "Brightness", 2);
-                slider!(ui, black, -0.1..=0.1, "Black Level", 3);
-
-                ui.separator();
-                ui.label("Highlight Recovery");
-                slider!(ui, hlcompr, 0.0..=100.0, "Compression %", 0);
-                slider!(ui, hlcomprthresh, 0.0..=100.0, "Threshold %", 0);
+                changed |= adjustment_slider(
+                    ui,
+                    "Exposure (EV)",
+                    &mut exposure.exposure,
+                    -5.0..=5.0,
+                    2,
+                    0.05,
+                    None,
+                );
+                changed |= adjustment_slider(
+                    ui,
+                    "Contrast",
+                    &mut exposure.contrast,
+                    -100.0..=100.0,
+                    0,
+                    1.0,
+                    None,
+                );
+                changed |= adjustment_slider(
+                    ui,
+                    "Highlights",
+                    &mut exposure.highlights,
+                    -100.0..=100.0,
+                    0,
+                    1.0,
+                    None,
+                );
+                changed |= adjustment_slider(
+                    ui,
+                    "Shadows",
+                    &mut exposure.shadows,
+                    -100.0..=100.0,
+                    0,
+                    1.0,
+                    None,
+                );
+                changed |= adjustment_slider(
+                    ui,
+                    "Whites",
+                    &mut exposure.whites,
+                    -100.0..=100.0,
+                    0,
+                    1.0,
+                    None,
+                );
+                changed |= adjustment_slider(
+                    ui,
+                    "Blacks",
+                    &mut exposure.blacks,
+                    -100.0..=100.0,
+                    0,
+                    1.0,
+                    None,
+                );
             });
+        changed
+    }
 
-        egui::CollapsingHeader::new("Color")
+    fn show_presence(ui: &mut Ui, exposure: &mut ExposureParams) -> bool {
+        let mut changed = false;
+        egui::CollapsingHeader::new("Presence")
             .default_open(true)
             .show(ui, |ui| {
-                slider!(ui, vibrance, -1.0..=1.0, "Vibrance", 2);
-                slider!(ui, saturation, -1.0..=1.0, "Saturation", 2);
-                slider!(ui, chroma_denoise, 0.0..=1.0, "Chroma Denoise", 2);
+                changed |= adjustment_slider(
+                    ui,
+                    "Texture",
+                    &mut exposure.texture,
+                    -100.0..=100.0,
+                    0,
+                    1.0,
+                    None,
+                );
+                changed |= adjustment_slider(
+                    ui,
+                    "Clarity",
+                    &mut exposure.clarity,
+                    -100.0..=100.0,
+                    0,
+                    1.0,
+                    None,
+                );
+                changed |= adjustment_slider(
+                    ui,
+                    "Dehaze",
+                    &mut exposure.dehaze,
+                    -100.0..=100.0,
+                    0,
+                    1.0,
+                    None,
+                );
+                changed |= adjustment_slider(
+                    ui,
+                    "Vibrance",
+                    &mut exposure.vibrance,
+                    -100.0..=100.0,
+                    0,
+                    1.0,
+                    None,
+                );
+                changed |= adjustment_slider(
+                    ui,
+                    "Saturation",
+                    &mut exposure.saturation,
+                    -100.0..=100.0,
+                    0,
+                    1.0,
+                    None,
+                );
             });
+        changed
+    }
 
-        egui::CollapsingHeader::new("Tone Mapping")
-            .default_open(true)
+    fn show_hsl(ui: &mut Ui, exposure: &mut ExposureParams) -> bool {
+        const COLORS: [&str; 8] = [
+            "Red", "Orange", "Yellow", "Green", "Aqua", "Blue", "Purple", "Magenta",
+        ];
+
+        let mut changed = false;
+        egui::CollapsingHeader::new("HSL / Color Mixer")
+            .default_open(false)
             .show(ui, |ui| {
-                slider!(ui, middle_grey, 5.0..=90.0, "Middle Grey %", 1);
-                slider!(ui, filmic_white, 0.1..=10.0, "White Point (EV)", 1);
-                slider!(ui, filmic_black, -10.0..=-0.1, "Black Point (EV)", 1);
-            });
+                for (index, color) in COLORS.iter().enumerate() {
+                    ui.push_id(index, |ui| {
+                        ui.strong(*color);
+                        changed |= adjustment_slider(
+                            ui,
+                            "Hue",
+                            &mut exposure.hsl_hue[index],
+                            -100.0..=100.0,
+                            0,
+                            1.0,
+                            None,
+                        );
+                        changed |= adjustment_slider(
+                            ui,
+                            "Saturation",
+                            &mut exposure.hsl_saturation[index],
+                            -100.0..=100.0,
+                            0,
+                            1.0,
+                            None,
+                        );
+                        changed |= adjustment_slider(
+                            ui,
+                            "Luminance",
+                            &mut exposure.hsl_luminance[index],
+                            -100.0..=100.0,
+                            0,
+                            1.0,
+                            None,
+                        );
+                    });
 
+                    if index + 1 < COLORS.len() {
+                        ui.separator();
+                    }
+                }
+            });
+        changed
+    }
+
+    fn show_raw(ui: &mut Ui, exposure: &mut ExposureParams) -> bool {
+        let mut changed = false;
         egui::CollapsingHeader::new("Raw")
             .default_open(false)
             .show(ui, |ui| {
-                slider!(ui, clip, -1.0..=1.0, "Clip Point", 2);
-                slider!(ui, ca_red, -2.0..=2.0, "Red CA", 2);
-                slider!(ui, ca_blue, -2.0..=2.0, "Blue CA", 2);
-                if ui.button("Reset adjustments").clicked() {
-                    app.exposure = Default::default();
-                    app.dirty = true;
+                changed |= adjustment_slider(
+                    ui,
+                    "Raw Black Point",
+                    &mut exposure.black_point,
+                    -0.25..=0.25,
+                    3,
+                    0.01,
+                    None,
+                );
+                let previous_mode = exposure.demosaic_mode;
+                egui::ComboBox::from_label("Demosaic")
+                    .selected_text(exposure.demosaic_mode.label())
+                    .show_ui(ui, |ui| {
+                        ui.selectable_value(
+                            &mut exposure.demosaic_mode,
+                            DemosaicMode::Reference,
+                            DemosaicMode::Reference.label(),
+                        );
+                        ui.selectable_value(
+                            &mut exposure.demosaic_mode,
+                            DemosaicMode::FrequencyDomainChroma,
+                            DemosaicMode::FrequencyDomainChroma.label(),
+                        );
+                        ui.selectable_value(
+                            &mut exposure.demosaic_mode,
+                            DemosaicMode::Dual,
+                            DemosaicMode::Dual.label(),
+                        );
+                    });
+                changed |= previous_mode != exposure.demosaic_mode;
+
+                changed |= adjustment_slider(
+                    ui,
+                    "Chroma Denoise",
+                    &mut exposure.chroma_denoise,
+                    0.0..=1.0,
+                    2,
+                    0.01,
+                    None,
+                );
+                if exposure.demosaic_mode == DemosaicMode::FrequencyDomainChroma {
+                    changed |= adjustment_slider(
+                        ui,
+                        "Frequency Chroma",
+                        &mut exposure.frequency_chroma,
+                        0.0..=1.0,
+                        2,
+                        0.01,
+                        None,
+                    );
                 }
+                if exposure.demosaic_mode == DemosaicMode::Dual {
+                    changed |= adjustment_slider(
+                        ui,
+                        "Dual Detail Threshold",
+                        &mut exposure.dual_threshold,
+                        0.0..=100.0,
+                        1,
+                        1.0,
+                        None,
+                    );
+                }
+                changed |= adjustment_slider(
+                    ui,
+                    "Red CA",
+                    &mut exposure.ca_red,
+                    -2.0..=2.0,
+                    2,
+                    0.01,
+                    None,
+                );
+                changed |= adjustment_slider(
+                    ui,
+                    "Blue CA",
+                    &mut exposure.ca_blue,
+                    -2.0..=2.0,
+                    2,
+                    0.01,
+                    None,
+                );
             });
+        changed
     }
 }
