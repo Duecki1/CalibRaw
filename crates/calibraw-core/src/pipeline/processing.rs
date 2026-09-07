@@ -269,7 +269,9 @@ pub fn crop_raw(raw: &LoadedRaw, x: u32, y: u32, width: u32, height: u32) -> Loa
         ai_denoised: std::sync::Arc::new(std::sync::RwLock::new(crop_ai_denoised(
             raw, x, y, width, height,
         ))),
-        opposed_chroma_cache: Default::default(),
+        opposed_chroma_cache: std::sync::Arc::clone(&raw.opposed_chroma_cache),
+        opposed_chroma_source_identity: std::sync::Arc::clone(&raw.opposed_chroma_source_identity),
+        opposed_chroma_reference_source: false,
     }
 }
 
@@ -447,7 +449,9 @@ pub fn build_region_proxy(
             width,
             height,
         ))),
-        opposed_chroma_cache: Default::default(),
+        opposed_chroma_cache: std::sync::Arc::clone(&raw.opposed_chroma_cache),
+        opposed_chroma_source_identity: std::sync::Arc::clone(&raw.opposed_chroma_source_identity),
+        opposed_chroma_reference_source: false,
     }
 }
 
@@ -928,12 +932,18 @@ pub fn extract_padded_tile(raw: &LoadedRaw, tile: ExportTile) -> LoadedRaw {
         lens_geometry: None,
         ai_denoised: std::sync::Arc::new(std::sync::RwLock::new(None)),
         opposed_chroma_cache: std::sync::Arc::clone(&raw.opposed_chroma_cache),
+        opposed_chroma_source_identity: std::sync::Arc::clone(&raw.opposed_chroma_source_identity),
+        opposed_chroma_reference_source: false,
     };
     fill_padded_tile(raw, tile, &mut tile_raw);
     tile_raw
 }
 
 pub fn extract_padded_tile_into(raw: &LoadedRaw, tile: ExportTile, tile_raw: &mut LoadedRaw) {
+    tile_raw.opposed_chroma_cache = std::sync::Arc::clone(&raw.opposed_chroma_cache);
+    tile_raw.opposed_chroma_source_identity =
+        std::sync::Arc::clone(&raw.opposed_chroma_source_identity);
+    tile_raw.opposed_chroma_reference_source = false;
     if raw.is_pre_demosaiced_raster() {
         let dimensions_changed =
             tile_raw.width != tile.padded_width || tile_raw.height != tile.padded_height;
@@ -1032,7 +1042,8 @@ fn fill_padded_tile(raw: &LoadedRaw, tile: ExportTile, tile_raw: &mut LoadedRaw)
 #[cfg(test)]
 mod tests {
     use super::{
-        affected_stage, build_proxy, crop_raw, extract_padded_tile, extract_padded_tile_into,
+        affected_stage, build_proxy, build_region_proxy, crop_raw, extract_padded_tile,
+        extract_padded_tile_into,
         required_export_tile_halo, ExportTile, ProcessingStage, ProxySpec, TilePlan, TileSpec,
         EXPORT_TILE_HALO, MIN_EXPORT_TILE_HALO,
     };
@@ -1091,7 +1102,78 @@ mod tests {
             lens_geometry: None,
             ai_denoised: std::sync::Arc::new(std::sync::RwLock::new(None)),
             opposed_chroma_cache: Default::default(),
+            opposed_chroma_source_identity: Default::default(),
+            opposed_chroma_reference_source: true,
         }
+    }
+
+    fn colored_highlight_raw(width: u32, height: u32) -> LoadedRaw {
+        let mut raw = test_raw(width, height);
+        raw.color_indices = CompactPixelMap::repeating(width, height, 2, 2, vec![0, 1, 3, 2]);
+        raw.white_levels = [10_000.0; 4];
+        raw.black_levels_per_pixel = CompactPixelMap::repeating(width, height, 1, 1, vec![0.0]);
+        raw.raw_pixels.clear();
+        raw.raw_pixels.reserve((width * height) as usize);
+        for y in 0..height {
+            for x in 0..width {
+                let physical = raw.color_indices[(y * width + x) as usize];
+                let logical = usize::from(if physical == 3 { 1 } else { physical });
+                let mut value = [0.82_f32, 0.58, 0.36][logical];
+                if (width / 3..2 * width / 3).contains(&x)
+                    && (height / 3..2 * height / 3).contains(&y)
+                    && (logical == 0 || logical == 2)
+                {
+                    value = 1.0;
+                }
+                raw.raw_pixels.push((value * 10_000.0).round() as u16);
+            }
+        }
+        raw
+    }
+
+    #[test]
+    fn opposed_chroma_full_reference_is_shared_by_moved_crops_and_proxy() {
+        let raw = colored_highlight_raw(120, 96);
+        let wb = [1.45, 1.0, 0.72, 1.0];
+        let reference = raw.inpaint_opposed_chroma(0.0, 1.0, false, wb);
+        assert_eq!(raw.opposed_chroma_cache.read().unwrap().len(), 1);
+
+        let first = crop_raw(&raw, 18, 12, 78, 70);
+        let shifted = crop_raw(&raw, 24, 18, 78, 70);
+        let proxy = build_region_proxy(&raw, 16, 10, 86, 74, ProxySpec { max_edge: 42 });
+
+        for derived in [&first, &shifted, &proxy] {
+            assert!(std::sync::Arc::ptr_eq(
+                &derived.opposed_chroma_cache,
+                &raw.opposed_chroma_cache
+            ));
+            assert!(std::sync::Arc::ptr_eq(
+                &derived.opposed_chroma_source_identity,
+                &raw.opposed_chroma_source_identity
+            ));
+            assert!(!derived.opposed_chroma_reference_source);
+            assert_eq!(
+                derived.inpaint_opposed_chroma(0.0, 1.0, false, wb),
+                reference
+            );
+        }
+    }
+
+    #[test]
+    fn derived_opposed_chroma_miss_does_not_poison_full_source_cache() {
+        let raw = colored_highlight_raw(120, 96);
+        let wb = [1.35, 1.0, 0.78, 1.0];
+        let crop = crop_raw(&raw, 24, 18, 72, 66);
+
+        let _local_fallback = crop.inpaint_opposed_chroma(0.0, 1.0, false, wb);
+        assert!(raw.opposed_chroma_cache.read().unwrap().is_empty());
+
+        let full_reference = raw.inpaint_opposed_chroma(0.0, 1.0, false, wb);
+        assert_eq!(raw.opposed_chroma_cache.read().unwrap().len(), 1);
+        assert_eq!(
+            crop.inpaint_opposed_chroma(0.0, 1.0, false, wb),
+            full_reference
+        );
     }
 
     #[test]
@@ -1457,6 +1539,8 @@ mod tests {
             lens_geometry: None,
             ai_denoised: std::sync::Arc::new(std::sync::RwLock::new(None)),
             opposed_chroma_cache: Default::default(),
+            opposed_chroma_source_identity: Default::default(),
+            opposed_chroma_reference_source: true,
         };
 
         let cropped = crop_raw(&raw, 1, 1, 2, 2);
@@ -1524,6 +1608,8 @@ mod tests {
             lens_geometry: None,
             ai_denoised: std::sync::Arc::new(std::sync::RwLock::new(None)),
             opposed_chroma_cache: Default::default(),
+            opposed_chroma_source_identity: Default::default(),
+            opposed_chroma_reference_source: true,
         };
 
         let proxy = build_proxy(&raw, ProxySpec { max_edge: 4 });

@@ -8,8 +8,9 @@ use super::{
     SHADER_XTRANS_DEMOSAIC, SHADER_XTRANS_FINISH,
 };
 use crate::pipeline::{
-    extract_padded_tile, ExportTile, ExposureParams, LoadedRaw, LocalMask, MaskEffect, MaskKind,
-    MaskStack, NativeRect, PointCurve, ProcessingStage, TONE_GUIDE_CELL_SIZE,
+    extract_padded_tile, CameraProfile, CfaKind, CompactPixelMap, ExportTile, ExposureParams,
+    HighlightReconstructionMethod, LoadedRaw, LocalMask, MaskEffect, MaskKind, MaskStack,
+    NativeRect, PointCurve, ProcessingStage, TONE_GUIDE_CELL_SIZE,
 };
 
 fn validate_shader(name: &str, source: &str, quality: ProcessingQuality) {
@@ -332,6 +333,124 @@ fn tone_consistency_scene(width: u32, height: u32) -> LoadedRaw {
     LoadedRaw::from_scene_linear_rec2020(width, height, rgb).unwrap()
 }
 
+fn opposed_highlight_consistency_raw(width: u32, height: u32) -> LoadedRaw {
+    let mut colors = Vec::with_capacity((width * height) as usize);
+    let mut pixels = Vec::with_capacity((width * height) as usize);
+    for y in 0..height {
+        for x in 0..width {
+            let physical = match (x % 2, y % 2) {
+                (0, 0) => 0,
+                (1, 0) => 1,
+                (0, 1) => 3,
+                _ => 2,
+            };
+            colors.push(physical);
+            let logical = usize::from(if physical == 3 { 1 } else { physical });
+            let mut value = [0.82_f32, 0.57, 0.34][logical];
+            if (width / 3..2 * width / 3).contains(&x)
+                && (height / 3..2 * height / 3).contains(&y)
+                && (logical == 0 || logical == 2)
+            {
+                value = 1.0;
+            }
+            pixels.push((value * 10_000.0).round() as u16);
+        }
+    }
+    LoadedRaw {
+        width,
+        height,
+        camera_make: "Test".to_owned(),
+        camera_model: "Opposed highlights".to_owned(),
+        lens_make: String::new(),
+        lens_model: String::new(),
+        focal_length: 0.0,
+        aperture: 0.0,
+        focus_distance: 0.0,
+        capture_metadata: Default::default(),
+        cfa_kind: CfaKind::Bayer,
+        raw_pixels: pixels,
+        scene_linear_raster: None,
+        color_indices: CompactPixelMap::dense(width, height, colors),
+        wb_coeffs: [1.45, 1.0, 0.72, 1.0],
+        cam_to_srgb: [
+            [1.0, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 0.0],
+        ],
+        black_levels: [0.0; 4],
+        black_levels_per_pixel: CompactPixelMap::repeating(width, height, 1, 1, vec![0.0]),
+        white_levels: [10_000.0; 4],
+        noise_profile: crate::pipeline::NoiseProfile::default(),
+        camera_profile: CameraProfile::default(),
+        camera_profile_source: None,
+        available_camera_profiles: Vec::new(),
+        white_balance_model: None,
+        lens_geometry: None,
+        ai_denoised: std::sync::Arc::new(std::sync::RwLock::new(None)),
+        opposed_chroma_cache: Default::default(),
+        opposed_chroma_source_identity: Default::default(),
+        opposed_chroma_reference_source: true,
+    }
+}
+
+#[test]
+fn gpu_params_pack_the_same_full_source_opposed_reference_for_moved_tiles() {
+    let source = opposed_highlight_consistency_raw(160, 128);
+    let masks = MaskStack::default();
+    let mut exposure = ExposureParams::default();
+    exposure.highlight_method = HighlightReconstructionMethod::InpaintOpposed;
+    source.inpaint_opposed_chroma_for_exposure(&exposure);
+
+    let first = tone_consistency_test_tile(
+        NativeRect {
+            x: 32,
+            y: 24,
+            width: 80,
+            height: 72,
+        },
+        16,
+    );
+    let shifted = tone_consistency_test_tile(
+        NativeRect {
+            x: 38,
+            y: 30,
+            width: 80,
+            height: 72,
+        },
+        16,
+    );
+    let first_raw = extract_padded_tile(&source, first);
+    let shifted_raw = extract_padded_tile(&source, shifted);
+    let first_params = GpuParams::new_for_tile(
+        &exposure,
+        &masks,
+        &first_raw,
+        first.global_origin_x,
+        first.global_origin_y,
+        source.width,
+        source.height,
+    );
+    let shifted_params = GpuParams::new_for_tile(
+        &exposure,
+        &masks,
+        &shifted_raw,
+        shifted.global_origin_x,
+        shifted.global_origin_y,
+        source.width,
+        source.height,
+    );
+
+    assert_eq!(first_params.camera.wb, shifted_params.camera.wb);
+    assert_eq!(
+        first_params.camera.highlight_options,
+        shifted_params.camera.highlight_options
+    );
+    assert!(first_params.camera.highlight_options[0] >= 1.5);
+    assert!(first_params.camera.highlight_options[1..]
+        .iter()
+        .any(|value| value.abs() > 1e-5));
+}
+
 fn request_test_device() -> Option<(wgpu::Device, wgpu::Queue)> {
     let instance = wgpu::Instance::default();
     let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
@@ -526,5 +645,144 @@ fn native_overlapping_tone_crops_match_full_frame_away_from_support_boundaries()
         full_max <= 2.0e-5 && full_rms <= 2.0e-6,
         "native crops diverged from full-frame render: max={full_max:e}, rms={full_rms:e}"
     );
+    Ok(())
+}
+
+#[test]
+fn clipped_colored_highlights_match_across_moved_detail_crops_and_wb() -> anyhow::Result<()> {
+    let Some((device, queue)) = request_test_device() else {
+        eprintln!("opposed highlight GPU regression skipped: no headless wgpu adapter");
+        return Ok(());
+    };
+
+    let mut source = opposed_highlight_consistency_raw(640, 480);
+    let masks = MaskStack::default();
+    let mut exposure = ExposureParams::default();
+    exposure.highlight_method = HighlightReconstructionMethod::InpaintOpposed;
+    exposure.sharpen_amount = 0.0;
+    exposure.texture = 0.0;
+    exposure.clarity = 0.0;
+    exposure.dehaze = 0.0;
+
+    let first = NativeRect {
+        x: 150,
+        y: 100,
+        width: 320,
+        height: 280,
+    };
+    let shifted = NativeRect {
+        x: first.x + 8,
+        y: first.y + 6,
+        ..first
+    };
+    let overlap_x0 = first.x.max(shifted.x);
+    let overlap_y0 = first.y.max(shifted.y);
+    let overlap_x1 = first.right().min(shifted.right());
+    let overlap_y1 = first.bottom().min(shifted.bottom());
+
+    // Restrict the comparison to the clipped colored-highlight patch while staying
+    // comfortably away from tile support boundaries.
+    let compare_x0 = overlap_x0.max(source.width / 3 + 16);
+    let compare_y0 = overlap_y0.max(source.height / 3 + 16);
+    let compare_x1 = overlap_x1.min(2 * source.width / 3 - 16);
+    let compare_y1 = overlap_y1.min(2 * source.height / 3 - 16);
+    assert!(compare_x1 > compare_x0 && compare_y1 > compare_y0);
+
+    let wb_cases = [[1.20, 1.0, 0.88, 1.0], [1.72, 1.0, 0.58, 1.0]];
+    let mut prior_reference = None;
+    for wb in wb_cases {
+        source.wb_coeffs = wb;
+        let reference = source.inpaint_opposed_chroma_for_exposure(&exposure);
+        if let Some(previous) = prior_reference {
+            assert_ne!(reference, previous, "WB change reused the previous chroma reference");
+        }
+        prior_reference = Some(reference);
+
+        let full_params = GpuParams::new(&exposure, &masks, &source);
+        assert_eq!(full_params.camera.wb, wb);
+        assert_eq!(&full_params.camera.highlight_options[1..], reference.as_slice());
+        let full_frame = RawGpuPipeline::new_headless_with_quality_and_mask_edge(
+            &device,
+            &queue,
+            &source,
+            &full_params,
+            ProcessingQuality::High,
+            64,
+        )?;
+        full_frame.recompute(&queue, &device, &full_params);
+
+        let first_rgb = render_tone_consistency_crop(
+            &device,
+            &queue,
+            &source,
+            &exposure,
+            &masks,
+            &full_frame,
+            first,
+        )?;
+        let shifted_rgb = render_tone_consistency_crop(
+            &device,
+            &queue,
+            &source,
+            &exposure,
+            &masks,
+            &full_frame,
+            shifted,
+        )?;
+        let full_rgb = full_frame.read_display_linear_region_blocking(
+            &device,
+            &queue,
+            compare_x0,
+            compare_y0,
+            compare_x1 - compare_x0,
+            compare_y1 - compare_y0,
+        )?;
+
+        let mut crop_max = 0.0_f32;
+        let mut full_max = 0.0_f32;
+        let mut crop_sum_sq = 0.0_f64;
+        let mut full_sum_sq = 0.0_f64;
+        let mut samples = 0_u64;
+        for y in compare_y0..compare_y1 {
+            for x in compare_x0..compare_x1 {
+                let first_pixel = ((y - first.y) * first.width + (x - first.x)) as usize * 3;
+                let shifted_pixel =
+                    ((y - shifted.y) * shifted.width + (x - shifted.x)) as usize * 3;
+                let full_pixel = ((y - compare_y0) * (compare_x1 - compare_x0)
+                    + (x - compare_x0)) as usize
+                    * 3;
+                for channel in 0..3 {
+                    let crop_delta = (first_rgb[first_pixel + channel]
+                        - shifted_rgb[shifted_pixel + channel])
+                        .abs();
+                    let first_full_delta =
+                        (first_rgb[first_pixel + channel] - full_rgb[full_pixel + channel]).abs();
+                    let shifted_full_delta =
+                        (shifted_rgb[shifted_pixel + channel] - full_rgb[full_pixel + channel]).abs();
+                    crop_max = crop_max.max(crop_delta);
+                    full_max = full_max.max(first_full_delta.max(shifted_full_delta));
+                    crop_sum_sq += f64::from(crop_delta) * f64::from(crop_delta);
+                    full_sum_sq += f64::from(first_full_delta) * f64::from(first_full_delta);
+                    full_sum_sq += f64::from(shifted_full_delta) * f64::from(shifted_full_delta);
+                    samples += 1;
+                }
+            }
+        }
+        let crop_rms = (crop_sum_sq / samples as f64).sqrt();
+        let full_rms = (full_sum_sq / (samples * 2) as f64).sqrt();
+        eprintln!(
+            "opposed highlight crop consistency wb={wb:?}: crop-vs-crop max={crop_max:.8e} rms={crop_rms:.8e}, crop-vs-full max={full_max:.8e} rms={full_rms:.8e}"
+        );
+        assert!(
+            crop_max <= 2.0e-5 && crop_rms <= 2.0e-6,
+            "moved highlight crops diverged for wb={wb:?}: max={crop_max:e}, rms={crop_rms:e}"
+        );
+        assert!(
+            full_max <= 2.0e-5 && full_rms <= 2.0e-6,
+            "highlight crops diverged from full frame for wb={wb:?}: max={full_max:e}, rms={full_rms:e}"
+        );
+    }
+
+    assert_eq!(source.opposed_chroma_cache.read().unwrap().len(), wb_cases.len());
     Ok(())
 }

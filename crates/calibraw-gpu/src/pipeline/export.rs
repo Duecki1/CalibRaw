@@ -50,6 +50,9 @@ pub fn render_remove_scene_crop_resized(
         "Remove crop lies outside the native source image"
     );
 
+    if job.raw.uses_opposed_chroma(&job.exposure) {
+        job.raw.inpaint_opposed_chroma_for_exposure(&job.exposure);
+    }
     let working_raw = build_region_proxy(
         &job.raw,
         job.crop.x,
@@ -162,6 +165,9 @@ pub fn render_remove_scene_crop(job: DevelopedCropJob) -> Result<Vec<f32>> {
         "Remove crop lies outside the native source image"
     );
     let empty_masks = MaskStack::default();
+    if job.raw.uses_opposed_chroma(&job.exposure) {
+        job.raw.inpaint_opposed_chroma_for_exposure(&job.exposure);
+    }
     let halo = required_export_tile_halo(&job.exposure, &empty_masks);
     let tile = crate::pipeline::ExportTile {
         core_x: job.crop.x,
@@ -548,6 +554,9 @@ pub fn render_developed_linear_crop(job: DevelopedCropJob) -> Result<Vec<f32>> {
         job.crop.right() <= job.raw.width && job.crop.bottom() <= job.raw.height,
         "Remove crop lies outside the native source image"
     );
+    if job.raw.uses_opposed_chroma(&job.exposure) {
+        job.raw.inpaint_opposed_chroma_for_exposure(&job.exposure);
+    }
     let halo = required_export_tile_halo(&job.exposure, &job.masks);
     let tile = tone_grid_aligned_crop_tile(job.crop, halo)?;
     let tile_raw = extract_padded_tile(&job.raw, tile);
@@ -1087,11 +1096,7 @@ where
         || (raw.cfa_kind == CfaKind::XTrans
             && exposure.highlight_method == crate::pipeline::HighlightReconstructionMethod::Lch)
     {
-        raw.inpaint_opposed_chroma(
-            exposure.black_point,
-            exposure.highlight_clip,
-            exposure.ai_denoise_enabled,
-        );
+        raw.inpaint_opposed_chroma_for_exposure(exposure);
     }
     let plan = TilePlan::new(raw.width, raw.height, tile_spec);
     crate::diagnostics::record(format!(

@@ -10,6 +10,13 @@ impl CalibRawApp {
 
         if let Some(stage) = affected_stage(&self.develop.target_exposure, &self.develop.exposure) {
             self.develop.target_exposure = self.develop.exposure;
+            if matches!(stage, ProcessingStage::Raw) {
+                if let Some(full_raw) = self.develop.loaded_raw.as_ref() {
+                    if detail_uses_opposed_chroma(full_raw, &self.develop.target_exposure) {
+                        full_raw.inpaint_opposed_chroma_for_exposure(&self.develop.target_exposure);
+                    }
+                }
+            }
             self.queue_preview_processing(stage);
         }
     }
@@ -70,17 +77,11 @@ impl CalibRawApp {
         let virtual_full_size = detail.virtual_full_size;
         if stage == ProcessingStage::Raw
             && !detail_raw.is_pre_demosaiced_raster()
-            && detail_raw.width == detail.source_size[0]
-            && detail_raw.height == detail.source_size[1]
             && detail_uses_opposed_chroma(full_raw, &self.develop.target_exposure)
         {
-            // Native settled crops share this cache. Populate the requested
-            // key from the full sensor before GpuParams reads it from the crop.
-            full_raw.inpaint_opposed_chroma(
-                self.develop.target_exposure.black_point,
-                self.develop.target_exposure.highlight_clip,
-                self.develop.target_exposure.ai_denoise_enabled,
-            );
+            // Crops and proxies share the full sensor cache. Populate the exact
+            // WB/black/clip/AI key before GpuParams reads it from the derived RAW.
+            full_raw.inpaint_opposed_chroma_for_exposure(&self.develop.target_exposure);
         }
         let mask_region = detail_mask_source_region(
             &self.masks.stack,
