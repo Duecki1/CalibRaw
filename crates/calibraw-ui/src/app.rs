@@ -750,12 +750,27 @@ enum LibraryBatchExportEvent {
 enum ExportTaskKind {
     Single,
     LibraryBatch,
+    #[cfg(not(target_os = "android"))]
+    Replay,
 }
 
 enum ExportTaskReceiver {
     Tiled(mpsc::Receiver<ExportEvent>),
     #[cfg(not(target_os = "android"))]
     LibraryBatch(mpsc::Receiver<LibraryBatchExportEvent>),
+    #[cfg(not(target_os = "android"))]
+    Replay(mpsc::Receiver<ReplayExportEvent>),
+}
+
+#[cfg(not(target_os = "android"))]
+enum ReplayExportEvent {
+    Progress {
+        progress: f32,
+        phase: String,
+        completed_frames: usize,
+        total_frames: usize,
+    },
+    Finished(Result<PathBuf, String>),
 }
 
 #[derive(Clone, Debug)]
