@@ -7,6 +7,8 @@ mod batch;
 mod export;
 mod lens;
 mod preview;
+#[cfg(not(target_os = "android"))]
+mod replay;
 
 #[cfg(test)]
 mod tests;

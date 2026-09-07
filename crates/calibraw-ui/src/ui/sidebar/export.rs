@@ -91,6 +91,15 @@ impl Sidebar {
                     export_picker_directory.as_deref(),
                 );
 
+                #[cfg(not(target_os = "android"))]
+                if let Some((fraction, phase)) = app.edit_replay_progress_state() {
+                    ui.add_space(8.0);
+                    ui.add_sized(
+                        [ui.available_width(), 18.0],
+                        egui::ProgressBar::new(fraction).text(phase),
+                    );
+                }
+
                 if let Some((completed, total)) = app.export_progress_state() {
                     ui.add_space(8.0);
                     let (fraction, text) = if total == 0 {
@@ -166,6 +175,26 @@ impl Sidebar {
                     .inner;
                 if jpeg_response.clicked() {
                     app.export_jpeg(frame);
+                }
+                #[cfg(not(target_os = "android"))]
+                {
+                    ui.add_space(10.0);
+                    ui.separator();
+                    ui.add_space(10.0);
+                    let replay_response = ui
+                        .add_enabled_ui(export_enabled, |ui| {
+                            ui.add_sized(
+                                [action_width, crate::ui::theme::CONTROL_HEIGHT],
+                                egui::Button::new("Create Edit Replay…"),
+                            )
+                        })
+                        .inner
+                        .on_hover_text(
+                            "Create a short 30 FPS MP4 that replays the current edit by category.",
+                        );
+                    if replay_response.clicked() {
+                        app.create_edit_replay(frame);
+                    }
                 }
                 if app.export_task_active() {
                     ui.label(

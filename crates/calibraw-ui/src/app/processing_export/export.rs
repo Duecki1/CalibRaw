@@ -17,10 +17,11 @@ impl ExportTask {
             receiver,
             destination,
             progress: 0.0,
-            phase: if kind == ExportTaskKind::LibraryBatch {
-                "Preparing batch export…".to_owned()
-            } else {
-                "Preparing tiled export…".to_owned()
+            phase: match kind {
+                ExportTaskKind::LibraryBatch => "Preparing batch export…".to_owned(),
+                #[cfg(not(target_os = "android"))]
+                ExportTaskKind::Replay => "Preparing edit replay…".to_owned(),
+                ExportTaskKind::Single => "Preparing tiled export…".to_owned(),
             },
             completed: 0,
             total,
@@ -55,10 +56,11 @@ impl ExportTask {
         use std::sync::atomic::Ordering;
         self.cancellation.store(true, Ordering::Release);
         self.cancelling = true;
-        self.phase = if self.kind == ExportTaskKind::LibraryBatch {
-            "Cancelling batch export…".to_owned()
-        } else {
-            "Cancelling export…".to_owned()
+        self.phase = match self.kind {
+            ExportTaskKind::LibraryBatch => "Cancelling batch export…".to_owned(),
+            #[cfg(not(target_os = "android"))]
+            ExportTaskKind::Replay => "Cancelling edit replay…".to_owned(),
+            ExportTaskKind::Single => "Cancelling export…".to_owned(),
         };
     }
 }
@@ -159,7 +161,7 @@ impl CalibRawApp {
             && self.develop.load_receiver.is_none()
     }
 
-    fn templated_export_stem(&self) -> Option<String> {
+    pub(super) fn templated_export_stem(&self) -> Option<String> {
         let raw = self.develop.loaded_raw.as_deref()?;
         let original_name = export_source_stem(
             self.develop.current_path.as_deref(),
@@ -406,6 +408,10 @@ impl CalibRawApp {
             (ExportTaskKind::LibraryBatch, _) => {
                 return Err("the library batch export is no longer active".to_owned());
             }
+            #[cfg(not(target_os = "android"))]
+            (ExportTaskKind::Replay, _) => {
+                return Err("edit replay uses its dedicated export worker".to_owned());
+            }
         };
         let destination = request.destination.clone();
         let receiver = spawn_export_item(request, Arc::clone(&cancellation));
@@ -459,7 +465,13 @@ impl CalibRawApp {
         if !task.minimized {
             return;
         }
-        let label = if task.total > 1 {
+        #[cfg(not(target_os = "android"))]
+        let replay = task.kind == ExportTaskKind::Replay;
+        #[cfg(target_os = "android")]
+        let replay = false;
+        let label = if replay {
+            format!("Replay {:.0}%", task.progress.clamp(0.0, 1.0) * 100.0)
+        } else if task.total > 1 {
             format!(
                 "Exporting {} / {}",
                 task.completed.min(task.total),
@@ -527,13 +539,20 @@ impl CalibRawApp {
         let cancelling = task.cancelling;
         let mut minimize = false;
         let mut cancel = false;
-        crate::ui::responsive_popup(egui::Window::new("Exporting"), ctx, 430.0)
+        #[cfg(not(target_os = "android"))]
+        let replay = task.kind == ExportTaskKind::Replay;
+        #[cfg(target_os = "android")]
+        let replay = false;
+        let window_title = if replay { "Creating Edit Replay" } else { "Exporting" };
+        crate::ui::responsive_popup(egui::Window::new(window_title), ctx, 430.0)
             .id(egui::Id::new("active-export-progress"))
             .collapsible(false)
             .resizable(false)
             .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
             .show(ctx, |ui| {
-                if total > 1 {
+                if replay {
+                    ui.label(egui::RichText::new("Creating edit replay").strong());
+                } else if total > 1 {
                     ui.label(
                         egui::RichText::new(format!(
                             "{} / {} images complete",
@@ -582,6 +601,17 @@ impl CalibRawApp {
     }
 
     pub(in crate::app) fn poll_export_worker(&mut self, _frame: &eframe::Frame) {
+        #[cfg(not(target_os = "android"))]
+        if self
+            .export
+            .task
+            .as_ref()
+            .is_some_and(|task| task.kind == ExportTaskKind::Replay)
+        {
+            self.poll_edit_replay_worker();
+            return;
+        }
+
         let (events, disconnected) = match self
             .export
             .task
