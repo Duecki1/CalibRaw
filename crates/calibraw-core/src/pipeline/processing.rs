@@ -683,7 +683,15 @@ const DEMOSAIC_CHAIN_SUPPORT: u32 = 32;
 const COLOR_DENOISE_SUPPORT_FAST: u32 = 2;
 const COLOR_DENOISE_SUPPORT_BALANCED: u32 = 2 * (1 + 2 + 4 + 8);
 const COLOR_DENOISE_SUPPORT_HIGH: u32 = COLOR_DENOISE_SUPPORT_BALANCED + 16 + 32;
-const TONE_GUIDE_SUPPORT: u32 = if cfg!(target_os = "android") { 32 } else { 24 };
+
+/// Native processing pixels represented by one adaptive tone-guide cell.
+///
+/// Cropped and tiled processing must use this same global grid so the guide
+/// does not move when a crop origin changes.
+pub const TONE_GUIDE_CELL_SIZE: u32 = if cfg!(target_os = "android") { 8 } else { 4 };
+
+const TONE_GUIDE_RADIUS_CELLS: u32 = if cfg!(target_os = "android") { 3 } else { 5 };
+const TONE_GUIDE_SUPPORT: u32 = (TONE_GUIDE_RADIUS_CELLS + 1) * TONE_GUIDE_CELL_SIZE;
 const LOCAL_EFFECTS_SUPPORT: u32 = 28;
 const NEON_SUPPORT: u32 = 48;
 const MASK_BLUR_SUPPORT: u32 = 72;

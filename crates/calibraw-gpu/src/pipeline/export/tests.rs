@@ -2,16 +2,67 @@ use super::{
     bounded_tile_spec, build_exif_payload, build_lanczos_contributions, built_in_srgb_icc,
     encode_jpeg_rgb, encode_srgb_row, encode_srgb_row_with_format, export_to_destination,
     publish_completed_export, resolved_export_tile_spec, stitch_linear_tile_into_band,
+    tone_grid_aligned_crop_tile,
     tiff_strip_layout, tile_mask_source_region, validate_export_dimensions,
     with_temporary_export_path, ExportFormat, ExportMetadata, ExportResizeMode, ExportRowFormat,
     ExportSettings, GeometryResampler, JpegEncodeRequest, LinearLightResizer, EXPORT_TILE_HALO,
     MAX_EXPORT_EDGE, TIFF_TARGET_STRIP_BYTES,
 };
 use crate::pipeline::{
-    ExportTile, ExposureParams, GeometryTransform, MaskStack, SrgbOutputLut, TileSpec,
+    ExportTile, ExposureParams, GeometryTransform, MaskStack, NativeRect, SrgbOutputLut,
+    TileSpec, TONE_GUIDE_CELL_SIZE,
 };
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
+
+#[test]
+fn developed_crop_padding_is_aligned_to_the_global_tone_grid() {
+    let halo = 64;
+    let first = tone_grid_aligned_crop_tile(
+        NativeRect {
+            x: 162,
+            y: 118,
+            width: 281,
+            height: 219,
+        },
+        halo,
+    )
+    .unwrap();
+    let shifted = tone_grid_aligned_crop_tile(
+        NativeRect {
+            x: 164,
+            y: 120,
+            width: 281,
+            height: 219,
+        },
+        halo,
+    )
+    .unwrap();
+
+    for tile in [first, shifted] {
+        assert_eq!(
+            tile.global_origin_x.rem_euclid(TONE_GUIDE_CELL_SIZE as i32),
+            0
+        );
+        assert_eq!(
+            tile.global_origin_y.rem_euclid(TONE_GUIDE_CELL_SIZE as i32),
+            0
+        );
+        assert!(tile.local_core_x >= halo);
+        assert!(tile.local_core_y >= halo);
+        assert!(
+            tile.padded_width - tile.local_core_x - tile.core_width >= halo,
+            "right-side guide support must cover the requested halo"
+        );
+        assert!(
+            tile.padded_height - tile.local_core_y - tile.core_height >= halo,
+            "bottom-side guide support must cover the requested halo"
+        );
+    }
+
+    assert_eq!(shifted.core_x - first.core_x, 2);
+    assert_eq!(shifted.core_y - first.core_y, 2);
+}
 
 #[test]
 fn export_format_extensions_preserve_existing_names_and_aliases() {

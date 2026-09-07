@@ -1,4 +1,5 @@
 use super::*;
+use crate::pipeline::TONE_GUIDE_CELL_SIZE;
 
 pub(in crate::app) fn aligned_detail_axis(
     min_uv: f32,
@@ -9,7 +10,19 @@ pub(in crate::app) fn aligned_detail_axis(
     detail_pixel_scale: f32,
 ) -> (u32, u32) {
     let extent = extent.max(1);
-    let period = cfa_period.max(1);
+    let cfa_period = cfa_period.max(1);
+    let gcd = |mut a: u32, mut b: u32| {
+        while b != 0 {
+            let remainder = a % b;
+            a = b;
+            b = remainder;
+        }
+        a.max(1)
+    };
+    let period = cfa_period
+        .checked_div(gcd(cfa_period, TONE_GUIDE_CELL_SIZE))
+        .and_then(|value| value.checked_mul(TONE_GUIDE_CELL_SIZE))
+        .unwrap_or(cfa_period.max(TONE_GUIDE_CELL_SIZE));
     let visible_start =
         ((min_uv.clamp(0.0, 1.0) * extent as f32).floor() as u32).min(extent.saturating_sub(1));
     let visible_end =
@@ -184,6 +197,33 @@ mod state;
 #[cfg(test)]
 mod detail_resolution_tests {
     use super::*;
+
+    #[test]
+    fn detail_crop_origin_uses_the_shared_cfa_and_tone_grid() {
+        let extent = 6_017;
+        let (bayer_start, bayer_end) =
+            aligned_detail_axis(0.173, 0.481, extent, 2, 1_600, 1.0);
+        let (xtrans_start, xtrans_end) =
+            aligned_detail_axis(0.173, 0.481, extent, 6, 1_600, 1.0);
+
+        let gcd = |mut a: u32, mut b: u32| {
+            while b != 0 {
+                (a, b) = (b, a % b);
+            }
+            a.max(1)
+        };
+        let lcm = |a: u32, b: u32| a / gcd(a, b) * b;
+
+        assert_eq!(bayer_start % lcm(2, TONE_GUIDE_CELL_SIZE), 0);
+        assert_eq!(xtrans_start % lcm(6, TONE_GUIDE_CELL_SIZE), 0);
+        assert!(bayer_end > bayer_start);
+        assert!(xtrans_end > xtrans_start);
+
+        let visible_start = (0.173_f32 * extent as f32).floor() as u32;
+        let visible_end = (0.481_f32 * extent as f32).ceil() as u32;
+        assert!(bayer_start <= visible_start && bayer_end >= visible_end);
+        assert!(xtrans_start <= visible_start && xtrans_end >= visible_end);
+    }
 
     #[test]
     fn medium_zoom_detail_matches_the_physical_viewport_density() {

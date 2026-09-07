@@ -1,4 +1,5 @@
 use super::*;
+use crate::pipeline::TONE_GUIDE_CELL_SIZE;
 use std::borrow::Cow;
 use std::cell::RefCell;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -11,12 +12,8 @@ std::thread_local! {
     static COLOR_UPLOAD_SCRATCH: RefCell<Vec<u8>> = const { RefCell::new(Vec::new()) };
 }
 
-pub(super) fn tone_analysis_scale() -> u32 {
-    if cfg!(target_os = "android") {
-        8
-    } else {
-        4
-    }
+pub(super) const fn tone_analysis_scale() -> u32 {
+    TONE_GUIDE_CELL_SIZE
 }
 
 pub(super) fn tone_guide_format() -> wgpu::TextureFormat {

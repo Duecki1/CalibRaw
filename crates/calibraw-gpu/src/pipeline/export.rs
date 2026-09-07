@@ -5,7 +5,7 @@ use super::{
     GpuParams, GpuProgramPrewarm, LensGeometryMap, LoadedRaw, MaskStack, NativeRect,
     ProcessingQuality, ProcessingStage, ProxySpec, RawGpuPipeline, RawGpuProgramTemplate,
     RemoveEditState, RemoveSceneContext, SrgbOutputLut, TilePlan, TileSpec, EXPORT_TILE_HALO,
-    MAX_LOCAL_MASKS, MIN_EXPORT_TILE_HALO,
+    MAX_LOCAL_MASKS, MIN_EXPORT_TILE_HALO, TONE_GUIDE_CELL_SIZE,
 };
 use crate::file_ops::{replace_file, sync_parent_directory};
 use anyhow::{Context, Result};
@@ -492,6 +492,41 @@ pub struct TiledExportJob {
     pub program_prewarm: Option<Arc<GpuProgramPrewarm>>,
 }
 
+fn tone_grid_aligned_crop_tile(crop: NativeRect, halo: u32) -> Result<crate::pipeline::ExportTile> {
+    let alignment = i64::from(TONE_GUIDE_CELL_SIZE.max(1));
+    let align_down = |value: i64| value.div_euclid(alignment) * alignment;
+    let align_up = |value: i64| -(-value).div_euclid(alignment) * alignment;
+
+    let core_x = i64::from(crop.x);
+    let core_y = i64::from(crop.y);
+    let core_right = core_x
+        .checked_add(i64::from(crop.width))
+        .context("crop right edge overflow")?;
+    let core_bottom = core_y
+        .checked_add(i64::from(crop.height))
+        .context("crop bottom edge overflow")?;
+    let halo = i64::from(halo);
+    let origin_x = align_down(core_x - halo);
+    let origin_y = align_down(core_y - halo);
+    let padded_right = align_up(core_right + halo);
+    let padded_bottom = align_up(core_bottom + halo);
+
+    Ok(crate::pipeline::ExportTile {
+        core_x: crop.x,
+        core_y: crop.y,
+        core_width: crop.width,
+        core_height: crop.height,
+        local_core_x: u32::try_from(core_x - origin_x).context("crop x offset overflow")?,
+        local_core_y: u32::try_from(core_y - origin_y).context("crop y offset overflow")?,
+        padded_width: u32::try_from(padded_right - origin_x)
+            .context("aligned crop width overflow")?,
+        padded_height: u32::try_from(padded_bottom - origin_y)
+            .context("aligned crop height overflow")?,
+        global_origin_x: i32::try_from(origin_x).context("aligned crop x origin overflow")?,
+        global_origin_y: i32::try_from(origin_y).context("aligned crop y origin overflow")?,
+    })
+}
+
 pub struct DevelopedCropJob {
     pub device: wgpu::Device,
     pub queue: wgpu::Queue,
@@ -514,18 +549,7 @@ pub fn render_developed_linear_crop(job: DevelopedCropJob) -> Result<Vec<f32>> {
         "Remove crop lies outside the native source image"
     );
     let halo = required_export_tile_halo(&job.exposure, &job.masks);
-    let tile = crate::pipeline::ExportTile {
-        core_x: job.crop.x,
-        core_y: job.crop.y,
-        core_width: job.crop.width,
-        core_height: job.crop.height,
-        local_core_x: halo,
-        local_core_y: halo,
-        padded_width: job.crop.width.saturating_add(halo.saturating_mul(2)),
-        padded_height: job.crop.height.saturating_add(halo.saturating_mul(2)),
-        global_origin_x: job.crop.x as i32 - halo as i32,
-        global_origin_y: job.crop.y as i32 - halo as i32,
-    };
+    let tile = tone_grid_aligned_crop_tile(job.crop, halo)?;
     let tile_raw = extract_padded_tile(&job.raw, tile);
     let mask_region = tile_mask_source_region(
         &job.masks,
@@ -1194,9 +1218,9 @@ where
             raw.height,
         )
         .with_vignette_geometry(geometry)
-        .with_tone_histogram_bounds(
-            tile.local_core_x,
-            tile.local_core_y,
+        .with_global_tone_histogram_bounds(
+            tile.core_x,
+            tile.core_y,
             tile.core_width,
             tile.core_height,
         );
@@ -2785,7 +2809,7 @@ fn checked_rgb_len(width: u32, height: u32) -> Result<usize> {
 fn validate_tile_spec(spec: TileSpec) -> Result<()> {
     let maximum_core = 1024;
     let maximum_halo = 768;
-    let scale = if cfg!(target_os = "android") { 8 } else { 4 };
+    let scale = TONE_GUIDE_CELL_SIZE;
     anyhow::ensure!(
         (64..=maximum_core).contains(&spec.core_edge),
         "export tile core must be between 64 and {maximum_core} pixels"
@@ -2811,7 +2835,7 @@ fn bounded_tile_spec(mut spec: TileSpec, source_width: u32) -> Result<TileSpec> 
         .and_then(|value| value.checked_mul(std::mem::size_of::<f32>() as u64))
         .context("export source-band row size overflow")?;
     anyhow::ensure!(bytes_per_source_row > 0, "export source width is zero");
-    let alignment = if cfg!(target_os = "android") { 8 } else { 4 };
+    let alignment = TONE_GUIDE_CELL_SIZE;
     let maximum_rows =
         (MAX_EXPORT_BAND_BYTES / bytes_per_source_row).min(u64::from(spec.core_edge)) as u32;
     let aligned_rows = maximum_rows - maximum_rows % alignment;
