@@ -3,6 +3,13 @@ use std::sync::Arc;
 
 use super::*;
 
+
+pub(super) fn tone_guide_axis_cell_count(origin: i32, extent: u32, cell_size: u32) -> u32 {
+    let cell_size = cell_size.max(1);
+    let phase = origin.rem_euclid(cell_size as i32) as u32;
+    phase.saturating_add(extent).div_ceil(cell_size).max(1)
+}
+
 pub(super) struct DerivedGeometry {
     pub(super) size: wgpu::Extent3d,
     pub(super) tone_size: wgpu::Extent3d,
@@ -28,8 +35,8 @@ pub(super) fn compute_derived_geometry(
     let highlight_work_format = work_format;
     let tone_scale = tone_analysis_scale();
     let tone_size = texture_size(
-        raw.width.div_ceil(tone_scale),
-        raw.height.div_ceil(tone_scale),
+        tone_guide_axis_cell_count(params.camera.tile_origin_x, raw.width, tone_scale),
+        tone_guide_axis_cell_count(params.camera.tile_origin_y, raw.height, tone_scale),
     );
     let tone_format = tone_guide_format();
     let image_workgroups = dispatch_for_extent(raw.width, raw.height);
@@ -2188,4 +2195,16 @@ pub(super) fn assemble_passes(
             adjustment_render_pass_index,
         },
     })
+}
+#[cfg(test)]
+mod tone_grid_tests {
+    use super::tone_guide_axis_cell_count;
+
+    #[test]
+    fn tone_guide_cell_count_tracks_global_origin_phase() {
+        assert_eq!(tone_guide_axis_cell_count(0, 8, 4), 2);
+        assert_eq!(tone_guide_axis_cell_count(2, 8, 4), 3);
+        assert_eq!(tone_guide_axis_cell_count(-2, 8, 4), 3);
+        assert_eq!(tone_guide_axis_cell_count(64, 10, 4), 3);
+    }
 }

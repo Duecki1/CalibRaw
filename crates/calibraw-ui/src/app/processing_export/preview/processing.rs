@@ -145,36 +145,54 @@ impl CalibRawApp {
             self.masks.detail_dirty_layers.fill(false);
         }
 
-        if stage == ProcessingStage::Output {
+        if stage == ProcessingStage::Tone {
             if let Some(full_frame) = full_frame_tone_pipeline {
-                detail.pipeline.inherit_tone_statistics(
+                detail.pipeline.dispatch_tone_guide_with_inherited_statistics(
                     &render_state.queue,
                     &render_state.device,
+                    &params,
                     full_frame,
                 );
+            } else {
+                detail.pipeline.dispatch_stage(
+                    &render_state.queue,
+                    &render_state.device,
+                    &params,
+                    ProcessingStage::Tone,
+                );
             }
-        }
-        if let Err(error) = detail.pipeline.dispatch_stage_with_remove(
-            &render_state.queue,
-            &render_state.device,
-            &params,
-            stage,
-            RemoveSceneContext::new(
-                &self.inpaint.edits,
-                full_raw,
-                &self.develop.target_exposure,
-                [
-                    detail.source_origin[0] as f32,
-                    detail.source_origin[1] as f32,
-                ],
-                [detail.source_size[0] as f32, detail.source_size[1] as f32],
-            ),
-        ) {
-            self.ui.notice = Some(format!(
-                "Could not apply Remove to zoomed preview: {error:#}"
-            ));
-            self.preview.detail_pending_stage = None;
-            return;
+        } else {
+            if stage == ProcessingStage::Output {
+                if let Some(full_frame) = full_frame_tone_pipeline {
+                    detail.pipeline.inherit_tone_statistics(
+                        &render_state.queue,
+                        &render_state.device,
+                        full_frame,
+                    );
+                }
+            }
+            if let Err(error) = detail.pipeline.dispatch_stage_with_remove(
+                &render_state.queue,
+                &render_state.device,
+                &params,
+                stage,
+                RemoveSceneContext::new(
+                    &self.inpaint.edits,
+                    full_raw,
+                    &self.develop.target_exposure,
+                    [
+                        detail.source_origin[0] as f32,
+                        detail.source_origin[1] as f32,
+                    ],
+                    [detail.source_size[0] as f32, detail.source_size[1] as f32],
+                ),
+            ) {
+                self.ui.notice = Some(format!(
+                    "Could not apply Remove to zoomed preview: {error:#}"
+                ));
+                self.preview.detail_pending_stage = None;
+                return;
+            }
         }
         self.preview.detail_pending_stage = match stage {
             ProcessingStage::Raw => Some(ProcessingStage::Tone),

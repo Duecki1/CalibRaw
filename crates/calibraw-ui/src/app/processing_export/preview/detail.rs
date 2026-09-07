@@ -220,6 +220,9 @@ impl CalibRawApp {
         if let Some(detail) = self.preview.detail.as_mut().filter(|detail| {
             detail.pipeline.width == detail_raw.width
                 && detail.pipeline.height == detail_raw.height
+                && detail
+                    .pipeline
+                    .tone_guide_supports_origin(virtual_origin_x, virtual_origin_y)
                 && detail.pipeline.mask_layer_capacity() >= required_mask_layers
         }) {
             if let Err(error) = detail
@@ -260,17 +263,19 @@ impl CalibRawApp {
                 ));
                 return;
             }
-            detail.pipeline.dispatch_stage(
-                &render_state.queue,
-                &render_state.device,
-                &params,
-                ProcessingStage::Tone,
-            );
             if let Some(full_frame) = full_frame_tone_pipeline {
-                detail.pipeline.inherit_tone_statistics(
+                detail.pipeline.dispatch_tone_guide_with_inherited_statistics(
                     &render_state.queue,
                     &render_state.device,
+                    &params,
                     full_frame,
+                );
+            } else {
+                detail.pipeline.dispatch_stage(
+                    &render_state.queue,
+                    &render_state.device,
+                    &params,
+                    ProcessingStage::Tone,
                 );
             }
             detail.pipeline.dispatch_stage(
@@ -340,14 +345,20 @@ impl CalibRawApp {
             ));
             return;
         }
-        pipeline.dispatch_stage(
-            &render_state.queue,
-            &render_state.device,
-            &params,
-            ProcessingStage::Tone,
-        );
         if let Some(full_frame) = full_frame_tone_pipeline {
-            pipeline.inherit_tone_statistics(&render_state.queue, &render_state.device, full_frame);
+            pipeline.dispatch_tone_guide_with_inherited_statistics(
+                &render_state.queue,
+                &render_state.device,
+                &params,
+                full_frame,
+            );
+        } else {
+            pipeline.dispatch_stage(
+                &render_state.queue,
+                &render_state.device,
+                &params,
+                ProcessingStage::Tone,
+            );
         }
         pipeline.dispatch_stage(
             &render_state.queue,

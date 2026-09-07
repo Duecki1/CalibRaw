@@ -4,10 +4,13 @@ use super::{
     SHADER_BAYER_RCD_P2, SHADER_BAYER_RCD_P3, SHADER_BAYER_RCD_P4, SHADER_COLOR_DENOISE,
     SHADER_CREATIVE_EFFECTS, SHADER_DUAL_DEMOSAIC, SHADER_HIGHLIGHTS, SHADER_RAW_SAMPLING,
     SHADER_REMOVE_COMPOSITE, SHADER_SCENE_ADJUSTMENTS, SHADER_TONEMAP, SHADER_TONE_ANALYSIS,
-    SHADER_VIEW_TRANSFORM,
+    SHADER_VIEW_TRANSFORM, GpuParams, RawGpuPipeline,
     SHADER_XTRANS_DEMOSAIC, SHADER_XTRANS_FINISH,
 };
-use crate::pipeline::{LocalMask, MaskEffect, MaskKind, PointCurve};
+use crate::pipeline::{
+    extract_padded_tile, ExportTile, ExposureParams, LoadedRaw, LocalMask, MaskEffect, MaskKind,
+    MaskStack, NativeRect, PointCurve, ProcessingStage, TONE_GUIDE_CELL_SIZE,
+};
 
 fn validate_shader(name: &str, source: &str, quality: ProcessingQuality) {
     let format = processing_work_format(quality);
@@ -281,4 +284,247 @@ fn tone_percentile_masks_follow_full_user_exposure() {
     for (base, exposed) in base_masks.into_iter().zip(exposed_masks) {
         assert!((exposed - base).abs() < 1e-6);
     }
+}
+
+fn tone_consistency_test_tile(core: NativeRect, halo: u32) -> ExportTile {
+    // Deliberately preserve the requested crop phase here. Production detail/export
+    // preparation aligns to the shared tone grid, but this regression also proves
+    // that the shader and guide allocation remain globally anchored if an arbitrary
+    // crop origin (including a two-pixel phase shift) reaches the GPU.
+    let origin_x = i32::try_from(core.x).unwrap() - i32::try_from(halo).unwrap();
+    let origin_y = i32::try_from(core.y).unwrap() - i32::try_from(halo).unwrap();
+    ExportTile {
+        core_x: core.x,
+        core_y: core.y,
+        core_width: core.width,
+        core_height: core.height,
+        local_core_x: halo,
+        local_core_y: halo,
+        padded_width: core.width + 2 * halo,
+        padded_height: core.height + 2 * halo,
+        global_origin_x: origin_x,
+        global_origin_y: origin_y,
+    }
+}
+
+fn tone_consistency_scene(width: u32, height: u32) -> LoadedRaw {
+    let mut rgb = Vec::with_capacity((width * height * 3) as usize);
+    for y in 0..height {
+        for x in 0..width {
+            let u = (x as f32 + 0.5) / width as f32;
+            let v = (y as f32 + 0.5) / height as f32;
+            let wave = (u * std::f32::consts::TAU * 5.0).sin() * 0.65
+                + (v * std::f32::consts::TAU * 3.0).cos() * 0.45;
+            let checker = if ((x / 37) + (y / 29)).is_multiple_of(2) {
+                -0.85
+            } else {
+                0.85
+            };
+            let ev = -6.5 + 10.5 * u + wave + checker;
+            let luma = 0.18 * ev.exp2();
+            rgb.extend_from_slice(&[
+                luma * (0.82 + 0.28 * v),
+                luma * (0.90 + 0.18 * u),
+                luma * (0.76 + 0.24 * (1.0 - v)),
+            ]);
+        }
+    }
+    LoadedRaw::from_scene_linear_rec2020(width, height, rgb).unwrap()
+}
+
+fn request_test_device() -> Option<(wgpu::Device, wgpu::Queue)> {
+    let instance = wgpu::Instance::default();
+    let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+        power_preference: wgpu::PowerPreference::LowPower,
+        compatible_surface: None,
+        force_fallback_adapter: true,
+    }))
+    .or_else(|_| {
+        pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+            power_preference: wgpu::PowerPreference::HighPerformance,
+            compatible_surface: None,
+            force_fallback_adapter: false,
+        }))
+    })
+    .ok()?;
+    pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+        label: Some("calibraw tone crop consistency test"),
+        ..Default::default()
+    }))
+    .ok()
+}
+
+fn render_tone_consistency_crop(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    source: &LoadedRaw,
+    exposure: &ExposureParams,
+    masks: &MaskStack,
+    full_frame: &RawGpuPipeline,
+    core: NativeRect,
+) -> anyhow::Result<Vec<f32>> {
+    const HALO: u32 = 64;
+    let tile = tone_consistency_test_tile(core, HALO);
+    let tile_raw = extract_padded_tile(source, tile);
+    let params = GpuParams::new_for_tile(
+        exposure,
+        masks,
+        &tile_raw,
+        tile.global_origin_x,
+        tile.global_origin_y,
+        source.width,
+        source.height,
+    );
+    let crop_pipeline = RawGpuPipeline::new_headless_reusing_programs_with_mask_edge(
+        device,
+        queue,
+        &tile_raw,
+        &params,
+        ProcessingQuality::High,
+        full_frame,
+        64,
+    )?;
+    crop_pipeline.dispatch_stage(queue, device, &params, ProcessingStage::Raw);
+    crop_pipeline.dispatch_tone_guide_with_inherited_statistics(queue, device, &params, full_frame);
+    crop_pipeline.dispatch_stage(queue, device, &params, ProcessingStage::Output);
+    crop_pipeline.read_display_linear_region_blocking(
+        device,
+        queue,
+        tile.local_core_x,
+        tile.local_core_y,
+        tile.core_width,
+        tile.core_height,
+    )
+}
+
+#[test]
+fn native_overlapping_tone_crops_match_full_frame_away_from_support_boundaries() -> anyhow::Result<()> {
+    let Some((device, queue)) = request_test_device() else {
+        eprintln!("tone crop GPU regression skipped: no headless wgpu adapter");
+        return Ok(());
+    };
+
+    let source = tone_consistency_scene(640, 480);
+    let masks = MaskStack::default();
+    let mut exposure = ExposureParams::default();
+    exposure.highlights = -100.0;
+    exposure.shadows = 100.0;
+    exposure.sharpen_amount = 0.0;
+    exposure.texture = 0.0;
+    exposure.clarity = 0.0;
+    exposure.dehaze = 0.0;
+
+    let full_params = GpuParams::new(&exposure, &masks, &source);
+    let full_frame = RawGpuPipeline::new_headless_with_quality_and_mask_edge(
+        &device,
+        &queue,
+        &source,
+        &full_params,
+        ProcessingQuality::High,
+        64,
+    )?;
+    full_frame.recompute(&queue, &device, &full_params);
+
+    let cell = TONE_GUIDE_CELL_SIZE;
+    let first = NativeRect {
+        x: 160 + cell - 2,
+        y: 120 + cell - 2,
+        width: 280,
+        height: 220,
+    };
+    let shifted = NativeRect {
+        x: first.x + 2,
+        y: first.y + 2,
+        ..first
+    };
+    let first_tile = tone_consistency_test_tile(first, 64);
+    let shifted_tile = tone_consistency_test_tile(shifted, 64);
+    assert_eq!(shifted_tile.global_origin_x - first_tile.global_origin_x, 2);
+    assert_eq!(shifted_tile.global_origin_y - first_tile.global_origin_y, 2);
+    let first_rgb = render_tone_consistency_crop(
+        &device,
+        &queue,
+        &source,
+        &exposure,
+        &masks,
+        &full_frame,
+        first,
+    )?;
+    let shifted_rgb = render_tone_consistency_crop(
+        &device,
+        &queue,
+        &source,
+        &exposure,
+        &masks,
+        &full_frame,
+        shifted,
+    )?;
+
+    let overlap_x0 = first.x.max(shifted.x);
+    let overlap_y0 = first.y.max(shifted.y);
+    let overlap_x1 = first.right().min(shifted.right());
+    let overlap_y1 = first.bottom().min(shifted.bottom());
+    let boundary_margin = (TONE_GUIDE_CELL_SIZE * 8).max(32);
+    let interior_x0 = overlap_x0 + boundary_margin;
+    let interior_y0 = overlap_y0 + boundary_margin;
+    let interior_x1 = overlap_x1 - boundary_margin;
+    let interior_y1 = overlap_y1 - boundary_margin;
+    assert!(interior_x1 > interior_x0 && interior_y1 > interior_y0);
+
+    let full_rgb = full_frame.read_display_linear_region_blocking(
+        &device,
+        &queue,
+        interior_x0,
+        interior_y0,
+        interior_x1 - interior_x0,
+        interior_y1 - interior_y0,
+    )?;
+
+    let mut crop_max = 0.0_f32;
+    let mut full_max = 0.0_f32;
+    let mut crop_sum_sq = 0.0_f64;
+    let mut full_sum_sq = 0.0_f64;
+    let mut samples = 0_u64;
+    for y in interior_y0..interior_y1 {
+        for x in interior_x0..interior_x1 {
+            let first_pixel = ((y - first.y) * first.width + (x - first.x)) as usize * 3;
+            let shifted_pixel =
+                ((y - shifted.y) * shifted.width + (x - shifted.x)) as usize * 3;
+            let full_pixel = ((y - interior_y0) * (interior_x1 - interior_x0)
+                + (x - interior_x0)) as usize
+                * 3;
+            for channel in 0..3 {
+                let crop_delta = (first_rgb[first_pixel + channel]
+                    - shifted_rgb[shifted_pixel + channel])
+                    .abs();
+                let first_full_delta =
+                    (first_rgb[first_pixel + channel] - full_rgb[full_pixel + channel]).abs();
+                let shifted_full_delta =
+                    (shifted_rgb[shifted_pixel + channel] - full_rgb[full_pixel + channel]).abs();
+                crop_max = crop_max.max(crop_delta);
+                full_max = full_max.max(first_full_delta.max(shifted_full_delta));
+                crop_sum_sq += f64::from(crop_delta) * f64::from(crop_delta);
+                full_sum_sq += f64::from(first_full_delta) * f64::from(first_full_delta);
+                full_sum_sq += f64::from(shifted_full_delta) * f64::from(shifted_full_delta);
+                samples += 1;
+            }
+        }
+    }
+    let crop_rms = (crop_sum_sq / samples as f64).sqrt();
+    let full_rms = (full_sum_sq / (samples * 2) as f64).sqrt();
+    eprintln!(
+        "tone crop consistency: interior={}x{}, crop-vs-crop max={crop_max:.8e} rms={crop_rms:.8e}, crop-vs-full max={full_max:.8e} rms={full_rms:.8e}",
+        interior_x1 - interior_x0,
+        interior_y1 - interior_y0,
+    );
+
+    assert!(
+        crop_max <= 2.0e-5 && crop_rms <= 2.0e-6,
+        "shifted native crops diverged: max={crop_max:e}, rms={crop_rms:e}"
+    );
+    assert!(
+        full_max <= 2.0e-5 && full_rms <= 2.0e-6,
+        "native crops diverged from full-frame render: max={full_max:e}, rms={full_rms:e}"
+    );
+    Ok(())
 }

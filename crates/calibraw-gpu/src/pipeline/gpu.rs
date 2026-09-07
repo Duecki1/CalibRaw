@@ -962,7 +962,7 @@ fn pack_camera_params(ctx: &GpuParamContext<'_>) -> CameraUniforms {
         full_height,
         abi_version: GPU_PARAMS_ABI_VERSION,
         abi_size_bytes: GPU_PARAMS_ABI_SIZE_BYTES,
-        tone_histogram_bounds: [0, 0, raw.width, raw.height],
+        tone_histogram_bounds: [0, 0, full_width, full_height],
         profile_hue_sat: profile_stages.characterization.hue_sat,
         profile_look: profile_stages.optional_look.look_table,
         profile_tone: profile_stages.view.profile_tone,
@@ -1209,12 +1209,20 @@ impl GpuParams {
         self
     }
 
-    pub fn with_tone_histogram_bounds(mut self, x: u32, y: u32, width: u32, height: u32) -> Self {
+    pub fn with_global_tone_histogram_bounds(
+        mut self,
+        x: u32,
+        y: u32,
+        width: u32,
+        height: u32,
+    ) -> Self {
+        let x0 = x.min(self.camera.full_width);
+        let y0 = y.min(self.camera.full_height);
         self.camera.tone_histogram_bounds = [
-            x,
-            y,
-            x.saturating_add(width).min(self.camera.width),
-            y.saturating_add(height).min(self.camera.height),
+            x0,
+            y0,
+            x.saturating_add(width).min(self.camera.full_width),
+            y.saturating_add(height).min(self.camera.full_height),
         ];
         self
     }
@@ -1413,6 +1421,7 @@ pub struct RawGpuPipeline {
     pub egui_texture_id: Option<egui::TextureId>,
     pub width: u32,
     pub height: u32,
+    tone_guide_extent: [u32; 2],
     cfa_kind: CfaKind,
     processing_quality: ProcessingQuality,
     camera_uniforms_buffer: wgpu::Buffer,
@@ -2060,6 +2069,7 @@ impl RawGpuPipeline {
             egui_texture_id,
             width: raw.width,
             height: raw.height,
+            tone_guide_extent: [geometry.tone_size.width, geometry.tone_size.height],
             cfa_kind: raw.cfa_kind,
             processing_quality: quality,
             camera_uniforms_buffer: buffers.camera_uniforms_buffer,
@@ -2133,6 +2143,15 @@ impl RawGpuPipeline {
             return Err(error);
         }
         Ok(pipeline)
+    }
+
+    pub fn tone_guide_supports_origin(&self, origin_x: i32, origin_y: i32) -> bool {
+        let scale = tone_analysis_scale();
+        self.tone_guide_extent
+            == [
+                tone_guide_axis_cell_count(origin_x, self.width, scale),
+                tone_guide_axis_cell_count(origin_y, self.height, scale),
+            ]
     }
 
     pub fn update_mask_layer(
@@ -2473,6 +2492,33 @@ impl RawGpuPipeline {
             self.dispatch_stage_with_remove(queue, device, params, stage, remove)?;
         }
         Ok(())
+    }
+
+    pub fn dispatch_tone_guide_with_inherited_statistics(
+        &self,
+        queue: &wgpu::Queue,
+        device: &wgpu::Device,
+        params: &GpuParams,
+        full_frame: &Self,
+    ) {
+        self.upload_params(queue, params);
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("calibraw crop tone guide with full-frame statistics"),
+        });
+        encoder.clear_buffer(&self.tone_histogram_buffer, 0, None);
+        encoder.copy_buffer_to_buffer(
+            &full_frame.tone_stats_buffer,
+            0,
+            &self.tone_stats_buffer,
+            0,
+            TONE_STATS_SIZE_BYTES,
+        );
+        self.encode_pass_range(
+            &mut encoder,
+            self.tone_prepare_pass_index,
+            self.tone_reduce_pass_index,
+        );
+        queue.submit(Some(encoder.finish()));
     }
 
     pub fn inherit_tone_statistics(

@@ -40,7 +40,7 @@ pub use noise::{AdaptiveDetailDefaults, DenoiseQuality, NoiseProfile};
 pub use processing::{
     affected_stage, build_proxy, build_region_proxy, crop_raw, extract_padded_tile,
     extract_padded_tile_into, required_export_tile_halo, ExportTile, ProcessingStage, ProxySpec,
-    TilePlan, TileSpec, EXPORT_TILE_HALO, MIN_EXPORT_TILE_HALO,
+    TilePlan, TileSpec, EXPORT_TILE_HALO, MIN_EXPORT_TILE_HALO, TONE_GUIDE_CELL_SIZE,
 };
 pub use raw_loader::{invalidate_dcp_profile_index, prewarm_dcp_profile_index};
 pub use raw_loader::{
