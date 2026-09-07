@@ -411,6 +411,10 @@ impl CalibRawApp {
             return;
         }
 
+        if source_raw.uses_opposed_chroma(&self.develop.target_exposure) {
+            source_raw.inpaint_opposed_chroma_for_exposure(&self.develop.target_exposure);
+        }
+
         for texture_id in [
             self.preview
                 .detail

@@ -520,6 +520,10 @@ pub(super) fn render_uncached_developed_thumbnail(
         requested_camera_profile.as_deref(),
     )
     .map_err(|error| format!("could not decode edited RAW {}: {error:#}", path.display()))?;
+    let edits = loaded_sidecar.edits;
+    if full_raw.uses_opposed_chroma(&edits.exposure) {
+        full_raw.inpaint_opposed_chroma_for_exposure(&edits.exposure);
+    }
     let render_proxy_edge = DEVELOPED_THUMBNAIL_PROXY_EDGE.max(maximum_edge);
     let mut preview_raw = if full_raw.width.max(full_raw.height) > render_proxy_edge {
         build_proxy(
@@ -532,7 +536,6 @@ pub(super) fn render_uncached_developed_thumbnail(
         full_raw
     };
 
-    let edits = loaded_sidecar.edits;
     let geometry = edits.geometry;
     if edits.lens.enabled {
         let catalog = lensfun_catalog(&preview_raw);

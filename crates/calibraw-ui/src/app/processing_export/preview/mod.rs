@@ -121,9 +121,7 @@ pub(in crate::app) fn detail_uses_opposed_chroma(
     raw: &LoadedRaw,
     exposure: &ExposureParams,
 ) -> bool {
-    exposure.highlight_method == crate::pipeline::HighlightReconstructionMethod::InpaintOpposed
-        || (raw.cfa_kind == crate::pipeline::CfaKind::XTrans
-            && exposure.highlight_method == crate::pipeline::HighlightReconstructionMethod::Lch)
+    raw.uses_opposed_chroma(exposure)
 }
 
 pub(in crate::app) fn detail_mask_source_region(

@@ -885,6 +885,7 @@ fn pack_camera_params(ctx: &GpuParamContext<'_>) -> CameraUniforms {
             exposure.black_point,
             exposure.highlight_clip,
             exposure.ai_denoise_enabled,
+            white_balance,
         )
     } else {
         [0.0; 3]
@@ -1752,6 +1753,8 @@ impl RawGpuPipeline {
             lens_geometry: None,
             ai_denoised: Arc::new(std::sync::RwLock::new(None)),
             opposed_chroma_cache: Default::default(),
+            opposed_chroma_source_identity: Default::default(),
+            opposed_chroma_reference_source: true,
         };
         let exposure = ExposureParams::scene_referred_default();
         let masks = MaskStack::default();

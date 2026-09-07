@@ -451,6 +451,9 @@ fn prepare_preview_detail(request: PreviewDetailRequest) -> anyhow::Result<Prepa
         source_raw.width,
         source_raw.height,
     );
+    if detail_uses_opposed_chroma(&source_raw, &exposure) {
+        source_raw.inpaint_opposed_chroma_for_exposure(&exposure);
+    }
     let raw = Arc::new(
         if settled_detail_uses_native_source(
             !source_raw.is_pre_demosaiced_raster(),
@@ -461,13 +464,6 @@ fn prepare_preview_detail(request: PreviewDetailRequest) -> anyhow::Result<Prepa
             // The detail texture is sampled down to the viewport only after the
             // complete GPU graph has run.  Keeping the mosaic native here is what
             // preserves clipping decisions, CFA detail, and sensor-noise scale.
-            if detail_uses_opposed_chroma(&source_raw, &exposure) {
-                source_raw.inpaint_opposed_chroma(
-                    exposure.black_point,
-                    exposure.highlight_clip,
-                    exposure.ai_denoise_enabled,
-                );
-            }
             let mut native =
                 crate::pipeline::crop_raw(&source_raw, x0, y0, source_size[0], source_size[1]);
             native.opposed_chroma_cache = Arc::clone(&source_raw.opposed_chroma_cache);

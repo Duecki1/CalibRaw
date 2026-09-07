@@ -619,6 +619,9 @@ impl CalibRawApp {
                     } else {
                         full_raw.clear_ai_denoised_image();
                     }
+                    if full_raw.uses_opposed_chroma(&rendered_exposure) {
+                        full_raw.inpaint_opposed_chroma_for_exposure(&rendered_exposure);
+                    }
                     let preview_spec = ProxySpec {
                         max_edge: preview_quality_setting.proxy_edge_for_fitted_source(
                             preview_viewport_pixels_setting,
@@ -730,6 +733,9 @@ impl CalibRawApp {
                     if needs_canonical_mask_source(&rendered_masks) {
                         let mask_source_started = Instant::now();
                         let reference_exposure = ExposureParams::scene_referred_default();
+                        if full_raw.uses_opposed_chroma(&reference_exposure) {
+                            full_raw.inpaint_opposed_chroma_for_exposure(&reference_exposure);
+                        }
                         let reference_masks = MaskStack::default();
                         let reference_params =
                             GpuParams::new(&reference_exposure, &reference_masks, &preview_raw);

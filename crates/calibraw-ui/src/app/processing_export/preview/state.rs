@@ -99,6 +99,11 @@ impl CalibRawApp {
         } else {
             &self.masks.stack
         };
+        if let Some(full_raw) = self.develop.loaded_raw.as_ref() {
+            if full_raw.uses_opposed_chroma(exposure) {
+                full_raw.inpaint_opposed_chroma_for_exposure(exposure);
+            }
+        }
         if let (Some(raw), Some(pipeline), Some(full_raw)) = (
             &self.develop.preview_raw,
             &self.preview.gpu_pipeline,

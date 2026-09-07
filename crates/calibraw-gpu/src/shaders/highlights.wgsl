@@ -161,8 +161,10 @@ fn inpaint_opposed_cfa_at(pos: vec2<i32>) -> f32 {
         return original;
     }
     let reference = inpaint_opposed_refavg(center);
-    let chrominance = Common::camera_uniforms.highlight_options[color + 1u];
-    return max(original, reference + chrominance);
+    // y/z/w are estimated once from the full active RAW source with the same
+    // adjusted WB carried in camera_uniforms.wb, then shared by proxies/tiles.
+    let full_source_chrominance = Common::camera_uniforms.highlight_options[color + 1u];
+    return max(original, reference + full_source_chrominance);
 }
 
 @compute @workgroup_size(8, 8, 1)

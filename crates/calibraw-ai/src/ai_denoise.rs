@@ -938,6 +938,9 @@ fn infer_linear(
     neutral.ca_red = 0.0;
     neutral.ca_blue = 0.0;
     let masks = MaskStack::default();
+    if raw.uses_opposed_chroma(&neutral) {
+        raw.inpaint_opposed_chroma_for_exposure(&neutral);
+    }
     let mut pipeline: Option<RawGpuPipeline> = None;
     let cam_to_rec2020 = multiply3(SRGB_TO_REC2020, rows3(raw.cam_to_srgb));
     let rec2020_to_cam =
@@ -1266,7 +1269,9 @@ fn reflected_raw_tile(raw: &LoadedRaw, origin_x: i32, origin_y: i32) -> Result<L
         white_balance_model: raw.white_balance_model.clone(),
         lens_geometry: None,
         ai_denoised: Arc::new(RwLock::new(None)),
-        opposed_chroma_cache: Default::default(),
+        opposed_chroma_cache: Arc::clone(&raw.opposed_chroma_cache),
+        opposed_chroma_source_identity: Arc::clone(&raw.opposed_chroma_source_identity),
+        opposed_chroma_reference_source: false,
     })
 }
 
@@ -1382,6 +1387,8 @@ mod tests {
             lens_geometry: None,
             ai_denoised: std::sync::Arc::new(std::sync::RwLock::new(None)),
             opposed_chroma_cache: Default::default(),
+            opposed_chroma_source_identity: Default::default(),
+            opposed_chroma_reference_source: true,
         }
     }
 
@@ -1688,6 +1695,7 @@ mod tests {
                 ai_denoise_enabled: ai_enabled,
                 ..ExposureParams::default()
             };
+            raw.inpaint_opposed_chroma_for_exposure(&exposure);
             let params = GpuParams::new(&exposure, &MaskStack::default(), &proxy);
             let pipeline = RawGpuPipeline::new_headless_with_quality(
                 &device,
