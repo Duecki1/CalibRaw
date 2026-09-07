@@ -15,7 +15,15 @@ use crate::pipeline::{
 
 fn validate_shader(name: &str, source: &str, quality: ProcessingQuality) {
     let format = processing_work_format(quality);
-    let mut manager = ShaderManager::new(format).unwrap();
+    let mut manager = ShaderManager::new(
+        format,
+        if name.starts_with("X-Trans") {
+            CfaKind::XTrans
+        } else {
+            CfaKind::Bayer
+        },
+    )
+    .unwrap();
     let source = match quality {
         ProcessingQuality::Preview => std::borrow::Cow::Borrowed(source),
         ProcessingQuality::High => work_shader_source(source, format).unwrap(),
@@ -784,5 +792,127 @@ fn clipped_colored_highlights_match_across_moved_detail_crops_and_wb() -> anyhow
     }
 
     assert_eq!(source.opposed_chroma_cache.read().unwrap().len(), wb_cases.len());
+    Ok(())
+}
+
+#[test]
+fn inactive_programs_stay_deferred_across_template_reuse_and_activate_on_edit() -> anyhow::Result<()>
+{
+    let Some((device, queue)) = request_test_device() else {
+        eprintln!("GPU program reuse regression skipped: no headless wgpu adapter");
+        return Ok(());
+    };
+    let raw = opposed_highlight_consistency_raw(48, 48);
+    let masks = MaskStack::default();
+    let mut exposure = ExposureParams::scene_referred_default();
+    let params = GpuParams::new(&exposure, &masks, &raw);
+    let pipeline = RawGpuPipeline::new_headless_with_quality(
+        &device,
+        &queue,
+        &raw,
+        &params,
+        ProcessingQuality::Preview,
+    )?;
+    let creative = pipeline.adjustment_creative_pass_index;
+    assert!(pipeline.passes[creative].pipeline.compiled.get().is_none());
+    let template = pipeline.program_template();
+    let reused = RawGpuPipeline::new_headless_reusing_program_template(
+        &device,
+        &queue,
+        &raw,
+        &params,
+        ProcessingQuality::Preview,
+        &template,
+    )?;
+    assert!(reused.passes[creative].pipeline.compiled.get().is_none());
+    assert!(std::sync::Arc::ptr_eq(
+        &pipeline.passes[creative].pipeline,
+        &reused.passes[creative].pipeline
+    ));
+    reused.recompute(&queue, &device, &params);
+    let neutral =
+        reused.read_output_region_blocking(&device, &queue, 0, 0, raw.width, raw.height)?;
+    exposure.saturation = 35.0;
+    let edited = GpuParams::new(&exposure, &masks, &raw);
+    reused.recompute(&queue, &device, &edited);
+    let colored =
+        reused.read_output_region_blocking(&device, &queue, 0, 0, raw.width, raw.height)?;
+    assert!(pipeline.passes[creative].pipeline.compiled.get().is_some());
+    assert_ne!(neutral, colored);
+    // Eagerly compiling all remaining programs must not alter the rendered result.
+    for pass in &reused.passes {
+        pass.pipeline.get();
+    }
+    reused.recompute(&queue, &device, &edited);
+    assert_eq!(
+        colored,
+        reused.read_output_region_blocking(&device, &queue, 0, 0, raw.width, raw.height)?
+    );
+    Ok(())
+}
+
+#[test]
+fn specialized_bayer_modes_match_the_dynamic_shader_when_switching_modes() -> anyhow::Result<()> {
+    use super::ComputeProgram;
+    use crate::pipeline::DemosaicMode;
+    use std::sync::{Arc, OnceLock};
+    let Some((device, queue)) = request_test_device() else {
+        eprintln!("Bayer specialization regression skipped: no headless wgpu adapter");
+        return Ok(());
+    };
+    let raw = opposed_highlight_consistency_raw(48, 48);
+    let masks = MaskStack::default();
+    let mut exposure = ExposureParams::scene_referred_default();
+    exposure.luminance_denoise = 15.0;
+    exposure.ca_red = 0.5;
+    let params = GpuParams::new(&exposure, &masks, &raw);
+    let mut pipeline = RawGpuPipeline::new_headless_with_quality(
+        &device,
+        &queue,
+        &raw,
+        &params,
+        ProcessingQuality::High,
+    )?;
+    let finish = pipeline.demosaic_finish_index;
+    let specialized = Arc::clone(&pipeline.passes[finish].pipeline);
+    let dynamic = specialized.compile(&[]);
+    let reference = Arc::new(ComputeProgram {
+        device: device.clone(),
+        shader: specialized.shader.clone(),
+        layouts: specialized.layouts.clone(),
+        entry: specialized.entry.clone(),
+        cache: None,
+        compiled: OnceLock::from(dynamic.clone()),
+        demosaic_variants: std::array::from_fn(|_| OnceLock::from(dynamic.clone())),
+    });
+    for (denoise, ca) in [(0.0, 0.0), (15.0, 0.0), (0.0, 0.5), (15.0, 0.5)] {
+        exposure.luminance_denoise = denoise;
+        exposure.ca_red = ca;
+        for mode in [
+            DemosaicMode::Reference,
+            DemosaicMode::FrequencyDomainChroma,
+            DemosaicMode::Dual,
+            DemosaicMode::Reference,
+        ] {
+            exposure.demosaic_mode = mode;
+            let params = GpuParams::new(&exposure, &masks, &raw);
+            pipeline.passes[finish].pipeline = Arc::clone(&reference);
+            pipeline.recompute(&queue, &device, &params);
+            let expected = pipeline.read_display_linear_region_blocking(
+                &device, &queue, 0, 0, raw.width, raw.height,
+            )?;
+            pipeline.passes[finish].pipeline = Arc::clone(&specialized);
+            pipeline.recompute(&queue, &device, &params);
+            let actual = pipeline.read_display_linear_region_blocking(
+                &device, &queue, 0, 0, raw.width, raw.height,
+            )?;
+            let max_error = actual
+                .iter()
+                .zip(&expected)
+                .map(|(a, b)| (a - b).abs())
+                .fold(0.0f32, f32::max);
+            assert!(max_error <= 1e-5, "mode={mode:?} error={max_error}");
+        }
+    }
     Ok(())
 }

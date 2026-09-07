@@ -3,7 +3,6 @@ use std::sync::Arc;
 
 use super::*;
 
-
 pub(super) fn tone_guide_axis_cell_count(origin: i32, extent: u32, cell_size: u32) -> u32 {
     let cell_size = cell_size.max(1);
     let phase = origin.rem_euclid(cell_size as i32) as u32;
@@ -1484,6 +1483,7 @@ pub(super) struct ShaderSet {
 pub(super) fn load_shader_set(
     device: &wgpu::Device,
     has_program_template: bool,
+    cfa_kind: CfaKind,
     demosaic_format: wgpu::TextureFormat,
     work_format: wgpu::TextureFormat,
 ) -> Result<ShaderSet> {
@@ -1507,7 +1507,7 @@ pub(super) fn load_shader_set(
         .context("specialize scene-adjustments shader work format")?;
 
     let mut shader_manager = (!has_program_template)
-        .then(|| ShaderManager::new(work_format))
+        .then(|| ShaderManager::new(work_format, cfa_kind))
         .transpose()
         .context("initialize WGSL shader composer")?;
     let mut create_shader =
@@ -1518,7 +1518,14 @@ pub(super) fn load_shader_set(
                 .create_shader_module(device, label, source, file_name)
         };
     let mut load_shader = |label: &'static str, source: &str, file_name: &str| {
-        if has_program_template {
+        let other_sensor = match cfa_kind {
+            CfaKind::Bayer => matches!(file_name, "xtrans_demosaic.wgsl" | "xtrans_finish.wgsl"),
+            CfaKind::XTrans => matches!(
+                file_name,
+                "pass1.wgsl" | "pass2.wgsl" | "pass3.wgsl" | "pass4.wgsl"
+            ),
+        };
+        if has_program_template || other_sensor {
             Ok(None)
         } else {
             create_shader(label, source, file_name).map(Some)
@@ -1662,25 +1669,19 @@ impl PassAssembler<'_> {
             template.pipelines[program_index].clone()
         } else {
             let shader = shader.expect("shader module exists without a program template");
-            let pll = self
-                .device
-                .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                    label: Some(&format!("pll_{}", entry)),
-                    bind_group_layouts: &[
-                        Some(bgl),
-                        Some(self.bgl_scene_tone),
-                        Some(self.bgl_effects),
-                    ],
-                    immediate_size: 0,
-                });
-            create_compute_pipeline(
-                self.device,
-                entry,
-                &pll,
-                shader,
-                entry,
-                self.pipeline_cache.map(|cache| cache.raw()),
-            )
+            Arc::new(ComputeProgram {
+                device: self.device.clone(),
+                shader: shader.clone(),
+                layouts: [
+                    bgl.clone(),
+                    self.bgl_scene_tone.clone(),
+                    self.bgl_effects.clone(),
+                ],
+                entry: entry.to_owned(),
+                cache: self.pipeline_cache.cloned(),
+                compiled: OnceLock::new(),
+                demosaic_variants: std::array::from_fn(|_| OnceLock::new()),
+            })
         };
         Pass {
             pipeline,

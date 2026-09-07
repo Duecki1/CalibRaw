@@ -9,6 +9,7 @@ use super::{
 };
 use crate::file_ops::{replace_file, sync_parent_directory};
 use anyhow::{Context, Result};
+use rayon::prelude::*;
 use std::borrow::Cow;
 use std::fs::{self, OpenOptions};
 use std::io::{BufWriter, Write};
@@ -18,6 +19,8 @@ use std::sync::{
     mpsc, Arc,
 };
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+
+const EXPORT_CPU_ROW_BATCH: usize = 32;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum ExportFormat {
@@ -936,6 +939,9 @@ fn export_tiled_png(context: ExportContext<'_>, request: ExportRequest<'_>) -> R
     }
     let mut encoder =
         png::Encoder::with_info(BufWriter::new(file), info).context("configure PNG encoder")?;
+    // Lossless pixel values are identical; avoid spending most of an export
+    // searching for a slightly smaller DEFLATE stream.
+    encoder.set_compression(png::Compression::Fast);
     if request.color.srgb {
         encoder.set_source_srgb(png::SrgbRenderingIntent::Perceptual);
     }
@@ -1041,16 +1047,24 @@ fn render_geometry_output<W: Write>(
         )
         .with_passthrough(row_format == ExportRowFormat::RgbF32Le);
         let output_transform = request.color.transform.as_ref();
-        for y in 0..request.output_height {
-            ensure_export_not_cancelled(context.cancellation)?;
-            output_sharpen.push_row(
-                resampler.output_row(y)?,
-                output_transform,
-                row_format,
-                output,
-            )?;
+        let finalize_started = Instant::now();
+        for first_y in (0..request.output_height).step_by(EXPORT_CPU_ROW_BATCH) {
+            let end_y = first_y
+                .saturating_add(EXPORT_CPU_ROW_BATCH as u32)
+                .min(request.output_height);
+            let rows = resampler.output_rows(first_y..end_y, context.cancellation)?;
+            for row in rows {
+                ensure_export_not_cancelled(context.cancellation)?;
+                output_sharpen.push_row(row, output_transform, row_format, output)?;
+            }
         }
         output_sharpen.finish(output_transform, row_format, output)?;
+        crate::diagnostics::record(format!(
+            "Export geometry, final sharpening and output encoding finished in {:.3}s: {}x{}",
+            finalize_started.elapsed().as_secs_f64(),
+            request.output_width,
+            request.output_height,
+        ));
         Ok(())
     })
 }
@@ -1904,6 +1918,22 @@ impl<'a> GeometryResampler<'a> {
         })
     }
 
+    fn output_rows(
+        &self,
+        rows: std::ops::Range<u32>,
+        cancellation: &AtomicBool,
+    ) -> Result<Vec<Vec<f32>>> {
+        // Lens correction, rotation and crop run after the last rendered tile.
+        // Process a bounded band across CPU cores without changing sampling order
+        // within a pixel or the row order seen by sharpening and the encoder.
+        rows.into_par_iter()
+            .map(|y| {
+                ensure_export_not_cancelled(cancellation)?;
+                self.output_row(y)
+            })
+            .collect()
+    }
+
     fn output_row(&self, output_y: u32) -> Result<Vec<f32>> {
         anyhow::ensure!(
             output_y < self.output_height,
@@ -2193,8 +2223,9 @@ struct OutputSampleWeight {
 struct FinalSizeOutputSharpen {
     width: u32,
     strength: f32,
-    previous: Option<Vec<f32>>,
-    current: Option<Vec<f32>>,
+    previous: Option<Arc<Vec<f32>>>,
+    current: Option<Arc<Vec<f32>>>,
+    pending: Vec<[Arc<Vec<f32>>; 3]>,
     encoded_rows: u32,
     passthrough: bool,
 }
@@ -2215,6 +2246,7 @@ impl FinalSizeOutputSharpen {
             strength,
             previous: None,
             current: None,
+            pending: Vec::new(),
             encoded_rows: 0,
             passthrough: false,
         }
@@ -2236,19 +2268,21 @@ impl FinalSizeOutputSharpen {
             row.len() == checked_rgb_len(self.width, 1)?,
             "final-size sharpen row length does not match output width"
         );
+        let row = Arc::new(row);
         if self.passthrough {
-            return self.write_encoded_row(&row, output_transform, row_format, output);
+            self.pending.push([Arc::clone(&row), Arc::clone(&row), row]);
+            return self.flush_full_batch(output_transform, row_format, output);
         }
         let Some(current) = self.current.take() else {
             self.current = Some(row);
             return Ok(());
         };
-        let top = self.previous.as_deref().unwrap_or(&current);
-        let sharpened = output_sharpen_linear_row(top, &current, &row, self.strength)?;
-        self.write_encoded_row(&sharpened, output_transform, row_format, output)?;
+        let top = self.previous.as_ref().unwrap_or(&current);
+        self.pending
+            .push([Arc::clone(top), Arc::clone(&current), Arc::clone(&row)]);
         self.previous = Some(current);
         self.current = Some(row);
-        Ok(())
+        self.flush_full_batch(output_transform, row_format, output)
     }
 
     fn finish<W: Write>(
@@ -2258,29 +2292,56 @@ impl FinalSizeOutputSharpen {
         output: &mut W,
     ) -> Result<()> {
         if self.passthrough {
-            return Ok(());
+            return self.flush_batch(output_transform, row_format, output);
         }
         if let Some(current) = self.current.take() {
-            let top = self.previous.as_deref().unwrap_or(&current);
-            let sharpened = output_sharpen_linear_row(top, &current, &current, self.strength)?;
-            self.write_encoded_row(&sharpened, output_transform, row_format, output)?;
+            let top = self.previous.as_ref().unwrap_or(&current);
+            self.pending
+                .push([Arc::clone(top), Arc::clone(&current), current]);
         }
         self.previous = None;
-        Ok(())
+        self.flush_batch(output_transform, row_format, output)
     }
 
-    fn write_encoded_row<W: Write>(
+    fn flush_full_batch<W: Write>(
         &mut self,
-        row: &[f32],
         output_transform: Option<&SrgbOutputLut>,
         row_format: ExportRowFormat,
         output: &mut W,
     ) -> Result<()> {
-        let encoded = encode_output_row(row, output_transform, row_format)?;
-        output
-            .write_all(&encoded)
-            .with_context(|| format!("write output row {}", self.encoded_rows))?;
-        self.encoded_rows += 1;
+        if self.pending.len() >= EXPORT_CPU_ROW_BATCH {
+            self.flush_batch(output_transform, row_format, output)?;
+        }
+        Ok(())
+    }
+
+    fn flush_batch<W: Write>(
+        &mut self,
+        output_transform: Option<&SrgbOutputLut>,
+        row_format: ExportRowFormat,
+        output: &mut W,
+    ) -> Result<()> {
+        // Only a small band is retained. Rayon preserves indexed row order;
+        // compression and writes stay sequential, with identical pixel math.
+        let encoded: Result<Vec<Vec<u8>>> = self
+            .pending
+            .par_iter()
+            .map(|[top, center, bottom]| {
+                if self.passthrough {
+                    encode_output_row(center, output_transform, row_format)
+                } else {
+                    let sharpened = output_sharpen_linear_row(top, center, bottom, self.strength)?;
+                    encode_output_row(&sharpened, output_transform, row_format)
+                }
+            })
+            .collect();
+        for row in encoded? {
+            output
+                .write_all(&row)
+                .with_context(|| format!("write output row {}", self.encoded_rows))?;
+            self.encoded_rows += 1;
+        }
+        self.pending.clear();
         Ok(())
     }
 }
