@@ -15,6 +15,7 @@ use super::white_balance_presets::WhiteBalancePreset;
 #[cfg(not(libraw_available))]
 use anyhow::anyhow;
 use anyhow::{Context, Result};
+use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::ops::{Deref, DerefMut, Index};
@@ -211,6 +212,14 @@ impl<T> CompactPixelMap<T> {
     }
 
     fn storage_index(&self, index: usize) -> usize {
+        // Dense maps and uniform black levels are common in the full-resolution
+        // processing loops. Neither needs the divisions used for a CFA tile.
+        if self.storage_width == self.width && self.storage_height == self.height {
+            return index;
+        }
+        if self.values.len() == 1 {
+            return 0;
+        }
         let width = self.width.max(1) as usize;
         let x = index % width;
         let y = index / width;
@@ -652,8 +661,8 @@ impl LoadedRaw {
                 let index = sample_row * width + sample_col;
                 let physical = usize::from(self.color_indices[index].min(3));
                 let color = self.opposed_logical_color(index);
-                let value = self.opposed_sensor_value(index, black_point, pixels)
-                    * wb_coeffs[physical];
+                let value =
+                    self.opposed_sensor_value(index, black_point, pixels) * wb_coeffs[physical];
                 means[color] += value.max(0.0);
                 counts[color] += 1;
             }
@@ -674,6 +683,115 @@ impl LoadedRaw {
     }
 
     fn prepare_opposed_chroma_candidates(
+        &self,
+        black_point: f32,
+        clip_threshold: f32,
+        pixels: &[u16],
+    ) -> Vec<usize> {
+        let width = self.width as usize;
+        let height = self.height as usize;
+        if width == 0 || height == 0 || pixels.len() != width.saturating_mul(height) {
+            return Vec::new();
+        }
+
+        let mask_width = width / 3;
+        let mask_height = height / 3;
+        if mask_width == 0 || mask_height == 0 {
+            return Vec::new();
+        }
+        let aligned_mask_width = mask_width.div_ceil(8) * 8;
+        let aligned_mask_height = mask_height.div_ceil(8) * 8;
+        let aligned_mask_area = aligned_mask_width.saturating_mul(aligned_mask_height);
+        let last_raw_mask_index = ((height - 1) / 3) * mask_width + (width - 1) / 3;
+        let required_mask_size = (last_raw_mask_index + 1).div_ceil(8) * 8;
+        let mask_size = aligned_mask_area.max(required_mask_size);
+        // Store RGB clipping flags together so rows can be processed independently.
+        let mut clipped_mask = vec![0u8; mask_size];
+        let clip = 0.987 * clip_threshold.max(0.01);
+        clipped_mask[..mask_width * mask_height]
+            .par_chunks_mut(mask_width)
+            .enumerate()
+            .for_each(|(mask_row, cells)| {
+                if mask_row >= mask_height.saturating_sub(1) {
+                    return;
+                }
+                for (mask_col, cell) in cells
+                    .iter_mut()
+                    .enumerate()
+                    .take(mask_width.saturating_sub(1))
+                {
+                    for offset_y in 0..3 {
+                        let row = mask_row * 3 + offset_y;
+                        for offset_x in 0..3 {
+                            let index = row * width + mask_col * 3 + offset_x;
+                            if self.opposed_sensor_value(index, black_point, pixels) >= clip {
+                                *cell |= 1 << self.opposed_logical_color(index);
+                            }
+                        }
+                    }
+                }
+            });
+        if clipped_mask.iter().all(|&cell| cell == 0) {
+            return Vec::new();
+        }
+
+        // Scatter from sparse clipped cells, retaining the original border rules.
+        let mut nearby_mask = clipped_mask.clone();
+        for source_row in 0..mask_height {
+            for source_col in 0..mask_width {
+                let flags = clipped_mask[source_row * mask_width + source_col];
+                if flags == 0 {
+                    continue;
+                }
+                for offset_y in -3isize..=3 {
+                    for offset_x in -3isize..=3 {
+                        if offset_x.abs() == 3 && offset_y.abs() == 3 {
+                            continue;
+                        }
+                        let row = source_row as isize - offset_y;
+                        let col = source_col as isize - offset_x;
+                        if row >= 3
+                            && col >= 3
+                            && row < mask_height.saturating_sub(4) as isize
+                            && col < mask_width.saturating_sub(4) as isize
+                        {
+                            nearby_mask[row as usize * mask_width + col as usize] |= flags;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Only normalize pixels near clipping. Collect indexed row bands in order
+        // so the subsequent floating-point accumulation remains bit-for-bit stable.
+        let bands: Vec<Vec<usize>> = (0..height.div_ceil(24))
+            .into_par_iter()
+            .map(|band| {
+                let mut candidates = Vec::new();
+                for row in band * 24..((band + 1) * 24).min(height) {
+                    for col in 0..width {
+                        let flags = nearby_mask[(row / 3) * mask_width + col / 3];
+                        if flags == 0 {
+                            continue;
+                        }
+                        let index = row * width + col;
+                        if flags & (1 << self.opposed_logical_color(index)) == 0 {
+                            continue;
+                        }
+                        let value = self.opposed_sensor_value(index, black_point, pixels);
+                        if value > 0.2 * clip && value < clip {
+                            candidates.push(index);
+                        }
+                    }
+                }
+                candidates
+            })
+            .collect();
+        bands.into_iter().flatten().collect()
+    }
+
+    #[cfg(test)]
+    fn prepare_opposed_chroma_candidates_serial(
         &self,
         black_point: f32,
         clip_threshold: f32,
@@ -764,9 +882,7 @@ impl LoadedRaw {
                 let color = self.opposed_logical_color(index);
                 let value = self.opposed_sensor_value(index, black_point, pixels);
                 let mask_index = (row / 3) * mask_width + col / 3;
-                if nearby_mask[color * mask_size + mask_index]
-                    && value > 0.2 * clip
-                    && value < clip
+                if nearby_mask[color * mask_size + mask_index] && value > 0.2 * clip && value < clip
                 {
                     candidates.push(index);
                 }
@@ -794,8 +910,7 @@ impl LoadedRaw {
             let physical = usize::from(self.color_indices[index].min(3));
             let color = self.opposed_logical_color(index);
             let value = self.opposed_sensor_value(index, black_point, pixels) * wb_coeffs[physical];
-            sums[color] +=
-                value - self.opposed_refavg(row, col, black_point, pixels, wb_coeffs);
+            sums[color] += value - self.opposed_refavg(row, col, black_point, pixels, wb_coeffs);
             counts[color] += 1.0;
         }
 
@@ -815,13 +930,9 @@ impl LoadedRaw {
         pixels: &[u16],
         wb_coeffs: [f32; 4],
     ) -> [f32; 3] {
-        let candidates = self.prepare_opposed_chroma_candidates(black_point, clip_threshold, pixels);
-        self.calculate_opposed_chroma_from_candidates(
-            black_point,
-            pixels,
-            wb_coeffs,
-            &candidates,
-        )
+        let candidates =
+            self.prepare_opposed_chroma_candidates(black_point, clip_threshold, pixels);
+        self.calculate_opposed_chroma_from_candidates(black_point, pixels, wb_coeffs, &candidates)
     }
 
     pub fn inpaint_opposed_chroma(
@@ -874,12 +985,7 @@ impl LoadedRaw {
                     }
                     candidates
                 });
-            self.calculate_opposed_chroma_from_candidates(
-                black_point,
-                pixels,
-                wb_coeffs,
-                &prepared,
-            )
+            self.calculate_opposed_chroma_from_candidates(black_point, pixels, wb_coeffs, &prepared)
         } else {
             // A derived crop/proxy must never populate full-source prepared state. This fallback
             // preserves standalone behavior if the caller forgot to prime the full source first.
@@ -1402,6 +1508,86 @@ mod tests {
         CameraProfileMode, CameraWhiteBalanceModel, CfaKind, CompactPixelMap, ExposureParams,
         LoadedRaw, GLOBAL_TEMPERATURE_LIMIT,
     };
+
+    #[test]
+    fn parallel_highlight_candidates_match_serial_for_dense_and_periodic_maps() {
+        // Cover CFA tile sizes, partial 3-pixel cells, dense black maps, threshold
+        // boundaries and both empty and heavily clipped scenes.
+        for (width, height, tile) in [(2, 2, 2), (26, 24, 2), (97, 98, 2), (101, 103, 6)] {
+            for dense in [false, true] {
+                for clipped in [false, true] {
+                    let mut raw = colored_opposed_test_raw();
+                    raw.width = width;
+                    raw.height = height;
+                    let colors: Vec<u8> = (0..tile * tile)
+                        .map(|i| ((i * 7 + i / tile) % 4) as u8)
+                        .collect();
+                    raw.color_indices =
+                        CompactPixelMap::repeating(width, height, tile, tile, colors);
+                    raw.black_levels_per_pixel = CompactPixelMap::repeating(
+                        width,
+                        height,
+                        2,
+                        2,
+                        vec![0.0, 128.0, 256.0, 512.0],
+                    );
+                    if dense {
+                        raw.color_indices = CompactPixelMap::dense(
+                            width,
+                            height,
+                            raw.color_indices.iter().copied().collect(),
+                        );
+                        raw.black_levels_per_pixel = CompactPixelMap::dense(
+                            width,
+                            height,
+                            raw.black_levels_per_pixel.iter().copied().collect(),
+                        );
+                    }
+                    raw.raw_pixels = (0..width * height)
+                        .map(|i| {
+                            if clipped && i % 19 < 3 {
+                                10000
+                            } else {
+                                (i * 31 % 9500) as u16
+                            }
+                        })
+                        .collect();
+                    for (black, clip) in [(0.0, 1.0), (0.025, 0.93), (-0.025, 0.8)] {
+                        let expected = raw.prepare_opposed_chroma_candidates_serial(
+                            black,
+                            clip,
+                            &raw.raw_pixels,
+                        );
+                        let actual =
+                            raw.prepare_opposed_chroma_candidates(black, clip, &raw.raw_pixels);
+                        assert_eq!(actual, expected, "{width}x{height}, dense={dense}, clipped={clipped}, black={black}, clip={clip}");
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn compact_map_fast_paths_match_expanded_tiles() {
+        for (width, height, tw, th) in [
+            (17, 13, 1, 1),
+            (17, 13, 2, 2),
+            (17, 13, 6, 6),
+            (17, 13, 17, 13),
+        ] {
+            let values: Vec<_> = (0..tw * th).collect();
+            let map = CompactPixelMap::repeating(width, height, tw, th, values.clone());
+            for y in 0..height {
+                for x in 0..width {
+                    assert_eq!(
+                        map[(y * width + x) as usize],
+                        values[((y % th) * tw + x % tw) as usize]
+                    );
+                }
+            }
+            assert_eq!(map.get((width * height) as usize), None);
+        }
+    }
 
     #[test]
     fn automatic_profile_mode_defaults_to_the_embedded_matrix() {

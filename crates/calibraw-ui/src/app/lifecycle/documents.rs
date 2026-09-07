@@ -620,7 +620,12 @@ impl CalibRawApp {
                         full_raw.clear_ai_denoised_image();
                     }
                     if full_raw.uses_opposed_chroma(&rendered_exposure) {
+                        let highlight_started = Instant::now();
                         full_raw.inpaint_opposed_chroma_for_exposure(&rendered_exposure);
+                        crate::diagnostics::record(format!(
+                            "Full-resolution highlight analysis finished in {:.3}s",
+                            highlight_started.elapsed().as_secs_f64()
+                        ));
                     }
                     let preview_spec = ProxySpec {
                         max_edge: preview_quality_setting.proxy_edge_for_fitted_source(
