@@ -51,6 +51,7 @@ impl CalibRawApp {
             visible: self.preview.visible_uv,
             viewport_pixels: self.preview.viewport_pixels,
             quality: self.preview.quality,
+            exposure: self.develop.target_exposure,
         };
         self.preview.motion_at = None;
         self.preview.detail_urgent = false;
@@ -387,6 +388,7 @@ struct PreviewDetailRequest {
     visible: PreviewUvRect,
     viewport_pixels: [u32; 2],
     quality: PreviewQuality,
+    exposure: ExposureParams,
 }
 
 fn prepare_preview_detail(request: PreviewDetailRequest) -> anyhow::Result<PreparedPreviewDetail> {
@@ -396,6 +398,7 @@ fn prepare_preview_detail(request: PreviewDetailRequest) -> anyhow::Result<Prepa
         visible,
         viewport_pixels,
         quality,
+        exposure,
     } = request;
     let cfa_period = match source_raw.cfa_kind {
         crate::pipeline::CfaKind::Bayer => 2,
@@ -428,24 +431,49 @@ fn prepare_preview_detail(request: PreviewDetailRequest) -> anyhow::Result<Prepa
             y1 as f32 / source_raw.height.max(1) as f32,
         ],
     };
-    let raw = Arc::new(build_region_proxy(
-        &source_raw,
-        x0,
-        y0,
+    let requested_edge = requested_detail_edge(
+        quality,
+        viewport_pixels,
+        visible,
         source_size[0],
         source_size[1],
-        ProxySpec {
-            max_edge: requested_detail_edge(
-                quality,
-                viewport_pixels,
-                visible,
+        source_raw.width,
+        source_raw.height,
+    );
+    let raw = Arc::new(
+        if settled_detail_uses_native_source(
+            !source_raw.is_pre_demosaiced_raster(),
+            source_size[0],
+            source_size[1],
+            requested_edge,
+        ) {
+            // The detail texture is sampled down to the viewport only after the
+            // complete GPU graph has run.  Keeping the mosaic native here is what
+            // preserves clipping decisions, CFA detail, and sensor-noise scale.
+            if detail_uses_opposed_chroma(&source_raw, &exposure) {
+                source_raw.inpaint_opposed_chroma(
+                    exposure.black_point,
+                    exposure.highlight_clip,
+                    exposure.ai_denoise_enabled,
+                );
+            }
+            let mut native =
+                crate::pipeline::crop_raw(&source_raw, x0, y0, source_size[0], source_size[1]);
+            native.opposed_chroma_cache = Arc::clone(&source_raw.opposed_chroma_cache);
+            native
+        } else {
+            build_region_proxy(
+                &source_raw,
+                x0,
+                y0,
                 source_size[0],
                 source_size[1],
-                source_raw.width,
-                source_raw.height,
-            ),
+                ProxySpec {
+                    max_edge: requested_edge,
+                },
+            )
         },
-    ));
+    );
     Ok(PreparedPreviewDetail {
         source_raw,
         revision,
@@ -456,4 +484,49 @@ fn prepare_preview_detail(request: PreviewDetailRequest) -> anyhow::Result<Prepa
         source_size,
         raw,
     })
+}
+
+fn settled_detail_uses_native_source(
+    is_sensor_raw: bool,
+    region_width: u32,
+    region_height: u32,
+    requested_edge: u32,
+) -> bool {
+    if !is_sensor_raw {
+        return false;
+    }
+
+    // A settled detail may spend more memory than the continuously updated
+    // proxy, but remains bounded so a near-fit view cannot allocate a full
+    // high-megapixel processing graph.  As zoom increases the native region
+    // eventually fits and becomes the authoritative fidelity path.
+    let platform_limit = if cfg!(target_os = "android") {
+        2_048
+    } else {
+        4_096
+    };
+    let native_edge = requested_edge.saturating_mul(2).min(platform_limit);
+    region_width.max(region_height) <= native_edge
+}
+
+#[cfg(test)]
+mod tests {
+    use super::settled_detail_uses_native_source;
+
+    #[test]
+    fn settled_sensor_detail_uses_native_samples_before_the_resource_limit() {
+        assert!(settled_detail_uses_native_source(true, 3_800, 2_500, 2_000));
+    }
+
+    #[test]
+    fn wide_detail_remains_an_explicit_bounded_approximation() {
+        assert!(!settled_detail_uses_native_source(
+            true, 6_000, 4_000, 2_000
+        ));
+    }
+
+    #[test]
+    fn developed_rasters_keep_their_existing_resize_path() {
+        assert!(!settled_detail_uses_native_source(false, 1_000, 700, 2_000));
+    }
 }

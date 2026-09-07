@@ -277,6 +277,14 @@ pub fn build_proxy(raw: &LoadedRaw, spec: ProxySpec) -> LoadedRaw {
     build_region_proxy(raw, 0, 0, raw.width, raw.height, spec)
 }
 
+/// Builds a bounded, interactive approximation of a source region.
+///
+/// For sensor RAW inputs this averages samples of the same CFA colour before
+/// highlight reconstruction, demosaic, and denoise.  It is consequently not a
+/// fidelity reference: averaging can hide clipped samples, erase sub-footprint
+/// colour structure, and reduce the noise seen by RAW-domain processing.  Use a
+/// native crop (or native tiles) and resize the developed linear result for a
+/// settled/final comparison.
 pub fn build_region_proxy(
     raw: &LoadedRaw,
     x: u32,
@@ -1516,6 +1524,57 @@ mod tests {
         let proxy_cfa = proxy.color_indices.iter().copied().collect::<Vec<_>>();
         assert_eq!(&proxy_cfa[..4], &[0, 1, 0, 1]);
         assert_eq!(&proxy_cfa[4..8], &[3, 2, 3, 2]);
+    }
+
+    fn patterned_bayer_raw() -> LoadedRaw {
+        let mut raw = test_raw(8, 8);
+        raw.color_indices = CompactPixelMap::repeating(8, 8, 2, 2, vec![0, 1, 3, 2]);
+        raw
+    }
+
+    #[test]
+    fn cfa_proxy_can_hide_a_native_clipped_photosite() {
+        let mut raw = patterned_bayer_raw();
+        raw.raw_pixels.fill(100);
+        raw.raw_pixels[0] = 1023;
+
+        let proxy = build_proxy(&raw, ProxySpec { max_edge: 2 });
+
+        assert_eq!(raw.raw_pixels.iter().copied().max(), Some(1023));
+        assert!(
+            proxy.raw_pixels.iter().all(|sample| *sample < 1023),
+            "pre-reconstruction averaging must not be treated as a clipping reference"
+        );
+    }
+
+    #[test]
+    fn cfa_proxy_erases_fine_phase_detail_and_reduces_shadow_variance() {
+        let mut raw = patterned_bayer_raw();
+        for y in 0..raw.height {
+            for x in 0..raw.width {
+                // A two-pixel coloured/checker structure: each CFA phase sees
+                // alternating shadow values, while every proxy footprint sees
+                // the same mean.
+                raw.raw_pixels[(y * raw.width + x) as usize] =
+                    if (x / 2 + y / 2) % 2 == 0 { 300 } else { 500 };
+            }
+        }
+
+        let proxy = build_proxy(&raw, ProxySpec { max_edge: 2 });
+        let variance = |samples: &[u16]| {
+            let mean =
+                samples.iter().map(|value| f64::from(*value)).sum::<f64>() / samples.len() as f64;
+            samples
+                .iter()
+                .map(|value| (f64::from(*value) - mean).powi(2))
+                .sum::<f64>()
+                / samples.len() as f64
+        };
+
+        assert!(raw.raw_pixels.contains(&300) && raw.raw_pixels.contains(&500));
+        assert_eq!(proxy.raw_pixels, vec![400; 4]);
+        assert!(variance(&raw.raw_pixels) > 0.0);
+        assert_eq!(variance(&proxy.raw_pixels), 0.0);
     }
 
     #[test]
