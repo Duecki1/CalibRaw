@@ -104,6 +104,15 @@ pub(in crate::app) fn detail_mask_edge() -> u32 {
     }
 }
 
+pub(in crate::app) fn detail_uses_opposed_chroma(
+    raw: &LoadedRaw,
+    exposure: &ExposureParams,
+) -> bool {
+    exposure.highlight_method == crate::pipeline::HighlightReconstructionMethod::InpaintOpposed
+        || (raw.cfa_kind == crate::pipeline::CfaKind::XTrans
+            && exposure.highlight_method == crate::pipeline::HighlightReconstructionMethod::Lch)
+}
+
 pub(in crate::app) fn detail_mask_source_region(
     masks: &MaskStack,
     source_origin: [u32; 2],

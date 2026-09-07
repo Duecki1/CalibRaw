@@ -68,6 +68,20 @@ impl CalibRawApp {
         let detail_raw = Arc::clone(&detail.raw);
         let virtual_origin = detail.virtual_origin;
         let virtual_full_size = detail.virtual_full_size;
+        if stage == ProcessingStage::Raw
+            && !detail_raw.is_pre_demosaiced_raster()
+            && detail_raw.width == detail.source_size[0]
+            && detail_raw.height == detail.source_size[1]
+            && detail_uses_opposed_chroma(full_raw, &self.develop.target_exposure)
+        {
+            // Native settled crops share this cache. Populate the requested
+            // key from the full sensor before GpuParams reads it from the crop.
+            full_raw.inpaint_opposed_chroma(
+                self.develop.target_exposure.black_point,
+                self.develop.target_exposure.highlight_clip,
+                self.develop.target_exposure.ai_denoise_enabled,
+            );
+        }
         let mask_region = detail_mask_source_region(
             &self.masks.stack,
             detail.source_origin,
