@@ -1,5 +1,5 @@
 use super::{
-    work_shader_source, SHADER_BASIC_ADJUSTMENTS, SHADER_COLOR, SHADER_COMMON,
+    work_shader_source, CfaKind, SHADER_BASIC_ADJUSTMENTS, SHADER_COLOR, SHADER_COMMON,
     SHADER_CREATIVE_EFFECTS, SHADER_DETAIL_CAPTURE, SHADER_DETAIL_SCALE_SPACE,
     SHADER_MASK_ATMOSPHERE, SHADER_MASK_BLUR, SHADER_MASK_EDGE_GLOW, SHADER_MASK_EFFECTS_SHARED,
     SHADER_MASK_GLOW, SHADER_MASK_LENS_BLUR, SHADER_MASK_LIGHT_RAYS, SHADER_MASK_MOTION_BLUR,
@@ -42,7 +42,7 @@ pub(super) struct ShaderManager {
 }
 
 impl ShaderManager {
-    pub(super) fn new(work_format: wgpu::TextureFormat) -> Result<Self> {
+    pub(super) fn new(work_format: wgpu::TextureFormat, cfa_kind: CfaKind) -> Result<Self> {
         let mut manager = Self {
             composer: Composer::default(),
         };
@@ -55,41 +55,43 @@ impl ShaderManager {
             "raw_sampling.wgsl",
             SHADER_RAW_SAMPLING,
         )?;
-        manager.register(
-            "calibraw::xtrans::seed",
-            "xtrans/seed.wgsl",
-            SHADER_XTRANS_SEED,
-        )?;
-        manager.register(
-            "calibraw::xtrans::markesteijn_interpolate",
-            "xtrans/markesteijn_interpolate.wgsl",
-            SHADER_XTRANS_MARKESTEIJN_INTERPOLATE,
-        )?;
-        manager.register(
-            "calibraw::xtrans::markesteijn_refine",
-            "xtrans/markesteijn_refine.wgsl",
-            SHADER_XTRANS_MARKESTEIJN_REFINE,
-        )?;
-        manager.register(
-            "calibraw::xtrans::markesteijn_candidates",
-            "xtrans/markesteijn_candidates.wgsl",
-            SHADER_XTRANS_MARKESTEIJN_CANDIDATES,
-        )?;
-        manager.register(
-            "calibraw::xtrans::markesteijn_derivatives",
-            "xtrans/markesteijn_derivatives.wgsl",
-            SHADER_XTRANS_MARKESTEIJN_DERIVATIVES,
-        )?;
-        manager.register(
-            "calibraw::xtrans::markesteijn_homogeneity",
-            "xtrans/markesteijn_homogeneity.wgsl",
-            SHADER_XTRANS_MARKESTEIJN_HOMOGENEITY,
-        )?;
-        manager.register(
-            "calibraw::xtrans::markesteijn_accumulate",
-            "xtrans/markesteijn_accumulate.wgsl",
-            SHADER_XTRANS_MARKESTEIJN_ACCUMULATE,
-        )?;
+        if cfa_kind == CfaKind::XTrans {
+            manager.register(
+                "calibraw::xtrans::seed",
+                "xtrans/seed.wgsl",
+                SHADER_XTRANS_SEED,
+            )?;
+            manager.register(
+                "calibraw::xtrans::markesteijn_interpolate",
+                "xtrans/markesteijn_interpolate.wgsl",
+                SHADER_XTRANS_MARKESTEIJN_INTERPOLATE,
+            )?;
+            manager.register(
+                "calibraw::xtrans::markesteijn_refine",
+                "xtrans/markesteijn_refine.wgsl",
+                SHADER_XTRANS_MARKESTEIJN_REFINE,
+            )?;
+            manager.register(
+                "calibraw::xtrans::markesteijn_candidates",
+                "xtrans/markesteijn_candidates.wgsl",
+                SHADER_XTRANS_MARKESTEIJN_CANDIDATES,
+            )?;
+            manager.register(
+                "calibraw::xtrans::markesteijn_derivatives",
+                "xtrans/markesteijn_derivatives.wgsl",
+                SHADER_XTRANS_MARKESTEIJN_DERIVATIVES,
+            )?;
+            manager.register(
+                "calibraw::xtrans::markesteijn_homogeneity",
+                "xtrans/markesteijn_homogeneity.wgsl",
+                SHADER_XTRANS_MARKESTEIJN_HOMOGENEITY,
+            )?;
+            manager.register(
+                "calibraw::xtrans::markesteijn_accumulate",
+                "xtrans/markesteijn_accumulate.wgsl",
+                SHADER_XTRANS_MARKESTEIJN_ACCUMULATE,
+            )?;
+        }
         manager.register("calibraw::profile", "profile.wgsl", SHADER_PROFILE)?;
         manager.register(
             "calibraw::basic_adjustments",
@@ -184,13 +186,19 @@ impl ShaderManager {
         source: &str,
         file_name: &str,
     ) -> Result<wgpu::ShaderModule> {
+        let started = std::time::Instant::now();
         let module = self
             .compose_naga_module(source, file_name)
             .with_context(|| format!("compose {label}"))?;
-        Ok(device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some(label),
             source: wgpu::ShaderSource::Naga(Cow::Owned(module)),
-        }))
+        });
+        log::debug!(
+            "GPU shader {label} prepared in {:.3}s",
+            started.elapsed().as_secs_f64()
+        );
+        Ok(module)
     }
 
     fn composer_error(&self, operation: &str, error: ComposerError) -> anyhow::Error {

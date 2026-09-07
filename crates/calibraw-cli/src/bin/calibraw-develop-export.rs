@@ -24,6 +24,7 @@ struct Args {
 }
 
 fn main() {
+    env_logger::init();
     if let Err(error) = run() {
         eprintln!("calibraw-develop-export: {error:#}");
         std::process::exit(2);

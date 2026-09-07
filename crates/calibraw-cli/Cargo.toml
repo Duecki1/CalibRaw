@@ -19,3 +19,4 @@ calibraw-core.workspace = true
 calibraw-gpu.workspace = true
 anyhow.workspace = true
 pollster.workspace = true
+env_logger.workspace = true
