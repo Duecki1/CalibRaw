@@ -62,7 +62,8 @@ linear light before output encoding.
 ## Viewport behavior
 
 Wheel/trackpad zoom and two-finger pan/zoom keep the image point under the
-gesture anchor. Zoom-out extends to 70% of the fitted size to leave room for
+gesture anchor. Zoom-out extends to 25% of the fitted size on Android and 70%
+on desktop to leave room for
 mask handles outside the image. Double-click/tap returns to fit from a smaller
 or larger view, and switches from fit to native 100% sampling, accounting for
 display density. Reset also works in the canvas margins and on mask/Remove
