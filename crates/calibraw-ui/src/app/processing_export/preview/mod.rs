@@ -33,9 +33,10 @@ pub(in crate::app) fn aligned_detail_axis(
         (viewport_pixels.max(1) as f32 * detail_pixel_scale.max(0.1)).max(1.0);
     let support_padding =
         (visible_len as f32 * EXPORT_TILE_HALO as f32 / visible_detail_pixels).ceil() as u32;
-    let padding = ((visible_len as f32 * 0.06).ceil() as u32)
+    // Reserve a small reusable border in addition to processing support.
+    let padding = support_padding
         .max(EXPORT_TILE_HALO)
-        .max(support_padding);
+        .saturating_add((visible_len as f32 * 0.08).ceil() as u32);
     let padded_start = visible_start.saturating_sub(padding);
     let padded_end = visible_end.saturating_add(padding).min(extent);
     let aligned_start = (padded_start / period) * period;
@@ -63,6 +64,31 @@ pub(in crate::app) fn detail_texture_uv(
             ((visible.max[1] - crop.min[1]) / crop_height).clamp(0.0, 1.0),
         ],
     }
+}
+
+fn detail_display_uv(
+    visible: PreviewUvRect,
+    crop: PreviewUvRect,
+    texture_size: [u32; 2],
+) -> PreviewUvRect {
+    let mut display = visible;
+    for (axis, extent) in texture_size.into_iter().enumerate() {
+        let halo =
+            EXPORT_TILE_HALO as f32 / extent.max(1) as f32 * (crop.max[axis] - crop.min[axis]);
+        let safe_min = if crop.min[axis] <= 0.0 {
+            0.0
+        } else {
+            crop.min[axis] + halo
+        };
+        let safe_max = if crop.max[axis] >= 1.0 {
+            1.0
+        } else {
+            crop.max[axis] - halo
+        };
+        display.min[axis] = visible.min[axis].min(safe_min).max(crop.min[axis]);
+        display.max[axis] = visible.max[axis].max(safe_max).min(crop.max[axis]);
+    }
+    display
 }
 
 pub(in crate::app) fn requested_detail_edge(
@@ -192,17 +218,156 @@ mod processing;
 mod rebuild;
 mod state;
 
+// Check coverage and sampling density independently of navigation. A native
+// crop never needs upsampling on the GPU, even when displayed beyond 100%.
+fn detail_covers_view(
+    coverage: PreviewUvRect,
+    texture_uv: PreviewUvRect,
+    texture_size: [u32; 2],
+    source_size: [u32; 2],
+    visible: PreviewUvRect,
+    viewport: [u32; 2],
+    quality: PreviewQuality,
+) -> bool {
+    (0..2).all(|axis| {
+        let contains = coverage.min[axis] <= visible.min[axis] + 1e-6
+            && coverage.max[axis] >= visible.max[axis] - 1e-6;
+        let native = texture_size[axis] >= source_size[axis];
+        let coverage_span = (coverage.max[axis] - coverage.min[axis]).max(f32::EPSILON);
+        let visible_span = (visible.max[axis] - visible.min[axis]).max(f32::EPSILON);
+        let samples = texture_size[axis] as f32
+            * (texture_uv.max[axis] - texture_uv.min[axis])
+            * visible_span
+            / coverage_span;
+        // Respect the same padded-working-edge budget as preparation. Otherwise
+        // an aspect-mismatched/rotated view can rebuild forever at the cap.
+        let budget_samples = quality.detail_edge_for_viewport(viewport) as f32
+            * texture_size[axis] as f32
+            / texture_size[0].max(texture_size[1]).max(1) as f32
+            * (texture_uv.max[axis] - texture_uv.min[axis])
+            * visible_span
+            / coverage_span;
+        let required = (viewport[axis] as f32 * quality.detail_pixel_scale()).min(budget_samples);
+        // CFA proxy dimensions are rounded down to a complete mosaic period.
+        contains && (native || samples + 6.0 >= required)
+    })
+}
+
 #[cfg(test)]
 mod detail_resolution_tests {
     use super::*;
 
+    fn uv(min: f32, max: f32) -> PreviewUvRect {
+        PreviewUvRect {
+            min: [min; 2],
+            max: [max; 2],
+        }
+    }
+
+    #[test]
+    fn native_detail_is_reusable_when_zooming_further_into_its_coverage() {
+        assert!(detail_covers_view(
+            uv(0.2, 0.8),
+            uv(0.1, 0.9),
+            [1200; 2],
+            [1200; 2],
+            uv(0.4, 0.6),
+            [2400; 2],
+            PreviewQuality::Max
+        ));
+    }
+
+    #[test]
+    fn cached_detail_must_cover_every_visible_edge() {
+        for visible in [uv(0.19, 0.7), uv(0.3, 0.81), uv(0.0, 1.0)] {
+            assert!(!detail_covers_view(
+                uv(0.2, 0.8),
+                uv(0.0, 1.0),
+                [1200; 2],
+                [1200; 2],
+                visible,
+                [1000; 2],
+                PreviewQuality::Medium
+            ));
+        }
+    }
+
+    #[test]
+    fn proxy_detail_refreshes_on_zoom_dpi_or_quality_increase() {
+        let coverage = uv(0.2, 0.8);
+        let texture = uv(0.0, 1.0);
+        assert!(detail_covers_view(
+            coverage,
+            texture,
+            [1200; 2],
+            [3000; 2],
+            coverage,
+            [1200; 2],
+            PreviewQuality::Medium
+        ));
+        assert!(!detail_covers_view(
+            coverage,
+            texture,
+            [1200; 2],
+            [3000; 2],
+            uv(0.4, 0.6),
+            [1200; 2],
+            PreviewQuality::Medium
+        ));
+        assert!(!detail_covers_view(
+            coverage,
+            texture,
+            [1200; 2],
+            [3000; 2],
+            coverage,
+            [2400; 2],
+            PreviewQuality::Medium
+        ));
+        assert!(!detail_covers_view(
+            coverage,
+            texture,
+            [1200; 2],
+            [3000; 2],
+            coverage,
+            [1200; 2],
+            PreviewQuality::Max
+        ));
+    }
+
+    #[test]
+    fn working_edge_cap_and_cfa_rounding_do_not_trigger_endless_rebuilds() {
+        let viewport = [1000, 1800];
+        let edge = PreviewQuality::Medium.detail_edge_for_viewport(viewport);
+        assert!(detail_covers_view(
+            uv(0.2, 0.8),
+            uv(0.1, 0.9),
+            [edge - 5, (edge - 5) / 2],
+            [6000, 3000],
+            uv(0.2, 0.8),
+            viewport,
+            PreviewQuality::Medium
+        ));
+    }
+
+    #[test]
+    fn reusable_border_excludes_processing_halo_and_includes_the_visible_region() {
+        let crop = uv(0.1, 0.9);
+        let visible = uv(0.3, 0.7);
+        let edge = EXPORT_TILE_HALO * 10;
+        let display = detail_display_uv(visible, crop, [edge; 2]);
+        assert!((display.min[0] - 0.18).abs() < 1e-6);
+        assert!((display.max[0] - 0.82).abs() < 1e-6);
+        assert!(display.min[0] <= visible.min[0] && display.max[0] >= visible.max[0]);
+        let full = detail_display_uv(visible, uv(0.0, 1.0), [edge; 2]);
+        assert_eq!(full.min, [0.0; 2]);
+        assert_eq!(full.max, [1.0; 2]);
+    }
+
     #[test]
     fn detail_crop_origin_uses_the_shared_cfa_and_tone_grid() {
         let extent = 6_017;
-        let (bayer_start, bayer_end) =
-            aligned_detail_axis(0.173, 0.481, extent, 2, 1_600, 1.0);
-        let (xtrans_start, xtrans_end) =
-            aligned_detail_axis(0.173, 0.481, extent, 6, 1_600, 1.0);
+        let (bayer_start, bayer_end) = aligned_detail_axis(0.173, 0.481, extent, 2, 1_600, 1.0);
+        let (xtrans_start, xtrans_end) = aligned_detail_axis(0.173, 0.481, extent, 6, 1_600, 1.0);
 
         let gcd = |mut a: u32, mut b: u32| {
             while b != 0 {

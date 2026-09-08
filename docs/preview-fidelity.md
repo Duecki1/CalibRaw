@@ -2,6 +2,20 @@
 
 CalibRaw has two deliberately different preview sources.
 
+The developed-image revision is independent of pan and zoom. A sharp detail
+crop stays on screen while a single background worker prepares the latest
+view. Crops include an 8% navigation border in addition to processing support;
+only the region inside the processing halo is reused for presentation.
+Coverage, physical pixel density, quality, and eligibility for native sensor
+processing determine whether a cached crop is sufficient. Resizing, rotating,
+changing DPI, and changing geometry all reevaluate that decision. A missing
+detail crop is rebuilt even when there is no remaining navigation timer.
+
+The fitted fallback also finishes pending edits while zoomed in, so newly
+exposed areas cannot retain old adjustments. Obsolete offscreen worker results
+are discarded before GPU upload. GPU programs and compatible crop allocations
+are reused, and a failed upload backs off before retrying.
+
 The fitted, navigation, and wide zoom views use `build_region_proxy`. For a
 sensor RAW this is an interactive approximation: samples with the same CFA
 colour are averaged into a smaller synthetic mosaic. That averaging happens
@@ -32,3 +46,24 @@ The remaining approximations are explicit:
 Final export remains authoritative: it processes native RAW tiles, performs
 full-resolution tone analysis, stitches developed linear RGB, and resizes in
 linear light before output encoding.
+
+## Viewport behavior
+
+Wheel/trackpad zoom and two-finger pan/zoom keep the image point under the
+gesture anchor. Zoom-out stops at fit. Double-click/tap toggles fit and native
+100% sampling, accounting for display density. A remaining finger after a
+pinch cannot accidentally start painting or panning.
+
+Portrait Develop uses the complete safe-area width with a width-fitted image.
+The top controls and resizable bottom tool sheet overlay that canvas; changing
+tools or resizing the sheet does not change image scale. The exposed area
+determines pan bounds and gesture ownership, so image edges can be brought
+above the sheet and tool interactions cannot start through it. Android system
+insets remain outside the canvas. Android landscape uses the same full canvas
+with its tool rail and sidebar overlaid on the right.
+
+Regression checks: `cargo test -p calibraw-ui --lib --locked`. The optional
+`portrait_gpu_layout_and_input` test exercises the actual GPU texture and egui
+layout without a window (a software Vulkan adapter also works). Run it with `-- --ignored`, an isolated
+`XDG_CONFIG_HOME`, and optionally `CALIBRAW_PREVIEW_TEST_SCREENSHOT` pointing to
+a PNG file to capture the rendered fixture.

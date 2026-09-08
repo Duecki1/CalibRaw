@@ -35,7 +35,10 @@ impl Preview {
         }
 
         if pressed {
-            if let Some(position) = pointer.filter(|position| preview_rect.contains(*position)) {
+            if let Some(position) = pointer.filter(|position| {
+                preview_rect.contains(*position)
+                    && ui.ctx().layer_id_at(*position) == Some(ui.layer_id())
+            }) {
                 app.preview.original_hold = Some(crate::app::AndroidOriginalHold {
                     start: position,
                     started_at: std::time::Instant::now(),

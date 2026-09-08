@@ -225,19 +225,23 @@ impl eframe::App for CalibRawApp {
         let layout = ScreenLayout::from_size(viewport_size);
         let sidebar_size = layout.sidebar_default_size(viewport_size);
 
+        let overlay_develop = self.ui.active_tab == AppTab::Develop
+            && (layout == ScreenLayout::Vertical || cfg!(target_os = "android"));
         self.refresh_status();
         #[cfg(not(target_os = "android"))]
-        egui::Panel::top("top_bar")
-            .frame(crate::ui::theme::toolbar_frame(ui))
-            .show(ui, |ui| TopBar::show(ui, self, frame));
+        if !overlay_develop {
+            egui::Panel::top("top_bar")
+                .frame(crate::ui::theme::toolbar_frame(ui))
+                .show(ui, |ui| TopBar::show(ui, self, frame));
+        }
         #[cfg(target_os = "android")]
-        if self.ui.active_tab == AppTab::Develop {
+        if self.ui.active_tab == AppTab::Develop && !overlay_develop {
             egui::Panel::top("top_bar")
                 .frame(crate::ui::theme::toolbar_frame(ui))
                 .show(ui, |ui| TopBar::show(ui, self, frame));
         }
 
-        if self.ui.active_tab == AppTab::Develop {
+        if self.ui.active_tab == AppTab::Develop && !overlay_develop {
             match layout {
                 ScreenLayout::Horizontal => {
                     #[cfg(not(target_os = "android"))]
@@ -321,27 +325,15 @@ impl eframe::App for CalibRawApp {
                             });
                     }
                 }
-                ScreenLayout::Vertical => {
-                    egui::Panel::bottom("develop_sidebar_bottom")
-                        .resizable(true)
-                        .min_size(ScreenLayout::MIN_VERTICAL_SIDEBAR_HEIGHT)
-                        .default_size(sidebar_size)
-                        .frame(crate::ui::theme::panel_frame(ui))
-                        .show(ui, |ui| Sidebar::show(ui, self, layout, frame));
-
-                    if self.ui.sidebar_tab == SidebarTab::Masks {
-                        egui::Panel::bottom("develop_vertical_mask_strip")
-                            .resizable(false)
-                            .exact_size(Sidebar::VERTICAL_MASK_STRIP_HEIGHT)
-                            .frame(crate::ui::theme::panel_frame(ui))
-                            .show(ui, |ui| Sidebar::show_vertical_mask_strip(ui, self, frame));
-                    }
-                }
+                ScreenLayout::Vertical => {} // Controls are drawn over the portrait canvas.
             }
         }
 
         #[cfg(not(target_os = "android"))]
-        if self.ui.active_tab == AppTab::Develop && self.develop_ui.filmstrip_open {
+        if self.ui.active_tab == AppTab::Develop
+            && !overlay_develop
+            && self.develop_ui.filmstrip_open
+        {
             egui::Panel::bottom("filmstrip")
                 .resizable(false)
                 .exact_size(crate::ui::develop::FILMSTRIP_HEIGHT)
@@ -391,6 +383,9 @@ impl eframe::App for CalibRawApp {
         };
         let _central = central_panel.show(ui, |ui| match self.ui.active_tab {
             AppTab::Library => Library::show(ui, self, frame),
+            AppTab::Develop if overlay_develop => {
+                crate::ui::develop_viewport::show(ui, self, frame)
+            }
             AppTab::Develop => {
                 #[cfg(not(target_os = "android"))]
                 Develop::show_preview(ui, self, frame);
@@ -421,10 +416,10 @@ impl eframe::App for CalibRawApp {
         self.advance_remove_worker(frame);
         self.apply_pending_lens_correction(frame);
         self.apply_pending_preview_quality(frame);
+        self.advance_preview_detail(frame);
         self.sync_original_preview(frame);
         if !self.preview.original_requested {
             self.advance_navigation_preview(frame);
-            self.advance_preview_detail(frame);
             self.advance_processing(frame);
         }
         self.refresh_status();
@@ -496,7 +491,7 @@ impl eframe::App for CalibRawApp {
 pub(super) fn show_android_foreground_task_blocker(ctx: &egui::Context) {
     let content_rect = ctx.content_rect();
     egui::Area::new(egui::Id::new("android-foreground-task-input-blocker"))
-        .order(egui::Order::Middle)
+        .order(egui::Order::Foreground)
         .fixed_pos(content_rect.min)
         .movable(false)
         .interactable(true)

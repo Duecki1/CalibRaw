@@ -2,16 +2,37 @@ use super::*;
 
 impl PreviewState {
     pub(in crate::app) fn detail_is_current(&self) -> bool {
-        self.detail
-            .as_ref()
-            .is_some_and(|detail| detail.revision == self.revision)
+        self.detail.as_ref().is_some_and(|detail| {
+            detail.revision == self.revision
+                && !detail.needs_native_refinement(
+                    self.visible_uv,
+                    self.source_viewport_pixels(),
+                    self.quality,
+                )
+                && detail_covers_view(
+                    detail.uv_rect,
+                    detail.texture_uv_rect,
+                    [detail.pipeline.width, detail.pipeline.height],
+                    detail.source_size,
+                    self.visible_uv,
+                    self.source_viewport_pixels(),
+                    self.quality,
+                )
+        })
+    }
+
+    pub(in crate::app) fn source_viewport_pixels(&self) -> [u32; 2] {
+        if self.source_axes_swapped {
+            [self.viewport_pixels[1], self.viewport_pixels[0]]
+        } else {
+            self.viewport_pixels
+        }
     }
 
     pub(crate) fn processing_pending(&self) -> bool {
         self.detail_pending_stage.is_some()
             || self.navigation_pending_stage.is_some()
-            || (self.pending_stage.is_some()
-                && (self.zoom <= DETAIL_ZOOM_START || !self.detail_is_current()))
+            || self.pending_stage.is_some()
     }
 
     pub(crate) fn original_visible(&self) -> bool {
@@ -21,22 +42,11 @@ impl PreviewState {
 
 impl CalibRawApp {
     pub(crate) fn note_preview_motion(&mut self) {
-        let edit_was_pending = self.preview.detail_pending_stage.is_some();
-        let rendered_content_was_current = self.preview.original_rendered_state
-            == Some((self.preview.original_requested, self.preview.revision));
-        self.preview.revision = self.preview.revision.wrapping_add(1);
-        if rendered_content_was_current {
-            self.preview.original_rendered_state =
-                Some((self.preview.original_requested, self.preview.revision));
-        }
-        self.preview.detail_urgent = edit_was_pending;
+        // Navigation changes the requested region, not the developed pixels.
+        // Keep the last sharp crop visible while its replacement is prepared.
         self.preview.motion_at = Some(Instant::now());
-        if edit_was_pending {
-            self.egui_ctx.request_repaint();
-        } else {
-            self.egui_ctx
-                .request_repaint_after(zoom_detail_idle_delay());
-        }
+        self.egui_ctx
+            .request_repaint_after(zoom_detail_idle_delay());
     }
 
     pub(crate) fn queue_preview_processing(&mut self, stage: ProcessingStage) {

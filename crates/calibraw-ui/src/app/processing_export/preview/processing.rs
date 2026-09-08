@@ -148,12 +148,14 @@ impl CalibRawApp {
 
         if stage == ProcessingStage::Tone {
             if let Some(full_frame) = full_frame_tone_pipeline {
-                detail.pipeline.dispatch_tone_guide_with_inherited_statistics(
-                    &render_state.queue,
-                    &render_state.device,
-                    &params,
-                    full_frame,
-                );
+                detail
+                    .pipeline
+                    .dispatch_tone_guide_with_inherited_statistics(
+                        &render_state.queue,
+                        &render_state.device,
+                        &params,
+                        full_frame,
+                    );
             } else {
                 detail.pipeline.dispatch_stage(
                     &render_state.queue,
@@ -210,9 +212,7 @@ impl CalibRawApp {
     pub(in crate::app) fn advance_processing(&mut self, frame: &eframe::Frame) {
         if self.preview.zoom > DETAIL_ZOOM_START {
             self.advance_zoomed_processing(frame);
-            if self.preview.detail_is_current() {
-                return;
-            }
+            // Refresh the fitted fallback too: panning can expose any part of it.
         }
 
         let Some(stage) = self.preview.pending_stage else {
@@ -283,6 +283,23 @@ impl CalibRawApp {
             self.ui.notice = Some(format!("Could not apply Remove to preview: {error:#}"));
             self.preview.pending_stage = None;
             return;
+        }
+        if stage == ProcessingStage::Tone
+            && self
+                .preview
+                .detail
+                .as_ref()
+                .is_some_and(|detail| detail.revision == self.preview.revision)
+        {
+            // Once full-frame statistics are ready, replace the temporary
+            // navigation statistics in the crop without repeating RAW processing.
+            self.preview.detail_pending_stage = Some(
+                self.preview
+                    .detail_pending_stage
+                    .map_or(ProcessingStage::Tone, |pending| {
+                        pending.min(ProcessingStage::Tone)
+                    }),
+            );
         }
         self.preview.pending_stage = match stage {
             ProcessingStage::Raw => Some(ProcessingStage::Tone),

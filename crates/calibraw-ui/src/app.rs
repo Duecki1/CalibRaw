@@ -282,6 +282,7 @@ pub(crate) struct PreviewDetail {
     mask_source_region: [u32; 4],
     virtual_origin: [i32; 2],
     virtual_full_size: [u32; 2],
+    full_source_size: [u32; 2],
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -950,6 +951,7 @@ pub(crate) struct PreviewState {
     pub(crate) center: [f32; 2],
     pub(crate) visible_uv: PreviewUvRect,
     pub(crate) viewport_pixels: [u32; 2],
+    pub(crate) source_axes_swapped: bool,
     pub(crate) motion_at: Option<Instant>,
     pub(crate) touch_navigation_active: bool,
     pub(crate) revision: u64,
@@ -1332,6 +1334,8 @@ impl CalibRawApp {
 }
 
 mod eframe_impl;
+#[cfg(all(test, not(target_os = "android")))]
+mod preview_tests;
 mod foreground;
 mod inpainting;
 mod library_adjustments;
