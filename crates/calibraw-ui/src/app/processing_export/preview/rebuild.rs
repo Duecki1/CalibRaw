@@ -57,9 +57,11 @@ impl CalibRawApp {
             * source_to_display
             * f64::from(self.preview.quality.pixel_scale()))
         .ceil() as u32;
-        fallback
-            .max(requested.saturating_add(6))
-            .min(full_raw.width.max(full_raw.height))
+        PreviewQuality::bounded_source_edge(
+            full_raw.width,
+            full_raw.height,
+            fallback.max(requested.saturating_add(6)),
+        )
     }
 
     pub(crate) fn preview_source_region_changed(&mut self) {
