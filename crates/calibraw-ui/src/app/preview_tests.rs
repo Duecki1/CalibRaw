@@ -150,6 +150,77 @@ fn portrait_gpu_layout_and_input() {
         );
     }
 
+    // Real pointer and touch releases must reset zoom on brush canvases too.
+    let mut time = 10.0;
+    app.inpaint.tool = InpaintTool::Clone;
+    for tab in [
+        SidebarTab::Adjustments,
+        SidebarTab::Masks,
+        SidebarTab::Inpainting,
+        SidebarTab::Crop,
+    ] {
+        for touch in [false, true] {
+            for zoom in [0.7, 2.0] {
+                app.ui.sidebar_tab = tab;
+                app.preview.zoom = zoom;
+                app.preview.center = [0.5; 2];
+                let point = egui::pos2(200.0, 200.0);
+                for pressed in [
+                    Some(false),
+                    None,
+                    None,
+                    Some(true),
+                    Some(false),
+                    Some(true),
+                    Some(false),
+                ] {
+                    let mut events = vec![egui::Event::PointerMoved(point)];
+                    if let Some(pressed) = pressed {
+                        events.push(egui::Event::PointerButton {
+                            pos: point,
+                            button: egui::PointerButton::Primary,
+                            pressed,
+                            modifiers: egui::Modifiers::NONE,
+                        });
+                        if touch {
+                            events.push(egui::Event::Touch {
+                                device_id: egui::TouchDeviceId(1),
+                                id: egui::TouchId(1),
+                                phase: if pressed {
+                                    egui::TouchPhase::Start
+                                } else {
+                                    egui::TouchPhase::End
+                                },
+                                pos: point,
+                                force: None,
+                            });
+                        }
+                    }
+                    time += 0.05;
+                    let _ = context.run_ui(
+                        egui::RawInput {
+                            screen_rect: Some(screen),
+                            time: Some(time),
+                            events,
+                            ..Default::default()
+                        },
+                        |ui| {
+                            egui::CentralPanel::default().show(ui, |ui| {
+                                crate::ui::preview::Preview::show(ui, &mut app, &frame);
+                            });
+                        },
+                    );
+                }
+                assert_eq!(
+                    app.preview.zoom, 1.0,
+                    "tab={tab:?}, touch={touch}, zoom={zoom}"
+                );
+                assert_eq!(app.preview.center, [0.5; 2]);
+                time += 1.0;
+            }
+        }
+    }
+
     // Zooming out and immediately back must not let the late, coarser worker
     // result replace a native crop that is sufficient again.
     let source = Arc::clone(app.develop.loaded_raw.as_ref().unwrap());
@@ -157,7 +228,9 @@ fn portrait_gpu_layout_and_input() {
         min: [0.0; 2],
         max: [1.0; 2],
     };
+    let processing_halo = app.preview_detail_halo();
     app.preview.detail = Some(PreviewDetail {
+        processing_halo,
         pipeline: app.preview.gpu_pipeline.take().unwrap(),
         uv_rect: full_uv,
         texture_uv_rect: full_uv,
@@ -176,11 +249,12 @@ fn portrait_gpu_layout_and_input() {
         max: [0.6; 2],
     };
     app.preview.motion_at = None;
-    assert!(app.preview.detail_is_current());
+    assert!(app.preview_detail_is_current());
     let (sender, receiver) = std::sync::mpsc::channel();
     sender
         .send(PreviewDetailRebuildEvent::Finished(Ok(
             PreparedPreviewDetail {
+                processing_halo,
                 raw: Arc::new(build_proxy(&source, ProxySpec { max_edge: 300 })),
                 source_raw: source,
                 revision: app.preview.revision,

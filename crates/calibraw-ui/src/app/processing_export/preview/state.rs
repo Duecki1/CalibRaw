@@ -1,26 +1,6 @@
 use super::*;
 
 impl PreviewState {
-    pub(in crate::app) fn detail_is_current(&self) -> bool {
-        self.detail.as_ref().is_some_and(|detail| {
-            detail.revision == self.revision
-                && !detail.needs_native_refinement(
-                    self.visible_uv,
-                    self.source_viewport_pixels(),
-                    self.quality,
-                )
-                && detail_covers_view(
-                    detail.uv_rect,
-                    detail.texture_uv_rect,
-                    [detail.pipeline.width, detail.pipeline.height],
-                    detail.source_size,
-                    self.visible_uv,
-                    self.source_viewport_pixels(),
-                    self.quality,
-                )
-        })
-    }
-
     pub(in crate::app) fn source_viewport_pixels(&self) -> [u32; 2] {
         if self.source_axes_swapped {
             [self.viewport_pixels[1], self.viewport_pixels[0]]
@@ -41,6 +21,44 @@ impl PreviewState {
 }
 
 impl CalibRawApp {
+    pub(in crate::app) fn preview_detail_halo(&self) -> u32 {
+        if self.preview.original_requested {
+            crate::pipeline::required_export_tile_halo(
+                &self.preview.original_exposure,
+                &MaskStack::default(),
+            )
+        } else {
+            crate::pipeline::required_export_tile_halo(
+                &self.develop.target_exposure,
+                &self.masks.stack,
+            )
+        }
+    }
+
+    pub(in crate::app) fn preview_detail_is_current(&self) -> bool {
+        self.preview.detail.as_ref().is_some_and(|detail| {
+            let halo = self.preview_detail_halo();
+            let requested = PreviewDetailPlan::new(
+                detail.full_source_size,
+                detail.raw.cfa_kind,
+                self.preview.visible_uv,
+                self.preview.source_viewport_pixels(),
+                self.preview.quality,
+                halo,
+            );
+            detail.revision == self.preview.revision
+                && detail.processing_halo >= halo
+                && !detail.needs_native_refinement(&requested)
+                && detail_covers_view(
+                    detail.uv_rect,
+                    [detail.pipeline.width, detail.pipeline.height],
+                    detail.source_size,
+                    self.preview.visible_uv,
+                    &requested,
+                )
+        })
+    }
+
     pub(crate) fn note_preview_motion(&mut self) {
         // Navigation changes the requested region, not the developed pixels.
         // Keep the last sharp crop visible while its replacement is prepared.

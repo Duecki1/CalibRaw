@@ -7,7 +7,12 @@ crop stays on screen while a single background worker prepares the latest
 view. Crops include an 8% navigation border in addition to processing support;
 only the region inside the processing halo is reused for presentation.
 Coverage, physical pixel density, quality, and eligibility for native sensor
-processing determine whether a cached crop is sufficient. Resizing, rotating,
+processing determine whether a cached crop is sufficient. Cache validation
+compares its source sampling density with the newly planned crop, so a texture
+at the working-edge cap cannot remain frozen through subsequent zoom steps.
+Processing support is calculated from the active adjustments and mask effects;
+its border has a separate pixel allowance so it does not reduce visible image
+resolution during the first zoom steps. Resizing, rotating,
 changing DPI, and changing geometry all reevaluate that decision. A missing
 detail crop is rebuilt even when there is no remaining navigation timer.
 
@@ -15,6 +20,13 @@ The fitted fallback also finishes pending edits while zoomed in, so newly
 exposed areas cannot retain old adjustments. Obsolete offscreen worker results
 are discarded before GPU upload. GPU programs and compatible crop allocations
 are reused, and a failed upload backs off before retrying.
+
+Android sizes fitted proxies, detail crops, and native refinements against the
+GPU resource plan before allocation. Each graph uses at most half of the
+384 MiB process budget, including mask capacity and the safety margin, so the
+fitted image and detail crop can coexist. Max quality requests are limited to
+the resolution that fits this budget. An incompatible old detail graph is
+released once its replacement is ready to upload.
 
 The fitted, navigation, and wide zoom views use `build_region_proxy`. For a
 sensor RAW this is an interactive approximation: samples with the same CFA
@@ -50,8 +62,11 @@ linear light before output encoding.
 ## Viewport behavior
 
 Wheel/trackpad zoom and two-finger pan/zoom keep the image point under the
-gesture anchor. Zoom-out stops at fit. Double-click/tap toggles fit and native
-100% sampling, accounting for display density. A remaining finger after a
+gesture anchor. Zoom-out extends to 70% of the fitted size to leave room for
+mask handles outside the image. Double-click/tap returns to fit from a smaller
+or larger view, and switches from fit to native 100% sampling, accounting for
+display density. Reset also works in the canvas margins and on mask/Remove
+canvases. A remaining finger after a
 pinch cannot accidentally start painting or panning.
 
 Portrait Develop uses the complete safe-area width with a width-fitted image.

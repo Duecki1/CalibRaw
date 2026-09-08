@@ -52,7 +52,7 @@ fn pinch_translation_and_zoom_preserve_the_gesture_anchor() {
 }
 
 #[test]
-fn zoom_out_stops_at_fit_and_invalid_gestures_do_not_corrupt_the_view() {
+fn zoom_out_preserves_mask_workspace_and_invalid_gestures_do_not_corrupt_the_view() {
     let viewport = Rect::from_min_size(Pos2::ZERO, egui::vec2(800.0, 600.0));
     for factor in [f32::NAN, f32::INFINITY, -1.0, 0.0] {
         let mut zoom = 1.0;
@@ -81,7 +81,10 @@ fn zoom_out_stops_at_fit_and_invalid_gestures_do_not_corrupt_the_view() {
         viewport.center(),
         0.1,
     );
-    assert_eq!((zoom, center), (1.0, [0.5, 0.5]));
+    assert_eq!((zoom, center), (0.70, [0.5, 0.5]));
+    let image = zoomed_image_rect(viewport, viewport.size(), zoom, center);
+    assert!(image.left() > viewport.left() && image.right() < viewport.right());
+    assert!(image.top() > viewport.top() && image.bottom() < viewport.bottom());
 }
 
 #[test]

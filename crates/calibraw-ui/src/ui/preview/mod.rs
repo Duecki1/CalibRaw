@@ -11,7 +11,7 @@ use crate::pipeline::{
 use crate::ui::mask_component_color;
 use eframe::egui::{self, Color32, Mesh, Pos2, Rect, Sense, Shape, Stroke, Ui};
 
-const MIN_PREVIEW_ZOOM: f32 = 1.0;
+const MIN_PREVIEW_ZOOM: f32 = 0.70;
 const MAX_PREVIEW_ZOOM: f32 = 32.0;
 
 fn physical_pixels_per_point(ctx: &egui::Context) -> f32 {
@@ -193,16 +193,8 @@ impl Preview {
         );
         let mut image_rect =
             zoomed_image_rect(outer_rect, base_size, app.preview.zoom, app.preview.center);
-        let visible_image_rect = outer_rect.intersect(image_rect);
-        let mut interaction_rect =
-            if matches!(app.ui.sidebar_tab, SidebarTab::Masks | SidebarTab::Crop) {
-                outer_rect
-            } else {
-                visible_image_rect
-            };
-        if interaction_rect.width() <= 0.0 || interaction_rect.height() <= 0.0 {
-            interaction_rect = outer_rect;
-        }
+        // Navigation also works in the margins left for mask handles.
+        let interaction_rect = outer_rect;
         let white_balance_canvas = white_balance_picker_owns_canvas(
             app.ui.sidebar_tab,
             app.develop_ui.white_balance_picker_active,
@@ -222,7 +214,7 @@ impl Preview {
             }
             _ => ui.id().with("develop-preview-interaction"),
         };
-        let interaction_sense = if brush_canvas {
+        let interaction_sense = if white_balance_canvas {
             Sense::drag()
         } else {
             Sense::click_and_drag()
@@ -320,7 +312,12 @@ impl Preview {
 
         let fit_gesture = !white_balance_canvas && !touch_navigation && response.double_clicked();
         if fit_gesture {
-            if app.preview.zoom > 1.0005 {
+            app.cancel_mask_touch_gesture();
+            app.inpaint.active_points.clear();
+            app.inpaint.last_brush_uv = None;
+            app.develop_ui.crop_drag = None;
+            app.develop_ui.straighten_drag = None;
+            if (app.preview.zoom - 1.0).abs() > 0.0005 {
                 app.preview.zoom = 1.0;
                 app.preview.center = [0.5, 0.5];
             } else {

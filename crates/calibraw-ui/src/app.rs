@@ -13,7 +13,7 @@ use crate::pipeline::{
     MaskKind, MaskRgbImage, MaskStack, ProcessingQuality, ProcessingStage, ProxySpec,
     RawGpuPipeline, RawGpuProgramTemplate, RemoveBrushPoint, RemoveBrushStroke, RemoveEditState,
     RemoveSceneContext, RetouchAlignment, RetouchStroke, RetouchTool, SubjectRefinement, TileSpec,
-    TiledExportJob, EXPORT_TILE_HALO, MAX_LOCAL_MASKS,
+    TiledExportJob, MAX_LOCAL_MASKS,
 };
 use crate::remove::{spawn_remove, spawn_retouch, RemoveEvent, RemoveRequest, RetouchRequest};
 use crate::sidecar::{
@@ -154,6 +154,14 @@ pub(crate) enum PreviewQuality {
 }
 
 impl PreviewQuality {
+    pub(crate) fn bounded_source_edge(width: u32, height: u32, requested: u32) -> u32 {
+        if cfg!(target_os = "android") {
+            RawGpuPipeline::bounded_mobile_preview_edge(width, height, requested)
+        } else {
+            requested.min(width.max(height))
+        }
+    }
+
     pub(crate) const fn pixel_scale(self) -> f32 {
         match self {
             Self::Low => 0.75,
@@ -212,7 +220,11 @@ impl PreviewQuality {
             .ceil()
             .min(f64::from(u32::MAX - CFA_PHASE_GUARD)) as u32
             + CFA_PHASE_GUARD;
-        self.proxy_edge().max(requested).min(source_edge)
+        Self::bounded_source_edge(
+            source_width,
+            source_height,
+            self.proxy_edge().max(requested),
+        )
     }
 
     pub(crate) fn detail_edge_for_viewport(self, viewport_pixels: [u32; 2]) -> u32 {
@@ -283,6 +295,7 @@ pub(crate) struct PreviewDetail {
     virtual_origin: [i32; 2],
     virtual_full_size: [u32; 2],
     full_source_size: [u32; 2],
+    processing_halo: u32,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -518,6 +531,7 @@ pub(crate) struct PreparedPreviewDetail {
     source_origin: [u32; 2],
     source_size: [u32; 2],
     raw: Arc<LoadedRaw>,
+    processing_halo: u32,
 }
 
 pub(crate) enum PreviewDetailRebuildEvent {
@@ -1334,13 +1348,13 @@ impl CalibRawApp {
 }
 
 mod eframe_impl;
-#[cfg(all(test, not(target_os = "android")))]
-mod preview_tests;
 mod foreground;
 mod inpainting;
 mod library_adjustments;
 mod lifecycle;
 mod masks_ai;
+#[cfg(all(test, not(target_os = "android")))]
+mod preview_tests;
 mod processing_export;
 mod sidecar_persistence;
 

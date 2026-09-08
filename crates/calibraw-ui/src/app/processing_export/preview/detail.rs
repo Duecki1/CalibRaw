@@ -24,7 +24,7 @@ impl CalibRawApp {
         {
             return;
         }
-        if self.preview.detail_is_current() {
+        if self.preview_detail_is_current() {
             return;
         }
 
@@ -47,6 +47,7 @@ impl CalibRawApp {
             visible: self.preview.visible_uv,
             viewport_pixels: self.preview.source_viewport_pixels(),
             quality: self.preview.quality,
+            processing_halo: self.preview_detail_halo(),
             exposure: if self.preview.original_requested {
                 self.preview.original_exposure
             } else {
@@ -127,6 +128,7 @@ impl CalibRawApp {
             || self.ui.active_tab != AppTab::Develop
             || !source_is_current
             || prepared.revision != self.preview.revision
+            || prepared.processing_halo < self.preview_detail_halo()
             || prepared.quality != self.preview.quality
             || self.preview.quality_dirty
         {
@@ -138,7 +140,7 @@ impl CalibRawApp {
         }
         // The user may have returned to the already-sharp cached view while
         // this worker was running. Never replace it with a coarser late result.
-        if self.preview.detail_is_current() {
+        if self.preview_detail_is_current() {
             return;
         }
         // Coalesce navigation while the one preparation worker is running.
@@ -192,6 +194,7 @@ impl CalibRawApp {
             source_origin,
             source_size,
             raw: detail_raw,
+            processing_halo,
             ..
         } = prepared;
         let [x0, y0] = source_origin;
@@ -326,6 +329,7 @@ impl CalibRawApp {
             detail.raw = detail_raw;
             detail.source_origin = source_origin;
             detail.source_size = source_size;
+            detail.processing_halo = processing_halo;
             detail.full_source_size = [full_raw.width, full_raw.height];
             detail.mask_source_region = mask_region;
             detail.virtual_origin = [virtual_origin_x, virtual_origin_y];
@@ -335,6 +339,15 @@ impl CalibRawApp {
             return true;
         }
 
+        // On mobile the fitted graph and one detail graph share the budget.
+        // Release an incompatible cached graph only once its replacement is
+        // ready to upload, keeping the fitted image available on failure.
+        #[cfg(target_os = "android")]
+        if let Some(old) = self.preview.detail.take() {
+            if let Some(id) = old.pipeline.egui_texture_id {
+                render_state.renderer.write().free_texture(&id);
+            }
+        }
         let Some(program_template) = self.preview.gpu_pipeline.as_ref() else {
             return false;
         };
@@ -419,6 +432,7 @@ impl CalibRawApp {
             texture_uv_rect,
             revision,
             raw: detail_raw,
+            processing_halo,
             source_origin,
             source_size,
             full_source_size: [full_raw.width, full_raw.height],
@@ -433,42 +447,18 @@ impl CalibRawApp {
 }
 
 impl PreviewDetail {
-    pub(super) fn needs_native_refinement(
-        &self,
-        visible: PreviewUvRect,
-        viewport: [u32; 2],
-        quality: PreviewQuality,
-    ) -> bool {
+    pub(super) fn needs_native_refinement(&self, requested: &PreviewDetailPlan) -> bool {
         if self.raw.is_pre_demosaiced_raster()
             || [self.raw.width, self.raw.height] == self.source_size
         {
             return false;
         }
-        let cfa_period = match self.raw.cfa_kind {
-            crate::pipeline::CfaKind::Bayer => 2,
-            crate::pipeline::CfaKind::XTrans => 6,
-        };
-        let crop_size = [0, 1].map(|axis| {
-            let (start, end) = aligned_detail_axis(
-                visible.min[axis],
-                visible.max[axis],
-                self.full_source_size[axis],
-                cfa_period,
-                viewport[axis],
-                quality.detail_pixel_scale(),
-            );
-            end - start
-        });
-        let edge = requested_detail_edge(
-            quality,
-            viewport,
-            visible,
-            crop_size[0],
-            crop_size[1],
-            self.full_source_size[0],
-            self.full_source_size[1],
-        );
-        settled_detail_uses_native_source(true, crop_size[0], crop_size[1], edge)
+        settled_detail_uses_native_source(
+            true,
+            requested.size[0],
+            requested.size[1],
+            requested.edge,
+        )
     }
 }
 
@@ -488,6 +478,7 @@ struct PreviewDetailRequest {
     viewport_pixels: [u32; 2],
     quality: PreviewQuality,
     exposure: ExposureParams,
+    processing_halo: u32,
 }
 
 fn prepare_preview_detail(request: PreviewDetailRequest) -> anyhow::Result<PreparedPreviewDetail> {
@@ -498,28 +489,20 @@ fn prepare_preview_detail(request: PreviewDetailRequest) -> anyhow::Result<Prepa
         viewport_pixels,
         quality,
         exposure,
+        processing_halo,
     } = request;
-    let cfa_period = match source_raw.cfa_kind {
-        crate::pipeline::CfaKind::Bayer => 2,
-        crate::pipeline::CfaKind::XTrans => 6,
-    };
-    let (x0, x1) = aligned_detail_axis(
-        visible.min[0],
-        visible.max[0],
-        source_raw.width,
-        cfa_period,
-        viewport_pixels[0],
-        quality.detail_pixel_scale(),
+    let plan = PreviewDetailPlan::new(
+        [source_raw.width, source_raw.height],
+        source_raw.cfa_kind,
+        visible,
+        viewport_pixels,
+        quality,
+        processing_halo,
     );
-    let (y0, y1) = aligned_detail_axis(
-        visible.min[1],
-        visible.max[1],
-        source_raw.height,
-        cfa_period,
-        viewport_pixels[1],
-        quality.detail_pixel_scale(),
-    );
-    let source_size = [x1 - x0, y1 - y0];
+    let [x0, y0] = plan.origin;
+    let [crop_width, crop_height] = plan.size;
+    let [x1, y1] = [x0 + crop_width, y0 + crop_height];
+    let source_size = plan.size;
     let crop_uv = PreviewUvRect {
         min: [
             x0 as f32 / source_raw.width.max(1) as f32,
@@ -530,15 +513,7 @@ fn prepare_preview_detail(request: PreviewDetailRequest) -> anyhow::Result<Prepa
             y1 as f32 / source_raw.height.max(1) as f32,
         ],
     };
-    let requested_edge = requested_detail_edge(
-        quality,
-        viewport_pixels,
-        visible,
-        source_size[0],
-        source_size[1],
-        source_raw.width,
-        source_raw.height,
-    );
+    let requested_edge = plan.edge;
     if detail_uses_opposed_chroma(&source_raw, &exposure) {
         source_raw.inpaint_opposed_chroma_for_exposure(&exposure);
     }
@@ -569,9 +544,10 @@ fn prepare_preview_detail(request: PreviewDetailRequest) -> anyhow::Result<Prepa
             )
         },
     );
-    let visible = detail_display_uv(visible, crop_uv, [raw.width, raw.height]);
+    let visible = detail_display_uv(visible, crop_uv, [raw.width, raw.height], processing_halo);
     Ok(PreparedPreviewDetail {
         source_raw,
+        processing_halo,
         revision,
         quality,
         visible,
@@ -603,6 +579,11 @@ fn settled_detail_uses_native_source(
     };
     let native_edge = requested_edge.saturating_mul(2).min(platform_limit);
     region_width.max(region_height) <= native_edge
+        && PreviewQuality::bounded_source_edge(
+            region_width,
+            region_height,
+            region_width.max(region_height),
+        ) == region_width.max(region_height)
 }
 
 #[cfg(test)]
