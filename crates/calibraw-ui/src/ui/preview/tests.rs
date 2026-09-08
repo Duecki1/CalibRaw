@@ -81,7 +81,7 @@ fn zoom_out_preserves_mask_workspace_and_invalid_gestures_do_not_corrupt_the_vie
         viewport.center(),
         0.1,
     );
-    assert_eq!((zoom, center), (0.70, [0.5, 0.5]));
+    assert_eq!((zoom, center), (MIN_PREVIEW_ZOOM, [0.5, 0.5]));
     let image = zoomed_image_rect(viewport, viewport.size(), zoom, center);
     assert!(image.left() > viewport.left() && image.right() < viewport.right());
     assert!(image.top() > viewport.top() && image.bottom() < viewport.bottom());

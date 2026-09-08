@@ -160,7 +160,14 @@ fn portrait_gpu_layout_and_input() {
         SidebarTab::Crop,
     ] {
         for touch in [false, true] {
-            for zoom in [0.7, 2.0] {
+            for zoom in [
+                if cfg!(target_os = "android") {
+                    0.25
+                } else {
+                    0.7
+                },
+                2.0,
+            ] {
                 app.ui.sidebar_tab = tab;
                 app.preview.zoom = zoom;
                 app.preview.center = [0.5; 2];
