@@ -1025,7 +1025,9 @@ fn encoded_review_is_available_with_decoded_edits() {
         flag: PhotoFlag::Rejected,
         rating: 3,
     };
-    let loaded = decode(&encode_with_review(sample_edits(), review).unwrap()).unwrap();
+    let encoded = encode_with_review(sample_edits(), review).unwrap();
+    assert_eq!(decode_photo_review(&encoded).unwrap(), review);
+    let loaded = decode(&encoded).unwrap();
     assert_eq!(loaded.review, review);
 }
 

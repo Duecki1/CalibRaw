@@ -1203,7 +1203,10 @@ pub fn reset_desktop_adjustments(raw_path: &Path) -> Result<bool, String> {
 }
 
 /// Read review metadata without decoding embedded masks or development state.
-pub fn load_photo_review(raw_path: &Path) -> Result<PhotoReview, SidecarError> {
+pub fn decode_photo_review(bytes: &[u8]) -> Result<PhotoReview, SidecarError> {
+    if bytes.len() as u64 > MAX_SIDECAR_BYTES {
+        return Err(SidecarError::TooLarge(bytes.len() as u64));
+    }
     #[derive(Deserialize)]
     struct ReviewHeader {
         format: String,
@@ -1211,15 +1214,8 @@ pub fn load_photo_review(raw_path: &Path) -> Result<PhotoReview, SidecarError> {
         #[serde(default)]
         review: PhotoReview,
     }
-    let bytes = match read_bounded(&sidecar_path_for_raw(raw_path)) {
-        Ok(bytes) => bytes,
-        Err(SidecarError::Io(error)) if error.kind() == std::io::ErrorKind::NotFound => {
-            return Ok(PhotoReview::default())
-        }
-        Err(error) => return Err(error),
-    };
     let header: ReviewHeader =
-        serde_json::from_slice(&bytes).map_err(|error| SidecarError::Invalid(error.to_string()))?;
+        serde_json::from_slice(bytes).map_err(|error| SidecarError::Invalid(error.to_string()))?;
     if header.format != SIDECAR_FORMAT || header.schema_version != SIDECAR_SCHEMA_VERSION {
         return Err(SidecarError::Unsupported(
             "unsupported review sidecar".to_owned(),
@@ -1229,6 +1225,18 @@ pub fn load_photo_review(raw_path: &Path) -> Result<PhotoReview, SidecarError> {
         rating: header.review.rating.min(5),
         ..header.review
     })
+}
+
+/// Read review metadata without decoding embedded masks or development state.
+pub fn load_photo_review(raw_path: &Path) -> Result<PhotoReview, SidecarError> {
+    let bytes = match read_bounded(&sidecar_path_for_raw(raw_path)) {
+        Ok(bytes) => bytes,
+        Err(SidecarError::Io(error)) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(PhotoReview::default())
+        }
+        Err(error) => return Err(error),
+    };
+    decode_photo_review(&bytes)
 }
 
 /// Inspect preview geometry and edit presence without decoding embedded image assets.

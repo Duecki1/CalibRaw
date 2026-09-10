@@ -1723,15 +1723,34 @@ pub fn load_android(
     result.map(Some)
 }
 
+pub fn load_android_review(
+    app: &AndroidApp,
+    raw_uri: &str,
+    display_name: &str,
+) -> Result<Option<crate::sidecar::PhotoReview>, crate::sidecar::SidecarError> {
+    let Some(path) = materialize_raw_sidecar(app, raw_uri, display_name)
+        .map_err(crate::sidecar::SidecarError::Platform)?
+    else {
+        return Ok(None);
+    };
+    let result = crate::sidecar::read_bounded(&path)
+        .and_then(|bytes| crate::sidecar::decode_photo_review(&bytes));
+    if let Err(error) = fs::remove_file(&path) {
+        log::warn!(
+            "could not remove Android sidecar cache {}: {error}",
+            path.display()
+        );
+    }
+    result.map(Some)
+}
+
 pub fn save_android(
     app: &AndroidApp,
     raw_uri: &str,
     display_name: &str,
     edits: crate::sidecar::EditState,
 ) -> Result<String, crate::sidecar::SidecarError> {
-    let review = load_android(app, raw_uri, display_name)?
-        .map(|loaded| loaded.review)
-        .unwrap_or_default();
+    let review = load_android_review(app, raw_uri, display_name)?.unwrap_or_default();
     save_android_with_review(app, raw_uri, display_name, edits, review)
 }
 

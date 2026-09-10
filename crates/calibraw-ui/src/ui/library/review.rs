@@ -85,8 +85,7 @@ pub(super) fn thumbnail_hover_overlay(
         .map(|change| LibraryAction::Review(vec![asset.clone()], change))
 }
 
-#[cfg(not(target_os = "android"))]
-fn paint_review_badge(ui: &Ui, rect: egui::Rect, review: PhotoReview) {
+pub(crate) fn paint_review_badge(ui: &Ui, rect: egui::Rect, review: PhotoReview) {
     let has_flag = review.flag != PhotoFlag::Unflagged;
     let count = usize::from(review.rating) + usize::from(has_flag);
     if count == 0 {
@@ -97,28 +96,52 @@ fn paint_review_badge(ui: &Ui, rect: egui::Rect, review: PhotoReview) {
     } else {
         0.0
     };
-    let width = count as f32 * 15.0 + 12.0 + gap;
+    let full_width = count as f32 * 15.0 + 12.0 + gap;
+    let compact_rating = review.rating > 0 && full_width + 16.0 > rect.width();
+    let width = if compact_rating {
+        12.0 + 31.0 + if has_flag { 21.0 } else { 0.0 }
+    } else {
+        full_width
+    };
+    let scale = (rect.width() / (width + 16.0)).clamp(0.0, 1.0);
+    let margin = 8.0 * scale;
     let badge = egui::Rect::from_min_size(
-        egui::pos2(rect.left() + 8.0, rect.bottom() - 30.0),
-        egui::vec2(width, 22.0),
+        egui::pos2(rect.left() + margin, rect.bottom() - margin - 22.0 * scale),
+        egui::vec2(width * scale, 22.0 * scale),
     );
     let painter = ui.painter_at(rect);
-    painter.rect_filled(badge, 6.0, Color32::from_black_alpha(150));
-    for index in 0..review.rating {
+    painter.rect_filled(badge, 6.0 * scale, Color32::from_black_alpha(150));
+    let painted_stars = if compact_rating { 1 } else { review.rating };
+    for index in 0..painted_stars {
         paint_star(
             &painter,
             egui::pos2(
-                badge.left() + 13.5 + f32::from(index) * 15.0,
+                badge.left() + (13.5 + f32::from(index) * 15.0) * scale,
                 badge.center().y,
             ),
-            11.0,
+            11.0 * scale,
             STAR_COLOR,
             true,
         );
     }
+    if compact_rating {
+        painter.text(
+            egui::pos2(badge.left() + 29.5 * scale, badge.center().y),
+            Align2::CENTER_CENTER,
+            review.rating.to_string(),
+            FontId::proportional(11.0 * scale),
+            Color32::WHITE,
+        );
+    }
     if has_flag {
-        let center = egui::pos2(badge.right() - 13.5, badge.center().y);
-        paint_flag(&painter, center, 12.0, flag_color(review.flag), true);
+        let center = egui::pos2(badge.right() - 13.5 * scale, badge.center().y);
+        paint_flag(
+            &painter,
+            center,
+            12.0 * scale,
+            flag_color(review.flag),
+            true,
+        );
     }
 }
 

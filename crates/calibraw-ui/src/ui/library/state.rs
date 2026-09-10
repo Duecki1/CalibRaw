@@ -820,6 +820,7 @@ impl LibraryState {
                             let LoadedLibraryThumbnail {
                                 thumbnail,
                                 resident_thumbnail,
+                                review,
                                 developed,
                                 developed_thumbnail_stale,
                                 developed_render_pending,
@@ -828,6 +829,10 @@ impl LibraryState {
                             let install_pixels =
                                 display_priority || self.entries[index].texture.is_some();
                             self.entries[index].resident_thumbnail = Some(resident_thumbnail);
+                            if let Some(review) = review {
+                                self.entries[index].review = review;
+                                self.entries[index].asset.metadata.review = review;
+                            }
                             self.entries[index].texture_is_resident = false;
                             if install_pixels {
                                 let image = egui::ColorImage::from_rgba_unmultiplied(

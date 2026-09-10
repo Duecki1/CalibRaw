@@ -381,6 +381,7 @@ pub(super) fn loaded_library_thumbnail(
     LoadedLibraryThumbnail {
         thumbnail,
         resident_thumbnail,
+        review: None,
         developed,
         developed_thumbnail_stale: false,
         developed_render_pending: false,
@@ -791,12 +792,32 @@ pub(super) fn load_android_library_thumbnail(
     let bytes = asset.metadata.bytes;
     let modified_seconds = asset.metadata.modified_seconds;
     match crate::android::load_developed_thumbnail_cache(app, uri, display_name, THUMBNAIL_EDGE) {
-        Ok(Some(thumbnail)) => return Ok(loaded_library_thumbnail(thumbnail, true)),
+        Ok(Some(thumbnail)) => {
+            let mut loaded = loaded_library_thumbnail(thumbnail, true);
+            loaded.review = match crate::sidecar::load_android_review(app, uri, display_name) {
+                Ok(review) => review,
+                Err(error) => {
+                    log::warn!(
+                        "could not inspect Android review sidecar for {display_name}: {error}"
+                    );
+                    None
+                }
+            };
+            return Ok(loaded);
+        }
         Ok(None) => {}
         Err(error) => log::warn!(
             "could not use Android developed-thumbnail cache for {display_name}: {error}"
         ),
     }
+    let sidecar = match crate::sidecar::load_android(app, uri, display_name) {
+        Ok(sidecar) => sidecar,
+        Err(error) => {
+            log::warn!("could not inspect Android edit sidecar for {display_name}: {error}");
+            None
+        }
+    };
+    let review = sidecar.as_ref().map(|sidecar| sidecar.review);
     let mut thumbnail = crate::android::load_library_thumbnail(
         app,
         uri,
@@ -805,24 +826,22 @@ pub(super) fn load_android_library_thumbnail(
         modified_seconds,
         THUMBNAIL_EDGE,
     )?;
-    let has_edits = match crate::sidecar::load_android(app, uri, display_name) {
-        Ok(Some(sidecar)) => {
+    let has_edits = match sidecar {
+        Some(sidecar) => {
             let has_edits = crate::sidecar::edit_state_has_adjustments(&sidecar.edits);
             thumbnail =
                 crate::pipeline::transform_thumbnail_geometry(&thumbnail, sidecar.edits.geometry);
             has_edits
         }
-        Ok(None) => false,
-        Err(error) => {
-            log::warn!("could not inspect Android edit sidecar for {display_name}: {error}");
-            false
-        }
+        None => false,
     };
-    if has_edits {
-        Ok(loaded_library_raw_preview_with_stale_edits(thumbnail))
+    let mut loaded = if has_edits {
+        loaded_library_raw_preview_with_stale_edits(thumbnail)
     } else {
-        Ok(loaded_library_thumbnail(thumbnail, false))
-    }
+        loaded_library_thumbnail(thumbnail, false)
+    };
+    loaded.review = review;
+    Ok(loaded)
 }
 
 pub(super) fn run_thumbnail_workers(

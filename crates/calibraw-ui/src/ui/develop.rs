@@ -594,6 +594,9 @@ fn filmstrip_thumbnail(
     }
 
     filmstrip_name_hover_overlay(ui, &response, rect, &item.asset.display_name);
+    if !response.hovered() {
+        crate::ui::library::paint_review_badge(ui, rect, item.asset.metadata.review);
+    }
 
     if item.developed_thumbnail_pending {
         let center = rect.right_top() + egui::vec2(-13.0, 13.0);
