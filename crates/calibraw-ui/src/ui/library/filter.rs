@@ -80,7 +80,6 @@ const SORT_GROUPS: &[(&str, [(LibrarySortOrder, &str); 2])] = &[
             (LibrarySortOrder::SmallestFirst, "Smallest first"),
         ],
     ),
-    #[cfg(not(target_os = "android"))]
     (
         "Rating",
         [
@@ -88,7 +87,6 @@ const SORT_GROUPS: &[(&str, [(LibrarySortOrder, &str); 2])] = &[
             (LibrarySortOrder::RatingLowestFirst, "Lowest first"),
         ],
     ),
-    #[cfg(not(target_os = "android"))]
     (
         "Flag",
         [
@@ -112,18 +110,12 @@ pub(super) fn show_sort_filter_options(
         .position(|(_, choices)| choices.iter().any(|(order, _)| order == sort))
         .unwrap_or(0);
     let previous = group;
-    theme::responsive_combo_box(
-        ui,
-        "library-sort-category",
-        SORT_GROUPS[group].0,
-        280.0,
-        SORT_GROUPS.len(),
-        |ui| {
-            for (index, (label, _)) in SORT_GROUPS.iter().enumerate() {
-                ui.selectable_value(&mut group, index, *label);
-            }
-        },
-    );
+    theme::dropdown_submenu(ui, SORT_GROUPS[group].0, |ui| {
+        ui.set_min_width(220.0);
+        for (index, (label, _)) in SORT_GROUPS.iter().enumerate() {
+            ui.selectable_value(&mut group, index, *label);
+        }
+    });
     if group != previous {
         *sort = SORT_GROUPS[group].1[0].0;
     }
@@ -211,18 +203,21 @@ pub(super) fn sort_filter_popup(
     width: f32,
 ) {
     let compact = compact_size.is_some();
-    let label = if compact {
-        format!(
-            "{} {}",
+    let label: egui::WidgetText = if compact {
+        egui::RichText::new(format!(
+            "{}{}",
             egui_phosphor::regular::SLIDERS_HORIZONTAL,
-            if filter.active() { "•" } else { "" }
-        )
+            if filter.active() { " •" } else { "" }
+        ))
+        .size(theme::CONTROL_HEIGHT * 0.55)
+        .into()
     } else {
         format!(
             "Sort & filter{} {}",
             if filter.active() { " •" } else { "" },
             egui_phosphor::regular::CARET_DOWN
         )
+        .into()
     };
     let response = theme::toolbar_button(ui, label, width).on_hover_text(format!(
         "{}{}",

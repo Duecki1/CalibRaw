@@ -704,6 +704,7 @@ impl LibraryState {
             }
         }
 
+        let mut review_sort_changed = false;
         for _ in 0..MAX_EVENTS_PER_FRAME {
             let received = self.event_receiver.as_ref().map(mpsc::Receiver::try_recv);
             let event = match received {
@@ -830,6 +831,14 @@ impl LibraryState {
                                 display_priority || self.entries[index].texture.is_some();
                             self.entries[index].resident_thumbnail = Some(resident_thumbnail);
                             if let Some(review) = review {
+                                review_sort_changed |= self.entries[index].review != review
+                                    && matches!(
+                                        self.sort_order,
+                                        LibrarySortOrder::RatingHighestFirst
+                                            | LibrarySortOrder::RatingLowestFirst
+                                            | LibrarySortOrder::FlagPickedFirst
+                                            | LibrarySortOrder::FlagRejectedFirst
+                                    );
                                 self.entries[index].review = review;
                                 self.entries[index].asset.metadata.review = review;
                             }
@@ -884,6 +893,9 @@ impl LibraryState {
                 }
                 _ => {}
             }
+        }
+        if review_sort_changed {
+            self.sort_entries();
         }
     }
 }
