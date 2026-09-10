@@ -172,8 +172,14 @@ impl TopBar {
     fn show_desktop(ui: &mut Ui, app: &mut CalibRawApp, _frame: &eframe::Frame) {
         theme::prepare_toolbar(ui);
         let compact = ui.available_width() < 620.0;
+        let compact_review = ui.available_width() < 760.0;
         let tab_width = if compact { 72.0 } else { 82.0 };
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if app.ui.active_tab == AppTab::Develop
+                && crate::ui::library::show_current_photo_review(ui, app, compact_review)
+            {
+                ui.separator();
+            }
             app.show_export_task_indicator(ui);
             Self::show_thumbnail_task_indicator(ui, app);
             ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
@@ -256,8 +262,6 @@ impl TopBar {
                 }
 
                 if app.ui.active_tab == AppTab::Develop {
-                    crate::ui::library::show_current_photo_review(ui, app);
-                    ui.separator();
                     if Self::history_icon_button(
                         ui,
                         app.can_undo_edit(),

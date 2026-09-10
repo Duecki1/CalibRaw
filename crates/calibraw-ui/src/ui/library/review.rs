@@ -136,13 +136,15 @@ fn review_editor(
 ) -> Option<ReviewChange> {
     let painter = ui.painter_at(bounds);
     // Gallery stars and flags sit directly on the full-photo hover scrim.
-    // Only the Develop toolbar uses a separate control frame.
+    // In the Develop toolbar, use the same surface treatment as the app's
+    // standard toolbar buttons so the review controls read as one compact group.
     if !overlay {
-        painter.rect_filled(bounds, theme::CARD_RADIUS, ui.visuals().extreme_bg_color);
+        let visuals = &ui.visuals().widgets.inactive;
+        painter.rect_filled(bounds, visuals.corner_radius, visuals.weak_bg_fill);
         painter.rect_stroke(
             bounds,
-            theme::CARD_RADIUS,
-            Stroke::new(1.0, ui.visuals().widgets.noninteractive.bg_stroke.color),
+            visuals.corner_radius,
+            visuals.bg_stroke,
             StrokeKind::Inside,
         );
     }
@@ -186,7 +188,7 @@ fn review_editor(
             );
         }
         let icon_size = (edge * 0.62).min(15.0);
-        let (value, tooltip) = if index < 5 {
+        let value = if index < 5 {
             paint_star(
                 &painter,
                 button.center(),
@@ -195,16 +197,15 @@ fn review_editor(
                     STAR_COLOR
                 } else if hovered_rating.is_some_and(|rating| rating > index as u8) {
                     STAR_PREVIEW_COLOR
-                } else {
+                } else if overlay {
                     MUTED
+                } else {
+                    ui.visuals().weak_text_color()
                 },
                 active,
             );
             let rating = index as u8 + 1;
-            (
-                ReviewChange::Rating(if review.rating == rating { 0 } else { rating }),
-                format!("{rating} stars · click again to clear"),
-            )
+            ReviewChange::Rating(if review.rating == rating { 0 } else { rating })
         } else {
             let flag = if index == 5 {
                 PhotoFlag::Picked
@@ -218,21 +219,13 @@ fn review_editor(
                 flag_color(flag),
                 active,
             );
-            (
-                ReviewChange::Flag(if review.flag == flag {
-                    PhotoFlag::Unflagged
-                } else {
-                    flag
-                }),
-                if index == 5 {
-                    "Pick · click again to unflag"
-                } else {
-                    "Reject · click again to unflag"
-                }
-                .to_owned(),
-            )
+            ReviewChange::Flag(if review.flag == flag {
+                PhotoFlag::Unflagged
+            } else {
+                flag
+            })
         };
-        if response.on_hover_text(tooltip).clicked() {
+        if response.clicked() {
             change = Some(value);
         }
     }
@@ -323,9 +316,9 @@ fn paint_flag(
     ));
 }
 
-pub(crate) fn show_current_photo_review(ui: &mut Ui, app: &mut CalibRawApp) {
+pub(crate) fn show_current_photo_review(ui: &mut Ui, app: &mut CalibRawApp, compact: bool) -> bool {
     let Some(path) = app.develop.current_path.clone() else {
-        return;
+        return false;
     };
     // A RAW opened directly may not have a gallery entry. Cache its metadata instead
     // of reading the sidecar on every toolbar frame.
@@ -349,7 +342,7 @@ pub(crate) fn show_current_photo_review(ui: &mut Ui, app: &mut CalibRawApp) {
     ui.ctx()
         .data_mut(|data| data.insert_temp(cache_id, asset.clone()));
     let mut change = None;
-    if ui.available_width() >= EDITOR_WIDTH + 176.0 {
+    if !compact && ui.available_width() >= EDITOR_WIDTH {
         let (rect, _) = ui.allocate_exact_size(
             egui::vec2(EDITOR_WIDTH, theme::CONTROL_HEIGHT),
             Sense::hover(),
@@ -359,12 +352,23 @@ pub(crate) fn show_current_photo_review(ui: &mut Ui, app: &mut CalibRawApp) {
         let (rect, response) =
             ui.allocate_exact_size(egui::vec2(92.0, theme::CONTROL_HEIGHT), Sense::click());
         let painter = ui.painter_at(rect);
-        painter.rect_filled(rect, theme::CARD_RADIUS, ui.visuals().extreme_bg_color);
+        let visuals = ui.style().interact(&response);
+        painter.rect_filled(rect, visuals.corner_radius, visuals.weak_bg_fill);
+        painter.rect_stroke(
+            rect,
+            visuals.corner_radius,
+            visuals.bg_stroke,
+            StrokeKind::Inside,
+        );
         paint_star(
             &painter,
             rect.left_center() + egui::vec2(14.0, 0.0),
             14.0,
-            STAR_COLOR,
+            if review.rating > 0 {
+                STAR_COLOR
+            } else {
+                ui.visuals().weak_text_color()
+            },
             review.rating > 0,
         );
         painter.text(
@@ -378,7 +382,11 @@ pub(crate) fn show_current_photo_review(ui: &mut Ui, app: &mut CalibRawApp) {
             &painter,
             rect.left_center() + egui::vec2(56.0, 0.0),
             14.0,
-            flag_color(review.flag),
+            if review.flag == PhotoFlag::Unflagged {
+                ui.visuals().weak_text_color()
+            } else {
+                flag_color(review.flag)
+            },
             review.flag != PhotoFlag::Unflagged,
         );
         painter.text(
@@ -398,7 +406,6 @@ pub(crate) fn show_current_photo_review(ui: &mut Ui, app: &mut CalibRawApp) {
                 ui.close();
             }
         });
-        response.on_hover_text("Rate or flag the open photo");
     }
     if let Some(change) = change {
         apply_review(app, vec![asset.clone()], change);
@@ -409,6 +416,7 @@ pub(crate) fn show_current_photo_review(ui: &mut Ui, app: &mut CalibRawApp) {
         ui.ctx()
             .data_mut(|data| data.insert_temp(cache_id, updated));
     }
+    true
 }
 
 pub(super) fn apply_review(app: &mut CalibRawApp, assets: Vec<LibraryAsset>, change: ReviewChange) {
