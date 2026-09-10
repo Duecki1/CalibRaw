@@ -1019,6 +1019,16 @@ fn relative_sidecar_parent_is_the_current_directory() {
     assert_eq!(parent, Path::new("."));
 }
 
+#[test]
+fn encoded_review_is_available_with_decoded_edits() {
+    let review = PhotoReview {
+        flag: PhotoFlag::Rejected,
+        rating: 3,
+    };
+    let loaded = decode(&encode_with_review(sample_edits(), review).unwrap()).unwrap();
+    assert_eq!(loaded.review, review);
+}
+
 #[cfg(not(target_os = "android"))]
 #[test]
 fn photo_review_survives_development_saves_and_reset() {

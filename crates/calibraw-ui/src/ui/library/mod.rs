@@ -33,13 +33,11 @@ mod export;
 mod filter;
 mod local;
 mod platform;
-#[cfg(not(target_os = "android"))]
 mod review;
 mod state;
 mod storage;
 mod thumbnails;
 mod view;
-#[cfg(not(target_os = "android"))]
 pub(crate) use review::show_current_photo_review;
 #[cfg(not(target_os = "android"))]
 use review::thumbnail_hover_overlay;

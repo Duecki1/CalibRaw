@@ -5,6 +5,7 @@ use crate::ui::theme;
 const STAR_COLOR: Color32 = Color32::from_rgb(234, 195, 112);
 const STAR_PREVIEW_COLOR: Color32 = Color32::from_rgb(255, 232, 183);
 const MUTED: Color32 = Color32::from_rgb(137, 145, 155);
+#[cfg(not(target_os = "android"))]
 const HOVER_ANIMATION_SECONDS: f32 = 0.18;
 const EDITOR_WIDTH: f32 = 196.0;
 
@@ -16,6 +17,7 @@ pub(crate) enum ReviewChange {
 
 /// One hover surface owns both photo details and review controls, including when
 /// the pointer moves from the image onto a star or flag.
+#[cfg(not(target_os = "android"))]
 pub(super) fn thumbnail_hover_overlay(
     ui: &mut Ui,
     rect: egui::Rect,
@@ -83,6 +85,7 @@ pub(super) fn thumbnail_hover_overlay(
         .map(|change| LibraryAction::Review(vec![asset.clone()], change))
 }
 
+#[cfg(not(target_os = "android"))]
 fn paint_review_badge(ui: &Ui, rect: egui::Rect, review: PhotoReview) {
     let has_flag = review.flag != PhotoFlag::Unflagged;
     let count = usize::from(review.rating) + usize::from(has_flag);
@@ -316,6 +319,73 @@ fn paint_flag(
     ));
 }
 
+fn compact_review_editor(
+    ui: &mut Ui,
+    asset_id: &LibraryAssetId,
+    review: PhotoReview,
+) -> Option<ReviewChange> {
+    let (rect, response) =
+        ui.allocate_exact_size(egui::vec2(92.0, theme::CONTROL_HEIGHT), Sense::click());
+    let painter = ui.painter_at(rect);
+    let visuals = ui.style().interact(&response);
+    painter.rect_filled(rect, visuals.corner_radius, visuals.weak_bg_fill);
+    painter.rect_stroke(
+        rect,
+        visuals.corner_radius,
+        visuals.bg_stroke,
+        StrokeKind::Inside,
+    );
+    paint_star(
+        &painter,
+        rect.left_center() + egui::vec2(14.0, 0.0),
+        14.0,
+        if review.rating > 0 {
+            STAR_COLOR
+        } else {
+            ui.visuals().weak_text_color()
+        },
+        review.rating > 0,
+    );
+    painter.text(
+        rect.left_center() + egui::vec2(31.0, 0.0),
+        Align2::CENTER_CENTER,
+        review.rating.to_string(),
+        FontId::proportional(12.0),
+        ui.visuals().text_color(),
+    );
+    paint_flag(
+        &painter,
+        rect.left_center() + egui::vec2(56.0, 0.0),
+        14.0,
+        if review.flag == PhotoFlag::Unflagged {
+            ui.visuals().weak_text_color()
+        } else {
+            flag_color(review.flag)
+        },
+        review.flag != PhotoFlag::Unflagged,
+    );
+    painter.text(
+        rect.right_center() - egui::vec2(13.0, 0.0),
+        Align2::CENTER_CENTER,
+        egui_phosphor::regular::CARET_DOWN,
+        FontId::proportional(12.0),
+        ui.visuals().weak_text_color(),
+    );
+    let mut change = None;
+    theme::dropdown_menu(&response, |ui| {
+        let (rect, _) = ui.allocate_exact_size(
+            egui::vec2(EDITOR_WIDTH, theme::CONTROL_HEIGHT),
+            Sense::hover(),
+        );
+        change = review_editor(ui, rect, asset_id, review, false);
+        if change.is_some() {
+            ui.close();
+        }
+    });
+    change
+}
+
+#[cfg(not(target_os = "android"))]
 pub(crate) fn show_current_photo_review(ui: &mut Ui, app: &mut CalibRawApp, compact: bool) -> bool {
     let Some(path) = app.develop.current_path.clone() else {
         return false;
@@ -341,77 +411,21 @@ pub(crate) fn show_current_photo_review(ui: &mut Ui, app: &mut CalibRawApp, comp
     let review = asset.metadata.review;
     ui.ctx()
         .data_mut(|data| data.insert_temp(cache_id, asset.clone()));
-    let mut change = None;
-    if !compact && ui.available_width() >= EDITOR_WIDTH {
+    let change = if !compact && ui.available_width() >= EDITOR_WIDTH {
         let (rect, _) = ui.allocate_exact_size(
             egui::vec2(EDITOR_WIDTH, theme::CONTROL_HEIGHT),
             Sense::hover(),
         );
-        change = review_editor(ui, rect, &asset.id, review, false);
+        review_editor(ui, rect, &asset.id, review, false)
     } else {
-        let (rect, response) =
-            ui.allocate_exact_size(egui::vec2(92.0, theme::CONTROL_HEIGHT), Sense::click());
-        let painter = ui.painter_at(rect);
-        let visuals = ui.style().interact(&response);
-        painter.rect_filled(rect, visuals.corner_radius, visuals.weak_bg_fill);
-        painter.rect_stroke(
-            rect,
-            visuals.corner_radius,
-            visuals.bg_stroke,
-            StrokeKind::Inside,
-        );
-        paint_star(
-            &painter,
-            rect.left_center() + egui::vec2(14.0, 0.0),
-            14.0,
-            if review.rating > 0 {
-                STAR_COLOR
-            } else {
-                ui.visuals().weak_text_color()
-            },
-            review.rating > 0,
-        );
-        painter.text(
-            rect.left_center() + egui::vec2(31.0, 0.0),
-            Align2::CENTER_CENTER,
-            review.rating.to_string(),
-            FontId::proportional(12.0),
-            ui.visuals().text_color(),
-        );
-        paint_flag(
-            &painter,
-            rect.left_center() + egui::vec2(56.0, 0.0),
-            14.0,
-            if review.flag == PhotoFlag::Unflagged {
-                ui.visuals().weak_text_color()
-            } else {
-                flag_color(review.flag)
-            },
-            review.flag != PhotoFlag::Unflagged,
-        );
-        painter.text(
-            rect.right_center() - egui::vec2(13.0, 0.0),
-            Align2::CENTER_CENTER,
-            egui_phosphor::regular::CARET_DOWN,
-            FontId::proportional(12.0),
-            ui.visuals().weak_text_color(),
-        );
-        theme::dropdown_menu(&response, |ui| {
-            let (rect, _) = ui.allocate_exact_size(
-                egui::vec2(EDITOR_WIDTH, theme::CONTROL_HEIGHT),
-                Sense::hover(),
-            );
-            change = review_editor(ui, rect, &asset.id, review, false);
-            if change.is_some() {
-                ui.close();
-            }
-        });
-    }
+        compact_review_editor(ui, &asset.id, review)
+    };
     if let Some(change) = change {
         apply_review(app, vec![asset.clone()], change);
         let mut updated = asset;
         if let Ok(review) = crate::sidecar::load_photo_review(&path) {
             updated.metadata.review = review;
+            app.develop.review = review;
         }
         ui.ctx()
             .data_mut(|data| data.insert_temp(cache_id, updated));
@@ -419,6 +433,43 @@ pub(crate) fn show_current_photo_review(ui: &mut Ui, app: &mut CalibRawApp, comp
     true
 }
 
+#[cfg(target_os = "android")]
+pub(crate) fn show_current_photo_review(
+    ui: &mut Ui,
+    app: &mut CalibRawApp,
+    _compact: bool,
+) -> bool {
+    let Some((raw_uri, asset_id)) =
+        app.persistence
+            .sidecar_target
+            .as_ref()
+            .and_then(|target| match target {
+                crate::sidecar::SidecarTarget::Android { raw_uri, .. } => {
+                    Some((raw_uri.clone(), LibraryAssetId::Android(raw_uri.clone())))
+                }
+                crate::sidecar::SidecarTarget::Desktop { .. } => None,
+            })
+    else {
+        return false;
+    };
+    let Some(change) = compact_review_editor(ui, &asset_id, app.develop.review) else {
+        return true;
+    };
+    match change {
+        ReviewChange::Flag(flag) => app.develop.review.flag = flag,
+        ReviewChange::Rating(rating) => app.develop.review.rating = rating,
+    }
+    if let Some(index) = app.library.entry_indices.get(&asset_id).copied() {
+        app.library.entries[index].review = app.develop.review;
+        app.library.entries[index].asset.metadata.review = app.develop.review;
+    } else {
+        log::debug!("reviewed Android RAW is not in the current library: {raw_uri}");
+    }
+    app.queue_explicit_sidecar_save();
+    true
+}
+
+#[cfg(not(target_os = "android"))]
 pub(super) fn apply_review(app: &mut CalibRawApp, assets: Vec<LibraryAsset>, change: ReviewChange) {
     let mut failures = Vec::new();
     for asset in assets {
@@ -448,7 +499,7 @@ pub(super) fn apply_review(app: &mut CalibRawApp, assets: Vec<LibraryAsset>, cha
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(target_os = "android")))]
 mod tests {
     use super::*;
 

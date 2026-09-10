@@ -1729,7 +1729,20 @@ pub fn save_android(
     display_name: &str,
     edits: crate::sidecar::EditState,
 ) -> Result<String, crate::sidecar::SidecarError> {
-    let bytes = crate::sidecar::encode(edits)?;
+    let review = load_android(app, raw_uri, display_name)?
+        .map(|loaded| loaded.review)
+        .unwrap_or_default();
+    save_android_with_review(app, raw_uri, display_name, edits, review)
+}
+
+pub fn save_android_with_review(
+    app: &AndroidApp,
+    raw_uri: &str,
+    display_name: &str,
+    edits: crate::sidecar::EditState,
+    review: crate::sidecar::PhotoReview,
+) -> Result<String, crate::sidecar::SidecarError> {
+    let bytes = crate::sidecar::encode_with_review(edits, review)?;
     let path = create_raw_sidecar_cache(app).map_err(crate::sidecar::SidecarError::Platform)?;
     let result = crate::sidecar::write_synced(&path, &bytes).and_then(|()| {
         publish_raw_sidecar(app, &path, raw_uri, display_name)
