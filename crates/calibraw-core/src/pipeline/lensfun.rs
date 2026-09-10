@@ -680,6 +680,8 @@ mod imp {
             lens_geometry,
             ai_denoised: Arc::new(std::sync::RwLock::new(None)),
             opposed_chroma_cache: Default::default(),
+            opposed_chroma_source_identity: Default::default(),
+            opposed_chroma_reference_source: true,
         })
     }
 

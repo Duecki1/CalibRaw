@@ -15,6 +15,11 @@
 @group(0) @binding(23) var dual_low_read: texture_2d<f32>;
 
 const RCD_MARGIN: i32 = 9;
+// Specialize the selected algorithm before driver compilation. The dynamic
+// fallback remains available for validation against the original unified shader.
+override BAYER_DEMOSAIC_MODE: u32 = 3u;
+override BAYER_SENSOR_DENOISE: bool = true;
+override BAYER_CA: bool = true;
 
 fn demosaic_in_bounds(pos: vec2<i32>) -> bool {
     return pos.x >= 0 && pos.y >= 0
@@ -341,15 +346,20 @@ fn bayer_rcd_output(@builtin(global_invocation_id) gid: vec3<u32>) {
     let pos = vec2<i32>(i32(gid.x), i32(gid.y));
     let reference = rcd_reference_at(pos);
     var camera_rgb = reference;
-    if Common::camera_uniforms.demosaic_mode >= 1.5 {
+    let demosaic_mode = select(f32(BAYER_DEMOSAIC_MODE), Common::camera_uniforms.demosaic_mode, BAYER_DEMOSAIC_MODE == 3u);
+    if demosaic_mode >= 1.5 {
         let low = dual_low_at(pos);
         camera_rgb = mix(low.rgb, reference, dual_high_weight(pos, reference, low));
-    } else if Common::camera_uniforms.demosaic_mode >= 0.5 {
+    } else if demosaic_mode >= 0.5 {
         camera_rgb = frequency_chroma_at(pos, reference);
     } else {
         camera_rgb = bayer_reference_false_color_guard(pos, reference);
     }
-    camera_rgb = NoiseCaFinish::finish_apply_sensor_denoise(pos, camera_rgb);
-    camera_rgb = NoiseCaFinish::finish_apply_ca(pos, camera_rgb);
+    if BAYER_SENSOR_DENOISE {
+        camera_rgb = NoiseCaFinish::finish_apply_sensor_denoise(pos, camera_rgb);
+    }
+    if BAYER_CA {
+        camera_rgb = NoiseCaFinish::finish_apply_ca(pos, camera_rgb);
+    }
     textureStore(scene_write, pos, vec4<f32>(camera_rgb, 1.0));
 }

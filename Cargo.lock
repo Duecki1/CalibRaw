@@ -587,6 +587,7 @@ dependencies = [
  "anyhow",
  "calibraw-core",
  "calibraw-gpu",
+ "env_logger",
  "pollster",
 ]
 
@@ -640,6 +641,7 @@ dependencies = [
  "naga_oil",
  "png",
  "pollster",
+ "rayon",
  "wgpu",
 ]
 

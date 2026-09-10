@@ -4,6 +4,7 @@ pub(super) fn show_loading_thumbnail(
     ui: &mut Ui,
     app: &CalibRawApp,
     available: egui::Vec2,
+    unobscured: Option<Rect>,
 ) -> bool {
     let (Some(texture), Some([width, height])) = (
         app.develop_ui.loading_thumbnail.texture.as_ref(),
@@ -16,9 +17,13 @@ pub(super) fn show_loading_thumbnail(
     }
 
     let (outer_rect, _) = ui.allocate_exact_size(available, Sense::hover());
-    let image_size = fitted_image_size(outer_rect.size(), width as f32 / height as f32);
-    let image_rect = Rect::from_center_size(outer_rect.center(), image_size);
-    ui.painter().image(
+    let image_size = if unobscured.is_some() && available.y > available.x {
+        egui::vec2(available.x, available.x * height as f32 / width as f32)
+    } else {
+        fitted_image_size(outer_rect.size(), width as f32 / height as f32)
+    };
+    let image_rect = Rect::from_center_size(unobscured.unwrap_or(outer_rect).center(), image_size);
+    ui.painter_at(outer_rect).image(
         texture.id(),
         image_rect,
         Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)),
@@ -27,7 +32,10 @@ pub(super) fn show_loading_thumbnail(
 
     if outer_rect.width() >= 104.0 && outer_rect.height() >= 48.0 {
         let badge_width = 132.0_f32.min(outer_rect.width() - 16.0);
-        let badge_rect = Rect::from_center_size(outer_rect.center(), egui::vec2(badge_width, 32.0));
+        let badge_rect = Rect::from_center_size(
+            unobscured.unwrap_or(outer_rect).center(),
+            egui::vec2(badge_width, 32.0),
+        );
         ui.painter()
             .rect_filled(badge_rect, 16.0, Color32::from_black_alpha(190));
         ui.painter().text(
