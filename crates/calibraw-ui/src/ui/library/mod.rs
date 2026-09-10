@@ -32,10 +32,16 @@ mod dialogs;
 mod export;
 mod local;
 mod platform;
+#[cfg(not(target_os = "android"))]
+mod review;
 mod state;
 mod storage;
 mod thumbnails;
 mod view;
+#[cfg(not(target_os = "android"))]
+pub(crate) use review::show_current_photo_review;
+#[cfg(not(target_os = "android"))]
+use review::thumbnail_hover_overlay;
 
 use actions::*;
 use adjustments::*;
@@ -87,9 +93,28 @@ pub(crate) enum LibrarySortOrder {
     NameDescending,
     LargestFirst,
     SmallestFirst,
+    RatingHighestFirst,
+    RatingLowestFirst,
+    FlagPickedFirst,
+    FlagRejectedFirst,
 }
 
 impl LibrarySortOrder {
+    #[cfg(not(target_os = "android"))]
+    const ALL: [Self; 10] = [
+        Self::NewestFirst,
+        Self::OldestFirst,
+        Self::NameAscending,
+        Self::NameDescending,
+        Self::LargestFirst,
+        Self::SmallestFirst,
+        Self::RatingHighestFirst,
+        Self::RatingLowestFirst,
+        Self::FlagPickedFirst,
+        Self::FlagRejectedFirst,
+    ];
+
+    #[cfg(target_os = "android")]
     const ALL: [Self; 6] = [
         Self::NewestFirst,
         Self::OldestFirst,
@@ -107,6 +132,10 @@ impl LibrarySortOrder {
             Self::NameDescending => "Name Z–A",
             Self::LargestFirst => "Largest first",
             Self::SmallestFirst => "Smallest first",
+            Self::RatingHighestFirst => "Rating: highest first",
+            Self::RatingLowestFirst => "Rating: lowest first",
+            Self::FlagPickedFirst => "Flag: picks first",
+            Self::FlagRejectedFirst => "Flag: rejects first",
         }
     }
 }
@@ -169,6 +198,7 @@ pub(crate) enum LibraryLocator {
 
 #[derive(Clone, Debug, Default)]
 pub(crate) struct LibraryAssetMetadata {
+    pub(crate) review: crate::sidecar::PhotoReview,
     pub(crate) bytes: u64,
     pub(crate) dimensions_hint: Option<[u32; 2]>,
     #[cfg(any(not(target_os = "android"), test))]
@@ -201,12 +231,17 @@ impl LibraryAsset {
             .file_name()
             .map(|name| name.to_string_lossy().into_owned())
             .unwrap_or_else(|| path.display().to_string());
+        let review = crate::sidecar::load_photo_review(&path).unwrap_or_else(|error| {
+            log::warn!("Could not read review for {}: {error}", path.display());
+            crate::sidecar::PhotoReview::default()
+        });
         Self {
             id: LibraryAssetId::Desktop(path.clone()),
             display_path: path.display().to_string(),
             display_name,
             locator: LibraryLocator::Desktop(path),
             metadata: LibraryAssetMetadata {
+                review,
                 bytes,
                 dimensions_hint,
                 iso_speed: 0.0,
@@ -225,6 +260,7 @@ impl LibraryAsset {
             display_path: document.display_path,
             locator: LibraryLocator::Android { uri: document.uri },
             metadata: LibraryAssetMetadata {
+                review: crate::sidecar::PhotoReview::default(),
                 bytes: document.bytes,
                 dimensions_hint: None,
                 #[cfg(test)]
@@ -264,6 +300,7 @@ fn library_import_icon() -> &'static str {
 }
 
 pub(crate) struct LibraryEntry {
+    review: crate::sidecar::PhotoReview,
     asset: LibraryAsset,
     texture: Option<egui::TextureHandle>,
     resident_thumbnail: Option<RawThumbnail>,

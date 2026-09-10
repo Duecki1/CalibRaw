@@ -109,14 +109,11 @@ impl LibraryState {
         let Some(entry) = self.entries.get_mut(index) else {
             return;
         };
-        if !entry.developed_thumbnail {
-            return;
-        }
-
         entry.texture = None;
         entry.resident_thumbnail = None;
         entry.texture_is_resident = false;
         entry.thumbnail_size = None;
+        entry.layout_size = entry.asset.metadata.dimensions_hint;
         entry.thumbnail_error = None;
         entry.thumbnail_failures = 0;
         entry.thumbnail_retry_after = None;
@@ -144,7 +141,7 @@ impl LibraryState {
         let decoded_size = [thumbnail.width, thumbnail.height];
         let resident_thumbnail = make_resident_thumbnail(&thumbnail);
         self.entries[index].thumbnail_size = Some(decoded_size);
-        self.entries[index].layout_size.get_or_insert(decoded_size);
+        self.entries[index].layout_size = Some(decoded_size);
         self.entries[index].resident_thumbnail = Some(resident_thumbnail);
         self.entries[index].texture_is_resident = false;
         self.entries[index].thumbnail_error = None;
@@ -263,7 +260,9 @@ impl LibraryState {
 
 pub(super) fn new_library_entry(asset: LibraryAsset) -> LibraryEntry {
     let layout_size = Some(asset.metadata.dimensions_hint.unwrap_or([3, 2]));
+    let review = asset.metadata.review;
     LibraryEntry {
+        review,
         asset,
         texture: None,
         resident_thumbnail: None,
@@ -294,6 +293,28 @@ pub(super) fn compare_library_entries(
     let name_order = compare_library_names(&left.asset, &right.asset);
 
     match sort_order {
+        LibrarySortOrder::RatingHighestFirst => right
+            .review
+            .rating
+            .cmp(&left.review.rating)
+            .then(name_order),
+        LibrarySortOrder::RatingLowestFirst => left
+            .review
+            .rating
+            .cmp(&right.review.rating)
+            .then(name_order),
+        LibrarySortOrder::FlagPickedFirst => right
+            .review
+            .flag
+            .cmp(&left.review.flag)
+            .then_with(|| right.review.rating.cmp(&left.review.rating))
+            .then(name_order),
+        LibrarySortOrder::FlagRejectedFirst => left
+            .review
+            .flag
+            .cmp(&right.review.flag)
+            .then_with(|| right.review.rating.cmp(&left.review.rating))
+            .then(name_order),
         LibrarySortOrder::NewestFirst => right
             .asset
             .metadata
@@ -712,15 +733,24 @@ fn load_desktop_raw_library_thumbnail(
     has_edits: bool,
     render_edited_thumbnails_during_indexing: bool,
 ) -> Result<LoadedLibraryThumbnail, String> {
+    let (geometry, has_edits) =
+        crate::sidecar::load_photo_preview_info(path).unwrap_or_else(|error| {
+            log::warn!(
+                "Could not read preview edits for {}: {error}",
+                path.display()
+            );
+            (crate::pipeline::GeometryTransform::default(), has_edits)
+        });
     match crate::thumbnail_cache::load_desktop_raw_thumbnail(path, THUMBNAIL_EDGE) {
         Ok(Some(thumbnail)) => {
+            let thumbnail = crate::pipeline::transform_thumbnail_geometry(&thumbnail, geometry);
             return Ok(if has_edits && render_edited_thumbnails_during_indexing {
                 loaded_library_raw_preview_pending_development(thumbnail)
             } else if has_edits {
                 loaded_library_raw_preview_with_stale_edits(thumbnail)
             } else {
                 loaded_library_thumbnail(thumbnail, false)
-            })
+            });
         }
         Ok(None) => {}
         Err(error) => log::warn!(
@@ -737,6 +767,7 @@ fn load_desktop_raw_library_thumbnail(
             path.display()
         );
     }
+    let thumbnail = crate::pipeline::transform_thumbnail_geometry(&thumbnail, geometry);
     Ok(if has_edits && render_edited_thumbnails_during_indexing {
         loaded_library_raw_preview_pending_development(thumbnail)
     } else if has_edits {
@@ -751,7 +782,7 @@ pub(super) fn load_android_library_thumbnail(
     app: &calibraw_ffi::AndroidApp,
     asset: &LibraryAsset,
     _stage: ThumbnailLoadStage,
-    render_edited_thumbnails_during_indexing: bool,
+    _render_edited_thumbnails_during_indexing: bool,
 ) -> Result<LoadedLibraryThumbnail, String> {
     let Some(uri) = asset.android_uri() else {
         return Err("invalid Android thumbnail request".to_owned());
@@ -777,12 +808,8 @@ pub(super) fn load_android_library_thumbnail(
     let has_edits = match crate::sidecar::load_android(app, uri, display_name) {
         Ok(Some(sidecar)) => {
             let has_edits = crate::sidecar::edit_state_has_adjustments(&sidecar.edits);
-            if render_edited_thumbnails_during_indexing {
-                thumbnail = crate::pipeline::transform_thumbnail_geometry(
-                    &thumbnail,
-                    sidecar.edits.geometry,
-                );
-            }
+            thumbnail =
+                crate::pipeline::transform_thumbnail_geometry(&thumbnail, sidecar.edits.geometry);
             has_edits
         }
         Ok(None) => false,

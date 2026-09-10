@@ -286,7 +286,7 @@ fn show_filmstrip_contents(ui: &mut Ui, app: &mut CalibRawApp, frame: &eframe::F
                     crate::ui::theme::context_menu(&response, |ui| {
                         let context_assets = [item.asset.clone()];
                         if let Some(action) =
-                            library_image_context_menu(ui, app, &item.asset, &context_assets)
+                            library_image_context_menu(ui, app, &item.asset, &context_assets, false)
                         {
                             library_action = Some(action);
                         }

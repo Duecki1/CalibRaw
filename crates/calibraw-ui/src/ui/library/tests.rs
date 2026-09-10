@@ -83,6 +83,7 @@ fn test_asset(name: impl Into<PathBuf>) -> LibraryAsset {
         display_path: format!("Library/{name}"),
         locator: LibraryLocator::Android { uri },
         metadata: LibraryAssetMetadata {
+            review: crate::sidecar::PhotoReview::default(),
             bytes: 42,
             dimensions_hint: Some([6000, 4000]),
             iso_speed: 0.0,
@@ -448,7 +449,7 @@ fn non_utf8_paths_remain_distinct_asset_ids() {
 
 #[cfg(not(target_os = "android"))]
 #[test]
-fn decoded_preview_does_not_change_reserved_gallery_geometry() {
+fn reserved_gallery_geometry_is_used_until_preview_is_installed() {
     let mut entry = new_library_entry(test_asset("stable-layout.dng"));
     let (before, before_height) =
         justified_thumbnail_layout(std::slice::from_ref(&entry), 900.0, 140.0, 6.0);
@@ -1462,4 +1463,125 @@ fn folder_scan_retains_newest_files_after_limit() {
     assert_eq!(warnings, 0);
     assert!(truncated);
     fs::remove_dir_all(root).unwrap();
+}
+
+#[cfg(not(target_os = "android"))]
+#[test]
+fn review_sort_orders_preserve_selection_and_use_names_for_ties() {
+    use crate::sidecar::{PhotoFlag, PhotoReview};
+    let mut library = LibraryState::new();
+    for (name, flag, rating) in [
+        ("b.dng", PhotoFlag::Picked, 5),
+        ("c.dng", PhotoFlag::Rejected, 1),
+        ("a.dng", PhotoFlag::Unflagged, 5),
+    ] {
+        let mut entry = new_library_entry(test_asset(name));
+        entry.review = PhotoReview { flag, rating };
+        library.entries.push(entry);
+    }
+    let selected = library.entries[0].asset.id.clone();
+    library.selected_assets.insert(selected.clone());
+    for (order, expected) in [
+        (
+            LibrarySortOrder::RatingHighestFirst,
+            ["a.dng", "b.dng", "c.dng"],
+        ),
+        (
+            LibrarySortOrder::RatingLowestFirst,
+            ["c.dng", "a.dng", "b.dng"],
+        ),
+        (
+            LibrarySortOrder::FlagPickedFirst,
+            ["b.dng", "a.dng", "c.dng"],
+        ),
+        (
+            LibrarySortOrder::FlagRejectedFirst,
+            ["c.dng", "a.dng", "b.dng"],
+        ),
+    ] {
+        library.set_sort_order(order);
+        assert_eq!(
+            library
+                .entries
+                .iter()
+                .map(|entry| entry.asset.display_name.as_str())
+                .collect::<Vec<_>>(),
+            expected
+        );
+        assert!(library.selected_assets.contains(&selected));
+        assert_eq!(
+            library.entries[library.entry_indices[&selected]].asset.id,
+            selected
+        );
+    }
+}
+
+#[cfg(not(target_os = "android"))]
+#[test]
+fn cropped_preview_updates_gallery_and_filmstrip_proportions() {
+    let context = egui::Context::default();
+    let mut library = LibraryState::new();
+    library
+        .entries
+        .push(new_library_entry(test_asset("crop.dng")));
+    library.install_developed_thumbnail_at(
+        0,
+        RawThumbnail {
+            width: 8,
+            height: 16,
+            rgba: [42, 42, 42, 255].repeat(8 * 16),
+        },
+        &context,
+        1,
+    );
+    assert_eq!(library.entries[0].layout_size, Some([8, 16]));
+    assert_eq!(library.filmstrip_item_aspect(0), 0.5);
+    let (rects, _) = justified_thumbnail_layout(&library.entries, 900.0, 140.0, 6.0);
+    assert!((rects[0].width() / rects[0].height() - 0.5).abs() < 0.001);
+}
+
+#[cfg(not(target_os = "android"))]
+#[test]
+fn raw_preview_cache_applies_saved_crop_without_full_edited_rendering() {
+    let root = unique_temp_dir("crop-raw-preview");
+    let path = root.join("crop.dng");
+    fs::write(&path, b"raw").unwrap();
+    let mut edits = crate::sidecar::default_edit_state();
+    edits.geometry.crop = [0.0, 0.0, 0.5, 1.0];
+    crate::sidecar::save_desktop(&path, edits).unwrap();
+    crate::thumbnail_cache::save_desktop_raw_thumbnail(
+        &path,
+        &RawThumbnail {
+            width: 40,
+            height: 20,
+            rgba: [42, 42, 42, 255].repeat(40 * 20),
+        },
+    )
+    .unwrap();
+    let loaded =
+        load_desktop_library_thumbnail(&test_asset(&path), ThumbnailLoadStage::RawPreview, false)
+            .unwrap();
+    assert_eq!([loaded.thumbnail.width, loaded.thumbnail.height], [20, 20]);
+    assert!(!loaded.developed_render_pending);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[cfg(not(target_os = "android"))]
+#[test]
+fn resetting_crop_invalidates_geometry_only_raw_preview() {
+    let mut library = LibraryState::new();
+    let asset = test_asset("geometry-only.dng");
+    let mut entry = new_library_entry(asset.clone());
+    entry.thumbnail_size = Some([20, 20]);
+    entry.layout_size = Some([20, 20]);
+    entry.resident_thumbnail = Some(test_developed_thumbnail());
+    library.entries.push(entry);
+    library.rebuild_entry_indices();
+    library.invalidate_adjustment_thumbnail_for_asset(&asset);
+    assert!(library.entries[0].thumbnail_size.is_none());
+    assert!(library.entries[0].resident_thumbnail.is_none());
+    assert_eq!(
+        library.entries[0].layout_size,
+        asset.metadata.dimensions_hint
+    );
 }
