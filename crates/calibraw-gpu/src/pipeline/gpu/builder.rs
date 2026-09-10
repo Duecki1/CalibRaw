@@ -3,6 +3,12 @@ use std::sync::Arc;
 
 use super::*;
 
+pub(super) fn tone_guide_axis_cell_count(origin: i32, extent: u32, cell_size: u32) -> u32 {
+    let cell_size = cell_size.max(1);
+    let phase = origin.rem_euclid(cell_size as i32) as u32;
+    phase.saturating_add(extent).div_ceil(cell_size).max(1)
+}
+
 pub(super) struct DerivedGeometry {
     pub(super) size: wgpu::Extent3d,
     pub(super) tone_size: wgpu::Extent3d,
@@ -28,8 +34,8 @@ pub(super) fn compute_derived_geometry(
     let highlight_work_format = work_format;
     let tone_scale = tone_analysis_scale();
     let tone_size = texture_size(
-        raw.width.div_ceil(tone_scale),
-        raw.height.div_ceil(tone_scale),
+        tone_guide_axis_cell_count(params.camera.tile_origin_x, raw.width, tone_scale),
+        tone_guide_axis_cell_count(params.camera.tile_origin_y, raw.height, tone_scale),
     );
     let tone_format = tone_guide_format();
     let image_workgroups = dispatch_for_extent(raw.width, raw.height);
@@ -1477,6 +1483,7 @@ pub(super) struct ShaderSet {
 pub(super) fn load_shader_set(
     device: &wgpu::Device,
     has_program_template: bool,
+    cfa_kind: CfaKind,
     demosaic_format: wgpu::TextureFormat,
     work_format: wgpu::TextureFormat,
 ) -> Result<ShaderSet> {
@@ -1500,7 +1507,7 @@ pub(super) fn load_shader_set(
         .context("specialize scene-adjustments shader work format")?;
 
     let mut shader_manager = (!has_program_template)
-        .then(|| ShaderManager::new(work_format))
+        .then(|| ShaderManager::new(work_format, cfa_kind))
         .transpose()
         .context("initialize WGSL shader composer")?;
     let mut create_shader =
@@ -1511,7 +1518,14 @@ pub(super) fn load_shader_set(
                 .create_shader_module(device, label, source, file_name)
         };
     let mut load_shader = |label: &'static str, source: &str, file_name: &str| {
-        if has_program_template {
+        let other_sensor = match cfa_kind {
+            CfaKind::Bayer => matches!(file_name, "xtrans_demosaic.wgsl" | "xtrans_finish.wgsl"),
+            CfaKind::XTrans => matches!(
+                file_name,
+                "pass1.wgsl" | "pass2.wgsl" | "pass3.wgsl" | "pass4.wgsl"
+            ),
+        };
+        if has_program_template || other_sensor {
             Ok(None)
         } else {
             create_shader(label, source, file_name).map(Some)
@@ -1655,25 +1669,19 @@ impl PassAssembler<'_> {
             template.pipelines[program_index].clone()
         } else {
             let shader = shader.expect("shader module exists without a program template");
-            let pll = self
-                .device
-                .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                    label: Some(&format!("pll_{}", entry)),
-                    bind_group_layouts: &[
-                        Some(bgl),
-                        Some(self.bgl_scene_tone),
-                        Some(self.bgl_effects),
-                    ],
-                    immediate_size: 0,
-                });
-            create_compute_pipeline(
-                self.device,
-                entry,
-                &pll,
-                shader,
-                entry,
-                self.pipeline_cache.map(|cache| cache.raw()),
-            )
+            Arc::new(ComputeProgram {
+                device: self.device.clone(),
+                shader: shader.clone(),
+                layouts: [
+                    bgl.clone(),
+                    self.bgl_scene_tone.clone(),
+                    self.bgl_effects.clone(),
+                ],
+                entry: entry.to_owned(),
+                cache: self.pipeline_cache.cloned(),
+                compiled: OnceLock::new(),
+                demosaic_variants: std::array::from_fn(|_| OnceLock::new()),
+            })
         };
         Pass {
             pipeline,
@@ -2188,4 +2196,16 @@ pub(super) fn assemble_passes(
             adjustment_render_pass_index,
         },
     })
+}
+#[cfg(test)]
+mod tone_grid_tests {
+    use super::tone_guide_axis_cell_count;
+
+    #[test]
+    fn tone_guide_cell_count_tracks_global_origin_phase() {
+        assert_eq!(tone_guide_axis_cell_count(0, 8, 4), 2);
+        assert_eq!(tone_guide_axis_cell_count(2, 8, 4), 3);
+        assert_eq!(tone_guide_axis_cell_count(-2, 8, 4), 3);
+        assert_eq!(tone_guide_axis_cell_count(64, 10, 4), 3);
+    }
 }

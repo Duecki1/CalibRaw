@@ -143,6 +143,10 @@ if(NOT TARGET raw)
     message(FATAL_ERROR "Pinned LibRaw-cmake did not define the expected 'raw' target")
 endif()
 set_property(TARGET raw PROPERTY POSITION_INDEPENDENT_CODE ON)
+# RAW unpacking runs in this library, outside Rust's optimization settings.
+# Keep the third-party decoder optimized in development APKs too, matching the
+# Release-built Lensfun dependencies below. Debug symbols remain available.
+target_compile_options(raw PRIVATE "$<$<CONFIG:Debug>:-O3>")
 
 add_custom_target(calibraw_stage_libraw
     COMMAND "${CMAKE_COMMAND}" -E make_directory

@@ -249,6 +249,11 @@ impl CalibRawApp {
             self.ui.notice = Some("eframe is not running with the wgpu backend.".to_owned());
             return;
         };
+        if prepared.full_raw.uses_opposed_chroma(&self.develop.exposure) {
+            prepared
+                .full_raw
+                .inpaint_opposed_chroma_for_exposure(&self.develop.exposure);
+        }
 
         #[cfg(target_os = "android")]
         {

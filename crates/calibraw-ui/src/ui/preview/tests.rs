@@ -1,5 +1,106 @@
 use super::*;
 
+#[test]
+fn zoom_keeps_the_pointer_on_the_same_image_pixel() {
+    let viewport = Rect::from_min_size(Pos2::ZERO, egui::vec2(800.0, 600.0));
+    let base = viewport.size();
+    let pointer = egui::pos2(300.0, 200.0);
+    let mut zoom = 1.0;
+    let mut center = [0.5, 0.5];
+    let before = screen_to_normalized_unclamped(viewport, pointer);
+    assert!(transform_preview_about_screen_points(
+        viewport,
+        viewport,
+        base,
+        &mut zoom,
+        &mut center,
+        pointer,
+        pointer,
+        4.0
+    ));
+    let after =
+        screen_to_normalized_unclamped(zoomed_image_rect(viewport, base, zoom, center), pointer);
+    for axis in 0..2 {
+        assert!((before[axis] - after[axis]).abs() < 1e-6);
+    }
+}
+
+#[test]
+fn pinch_translation_and_zoom_preserve_the_gesture_anchor() {
+    let viewport = Rect::from_min_size(Pos2::ZERO, egui::vec2(800.0, 600.0));
+    let base = viewport.size();
+    let mut zoom = 2.0;
+    let mut center = [0.5, 0.5];
+    let image = zoomed_image_rect(viewport, base, zoom, center);
+    let from = egui::pos2(350.0, 250.0);
+    let to = egui::pos2(380.0, 290.0);
+    let before = screen_to_normalized_unclamped(image, from);
+    transform_preview_about_screen_points(
+        viewport,
+        image,
+        base,
+        &mut zoom,
+        &mut center,
+        from,
+        to,
+        1.3,
+    );
+    let after = screen_to_normalized_unclamped(zoomed_image_rect(viewport, base, zoom, center), to);
+    for axis in 0..2 {
+        assert!((before[axis] - after[axis]).abs() < 1e-6);
+    }
+}
+
+#[test]
+fn zoom_out_preserves_mask_workspace_and_invalid_gestures_do_not_corrupt_the_view() {
+    let viewport = Rect::from_min_size(Pos2::ZERO, egui::vec2(800.0, 600.0));
+    for factor in [f32::NAN, f32::INFINITY, -1.0, 0.0] {
+        let mut zoom = 1.0;
+        let mut center = [0.5, 0.5];
+        assert!(!transform_preview_about_screen_points(
+            viewport,
+            viewport,
+            viewport.size(),
+            &mut zoom,
+            &mut center,
+            viewport.center(),
+            viewport.center(),
+            factor
+        ));
+        assert_eq!((zoom, center), (1.0, [0.5, 0.5]));
+    }
+    let mut zoom = 1.0;
+    let mut center = [0.5, 0.5];
+    transform_preview_about_screen_points(
+        viewport,
+        viewport,
+        viewport.size(),
+        &mut zoom,
+        &mut center,
+        viewport.center(),
+        viewport.center(),
+        0.1,
+    );
+    assert_eq!((zoom, center), (MIN_PREVIEW_ZOOM, [0.5, 0.5]));
+    let image = zoomed_image_rect(viewport, viewport.size(), zoom, center);
+    assert!(image.left() > viewport.left() && image.right() < viewport.right());
+    assert!(image.top() > viewport.top() && image.bottom() < viewport.bottom());
+}
+
+#[test]
+fn tiny_source_movements_still_request_new_detail() {
+    assert!(preview_uv_changed(
+        crate::app::PreviewUvRect {
+            min: [0.4, 0.4],
+            max: [0.5, 0.5]
+        },
+        crate::app::PreviewUvRect {
+            min: [0.4001, 0.4],
+            max: [0.5001, 0.5]
+        },
+    ));
+}
+
 #[cfg(test)]
 mod preview_overlay_tests {
     use super::*;

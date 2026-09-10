@@ -1,4 +1,5 @@
 use super::*;
+use crate::pipeline::TONE_GUIDE_CELL_SIZE;
 use std::borrow::Cow;
 use std::cell::RefCell;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -11,12 +12,8 @@ std::thread_local! {
     static COLOR_UPLOAD_SCRATCH: RefCell<Vec<u8>> = const { RefCell::new(Vec::new()) };
 }
 
-pub(super) fn tone_analysis_scale() -> u32 {
-    if cfg!(target_os = "android") {
-        8
-    } else {
-        4
-    }
+pub(super) const fn tone_analysis_scale() -> u32 {
+    TONE_GUIDE_CELL_SIZE
 }
 
 pub(super) fn tone_guide_format() -> wgpu::TextureFormat {
@@ -416,6 +413,44 @@ pub(super) fn gpu_working_set_limit_bytes() -> u64 {
     } else {
         DESKTOP_GPU_WORKING_SET_LIMIT_BYTES
     }
+}
+
+impl RawGpuPipeline {
+    /// Bound mobile previews using the same resource accounting as allocation.
+    /// Leave room for the fitted image and a detail crop to coexist. This uses
+    /// the full mask capacity so adding a mask cannot invalidate the budget.
+    pub fn bounded_mobile_preview_edge(width: u32, height: u32, requested: u32) -> u32 {
+        let mut low = 1;
+        let mut high = requested.min(width.max(height)).max(1);
+        while low < high {
+            let edge = low + (high - low).div_ceil(2);
+            let fits = mobile_preview_resource_plan(width, height, edge).is_ok_and(|plan| {
+                plan.admitted_gpu_bytes <= ANDROID_GPU_WORKING_SET_LIMIT_BYTES / 2
+            });
+            if fits {
+                low = edge;
+            } else {
+                high = edge - 1;
+            }
+        }
+        low
+    }
+}
+
+fn mobile_preview_resource_plan(width: u32, height: u32, edge: u32) -> Result<GpuResourcePlan> {
+    let scale = (f64::from(edge) / f64::from(width.max(height).max(1))).min(1.0);
+    build_gpu_resource_plan(GpuResourcePlanInput {
+        width: (f64::from(width) * scale).ceil().max(1.0) as u32,
+        height: (f64::from(height) * scale).ceil().max(1.0) as u32,
+        quality: ProcessingQuality::Preview,
+        tone_scale: tone_analysis_scale(),
+        mask_atlas_edge: crate::pipeline::masks::MASK_ATLAS_EDGE_ANDROID,
+        mask_layers: MAX_LOCAL_MASKS as u32,
+        // Reserve space for profile LUTs in addition to the processing surfaces.
+        profile_buffer_bytes: 4 * 1024 * 1024,
+        stage_uniform_buffer_bytes: GPU_STAGE_UNIFORM_ALLOCATION_BYTES,
+        mask_data_buffer_bytes: MASK_DATA_SIZE_BYTES,
+    })
 }
 
 pub(super) fn processing_work_format(quality: ProcessingQuality) -> wgpu::TextureFormat {
@@ -1308,6 +1343,37 @@ mod resource_plan_tests {
             stage_uniform_buffer_bytes: GPU_STAGE_UNIFORM_ALLOCATION_BYTES,
             mask_data_buffer_bytes: MASK_DATA_SIZE_BYTES,
         }
+    }
+
+    #[test]
+    fn mobile_max_preview_respects_the_budget_before_allocating() {
+        // Regression: the reported 2330x1554 Max proxy exceeded 384 MiB.
+        let unbounded = mobile_preview_resource_plan(2330, 1554, 2330).unwrap();
+        assert!(unbounded.admitted_gpu_bytes > ANDROID_GPU_WORKING_SET_LIMIT_BYTES);
+        for (width, height) in [(4688, 7028), (7028, 4688), (2048, 2048), (8000, 1000)] {
+            let edge = RawGpuPipeline::bounded_mobile_preview_edge(width, height, 3600);
+            let plan = mobile_preview_resource_plan(width, height, edge).unwrap();
+            assert!(plan.admitted_gpu_bytes <= ANDROID_GPU_WORKING_SET_LIMIT_BYTES / 2);
+            assert!(
+                mobile_preview_resource_plan(width, height, edge + 1)
+                    .unwrap()
+                    .admitted_gpu_bytes
+                    > ANDROID_GPU_WORKING_SET_LIMIT_BYTES / 2
+            );
+            // Two admitted graphs leave room for the small navigation graph.
+            assert!(
+                plan.persistent_gpu_bytes * 2 + 32 * 1024 * 1024
+                    < ANDROID_GPU_WORKING_SET_LIMIT_BYTES
+            );
+        }
+        assert_eq!(
+            RawGpuPipeline::bounded_mobile_preview_edge(800, 600, 800),
+            800
+        );
+        assert_eq!(
+            RawGpuPipeline::bounded_mobile_preview_edge(800, 600, 1600),
+            800
+        );
     }
 
     #[test]

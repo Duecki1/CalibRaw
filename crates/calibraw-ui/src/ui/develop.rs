@@ -286,7 +286,7 @@ fn show_filmstrip_contents(ui: &mut Ui, app: &mut CalibRawApp, frame: &eframe::F
                     crate::ui::theme::context_menu(&response, |ui| {
                         let context_assets = [item.asset.clone()];
                         if let Some(action) =
-                            library_image_context_menu(ui, app, &item.asset, &context_assets)
+                            library_image_context_menu(ui, app, &item.asset, &context_assets, false)
                         {
                             library_action = Some(action);
                         }
@@ -594,6 +594,9 @@ fn filmstrip_thumbnail(
     }
 
     filmstrip_name_hover_overlay(ui, &response, rect, &item.asset.display_name);
+    if !response.hovered() {
+        crate::ui::library::paint_review_badge(ui, rect, item.asset.metadata.review);
+    }
 
     if item.developed_thumbnail_pending {
         let center = rect.right_top() + egui::vec2(-13.0, 13.0);

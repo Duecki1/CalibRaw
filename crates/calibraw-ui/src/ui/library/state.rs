@@ -46,6 +46,7 @@ impl LibraryState {
             sort_order,
             thumbnail_size,
             search_query: String::new(),
+            review_filter: LibraryReviewFilter::default(),
             selected_assets: HashSet::new(),
             selection_mode: false,
             selection_anchor: None,
@@ -123,6 +124,7 @@ impl LibraryState {
             sort_order,
             thumbnail_size,
             search_query: String::new(),
+            review_filter: LibraryReviewFilter::default(),
             selected_assets: HashSet::new(),
             selection_mode: false,
             selection_anchor: None,
@@ -211,30 +213,40 @@ impl LibraryState {
             .iter()
             .enumerate()
             .filter_map(|(index, entry)| {
-                library_filename_matches(&entry.asset.display_name, &terms).then_some(index)
+                (library_filename_matches(&entry.asset.display_name, &terms)
+                    && self.review_filter.matches(entry.review))
+                .then_some(index)
             })
             .collect()
     }
 
+    pub(super) fn retain_visible_selection(&mut self) {
+        if self.selected_assets.is_empty() {
+            return;
+        }
+        let visible = self
+            .filtered_entry_indices()
+            .into_iter()
+            .map(|index| self.entries[index].asset.id.clone())
+            .collect::<HashSet<_>>();
+        self.selected_assets.retain(|id| visible.contains(id));
+        if self.selected_assets.is_empty() {
+            self.clear_selection();
+        } else if self
+            .selection_anchor
+            .as_ref()
+            .is_some_and(|id| !visible.contains(id))
+        {
+            self.selection_anchor = None;
+        }
+    }
+
     #[cfg(not(target_os = "android"))]
     pub(crate) fn select_search_matches(&mut self) -> usize {
-        let terms = library_search_terms(&self.search_query);
-        if terms.is_empty() {
+        if !self.search_active() && !self.review_filter.active() {
             return 0;
         }
-
-        self.selected_assets = self
-            .entries
-            .iter()
-            .filter(|entry| library_filename_matches(&entry.asset.display_name, &terms))
-            .map(|entry| entry.asset.id.clone())
-            .collect();
-        self.selection_mode = !self.selected_assets.is_empty();
-        self.selection_anchor = self
-            .entries
-            .iter()
-            .find(|entry| library_filename_matches(&entry.asset.display_name, &terms))
-            .map(|entry| entry.asset.id.clone());
+        self.select_all_thumbnails();
 
         #[cfg(target_os = "android")]
         crate::android::set_back_navigation_active(self.selection_mode);
@@ -299,12 +311,14 @@ impl LibraryState {
 
     #[cfg(not(target_os = "android"))]
     pub(super) fn select_all_thumbnails(&mut self) {
-        self.selected_assets = self
-            .entries
+        let indices = self.filtered_entry_indices();
+        self.selected_assets = indices
             .iter()
-            .map(|entry| entry.asset.id.clone())
+            .map(|index| self.entries[*index].asset.id.clone())
             .collect();
-        self.selection_anchor = self.entries.first().map(|entry| entry.asset.id.clone());
+        self.selection_anchor = indices
+            .first()
+            .map(|index| self.entries[*index].asset.id.clone());
         self.selection_mode = !self.selected_assets.is_empty();
     }
 
@@ -690,6 +704,7 @@ impl LibraryState {
             }
         }
 
+        let mut review_sort_changed = false;
         for _ in 0..MAX_EVENTS_PER_FRAME {
             let received = self.event_receiver.as_ref().map(mpsc::Receiver::try_recv);
             let event = match received {
@@ -748,6 +763,7 @@ impl LibraryState {
                         .map(|asset| {
                             if let Some(mut entry) = previous.remove(&asset.id) {
                                 if same_library_asset_identity(&entry.asset, &asset) {
+                                    entry.review = asset.metadata.review;
                                     entry.asset = asset;
                                     entry.thumbnail_error = None;
                                     entry.thumbnail_queued = false;
@@ -805,6 +821,7 @@ impl LibraryState {
                             let LoadedLibraryThumbnail {
                                 thumbnail,
                                 resident_thumbnail,
+                                review,
                                 developed,
                                 developed_thumbnail_stale,
                                 developed_render_pending,
@@ -813,6 +830,18 @@ impl LibraryState {
                             let install_pixels =
                                 display_priority || self.entries[index].texture.is_some();
                             self.entries[index].resident_thumbnail = Some(resident_thumbnail);
+                            if let Some(review) = review {
+                                review_sort_changed |= self.entries[index].review != review
+                                    && matches!(
+                                        self.sort_order,
+                                        LibrarySortOrder::RatingHighestFirst
+                                            | LibrarySortOrder::RatingLowestFirst
+                                            | LibrarySortOrder::FlagPickedFirst
+                                            | LibrarySortOrder::FlagRejectedFirst
+                                    );
+                                self.entries[index].review = review;
+                                self.entries[index].asset.metadata.review = review;
+                            }
                             self.entries[index].texture_is_resident = false;
                             if install_pixels {
                                 let image = egui::ColorImage::from_rgba_unmultiplied(
@@ -826,7 +855,7 @@ impl LibraryState {
                                 ));
                             }
                             self.entries[index].thumbnail_size = Some(decoded_size);
-                            self.entries[index].layout_size.get_or_insert(decoded_size);
+                            self.entries[index].layout_size = Some(decoded_size);
                             self.entries[index].thumbnail_error = None;
                             self.entries[index].thumbnail_failures = 0;
                             self.entries[index].thumbnail_retry_after = None;
@@ -864,6 +893,9 @@ impl LibraryState {
                 }
                 _ => {}
             }
+        }
+        if review_sort_changed {
+            self.sort_entries();
         }
     }
 }

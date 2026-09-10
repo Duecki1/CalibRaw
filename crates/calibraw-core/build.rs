@@ -135,6 +135,8 @@ fn configure_android_libraw(android_min_sdk: u32) {
         .unwrap_or_else(|| manifest_dir.join("../../android/native/libraw").join(abi));
     let header = root.join("include/libraw/libraw.h");
     let library = root.join("lib/libraw.a");
+    // Native build flags can change the archive without changing any headers.
+    println!("cargo:rerun-if-changed={}", library.display());
 
     if !header.is_file() || !library.is_file() {
         if allow_no_libraw() {

@@ -5,7 +5,8 @@
 
 use super::basicadj::{
     temperature_kelvin_from_offset, temperature_offset_from_kelvin, white_balance_tint_from_offset,
-    white_balance_tint_offset, ExposureParams, GLOBAL_TEMPERATURE_LIMIT, GLOBAL_TINT_OFFSET_LIMIT,
+    white_balance_tint_offset, ExposureParams, HighlightReconstructionMethod,
+    GLOBAL_TEMPERATURE_LIMIT, GLOBAL_TINT_OFFSET_LIMIT,
 };
 use super::color_profile::CameraProfile;
 use super::geometry::LensGeometryMap;
@@ -14,9 +15,10 @@ use super::white_balance_presets::WhiteBalancePreset;
 #[cfg(not(libraw_available))]
 use anyhow::anyhow;
 use anyhow::{Context, Result};
+use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::ops::Index;
+use std::ops::{Deref, DerefMut, Index};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
 
@@ -210,6 +212,14 @@ impl<T> CompactPixelMap<T> {
     }
 
     fn storage_index(&self, index: usize) -> usize {
+        // Dense maps and uniform black levels are common in the full-resolution
+        // processing loops. Neither needs the divisions used for a CFA tile.
+        if self.storage_width == self.width && self.storage_height == self.height {
+            return index;
+        }
+        if self.values.len() == 1 {
+            return 0;
+        }
         let width = self.width.max(1) as usize;
         let x = index % width;
         let y = index / width;
@@ -491,16 +501,58 @@ pub struct LoadedRaw {
     pub lens_geometry: Option<Arc<LensGeometryMap>>,
     pub ai_denoised: Arc<RwLock<Option<AiDenoisedImage>>>,
     pub opposed_chroma_cache: OpposedChromaCache,
+    /// Runtime identity of the full sensor source used to estimate opposed-highlight chroma.
+    /// Crops, proxies, and tiles retain this token so shared cache entries cannot cross images.
+    pub opposed_chroma_source_identity: Arc<u8>,
+    /// Only full-source RAWs may populate the shared opposed-chroma cache. Derived views may
+    /// consume it, but fall back to a local estimate on a miss rather than poisoning it.
+    pub opposed_chroma_reference_source: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct OpposedChromaCacheKey {
+    source_identity: usize,
+    wb_bits: [u32; 4],
     black_point_bits: u32,
     clip_threshold_bits: u32,
     use_ai_cfa: bool,
 }
 
-pub type OpposedChromaCache = Arc<RwLock<HashMap<OpposedChromaCacheKey, [f32; 3]>>>;
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+struct OpposedChromaPreparedKey {
+    source_identity: usize,
+    black_point_bits: u32,
+    clip_threshold_bits: u32,
+    use_ai_cfa: bool,
+}
+
+/// Shared opposed-highlight estimator state.
+///
+/// `results` is keyed by every input that changes the final chroma reference, including WB.
+/// `prepared` intentionally excludes WB: clipping/nearby classification is WB-independent for
+/// positive RAW white-balance coefficients, so the expensive full-image scan can be reused while
+/// temperature/tint is scrubbed and only the prepared candidate pixels need to be re-evaluated.
+#[derive(Debug, Default)]
+pub struct OpposedChromaCacheState {
+    results: HashMap<OpposedChromaCacheKey, [f32; 3]>,
+    prepared: HashMap<OpposedChromaPreparedKey, Arc<Vec<usize>>>,
+}
+
+impl Deref for OpposedChromaCacheState {
+    type Target = HashMap<OpposedChromaCacheKey, [f32; 3]>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.results
+    }
+}
+
+impl DerefMut for OpposedChromaCacheState {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.results
+    }
+}
+
+pub type OpposedChromaCache = Arc<RwLock<OpposedChromaCacheState>>;
 
 impl LoadedRaw {
     pub fn from_scene_linear_rec2020(width: u32, height: u32, rgb: Vec<f32>) -> Result<Self> {
@@ -549,6 +601,8 @@ impl LoadedRaw {
             lens_geometry: None,
             ai_denoised: Arc::new(RwLock::new(None)),
             opposed_chroma_cache: Default::default(),
+            opposed_chroma_source_identity: Default::default(),
+            opposed_chroma_reference_source: true,
         })
     }
 
@@ -585,7 +639,14 @@ impl LoadedRaw {
         }
     }
 
-    fn opposed_refavg(&self, row: usize, col: usize, black_point: f32, pixels: &[u16]) -> f32 {
+    fn opposed_refavg(
+        &self,
+        row: usize,
+        col: usize,
+        black_point: f32,
+        pixels: &[u16],
+        wb_coeffs: [f32; 4],
+    ) -> f32 {
         let width = self.width as usize;
         let height = self.height as usize;
         let center = row * width + col;
@@ -600,8 +661,8 @@ impl LoadedRaw {
                 let index = sample_row * width + sample_col;
                 let physical = usize::from(self.color_indices[index].min(3));
                 let color = self.opposed_logical_color(index);
-                let value = self.opposed_sensor_value(index, black_point, pixels)
-                    * self.wb_coeffs[physical];
+                let value =
+                    self.opposed_sensor_value(index, black_point, pixels) * wb_coeffs[physical];
                 means[color] += value.max(0.0);
                 counts[color] += 1;
             }
@@ -621,22 +682,131 @@ impl LoadedRaw {
         opposed_root * opposed_root * opposed_root
     }
 
-    fn calculate_opposed_chroma(
+    fn prepare_opposed_chroma_candidates(
         &self,
         black_point: f32,
         clip_threshold: f32,
         pixels: &[u16],
-    ) -> [f32; 3] {
+    ) -> Vec<usize> {
         let width = self.width as usize;
         let height = self.height as usize;
         if width == 0 || height == 0 || pixels.len() != width.saturating_mul(height) {
-            return [0.0; 3];
+            return Vec::new();
         }
 
         let mask_width = width / 3;
         let mask_height = height / 3;
         if mask_width == 0 || mask_height == 0 {
-            return [0.0; 3];
+            return Vec::new();
+        }
+        let aligned_mask_width = mask_width.div_ceil(8) * 8;
+        let aligned_mask_height = mask_height.div_ceil(8) * 8;
+        let aligned_mask_area = aligned_mask_width.saturating_mul(aligned_mask_height);
+        let last_raw_mask_index = ((height - 1) / 3) * mask_width + (width - 1) / 3;
+        let required_mask_size = (last_raw_mask_index + 1).div_ceil(8) * 8;
+        let mask_size = aligned_mask_area.max(required_mask_size);
+        // Store RGB clipping flags together so rows can be processed independently.
+        let mut clipped_mask = vec![0u8; mask_size];
+        let clip = 0.987 * clip_threshold.max(0.01);
+        clipped_mask[..mask_width * mask_height]
+            .par_chunks_mut(mask_width)
+            .enumerate()
+            .for_each(|(mask_row, cells)| {
+                if mask_row >= mask_height.saturating_sub(1) {
+                    return;
+                }
+                for (mask_col, cell) in cells
+                    .iter_mut()
+                    .enumerate()
+                    .take(mask_width.saturating_sub(1))
+                {
+                    for offset_y in 0..3 {
+                        let row = mask_row * 3 + offset_y;
+                        for offset_x in 0..3 {
+                            let index = row * width + mask_col * 3 + offset_x;
+                            if self.opposed_sensor_value(index, black_point, pixels) >= clip {
+                                *cell |= 1 << self.opposed_logical_color(index);
+                            }
+                        }
+                    }
+                }
+            });
+        if clipped_mask.iter().all(|&cell| cell == 0) {
+            return Vec::new();
+        }
+
+        // Scatter from sparse clipped cells, retaining the original border rules.
+        let mut nearby_mask = clipped_mask.clone();
+        for source_row in 0..mask_height {
+            for source_col in 0..mask_width {
+                let flags = clipped_mask[source_row * mask_width + source_col];
+                if flags == 0 {
+                    continue;
+                }
+                for offset_y in -3isize..=3 {
+                    for offset_x in -3isize..=3 {
+                        if offset_x.abs() == 3 && offset_y.abs() == 3 {
+                            continue;
+                        }
+                        let row = source_row as isize - offset_y;
+                        let col = source_col as isize - offset_x;
+                        if row >= 3
+                            && col >= 3
+                            && row < mask_height.saturating_sub(4) as isize
+                            && col < mask_width.saturating_sub(4) as isize
+                        {
+                            nearby_mask[row as usize * mask_width + col as usize] |= flags;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Only normalize pixels near clipping. Collect indexed row bands in order
+        // so the subsequent floating-point accumulation remains bit-for-bit stable.
+        let bands: Vec<Vec<usize>> = (0..height.div_ceil(24))
+            .into_par_iter()
+            .map(|band| {
+                let mut candidates = Vec::new();
+                for row in band * 24..((band + 1) * 24).min(height) {
+                    for col in 0..width {
+                        let flags = nearby_mask[(row / 3) * mask_width + col / 3];
+                        if flags == 0 {
+                            continue;
+                        }
+                        let index = row * width + col;
+                        if flags & (1 << self.opposed_logical_color(index)) == 0 {
+                            continue;
+                        }
+                        let value = self.opposed_sensor_value(index, black_point, pixels);
+                        if value > 0.2 * clip && value < clip {
+                            candidates.push(index);
+                        }
+                    }
+                }
+                candidates
+            })
+            .collect();
+        bands.into_iter().flatten().collect()
+    }
+
+    #[cfg(test)]
+    fn prepare_opposed_chroma_candidates_serial(
+        &self,
+        black_point: f32,
+        clip_threshold: f32,
+        pixels: &[u16],
+    ) -> Vec<usize> {
+        let width = self.width as usize;
+        let height = self.height as usize;
+        if width == 0 || height == 0 || pixels.len() != width.saturating_mul(height) {
+            return Vec::new();
+        }
+
+        let mask_width = width / 3;
+        let mask_height = height / 3;
+        if mask_width == 0 || mask_height == 0 {
+            return Vec::new();
         }
         let aligned_mask_width = mask_width.div_ceil(8) * 8;
         let aligned_mask_height = mask_height.div_ceil(8) * 8;
@@ -655,70 +825,93 @@ impl LoadedRaw {
                     for offset_x in 0..3 {
                         let col = mask_col * 3 + offset_x;
                         let index = row * width + col;
-                        let physical = usize::from(self.color_indices[index].min(3));
                         let color = self.opposed_logical_color(index);
-                        let value = self.opposed_sensor_value(index, black_point, pixels)
-                            * self.wb_coeffs[physical];
-                        let channel_clip = clip * self.wb_coeffs[physical];
-                        clipped_mask[color * mask_size + mask_index] |= value >= channel_clip;
+                        let value = self.opposed_sensor_value(index, black_point, pixels);
+                        clipped_mask[color * mask_size + mask_index] |= value >= clip;
                     }
                 }
             }
         }
 
-        let mut nearby_mask = vec![false; 3 * mask_size];
-        for row in 0..mask_height {
-            for col in 0..mask_width {
-                let index = row * mask_width + col;
-                for color in 0..3 {
-                    let plane = color * mask_size;
-                    let safe = col >= 3
-                        && row >= 3
-                        && col < mask_width.saturating_sub(4)
-                        && row < mask_height.saturating_sub(4);
-                    let nearby = if safe {
-                        let mut dilated = false;
-                        'neighbours: for offset_y in -3isize..=3 {
-                            for offset_x in -3isize..=3 {
-                                if offset_x.abs() == 3 && offset_y.abs() == 3 {
-                                    continue;
-                                }
-                                let sample = (row as isize + offset_y) as usize * mask_width
-                                    + (col as isize + offset_x) as usize;
-                                if clipped_mask[plane + sample] {
-                                    dilated = true;
-                                    break 'neighbours;
-                                }
+        // Dilate from clipped cells instead of probing a ~7x7 neighbourhood around every mask
+        // cell. Clipped highlights are normally sparse, so this turns the dominant preparation
+        // cost from O(mask_area * kernel_area) into O(mask_area + clipped_cells * kernel_area).
+        // The original edge behavior is retained: unsafe border destinations are not dilated.
+        let mut nearby_mask = clipped_mask.clone();
+        for color in 0..3 {
+            let plane = color * mask_size;
+            for source_row in 0..mask_height {
+                for source_col in 0..mask_width {
+                    let source_index = source_row * mask_width + source_col;
+                    if !clipped_mask[plane + source_index] {
+                        continue;
+                    }
+                    for offset_y in -3isize..=3 {
+                        for offset_x in -3isize..=3 {
+                            if offset_x.abs() == 3 && offset_y.abs() == 3 {
+                                continue;
+                            }
+                            let destination_row = source_row as isize - offset_y;
+                            let destination_col = source_col as isize - offset_x;
+                            if destination_row < 0
+                                || destination_col < 0
+                                || destination_row >= mask_height as isize
+                                || destination_col >= mask_width as isize
+                            {
+                                continue;
+                            }
+                            let row = destination_row as usize;
+                            let col = destination_col as usize;
+                            let safe = col >= 3
+                                && row >= 3
+                                && col < mask_width.saturating_sub(4)
+                                && row < mask_height.saturating_sub(4);
+                            if safe {
+                                nearby_mask[plane + row * mask_width + col] = true;
                             }
                         }
-                        dilated
-                    } else {
-                        clipped_mask[plane + index]
-                    };
-                    nearby_mask[plane + index] = nearby;
+                    }
                 }
             }
         }
 
-        let mut sums = [0.0f32; 3];
-        let mut counts = [0.0f32; 3];
+        let mut candidates = Vec::new();
         for row in 0..height {
             for col in 0..width {
                 let index = row * width + col;
-                let physical = usize::from(self.color_indices[index].min(3));
                 let color = self.opposed_logical_color(index);
-                let value = self.opposed_sensor_value(index, black_point, pixels)
-                    * self.wb_coeffs[physical];
-                let channel_clip = clip * self.wb_coeffs[physical];
+                let value = self.opposed_sensor_value(index, black_point, pixels);
                 let mask_index = (row / 3) * mask_width + col / 3;
-                if nearby_mask[color * mask_size + mask_index]
-                    && value > 0.2 * channel_clip
-                    && value < channel_clip
+                if nearby_mask[color * mask_size + mask_index] && value > 0.2 * clip && value < clip
                 {
-                    sums[color] += value - self.opposed_refavg(row, col, black_point, pixels);
-                    counts[color] += 1.0;
+                    candidates.push(index);
                 }
             }
+        }
+        candidates
+    }
+
+    fn calculate_opposed_chroma_from_candidates(
+        &self,
+        black_point: f32,
+        pixels: &[u16],
+        wb_coeffs: [f32; 4],
+        candidates: &[usize],
+    ) -> [f32; 3] {
+        let width = self.width as usize;
+        if width == 0 {
+            return [0.0; 3];
+        }
+        let mut sums = [0.0f32; 3];
+        let mut counts = [0.0f32; 3];
+        for &index in candidates {
+            let row = index / width;
+            let col = index % width;
+            let physical = usize::from(self.color_indices[index].min(3));
+            let color = self.opposed_logical_color(index);
+            let value = self.opposed_sensor_value(index, black_point, pixels) * wb_coeffs[physical];
+            sums[color] += value - self.opposed_refavg(row, col, black_point, pixels, wb_coeffs);
+            counts[color] += 1.0;
         }
 
         std::array::from_fn(|color| {
@@ -730,13 +923,28 @@ impl LoadedRaw {
         })
     }
 
+    fn calculate_opposed_chroma(
+        &self,
+        black_point: f32,
+        clip_threshold: f32,
+        pixels: &[u16],
+        wb_coeffs: [f32; 4],
+    ) -> [f32; 3] {
+        let candidates =
+            self.prepare_opposed_chroma_candidates(black_point, clip_threshold, pixels);
+        self.calculate_opposed_chroma_from_candidates(black_point, pixels, wb_coeffs, &candidates)
+    }
+
     pub fn inpaint_opposed_chroma(
         &self,
         black_point: f32,
         clip_threshold: f32,
         use_ai_cfa: bool,
+        wb_coeffs: [f32; 4],
     ) -> [f32; 3] {
         let key = OpposedChromaCacheKey {
+            source_identity: Arc::as_ptr(&self.opposed_chroma_source_identity) as usize,
+            wb_bits: wb_coeffs.map(f32::to_bits),
             black_point_bits: black_point.clamp(-0.25, 0.25).to_bits(),
             clip_threshold_bits: clip_threshold.max(0.01).to_bits(),
             use_ai_cfa,
@@ -746,16 +954,67 @@ impl LoadedRaw {
                 return *chroma;
             }
         }
+        let prepared_key = OpposedChromaPreparedKey {
+            source_identity: key.source_identity,
+            black_point_bits: key.black_point_bits,
+            clip_threshold_bits: key.clip_threshold_bits,
+            use_ai_cfa: key.use_ai_cfa,
+        };
         let ai_image = use_ai_cfa.then(|| self.ai_denoised_image()).flatten();
         let pixels = ai_image
             .as_ref()
             .and_then(AiDenoisedImage::bayer_cfa)
             .unwrap_or(self.raw_pixels.as_slice());
-        let chroma = self.calculate_opposed_chroma(black_point, clip_threshold, pixels);
-        if let Ok(mut cache) = self.opposed_chroma_cache.write() {
-            cache.insert(key, chroma);
+        let chroma = if self.opposed_chroma_reference_source {
+            let prepared = self
+                .opposed_chroma_cache
+                .read()
+                .ok()
+                .and_then(|cache| cache.prepared.get(&prepared_key).cloned())
+                .unwrap_or_else(|| {
+                    let candidates = Arc::new(self.prepare_opposed_chroma_candidates(
+                        black_point,
+                        clip_threshold,
+                        pixels,
+                    ));
+                    if let Ok(mut cache) = self.opposed_chroma_cache.write() {
+                        cache
+                            .prepared
+                            .entry(prepared_key)
+                            .or_insert_with(|| Arc::clone(&candidates));
+                    }
+                    candidates
+                });
+            self.calculate_opposed_chroma_from_candidates(black_point, pixels, wb_coeffs, &prepared)
+        } else {
+            // A derived crop/proxy must never populate full-source prepared state. This fallback
+            // preserves standalone behavior if the caller forgot to prime the full source first.
+            self.calculate_opposed_chroma(black_point, clip_threshold, pixels, wb_coeffs)
+        };
+        if self.opposed_chroma_reference_source {
+            if let Ok(mut cache) = self.opposed_chroma_cache.write() {
+                cache.insert(key, chroma);
+            }
         }
         chroma
+    }
+
+    pub fn uses_opposed_chroma(&self, exposure: &ExposureParams) -> bool {
+        exposure.highlight_method == HighlightReconstructionMethod::InpaintOpposed
+            || (self.cfa_kind == CfaKind::XTrans
+                && exposure.highlight_method == HighlightReconstructionMethod::Lch)
+    }
+
+    pub fn inpaint_opposed_chroma_for_exposure(&self, exposure: &ExposureParams) -> [f32; 3] {
+        let wb = self
+            .adjusted_white_balance_and_camera_transform(exposure.temperature, exposure.tint)
+            .0;
+        self.inpaint_opposed_chroma(
+            exposure.black_point,
+            exposure.highlight_clip,
+            exposure.ai_denoise_enabled,
+            wb,
+        )
     }
 
     pub fn ai_denoised_image(&self) -> Option<AiDenoisedImage> {
@@ -788,6 +1047,7 @@ impl LoadedRaw {
         }
         if let Ok(mut chroma) = self.opposed_chroma_cache.write() {
             chroma.retain(|key, _| !key.use_ai_cfa);
+            chroma.prepared.retain(|key, _| !key.use_ai_cfa);
         }
         Ok(())
     }
@@ -798,6 +1058,7 @@ impl LoadedRaw {
         }
         if let Ok(mut chroma) = self.opposed_chroma_cache.write() {
             chroma.retain(|key, _| !key.use_ai_cfa);
+            chroma.prepared.retain(|key, _| !key.use_ai_cfa);
         }
     }
 
@@ -1243,9 +1504,90 @@ mod extension_tests {
 #[cfg(all(test, libraw_available))]
 mod tests {
     use super::{
-        temperature_offset_from_kelvin, CameraColorModel, CameraProfile, CameraProfileMode,
-        CameraWhiteBalanceModel, CfaKind, CompactPixelMap, LoadedRaw, GLOBAL_TEMPERATURE_LIMIT,
+        temperature_offset_from_kelvin, AiDenoisedImage, CameraColorModel, CameraProfile,
+        CameraProfileMode, CameraWhiteBalanceModel, CfaKind, CompactPixelMap, ExposureParams,
+        LoadedRaw, GLOBAL_TEMPERATURE_LIMIT,
     };
+
+    #[test]
+    fn parallel_highlight_candidates_match_serial_for_dense_and_periodic_maps() {
+        // Cover CFA tile sizes, partial 3-pixel cells, dense black maps, threshold
+        // boundaries and both empty and heavily clipped scenes.
+        for (width, height, tile) in [(2, 2, 2), (26, 24, 2), (97, 98, 2), (101, 103, 6)] {
+            for dense in [false, true] {
+                for clipped in [false, true] {
+                    let mut raw = colored_opposed_test_raw();
+                    raw.width = width;
+                    raw.height = height;
+                    let colors: Vec<u8> = (0..tile * tile)
+                        .map(|i| ((i * 7 + i / tile) % 4) as u8)
+                        .collect();
+                    raw.color_indices =
+                        CompactPixelMap::repeating(width, height, tile, tile, colors);
+                    raw.black_levels_per_pixel = CompactPixelMap::repeating(
+                        width,
+                        height,
+                        2,
+                        2,
+                        vec![0.0, 128.0, 256.0, 512.0],
+                    );
+                    if dense {
+                        raw.color_indices = CompactPixelMap::dense(
+                            width,
+                            height,
+                            raw.color_indices.iter().copied().collect(),
+                        );
+                        raw.black_levels_per_pixel = CompactPixelMap::dense(
+                            width,
+                            height,
+                            raw.black_levels_per_pixel.iter().copied().collect(),
+                        );
+                    }
+                    raw.raw_pixels = (0..width * height)
+                        .map(|i| {
+                            if clipped && i % 19 < 3 {
+                                10000
+                            } else {
+                                (i * 31 % 9500) as u16
+                            }
+                        })
+                        .collect();
+                    for (black, clip) in [(0.0, 1.0), (0.025, 0.93), (-0.025, 0.8)] {
+                        let expected = raw.prepare_opposed_chroma_candidates_serial(
+                            black,
+                            clip,
+                            &raw.raw_pixels,
+                        );
+                        let actual =
+                            raw.prepare_opposed_chroma_candidates(black, clip, &raw.raw_pixels);
+                        assert_eq!(actual, expected, "{width}x{height}, dense={dense}, clipped={clipped}, black={black}, clip={clip}");
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn compact_map_fast_paths_match_expanded_tiles() {
+        for (width, height, tw, th) in [
+            (17, 13, 1, 1),
+            (17, 13, 2, 2),
+            (17, 13, 6, 6),
+            (17, 13, 17, 13),
+        ] {
+            let values: Vec<_> = (0..tw * th).collect();
+            let map = CompactPixelMap::repeating(width, height, tw, th, values.clone());
+            for y in 0..height {
+                for x in 0..width {
+                    assert_eq!(
+                        map[(y * width + x) as usize],
+                        values[((y % th) * tw + x % tw) as usize]
+                    );
+                }
+            }
+            assert_eq!(map.get((width * height) as usize), None);
+        }
+    }
 
     #[test]
     fn automatic_profile_mode_defaults_to_the_embedded_matrix() {
@@ -1299,7 +1641,125 @@ mod tests {
             lens_geometry: None,
             ai_denoised: std::sync::Arc::new(std::sync::RwLock::new(None)),
             opposed_chroma_cache: Default::default(),
+            opposed_chroma_source_identity: Default::default(),
+            opposed_chroma_reference_source: true,
         }
+    }
+
+    fn colored_opposed_test_raw() -> LoadedRaw {
+        const WIDTH: u32 = 96;
+        const HEIGHT: u32 = 96;
+        const WHITE: f32 = 10_000.0;
+        let mut raw = raw_with_white_balance_model();
+        raw.width = WIDTH;
+        raw.height = HEIGHT;
+        raw.white_levels = [WHITE; 4];
+        raw.black_levels_per_pixel = CompactPixelMap::repeating(WIDTH, HEIGHT, 1, 1, vec![0.0]);
+        let mut colors = Vec::with_capacity((WIDTH * HEIGHT) as usize);
+        let mut pixels = Vec::with_capacity((WIDTH * HEIGHT) as usize);
+        for row in 0..HEIGHT {
+            for col in 0..WIDTH {
+                let physical = match (col % 2, row % 2) {
+                    (0, 0) => 0,
+                    (1, 0) => 1,
+                    (0, 1) => 3,
+                    _ => 2,
+                };
+                colors.push(physical);
+                let logical = usize::from(if physical == 3 { 1 } else { physical });
+                let mut value = [0.80_f32, 0.60, 0.40][logical];
+                if (30..66).contains(&col)
+                    && (30..66).contains(&row)
+                    && (logical == 0 || logical == 2)
+                {
+                    value = 1.0;
+                }
+                pixels.push((value * WHITE).round() as u16);
+            }
+        }
+        raw.raw_pixels = pixels;
+        raw.color_indices = CompactPixelMap::dense(WIDTH, HEIGHT, colors);
+        raw.opposed_chroma_cache = Default::default();
+        raw.opposed_chroma_source_identity = Default::default();
+        raw.opposed_chroma_reference_source = true;
+        raw
+    }
+
+    #[test]
+    fn opposed_chroma_cache_identity_covers_source_wb_black_clip_and_ai_selection() {
+        let raw = colored_opposed_test_raw();
+        let wb_a = [1.0, 1.0, 1.0, 1.0];
+        let wb_b = [1.35, 1.0, 0.75, 1.0];
+
+        raw.inpaint_opposed_chroma(0.0, 1.0, false, wb_a);
+        {
+            let cache = raw.opposed_chroma_cache.read().unwrap();
+            assert_eq!(cache.len(), 1);
+            assert_eq!(cache.prepared.len(), 1);
+        }
+        raw.inpaint_opposed_chroma(0.0, 1.0, false, wb_a);
+        assert_eq!(raw.opposed_chroma_cache.read().unwrap().len(), 1);
+
+        raw.inpaint_opposed_chroma(0.0, 1.0, false, wb_b);
+        {
+            let cache = raw.opposed_chroma_cache.read().unwrap();
+            assert_eq!(cache.len(), 2);
+            assert_eq!(
+                cache.prepared.len(),
+                1,
+                "WB changes must reuse the full-image clipping analysis"
+            );
+        }
+        raw.inpaint_opposed_chroma(0.025, 1.0, false, wb_b);
+        raw.inpaint_opposed_chroma(0.025, 0.93, false, wb_b);
+        {
+            let cache = raw.opposed_chroma_cache.read().unwrap();
+            assert_eq!(cache.len(), 4);
+            assert_eq!(cache.prepared.len(), 3);
+        }
+
+        let mut ai_pixels = raw.raw_pixels.clone();
+        for value in &mut ai_pixels {
+            *value = value.saturating_sub(137);
+        }
+        raw.set_ai_denoised_image(
+            AiDenoisedImage::new_bayer_cfa(raw.width, raw.height, ai_pixels).unwrap(),
+        )
+        .unwrap();
+        raw.inpaint_opposed_chroma(0.025, 0.93, true, wb_b);
+        assert_eq!(raw.opposed_chroma_cache.read().unwrap().len(), 5);
+
+        let mut other = raw.clone();
+        other.opposed_chroma_cache = std::sync::Arc::clone(&raw.opposed_chroma_cache);
+        other.opposed_chroma_source_identity = Default::default();
+        other.opposed_chroma_reference_source = true;
+        other.inpaint_opposed_chroma(0.0, 1.0, false, wb_a);
+        assert_eq!(raw.opposed_chroma_cache.read().unwrap().len(), 6);
+    }
+
+    #[test]
+    fn opposed_chroma_for_exposure_uses_the_adjusted_white_balance() {
+        let mut raw = colored_opposed_test_raw();
+        let base_temperature = raw.as_shot_temperature_kelvin().unwrap();
+        let mut exposure = ExposureParams::default();
+        exposure.temperature = temperature_offset_from_kelvin(base_temperature, 8_000.0);
+        exposure.tint = 0.2;
+
+        let adjusted = raw
+            .adjusted_white_balance_and_camera_transform(exposure.temperature, exposure.tint)
+            .0;
+        assert_ne!(adjusted, raw.wb_coeffs);
+
+        raw.opposed_chroma_cache = Default::default();
+        let expected = raw.inpaint_opposed_chroma(
+            exposure.black_point,
+            exposure.highlight_clip,
+            exposure.ai_denoise_enabled,
+            adjusted,
+        );
+        raw.opposed_chroma_cache = Default::default();
+        let actual = raw.inpaint_opposed_chroma_for_exposure(&exposure);
+        assert_eq!(actual, expected);
     }
 
     #[test]
@@ -1415,7 +1875,7 @@ mod tests {
         raw.black_levels_per_pixel = CompactPixelMap::repeating(WIDTH, HEIGHT, 1, 1, vec![0.0]);
         raw.opposed_chroma_cache = Default::default();
 
-        let chroma = raw.inpaint_opposed_chroma(0.0, 1.0, false);
+        let chroma = raw.inpaint_opposed_chroma(0.0, 1.0, false, raw.wb_coeffs);
         let opposed_root = 0.5 * (0.6f32.cbrt() + 0.4f32.cbrt());
         let expected_red = 0.8 - opposed_root * opposed_root * opposed_root;
         assert!((chroma[0] - expected_red).abs() < 0.005, "{chroma:?}");
@@ -1437,7 +1897,7 @@ mod tests {
         raw.wb_coeffs = [1.0; 4];
         raw.opposed_chroma_cache = Default::default();
 
-        let chroma = raw.inpaint_opposed_chroma(0.0, 1.0, false);
+        let chroma = raw.inpaint_opposed_chroma(0.0, 1.0, false, raw.wb_coeffs);
         assert!(chroma.iter().all(|value| value.is_finite()));
     }
 }

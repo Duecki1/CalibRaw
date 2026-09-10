@@ -1,17 +1,18 @@
 use super::*;
 
 impl PreviewState {
-    pub(in crate::app) fn detail_is_current(&self) -> bool {
-        self.detail
-            .as_ref()
-            .is_some_and(|detail| detail.revision == self.revision)
+    pub(in crate::app) fn source_viewport_pixels(&self) -> [u32; 2] {
+        if self.source_axes_swapped {
+            [self.viewport_pixels[1], self.viewport_pixels[0]]
+        } else {
+            self.viewport_pixels
+        }
     }
 
     pub(crate) fn processing_pending(&self) -> bool {
         self.detail_pending_stage.is_some()
             || self.navigation_pending_stage.is_some()
-            || (self.pending_stage.is_some()
-                && (self.zoom <= DETAIL_ZOOM_START || !self.detail_is_current()))
+            || self.pending_stage.is_some()
     }
 
     pub(crate) fn original_visible(&self) -> bool {
@@ -20,23 +21,50 @@ impl PreviewState {
 }
 
 impl CalibRawApp {
-    pub(crate) fn note_preview_motion(&mut self) {
-        let edit_was_pending = self.preview.detail_pending_stage.is_some();
-        let rendered_content_was_current = self.preview.original_rendered_state
-            == Some((self.preview.original_requested, self.preview.revision));
-        self.preview.revision = self.preview.revision.wrapping_add(1);
-        if rendered_content_was_current {
-            self.preview.original_rendered_state =
-                Some((self.preview.original_requested, self.preview.revision));
-        }
-        self.preview.detail_urgent = edit_was_pending;
-        self.preview.motion_at = Some(Instant::now());
-        if edit_was_pending {
-            self.egui_ctx.request_repaint();
+    pub(in crate::app) fn preview_detail_halo(&self) -> u32 {
+        if self.preview.original_requested {
+            crate::pipeline::required_export_tile_halo(
+                &self.preview.original_exposure,
+                &MaskStack::default(),
+            )
         } else {
-            self.egui_ctx
-                .request_repaint_after(zoom_detail_idle_delay());
+            crate::pipeline::required_export_tile_halo(
+                &self.develop.target_exposure,
+                &self.masks.stack,
+            )
         }
+    }
+
+    pub(in crate::app) fn preview_detail_is_current(&self) -> bool {
+        self.preview.detail.as_ref().is_some_and(|detail| {
+            let halo = self.preview_detail_halo();
+            let requested = PreviewDetailPlan::new(
+                detail.full_source_size,
+                detail.raw.cfa_kind,
+                self.preview.visible_uv,
+                self.preview.source_viewport_pixels(),
+                self.preview.quality,
+                halo,
+            );
+            detail.revision == self.preview.revision
+                && detail.processing_halo >= halo
+                && !detail.needs_native_refinement(&requested)
+                && detail_covers_view(
+                    detail.uv_rect,
+                    [detail.pipeline.width, detail.pipeline.height],
+                    detail.source_size,
+                    self.preview.visible_uv,
+                    &requested,
+                )
+        })
+    }
+
+    pub(crate) fn note_preview_motion(&mut self) {
+        // Navigation changes the requested region, not the developed pixels.
+        // Keep the last sharp crop visible while its replacement is prepared.
+        self.preview.motion_at = Some(Instant::now());
+        self.egui_ctx
+            .request_repaint_after(zoom_detail_idle_delay());
     }
 
     pub(crate) fn queue_preview_processing(&mut self, stage: ProcessingStage) {
@@ -99,6 +127,11 @@ impl CalibRawApp {
         } else {
             &self.masks.stack
         };
+        if let Some(full_raw) = self.develop.loaded_raw.as_ref() {
+            if full_raw.uses_opposed_chroma(exposure) {
+                full_raw.inpaint_opposed_chroma_for_exposure(exposure);
+            }
+        }
         if let (Some(raw), Some(pipeline), Some(full_raw)) = (
             &self.develop.preview_raw,
             &self.preview.gpu_pipeline,
