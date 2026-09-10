@@ -512,6 +512,7 @@ pub(crate) fn show_current_photo_review(
     if let Some(index) = app.library.entry_indices.get(&asset_id).copied() {
         app.library.entries[index].review = app.develop.review;
         app.library.entries[index].asset.metadata.review = app.develop.review;
+        app.library.sort_entries();
     } else {
         log::debug!("reviewed Android RAW is not in the current library: {raw_uri}");
     }
