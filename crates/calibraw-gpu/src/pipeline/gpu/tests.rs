@@ -137,6 +137,7 @@ fn compute_shaders_validate() {
         ("color denoise", SHADER_COLOR_DENOISE),
         ("tone analysis", SHADER_TONE_ANALYSIS),
         ("scene adjustments", SHADER_SCENE_ADJUSTMENTS),
+        ("dehaze", super::SHADER_DEHAZE),
         ("creative effects", SHADER_CREATIVE_EFFECTS),
         ("Remove composite", SHADER_REMOVE_COMPOSITE),
         ("view transform", SHADER_VIEW_TRANSFORM),
@@ -154,6 +155,7 @@ fn high_quality_shaders_validate() {
         ("color denoise", SHADER_COLOR_DENOISE),
         ("Remove composite", SHADER_REMOVE_COMPOSITE),
         ("scene adjustments", SHADER_SCENE_ADJUSTMENTS),
+        ("dehaze", super::SHADER_DEHAZE),
     ] {
         validate_shader(name, source, ProcessingQuality::High);
     }
@@ -916,3 +918,5 @@ fn specialized_bayer_modes_match_the_dynamic_shader_when_switching_modes() -> an
     }
     Ok(())
 }
+
+mod dehaze;

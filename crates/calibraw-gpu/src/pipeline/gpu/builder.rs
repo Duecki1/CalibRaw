@@ -328,7 +328,7 @@ pub(super) fn create_pipeline_buffers(
     let tone_histogram_buffer = create_gpu_buffer(
         device,
         "calibraw tone histogram",
-        256 * std::mem::size_of::<u32>() as u64,
+        TONE_HISTOGRAM_WORDS * std::mem::size_of::<u32>() as u64,
         wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
     );
     let tone_stats_buffer = create_gpu_buffer(
@@ -367,6 +367,7 @@ pub(super) struct BindGroupLayouts {
     pub(super) bgl_tone_prepare: wgpu::BindGroupLayout,
     pub(super) bgl_tone_blur: wgpu::BindGroupLayout,
     pub(super) bgl_tone_reduce: wgpu::BindGroupLayout,
+    pub(super) bgl_dehaze: wgpu::BindGroupLayout,
     pub(super) bgl_adjust_prepare: wgpu::BindGroupLayout,
     pub(super) bgl_adjust_tone: wgpu::BindGroupLayout,
     pub(super) bgl_adjust_effects: wgpu::BindGroupLayout,
@@ -666,6 +667,24 @@ pub(super) fn create_bind_group_layouts(
         )
     });
 
+    let bgl_dehaze = reused_layout(expected_pass_count(cfa_kind) - DEHAZE_PASS_COUNT)
+        .unwrap_or_else(|| {
+            create_bind_group_layout(
+                device,
+                "bgl dehaze",
+                &[
+                    buffer_entry(0),
+                    storage_buffer_entry(16, true),
+                    texture_entry(22, wgpu::TextureSampleType::Float { filterable: false }),
+                    texture_entry(30, wgpu::TextureSampleType::Float { filterable: false }),
+                    storage_texture_entry(23, work_format, wgpu::StorageTextureAccess::WriteOnly),
+                    texture_array_entry(27, wgpu::TextureSampleType::Float { filterable: true }),
+                    sampler_entry(28),
+                    storage_buffer_entry(33, true),
+                ],
+            )
+        });
+
     let bgl_adjust_prepare = reused_layout(adjustment_prepare_for_programs).unwrap_or_else(|| {
         create_bind_group_layout(
             device,
@@ -823,6 +842,7 @@ pub(super) fn create_bind_group_layouts(
         bgl_tone_prepare,
         bgl_tone_blur,
         bgl_tone_reduce,
+        bgl_dehaze,
         bgl_adjust_prepare,
         bgl_adjust_tone,
         bgl_adjust_effects,
@@ -853,6 +873,7 @@ pub(super) struct BindGroups {
     pub(super) bg_tone_horizontal: wgpu::BindGroup,
     pub(super) bg_tone_vertical: wgpu::BindGroup,
     pub(super) bg_tone_reduce: wgpu::BindGroup,
+    pub(super) bg_dehaze: [wgpu::BindGroup; DEHAZE_PASS_COUNT],
     pub(super) bg_adjust_prepare: wgpu::BindGroup,
     pub(super) bg_adjust_tone: wgpu::BindGroup,
     pub(super) bg_adjust_local_tone: wgpu::BindGroup,
@@ -906,6 +927,7 @@ pub(super) fn create_bind_groups(
         bgl_tone_prepare,
         bgl_tone_blur,
         bgl_tone_reduce,
+        bgl_dehaze,
         bgl_adjust_prepare,
         bgl_adjust_tone,
         bgl_adjust_effects,
@@ -1201,6 +1223,32 @@ pub(super) fn create_bind_groups(
         ],
     );
 
+    // Highlight scratch surfaces are no longer live during scene adjustments.
+    let bg_dehaze = [
+        (tex1_view, tex1_view, highlight_work_a_view),
+        (tex1_view, highlight_work_a_view, highlight_work_b_view),
+        (tex1_view, highlight_work_b_view, highlight_work_a_view),
+        (tex1_view, highlight_work_a_view, tex2_view),
+        (tex2_view, highlight_work_a_view, tex1_view),
+    ]
+    .map(|(input, auxiliary, output)| {
+        create_bind_group(
+            device,
+            "bg dehaze",
+            bgl_dehaze,
+            &[
+                buffer_binding(0, camera_uniforms_buffer),
+                buffer_binding(16, tone_stats_buffer),
+                texture_binding(22, input),
+                texture_binding(30, auxiliary),
+                texture_binding(23, output),
+                texture_binding(27, mask_view),
+                sampler_binding(28, mask_sampler),
+                buffer_binding(33, mask_data_buffer),
+            ],
+        )
+    });
+
     let bg_adjust_prepare = create_bind_group(
         device,
         "bg adjustment preparation",
@@ -1435,6 +1483,7 @@ pub(super) fn create_bind_groups(
         bg_tone_horizontal,
         bg_tone_vertical,
         bg_tone_reduce,
+        bg_dehaze,
         bg_adjust_prepare,
         bg_adjust_tone,
         bg_adjust_local_tone,
@@ -1474,6 +1523,7 @@ pub(super) struct ShaderSet {
     pub(super) xtrans_demosaic_module: Option<wgpu::ShaderModule>,
     pub(super) xtrans_finish_module: Option<wgpu::ShaderModule>,
     pub(super) color_denoise_module: Option<wgpu::ShaderModule>,
+    pub(super) dehaze_module: Option<wgpu::ShaderModule>,
     pub(super) tone_analysis_module: Option<wgpu::ShaderModule>,
     pub(super) scene_adjustments_module: Option<wgpu::ShaderModule>,
     pub(super) creative_effects_module: Option<wgpu::ShaderModule>,
@@ -1576,6 +1626,8 @@ pub(super) fn load_shader_set(
         color_denoise_shader.as_ref(),
         "color_denoise.wgsl",
     )?;
+    let dehaze_source = work_shader_source(SHADER_DEHAZE, work_format)?;
+    let dehaze_module = load_shader("calibraw dehaze", dehaze_source.as_ref(), "dehaze.wgsl")?;
     let tone_analysis_module = load_shader(
         "calibraw tone analysis",
         SHADER_TONE_ANALYSIS,
@@ -1607,6 +1659,7 @@ pub(super) fn load_shader_set(
         xtrans_demosaic_module,
         xtrans_finish_module,
         color_denoise_module,
+        dehaze_module,
         tone_analysis_module,
         scene_adjustments_module,
         creative_effects_module,
@@ -1721,6 +1774,7 @@ pub(super) fn assemble_passes(
         bgl_tone_prepare,
         bgl_tone_blur,
         bgl_tone_reduce,
+        bgl_dehaze,
         bgl_adjust_prepare,
         bgl_adjust_tone,
         bgl_adjust_effects,
@@ -1747,6 +1801,7 @@ pub(super) fn assemble_passes(
         bg_tone_horizontal,
         bg_tone_vertical,
         bg_tone_reduce,
+        bg_dehaze,
         bg_adjust_prepare,
         bg_adjust_tone,
         bg_adjust_local_tone,
@@ -1785,6 +1840,7 @@ pub(super) fn assemble_passes(
         xtrans_demosaic_module,
         xtrans_finish_module,
         color_denoise_module,
+        dehaze_module,
         tone_analysis_module,
         scene_adjustments_module,
         creative_effects_module,
@@ -2157,6 +2213,25 @@ pub(super) fn assemble_passes(
         bind_group: bg_adjust_render_after_blur.clone(),
         workgroups: image_workgroups,
     };
+
+    for (entry, group) in [
+        "dark_horizontal",
+        "dark_vertical",
+        "guided_coefficients",
+        "restore_haze",
+        "copy_dehaze",
+    ]
+    .into_iter()
+    .zip(bg_dehaze.iter())
+    {
+        passes.push(assembler.make_pass(
+            dehaze_module.as_ref(),
+            entry,
+            bgl_dehaze,
+            group.clone(),
+            image_workgroups,
+        ));
+    }
 
     let expected_programs = expected_pass_count(cfa_kind);
     if assembler.next_program_index != expected_programs || passes.len() != expected_programs {

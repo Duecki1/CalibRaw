@@ -10,6 +10,7 @@ const TONE_EV_RANGE: f32 = TONE_EV_MAX - TONE_EV_MIN;
 struct ToneStats {
     percentiles_0_field: vec4<f32>,
     percentiles_1_field: vec4<f32>,
+    airlight: vec4<f32>, // unexposed scene-linear Rec.2020; w is candidate count
 }
 
 struct TonePercentiles {

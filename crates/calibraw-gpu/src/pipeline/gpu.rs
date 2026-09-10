@@ -44,7 +44,7 @@ const GPU_STAGE_UNIFORM_ALLOCATION_BYTES: u64 = 512 + 768 + 256;
 const MASK_DATA_SIZE_BYTES: u64 = (std::mem::size_of::<MaskData>() * MAX_LOCAL_MASKS) as u64;
 const WORK_FORMAT_MARKER: &str = "rgba16float /* CALIBRAW_WORK_FORMAT */";
 const WORKGROUP_EDGE: u32 = 8;
-const TONE_STATS_SIZE_BYTES: u64 = 2 * std::mem::size_of::<[f32; 4]>() as u64;
+const TONE_STATS_SIZE_BYTES: u64 = 3 * std::mem::size_of::<[f32; 4]>() as u64;
 const DESKTOP_GPU_WORKING_SET_LIMIT_BYTES: u64 = 1_500 * 1024 * 1024;
 const ANDROID_GPU_WORKING_SET_LIMIT_BYTES: u64 = 384 * 1024 * 1024;
 
@@ -167,7 +167,7 @@ fn expected_pass_count(cfa_kind: CfaKind) -> usize {
         CfaKind::Bayer => 6,
         CfaKind::XTrans => 10,
     };
-    1 + demosaic_passes + COLOR_DENOISE_ENTRY_POINTS.len() + 4 + 18
+    1 + demosaic_passes + COLOR_DENOISE_ENTRY_POINTS.len() + 4 + 18 + DEHAZE_PASS_COUNT
 }
 
 const SHADER_BAYER_RCD_P1: &str = include_str!("../shaders/pass1.wgsl");
@@ -178,6 +178,9 @@ const SHADER_DUAL_DEMOSAIC: &str = include_str!("../shaders/dual_demosaic.wgsl")
 const SHADER_XTRANS_DEMOSAIC: &str = include_str!("../shaders/xtrans_demosaic.wgsl");
 const SHADER_XTRANS_FINISH: &str = include_str!("../shaders/xtrans_finish.wgsl");
 const SHADER_COLOR_DENOISE: &str = include_str!("../shaders/color_denoise.wgsl");
+const DEHAZE_PASS_COUNT: usize = 5;
+const TONE_HISTOGRAM_WORDS: u64 = 256 * 8;
+const SHADER_DEHAZE: &str = include_str!("../shaders/dehaze.wgsl");
 const SHADER_TONE_ANALYSIS: &str = include_str!("../shaders/tone_analysis.wgsl");
 
 const SHADER_SCENE_ADJUSTMENTS: &str = include_str!("../shaders/scene_adjustments.wgsl");
@@ -1319,6 +1322,19 @@ impl GpuParams {
             mask.metadata[0] != 0
                 && mask.metadata[3] >> MASK_EFFECT_ID_SHIFT == MaskEffect::Glow.shader_id()
         })
+    }
+
+    fn needs_dehaze_passes(&self) -> bool {
+        self.effects.presence[2].abs() > 1e-6
+            || (0..self.scene_tone.mask_counts[0].min(MAX_LOCAL_MASKS as u32) as usize).any(
+                |index| {
+                    let mask = &self.mask_data[index];
+                    mask.metadata[0] != 0
+                        && mask.metadata[1] != 0
+                        && (mask.metadata[3] >> MASK_EFFECT_ID_SHIFT) == 0
+                        && mask.adjust_2[3].abs() > 1e-6
+                },
+            )
     }
 
     fn needs_blur_passes(&self) -> bool {
@@ -3038,6 +3054,13 @@ impl RawGpuPipeline {
 
     fn encode_output_stage(&self, encoder: &mut wgpu::CommandEncoder, params: &GpuParams) {
         self.encode_pass(encoder, self.adjustment_prepare_pass_index);
+        if params.needs_dehaze_passes() {
+            self.encode_pass_range(
+                encoder,
+                self.passes.len() - DEHAZE_PASS_COUNT,
+                self.passes.len(),
+            );
+        }
         self.encode_pass(encoder, self.adjustment_tone_pass_index);
         let blur_active = params.needs_blur_passes();
         if params.needs_intermediate_adjustment_passes() {

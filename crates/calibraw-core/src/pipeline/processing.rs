@@ -697,6 +697,8 @@ pub const TONE_GUIDE_CELL_SIZE: u32 = if cfg!(target_os = "android") { 8 } else 
 const TONE_GUIDE_RADIUS_CELLS: u32 = if cfg!(target_os = "android") { 3 } else { 5 };
 const TONE_GUIDE_SUPPORT: u32 = (TONE_GUIDE_RADIUS_CELLS + 1) * TONE_GUIDE_CELL_SIZE;
 const LOCAL_EFFECTS_SUPPORT: u32 = 28;
+// Dark radius (14) plus both guided-filter windows (2 * 8), before local detail.
+const DEHAZE_SUPPORT: u32 = 30;
 const NEON_SUPPORT: u32 = 48;
 const MASK_BLUR_SUPPORT: u32 = 72;
 const FOCUS_BLUR_SUPPORT: u32 = 144;
@@ -709,6 +711,7 @@ const EXPORT_CUMULATIVE_SUPPORT: u32 = HIGHLIGHT_RECONSTRUCTION_SUPPORT
     + COLOR_DENOISE_SUPPORT_HIGH
     + TONE_GUIDE_SUPPORT
     + LOCAL_EFFECTS_SUPPORT
+    + DEHAZE_SUPPORT
     + NEON_SUPPORT
     + MASK_BLUR_SUPPORT
     + FOCUS_BLUR_SUPPORT
@@ -752,6 +755,14 @@ pub fn required_export_tile_halo(exposure: &ExposureParams, masks: &MaskStack) -
         });
     if local_spatial_active {
         support += LOCAL_EFFECTS_SUPPORT;
+    }
+
+    if exposure.dehaze.abs() > 1e-6
+        || masks.masks.iter().any(|mask| {
+            mask.enabled && mask.effect.uses_adjustments() && mask.adjustments.dehaze.abs() > 1e-6
+        })
+    {
+        support += DEHAZE_SUPPORT;
     }
 
     let neon_active = masks.masks.iter().any(|mask| {
@@ -1407,6 +1418,7 @@ mod tests {
         exposure.glow_amount = 1.0;
         assert!(required_export_tile_halo(&exposure, &masks) > MIN_EXPORT_TILE_HALO);
         exposure.clarity = 1.0;
+        exposure.dehaze = 1.0;
         exposure.chroma_denoise = 1.0;
         exposure.denoise_quality = DenoiseQuality::High;
         neon_masks.masks[0].effect_settings.neon.amount = 50.0;

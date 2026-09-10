@@ -314,7 +314,7 @@ pub(super) fn build_gpu_resource_plan(input: GpuResourcePlanInput) -> Result<Gpu
     );
     let histogram_bytes = u64::try_from(std::mem::size_of::<u32>())
         .ok()
-        .and_then(|word_bytes| word_bytes.checked_mul(256))
+        .and_then(|word_bytes| word_bytes.checked_mul(TONE_HISTOGRAM_WORDS))
         .ok_or_else(|| anyhow!("tone histogram buffer byte calculation overflows"))?;
     push_entry(
         &mut entries,
@@ -734,7 +734,13 @@ pub(super) fn create_float_work_texture(
         device,
         size,
         format,
-        wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::STORAGE_BINDING,
+        wgpu::TextureUsages::TEXTURE_BINDING
+            | wgpu::TextureUsages::STORAGE_BINDING
+            | if cfg!(test) {
+                wgpu::TextureUsages::COPY_SRC
+            } else {
+                wgpu::TextureUsages::empty()
+            },
         label,
     )
 }

@@ -405,6 +405,17 @@ fn apply_local_scene_tone_nodes(pos: vec2<i32>, input_rgb: vec3<f32>) -> vec3<f3
     return rgb;
 }
 
+fn dehaze_active() -> bool {
+    if abs(Common::effects_uniforms.presence.z) > 1e-6 { return true; }
+    let count = min(Common::scene_tone_uniforms.mask_counts.x, 32u);
+    for (var index = 0u; index < count; index++) {
+        let state = Common::mask_data[index].metadata;
+        if state.x != 0u && state.y != 0u && Common::mask_effect_id(state) == 0u
+            && abs(Common::mask_data[index].adjust_2_field.w) > 1e-6 { return true; }
+    }
+    return false;
+}
+
 @compute @workgroup_size(8, 8, 1)
 fn prepare_scene_node(@builtin(global_invocation_id) gid: vec3<u32>) {
     if gid.x >= Common::camera_uniforms.width || gid.y >= Common::camera_uniforms.height { return; }
@@ -414,7 +425,7 @@ fn prepare_scene_node(@builtin(global_invocation_id) gid: vec3<u32>) {
     let profile_exposure_ev = bitcast<f32>(Common::camera_uniforms.profile_flags.z);
     rgb = rgb * exp2(profile_exposure_ev);
     rgb = BasicAdjustments::apply_exposure(rgb);
-    rgb = apply_local_exposure_nodes(pos, rgb);
+    if !dehaze_active() { rgb = apply_local_exposure_nodes(pos, rgb); }
     textureStore(adjustment_base_out, pos, vec4<f32>(rgb, 1.0));
 }
 

@@ -7,6 +7,13 @@
 
 struct ToneHistogram {
     bins: array<atomic<u32>, 256>,
+    air_count: array<atomic<u32>, 256>,
+    air_r: array<atomic<u32>, 256>,
+    air_g: array<atomic<u32>, 256>,
+    air_b: array<atomic<u32>, 256>,
+    air_r_carry: array<atomic<u32>, 256>,
+    air_g_carry: array<atomic<u32>, 256>,
+    air_b_carry: array<atomic<u32>, 256>,
 }
 
 @group(0) @binding(11) var tone_scene_tex: texture_2d<f32>;
@@ -110,6 +117,9 @@ fn tone_guide_prepare(@builtin(global_invocation_id) gid: vec3<u32>) {
     let cell_min = clamp(global_cell_min - tile_origin, vec2<i32>(0), source_size);
     let cell_max = clamp(global_cell_max - tile_origin, vec2<i32>(0), source_size);
 
+    var air_sum = vec3<f32>(0.0);
+    var air_dark = 1e20;
+    var air_count = 0.0;
     var log_sum = 0.0;
     var count = 0.0;
     var brightest = vec4<f32>(ToneCommon::TONE_EV_MIN);
@@ -143,10 +153,29 @@ fn tone_guide_prepare(@builtin(global_invocation_id) gid: vec3<u32>) {
             let histogram_max = vec2<i32>(Common::camera_uniforms.tone_histogram_bounds.zw);
             if all(global_pos >= histogram_min) && all(global_pos < histogram_max) {
                 atomicAdd(&tone_histogram.bins[ToneCommon::tone_ev_to_bin(ev)], 1u);
+                let positive = max(rgb, vec3<f32>(0.0));
+                air_sum += positive;
+                air_dark = min(air_dark, min(positive.r, min(positive.g, positive.b)));
+                air_count += 1.0;
             }
             x = x + 1;
         }
         y = y + 1;
+    }
+
+    // Only complete globally aligned cells contribute. Tile halos cannot add
+    // duplicate candidates; bounds select the core in tiled export.
+    if air_count > 0.0 && air_count == f32(cell_size * cell_size) {
+        let bin = ToneCommon::tone_ev_to_bin(log2(max(air_dark, 1e-6) / ToneCommon::SCENE_MIDDLE_GREY));
+        let scale = ToneCommon::SCENE_MIDDLE_GREY * exp2(ToneCommon::tone_bin_to_ev(bin));
+        let encoded = vec3<u32>(round(clamp(air_sum / air_count / scale, vec3<f32>(0.0), vec3<f32>(64.0)) * 4096.0));
+        atomicAdd(&tone_histogram.air_count[bin], 1u);
+        let r = atomicAdd(&tone_histogram.air_r[bin], encoded.r);
+        let g = atomicAdd(&tone_histogram.air_g[bin], encoded.g);
+        let b = atomicAdd(&tone_histogram.air_b[bin], encoded.b);
+        if r > 0xffffffffu - encoded.r { atomicAdd(&tone_histogram.air_r_carry[bin], 1u); }
+        if g > 0xffffffffu - encoded.g { atomicAdd(&tone_histogram.air_g_carry[bin], 1u); }
+        if b > 0xffffffffu - encoded.b { atomicAdd(&tone_histogram.air_b_carry[bin], 1u); }
     }
 
     let average_ev = log_sum / max(count, 1.0);
@@ -203,10 +232,30 @@ fn tone_guide_vertical(@builtin(global_invocation_id) gid: vec3<u32>) {
     textureStore(tone_guide_write, pos, vec4<f32>(value, 0.0, 0.0, 1.0));
 }
 
+fn estimate_airlight() -> vec4<f32> {
+    var total = 0u;
+    for (var bin = 0u; bin < 256u; bin++) { total += atomicLoad(&tone_histogram.air_count[bin]); }
+    if total == 0u { return vec4<f32>(1.0, 1.0, 1.0, 0.0); }
+    let candidate_target = max(1u, u32(ceil(f32(total) * 0.001)));
+    var count = 0u;
+    var sum = vec3<f32>(0.0);
+    for (var bin = 255i; bin >= 0; bin--) {
+        let n = atomicLoad(&tone_histogram.air_count[bin]);
+        let low = vec3<f32>(f32(atomicLoad(&tone_histogram.air_r[bin])), f32(atomicLoad(&tone_histogram.air_g[bin])), f32(atomicLoad(&tone_histogram.air_b[bin])));
+        let high = vec3<f32>(f32(atomicLoad(&tone_histogram.air_r_carry[bin])), f32(atomicLoad(&tone_histogram.air_g_carry[bin])), f32(atomicLoad(&tone_histogram.air_b_carry[bin])));
+        let scale = ToneCommon::SCENE_MIDDLE_GREY * exp2(ToneCommon::tone_bin_to_ev(u32(bin)));
+        sum += (low + high * 4294967296.0) * (scale / 4096.0);
+        count += n;
+        if count >= candidate_target { break; }
+    }
+    return vec4<f32>(max(sum / f32(count), vec3<f32>(1e-6)), f32(count));
+}
+
 @compute @workgroup_size(1, 1, 1)
 fn tone_reduce_histogram(@builtin(global_invocation_id) gid: vec3<u32>) {
     if any(gid != vec3<u32>(0u)) { return; }
 
+    tone_stats_out.airlight = estimate_airlight();
     var total = 0u;
     for (var index = 0u; index < ToneCommon::TONE_HISTOGRAM_BIN_COUNT; index = index + 1u) {
         total = total + atomicLoad(&tone_histogram.bins[index]);
