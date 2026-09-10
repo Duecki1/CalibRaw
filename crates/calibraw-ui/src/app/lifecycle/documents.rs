@@ -328,6 +328,12 @@ impl CalibRawApp {
                     "RAW sidecar lookup finished in {:.3}s",
                     sidecar_started.elapsed().as_secs_f64()
                 ));
+                let review = loaded_sidecar
+                    .as_ref()
+                    .ok()
+                    .and_then(|loaded| loaded.as_ref())
+                    .map(|loaded| loaded.review)
+                    .unwrap_or_default();
                 let (requested_camera_profile, requested_profile_from_sidecar) =
                     match profile_selection_override {
                         Some(selection) => (selection, false),
@@ -619,6 +625,14 @@ impl CalibRawApp {
                     } else {
                         full_raw.clear_ai_denoised_image();
                     }
+                    if full_raw.uses_opposed_chroma(&rendered_exposure) {
+                        let highlight_started = Instant::now();
+                        full_raw.inpaint_opposed_chroma_for_exposure(&rendered_exposure);
+                        crate::diagnostics::record(format!(
+                            "Full-resolution highlight analysis finished in {:.3}s",
+                            highlight_started.elapsed().as_secs_f64()
+                        ));
+                    }
                     let preview_spec = ProxySpec {
                         max_edge: preview_quality_setting.proxy_edge_for_fitted_source(
                             preview_viewport_pixels_setting,
@@ -730,6 +744,9 @@ impl CalibRawApp {
                     if needs_canonical_mask_source(&rendered_masks) {
                         let mask_source_started = Instant::now();
                         let reference_exposure = ExposureParams::scene_referred_default();
+                        if full_raw.uses_opposed_chroma(&reference_exposure) {
+                            full_raw.inpaint_opposed_chroma_for_exposure(&reference_exposure);
+                        }
                         let reference_masks = MaskStack::default();
                         let reference_params =
                             GpuParams::new(&reference_exposure, &reference_masks, &preview_raw);
@@ -807,6 +824,7 @@ impl CalibRawApp {
                         full_raw,
                         preview_raw,
                         pipeline,
+                        review,
                         rendered_exposure,
                         rendered_masks,
                         remove: remove_edits,
@@ -933,6 +951,7 @@ impl CalibRawApp {
                 self.develop.preview_raw = Some(loaded.preview_raw);
                 self.preview.program_template = Some(loaded.pipeline.program_template());
                 self.preview.gpu_pipeline = Some(loaded.pipeline);
+                self.develop.review = loaded.review;
                 self.develop.exposure = loaded.rendered_exposure;
                 self.develop.geometry = loaded.geometry.sanitized();
                 self.develop_ui.crop_constraint_reference = None;

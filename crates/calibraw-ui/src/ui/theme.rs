@@ -882,6 +882,14 @@ pub(crate) fn apply(ctx: &egui::Context, design: UiDesign) {
 
     let mut style = (*ctx.style_of(theme)).clone();
     style.visuals = visuals;
+    #[cfg(all(target_os = "android", debug_assertions))]
+    {
+        // Debug APKs are also used for normal editing. Egui enables these
+        // visual diagnostics by default in debug builds: tab changes flash
+        // red ID-change outlines, and fractional layouts draw orange edges.
+        style.debug.warn_if_rect_changes_id = false;
+        style.debug.show_unaligned = false;
+    }
     style
         .text_styles
         .insert(egui::TextStyle::Heading, egui::FontId::proportional(20.0));

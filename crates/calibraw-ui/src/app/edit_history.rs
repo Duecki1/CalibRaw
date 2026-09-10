@@ -368,6 +368,9 @@ impl CalibRawApp {
     pub(crate) fn note_geometry_changed(&mut self) {
         self.develop.geometry = self.develop.geometry.sanitized();
         self.develop.geometry_revision = self.develop.geometry_revision.wrapping_add(1);
+        // Geometry also changes output parameters (for example crop-relative
+        // vignetting), even when an existing detail crop still covers the view.
+        self.queue_preview_processing(ProcessingStage::Output);
     }
 
     pub(crate) fn note_mask_edit_changed(&mut self) {

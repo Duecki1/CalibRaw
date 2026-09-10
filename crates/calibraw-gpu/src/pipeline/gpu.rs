@@ -10,7 +10,7 @@ use crate::pipeline::{
 };
 use anyhow::{anyhow, Context, Result};
 use bytemuck::{Pod, Zeroable};
-use std::sync::{Arc, Condvar, Mutex};
+use std::sync::{Arc, Condvar, Mutex, OnceLock};
 
 use crate::gpu_errors::GpuErrorScopes;
 
@@ -885,6 +885,7 @@ fn pack_camera_params(ctx: &GpuParamContext<'_>) -> CameraUniforms {
             exposure.black_point,
             exposure.highlight_clip,
             exposure.ai_denoise_enabled,
+            white_balance,
         )
     } else {
         [0.0; 3]
@@ -962,7 +963,7 @@ fn pack_camera_params(ctx: &GpuParamContext<'_>) -> CameraUniforms {
         full_height,
         abi_version: GPU_PARAMS_ABI_VERSION,
         abi_size_bytes: GPU_PARAMS_ABI_SIZE_BYTES,
-        tone_histogram_bounds: [0, 0, raw.width, raw.height],
+        tone_histogram_bounds: [0, 0, full_width, full_height],
         profile_hue_sat: profile_stages.characterization.hue_sat,
         profile_look: profile_stages.optional_look.look_table,
         profile_tone: profile_stages.view.profile_tone,
@@ -1209,12 +1210,20 @@ impl GpuParams {
         self
     }
 
-    pub fn with_tone_histogram_bounds(mut self, x: u32, y: u32, width: u32, height: u32) -> Self {
+    pub fn with_global_tone_histogram_bounds(
+        mut self,
+        x: u32,
+        y: u32,
+        width: u32,
+        height: u32,
+    ) -> Self {
+        let x0 = x.min(self.camera.full_width);
+        let y0 = y.min(self.camera.full_height);
         self.camera.tone_histogram_bounds = [
-            x,
-            y,
-            x.saturating_add(width).min(self.camera.width),
-            y.saturating_add(height).min(self.camera.height),
+            x0,
+            y0,
+            x.saturating_add(width).min(self.camera.full_width),
+            y.saturating_add(height).min(self.camera.full_height),
         ];
         self
     }
@@ -1352,8 +1361,95 @@ struct RemoveCompositeParams {
     extent: [u32; 2],
 }
 
+// Templates share both compiled programs and deferred programs. Keep the explicit
+// layouts so reusing a template never compiles an inactive effect just to get its layout.
+struct ComputeProgram {
+    device: wgpu::Device,
+    shader: wgpu::ShaderModule,
+    layouts: [wgpu::BindGroupLayout; 3],
+    entry: String,
+    cache: Option<Arc<PersistentGpuPipelineCache>>,
+    compiled: OnceLock<wgpu::ComputePipeline>,
+    demosaic_variants: [OnceLock<wgpu::ComputePipeline>; 11],
+}
+
+impl ComputeProgram {
+    fn get_bind_group_layout(&self, index: u32) -> wgpu::BindGroupLayout {
+        self.layouts[index as usize].clone()
+    }
+
+    fn get(&self) -> &wgpu::ComputePipeline {
+        self.compiled.get_or_init(|| {
+            let constants = if self.entry == "bayer_rcd_output" {
+                &[
+                    ("BAYER_DEMOSAIC_MODE", 0.0),
+                    ("BAYER_SENSOR_DENOISE", 0.0),
+                    ("BAYER_CA", 0.0),
+                ][..]
+            } else {
+                &[][..]
+            };
+            self.compile(constants)
+        })
+    }
+
+    fn for_demosaic_params(&self, camera: &CameraUniforms) -> &wgpu::ComputePipeline {
+        if self.entry != "bayer_rcd_output" {
+            return self.get();
+        }
+        let mode = if camera.demosaic_mode >= 1.5 {
+            2
+        } else {
+            usize::from(camera.demosaic_mode >= 0.5)
+        };
+        let denoise = usize::from(camera.noise_options[0] > 0.0);
+        let ca = usize::from(camera.ca_red.abs() > 1e-6 || camera.ca_blue.abs() > 1e-6);
+        let variant = mode * 4 + denoise * 2 + ca;
+        if variant == 0 {
+            return self.get();
+        }
+        self.demosaic_variants[variant - 1].get_or_init(|| {
+            self.compile(&[
+                ("BAYER_DEMOSAIC_MODE", mode as f64),
+                ("BAYER_SENSOR_DENOISE", denoise as f64),
+                ("BAYER_CA", ca as f64),
+            ])
+        })
+    }
+
+    fn compile(&self, constants: &[(&str, f64)]) -> wgpu::ComputePipeline {
+        let started = std::time::Instant::now();
+        let layout = self
+            .device
+            .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some(&self.entry),
+                bind_group_layouts: &self.layouts.each_ref().map(Some),
+                immediate_size: 0,
+            });
+        let pipeline = self
+            .device
+            .create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some(&self.entry),
+                layout: Some(&layout),
+                module: &self.shader,
+                entry_point: Some(&self.entry),
+                compilation_options: wgpu::PipelineCompilationOptions {
+                    constants,
+                    ..Default::default()
+                },
+                cache: self.cache.as_ref().map(|cache| cache.raw()),
+            });
+        log::debug!(
+            "GPU program {} {constants:?} compiled in {:.3}s",
+            self.entry,
+            started.elapsed().as_secs_f64()
+        );
+        pipeline
+    }
+}
+
 struct Pass {
-    pipeline: wgpu::ComputePipeline,
+    pipeline: Arc<ComputeProgram>,
     bind_group: wgpu::BindGroup,
     workgroups: [u32; 3],
 }
@@ -1367,7 +1463,7 @@ struct RawGpuPipelineConfig {
 pub struct RawGpuProgramTemplate {
     cfa_kind: CfaKind,
     processing_quality: ProcessingQuality,
-    pipelines: Vec<wgpu::ComputePipeline>,
+    pipelines: Vec<Arc<ComputeProgram>>,
     pipeline_cache: Option<Arc<PersistentGpuPipelineCache>>,
 }
 
@@ -1413,6 +1509,7 @@ pub struct RawGpuPipeline {
     pub egui_texture_id: Option<egui::TextureId>,
     pub width: u32,
     pub height: u32,
+    tone_guide_extent: [u32; 2],
     cfa_kind: CfaKind,
     processing_quality: ProcessingQuality,
     camera_uniforms_buffer: wgpu::Buffer,
@@ -1743,6 +1840,8 @@ impl RawGpuPipeline {
             lens_geometry: None,
             ai_denoised: Arc::new(std::sync::RwLock::new(None)),
             opposed_chroma_cache: Default::default(),
+            opposed_chroma_source_identity: Default::default(),
+            opposed_chroma_reference_source: true,
         };
         let exposure = ExposureParams::scene_referred_default();
         let masks = MaskStack::default();
@@ -2018,6 +2117,7 @@ impl RawGpuPipeline {
         let shaders = load_shader_set(
             device,
             program_template.is_some(),
+            raw.cfa_kind,
             geometry.demosaic_format,
             geometry.work_format,
         )?;
@@ -2060,6 +2160,7 @@ impl RawGpuPipeline {
             egui_texture_id,
             width: raw.width,
             height: raw.height,
+            tone_guide_extent: [geometry.tone_size.width, geometry.tone_size.height],
             cfa_kind: raw.cfa_kind,
             processing_quality: quality,
             camera_uniforms_buffer: buffers.camera_uniforms_buffer,
@@ -2126,6 +2227,19 @@ impl RawGpuPipeline {
             pipeline_cache,
             _gpu_budget_reservation: gpu_budget_reservation,
         };
+        // Compile only the programs used by these edits, within the constructor's
+        // error scopes. The encoder is discarded: warming needs no GPU execution.
+        let mut warmup = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("calibraw active program warmup"),
+        });
+        pipeline.encode_raw_stage(&mut warmup, params);
+        pipeline.encode_pass_range(
+            &mut warmup,
+            pipeline.tone_prepare_pass_index,
+            pipeline.tone_stage_end,
+        );
+        pipeline.encode_output_stage(&mut warmup, params);
+        drop(warmup);
         if let Err(error) = gpu_error_scopes.finish("create RAW GPU pipeline") {
             if let (Some(renderer), Some(texture_id)) = (renderer, pipeline.egui_texture_id) {
                 renderer.free_texture(&texture_id);
@@ -2133,6 +2247,15 @@ impl RawGpuPipeline {
             return Err(error);
         }
         Ok(pipeline)
+    }
+
+    pub fn tone_guide_supports_origin(&self, origin_x: i32, origin_y: i32) -> bool {
+        let scale = tone_analysis_scale();
+        self.tone_guide_extent
+            == [
+                tone_guide_axis_cell_count(origin_x, self.width, scale),
+                tone_guide_axis_cell_count(origin_y, self.height, scale),
+            ]
     }
 
     pub fn update_mask_layer(
@@ -2473,6 +2596,33 @@ impl RawGpuPipeline {
             self.dispatch_stage_with_remove(queue, device, params, stage, remove)?;
         }
         Ok(())
+    }
+
+    pub fn dispatch_tone_guide_with_inherited_statistics(
+        &self,
+        queue: &wgpu::Queue,
+        device: &wgpu::Device,
+        params: &GpuParams,
+        full_frame: &Self,
+    ) {
+        self.upload_params(queue, params);
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("calibraw crop tone guide with full-frame statistics"),
+        });
+        encoder.clear_buffer(&self.tone_histogram_buffer, 0, None);
+        encoder.copy_buffer_to_buffer(
+            &full_frame.tone_stats_buffer,
+            0,
+            &self.tone_stats_buffer,
+            0,
+            TONE_STATS_SIZE_BYTES,
+        );
+        self.encode_pass_range(
+            &mut encoder,
+            self.tone_prepare_pass_index,
+            self.tone_reduce_pass_index,
+        );
+        queue.submit(Some(encoder.finish()));
     }
 
     pub fn inherit_tone_statistics(
@@ -2865,7 +3015,18 @@ impl RawGpuPipeline {
                 self.demosaic_dual_end_index,
             );
         }
-        self.encode_pass(encoder, self.demosaic_finish_index);
+        let finish = &self.passes[self.demosaic_finish_index];
+        dispatch_compute(
+            encoder,
+            "calibraw demosaic finish",
+            finish.pipeline.for_demosaic_params(&params.camera),
+            &[
+                &finish.bind_group,
+                &self.scene_tone_bind_group,
+                &self.effects_bind_group,
+            ],
+            finish.workgroups,
+        );
         if params.camera.chroma_denoise > 1e-6 {
             self.encode_pass_range(
                 encoder,
@@ -2950,7 +3111,7 @@ impl RawGpuPipeline {
         dispatch_compute(
             encoder,
             label,
-            &pass_record.pipeline,
+            pass_record.pipeline.get(),
             &[
                 &pass_record.bind_group,
                 &self.scene_tone_bind_group,

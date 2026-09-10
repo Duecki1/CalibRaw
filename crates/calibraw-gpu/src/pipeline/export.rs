@@ -5,10 +5,11 @@ use super::{
     GpuParams, GpuProgramPrewarm, LensGeometryMap, LoadedRaw, MaskStack, NativeRect,
     ProcessingQuality, ProcessingStage, ProxySpec, RawGpuPipeline, RawGpuProgramTemplate,
     RemoveEditState, RemoveSceneContext, SrgbOutputLut, TilePlan, TileSpec, EXPORT_TILE_HALO,
-    MAX_LOCAL_MASKS, MIN_EXPORT_TILE_HALO,
+    MAX_LOCAL_MASKS, MIN_EXPORT_TILE_HALO, TONE_GUIDE_CELL_SIZE,
 };
 use crate::file_ops::{replace_file, sync_parent_directory};
 use anyhow::{Context, Result};
+use rayon::prelude::*;
 use std::borrow::Cow;
 use std::fs::{self, OpenOptions};
 use std::io::{BufWriter, Write};
@@ -18,6 +19,8 @@ use std::sync::{
     mpsc, Arc,
 };
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+
+const EXPORT_CPU_ROW_BATCH: usize = 32;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum ExportFormat {
@@ -50,6 +53,9 @@ pub fn render_remove_scene_crop_resized(
         "Remove crop lies outside the native source image"
     );
 
+    if job.raw.uses_opposed_chroma(&job.exposure) {
+        job.raw.inpaint_opposed_chroma_for_exposure(&job.exposure);
+    }
     let working_raw = build_region_proxy(
         &job.raw,
         job.crop.x,
@@ -162,6 +168,9 @@ pub fn render_remove_scene_crop(job: DevelopedCropJob) -> Result<Vec<f32>> {
         "Remove crop lies outside the native source image"
     );
     let empty_masks = MaskStack::default();
+    if job.raw.uses_opposed_chroma(&job.exposure) {
+        job.raw.inpaint_opposed_chroma_for_exposure(&job.exposure);
+    }
     let halo = required_export_tile_halo(&job.exposure, &empty_masks);
     let tile = crate::pipeline::ExportTile {
         core_x: job.crop.x,
@@ -492,6 +501,41 @@ pub struct TiledExportJob {
     pub program_prewarm: Option<Arc<GpuProgramPrewarm>>,
 }
 
+fn tone_grid_aligned_crop_tile(crop: NativeRect, halo: u32) -> Result<crate::pipeline::ExportTile> {
+    let alignment = i64::from(TONE_GUIDE_CELL_SIZE.max(1));
+    let align_down = |value: i64| value.div_euclid(alignment) * alignment;
+    let align_up = |value: i64| -(-value).div_euclid(alignment) * alignment;
+
+    let core_x = i64::from(crop.x);
+    let core_y = i64::from(crop.y);
+    let core_right = core_x
+        .checked_add(i64::from(crop.width))
+        .context("crop right edge overflow")?;
+    let core_bottom = core_y
+        .checked_add(i64::from(crop.height))
+        .context("crop bottom edge overflow")?;
+    let halo = i64::from(halo);
+    let origin_x = align_down(core_x - halo);
+    let origin_y = align_down(core_y - halo);
+    let padded_right = align_up(core_right + halo);
+    let padded_bottom = align_up(core_bottom + halo);
+
+    Ok(crate::pipeline::ExportTile {
+        core_x: crop.x,
+        core_y: crop.y,
+        core_width: crop.width,
+        core_height: crop.height,
+        local_core_x: u32::try_from(core_x - origin_x).context("crop x offset overflow")?,
+        local_core_y: u32::try_from(core_y - origin_y).context("crop y offset overflow")?,
+        padded_width: u32::try_from(padded_right - origin_x)
+            .context("aligned crop width overflow")?,
+        padded_height: u32::try_from(padded_bottom - origin_y)
+            .context("aligned crop height overflow")?,
+        global_origin_x: i32::try_from(origin_x).context("aligned crop x origin overflow")?,
+        global_origin_y: i32::try_from(origin_y).context("aligned crop y origin overflow")?,
+    })
+}
+
 pub struct DevelopedCropJob {
     pub device: wgpu::Device,
     pub queue: wgpu::Queue,
@@ -513,19 +557,11 @@ pub fn render_developed_linear_crop(job: DevelopedCropJob) -> Result<Vec<f32>> {
         job.crop.right() <= job.raw.width && job.crop.bottom() <= job.raw.height,
         "Remove crop lies outside the native source image"
     );
+    if job.raw.uses_opposed_chroma(&job.exposure) {
+        job.raw.inpaint_opposed_chroma_for_exposure(&job.exposure);
+    }
     let halo = required_export_tile_halo(&job.exposure, &job.masks);
-    let tile = crate::pipeline::ExportTile {
-        core_x: job.crop.x,
-        core_y: job.crop.y,
-        core_width: job.crop.width,
-        core_height: job.crop.height,
-        local_core_x: halo,
-        local_core_y: halo,
-        padded_width: job.crop.width.saturating_add(halo.saturating_mul(2)),
-        padded_height: job.crop.height.saturating_add(halo.saturating_mul(2)),
-        global_origin_x: job.crop.x as i32 - halo as i32,
-        global_origin_y: job.crop.y as i32 - halo as i32,
-    };
+    let tile = tone_grid_aligned_crop_tile(job.crop, halo)?;
     let tile_raw = extract_padded_tile(&job.raw, tile);
     let mask_region = tile_mask_source_region(
         &job.masks,
@@ -903,6 +939,9 @@ fn export_tiled_png(context: ExportContext<'_>, request: ExportRequest<'_>) -> R
     }
     let mut encoder =
         png::Encoder::with_info(BufWriter::new(file), info).context("configure PNG encoder")?;
+    // Lossless pixel values are identical; avoid spending most of an export
+    // searching for a slightly smaller DEFLATE stream.
+    encoder.set_compression(png::Compression::Fast);
     if request.color.srgb {
         encoder.set_source_srgb(png::SrgbRenderingIntent::Perceptual);
     }
@@ -1008,16 +1047,24 @@ fn render_geometry_output<W: Write>(
         )
         .with_passthrough(row_format == ExportRowFormat::RgbF32Le);
         let output_transform = request.color.transform.as_ref();
-        for y in 0..request.output_height {
-            ensure_export_not_cancelled(context.cancellation)?;
-            output_sharpen.push_row(
-                resampler.output_row(y)?,
-                output_transform,
-                row_format,
-                output,
-            )?;
+        let finalize_started = Instant::now();
+        for first_y in (0..request.output_height).step_by(EXPORT_CPU_ROW_BATCH) {
+            let end_y = first_y
+                .saturating_add(EXPORT_CPU_ROW_BATCH as u32)
+                .min(request.output_height);
+            let rows = resampler.output_rows(first_y..end_y, context.cancellation)?;
+            for row in rows {
+                ensure_export_not_cancelled(context.cancellation)?;
+                output_sharpen.push_row(row, output_transform, row_format, output)?;
+            }
         }
         output_sharpen.finish(output_transform, row_format, output)?;
+        crate::diagnostics::record(format!(
+            "Export geometry, final sharpening and output encoding finished in {:.3}s: {}x{}",
+            finalize_started.elapsed().as_secs_f64(),
+            request.output_width,
+            request.output_height,
+        ));
         Ok(())
     })
 }
@@ -1063,11 +1110,7 @@ where
         || (raw.cfa_kind == CfaKind::XTrans
             && exposure.highlight_method == crate::pipeline::HighlightReconstructionMethod::Lch)
     {
-        raw.inpaint_opposed_chroma(
-            exposure.black_point,
-            exposure.highlight_clip,
-            exposure.ai_denoise_enabled,
-        );
+        raw.inpaint_opposed_chroma_for_exposure(exposure);
     }
     let plan = TilePlan::new(raw.width, raw.height, tile_spec);
     crate::diagnostics::record(format!(
@@ -1194,9 +1237,9 @@ where
             raw.height,
         )
         .with_vignette_geometry(geometry)
-        .with_tone_histogram_bounds(
-            tile.local_core_x,
-            tile.local_core_y,
+        .with_global_tone_histogram_bounds(
+            tile.core_x,
+            tile.core_y,
             tile.core_width,
             tile.core_height,
         );
@@ -1875,6 +1918,22 @@ impl<'a> GeometryResampler<'a> {
         })
     }
 
+    fn output_rows(
+        &self,
+        rows: std::ops::Range<u32>,
+        cancellation: &AtomicBool,
+    ) -> Result<Vec<Vec<f32>>> {
+        // Lens correction, rotation and crop run after the last rendered tile.
+        // Process a bounded band across CPU cores without changing sampling order
+        // within a pixel or the row order seen by sharpening and the encoder.
+        rows.into_par_iter()
+            .map(|y| {
+                ensure_export_not_cancelled(cancellation)?;
+                self.output_row(y)
+            })
+            .collect()
+    }
+
     fn output_row(&self, output_y: u32) -> Result<Vec<f32>> {
         anyhow::ensure!(
             output_y < self.output_height,
@@ -2164,8 +2223,9 @@ struct OutputSampleWeight {
 struct FinalSizeOutputSharpen {
     width: u32,
     strength: f32,
-    previous: Option<Vec<f32>>,
-    current: Option<Vec<f32>>,
+    previous: Option<Arc<Vec<f32>>>,
+    current: Option<Arc<Vec<f32>>>,
+    pending: Vec<[Arc<Vec<f32>>; 3]>,
     encoded_rows: u32,
     passthrough: bool,
 }
@@ -2186,6 +2246,7 @@ impl FinalSizeOutputSharpen {
             strength,
             previous: None,
             current: None,
+            pending: Vec::new(),
             encoded_rows: 0,
             passthrough: false,
         }
@@ -2207,19 +2268,21 @@ impl FinalSizeOutputSharpen {
             row.len() == checked_rgb_len(self.width, 1)?,
             "final-size sharpen row length does not match output width"
         );
+        let row = Arc::new(row);
         if self.passthrough {
-            return self.write_encoded_row(&row, output_transform, row_format, output);
+            self.pending.push([Arc::clone(&row), Arc::clone(&row), row]);
+            return self.flush_full_batch(output_transform, row_format, output);
         }
         let Some(current) = self.current.take() else {
             self.current = Some(row);
             return Ok(());
         };
-        let top = self.previous.as_deref().unwrap_or(&current);
-        let sharpened = output_sharpen_linear_row(top, &current, &row, self.strength)?;
-        self.write_encoded_row(&sharpened, output_transform, row_format, output)?;
+        let top = self.previous.as_ref().unwrap_or(&current);
+        self.pending
+            .push([Arc::clone(top), Arc::clone(&current), Arc::clone(&row)]);
         self.previous = Some(current);
         self.current = Some(row);
-        Ok(())
+        self.flush_full_batch(output_transform, row_format, output)
     }
 
     fn finish<W: Write>(
@@ -2229,29 +2292,56 @@ impl FinalSizeOutputSharpen {
         output: &mut W,
     ) -> Result<()> {
         if self.passthrough {
-            return Ok(());
+            return self.flush_batch(output_transform, row_format, output);
         }
         if let Some(current) = self.current.take() {
-            let top = self.previous.as_deref().unwrap_or(&current);
-            let sharpened = output_sharpen_linear_row(top, &current, &current, self.strength)?;
-            self.write_encoded_row(&sharpened, output_transform, row_format, output)?;
+            let top = self.previous.as_ref().unwrap_or(&current);
+            self.pending
+                .push([Arc::clone(top), Arc::clone(&current), current]);
         }
         self.previous = None;
-        Ok(())
+        self.flush_batch(output_transform, row_format, output)
     }
 
-    fn write_encoded_row<W: Write>(
+    fn flush_full_batch<W: Write>(
         &mut self,
-        row: &[f32],
         output_transform: Option<&SrgbOutputLut>,
         row_format: ExportRowFormat,
         output: &mut W,
     ) -> Result<()> {
-        let encoded = encode_output_row(row, output_transform, row_format)?;
-        output
-            .write_all(&encoded)
-            .with_context(|| format!("write output row {}", self.encoded_rows))?;
-        self.encoded_rows += 1;
+        if self.pending.len() >= EXPORT_CPU_ROW_BATCH {
+            self.flush_batch(output_transform, row_format, output)?;
+        }
+        Ok(())
+    }
+
+    fn flush_batch<W: Write>(
+        &mut self,
+        output_transform: Option<&SrgbOutputLut>,
+        row_format: ExportRowFormat,
+        output: &mut W,
+    ) -> Result<()> {
+        // Only a small band is retained. Rayon preserves indexed row order;
+        // compression and writes stay sequential, with identical pixel math.
+        let encoded: Result<Vec<Vec<u8>>> = self
+            .pending
+            .par_iter()
+            .map(|[top, center, bottom]| {
+                if self.passthrough {
+                    encode_output_row(center, output_transform, row_format)
+                } else {
+                    let sharpened = output_sharpen_linear_row(top, center, bottom, self.strength)?;
+                    encode_output_row(&sharpened, output_transform, row_format)
+                }
+            })
+            .collect();
+        for row in encoded? {
+            output
+                .write_all(&row)
+                .with_context(|| format!("write output row {}", self.encoded_rows))?;
+            self.encoded_rows += 1;
+        }
+        self.pending.clear();
         Ok(())
     }
 }
@@ -2785,7 +2875,7 @@ fn checked_rgb_len(width: u32, height: u32) -> Result<usize> {
 fn validate_tile_spec(spec: TileSpec) -> Result<()> {
     let maximum_core = 1024;
     let maximum_halo = 768;
-    let scale = if cfg!(target_os = "android") { 8 } else { 4 };
+    let scale = TONE_GUIDE_CELL_SIZE;
     anyhow::ensure!(
         (64..=maximum_core).contains(&spec.core_edge),
         "export tile core must be between 64 and {maximum_core} pixels"
@@ -2811,7 +2901,7 @@ fn bounded_tile_spec(mut spec: TileSpec, source_width: u32) -> Result<TileSpec> 
         .and_then(|value| value.checked_mul(std::mem::size_of::<f32>() as u64))
         .context("export source-band row size overflow")?;
     anyhow::ensure!(bytes_per_source_row > 0, "export source width is zero");
-    let alignment = if cfg!(target_os = "android") { 8 } else { 4 };
+    let alignment = TONE_GUIDE_CELL_SIZE;
     let maximum_rows =
         (MAX_EXPORT_BAND_BYTES / bytes_per_source_row).min(u64::from(spec.core_edge)) as u32;
     let aligned_rows = maximum_rows - maximum_rows % alignment;

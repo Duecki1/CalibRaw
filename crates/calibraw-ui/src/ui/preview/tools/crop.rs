@@ -5,6 +5,7 @@ impl Preview {
         ui: &mut Ui,
         app: &mut CalibRawApp,
         image_rect: Rect,
+        interaction_rect: Rect,
         source_width: u32,
         source_height: u32,
     ) {
@@ -12,7 +13,11 @@ impl Preview {
             return;
         }
         let pointer = ui.input(|input| input.pointer.interact_pos());
-        let primary_pressed = ui.input(|input| input.pointer.primary_pressed());
+        let primary_pressed = ui.input(|input| input.pointer.primary_pressed())
+            && pointer.is_some_and(|point| {
+                interaction_rect.contains(point)
+                    && ui.ctx().layer_id_at(point) == Some(ui.layer_id())
+            });
         let primary_down = ui.input(|input| input.pointer.primary_down());
         let primary_released = ui.input(|input| input.pointer.primary_released());
         let quarter_turns = app.develop.geometry.quarter_turns % 4;

@@ -46,6 +46,17 @@ pub fn desktop_sidecar_fingerprint(raw_path: &Path) -> Result<Option<u64>, Strin
         }
     };
 
+    // Review changes do not alter rendered pixels. Canonicalize the remaining document
+    // so metadata-only saves also leave the fingerprint independent of JSON field order.
+    let bytes = if let Ok(mut document) = serde_json::from_slice::<serde_json::Value>(&bytes) {
+        if let Some(object) = document.as_object_mut() {
+            object.remove("review");
+        }
+        serde_json::to_vec(&document)
+            .map_err(|error| format!("could not fingerprint edit sidecar: {error}"))?
+    } else {
+        bytes
+    };
     let mut fingerprint = 0xcbf2_9ce4_8422_2325u64;
     for byte in bytes {
         fingerprint ^= u64::from(byte);

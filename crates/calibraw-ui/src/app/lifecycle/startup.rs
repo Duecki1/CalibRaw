@@ -38,6 +38,7 @@ impl CalibRawApp {
         let mut app = Self {
             develop: DevelopState {
                 current_path: None,
+                review: crate::sidecar::PhotoReview::default(),
                 original_raw: None,
                 loaded_raw: None,
                 preview_raw: None,
@@ -68,6 +69,7 @@ impl CalibRawApp {
                     max: [1.0, 1.0],
                 },
                 viewport_pixels: [1, 1],
+                source_axes_swapped: false,
                 motion_at: None,
                 touch_navigation_active: false,
                 revision: 0,
@@ -320,6 +322,7 @@ impl CalibRawApp {
         let mut app = Self {
             develop: DevelopState {
                 current_path: None,
+                review: crate::sidecar::PhotoReview::default(),
                 original_raw: None,
                 loaded_raw: None,
                 preview_raw: None,
@@ -350,6 +353,7 @@ impl CalibRawApp {
                     max: [1.0, 1.0],
                 },
                 viewport_pixels: [1, 1],
+                source_axes_swapped: false,
                 motion_at: None,
                 touch_navigation_active: false,
                 revision: 0,

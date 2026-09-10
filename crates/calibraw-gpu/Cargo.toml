@@ -24,6 +24,7 @@ log.workspace = true
 memmap2.workspace = true
 png.workspace = true
 pollster.workspace = true
+rayon.workspace = true
 wgpu = { workspace = true, features = ["naga-ir"] }
 naga_oil.workspace = true
 

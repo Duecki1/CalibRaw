@@ -17,10 +17,11 @@ fn adaptive_tone_user_exposure_ev() -> f32 {
 fn sample_tone_guide_ev(pos: vec2<i32>) -> f32 {
     let guide_size_i = vec2<i32>(textureDimensions(tone_guide_tex));
     let guide_max = guide_size_i - vec2<i32>(1);
-    let full_size = vec2<f32>(f32(Common::camera_uniforms.width), f32(Common::camera_uniforms.height));
-    let guide_size = vec2<f32>(guide_size_i);
-    let coordinate = (vec2<f32>(pos) + vec2<f32>(0.5)) * guide_size / full_size
-        - vec2<f32>(0.5);
+    let cell_size = max(Common::camera_uniforms.tone_analysis_scale, 1.0);
+    let tile_origin = Common::tile_origin();
+    let guide_origin = floor(vec2<f32>(tile_origin) / cell_size);
+    let global_pos = vec2<f32>(pos + tile_origin) + vec2<f32>(0.5);
+    let coordinate = global_pos / cell_size - vec2<f32>(0.5) - guide_origin;
     let base = vec2<i32>(floor(coordinate));
     let fraction = fract(coordinate);
 
