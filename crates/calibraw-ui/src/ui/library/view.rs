@@ -312,6 +312,11 @@ impl Library {
                             }
                         };
                         let response = thumbnail_tile(ui, entry, item_rect, selected);
+                        #[cfg(not(target_os = "android"))]
+                        if let Some(action) = thumbnail_hover_overlay(ui, item_rect, entry) {
+                            library_action = Some(action);
+                            continue;
+                        }
 
                         #[cfg(target_os = "android")]
                         {
@@ -385,9 +390,13 @@ impl Library {
                                     ui.close();
                                 }
                                 ui.separator();
-                                if let Some(action) =
-                                    library_image_context_menu(ui, app, &asset, &context_assets)
-                                {
+                                if let Some(action) = library_image_context_menu(
+                                    ui,
+                                    app,
+                                    &asset,
+                                    &context_assets,
+                                    true,
+                                ) {
                                     library_action = Some(action);
                                 }
                             });

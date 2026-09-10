@@ -2,6 +2,8 @@ use super::*;
 
 #[derive(Clone, Debug)]
 pub(crate) enum LibraryAction {
+    #[cfg(not(target_os = "android"))]
+    Review(Vec<LibraryAsset>, super::review::ReviewChange),
     Export(Vec<LibraryAsset>),
     CopyAdjustments(LibraryAsset),
     PasteAdjustments(Vec<LibraryAsset>),
@@ -21,6 +23,7 @@ pub(crate) fn library_image_context_menu(
     app: &CalibRawApp,
     context_asset: &LibraryAsset,
     context_assets: &[LibraryAsset],
+    show_review: bool,
 ) -> Option<LibraryAction> {
     let selected_count = context_assets.len();
     let action_enabled = !local_action_in_progress(app)
@@ -28,6 +31,42 @@ pub(crate) fn library_image_context_menu(
         && app.library_ai_mask_refresh_status().is_none()
         && !context_assets.is_empty();
     let mut action = None;
+    if show_review {
+        ui.add_enabled_ui(action_enabled, |ui| {
+            ui.menu_button("Flag", |ui| {
+                for (label, flag) in [
+                    ("Pick", crate::sidecar::PhotoFlag::Picked),
+                    ("Unflag", crate::sidecar::PhotoFlag::Unflagged),
+                    ("Reject", crate::sidecar::PhotoFlag::Rejected),
+                ] {
+                    if ui.button(label).clicked() {
+                        action = Some(LibraryAction::Review(
+                            context_assets.to_vec(),
+                            super::review::ReviewChange::Flag(flag),
+                        ));
+                        ui.close();
+                    }
+                }
+            });
+            ui.menu_button("Rating", |ui| {
+                for rating in 0..=5 {
+                    let label = if rating == 0 {
+                        "Unrated".to_owned()
+                    } else {
+                        format!("{rating} stars")
+                    };
+                    if ui.button(label).clicked() {
+                        action = Some(LibraryAction::Review(
+                            context_assets.to_vec(),
+                            super::review::ReviewChange::Rating(rating),
+                        ));
+                        ui.close();
+                    }
+                }
+            });
+        });
+        ui.separator();
+    }
 
     if crate::ui::theme::context_menu_item(
         ui,
@@ -159,6 +198,8 @@ pub(crate) fn apply_library_action(
     action: LibraryAction,
 ) {
     match action {
+        #[cfg(not(target_os = "android"))]
+        LibraryAction::Review(assets, change) => super::review::apply_review(app, assets, change),
         LibraryAction::Export(assets) => {
             if !assets.is_empty() {
                 app.library.export_dialog = Some(LibraryExportDialog {

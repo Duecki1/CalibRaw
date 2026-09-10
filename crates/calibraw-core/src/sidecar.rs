@@ -304,11 +304,30 @@ fn synchronize_subject_refinement(edits: &mut EditState) {
     edits.subject_refinement = refinement;
 }
 
+/// Culling metadata is independent of development adjustments.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PhotoFlag {
+    Rejected,
+    #[default]
+    Unflagged,
+    Picked,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(default)]
+pub struct PhotoReview {
+    pub flag: PhotoFlag,
+    pub rating: u8,
+}
+
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 struct SidecarDocument {
     format: String,
     schema_version: u32,
     edits: EditState,
+    #[serde(default)]
+    review: PhotoReview,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     mask_assets: Vec<SidecarMaskAsset>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -1047,7 +1066,11 @@ pub use desktop::{
     save_developed_thumbnail_cache,
 };
 
-pub fn encode(mut edits: EditState) -> Result<Vec<u8>, SidecarError> {
+pub fn encode(edits: EditState) -> Result<Vec<u8>, SidecarError> {
+    encode_with_review(edits, PhotoReview::default())
+}
+
+fn encode_with_review(mut edits: EditState, review: PhotoReview) -> Result<Vec<u8>, SidecarError> {
     synchronize_subject_refinement(&mut edits);
     validate_edit_state(&edits)?;
     let (mask_assets, mask_asset_refs) = extract_mask_assets(&mut edits)?;
@@ -1056,6 +1079,7 @@ pub fn encode(mut edits: EditState) -> Result<Vec<u8>, SidecarError> {
         format: SIDECAR_FORMAT.to_owned(),
         schema_version: SIDECAR_SCHEMA_VERSION,
         edits,
+        review,
         mask_assets,
         mask_asset_refs,
         remove_assets,
@@ -1139,16 +1163,124 @@ pub fn load_desktop(raw_path: &Path) -> Result<Option<LoadedSidecar>, SidecarErr
     }
 }
 
+// Serialize read/modify/write operations so background development saves cannot lose
+// a review update made from the gallery on another thread.
+static SIDECAR_SAVE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 pub fn save_desktop(raw_path: &Path, edits: EditState) -> Result<PathBuf, SidecarError> {
+    let _guard = SIDECAR_SAVE_LOCK
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
     let path = sidecar_path_for_raw(raw_path);
-    let bytes = encode(edits)?;
+    let review = load_photo_review(raw_path)?;
+    let bytes = encode_with_review(edits, review)?;
     atomic_write(&path, &bytes)?;
     Ok(path)
 }
 
 #[cfg(not(target_os = "android"))]
 pub fn reset_desktop_adjustments(raw_path: &Path) -> Result<bool, String> {
-    remove_desktop_edits(raw_path)
+    let review = load_photo_review(raw_path).map_err(|error| error.to_string())?;
+    if review == PhotoReview::default() {
+        return remove_desktop_edits(raw_path);
+    }
+    save_desktop(raw_path, default_edit_state()).map_err(|error| error.to_string())?;
+    invalidate_developed_thumbnail_cache(raw_path)?;
+    Ok(true)
+}
+
+/// Read review metadata without decoding embedded masks or development state.
+pub fn load_photo_review(raw_path: &Path) -> Result<PhotoReview, SidecarError> {
+    #[derive(Deserialize)]
+    struct ReviewHeader {
+        format: String,
+        schema_version: u32,
+        #[serde(default)]
+        review: PhotoReview,
+    }
+    let bytes = match read_bounded(&sidecar_path_for_raw(raw_path)) {
+        Ok(bytes) => bytes,
+        Err(SidecarError::Io(error)) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(PhotoReview::default())
+        }
+        Err(error) => return Err(error),
+    };
+    let header: ReviewHeader =
+        serde_json::from_slice(&bytes).map_err(|error| SidecarError::Invalid(error.to_string()))?;
+    if header.format != SIDECAR_FORMAT || header.schema_version != SIDECAR_SCHEMA_VERSION {
+        return Err(SidecarError::Unsupported(
+            "unsupported review sidecar".to_owned(),
+        ));
+    }
+    Ok(PhotoReview {
+        rating: header.review.rating.min(5),
+        ..header.review
+    })
+}
+
+/// Inspect preview geometry and edit presence without decoding embedded image assets.
+pub fn load_photo_preview_info(raw_path: &Path) -> Result<(GeometryTransform, bool), SidecarError> {
+    #[derive(Deserialize)]
+    struct PreviewDocument {
+        edits: serde_json::Value,
+    }
+    let bytes = match read_bounded(&sidecar_path_for_raw(raw_path)) {
+        Ok(bytes) => bytes,
+        Err(SidecarError::Io(error)) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok((GeometryTransform::default(), false))
+        }
+        Err(error) => return Err(error),
+    };
+    let mut document: PreviewDocument =
+        serde_json::from_slice(&bytes).map_err(|error| SidecarError::Invalid(error.to_string()))?;
+    let geometry: GeometryTransform = document
+        .edits
+        .get("geometry")
+        .map(|value| serde_json::from_value(value.clone()))
+        .transpose()
+        .map_err(|error| SidecarError::Invalid(error.to_string()))?
+        .unwrap_or_default();
+    let mut default = serde_json::from_slice::<PreviewDocument>(&encode(default_edit_state())?)
+        .map_err(|error| SidecarError::Invalid(error.to_string()))?
+        .edits;
+    // This bookkeeping flag alone is not a development adjustment.
+    for value in [&mut document.edits, &mut default] {
+        if let Some(object) = value.as_object_mut() {
+            object.remove("ai_masks_need_update");
+        }
+    }
+    Ok((geometry.sanitized(), document.edits != default))
+}
+
+pub fn save_photo_review(raw_path: &Path, review: PhotoReview) -> Result<(), SidecarError> {
+    let _guard = SIDECAR_SAVE_LOCK
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    if review.rating > 5 {
+        return Err(SidecarError::Invalid(
+            "rating must be between 0 and 5".to_owned(),
+        ));
+    }
+    // Validate the existing document before modifying it, preserving all adjustment assets.
+    load_photo_review(raw_path)?;
+    let path = sidecar_path_for_raw(raw_path);
+    let bytes = match read_bounded(&path) {
+        Ok(bytes) => bytes,
+        Err(SidecarError::Io(error)) if error.kind() == std::io::ErrorKind::NotFound => {
+            encode(default_edit_state())?
+        }
+        Err(error) => return Err(error),
+    };
+    let mut document: serde_json::Value =
+        serde_json::from_slice(&bytes).map_err(|error| SidecarError::Invalid(error.to_string()))?;
+    document["review"] =
+        serde_json::to_value(review).map_err(|error| SidecarError::Invalid(error.to_string()))?;
+    let bytes =
+        serde_json::to_vec(&document).map_err(|error| SidecarError::Invalid(error.to_string()))?;
+    if bytes.len() as u64 > MAX_SIDECAR_BYTES {
+        return Err(SidecarError::TooLarge(bytes.len() as u64));
+    }
+    atomic_write(&path, &bytes)
 }
 
 pub fn read_bounded(path: &Path) -> Result<Vec<u8>, SidecarError> {

@@ -748,6 +748,7 @@ impl LibraryState {
                         .map(|asset| {
                             if let Some(mut entry) = previous.remove(&asset.id) {
                                 if same_library_asset_identity(&entry.asset, &asset) {
+                                    entry.review = asset.metadata.review;
                                     entry.asset = asset;
                                     entry.thumbnail_error = None;
                                     entry.thumbnail_queued = false;
@@ -826,7 +827,7 @@ impl LibraryState {
                                 ));
                             }
                             self.entries[index].thumbnail_size = Some(decoded_size);
-                            self.entries[index].layout_size.get_or_insert(decoded_size);
+                            self.entries[index].layout_size = Some(decoded_size);
                             self.entries[index].thumbnail_error = None;
                             self.entries[index].thumbnail_failures = 0;
                             self.entries[index].thumbnail_retry_after = None;

@@ -256,6 +256,8 @@ impl TopBar {
                 }
 
                 if app.ui.active_tab == AppTab::Develop {
+                    crate::ui::library::show_current_photo_review(ui, app);
+                    ui.separator();
                     if Self::history_icon_button(
                         ui,
                         app.can_undo_edit(),

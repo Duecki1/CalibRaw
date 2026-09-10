@@ -764,6 +764,7 @@ fn corrupt_and_future_sidecars_are_rejected() {
     let future = SidecarDocument {
         format: SIDECAR_FORMAT.to_owned(),
         schema_version: SIDECAR_SCHEMA_VERSION + 1,
+        review: PhotoReview::default(),
         edits,
         mask_assets: Vec::new(),
         mask_asset_refs: Vec::new(),
@@ -1016,4 +1017,59 @@ fn relative_sidecar_parent_is_the_current_directory() {
         .filter(|parent| !parent.as_os_str().is_empty())
         .unwrap_or_else(|| Path::new("."));
     assert_eq!(parent, Path::new("."));
+}
+
+#[cfg(not(target_os = "android"))]
+#[test]
+fn photo_review_survives_development_saves_and_reset() {
+    let directory = temporary_directory("photo-review");
+    let raw = directory.join("photo.CR3");
+    let review = PhotoReview {
+        flag: PhotoFlag::Picked,
+        rating: 4,
+    };
+    assert_eq!(load_photo_review(&raw).unwrap(), PhotoReview::default());
+    save_photo_review(&raw, review).unwrap();
+    assert_eq!(load_photo_review(&raw).unwrap(), review);
+    assert!(!load_photo_preview_info(&raw).unwrap().1);
+    let edits = sample_edits();
+    save_desktop(&raw, edits.clone()).unwrap();
+    assert_eq!(load_photo_review(&raw).unwrap(), review);
+    assert!(load_photo_preview_info(&raw).unwrap().1);
+    let fingerprint = desktop_sidecar_fingerprint(&raw).unwrap();
+    let changed = PhotoReview {
+        flag: PhotoFlag::Rejected,
+        rating: 2,
+    };
+    save_photo_review(&raw, changed).unwrap();
+    assert_eq!(desktop_sidecar_fingerprint(&raw).unwrap(), fingerprint);
+    assert_eq!(load_desktop(&raw).unwrap().unwrap().edits, edits);
+    reset_desktop_adjustments(&raw).unwrap();
+    assert_eq!(load_photo_review(&raw).unwrap(), changed);
+    assert!(!edit_state_has_adjustments(
+        &load_desktop(&raw).unwrap().unwrap().edits
+    ));
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn invalid_review_updates_leave_existing_sidecar_untouched() {
+    let directory = temporary_directory("invalid-photo-review");
+    let raw = directory.join("photo.CR3");
+    save_desktop(&raw, sample_edits()).unwrap();
+    let path = sidecar_path_for_raw(&raw);
+    let before = fs::read(&path).unwrap();
+    assert!(save_photo_review(
+        &raw,
+        PhotoReview {
+            rating: 6,
+            ..Default::default()
+        }
+    )
+    .is_err());
+    assert_eq!(fs::read(&path).unwrap(), before);
+    fs::write(&path, b"broken").unwrap();
+    assert!(save_photo_review(&raw, PhotoReview::default()).is_err());
+    assert_eq!(fs::read(&path).unwrap(), b"broken");
+    fs::remove_dir_all(directory).unwrap();
 }
