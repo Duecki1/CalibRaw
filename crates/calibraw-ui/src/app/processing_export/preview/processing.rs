@@ -10,6 +10,13 @@ impl CalibRawApp {
 
         if let Some(stage) = affected_stage(&self.develop.target_exposure, &self.develop.exposure) {
             self.develop.target_exposure = self.develop.exposure;
+            if matches!(stage, ProcessingStage::Raw) {
+                if let Some(full_raw) = self.develop.loaded_raw.as_ref() {
+                    if detail_uses_opposed_chroma(full_raw, &self.develop.target_exposure) {
+                        full_raw.inpaint_opposed_chroma_for_exposure(&self.develop.target_exposure);
+                    }
+                }
+            }
             self.queue_preview_processing(stage);
         }
     }
@@ -68,6 +75,14 @@ impl CalibRawApp {
         let detail_raw = Arc::clone(&detail.raw);
         let virtual_origin = detail.virtual_origin;
         let virtual_full_size = detail.virtual_full_size;
+        if stage == ProcessingStage::Raw
+            && !detail_raw.is_pre_demosaiced_raster()
+            && detail_uses_opposed_chroma(full_raw, &self.develop.target_exposure)
+        {
+            // Crops and proxies share the full sensor cache. Populate the exact
+            // WB/black/clip/AI key before GpuParams reads it from the derived RAW.
+            full_raw.inpaint_opposed_chroma_for_exposure(&self.develop.target_exposure);
+        }
         let mask_region = detail_mask_source_region(
             &self.masks.stack,
             detail.source_origin,
@@ -131,36 +146,56 @@ impl CalibRawApp {
             self.masks.detail_dirty_layers.fill(false);
         }
 
-        if stage == ProcessingStage::Output {
+        if stage == ProcessingStage::Tone {
             if let Some(full_frame) = full_frame_tone_pipeline {
-                detail.pipeline.inherit_tone_statistics(
+                detail
+                    .pipeline
+                    .dispatch_tone_guide_with_inherited_statistics(
+                        &render_state.queue,
+                        &render_state.device,
+                        &params,
+                        full_frame,
+                    );
+            } else {
+                detail.pipeline.dispatch_stage(
                     &render_state.queue,
                     &render_state.device,
-                    full_frame,
+                    &params,
+                    ProcessingStage::Tone,
                 );
             }
-        }
-        if let Err(error) = detail.pipeline.dispatch_stage_with_remove(
-            &render_state.queue,
-            &render_state.device,
-            &params,
-            stage,
-            RemoveSceneContext::new(
-                &self.inpaint.edits,
-                full_raw,
-                &self.develop.target_exposure,
-                [
-                    detail.source_origin[0] as f32,
-                    detail.source_origin[1] as f32,
-                ],
-                [detail.source_size[0] as f32, detail.source_size[1] as f32],
-            ),
-        ) {
-            self.ui.notice = Some(format!(
-                "Could not apply Remove to zoomed preview: {error:#}"
-            ));
-            self.preview.detail_pending_stage = None;
-            return;
+        } else {
+            if stage == ProcessingStage::Output {
+                if let Some(full_frame) = full_frame_tone_pipeline {
+                    detail.pipeline.inherit_tone_statistics(
+                        &render_state.queue,
+                        &render_state.device,
+                        full_frame,
+                    );
+                }
+            }
+            if let Err(error) = detail.pipeline.dispatch_stage_with_remove(
+                &render_state.queue,
+                &render_state.device,
+                &params,
+                stage,
+                RemoveSceneContext::new(
+                    &self.inpaint.edits,
+                    full_raw,
+                    &self.develop.target_exposure,
+                    [
+                        detail.source_origin[0] as f32,
+                        detail.source_origin[1] as f32,
+                    ],
+                    [detail.source_size[0] as f32, detail.source_size[1] as f32],
+                ),
+            ) {
+                self.ui.notice = Some(format!(
+                    "Could not apply Remove to zoomed preview: {error:#}"
+                ));
+                self.preview.detail_pending_stage = None;
+                return;
+            }
         }
         self.preview.detail_pending_stage = match stage {
             ProcessingStage::Raw => Some(ProcessingStage::Tone),
@@ -177,9 +212,7 @@ impl CalibRawApp {
     pub(in crate::app) fn advance_processing(&mut self, frame: &eframe::Frame) {
         if self.preview.zoom > DETAIL_ZOOM_START {
             self.advance_zoomed_processing(frame);
-            if self.preview.detail_is_current() {
-                return;
-            }
+            // Refresh the fitted fallback too: panning can expose any part of it.
         }
 
         let Some(stage) = self.preview.pending_stage else {
@@ -250,6 +283,23 @@ impl CalibRawApp {
             self.ui.notice = Some(format!("Could not apply Remove to preview: {error:#}"));
             self.preview.pending_stage = None;
             return;
+        }
+        if stage == ProcessingStage::Tone
+            && self
+                .preview
+                .detail
+                .as_ref()
+                .is_some_and(|detail| detail.revision == self.preview.revision)
+        {
+            // Once full-frame statistics are ready, replace the temporary
+            // navigation statistics in the crop without repeating RAW processing.
+            self.preview.detail_pending_stage = Some(
+                self.preview
+                    .detail_pending_stage
+                    .map_or(ProcessingStage::Tone, |pending| {
+                        pending.min(ProcessingStage::Tone)
+                    }),
+            );
         }
         self.preview.pending_stage = match stage {
             ProcessingStage::Raw => Some(ProcessingStage::Tone),

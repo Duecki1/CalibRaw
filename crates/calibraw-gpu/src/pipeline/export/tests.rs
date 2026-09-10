@@ -2,16 +2,67 @@ use super::{
     bounded_tile_spec, build_exif_payload, build_lanczos_contributions, built_in_srgb_icc,
     encode_jpeg_rgb, encode_srgb_row, encode_srgb_row_with_format, export_to_destination,
     publish_completed_export, resolved_export_tile_spec, stitch_linear_tile_into_band,
+    tone_grid_aligned_crop_tile,
     tiff_strip_layout, tile_mask_source_region, validate_export_dimensions,
     with_temporary_export_path, ExportFormat, ExportMetadata, ExportResizeMode, ExportRowFormat,
     ExportSettings, GeometryResampler, JpegEncodeRequest, LinearLightResizer, EXPORT_TILE_HALO,
     MAX_EXPORT_EDGE, TIFF_TARGET_STRIP_BYTES,
 };
 use crate::pipeline::{
-    ExportTile, ExposureParams, GeometryTransform, MaskStack, SrgbOutputLut, TileSpec,
+    ExportTile, ExposureParams, GeometryTransform, MaskStack, NativeRect, SrgbOutputLut,
+    TileSpec, TONE_GUIDE_CELL_SIZE,
 };
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
+
+#[test]
+fn developed_crop_padding_is_aligned_to_the_global_tone_grid() {
+    let halo = 64;
+    let first = tone_grid_aligned_crop_tile(
+        NativeRect {
+            x: 162,
+            y: 118,
+            width: 281,
+            height: 219,
+        },
+        halo,
+    )
+    .unwrap();
+    let shifted = tone_grid_aligned_crop_tile(
+        NativeRect {
+            x: 164,
+            y: 120,
+            width: 281,
+            height: 219,
+        },
+        halo,
+    )
+    .unwrap();
+
+    for tile in [first, shifted] {
+        assert_eq!(
+            tile.global_origin_x.rem_euclid(TONE_GUIDE_CELL_SIZE as i32),
+            0
+        );
+        assert_eq!(
+            tile.global_origin_y.rem_euclid(TONE_GUIDE_CELL_SIZE as i32),
+            0
+        );
+        assert!(tile.local_core_x >= halo);
+        assert!(tile.local_core_y >= halo);
+        assert!(
+            tile.padded_width - tile.local_core_x - tile.core_width >= halo,
+            "right-side guide support must cover the requested halo"
+        );
+        assert!(
+            tile.padded_height - tile.local_core_y - tile.core_height >= halo,
+            "bottom-side guide support must cover the requested halo"
+        );
+    }
+
+    assert_eq!(shifted.core_x - first.core_x, 2);
+    assert_eq!(shifted.core_y - first.core_y, 2);
+}
 
 #[test]
 fn export_format_extensions_preserve_existing_names_and_aliases() {
@@ -503,4 +554,134 @@ fn temporary_raster_helper_cleans_up_after_failure() {
     assert!(result.is_err());
     assert!(std::fs::read_dir(&directory).unwrap().next().is_none());
     std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn parallel_output_batches_match_serial_pixels_at_every_boundary() {
+    use super::{encode_output_row, output_sharpen_linear_row, FinalSizeOutputSharpen};
+    let transform = SrgbOutputLut::new();
+    for height in [1, 2, 31, 32, 33, 65] {
+        let width = 7;
+        let rows: Vec<Vec<f32>> = (0..height)
+            .map(|y| {
+                (0..width * 3)
+                    .map(|x| ((x * 17 + y * 31) % 251) as f32 / 200.0)
+                    .collect()
+            })
+            .collect();
+        for format in [
+            ExportRowFormat::Rgb8,
+            ExportRowFormat::Rgba8,
+            ExportRowFormat::Rgb16Le,
+            ExportRowFormat::Rgba16Be,
+            ExportRowFormat::RgbF32Le,
+        ] {
+            let passthrough = format == ExportRowFormat::RgbF32Le;
+            let mut pipeline = FinalSizeOutputSharpen::new(width, height, width, height)
+                .with_passthrough(passthrough);
+            let mut expected = Vec::new();
+            for y in 0..height as usize {
+                let sharpened;
+                let row = if passthrough {
+                    &rows[y]
+                } else {
+                    sharpened = output_sharpen_linear_row(
+                        &rows[y.saturating_sub(1)],
+                        &rows[y],
+                        &rows[(y + 1).min(height as usize - 1)],
+                        pipeline.strength,
+                    )
+                    .unwrap();
+                    &sharpened
+                };
+                expected.extend(encode_output_row(row, Some(&transform), format).unwrap());
+            }
+            let mut actual = Vec::new();
+            for row in &rows {
+                pipeline
+                    .push_row(row.clone(), Some(&transform), format, &mut actual)
+                    .unwrap();
+                assert!(pipeline.pending.len() < 32);
+            }
+            pipeline
+                .finish(Some(&transform), format, &mut actual)
+                .unwrap();
+            assert_eq!(actual, expected, "height={height}, format={format:?}");
+            assert_eq!(pipeline.encoded_rows, height);
+            assert!(pipeline.pending.is_empty());
+        }
+    }
+}
+
+#[test]
+fn parallel_output_batch_rejects_nonfinite_pixels_and_write_errors() {
+    use super::FinalSizeOutputSharpen;
+    let mut pipeline = FinalSizeOutputSharpen::new(1, 1, 1, 1).with_passthrough(true);
+    pipeline
+        .push_row(
+            vec![f32::NAN, 0.0, 0.0],
+            None,
+            ExportRowFormat::RgbF32Le,
+            &mut Vec::new(),
+        )
+        .unwrap();
+    assert!(pipeline
+        .finish(None, ExportRowFormat::RgbF32Le, &mut Vec::new())
+        .is_err());
+    let mut pipeline = FinalSizeOutputSharpen::new(1, 1, 1, 1).with_passthrough(true);
+    pipeline
+        .push_row(
+            vec![0.0; 3],
+            None,
+            ExportRowFormat::RgbF32Le,
+            &mut Vec::new(),
+        )
+        .unwrap();
+    assert!(pipeline
+        .finish(None, ExportRowFormat::RgbF32Le, &mut &mut [][..])
+        .is_err());
+}
+
+#[test]
+fn geometry_parallel_bands_match_serial_rows_with_lens_and_rotation() {
+    use crate::pipeline::LensGeometryMap;
+    let source: Vec<f32> = (0..19 * 17 * 3)
+        .map(|i| ((i * 31) % 251) as f32 / 250.0)
+        .collect();
+    let lens = LensGeometryMap::new(
+        19,
+        17,
+        2,
+        2,
+        vec![[0.2, 0.1], [17.7, 0.2], [0.1, 15.6], [17.9, 15.8]],
+    )
+    .unwrap();
+    let geometry = GeometryTransform {
+        crop: [0.05, 0.1, 0.95, 0.9],
+        rotation_degrees: 7.5,
+        horizontal_transform: 3.0,
+        ..Default::default()
+    };
+    let cancellation = AtomicBool::new(false);
+    for lens in [None, Some(&lens)] {
+        let resampler =
+            GeometryResampler::new_with_lens(&source, 19, 17, geometry, lens, 11, 65).unwrap();
+        let serial: Vec<_> = (0..65).map(|y| resampler.output_row(y).unwrap()).collect();
+        let mut parallel = Vec::new();
+        for first in (0..65).step_by(super::EXPORT_CPU_ROW_BATCH) {
+            parallel.extend(
+                resampler
+                    .output_rows(
+                        first..(first + super::EXPORT_CPU_ROW_BATCH as u32).min(65),
+                        &cancellation,
+                    )
+                    .unwrap(),
+            );
+        }
+        assert_eq!(parallel, serial);
+        cancellation.store(true, Ordering::Release);
+        assert!(resampler.output_rows(0..32, &cancellation).is_err());
+        cancellation.store(false, Ordering::Release);
+        assert!(resampler.output_rows(65..66, &cancellation).is_err());
+    }
 }

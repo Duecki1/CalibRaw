@@ -84,31 +84,43 @@ fn tone_unexposed_working_at(pos: vec2<i32>) -> vec3<f32> {
     return Color::map_negative_gamut(exposed);
 }
 
+fn tone_guide_cell_size() -> i32 {
+    return max(i32(round(Common::camera_uniforms.tone_analysis_scale)), 1);
+}
+
+fn tone_guide_origin_cell() -> vec2<i32> {
+    let scale = f32(tone_guide_cell_size());
+    return vec2<i32>(floor(vec2<f32>(Common::tile_origin()) / scale));
+}
+
 @compute @workgroup_size(8, 8, 1)
 fn tone_guide_prepare(@builtin(global_invocation_id) gid: vec3<u32>) {
     let guide_size = textureDimensions(tone_guide_write);
     if gid.x >= guide_size.x || gid.y >= guide_size.y { return; }
 
-    let source_size = vec2<u32>(Common::camera_uniforms.width, Common::camera_uniforms.height);
-    let cell_min = vec2<u32>(
-        gid.x * source_size.x / guide_size.x,
-        gid.y * source_size.y / guide_size.y,
+    let source_size = vec2<i32>(
+        i32(Common::camera_uniforms.width),
+        i32(Common::camera_uniforms.height),
     );
-    let cell_max = vec2<u32>(
-        max((gid.x + 1u) * source_size.x / guide_size.x, cell_min.x + 1u),
-        max((gid.y + 1u) * source_size.y / guide_size.y, cell_min.y + 1u),
-    );
+    let cell_size = tone_guide_cell_size();
+    let tile_origin = Common::tile_origin();
+    let global_cell = tone_guide_origin_cell() + vec2<i32>(gid.xy);
+    let global_cell_min = global_cell * cell_size;
+    let global_cell_max = global_cell_min + vec2<i32>(cell_size);
+    let cell_min = clamp(global_cell_min - tile_origin, vec2<i32>(0), source_size);
+    let cell_max = clamp(global_cell_max - tile_origin, vec2<i32>(0), source_size);
 
     var log_sum = 0.0;
     var count = 0.0;
     var brightest = vec4<f32>(ToneCommon::TONE_EV_MIN);
     var y = cell_min.y;
     loop {
-        if y >= min(cell_max.y, source_size.y) { break; }
+        if y >= cell_max.y { break; }
         var x = cell_min.x;
         loop {
-            if x >= min(cell_max.x, source_size.x) { break; }
-            let rgb = tone_unexposed_working_at(vec2<i32>(i32(x), i32(y)));
+            if x >= cell_max.x { break; }
+            let local_pos = vec2<i32>(x, y);
+            let rgb = tone_unexposed_working_at(local_pos);
             let ev = clamp(
                 log2(Common::safe_luma(rgb) / ToneCommon::SCENE_MIDDLE_GREY),
                 ToneCommon::TONE_EV_MIN,
@@ -126,15 +138,15 @@ fn tone_guide_prepare(@builtin(global_invocation_id) gid: vec3<u32>) {
             }
             count = count + 1.0;
 
-            let histogram_min = Common::camera_uniforms.tone_histogram_bounds.xy;
-            let histogram_max = Common::camera_uniforms.tone_histogram_bounds.zw;
-            if x >= histogram_min.x && y >= histogram_min.y
-                && x < histogram_max.x && y < histogram_max.y {
+            let global_pos = local_pos + tile_origin;
+            let histogram_min = vec2<i32>(Common::camera_uniforms.tone_histogram_bounds.xy);
+            let histogram_max = vec2<i32>(Common::camera_uniforms.tone_histogram_bounds.zw);
+            if all(global_pos >= histogram_min) && all(global_pos < histogram_max) {
                 atomicAdd(&tone_histogram.bins[ToneCommon::tone_ev_to_bin(ev)], 1u);
             }
-            x = x + 1u;
+            x = x + 1;
         }
-        y = y + 1u;
+        y = y + 1;
     }
 
     let average_ev = log_sum / max(count, 1.0);

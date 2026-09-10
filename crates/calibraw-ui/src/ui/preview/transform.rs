@@ -1350,6 +1350,13 @@ pub(super) fn transform_preview_about_screen_points(
     target_screen: Pos2,
     zoom_factor: f32,
 ) -> bool {
+    if !zoom_factor.is_finite()
+        || zoom_factor <= 0.0
+        || !anchor_screen.is_finite()
+        || !target_screen.is_finite()
+    {
+        return false;
+    }
     let previous_zoom = *zoom;
     let previous_center = *center;
     let anchor_uv = [
@@ -1395,7 +1402,7 @@ pub(super) fn preview_uv_changed(
         .into_iter()
         .chain(left.max)
         .zip(right.min.into_iter().chain(right.max))
-        .any(|(left, right)| (left - right).abs() > 0.0005)
+        .any(|(left, right)| (left - right).abs() > 1e-6)
 }
 
 pub(super) fn screen_to_normalized_unclamped(rect: Rect, point: Pos2) -> [f32; 2] {

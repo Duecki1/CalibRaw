@@ -92,12 +92,11 @@ impl Library {
         let mut import_raw = false;
         let mut open_asset: Option<LibraryAsset> = None;
         let mut library_action = None;
-        let search_active = app.library.search_active();
-        let visible_indices = search_active.then(|| app.library.filtered_entry_indices());
 
         let compact_header = ui.available_width() < 520.0;
         let mut selected_sort = app.library.sort_order();
         let mut selected_size = app.library.thumbnail_size();
+        let mut selected_filter = app.library.review_filter;
         let header_title = library_header_title(app);
         crate::ui::theme::card_header(ui, |ui| {
             crate::ui::theme::toolbar_row(ui, |ui| {
@@ -154,44 +153,46 @@ impl Library {
                     }
 
                     if compact_header {
-                        crate::ui::theme::responsive_combo_box(
+                        sort_filter_popup(
                             ui,
-                            "library-view-options",
-                            egui::RichText::new(egui_phosphor::regular::SLIDERS_HORIZONTAL)
-                                .size(17.0),
+                            &mut selected_sort,
+                            &mut selected_filter,
+                            Some(&mut selected_size),
                             64.0,
-                            LibraryThumbnailSize::ALL.len() + LibrarySortOrder::ALL.len() + 2,
-                            |ui| {
-                                ui.set_min_width(220.0);
-                                ui.strong("Thumbnail size");
-                                for thumbnail_size in LibraryThumbnailSize::ALL {
-                                    ui.selectable_value(
-                                        &mut selected_size,
-                                        thumbnail_size,
-                                        thumbnail_size.label(),
-                                    );
-                                }
-                                ui.separator();
-                                ui.strong("Sort order");
-                                for sort_order in LibrarySortOrder::ALL {
-                                    ui.selectable_value(
-                                        &mut selected_sort,
-                                        sort_order,
-                                        sort_order.label(),
-                                    );
-                                }
-                            },
-                        )
-                        .response
-                        .on_hover_text("Library view options");
+                        );
                     } else {
-                        show_library_view_combos(ui, &mut selected_sort, &mut selected_size);
+                        show_library_view_combos(
+                            ui,
+                            &mut selected_sort,
+                            &mut selected_size,
+                            &mut selected_filter,
+                        );
                     }
                 });
             });
         });
         app.set_library_sort_order(selected_sort);
         app.set_library_thumbnail_size(selected_size);
+        app.library.review_filter = selected_filter;
+        if app.library.review_filter.active() {
+            ui.horizontal_wrapped(|ui| {
+                ui.weak(format!(
+                    "Showing {} of {} · {}",
+                    app.library.filtered_entry_indices().len(),
+                    app.library.entries.len(),
+                    app.library.review_filter.summary()
+                ));
+                if ui.small_button("Clear filters").clicked() {
+                    app.library.review_filter = LibraryReviewFilter::default();
+                }
+            });
+        }
+        let filtered = app.library.search_active() || app.library.review_filter.active();
+        let visible_indices = filtered.then(|| app.library.filtered_entry_indices());
+        if filtered {
+            app.library.retain_visible_selection();
+        }
+
         crate::ui::theme::card_gap(ui);
 
         if app.library.location.is_none() {
@@ -233,10 +234,11 @@ impl Library {
             if show_library_empty_state(
                 ui,
                 "No matching photos",
-                "Try another filename, or clear the search to show every RAW photo.",
-                Some("Clear search"),
+                "Change the filename, rating or flag filters to show more photos.",
+                Some("Clear search & filters"),
             ) {
                 app.library.clear_search();
+                app.library.review_filter = LibraryReviewFilter::default();
             }
         } else {
             #[cfg(not(target_os = "android"))]
@@ -269,12 +271,21 @@ impl Library {
 
             let mut protected_thumbnail_indices = HashSet::new();
             #[cfg(not(target_os = "android"))]
-            let selection_order = app
-                .library
-                .entries
-                .iter()
-                .map(|entry| entry.asset.id.clone())
-                .collect::<Vec<_>>();
+            let selection_order = visible_indices.as_ref().map_or_else(
+                || {
+                    app.library
+                        .entries
+                        .iter()
+                        .map(|entry| entry.asset.id.clone())
+                        .collect::<Vec<_>>()
+                },
+                |indices| {
+                    indices
+                        .iter()
+                        .map(|index| app.library.entries[*index].asset.id.clone())
+                        .collect::<Vec<_>>()
+                },
+            );
             egui::ScrollArea::vertical()
                 .auto_shrink([false, false])
                 .show_viewport(ui, |ui, viewport| {
@@ -312,6 +323,15 @@ impl Library {
                             }
                         };
                         let response = thumbnail_tile(ui, entry, item_rect, selected);
+                        #[cfg(target_os = "android")]
+                        if !response.hovered() {
+                            paint_review_badge(ui, item_rect, entry.review);
+                        }
+                        #[cfg(not(target_os = "android"))]
+                        if let Some(action) = thumbnail_hover_overlay(ui, item_rect, entry) {
+                            library_action = Some(action);
+                            continue;
+                        }
 
                         #[cfg(target_os = "android")]
                         {
@@ -385,9 +405,13 @@ impl Library {
                                     ui.close();
                                 }
                                 ui.separator();
-                                if let Some(action) =
-                                    library_image_context_menu(ui, app, &asset, &context_assets)
-                                {
+                                if let Some(action) = library_image_context_menu(
+                                    ui,
+                                    app,
+                                    &asset,
+                                    &context_assets,
+                                    true,
+                                ) {
                                     library_action = Some(action);
                                 }
                             });
@@ -517,6 +541,7 @@ fn show_library_view_combos(
     ui: &mut Ui,
     selected_sort: &mut LibrarySortOrder,
     selected_size: &mut LibraryThumbnailSize,
+    selected_filter: &mut LibraryReviewFilter,
 ) {
     const SORT_WIDTH: f32 = 154.0;
     const SIZE_WIDTH: f32 = 118.0;
@@ -529,18 +554,7 @@ fn show_library_view_combos(
         (SORT_WIDTH, SIZE_WIDTH)
     };
 
-    crate::ui::theme::responsive_combo_box(
-        ui,
-        "library-sort-order",
-        format!("Sort: {}", selected_sort.label()),
-        sort_width,
-        LibrarySortOrder::ALL.len(),
-        |ui| {
-            for sort_order in LibrarySortOrder::ALL {
-                ui.selectable_value(selected_sort, sort_order, sort_order.label());
-            }
-        },
-    );
+    sort_filter_popup(ui, selected_sort, selected_filter, None, sort_width);
     crate::ui::theme::responsive_combo_box(
         ui,
         "library-thumbnail-size",

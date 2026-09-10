@@ -11,7 +11,11 @@ use crate::pipeline::{
 use crate::ui::mask_component_color;
 use eframe::egui::{self, Color32, Mesh, Pos2, Rect, Sense, Shape, Stroke, Ui};
 
-const MIN_PREVIEW_ZOOM: f32 = 0.70;
+const MIN_PREVIEW_ZOOM: f32 = if cfg!(target_os = "android") {
+    0.25
+} else {
+    0.70
+};
 const MAX_PREVIEW_ZOOM: f32 = 32.0;
 
 fn physical_pixels_per_point(ctx: &egui::Context) -> f32 {
@@ -81,8 +85,17 @@ pub(crate) struct Preview;
 
 impl Preview {
     pub(crate) fn show(ui: &mut Ui, app: &mut CalibRawApp, frame: &eframe::Frame) {
+        Self::show_in_viewport(ui, app, frame, None);
+    }
+
+    pub(crate) fn show_in_viewport(
+        ui: &mut Ui,
+        app: &mut CalibRawApp,
+        frame: &eframe::Frame,
+        unobscured: Option<Rect>,
+    ) {
         let available = ui.available_size();
-        let canvas_inset = if cfg!(target_os = "android") {
+        let canvas_inset = if unobscured.is_some() || cfg!(target_os = "android") {
             0.0
         } else {
             10.0
@@ -110,7 +123,7 @@ impl Preview {
 
         let Some((texture_id, pipeline_width, pipeline_height)) = base_pipeline else {
             if app.preview_is_preparing() {
-                if show_loading_thumbnail(ui, app, available) {
+                if show_loading_thumbnail(ui, app, available, unobscured) {
                     return;
                 }
                 show_centered_preview_message(
@@ -139,7 +152,8 @@ impl Preview {
         }
 
         let (workspace_rect, _) = ui.allocate_exact_size(available, Sense::hover());
-        let outer_rect = workspace_rect.shrink(canvas_inset);
+        let canvas_rect = workspace_rect.shrink(canvas_inset);
+        let outer_rect = unobscured.unwrap_or(canvas_rect).intersect(canvas_rect);
         let source_dimensions = app
             .develop
             .loaded_raw
@@ -164,10 +178,17 @@ impl Preview {
         } else {
             source_dimensions
         };
-        let base_size = fitted_image_size(
-            outer_rect.size(),
-            geometry_width as f32 / geometry_height.max(1) as f32,
-        );
+        let image_aspect = geometry_width as f32 / geometry_height.max(1) as f32;
+        let base_size = if unobscured.is_some() && canvas_rect.height() > canvas_rect.width() {
+            // Portrait has a width-fitted image, independent of the tool sheet.
+            egui::vec2(
+                canvas_rect.width(),
+                canvas_rect.width() / image_aspect.max(f32::EPSILON),
+            )
+        } else {
+            fitted_image_size(canvas_rect.size(), image_aspect)
+        };
+        app.preview.source_axes_swapped = app.develop.geometry.quarter_turns % 2 == 1;
         app.preview.zoom = app.preview.zoom.clamp(MIN_PREVIEW_ZOOM, MAX_PREVIEW_ZOOM);
         clamp_preview_center(
             &mut app.preview.center,
@@ -176,16 +197,8 @@ impl Preview {
         );
         let mut image_rect =
             zoomed_image_rect(outer_rect, base_size, app.preview.zoom, app.preview.center);
-        let visible_image_rect = outer_rect.intersect(image_rect);
-        let mut interaction_rect =
-            if matches!(app.ui.sidebar_tab, SidebarTab::Masks | SidebarTab::Crop) {
-                outer_rect
-            } else {
-                visible_image_rect
-            };
-        if interaction_rect.width() <= 0.0 || interaction_rect.height() <= 0.0 {
-            interaction_rect = outer_rect;
-        }
+        // Navigation also works in the margins left for mask handles.
+        let interaction_rect = outer_rect;
         let white_balance_canvas = white_balance_picker_owns_canvas(
             app.ui.sidebar_tab,
             app.develop_ui.white_balance_picker_active,
@@ -205,7 +218,7 @@ impl Preview {
             }
             _ => ui.id().with("develop-preview-interaction"),
         };
-        let interaction_sense = if brush_canvas {
+        let interaction_sense = if white_balance_canvas {
             Sense::drag()
         } else {
             Sense::click_and_drag()
@@ -213,14 +226,11 @@ impl Preview {
         let response = ui.interact(interaction_rect, interaction_id, interaction_sense);
 
         let mut moved = false;
-        let (multi_touch, any_touches) = ui.input(|input| {
-            (
-                input.multi_touch().filter(|multi_touch| {
-                    outer_rect.contains(multi_touch.start_pos)
-                        || outer_rect.contains(multi_touch.center_pos)
-                }),
-                input.any_touches(),
-            )
+        let (multi_touch, any_touches) =
+            ui.input(|input| (input.multi_touch(), input.any_touches()));
+        let multi_touch = multi_touch.filter(|touch| {
+            outer_rect.contains(touch.start_pos)
+                && ui.ctx().layer_id_at(touch.start_pos) == Some(ui.layer_id())
         });
         #[cfg(target_os = "android")]
         if any_touches {
@@ -270,8 +280,9 @@ impl Preview {
         let original_hold_tracking = false;
 
         if !touch_navigation && response.hovered() {
-            let scroll_y = ui.input(|input| input.smooth_scroll_delta.y);
-            if scroll_y.abs() > 0.01 {
+            let (scroll_y, pinch_zoom) =
+                ui.input(|input| (input.smooth_scroll_delta.y, input.zoom_delta()));
+            if scroll_y.abs() > 0.01 || (pinch_zoom - 1.0).abs() > f32::EPSILON {
                 let pointer = ui
                     .input(|input| input.pointer.hover_pos())
                     .unwrap_or(outer_rect.center());
@@ -283,12 +294,12 @@ impl Preview {
                     &mut app.preview.center,
                     pointer,
                     pointer,
-                    (scroll_y * 0.0018).exp(),
+                    (scroll_y * 0.0018).exp() * pinch_zoom,
                 );
             }
         }
 
-        let pan_with_primary = multi_touch.is_none()
+        let pan_with_primary = !touch_navigation
             && !original_hold_tracking
             && !brush_canvas
             && app.ui.sidebar_tab != SidebarTab::Crop
@@ -305,12 +316,38 @@ impl Preview {
 
         let fit_gesture = !white_balance_canvas && !touch_navigation && response.double_clicked();
         if fit_gesture {
-            app.preview.zoom = 1.0;
-            app.preview.center = [0.5, 0.5];
+            app.cancel_mask_touch_gesture();
+            app.inpaint.active_points.clear();
+            app.inpaint.last_brush_uv = None;
+            app.develop_ui.crop_drag = None;
+            app.develop_ui.straighten_drag = None;
+            if (app.preview.zoom - 1.0).abs() > 0.0005 {
+                app.preview.zoom = 1.0;
+                app.preview.center = [0.5, 0.5];
+            } else {
+                let native_zoom = (geometry_width as f32
+                    / (base_size.x * physical_pixels_per_point(ui.ctx())).max(1.0))
+                .clamp(1.0, MAX_PREVIEW_ZOOM);
+                let pointer = response
+                    .interact_pointer_pos()
+                    .unwrap_or(outer_rect.center());
+                transform_preview_about_screen_points(
+                    outer_rect,
+                    image_rect,
+                    base_size,
+                    &mut app.preview.zoom,
+                    &mut app.preview.center,
+                    pointer,
+                    pointer,
+                    native_zoom,
+                );
+            }
             moved = true;
         }
 
         image_rect = zoomed_image_rect(outer_rect, base_size, app.preview.zoom, app.preview.center);
+        // The fitted image continues behind tools; spend the detail budget on
+        // the exposed image, not the pixels hidden by the overlay surfaces.
         let visible_screen = outer_rect.intersect(image_rect);
         let pixels_per_point = physical_pixels_per_point(ui.ctx());
         let viewport_pixels = [
@@ -357,11 +394,12 @@ impl Preview {
         if preview_uv_changed(app.preview.visible_uv, visible_uv) {
             app.preview.visible_uv = visible_uv;
             app.preview_source_region_changed();
+            moved = true;
         }
         if moved {
             app.note_preview_motion();
         }
-        let painter = ui.painter_at(outer_rect);
+        let painter = ui.painter_at(canvas_rect);
         if crop_preview {
             paint_crop_workspace_texture(
                 ui,
@@ -457,6 +495,7 @@ impl Preview {
                     ui,
                     app,
                     image_rect,
+                    outer_rect,
                     source_dimensions.0,
                     source_dimensions.1,
                 );

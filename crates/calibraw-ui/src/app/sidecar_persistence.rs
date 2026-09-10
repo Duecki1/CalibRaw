@@ -198,7 +198,7 @@ impl CalibRawApp {
         }
     }
 
-    pub(super) fn queue_explicit_sidecar_save(&mut self) {
+    pub(crate) fn queue_explicit_sidecar_save(&mut self) {
         self.commit_edit_history_now();
         self.queue_current_sidecar_save(true);
         self.start_next_sidecar_save();
@@ -231,6 +231,8 @@ impl CalibRawApp {
             revision,
             explicit,
             edits: self.capture_sidecar_edit_state(),
+            #[cfg(target_os = "android")]
+            review: self.develop.review,
         };
         if let Some(index) = self
             .persistence
@@ -925,8 +927,14 @@ pub(super) fn save_sidecar_request(
         crate::sidecar::SidecarTarget::Android {
             raw_uri,
             display_name,
-        } => crate::sidecar::save_android(android_app, &raw_uri, &display_name, request.edits)
-            .map_err(|error| error.to_string()),
+        } => crate::sidecar::save_android_with_review(
+            android_app,
+            &raw_uri,
+            &display_name,
+            request.edits,
+            request.review,
+        )
+        .map_err(|error| error.to_string()),
     }
 }
 
