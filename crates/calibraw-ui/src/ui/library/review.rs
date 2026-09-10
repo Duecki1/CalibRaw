@@ -86,58 +86,85 @@ pub(super) fn thumbnail_hover_overlay(
 }
 
 pub(crate) fn paint_review_badge(ui: &Ui, rect: egui::Rect, review: PhotoReview) {
+    const ICON_STEP: f32 = 15.0;
+    const BADGE_PADDING: f32 = 12.0;
+    const BADGE_HEIGHT: f32 = 22.0;
+    const BADGE_MARGIN: f32 = 8.0;
+    const BADGE_GAP: f32 = 4.0;
+    const COMPACT_RATING_WIDTH: f32 = 43.0;
+
+    let has_rating = review.rating > 0;
     let has_flag = review.flag != PhotoFlag::Unflagged;
-    let count = usize::from(review.rating) + usize::from(has_flag);
-    if count == 0 {
+    if !has_rating && !has_flag {
         return;
     }
-    let gap = if has_flag && review.rating > 0 {
-        6.0
+
+    let full_rating_width = f32::from(review.rating) * ICON_STEP + BADGE_PADDING;
+    let flag_width = ICON_STEP + BADGE_PADDING;
+    let full_required_width = if has_rating { full_rating_width } else { 0.0 }
+        + if has_flag {
+            flag_width + if has_rating { BADGE_GAP } else { 0.0 }
+        } else {
+            0.0
+        }
+        + BADGE_MARGIN * 2.0;
+    let compact_rating = review.rating >= 3 && full_required_width > rect.width();
+    let rating_width = if compact_rating {
+        COMPACT_RATING_WIDTH
     } else {
-        0.0
+        full_rating_width
     };
-    let full_width = count as f32 * 15.0 + 12.0 + gap;
-    let compact_rating = review.rating > 0 && full_width + 16.0 > rect.width();
-    let width = if compact_rating {
-        12.0 + 31.0 + if has_flag { 21.0 } else { 0.0 }
-    } else {
-        full_width
-    };
-    let scale = (rect.width() / (width + 16.0)).clamp(0.0, 1.0);
+    let required_width = if has_rating { rating_width } else { 0.0 }
+        + if has_flag {
+            flag_width + if has_rating { BADGE_GAP } else { 0.0 }
+        } else {
+            0.0
+        }
+        + BADGE_MARGIN * 2.0;
+    let scale = (rect.width() / required_width).clamp(0.0, 1.0);
     let margin = 8.0 * scale;
-    let badge = egui::Rect::from_min_size(
-        egui::pos2(rect.left() + margin, rect.bottom() - margin - 22.0 * scale),
-        egui::vec2(width * scale, 22.0 * scale),
-    );
+    let badge_y = rect.bottom() - margin - BADGE_HEIGHT * scale;
     let painter = ui.painter_at(rect);
-    painter.rect_filled(badge, 6.0 * scale, Color32::from_black_alpha(150));
-    let painted_stars = if compact_rating { 1 } else { review.rating };
-    for index in 0..painted_stars {
-        paint_star(
-            &painter,
-            egui::pos2(
-                badge.left() + (13.5 + f32::from(index) * 15.0) * scale,
-                badge.center().y,
-            ),
-            11.0 * scale,
-            STAR_COLOR,
-            true,
+
+    if has_rating {
+        let rating_badge = egui::Rect::from_min_size(
+            egui::pos2(rect.left() + margin, badge_y),
+            egui::vec2(rating_width * scale, BADGE_HEIGHT * scale),
         );
+        painter.rect_filled(rating_badge, 6.0 * scale, Color32::from_black_alpha(150));
+        let painted_stars = if compact_rating { 1 } else { review.rating };
+        for index in 0..painted_stars {
+            paint_star(
+                &painter,
+                egui::pos2(
+                    rating_badge.left() + (13.5 + f32::from(index) * ICON_STEP) * scale,
+                    rating_badge.center().y,
+                ),
+                11.0 * scale,
+                STAR_COLOR,
+                true,
+            );
+        }
+        if compact_rating {
+            painter.text(
+                egui::pos2(rating_badge.left() + 29.5 * scale, rating_badge.center().y),
+                Align2::CENTER_CENTER,
+                review.rating.to_string(),
+                FontId::proportional(11.0 * scale),
+                Color32::WHITE,
+            );
+        }
     }
-    if compact_rating {
-        painter.text(
-            egui::pos2(badge.left() + 29.5 * scale, badge.center().y),
-            Align2::CENTER_CENTER,
-            review.rating.to_string(),
-            FontId::proportional(11.0 * scale),
-            Color32::WHITE,
-        );
-    }
+
     if has_flag {
-        let center = egui::pos2(badge.right() - 13.5 * scale, badge.center().y);
+        let flag_badge = egui::Rect::from_min_size(
+            egui::pos2(rect.right() - margin - flag_width * scale, badge_y),
+            egui::vec2(flag_width * scale, BADGE_HEIGHT * scale),
+        );
+        painter.rect_filled(flag_badge, 6.0 * scale, Color32::from_black_alpha(150));
         paint_flag(
             &painter,
-            center,
+            flag_badge.center(),
             12.0 * scale,
             flag_color(review.flag),
             true,
