@@ -38,9 +38,9 @@ mod state;
 mod storage;
 mod thumbnails;
 mod view;
-pub(crate) use review::show_current_photo_review;
 #[cfg(not(target_os = "android"))]
 use review::thumbnail_hover_overlay;
+pub(crate) use review::{paint_review_badge, show_current_photo_review};
 
 use actions::*;
 use adjustments::*;
@@ -305,6 +305,7 @@ pub(crate) struct DesktopFilmstripItem {
 struct LoadedLibraryThumbnail {
     thumbnail: RawThumbnail,
     resident_thumbnail: RawThumbnail,
+    review: Option<crate::sidecar::PhotoReview>,
     developed: bool,
     developed_thumbnail_stale: bool,
     developed_render_pending: bool,

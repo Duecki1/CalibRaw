@@ -323,6 +323,10 @@ impl Library {
                             }
                         };
                         let response = thumbnail_tile(ui, entry, item_rect, selected);
+                        #[cfg(target_os = "android")]
+                        if !response.hovered() {
+                            paint_review_badge(ui, item_rect, entry.review);
+                        }
                         #[cfg(not(target_os = "android"))]
                         if let Some(action) = thumbnail_hover_overlay(ui, item_rect, entry) {
                             library_action = Some(action);

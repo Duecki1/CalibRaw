@@ -20,7 +20,9 @@ pub mod pipeline {
 pub mod sidecar {
     pub use calibraw_core::sidecar::*;
     #[cfg(target_os = "android")]
-    pub use calibraw_ffi::{load_android, save_android, save_android_with_review};
+    pub use calibraw_ffi::{
+        load_android, load_android_review, save_android, save_android_with_review,
+    };
 }
 
 pub mod ai_denoise {
