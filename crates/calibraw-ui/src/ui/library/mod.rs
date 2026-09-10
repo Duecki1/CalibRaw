@@ -30,6 +30,7 @@ mod catalog;
 mod clipboard;
 mod dialogs;
 mod export;
+mod filter;
 mod local;
 mod platform;
 #[cfg(not(target_os = "android"))]
@@ -49,6 +50,7 @@ use catalog::*;
 use clipboard::*;
 use dialogs::*;
 use export::*;
+use filter::*;
 use platform::*;
 use storage::*;
 use thumbnails::*;
@@ -100,30 +102,6 @@ pub(crate) enum LibrarySortOrder {
 }
 
 impl LibrarySortOrder {
-    #[cfg(not(target_os = "android"))]
-    const ALL: [Self; 10] = [
-        Self::NewestFirst,
-        Self::OldestFirst,
-        Self::NameAscending,
-        Self::NameDescending,
-        Self::LargestFirst,
-        Self::SmallestFirst,
-        Self::RatingHighestFirst,
-        Self::RatingLowestFirst,
-        Self::FlagPickedFirst,
-        Self::FlagRejectedFirst,
-    ];
-
-    #[cfg(target_os = "android")]
-    const ALL: [Self; 6] = [
-        Self::NewestFirst,
-        Self::OldestFirst,
-        Self::NameAscending,
-        Self::NameDescending,
-        Self::LargestFirst,
-        Self::SmallestFirst,
-    ];
-
     const fn label(self) -> &'static str {
         match self {
             Self::NewestFirst => "Newest first",
@@ -753,6 +731,7 @@ pub(crate) struct LibraryState {
     sort_order: LibrarySortOrder,
     thumbnail_size: LibraryThumbnailSize,
     search_query: String,
+    review_filter: LibraryReviewFilter,
     selected_assets: HashSet<LibraryAssetId>,
     selection_mode: bool,
     selection_anchor: Option<LibraryAssetId>,

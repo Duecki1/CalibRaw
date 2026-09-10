@@ -46,6 +46,7 @@ impl LibraryState {
             sort_order,
             thumbnail_size,
             search_query: String::new(),
+            review_filter: LibraryReviewFilter::default(),
             selected_assets: HashSet::new(),
             selection_mode: false,
             selection_anchor: None,
@@ -123,6 +124,7 @@ impl LibraryState {
             sort_order,
             thumbnail_size,
             search_query: String::new(),
+            review_filter: LibraryReviewFilter::default(),
             selected_assets: HashSet::new(),
             selection_mode: false,
             selection_anchor: None,
@@ -211,30 +213,40 @@ impl LibraryState {
             .iter()
             .enumerate()
             .filter_map(|(index, entry)| {
-                library_filename_matches(&entry.asset.display_name, &terms).then_some(index)
+                (library_filename_matches(&entry.asset.display_name, &terms)
+                    && self.review_filter.matches(entry.review))
+                .then_some(index)
             })
             .collect()
     }
 
+    pub(super) fn retain_visible_selection(&mut self) {
+        if self.selected_assets.is_empty() {
+            return;
+        }
+        let visible = self
+            .filtered_entry_indices()
+            .into_iter()
+            .map(|index| self.entries[index].asset.id.clone())
+            .collect::<HashSet<_>>();
+        self.selected_assets.retain(|id| visible.contains(id));
+        if self.selected_assets.is_empty() {
+            self.clear_selection();
+        } else if self
+            .selection_anchor
+            .as_ref()
+            .is_some_and(|id| !visible.contains(id))
+        {
+            self.selection_anchor = None;
+        }
+    }
+
     #[cfg(not(target_os = "android"))]
     pub(crate) fn select_search_matches(&mut self) -> usize {
-        let terms = library_search_terms(&self.search_query);
-        if terms.is_empty() {
+        if !self.search_active() && !self.review_filter.active() {
             return 0;
         }
-
-        self.selected_assets = self
-            .entries
-            .iter()
-            .filter(|entry| library_filename_matches(&entry.asset.display_name, &terms))
-            .map(|entry| entry.asset.id.clone())
-            .collect();
-        self.selection_mode = !self.selected_assets.is_empty();
-        self.selection_anchor = self
-            .entries
-            .iter()
-            .find(|entry| library_filename_matches(&entry.asset.display_name, &terms))
-            .map(|entry| entry.asset.id.clone());
+        self.select_all_thumbnails();
 
         #[cfg(target_os = "android")]
         crate::android::set_back_navigation_active(self.selection_mode);
@@ -299,12 +311,14 @@ impl LibraryState {
 
     #[cfg(not(target_os = "android"))]
     pub(super) fn select_all_thumbnails(&mut self) {
-        self.selected_assets = self
-            .entries
+        let indices = self.filtered_entry_indices();
+        self.selected_assets = indices
             .iter()
-            .map(|entry| entry.asset.id.clone())
+            .map(|index| self.entries[*index].asset.id.clone())
             .collect();
-        self.selection_anchor = self.entries.first().map(|entry| entry.asset.id.clone());
+        self.selection_anchor = indices
+            .first()
+            .map(|index| self.entries[*index].asset.id.clone());
         self.selection_mode = !self.selected_assets.is_empty();
     }
 
