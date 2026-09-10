@@ -1013,6 +1013,7 @@ fn restore_remove_assets(
 #[derive(Clone, Debug, PartialEq)]
 pub struct LoadedSidecar {
     pub edits: EditState,
+    pub review: PhotoReview,
     pub migrated: bool,
 }
 
@@ -1070,7 +1071,15 @@ pub fn encode(edits: EditState) -> Result<Vec<u8>, SidecarError> {
     encode_with_review(edits, PhotoReview::default())
 }
 
-fn encode_with_review(mut edits: EditState, review: PhotoReview) -> Result<Vec<u8>, SidecarError> {
+pub fn encode_with_review(
+    mut edits: EditState,
+    review: PhotoReview,
+) -> Result<Vec<u8>, SidecarError> {
+    if review.rating > 5 {
+        return Err(SidecarError::Invalid(
+            "rating must be between 0 and 5".to_owned(),
+        ));
+    }
     synchronize_subject_refinement(&mut edits);
     validate_edit_state(&edits)?;
     let (mask_assets, mask_asset_refs) = extract_mask_assets(&mut edits)?;
@@ -1150,6 +1159,10 @@ pub fn decode(bytes: &[u8]) -> Result<LoadedSidecar, SidecarError> {
 
     Ok(LoadedSidecar {
         edits: document.edits,
+        review: PhotoReview {
+            rating: document.review.rating.min(5),
+            ..document.review
+        },
         migrated,
     })
 }

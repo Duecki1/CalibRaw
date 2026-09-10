@@ -496,6 +496,7 @@ pub(crate) struct LoadedPreview {
     full_raw: Arc<LoadedRaw>,
     preview_raw: Arc<LoadedRaw>,
     pipeline: RawGpuPipeline,
+    review: crate::sidecar::PhotoReview,
     rendered_exposure: ExposureParams,
     rendered_masks: MaskStack,
     remove: RemoveEditState,
@@ -564,6 +565,8 @@ pub(crate) struct SidecarSaveRequest {
     revision: u64,
     explicit: bool,
     edits: SidecarEditState,
+    #[cfg(target_os = "android")]
+    review: crate::sidecar::PhotoReview,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -937,6 +940,7 @@ struct AiMaskTarget {
 
 pub(crate) struct DevelopState {
     pub(crate) current_path: Option<PathBuf>,
+    pub(crate) review: crate::sidecar::PhotoReview,
     pub(crate) original_raw: Option<Arc<LoadedRaw>>,
     pub(crate) loaded_raw: Option<Arc<LoadedRaw>>,
     pub(crate) preview_raw: Option<Arc<LoadedRaw>>,

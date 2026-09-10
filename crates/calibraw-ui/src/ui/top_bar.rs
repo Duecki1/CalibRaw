@@ -137,6 +137,7 @@ impl TopBar {
             if save_response.clicked() {
                 app.save_edits_now();
             }
+            crate::ui::library::show_current_photo_review(ui, app, true);
 
             ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
                 if Self::back_icon_button(ui, theme::toolbar_icon_size()).clicked() {

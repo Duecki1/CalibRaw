@@ -328,6 +328,12 @@ impl CalibRawApp {
                     "RAW sidecar lookup finished in {:.3}s",
                     sidecar_started.elapsed().as_secs_f64()
                 ));
+                let review = loaded_sidecar
+                    .as_ref()
+                    .ok()
+                    .and_then(|loaded| loaded.as_ref())
+                    .map(|loaded| loaded.review)
+                    .unwrap_or_default();
                 let (requested_camera_profile, requested_profile_from_sidecar) =
                     match profile_selection_override {
                         Some(selection) => (selection, false),
@@ -818,6 +824,7 @@ impl CalibRawApp {
                         full_raw,
                         preview_raw,
                         pipeline,
+                        review,
                         rendered_exposure,
                         rendered_masks,
                         remove: remove_edits,
@@ -944,6 +951,7 @@ impl CalibRawApp {
                 self.develop.preview_raw = Some(loaded.preview_raw);
                 self.preview.program_template = Some(loaded.pipeline.program_template());
                 self.preview.gpu_pipeline = Some(loaded.pipeline);
+                self.develop.review = loaded.review;
                 self.develop.exposure = loaded.rendered_exposure;
                 self.develop.geometry = loaded.geometry.sanitized();
                 self.develop_ui.crop_constraint_reference = None;
