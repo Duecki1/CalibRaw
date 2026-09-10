@@ -311,6 +311,10 @@ fn prepare_desktop_library_export_item(
 impl CalibRawApp {
     pub(crate) fn export_progress_state(&self) -> Option<(usize, usize)> {
         self.export.task.as_ref().and_then(|task| {
+            #[cfg(not(target_os = "android"))]
+            if task.kind == ExportTaskKind::Replay {
+                return None;
+            }
             (task.total_tiles > 0).then_some((task.completed_tiles, task.total_tiles))
         })
     }

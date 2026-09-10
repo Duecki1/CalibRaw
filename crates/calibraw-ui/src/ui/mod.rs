@@ -35,6 +35,28 @@ pub(crate) fn choose_export_file_path(
     Some(path)
 }
 
+#[cfg(not(target_os = "android"))]
+pub(crate) fn choose_edit_replay_file_path(
+    default_name: &str,
+    initial_directory: Option<&std::path::Path>,
+) -> Option<std::path::PathBuf> {
+    let mut dialog = rfd::FileDialog::new()
+        .add_filter("MP4 video", &["mp4"])
+        .set_file_name(default_name);
+    if let Some(directory) = initial_directory.filter(|path| !path.as_os_str().is_empty()) {
+        dialog = dialog.set_directory(directory);
+    }
+    let mut path = dialog.save_file()?;
+    let valid_extension = path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("mp4"));
+    if !valid_extension {
+        path.set_extension("mp4");
+    }
+    Some(path)
+}
+
 pub(crate) fn responsive_popup<'a>(
     window: eframe::egui::Window<'a>,
     ctx: &eframe::egui::Context,
