@@ -32,4 +32,5 @@ naga_oil.workspace = true
 calibraw-ffi.workspace = true
 
 [dev-dependencies]
+exif.workspace = true
 naga.workspace = true

@@ -1163,3 +1163,46 @@ fn rgba_mask_image_dimensions_are_checked_before_buffer_comparison() {
     assert!(MaskRgbImage::new(2, 3, vec![0; 23]).is_none());
     assert!(MaskRgbImage::new(u32::MAX, u32::MAX, Vec::new()).is_none());
 }
+
+#[test]
+fn new_object_stroke_preserves_completed_submask_and_respects_limit() {
+    let mut stack = MaskStack::default();
+    stack.add_mask(MaskKind::Object);
+    assert_eq!(stack.prepare_object_stroke(0, 0), Some(0));
+    if let MaskGeometry::Object {
+        mask,
+        strokes,
+        brush_size,
+        ..
+    } = &mut stack.masks[0].components[0].geometry
+    {
+        *mask = MaskImage::new(1, 1, vec![255]);
+        *brush_size = 0.23;
+        strokes.push(ObjectStroke {
+            points: vec![[0.5, 0.5]],
+            positive: true,
+            brush_size: 0.23,
+        });
+    }
+    let original = serde_json::to_value(&stack.masks[0].components[0]).unwrap();
+    assert_eq!(stack.prepare_object_stroke(0, 0), Some(1));
+    assert_eq!(stack.selected_component, Some(1));
+    assert_eq!(stack.masks.len(), 1);
+    assert_eq!(
+        serde_json::to_value(&stack.masks[0].components[0]).unwrap(),
+        original
+    );
+    assert!(matches!(&stack.masks[0].components[1].geometry,
+        MaskGeometry::Object { mask: None, strokes, brush_size, .. } if strokes.is_empty() && *brush_size == 0.23));
+    assert_eq!(stack.prepare_object_stroke(0, 1), Some(1));
+    while stack.masks[0].components.len() < MAX_MASK_COMPONENTS {
+        stack
+            .add_component(MaskKind::Object, MaskCombineMode::Add)
+            .unwrap();
+    }
+    assert_eq!(stack.prepare_object_stroke(0, 0), None);
+    assert_eq!(
+        serde_json::to_value(&stack.masks[0].components[0]).unwrap(),
+        original
+    );
+}

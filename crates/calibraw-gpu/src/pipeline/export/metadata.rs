@@ -115,36 +115,6 @@ fn joined_metadata_label(make: &str, model: &str) -> String {
     }
 }
 
-fn export_metadata_description(metadata: &ExportMetadata) -> String {
-    let mut parts = Vec::with_capacity(3);
-    if let Some(source) = metadata
-        .source_file_name
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    {
-        parts.push(format!("Processed from {source}"));
-    } else {
-        parts.push("Processed from a RAW image".to_owned());
-    }
-    if metadata.source_width > 0 && metadata.source_height > 0 {
-        parts.push(format!(
-            "original dimensions {}x{}",
-            metadata.source_width, metadata.source_height
-        ));
-    }
-    parts.push("exported by CalibRaw 2.0".to_owned());
-    parts.join("; ")
-}
-
-pub(super) fn combined_image_description(metadata: &ExportMetadata) -> String {
-    let export_description = export_metadata_description(metadata);
-    match metadata.description.trim() {
-        "" => export_description,
-        original => format!("{original}; {export_description}"),
-    }
-}
-
 #[derive(Clone)]
 enum ExifValue {
     Short(u16),
@@ -273,12 +243,6 @@ pub(super) fn build_exif_payload(
             value: ExifValue::Long(output_height),
         },
         ExifEntry {
-            tag: 0x010e,
-            value: ExifValue::Ascii(nul_terminated_exif_ascii(&combined_image_description(
-                metadata,
-            ))),
-        },
-        ExifEntry {
             tag: 0x0112,
             value: ExifValue::Short(1),
         },
@@ -287,6 +251,20 @@ pub(super) fn build_exif_payload(
             value: ExifValue::Ascii(nul_terminated_exif_ascii("CalibRaw 2.0")),
         },
     ];
+    if !metadata.description.trim().is_empty() {
+        ifd0_entries.push(ExifEntry {
+            tag: 0x010e,
+            value: ExifValue::Ascii(nul_terminated_exif_ascii(metadata.description.trim())),
+        });
+    }
+    for (tag, value) in &metadata.exif_dates {
+        if *tag == 0x0132 {
+            ifd0_entries.push(ExifEntry {
+                tag: *tag,
+                value: ExifValue::Ascii(nul_terminated_exif_ascii(value)),
+            });
+        }
+    }
     if !metadata.camera_make.trim().is_empty() {
         ifd0_entries.push(ExifEntry {
             tag: 0x010f,
@@ -367,13 +345,7 @@ pub(super) fn build_exif_payload(
             value: ExifValue::Ascii(nul_terminated_exif_ascii(&metadata.lens_model)),
         });
     }
-    let mut user_comment = b"ASCII\0\0\0".to_vec();
-    user_comment
-        .extend_from_slice(&nul_terminated_exif_ascii(&combined_image_description(metadata))[..]);
-    exif_entries.push(ExifEntry {
-        tag: 0x9286,
-        value: ExifValue::Undefined(user_comment),
-    });
+    exif_entries.extend(date_entries(metadata));
 
     ifd0_entries.sort_by_key(|entry| entry.tag);
     exif_entries.sort_by_key(|entry| entry.tag);
@@ -398,4 +370,22 @@ pub(super) fn build_exif_payload(
     output.extend_from_slice(&ifd0);
     output.extend_from_slice(&exif_ifd);
     output
+}
+
+fn date_entries(metadata: &ExportMetadata) -> Vec<ExifEntry> {
+    metadata
+        .exif_dates
+        .iter()
+        .filter(|(tag, _)| matches!(tag, 0x9003 | 0x9004 | 0x9010..=0x9012 | 0x9290..=0x9292))
+        .map(|(tag, value)| ExifEntry {
+            tag: *tag,
+            value: ExifValue::Ascii(nul_terminated_exif_ascii(value)),
+        })
+        .collect()
+}
+
+pub(super) fn encode_date_ifd(metadata: &ExportMetadata, offset: u32) -> Vec<u8> {
+    let mut entries = date_entries(metadata);
+    entries.sort_by_key(|entry| entry.tag);
+    encode_ifd_block(&entries, offset)
 }

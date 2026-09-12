@@ -378,6 +378,8 @@ impl<'a, T> IntoIterator for &'a CompactPixelMap<T> {
 
 #[derive(Clone, Debug, Default)]
 pub struct CaptureMetadata {
+    /// Original EXIF date/time, subsecond and UTC-offset ASCII tags.
+    pub exif_dates: Vec<(u16, String)>,
     pub iso_speed: f32,
     pub shutter_seconds: f32,
     pub flash: Option<u16>,

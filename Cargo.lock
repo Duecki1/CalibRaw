@@ -635,6 +635,7 @@ dependencies = [
  "half",
  "image",
  "jpeg-encoder",
+ "kamadak-exif",
  "log",
  "memmap2",
  "naga",

@@ -135,7 +135,6 @@ fn exif_payload_contains_source_camera_lens_and_exposure_metadata() {
         b"Model X\0".as_slice(),
         b"LensCo\0".as_slice(),
         b"Prime 50\0".as_slice(),
-        b"IMG_0042.CR3".as_slice(),
         b"Studio portrait".as_slice(),
         b"Photographer\0".as_slice(),
     ] {
@@ -176,7 +175,7 @@ fn exif_payload_contains_source_camera_lens_and_exposure_metadata() {
         .map(|index| read_u16(exif_ifd_offset + 2 + index * 12))
         .collect::<Vec<_>>();
     for tag in [
-        0x829a, 0x829d, 0x8827, 0x920a, 0x9286, 0xa002, 0xa003, 0xa433, 0xa434,
+        0x829a, 0x829d, 0x8827, 0x920a, 0xa002, 0xa003, 0xa433, 0xa434,
     ] {
         assert!(exif_tags.contains(&tag), "missing EXIF tag {tag:#06x}");
     }
@@ -684,4 +683,95 @@ fn geometry_parallel_bands_match_serial_rows_with_lens_and_rotation() {
         cancellation.store(false, Ordering::Release);
         assert!(resampler.output_rows(65..66, &cancellation).is_err());
     }
+}
+
+#[test]
+fn exported_exif_preserves_dates_without_generated_description() {
+    let metadata = ExportMetadata {
+        exif_dates: vec![
+            (0x9003, "2024:02:29 12:34:56".into()),
+            (0x9004, "2024:02:29 12:34:57".into()),
+            (0x9011, "+02:00".into()),
+            (0x9291, "123".into()),
+        ],
+        description: "Original caption".into(),
+        ..Default::default()
+    };
+    let parsed = exif::Reader::new()
+        .read_raw(build_exif_payload(&metadata, 1, 1))
+        .unwrap();
+    for (tag, value) in &metadata.exif_dates {
+        let field = parsed
+            .fields()
+            .find(|field| field.tag.number() == *tag)
+            .unwrap();
+        assert_exif_ascii(&field.value, value);
+    }
+    assert_exif_ascii(
+        &parsed
+            .get_field(exif::Tag::ImageDescription, exif::In::PRIMARY)
+            .unwrap()
+            .value,
+        "Original caption",
+    );
+    assert!(parsed
+        .get_field(exif::Tag::UserComment, exif::In::PRIMARY)
+        .is_none());
+    let empty = exif::Reader::new()
+        .read_raw(build_exif_payload(&ExportMetadata::default(), 1, 1))
+        .unwrap();
+    assert!(empty
+        .get_field(exif::Tag::ImageDescription, exif::In::PRIMARY)
+        .is_none());
+}
+
+#[test]
+fn tiff_header_preserves_create_date_at_relocated_exif_offset() {
+    let raw = crate::pipeline::LoadedRaw::from_scene_linear_rec2020(1, 1, vec![0.0; 3]).unwrap();
+    let metadata = ExportMetadata {
+        exif_dates: vec![(0x9004, "2024:02:29 12:34:56".into())],
+        ..Default::default()
+    };
+    let color = super::ResolvedExportColor {
+        transform: None,
+        embedded_icc: None,
+        srgb: true,
+    };
+    for keep_metadata in [true, false] {
+        let mut bytes = Vec::new();
+        super::write_tiff_header(
+            &mut bytes,
+            super::ExportRequest {
+                raw: &raw,
+                exposure: &ExposureParams::default(),
+                masks: &MaskStack::default(),
+                remove: &crate::pipeline::RemoveEditState::default(),
+                path: std::path::Path::new("test.tif"),
+                tile_spec: TileSpec::default(),
+                output_width: 1,
+                output_height: 1,
+                keep_metadata,
+                metadata: &metadata,
+                geometry: GeometryTransform::default(),
+                bit_depth: super::ExportBitDepth::Sixteen,
+                color: &color,
+            },
+            ExportRowFormat::Rgb16Le,
+            &built_in_srgb_icc(),
+        )
+        .unwrap();
+        let parsed = exif::Reader::new().read_raw(bytes).unwrap();
+        let date = parsed.get_field(exif::Tag::DateTimeDigitized, exif::In::PRIMARY);
+        assert_eq!(date.is_some(), keep_metadata);
+        if let Some(date) = date {
+            assert_exif_ascii(&date.value, "2024:02:29 12:34:56");
+        }
+    }
+}
+
+fn assert_exif_ascii(value: &exif::Value, expected: &str) {
+    let exif::Value::Ascii(values) = value else {
+        panic!("expected ASCII metadata");
+    };
+    assert_eq!(values, &[expected.as_bytes().to_vec()]);
 }

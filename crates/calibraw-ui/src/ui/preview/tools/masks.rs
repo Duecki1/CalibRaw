@@ -25,7 +25,7 @@ impl Preview {
             app.masks.active_tool = None;
             return;
         };
-        let Some(component_index) = app.masks.stack.selected_component else {
+        let Some(mut component_index) = app.masks.stack.selected_component else {
             app.finish_mask_geometry_interaction();
             app.masks.active_tool = None;
             return;
@@ -237,7 +237,12 @@ impl Preview {
         let mut changed = false;
 
         if kind == MaskKind::Object && app.masks.last_brush_point.is_none() {
-            changed |= app.restart_refined_object_mask_for_stroke(mask_index, component_index);
+            let Some(target) = app.prepare_object_mask_for_stroke(mask_index, component_index)
+            else {
+                return;
+            };
+            changed |= target != component_index;
+            component_index = target;
         }
 
         if let Some(component) = app

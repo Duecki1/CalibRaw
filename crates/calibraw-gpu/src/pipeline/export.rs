@@ -439,6 +439,7 @@ fn validate_export_dimensions(width: u32, height: u32) -> Result<()> {
 
 #[derive(Clone, Debug, Default)]
 pub struct ExportMetadata {
+    pub exif_dates: Vec<(u16, String)>,
     pub source_file_name: Option<String>,
     pub camera_make: String,
     pub camera_model: String,
@@ -458,6 +459,7 @@ pub struct ExportMetadata {
 impl ExportMetadata {
     pub fn from_raw(raw: &LoadedRaw, source_file_name: Option<String>) -> Self {
         Self {
+            exif_dates: raw.capture_metadata.exif_dates.clone(),
             source_file_name,
             camera_make: raw.camera_make.clone(),
             camera_model: raw.camera_model.clone(),
@@ -1665,9 +1667,23 @@ fn write_tiff_header<W: Write>(
     ];
 
     if request.keep_metadata {
-        let description = combined_image_description(request.metadata);
+        let description = request.metadata.description.trim();
         if !description.is_empty() {
-            entries.push(tiff_ascii_entry(270, &description)?);
+            entries.push(tiff_ascii_entry(270, description)?);
+        }
+        for (tag, value) in &request.metadata.exif_dates {
+            if *tag == 0x0132 {
+                entries.push(tiff_ascii_entry(*tag, value)?);
+            }
+        }
+        let dates = metadata::encode_date_ifd(request.metadata, 0);
+        if dates.len() > 6 {
+            entries.push(TiffEntry {
+                tag: 0x8769,
+                field_type: 4,
+                count: 1,
+                data: dates,
+            });
         }
         if !request.metadata.camera_make.trim().is_empty() {
             entries.push(tiff_ascii_entry(271, request.metadata.camera_make.trim())?);
@@ -1707,6 +1723,15 @@ fn write_tiff_header<W: Write>(
                 .context("TIFF metadata size overflow")?;
         } else {
             external_offsets.push(None);
+        }
+    }
+    for (entry, offset) in entries.iter_mut().zip(&external_offsets) {
+        if entry.tag == 0x8769 {
+            entry.data = metadata::encode_date_ifd(
+                request.metadata,
+                u32::try_from(offset.context("missing TIFF EXIF offset")?)
+                    .context("TIFF EXIF offset overflow")?,
+            );
         }
     }
     cursor = cursor
@@ -3120,7 +3145,7 @@ fn upload_mask_atlas(
 }
 
 mod metadata;
-use metadata::{add_png_text_metadata, build_exif_payload, combined_image_description};
+use metadata::{add_png_text_metadata, build_exif_payload};
 
 #[cfg(test)]
 mod tests;

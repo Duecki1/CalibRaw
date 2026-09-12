@@ -102,7 +102,7 @@ pub(super) fn load_raw_file_with_profile_selection(
     selected_profile: Option<&Path>,
 ) -> Result<LoadedRaw> {
     validate_input_file(path, MAX_RAW_FILE_BYTES, "RAW input")?;
-    let exif_flash = read_exif_flash(path);
+    let source_metadata = read_exif_capture_metadata(path).unwrap_or_default();
 
     let c_path = path_to_libraw_cstring(path)?;
     let ctx = LibRawContext::new()?;
@@ -234,7 +234,14 @@ pub(super) fn load_raw_file_with_profile_selection(
     ));
     let materialize_started = Instant::now();
     let mut loaded = unsafe { loaded_raw_from_context(&ctx, selected_profile) }?;
-    loaded.capture_metadata.flash = exif_flash.or(loaded.capture_metadata.flash);
+    loaded.capture_metadata.flash = source_metadata.flash.or(loaded.capture_metadata.flash);
+    for (tag, value) in source_metadata.exif_dates {
+        loaded
+            .capture_metadata
+            .exif_dates
+            .retain(|(existing, _)| *existing != tag);
+        loaded.capture_metadata.exif_dates.push((tag, value));
+    }
     crate::diagnostics::record(format!(
         "Decoded mosaic materialization finished in {:.3}s",
         materialize_started.elapsed().as_secs_f64()
@@ -963,7 +970,7 @@ fn load_raw_file_with_selected_profile(
     dcp_profile: Option<DcpProfile>,
 ) -> Result<LoadedRaw> {
     validate_input_file(path, MAX_RAW_FILE_BYTES, "RAW input")?;
-    let exif_flash = read_exif_flash(path);
+    let source_metadata = read_exif_capture_metadata(path).unwrap_or_default();
 
     let c_path = path_to_libraw_cstring(path)?;
     let ctx = LibRawContext::new()?;
@@ -976,11 +983,18 @@ fn load_raw_file_with_selected_profile(
     check_libraw(unsafe { ffi::libraw_unpack(ctx.raw) }, "unpack RAW file")?;
 
     let mut loaded = unsafe { loaded_raw_from_context(&ctx, dcp_profile) }?;
-    loaded.capture_metadata.flash = exif_flash.or(loaded.capture_metadata.flash);
+    loaded.capture_metadata.flash = source_metadata.flash.or(loaded.capture_metadata.flash);
+    for (tag, value) in source_metadata.exif_dates {
+        loaded
+            .capture_metadata
+            .exif_dates
+            .retain(|(existing, _)| *existing != tag);
+        loaded.capture_metadata.exif_dates.push((tag, value));
+    }
     Ok(loaded)
 }
 
-fn read_exif_flash(path: &Path) -> Option<u16> {
+fn read_exif_capture_metadata(path: &Path) -> Option<super::CaptureMetadata> {
     const MAX_EXIF_SCAN_BYTES: u64 = 256_000_000;
     if std::fs::metadata(path).ok()?.len() > MAX_EXIF_SCAN_BYTES {
         return None;
@@ -993,12 +1007,31 @@ fn read_exif_flash(path: &Path) -> Option<u16> {
         .read_from_container(&mut input)
         .or_else(|error| error.distill_partial_result(|_| {}))
         .ok()?;
-    let value = metadata
+    let mut capture = super::CaptureMetadata::default();
+    capture.flash = metadata
         .fields()
-        .find(|field| field.tag == exif::Tag::Flash)?
-        .value
-        .get_uint(0)?;
-    u16::try_from(value).ok()
+        .find(|field| field.tag == exif::Tag::Flash)
+        .and_then(|field| field.value.get_uint(0))
+        .and_then(|value| u16::try_from(value).ok());
+    for field in metadata
+        .fields()
+        .filter(|field| field.ifd_num == exif::In::PRIMARY)
+    {
+        let tag = field.tag.number();
+        if matches!(tag, 0x0132 | 0x9003 | 0x9004 | 0x9010..=0x9012 | 0x9290..=0x9292) {
+            if let exif::Value::Ascii(values) = &field.value {
+                if let Some(value) = values
+                    .first()
+                    .and_then(|value| std::str::from_utf8(value).ok())
+                {
+                    if !value.trim().is_empty() {
+                        capture.exif_dates.push((tag, value.to_owned()));
+                    }
+                }
+            }
+        }
+    }
+    Some(capture)
 }
 
 #[cfg(unix)]
@@ -1258,6 +1291,7 @@ unsafe fn loaded_raw_from_context(
         aperture: finite_positive_or_zero(other.aperture),
         focus_distance: 0.0,
         capture_metadata: super::CaptureMetadata {
+            exif_dates: capture_dates_from_timestamp(other.timestamp as i64),
             iso_speed: finite_positive_or_zero(other.iso_speed),
             shutter_seconds: finite_positive_or_zero(other.shutter),
             flash: (color.flash_used.is_finite() && color.flash_used > 0.0).then_some(1),
@@ -2830,6 +2864,31 @@ fn check_libraw(err: i32, action: &str) -> Result<()> {
     Err(anyhow!("LibRaw failed to {action}: {message} ({err})"))
 }
 
+/// LibRaw represents camera wall-clock time as seconds from the Unix epoch.
+/// Convert without applying the exporting computer's timezone.
+fn capture_dates_from_timestamp(timestamp: i64) -> Vec<(u16, String)> {
+    if timestamp <= 0 || timestamp > 253_402_300_799 {
+        return Vec::new();
+    }
+    // Gregorian civil date from days since 1970-01-01.
+    let days = timestamp / 86_400 + 719_468;
+    let era = days / 146_097;
+    let day_of_era = days - era * 146_097;
+    let year_of_era =
+        (day_of_era - day_of_era / 1460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;
+    let year = year_of_era + era * 400;
+    let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
+    let month_index = (5 * day_of_year + 2) / 153;
+    let day = day_of_year - (153 * month_index + 2) / 5 + 1;
+    let month = month_index + if month_index < 10 { 3 } else { -9 };
+    let year = year + i64::from(month <= 2);
+    let hour = timestamp % 86_400 / 3600;
+    let minute = timestamp % 3600 / 60;
+    let second = timestamp % 60;
+    let date = format!("{year:04}:{month:02}:{day:02} {hour:02}:{minute:02}:{second:02}");
+    vec![(0x9003, date.clone()), (0x9004, date)]
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
@@ -2841,6 +2900,21 @@ mod tests {
         CameraColorModel, CameraProfile, CameraWhiteBalanceModel, CfaKind, DngColorEndpoint,
         MAX_EMBEDDED_THUMBNAIL_BYTES, MISSING_BASELINE_EXPOSURE_FALLBACK_EV,
     };
+
+    #[test]
+    fn capture_timestamp_preserves_camera_calendar_time() {
+        for (timestamp, date) in [
+            (1, "1970:01:01 00:00:01"),
+            (951_827_696, "2000:02:29 12:34:56"),
+            (1_704_067_200, "2024:01:01 00:00:00"),
+        ] {
+            assert_eq!(
+                super::capture_dates_from_timestamp(timestamp),
+                vec![(0x9003, date.to_owned()), (0x9004, date.to_owned())]
+            );
+        }
+        assert!(super::capture_dates_from_timestamp(0).is_empty());
+    }
 
     const RGBG: [u8; 4] = *b"RGBG";
 
