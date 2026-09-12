@@ -844,6 +844,37 @@ impl MaskStack {
         Some((mask_index, component_index))
     }
 
+    /// Preserve a completed object selection and draw into a new submask.
+    pub fn prepare_object_stroke(
+        &mut self,
+        mask_index: usize,
+        component_index: usize,
+    ) -> Option<usize> {
+        if self.selected_mask != Some(mask_index) {
+            return None;
+        }
+        let component = self
+            .masks
+            .get(mask_index)?
+            .components
+            .get(component_index)?;
+        let MaskGeometry::Object { mask, .. } = &component.geometry else {
+            return None;
+        };
+        if mask.is_none() {
+            return Some(component_index);
+        }
+        let mut geometry = component.geometry.clone();
+        if let MaskGeometry::Object { mask, strokes, .. } = &mut geometry {
+            *mask = None;
+            strokes.clear();
+        }
+        let combine = component.combine;
+        let (_, new_index) = self.add_component(MaskKind::Object, combine)?;
+        self.masks[mask_index].components[new_index].geometry = geometry;
+        Some(new_index)
+    }
+
     pub fn selected_mask(&self) -> Option<&LocalMask> {
         self.masks.get(self.selected_mask?)
     }

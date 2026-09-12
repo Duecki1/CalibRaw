@@ -1,52 +1,20 @@
 use super::*;
 
 impl CalibRawApp {
-    pub(crate) fn restart_refined_object_mask_for_stroke(
+    /// Start a new submask when drawing after a completed object selection.
+    pub(crate) fn prepare_object_mask_for_stroke(
         &mut self,
         mask_index: usize,
         component_index: usize,
-    ) -> bool {
-        let target = (mask_index, component_index);
-        let cleared = self
+    ) -> Option<usize> {
+        let new_index = self
             .masks
             .stack
-            .masks
-            .get_mut(mask_index)
-            .and_then(|mask| mask.components.get_mut(component_index))
-            .is_some_and(|component| {
-                let crate::pipeline::MaskGeometry::Object { mask, strokes, .. } =
-                    &mut component.geometry
-                else {
-                    return false;
-                };
-                if mask.is_none() {
-                    return false;
-                }
-                *mask = None;
-                strokes.clear();
-                true
-            });
-        if !cleared {
-            return false;
-        }
-
-        if self.foreground_operation_is(ForegroundOperationKind::ObjectMask) {
-            self.cancel_foreground_operation();
-        }
-        if self.ai.object_pending_target == Some(target) {
-            self.ai.object_pending_target = None;
-        }
-        if self
-            .ai
-            .object_cache
-            .as_ref()
-            .is_some_and(|(cached_target, _)| *cached_target == target)
-        {
-            self.ai.object_cache = None;
-        }
+            .prepare_object_stroke(mask_index, component_index)?;
         self.masks.overlay_blink = None;
+        self.masks.thumbnail_component_mask = None;
         self.masks.brush_mode = BrushMode::Paint;
-        true
+        Some(new_index)
     }
 
     pub(crate) fn request_object_mask(&mut self, mask_index: usize, component_index: usize) {
