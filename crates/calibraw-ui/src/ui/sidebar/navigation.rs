@@ -419,6 +419,10 @@ impl Sidebar {
             scroll_style.bar_inner_margin = 7.0;
             ui.spacing_mut().scroll = scroll_style;
 
+            if app.ui.sidebar_tab == SidebarTab::Export {
+                show_export_action_panel(ui, |ui| Self::show_export_action(ui, app, frame));
+            }
+
             let mut mask_edit_header_rect = None;
             let scroll_output = egui::ScrollArea::vertical()
                 .id_salt("develop-sidebar-content")

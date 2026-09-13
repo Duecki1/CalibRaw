@@ -276,10 +276,9 @@ impl Sidebar {
                 };
                 ui.horizontal(|ui| {
                     let picker_width = crate::ui::theme::TOOLBAR_ICON_EDGE;
-                    let combo_width = (ui.available_width()
-                        - picker_width
-                        - ui.spacing().item_spacing.x)
-                        .clamp(1.0, 240.0);
+                    let combo_width =
+                        (ui.available_width() - picker_width - ui.spacing().item_spacing.x)
+                            .clamp(1.0, 240.0);
                     egui::ComboBox::from_id_salt("global-white-balance-preset")
                         .selected_text(selection)
                         .width(combo_width)
@@ -386,7 +385,7 @@ impl Sidebar {
                 let base_kelvin = raw.as_shot_temperature_kelvin().unwrap_or(kelvin);
                 let kelvin_changed = ui
                     .push_id(base_kelvin.to_bits(), |ui| {
-                        gradient_adjustment_slider(
+                        gradient_adjustment_slider_with_reset(
                             ui,
                             "Temperature (K)",
                             &mut kelvin,
@@ -396,6 +395,7 @@ impl Sidebar {
                             10.0,
                             Some("Scene illuminant color temperature in Kelvin; the as-shot camera white balance is the reset value."),
                             SliderGradient::Temperature,
+                            base_kelvin,
                         )
                     })
                     .inner;
@@ -411,7 +411,7 @@ impl Sidebar {
                     .clamp(0.0, 1.0);
                 let tint_changed = ui
                     .push_id(base_tint.to_bits(), |ui| {
-                        gradient_adjustment_slider(
+                        gradient_adjustment_slider_with_reset(
                             ui,
                             "Tint",
                             &mut tint,
@@ -422,6 +422,7 @@ impl Sidebar {
                             SliderGradient::CameraTint {
                                 neutral_fraction: tint_neutral_fraction,
                             },
+                            base_tint,
                         )
                     })
                     .inner;
@@ -531,7 +532,7 @@ impl Sidebar {
                     exposure.chroma_denoise = color_percent / 100.0;
                     changed = true;
                 }
-                changed |= adjustment_slider(
+                changed |= adjustment_slider_with_reset(
                     ui,
                     "Denoise Detail",
                     &mut exposure.denoise_detail,
@@ -539,6 +540,7 @@ impl Sidebar {
                     0,
                     1.0,
                     Some("Higher values protect edges and microtexture more strongly; lower values permit smoother denoising."),
+                    ExposureParams::default().denoise_detail,
                 );
                 let previous_quality = exposure.denoise_quality;
                 crate::ui::theme::form_combo(
@@ -575,7 +577,7 @@ impl Sidebar {
                 "Capture sharpening",
                 "Edge-aware capture sharpening restores fine RAW detail while its radius, detail, and masking controls limit halos and noisy texture.",
             );
-            changed |= adjustment_slider(
+            changed |= adjustment_slider_with_reset(
                 ui,
                 "Amount",
                 &mut exposure.sharpen_amount,
@@ -583,8 +585,9 @@ impl Sidebar {
                 0,
                 1.0,
                 Some("Controls overall capture sharpening strength. Zero is an exact no-op."),
+                ExposureParams::default().sharpen_amount,
             );
-            changed |= adjustment_slider(
+            changed |= adjustment_slider_with_reset(
                 ui,
                 "Radius",
                 &mut exposure.sharpen_radius,
@@ -592,8 +595,9 @@ impl Sidebar {
                 2,
                 0.05,
                 Some("Controls the edge width being sharpened. Smaller values favor fine detail; larger values strengthen broader edges."),
+                ExposureParams::default().sharpen_radius,
             );
-            changed |= adjustment_slider(
+            changed |= adjustment_slider_with_reset(
                 ui,
                 "Detail",
                 &mut exposure.sharpen_detail,
@@ -601,6 +605,7 @@ impl Sidebar {
                 0,
                 1.0,
                 Some("Raises the contribution of the finest texture and lowers fine-detail suppression."),
+                ExposureParams::default().sharpen_detail,
             );
             changed |= adjustment_slider(
                 ui,
@@ -615,11 +620,7 @@ impl Sidebar {
         (changed, ai_request)
     }
 
-    fn show_presence(
-        ui: &mut Ui,
-        exposure: &mut ExposureParams,
-        foldable: bool,
-    ) -> bool {
+    fn show_presence(ui: &mut Ui, exposure: &mut ExposureParams, foldable: bool) -> bool {
         let mut changed = false;
         Self::adjustment_section(ui, "Effects", false, foldable, |ui| {
             changed |= adjustment_slider(
@@ -679,7 +680,7 @@ impl Sidebar {
                     Some("Darkens negative values or brightens positive values toward the image edges."),
                     SliderGradient::Brightness,
                 );
-                changed |= adjustment_slider(
+                changed |= adjustment_slider_with_reset(
                     ui,
                     "Midpoint",
                     &mut exposure.vignette_midpoint,
@@ -687,6 +688,7 @@ impl Sidebar {
                     0,
                     1.0,
                     Some("Moves the vignette transition inward or confines it to the outermost edge."),
+                    ExposureParams::default().vignette_midpoint,
                 );
                 changed |= adjustment_slider(
                     ui,
@@ -697,7 +699,7 @@ impl Sidebar {
                     1.0,
                     Some("Changes the vignette shape from frame-like to circular."),
                 );
-                changed |= adjustment_slider(
+                changed |= adjustment_slider_with_reset(
                     ui,
                     "Feather",
                     &mut exposure.vignette_feather,
@@ -705,6 +707,7 @@ impl Sidebar {
                     0,
                     1.0,
                     Some("Controls the softness of the vignette transition."),
+                    ExposureParams::default().vignette_feather,
                 );
                 changed |= gradient_adjustment_slider(
                     ui,
@@ -739,5 +742,4 @@ impl Sidebar {
         });
         changed
     }
-
 }

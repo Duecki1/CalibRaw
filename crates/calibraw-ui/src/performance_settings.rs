@@ -458,7 +458,7 @@ mod tests {
         );
         assert_eq!(
             settings.library_thumbnail_size,
-            crate::ui::library::LibraryThumbnailSize::Medium
+            crate::ui::library::LibraryThumbnailSize::Large
         );
         assert_eq!(
             settings.library_sort_order,

@@ -149,7 +149,7 @@ impl Sidebar {
             clear_refinement,
         ) = refinement_controls;
         let mut opacity = mask.opacity;
-        let mut geometry_changed = adjustment_slider(
+        let mut geometry_changed = adjustment_slider_with_reset(
             ui,
             "Mask opacity",
             &mut opacity,
@@ -157,6 +157,7 @@ impl Sidebar {
             2,
             0.01,
             Some("Controls the strength of the entire mask before its selected type is applied."),
+            1.0,
         );
         if geometry_changed {
             mask.set_opacity(opacity);
@@ -231,7 +232,7 @@ impl Sidebar {
                             *brush_mode = BrushMode::Erase;
                         }
                     });
-                    geometry_changed |= adjustment_slider(
+                    geometry_changed |= adjustment_slider_with_reset(
                         ui,
                         "Size",
                         size,
@@ -239,6 +240,7 @@ impl Sidebar {
                         3,
                         0.0025,
                         Some("Brush stays the same size on screen; zoom in for finer image-space detail."),
+                        0.055,
                     );
                     geometry_changed |= Self::mask_feather_slider(
                         ui,
@@ -271,7 +273,7 @@ impl Sidebar {
                         }
                     });
                     ui.add_enabled_ui(*opacity_enabled, |ui| {
-                        geometry_changed |= adjustment_slider(
+                        geometry_changed |= adjustment_slider_with_reset(
                             ui,
                             "Stroke opacity",
                             opacity,
@@ -282,6 +284,7 @@ impl Sidebar {
                                 "Controls only newly drawn brush and eraser strokes. Existing \
                                  strokes and the whole-mask opacity are unchanged.",
                             ),
+                            1.0,
                         );
                     });
                     if crate::ui::icons::phosphor_icon_button(
@@ -362,7 +365,7 @@ impl Sidebar {
                                     *brush_mode = BrushMode::Erase;
                                 }
                             });
-                            adjustment_slider(
+                            adjustment_slider_with_reset(
                                 ui,
                                 "Size",
                                 refinement_size,
@@ -372,6 +375,7 @@ impl Sidebar {
                                 Some(
                                     "Brush stays the same size on screen; zoom in for finer image-space detail.",
                                 ),
+                                0.035,
                             );
                             Self::mask_feather_slider(
                                 ui,
@@ -448,7 +452,7 @@ impl Sidebar {
                         "Paint through the middle of the object part you want to select."
                     });
                     ui.strong("Selection brush");
-                    geometry_changed |= adjustment_slider(
+                    geometry_changed |= adjustment_slider_with_reset(
                         ui,
                         "Size",
                         brush_size,
@@ -456,6 +460,7 @@ impl Sidebar {
                         3,
                         0.0025,
                         Some("Controls the hard-edged selection brush. Its on-screen size stays constant while zooming for finer detail."),
+                        0.055,
                     );
                     ui.add_space(4.0);
                     geometry_changed |= Self::mask_grow_slider(ui, grow);
@@ -467,7 +472,7 @@ impl Sidebar {
                         "Softens the final object mask after SAM selection.",
                         0.0,
                     );
-                    let refine_changed = adjustment_slider(
+                    let refine_changed = adjustment_slider_with_reset(
                         ui,
                         "Edge refine",
                         edge_refine,
@@ -475,6 +480,7 @@ impl Sidebar {
                         2,
                         0.01,
                         Some("Aligns uncertain SAM boundaries to local image edges."),
+                        0.55,
                     );
                     geometry_changed |= refine_changed;
                     if refine_changed && !strokes.is_empty() {
@@ -513,7 +519,7 @@ impl Sidebar {
                     feather,
                     ..
                 } => {
-                    geometry_changed |= adjustment_slider(
+                    geometry_changed |= adjustment_slider_with_reset(
                         ui,
                         "Range low",
                         low,
@@ -521,8 +527,9 @@ impl Sidebar {
                         2,
                         0.01,
                         Some("Lowest included scene luminance."),
+                        0.2,
                     );
-                    geometry_changed |= adjustment_slider(
+                    geometry_changed |= adjustment_slider_with_reset(
                         ui,
                         "Range high",
                         high,
@@ -530,6 +537,7 @@ impl Sidebar {
                         2,
                         0.01,
                         Some("Highest included scene luminance."),
+                        0.8,
                     );
                     geometry_changed |= Self::mask_grow_slider(ui, grow);
                     geometry_changed |= Self::mask_feather_slider(
@@ -553,7 +561,7 @@ impl Sidebar {
                     } else {
                         "Drag on the image to sample a color."
                     });
-                    geometry_changed |= adjustment_slider(
+                    geometry_changed |= adjustment_slider_with_reset(
                         ui,
                         "Tolerance",
                         tolerance,
@@ -561,6 +569,7 @@ impl Sidebar {
                         3,
                         0.005,
                         Some("Expands the selected color region in perceptual OkLab space."),
+                        0.18,
                     );
                     geometry_changed |= Self::mask_grow_slider(ui, grow);
                     geometry_changed |= Self::mask_feather_slider(

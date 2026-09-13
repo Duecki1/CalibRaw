@@ -180,6 +180,7 @@ impl CalibRawApp {
                 stroke_opacity_edit_pending: false,
             },
             export: ExportState {
+                format: ExportFormat::default(),
                 gpu_prewarm: None,
                 settings: ExportSettings::default(),
                 task: None,
@@ -453,6 +454,7 @@ impl CalibRawApp {
                 stroke_opacity_edit_pending: false,
             },
             export: ExportState {
+                format: ExportFormat::default(),
                 gpu_prewarm: Some(gpu_export_prewarm),
                 settings: ExportSettings::default(),
                 task: None,

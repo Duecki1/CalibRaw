@@ -1,33 +1,71 @@
+fn show_export_action_panel<R>(
+    ui: &mut Ui,
+    contents: impl FnOnce(&mut Ui) -> R,
+) -> egui::InnerResponse<R> {
+    egui::Panel::bottom("develop-export-action")
+        .resizable(false)
+        .exact_size(crate::ui::theme::CONTROL_HEIGHT + 16.0)
+        .frame(
+            egui::Frame::new()
+                .fill(ui.visuals().panel_fill)
+                .inner_margin(egui::Margin::symmetric(0, 8)),
+        )
+        .show(ui, contents)
+}
+
+fn enforce_export_bit_depth(format: ExportFormat, settings: &mut crate::pipeline::ExportSettings) {
+    match format {
+        ExportFormat::Jpeg => settings.bit_depth = ExportBitDepth::Eight,
+        ExportFormat::Png if settings.bit_depth.is_float() => {
+            settings.bit_depth = ExportBitDepth::Sixteen
+        }
+        _ => {}
+    }
+}
+
 pub(crate) fn export_settings_controls(
     ui: &mut Ui,
+    format: &mut ExportFormat,
     settings: &mut crate::pipeline::ExportSettings,
     _fallback_picker_directory: Option<&std::path::Path>,
 ) {
     settings.resize_mode = ExportResizeMode::Original;
+    ui.horizontal_wrapped(|ui| {
+        ui.label("Format");
+        ui.selectable_value(format, ExportFormat::Jpeg, "JPEG");
+        ui.selectable_value(format, ExportFormat::Png, "PNG");
+        ui.selectable_value(format, ExportFormat::Tiff, "TIFF");
+    });
+    enforce_export_bit_depth(*format, settings);
+    ui.add_space(6.0);
 
     crate::ui::theme::section_card_with_help(
         ui,
         "Precision",
         "Choose the channel precision written to the exported file. Higher precision preserves more editing latitude but produces larger files.",
         |ui| {
-        crate::ui::theme::form_combo_with_help(
-            ui,
-            "Bit depth",
-            "export-bit-depth",
-            settings.bit_depth.label(),
-            150.0,
-            "8-bit is broadly compatible; 16-bit retains more tonal precision; 32-bit float writes a scene-linear master.",
-            |ui| {
-                for depth in [
-                    ExportBitDepth::Eight,
-                    ExportBitDepth::Sixteen,
-                    ExportBitDepth::Float32Linear,
-                ] {
-                    ui.selectable_value(&mut settings.bit_depth, depth, depth.label());
-                }
-            },
-        );
-    });
+            crate::ui::theme::form_combo_with_help(
+                ui,
+                "Bit depth",
+                "export-bit-depth",
+                settings.bit_depth.label(),
+                150.0,
+                "8-bit is broadly compatible; 16-bit retains more tonal precision; 32-bit float writes a scene-linear TIFF master.",
+                |ui| {
+                    for depth in [ExportBitDepth::Eight, ExportBitDepth::Sixteen, ExportBitDepth::Float32Linear] {
+                        let supported = match *format {
+                            ExportFormat::Jpeg => depth == ExportBitDepth::Eight,
+                            ExportFormat::Png => !depth.is_float(),
+                            ExportFormat::Tiff => true,
+                        };
+                        if supported {
+                            ui.selectable_value(&mut settings.bit_depth, depth, depth.label());
+                        }
+                    }
+                },
+            );
+        },
+    );
 
     crate::ui::theme::card_gap(ui);
     crate::ui::theme::section_card_with_help(
@@ -35,12 +73,13 @@ pub(crate) fn export_settings_controls(
         "Color space",
         "Integer exports use sRGB. Float TIFF masters use linear Rec.2020.",
         |ui| {
-        ui.label(if settings.bit_depth.is_float() {
-            "Linear Rec.2020"
-        } else {
-            "sRGB"
-        });
-    });
+            ui.label(if settings.bit_depth.is_float() {
+                "Linear Rec.2020"
+            } else {
+                "sRGB"
+            });
+        },
+    );
 
     crate::ui::theme::card_gap(ui);
     crate::ui::theme::section_card(ui, "Metadata", |ui| {
@@ -52,27 +91,62 @@ pub(crate) fn export_settings_controls(
         );
     });
 
-    crate::ui::theme::card_gap(ui);
-    crate::ui::theme::section_card(ui, "JPEG", |ui| {
-        adjustment_slider(
-            ui,
-            "Quality",
-            &mut settings.jpeg_quality,
-            1..=100,
-            0,
-            1.0,
-            Some("Higher quality keeps more detail and produces a larger JPEG file."),
-        );
-    });
+    if *format == ExportFormat::Jpeg {
+        crate::ui::theme::card_gap(ui);
+        crate::ui::theme::section_card(ui, "JPEG", |ui| {
+            adjustment_slider_with_reset(
+                ui,
+                "Quality",
+                &mut settings.jpeg_quality,
+                1..=100,
+                0,
+                1.0,
+                Some("Higher quality keeps more detail and produces a larger JPEG file."),
+                crate::pipeline::ExportSettings::default().jpeg_quality,
+            );
+        });
+    }
 }
 
 impl Sidebar {
-    fn show_export(ui: &mut Ui, app: &mut CalibRawApp, frame: &eframe::Frame) {
+    fn show_export_action(ui: &mut Ui, app: &mut CalibRawApp, frame: &eframe::Frame) {
+        let dimensions_valid = app.develop.loaded_raw.as_ref().is_some_and(|raw| {
+            let (width, height) = app
+                .develop
+                .geometry
+                .crop_pixel_dimensions(raw.width, raw.height);
+            app.export
+                .settings
+                .checked_output_dimensions(width, height)
+                .is_ok()
+        });
+        let export_enabled = app.can_export() && dimensions_valid;
+
+        let response = ui
+            .add_enabled_ui(export_enabled, |ui| {
+                ui.add_sized(
+                    [ui.available_width(), crate::ui::theme::CONTROL_HEIGHT],
+                    egui::Button::new("Export…"),
+                )
+            })
+            .inner;
+        if response.clicked() {
+            match app.export.format {
+                ExportFormat::Jpeg => app.export_jpeg(frame),
+                ExportFormat::Png => app.export_png(frame),
+                ExportFormat::Tiff => app.export_tiff(frame),
+            }
+        }
+    }
+
+    fn show_export(ui: &mut Ui, app: &mut CalibRawApp, _frame: &eframe::Frame) {
         let content_width = ui.available_width().max(1.0);
         let column_width = content_width;
 
         #[cfg(not(target_os = "android"))]
-        let export_picker_directory = app.develop.current_path
+        let export_picker_directory = app
+            .develop
+            .current_path
             .as_deref()
             .and_then(|path| path.parent())
             .filter(|parent| !parent.as_os_str().is_empty())
@@ -87,6 +161,7 @@ impl Sidebar {
                 ui.set_max_width(column_width);
                 export_settings_controls(
                     ui,
+                    &mut app.export.format,
                     &mut app.export.settings,
                     export_picker_directory.as_deref(),
                 );
@@ -126,56 +201,10 @@ impl Sidebar {
                 }
 
                 ui.add_space(10.0);
-                let dimensions_valid = app.develop.loaded_raw.as_ref().is_some_and(|raw| {
-                    let (width, height) = app
-                        .develop
-                        .geometry
-                        .crop_pixel_dimensions(raw.width, raw.height);
-                    app.export.settings
-                        .checked_output_dimensions(width, height)
-                        .is_ok()
-                });
-                let export_enabled = app.can_export() && dimensions_valid;
-                let png_enabled = export_enabled
-                    && app.export.settings.bit_depth != ExportBitDepth::Float32Linear;
+                #[cfg(not(target_os = "android"))]
+                let export_enabled = app.can_export();
+                #[cfg(not(target_os = "android"))]
                 let action_width = ui.available_width();
-                let png_response = ui
-                    .add_enabled_ui(png_enabled, |ui| {
-                        ui.add_sized(
-                            [action_width, crate::ui::theme::CONTROL_HEIGHT],
-                            egui::Button::new("Export PNG…"),
-                        )
-                    })
-                    .inner;
-                if png_response.clicked() {
-                    app.export_png(frame);
-                }
-                ui.add_space(4.0);
-                let tiff_response = ui
-                    .add_enabled_ui(export_enabled, |ui| {
-                        ui.add_sized(
-                            [action_width, crate::ui::theme::CONTROL_HEIGHT],
-                            egui::Button::new("Export TIFF…"),
-                        )
-                    })
-                    .inner;
-                if tiff_response.clicked() {
-                    app.export_tiff(frame);
-                }
-                ui.add_space(4.0);
-                let jpeg_enabled = export_enabled
-                    && app.export.settings.bit_depth != ExportBitDepth::Float32Linear;
-                let jpeg_response = ui
-                    .add_enabled_ui(jpeg_enabled, |ui| {
-                        ui.add_sized(
-                            [action_width, crate::ui::theme::CONTROL_HEIGHT],
-                            egui::Button::new("Export JPEG…"),
-                        )
-                    })
-                    .inner;
-                if jpeg_response.clicked() {
-                    app.export_jpeg(frame);
-                }
                 #[cfg(not(target_os = "android"))]
                 {
                     ui.add_space(10.0);
@@ -193,7 +222,7 @@ impl Sidebar {
                             "Create a short 30 FPS MP4 that replays the current edit by category.",
                         );
                     if replay_response.clicked() {
-                        app.create_edit_replay(frame);
+                        app.create_edit_replay(_frame);
                     }
                 }
                 if app.export_task_active() {
