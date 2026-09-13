@@ -3,14 +3,15 @@ use crate::app::{
     SidebarTab, ToneCurveTab,
 };
 use crate::pipeline::{
-    BrushMode, DenoiseQuality, ExportBitDepth, ExportResizeMode, ExposureParams, LoadedRaw,
-    LocalMask, MaskCombineMode, MaskComponent, MaskEffect, MaskEffectCategory, MaskGeometry,
-    MaskKind, RetouchAlignment, MAX_LOCAL_MASKS, MAX_MASK_COMPONENTS, MAX_WHITE_BALANCE_TINT,
-    MIN_WHITE_BALANCE_TINT,
+    BrushMode, DenoiseQuality, ExportBitDepth, ExportFormat, ExportResizeMode, ExposureParams,
+    LoadedRaw, LocalMask, MaskCombineMode, MaskComponent, MaskEffect, MaskEffectCategory,
+    MaskGeometry, MaskKind, RetouchAlignment, MAX_LOCAL_MASKS, MAX_MASK_COMPONENTS,
+    MAX_WHITE_BALANCE_TINT, MIN_WHITE_BALANCE_TINT,
 };
 use crate::ui::components::adjustment_slider::{
     adjustment_slider, adjustment_slider_with_reset, gradient_adjustment_slider,
-    hue_adjustment_slider, slider_scroll_locked, SliderGradient,
+    gradient_adjustment_slider_with_reset, hue_adjustment_slider, slider_scroll_locked,
+    SliderGradient,
 };
 use crate::ui::components::color_grading::color_grading_editor;
 use crate::ui::components::hsl_mixer::hsl_mixer;
@@ -87,11 +88,69 @@ include!("sidebar/crop.rs");
 
 #[cfg(test)]
 mod tests {
+    use eframe::egui;
     use super::masks::{mask_component_badge, mask_creation_icon};
     use super::{
         mobile_tab_icon_geometry, mobile_tab_text_geometry, MaskCardSize, MaskCombineMode,
         MaskStripOrientation,
     };
+
+    #[test]
+    fn export_action_stays_visible_above_scrolling_settings() {
+        for size in [
+            egui::vec2(320.0, 180.0),
+            egui::vec2(360.0, 600.0),
+            egui::vec2(420.0, 800.0),
+        ] {
+            let ctx = egui::Context::default();
+            let mut previous_button = None;
+            for offset in [0.0, 300.0, 1000.0] {
+                let _ = ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, size)),
+                        ..Default::default()
+                    },
+                    |ui| {
+                        let viewport = ui.available_rect_before_wrap();
+                        let button = super::show_export_action_panel(ui, |ui| {
+                            ui.add_sized(
+                                [ui.available_width(), crate::ui::theme::CONTROL_HEIGHT],
+                                egui::Button::new("Export…"),
+                            )
+                        })
+                        .inner
+                        .rect;
+                        let scroll = egui::ScrollArea::vertical()
+                            .auto_shrink([false, false])
+                            .vertical_scroll_offset(offset)
+                            .show(ui, |ui| {
+                                ui.allocate_space(egui::vec2(100.0, 2000.0));
+                            });
+                        assert!(viewport.contains_rect(button));
+                        assert!(scroll.inner_rect.bottom() <= button.top());
+                        assert!((viewport.bottom() - button.bottom() - 8.0).abs() < 1.0);
+                        if let Some(previous) = previous_button {
+                            assert_eq!(button, previous);
+                        }
+                        previous_button = Some(button);
+                    },
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn export_format_changes_keep_bit_depth_supported() {
+        use crate::pipeline::{ExportBitDepth, ExportFormat, ExportSettings};
+        let mut settings = ExportSettings::default();
+        settings.bit_depth = ExportBitDepth::Float32Linear;
+        super::enforce_export_bit_depth(ExportFormat::Tiff, &mut settings);
+        assert_eq!(settings.bit_depth, ExportBitDepth::Float32Linear);
+        super::enforce_export_bit_depth(ExportFormat::Png, &mut settings);
+        assert_eq!(settings.bit_depth, ExportBitDepth::Sixteen);
+        super::enforce_export_bit_depth(ExportFormat::Jpeg, &mut settings);
+        assert_eq!(settings.bit_depth, ExportBitDepth::Eight);
+    }
 
     #[test]
     fn mask_badges_match_base_and_combine_semantics() {

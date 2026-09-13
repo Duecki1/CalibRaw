@@ -14,15 +14,9 @@ fn inpaint_tool_help(tool: InpaintTool) -> &'static str {
 
 fn retouch_alignment_help(alignment: RetouchAlignment) -> &'static str {
     match alignment {
-        RetouchAlignment::None => {
-            "Source follows this stroke, then returns to the selected point."
-        }
-        RetouchAlignment::Aligned => {
-            "Source keeps the same offset between separate strokes."
-        }
-        RetouchAlignment::Registered => {
-            "Source and destination use the same image coordinates."
-        }
+        RetouchAlignment::None => "Source follows this stroke, then returns to the selected point.",
+        RetouchAlignment::Aligned => "Source keeps the same offset between separate strokes.",
+        RetouchAlignment::Registered => "Source and destination use the same image coordinates.",
         RetouchAlignment::Fixed => "Every brush dab starts from the selected source point.",
     }
 }
@@ -153,7 +147,7 @@ impl Sidebar {
         crate::ui::theme::card_gap(ui);
         crate::ui::theme::section_card(ui, "Brush", |ui| {
             ui.add_enabled_ui(!app.inpaint.processing(), |ui| {
-                adjustment_slider(
+                adjustment_slider_with_reset(
                     ui,
                     "Size",
                     &mut app.inpaint.brush_size,
@@ -161,10 +155,11 @@ impl Sidebar {
                     3,
                     0.0025,
                     Some("Brush stays the same size on screen; zoom in for a smaller, more precise native-image footprint."),
+                    0.055,
                 );
                 if app.inpaint.tool.retouch().is_some() {
                     let mut feather = 1.0 - app.inpaint.brush_hardness;
-                    if adjustment_slider(
+                    if adjustment_slider_with_reset(
                         ui,
                         "Feather",
                         &mut feather,
@@ -172,11 +167,12 @@ impl Sidebar {
                         2,
                         0.01,
                         Some("Width of the soft outer edge as a fraction of the brush radius."),
+                        0.5,
                     ) {
                         app.inpaint.brush_hardness = 1.0 - feather;
                     }
                 }
-                adjustment_slider(
+                adjustment_slider_with_reset(
                     ui,
                     "Opacity",
                     &mut app.inpaint.brush_opacity,
@@ -184,6 +180,7 @@ impl Sidebar {
                     2,
                     0.01,
                     Some("Initial strength of each new Remove, Clone, or Heal stroke."),
+                    1.0,
                 );
             });
             if let Some(status) = app.inpaint.processing_label.as_deref() {
@@ -215,10 +212,7 @@ impl Sidebar {
                 .collect::<Vec<_>>();
             if visible_strokes.is_empty() {
                 ui.label(
-                    egui::RichText::new(format!(
-                        "No {} strokes yet.",
-                        app.inpaint.tool.label()
-                    ))
+                    egui::RichText::new(format!("No {} strokes yet.", app.inpaint.tool.label()))
                         .small()
                         .color(ui.visuals().weak_text_color()),
                 );
@@ -308,7 +302,7 @@ impl Sidebar {
                 }
                 let changed = ui
                     .add_enabled_ui(!app.inpaint.processing(), |ui| {
-                        adjustment_slider(
+                        adjustment_slider_with_reset(
                             ui,
                             "Opacity",
                             &mut opacity,
@@ -316,6 +310,7 @@ impl Sidebar {
                             2,
                             0.01,
                             Some("Non-destructively changes this stored stroke without rerunning its model or heal solver."),
+                            1.0,
                         )
                     })
                     .inner;

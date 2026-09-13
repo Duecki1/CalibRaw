@@ -2,7 +2,7 @@
 use crate::app::OnnxRuntimeMode;
 use crate::app::{maximum_raw_cache_limit, CalibRawApp, PreviewQuality};
 use crate::pipeline::CameraProfileMode;
-use crate::ui::components::adjustment_slider::adjustment_slider;
+use crate::ui::components::adjustment_slider::adjustment_slider_with_reset;
 use crate::ui::layout::ScreenLayout;
 use crate::ui::library::maximum_thumbnail_worker_count;
 use eframe::egui::{self, Ui};
@@ -318,7 +318,7 @@ impl Settings {
                     if raw_cache_files == 1 { "file" } else { "files" }
                 )
             };
-            if adjustment_slider(
+            if adjustment_slider_with_reset(
                 ui,
                 "Decoded RAW cache",
                 &mut raw_cache_files,
@@ -326,12 +326,13 @@ impl Settings {
                 0,
                 1.0,
                 Some(&raw_cache_help),
+                crate::app::default_raw_cache_limit(),
             ) {
                 app.set_raw_cache_limit(raw_cache_files);
             }
 
             let mut thumbnail_workers = app.thumbnail_worker_count();
-            if adjustment_slider(
+            if adjustment_slider_with_reset(
                 ui,
                 "Thumbnail workers",
                 &mut thumbnail_workers,
@@ -341,6 +342,7 @@ impl Settings {
                 Some(
                     "Concurrent thumbnail jobs. Higher values fill the library faster but preview-less and edited jobs may unpack a full sensor and use substantial memory. Changing this restarts the queue.",
                 ),
+                crate::ui::library::default_thumbnail_worker_count(),
             ) {
                 app.set_thumbnail_worker_count(thumbnail_workers);
             }

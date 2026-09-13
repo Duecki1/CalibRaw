@@ -1142,6 +1142,7 @@ pub(crate) struct AiState {
 }
 
 pub(crate) struct ExportState {
+    pub(crate) format: ExportFormat,
     pub(crate) gpu_prewarm: Option<Arc<GpuProgramPrewarm>>,
     pub(crate) settings: ExportSettings,
     pub(crate) task: Option<ExportTask>,

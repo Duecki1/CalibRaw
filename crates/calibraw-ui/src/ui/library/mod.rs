@@ -120,8 +120,8 @@ impl LibrarySortOrder {
 #[serde(rename_all = "snake_case")]
 pub(crate) enum LibraryThumbnailSize {
     Small,
-    #[default]
     Medium,
+    #[default]
     Large,
     Enormous,
 }

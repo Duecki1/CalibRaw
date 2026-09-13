@@ -5,7 +5,7 @@ fn local_param_slider(
     value: &mut f32,
     spec: crate::pipeline::effect_params::FloatParamSpec,
 ) -> bool {
-    adjustment_slider(
+    adjustment_slider_with_reset(
         ui,
         spec.label,
         value,
@@ -13,6 +13,7 @@ fn local_param_slider(
         spec.decimals,
         spec.step,
         spec.tooltip,
+        spec.default,
     )
 }
 
@@ -22,7 +23,7 @@ fn local_gradient_param_slider(
     spec: crate::pipeline::effect_params::FloatParamSpec,
     gradient: SliderGradient,
 ) -> bool {
-    gradient_adjustment_slider(
+    gradient_adjustment_slider_with_reset(
         ui,
         spec.label,
         value,
@@ -31,6 +32,7 @@ fn local_gradient_param_slider(
         spec.step,
         spec.tooltip,
         gradient,
+        spec.default,
     )
 }
 

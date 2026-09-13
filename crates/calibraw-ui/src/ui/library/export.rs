@@ -1,33 +1,12 @@
 use super::*;
 
-fn enforce_library_export_bit_depth(format: ExportFormat, settings: &mut ExportSettings) {
-    match format {
-        ExportFormat::Jpeg => settings.bit_depth = crate::pipeline::ExportBitDepth::Eight,
-        ExportFormat::Png => {
-            if settings.bit_depth == crate::pipeline::ExportBitDepth::Float32Linear {
-                settings.bit_depth = crate::pipeline::ExportBitDepth::Sixteen;
-            }
-        }
-        _ => {}
-    }
-}
-
 pub(super) fn show_library_export_settings_controls(
     ui: &mut Ui,
     format: &mut ExportFormat,
     settings: &mut ExportSettings,
     picker_directory: Option<&Path>,
 ) {
-    ui.horizontal(|ui| {
-        ui.label("Format");
-        ui.selectable_value(format, ExportFormat::Jpeg, "JPEG");
-        ui.selectable_value(format, ExportFormat::Png, "PNG");
-        ui.selectable_value(format, ExportFormat::Tiff, "TIFF");
-    });
-    enforce_library_export_bit_depth(*format, settings);
-    ui.add_space(6.0);
-    crate::ui::sidebar::export_settings_controls(ui, settings, picker_directory);
-    enforce_library_export_bit_depth(*format, settings);
+    crate::ui::sidebar::export_settings_controls(ui, format, settings, picker_directory);
 }
 
 #[cfg(not(target_os = "android"))]

@@ -157,6 +157,37 @@ where
 }
 
 #[allow(clippy::too_many_arguments)]
+pub(crate) fn gradient_adjustment_slider_with_reset<Num>(
+    ui: &mut Ui,
+    label: &str,
+    value: &mut Num,
+    range: RangeInclusive<Num>,
+    decimals: usize,
+    speed: f64,
+    hover_text: Option<&str>,
+    gradient: SliderGradient,
+    reset_value: Num,
+) -> bool
+where
+    Num: egui::emath::Numeric + Copy,
+{
+    adjustment_slider_impl(
+        ui,
+        label,
+        value,
+        range,
+        SliderOptions {
+            decimals,
+            speed,
+            hover_text,
+            explicit_reset_value: Some(reset_value.to_f64()),
+            accent: None,
+            gradient: Some(gradient),
+        },
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn accented_gradient_adjustment_slider<Num>(
     ui: &mut Ui,
     label: &str,
@@ -263,18 +294,13 @@ where
     let mut changed = false;
 
     ui.push_id(label, |ui| {
-        let reset_id = ui.id().with("reset-value");
-        let reset_value = explicit_reset_value.unwrap_or_else(|| {
-            ui.data_mut(|data| {
-                if let Some(value) = data.get_temp::<f64>(reset_id) {
-                    value
-                } else {
-                    let value = (*value).to_f64();
-                    data.insert_temp(reset_id, value);
-                    value
-                }
-            })
-        });
+        // Reset to a stable neutral value, never the value of the first image
+        // or mask displayed in this widget. Nonzero defaults are explicit.
+        let start = range.start().to_f64();
+        let end = range.end().to_f64();
+        let reset_value = explicit_reset_value
+            .unwrap_or(0.0)
+            .clamp(start.min(end), start.max(end));
         let control_width = ui.available_width().max(1.0);
 
         ui.vertical(|ui| {
@@ -329,20 +355,23 @@ where
                     egui::vec2(control_width, HEADER_HEIGHT),
                     Layout::left_to_right(Align::Center),
                     |ui| {
-                        let mut label_response = if let Some(accent) = accent {
-                            let (swatch_rect, swatch_response) =
-                                ui.allocate_exact_size(egui::vec2(9.0, 9.0), Sense::hover());
-                            ui.painter()
-                                .circle_filled(swatch_rect.center(), 4.5, accent);
-                            ui.painter().circle_stroke(
-                                swatch_rect.center(),
-                                4.5,
-                                Stroke::new(1.0, egui::Color32::from_white_alpha(90)),
-                            );
-                            swatch_response.union(ui.label(RichText::new(label)))
-                        } else {
-                            ui.label(label)
-                        };
+                        let mut label_response =
+                            if let Some(accent) = accent {
+                                let (swatch_rect, swatch_response) =
+                                    ui.allocate_exact_size(egui::vec2(9.0, 9.0), Sense::hover());
+                                ui.painter()
+                                    .circle_filled(swatch_rect.center(), 4.5, accent);
+                                ui.painter().circle_stroke(
+                                    swatch_rect.center(),
+                                    4.5,
+                                    Stroke::new(1.0, egui::Color32::from_white_alpha(90)),
+                                );
+                                swatch_response.union(ui.add(
+                                    egui::Label::new(RichText::new(label)).sense(Sense::click()),
+                                ))
+                            } else {
+                                ui.add(egui::Label::new(label).sense(Sense::click()))
+                            };
                         label_response = label_response.on_hover_text(reset_tooltip(hover_text));
                         if label_response.double_clicked() {
                             changed |= set_numeric(value, reset_value, decimals);
@@ -922,6 +951,75 @@ mod tests {
                     });
             }
         });
+    }
+
+    #[test]
+    fn double_click_resets_edited_values_to_stable_defaults() {
+        use eframe::egui::{pos2, Event, Modifiers, PointerButton};
+
+        // Include reopened edits, switching images in the same widget, and
+        // per-image white balance defaults that change without a new UI id.
+        for gradient in [false, true] {
+            for click_label in [false, true] {
+                let ctx = eframe::egui::Context::default();
+                let mut time = 0.0;
+                for (initial, reset) in [
+                    (37.0, None),
+                    (-24.0, None),
+                    (81.0, Some(50.0)),
+                    (72.0, Some(65.0)),
+                ] {
+                    let mut value = initial;
+                    let mut show = |events| {
+                        let mut input = pointer_input(events);
+                        input.time = Some(time);
+                        time += 0.05;
+                        let _ = ctx.run_ui(input, |ui| {
+                            let options = super::SliderOptions {
+                                decimals: 0,
+                                speed: 1.0,
+                                hover_text: None,
+                                explicit_reset_value: reset,
+                                accent: None,
+                                gradient: gradient.then_some(SliderGradient::Colorfulness),
+                            };
+                            super::adjustment_slider_impl(
+                                ui,
+                                "Saturation",
+                                &mut value,
+                                -100.0..=100.0,
+                                options,
+                            );
+                        });
+                    };
+                    show(Vec::new());
+                    let pos = if click_label {
+                        pos2(20.0, HEADER_HEIGHT * 0.5)
+                    } else {
+                        pos2(20.0, HEADER_HEIGHT + 4.0 + SLIDER_HEIGHT * 0.5)
+                    };
+                    for _ in 0..2 {
+                        for pressed in [true, false] {
+                            show(vec![
+                                Event::PointerMoved(pos),
+                                Event::PointerButton {
+                                    pos,
+                                    button: PointerButton::Primary,
+                                    pressed,
+                                    modifiers: Modifiers::NONE,
+                                },
+                            ]);
+                        }
+                    }
+                    assert_eq!(
+                        value,
+                        reset.unwrap_or(0.0) as f32,
+                        "gradient={gradient}, label={click_label}"
+                    );
+                    time += 1.0;
+                }
+            }
+        }
     }
 
     #[test]

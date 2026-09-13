@@ -299,7 +299,7 @@ fn middle_elision_is_readable() {
 fn thumbnail_size_and_responsive_mobile_target_remain_stable() {
     assert_eq!(
         LibraryThumbnailSize::default(),
-        LibraryThumbnailSize::Medium
+        LibraryThumbnailSize::Large
     );
     assert_eq!(LibraryThumbnailSize::Small.scale(), 1.0);
     assert!(LibraryThumbnailSize::Large.scale() > LibraryThumbnailSize::Medium.scale());

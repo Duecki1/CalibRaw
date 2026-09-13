@@ -1,7 +1,7 @@
 use crate::app::ColorGradeTab;
 use crate::pipeline::{ColorGradeWheel, ColorGrading};
 use crate::ui::components::adjustment_slider::{
-    adjustment_slider, gradient_adjustment_slider, SliderGradient,
+    adjustment_slider, adjustment_slider_with_reset, gradient_adjustment_slider, SliderGradient,
 };
 use eframe::egui::{self, Color32, Mesh, Pos2, Sense, Shape, Stroke, Ui};
 
@@ -103,7 +103,7 @@ fn color_grading_editor_contents(
     }
 
     ui.separator();
-    changed |= adjustment_slider(
+    changed |= adjustment_slider_with_reset(
         ui,
         "Blending",
         &mut grading.blending,
@@ -111,6 +111,7 @@ fn color_grading_editor_contents(
         0,
         1.0,
         Some("Controls the overlap between shadows, midtones, and highlights."),
+        ColorGrading::default().blending,
     );
     changed |= adjustment_slider(
         ui,
