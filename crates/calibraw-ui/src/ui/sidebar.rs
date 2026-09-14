@@ -22,6 +22,7 @@ use eframe::egui::{self, Ui};
 pub(crate) struct Sidebar;
 
 mod adjustment_cards;
+mod histogram;
 mod mask_effects;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

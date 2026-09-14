@@ -57,6 +57,7 @@ impl CalibRawApp {
                 current_label: None,
             },
             preview: PreviewState {
+                histogram: Default::default(),
                 gpu_pipeline: None,
                 program_template: None,
                 retired_egui_textures: Vec::new(),
@@ -342,6 +343,7 @@ impl CalibRawApp {
                 current_label: None,
             },
             preview: PreviewState {
+                histogram: Default::default(),
                 gpu_pipeline: None,
                 program_template: None,
                 retired_egui_textures: Vec::new(),

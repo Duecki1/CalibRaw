@@ -425,6 +425,8 @@ impl eframe::App for CalibRawApp {
         }
         self.refresh_status();
 
+        self.update_preview_histogram(frame);
+
         if self.preview.processing_pending() {
             ui.ctx().request_repaint();
         }

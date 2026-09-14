@@ -43,6 +43,12 @@ impl Sidebar {
             return;
         }
 
+        Self::show_sidebar_header(ui, app);
+        Self::show_histogram(ui, app);
+        Self::show_sidebar_content(ui, app, layout, frame);
+    }
+
+    fn show_sidebar_header(ui: &mut Ui, app: &mut CalibRawApp) {
         let title = match app.ui.sidebar_tab {
             SidebarTab::Adjustments => "Edit",
             SidebarTab::Crop => "Crop & Straighten",
@@ -58,9 +64,8 @@ impl Sidebar {
                 egui::Layout::left_to_right(egui::Align::Center),
                 |ui| {
                     crate::ui::theme::toolbar_title(ui, title);
-                    ui.with_layout(
-                        egui::Layout::right_to_left(egui::Align::Center),
-                        |ui| match app.ui.sidebar_tab {
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        match app.ui.sidebar_tab {
                             SidebarTab::Adjustments => {
                                 if crate::ui::icons::phosphor_icon_button(
                                     ui,
@@ -123,14 +128,13 @@ impl Sidebar {
                                 }
                             }
                             SidebarTab::Export | SidebarTab::Info => {}
-                        },
-                    );
+                        }
+                        Self::show_histogram_toggle(ui);
+                    });
                 },
             );
         });
         crate::ui::theme::card_gap(ui);
-
-        Self::show_sidebar_content(ui, app, layout, frame);
     }
 
     fn show_vertical_mobile_shell(ui: &mut Ui, app: &mut CalibRawApp, frame: &eframe::Frame) {
@@ -165,6 +169,7 @@ impl Sidebar {
         egui::CentralPanel::default()
             .frame(egui::Frame::new().inner_margin(egui::Margin::same(0)))
             .show(ui, |ui| {
+                Self::show_sidebar_header(ui, app);
                 Self::show_sidebar_content(ui, app, ScreenLayout::Vertical, frame)
             });
     }
@@ -436,6 +441,9 @@ impl Sidebar {
                         |ui| {
                             ui.set_width(content_width);
                             ui.set_max_width(content_width);
+                            if layout == ScreenLayout::Vertical {
+                                Self::show_histogram(ui, app);
+                            }
                             match app.ui.sidebar_tab {
                                 SidebarTab::Adjustments => {
                                     Self::show_adjustments(ui, app, layout, frame)

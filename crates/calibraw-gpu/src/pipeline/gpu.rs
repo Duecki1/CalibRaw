@@ -15,11 +15,13 @@ use std::sync::{Arc, Condvar, Mutex, OnceLock};
 use crate::gpu_errors::GpuErrorScopes;
 
 mod builder;
+mod histogram;
 mod readback;
 mod resources;
 mod shader_manager;
 
 use builder::*;
+pub use histogram::{PreviewHistogram, PreviewHistogramGpu};
 use readback::*;
 use resources::*;
 use shader_manager::ShaderManager;
@@ -1506,6 +1508,7 @@ impl GpuProgramPrewarm {
 }
 
 pub struct RawGpuPipeline {
+    output_revision: std::sync::atomic::AtomicU64,
     pub egui_texture_id: Option<egui::TextureId>,
     pub width: u32,
     pub height: u32,
@@ -2157,6 +2160,7 @@ impl RawGpuPipeline {
         )?;
 
         let pipeline = Self {
+            output_revision: std::sync::atomic::AtomicU64::new(0),
             egui_texture_id,
             width: raw.width,
             height: raw.height,
@@ -3037,6 +3041,8 @@ impl RawGpuPipeline {
     }
 
     fn encode_output_stage(&self, encoder: &mut wgpu::CommandEncoder, params: &GpuParams) {
+        self.output_revision
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         self.encode_pass(encoder, self.adjustment_prepare_pass_index);
         self.encode_pass(encoder, self.adjustment_tone_pass_index);
         let blur_active = params.needs_blur_passes();
