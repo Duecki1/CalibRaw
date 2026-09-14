@@ -32,7 +32,6 @@ pub(crate) fn export_settings_controls(
     let previous_format = *format;
     settings.resize_mode = ExportResizeMode::Original;
     ui.horizontal_wrapped(|ui| {
-        ui.label("Format");
         ui.selectable_value(format, ExportFormat::Jpeg, "JPEG");
         ui.selectable_value(format, ExportFormat::Png, "PNG");
         ui.selectable_value(format, ExportFormat::Tiff, "TIFF");

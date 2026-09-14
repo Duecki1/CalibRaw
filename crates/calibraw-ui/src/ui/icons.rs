@@ -79,8 +79,10 @@ pub(crate) fn phosphor_icon_button(
     size: Vec2,
     tooltip: &str,
 ) -> Response {
+    // Reserve the themed minimum height so button overflow cannot shift the row.
+    let button_size = egui::vec2(size.x, size.y.max(ui.spacing().interact_size.y));
     ui.add_sized(
-        size,
+        button_size,
         egui::Button::new(RichText::new(glyph).size(size.y * 0.55)).frame(true),
     )
     .on_hover_text(tooltip)
@@ -93,8 +95,9 @@ pub(crate) fn phosphor_icon_toggle_button(
     size: Vec2,
     tooltip: &str,
 ) -> Response {
+    let button_size = egui::vec2(size.x, size.y.max(ui.spacing().interact_size.y));
     ui.add_sized(
-        size,
+        button_size,
         egui::Button::new(RichText::new(glyph).size(size.y * 0.55)).selected(selected),
     )
     .on_hover_text(tooltip)
