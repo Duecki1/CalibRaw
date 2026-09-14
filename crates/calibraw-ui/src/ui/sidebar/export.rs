@@ -39,49 +39,43 @@ pub(crate) fn export_settings_controls(
     enforce_export_bit_depth(*format, settings);
     ui.add_space(6.0);
 
-    crate::ui::theme::section_card_with_help(
-        ui,
-        "Precision",
-        "Choose the channel precision written to the exported file. Higher precision preserves more editing latitude but produces larger files.",
-        |ui| {
-            crate::ui::theme::form_combo_with_help(
-                ui,
-                "Bit depth",
-                "export-bit-depth",
-                settings.bit_depth.label(),
-                150.0,
-                "8-bit is broadly compatible; 16-bit retains more tonal precision; 32-bit float writes a scene-linear TIFF master.",
-                |ui| {
-                    for depth in [ExportBitDepth::Eight, ExportBitDepth::Sixteen, ExportBitDepth::Float32Linear] {
-                        let supported = match *format {
-                            ExportFormat::Jpeg => depth == ExportBitDepth::Eight,
-                            ExportFormat::Png => !depth.is_float(),
-                            ExportFormat::Tiff => true,
-                        };
-                        if supported {
-                            ui.selectable_value(&mut settings.bit_depth, depth, depth.label());
+    if *format != ExportFormat::Jpeg {
+        crate::ui::theme::section_card_with_help(
+            ui,
+            "Precision",
+            "Choose the channel precision written to the exported file. Higher precision preserves more editing latitude but produces larger files.",
+            |ui| {
+                egui::ComboBox::from_id_salt("export-bit-depth")
+                    .selected_text(settings.bit_depth.label())
+                    .width(ui.available_width().max(1.0))
+                    .truncate()
+                    .show_ui(ui, |ui| {
+                        for depth in [
+                            ExportBitDepth::Eight,
+                            ExportBitDepth::Sixteen,
+                            ExportBitDepth::Float32Linear,
+                        ] {
+                            let supported = match *format {
+                                ExportFormat::Jpeg => depth == ExportBitDepth::Eight,
+                                ExportFormat::Png => !depth.is_float(),
+                                ExportFormat::Tiff => true,
+                            };
+                            if supported {
+                                ui.selectable_value(
+                                    &mut settings.bit_depth,
+                                    depth,
+                                    depth.label(),
+                                );
+                            }
                         }
-                    }
-                },
-            );
-        },
-    );
+                    })
+                    .response
+                    .on_hover_text("8-bit is broadly compatible; 16-bit retains more tonal precision; 32-bit float writes a scene-linear TIFF master.");
+            },
+        );
+        crate::ui::theme::card_gap(ui);
+    }
 
-    crate::ui::theme::card_gap(ui);
-    crate::ui::theme::section_card_with_help(
-        ui,
-        "Color space",
-        "Integer exports use sRGB. Float TIFF masters use linear Rec.2020.",
-        |ui| {
-            ui.label(if settings.bit_depth.is_float() {
-                "Linear Rec.2020"
-            } else {
-                "sRGB"
-            });
-        },
-    );
-
-    crate::ui::theme::card_gap(ui);
     crate::ui::theme::section_card(ui, "Metadata", |ui| {
         crate::ui::theme::checkbox_with_help(
             ui,
