@@ -182,9 +182,7 @@ mod tests {
             app.ui.sidebar_tab = tab;
             for width in [320.0, 480.0] {
                 for open in [true, false] {
-                    ctx.data_mut(|data| {
-                        data.insert_persisted(egui::Id::new("develop-histogram-open"), open)
-                    });
+                    app.develop_ui.histogram_open = open;
                     app.preview.histogram.visible_this_frame = false;
                     let output = ctx.run_ui(
                         egui::RawInput {

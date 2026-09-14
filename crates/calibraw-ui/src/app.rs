@@ -1011,6 +1011,7 @@ pub(crate) struct PreviewState {
 }
 
 pub(crate) struct DevelopUiState {
+    pub(crate) histogram_open: bool,
     #[cfg(not(target_os = "android"))]
     pub(crate) reference: DevelopReferenceState,
     pub(crate) loading_thumbnail: DevelopLoadingThumbnailState,

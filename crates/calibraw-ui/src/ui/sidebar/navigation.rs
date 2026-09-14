@@ -129,7 +129,7 @@ impl Sidebar {
                             }
                             SidebarTab::Export | SidebarTab::Info => {}
                         }
-                        Self::show_histogram_toggle(ui);
+                        Self::show_histogram_toggle(ui, app);
                     });
                 },
             );

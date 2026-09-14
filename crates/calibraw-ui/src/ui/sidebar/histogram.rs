@@ -1,14 +1,9 @@
 use super::*;
 use crate::ui::theme;
 
-fn histogram_open(ctx: &egui::Context) -> bool {
-    ctx.data_mut(|data| data.get_persisted::<bool>(egui::Id::new("develop-histogram-open")))
-        .unwrap_or(true)
-}
-
 impl Sidebar {
-    pub(super) fn show_histogram_toggle(ui: &mut Ui) {
-        let open = histogram_open(ui.ctx());
+    pub(super) fn show_histogram_toggle(ui: &mut Ui, app: &mut CalibRawApp) {
+        let open = app.develop_ui.histogram_open;
         if crate::ui::icons::phosphor_icon_toggle_button(
             ui,
             egui_phosphor::regular::CHART_BAR,
@@ -22,27 +17,45 @@ impl Sidebar {
         )
         .clicked()
         {
-            ui.ctx().data_mut(|data| {
-                data.insert_persisted(egui::Id::new("develop-histogram-open"), !open)
-            });
+            app.develop_ui.histogram_open = !open;
+            app.persist_performance_settings();
         }
     }
 
     pub(super) fn show_histogram(ui: &mut Ui, app: &mut CalibRawApp) {
-        if !histogram_open(ui.ctx()) {
+        if !app.develop_ui.histogram_open {
             return;
         }
+        let channel_id = egui::Id::new("develop-histogram-selected-channel");
+        let mut selected = ui
+            .ctx()
+            .data(|data| data.get_temp::<Option<usize>>(channel_id))
+            .flatten();
         theme::content_card(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.label(egui::RichText::new("Histogram").strong());
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    for (label, color) in [
-                        ("L", ui.visuals().text_color()),
-                        ("B", theme::CHANNEL_BLUE),
-                        ("G", theme::CHANNEL_GREEN),
-                        ("R", theme::CHANNEL_RED),
+                    for (channel, label, name, color) in [
+                        (3, "L", "Luminance", ui.visuals().text_color()),
+                        (2, "B", "Blue", theme::CHANNEL_BLUE),
+                        (1, "G", "Green", theme::CHANNEL_GREEN),
+                        (0, "R", "Red", theme::CHANNEL_RED),
                     ] {
-                        ui.colored_label(color, label);
+                        let active = selected == Some(channel);
+                        let color = if active {
+                            color
+                        } else {
+                            ui.visuals().weak_text_color()
+                        };
+                        if ui
+                            .selectable_label(active, egui::RichText::new(label).color(color))
+                            .on_hover_text(name)
+                            .clicked()
+                        {
+                            selected = if active { None } else { Some(channel) };
+                            ui.ctx()
+                                .data_mut(|data| data.insert_temp(channel_id, selected));
+                        }
                     }
                 });
             });
@@ -79,6 +92,9 @@ impl Sidebar {
                     (1, theme::CHANNEL_GREEN),
                     (2, theme::CHANNEL_BLUE),
                 ] {
+                    if selected.is_some_and(|selected| selected != channel) {
+                        continue;
+                    }
                     let points: Vec<_> = histogram.channels[channel]
                         .iter()
                         .enumerate()

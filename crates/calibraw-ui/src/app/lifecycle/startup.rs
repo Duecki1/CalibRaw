@@ -94,6 +94,7 @@ impl CalibRawApp {
                 lens_corrected_cache: None,
             },
             develop_ui: DevelopUiState {
+                histogram_open: performance.develop_histogram_open,
                 reference: DevelopReferenceState::default(),
                 loading_thumbnail: DevelopLoadingThumbnailState::default(),
                 filmstrip_open: performance.develop_filmstrip_open,
@@ -378,6 +379,7 @@ impl CalibRawApp {
                 lens_corrected_cache: None,
             },
             develop_ui: DevelopUiState {
+                histogram_open: performance.develop_histogram_open,
                 loading_thumbnail: DevelopLoadingThumbnailState::default(),
                 crop_constraint_reference: None,
                 crop_drag: None,
