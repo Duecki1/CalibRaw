@@ -151,20 +151,41 @@ pub fn merge_hdr_bracket(
         progress("HDR: preparing floating-point master".to_owned()),
         "HDR merge cancelled"
     );
-    let mut rgb = accumulator.context("HDR bracket is empty")?.finish()?;
-    // Use one reference WB and matrix for the entire bracket; individual auto-WB differences
-    // must not create color seams. Preserve negative out-of-gamut values and values above 1.
-    rgb.par_chunks_exact_mut(3).for_each(|p| {
-        let source = [p[0], p[1], p[2]];
-        for row in 0..3 {
-            p[row] = (0..3).map(|c| color_transform[row][c] * source[c]).sum();
-        }
-    });
+    let rgb = finish_hdr_merge(
+        accumulator.context("HDR bracket is empty")?,
+        color_transform,
+    )?;
     Ok(HdrMergeResult {
         width: dimensions.0,
         height: dimensions.1,
         rgb,
     })
+}
+
+fn finish_hdr_merge(
+    accumulator: HdrAccumulator,
+    color_transform: [[f32; 3]; 3],
+) -> Result<Vec<f32>> {
+    let (mut rgb, clipped) = accumulator.finish_with_clipped_highlights()?;
+    // Use one reference WB and matrix for the entire bracket; individual auto-WB differences
+    // must not create color seams. Preserve negative out-of-gamut values and values above 1.
+    rgb.par_chunks_exact_mut(3)
+        .zip(clipped.par_iter())
+        .for_each(|(p, &clipped)| {
+            let source = [p[0], p[1], p[2]];
+            for row in 0..3 {
+                p[row] = (0..3).map(|c| color_transform[row][c] * source[c]).sum();
+            }
+            if clipped {
+                // Every exposure lost highlight chroma. Equal saturated camera channels
+                // become magenta after WB/matrix conversion, so use an achromatic fallback
+                // in working Rec.2020, preserving luminance and the floating-point range.
+                // Never apply this to a highlight recovered from any unclipped exposure.
+                let luminance = 0.2627 * p[0] + 0.6780 * p[1] + 0.0593 * p[2];
+                p.fill(luminance);
+            }
+        });
+    Ok(rgb)
 }
 
 fn render_camera_rgb(
@@ -298,6 +319,59 @@ mod tests {
         assert_eq!(profile, super::super::export::linear_rec2020_icc());
     }
     #[test]
+    fn unrecoverable_highlights_stay_neutral_at_minus_five_ev() {
+        let mut merge = HdrAccumulator::new(3, 1).unwrap();
+        // Pixel 0 clips even in the shortest exposure. Pixel 1 is real magenta
+        // with valid measurements, and pixel 2 is black in every exposure.
+        for exposure in [1.0, 1.0 / 16.0] {
+            let frame = [
+                1.0,
+                1.0,
+                1.0,
+                0.2 * exposure,
+                0.05 * exposure,
+                0.2 * exposure,
+                0.0,
+                0.0,
+                0.0,
+            ];
+            merge
+                .add(&frame, exposure, Alignment::default(), None)
+                .unwrap();
+        }
+        let rgb =
+            finish_hdr_merge(merge, [[2.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.5]]).unwrap();
+        let expected_luminance = 0.2627 * 32.0 + 0.6780 * 16.0 + 0.0593 * 24.0;
+        assert!(expected_luminance > 1.0);
+        for channel in &rgb[..3] {
+            assert!(
+                (channel - expected_luminance).abs() < 1e-5,
+                "clipped highlight: {rgb:?}"
+            );
+        }
+        for (actual, expected) in rgb[3..].iter().zip([0.4, 0.05, 0.3, 0.0, 0.0, 0.0]) {
+            assert!(
+                (actual - expected).abs() < 1e-6,
+                "valid color changed: {rgb:?}"
+            );
+        }
+        let master = HdrMergeResult {
+            width: 3,
+            height: 1,
+            rgb,
+        };
+        let mut tiff = std::io::Cursor::new(Vec::new());
+        master.write_tiff(&mut tiff).unwrap();
+        let reopened =
+            image::load_from_memory_with_format(tiff.get_ref(), image::ImageFormat::Tiff)
+                .unwrap()
+                .into_rgb32f();
+        let dimmed = reopened.get_pixel(0, 0).0.map(|v| v * 2.0f32.powi(-5));
+        assert_eq!(dimmed[0], dimmed[1]);
+        assert_eq!(dimmed[1], dimmed[2]);
+    }
+
+    #[test]
     #[ignore = "requires a compute-capable GPU"]
     fn raw_demosaic_merge_preserves_highlights_and_shadows() {
         let instance = wgpu::Instance::default();
@@ -306,7 +380,7 @@ mod tests {
                 .unwrap();
         let (device, queue) =
             pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default())).unwrap();
-        let (width, height) = (192u32, 96u32);
+        let (width, height) = (256u32, 96u32);
         let mut merge = HdrAccumulator::new(width, height).unwrap();
         for exposure in [1.0, 1.0 / 16.0, 16.0] {
             let mut raw = LoadedRaw::from_scene_linear_rec2020(
@@ -331,8 +405,10 @@ mod tests {
                         [0.0001f32, 0.0002, 0.0003]
                     } else if x < 128 {
                         [0.2, 0.1, 0.05]
-                    } else {
+                    } else if x < 192 {
                         [4.0, 2.0, 0.5]
+                    } else {
+                        [64.0, 64.0, 64.0]
                     };
                     (64.0 + (scene[c] * exposure).min(1.0) * 4031.0).round() as u16
                 })
@@ -344,11 +420,13 @@ mod tests {
                 .add(&rgb, exposure, Alignment::default(), Some(&clipped))
                 .unwrap();
         }
-        let rgb = merge.finish().unwrap();
+        let rgb =
+            finish_hdr_merge(merge, [[2.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.5]]).unwrap();
         for (x, expected, tolerance) in [
-            (32, [0.0001, 0.0002, 0.0003], 0.00002),
-            (96, [0.2, 0.1, 0.05], 0.002),
-            (160, [4.0, 2.0, 0.5], 0.01),
+            (32, [0.0002, 0.0002, 0.00045], 0.00004),
+            (96, [0.4, 0.1, 0.075], 0.004),
+            (160, [8.0, 2.0, 0.75], 0.02),
+            (224, [20.6776; 3], 0.01),
         ] {
             let i = (48 * width as usize + x) * 3;
             for c in 0..3 {

@@ -143,6 +143,13 @@ impl HdrAccumulator {
     }
 
     pub fn finish(self) -> Result<Vec<f32>> {
+        self.finish_with_clipped_highlights().map(|(rgb, _)| rgb)
+    }
+
+    /// Returns camera RGB and a mask of pixels with no usable exposure because every
+    /// covering sample clipped. Black/shadow fallbacks are not marked. The mask must
+    /// survive color conversion: saturated camera RGB has no trustworthy chroma.
+    pub fn finish_with_clipped_highlights(self) -> Result<(Vec<f32>, Vec<bool>)> {
         ensure!(
             self.pixels.iter().all(|p| p.fallback_score > 0.0),
             "HDR merge has uncovered pixels"
@@ -163,7 +170,15 @@ impl HdrAccumulator {
             rgb.par_iter().all(|v| v.is_finite()),
             "HDR radiance exceeded floating-point range"
         );
-        Ok(rgb)
+        let clipped = self
+            .pixels
+            .par_iter()
+            .map(|p| {
+                // Clipped fallback scores are in (0, 1]; non-clipped scores are >= 2.
+                p.weight == 0.0 && p.fallback_score <= 1.0
+            })
+            .collect();
+        Ok((rgb, clipped))
     }
 }
 
