@@ -646,8 +646,6 @@ impl LibraryState {
     }
 
     pub(crate) fn poll(&mut self, context: &egui::Context) {
-        #[cfg(not(target_os = "android"))]
-        self.poll_hdr_merge(context);
         let pasted = self
             .asset_transfer_receiver
             .as_ref()
