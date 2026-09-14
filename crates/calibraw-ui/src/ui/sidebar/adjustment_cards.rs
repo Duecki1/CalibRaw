@@ -408,6 +408,7 @@ mod tests {
         for width in [210.0, 280.0, 400.0] {
             for foldable in [false, true] {
                 let ctx = egui::Context::default();
+                crate::ui::theme::install(&ctx);
                 let mut edits = ExposureParams {
                     exposure: 2.0,
                     temperature: 17.0,
