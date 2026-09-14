@@ -53,6 +53,8 @@ impl LibraryState {
             image_clipboard: None,
             adjustment_clipboard: None,
             asset_transfer_receiver: None,
+            hdr_merge: None,
+            hdr_merge_message: None,
             raw_import_receiver: None,
             folder_operation_receiver: None,
             folder_clipboard: None,
@@ -172,7 +174,9 @@ impl LibraryState {
         }
         #[cfg(not(target_os = "android"))]
         {
-            self.raw_import_receiver.is_some() || self.folder_operation_receiver.is_some()
+            self.raw_import_receiver.is_some()
+                || self.folder_operation_receiver.is_some()
+                || self.hdr_merge.is_some()
         }
         #[cfg(target_os = "android")]
         {
@@ -642,6 +646,8 @@ impl LibraryState {
     }
 
     pub(crate) fn poll(&mut self, context: &egui::Context) {
+        #[cfg(not(target_os = "android"))]
+        self.poll_hdr_merge(context);
         let pasted = self
             .asset_transfer_receiver
             .as_ref()

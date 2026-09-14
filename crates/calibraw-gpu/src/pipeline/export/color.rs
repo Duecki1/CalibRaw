@@ -127,19 +127,23 @@ fn build_matrix_shaper_icc(_name: &str, matrix: [[f32; 3]; 3], transfer: IccTran
     profile
 }
 
+pub(in crate::pipeline) fn linear_rec2020_icc() -> Vec<u8> {
+    build_matrix_shaper_icc(
+        "Linear Rec.2020",
+        [
+            [0.673_424_1, 0.165_641_1, 0.125_128_6],
+            [0.279_017_7, 0.675_340_2, 0.045_637_7],
+            [-0.001_930_0, 0.029_978_4, 0.797_333],
+        ],
+        IccTransfer::Linear,
+    )
+}
+
 pub(super) fn resolve_export_color(settings: &ExportSettings) -> Result<ResolvedExportColor> {
     if settings.bit_depth.is_float() {
         return Ok(ResolvedExportColor {
             transform: None,
-            embedded_icc: Some(build_matrix_shaper_icc(
-                "Linear Rec.2020",
-                [
-                    [0.673_424_1, 0.165_641_1, 0.125_128_6],
-                    [0.279_017_7, 0.675_340_2, 0.045_637_7],
-                    [-0.001_930_0, 0.029_978_4, 0.797_333],
-                ],
-                IccTransfer::Linear,
-            )),
+            embedded_icc: Some(linear_rec2020_icc()),
             srgb: false,
         });
     }

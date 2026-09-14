@@ -5,6 +5,8 @@ pub(crate) enum LibraryAction {
     #[cfg(not(target_os = "android"))]
     Review(Vec<LibraryAsset>, super::review::ReviewChange),
     Export(Vec<LibraryAsset>),
+    #[cfg(not(target_os = "android"))]
+    HdrMerge(Vec<LibraryAsset>),
     CopyAdjustments(LibraryAsset),
     PasteAdjustments(Vec<LibraryAsset>),
     Copy(Vec<LibraryAsset>),
@@ -80,6 +82,15 @@ pub(crate) fn library_image_context_menu(
     .clicked()
     {
         action = Some(LibraryAction::Export(context_assets.to_vec()));
+        ui.close();
+    }
+
+    if selected_count >= 2
+        && crate::ui::theme::context_menu_item(ui, action_enabled, "HDR merge")
+            .on_hover_text("Auto-align and merge RAW exposures into an editable 32-bit float TIFF")
+            .clicked()
+    {
+        action = Some(LibraryAction::HdrMerge(context_assets.to_vec()));
         ui.close();
     }
 
@@ -198,6 +209,8 @@ pub(crate) fn apply_library_action(
     action: LibraryAction,
 ) {
     match action {
+        #[cfg(not(target_os = "android"))]
+        LibraryAction::HdrMerge(assets) => super::hdr::start(app, frame, assets, ui.ctx()),
         #[cfg(not(target_os = "android"))]
         LibraryAction::Review(assets, change) => super::review::apply_review(app, assets, change),
         LibraryAction::Export(assets) => {

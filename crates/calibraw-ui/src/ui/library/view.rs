@@ -86,6 +86,8 @@ impl Library {
     pub(crate) fn show(ui: &mut Ui, app: &mut CalibRawApp, frame: &eframe::Frame) {
         app.library.resume_thumbnail_decoding();
         app.library.poll(ui.ctx());
+        #[cfg(not(target_os = "android"))]
+        app.library.show_hdr_merge_status(ui);
 
         let mut refresh = false;
         #[cfg(target_os = "android")]
