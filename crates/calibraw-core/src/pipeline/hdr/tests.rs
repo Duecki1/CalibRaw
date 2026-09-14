@@ -131,3 +131,31 @@ fn excludes_saturated_sensor_footprints_even_when_demosaicing_softens_them() {
         .unwrap();
     assert_eq!(merge.finish().unwrap(), [1.0, 0.4, 0.2]);
 }
+
+#[test]
+fn marks_only_highlights_without_any_unclipped_exposure() {
+    let mut merge = HdrAccumulator::new(4, 1).unwrap();
+    merge
+        .add(
+            &[1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.2, 0.1, 0.05],
+            1.0,
+            Alignment::default(),
+            None,
+        )
+        .unwrap();
+    merge
+        .add(
+            &[
+                1.0, 0.7, 0.9, 0.5, 0.25, 0.125, 0.0, 0.0, 0.0, 0.05, 0.025, 0.0125,
+            ],
+            0.25,
+            Alignment::default(),
+            None,
+        )
+        .unwrap();
+    let (rgb, clipped) = merge.finish_with_clipped_highlights().unwrap();
+    assert_eq!(clipped, [true, false, false, false]);
+    assert_eq!(&rgb[..3], &[4.0, 2.8, 3.6]);
+    assert_eq!(&rgb[3..6], &[2.0, 1.0, 0.5]);
+    assert_eq!(&rgb[6..9], &[0.0; 3]);
+}
