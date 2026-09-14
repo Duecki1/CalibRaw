@@ -15,6 +15,7 @@ pub(crate) const TOOLBAR_HEIGHT: f32 = if cfg!(target_os = "android") {
 pub(crate) const TOOLBAR_ICON_EDGE: f32 = CONTROL_HEIGHT;
 #[cfg(not(target_os = "android"))]
 pub(crate) const TOOL_RAIL_ICON_EDGE: f32 = 40.0;
+pub(crate) const SPACE_XXS: f32 = 2.0;
 pub(crate) const SPACE_XS: f32 = 4.0;
 pub(crate) const SPACE_SM: f32 = 8.0;
 pub(crate) const SPACE_MD: f32 = 12.0;
@@ -23,8 +24,17 @@ pub(crate) const CARD_GAP: f32 = SPACE_SM;
 pub(crate) const CONTENT_MARGIN: i8 = 12;
 pub(crate) const CARD_RADIUS: f32 = 8.0;
 const COMPACT_PORTRAIT_CARD_GAP: f32 = SPACE_SM;
-const COMPACT_PORTRAIT_CONTENT_MARGIN: i8 = 8;
-pub(crate) const FORM_STACK_BREAKPOINT: f32 = 520.0;
+const COMPACT_PORTRAIT_CONTENT_MARGIN: i8 = SPACE_SM as i8;
+pub(crate) const COMPACT_WIDTH_BREAKPOINT: f32 = 520.0;
+pub(crate) const DIALOG_WIDTH_NARROW: f32 = 360.0;
+pub(crate) const DIALOG_WIDTH_FORM: f32 = 420.0;
+pub(crate) const DIALOG_WIDTH_DEFAULT: f32 = 440.0;
+pub(crate) const DIALOG_WIDTH_WIDE: f32 = 480.0;
+pub(crate) const DIALOG_WIDTH_LARGE: f32 = 520.0;
+pub(crate) const DIALOG_TEXT_FIELD_WIDTH: f32 = 320.0;
+const DIALOG_COMPACT_WIDTH_BREAKPOINT: f32 = 560.0;
+const DIALOG_VIEWPORT_PADDING: f32 = 24.0;
+pub(crate) const DIALOG_MARGIN: i8 = if cfg!(target_os = "android") { 16 } else { 12 };
 pub(crate) const HELP_BUTTON_EDGE: f32 = if cfg!(target_os = "android") {
     CONTROL_HEIGHT
 } else {
@@ -37,7 +47,7 @@ pub(crate) const PANEL_TITLE_TEXT_SIZE: f32 = 16.0;
 pub(crate) const FLOATING_ACTION_EDGE: f32 =
     platform_floating_action_edge(cfg!(target_os = "android"));
 #[cfg(any(target_os = "android", test))]
-pub(crate) const FLOATING_ACTION_MARGIN: f32 = 12.0;
+pub(crate) const FLOATING_ACTION_MARGIN: f32 = SPACE_MD;
 
 pub(crate) const CANVAS_BACKDROP: Color32 = Color32::from_rgb(13, 15, 18);
 pub(crate) const STATUS_WARNING: Color32 = Color32::from_rgb(244, 142, 48);
@@ -543,19 +553,67 @@ pub(crate) fn toolbar_button(
     ui.add_sized([width, CONTROL_HEIGHT], egui::Button::new(label.into()))
 }
 
+fn primary_button_impl(
+    ui: &mut Ui,
+    label: impl Into<egui::WidgetText>,
+    width: Option<f32>,
+) -> Response {
+    let visuals = &ui.visuals().widgets.active;
+    let button = egui::Button::new(label.into().color(Color32::WHITE))
+        .fill(visuals.weak_bg_fill)
+        .stroke(visuals.bg_stroke)
+        .corner_radius(CARD_RADIUS);
+    if let Some(width) = width {
+        ui.add_sized([width, CONTROL_HEIGHT], button)
+    } else {
+        ui.add(button.min_size(egui::vec2(0.0, CONTROL_HEIGHT)))
+    }
+}
+
 pub(crate) fn primary_button(
     ui: &mut Ui,
     label: impl Into<egui::WidgetText>,
     width: f32,
 ) -> Response {
-    let visuals = &ui.visuals().widgets.active;
-    ui.add_sized(
-        [width, CONTROL_HEIGHT],
-        egui::Button::new(label.into().color(Color32::WHITE))
-            .fill(visuals.weak_bg_fill)
-            .stroke(visuals.bg_stroke)
-            .corner_radius(CARD_RADIUS),
+    primary_button_impl(ui, label, Some(width))
+}
+
+pub(crate) fn primary_action_button(
+    ui: &mut Ui,
+    label: impl Into<egui::WidgetText>,
+) -> Response {
+    primary_button_impl(ui, label, None)
+}
+
+pub(crate) fn secondary_button(
+    ui: &mut Ui,
+    label: impl Into<egui::WidgetText>,
+) -> Response {
+    ui.add(
+        egui::Button::new(label.into())
+            .corner_radius(CARD_RADIUS)
+            .min_size(egui::vec2(0.0, CONTROL_HEIGHT)),
     )
+}
+
+pub(crate) fn destructive_button(
+    ui: &mut Ui,
+    label: impl Into<egui::WidgetText>,
+) -> Response {
+    let color = ui.visuals().error_fg_color;
+    ui.add(
+        egui::Button::new(label.into().color(color))
+            .corner_radius(CARD_RADIUS)
+            .min_size(egui::vec2(0.0, CONTROL_HEIGHT)),
+    )
+}
+
+pub(crate) fn destructive_menu_item(
+    ui: &mut Ui,
+    label: impl Into<egui::WidgetText>,
+) -> Response {
+    let color = ui.visuals().error_fg_color;
+    ui.add(egui::Button::new(label.into().color(color)))
 }
 
 pub(crate) fn toggle_button(
@@ -597,6 +655,147 @@ pub(crate) fn action_row<R>(
     })
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum DialogAction {
+    #[default]
+    None,
+    Cancel,
+    Confirm,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct DialogKeyboard {
+    pub(crate) escape_closes: bool,
+    pub(crate) enter_confirms: bool,
+}
+
+impl DialogKeyboard {
+    pub(crate) const CLOSE_ONLY: Self = Self {
+        escape_closes: true,
+        enter_confirms: false,
+    };
+    pub(crate) const CONFIRM_ON_ENTER: Self = Self {
+        escape_closes: true,
+        enter_confirms: true,
+    };
+}
+
+/// Fallback keyboard handling; call after dialog controls have processed input.
+pub(crate) fn dialog_keyboard_action(
+    ui: &Ui,
+    keyboard: DialogKeyboard,
+    confirm_enabled: bool,
+) -> DialogAction {
+    if keyboard.escape_closes
+        && ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
+    {
+        return DialogAction::Cancel;
+    }
+    if keyboard.enter_confirms
+        && confirm_enabled
+        && ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Enter))
+    {
+        return DialogAction::Confirm;
+    }
+    DialogAction::None
+}
+
+fn take_initial_focus_request(focus_requested: &mut bool) -> bool {
+    if *focus_requested {
+        false
+    } else {
+        *focus_requested = true;
+        true
+    }
+}
+
+pub(crate) fn request_initial_focus(response: &Response, focus_requested: &mut bool) {
+    if take_initial_focus_request(focus_requested) {
+        response.request_focus();
+    }
+}
+
+pub(crate) fn dialog_button_row<R>(
+    ui: &mut Ui,
+    add_contents: impl FnOnce(&mut Ui) -> R,
+) -> InnerResponse<R> {
+    ui.add_space(SPACE_SM);
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = SPACE_SM;
+        add_contents(ui)
+    })
+}
+
+fn dialog_confirmation_keyboard(
+    keyboard: DialogKeyboard,
+    destructive: bool,
+) -> DialogKeyboard {
+    DialogKeyboard {
+        enter_confirms: keyboard.enter_confirms && !destructive,
+        ..keyboard
+    }
+}
+
+pub(crate) fn dialog_confirmation_buttons(
+    ui: &mut Ui,
+    cancel_label: impl Into<egui::WidgetText>,
+    confirm_label: impl Into<egui::WidgetText>,
+    confirm_enabled: bool,
+    destructive: bool,
+    keyboard: DialogKeyboard,
+) -> DialogAction {
+    let keyboard = dialog_confirmation_keyboard(keyboard, destructive);
+    let mut action = DialogAction::None;
+    let cancel_label = cancel_label.into();
+    let confirm_label = confirm_label.into();
+    dialog_button_row(ui, |ui| {
+        if secondary_button(ui, cancel_label).clicked() {
+            action = DialogAction::Cancel;
+        }
+        let confirm = ui
+            .add_enabled_ui(confirm_enabled, |ui| {
+                if destructive {
+                    destructive_button(ui, confirm_label.clone())
+                } else {
+                    primary_action_button(ui, confirm_label)
+                }
+            })
+            .inner;
+        if confirm.clicked() {
+            action = DialogAction::Confirm;
+        }
+    });
+    if action == DialogAction::None {
+        action = dialog_keyboard_action(ui, keyboard, confirm_enabled);
+    }
+    action
+}
+
+// TODO: Evaluate migrating standard confirmation/form dialogs to `egui::Modal` so
+// background interaction is structurally blocked while preserving desktop/Android behavior.
+pub(crate) fn dialog_window<'a>(
+    window: egui::Window<'a>,
+    ctx: &egui::Context,
+    preferred_width: f32,
+) -> egui::Window<'a> {
+    let available = ctx.content_rect().size()
+        - egui::vec2(DIALOG_VIEWPORT_PADDING, DIALOG_VIEWPORT_PADDING);
+    let available = egui::vec2(available.x.max(1.0), available.y.max(1.0));
+    let compact_portrait =
+        available.x < DIALOG_COMPACT_WIDTH_BREAKPOINT && available.y > available.x;
+    let window = window
+        .collapsible(false)
+        .resizable(false)
+        .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+        .default_width(preferred_width.min(available.x))
+        .max_width(available.x)
+        .max_height(available.y)
+        .vscroll(compact_portrait);
+    #[cfg(target_os = "android")]
+    let window = window.order(egui::Order::Foreground);
+    window
+}
+
 pub(crate) fn card_gap(ui: &mut Ui) {
     let gap = if is_compact_portrait(ui) {
         COMPACT_PORTRAIT_CARD_GAP
@@ -610,7 +809,7 @@ pub(crate) fn card_gap(ui: &mut Ui) {
 pub(crate) fn singleline_text_edit<'a>(text: &'a mut dyn egui::TextBuffer) -> egui::TextEdit<'a> {
     egui::TextEdit::singleline(text)
         .vertical_align(Align::Center)
-        .margin(Margin::symmetric(8, 4))
+        .margin(Margin::symmetric(SPACE_SM as i8, SPACE_XS as i8))
         .min_size(egui::vec2(0.0, CONTROL_HEIGHT))
 }
 
@@ -656,7 +855,7 @@ pub(crate) fn form_combo(
     preferred_width: f32,
     add_contents: impl FnOnce(&mut Ui),
 ) {
-    if ui.available_width() < FORM_STACK_BREAKPOINT {
+    if ui.available_width() < COMPACT_WIDTH_BREAKPOINT {
         ui.vertical(|ui| {
             ui.label(label);
             let width = ui.available_width().max(1.0);
@@ -772,7 +971,7 @@ pub(crate) fn form_combo_with_help(
     help: &str,
     add_contents: impl FnOnce(&mut Ui),
 ) {
-    if ui.available_width() < FORM_STACK_BREAKPOINT {
+    if ui.available_width() < COMPACT_WIDTH_BREAKPOINT {
         ui.vertical(|ui| {
             let width = ui.available_width().max(1.0);
             ui.allocate_ui_with_layout(
@@ -906,11 +1105,7 @@ pub(crate) fn apply(ctx: &egui::Context, design: UiDesign) {
     style.spacing.item_spacing = egui::vec2(SPACE_SM, SPACE_SM);
     style.spacing.button_padding = egui::vec2(10.0, 5.0);
     style.spacing.interact_size.y = CONTROL_HEIGHT;
-    style.spacing.window_margin = Margin::same(if cfg!(target_os = "android") {
-        16
-    } else {
-        CONTENT_MARGIN
-    });
+    style.spacing.window_margin = Margin::same(DIALOG_MARGIN);
     style.spacing.menu_margin = Margin::same(SPACE_SM as i8);
     style.spacing.indent = SPACE_LG;
     ctx.set_style_of(theme, style);
@@ -984,6 +1179,204 @@ mod tests {
             assert_eq!(response.rect.width(), width);
             assert_eq!(response.rect.height(), CONTROL_HEIGHT);
         });
+    }
+
+    fn key_press(key: eframe::egui::Key) -> eframe::egui::Event {
+        eframe::egui::Event::Key {
+            key,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: eframe::egui::Modifiers::NONE,
+        }
+    }
+
+    fn run_dialog_key(
+        key: eframe::egui::Key,
+        keyboard: super::DialogKeyboard,
+        confirm_enabled: bool,
+        consume_before_fallback: bool,
+    ) -> (super::DialogAction, bool, bool) {
+        let ctx = eframe::egui::Context::default();
+        let mut action = super::DialogAction::None;
+        let mut consumed_before_fallback = false;
+        let mut key_remains = false;
+        let _ = ctx.run_ui(
+            eframe::egui::RawInput {
+                events: vec![key_press(key)],
+                ..Default::default()
+            },
+            |ui| {
+                if consume_before_fallback {
+                    consumed_before_fallback = ui.input_mut(|input| {
+                        input.consume_key(eframe::egui::Modifiers::NONE, key)
+                    });
+                }
+                action = super::dialog_keyboard_action(ui, keyboard, confirm_enabled);
+                key_remains = ui.input_mut(|input| {
+                    input.consume_key(eframe::egui::Modifiers::NONE, key)
+                });
+            },
+        );
+        (action, consumed_before_fallback, key_remains)
+    }
+
+    fn run_confirmation_key(
+        key: eframe::egui::Key,
+        keyboard: super::DialogKeyboard,
+        destructive: bool,
+        consume_before_buttons: bool,
+    ) -> (super::DialogAction, bool, bool) {
+        let ctx = eframe::egui::Context::default();
+        let mut action = super::DialogAction::None;
+        let mut consumed_before_buttons = false;
+        let mut key_remains = false;
+        let _ = ctx.run_ui(
+            eframe::egui::RawInput {
+                events: vec![key_press(key)],
+                ..Default::default()
+            },
+            |ui| {
+                if consume_before_buttons {
+                    consumed_before_buttons = ui.input_mut(|input| {
+                        input.consume_key(eframe::egui::Modifiers::NONE, key)
+                    });
+                }
+                action = super::dialog_confirmation_buttons(
+                    ui,
+                    "Cancel",
+                    "Confirm",
+                    true,
+                    destructive,
+                    keyboard,
+                );
+                key_remains = ui.input_mut(|input| {
+                    input.consume_key(eframe::egui::Modifiers::NONE, key)
+                });
+            },
+        );
+        (action, consumed_before_buttons, key_remains)
+    }
+
+    #[test]
+    fn close_only_does_not_consume_enter() {
+        let (action, _, key_remains) = run_dialog_key(
+            eframe::egui::Key::Enter,
+            super::DialogKeyboard::CLOSE_ONLY,
+            true,
+            false,
+        );
+
+        assert_eq!(action, super::DialogAction::None);
+        assert!(key_remains);
+    }
+
+    #[test]
+    fn enter_fallback_confirms_simple_forms() {
+        let (action, _, key_remains) = run_confirmation_key(
+            eframe::egui::Key::Enter,
+            super::DialogKeyboard::CONFIRM_ON_ENTER,
+            false,
+            false,
+        );
+
+        assert_eq!(action, super::DialogAction::Confirm);
+        assert!(!key_remains);
+    }
+
+    #[test]
+    fn destructive_dialogs_disable_global_enter_confirmation() {
+        let (action, _, key_remains) = run_confirmation_key(
+            eframe::egui::Key::Enter,
+            super::DialogKeyboard::CONFIRM_ON_ENTER,
+            true,
+            false,
+        );
+
+        assert_eq!(action, super::DialogAction::None);
+        assert!(key_remains);
+    }
+
+    #[test]
+    fn consumed_enter_does_not_trigger_confirmation_fallback() {
+        let (action, consumed_before_buttons, key_remains) = run_confirmation_key(
+            eframe::egui::Key::Enter,
+            super::DialogKeyboard::CONFIRM_ON_ENTER,
+            false,
+            true,
+        );
+
+        assert!(consumed_before_buttons);
+        assert_eq!(action, super::DialogAction::None);
+        assert!(!key_remains);
+    }
+
+    #[test]
+    fn handled_keys_do_not_trigger_a_second_dialog_action() {
+        for key in [eframe::egui::Key::Enter, eframe::egui::Key::Escape] {
+            let (action, consumed_before_fallback, key_remains) = run_dialog_key(
+                key,
+                super::DialogKeyboard::CONFIRM_ON_ENTER,
+                true,
+                true,
+            );
+
+            assert!(consumed_before_fallback);
+            assert_eq!(action, super::DialogAction::None);
+            assert!(!key_remains);
+        }
+    }
+
+    #[test]
+    fn destructive_menu_items_keep_default_button_geometry() {
+        eframe::egui::__run_test_ui(|ui| {
+            let (normal, destructive) = ui
+                .horizontal(|ui| {
+                    let normal = ui.button("Delete");
+                    let destructive = super::destructive_menu_item(ui, "Delete");
+                    (normal.rect.size(), destructive.rect.size())
+                })
+                .inner;
+
+            assert_eq!(normal, destructive);
+        });
+    }
+
+    #[test]
+    fn dialog_initial_focus_is_requested_only_once() {
+        let mut focus_requested = false;
+        assert!(super::take_initial_focus_request(&mut focus_requested));
+        assert!(focus_requested);
+        assert!(!super::take_initial_focus_request(&mut focus_requested));
+    }
+
+    #[test]
+    fn dialog_buttons_share_height_and_cancel_precedes_confirm() {
+        eframe::egui::__run_test_ui(|ui| {
+            let (cancel, confirm, destructive) = super::dialog_button_row(ui, |ui| {
+                let cancel = super::secondary_button(ui, "Cancel").rect;
+                let confirm = super::primary_action_button(ui, "Save").rect;
+                let destructive = super::destructive_button(ui, "Delete").rect;
+                (cancel, confirm, destructive)
+            })
+            .inner;
+
+            assert_eq!(cancel.height(), CONTROL_HEIGHT);
+            assert_eq!(confirm.height(), CONTROL_HEIGHT);
+            assert_eq!(destructive.height(), CONTROL_HEIGHT);
+            assert!(cancel.left() < confirm.left());
+            assert!(confirm.left() < destructive.left());
+        });
+    }
+
+    #[test]
+    fn dialog_margin_uses_the_theme_constant() {
+        let ctx = eframe::egui::Context::default();
+        super::apply(&ctx, UiDesign::default());
+        assert_eq!(
+            ctx.style_of(ctx.theme()).spacing.window_margin,
+            eframe::egui::Margin::same(super::DIALOG_MARGIN)
+        );
     }
 
     #[test]

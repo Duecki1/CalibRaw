@@ -138,11 +138,12 @@ impl LibraryState {
             return;
         }
         let mut dismiss = false;
-        crate::ui::responsive_popup(egui::Window::new("HDR merge"), ui.ctx(), 440.0)
+        crate::ui::theme::dialog_window(
+            egui::Window::new("HDR merge"),
+            ui.ctx(),
+            crate::ui::theme::DIALOG_WIDTH_DEFAULT,
+        )
             .id(egui::Id::new("library-hdr-merge-dialog"))
-            .collapsible(false)
-            .resizable(false)
-            .anchor(Align2::CENTER_CENTER, egui::Vec2::ZERO)
             .show(ui.ctx(), |ui| {
                 if let Some(task) = &self.hdr_merge {
                     ui.horizontal_wrapped(|ui| {
@@ -151,25 +152,41 @@ impl LibraryState {
                             ui.label(progress.as_str());
                         }
                     });
-                    ui.add_space(8.0);
                     let cancelling = task.cancelled.load(Ordering::Relaxed);
-                    if ui
-                        .add_enabled(
-                            !cancelling,
-                            egui::Button::new(if cancelling {
-                                "Cancelling…"
-                            } else {
-                                "Cancel"
-                            }),
-                        )
-                        .clicked()
-                    {
+                    let mut button_cancel = false;
+                    crate::ui::theme::dialog_button_row(ui, |ui| {
+                        button_cancel = ui
+                            .add_enabled_ui(!cancelling, |ui| {
+                                crate::ui::theme::secondary_button(
+                                    ui,
+                                    if cancelling { "Cancelling…" } else { "Cancel" },
+                                )
+                            })
+                            .inner
+                            .clicked();
+                    });
+                    let keyboard_cancel = !button_cancel
+                        && !cancelling
+                        && crate::ui::theme::dialog_keyboard_action(
+                            ui,
+                            crate::ui::theme::DialogKeyboard::CLOSE_ONLY,
+                            false,
+                        ) == crate::ui::theme::DialogAction::Cancel;
+                    if keyboard_cancel || button_cancel {
                         task.cancelled.store(true, Ordering::Relaxed);
                     }
                 } else if let Some(message) = &self.hdr_merge_message {
                     ui.label(message);
-                    ui.add_space(8.0);
-                    dismiss = ui.button("Dismiss").clicked();
+                    crate::ui::theme::dialog_button_row(ui, |ui| {
+                        dismiss |= crate::ui::theme::secondary_button(ui, "Dismiss").clicked();
+                    });
+                    if !dismiss {
+                        dismiss = crate::ui::theme::dialog_keyboard_action(
+                            ui,
+                            crate::ui::theme::DialogKeyboard::CLOSE_ONLY,
+                            false,
+                        ) == crate::ui::theme::DialogAction::Cancel;
+                    }
                 }
             });
         if dismiss {

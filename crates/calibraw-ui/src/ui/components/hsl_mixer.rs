@@ -35,7 +35,7 @@ pub(crate) fn hsl_mixer(
     let (name, accent) = CHANNELS[index];
     let mut reset_color = false;
 
-    ui.add_space(4.0);
+    ui.add_space(crate::ui::theme::SPACE_XS);
     crate::ui::theme::toolbar_row(ui, |ui| {
         ui.label(RichText::new(format!("{name} adjustments")).strong());
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {

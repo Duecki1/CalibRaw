@@ -29,7 +29,7 @@ pub(super) fn show_android_library_folder_node(
 
     ui.push_id(("android-library-folder", path), |ui| {
         ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = 4.0;
+            ui.spacing_mut().item_spacing.x = crate::ui::theme::SPACE_XS;
             let disclosure_size = egui::vec2(30.0, crate::ui::theme::CONTROL_HEIGHT);
             if has_children {
                 let caret = if expanded {

@@ -55,7 +55,7 @@ impl Sidebar {
                     }
                 });
             });
-            ui.add_space(4.0);
+            ui.add_space(crate::ui::theme::SPACE_XS);
         }
 
         let tool_help = inpaint_tool_help(app.inpaint.tool);
@@ -184,7 +184,7 @@ impl Sidebar {
                 );
             });
             if let Some(status) = app.inpaint.processing_label.as_deref() {
-                ui.add_space(8.0);
+                ui.add_space(crate::ui::theme::SPACE_SM);
                 ui.horizontal(|ui| {
                     ui.spinner();
                     ui.label(egui::RichText::new(status).small());
@@ -289,7 +289,7 @@ impl Sidebar {
                     )
                 });
             if let Some((index, history_index, mut opacity, feather)) = selected_settings {
-                ui.add_space(8.0);
+                ui.add_space(crate::ui::theme::SPACE_SM);
                 ui.separator();
                 ui.add_space(6.0);
                 ui.strong(format!("Selected stroke {}", history_index + 1));
@@ -326,7 +326,7 @@ impl Sidebar {
             }
 
             if app.preview.gpu_pipeline.is_none() {
-                ui.add_space(8.0);
+                ui.add_space(crate::ui::theme::SPACE_SM);
                 ui.colored_label(
                     ui.visuals().warn_fg_color,
                     "Open a RAW image to use inpainting tools.",

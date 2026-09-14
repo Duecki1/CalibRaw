@@ -455,15 +455,12 @@ impl CalibRawApp {
                 (false, true) => "Download ONNX Runtime?",
                 (false, false) => "Prepare AI denoise?",
             };
-            crate::ui::responsive_popup(
+            crate::ui::theme::dialog_window(
                 egui::Window::new(title),
                 ctx,
-                540.0,
+                crate::ui::theme::DIALOG_WIDTH_LARGE,
             )
-            .collapsible(false)
-            .resizable(false)
             .movable(false)
-            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
             .show(ctx, |ui| {
                 ui.label("AI Denoise uses darktable-ai's RawNIND UtNet2 package: joint Bayer denoise/demosaic and a linear Rec.2020 model for X-Trans.");
                 if model_download_needed {
@@ -510,18 +507,25 @@ impl CalibRawApp {
                         );
                     }
                 });
-                ui.add_space(8.0);
-                ui.horizontal(|ui| {
-                    if ui.button("Consent, download and apply").clicked() {
+                match crate::ui::theme::dialog_confirmation_buttons(
+                    ui,
+                    "Cancel",
+                    "Consent, download and apply",
+                    true,
+                    false,
+                    crate::ui::theme::DialogKeyboard::CLOSE_ONLY,
+                ) {
+                    crate::ui::theme::DialogAction::Confirm => {
                         self.ai.runtime_download_consent_pending = false;
                         self.start_ai_denoise(frame, model_download_needed);
                     }
-                    if ui.button("Cancel").clicked() {
+                    crate::ui::theme::DialogAction::Cancel => {
                         self.ai.runtime_download_consent_pending = false;
                         self.ai.denoise_consent_open = false;
                         self.develop.exposure.ai_denoise_enabled = false;
                     }
-                });
+                    crate::ui::theme::DialogAction::None => {}
+                }
             });
         }
     }

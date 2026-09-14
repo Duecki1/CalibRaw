@@ -72,7 +72,7 @@ fn color_grading_editor_contents(
     #[cfg(not(target_os = "android"))]
     {
         color_grade_tab_row(ui, selected);
-        ui.add_space(4.0);
+        ui.add_space(crate::ui::theme::SPACE_XS);
 
         let (wheel_id, wheel) = selected_color_wheel(grading, *selected);
         changed |= ui.push_id(wheel_id, |ui| color_wheel(ui, wheel)).inner;

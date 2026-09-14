@@ -91,12 +91,13 @@ impl CalibRawApp {
         let progress = operation.progress.clone();
         let cancelling = operation.cancelling;
         let mut cancel = false;
-        crate::ui::responsive_popup(egui::Window::new(kind.title()), ctx, 440.0)
+        crate::ui::theme::dialog_window(
+            egui::Window::new(kind.title()),
+            ctx,
+            crate::ui::theme::DIALOG_WIDTH_DEFAULT,
+        )
             .id(egui::Id::new("foreground-operation-progress"))
-            .collapsible(false)
-            .resizable(false)
             .movable(false)
-            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
             .show(ctx, |ui| {
                 ui.label(&progress.phase);
                 if let Some(detail) = &progress.detail {
@@ -127,10 +128,21 @@ impl CalibRawApp {
                 if cancelling {
                     ui.label(egui::RichText::new("Stopping at the next safe point…").small());
                 }
-                ui.add_space(8.0);
-                if ui
-                    .add_enabled(!cancelling, egui::Button::new("Cancel"))
-                    .clicked()
+                crate::ui::theme::dialog_button_row(ui, |ui| {
+                    cancel |= ui
+                        .add_enabled_ui(!cancelling, |ui| {
+                            crate::ui::theme::secondary_button(ui, "Cancel")
+                        })
+                        .inner
+                        .clicked();
+                });
+                if !cancel
+                    && !cancelling
+                    && crate::ui::theme::dialog_keyboard_action(
+                        ui,
+                        crate::ui::theme::DialogKeyboard::CLOSE_ONLY,
+                        false,
+                    ) == crate::ui::theme::DialogAction::Cancel
                 {
                     cancel = true;
                 }

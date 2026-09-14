@@ -624,9 +624,9 @@ pub(super) fn show_library_selection_action_bar(
         .movable(false)
         .show(ui.ctx(), |ui| {
             egui::Frame::popup(ui.style())
-                .inner_margin(egui::Margin::symmetric(8, 6))
+                .inner_margin(egui::Margin::symmetric(crate::ui::theme::SPACE_SM as i8, 6))
                 .show(ui, |ui| {
-                    ui.spacing_mut().item_spacing.x = if compact { 4.0 } else { 6.0 };
+                    ui.spacing_mut().item_spacing.x = if compact { crate::ui::theme::SPACE_XS } else { 6.0 };
                     ui.spacing_mut().interact_size.y = crate::ui::theme::CONTROL_HEIGHT;
                     ui.horizontal(|ui| {
                         let count_label = if compact && bounds.width() < 360.0 {
@@ -777,9 +777,12 @@ pub(crate) fn show_library_action_overlays(
         } else {
             format!("Export {count} images")
         };
-        crate::ui::responsive_popup(egui::Window::new(title), ui.ctx(), 480.0)
+        crate::ui::theme::dialog_window(
+            egui::Window::new(title),
+            ui.ctx(),
+            crate::ui::theme::DIALOG_WIDTH_WIDE,
+        )
             .id(egui::Id::new("library-export-dialog"))
-            .collapsible(false)
             .resizable(true)
             .show(ui.ctx(), |ui| {
                 let format_changed = show_library_export_settings_controls(
@@ -794,7 +797,6 @@ pub(crate) fn show_library_action_overlays(
                 if format_changed {
                     selected_export_format = Some(dialog.format);
                 }
-                ui.add_space(10.0);
                 #[cfg(not(target_os = "android"))]
                 let help = if count > 1 {
                     "A destination folder will be selected for the batch. File names are generated from each RAW name."
@@ -803,25 +805,38 @@ pub(crate) fn show_library_action_overlays(
                 };
                 #[cfg(target_os = "android")]
                 let help = "Exports are saved to Pictures/CalibRaw. File names are generated from each RAW name.";
-                ui.horizontal(|ui| {
-                    if ui.button("Cancel").clicked() {
+                let label = if count == 1 {
+                    #[cfg(not(target_os = "android"))]
+                    { "Export 1 image…".to_owned() }
+                    #[cfg(target_os = "android")]
+                    { "Export 1 image".to_owned() }
+                } else {
+                    #[cfg(not(target_os = "android"))]
+                    { format!("Export {count} images…") }
+                    #[cfg(target_os = "android")]
+                    { format!("Export {count} images") }
+                };
+                crate::ui::theme::dialog_button_row(ui, |ui| {
+                    if crate::ui::theme::secondary_button(ui, "Cancel").clicked() {
                         close_export_dialog = true;
                     }
-                    let label = if count == 1 {
-                        #[cfg(not(target_os = "android"))]
-                        { "Export 1 image…".to_owned() }
-                        #[cfg(target_os = "android")]
-                        { "Export 1 image".to_owned() }
-                    } else {
-                        #[cfg(not(target_os = "android"))]
-                        { format!("Export {count} images…") }
-                        #[cfg(target_os = "android")]
-                        { format!("Export {count} images") }
-                    };
-                    if ui.button(label).on_hover_text(help).clicked() {
+                    if crate::ui::theme::primary_action_button(ui, label)
+                        .on_hover_text(help)
+                        .clicked()
+                    {
                         confirm_export = true;
                     }
                 });
+                if !close_export_dialog
+                    && !confirm_export
+                    && crate::ui::theme::dialog_keyboard_action(
+                        ui,
+                        crate::ui::theme::DialogKeyboard::CLOSE_ONLY,
+                        false,
+                    ) == crate::ui::theme::DialogAction::Cancel
+                {
+                    close_export_dialog = true;
+                }
             });
     }
 

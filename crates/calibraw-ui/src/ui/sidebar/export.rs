@@ -8,7 +8,7 @@ fn show_export_action_panel<R>(
         .frame(
             egui::Frame::new()
                 .fill(ui.visuals().panel_fill)
-                .inner_margin(egui::Margin::symmetric(0, 8)),
+                .inner_margin(egui::Margin::symmetric(0, crate::ui::theme::SPACE_SM as i8)),
         )
         .show(ui, contents)
 }
@@ -166,7 +166,7 @@ impl Sidebar {
 
                 #[cfg(not(target_os = "android"))]
                 if let Some((fraction, phase)) = app.edit_replay_progress_state() {
-                    ui.add_space(8.0);
+                    ui.add_space(crate::ui::theme::SPACE_SM);
                     ui.add_sized(
                         [ui.available_width(), 18.0],
                         egui::ProgressBar::new(fraction).text(phase),
@@ -174,7 +174,7 @@ impl Sidebar {
                 }
 
                 if let Some((completed, total)) = app.export_progress_state() {
-                    ui.add_space(8.0);
+                    ui.add_space(crate::ui::theme::SPACE_SM);
                     let (fraction, text) = if total == 0 {
                         (0.0, "Preparing export…".to_owned())
                     } else {

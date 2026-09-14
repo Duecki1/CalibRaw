@@ -70,10 +70,12 @@ impl CalibRawApp {
             && self.persistence.sidecar_failed_revision == Some(self.edit_commit_revision());
         let mut retry = false;
         let mut close = false;
-        crate::ui::responsive_popup(egui::Window::new("Could not save edits"), ctx, 460.0)
-            .collapsible(false)
+        crate::ui::theme::dialog_window(
+            egui::Window::new("Could not save edits"),
+            ctx,
+            crate::ui::theme::DIALOG_WIDTH_WIDE,
+        )
             .resizable(true)
-            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
             .show(ctx, |ui| {
                 ui.label("CalibRaw was unable to write the edit sidecar.");
                 ui.add_space(6.0);
@@ -84,18 +86,18 @@ impl CalibRawApp {
                 );
                 ui.add_space(6.0);
                 ui.small("This error was added to the log in Settings → Diagnostics.");
-                ui.add_space(8.0);
-                ui.horizontal(|ui| {
-                    if ui
-                        .add_enabled(can_retry, egui::Button::new("Try again"))
-                        .clicked()
-                    {
-                        retry = true;
-                    }
-                    if ui.button("Close").clicked() {
-                        close = true;
-                    }
-                });
+                match crate::ui::theme::dialog_confirmation_buttons(
+                    ui,
+                    "Close",
+                    "Try again",
+                    can_retry,
+                    false,
+                    crate::ui::theme::DialogKeyboard::CLOSE_ONLY,
+                ) {
+                    crate::ui::theme::DialogAction::Cancel => close = true,
+                    crate::ui::theme::DialogAction::Confirm => retry = true,
+                    crate::ui::theme::DialogAction::None => {}
+                }
             });
         if retry {
             self.persistence.sidecar_save_error_dialog = None;

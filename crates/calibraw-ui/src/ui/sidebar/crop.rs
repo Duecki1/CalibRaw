@@ -33,7 +33,7 @@ impl Sidebar {
                     }
                 });
             });
-            ui.add_space(4.0);
+            ui.add_space(crate::ui::theme::SPACE_XS);
         }
 
         let before = app.develop.geometry;
