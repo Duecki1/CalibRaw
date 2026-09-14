@@ -24,8 +24,8 @@ const EXPORT_CPU_ROW_BATCH: usize = 32;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum ExportFormat {
-    #[default]
     Png,
+    #[default]
     Jpeg,
     Tiff,
 }

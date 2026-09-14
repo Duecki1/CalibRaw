@@ -286,6 +286,7 @@ impl CalibRawApp {
             image_relative_brush_size: self.preferences.image_relative_brush_size,
             show_develop_navigation_labels: self.preferences.show_develop_navigation_labels,
             export_name_template: self.preferences.export_name_template.clone(),
+            export_format: self.export.format,
             ui_design: self.preferences.ui_design,
             preview_backdrop: self.preferences.preview_backdrop,
             onboarding_completed: self.preferences.onboarding_completed,

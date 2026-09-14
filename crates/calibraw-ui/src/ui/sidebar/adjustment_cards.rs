@@ -8,6 +8,18 @@ pub(super) enum CardAction {
     Reset,
 }
 
+struct CardActionLayout {
+    action: CardAction,
+    buttons: [egui::Rect; 2],
+    button_count: usize,
+}
+
+impl CardActionLayout {
+    fn button_rects(&self) -> &[egui::Rect] {
+        &self.buttons[..self.button_count]
+    }
+}
+
 impl CardAction {
     pub(super) fn apply(self, exposure: &mut ExposureParams, group: AdjustmentGroup) -> bool {
         match self {
@@ -44,7 +56,12 @@ impl Sidebar {
         }
     }
 
-    fn card_actions(ui: &mut Ui, title: &str, visible: bool) -> (CardAction, [egui::Rect; 2]) {
+    fn card_actions(
+        ui: &mut Ui,
+        title: &str,
+        visible: bool,
+        show_visibility: bool,
+    ) -> CardActionLayout {
         let mut action = CardAction::None;
         let buttons = ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             let size = egui::vec2(26.0, 26.0);
@@ -57,24 +74,32 @@ impl Sidebar {
             if reset.clicked() {
                 action = CardAction::Reset;
             }
-            // Like the topbar eye, highlight the button when edits are bypassed.
-            let eye = crate::ui::icons::phosphor_icon_toggle_button(
-                ui,
-                if visible {
-                    egui_phosphor::regular::EYE_SLASH
-                } else {
-                    egui_phosphor::regular::EYE
-                },
-                !visible,
-                size,
-                &format!("{} {title}", if visible { "Hide" } else { "Show" }),
-            );
-            if eye.clicked() {
-                action = CardAction::Toggle;
+            if show_visibility {
+                // Like the topbar eye, highlight the button when edits are bypassed.
+                let eye = crate::ui::icons::phosphor_icon_toggle_button(
+                    ui,
+                    if visible {
+                        egui_phosphor::regular::EYE_SLASH
+                    } else {
+                        egui_phosphor::regular::EYE
+                    },
+                    !visible,
+                    size,
+                    &format!("{} {title}", if visible { "Hide" } else { "Show" }),
+                );
+                if eye.clicked() {
+                    action = CardAction::Toggle;
+                }
+                ([eye.rect, reset.rect], 2)
+            } else {
+                ([reset.rect, egui::Rect::NOTHING], 1)
             }
-            [eye.rect, reset.rect]
         });
-        (action, buttons.inner)
+        CardActionLayout {
+            action,
+            buttons: buttons.inner.0,
+            button_count: buttons.inner.1,
+        }
     }
 
     pub(super) fn adjustment_card(
@@ -105,7 +130,51 @@ impl Sidebar {
         controls_enabled: bool,
         contents: impl FnOnce(&mut Ui),
     ) -> CardAction {
-        let visible = crate::app::preview_visibility::PreviewVisibility::visible(ui.ctx(), title);
+        Self::adjustment_card_controls(
+            ui,
+            title,
+            default_open,
+            foldable,
+            enabled,
+            controls_enabled,
+            true,
+            contents,
+        )
+    }
+
+    pub(super) fn adjustment_card_without_visibility(
+        ui: &mut Ui,
+        title: &'static str,
+        default_open: bool,
+        foldable: bool,
+        enabled: bool,
+        controls_enabled: bool,
+        contents: impl FnOnce(&mut Ui),
+    ) -> CardAction {
+        Self::adjustment_card_controls(
+            ui,
+            title,
+            default_open,
+            foldable,
+            enabled,
+            controls_enabled,
+            false,
+            contents,
+        )
+    }
+
+    fn adjustment_card_controls(
+        ui: &mut Ui,
+        title: &'static str,
+        default_open: bool,
+        foldable: bool,
+        enabled: bool,
+        controls_enabled: bool,
+        show_visibility: bool,
+        contents: impl FnOnce(&mut Ui),
+    ) -> CardAction {
+        let visible = !show_visibility
+            || crate::app::preview_visibility::PreviewVisibility::visible(ui.ctx(), title);
         let controls_enabled = controls_enabled && visible;
         let _ = enabled;
         let mut action = CardAction::None;
@@ -127,20 +196,25 @@ impl Sidebar {
                         .show_header(ui, |ui| {
                             let available = ui.available_rect_before_wrap();
                             Self::adjustment_card_title(ui, title);
-                            let (card_action, buttons) = Self::card_actions(ui, title, visible);
-                            action = card_action;
+                            let card_actions =
+                                Self::card_actions(ui, title, visible, show_visibility);
+                            action = card_actions.action;
+                            let buttons = card_actions.button_rects();
                             // The built-in arrow already toggles. Make the rest of the
                             // header clickable, excluding each action button's bounds.
+                            let button_top = buttons[0].top();
+                            let button_bottom = buttons[0].bottom();
                             let mut left = available.left();
-                            for (index, right) in
-                                [buttons[0].left(), buttons[1].left(), available.right()]
-                                    .into_iter()
-                                    .enumerate()
+                            for (index, right) in buttons
+                                .iter()
+                                .map(egui::Rect::left)
+                                .chain(std::iter::once(available.right()))
+                                .enumerate()
                             {
                                 if right > left {
                                     let rect = egui::Rect::from_min_max(
-                                        egui::pos2(left, buttons[0].top()),
-                                        egui::pos2(right, buttons[0].bottom()),
+                                        egui::pos2(left, button_top),
+                                        egui::pos2(right, button_bottom),
                                     );
                                     header_clicked |= ui
                                         .interact(
@@ -163,7 +237,7 @@ impl Sidebar {
                 } else {
                     ui.horizontal(|ui| {
                         Self::adjustment_card_title(ui, title);
-                        action = Self::card_actions(ui, title, visible).0;
+                        action = Self::card_actions(ui, title, visible, show_visibility).action;
                     });
                     body(ui);
                 }
@@ -176,7 +250,9 @@ impl Sidebar {
                 CardAction::None
             }
             CardAction::Reset => {
-                crate::app::preview_visibility::PreviewVisibility::show(ui.ctx(), title);
+                if show_visibility {
+                    crate::app::preview_visibility::PreviewVisibility::show(ui.ctx(), title);
+                }
                 CardAction::Reset
             }
             CardAction::None => CardAction::None,
@@ -189,7 +265,10 @@ mod tests {
     use super::*;
     use crate::app::preview_visibility::PreviewVisibility;
 
-    fn text_rect(shapes: &[egui::epaint::ClippedShape], text: &str) -> egui::Rect {
+    fn optional_text_rect(
+        shapes: &[egui::epaint::ClippedShape],
+        text: &str,
+    ) -> Option<egui::Rect> {
         fn find(shape: &egui::Shape, text: &str) -> Option<egui::Rect> {
             match shape {
                 egui::Shape::Text(shape) if shape.galley.text() == text => {
@@ -199,10 +278,40 @@ mod tests {
                 _ => None,
             }
         }
-        shapes
-            .iter()
-            .find_map(|shape| find(&shape.shape, text))
-            .expect("header text")
+        shapes.iter().find_map(|shape| find(&shape.shape, text))
+    }
+
+    fn text_rect(shapes: &[egui::epaint::ClippedShape], text: &str) -> egui::Rect {
+        optional_text_rect(shapes, text).expect("header text")
+    }
+
+    #[test]
+    fn structural_card_has_reset_without_preview_eye() {
+        let ctx = egui::Context::default();
+        PreviewVisibility::set_mask_scope(&ctx, Some(0));
+        PreviewVisibility::toggle(&ctx, "Mask Properties");
+        let output = ctx.run_ui(Default::default(), |ui| {
+            Sidebar::adjustment_card_without_visibility(
+                ui,
+                "Mask Properties",
+                true,
+                false,
+                true,
+                true,
+                |ui| {
+                    assert!(ui.is_enabled());
+                    ui.label("Controls");
+                },
+            );
+        });
+
+        assert!(optional_text_rect(
+            &output.shapes,
+            egui_phosphor::regular::ARROW_COUNTER_CLOCKWISE
+        )
+        .is_some());
+        assert!(optional_text_rect(&output.shapes, egui_phosphor::regular::EYE).is_none());
+        assert!(optional_text_rect(&output.shapes, egui_phosphor::regular::EYE_SLASH).is_none());
     }
 
     #[test]
@@ -210,8 +319,8 @@ mod tests {
         for width in [210.0, 280.0, 400.0] {
             for title in ["Light", "Color Grading", "Mask Properties"] {
                 let ctx = egui::Context::default();
-                ctx.style_mut(|style| style.animation_time = 0.0);
-                let mut render = |events| {
+                ctx.style_mut_of(egui::Theme::Dark, |style| style.animation_time = 0.0);
+                let render = |events| {
                     let mut body_shown = false;
                     let mut reset_count = 0;
                     let output = ctx.run_ui(
@@ -245,7 +354,10 @@ mod tests {
                 )
                 .center();
                 let blank = egui::pos2((label.right() + eye.x - 13.0) / 2.0, eye.y);
-                let arrow = egui::pos2(label.left() - ctx.style().spacing.indent / 2.0, eye.y);
+                let arrow = egui::pos2(
+                    label.left() - ctx.style_of(egui::Theme::Dark).spacing.indent / 2.0,
+                    eye.y,
+                );
                 let button_gap = eye.lerp(reset, 0.5);
                 for (target, expected_open, expected_visible, expected_resets) in [
                     (label.center(), true, true, 0),

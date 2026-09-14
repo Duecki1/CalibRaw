@@ -5,8 +5,8 @@ pub(super) fn show_library_export_settings_controls(
     format: &mut ExportFormat,
     settings: &mut ExportSettings,
     picker_directory: Option<&Path>,
-) {
-    crate::ui::sidebar::export_settings_controls(ui, format, settings, picker_directory);
+) -> bool {
+    crate::ui::sidebar::export_settings_controls(ui, format, settings, picker_directory)
 }
 
 #[cfg(not(target_os = "android"))]

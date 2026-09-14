@@ -28,7 +28,8 @@ pub(crate) fn export_settings_controls(
     format: &mut ExportFormat,
     settings: &mut crate::pipeline::ExportSettings,
     _fallback_picker_directory: Option<&std::path::Path>,
-) {
+) -> bool {
+    let previous_format = *format;
     settings.resize_mode = ExportResizeMode::Original;
     ui.horizontal_wrapped(|ui| {
         ui.label("Format");
@@ -106,6 +107,7 @@ pub(crate) fn export_settings_controls(
             );
         });
     }
+    *format != previous_format
 }
 
 impl Sidebar {
@@ -159,12 +161,15 @@ impl Sidebar {
             |ui| {
                 ui.set_min_width(column_width);
                 ui.set_max_width(column_width);
-                export_settings_controls(
+                let format_changed = export_settings_controls(
                     ui,
                     &mut app.export.format,
                     &mut app.export.settings,
                     export_picker_directory.as_deref(),
                 );
+                if format_changed {
+                    app.persist_performance_settings();
+                }
 
                 #[cfg(not(target_os = "android"))]
                 if let Some((fraction, phase)) = app.edit_replay_progress_state() {

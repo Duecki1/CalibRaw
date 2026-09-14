@@ -1,4 +1,4 @@
-use crate::pipeline::CameraProfileMode;
+use crate::pipeline::{CameraProfileMode, ExportFormat};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
@@ -28,6 +28,8 @@ pub(crate) struct PerformanceSettings {
     pub show_develop_navigation_labels: bool,
     #[serde(default = "default_export_name_template")]
     pub export_name_template: String,
+    #[serde(default = "default_export_format", with = "export_format_serde")]
+    pub export_format: ExportFormat,
     #[serde(default)]
     pub ui_design: crate::ui::theme::UiDesign,
     #[serde(default)]
@@ -97,6 +99,41 @@ fn default_export_name_template() -> String {
     crate::export_naming::DEFAULT_EXPORT_NAME_TEMPLATE.to_owned()
 }
 
+const fn default_export_format() -> ExportFormat {
+    ExportFormat::Jpeg
+}
+
+mod export_format_serde {
+    use super::ExportFormat;
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    pub(super) fn serialize<S>(format: &ExportFormat, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(match format {
+            ExportFormat::Jpeg => "jpeg",
+            ExportFormat::Png => "png",
+            ExportFormat::Tiff => "tiff",
+        })
+    }
+
+    pub(super) fn deserialize<'de, D>(deserializer: D) -> Result<ExportFormat, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        match String::deserialize(deserializer)?.as_str() {
+            "jpeg" => Ok(ExportFormat::Jpeg),
+            "png" => Ok(ExportFormat::Png),
+            "tiff" => Ok(ExportFormat::Tiff),
+            value => Err(serde::de::Error::unknown_variant(
+                value,
+                &["jpeg", "png", "tiff"],
+            )),
+        }
+    }
+}
+
 const fn default_camera_profile_auto_detect() -> bool {
     !cfg!(target_os = "android")
 }
@@ -129,6 +166,7 @@ impl Default for PerformanceSettings {
             image_relative_brush_size: false,
             show_develop_navigation_labels: false,
             export_name_template: default_export_name_template(),
+            export_format: default_export_format(),
             ui_design: crate::ui::theme::UiDesign::default(),
             preview_backdrop: crate::ui::theme::PreviewBackdrop::default(),
             onboarding_completed: false,
@@ -335,6 +373,7 @@ mod tests {
             image_relative_brush_size: true,
             show_develop_navigation_labels: true,
             export_name_template: "{OriginalName}-{ISO}".to_owned(),
+            export_format: ExportFormat::Tiff,
             ui_design: crate::ui::theme::UiDesign::DaylightBlue,
             preview_backdrop: crate::ui::theme::PreviewBackdrop::White,
             onboarding_completed: true,
@@ -391,6 +430,7 @@ mod tests {
         assert!(settings.image_relative_brush_size);
         assert!(settings.show_develop_navigation_labels);
         assert_eq!(settings.export_name_template, "{OriginalName}-{ISO}");
+        assert_eq!(settings.export_format, ExportFormat::Tiff);
         assert_eq!(settings.ui_design, crate::ui::theme::UiDesign::DaylightBlue);
         assert_eq!(
             settings.preview_backdrop,
@@ -444,6 +484,7 @@ mod tests {
             settings.export_name_template,
             crate::export_naming::DEFAULT_EXPORT_NAME_TEMPLATE
         );
+        assert_eq!(settings.export_format, ExportFormat::Jpeg);
         assert_eq!(settings.ui_design, crate::ui::theme::UiDesign::ObsidianBlue);
         assert_eq!(
             settings.preview_backdrop,
@@ -492,6 +533,7 @@ mod tests {
             image_relative_brush_size: true,
             show_develop_navigation_labels: true,
             export_name_template: "{OriginalName}-{CurrentDate}".to_owned(),
+            export_format: ExportFormat::Png,
             ui_design: crate::ui::theme::UiDesign::Porcelain,
             preview_backdrop: crate::ui::theme::PreviewBackdrop::MatchPhoto,
             render_edited_thumbnails_during_indexing: true,
@@ -530,6 +572,7 @@ mod tests {
             restored.export_name_template,
             "{OriginalName}-{CurrentDate}"
         );
+        assert_eq!(restored.export_format, ExportFormat::Png);
         assert_eq!(restored.ui_design, crate::ui::theme::UiDesign::Porcelain);
         assert_eq!(
             restored.preview_backdrop,
