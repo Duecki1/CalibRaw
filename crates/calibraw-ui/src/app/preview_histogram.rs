@@ -214,6 +214,9 @@ mod tests {
                     assert!(text_shapes
                         .iter()
                         .any(|text| text.galley.text() == egui_phosphor::regular::CHART_BAR));
+                    for icon in [egui_phosphor::regular::MOON, egui_phosphor::regular::SUN] {
+                        assert!(text_shapes.iter().any(|text| text.galley.text() == icon));
+                    }
                     assert_eq!(
                         text_shapes
                             .iter()

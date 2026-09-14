@@ -108,10 +108,15 @@ impl Preview {
         if app.preview_base_pipeline().is_none() && app.preview_is_preparing() {
             app.refresh_develop_loading_thumbnail(ui.ctx());
         }
+        let [clipping_base, clipping_detail] = app.preview_clipping_textures(frame);
         let base_pipeline = app.preview_base_pipeline().and_then(|pipeline| {
-            pipeline
-                .egui_texture_id
-                .map(|texture_id| (texture_id, pipeline.width, pipeline.height))
+            pipeline.egui_texture_id.map(|texture_id| {
+                (
+                    clipping_base.unwrap_or(texture_id),
+                    pipeline.width,
+                    pipeline.height,
+                )
+            })
         });
         if base_pipeline.is_none() && preview_size.x > 0.0 && preview_size.y > 0.0 {
             let pixels_per_point = physical_pixels_per_point(ui.ctx());
@@ -440,6 +445,7 @@ impl Preview {
             .filter(|detail| detail.revision == app.preview.revision)
         {
             if let Some(detail_texture_id) = detail.pipeline.egui_texture_id {
+                let detail_texture_id = clipping_detail.unwrap_or(detail_texture_id);
                 let detail_texture_uv = Rect::from_min_max(
                     Pos2::new(detail.texture_uv_rect.min[0], detail.texture_uv_rect.min[1]),
                     Pos2::new(detail.texture_uv_rect.max[0], detail.texture_uv_rect.max[1]),
