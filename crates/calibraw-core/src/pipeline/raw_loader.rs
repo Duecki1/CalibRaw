@@ -391,6 +391,7 @@ pub struct CaptureMetadata {
 /// its full pixel payload.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct RawDisplayMetadata {
+    pub aperture: f32,
     pub dimensions: [u32; 2],
     pub iso_speed: f32,
     pub shutter_seconds: f32,

@@ -374,6 +374,10 @@ impl CalibRawApp {
     }
 
     pub(crate) fn note_mask_edit_changed(&mut self) {
+        super::preview_visibility::PreviewVisibility::invalidate_masks(
+            &self.egui_ctx,
+            &self.masks.stack,
+        );
         self.persistence.history.note_mask_change();
     }
 

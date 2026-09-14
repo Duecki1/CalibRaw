@@ -207,6 +207,7 @@ impl CalibRawApp {
         self.preview.rebuild_receiver = None;
         self.preview.detail_rebuild_receiver = None;
         let sidecar_generation = self.begin_sidecar_open();
+        crate::app::preview_visibility::PreviewVisibility::clear(&self.egui_ctx);
         let reusable_preview_pipeline = {
             let mut renderer = render_state.renderer.write();
             self.take_preview_pipeline_and_release_textures(&mut renderer)
@@ -1016,6 +1017,10 @@ impl CalibRawApp {
                 self.develop.target_exposure = loaded.rendered_exposure;
                 self.preview.pending_stage = None;
                 self.ui.notice = loaded.sidecar_warning;
+                crate::app::preview_visibility::PreviewVisibility::invalidate_masks(
+                    &self.egui_ctx,
+                    &self.masks.stack,
+                );
                 self.reset_edit_history();
                 self.install_sidecar_target(
                     loaded.sidecar_target,

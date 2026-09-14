@@ -2,6 +2,7 @@ use super::*;
 
 impl CalibRawApp {
     pub(in crate::app) fn advance_preview_detail(&mut self, _frame: &eframe::Frame) {
+        let preview_source = self.preview_source_raw();
         if self.preview.zoom <= DETAIL_ZOOM_START {
             if let Some(old) = self.preview.detail.take() {
                 if let Some(texture_id) = old.pipeline.egui_texture_id {
@@ -38,7 +39,7 @@ impl CalibRawApp {
             return;
         }
 
-        let Some(source_raw) = self.develop.loaded_raw.as_ref().map(Arc::clone) else {
+        let Some(source_raw) = preview_source.as_ref().map(Arc::clone) else {
             return;
         };
         let request = PreviewDetailRequest {
@@ -92,6 +93,7 @@ impl CalibRawApp {
     }
 
     pub(in crate::app) fn poll_preview_detail_rebuild_worker(&mut self, frame: &eframe::Frame) {
+        let preview_source = self.preview_source_raw();
         let received = self
             .preview
             .detail_rebuild_receiver
@@ -119,9 +121,7 @@ impl CalibRawApp {
                 return;
             }
         };
-        let source_is_current = self
-            .develop
-            .loaded_raw
+        let source_is_current = preview_source
             .as_ref()
             .is_some_and(|raw| Arc::ptr_eq(raw, &prepared.source_raw));
         if self.preview.zoom <= DETAIL_ZOOM_START
@@ -179,7 +179,9 @@ impl CalibRawApp {
         frame: &eframe::Frame,
         prepared: PreparedPreviewDetail,
     ) -> bool {
-        let Some(full_raw) = self.develop.loaded_raw.as_ref().map(Arc::clone) else {
+        let preview_masks = self.preview_mask_stack();
+        let preview_source = self.preview_source_raw();
+        let Some(full_raw) = preview_source.as_ref().map(Arc::clone) else {
             return false;
         };
         let Some(render_state) = frame.wgpu_render_state() else {
@@ -212,7 +214,7 @@ impl CalibRawApp {
         let virtual_origin_y =
             (y0 as f64 / full_raw.height.max(1) as f64 * virtual_full_height as f64).round() as i32;
         let mask_region = detail_mask_source_region(
-            &self.masks.stack,
+            &preview_masks,
             source_origin,
             source_size,
             full_raw.width,
@@ -223,7 +225,7 @@ impl CalibRawApp {
         }
         let params = GpuParams::new_for_tile(
             &self.develop.target_exposure,
-            &self.masks.stack,
+            &preview_masks,
             &detail_raw,
             virtual_origin_x,
             virtual_origin_y,
@@ -253,7 +255,7 @@ impl CalibRawApp {
                 .map(|preview| &preview.pipeline)
                 .or(self.preview.gpu_pipeline.as_ref())
         };
-        let required_mask_layers = self.masks.stack.masks.len().max(1);
+        let required_mask_layers = preview_masks.masks.len().max(1);
         if let Some(detail) = self.preview.detail.as_mut().filter(|detail| {
             detail.pipeline.width == detail_raw.width
                 && detail.pipeline.height == detail_raw.height
@@ -274,7 +276,7 @@ impl CalibRawApp {
             if let Err(error) = Self::upload_detail_masks(
                 &detail.pipeline,
                 &render_state.queue,
-                &self.masks.stack,
+                &preview_masks,
                 &full_raw,
                 mask_region,
                 None,
@@ -369,7 +371,7 @@ impl CalibRawApp {
         if let Err(error) = Self::upload_detail_masks(
             &pipeline,
             &render_state.queue,
-            &self.masks.stack,
+            &preview_masks,
             &full_raw,
             mask_region,
             None,

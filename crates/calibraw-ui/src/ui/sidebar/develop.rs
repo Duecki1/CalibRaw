@@ -13,140 +13,157 @@ impl Sidebar {
             (lens, focal, aperture)
         });
 
-        Self::adjustment_section(ui, "Lens Corrections", false, foldable, |ui| {
-            let lens_correction_busy = app.lens_correction_busy();
-            let state = &mut app.develop.lens_correction;
-            let has_selection = state.selected_lens().is_some();
-            let enabled_response = ui.add_enabled(
-                state.catalog.available && has_selection && !lens_correction_busy,
-                egui::Checkbox::new(&mut state.enabled, "Enabled"),
-            );
-            if enabled_response.changed() {
-                rebuild = true;
-            }
-            if !state.catalog.available {
-                state.enabled = false;
-                state.applied = false;
-            }
-
-            ui.add_space(2.0);
-            egui::Grid::new("lens-correction-capture-metadata")
-                .num_columns(2)
-                .spacing(egui::vec2(10.0, 3.0))
-                .show(ui, |ui| {
-                    ui.label("Camera");
-                    ui.label(if state.catalog.camera_label.is_empty() {
-                        "Not matched"
-                    } else {
-                        state.catalog.camera_label.as_str()
-                    });
-                    ui.end_row();
-                    if let Some((lens, focal, aperture)) = &capture {
-                        ui.label("RAW lens");
-                        ui.label(lens);
-                        ui.end_row();
-                        if let Some(focal) = focal {
-                            ui.label("Focal length");
-                            ui.label(focal);
-                            ui.end_row();
-                        }
-                        if let Some(aperture) = aperture {
-                            ui.label("Aperture");
-                            ui.label(aperture);
-                            ui.end_row();
-                        }
-                    }
-                });
-
-            ui.add_space(4.0);
-            let makers = state.makers();
-            let previous_maker = state.selected_maker.clone();
-            ui.add_enabled_ui(
-                state.catalog.available && !makers.is_empty() && !lens_correction_busy,
-                |ui| {
-                    ui.label("Brand");
-                    egui::ComboBox::from_id_salt("lens-correction-brand")
-                        .selected_text(if state.selected_maker.is_empty() {
-                            if state.selected_model.is_empty() {
-                                "Select a brand"
-                            } else {
-                                "Unknown"
-                            }
-                        } else {
-                            state.selected_maker.as_str()
-                        })
-                        .width(ui.available_width().clamp(1.0, 240.0))
-                        .truncate()
-                        .show_ui(ui, |ui| {
-                            for maker in &makers {
-                                ui.selectable_value(
-                                    &mut state.selected_maker,
-                                    maker.clone(),
-                                    if maker.is_empty() { "Unknown" } else { maker },
-                                );
-                            }
-                        });
-                },
-            );
-            let mut selection_changed = state.selected_maker != previous_maker;
-            if selection_changed {
-                let first_model = state
-                    .models_for_maker(&state.selected_maker)
-                    .into_iter()
-                    .next()
-                    .unwrap_or_default();
-                state.selected_model = first_model;
-            }
-
-            let models = state.models_for_maker(&state.selected_maker);
-            let previous_model = state.selected_model.clone();
-            ui.add_enabled_ui(
-                state.catalog.available && !models.is_empty() && !lens_correction_busy,
-                |ui| {
-                    ui.label("Lens");
-                    egui::ComboBox::from_id_salt("lens-correction-model")
-                        .selected_text(if state.selected_model.is_empty() {
-                            "Select a lens"
-                        } else {
-                            state.selected_model.as_str()
-                        })
-                        .width(ui.available_width().clamp(1.0, 240.0))
-                        .truncate()
-                        .show_ui(ui, |ui| {
-                            for model in &models {
-                                ui.selectable_value(
-                                    &mut state.selected_model,
-                                    model.clone(),
-                                    model,
-                                );
-                            }
-                        });
-                },
-            );
-            selection_changed |= state.selected_model != previous_model;
-            if selection_changed {
-                state.applied = false;
-                if let Some(selection) = state.selected_lens() {
-                    state.catalog.status = if state.enabled {
-                        format!("Applying {}…", selection.label())
-                    } else {
-                        format!(
-                            "Selected {}. Enable correction to apply it.",
-                            selection.label()
-                        )
-                    };
-                }
-                if state.enabled {
+        let action = Self::adjustment_card_with_enabled(
+            ui,
+            "Lens Corrections",
+            false,
+            foldable,
+            app.develop.lens_correction.enabled,
+            true,
+            |ui| {
+                let lens_correction_busy = app.lens_correction_busy();
+                let state = &mut app.develop.lens_correction;
+                let has_selection = state.selected_lens().is_some();
+                let enabled_response = ui.add_enabled(
+                    state.catalog.available && has_selection && !lens_correction_busy,
+                    egui::Checkbox::new(&mut state.enabled, "Enabled"),
+                );
+                if enabled_response.changed() {
                     rebuild = true;
                 }
+                if !state.catalog.available {
+                    state.enabled = false;
+                    state.applied = false;
+                }
+
+                ui.add_space(2.0);
+                egui::Grid::new("lens-correction-capture-metadata")
+                    .num_columns(2)
+                    .spacing(egui::vec2(10.0, 3.0))
+                    .show(ui, |ui| {
+                        ui.label("Camera");
+                        ui.label(if state.catalog.camera_label.is_empty() {
+                            "Not matched"
+                        } else {
+                            state.catalog.camera_label.as_str()
+                        });
+                        ui.end_row();
+                        if let Some((lens, focal, aperture)) = &capture {
+                            ui.label("RAW lens");
+                            ui.label(lens);
+                            ui.end_row();
+                            if let Some(focal) = focal {
+                                ui.label("Focal length");
+                                ui.label(focal);
+                                ui.end_row();
+                            }
+                            if let Some(aperture) = aperture {
+                                ui.label("Aperture");
+                                ui.label(aperture);
+                                ui.end_row();
+                            }
+                        }
+                    });
+
+                ui.add_space(4.0);
+                let makers = state.makers();
+                let previous_maker = state.selected_maker.clone();
+                ui.add_enabled_ui(
+                    state.catalog.available && !makers.is_empty() && !lens_correction_busy,
+                    |ui| {
+                        ui.label("Brand");
+                        egui::ComboBox::from_id_salt("lens-correction-brand")
+                            .selected_text(if state.selected_maker.is_empty() {
+                                if state.selected_model.is_empty() {
+                                    "Select a brand"
+                                } else {
+                                    "Unknown"
+                                }
+                            } else {
+                                state.selected_maker.as_str()
+                            })
+                            .width(ui.available_width().clamp(1.0, 240.0))
+                            .truncate()
+                            .show_ui(ui, |ui| {
+                                for maker in &makers {
+                                    ui.selectable_value(
+                                        &mut state.selected_maker,
+                                        maker.clone(),
+                                        if maker.is_empty() { "Unknown" } else { maker },
+                                    );
+                                }
+                            });
+                    },
+                );
+                let mut selection_changed = state.selected_maker != previous_maker;
+                if selection_changed {
+                    let first_model = state
+                        .models_for_maker(&state.selected_maker)
+                        .into_iter()
+                        .next()
+                        .unwrap_or_default();
+                    state.selected_model = first_model;
+                }
+
+                let models = state.models_for_maker(&state.selected_maker);
+                let previous_model = state.selected_model.clone();
+                ui.add_enabled_ui(
+                    state.catalog.available && !models.is_empty() && !lens_correction_busy,
+                    |ui| {
+                        ui.label("Lens");
+                        egui::ComboBox::from_id_salt("lens-correction-model")
+                            .selected_text(if state.selected_model.is_empty() {
+                                "Select a lens"
+                            } else {
+                                state.selected_model.as_str()
+                            })
+                            .width(ui.available_width().clamp(1.0, 240.0))
+                            .truncate()
+                            .show_ui(ui, |ui| {
+                                for model in &models {
+                                    ui.selectable_value(
+                                        &mut state.selected_model,
+                                        model.clone(),
+                                        model,
+                                    );
+                                }
+                            });
+                    },
+                );
+                selection_changed |= state.selected_model != previous_model;
+                if selection_changed {
+                    state.applied = false;
+                    if let Some(selection) = state.selected_lens() {
+                        state.catalog.status = if state.enabled {
+                            format!("Applying {}…", selection.label())
+                        } else {
+                            format!(
+                                "Selected {}. Enable correction to apply it.",
+                                selection.label()
+                            )
+                        };
+                    }
+                    if state.enabled {
+                        rebuild = true;
+                    }
+                }
+            },
+        );
+        match action {
+            adjustment_cards::CardAction::None => {}
+            adjustment_cards::CardAction::Toggle => {}
+            adjustment_cards::CardAction::Reset => {
+                let state = &mut app.develop.lens_correction;
+                *state = crate::app::LensCorrectionState::from_catalog(state.catalog.clone());
+                rebuild = true;
             }
-        });
+        }
         rebuild
     }
 
     fn show_basic(ui: &mut Ui, exposure: &mut ExposureParams, foldable: bool) -> bool {
         let mut changed = false;
-        Self::adjustment_section(ui, "Light", true, foldable, |ui| {
+        let action = Self::adjustment_card(ui, "Light", true, foldable, true, |ui| {
             changed |= gradient_adjustment_slider(
                 ui,
                 "Exposure",
@@ -208,6 +225,7 @@ impl Sidebar {
                 SliderGradient::Brightness,
             );
         });
+        changed |= action.apply(exposure, AdjustmentGroup::Light);
         changed
     }
 
@@ -218,7 +236,7 @@ impl Sidebar {
         foldable: bool,
     ) -> bool {
         let mut changed = false;
-        Self::adjustment_section(ui, "Tone Curve", false, foldable, |ui| {
+        let action = Self::adjustment_card(ui, "Tone Curve", false, foldable, true, |ui| {
             changed |= tone_curve_channel_editor(
                 ui,
                 ToneCurveChannels {
@@ -231,6 +249,7 @@ impl Sidebar {
                 4.0,
             );
         });
+        changed |= action.apply(exposure, AdjustmentGroup::ToneCurve);
         changed
     }
 
@@ -242,7 +261,7 @@ impl Sidebar {
         foldable: bool,
     ) -> bool {
         let mut changed = false;
-        Self::adjustment_section(ui, "Color", false, foldable, |ui| {
+        let action = Self::adjustment_card(ui, "Color", false, foldable, true, |ui| {
             if let Some(raw) = raw.filter(|raw| raw.as_shot_white_balance().is_some()) {
                 let presets = raw.camera_white_balance_presets();
                 let matches_current = |candidate: (f32, f32)| {
@@ -468,20 +487,26 @@ impl Sidebar {
                 SliderGradient::Colorfulness,
             );
         });
+        changed |= action.apply(exposure, AdjustmentGroup::Color);
+        if !crate::app::preview_visibility::PreviewVisibility::visible(ui.ctx(), "Color")
+            || !matches!(action, adjustment_cards::CardAction::None)
+        {
+            *white_balance_picker_active = false;
+        }
         changed
     }
 
     fn show_color_grading(
         ui: &mut Ui,
-        grading: &mut crate::pipeline::ColorGrading,
+        exposure: &mut ExposureParams,
         selected_tab: &mut ColorGradeTab,
         foldable: bool,
     ) -> bool {
         let mut changed = false;
-        let contents = |ui: &mut Ui| {
-            changed |= color_grading_editor(ui, grading, selected_tab);
-        };
-        Self::adjustment_section(ui, "Color Grading", false, foldable, contents);
+        let action = Self::adjustment_card(ui, "Color Grading", false, foldable, true, |ui| {
+            changed |= color_grading_editor(ui, &mut exposure.color_grading, selected_tab);
+        });
+        changed |= action.apply(exposure, AdjustmentGroup::ColorGrading);
         changed
     }
 
@@ -492,7 +517,8 @@ impl Sidebar {
     ) -> (bool, Option<bool>) {
         let mut changed = false;
         let mut ai_request = None;
-        Self::adjustment_section(ui, "Detail", false, foldable, |ui| {
+        let ai_before = exposure.ai_denoise_enabled;
+        let action = Self::adjustment_card(ui, "Detail", false, foldable, true, |ui| {
             let mut ai_enabled = exposure.ai_denoise_enabled;
             let ai_response = ui.checkbox(&mut ai_enabled, "AI Denoise — RawNIND UtNet2");
             if ai_response.changed() {
@@ -617,12 +643,17 @@ impl Sidebar {
                 Some("Restricts sharpening to stronger luminance edges as the value increases, protecting flat areas and noise."),
             );
         });
+        changed |= action.apply(exposure, AdjustmentGroup::Detail);
+        if exposure.ai_denoise_enabled != ai_before {
+            ai_request = Some(exposure.ai_denoise_enabled);
+            exposure.ai_denoise_enabled = ai_before;
+        }
         (changed, ai_request)
     }
 
     fn show_presence(ui: &mut Ui, exposure: &mut ExposureParams, foldable: bool) -> bool {
         let mut changed = false;
-        Self::adjustment_section(ui, "Effects", false, foldable, |ui| {
+        let action = Self::adjustment_card(ui, "Effects", false, foldable, true, |ui| {
             changed |= adjustment_slider(
                 ui,
                 "Texture",
@@ -721,6 +752,7 @@ impl Sidebar {
                 );
             });
         });
+        changed |= action.apply(exposure, AdjustmentGroup::Effects);
         changed
     }
 
@@ -731,7 +763,7 @@ impl Sidebar {
         foldable: bool,
     ) -> bool {
         let mut changed = false;
-        Self::adjustment_section(ui, "Color Mixer", false, foldable, |ui| {
+        let action = Self::adjustment_card(ui, "Color Mixer", false, foldable, true, |ui| {
             changed |= hsl_mixer(
                 ui,
                 selected_color,
@@ -740,6 +772,7 @@ impl Sidebar {
                 &mut exposure.hsl_luminance,
             );
         });
+        changed |= action.apply(exposure, AdjustmentGroup::ColorMixer);
         changed
     }
 }

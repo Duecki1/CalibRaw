@@ -280,7 +280,8 @@ impl CalibRawApp {
         });
         let changed = !self.develop.exposure.ai_denoise_enabled;
         self.develop.exposure.ai_denoise_enabled = true;
-        self.develop.target_exposure.ai_denoise_enabled = true;
+        self.develop.target_exposure.ai_denoise_enabled =
+            self.preview_exposure().ai_denoise_enabled;
         if changed {
             self.note_edit_changed();
         }
@@ -426,7 +427,8 @@ impl CalibRawApp {
                 .as_ref()
                 .is_some_and(|raw| raw.ai_denoised_image().is_some())
             {
-                self.develop.target_exposure.ai_denoise_enabled = true;
+                self.develop.target_exposure.ai_denoise_enabled =
+                    self.preview_exposure().ai_denoise_enabled;
                 crate::diagnostics::record(
                     "Restored the persisted AI-denoise scene without rerunning RawNIND",
                 );

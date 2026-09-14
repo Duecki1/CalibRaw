@@ -2,6 +2,8 @@ use super::*;
 
 impl CalibRawApp {
     pub(in crate::app) fn advance_navigation_preview(&mut self, frame: &eframe::Frame) {
+        let preview_masks = self.preview_mask_stack();
+        let preview_source = self.preview_source_raw();
         if self.foreground_operation_is(ForegroundOperationKind::AiDenoise) {
             return;
         }
@@ -20,7 +22,7 @@ impl CalibRawApp {
             }
             return;
         }
-        let Some(full_raw) = self.develop.loaded_raw.as_ref().map(Arc::clone) else {
+        let Some(full_raw) = preview_source.as_ref().map(Arc::clone) else {
             self.preview.navigation_pending_stage = None;
             return;
         };
@@ -29,7 +31,7 @@ impl CalibRawApp {
         };
 
         let navigation_capacity_stale = self.preview.navigation.as_ref().is_some_and(|preview| {
-            preview.pipeline.mask_layer_capacity() < self.masks.stack.masks.len().max(1)
+            preview.pipeline.mask_layer_capacity() < preview_masks.masks.len().max(1)
         });
         if navigation_capacity_stale {
             if let Some(old) = self.preview.navigation.take() {
@@ -57,7 +59,7 @@ impl CalibRawApp {
                     },
                 ))
             };
-            let params = GpuParams::new(&self.develop.target_exposure, &self.masks.stack, &raw)
+            let params = GpuParams::new(&self.develop.target_exposure, &preview_masks, &raw)
                 .with_vignette_geometry(self.develop.geometry);
             let Some(template) = self.preview.gpu_pipeline.as_ref() else {
                 return;
@@ -81,7 +83,7 @@ impl CalibRawApp {
                 }
             };
             if let Err(error) =
-                Self::upload_preview_masks(&pipeline, &render_state.queue, &self.masks.stack, &raw)
+                Self::upload_preview_masks(&pipeline, &render_state.queue, &preview_masks, &raw)
             {
                 self.ui.notice = Some(error);
                 self.preview.navigation_pending_stage = None;
@@ -132,7 +134,7 @@ impl CalibRawApp {
                 if !self.masks.navigation_dirty_layers[layer] {
                     continue;
                 }
-                let bytes = self.masks.stack.rasterize_layer_f16(
+                let bytes = preview_masks.rasterize_layer_f16(
                     layer,
                     edge,
                     edge,
@@ -154,7 +156,7 @@ impl CalibRawApp {
             }
             if let Err(error) = preview.pipeline.update_light_rays_mask_layers(
                 &render_state.queue,
-                &self.masks.stack,
+                &preview_masks,
                 preview.raw.width,
                 preview.raw.height,
             ) {
@@ -171,12 +173,8 @@ impl CalibRawApp {
         {
             full_raw.inpaint_opposed_chroma_for_exposure(&self.develop.target_exposure);
         }
-        let params = GpuParams::new(
-            &self.develop.target_exposure,
-            &self.masks.stack,
-            &preview.raw,
-        )
-        .with_vignette_geometry(self.develop.geometry);
+        let params = GpuParams::new(&self.develop.target_exposure, &preview_masks, &preview.raw)
+            .with_vignette_geometry(self.develop.geometry);
         let stages = match stage {
             ProcessingStage::Raw => &[
                 ProcessingStage::Raw,

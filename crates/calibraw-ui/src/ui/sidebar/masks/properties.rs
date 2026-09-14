@@ -1,81 +1,250 @@
 use super::*;
 
 impl Sidebar {
-    pub(super) fn show_mask_effect_picker(ui: &mut Ui, effect: &mut MaskEffect) -> bool {
-        let before = *effect;
-        crate::ui::theme::section_card(ui, "Mask type", |ui| {
-            ui.add_space(4.0);
-            egui::ComboBox::from_id_salt("mask-effect-picker")
-                .selected_text(effect.label())
-                .width(ui.available_width())
-                .height(ui.ctx().content_rect().height())
-                .show_ui(ui, |ui| {
-                    ui.set_min_width(190.0);
-                    if ui
-                        .selectable_label(*effect == MaskEffect::Adjustment, "Adjustment")
-                        .on_hover_text("Use the mask with the existing local adjustment controls.")
-                        .clicked()
-                    {
-                        *effect = MaskEffect::Adjustment;
-                        ui.close();
+    pub(super) fn apply_mask_properties_action(
+        mask: &mut LocalMask,
+        component_index: usize,
+        action: super::super::adjustment_cards::CardAction,
+    ) -> bool {
+        use super::super::adjustment_cards::CardAction;
+        match action {
+            CardAction::None => return false,
+            CardAction::Toggle => {}
+            CardAction::Reset => {
+                mask.enabled = true;
+                mask.invert = false;
+                mask.opacity = 1.0;
+                if let Some(component) = mask.components.get_mut(component_index) {
+                    component.enabled = true;
+                    component.invert = false;
+                    // Reset the property controls while retaining the selection itself.
+                    let defaults = MaskGeometry::for_kind(component.kind);
+                    let previous = std::mem::replace(&mut component.geometry, defaults);
+                    match (&mut component.geometry, previous) {
+                        (
+                            MaskGeometry::Brush {
+                                dabs,
+                                stroke_starts,
+                                ..
+                            },
+                            MaskGeometry::Brush {
+                                dabs: saved,
+                                stroke_starts: starts,
+                                ..
+                            },
+                        ) => {
+                            *dabs = saved;
+                            *stroke_starts = starts;
+                        }
+                        (
+                            MaskGeometry::Radial {
+                                center,
+                                radius,
+                                rotation,
+                                initialized,
+                                ..
+                            },
+                            MaskGeometry::Radial {
+                                center: c,
+                                radius: r,
+                                rotation: angle,
+                                initialized: ready,
+                                ..
+                            },
+                        ) => {
+                            *center = c;
+                            *radius = r;
+                            *rotation = angle;
+                            *initialized = ready;
+                        }
+                        (
+                            MaskGeometry::Linear {
+                                start,
+                                end,
+                                initialized,
+                                ..
+                            },
+                            MaskGeometry::Linear {
+                                start: a,
+                                end: b,
+                                initialized: ready,
+                                ..
+                            },
+                        ) => {
+                            *start = a;
+                            *end = b;
+                            *initialized = ready;
+                        }
+                        (MaskGeometry::Ai { mask, .. }, MaskGeometry::Ai { mask: saved, .. }) => {
+                            *mask = saved
+                        }
+                        (
+                            MaskGeometry::Object { mask, strokes, .. },
+                            MaskGeometry::Object {
+                                mask: saved,
+                                strokes: saved_strokes,
+                                ..
+                            },
+                        ) => {
+                            *mask = saved;
+                            *strokes = saved_strokes;
+                        }
+                        (
+                            MaskGeometry::LuminanceRange { source, .. },
+                            MaskGeometry::LuminanceRange { source: saved, .. },
+                        ) => *source = saved,
+                        (
+                            MaskGeometry::ColorRange {
+                                source,
+                                sample,
+                                sampled,
+                                ..
+                            },
+                            MaskGeometry::ColorRange {
+                                source: saved,
+                                sample: color,
+                                sampled: ready,
+                                ..
+                            },
+                        ) => {
+                            *source = saved;
+                            *sample = color;
+                            *sampled = ready;
+                        }
+                        _ => {}
                     }
+                }
+            }
+        }
+        true
+    }
 
-                    ui.separator();
-                    for category in MaskEffectCategory::ALL {
-                        ui.menu_button(category.label(), |ui| {
-                            ui.set_min_width(180.0);
-                            for candidate in MaskEffect::ALL {
-                                if candidate.category() != Some(category) {
-                                    continue;
+    pub(super) fn show_mask_effect_picker(ui: &mut Ui, mask: &mut LocalMask) -> bool {
+        let before = mask.effect;
+        let enabled_before = mask.enabled;
+        let effect = &mut mask.effect;
+        let action = Self::adjustment_card_with_enabled(
+            ui,
+            "Mask type",
+            true,
+            false,
+            enabled_before,
+            true,
+            |ui| {
+                ui.add_space(4.0);
+                egui::ComboBox::from_id_salt("mask-effect-picker")
+                    .selected_text(effect.label())
+                    .width(ui.available_width())
+                    .height(ui.ctx().content_rect().height())
+                    .show_ui(ui, |ui| {
+                        ui.set_min_width(190.0);
+                        if ui
+                            .selectable_label(*effect == MaskEffect::Adjustment, "Adjustment")
+                            .on_hover_text(
+                                "Use the mask with the existing local adjustment controls.",
+                            )
+                            .clicked()
+                        {
+                            *effect = MaskEffect::Adjustment;
+                            ui.close();
+                        }
+
+                        ui.separator();
+                        for category in MaskEffectCategory::ALL {
+                            ui.menu_button(category.label(), |ui| {
+                                ui.set_min_width(180.0);
+                                for candidate in MaskEffect::ALL {
+                                    if candidate.category() != Some(category) {
+                                        continue;
+                                    }
+                                    if ui
+                                        .selectable_label(*effect == candidate, candidate.label())
+                                        .clicked()
+                                    {
+                                        *effect = candidate;
+                                        ui.close();
+                                    }
                                 }
-                                if ui
-                                    .selectable_label(*effect == candidate, candidate.label())
-                                    .clicked()
-                                {
-                                    *effect = candidate;
-                                    ui.close();
-                                }
-                            }
-                        });
-                    }
-                });
-        });
-        before != *effect
+                            });
+                        }
+                    });
+            },
+        );
+        match action {
+            super::super::adjustment_cards::CardAction::None => {}
+            super::super::adjustment_cards::CardAction::Toggle => {}
+            super::super::adjustment_cards::CardAction::Reset => {
+                mask.effect = MaskEffect::default();
+                mask.enabled = true;
+            }
+        }
+        before != mask.effect || enabled_before != mask.enabled
     }
 
     pub(super) fn show_mask_effect_settings(ui: &mut Ui, mask: &mut LocalMask) -> bool {
         match mask.effect {
-            MaskEffect::Blur => mask_effects::blur::show(ui, &mut mask.effect_settings.blur),
-            MaskEffect::LensBlur => {
-                mask_effects::lens_blur::show(ui, &mut mask.effect_settings.lens_blur)
-            }
-            MaskEffect::MotionBlur => {
-                mask_effects::motion_blur::show(ui, &mut mask.effect_settings.motion_blur)
-            }
-            MaskEffect::RadialBlur => {
-                mask_effects::radial_blur::show(ui, &mut mask.effect_settings.radial_blur)
-            }
+            MaskEffect::Blur => mask_effects::blur::show(
+                ui,
+                &mut mask.effect_settings.blur,
+                &mut mask.common.enabled,
+            ),
+            MaskEffect::LensBlur => mask_effects::lens_blur::show(
+                ui,
+                &mut mask.effect_settings.lens_blur,
+                &mut mask.common.enabled,
+            ),
+            MaskEffect::MotionBlur => mask_effects::motion_blur::show(
+                ui,
+                &mut mask.effect_settings.motion_blur,
+                &mut mask.common.enabled,
+            ),
+            MaskEffect::RadialBlur => mask_effects::radial_blur::show(
+                ui,
+                &mut mask.effect_settings.radial_blur,
+                &mut mask.common.enabled,
+            ),
             MaskEffect::TiltShift => {
                 let is_fullscreen_mask = Self::is_plain_fullscreen_mask(mask);
                 mask_effects::tilt_shift::show(
                     ui,
                     &mut mask.effect_settings.tilt_shift,
+                    &mut mask.common.enabled,
                     is_fullscreen_mask,
                 )
             }
-            MaskEffect::EdgeGlow => {
-                mask_effects::edge_glow::show(ui, &mut mask.effect_settings.edge_glow)
+            MaskEffect::EdgeGlow => mask_effects::edge_glow::show(
+                ui,
+                &mut mask.effect_settings.edge_glow,
+                &mut mask.common.enabled,
+            ),
+            MaskEffect::Glow => mask_effects::glow::show(
+                ui,
+                &mut mask.effect_settings.glow,
+                &mut mask.common.enabled,
+            ),
+            MaskEffect::LightRays => mask_effects::light_rays::show(
+                ui,
+                &mut mask.effect_settings.light_rays,
+                &mut mask.common.enabled,
+            ),
+            MaskEffect::Neon => mask_effects::neon::show(
+                ui,
+                &mut mask.effect_settings.neon,
+                &mut mask.common.enabled,
+            ),
+            MaskEffect::Pixelate => mask_effects::pixelate::show(
+                ui,
+                &mut mask.effect_settings.pixelate,
+                &mut mask.common.enabled,
+            ),
+            MaskEffect::Fog => {
+                mask_effects::fog::show(ui, &mut mask.effect_settings.fog, &mut mask.common.enabled)
             }
-            MaskEffect::Glow => mask_effects::glow::show(ui, &mut mask.effect_settings.glow),
-            MaskEffect::LightRays => {
-                mask_effects::light_rays::show(ui, &mut mask.effect_settings.light_rays)
-            }
-            MaskEffect::Neon => mask_effects::neon::show(ui, &mut mask.effect_settings.neon),
-            MaskEffect::Pixelate => {
-                mask_effects::pixelate::show(ui, &mut mask.effect_settings.pixelate)
-            }
-            MaskEffect::Fog => mask_effects::fog::show(ui, &mut mask.effect_settings.fog),
-            MaskEffect::Smoke => mask_effects::smoke::show(ui, &mut mask.effect_settings.smoke),
+            MaskEffect::Smoke => mask_effects::smoke::show(
+                ui,
+                &mut mask.effect_settings.smoke,
+                &mut mask.common.enabled,
+            ),
             MaskEffect::Adjustment => false,
         }
     }
@@ -338,7 +507,7 @@ impl Sidebar {
                         *refinement_active = !*refinement_active;
                     }
                     if *refinement_active {
-                        crate::ui::theme::section_card(ui, "Subject refinement", |ui| {
+                        let action = Self::adjustment_card(ui, "Subject refinement", true, false, true, |ui| {
                             ui.horizontal(|ui| {
                                 let width = ((ui.available_width()
                                     - ui.spacing().item_spacing.x)
@@ -406,6 +575,17 @@ impl Sidebar {
                                 *clear_refinement = true;
                             }
                         });
+                        match action {
+                            super::super::adjustment_cards::CardAction::None => {},
+                            super::super::adjustment_cards::CardAction::Toggle => {},
+                            super::super::adjustment_cards::CardAction::Reset => {
+                                let defaults = crate::pipeline::SubjectRefinement::default();
+                                *refinement_size = defaults.size;
+                                *refinement_feather = defaults.feather;
+                                *refinement_flow = defaults.flow;
+                                *clear_refinement = true;
+                            }
+                        }
                     }
                     if generated_mask.is_none() {
                         ui.horizontal_wrapped(|ui| {
@@ -588,5 +768,36 @@ impl Sidebar {
         });
 
         geometry_changed
+    }
+}
+
+#[cfg(test)]
+mod card_tests {
+    use super::*;
+
+    #[test]
+    fn properties_reset_keeps_painted_selection_and_local_edits() {
+        let mut mask = LocalMask::new(MaskKind::Brush, 1);
+        mask.adjustments.exposure = 1.5;
+        mask.opacity = 0.2;
+        let dab = crate::pipeline::BrushDab::default();
+        if let MaskGeometry::Brush { size, dabs, .. } = &mut mask.components[0].geometry {
+            *size = 0.2;
+            dabs.push(dab);
+        }
+        Sidebar::apply_mask_properties_action(
+            &mut mask,
+            0,
+            super::super::super::adjustment_cards::CardAction::Reset,
+        );
+        assert_eq!(mask.opacity, 1.0);
+        assert_eq!(mask.adjustments.exposure, 1.5);
+        match &mask.components[0].geometry {
+            MaskGeometry::Brush { size, dabs, .. } => {
+                assert_eq!(*size, 0.055);
+                assert_eq!(dabs, &[dab]);
+            }
+            _ => panic!("brush selection changed type"),
+        }
     }
 }

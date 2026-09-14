@@ -337,11 +337,21 @@ pub(super) fn thumbnail_hover_details(asset: &LibraryAsset) -> String {
 pub(super) fn thumbnail_capture_details(asset: &LibraryAsset) -> String {
     let metadata = &asset.metadata;
     format!(
-        "{}  ·  {}  ·  {}",
+        "{}  ·  {}  ·  {}  ·  {}",
         format_thumbnail_iso(metadata.iso_speed),
         format_thumbnail_shutter(metadata.shutter_seconds),
+        format_thumbnail_aperture(metadata.aperture),
         format_thumbnail_focal_length(metadata.focal_length),
     )
+}
+
+#[cfg(any(not(target_os = "android"), test))]
+fn format_thumbnail_aperture(value: f32) -> String {
+    if value.is_finite() && value > 0.0 {
+        format!("f/{value:.1}")
+    } else {
+        "f/—".to_owned()
+    }
 }
 
 #[cfg(any(not(target_os = "android"), test))]
@@ -445,17 +455,4 @@ pub(super) fn thumbnail_selection_checkbox(
     } else {
         "Select RAW"
     })
-}
-
-#[cfg(any(not(target_os = "android"), test))]
-pub(super) fn elide_middle(value: &str, maximum_chars: usize) -> String {
-    let count = value.chars().count();
-    if count <= maximum_chars || maximum_chars < 5 {
-        return value.to_owned();
-    }
-    let left = (maximum_chars - 1) / 2;
-    let right = maximum_chars - 1 - left;
-    let prefix = value.chars().take(left).collect::<String>();
-    let suffix = value.chars().skip(count - right).collect::<String>();
-    format!("{prefix}…{suffix}")
 }

@@ -1,16 +1,21 @@
-use super::{effect_slider, effect_toolbar};
+use super::{effect_card_action, effect_slider};
 use crate::pipeline::{
     effect_params::radial_blur, MaskEffect, RadialBlurEffectSettings, RadialBlurMode,
 };
 use eframe::egui::{self, Ui};
 
-pub(crate) fn show(ui: &mut Ui, settings: &mut RadialBlurEffectSettings) -> bool {
-    let mut changed = effect_toolbar(ui, MaskEffect::RadialBlur, settings);
-    super::super::Sidebar::adjustment_section(
+pub(crate) fn show(
+    ui: &mut Ui,
+    settings: &mut RadialBlurEffectSettings,
+    enabled: &mut bool,
+) -> bool {
+    let mut changed = false;
+    let action = super::super::Sidebar::adjustment_card(
         ui,
         MaskEffect::RadialBlur.label(),
         true,
         false,
+        *enabled,
         |ui| {
             ui.horizontal(|ui| {
                 ui.label("Mode");
@@ -32,5 +37,5 @@ pub(crate) fn show(ui: &mut Ui, settings: &mut RadialBlurEffectSettings) -> bool
             changed |= effect_slider(ui, &mut settings.center[1], radial_blur::CENTER_Y);
         },
     );
-    changed
+    changed | effect_card_action(action, settings, enabled)
 }

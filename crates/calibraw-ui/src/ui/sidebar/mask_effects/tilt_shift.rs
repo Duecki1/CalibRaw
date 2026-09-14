@@ -1,18 +1,20 @@
-use super::{effect_slider, effect_toolbar};
+use super::{effect_card_action, effect_slider};
 use crate::pipeline::{effect_params::tilt_shift, MaskEffect, TiltShiftEffectSettings};
 use eframe::egui::Ui;
 
 pub(crate) fn show(
     ui: &mut Ui,
     settings: &mut TiltShiftEffectSettings,
+    enabled: &mut bool,
     is_fullscreen_mask: bool,
 ) -> bool {
-    let mut changed = effect_toolbar(ui, MaskEffect::TiltShift, settings);
-    super::super::Sidebar::adjustment_section(
+    let mut changed = false;
+    let action = super::super::Sidebar::adjustment_card(
         ui,
         MaskEffect::TiltShift.label(),
         true,
         false,
+        *enabled,
         |ui| {
             if !is_fullscreen_mask {
                 ui.colored_label(
@@ -30,5 +32,5 @@ pub(crate) fn show(
             changed |= effect_slider(ui, &mut settings.feather, tilt_shift::FEATHER);
         },
     );
-    changed
+    changed | effect_card_action(action, settings, enabled)
 }

@@ -1,14 +1,19 @@
-use super::{effect_color, effect_slider, effect_toolbar};
+use super::{effect_card_action, effect_color, effect_slider};
 use crate::pipeline::{effect_params::light_rays, LightRaysEffectSettings, MaskEffect};
 use eframe::egui::Ui;
 
-pub(crate) fn show(ui: &mut Ui, settings: &mut LightRaysEffectSettings) -> bool {
-    let mut changed = effect_toolbar(ui, MaskEffect::LightRays, settings);
-    super::super::Sidebar::adjustment_section(
+pub(crate) fn show(
+    ui: &mut Ui,
+    settings: &mut LightRaysEffectSettings,
+    enabled: &mut bool,
+) -> bool {
+    let mut changed = false;
+    let action = super::super::Sidebar::adjustment_card(
         ui,
         MaskEffect::LightRays.label(),
         true,
         false,
+        *enabled,
         |ui| {
             changed |= effect_slider(ui, &mut settings.amount, light_rays::AMOUNT);
             changed |= effect_slider(ui, &mut settings.length, light_rays::LENGTH);
@@ -27,5 +32,5 @@ pub(crate) fn show(ui: &mut Ui, settings: &mut LightRaysEffectSettings) -> bool 
             );
         },
     );
-    changed
+    changed | effect_card_action(action, settings, enabled)
 }

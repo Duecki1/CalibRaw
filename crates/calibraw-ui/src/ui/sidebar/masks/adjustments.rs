@@ -67,6 +67,34 @@ impl Sidebar {
         }
     }
 
+    pub(super) fn show_local_adjustment_card(
+        ui: &mut Ui,
+        adjustment: &mut crate::pipeline::LocalAdjustments,
+        section: MaskSection,
+        title: &'static str,
+        default_open: bool,
+        foldable: bool,
+        tabs: (&mut ToneCurveTab, &mut ColorGradeTab, &mut HslMixerColor),
+    ) -> bool {
+        let group = match section {
+            MaskSection::Light => AdjustmentGroup::Light,
+            MaskSection::ToneCurve => AdjustmentGroup::ToneCurve,
+            MaskSection::Color => AdjustmentGroup::Color,
+            MaskSection::ColorGrading => AdjustmentGroup::ColorGrading,
+            MaskSection::Effects => AdjustmentGroup::Effects,
+            MaskSection::ColorMixer => AdjustmentGroup::ColorMixer,
+            MaskSection::Properties => return false,
+        };
+        let mut changed = false;
+        let action = Self::adjustment_card(ui, title, default_open, foldable, true, |ui| {
+            changed |= Self::show_local_mask_adjustment_section(
+                ui, adjustment, section, tabs.0, tabs.1, tabs.2,
+            )
+            .0;
+        });
+        changed | action.apply_local(adjustment, group)
+    }
+
     pub(super) fn show_local_mask_adjustment_section(
         ui: &mut Ui,
         adjustment: &mut crate::pipeline::LocalAdjustments,

@@ -24,17 +24,19 @@ fn mobile_tab_icon_geometry(height: f32, show_label: bool) -> (f32, f32) {
 }
 
 impl Sidebar {
-    pub(crate) fn show(ui: &mut Ui, app: &mut CalibRawApp, layout: ScreenLayout, frame: &eframe::Frame) {
+    pub(crate) fn show(
+        ui: &mut Ui,
+        app: &mut CalibRawApp,
+        layout: ScreenLayout,
+        frame: &eframe::Frame,
+    ) {
         ui.take_available_width();
         let vertical_spacing = if crate::ui::theme::is_compact_portrait(ui) {
             crate::ui::theme::SPACE_XS
         } else {
             crate::ui::theme::SPACE_SM
         };
-        ui.spacing_mut().item_spacing = egui::vec2(
-            crate::ui::theme::SPACE_SM,
-            vertical_spacing,
-        );
+        ui.spacing_mut().item_spacing = egui::vec2(crate::ui::theme::SPACE_SM, vertical_spacing);
 
         if layout == ScreenLayout::Vertical {
             Self::show_vertical_mobile_shell(ui, app, frame);
@@ -56,8 +58,9 @@ impl Sidebar {
                 egui::Layout::left_to_right(egui::Align::Center),
                 |ui| {
                     crate::ui::theme::toolbar_title(ui, title);
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        match app.ui.sidebar_tab {
+                    ui.with_layout(
+                        egui::Layout::right_to_left(egui::Align::Center),
+                        |ui| match app.ui.sidebar_tab {
                             SidebarTab::Adjustments => {
                                 if crate::ui::icons::phosphor_icon_button(
                                     ui,
@@ -120,8 +123,8 @@ impl Sidebar {
                                 }
                             }
                             SidebarTab::Export | SidebarTab::Info => {}
-                        }
-                    });
+                        },
+                    );
                 },
             );
         });
@@ -143,7 +146,10 @@ impl Sidebar {
             .frame(Self::mobile_navigation_frame(ui))
             .show(ui, |ui| Self::show_mobile_primary_tabs(ui, app));
 
-        if matches!(app.ui.sidebar_tab, SidebarTab::Adjustments | SidebarTab::Masks) {
+        if matches!(
+            app.ui.sidebar_tab,
+            SidebarTab::Adjustments | SidebarTab::Masks
+        ) {
             egui::Panel::bottom("develop_portrait_context_tabs")
                 .resizable(false)
                 .show_separator_line(false)
@@ -316,11 +322,7 @@ impl Sidebar {
                     (MaskSection::Light, regular::SUN, "Light"),
                     (MaskSection::ToneCurve, regular::WAVE_SINE, "Curve"),
                     (MaskSection::Color, regular::DROP, "Color"),
-                    (
-                        MaskSection::ColorGrading,
-                        regular::CIRCLES_THREE,
-                        "Grading",
-                    ),
+                    (MaskSection::ColorGrading, regular::CIRCLES_THREE, "Grading"),
                     (MaskSection::Effects, regular::SPARKLE, "Effects"),
                     (MaskSection::ColorMixer, regular::SWATCHES, "Mixer"),
                 ] {
@@ -342,10 +344,7 @@ impl Sidebar {
                     }
                 }
             }
-            SidebarTab::Crop
-            | SidebarTab::Inpainting
-            | SidebarTab::Export
-            | SidebarTab::Info => {}
+            SidebarTab::Crop | SidebarTab::Inpainting | SidebarTab::Export | SidebarTab::Info => {}
         });
     }
 
@@ -616,34 +615,6 @@ impl Sidebar {
         layout: ScreenLayout,
         frame: &eframe::Frame,
     ) {
-        if layout == ScreenLayout::Vertical && !crate::ui::theme::is_compact_portrait(ui) {
-            crate::ui::theme::toolbar_row(ui, |ui| {
-                ui.strong(match app.develop_ui.adjustment_section {
-                    AdjustmentSection::Light => "Light",
-                    AdjustmentSection::ToneCurve => "Tone Curve",
-                    AdjustmentSection::Color => "Color",
-                    AdjustmentSection::ColorGrading => "Color Grading",
-                    AdjustmentSection::Detail => "Detail",
-                    AdjustmentSection::Effects => "Effects",
-                    AdjustmentSection::ColorMixer => "Color Mixer",
-                    AdjustmentSection::Optics => "Optics",
-                });
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if crate::ui::icons::phosphor_icon_button(
-                        ui,
-                        egui_phosphor::regular::ARROW_COUNTER_CLOCKWISE,
-                        crate::ui::theme::toolbar_icon_size(),
-                        "Reset all develop adjustments",
-                    )
-                    .clicked()
-                    {
-                        app.reset_develop_adjustments();
-                    }
-                });
-            });
-            ui.add_space(4.0);
-        }
-
         Self::show_camera_profile_selector(ui, app, frame);
 
         let mut changed = false;
@@ -675,13 +646,14 @@ impl Sidebar {
                 AdjustmentSection::ColorGrading => {
                     changed |= Self::show_color_grading(
                         ui,
-                        &mut app.develop.exposure.color_grading,
+                        &mut app.develop.exposure,
                         &mut app.develop_ui.color_grade_tab,
                         false,
                     );
                 }
                 AdjustmentSection::Detail => {
-                    let (detail_changed, request) = Self::show_detail(ui, &mut app.develop.exposure, false);
+                    let (detail_changed, request) =
+                        Self::show_detail(ui, &mut app.develop.exposure, false);
                     changed |= detail_changed;
                     ai_denoise_request = request;
                 }
@@ -689,8 +661,12 @@ impl Sidebar {
                     changed |= Self::show_presence(ui, &mut app.develop.exposure, false);
                 }
                 AdjustmentSection::ColorMixer => {
-                    changed |=
-                        Self::show_hsl(ui, &mut app.develop.exposure, &mut app.develop_ui.hsl_mixer_color, false);
+                    changed |= Self::show_hsl(
+                        ui,
+                        &mut app.develop.exposure,
+                        &mut app.develop_ui.hsl_mixer_color,
+                        false,
+                    );
                 }
                 AdjustmentSection::Optics => {
                     lens_changed |= Self::show_optics(ui, app, false);
@@ -698,7 +674,12 @@ impl Sidebar {
             }
         } else {
             changed |= Self::show_basic(ui, &mut app.develop.exposure, true);
-            changed |= Self::show_tone_curve(ui, &mut app.develop.exposure, &mut app.develop_ui.tone_curve_tab, true);
+            changed |= Self::show_tone_curve(
+                ui,
+                &mut app.develop.exposure,
+                &mut app.develop_ui.tone_curve_tab,
+                true,
+            );
             changed |= Self::show_color(
                 ui,
                 &mut app.develop.exposure,
@@ -708,7 +689,7 @@ impl Sidebar {
             );
             changed |= Self::show_color_grading(
                 ui,
-                &mut app.develop.exposure.color_grading,
+                &mut app.develop.exposure,
                 &mut app.develop_ui.color_grade_tab,
                 true,
             );
@@ -716,7 +697,12 @@ impl Sidebar {
             changed |= detail_changed;
             ai_denoise_request = request;
             changed |= Self::show_presence(ui, &mut app.develop.exposure, true);
-            changed |= Self::show_hsl(ui, &mut app.develop.exposure, &mut app.develop_ui.hsl_mixer_color, true);
+            changed |= Self::show_hsl(
+                ui,
+                &mut app.develop.exposure,
+                &mut app.develop_ui.hsl_mixer_color,
+                true,
+            );
             lens_changed |= Self::show_optics(ui, app, true);
         }
 
@@ -822,25 +808,5 @@ impl Sidebar {
         if selection != previous {
             app.select_camera_profile_for_current(selection, frame);
         }
-    }
-
-    fn adjustment_section(
-        ui: &mut Ui,
-        title: &'static str,
-        default_open: bool,
-        foldable: bool,
-        contents: impl FnOnce(&mut Ui),
-    ) {
-        crate::ui::theme::content_card(ui, |ui| {
-            if foldable {
-                egui::CollapsingHeader::new(egui::RichText::new(title).strong())
-                    .default_open(default_open)
-                    .show_background(false)
-                    .show_unindented(ui, contents);
-            } else {
-                contents(ui);
-            }
-        });
-        crate::ui::theme::card_gap(ui);
     }
 }
