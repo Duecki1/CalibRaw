@@ -44,37 +44,37 @@ impl Sidebar {
         }
     }
 
-    pub(super) fn card_actions(ui: &mut Ui, title: &str, enabled: bool) -> CardAction {
+    fn card_actions(ui: &mut Ui, title: &str, visible: bool) -> (CardAction, [egui::Rect; 2]) {
         let mut action = CardAction::None;
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+        let buttons = ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             let size = egui::vec2(26.0, 26.0);
-            if crate::ui::icons::phosphor_icon_button(
+            let reset = crate::ui::icons::phosphor_icon_button(
                 ui,
                 egui_phosphor::regular::ARROW_COUNTER_CLOCKWISE,
                 size,
                 &format!("Reset {title}"),
-            )
-            .clicked()
-            {
+            );
+            if reset.clicked() {
                 action = CardAction::Reset;
             }
-            if crate::ui::icons::phosphor_icon_toggle_button(
+            // Like the topbar eye, highlight the button when edits are bypassed.
+            let eye = crate::ui::icons::phosphor_icon_toggle_button(
                 ui,
-                if enabled {
-                    egui_phosphor::regular::EYE
-                } else {
+                if visible {
                     egui_phosphor::regular::EYE_SLASH
+                } else {
+                    egui_phosphor::regular::EYE
                 },
-                enabled,
+                !visible,
                 size,
-                &format!("{} {title}", if enabled { "Hide" } else { "Show" }),
-            )
-            .clicked()
-            {
+                &format!("{} {title}", if visible { "Hide" } else { "Show" }),
+            );
+            if eye.clicked() {
                 action = CardAction::Toggle;
             }
+            [eye.rect, reset.rect]
         });
-        action
+        (action, buttons.inner)
     }
 
     pub(super) fn adjustment_card(
@@ -117,20 +117,53 @@ impl Sidebar {
                     ui.add_enabled_ui(controls_enabled, contents);
                 };
                 if foldable {
-                    egui::collapsing_header::CollapsingState::load_with_default_open(
-                        ui.ctx(),
-                        ui.make_persistent_id("expanded"),
-                        default_open,
-                    )
-                    .show_header(ui, |ui| {
-                        Self::adjustment_card_title(ui, title);
-                        action = Self::card_actions(ui, title, visible);
-                    })
-                    .body_unindented(body);
+                    let mut header_clicked = false;
+                    let mut header =
+                        egui::collapsing_header::CollapsingState::load_with_default_open(
+                            ui.ctx(),
+                            ui.make_persistent_id("expanded"),
+                            default_open,
+                        )
+                        .show_header(ui, |ui| {
+                            let available = ui.available_rect_before_wrap();
+                            Self::adjustment_card_title(ui, title);
+                            let (card_action, buttons) = Self::card_actions(ui, title, visible);
+                            action = card_action;
+                            // The built-in arrow already toggles. Make the rest of the
+                            // header clickable, excluding each action button's bounds.
+                            let mut left = available.left();
+                            for (index, right) in
+                                [buttons[0].left(), buttons[1].left(), available.right()]
+                                    .into_iter()
+                                    .enumerate()
+                            {
+                                if right > left {
+                                    let rect = egui::Rect::from_min_max(
+                                        egui::pos2(left, buttons[0].top()),
+                                        egui::pos2(right, buttons[0].bottom()),
+                                    );
+                                    header_clicked |= ui
+                                        .interact(
+                                            rect,
+                                            ui.id().with(("header", index)),
+                                            egui::Sense::click(),
+                                        )
+                                        .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                        .clicked();
+                                }
+                                if let Some(button) = buttons.get(index) {
+                                    left = button.right();
+                                }
+                            }
+                        });
+                    if header_clicked {
+                        header.toggle();
+                    }
+                    header.body_unindented(body);
                 } else {
                     ui.horizontal(|ui| {
                         Self::adjustment_card_title(ui, title);
-                        action = Self::card_actions(ui, title, visible);
+                        action = Self::card_actions(ui, title, visible).0;
                     });
                     body(ui);
                 }
@@ -170,6 +203,92 @@ mod tests {
             .iter()
             .find_map(|shape| find(&shape.shape, text))
             .expect("header text")
+    }
+
+    #[test]
+    fn header_folds_from_title_and_empty_space_but_not_action_buttons() {
+        for width in [210.0, 280.0, 400.0] {
+            for title in ["Light", "Color Grading", "Mask Properties"] {
+                let ctx = egui::Context::default();
+                ctx.style_mut(|style| style.animation_time = 0.0);
+                let mut render = |events| {
+                    let mut body_shown = false;
+                    let mut reset_count = 0;
+                    let output = ctx.run_ui(
+                        egui::RawInput {
+                            screen_rect: Some(egui::Rect::from_min_size(
+                                egui::Pos2::ZERO,
+                                egui::vec2(width, 400.0),
+                            )),
+                            events,
+                            ..Default::default()
+                        },
+                        |ui| {
+                            let action =
+                                Sidebar::adjustment_card(ui, title, false, true, true, |ui| {
+                                    body_shown = true;
+                                    ui.label("Controls");
+                                });
+                            assert!(!matches!(action, CardAction::Toggle));
+                            reset_count += usize::from(matches!(action, CardAction::Reset));
+                        },
+                    );
+                    (output, body_shown, reset_count)
+                };
+                let (output, shown, _) = render(Vec::new());
+                assert!(!shown);
+                let label = text_rect(&output.shapes, title);
+                let eye = text_rect(&output.shapes, egui_phosphor::regular::EYE_SLASH).center();
+                let reset = text_rect(
+                    &output.shapes,
+                    egui_phosphor::regular::ARROW_COUNTER_CLOCKWISE,
+                )
+                .center();
+                let blank = egui::pos2((label.right() + eye.x - 13.0) / 2.0, eye.y);
+                let arrow = egui::pos2(label.left() - ctx.style().spacing.indent / 2.0, eye.y);
+                let button_gap = eye.lerp(reset, 0.5);
+                for (target, expected_open, expected_visible, expected_resets) in [
+                    (label.center(), true, true, 0),
+                    (eye, true, false, 0),
+                    (reset, true, true, 1),
+                    (blank, false, true, 0),
+                    (eye, false, false, 0),
+                    (reset, false, true, 1),
+                    (arrow, true, true, 0),
+                    (label.center(), false, true, 0),
+                    (button_gap, true, true, 0),
+                    (arrow, false, true, 0),
+                ] {
+                    let mut resets = 0;
+                    for step in 0..4 {
+                        let mut events = vec![egui::Event::PointerMoved(target)];
+                        if matches!(step, 1 | 2) {
+                            events.push(egui::Event::PointerButton {
+                                pos: target,
+                                button: egui::PointerButton::Primary,
+                                pressed: step == 1,
+                                modifiers: egui::Modifiers::NONE,
+                            });
+                        }
+                        let (output, shown, count) = render(events);
+                        resets += count;
+                        if step == 3 {
+                            assert_eq!(shown, expected_open, "{title}, width {width}, {target:?}");
+                            assert_eq!(PreviewVisibility::visible(&ctx, title), expected_visible);
+                            text_rect(
+                                &output.shapes,
+                                if expected_visible {
+                                    egui_phosphor::regular::EYE_SLASH
+                                } else {
+                                    egui_phosphor::regular::EYE
+                                },
+                            );
+                        }
+                    }
+                    assert_eq!(resets, expected_resets);
+                }
+            }
+        }
     }
 
     #[test]
@@ -223,7 +342,7 @@ mod tests {
                     );
                     if step == 0 {
                         let title = text_rect(&output.shapes, "Light");
-                        let eye_rect = text_rect(&output.shapes, egui_phosphor::regular::EYE);
+                        let eye_rect = text_rect(&output.shapes, egui_phosphor::regular::EYE_SLASH);
                         let reset_rect = text_rect(
                             &output.shapes,
                             egui_phosphor::regular::ARROW_COUNTER_CLOCKWISE,
