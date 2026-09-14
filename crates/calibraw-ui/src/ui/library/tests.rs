@@ -88,6 +88,7 @@ fn test_asset(name: impl Into<PathBuf>) -> LibraryAsset {
             dimensions_hint: Some([6000, 4000]),
             iso_speed: 0.0,
             shutter_seconds: 0.0,
+            aperture: 0.0,
             focal_length: 0.0,
             modified_seconds: 123,
         },
@@ -288,19 +289,8 @@ fn thumbnail_background_progress_is_generation_scoped_and_deduplicated() {
 }
 
 #[test]
-fn middle_elision_is_readable() {
-    let elided = elide_middle("0123456789abcdefghij", 11);
-    assert!(elided.starts_with("01234"));
-    assert!(elided.ends_with("ghij"));
-    assert!(elided.contains('…'));
-}
-
-#[test]
 fn thumbnail_size_and_responsive_mobile_target_remain_stable() {
-    assert_eq!(
-        LibraryThumbnailSize::default(),
-        LibraryThumbnailSize::Large
-    );
+    assert_eq!(LibraryThumbnailSize::default(), LibraryThumbnailSize::Large);
     assert_eq!(LibraryThumbnailSize::Small.scale(), 1.0);
     assert!(LibraryThumbnailSize::Large.scale() > LibraryThumbnailSize::Medium.scale());
     assert_eq!(
@@ -387,10 +377,11 @@ fn thumbnail_capture_details_format_exposure_metadata() {
     asset.metadata.iso_speed = 400.0;
     asset.metadata.shutter_seconds = 1.0 / 125.0;
     asset.metadata.focal_length = 50.0;
+    asset.metadata.aperture = 2.8;
 
     assert_eq!(
         thumbnail_capture_details(&asset),
-        "ISO 400  ·  1/125 s  ·  50 mm"
+        "ISO 400  ·  1/125 s  ·  f/2.8  ·  50 mm"
     );
 }
 

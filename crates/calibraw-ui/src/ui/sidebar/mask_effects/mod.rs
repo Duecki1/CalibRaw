@@ -15,7 +15,7 @@ use super::{adjustment_slider_with_reset, MaskEffect, Ui};
 use crate::pipeline::effect_params::{ColorParamSpec, FloatParamSpec};
 use eframe::egui;
 
-fn effect_description(effect: MaskEffect) -> Option<&'static str> {
+pub(super) fn effect_description(effect: MaskEffect) -> Option<&'static str> {
     match effect {
         MaskEffect::LensBlur => {
             Some("Uses an aperture-shaped scene-linear blur for natural bokeh.")
@@ -33,43 +33,20 @@ fn effect_description(effect: MaskEffect) -> Option<&'static str> {
     }
 }
 
-fn effect_toolbar<T: Default>(ui: &mut Ui, effect: MaskEffect, settings: &mut T) -> bool {
-    let mut reset = false;
-    let help = effect_description(effect);
-    if !crate::ui::theme::is_compact_portrait(ui) {
-        crate::ui::theme::toolbar_row(ui, |ui| {
-            let title = ui.strong(format!("{} Effect", effect.label()));
-            if let Some(help) = help {
-                title.on_hover_text(help);
-            }
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                reset = crate::ui::icons::phosphor_icon_button(
-                    ui,
-                    egui_phosphor::regular::ARROW_COUNTER_CLOCKWISE,
-                    crate::ui::theme::toolbar_icon_size(),
-                    &format!("Reset {} settings", effect.label()),
-                )
-                .clicked();
-            });
-        });
-        ui.add_space(4.0);
-    } else {
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            reset = ui
-                .button(format!(
-                    "{}  Reset {} settings",
-                    egui_phosphor::regular::ARROW_COUNTER_CLOCKWISE,
-                    effect.label()
-                ))
-                .on_hover_text(format!("Reset {} settings", effect.label()))
-                .clicked();
-        });
-        ui.add_space(crate::ui::theme::SPACE_XS);
+fn effect_card_action<T: Default>(
+    action: super::adjustment_cards::CardAction,
+    settings: &mut T,
+    _enabled: &mut bool,
+) -> bool {
+    use super::adjustment_cards::CardAction;
+    match action {
+        CardAction::None => return false,
+        CardAction::Toggle => return false,
+        CardAction::Reset => {
+            *settings = T::default();
+        }
     }
-    if reset {
-        *settings = T::default();
-    }
-    reset
+    true
 }
 
 fn effect_slider(ui: &mut Ui, value: &mut f32, spec: FloatParamSpec) -> bool {
@@ -105,4 +82,56 @@ fn effect_color(
         });
     });
     changed
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::pipeline::{LocalMask, MaskKind};
+
+    #[test]
+    fn each_effect_reset_preserves_other_effects_adjustments_and_mask_state() {
+        fn modify(value: &mut serde_json::Value) {
+            match value {
+                serde_json::Value::Number(number) if number.is_f64() => {
+                    *value = serde_json::Value::from(0.25)
+                }
+                serde_json::Value::Array(values) => values.iter_mut().for_each(modify),
+                serde_json::Value::Object(values) => values.values_mut().for_each(modify),
+                _ => {}
+            }
+        }
+        let mut mask = LocalMask::new(MaskKind::Brush, 1);
+        mask.enabled = false;
+        mask.adjustments.exposure = 1.75;
+        let mut settings = serde_json::to_value(mask.effect_settings).unwrap();
+        modify(&mut settings);
+        mask.effect_settings = serde_json::from_value(settings).unwrap();
+        let before = mask;
+        macro_rules! check {
+            ($field:ident) => {{
+                let mut mask = before.clone();
+                assert!(effect_card_action(
+                    super::super::adjustment_cards::CardAction::Reset,
+                    &mut mask.effect_settings.$field,
+                    &mut mask.common.enabled
+                ));
+                let mut expected = before.clone();
+                expected.effect_settings.$field = Default::default();
+                assert_eq!(mask, expected, stringify!($field));
+            }};
+        }
+        check!(blur);
+        check!(lens_blur);
+        check!(motion_blur);
+        check!(radial_blur);
+        check!(tilt_shift);
+        check!(edge_glow);
+        check!(glow);
+        check!(light_rays);
+        check!(neon);
+        check!(pixelate);
+        check!(fog);
+        check!(smoke);
+    }
 }

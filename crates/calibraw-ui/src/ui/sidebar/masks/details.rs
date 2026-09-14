@@ -257,6 +257,10 @@ impl Sidebar {
         orientation: MaskStripOrientation,
     ) -> Option<egui::Rect> {
         let (mask_index, component_index) = app.masks.stack.ensure_selection()?;
+        crate::app::preview_visibility::PreviewVisibility::set_mask_scope(
+            ui.ctx(),
+            Some(mask_index),
+        );
 
         let vertical_section = (orientation == MaskStripOrientation::Vertical).then(|| {
             if !app.masks.stack.masks[mask_index].effect.uses_adjustments() {
@@ -292,35 +296,44 @@ impl Sidebar {
 
         {
             let mask = &mut app.masks.stack.masks[mask_index];
-            let compact_android = crate::ui::theme::is_compact_portrait(ui);
             if mask_effect_picker_visible(orientation, vertical_section) {
-                effect_changed |= Self::show_mask_effect_picker(ui, &mut mask.effect);
+                effect_changed |= Self::show_mask_effect_picker(ui, mask);
                 crate::ui::theme::card_gap(ui);
             }
 
             match orientation {
                 MaskStripOrientation::Horizontal => {
-                    Self::adjustment_section(ui, "Mask Properties", true, true, |ui| {
-                        geometry_changed |= Self::show_vertical_mask_properties(
-                            ui,
-                            mask,
-                            component_index,
-                            &mut brush_mode,
-                            (
-                                &mut request_subject,
-                                birefnet_quality,
-                                birefnet_quality_change_enabled,
-                            ),
-                            (
-                                &mut refinement_active,
-                                &mut refinement_size,
-                                &mut refinement_feather,
-                                &mut refinement_flow,
-                                &mut clear_refinement,
-                            ),
-                            &mut request_object,
-                        );
-                    });
+                    let action = Self::adjustment_card_with_enabled(
+                        ui,
+                        "Mask Properties",
+                        true,
+                        true,
+                        mask.enabled,
+                        true,
+                        |ui| {
+                            geometry_changed |= Self::show_vertical_mask_properties(
+                                ui,
+                                mask,
+                                component_index,
+                                &mut brush_mode,
+                                (
+                                    &mut request_subject,
+                                    birefnet_quality,
+                                    birefnet_quality_change_enabled,
+                                ),
+                                (
+                                    &mut refinement_active,
+                                    &mut refinement_size,
+                                    &mut refinement_feather,
+                                    &mut refinement_flow,
+                                    &mut clear_refinement,
+                                ),
+                                &mut request_object,
+                            );
+                        },
+                    );
+                    geometry_changed |=
+                        Self::apply_mask_properties_action(mask, component_index, action);
 
                     if mask.effect.uses_adjustments() {
                         edit_header_rect = Some(
@@ -341,17 +354,19 @@ impl Sidebar {
                             (MaskSection::Effects, "Effects", false),
                             (MaskSection::ColorMixer, "Color Mixer", false),
                         ] {
-                            Self::adjustment_section(ui, label, default_open, true, |ui| {
-                                let (section_changed, _) = Self::show_local_mask_adjustment_section(
-                                    ui,
-                                    &mut mask.adjustments,
-                                    section,
+                            adjustments_changed |= Self::show_local_adjustment_card(
+                                ui,
+                                &mut mask.adjustments,
+                                section,
+                                label,
+                                default_open,
+                                true,
+                                (
                                     &mut local_curve_tab,
                                     &mut local_color_grade_tab,
                                     &mut local_hsl_mixer_color,
-                                );
-                                adjustments_changed |= section_changed;
-                            });
+                                ),
+                            );
                         }
                     } else {
                         adjustments_changed |= Self::show_mask_effect_settings(ui, mask);
@@ -369,38 +384,15 @@ impl Sidebar {
                         MaskSection::ColorMixer => "Color Mixer",
                     };
                     if mask.effect.uses_adjustments() {
-                        if !compact_android {
-                            crate::ui::theme::toolbar_row(ui, |ui| {
-                                ui.strong(section_title);
-                                if mask_section != MaskSection::Properties {
-                                    ui.with_layout(
-                                        egui::Layout::right_to_left(egui::Align::Center),
-                                        |ui| {
-                                            if crate::ui::icons::phosphor_icon_button(
-                                                ui,
-                                                egui_phosphor::regular::ARROW_COUNTER_CLOCKWISE,
-                                                crate::ui::theme::toolbar_icon_size(),
-                                                "Reset local adjustments",
-                                            )
-                                            .clicked()
-                                            {
-                                                mask.adjustments.reset();
-                                                adjustments_changed = true;
-                                            }
-                                        },
-                                    );
-                                }
-                            });
-                            ui.add_space(4.0);
-                        }
-
                         match mask_section {
                             MaskSection::Properties => {
-                                Self::adjustment_section(
+                                let action = Self::adjustment_card_with_enabled(
                                     ui,
                                     "Mask Properties",
                                     true,
                                     false,
+                                    mask.enabled,
+                                    true,
                                     |ui| {
                                         geometry_changed |= Self::show_vertical_mask_properties(
                                             ui,
@@ -423,44 +415,60 @@ impl Sidebar {
                                         );
                                     },
                                 );
+                                geometry_changed |= Self::apply_mask_properties_action(
+                                    mask,
+                                    component_index,
+                                    action,
+                                );
                             }
                             section => {
-                                Self::adjustment_section(ui, section_title, true, false, |ui| {
-                                    let (section_changed, _) =
-                                        Self::show_local_mask_adjustment_section(
-                                            ui,
-                                            &mut mask.adjustments,
-                                            section,
-                                            &mut local_curve_tab,
-                                            &mut local_color_grade_tab,
-                                            &mut local_hsl_mixer_color,
-                                        );
-                                    adjustments_changed |= section_changed;
-                                });
+                                adjustments_changed |= Self::show_local_adjustment_card(
+                                    ui,
+                                    &mut mask.adjustments,
+                                    section,
+                                    section_title,
+                                    true,
+                                    false,
+                                    (
+                                        &mut local_curve_tab,
+                                        &mut local_color_grade_tab,
+                                        &mut local_hsl_mixer_color,
+                                    ),
+                                );
                             }
                         }
                     } else {
-                        Self::adjustment_section(ui, "Mask Properties", true, false, |ui| {
-                            geometry_changed |= Self::show_vertical_mask_properties(
-                                ui,
-                                mask,
-                                component_index,
-                                &mut brush_mode,
-                                (
-                                    &mut request_subject,
-                                    birefnet_quality,
-                                    birefnet_quality_change_enabled,
-                                ),
-                                (
-                                    &mut refinement_active,
-                                    &mut refinement_size,
-                                    &mut refinement_feather,
-                                    &mut refinement_flow,
-                                    &mut clear_refinement,
-                                ),
-                                &mut request_object,
-                            );
-                        });
+                        let action = Self::adjustment_card_with_enabled(
+                            ui,
+                            "Mask Properties",
+                            true,
+                            false,
+                            mask.enabled,
+                            true,
+                            |ui| {
+                                geometry_changed |= Self::show_vertical_mask_properties(
+                                    ui,
+                                    mask,
+                                    component_index,
+                                    &mut brush_mode,
+                                    (
+                                        &mut request_subject,
+                                        birefnet_quality,
+                                        birefnet_quality_change_enabled,
+                                    ),
+                                    (
+                                        &mut refinement_active,
+                                        &mut refinement_size,
+                                        &mut refinement_feather,
+                                        &mut refinement_flow,
+                                        &mut clear_refinement,
+                                    ),
+                                    &mut request_object,
+                                );
+                            },
+                        );
+                        geometry_changed |=
+                            Self::apply_mask_properties_action(mask, component_index, action);
                         adjustments_changed |= Self::show_mask_effect_settings(ui, mask);
                     }
                 }
@@ -540,6 +548,7 @@ impl Sidebar {
         if reset_all_masks_requested {
             app.reset_masks();
         }
+        crate::app::preview_visibility::PreviewVisibility::set_mask_scope(ui.ctx(), None);
         edit_header_rect
     }
 }

@@ -183,6 +183,8 @@ pub(crate) struct LibraryAssetMetadata {
     pub(crate) shutter_seconds: f32,
     #[cfg(any(not(target_os = "android"), test))]
     pub(crate) focal_length: f32,
+    #[cfg(any(not(target_os = "android"), test))]
+    pub(crate) aperture: f32,
     pub(crate) modified_seconds: u64,
 }
 
@@ -223,6 +225,8 @@ impl LibraryAsset {
                 iso_speed: 0.0,
                 shutter_seconds: 0.0,
                 focal_length: 0.0,
+                #[cfg(any(not(target_os = "android"), test))]
+                aperture: 0.0,
                 modified_seconds,
             },
         }
@@ -245,6 +249,8 @@ impl LibraryAsset {
                 shutter_seconds: 0.0,
                 #[cfg(test)]
                 focal_length: 0.0,
+                #[cfg(any(not(target_os = "android"), test))]
+                aperture: 0.0,
                 modified_seconds: document.modified_seconds,
             },
         }

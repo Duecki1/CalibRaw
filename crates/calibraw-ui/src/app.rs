@@ -438,7 +438,7 @@ pub(crate) struct LensCorrectionState {
 }
 
 impl LensCorrectionState {
-    fn from_catalog(catalog: LensfunCatalog) -> Self {
+    pub(crate) fn from_catalog(catalog: LensfunCatalog) -> Self {
         let selected = catalog.auto_match.clone();
         Self {
             enabled: catalog.available && selected.is_some(),
@@ -1520,3 +1520,5 @@ mod transactional_pipeline_tests {
         assert!(error.contains("changed type"));
     }
 }
+
+pub(crate) mod preview_visibility;

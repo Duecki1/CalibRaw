@@ -2,16 +2,18 @@ use super::*;
 
 impl CalibRawApp {
     pub(crate) fn mark_pipeline_dirty(&mut self) {
+        let preview_source = self.preview_source_raw();
         self.note_edit_changed();
         if self.preview.gpu_pipeline.is_none() {
-            self.develop.target_exposure = self.develop.exposure;
+            self.develop.target_exposure = self.preview_exposure();
             return;
         }
 
-        if let Some(stage) = affected_stage(&self.develop.target_exposure, &self.develop.exposure) {
-            self.develop.target_exposure = self.develop.exposure;
+        if let Some(stage) = affected_stage(&self.develop.target_exposure, &self.preview_exposure())
+        {
+            self.develop.target_exposure = self.preview_exposure();
             if matches!(stage, ProcessingStage::Raw) {
-                if let Some(full_raw) = self.develop.loaded_raw.as_ref() {
+                if let Some(full_raw) = preview_source.as_ref() {
                     if detail_uses_opposed_chroma(full_raw, &self.develop.target_exposure) {
                         full_raw.inpaint_opposed_chroma_for_exposure(&self.develop.target_exposure);
                     }
@@ -22,7 +24,8 @@ impl CalibRawApp {
     }
 
     pub(crate) fn apply_white_balance_area(&mut self, area: [[f32; 2]; 2]) -> bool {
-        let result = self.develop.loaded_raw.as_ref().and_then(|raw| {
+        let preview_source = self.preview_source_raw();
+        let result = preview_source.as_ref().and_then(|raw| {
             raw.white_balance_offsets_from_area(area[0], area[1], self.develop.exposure.black_point)
         });
         self.develop_ui.white_balance_picker_active = false;
@@ -43,6 +46,8 @@ impl CalibRawApp {
     }
 
     pub(in crate::app) fn advance_zoomed_processing(&mut self, frame: &eframe::Frame) {
+        let preview_masks = self.preview_mask_stack();
+        let preview_source = self.preview_source_raw();
         let Some(stage) = self.preview.detail_pending_stage else {
             return;
         };
@@ -54,7 +59,7 @@ impl CalibRawApp {
         else {
             return;
         };
-        if detail.pipeline.mask_layer_capacity() < self.masks.stack.masks.len().max(1) {
+        if detail.pipeline.mask_layer_capacity() < preview_masks.masks.len().max(1) {
             if let Some(detail) = self.preview.detail.as_mut() {
                 detail.revision = self.preview.revision.wrapping_sub(1);
             }
@@ -64,7 +69,7 @@ impl CalibRawApp {
             self.egui_ctx.request_repaint();
             return;
         }
-        let Some(full_raw) = self.develop.loaded_raw.as_ref() else {
+        let Some(full_raw) = preview_source.as_ref() else {
             self.preview.detail_pending_stage = None;
             return;
         };
@@ -84,7 +89,7 @@ impl CalibRawApp {
             full_raw.inpaint_opposed_chroma_for_exposure(&self.develop.target_exposure);
         }
         let mask_region = detail_mask_source_region(
-            &self.masks.stack,
+            &preview_masks,
             detail.source_origin,
             detail.source_size,
             full_raw.width,
@@ -92,7 +97,7 @@ impl CalibRawApp {
         );
         let params = GpuParams::new_for_tile(
             &self.develop.target_exposure,
-            &self.masks.stack,
+            &preview_masks,
             &detail_raw,
             virtual_origin[0],
             virtual_origin[1],
@@ -133,7 +138,7 @@ impl CalibRawApp {
             if let Err(error) = Self::upload_detail_masks(
                 &detail.pipeline,
                 &render_state.queue,
-                &self.masks.stack,
+                &preview_masks,
                 full_raw,
                 mask_region,
                 (!region_changed).then_some(&self.masks.detail_dirty_layers),
@@ -210,6 +215,8 @@ impl CalibRawApp {
     }
 
     pub(in crate::app) fn advance_processing(&mut self, frame: &eframe::Frame) {
+        let preview_masks = self.preview_mask_stack();
+        let preview_source = self.preview_source_raw();
         if self.preview.zoom > DETAIL_ZOOM_START {
             self.advance_zoomed_processing(frame);
             // Refresh the fitted fallback too: panning can expose any part of it.
@@ -234,10 +241,8 @@ impl CalibRawApp {
                 if !self.masks.dirty_layers[layer] {
                     continue;
                 }
-                let bytes = self
-                    .masks
-                    .stack
-                    .rasterize_layer_f16(layer, edge, edge, raw.width, raw.height);
+                let bytes =
+                    preview_masks.rasterize_layer_f16(layer, edge, edge, raw.width, raw.height);
                 if let Err(error) = pipeline.update_mask_layer(&render_state.queue, layer, &bytes) {
                     upload_error = Some(format!("Could not update local mask: {error:#}"));
                     break;
@@ -251,7 +256,7 @@ impl CalibRawApp {
             }
             if let Err(error) = pipeline.update_light_rays_mask_layers(
                 &render_state.queue,
-                &self.masks.stack,
+                &preview_masks,
                 raw.width,
                 raw.height,
             ) {
@@ -261,9 +266,9 @@ impl CalibRawApp {
             }
         }
 
-        let params = GpuParams::new(&self.develop.target_exposure, &self.masks.stack, raw)
+        let params = GpuParams::new(&self.develop.target_exposure, &preview_masks, raw)
             .with_vignette_geometry(self.develop.geometry);
-        let Some(full_raw) = self.develop.loaded_raw.as_ref() else {
+        let Some(full_raw) = preview_source.as_ref() else {
             self.preview.pending_stage = None;
             return;
         };

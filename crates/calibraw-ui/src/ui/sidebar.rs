@@ -3,10 +3,10 @@ use crate::app::{
     SidebarTab, ToneCurveTab,
 };
 use crate::pipeline::{
-    BrushMode, DenoiseQuality, ExportBitDepth, ExportFormat, ExportResizeMode, ExposureParams,
-    LoadedRaw, LocalMask, MaskCombineMode, MaskComponent, MaskEffect, MaskEffectCategory,
-    MaskGeometry, MaskKind, RetouchAlignment, MAX_LOCAL_MASKS, MAX_MASK_COMPONENTS,
-    MAX_WHITE_BALANCE_TINT, MIN_WHITE_BALANCE_TINT,
+    AdjustmentGroup, BrushMode, DenoiseQuality, ExportBitDepth, ExportFormat, ExportResizeMode,
+    ExposureParams, LoadedRaw, LocalMask, MaskCombineMode, MaskComponent, MaskEffect,
+    MaskEffectCategory, MaskGeometry, MaskKind, RetouchAlignment, MAX_LOCAL_MASKS,
+    MAX_MASK_COMPONENTS, MAX_WHITE_BALANCE_TINT, MIN_WHITE_BALANCE_TINT,
 };
 use crate::ui::components::adjustment_slider::{
     adjustment_slider, adjustment_slider_with_reset, gradient_adjustment_slider,
@@ -21,6 +21,7 @@ use eframe::egui::{self, Ui};
 
 pub(crate) struct Sidebar;
 
+mod adjustment_cards;
 mod mask_effects;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -88,12 +89,12 @@ include!("sidebar/crop.rs");
 
 #[cfg(test)]
 mod tests {
-    use eframe::egui;
     use super::masks::{mask_component_badge, mask_creation_icon};
     use super::{
         mobile_tab_icon_geometry, mobile_tab_text_geometry, MaskCardSize, MaskCombineMode,
         MaskStripOrientation,
     };
+    use eframe::egui;
 
     #[test]
     fn export_action_stays_visible_above_scrolling_settings() {

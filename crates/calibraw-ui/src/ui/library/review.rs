@@ -54,17 +54,11 @@ pub(super) fn thumbnail_hover_overlay(
             thumbnail_hover_details(asset)
         }
     });
-    for (text, size, offset, alpha) in [
-        (asset.display_name.clone(), 14.5, -48.0, 255),
-        (thumbnail_capture_details(asset), 11.5, -27.0, 205),
-        (detail, 10.5, -8.0, 175),
-    ] {
-        let size = size * scale;
-        let chars = ((rect.width() - 24.0) / (size * 0.55)).floor().max(1.0) as usize;
+    for (text, size, offset, alpha) in hover_text_lines(ui, rect, asset, detail) {
         painter.text(
             center + egui::vec2(0.0, offset * scale),
             Align2::CENTER_CENTER,
-            elide_middle(&text, chars),
+            text,
             FontId::proportional(size),
             Color32::from_white_alpha(alpha),
         );
@@ -83,6 +77,66 @@ pub(super) fn thumbnail_hover_overlay(
     change
         .filter(|_| hovered)
         .map(|change| LibraryAction::Review(vec![asset.clone()], change))
+}
+
+/// Never squeeze complete metadata into ellipses or unreadably small text.
+#[cfg(not(target_os = "android"))]
+fn hover_text_lines(
+    ui: &Ui,
+    rect: egui::Rect,
+    asset: &LibraryAsset,
+    detail: String,
+) -> Vec<(String, f32, f32, u8)> {
+    if rect.width() < 64.0 || rect.height() < 84.0 {
+        return Vec::new();
+    }
+    let fits = |text: &str, size: f32| {
+        !text.is_empty()
+            && ui
+                .painter()
+                .layout_no_wrap(text.to_owned(), FontId::proportional(size), Color32::WHITE)
+                .size()
+                .x
+                <= rect.width() - 24.0
+    };
+    let capture = thumbnail_capture_details(asset);
+    if rect.width() >= 180.0 && rect.height() >= 124.0 {
+        let lines = [
+            (asset.display_name.clone(), 14.5, -48.0, 255),
+            (capture.clone(), 11.5, -27.0, 205),
+            (detail, 10.5, -8.0, 175),
+        ];
+        let visible: Vec<_> = lines
+            .into_iter()
+            .filter(|(text, size, _, _)| fits(text, *size))
+            .collect();
+        if !visible.is_empty() {
+            return visible;
+        }
+    }
+    // Portrait thumbnails get at most one readable line. Prefer the name, then
+    // a complete capture field (aperture first) when the name cannot fit.
+    let candidates = std::iter::once(asset.display_name.clone())
+        .chain(std::iter::once(capture.clone()))
+        .chain(
+            capture
+                .split("  ·  ")
+                .skip(2)
+                .take(1)
+                .filter(|text| !text.contains('—'))
+                .map(str::to_owned),
+        )
+        .chain(
+            capture
+                .split("  ·  ")
+                .filter(|text| !text.contains('—'))
+                .map(str::to_owned),
+        );
+    candidates
+        .into_iter()
+        .find(|text| fits(text, 11.5))
+        .map(|text| vec![(text, 11.5, -20.0, 255)])
+        .unwrap_or_default()
 }
 
 pub(crate) fn paint_review_badge(ui: &Ui, rect: egui::Rect, review: PhotoReview) {
@@ -553,6 +607,51 @@ pub(super) fn apply_review(app: &mut CalibRawApp, assets: Vec<LibraryAsset>, cha
 #[cfg(all(test, not(target_os = "android")))]
 mod tests {
     use super::*;
+
+    #[test]
+    fn narrow_hover_shows_only_complete_readable_lines() {
+        let context = egui::Context::default();
+        let mut asset = LibraryAsset::from_desktop_path(
+            PathBuf::from("a-very-long-portrait-photo-filename.dng"),
+            0,
+            0,
+            None,
+        );
+        asset.metadata.aperture = 2.8;
+        let _ = context.run_ui(egui::RawInput::default(), |ui| {
+            for (width, height, max_lines) in [
+                (40.0, 180.0, 0),
+                (90.0, 180.0, 1),
+                (300.0, 60.0, 0),
+                (400.0, 180.0, 3),
+            ] {
+                let rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(width, height));
+                let lines = hover_text_lines(ui, rect, &asset, "DNG  ·  6000 × 4000".to_owned());
+                assert!(lines.len() <= max_lines);
+                for (text, size, _, _) in &lines {
+                    assert!(!text.contains('…'));
+                    assert!(*size >= 10.5);
+                    assert!(
+                        ui.painter()
+                            .layout_no_wrap(
+                                text.clone(),
+                                FontId::proportional(*size),
+                                Color32::WHITE
+                            )
+                            .size()
+                            .x
+                            <= width - 24.0
+                    );
+                }
+                if width == 90.0 {
+                    assert_eq!(lines[0].0, "f/2.8");
+                }
+                if width == 400.0 {
+                    assert!(lines.iter().any(|(text, _, _, _)| text.contains("f/2.8")));
+                }
+            }
+        });
+    }
 
     fn click_at(review: PhotoReview, pos: egui::Pos2) -> Option<LibraryAction> {
         let context = egui::Context::default();

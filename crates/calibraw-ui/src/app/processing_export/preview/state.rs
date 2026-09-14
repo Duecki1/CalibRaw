@@ -22,6 +22,7 @@ impl PreviewState {
 
 impl CalibRawApp {
     pub(in crate::app) fn preview_detail_halo(&self) -> u32 {
+        let preview_masks = self.preview_mask_stack();
         if self.preview.original_requested {
             crate::pipeline::required_export_tile_halo(
                 &self.preview.original_exposure,
@@ -30,7 +31,7 @@ impl CalibRawApp {
         } else {
             crate::pipeline::required_export_tile_halo(
                 &self.develop.target_exposure,
-                &self.masks.stack,
+                &preview_masks,
             )
         }
     }
@@ -108,6 +109,8 @@ impl CalibRawApp {
     }
 
     pub(crate) fn sync_original_preview(&mut self, frame: &eframe::Frame) {
+        let preview_masks = self.preview_mask_stack();
+        let preview_source = self.preview_source_raw();
         let requested_state = (self.preview.original_requested, self.preview.revision);
         if self.preview.original_rendered_state == Some(requested_state) {
             return;
@@ -125,9 +128,9 @@ impl CalibRawApp {
         let masks = if self.preview.original_requested {
             &empty_masks
         } else {
-            &self.masks.stack
+            &preview_masks
         };
-        if let Some(full_raw) = self.develop.loaded_raw.as_ref() {
+        if let Some(full_raw) = preview_source.as_ref() {
             if full_raw.uses_opposed_chroma(exposure) {
                 full_raw.inpaint_opposed_chroma_for_exposure(exposure);
             }
@@ -135,7 +138,7 @@ impl CalibRawApp {
         if let (Some(raw), Some(pipeline), Some(full_raw)) = (
             &self.develop.preview_raw,
             &self.preview.gpu_pipeline,
-            &self.develop.loaded_raw,
+            &preview_source,
         ) {
             let params =
                 GpuParams::new(exposure, masks, raw).with_vignette_geometry(self.develop.geometry);
@@ -156,10 +159,9 @@ impl CalibRawApp {
                 self.ui.notice = Some(format!("Could not apply Remove to preview: {error:#}"));
             }
         }
-        if let (Some(navigation), Some(full_raw)) = (
-            self.preview.navigation.as_ref(),
-            self.develop.loaded_raw.as_ref(),
-        ) {
+        if let (Some(navigation), Some(full_raw)) =
+            (self.preview.navigation.as_ref(), preview_source.as_ref())
+        {
             let params = GpuParams::new(exposure, masks, &navigation.raw)
                 .with_vignette_geometry(self.develop.geometry);
             if self.preview.original_requested {
@@ -199,7 +201,7 @@ impl CalibRawApp {
                 detail.virtual_full_size[1],
             )
             .with_vignette_geometry(self.develop.geometry);
-            if let Some(full_raw) = self.develop.loaded_raw.as_ref() {
+            if let Some(full_raw) = preview_source.as_ref() {
                 let mask_region = detail_mask_source_region(
                     masks,
                     detail.source_origin,
@@ -216,7 +218,7 @@ impl CalibRawApp {
                 detail
                     .pipeline
                     .recompute(&render_state.queue, &render_state.device, &params);
-            } else if let Some(full_raw) = self.develop.loaded_raw.as_ref() {
+            } else if let Some(full_raw) = preview_source.as_ref() {
                 if let Err(error) = detail.pipeline.recompute_with_remove(
                     &render_state.queue,
                     &render_state.device,

@@ -249,10 +249,13 @@ impl CalibRawApp {
             self.ui.notice = Some("eframe is not running with the wgpu backend.".to_owned());
             return;
         };
-        if prepared.full_raw.uses_opposed_chroma(&self.develop.exposure) {
+        if prepared
+            .full_raw
+            .uses_opposed_chroma(&self.preview_exposure())
+        {
             prepared
                 .full_raw
-                .inpaint_opposed_chroma_for_exposure(&self.develop.exposure);
+                .inpaint_opposed_chroma_for_exposure(&self.preview_exposure());
         }
 
         #[cfg(target_os = "android")]
@@ -269,8 +272,8 @@ impl CalibRawApp {
                 return;
             }
             let params = GpuParams::new(
-                &self.develop.exposure,
-                &self.masks.stack,
+                &self.preview_exposure(),
+                &self.preview_mask_stack(),
                 &prepared.preview_raw,
             )
             .with_vignette_geometry(self.develop.geometry);
@@ -281,7 +284,7 @@ impl CalibRawApp {
                 RemoveSceneContext::new(
                     &self.inpaint.edits,
                     &prepared.full_raw,
-                    &self.develop.exposure,
+                    &self.preview_exposure(),
                     [0.0, 0.0],
                     [
                         prepared.full_raw.width as f32,
@@ -307,9 +310,9 @@ impl CalibRawApp {
 
         #[cfg(not(target_os = "android"))]
         {
-            let preview_masks = self.masks.stack.clone();
+            let preview_masks = self.preview_mask_stack();
             let params = GpuParams::new(
-                &self.develop.exposure,
+                &self.preview_exposure(),
                 &preview_masks,
                 &prepared.preview_raw,
             )
@@ -345,7 +348,7 @@ impl CalibRawApp {
                 RemoveSceneContext::new(
                     &self.inpaint.edits,
                     &prepared.full_raw,
-                    &self.develop.exposure,
+                    &self.preview_exposure(),
                     [0.0, 0.0],
                     [
                         prepared.full_raw.width as f32,
@@ -392,7 +395,7 @@ impl CalibRawApp {
         self.preview.detail_pending_stage = None;
         self.preview.navigation_pending_stage = None;
         self.preview.detail_urgent = false;
-        self.develop.target_exposure = self.develop.exposure;
+        self.develop.target_exposure = self.preview_exposure();
         self.preview.pending_stage = None;
         self.develop.lens_correction.applied = prepared.applied_label.is_some();
         self.develop.lens_correction.catalog.status = prepared.applied_label.map_or_else(
@@ -400,6 +403,15 @@ impl CalibRawApp {
             |label| format!("Applied {label}"),
         );
         self.ui.notice = None;
+        if self
+            .preview_source_raw()
+            .as_ref()
+            .zip(self.develop.loaded_raw.as_ref())
+            .is_some_and(|(preview, saved)| !Arc::ptr_eq(preview, saved))
+        {
+            self.preview.quality_dirty = true;
+            crate::app::preview_visibility::PreviewVisibility::request_rebuild(&self.egui_ctx);
+        }
         self.resume_persisted_ai_denoise(frame);
         self.egui_ctx.request_repaint();
     }

@@ -289,6 +289,7 @@ pub(super) fn load_raw_display_metadata(path: &Path) -> Result<super::RawDisplay
         _ => [width, height],
     };
     Ok(super::RawDisplayMetadata {
+        aperture: finite_positive_or_zero(other.aperture),
         dimensions,
         iso_speed: finite_positive_or_zero(other.iso_speed),
         shutter_seconds: finite_positive_or_zero(other.shutter),

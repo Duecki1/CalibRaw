@@ -13,8 +13,9 @@ impl CalibRawApp {
     }
 
     pub(crate) fn preview_quality_changed(&mut self) {
+        let preview_source = self.preview_source_raw();
         self.persist_performance_settings();
-        if self.develop.loaded_raw.is_some() || self.develop.load_receiver.is_some() {
+        if preview_source.is_some() || self.develop.load_receiver.is_some() {
             self.preview.quality_dirty = true;
             self.note_preview_motion();
         }
@@ -65,13 +66,13 @@ impl CalibRawApp {
     }
 
     pub(crate) fn preview_source_region_changed(&mut self) {
+        let preview_source = self.preview_source_raw();
         if self.preview.zoom > DETAIL_ZOOM_START {
             return;
         }
-        if let (Some(full_raw), Some(preview_raw)) = (
-            self.develop.loaded_raw.as_ref(),
-            self.develop.preview_raw.as_ref(),
-        ) {
+        if let (Some(full_raw), Some(preview_raw)) =
+            (preview_source.as_ref(), self.develop.preview_raw.as_ref())
+        {
             let target = self.requested_preview_edge_for_source(full_raw);
             if preview_raw.width.max(preview_raw.height).saturating_add(5) < target {
                 self.preview.quality_dirty = true;
@@ -80,6 +81,7 @@ impl CalibRawApp {
     }
 
     pub(crate) fn set_preview_viewport_pixels(&mut self, viewport_pixels: [u32; 2]) -> bool {
+        let preview_source = self.preview_source_raw();
         if self.preview.viewport_pixels == viewport_pixels {
             return false;
         }
@@ -93,10 +95,9 @@ impl CalibRawApp {
             self.preview.quality_dirty = true;
         }
 
-        if let (Some(full_raw), Some(preview_raw)) = (
-            self.develop.loaded_raw.as_ref(),
-            self.develop.preview_raw.as_ref(),
-        ) {
+        if let (Some(full_raw), Some(preview_raw)) =
+            (preview_source.as_ref(), self.develop.preview_raw.as_ref())
+        {
             let target_edge = self.requested_preview_edge_for_source(full_raw);
             let current_edge = preview_raw.width.max(preview_raw.height);
             if current_edge.saturating_add(5) < target_edge {
@@ -168,6 +169,8 @@ impl CalibRawApp {
     }
 
     pub(in crate::app) fn poll_preview_rebuild_worker(&mut self, frame: &eframe::Frame) {
+        let preview_masks = self.preview_mask_stack();
+        let preview_source = self.preview_source_raw();
         let received = self
             .preview
             .rebuild_receiver
@@ -195,12 +198,10 @@ impl CalibRawApp {
                 return;
             }
         };
-        let source_is_current = self
-            .develop
-            .loaded_raw
+        let source_is_current = preview_source
             .as_ref()
             .is_some_and(|raw| Arc::ptr_eq(raw, &prepared.source_raw));
-        if !source_is_current || prepared.ai_enabled != self.develop.exposure.ai_denoise_enabled {
+        if !source_is_current || prepared.ai_enabled != self.preview_exposure().ai_denoise_enabled {
             self.preview.quality_dirty |= source_is_current;
             return;
         }
@@ -209,8 +210,8 @@ impl CalibRawApp {
             return;
         };
         let params = GpuParams::new(
-            &self.develop.exposure,
-            &self.masks.stack,
+            &self.preview_exposure(),
+            &preview_masks,
             &prepared.preview_raw,
         )
         .with_vignette_geometry(self.develop.geometry);
@@ -277,14 +278,14 @@ impl CalibRawApp {
         if let Err(error) = Self::upload_preview_masks(
             &pipeline,
             &render_state.queue,
-            &self.masks.stack,
+            &preview_masks,
             &prepared.preview_raw,
         ) {
             self.ui.notice = Some(error);
             self.preview.quality_dirty = false;
             return;
         }
-        if let Some(full_raw) = self.develop.loaded_raw.as_ref() {
+        if let Some(full_raw) = preview_source.as_ref() {
             if let Err(error) = pipeline.recompute_with_remove(
                 &render_state.queue,
                 &render_state.device,
@@ -292,7 +293,7 @@ impl CalibRawApp {
                 RemoveSceneContext::new(
                     &self.inpaint.edits,
                     full_raw,
-                    &self.develop.exposure,
+                    &self.preview_exposure(),
                     [0.0, 0.0],
                     [full_raw.width as f32, full_raw.height as f32],
                 ),
@@ -314,15 +315,21 @@ impl CalibRawApp {
         };
         drop(previous);
 
+        crate::app::preview_visibility::PreviewVisibility::rebuilt(&self.egui_ctx);
         self.preview.program_template = Some(pipeline.program_template());
         self.develop.preview_raw = Some(prepared.preview_raw);
         self.preview.gpu_pipeline = Some(pipeline);
         #[cfg(target_os = "android")]
         {
-            if self.develop.lens_correction.applied {
+            if self.develop.lens_correction.applied
+                && preview_source
+                    .as_ref()
+                    .zip(self.develop.loaded_raw.as_ref())
+                    .is_some_and(|(preview, saved)| Arc::ptr_eq(preview, saved))
+            {
                 if let (Some(selection), Some(full_raw), Some(preview_raw)) = (
                     self.develop.lens_correction.selected_lens(),
-                    self.develop.loaded_raw.as_ref(),
+                    preview_source.as_ref(),
                     self.develop.preview_raw.as_ref(),
                 ) {
                     self.preview.lens_corrected_cache = Some((
@@ -332,12 +339,14 @@ impl CalibRawApp {
                         Arc::clone(preview_raw),
                     ));
                 }
-            } else if let Some(preview_raw) = self.develop.preview_raw.as_ref() {
-                self.preview.lens_original_cache =
-                    Some((prepared.quality, Arc::clone(preview_raw)));
+            } else if !self.develop.lens_correction.applied {
+                if let Some(preview_raw) = self.develop.preview_raw.as_ref() {
+                    self.preview.lens_original_cache =
+                        Some((prepared.quality, Arc::clone(preview_raw)));
+                }
             }
         }
-        self.develop.target_exposure = self.develop.exposure;
+        self.develop.target_exposure = self.preview_exposure();
         self.preview.pending_stage = None;
         self.preview.detail_pending_stage = None;
         self.preview.navigation_pending_stage = None;
@@ -347,7 +356,7 @@ impl CalibRawApp {
         self.masks.navigation_dirty_layers.fill(false);
         self.preview.revision = self.preview.revision.wrapping_add(1);
         self.preview.motion_at = (self.preview.zoom > DETAIL_ZOOM_START).then(Instant::now);
-        if let (Some(full), Some(preview)) = (&self.develop.loaded_raw, &self.develop.preview_raw) {
+        if let (Some(full), Some(preview)) = (&preview_source, &self.develop.preview_raw) {
             self.develop.image_status = format!(
                 "{} {} — full {}×{}, preview {}×{} ({})",
                 full.camera_make,
@@ -378,6 +387,7 @@ impl CalibRawApp {
     }
 
     pub(in crate::app) fn apply_pending_preview_quality(&mut self, _frame: &eframe::Frame) {
+        let preview_source = self.preview_source_raw();
         if self.preview.rebuild_receiver.is_some() {
             return;
         }
@@ -391,23 +401,25 @@ impl CalibRawApp {
         if self.foreground_operation_is(ForegroundOperationKind::AiDenoise) {
             return;
         }
-        let Some(source_raw) = self.develop.loaded_raw.as_ref().map(Arc::clone) else {
+        let Some(source_raw) = preview_source.as_ref().map(Arc::clone) else {
             self.preview.quality_dirty = false;
             return;
         };
         let requested_edge = self.requested_preview_edge_for_source(&source_raw);
         let quality = self.preview.quality;
-        let ai_enabled = self.develop.exposure.ai_denoise_enabled;
+        let ai_enabled = self.preview_exposure().ai_denoise_enabled;
 
-        let current_is_sufficient = self
-            .develop
-            .preview_raw
-            .as_ref()
-            .zip(self.preview.gpu_pipeline.as_ref())
-            .is_some_and(|(raw, pipeline)| {
-                raw.width.max(raw.height).saturating_add(5) >= requested_edge
-                    && pipeline.immutable_ai_source_matches(source_raw.cfa_kind, ai_enabled)
-            });
+        let current_is_sufficient =
+            !crate::app::preview_visibility::PreviewVisibility::requires_rebuild(&self.egui_ctx)
+                && self
+                    .develop
+                    .preview_raw
+                    .as_ref()
+                    .zip(self.preview.gpu_pipeline.as_ref())
+                    .is_some_and(|(raw, pipeline)| {
+                        raw.width.max(raw.height).saturating_add(5) >= requested_edge
+                            && pipeline.immutable_ai_source_matches(source_raw.cfa_kind, ai_enabled)
+                    });
         if current_is_sufficient {
             self.preview.quality_dirty = false;
             return;

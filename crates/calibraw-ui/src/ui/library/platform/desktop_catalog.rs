@@ -201,6 +201,7 @@ pub(in crate::ui::library) fn scan_folder_with_limit(
                 asset.metadata.iso_speed = metadata.iso_speed;
                 asset.metadata.shutter_seconds = metadata.shutter_seconds;
                 asset.metadata.focal_length = metadata.focal_length;
+                asset.metadata.aperture = metadata.aperture;
             }
         }
     }

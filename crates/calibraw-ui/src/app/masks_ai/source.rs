@@ -57,8 +57,12 @@ impl CalibRawApp {
             GpuParams::new(&self.preview.original_exposure, &reference_masks, raw)
                 .with_vignette_geometry(self.develop.geometry)
         } else {
-            GpuParams::new(&self.develop.target_exposure, &self.masks.stack, raw)
-                .with_vignette_geometry(self.develop.geometry)
+            GpuParams::new(
+                &self.develop.target_exposure,
+                &self.preview_mask_stack(),
+                raw,
+            )
+            .with_vignette_geometry(self.develop.geometry)
         };
         let preview_restore = if self.preview.original_requested {
             pipeline.recompute(&render_state.queue, &render_state.device, &restore_params);
