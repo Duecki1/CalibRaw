@@ -36,7 +36,7 @@ impl Sidebar {
                     state.applied = false;
                 }
 
-                ui.add_space(2.0);
+                ui.add_space(crate::ui::theme::SPACE_XXS);
                 egui::Grid::new("lens-correction-capture-metadata")
                     .num_columns(2)
                     .spacing(egui::vec2(10.0, 3.0))
@@ -65,7 +65,7 @@ impl Sidebar {
                         }
                     });
 
-                ui.add_space(4.0);
+                ui.add_space(crate::ui::theme::SPACE_XS);
                 let makers = state.makers();
                 let previous_maker = state.selected_maker.clone();
                 ui.add_enabled_ui(
@@ -527,9 +527,9 @@ impl Sidebar {
             ai_response.on_hover_text(
                 "Runs the pinned darktable-ai RawNIND model locally. Bayer uses joint denoise/demosaic; X-Trans uses the linear Rec.2020 variant.",
             );
-            ui.add_space(4.0);
+            ui.add_space(crate::ui::theme::SPACE_XS);
             ui.separator();
-            ui.add_space(4.0);
+            ui.add_space(crate::ui::theme::SPACE_XS);
             crate::ui::theme::strong_with_help(
                 ui,
                 "Noise reduction",
@@ -595,9 +595,9 @@ impl Sidebar {
                 );
                 changed |= previous_quality != exposure.denoise_quality;
             });
-            ui.add_space(8.0);
+            ui.add_space(crate::ui::theme::SPACE_SM);
             ui.separator();
-            ui.add_space(4.0);
+            ui.add_space(crate::ui::theme::SPACE_XS);
             crate::ui::theme::strong_with_help(
                 ui,
                 "Capture sharpening",

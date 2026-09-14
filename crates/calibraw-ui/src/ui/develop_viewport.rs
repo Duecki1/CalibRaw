@@ -125,7 +125,7 @@ fn show_top_controls(
             ui.set_clip_rect(top);
             egui::Frame::new()
                 .fill(ui.visuals().panel_fill.gamma_multiply(0.92))
-                .inner_margin(egui::Margin::symmetric(8, 6))
+                .inner_margin(egui::Margin::symmetric(crate::ui::theme::SPACE_SM as i8, 6))
                 .show(ui, |ui| TopBar::show_portrait(ui, app, frame));
         });
 }

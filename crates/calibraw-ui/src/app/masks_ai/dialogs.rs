@@ -15,14 +15,11 @@ impl CalibRawApp {
                 (false, true) => "Download ONNX Runtime?",
                 (false, false) => "Prepare subject selection?",
             };
-            crate::ui::responsive_popup(
+            crate::ui::theme::dialog_window(
                 egui::Window::new(title),
                 ctx,
-                520.0,
+                crate::ui::theme::DIALOG_WIDTH_LARGE,
             )
-                .collapsible(false)
-                .resizable(false)
-                .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
                 .show(ctx, |ui| {
                     if model_download_needed {
                         ui.strong("Subject-selection model");
@@ -72,11 +69,15 @@ impl CalibRawApp {
                             "Manual runtime mode needs a trusted local ONNX Runtime library. Select one in Settings or switch to Automatic.",
                         );
                     }
-                    ui.add_space(8.0);
-                    ui.horizontal(|ui| {
-                        if ui.button("Consent, download and continue").clicked()
-                            && self.ai_runtime_ready()
-                        {
+                    match crate::ui::theme::dialog_confirmation_buttons(
+                        ui,
+                        "Cancel",
+                        "Consent, download and continue",
+                        self.ai_runtime_ready(),
+                        false,
+                        crate::ui::theme::DialogKeyboard::CLOSE_ONLY,
+                    ) {
+                        crate::ui::theme::DialogAction::Confirm => {
                             self.ai.runtime_download_consent_pending = false;
                             self.ai.subject_consent_open = false;
                             self.start_subject_worker(
@@ -84,14 +85,15 @@ impl CalibRawApp {
                                 model_download_needed,
                             );
                         }
-                        if ui.button("Cancel").clicked() {
+                        crate::ui::theme::DialogAction::Cancel => {
                             self.ai.runtime_download_consent_pending = false;
                             self.ai.subject_consent_open = false;
                             if self.ai.mask_update_active {
                                 self.cancel_ai_mask_update();
                             }
                         }
-                    });
+                        crate::ui::theme::DialogAction::None => {}
+                    }
                 });
         }
 
@@ -106,14 +108,11 @@ impl CalibRawApp {
                 (false, true) => "Download ONNX Runtime?",
                 (false, false) => "Prepare object selection?",
             };
-            crate::ui::responsive_popup(
+            crate::ui::theme::dialog_window(
                 egui::Window::new(title),
                 ctx,
-                520.0,
+                crate::ui::theme::DIALOG_WIDTH_LARGE,
             )
-                .collapsible(false)
-                .resizable(false)
-                .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
                 .show(ctx, |ui| {
                     ui.label("Object masks use SAM 2.1 Hiera Tiny with local edge-aware cleanup.");
                     if model_download_needed {
@@ -155,11 +154,15 @@ impl CalibRawApp {
                             "Manual runtime mode needs a trusted local ONNX Runtime library. Select one in Settings or switch to Automatic.",
                         );
                     }
-                    ui.add_space(8.0);
-                    ui.horizontal(|ui| {
-                        if ui.button("Consent, download and continue").clicked()
-                            && self.ai_runtime_ready()
-                        {
+                    match crate::ui::theme::dialog_confirmation_buttons(
+                        ui,
+                        "Cancel",
+                        "Consent, download and continue",
+                        self.ai_runtime_ready(),
+                        false,
+                        crate::ui::theme::DialogKeyboard::CLOSE_ONLY,
+                    ) {
+                        crate::ui::theme::DialogAction::Confirm => {
                             self.ai.runtime_download_consent_pending = false;
                             self.ai.object_consent_open = false;
                             if let Some((mask_index, component_index)) = self.ai.object_pending_target.take() {
@@ -167,7 +170,7 @@ impl CalibRawApp {
                                 self.start_object_worker(mask_index, component_index, encoder, decoder, model_download_needed);
                             }
                         }
-                        if ui.button("Cancel").clicked() {
+                        crate::ui::theme::DialogAction::Cancel => {
                             self.ai.runtime_download_consent_pending = false;
                             self.ai.object_consent_open = false;
                             self.ai.object_pending_target = None;
@@ -175,20 +178,31 @@ impl CalibRawApp {
                                 self.cancel_ai_mask_update();
                             }
                         }
-                    });
+                        crate::ui::theme::DialogAction::None => {}
+                    }
                 });
         }
 
         if let Some(message) = self.ai.object_error_dialog.clone() {
             let mut close = false;
-            crate::ui::responsive_popup(egui::Window::new("AI mask failed"), ctx, 420.0)
-                .collapsible(false)
+            crate::ui::theme::dialog_window(
+                egui::Window::new("AI mask failed"),
+                ctx,
+                crate::ui::theme::DIALOG_WIDTH_DEFAULT,
+            )
                 .resizable(true)
-                .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
                 .show(ctx, |ui| {
                     ui.label(message);
-                    ui.add_space(8.0);
-                    if ui.button("Close").clicked() {
+                    crate::ui::theme::dialog_button_row(ui, |ui| {
+                        close |= crate::ui::theme::secondary_button(ui, "Close").clicked();
+                    });
+                    if !close
+                        && crate::ui::theme::dialog_keyboard_action(
+                            ui,
+                            crate::ui::theme::DialogKeyboard::CLOSE_ONLY,
+                            false,
+                        ) == crate::ui::theme::DialogAction::Cancel
+                    {
                         close = true;
                     }
                 });

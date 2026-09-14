@@ -40,7 +40,22 @@ enum MaskRenameTarget {
 struct MaskRenameDialog {
     target: MaskRenameTarget,
     name: String,
-    request_focus: bool,
+    focus_requested: bool,
+}
+
+#[derive(Clone, Debug)]
+enum MaskDeleteTarget {
+    Group(usize),
+    Component {
+        mask_index: usize,
+        component_index: usize,
+    },
+}
+
+#[derive(Clone, Debug)]
+struct MaskDeleteDialog {
+    target: MaskDeleteTarget,
+    name: String,
 }
 
 #[derive(Clone)]

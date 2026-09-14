@@ -81,7 +81,7 @@ pub(crate) fn effect_color_picker(
                     });
                 });
 
-                ui.add_space(4.0);
+                ui.add_space(crate::ui::theme::SPACE_XS);
                 ui.label(RichText::new("Saturation / brightness").weak());
                 let plane = ui
                     .vertical_centered(|ui| {
@@ -99,7 +99,7 @@ pub(crate) fn effect_color_picker(
                     changed = true;
                 }
 
-                ui.add_space(2.0);
+                ui.add_space(crate::ui::theme::SPACE_XXS);
                 ui.label(RichText::new("Hue").weak());
                 let hue = hue_slider(ui, &mut state.hue);
                 if hue.changed() {
@@ -107,10 +107,10 @@ pub(crate) fn effect_color_picker(
                     changed = true;
                 }
 
-                ui.add_space(4.0);
+                ui.add_space(crate::ui::theme::SPACE_XS);
                 selected_color_row(ui, *color);
 
-                ui.add_space(2.0);
+                ui.add_space(crate::ui::theme::SPACE_XXS);
                 if ui
                     .add_sized(
                         [ui.available_width(), crate::ui::theme::CONTROL_HEIGHT],

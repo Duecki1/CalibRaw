@@ -544,11 +544,12 @@ impl CalibRawApp {
         #[cfg(target_os = "android")]
         let replay = false;
         let window_title = if replay { "Creating Edit Replay" } else { "Exporting" };
-        crate::ui::responsive_popup(egui::Window::new(window_title), ctx, 430.0)
+        crate::ui::theme::dialog_window(
+            egui::Window::new(window_title),
+            ctx,
+            crate::ui::theme::DIALOG_WIDTH_DEFAULT,
+        )
             .id(egui::Id::new("active-export-progress"))
-            .collapsible(false)
-            .resizable(false)
-            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
             .show(ctx, |ui| {
                 if replay {
                     ui.label(egui::RichText::new("Creating edit replay").strong());
@@ -578,18 +579,27 @@ impl CalibRawApp {
                             .color(ui.visuals().weak_text_color()),
                     );
                 }
-                ui.add_space(8.0);
-                ui.horizontal(|ui| {
-                    if ui.button("Minimize").clicked() {
+                crate::ui::theme::dialog_button_row(ui, |ui| {
+                    if crate::ui::theme::secondary_button(ui, "Minimize").clicked() {
                         minimize = true;
                     }
-                    if ui
-                        .add_enabled(!cancelling, egui::Button::new("Cancel"))
-                        .clicked()
-                    {
-                        cancel = true;
-                    }
+                    cancel |= ui
+                        .add_enabled_ui(!cancelling, |ui| {
+                            crate::ui::theme::secondary_button(ui, "Cancel")
+                        })
+                        .inner
+                        .clicked();
                 });
+                if !cancel
+                    && !cancelling
+                    && crate::ui::theme::dialog_keyboard_action(
+                        ui,
+                        crate::ui::theme::DialogKeyboard::CLOSE_ONLY,
+                        false,
+                    ) == crate::ui::theme::DialogAction::Cancel
+                {
+                    cancel = true;
+                }
             });
         if minimize {
             self.minimize_export_task();

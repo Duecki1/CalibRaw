@@ -643,6 +643,7 @@ struct LibraryFolderNameDialog {
     kind: LibraryFolderNameDialogKind,
     name: String,
     error: Option<String>,
+    focus_requested: bool,
 }
 
 struct LibraryRawNameDialog {

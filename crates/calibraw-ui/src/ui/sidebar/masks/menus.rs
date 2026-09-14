@@ -61,7 +61,6 @@ impl Sidebar {
         geometry_changed: &mut bool,
         duplicate_mask: &mut Option<(usize, bool)>,
         paste_mask: &mut Option<usize>,
-        remove_mask: &mut Option<usize>,
         mask_index: usize,
     ) {
         if ui.button("Rename…").clicked() {
@@ -113,14 +112,17 @@ impl Sidebar {
             ui.close();
         }
         ui.separator();
-        if ui
-            .button(format!(
-                "{}  Delete mask group",
-                egui_phosphor::regular::TRASH
-            ))
-            .clicked()
+        if crate::ui::theme::destructive_menu_item(
+            ui,
+            format!("{}  Delete mask group", egui_phosphor::regular::TRASH),
+        )
+        .clicked()
         {
-            *remove_mask = Some(mask_index);
+            Self::open_mask_delete_dialog(
+                ui.ctx(),
+                MaskDeleteTarget::Group(mask_index),
+                mask.name.clone(),
+            );
             ui.close();
         }
     }
@@ -134,7 +136,6 @@ impl Sidebar {
         geometry_changed: &mut bool,
         duplicate_component: &mut Option<(usize, usize, bool)>,
         paste_component: &mut Option<(usize, usize)>,
-        remove_component: &mut Option<usize>,
         mask_index: usize,
         component_index: usize,
     ) {
@@ -191,17 +192,24 @@ impl Sidebar {
         }
         ui.separator();
         if ui
-            .add_enabled(
-                can_delete,
-                egui::Button::new(format!(
-                    "{}  Delete sub-mask",
-                    egui_phosphor::regular::TRASH
-                )),
-            )
+            .add_enabled_ui(can_delete, |ui| {
+                crate::ui::theme::destructive_menu_item(
+                    ui,
+                    format!("{}  Delete sub-mask", egui_phosphor::regular::TRASH),
+                )
+            })
+            .inner
             .on_disabled_hover_text("A mask group must contain at least one sub-mask")
             .clicked()
         {
-            *remove_component = Some(component_index);
+            Self::open_mask_delete_dialog(
+                ui.ctx(),
+                MaskDeleteTarget::Component {
+                    mask_index,
+                    component_index,
+                },
+                component.name.clone(),
+            );
             ui.close();
         }
     }
@@ -216,6 +224,10 @@ impl Sidebar {
 
     fn mask_rename_dialog_id() -> egui::Id {
         egui::Id::new("mask-rename-dialog-state")
+    }
+
+    fn mask_delete_dialog_id() -> egui::Id {
+        egui::Id::new("mask-delete-dialog-state")
     }
 
     fn copied_mask_group(ctx: &egui::Context) -> Option<LocalMask> {
@@ -233,8 +245,17 @@ impl Sidebar {
                 MaskRenameDialog {
                     target,
                     name,
-                    request_focus: true,
+                    focus_requested: false,
                 },
+            );
+        });
+    }
+
+    fn open_mask_delete_dialog(ctx: &egui::Context, target: MaskDeleteTarget, name: String) {
+        ctx.data_mut(|data| {
+            data.insert_temp(
+                Self::mask_delete_dialog_id(),
+                MaskDeleteDialog { target, name },
             );
         });
     }
@@ -252,36 +273,31 @@ impl Sidebar {
         };
         let mut save = false;
         let mut cancel = false;
-        crate::ui::responsive_popup(egui::Window::new(title), ctx, 360.0)
+        crate::ui::theme::dialog_window(
+            egui::Window::new(title),
+            ctx,
+            crate::ui::theme::DIALOG_WIDTH_NARROW,
+        )
             .id(egui::Id::new("mask-rename-dialog-window"))
-            .collapsible(false)
-            .resizable(false)
-            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
             .show(ctx, |ui| {
                 let response = ui.add_sized(
                     [ui.available_width(), ui.spacing().interact_size.y],
                     crate::ui::theme::singleline_text_edit(&mut dialog.name),
                 );
-                if dialog.request_focus {
-                    response.request_focus();
-                    dialog.request_focus = false;
-                }
+                crate::ui::theme::request_initial_focus(&response, &mut dialog.focus_requested);
                 let trimmed_is_empty = dialog.name.trim().is_empty();
-                let enter_pressed = ui.input(|input| input.key_pressed(egui::Key::Enter));
-                let escape_pressed = ui.input(|input| input.key_pressed(egui::Key::Escape));
-                ui.add_space(8.0);
-                ui.horizontal(|ui| {
-                    if ui
-                        .add_enabled(!trimmed_is_empty, egui::Button::new("Rename"))
-                        .clicked()
-                        || (enter_pressed && !trimmed_is_empty)
-                    {
-                        save = true;
-                    }
-                    if ui.button("Cancel").clicked() || escape_pressed {
-                        cancel = true;
-                    }
-                });
+                match crate::ui::theme::dialog_confirmation_buttons(
+                    ui,
+                    "Cancel",
+                    "Rename",
+                    !trimmed_is_empty,
+                    false,
+                    crate::ui::theme::DialogKeyboard::CONFIRM_ON_ENTER,
+                ) {
+                    crate::ui::theme::DialogAction::Cancel => cancel = true,
+                    crate::ui::theme::DialogAction::Confirm => save = true,
+                    crate::ui::theme::DialogAction::None => {}
+                }
             });
 
         if save {
@@ -311,6 +327,90 @@ impl Sidebar {
             ctx.data_mut(|data| data.remove::<MaskRenameDialog>(Self::mask_rename_dialog_id()));
         } else {
             ctx.data_mut(|data| data.insert_temp(Self::mask_rename_dialog_id(), dialog));
+        }
+    }
+
+    pub(super) fn show_mask_delete_dialog(ui: &mut Ui, app: &mut CalibRawApp) {
+        let ctx = ui.ctx().clone();
+        let Some(dialog) =
+            ctx.data(|data| data.get_temp::<MaskDeleteDialog>(Self::mask_delete_dialog_id()))
+        else {
+            return;
+        };
+
+        let (title, message, confirm_label) = match &dialog.target {
+            MaskDeleteTarget::Group(_) => (
+                "Delete mask group?",
+                format!("Delete the mask group “{}”?", dialog.name),
+                "Delete Group",
+            ),
+            MaskDeleteTarget::Component { .. } => (
+                "Delete sub-mask?",
+                format!("Delete the sub-mask “{}”?", dialog.name),
+                "Delete Sub-mask",
+            ),
+        };
+        let mut action = crate::ui::theme::DialogAction::None;
+        crate::ui::theme::dialog_window(
+            egui::Window::new(title),
+            &ctx,
+            crate::ui::theme::DIALOG_WIDTH_NARROW,
+        )
+        .id(egui::Id::new("mask-delete-dialog-window"))
+        .show(&ctx, |ui| {
+            ui.label(message);
+            action = crate::ui::theme::dialog_confirmation_buttons(
+                ui,
+                "Cancel",
+                confirm_label,
+                true,
+                true,
+                crate::ui::theme::DialogKeyboard::CLOSE_ONLY,
+            );
+        });
+
+        match action {
+            crate::ui::theme::DialogAction::Cancel => {
+                ctx.data_mut(|data| {
+                    data.remove::<MaskDeleteDialog>(Self::mask_delete_dialog_id());
+                });
+            }
+            crate::ui::theme::DialogAction::Confirm => {
+                let changed = match dialog.target {
+                    MaskDeleteTarget::Group(mask_index) => {
+                        if app.masks.stack.delete_mask(mask_index) {
+                            app.mark_all_mask_layers_dirty();
+                            app.sync_selected_mask_tool();
+                            true
+                        } else {
+                            false
+                        }
+                    }
+                    MaskDeleteTarget::Component {
+                        mask_index,
+                        component_index,
+                    } => {
+                        if app
+                            .masks
+                            .stack
+                            .delete_component(mask_index, component_index)
+                        {
+                            app.mark_mask_geometry_dirty(mask_index);
+                            app.sync_selected_mask_tool();
+                            true
+                        } else {
+                            false
+                        }
+                    }
+                };
+                ctx.data_mut(|data| {
+                    data.remove::<MaskDeleteDialog>(Self::mask_delete_dialog_id());
+                });
+                if changed {
+                    Self::refresh_mask_thumbnails(ui, app);
+                }
+            }
+            crate::ui::theme::DialogAction::None => {}
         }
     }
 

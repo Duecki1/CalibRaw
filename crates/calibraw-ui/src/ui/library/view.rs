@@ -93,7 +93,7 @@ impl Library {
         let mut open_asset: Option<LibraryAsset> = None;
         let mut library_action = None;
 
-        let compact_header = ui.available_width() < 520.0;
+        let compact_header = ui.available_width() < crate::ui::theme::COMPACT_WIDTH_BREAKPOINT;
         let mut selected_sort = app.library.sort_order();
         let mut selected_size = app.library.thumbnail_size();
         let mut selected_filter = app.library.review_filter;
@@ -101,7 +101,7 @@ impl Library {
         crate::ui::theme::card_header(ui, |ui| {
             crate::ui::theme::toolbar_row(ui, |ui| {
                 if compact_header {
-                    ui.spacing_mut().item_spacing.x = 4.0;
+                    ui.spacing_mut().item_spacing.x = crate::ui::theme::SPACE_XS;
                 }
                 if !app.library.folder_sidebar_open()
                     && crate::ui::icons::phosphor_icon_button(

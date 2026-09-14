@@ -30,7 +30,7 @@ pub(super) fn show_library_folder_node(
 
     ui.push_id(&node.path, |ui| {
         ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = 4.0;
+            ui.spacing_mut().item_spacing.x = crate::ui::theme::SPACE_XS;
             let disclosure_size = egui::vec2(26.0, crate::ui::theme::CONTROL_HEIGHT);
             if has_children {
                 let caret = if expanded {
@@ -211,6 +211,7 @@ pub(super) fn apply_library_folder_ui_action(
                 kind: LibraryFolderNameDialogKind::Create { parent },
                 name: String::new(),
                 error: None,
+                focus_requested: false,
             });
         }
         LibraryFolderUiAction::Copy(path) => {
@@ -306,6 +307,7 @@ pub(super) fn apply_library_folder_ui_action(
                 kind: LibraryFolderNameDialogKind::Rename { source },
                 name,
                 error: None,
+                focus_requested: false,
             });
         }
         LibraryFolderUiAction::Delete(path) => {

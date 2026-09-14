@@ -253,14 +253,11 @@ impl CalibRawApp {
             (false, true) => "Download ONNX Runtime?",
             (false, false) => "Prepare Remove?",
         };
-        crate::ui::responsive_popup(
+        crate::ui::theme::dialog_window(
             egui::Window::new(title),
             ctx,
-            520.0,
+            crate::ui::theme::DIALOG_WIDTH_LARGE,
         )
-        .collapsible(false)
-        .resizable(false)
-        .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
         .show(ctx, |ui| {
             ui.label("Remove uses the Big-LaMa Places2 ONNX inpainting model for local context repair.");
             if model_download_needed {
@@ -307,11 +304,15 @@ impl CalibRawApp {
                     "Manual runtime mode needs a trusted local ONNX Runtime library. Select one in Settings or switch to Automatic.",
                 );
             }
-            ui.add_space(8.0);
-            ui.horizontal(|ui| {
-                if ui.button("Consent, download and continue").clicked()
-                    && self.ai_runtime_ready()
-                {
+            match crate::ui::theme::dialog_confirmation_buttons(
+                ui,
+                "Cancel",
+                "Consent, download and continue",
+                self.ai_runtime_ready(),
+                false,
+                crate::ui::theme::DialogKeyboard::CLOSE_ONLY,
+            ) {
+                crate::ui::theme::DialogAction::Confirm => {
                     self.ai.runtime_download_consent_pending = false;
                     self.inpaint.model_consent_open = false;
                     if let Some(brush) = self.inpaint.pending_brush.take() {
@@ -324,14 +325,15 @@ impl CalibRawApp {
                         );
                     }
                 }
-                if ui.button("Cancel").clicked() {
+                crate::ui::theme::DialogAction::Cancel => {
                     self.ai.runtime_download_consent_pending = false;
                     self.inpaint.model_consent_open = false;
                     self.inpaint.pending_brush = None;
                     self.inpaint.pending_retouch = None;
                     self.inpaint.last_brush_uv = None;
                 }
-            });
+                crate::ui::theme::DialogAction::None => {}
+            }
         });
     }
 

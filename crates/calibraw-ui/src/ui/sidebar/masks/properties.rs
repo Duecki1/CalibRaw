@@ -131,7 +131,7 @@ impl Sidebar {
             enabled_before,
             true,
             |ui| {
-                ui.add_space(4.0);
+                ui.add_space(crate::ui::theme::SPACE_XS);
                 egui::ComboBox::from_id_salt("mask-effect-picker")
                     .selected_text(effect.label())
                     .width(ui.available_width())
@@ -336,7 +336,7 @@ impl Sidebar {
             return geometry_changed;
         };
 
-        ui.add_space(4.0);
+        ui.add_space(crate::ui::theme::SPACE_XS);
         ui.scope(|ui| {
             let is_fullscreen = matches!(&component.geometry, MaskGeometry::Fullscreen);
             ui.horizontal_wrapped(|ui| {
@@ -642,7 +642,7 @@ impl Sidebar {
                         Some("Controls the hard-edged selection brush. Its on-screen size stays constant while zooming for finer detail."),
                         0.055,
                     );
-                    ui.add_space(4.0);
+                    ui.add_space(crate::ui::theme::SPACE_XS);
                     geometry_changed |= Self::mask_grow_slider(ui, grow);
                     geometry_changed |= Self::mask_feather_slider(
                         ui,
