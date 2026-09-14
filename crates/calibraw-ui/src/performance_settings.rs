@@ -8,6 +8,8 @@ const MAX_SETTINGS_BYTES: u64 = 64 * 1024;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub(crate) struct PerformanceSettings {
+    #[serde(default)]
+    pub develop_histogram_open: bool,
     #[serde(default = "settings_version")]
     pub version: u32,
     #[serde(default = "default_raw_cache_files")]
@@ -156,6 +158,7 @@ const fn default_true() -> bool {
 impl Default for PerformanceSettings {
     fn default() -> Self {
         Self {
+            develop_histogram_open: false,
             version: SETTINGS_VERSION,
             raw_cache_files: default_raw_cache_files(),
             thumbnail_workers: default_thumbnail_workers(),
@@ -363,6 +366,7 @@ mod tests {
     #[test]
     fn invalid_values_are_clamped() {
         let settings = PerformanceSettings {
+            develop_histogram_open: true,
             version: 99,
             raw_cache_files: usize::MAX,
             thumbnail_workers: 0,
@@ -480,6 +484,7 @@ mod tests {
         assert_eq!(settings.preview_quality, crate::app::PreviewQuality::Medium);
         assert!(!settings.image_relative_brush_size);
         assert!(!settings.show_develop_navigation_labels);
+        assert!(!settings.develop_histogram_open);
         assert_eq!(
             settings.export_name_template,
             crate::export_naming::DEFAULT_EXPORT_NAME_TEMPLATE
@@ -527,6 +532,7 @@ mod tests {
     #[test]
     fn library_preferences_round_trip() {
         let mut settings = PerformanceSettings {
+            develop_histogram_open: true,
             library_thumbnail_size: crate::ui::library::LibraryThumbnailSize::Enormous,
             library_sort_order: crate::ui::library::LibrarySortOrder::SmallestFirst,
             birefnet_quality: crate::ai_masks::BiRefNetQuality::High,
@@ -568,6 +574,7 @@ mod tests {
         );
         assert!(restored.image_relative_brush_size);
         assert!(restored.show_develop_navigation_labels);
+        assert!(restored.develop_histogram_open);
         assert_eq!(
             restored.export_name_template,
             "{OriginalName}-{CurrentDate}"
