@@ -132,11 +132,13 @@ impl Sidebar {
             true,
             |ui| {
                 ui.add_space(crate::ui::theme::SPACE_XS);
-                egui::ComboBox::from_id_salt("mask-effect-picker")
-                    .selected_text(effect.label())
-                    .width(ui.available_width())
-                    .height(ui.ctx().content_rect().height())
-                    .show_ui(ui, |ui| {
+                crate::ui::theme::responsive_combo_box(
+                    ui,
+                    "mask-effect-picker",
+                    effect.label(),
+                    ui.available_width().max(1.0),
+                    1 + MaskEffectCategory::ALL.len(),
+                    |ui| {
                         ui.set_min_width(190.0);
                         if ui
                             .selectable_label(*effect == MaskEffect::Adjustment, "Adjustment")
@@ -167,7 +169,8 @@ impl Sidebar {
                                 }
                             });
                         }
-                    });
+                    },
+                );
             },
         );
         match action {

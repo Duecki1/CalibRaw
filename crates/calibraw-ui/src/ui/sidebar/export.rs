@@ -4,7 +4,9 @@ fn show_export_action_panel<R>(
 ) -> egui::InnerResponse<R> {
     egui::Panel::bottom("develop-export-action")
         .resizable(false)
-        .exact_size(crate::ui::theme::CONTROL_HEIGHT + 16.0)
+        .exact_size(
+            crate::ui::theme::CONTROL_HEIGHT + 2.0 * crate::ui::theme::SPACE_SM,
+        )
         .frame(
             egui::Frame::new()
                 .fill(ui.visuals().panel_fill)
@@ -37,7 +39,7 @@ pub(crate) fn export_settings_controls(
         ui.selectable_value(format, ExportFormat::Tiff, "TIFF");
     });
     enforce_export_bit_depth(*format, settings);
-    ui.add_space(6.0);
+    crate::ui::theme::card_gap(ui);
 
     if *format != ExportFormat::Jpeg {
         crate::ui::theme::section_card_with_help(
@@ -119,10 +121,7 @@ impl Sidebar {
 
         let response = ui
             .add_enabled_ui(export_enabled, |ui| {
-                ui.add_sized(
-                    [ui.available_width(), crate::ui::theme::CONTROL_HEIGHT],
-                    egui::Button::new("Export…"),
-                )
+                crate::ui::theme::full_width_button(ui, "Export…")
             })
             .inner;
         if response.clicked() {
@@ -198,22 +197,15 @@ impl Sidebar {
                     }
                 }
 
-                ui.add_space(10.0);
+                ui.add_space(crate::ui::theme::SPACE_SM);
                 #[cfg(not(target_os = "android"))]
                 let export_enabled = app.can_export();
                 #[cfg(not(target_os = "android"))]
-                let action_width = ui.available_width();
-                #[cfg(not(target_os = "android"))]
                 {
-                    ui.add_space(10.0);
-                    ui.separator();
-                    ui.add_space(10.0);
+                    crate::ui::theme::section_separator(ui);
                     let replay_response = ui
                         .add_enabled_ui(export_enabled, |ui| {
-                            ui.add_sized(
-                                [action_width, crate::ui::theme::CONTROL_HEIGHT],
-                                egui::Button::new("Create Edit Replay…"),
-                            )
+                            crate::ui::theme::full_width_button(ui, "Create Edit Replay…")
                         })
                         .inner
                         .on_hover_text(

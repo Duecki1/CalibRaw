@@ -17,19 +17,16 @@ pub(crate) fn show(
         false,
         *enabled,
         |ui| {
-            ui.horizontal(|ui| {
-                ui.label("Mode");
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    egui::ComboBox::from_id_salt("radial-blur-mode")
-                        .selected_text(settings.mode.label())
-                        .show_ui(ui, |ui| {
-                            for mode in RadialBlurMode::ALL {
-                                changed |= ui
-                                    .selectable_value(&mut settings.mode, mode, mode.label())
-                                    .changed();
-                            }
-                        });
-                });
+            crate::ui::theme::property_row(ui, "Mode", |ui| {
+                egui::ComboBox::from_id_salt("radial-blur-mode")
+                    .selected_text(settings.mode.label())
+                    .show_ui(ui, |ui| {
+                        for mode in RadialBlurMode::ALL {
+                            changed |= ui
+                                .selectable_value(&mut settings.mode, mode, mode.label())
+                                .changed();
+                        }
+                    });
             });
             changed |= effect_slider(ui, &mut settings.amount, radial_blur::AMOUNT);
             changed |= effect_slider(ui, &mut settings.strength, radial_blur::STRENGTH);

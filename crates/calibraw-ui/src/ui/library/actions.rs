@@ -1,5 +1,7 @@
 use super::*;
 
+const SELECTION_BAR_COUNT_LABEL_BREAKPOINT: f32 = 360.0;
+
 #[derive(Clone, Debug)]
 pub(crate) enum LibraryAction {
     #[cfg(not(target_os = "android"))]
@@ -613,7 +615,7 @@ pub(super) fn show_library_selection_action_bar(
         return;
     }
     let bounds = ui.max_rect();
-    let compact = bounds.width() < 820.0;
+    let compact = !crate::ui::layout::ResponsiveWidth::from_width(bounds.width()).is_wide();
     let count = selected.len();
     let mut clear_selection = false;
     egui::Area::new(egui::Id::new("library-selection-action-bar"))
@@ -626,10 +628,16 @@ pub(super) fn show_library_selection_action_bar(
             egui::Frame::popup(ui.style())
                 .inner_margin(egui::Margin::symmetric(crate::ui::theme::SPACE_SM as i8, 6))
                 .show(ui, |ui| {
-                    ui.spacing_mut().item_spacing.x = if compact { crate::ui::theme::SPACE_XS } else { 6.0 };
+                    ui.spacing_mut().item_spacing.x = if compact {
+                        crate::ui::theme::SPACE_XS
+                    } else {
+                        6.0
+                    };
                     ui.spacing_mut().interact_size.y = crate::ui::theme::CONTROL_HEIGHT;
                     ui.horizontal(|ui| {
-                        let count_label = if compact && bounds.width() < 360.0 {
+                        let count_label = if compact
+                            && bounds.width() < SELECTION_BAR_COUNT_LABEL_BREAKPOINT
+                        {
                             count.to_string()
                         } else {
                             format!("{count} selected")

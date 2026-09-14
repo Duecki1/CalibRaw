@@ -71,7 +71,7 @@ impl Library {
                             crate::ui::theme::content_card(ui, |ui| {
                                 platform::show_local_folder_tree(ui, app, action_in_progress);
                             });
-                            ui.add_space(10.0);
+                            crate::ui::theme::card_gap(ui);
                         },
                     );
                 });
@@ -93,7 +93,8 @@ impl Library {
         let mut open_asset: Option<LibraryAsset> = None;
         let mut library_action = None;
 
-        let compact_header = ui.available_width() < crate::ui::theme::COMPACT_WIDTH_BREAKPOINT;
+        let compact_header = crate::ui::layout::ResponsiveWidth::from_width(ui.available_width())
+            .is_compact();
         let mut selected_sort = app.library.sort_order();
         let mut selected_size = app.library.thumbnail_size();
         let mut selected_filter = app.library.review_filter;

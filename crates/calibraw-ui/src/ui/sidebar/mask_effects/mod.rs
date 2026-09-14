@@ -13,7 +13,6 @@ pub(super) mod tilt_shift;
 
 use super::{adjustment_slider_with_reset, MaskEffect, Ui};
 use crate::pipeline::effect_params::{ColorParamSpec, FloatParamSpec};
-use eframe::egui;
 
 pub(super) fn effect_description(effect: MaskEffect) -> Option<&'static str> {
     match effect {
@@ -69,17 +68,14 @@ fn effect_color(
     spec: ColorParamSpec,
 ) -> bool {
     let mut changed = false;
-    ui.horizontal(|ui| {
-        ui.label(spec.label);
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            changed |= crate::ui::components::effect_color_picker::effect_color_picker(
-                ui,
-                id_salt,
-                color,
-                spec.title,
-                spec.tooltip,
-            );
-        });
+    crate::ui::theme::property_row(ui, spec.label, |ui| {
+        changed |= crate::ui::components::effect_color_picker::effect_color_picker(
+            ui,
+            id_salt,
+            color,
+            spec.title,
+            spec.tooltip,
+        );
     });
     changed
 }
