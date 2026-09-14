@@ -1,3 +1,4 @@
+use crate::ui::layout::ResponsiveWidth;
 use eframe::egui::{
     self, Align, Color32, Frame, InnerResponse, Layout, Margin, Response, RichText, Stroke, Ui,
     Vec2,
@@ -25,7 +26,6 @@ pub(crate) const CONTENT_MARGIN: i8 = 12;
 pub(crate) const CARD_RADIUS: f32 = 8.0;
 const COMPACT_PORTRAIT_CARD_GAP: f32 = SPACE_SM;
 const COMPACT_PORTRAIT_CONTENT_MARGIN: i8 = SPACE_SM as i8;
-pub(crate) const COMPACT_WIDTH_BREAKPOINT: f32 = 520.0;
 pub(crate) const DIALOG_WIDTH_NARROW: f32 = 360.0;
 pub(crate) const DIALOG_WIDTH_FORM: f32 = 420.0;
 pub(crate) const DIALOG_WIDTH_DEFAULT: f32 = 440.0;
@@ -524,6 +524,98 @@ pub(crate) fn checkbox_with_help(
     .inner
 }
 
+pub(crate) fn property_row<R>(
+    ui: &mut Ui,
+    label: impl Into<egui::WidgetText>,
+    add_control: impl FnOnce(&mut Ui) -> R,
+) -> InnerResponse<R> {
+    let width = ui.available_width().max(1.0);
+    ui.allocate_ui_with_layout(
+        egui::vec2(width, CONTROL_HEIGHT),
+        Layout::left_to_right(Align::Center),
+        |ui| {
+            ui.label(label);
+            ui.with_layout(Layout::right_to_left(Align::Center), add_control)
+                .inner
+        },
+    )
+}
+
+pub(crate) fn form_row<R>(
+    ui: &mut Ui,
+    label: impl Into<egui::WidgetText>,
+    preferred_control_width: f32,
+    add_control: impl FnOnce(&mut Ui, f32) -> R,
+) -> InnerResponse<R> {
+    if ResponsiveWidth::from_width(ui.available_width()).is_compact() {
+        ui.vertical(|ui| {
+            ui.label(label);
+            let width = ui.available_width().max(1.0);
+            add_control(ui, width)
+        })
+    } else {
+        property_row(ui, label, |ui| {
+            let width = preferred_control_width.min(ui.available_width().max(1.0));
+            add_control(ui, width)
+        })
+    }
+}
+
+pub(crate) fn form_row_with_help<R>(
+    ui: &mut Ui,
+    label: &str,
+    preferred_control_width: f32,
+    help: &str,
+    add_control: impl FnOnce(&mut Ui, f32) -> R,
+) -> InnerResponse<R> {
+    if ResponsiveWidth::from_width(ui.available_width()).is_compact() {
+        ui.vertical(|ui| {
+            let width = ui.available_width().max(1.0);
+            ui.allocate_ui_with_layout(
+                egui::vec2(width, HELP_BUTTON_EDGE),
+                Layout::left_to_right(Align::Center),
+                |ui| {
+                    ui.label(label).on_hover_text(help);
+                },
+            );
+            let width = ui.available_width().max(1.0);
+            add_control(ui, width)
+        })
+    } else {
+        let width = ui.available_width().max(1.0);
+        ui.allocate_ui_with_layout(
+            egui::vec2(width, CONTROL_HEIGHT),
+            Layout::left_to_right(Align::Center),
+            |ui| {
+                ui.label(label).on_hover_text(help);
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    let width = preferred_control_width.min(ui.available_width().max(1.0));
+                    add_control(ui, width)
+                })
+                .inner
+            },
+        )
+    }
+}
+
+pub(crate) fn section_separator(ui: &mut Ui) -> Response {
+    let extra_space = (SPACE_SM - ui.spacing().item_spacing.y).max(0.0);
+    ui.add_space(extra_space);
+    let response = ui.separator();
+    ui.add_space(extra_space);
+    response
+}
+
+pub(crate) fn full_width_button(
+    ui: &mut Ui,
+    label: impl Into<egui::WidgetText>,
+) -> Response {
+    ui.add_sized(
+        [ui.available_width().max(1.0), CONTROL_HEIGHT],
+        egui::Button::new(label.into()),
+    )
+}
+
 #[cfg(not(target_os = "android"))]
 pub(crate) fn tab_button(ui: &mut Ui, label: &str, selected: bool, width: f32) -> Response {
     segmented_button(ui, RichText::new(label).strong(), selected, width)
@@ -855,29 +947,13 @@ pub(crate) fn form_combo(
     preferred_width: f32,
     add_contents: impl FnOnce(&mut Ui),
 ) {
-    if ui.available_width() < COMPACT_WIDTH_BREAKPOINT {
-        ui.vertical(|ui| {
-            ui.label(label);
-            let width = ui.available_width().max(1.0);
-            egui::ComboBox::from_id_salt(id_salt)
-                .selected_text(selected_text)
-                .width(width)
-                .truncate()
-                .show_ui(ui, add_contents);
-        });
-    } else {
-        ui.horizontal(|ui| {
-            ui.label(label);
-            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                let width = preferred_width.min(ui.available_width().max(1.0));
-                egui::ComboBox::from_id_salt(id_salt)
-                    .selected_text(selected_text)
-                    .width(width)
-                    .truncate()
-                    .show_ui(ui, add_contents);
-            });
-        });
-    }
+    form_row(ui, label, preferred_width, |ui, width| {
+        egui::ComboBox::from_id_salt(id_salt)
+            .selected_text(selected_text)
+            .width(width)
+            .truncate()
+            .show_ui(ui, add_contents);
+    });
 }
 
 pub(crate) fn responsive_combo_box<R>(
@@ -971,40 +1047,15 @@ pub(crate) fn form_combo_with_help(
     help: &str,
     add_contents: impl FnOnce(&mut Ui),
 ) {
-    if ui.available_width() < COMPACT_WIDTH_BREAKPOINT {
-        ui.vertical(|ui| {
-            let width = ui.available_width().max(1.0);
-            ui.allocate_ui_with_layout(
-                egui::vec2(width, HELP_BUTTON_EDGE),
-                Layout::left_to_right(Align::Center),
-                |ui| {
-                    ui.label(label).on_hover_text(help);
-                },
-            );
-            let width = ui.available_width().max(1.0);
-            egui::ComboBox::from_id_salt(id_salt)
-                .selected_text(selected_text)
-                .width(width)
-                .truncate()
-                .show_ui(ui, add_contents)
-                .response
-                .on_hover_text(help);
-        });
-    } else {
-        ui.horizontal(|ui| {
-            ui.label(label).on_hover_text(help);
-            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                let width = preferred_width.min(ui.available_width().max(1.0));
-                egui::ComboBox::from_id_salt(id_salt)
-                    .selected_text(selected_text)
-                    .width(width)
-                    .truncate()
-                    .show_ui(ui, add_contents)
-                    .response
-                    .on_hover_text(help);
-            });
-        });
-    }
+    form_row_with_help(ui, label, preferred_width, help, |ui, width| {
+        egui::ComboBox::from_id_salt(id_salt)
+            .selected_text(selected_text)
+            .width(width)
+            .truncate()
+            .show_ui(ui, add_contents)
+            .response
+            .on_hover_text(help);
+    });
 }
 
 pub(crate) fn install(ctx: &egui::Context) {
@@ -1178,6 +1229,60 @@ mod tests {
             let response = super::segmented_button(ui, "Long segment label", false, width);
             assert_eq!(response.rect.width(), width);
             assert_eq!(response.rect.height(), CONTROL_HEIGHT);
+        });
+    }
+
+    #[test]
+    fn property_rows_share_control_height_and_vertical_alignment() {
+        eframe::egui::__run_test_ui(|ui| {
+            ui.set_width(360.0);
+            let row = super::property_row(ui, "Mode", |ui| {
+                ui.add_sized([96.0, CONTROL_HEIGHT], eframe::egui::Button::new("Value"))
+            });
+            assert_eq!(row.response.rect.height(), CONTROL_HEIGHT);
+            assert!((row.inner.rect.center().y - row.response.rect.center().y).abs() < 0.001);
+        });
+    }
+
+    #[test]
+    fn form_rows_expand_in_compact_mode_and_cap_controls_after_breakpoint() {
+        fn offered_control_width(width: f32) -> f32 {
+            let ctx = eframe::egui::Context::default();
+            let mut offered = 0.0;
+            let _ = ctx.run_ui(
+                eframe::egui::RawInput {
+                    screen_rect: Some(eframe::egui::Rect::from_min_size(
+                        eframe::egui::Pos2::ZERO,
+                        eframe::egui::vec2(width, 200.0),
+                    )),
+                    ..Default::default()
+                },
+                |ui| {
+                    ui.set_width(width);
+                    super::form_row(ui, "Quality", 220.0, |ui, control_width| {
+                        offered = control_width;
+                        ui.add_sized(
+                            [control_width, CONTROL_HEIGHT],
+                            eframe::egui::Button::new("Value"),
+                        );
+                    });
+                },
+            );
+            offered
+        }
+
+        assert!(offered_control_width(400.0) > 300.0);
+        assert!((offered_control_width(600.0) - 220.0).abs() < 0.001);
+        assert!((offered_control_width(900.0) - 220.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn full_width_buttons_use_standard_control_height() {
+        eframe::egui::__run_test_ui(|ui| {
+            ui.set_width(280.0);
+            let response = super::full_width_button(ui, "Continue");
+            assert_eq!(response.rect.height(), CONTROL_HEIGHT);
+            assert!((response.rect.width() - 280.0).abs() < 0.001);
         });
     }
 

@@ -289,9 +289,7 @@ impl Sidebar {
                     )
                 });
             if let Some((index, history_index, mut opacity, feather)) = selected_settings {
-                ui.add_space(crate::ui::theme::SPACE_SM);
-                ui.separator();
-                ui.add_space(6.0);
+                crate::ui::theme::section_separator(ui);
                 ui.strong(format!("Selected stroke {}", history_index + 1));
                 if let Some(feather) = feather {
                     ui.label(

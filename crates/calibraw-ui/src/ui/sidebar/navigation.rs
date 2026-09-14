@@ -469,7 +469,7 @@ impl Sidebar {
                                 SidebarTab::Export => Self::show_export(ui, app, frame),
                                 SidebarTab::Info => Self::show_info(ui, app),
                             }
-                            ui.add_space(10.0);
+                            ui.add_space(crate::ui::theme::SPACE_SM);
                         },
                     );
                 });

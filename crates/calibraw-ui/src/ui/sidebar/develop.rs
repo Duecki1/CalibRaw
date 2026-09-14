@@ -71,9 +71,11 @@ impl Sidebar {
                 ui.add_enabled_ui(
                     state.catalog.available && !makers.is_empty() && !lens_correction_busy,
                     |ui| {
-                        ui.label("Brand");
-                        egui::ComboBox::from_id_salt("lens-correction-brand")
-                            .selected_text(if state.selected_maker.is_empty() {
+                        crate::ui::theme::form_combo(
+                            ui,
+                            "Brand",
+                            "lens-correction-brand",
+                            if state.selected_maker.is_empty() {
                                 if state.selected_model.is_empty() {
                                     "Select a brand"
                                 } else {
@@ -81,10 +83,9 @@ impl Sidebar {
                                 }
                             } else {
                                 state.selected_maker.as_str()
-                            })
-                            .width(ui.available_width().clamp(1.0, 240.0))
-                            .truncate()
-                            .show_ui(ui, |ui| {
+                            },
+                            240.0,
+                            |ui| {
                                 for maker in &makers {
                                     ui.selectable_value(
                                         &mut state.selected_maker,
@@ -92,7 +93,8 @@ impl Sidebar {
                                         if maker.is_empty() { "Unknown" } else { maker },
                                     );
                                 }
-                            });
+                            },
+                        );
                     },
                 );
                 let mut selection_changed = state.selected_maker != previous_maker;
@@ -110,16 +112,17 @@ impl Sidebar {
                 ui.add_enabled_ui(
                     state.catalog.available && !models.is_empty() && !lens_correction_busy,
                     |ui| {
-                        ui.label("Lens");
-                        egui::ComboBox::from_id_salt("lens-correction-model")
-                            .selected_text(if state.selected_model.is_empty() {
+                        crate::ui::theme::form_combo(
+                            ui,
+                            "Lens",
+                            "lens-correction-model",
+                            if state.selected_model.is_empty() {
                                 "Select a lens"
                             } else {
                                 state.selected_model.as_str()
-                            })
-                            .width(ui.available_width().clamp(1.0, 240.0))
-                            .truncate()
-                            .show_ui(ui, |ui| {
+                            },
+                            240.0,
+                            |ui| {
                                 for model in &models {
                                     ui.selectable_value(
                                         &mut state.selected_model,
@@ -127,7 +130,8 @@ impl Sidebar {
                                         model,
                                     );
                                 }
-                            });
+                            },
+                        );
                     },
                 );
                 selection_changed |= state.selected_model != previous_model;
@@ -527,9 +531,7 @@ impl Sidebar {
             ai_response.on_hover_text(
                 "Runs the pinned darktable-ai RawNIND model locally. Bayer uses joint denoise/demosaic; X-Trans uses the linear Rec.2020 variant.",
             );
-            ui.add_space(crate::ui::theme::SPACE_XS);
-            ui.separator();
-            ui.add_space(crate::ui::theme::SPACE_XS);
+            crate::ui::theme::section_separator(ui);
             crate::ui::theme::strong_with_help(
                 ui,
                 "Noise reduction",
@@ -595,9 +597,7 @@ impl Sidebar {
                 );
                 changed |= previous_quality != exposure.denoise_quality;
             });
-            ui.add_space(crate::ui::theme::SPACE_SM);
-            ui.separator();
-            ui.add_space(crate::ui::theme::SPACE_XS);
+            crate::ui::theme::section_separator(ui);
             crate::ui::theme::strong_with_help(
                 ui,
                 "Capture sharpening",
@@ -682,7 +682,7 @@ impl Sidebar {
                 Some("Removes or adds atmospheric veil while preserving color relationships."),
             );
 
-            ui.separator();
+            crate::ui::theme::section_separator(ui);
             ui.push_id("glow", |ui| {
                 ui.strong("Glow");
                 changed |= adjustment_slider(
@@ -698,7 +698,7 @@ impl Sidebar {
                 );
             });
 
-            ui.separator();
+            crate::ui::theme::section_separator(ui);
             ui.push_id("vignette", |ui| {
                 ui.strong("Vignette");
                 changed |= gradient_adjustment_slider(

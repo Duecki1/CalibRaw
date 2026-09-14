@@ -111,13 +111,7 @@ pub(crate) fn effect_color_picker(
                 selected_color_row(ui, *color);
 
                 ui.add_space(crate::ui::theme::SPACE_XXS);
-                if ui
-                    .add_sized(
-                        [ui.available_width(), crate::ui::theme::CONTROL_HEIGHT],
-                        egui::Button::new("Done"),
-                    )
-                    .clicked()
-                {
+                if crate::ui::theme::full_width_button(ui, "Done").clicked() {
                     close_requested = true;
                 }
 
