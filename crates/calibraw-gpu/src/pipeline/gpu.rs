@@ -15,12 +15,14 @@ use std::sync::{Arc, Condvar, Mutex, OnceLock};
 use crate::gpu_errors::GpuErrorScopes;
 
 mod builder;
+mod clipping;
 mod histogram;
 mod readback;
 mod resources;
 mod shader_manager;
 
 use builder::*;
+pub use clipping::PreviewClippingGpu;
 pub use histogram::{PreviewHistogram, PreviewHistogramGpu};
 use readback::*;
 use resources::*;

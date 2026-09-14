@@ -63,7 +63,6 @@ impl Sidebar {
                 egui::vec2(width, crate::ui::theme::TOOLBAR_HEIGHT),
                 egui::Layout::left_to_right(egui::Align::Center),
                 |ui| {
-                    crate::ui::theme::toolbar_title(ui, title);
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         match app.ui.sidebar_tab {
                             SidebarTab::Adjustments => {
@@ -130,6 +129,18 @@ impl Sidebar {
                             SidebarTab::Export | SidebarTab::Info => {}
                         }
                         Self::show_histogram_toggle(ui, app);
+                        Self::show_clipping_toggles(ui, app);
+                        ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                            ui.add(
+                                egui::Label::new(
+                                    egui::RichText::new(title)
+                                        .strong()
+                                        .size(crate::ui::theme::PANEL_TITLE_TEXT_SIZE),
+                                )
+                                .truncate(),
+                            )
+                            .on_hover_text(title);
+                        });
                     });
                 },
             );

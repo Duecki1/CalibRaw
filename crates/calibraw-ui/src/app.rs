@@ -975,6 +975,7 @@ pub(crate) struct DevelopState {
 }
 
 pub(crate) struct PreviewState {
+    pub(crate) clipping: preview_clipping::ClippingState,
     pub(crate) histogram: preview_histogram::HistogramState,
     pub(crate) gpu_pipeline: Option<RawGpuPipeline>,
     pub(crate) program_template: Option<RawGpuProgramTemplate>,
@@ -1375,9 +1376,10 @@ mod inpainting;
 mod library_adjustments;
 mod lifecycle;
 mod masks_ai;
+mod preview_clipping;
+mod preview_histogram;
 #[cfg(all(test, not(target_os = "android")))]
 mod preview_tests;
-mod preview_histogram;
 mod processing_export;
 mod sidecar_persistence;
 

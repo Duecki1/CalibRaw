@@ -2,6 +2,33 @@ use super::*;
 use crate::ui::theme;
 
 impl Sidebar {
+    pub(super) fn show_clipping_toggles(ui: &mut Ui, app: &mut CalibRawApp) {
+        for (enabled, icon, tooltip) in [
+            (
+                &mut app.preview.clipping.highlights,
+                egui_phosphor::regular::SUN,
+                "Highlight clipping: mark pixels red when any processed RGB channel reaches 255",
+            ),
+            (
+                &mut app.preview.clipping.shadows,
+                egui_phosphor::regular::MOON,
+                "Shadow clipping: mark pixels blue when all processed RGB channels reach 0",
+            ),
+        ] {
+            if crate::ui::icons::phosphor_icon_toggle_button(
+                ui,
+                icon,
+                *enabled,
+                theme::toolbar_icon_size(),
+                tooltip,
+            )
+            .clicked()
+            {
+                *enabled = !*enabled;
+            }
+        }
+    }
+
     pub(super) fn show_histogram_toggle(ui: &mut Ui, app: &mut CalibRawApp) {
         let open = app.develop_ui.histogram_open;
         if crate::ui::icons::phosphor_icon_toggle_button(

@@ -61,6 +61,15 @@ linear light before output encoding.
 
 ## Viewport behavior
 
+Each Develop tab header has moon (shadow clipping) and sun (highlight clipping)
+toggles beside the histogram button. Both start off and can be enabled
+independently. Blue marks pixels whose processed RGB channels are all 0; red
+marks pixels with any channel at 255. These checks use the display-encoded
+preview output before viewport resampling, including the current edits, rather
+than sensor RAW values. The overlays follow the fitted and detailed previews
+through zoom, crop, rotation, and lens corrections. They affect only canvas
+presentation; histogram data, color picking, and exports keep the processed RGB.
+
 Wheel/trackpad zoom and two-finger pan/zoom keep the image point under the
 gesture anchor. Zoom-out extends to 25% of the fitted size on Android and 70%
 on desktop to leave room for
