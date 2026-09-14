@@ -3,6 +3,7 @@ pub use adjustment_groups::AdjustmentGroup;
 pub mod basicadj;
 pub mod color_profile;
 pub mod geometry;
+pub mod hdr;
 pub mod lensfun;
 pub mod masks;
 pub mod noise;

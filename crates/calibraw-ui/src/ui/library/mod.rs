@@ -31,6 +31,8 @@ mod clipboard;
 mod dialogs;
 mod export;
 mod filter;
+#[cfg(not(target_os = "android"))]
+mod hdr;
 mod local;
 mod platform;
 mod review;
@@ -743,6 +745,10 @@ pub(crate) struct LibraryState {
     image_clipboard: Option<ImageClipboard>,
     pub(crate) adjustment_clipboard: Option<LibraryAdjustmentClipboard>,
     asset_transfer_receiver: Option<mpsc::Receiver<AssetTransferCompletion>>,
+    #[cfg(not(target_os = "android"))]
+    hdr_merge: Option<hdr::HdrMergeTask>,
+    #[cfg(not(target_os = "android"))]
+    hdr_merge_message: Option<String>,
     #[cfg(not(target_os = "android"))]
     raw_import_receiver: Option<mpsc::Receiver<RawImportResult>>,
     #[cfg(not(target_os = "android"))]
