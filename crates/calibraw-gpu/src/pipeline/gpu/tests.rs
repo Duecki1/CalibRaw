@@ -459,7 +459,7 @@ fn gpu_params_pack_the_same_full_source_opposed_reference_for_moved_tiles() {
         .any(|value| value.abs() > 1e-5));
 }
 
-fn request_test_device() -> Option<(wgpu::Device, wgpu::Queue)> {
+pub(super) fn request_test_device() -> Option<(wgpu::Device, wgpu::Queue)> {
     let instance = wgpu::Instance::default();
     let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
         power_preference: wgpu::PowerPreference::LowPower,

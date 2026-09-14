@@ -13,7 +13,7 @@ pub use export::{
     MAX_EXPORT_EDGE, MAX_EXPORT_PIXELS,
 };
 pub use gpu::{
-    GpuOutputSnapshot, GpuParams, GpuProgramPrewarm, ProcessingQuality, RawGpuPipeline,
-    RawGpuProgramTemplate, RemoveSceneContext,
+    GpuOutputSnapshot, GpuParams, GpuProgramPrewarm, PreviewHistogram, PreviewHistogramGpu,
+    ProcessingQuality, RawGpuPipeline, RawGpuProgramTemplate, RemoveSceneContext,
 };
 pub use gpu_cache::PersistentGpuPipelineCache;

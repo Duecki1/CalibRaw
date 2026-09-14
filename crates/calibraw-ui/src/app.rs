@@ -975,6 +975,7 @@ pub(crate) struct DevelopState {
 }
 
 pub(crate) struct PreviewState {
+    pub(crate) histogram: preview_histogram::HistogramState,
     pub(crate) gpu_pipeline: Option<RawGpuPipeline>,
     pub(crate) program_template: Option<RawGpuProgramTemplate>,
     pub(crate) retired_egui_textures: Vec<egui::TextureId>,
@@ -1375,6 +1376,7 @@ mod lifecycle;
 mod masks_ai;
 #[cfg(all(test, not(target_os = "android")))]
 mod preview_tests;
+mod preview_histogram;
 mod processing_export;
 mod sidecar_persistence;
 
