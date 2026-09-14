@@ -903,6 +903,7 @@ struct ExportRequest<'a> {
 }
 
 mod color;
+pub(super) use color::linear_rec2020_icc;
 use color::{built_in_srgb_icc, resolve_export_color, ResolvedExportColor};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

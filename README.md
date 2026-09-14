@@ -25,6 +25,7 @@ Download the latest release [here](https://github.com/Duecki1/CalibRaw/releases)
 - **Optional AI:** Local Subject & Object masks, [AI Denoise](https://github.com/darktable-org/darktable-ai), and AI object removal.
 - **Multi-platform:** Native builds for Linux, Android, Windows, and macOS.
 - **Flexible export:** High-quality export to PNG, JPEG, and color-managed TIFF.
+- **HDR merge:** Select two or more RAW exposures in the desktop library, right-click, and choose **HDR merge**. Small camera shifts and rotations are aligned automatically, and an editable `-HDR.tif` is saved beside the first selected source. The 32-bit scene-linear Rec.2020 master preserves the highlight and shadow range captured across the bracket. Use exposures of the same static scene from the same camera; this basic merge does not include moving-subject deghosting. Source adjustments are excluded from the merge.
 
 ## Contributing
 Feel free to open a Pull Request or create an issue :D.
