@@ -3,6 +3,8 @@ pub use calibraw_core::pipeline::*;
 mod export;
 mod gpu;
 mod gpu_cache;
+pub mod hdr;
+pub use hdr::{merge_hdr_bracket, HdrMergeResult};
 
 pub use export::{
     render_developed_linear_crop, render_remove_scene_crop, render_remove_scene_crop_resized,
