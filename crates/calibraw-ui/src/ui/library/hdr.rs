@@ -132,35 +132,48 @@ impl LibraryState {
         }
     }
 
-    pub(super) fn show_hdr_merge_status(&mut self, ui: &mut Ui) {
-        if let Some(task) = &self.hdr_merge {
-            ui.horizontal_wrapped(|ui| {
-                ui.spinner();
-                if let Ok(progress) = task.progress.lock() {
-                    ui.label(progress.as_str());
-                }
-                let cancelling = task.cancelled.load(Ordering::Relaxed);
-                if ui
-                    .add_enabled(
-                        !cancelling,
-                        egui::Button::new(if cancelling {
-                            "Cancelling…"
-                        } else {
-                            "Cancel"
-                        }),
-                    )
-                    .clicked()
-                {
-                    task.cancelled.store(true, Ordering::Relaxed);
+    pub(super) fn show_hdr_merge_dialog(&mut self, ui: &mut Ui) {
+        self.poll_hdr_merge(ui.ctx());
+        if self.hdr_merge.is_none() && self.hdr_merge_message.is_none() {
+            return;
+        }
+        let mut dismiss = false;
+        crate::ui::responsive_popup(egui::Window::new("HDR merge"), ui.ctx(), 440.0)
+            .id(egui::Id::new("library-hdr-merge-dialog"))
+            .collapsible(false)
+            .resizable(false)
+            .anchor(Align2::CENTER_CENTER, egui::Vec2::ZERO)
+            .show(ui.ctx(), |ui| {
+                if let Some(task) = &self.hdr_merge {
+                    ui.horizontal_wrapped(|ui| {
+                        ui.spinner();
+                        if let Ok(progress) = task.progress.lock() {
+                            ui.label(progress.as_str());
+                        }
+                    });
+                    ui.add_space(8.0);
+                    let cancelling = task.cancelled.load(Ordering::Relaxed);
+                    if ui
+                        .add_enabled(
+                            !cancelling,
+                            egui::Button::new(if cancelling {
+                                "Cancelling…"
+                            } else {
+                                "Cancel"
+                            }),
+                        )
+                        .clicked()
+                    {
+                        task.cancelled.store(true, Ordering::Relaxed);
+                    }
+                } else if let Some(message) = &self.hdr_merge_message {
+                    ui.label(message);
+                    ui.add_space(8.0);
+                    dismiss = ui.button("Dismiss").clicked();
                 }
             });
-        } else if let Some(message) = self.hdr_merge_message.clone() {
-            ui.horizontal_wrapped(|ui| {
-                ui.label(message);
-                if ui.small_button("Dismiss").clicked() {
-                    self.hdr_merge_message = None;
-                }
-            });
+        if dismiss {
+            self.hdr_merge_message = None;
         }
     }
 }

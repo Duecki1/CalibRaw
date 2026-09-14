@@ -444,6 +444,8 @@ pub(super) fn selection_bar_more_menu<R>(
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum SelectionBarCommand {
     Export,
+    #[cfg(not(target_os = "android"))]
+    HdrMerge,
     CopyAdjustments,
     PasteAdjustments,
     Copy,
@@ -472,6 +474,19 @@ pub(super) fn selection_bar_actions(
     .clicked()
     {
         action = Some(SelectionBarCommand::Export);
+    }
+    #[cfg(not(target_os = "android"))]
+    if selected_count >= 2
+        && selection_bar_action_button(
+            ui,
+            action_enabled,
+            compact,
+            egui_phosphor::regular::STACK,
+            "HDR merge",
+        )
+        .clicked()
+    {
+        action = Some(SelectionBarCommand::HdrMerge);
     }
     if selected_count == 1
         && selection_bar_action_button(
@@ -563,6 +578,10 @@ pub(super) fn library_selection_action(
 ) -> Option<LibraryAction> {
     match command {
         SelectionBarCommand::Export => Some(LibraryAction::Export(assets.to_vec())),
+        #[cfg(not(target_os = "android"))]
+        SelectionBarCommand::HdrMerge => {
+            (assets.len() >= 2).then(|| LibraryAction::HdrMerge(assets.to_vec()))
+        }
         SelectionBarCommand::CopyAdjustments if assets.len() == 1 => {
             assets.first().cloned().map(LibraryAction::CopyAdjustments)
         }
@@ -660,6 +679,9 @@ pub(crate) fn show_library_action_overlays(
     app: &mut CalibRawApp,
     frame: &eframe::Frame,
 ) {
+    #[cfg(not(target_os = "android"))]
+    app.library.show_hdr_merge_dialog(ui);
+
     let delete_choice = app
         .library
         .delete_originals_confirmation
