@@ -123,7 +123,7 @@ impl Sidebar {
         let before = mask.effect;
         let enabled_before = mask.enabled;
         let effect = &mut mask.effect;
-        let action = Self::adjustment_card_with_enabled(
+        let action = Self::adjustment_card_without_visibility(
             ui,
             "Mask type",
             true,

@@ -205,7 +205,7 @@ pub(crate) fn apply_library_action(
                 app.library.export_dialog = Some(LibraryExportDialog {
                     assets,
                     settings: app.export.settings.clone(),
-                    format: ExportFormat::Jpeg,
+                    format: app.export.format,
                 });
             }
         }
@@ -726,6 +726,7 @@ pub(crate) fn show_library_action_overlays(
 
     let mut close_export_dialog = false;
     let mut confirm_export = false;
+    let mut selected_export_format = None;
     if let Some(dialog) = app.library.export_dialog.as_mut() {
         let count = dialog.assets.len();
         #[cfg(not(target_os = "android"))]
@@ -746,7 +747,7 @@ pub(crate) fn show_library_action_overlays(
             .collapsible(false)
             .resizable(true)
             .show(ui.ctx(), |ui| {
-                show_library_export_settings_controls(
+                let format_changed = show_library_export_settings_controls(
                     ui,
                     &mut dialog.format,
                     &mut dialog.settings,
@@ -755,6 +756,9 @@ pub(crate) fn show_library_action_overlays(
                     #[cfg(target_os = "android")]
                     None,
                 );
+                if format_changed {
+                    selected_export_format = Some(dialog.format);
+                }
                 ui.add_space(10.0);
                 #[cfg(not(target_os = "android"))]
                 let help = if count > 1 {
@@ -784,6 +788,11 @@ pub(crate) fn show_library_action_overlays(
                     }
                 });
             });
+    }
+
+    if let Some(format) = selected_export_format {
+        app.export.format = format;
+        app.persist_performance_settings();
     }
 
     if confirm_export {
