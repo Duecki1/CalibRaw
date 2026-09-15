@@ -1,4 +1,7 @@
-use super::{needs_canonical_mask_source, AppTab, CalibRawApp, LensCorrectionState};
+use super::{
+    needs_canonical_mask_source, AiConsentState, AppAction, AppTab, CalibRawApp,
+    LensCorrectionState,
+};
 use crate::pipeline::{ExposureParams, MaskGeometry, MaskStack, ProcessingStage, RemoveEditState};
 use eframe::egui;
 use std::collections::VecDeque;

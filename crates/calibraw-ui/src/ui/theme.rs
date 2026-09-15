@@ -1,9 +1,40 @@
-use crate::ui::layout::ResponsiveWidth;
 use eframe::egui::{
     self, Align, Color32, Frame, InnerResponse, Layout, Margin, Response, RichText, Stroke, Ui,
     Vec2,
 };
 use serde::{Deserialize, Serialize};
+
+pub(crate) use super::dialogs::{
+    dialog_button_row, dialog_confirmation_buttons, dialog_keyboard_action, dialog_window,
+    request_initial_focus, DialogAction, DialogKeyboard, DIALOG_MARGIN, DIALOG_TEXT_FIELD_WIDTH,
+    DIALOG_WIDTH_DEFAULT, DIALOG_WIDTH_FORM, DIALOG_WIDTH_LARGE, DIALOG_WIDTH_NARROW,
+    DIALOG_WIDTH_WIDE,
+};
+pub(crate) use super::responsive::{card_gap, is_compact_portrait};
+pub(crate) use super::widgets::buttons::{
+    action_row, destructive_button, full_width_button, interaction_visual_state,
+    interaction_visuals, interaction_visuals_for_flags, navigation_row, primary_action_button,
+    primary_button, secondary_button, segmented_button, toggle_button, toolbar_button,
+    InteractionVisualState, InteractionVisuals,
+};
+#[cfg(any(target_os = "android", test))]
+pub(crate) use super::widgets::buttons::floating_action_rect;
+#[cfg(target_os = "android")]
+pub use super::widgets::buttons::floating_action_button;
+#[cfg(not(target_os = "android"))]
+pub(crate) use super::widgets::buttons::tab_button;
+pub(crate) use super::widgets::forms::{
+    checkbox_with_help, form_combo, form_combo_with_help, form_row, form_row_with_help,
+    heading_with_help, property_row, responsive_combo_box, singleline_text_edit, strong_with_help,
+};
+pub(crate) use super::widgets::menus::{
+    context_menu, context_menu_item, destructive_menu_item, dropdown_menu, dropdown_submenu,
+};
+use super::responsive::content_margin;
+#[cfg(test)]
+use super::dialogs::take_initial_focus_request;
+#[cfg(test)]
+use super::responsive::compact_portrait_for_platform;
 
 const DESKTOP_CONTROL_HEIGHT: f32 = 32.0;
 const ANDROID_CONTROL_HEIGHT: f32 = 40.0;
@@ -24,17 +55,6 @@ pub(crate) const SPACE_LG: f32 = 16.0;
 pub(crate) const CARD_GAP: f32 = SPACE_SM;
 pub(crate) const CONTENT_MARGIN: i8 = 12;
 pub(crate) const CARD_RADIUS: f32 = 8.0;
-const COMPACT_PORTRAIT_CARD_GAP: f32 = SPACE_SM;
-const COMPACT_PORTRAIT_CONTENT_MARGIN: i8 = SPACE_SM as i8;
-pub(crate) const DIALOG_WIDTH_NARROW: f32 = 360.0;
-pub(crate) const DIALOG_WIDTH_FORM: f32 = 420.0;
-pub(crate) const DIALOG_WIDTH_DEFAULT: f32 = 440.0;
-pub(crate) const DIALOG_WIDTH_WIDE: f32 = 480.0;
-pub(crate) const DIALOG_WIDTH_LARGE: f32 = 520.0;
-pub(crate) const DIALOG_TEXT_FIELD_WIDTH: f32 = 320.0;
-const DIALOG_COMPACT_WIDTH_BREAKPOINT: f32 = 560.0;
-const DIALOG_VIEWPORT_PADDING: f32 = 24.0;
-pub(crate) const DIALOG_MARGIN: i8 = if cfg!(target_os = "android") { 16 } else { 12 };
 pub(crate) const HELP_BUTTON_EDGE: f32 = if cfg!(target_os = "android") {
     CONTROL_HEIGHT
 } else {
@@ -322,6 +342,7 @@ struct ThemePalette {
     open_stroke: Color32,
 }
 
+
 const fn platform_control_height(android: bool) -> f32 {
     if android {
         ANDROID_CONTROL_HEIGHT
@@ -343,21 +364,6 @@ pub(crate) fn toolbar_icon_size() -> Vec2 {
     Vec2::splat(TOOLBAR_ICON_EDGE)
 }
 
-pub(crate) fn is_compact_portrait(ui: &Ui) -> bool {
-    compact_portrait_for_platform(ui.ctx().content_rect().size(), cfg!(target_os = "android"))
-}
-
-fn compact_portrait_for_platform(viewport: Vec2, android: bool) -> bool {
-    android && viewport.x < viewport.y
-}
-
-fn content_margin(ui: &Ui) -> i8 {
-    if is_compact_portrait(ui) {
-        COMPACT_PORTRAIT_CONTENT_MARGIN
-    } else {
-        CONTENT_MARGIN
-    }
-}
 
 #[cfg(not(target_os = "android"))]
 pub(crate) fn tool_rail_icon_size() -> Vec2 {
@@ -501,196 +507,6 @@ pub(crate) fn section_card_with_help<R>(
     })
 }
 
-pub(crate) fn heading_with_help(ui: &mut Ui, title: impl Into<RichText>, help: &str) {
-    ui.heading(title).on_hover_text(help);
-}
-
-pub(crate) fn strong_with_help(ui: &mut Ui, title: impl Into<RichText>, help: &str) {
-    ui.label(title.into().strong()).on_hover_text(help);
-}
-
-pub(crate) fn checkbox_with_help(
-    ui: &mut Ui,
-    checked: &mut bool,
-    label: impl Into<egui::WidgetText>,
-    help: &str,
-) -> Response {
-    let width = ui.available_width().max(1.0);
-    ui.allocate_ui_with_layout(
-        egui::vec2(width, CONTROL_HEIGHT),
-        Layout::left_to_right(Align::Center),
-        |ui| ui.checkbox(checked, label).on_hover_text(help),
-    )
-    .inner
-}
-
-pub(crate) fn property_row<R>(
-    ui: &mut Ui,
-    label: impl Into<egui::WidgetText>,
-    add_control: impl FnOnce(&mut Ui) -> R,
-) -> InnerResponse<R> {
-    let width = ui.available_width().max(1.0);
-    ui.allocate_ui_with_layout(
-        egui::vec2(width, CONTROL_HEIGHT),
-        Layout::left_to_right(Align::Center),
-        |ui| {
-            ui.label(label);
-            ui.with_layout(Layout::right_to_left(Align::Center), add_control)
-                .inner
-        },
-    )
-}
-
-pub(crate) fn form_row<R>(
-    ui: &mut Ui,
-    label: impl Into<egui::WidgetText>,
-    preferred_control_width: f32,
-    add_control: impl FnOnce(&mut Ui, f32) -> R,
-) -> InnerResponse<R> {
-    if ResponsiveWidth::from_width(ui.available_width()).is_compact() {
-        ui.vertical(|ui| {
-            ui.label(label);
-            let width = ui.available_width().max(1.0);
-            add_control(ui, width)
-        })
-    } else {
-        property_row(ui, label, |ui| {
-            let width = preferred_control_width.min(ui.available_width().max(1.0));
-            add_control(ui, width)
-        })
-    }
-}
-
-pub(crate) fn form_row_with_help<R>(
-    ui: &mut Ui,
-    label: &str,
-    preferred_control_width: f32,
-    help: &str,
-    add_control: impl FnOnce(&mut Ui, f32) -> R,
-) -> InnerResponse<R> {
-    if ResponsiveWidth::from_width(ui.available_width()).is_compact() {
-        ui.vertical(|ui| {
-            let width = ui.available_width().max(1.0);
-            ui.allocate_ui_with_layout(
-                egui::vec2(width, HELP_BUTTON_EDGE),
-                Layout::left_to_right(Align::Center),
-                |ui| {
-                    ui.label(label).on_hover_text(help);
-                },
-            );
-            let width = ui.available_width().max(1.0);
-            add_control(ui, width)
-        })
-    } else {
-        let width = ui.available_width().max(1.0);
-        ui.allocate_ui_with_layout(
-            egui::vec2(width, CONTROL_HEIGHT),
-            Layout::left_to_right(Align::Center),
-            |ui| {
-                ui.label(label).on_hover_text(help);
-                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    let width = preferred_control_width.min(ui.available_width().max(1.0));
-                    add_control(ui, width)
-                })
-                .inner
-            },
-        )
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum InteractionVisualState {
-    Disabled,
-    Active,
-    Selected,
-    Focused,
-    Hovered,
-    Inactive,
-}
-
-#[derive(Clone, Copy, Debug)]
-pub(crate) struct InteractionVisuals {
-    pub(crate) state: InteractionVisualState,
-    pub(crate) fill: Color32,
-    pub(crate) weak_fill: Color32,
-    pub(crate) stroke: Stroke,
-    pub(crate) foreground: Color32,
-}
-
-pub(crate) const fn interaction_visual_state(
-    enabled: bool,
-    selected: bool,
-    active: bool,
-    hovered: bool,
-    focused: bool,
-) -> InteractionVisualState {
-    if !enabled {
-        InteractionVisualState::Disabled
-    } else if active {
-        InteractionVisualState::Active
-    } else if selected {
-        InteractionVisualState::Selected
-    } else if focused {
-        InteractionVisualState::Focused
-    } else if hovered {
-        InteractionVisualState::Hovered
-    } else {
-        InteractionVisualState::Inactive
-    }
-}
-
-pub(crate) fn interaction_visuals_for_flags(
-    ui: &Ui,
-    enabled: bool,
-    selected: bool,
-    active: bool,
-    hovered: bool,
-    focused: bool,
-) -> InteractionVisuals {
-    let state = interaction_visual_state(enabled, selected, active, hovered, focused);
-    let visuals = ui.visuals();
-    if state == InteractionVisualState::Selected {
-        return InteractionVisuals {
-            state,
-            fill: visuals.selection.bg_fill,
-            weak_fill: visuals.selection.bg_fill,
-            stroke: visuals.selection.stroke,
-            foreground: visuals.selection.stroke.color,
-        };
-    }
-
-    let widget = match state {
-        InteractionVisualState::Disabled => &visuals.widgets.noninteractive,
-        InteractionVisualState::Active => &visuals.widgets.active,
-        InteractionVisualState::Focused | InteractionVisualState::Hovered => {
-            &visuals.widgets.hovered
-        }
-        InteractionVisualState::Inactive => &visuals.widgets.inactive,
-        InteractionVisualState::Selected => unreachable!(),
-    };
-    InteractionVisuals {
-        state,
-        fill: widget.bg_fill,
-        weak_fill: widget.weak_bg_fill,
-        stroke: widget.bg_stroke,
-        foreground: widget.fg_stroke.color,
-    }
-}
-
-pub(crate) fn interaction_visuals(
-    ui: &Ui,
-    response: &Response,
-    selected: bool,
-) -> InteractionVisuals {
-    interaction_visuals_for_flags(
-        ui,
-        response.enabled(),
-        selected,
-        response.is_pointer_button_down_on(),
-        response.hovered() || response.highlighted(),
-        response.has_focus(),
-    )
-}
 
 pub(crate) fn section_separator(ui: &mut Ui) -> Response {
     let extra_space = (SPACE_SM - ui.spacing().item_spacing.y).max(0.0);
@@ -700,459 +516,6 @@ pub(crate) fn section_separator(ui: &mut Ui) -> Response {
     response
 }
 
-pub(crate) fn full_width_button(
-    ui: &mut Ui,
-    label: impl Into<egui::WidgetText>,
-) -> Response {
-    ui.add_sized(
-        [ui.available_width().max(1.0), CONTROL_HEIGHT],
-        egui::Button::new(label.into()),
-    )
-}
-
-#[cfg(not(target_os = "android"))]
-pub(crate) fn tab_button(ui: &mut Ui, label: &str, selected: bool, width: f32) -> Response {
-    segmented_button(ui, RichText::new(label).strong(), selected, width)
-}
-
-pub(crate) fn segmented_button(
-    ui: &mut Ui,
-    label: impl Into<egui::WidgetText>,
-    selected: bool,
-    width: f32,
-) -> Response {
-    ui.add_sized(
-        [width, CONTROL_HEIGHT],
-        egui::Button::new(label.into())
-            .selected(selected)
-            .frame(true)
-            .truncate()
-            .corner_radius(CARD_RADIUS),
-    )
-}
-
-pub(crate) fn toolbar_button(
-    ui: &mut Ui,
-    label: impl Into<egui::WidgetText>,
-    width: f32,
-) -> Response {
-    ui.add_sized([width, CONTROL_HEIGHT], egui::Button::new(label.into()))
-}
-
-fn primary_button_impl(
-    ui: &mut Ui,
-    label: impl Into<egui::WidgetText>,
-    width: Option<f32>,
-) -> Response {
-    let visuals = &ui.visuals().widgets.active;
-    let button = egui::Button::new(label.into().color(Color32::WHITE))
-        .fill(visuals.weak_bg_fill)
-        .stroke(visuals.bg_stroke)
-        .corner_radius(CARD_RADIUS);
-    if let Some(width) = width {
-        ui.add_sized([width, CONTROL_HEIGHT], button)
-    } else {
-        ui.add(button.min_size(egui::vec2(0.0, CONTROL_HEIGHT)))
-    }
-}
-
-pub(crate) fn primary_button(
-    ui: &mut Ui,
-    label: impl Into<egui::WidgetText>,
-    width: f32,
-) -> Response {
-    primary_button_impl(ui, label, Some(width))
-}
-
-pub(crate) fn primary_action_button(
-    ui: &mut Ui,
-    label: impl Into<egui::WidgetText>,
-) -> Response {
-    primary_button_impl(ui, label, None)
-}
-
-pub(crate) fn secondary_button(
-    ui: &mut Ui,
-    label: impl Into<egui::WidgetText>,
-) -> Response {
-    ui.add(
-        egui::Button::new(label.into())
-            .corner_radius(CARD_RADIUS)
-            .min_size(egui::vec2(0.0, CONTROL_HEIGHT)),
-    )
-}
-
-pub(crate) fn destructive_button(
-    ui: &mut Ui,
-    label: impl Into<egui::WidgetText>,
-) -> Response {
-    let color = ui.visuals().error_fg_color;
-    ui.add(
-        egui::Button::new(label.into().color(color))
-            .corner_radius(CARD_RADIUS)
-            .min_size(egui::vec2(0.0, CONTROL_HEIGHT)),
-    )
-}
-
-pub(crate) fn destructive_menu_item(
-    ui: &mut Ui,
-    label: impl Into<egui::WidgetText>,
-) -> Response {
-    let color = ui.visuals().error_fg_color;
-    ui.add(egui::Button::new(label.into().color(color)))
-}
-
-pub(crate) fn toggle_button(
-    ui: &mut Ui,
-    label: impl Into<egui::WidgetText>,
-    selected: bool,
-) -> Response {
-    ui.add(
-        egui::Button::new(label.into())
-            .selected(selected)
-            .frame(true)
-            .corner_radius(CARD_RADIUS),
-    )
-}
-
-pub(crate) fn navigation_row(
-    ui: &mut Ui,
-    label: impl Into<egui::WidgetText>,
-    selected: bool,
-    sense: egui::Sense,
-) -> Response {
-    ui.add_sized(
-        [ui.available_width().max(1.0), CONTROL_HEIGHT],
-        egui::Button::selectable(selected, ())
-            .left_text(label)
-            .truncate()
-            .sense(sense),
-    )
-}
-
-pub(crate) fn action_row<R>(
-    ui: &mut Ui,
-    add_contents: impl FnOnce(&mut Ui) -> R,
-) -> InnerResponse<R> {
-    ui.horizontal_wrapped(|ui| {
-        ui.spacing_mut().interact_size.y = CONTROL_HEIGHT;
-        ui.spacing_mut().item_spacing = egui::vec2(SPACE_SM, SPACE_SM);
-        add_contents(ui)
-    })
-}
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(crate) enum DialogAction {
-    #[default]
-    None,
-    Cancel,
-    Confirm,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct DialogKeyboard {
-    pub(crate) escape_closes: bool,
-    pub(crate) enter_confirms: bool,
-}
-
-impl DialogKeyboard {
-    pub(crate) const CLOSE_ONLY: Self = Self {
-        escape_closes: true,
-        enter_confirms: false,
-    };
-    pub(crate) const CONFIRM_ON_ENTER: Self = Self {
-        escape_closes: true,
-        enter_confirms: true,
-    };
-}
-
-/// Fallback keyboard handling; call after dialog controls have processed input.
-pub(crate) fn dialog_keyboard_action(
-    ui: &Ui,
-    keyboard: DialogKeyboard,
-    confirm_enabled: bool,
-) -> DialogAction {
-    if keyboard.escape_closes
-        && ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
-    {
-        return DialogAction::Cancel;
-    }
-    if keyboard.enter_confirms
-        && confirm_enabled
-        && ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Enter))
-    {
-        return DialogAction::Confirm;
-    }
-    DialogAction::None
-}
-
-fn take_initial_focus_request(focus_requested: &mut bool) -> bool {
-    if *focus_requested {
-        false
-    } else {
-        *focus_requested = true;
-        true
-    }
-}
-
-pub(crate) fn request_initial_focus(response: &Response, focus_requested: &mut bool) {
-    if take_initial_focus_request(focus_requested) {
-        response.request_focus();
-    }
-}
-
-pub(crate) fn dialog_button_row<R>(
-    ui: &mut Ui,
-    add_contents: impl FnOnce(&mut Ui) -> R,
-) -> InnerResponse<R> {
-    ui.add_space(SPACE_SM);
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = SPACE_SM;
-        add_contents(ui)
-    })
-}
-
-fn dialog_confirmation_keyboard(
-    keyboard: DialogKeyboard,
-    destructive: bool,
-) -> DialogKeyboard {
-    DialogKeyboard {
-        enter_confirms: keyboard.enter_confirms && !destructive,
-        ..keyboard
-    }
-}
-
-pub(crate) fn dialog_confirmation_buttons(
-    ui: &mut Ui,
-    cancel_label: impl Into<egui::WidgetText>,
-    confirm_label: impl Into<egui::WidgetText>,
-    confirm_enabled: bool,
-    destructive: bool,
-    keyboard: DialogKeyboard,
-) -> DialogAction {
-    let keyboard = dialog_confirmation_keyboard(keyboard, destructive);
-    let mut action = DialogAction::None;
-    let cancel_label = cancel_label.into();
-    let confirm_label = confirm_label.into();
-    dialog_button_row(ui, |ui| {
-        if secondary_button(ui, cancel_label).clicked() {
-            action = DialogAction::Cancel;
-        }
-        let confirm = ui
-            .add_enabled_ui(confirm_enabled, |ui| {
-                if destructive {
-                    destructive_button(ui, confirm_label.clone())
-                } else {
-                    primary_action_button(ui, confirm_label)
-                }
-            })
-            .inner;
-        if confirm.clicked() {
-            action = DialogAction::Confirm;
-        }
-    });
-    if action == DialogAction::None {
-        action = dialog_keyboard_action(ui, keyboard, confirm_enabled);
-    }
-    action
-}
-
-// TODO: Evaluate migrating standard confirmation/form dialogs to `egui::Modal` so
-// background interaction is structurally blocked while preserving desktop/Android behavior.
-pub(crate) fn dialog_window<'a>(
-    window: egui::Window<'a>,
-    ctx: &egui::Context,
-    preferred_width: f32,
-) -> egui::Window<'a> {
-    let available = ctx.content_rect().size()
-        - egui::vec2(DIALOG_VIEWPORT_PADDING, DIALOG_VIEWPORT_PADDING);
-    let available = egui::vec2(available.x.max(1.0), available.y.max(1.0));
-    let compact_portrait =
-        available.x < DIALOG_COMPACT_WIDTH_BREAKPOINT && available.y > available.x;
-    let window = window
-        .collapsible(false)
-        .resizable(false)
-        .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
-        .default_width(preferred_width.min(available.x))
-        .max_width(available.x)
-        .max_height(available.y)
-        .vscroll(compact_portrait);
-    #[cfg(target_os = "android")]
-    let window = window.order(egui::Order::Foreground);
-    window
-}
-
-pub(crate) fn card_gap(ui: &mut Ui) {
-    let gap = if is_compact_portrait(ui) {
-        COMPACT_PORTRAIT_CARD_GAP
-    } else {
-        CARD_GAP
-    };
-    let explicit_space = (gap - ui.spacing().item_spacing.y).max(0.0);
-    ui.add_space(explicit_space);
-}
-
-pub(crate) fn singleline_text_edit<'a>(text: &'a mut dyn egui::TextBuffer) -> egui::TextEdit<'a> {
-    egui::TextEdit::singleline(text)
-        .vertical_align(Align::Center)
-        .margin(Margin::symmetric(SPACE_SM as i8, SPACE_XS as i8))
-        .min_size(egui::vec2(0.0, CONTROL_HEIGHT))
-}
-
-#[cfg(any(target_os = "android", test))]
-pub(crate) fn floating_action_rect(bounds: egui::Rect) -> egui::Rect {
-    let size = Vec2::splat(FLOATING_ACTION_EDGE);
-    let inset = Vec2::splat(FLOATING_ACTION_MARGIN);
-    egui::Rect::from_min_size(bounds.right_bottom() - inset - size, size)
-}
-
-#[cfg(target_os = "android")]
-pub fn floating_action_button(
-    ui: &mut Ui,
-    rect: egui::Rect,
-    glyph: &str,
-    tooltip: &str,
-) -> Response {
-    let active = &ui.visuals().widgets.active;
-    let fill = active.weak_bg_fill;
-    let stroke = active.bg_stroke;
-    let corner_radius = active.corner_radius;
-    let icon_color = active.fg_stroke.color;
-    ui.put(
-        rect,
-        egui::Button::new(
-            RichText::new(glyph)
-                .size(FLOATING_ACTION_EDGE * 0.42)
-                .color(icon_color),
-        )
-        .min_size(rect.size())
-        .corner_radius(corner_radius)
-        .fill(fill)
-        .stroke(stroke),
-    )
-    .on_hover_text(tooltip)
-}
-
-pub(crate) fn form_combo(
-    ui: &mut Ui,
-    label: impl Into<egui::WidgetText>,
-    id_salt: impl egui::AsIdSalt,
-    selected_text: impl Into<egui::WidgetText>,
-    preferred_width: f32,
-    add_contents: impl FnOnce(&mut Ui),
-) {
-    form_row(ui, label, preferred_width, |ui, width| {
-        egui::ComboBox::from_id_salt(id_salt)
-            .selected_text(selected_text)
-            .width(width)
-            .truncate()
-            .show_ui(ui, add_contents);
-    });
-}
-
-pub(crate) fn responsive_combo_box<R>(
-    ui: &mut Ui,
-    id_salt: impl egui::AsIdSalt,
-    selected_text: impl Into<egui::WidgetText>,
-    width: f32,
-    item_count: usize,
-    add_contents: impl FnOnce(&mut Ui) -> R,
-) -> egui::InnerResponse<Option<R>> {
-    let popup_style = ui.ctx().global_style();
-    let spacing = &popup_style.spacing;
-    let item_count_f32 = item_count as f32;
-    let item_spacing_count = item_count.saturating_sub(1) as f32;
-    let popup_height = item_count_f32 * spacing.interact_size.y
-        + item_spacing_count * spacing.item_spacing.y
-        + spacing.menu_margin.sum().y
-        + 2.0 * ui.visuals().window_stroke.width
-        + 4.0;
-    let content_height = ui.ctx().content_rect().height();
-    let popup_fits_viewport = content_height >= popup_height;
-
-    let context = ui.ctx().clone();
-    let theme = context.theme();
-    let original_style = context.style_of(theme);
-    if original_style.spacing.default_area_size.y < popup_height {
-        context.style_mut_of(theme, |style| {
-            style.spacing.default_area_size.y = popup_height;
-        });
-    }
-
-    let response = egui::ComboBox::from_id_salt((id_salt, popup_fits_viewport))
-        .selected_text(selected_text)
-        .width(width)
-        .height(content_height)
-        .truncate()
-        .show_ui(ui, add_contents);
-
-    context.set_style_of(theme, original_style);
-    response
-}
-
-/// A right-click menu that retains the regular popup/widget styling used by
-/// combo boxes instead of egui's compact frameless menu override.
-pub(crate) fn context_menu<R>(
-    response: &Response,
-    add_contents: impl FnOnce(&mut Ui) -> R,
-) -> Option<InnerResponse<R>> {
-    egui::Popup::context_menu(response)
-        .style(egui::style::StyleModifier::default())
-        .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
-        .show(add_contents)
-}
-
-/// A click-triggered dropdown that uses the same regular widget styling as
-/// combo boxes and context menus instead of egui's compact menu styling.
-pub(crate) fn dropdown_menu<R>(
-    response: &Response,
-    add_contents: impl FnOnce(&mut Ui) -> R,
-) -> Option<InnerResponse<R>> {
-    egui::Popup::menu(response)
-        .style(egui::style::StyleModifier::default())
-        .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
-        .show(add_contents)
-}
-
-/// A submenu with the regular dropdown styling used by [`dropdown_menu`].
-pub(crate) fn dropdown_submenu<'a, R>(
-    ui: &mut Ui,
-    label: impl egui::IntoAtoms<'a>,
-    add_contents: impl FnOnce(&mut Ui) -> R,
-) -> Response {
-    let (response, _) = egui::menu::SubMenuButton::new(label)
-        .config(egui::menu::MenuConfig::new().style(egui::style::StyleModifier::default()))
-        .ui(ui, add_contents);
-    response
-}
-
-pub(crate) fn context_menu_item<'a>(
-    ui: &mut Ui,
-    enabled: bool,
-    label: impl egui::IntoAtoms<'a>,
-) -> Response {
-    ui.add_enabled(enabled, egui::Button::selectable(false, label))
-}
-
-pub(crate) fn form_combo_with_help(
-    ui: &mut Ui,
-    label: &str,
-    id_salt: impl egui::AsIdSalt,
-    selected_text: impl Into<egui::WidgetText>,
-    preferred_width: f32,
-    help: &str,
-    add_contents: impl FnOnce(&mut Ui),
-) {
-    form_row_with_help(ui, label, preferred_width, help, |ui, width| {
-        egui::ComboBox::from_id_salt(id_salt)
-            .selected_text(selected_text)
-            .width(width)
-            .truncate()
-            .show_ui(ui, add_contents)
-            .response
-            .on_hover_text(help);
-    });
-}
 
 pub(crate) fn install(ctx: &egui::Context) {
     let mut fonts = egui::FontDefinitions::default();
@@ -1259,6 +622,7 @@ pub(crate) fn apply(ctx: &egui::Context, design: UiDesign) {
     ctx.set_theme(theme);
     ctx.request_repaint();
 }
+
 
 #[cfg(test)]
 mod tests {
