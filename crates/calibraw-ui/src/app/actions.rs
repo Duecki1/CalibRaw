@@ -167,11 +167,85 @@ mod tests {
             crop: [0.0, 0.0, 1.0, 1.0],
         });
 
-        assert!(app.dispatch_action(AppAction::SelectSidebarTab(
-            SidebarTab::Masks
-        )));
+        assert!(app.dispatch_action(AppAction::SelectSidebarTab(SidebarTab::Masks)));
         assert_eq!(app.ui.sidebar_tab, SidebarTab::Masks);
         assert!(!app.develop_ui.straighten_tool_active);
         assert!(app.develop_ui.crop_drag.is_none());
+    }
+
+    #[test]
+    fn reselecting_tab_is_a_noop() {
+        let ctx = egui::Context::default();
+        crate::ui::theme::install(&ctx);
+        let mut app = CalibRawApp::empty(&ctx);
+        app.ui.active_tab = AppTab::Develop;
+        app.ui.thumbnail_cache_size = Some(Ok(42));
+        app.preview.original_requested = true;
+
+        app.activate_tab(AppTab::Develop);
+
+        assert_eq!(app.ui.thumbnail_cache_size, Some(Ok(42)));
+        assert!(app.preview.original_requested);
+    }
+
+    #[test]
+    fn entering_settings_clears_thumbnail_cache_once() {
+        let ctx = egui::Context::default();
+        crate::ui::theme::install(&ctx);
+        let mut app = CalibRawApp::empty(&ctx);
+        app.ui.thumbnail_cache_size = Some(Ok(42));
+
+        app.activate_tab(AppTab::Settings);
+        assert!(app.ui.thumbnail_cache_size.is_none());
+
+        app.ui.thumbnail_cache_size = Some(Ok(7));
+        app.activate_tab(AppTab::Settings);
+        assert_eq!(app.ui.thumbnail_cache_size, Some(Ok(7)));
+    }
+
+    #[test]
+    fn leaving_develop_clears_original_preview_request() {
+        let ctx = egui::Context::default();
+        crate::ui::theme::install(&ctx);
+        let mut app = CalibRawApp::empty(&ctx);
+        app.ui.active_tab = AppTab::Develop;
+        app.preview.original_requested = true;
+
+        app.activate_tab(AppTab::Library);
+
+        assert!(!app.preview.original_requested);
+    }
+
+    #[test]
+    fn selecting_current_sidebar_tab_preserves_white_balance_picker() {
+        let ctx = egui::Context::default();
+        crate::ui::theme::install(&ctx);
+        let mut app = CalibRawApp::empty(&ctx);
+        app.ui.sidebar_tab = SidebarTab::Adjustments;
+        app.develop_ui.white_balance_picker_active = true;
+        app.develop_ui.white_balance_picker_drag = Some([[0.1, 0.2], [0.3, 0.4]]);
+
+        app.dispatch_action(AppAction::SelectSidebarTab(SidebarTab::Adjustments));
+
+        assert!(app.develop_ui.white_balance_picker_active);
+        assert_eq!(
+            app.develop_ui.white_balance_picker_drag,
+            Some([[0.1, 0.2], [0.3, 0.4]])
+        );
+    }
+
+    #[test]
+    fn selecting_current_inpaint_tool_preserves_interaction_state() {
+        let ctx = egui::Context::default();
+        crate::ui::theme::install(&ctx);
+        let mut app = CalibRawApp::empty(&ctx);
+        app.inpaint.tool = InpaintTool::Remove;
+        app.inpaint.source_pick_active = true;
+        app.inpaint.hovered_stroke = Some(2);
+
+        app.dispatch_action(AppAction::SelectInpaintTool(InpaintTool::Remove));
+
+        assert!(app.inpaint.source_pick_active);
+        assert_eq!(app.inpaint.hovered_stroke, Some(2));
     }
 }

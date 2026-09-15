@@ -46,16 +46,9 @@ pub(crate) fn effect_color_picker(
         let content_size = ui.ctx().content_rect().size();
         let picker_width = picker_width(content_size.x);
         let plane_edge = picker_plane_edge(picker_width, content_size.y);
-        let frame = egui::Frame::new()
-            .fill(ui.visuals().window_fill)
-            .inner_margin(egui::Margin::same(if cfg!(target_os = "android") {
-                14
-            } else {
-                12
-            }))
-            .corner_radius(ui.visuals().window_corner_radius)
-            .stroke(ui.visuals().window_stroke)
-            .shadow(ui.visuals().window_shadow);
+        let frame = egui::Frame::window(ui.style()).inner_margin(egui::Margin::same(
+            if cfg!(target_os = "android") { 14 } else { 12 },
+        ));
 
         let modal = egui::Modal::new(picker_id.with("modal"))
             .frame(frame)

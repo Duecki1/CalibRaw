@@ -186,10 +186,7 @@ pub(super) fn show_sort_filter_options(
         }
         ui.add_space(theme::SPACE_XS);
         ui.weak("Select several values to include them together.");
-        if ui
-            .add_enabled(filter.active(), egui::Button::new("Clear filters"))
-            .clicked()
-        {
+        if theme::menu_item(ui, filter.active(), "Clear filters").clicked() {
             *filter = LibraryReviewFilter::default();
         }
     }

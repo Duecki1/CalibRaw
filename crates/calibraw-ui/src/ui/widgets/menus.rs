@@ -1,11 +1,17 @@
 use eframe::egui::{self, InnerResponse, Response, Ui};
 
-pub(crate) fn destructive_menu_item(
+/// A regular menu action with the same geometry in enabled and disabled states.
+pub(crate) fn menu_item(
     ui: &mut Ui,
+    enabled: bool,
     label: impl Into<egui::WidgetText>,
 ) -> Response {
+    ui.add_enabled(enabled, egui::Button::new(label))
+}
+
+pub(crate) fn destructive_menu_item(ui: &mut Ui, label: impl Into<egui::WidgetText>) -> Response {
     let color = ui.visuals().error_fg_color;
-    ui.add(egui::Button::new(label.into().color(color)))
+    menu_item(ui, true, label.into().color(color))
 }
 
 /// A right-click menu that retains the regular popup/widget styling used by

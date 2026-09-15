@@ -4,9 +4,7 @@ fn show_export_action_panel<R>(
 ) -> egui::InnerResponse<R> {
     egui::Panel::bottom("develop-export-action")
         .resizable(false)
-        .exact_size(
-            crate::ui::theme::CONTROL_HEIGHT + 2.0 * crate::ui::theme::SPACE_SM,
-        )
+        .exact_size(crate::ui::theme::CONTROL_HEIGHT + 2.0 * crate::ui::theme::SPACE_SM)
         .frame(
             egui::Frame::new()
                 .fill(ui.visuals().panel_fill)
@@ -47,10 +45,11 @@ pub(crate) fn export_settings_controls(
             "Precision",
             "Choose the channel precision written to the exported file. Higher precision preserves more editing latitude but produces larger files.",
             |ui| {
-                egui::ComboBox::from_id_salt("export-bit-depth")
-                    .selected_text(settings.bit_depth.label())
-                    .width(ui.available_width().max(1.0))
-                    .truncate()
+                crate::ui::theme::combo_box(
+                    "export-bit-depth",
+                    settings.bit_depth.label(),
+                    ui.available_width().max(1.0),
+                )
                     .show_ui(ui, |ui| {
                         for depth in [
                             ExportBitDepth::Eight,

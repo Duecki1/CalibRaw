@@ -43,7 +43,7 @@ pub(crate) fn library_image_context_menu(
                     ("Unflag", crate::sidecar::PhotoFlag::Unflagged),
                     ("Reject", crate::sidecar::PhotoFlag::Rejected),
                 ] {
-                    if ui.button(label).clicked() {
+                    if crate::ui::theme::menu_item(ui, true, label).clicked() {
                         action = Some(LibraryAction::Review(
                             context_assets.to_vec(),
                             super::review::ReviewChange::Flag(flag),
@@ -59,7 +59,7 @@ pub(crate) fn library_image_context_menu(
                     } else {
                         format!("{rating} stars")
                     };
-                    if ui.button(label).clicked() {
+                    if crate::ui::theme::menu_item(ui, true, label).clicked() {
                         action = Some(LibraryAction::Review(
                             context_assets.to_vec(),
                             super::review::ReviewChange::Rating(rating),
@@ -526,44 +526,53 @@ pub(super) fn selection_bar_actions(
         action = Some(SelectionBarCommand::Copy);
     }
     selection_bar_more_menu(ui, action_enabled, compact, |ui| {
-        if ui.button("Cut").clicked() {
+        if crate::ui::theme::menu_item(ui, true, "Cut").clicked() {
             action = Some(SelectionBarCommand::Cut);
             ui.close();
         }
-        if ui
-            .button(if selected_count > 1 {
+        if crate::ui::theme::menu_item(
+            ui,
+            true,
+            if selected_count > 1 {
                 "Duplicate selected (RAW + sidecars)"
             } else {
                 "Duplicate (RAW + sidecar)"
-            })
-            .clicked()
+            },
+        )
+        .clicked()
         {
             action = Some(SelectionBarCommand::Duplicate);
             ui.close();
         }
-        if selected_count == 1 && ui.button("Rename…").clicked() {
+        if selected_count == 1 && crate::ui::theme::menu_item(ui, true, "Rename…").clicked() {
             action = Some(SelectionBarCommand::Rename);
             ui.close();
         }
-        if ui
-            .button(if selected_count > 1 {
+        if crate::ui::theme::menu_item(
+            ui,
+            true,
+            if selected_count > 1 {
                 "Reset adjustments for selected"
             } else {
                 "Reset all adjustments"
-            })
-            .clicked()
+            },
+        )
+        .clicked()
         {
             action = Some(SelectionBarCommand::ResetAdjustments);
             ui.close();
         }
         ui.separator();
-        if ui
-            .button(if selected_count > 1 {
+        if crate::ui::theme::menu_item(
+            ui,
+            true,
+            if selected_count > 1 {
                 "Delete selected…"
             } else {
                 "Delete…"
-            })
-            .clicked()
+            },
+        )
+        .clicked()
         {
             action = Some(SelectionBarCommand::Delete);
             ui.close();
@@ -635,13 +644,12 @@ pub(super) fn show_library_selection_action_bar(
                     };
                     ui.spacing_mut().interact_size.y = crate::ui::theme::CONTROL_HEIGHT;
                     ui.horizontal(|ui| {
-                        let count_label = if compact
-                            && bounds.width() < SELECTION_BAR_COUNT_LABEL_BREAKPOINT
-                        {
-                            count.to_string()
-                        } else {
-                            format!("{count} selected")
-                        };
+                        let count_label =
+                            if compact && bounds.width() < SELECTION_BAR_COUNT_LABEL_BREAKPOINT {
+                                count.to_string()
+                            } else {
+                                format!("{count} selected")
+                            };
                         ui.strong(count_label).on_hover_text(format!(
                             "{count} selected {}",
                             if count == 1 { "RAW" } else { "RAWs" }

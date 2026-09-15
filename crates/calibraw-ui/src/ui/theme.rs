@@ -4,37 +4,43 @@ use eframe::egui::{
 };
 use serde::{Deserialize, Serialize};
 
+#[cfg(test)]
+use super::widgets::buttons::{destructive_button, interaction_visual_state};
+#[cfg(test)]
+use super::widgets::forms::form_row;
+
+#[cfg(test)]
+use super::dialogs::take_initial_focus_request;
 pub(crate) use super::dialogs::{
     dialog_button_row, dialog_confirmation_buttons, dialog_keyboard_action, dialog_window,
     request_initial_focus, DialogAction, DialogKeyboard, DIALOG_MARGIN, DIALOG_TEXT_FIELD_WIDTH,
     DIALOG_WIDTH_DEFAULT, DIALOG_WIDTH_FORM, DIALOG_WIDTH_LARGE, DIALOG_WIDTH_NARROW,
     DIALOG_WIDTH_WIDE,
 };
+#[cfg(test)]
+use super::responsive::compact_portrait_for_platform;
+use super::responsive::content_margin;
 pub(crate) use super::responsive::{card_gap, is_compact_portrait};
-pub(crate) use super::widgets::buttons::{
-    action_row, destructive_button, full_width_button, interaction_visual_state,
-    interaction_visuals, interaction_visuals_for_flags, navigation_row, primary_action_button,
-    primary_button, secondary_button, segmented_button, toggle_button, toolbar_button,
-    InteractionVisualState, InteractionVisuals,
-};
-#[cfg(any(target_os = "android", test))]
-pub(crate) use super::widgets::buttons::floating_action_rect;
 #[cfg(target_os = "android")]
 pub use super::widgets::buttons::floating_action_button;
+#[cfg(any(target_os = "android", test))]
+pub(crate) use super::widgets::buttons::floating_action_rect;
 #[cfg(not(target_os = "android"))]
 pub(crate) use super::widgets::buttons::tab_button;
+pub(crate) use super::widgets::buttons::{
+    action_row, full_width_button, interaction_visuals, interaction_visuals_for_flags,
+    navigation_row, primary_action_button, primary_button, secondary_button,
+    secondary_button_enabled, segmented_button, toggle_button, toolbar_button,
+    InteractionVisualState,
+};
 pub(crate) use super::widgets::forms::{
-    checkbox_with_help, form_combo, form_combo_with_help, form_row, form_row_with_help,
-    heading_with_help, property_row, responsive_combo_box, singleline_text_edit, strong_with_help,
+    checkbox_with_help, combo_box, form_combo, form_combo_with_help, heading_with_help,
+    property_row, responsive_combo_box, singleline_text_edit, strong_with_help,
 };
 pub(crate) use super::widgets::menus::{
     context_menu, context_menu_item, destructive_menu_item, dropdown_menu, dropdown_submenu,
+    menu_item,
 };
-use super::responsive::content_margin;
-#[cfg(test)]
-use super::dialogs::take_initial_focus_request;
-#[cfg(test)]
-use super::responsive::compact_portrait_for_platform;
 
 const DESKTOP_CONTROL_HEIGHT: f32 = 32.0;
 const ANDROID_CONTROL_HEIGHT: f32 = 40.0;
@@ -342,7 +348,6 @@ struct ThemePalette {
     open_stroke: Color32,
 }
 
-
 const fn platform_control_height(android: bool) -> f32 {
     if android {
         ANDROID_CONTROL_HEIGHT
@@ -363,7 +368,6 @@ const fn platform_floating_action_edge(android: bool) -> f32 {
 pub(crate) fn toolbar_icon_size() -> Vec2 {
     Vec2::splat(TOOLBAR_ICON_EDGE)
 }
-
 
 #[cfg(not(target_os = "android"))]
 pub(crate) fn tool_rail_icon_size() -> Vec2 {
@@ -507,7 +511,6 @@ pub(crate) fn section_card_with_help<R>(
     })
 }
 
-
 pub(crate) fn section_separator(ui: &mut Ui) -> Response {
     let extra_space = (SPACE_SM - ui.spacing().item_spacing.y).max(0.0);
     ui.add_space(extra_space);
@@ -515,7 +518,6 @@ pub(crate) fn section_separator(ui: &mut Ui) -> Response {
     ui.add_space(extra_space);
     response
 }
-
 
 pub(crate) fn install(ctx: &egui::Context) {
     let mut fonts = egui::FontDefinitions::default();
@@ -622,7 +624,6 @@ pub(crate) fn apply(ctx: &egui::Context, design: UiDesign) {
     ctx.set_theme(theme);
     ctx.request_repaint();
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -805,14 +806,12 @@ mod tests {
             },
             |ui| {
                 if consume_before_fallback {
-                    consumed_before_fallback = ui.input_mut(|input| {
-                        input.consume_key(eframe::egui::Modifiers::NONE, key)
-                    });
+                    consumed_before_fallback =
+                        ui.input_mut(|input| input.consume_key(eframe::egui::Modifiers::NONE, key));
                 }
                 action = super::dialog_keyboard_action(ui, keyboard, confirm_enabled);
-                key_remains = ui.input_mut(|input| {
-                    input.consume_key(eframe::egui::Modifiers::NONE, key)
-                });
+                key_remains =
+                    ui.input_mut(|input| input.consume_key(eframe::egui::Modifiers::NONE, key));
             },
         );
         (action, consumed_before_fallback, key_remains)
@@ -835,9 +834,8 @@ mod tests {
             },
             |ui| {
                 if consume_before_buttons {
-                    consumed_before_buttons = ui.input_mut(|input| {
-                        input.consume_key(eframe::egui::Modifiers::NONE, key)
-                    });
+                    consumed_before_buttons =
+                        ui.input_mut(|input| input.consume_key(eframe::egui::Modifiers::NONE, key));
                 }
                 action = super::dialog_confirmation_buttons(
                     ui,
@@ -847,9 +845,8 @@ mod tests {
                     destructive,
                     keyboard,
                 );
-                key_remains = ui.input_mut(|input| {
-                    input.consume_key(eframe::egui::Modifiers::NONE, key)
-                });
+                key_remains =
+                    ui.input_mut(|input| input.consume_key(eframe::egui::Modifiers::NONE, key));
             },
         );
         (action, consumed_before_buttons, key_remains)
@@ -911,12 +908,8 @@ mod tests {
     #[test]
     fn handled_keys_do_not_trigger_a_second_dialog_action() {
         for key in [eframe::egui::Key::Enter, eframe::egui::Key::Escape] {
-            let (action, consumed_before_fallback, key_remains) = run_dialog_key(
-                key,
-                super::DialogKeyboard::CONFIRM_ON_ENTER,
-                true,
-                true,
-            );
+            let (action, consumed_before_fallback, key_remains) =
+                run_dialog_key(key, super::DialogKeyboard::CONFIRM_ON_ENTER, true, true);
 
             assert!(consumed_before_fallback);
             assert_eq!(action, super::DialogAction::None);

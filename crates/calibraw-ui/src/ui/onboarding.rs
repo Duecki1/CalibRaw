@@ -327,21 +327,21 @@ fn show_discord(ui: &mut egui::Ui, app: &mut CalibRawApp) {
 
 fn show_navigation(ui: &mut egui::Ui, step: OnboardingStep, action: &mut Option<OnboardingAction>) {
     ui.horizontal(|ui| {
-        if ui
-            .add_enabled(
-                step != OnboardingStep::Appearance,
-                egui::Button::new("Back"),
-            )
-            .clicked()
-        {
+        let back = ui
+            .add_enabled_ui(step != OnboardingStep::Appearance, |ui| {
+                crate::ui::theme::secondary_button(ui, "Back")
+            })
+            .inner;
+        if back.clicked() {
             *action = Some(OnboardingAction::Back);
         }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             let final_step = is_final_step(step);
-            if ui
-                .button(if final_step { "Finish setup" } else { "Next" })
-                .clicked()
-            {
+            let next = crate::ui::theme::secondary_button(
+                ui,
+                if final_step { "Finish setup" } else { "Next" },
+            );
+            if next.clicked() {
                 *action = Some(if final_step {
                     OnboardingAction::Finish
                 } else {

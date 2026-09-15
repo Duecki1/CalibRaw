@@ -73,15 +73,18 @@ impl Sidebar {
                     app.inpaint.aligned_offset = None;
                 }
                 if ui
-                    .add_enabled(
-                        !app.inpaint_processing(),
-                        egui::Button::new(if app.inpaint.source_pick_active {
-                            "Cancel source placement"
-                        } else {
-                            "Set source on canvas"
-                        })
-                        .selected(app.inpaint.source_pick_active),
-                    )
+                    .add_enabled_ui(!app.inpaint_processing(), |ui| {
+                        crate::ui::theme::toggle_button(
+                            ui,
+                            if app.inpaint.source_pick_active {
+                                "Cancel source placement"
+                            } else {
+                                "Set source on canvas"
+                            },
+                            app.inpaint.source_pick_active,
+                        )
+                    })
+                    .inner
                     .on_hover_text("Choose the source point used by Clone or Heal strokes.")
                     .clicked()
                 {
@@ -291,6 +294,5 @@ impl Sidebar {
                 );
             }
         });
-
     }
 }
