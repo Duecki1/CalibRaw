@@ -43,7 +43,9 @@ impl Sidebar {
             return;
         }
 
-        Self::show_sidebar_header(ui, app);
+        if !cfg!(target_os = "android") {
+            Self::show_sidebar_header(ui, app);
+        }
         Self::show_histogram(ui, app);
         Self::show_sidebar_content(ui, app, layout, frame);
     }
@@ -179,10 +181,7 @@ impl Sidebar {
 
         egui::CentralPanel::default()
             .frame(egui::Frame::new().inner_margin(egui::Margin::same(0)))
-            .show(ui, |ui| {
-                Self::show_sidebar_header(ui, app);
-                Self::show_sidebar_content(ui, app, ScreenLayout::Vertical, frame)
-            });
+            .show(ui, |ui| Self::show_sidebar_content(ui, app, ScreenLayout::Vertical, frame));
     }
 
     fn mobile_navigation_frame(ui: &Ui) -> egui::Frame {
@@ -463,6 +462,9 @@ impl Sidebar {
                                 SidebarTab::Export => Self::show_export(ui, app, frame),
                                 SidebarTab::Info => Self::show_info(ui, app),
                             }
+                            if layout == ScreenLayout::Vertical || cfg!(target_os = "android") {
+                                Self::show_mobile_footer_actions(ui, app);
+                            }
                             ui.add_space(crate::ui::theme::SPACE_SM);
                         },
                     );
@@ -479,6 +481,73 @@ impl Sidebar {
                 }
             }
         });
+    }
+
+    fn show_mobile_footer_actions(ui: &mut Ui, app: &mut CalibRawApp) {
+        ui.add_space(crate::ui::theme::SPACE_XS);
+        let width = ui.available_width().max(1.0);
+        ui.allocate_ui_with_layout(
+            egui::vec2(width, crate::ui::theme::TOOLBAR_HEIGHT),
+            egui::Layout::right_to_left(egui::Align::Center),
+            |ui| {
+                match app.ui.sidebar_tab {
+                    // Intentionally no global reset in Edit on mobile.
+                    SidebarTab::Adjustments => {}
+                    SidebarTab::Crop => {
+                        if crate::ui::icons::phosphor_icon_button(
+                            ui,
+                            egui_phosphor::regular::ARROW_COUNTER_CLOCKWISE,
+                            crate::ui::theme::toolbar_icon_size(),
+                            "Reset crop and geometry",
+                        )
+                        .clicked()
+                        {
+                            Self::reset_crop(app);
+                        }
+                    }
+                    SidebarTab::Masks => {
+                        if crate::ui::icons::phosphor_icon_button(
+                            ui,
+                            egui_phosphor::regular::ARROW_COUNTER_CLOCKWISE,
+                            crate::ui::theme::toolbar_icon_size(),
+                            "Reset all masks and clear the subject mask cache",
+                        )
+                        .clicked()
+                        {
+                            app.reset_masks();
+                        }
+                    }
+                    SidebarTab::Inpainting => {
+                        let active_tool = app.inpaint.tool;
+                        let active_stroke_count = app
+                            .inpaint
+                            .edits
+                            .strokes
+                            .iter()
+                            .filter(|stroke| {
+                                active_tool.matches_stroke_tool(
+                                    stroke.retouch.map(|retouch| retouch.tool),
+                                )
+                            })
+                            .count();
+                        if crate::ui::icons::phosphor_icon_button_enabled(
+                            ui,
+                            active_stroke_count != 0 && !app.inpaint_processing(),
+                            egui_phosphor::regular::TRASH,
+                            crate::ui::theme::toolbar_icon_size(),
+                            &format!("Clear all {} strokes", active_tool.label()),
+                        )
+                        .clicked()
+                        {
+                            app.clear_inpainting_tool();
+                        }
+                    }
+                    SidebarTab::Export | SidebarTab::Info => {}
+                }
+                Self::show_histogram_toggle(ui, app);
+                Self::show_clipping_toggles(ui, app);
+            },
+        );
     }
 
     #[cfg(not(target_os = "android"))]
@@ -698,22 +767,6 @@ impl Sidebar {
                 true,
             );
             lens_changed |= Self::show_optics(ui, app, true);
-        }
-
-        if layout == ScreenLayout::Vertical && crate::ui::theme::is_compact_portrait(ui) {
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui
-                    .button(format!(
-                        "{}  Reset all adjustments",
-                        egui_phosphor::regular::ARROW_COUNTER_CLOCKWISE
-                    ))
-                    .on_hover_text("Reset all develop adjustments")
-                    .clicked()
-                {
-                    app.reset_develop_adjustments();
-                }
-            });
-            ui.add_space(crate::ui::theme::SPACE_XS);
         }
 
         if changed {

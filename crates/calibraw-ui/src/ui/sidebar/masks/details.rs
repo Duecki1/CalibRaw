@@ -272,7 +272,6 @@ impl Sidebar {
         let mut geometry_changed = false;
         let mut adjustments_changed = false;
         let mut effect_changed = false;
-        let mut reset_all_masks_requested = false;
         let mut edit_header_rect = None;
         let mut request_subject = false;
         let mut request_object = false;
@@ -495,24 +494,6 @@ impl Sidebar {
             ui.add_space(crate::ui::theme::SPACE_XS);
         }
 
-        if crate::ui::theme::is_compact_portrait(ui)
-            && vertical_section == Some(MaskSection::Properties)
-        {
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui
-                    .button(format!(
-                        "{}  Reset all masks",
-                        egui_phosphor::regular::ARROW_COUNTER_CLOCKWISE
-                    ))
-                    .on_hover_text("Reset all masks and clear the subject mask cache")
-                    .clicked()
-                {
-                    reset_all_masks_requested = true;
-                }
-            });
-            ui.add_space(crate::ui::theme::SPACE_XS);
-        }
-
         app.develop_ui.tone_curve_tab = local_curve_tab;
         app.develop_ui.color_grade_tab = local_color_grade_tab;
         app.develop_ui.hsl_mixer_color = local_hsl_mixer_color;
@@ -544,9 +525,6 @@ impl Sidebar {
         }
         if adjustments_changed || effect_changed {
             app.mark_mask_adjustments_dirty();
-        }
-        if reset_all_masks_requested {
-            app.reset_masks();
         }
         crate::app::preview_visibility::PreviewVisibility::set_mask_scope(ui.ctx(), None);
         edit_header_rect
