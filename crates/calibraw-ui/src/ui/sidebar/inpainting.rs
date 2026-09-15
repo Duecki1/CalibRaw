@@ -25,39 +25,9 @@ impl Sidebar {
     pub(crate) fn show_inpainting(
         ui: &mut Ui,
         app: &mut CalibRawApp,
-        layout: ScreenLayout,
+        _layout: ScreenLayout,
         _frame: &eframe::Frame,
     ) {
-        let active_tool = app.inpaint.tool;
-        let active_stroke_count = app
-            .inpaint
-            .edits
-            .strokes
-            .iter()
-            .filter(|stroke| {
-                active_tool.matches_stroke_tool(stroke.retouch.map(|retouch| retouch.tool))
-            })
-            .count();
-        let compact_android = crate::ui::theme::is_compact_portrait(ui);
-        if layout == ScreenLayout::Vertical && !compact_android {
-            crate::ui::theme::toolbar_row(ui, |ui| {
-                ui.strong("Inpainting");
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    let clear = crate::ui::icons::phosphor_icon_button_enabled(
-                        ui,
-                        active_stroke_count != 0 && !app.inpaint_processing(),
-                        egui_phosphor::regular::TRASH,
-                        crate::ui::theme::toolbar_icon_size(),
-                        &format!("Clear all {} strokes", active_tool.label()),
-                    );
-                    if clear.clicked() {
-                        app.clear_inpainting_tool();
-                    }
-                });
-            });
-            ui.add_space(crate::ui::theme::SPACE_XS);
-        }
-
         let tool_help = inpaint_tool_help(app.inpaint.tool);
         crate::ui::theme::section_card_with_help(ui, "Tool", tool_help, |ui| {
             ui.horizontal(|ui| {
@@ -322,23 +292,5 @@ impl Sidebar {
             }
         });
 
-        if compact_android {
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                let clear = ui
-                    .add_enabled(
-                        active_stroke_count != 0 && !app.inpaint_processing(),
-                        egui::Button::new(format!(
-                            "{}  Clear all {} strokes",
-                            egui_phosphor::regular::TRASH,
-                            active_tool.label()
-                        )),
-                    )
-                    .on_hover_text(format!("Clear all {} strokes", active_tool.label()));
-                if clear.clicked() {
-                    app.clear_inpainting_tool();
-                }
-            });
-            ui.add_space(crate::ui::theme::SPACE_XS);
-        }
     }
 }
