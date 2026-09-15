@@ -117,9 +117,9 @@ impl CalibRawApp {
 
         self.invalidate_generated_mask_sources();
         self.ai.masks_need_update = false;
-        self.ai.subject_consent_open = false;
-        self.ai.object_consent_open = false;
-        self.ai.runtime_download_consent_pending = false;
+        if self.ai.consent.is_mask_consent() {
+            self.ai.consent = AiConsentState::None;
+        }
         self.ai.object_error_dialog = None;
 
         if masks_changed {
@@ -333,8 +333,7 @@ impl CalibRawApp {
                 self.foreground_operation_kind(),
                 Some(ForegroundOperationKind::SubjectMask | ForegroundOperationKind::ObjectMask)
             )
-            || self.ai.subject_consent_open
-            || self.ai.object_consent_open
+            || self.ai.consent.is_mask_consent()
     }
 
     pub(crate) fn ai_mask_update_remaining_target_count(&self) -> usize {
@@ -533,11 +532,12 @@ impl CalibRawApp {
             if crate::ai_masks::birefnet_model_is_verified(self.ai.birefnet_quality, &path)
                 && !runtime_download_needed
             {
-                self.ai.runtime_download_consent_pending = false;
+                if matches!(self.ai.consent, AiConsentState::Subject { .. }) {
+                    self.ai.consent = AiConsentState::None;
+                }
                 self.start_subject_worker(path, false);
             } else {
-                self.ai.runtime_download_consent_pending = runtime_download_needed;
-                self.ai.subject_consent_open = true;
+                self.ai.consent = AiConsentState::Subject { runtime_download_needed };
                 self.egui_ctx.request_repaint();
             }
         } else {
@@ -552,8 +552,7 @@ impl CalibRawApp {
                 self.foreground_operation_kind(),
                 Some(ForegroundOperationKind::SubjectMask | ForegroundOperationKind::ObjectMask)
             )
-            || self.ai.subject_consent_open
-            || self.ai.object_consent_open
+            || self.ai.consent.is_mask_consent()
         {
             return;
         }
@@ -583,12 +582,13 @@ impl CalibRawApp {
             if crate::ai_masks::object_models_are_verified(&encoder, &decoder)
                 && !runtime_download_needed
             {
-                self.ai.runtime_download_consent_pending = false;
+                if matches!(self.ai.consent, AiConsentState::Object { .. }) {
+                    self.ai.consent = AiConsentState::None;
+                }
                 self.start_object_worker(mask_index, component_index, encoder, decoder, false);
             } else {
-                self.ai.runtime_download_consent_pending = runtime_download_needed;
                 self.ai.object_pending_target = Some((mask_index, component_index));
-                self.ai.object_consent_open = true;
+                self.ai.consent = AiConsentState::Object { runtime_download_needed };
                 self.egui_ctx.request_repaint();
             }
             return;

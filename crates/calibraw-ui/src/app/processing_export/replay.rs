@@ -1045,7 +1045,7 @@ impl CalibRawApp {
     }
 
     pub(crate) fn create_edit_replay(&mut self, frame: &eframe::Frame) {
-        if !self.can_export() || self.inpaint.processing() {
+        if !self.can_export() || self.inpaint_processing() {
             return;
         }
         let Some(stem) = self.templated_export_stem() else {

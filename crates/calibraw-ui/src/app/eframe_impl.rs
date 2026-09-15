@@ -436,7 +436,7 @@ impl eframe::App for CalibRawApp {
             || self.export.publish_pending
             || self.preview.rebuild_receiver.is_some()
             || self.preview.detail_rebuild_receiver.is_some()
-            || self.inpaint.processing()
+            || self.inpaint_processing()
         {
             ui.ctx().request_repaint_after(Duration::from_millis(80));
         }

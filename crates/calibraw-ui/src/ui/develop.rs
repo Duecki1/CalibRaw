@@ -30,7 +30,7 @@ impl Develop {
         app: &mut CalibRawApp,
         frame: &eframe::Frame,
     ) {
-        if context.egui_wants_keyboard_input() {
+        if !app.navigation_shortcuts_allowed(context) {
             return;
         }
 

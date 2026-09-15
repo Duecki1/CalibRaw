@@ -39,6 +39,8 @@ use std::sync::atomic::AtomicBool;
 use std::sync::{mpsc, Arc};
 use std::time::{Duration, Instant};
 
+mod actions;
+pub(crate) use actions::AppAction;
 mod ai_denoise;
 #[cfg(not(target_os = "android"))]
 mod discord_presence;
@@ -1116,6 +1118,26 @@ pub(crate) enum OnnxRuntimeMode {
     Manual,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum AiConsentState {
+    #[default]
+    None,
+    Subject { runtime_download_needed: bool },
+    Object { runtime_download_needed: bool },
+    Denoise { runtime_download_needed: bool },
+    Remove { runtime_download_needed: bool },
+}
+
+impl AiConsentState {
+    pub(crate) const fn is_open(self) -> bool {
+        !matches!(self, Self::None)
+    }
+
+    pub(crate) const fn is_mask_consent(self) -> bool {
+        matches!(self, Self::Subject { .. } | Self::Object { .. })
+    }
+}
+
 pub(crate) struct AiState {
     pub(crate) birefnet_quality: BiRefNetQuality,
     #[cfg(not(target_os = "android"))]
@@ -1133,14 +1155,11 @@ pub(crate) struct AiState {
     pub(crate) runtime_path: Option<PathBuf>,
     #[cfg(not(target_os = "android"))]
     pub(crate) runtime_sha256: Option<String>,
-    pub(crate) runtime_download_consent_pending: bool,
     pub(crate) library_mask_refresh: Option<LibraryAiMaskRefreshState>,
-    pub(crate) subject_consent_open: bool,
-    pub(crate) object_consent_open: bool,
+    pub(crate) consent: AiConsentState,
     pub(crate) object_pending_target: Option<(usize, usize)>,
     pub(crate) object_error_dialog: Option<String>,
     pub(crate) object_cache: Option<((usize, usize), ObjectInferenceCache)>,
-    pub(crate) denoise_consent_open: bool,
     pub(crate) denoise_resume_pending: bool,
 }
 
@@ -1187,7 +1206,6 @@ pub(crate) struct InpaintState {
     pub(crate) last_brush_uv: Option<[f32; 2]>,
     pub(crate) pending_brush: Option<RemoveBrushStroke>,
     pub(crate) pending_retouch: Option<RetouchStroke>,
-    pub(crate) model_consent_open: bool,
     pub(crate) receiver: Option<mpsc::Receiver<RemoveEvent>>,
     pub(crate) cancellation: Option<Arc<AtomicBool>>,
     pub(crate) processing_label: Option<String>,

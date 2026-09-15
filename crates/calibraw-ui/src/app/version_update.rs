@@ -51,6 +51,12 @@ impl Default for VersionCheckState {
     }
 }
 
+impl VersionCheckState {
+    pub(super) fn dialog_open(&self) -> bool {
+        self.dialog.is_some()
+    }
+}
+
 fn normalized_version(tag: &str) -> Result<semver::Version, String> {
     let trimmed = tag.trim();
     let version = trimmed

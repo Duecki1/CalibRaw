@@ -168,6 +168,26 @@ impl LibraryState {
         self.asset_transfer_receiver.is_some()
     }
 
+    pub(crate) fn transient_dialog_open(&self) -> bool {
+        let common = self.delete_originals_confirmation.is_some()
+            || self.raw_name_dialog.is_some()
+            || self.export_dialog.is_some()
+            || self.adjustment_paste_dialog.is_some()
+            || self.ai_mask_refresh_prompt.is_some();
+        #[cfg(not(target_os = "android"))]
+        {
+            common
+                || self.folder_name_dialog.is_some()
+                || self.folder_delete_confirmation.is_some()
+                || self.hdr_merge.is_some()
+                || self.hdr_merge_message.is_some()
+        }
+        #[cfg(target_os = "android")]
+        {
+            common || self.platform.folder_name_dialog.is_some()
+        }
+    }
+
     pub(crate) fn local_mutation_in_progress(&self) -> bool {
         if self.asset_transfer_in_progress() {
             return true;

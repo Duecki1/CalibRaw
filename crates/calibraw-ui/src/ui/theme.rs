@@ -598,6 +598,100 @@ pub(crate) fn form_row_with_help<R>(
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum InteractionVisualState {
+    Disabled,
+    Active,
+    Selected,
+    Focused,
+    Hovered,
+    Inactive,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct InteractionVisuals {
+    pub(crate) state: InteractionVisualState,
+    pub(crate) fill: Color32,
+    pub(crate) weak_fill: Color32,
+    pub(crate) stroke: Stroke,
+    pub(crate) foreground: Color32,
+}
+
+pub(crate) const fn interaction_visual_state(
+    enabled: bool,
+    selected: bool,
+    active: bool,
+    hovered: bool,
+    focused: bool,
+) -> InteractionVisualState {
+    if !enabled {
+        InteractionVisualState::Disabled
+    } else if active {
+        InteractionVisualState::Active
+    } else if selected {
+        InteractionVisualState::Selected
+    } else if focused {
+        InteractionVisualState::Focused
+    } else if hovered {
+        InteractionVisualState::Hovered
+    } else {
+        InteractionVisualState::Inactive
+    }
+}
+
+pub(crate) fn interaction_visuals_for_flags(
+    ui: &Ui,
+    enabled: bool,
+    selected: bool,
+    active: bool,
+    hovered: bool,
+    focused: bool,
+) -> InteractionVisuals {
+    let state = interaction_visual_state(enabled, selected, active, hovered, focused);
+    let visuals = ui.visuals();
+    if state == InteractionVisualState::Selected {
+        return InteractionVisuals {
+            state,
+            fill: visuals.selection.bg_fill,
+            weak_fill: visuals.selection.bg_fill,
+            stroke: visuals.selection.stroke,
+            foreground: visuals.selection.stroke.color,
+        };
+    }
+
+    let widget = match state {
+        InteractionVisualState::Disabled => &visuals.widgets.noninteractive,
+        InteractionVisualState::Active => &visuals.widgets.active,
+        InteractionVisualState::Focused | InteractionVisualState::Hovered => {
+            &visuals.widgets.hovered
+        }
+        InteractionVisualState::Inactive => &visuals.widgets.inactive,
+        InteractionVisualState::Selected => unreachable!(),
+    };
+    InteractionVisuals {
+        state,
+        fill: widget.bg_fill,
+        weak_fill: widget.weak_bg_fill,
+        stroke: widget.bg_stroke,
+        foreground: widget.fg_stroke.color,
+    }
+}
+
+pub(crate) fn interaction_visuals(
+    ui: &Ui,
+    response: &Response,
+    selected: bool,
+) -> InteractionVisuals {
+    interaction_visuals_for_flags(
+        ui,
+        response.enabled(),
+        selected,
+        response.is_pointer_button_down_on(),
+        response.hovered() || response.highlighted(),
+        response.has_focus(),
+    )
+}
+
 pub(crate) fn section_separator(ui: &mut Ui) -> Response {
     let extra_space = (SPACE_SM - ui.spacing().item_spacing.y).max(0.0);
     ui.add_space(extra_space);
@@ -1004,6 +1098,7 @@ pub(crate) fn context_menu<R>(
 ) -> Option<InnerResponse<R>> {
     egui::Popup::context_menu(response)
         .style(egui::style::StyleModifier::default())
+        .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
         .show(add_contents)
 }
 
@@ -1015,6 +1110,7 @@ pub(crate) fn dropdown_menu<R>(
 ) -> Option<InnerResponse<R>> {
     egui::Popup::menu(response)
         .style(egui::style::StyleModifier::default())
+        .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
         .show(add_contents)
 }
 
@@ -1219,6 +1315,38 @@ mod tests {
         assert_eq!(
             rect.right_bottom(),
             bounds.right_bottom() - eframe::egui::Vec2::splat(FLOATING_ACTION_MARGIN)
+        );
+    }
+
+    #[test]
+    fn disabled_interaction_state_overrides_other_flags() {
+        assert_eq!(
+            super::interaction_visual_state(false, true, true, true, true),
+            super::InteractionVisualState::Disabled
+        );
+    }
+
+    #[test]
+    fn active_selected_and_focus_states_have_stable_priority() {
+        assert_eq!(
+            super::interaction_visual_state(true, true, true, true, true),
+            super::InteractionVisualState::Active
+        );
+        assert_eq!(
+            super::interaction_visual_state(true, true, false, true, true),
+            super::InteractionVisualState::Selected
+        );
+        assert_eq!(
+            super::interaction_visual_state(true, false, false, false, true),
+            super::InteractionVisualState::Focused
+        );
+        assert_eq!(
+            super::interaction_visual_state(true, false, false, true, false),
+            super::InteractionVisualState::Hovered
+        );
+        assert_eq!(
+            super::interaction_visual_state(true, false, false, false, false),
+            super::InteractionVisualState::Inactive
         );
     }
 

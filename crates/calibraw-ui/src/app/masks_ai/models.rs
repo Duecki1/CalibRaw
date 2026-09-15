@@ -7,7 +7,7 @@ impl CalibRawApp {
             return;
         }
         self.ai.runtime_mode = mode;
-        self.ai.runtime_download_consent_pending = false;
+        self.ai.consent = AiConsentState::None;
         self.persist_performance_settings();
         self.ui.notice = Some(
             "ONNX Runtime mode changed. Restart CalibRaw if an AI runtime was already used in this session."

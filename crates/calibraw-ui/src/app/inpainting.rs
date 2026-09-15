@@ -13,7 +13,6 @@ impl InpaintState {
         self.last_brush_uv = None;
         self.pending_brush = None;
         self.pending_retouch = None;
-        self.model_consent_open = false;
         self.receiver = None;
         self.processing_label = None;
         self.hovered_stroke = None;
@@ -21,14 +20,21 @@ impl InpaintState {
         self.stroke_opacity_edit_pending = false;
     }
 
-    pub(crate) fn processing(&self) -> bool {
-        self.receiver.is_some() || self.model_consent_open
+    pub(crate) fn worker_active(&self) -> bool {
+        self.receiver.is_some()
     }
 }
 
 impl CalibRawApp {
     pub(crate) fn reset_inpainting_state(&mut self) {
         self.inpaint.reset_for_document();
+        if matches!(self.ai.consent, AiConsentState::Remove { .. }) {
+            self.ai.consent = AiConsentState::None;
+        }
+    }
+
+    pub(crate) fn inpaint_processing(&self) -> bool {
+        self.inpaint.worker_active() || matches!(self.ai.consent, AiConsentState::Remove { .. })
     }
 
     pub(crate) fn install_remove_edits(&mut self, edits: Arc<RemoveEditState>) {
@@ -38,7 +44,9 @@ impl CalibRawApp {
         self.inpaint.receiver = None;
         self.inpaint.pending_brush = None;
         self.inpaint.pending_retouch = None;
-        self.inpaint.model_consent_open = false;
+        if matches!(self.ai.consent, AiConsentState::Remove { .. }) {
+            self.ai.consent = AiConsentState::None;
+        }
         self.inpaint.active_points.clear();
         self.inpaint.source_pick_active = false;
         self.inpaint.last_brush_uv = None;
@@ -56,7 +64,9 @@ impl CalibRawApp {
         self.inpaint.receiver = None;
         self.inpaint.pending_brush = None;
         self.inpaint.pending_retouch = None;
-        self.inpaint.model_consent_open = false;
+        if matches!(self.ai.consent, AiConsentState::Remove { .. }) {
+            self.ai.consent = AiConsentState::None;
+        }
         self.inpaint.processing_label = None;
         self.inpaint.active_points.clear();
         self.inpaint.source_pick_active = false;
@@ -99,7 +109,7 @@ impl CalibRawApp {
     }
 
     pub(crate) fn set_inpaint_stroke_opacity(&mut self, index: usize, opacity: f32) {
-        if self.inpaint.processing() || !opacity.is_finite() {
+        if self.inpaint_processing() || !opacity.is_finite() {
             return;
         }
         let opacity = opacity.clamp(0.0, 1.0);
@@ -178,7 +188,7 @@ impl CalibRawApp {
     }
 
     pub(crate) fn start_remove_worker(&mut self, frame: &eframe::Frame, brush: RemoveBrushStroke) {
-        if self.inpaint.processing() || brush.points.is_empty() {
+        if self.inpaint_processing() || brush.points.is_empty() {
             return;
         }
         #[cfg(not(target_os = "android"))]
@@ -188,14 +198,15 @@ impl CalibRawApp {
         let model_path = self.big_lama_model_path();
         let runtime_download_needed = self.automatic_onnx_runtime_download_needed();
         if crate::remove::big_lama_model_is_verified(&model_path) && !runtime_download_needed {
-            self.ai.runtime_download_consent_pending = false;
+            if matches!(self.ai.consent, AiConsentState::Remove { .. }) {
+                self.ai.consent = AiConsentState::None;
+            }
             let existing = self.inpaint.edits.as_ref().clone();
             let _ = self.start_remove_request(frame, existing, brush, false);
         } else {
-            self.ai.runtime_download_consent_pending = runtime_download_needed;
             self.inpaint.pending_brush = Some(brush);
             self.inpaint.pending_retouch = None;
-            self.inpaint.model_consent_open = true;
+            self.ai.consent = AiConsentState::Remove { runtime_download_needed };
             self.egui_ctx.request_repaint();
         }
     }
@@ -206,7 +217,7 @@ impl CalibRawApp {
         brush: RemoveBrushStroke,
         retouch: RetouchStroke,
     ) {
-        if self.inpaint.processing() || brush.points.is_empty() {
+        if self.inpaint_processing() || brush.points.is_empty() {
             return;
         }
         let Some(raw) = self.develop.loaded_raw.as_ref().cloned() else {
@@ -241,12 +252,11 @@ impl CalibRawApp {
     }
 
     pub(crate) fn show_remove_model_dialog(&mut self, ctx: &egui::Context, frame: &eframe::Frame) {
-        if !self.inpaint.model_consent_open {
+        let AiConsentState::Remove { runtime_download_needed } = self.ai.consent else {
             return;
-        }
+        };
         let model_download_needed =
             !crate::remove::big_lama_model_is_verified(&self.big_lama_model_path());
-        let runtime_download_needed = self.ai.runtime_download_consent_pending;
         let title = match (model_download_needed, runtime_download_needed) {
             (true, true) => "Download Remove model and ONNX Runtime?",
             (true, false) => "Download Remove model?",
@@ -313,8 +323,7 @@ impl CalibRawApp {
                 crate::ui::theme::DialogKeyboard::CLOSE_ONLY,
             ) {
                 crate::ui::theme::DialogAction::Confirm => {
-                    self.ai.runtime_download_consent_pending = false;
-                    self.inpaint.model_consent_open = false;
+                    self.ai.consent = AiConsentState::None;
                     if let Some(brush) = self.inpaint.pending_brush.take() {
                         let existing = self.inpaint.edits.as_ref().clone();
                         let _ = self.start_remove_request(
@@ -326,8 +335,7 @@ impl CalibRawApp {
                     }
                 }
                 crate::ui::theme::DialogAction::Cancel => {
-                    self.ai.runtime_download_consent_pending = false;
-                    self.inpaint.model_consent_open = false;
+                    self.ai.consent = AiConsentState::None;
                     self.inpaint.pending_brush = None;
                     self.inpaint.pending_retouch = None;
                     self.inpaint.last_brush_uv = None;
@@ -389,9 +397,11 @@ impl CalibRawApp {
                         Err(error) => {
                             if error.contains("consent to its download again") {
                                 self.inpaint.pending_brush = pending_brush;
-                                self.ai.runtime_download_consent_pending =
+                                let runtime_download_needed =
                                     self.automatic_onnx_runtime_download_needed();
-                                self.inpaint.model_consent_open = true;
+                                self.ai.consent = AiConsentState::Remove {
+                                    runtime_download_needed,
+                                };
                                 self.ui.notice = Some(
                                     "Big-LaMa needs to be installed or re-verified before Remove can continue."
                                         .to_owned(),

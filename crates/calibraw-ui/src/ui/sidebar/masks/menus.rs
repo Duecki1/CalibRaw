@@ -230,6 +230,16 @@ impl Sidebar {
         egui::Id::new("mask-delete-dialog-state")
     }
 
+    pub(crate) fn mask_dialog_open(ctx: &egui::Context) -> bool {
+        ctx.data(|data| {
+            data.get_temp::<MaskRenameDialog>(Self::mask_rename_dialog_id())
+                .is_some()
+                || data
+                    .get_temp::<MaskDeleteDialog>(Self::mask_delete_dialog_id())
+                    .is_some()
+        })
+    }
+
     fn copied_mask_group(ctx: &egui::Context) -> Option<LocalMask> {
         ctx.data(|data| data.get_temp::<LocalMask>(Self::mask_group_clipboard_id()))
     }

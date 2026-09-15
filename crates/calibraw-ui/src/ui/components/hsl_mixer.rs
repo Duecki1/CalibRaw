@@ -119,27 +119,12 @@ fn color_selector_button(
 ) -> egui::Response {
     let (rect, response) =
         ui.allocate_exact_size(egui::vec2(width, SELECTOR_HEIGHT), Sense::click());
-    let visuals = if response.is_pointer_button_down_on() {
-        ui.visuals().widgets.active
-    } else if response.hovered() || response.has_focus() {
-        ui.visuals().widgets.hovered
-    } else {
-        ui.visuals().widgets.inactive
-    };
-    let fill = if selected {
-        ui.visuals().selection.bg_fill
-    } else {
-        visuals.weak_bg_fill
-    };
-    let stroke = if selected {
-        Stroke::new(2.0, accent)
-    } else {
-        visuals.bg_stroke
-    };
+    let interaction = crate::ui::theme::interaction_visuals(ui, &response, selected);
 
-    ui.painter().rect_filled(rect, 4.0, fill);
     ui.painter()
-        .rect_stroke(rect, 4.0, stroke, StrokeKind::Inside);
+        .rect_filled(rect, 4.0, interaction.weak_fill);
+    ui.painter()
+        .rect_stroke(rect, 4.0, interaction.stroke, StrokeKind::Inside);
 
     let radius = (rect.width() * 0.25).clamp(4.0, 9.0);
     ui.painter().circle_filled(rect.center(), radius, accent);
