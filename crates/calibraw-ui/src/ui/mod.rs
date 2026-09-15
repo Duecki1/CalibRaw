@@ -2,15 +2,18 @@ pub(crate) mod components;
 #[cfg(not(target_os = "android"))]
 pub(crate) mod develop;
 pub(crate) mod develop_viewport;
+mod dialogs;
 pub(crate) mod icons;
 pub(crate) mod layout;
 pub(crate) mod library;
 pub(crate) mod onboarding;
 pub(crate) mod preview;
+mod responsive;
 pub(crate) mod settings;
 pub(crate) mod sidebar;
 pub(crate) mod theme;
 pub(crate) mod top_bar;
+mod widgets;
 
 #[cfg(not(target_os = "android"))]
 pub(crate) fn choose_export_file_path(

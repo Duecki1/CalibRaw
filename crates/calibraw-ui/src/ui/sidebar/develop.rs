@@ -68,6 +68,15 @@ impl Sidebar {
                 ui.add_space(crate::ui::theme::SPACE_XS);
                 let makers = state.makers();
                 let previous_maker = state.selected_maker.clone();
+                let selected_maker_text = if state.selected_maker.is_empty() {
+                    if state.selected_model.is_empty() {
+                        "Select a brand".to_owned()
+                    } else {
+                        "Unknown".to_owned()
+                    }
+                } else {
+                    state.selected_maker.clone()
+                };
                 ui.add_enabled_ui(
                     state.catalog.available && !makers.is_empty() && !lens_correction_busy,
                     |ui| {
@@ -75,15 +84,7 @@ impl Sidebar {
                             ui,
                             "Brand",
                             "lens-correction-brand",
-                            if state.selected_maker.is_empty() {
-                                if state.selected_model.is_empty() {
-                                    "Select a brand"
-                                } else {
-                                    "Unknown"
-                                }
-                            } else {
-                                state.selected_maker.as_str()
-                            },
+                            selected_maker_text,
                             240.0,
                             |ui| {
                                 for maker in &makers {
@@ -109,6 +110,11 @@ impl Sidebar {
 
                 let models = state.models_for_maker(&state.selected_maker);
                 let previous_model = state.selected_model.clone();
+                let selected_model_text = if state.selected_model.is_empty() {
+                    "Select a lens".to_owned()
+                } else {
+                    state.selected_model.clone()
+                };
                 ui.add_enabled_ui(
                     state.catalog.available && !models.is_empty() && !lens_correction_busy,
                     |ui| {
@@ -116,11 +122,7 @@ impl Sidebar {
                             ui,
                             "Lens",
                             "lens-correction-model",
-                            if state.selected_model.is_empty() {
-                                "Select a lens"
-                            } else {
-                                state.selected_model.as_str()
-                            },
+                            selected_model_text,
                             240.0,
                             |ui| {
                                 for model in &models {
