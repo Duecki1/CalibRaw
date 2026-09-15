@@ -451,9 +451,13 @@ impl CalibRawApp {
     }
 
     pub(crate) fn handle_sidecar_shortcut(&mut self, ctx: &egui::Context) {
+        if !self.app_shortcuts_allowed(ctx) {
+            return;
+        }
         let save = egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, egui::Key::S);
-        if self.can_save_edits() && ctx.input_mut(|input| input.consume_shortcut(&save)) {
-            self.save_edits_now();
+        let action = AppAction::SaveEdits;
+        if self.action_enabled(action) && ctx.input_mut(|input| input.consume_shortcut(&save)) {
+            self.dispatch_action(action);
         }
     }
 

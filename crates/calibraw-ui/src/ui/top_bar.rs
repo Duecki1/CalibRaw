@@ -1,4 +1,4 @@
-use crate::app::{AppTab, CalibRawApp};
+use crate::app::{AppAction, AppTab, CalibRawApp};
 use crate::ui::theme;
 use eframe::egui::{self, Ui};
 
@@ -129,13 +129,13 @@ impl TopBar {
             };
             let save_response = crate::ui::icons::phosphor_icon_button_enabled(
                 ui,
-                app.can_save_edits(),
+                app.action_enabled(AppAction::SaveEdits),
                 save_icon,
                 theme::toolbar_icon_size(),
                 save_tooltip,
             );
             if save_response.clicked() {
-                app.save_edits_now();
+                app.dispatch_action(AppAction::SaveEdits);
             }
             crate::ui::library::show_current_photo_review(ui, app, true);
 
@@ -145,25 +145,25 @@ impl TopBar {
                 }
                 if Self::history_icon_button(
                     ui,
-                    app.can_undo_edit(),
+                    app.action_enabled(AppAction::UndoEdit),
                     false,
                     theme::toolbar_icon_size(),
                     "Undo the last edit",
                 )
                 .clicked()
                 {
-                    app.undo_edit();
+                    app.dispatch_action(AppAction::UndoEdit);
                 }
                 if Self::history_icon_button(
                     ui,
-                    app.can_redo_edit(),
+                    app.action_enabled(AppAction::RedoEdit),
                     true,
                     theme::toolbar_icon_size(),
                     "Redo the last edit",
                 )
                 .clicked()
                 {
-                    app.redo_edit();
+                    app.dispatch_action(AppAction::RedoEdit);
                 }
             });
         });
@@ -215,9 +215,10 @@ impl TopBar {
                 });
                 if app.ui.active_tab == AppTab::Library {
                     let search_width = if compact { 142.0 } else { 210.0 };
-                    let focus_search = ui.input(|input| {
-                        input.modifiers.command && input.key_pressed(egui::Key::F)
-                    });
+                    let focus_search = app.app_shortcuts_allowed(ui.ctx())
+                        && ui.input(|input| {
+                            input.modifiers.command && input.key_pressed(egui::Key::F)
+                        });
                     let search_response = ui
                         .add_sized(
                             [search_width, theme::CONTROL_HEIGHT],
@@ -235,9 +236,13 @@ impl TopBar {
                         search_response.request_focus();
                     }
                     let select_matches = search_response.has_focus()
-                        && ui.input(|input| input.key_pressed(egui::Key::Enter));
+                        && ui.input_mut(|input| {
+                            input.consume_key(egui::Modifiers::NONE, egui::Key::Enter)
+                        });
                     let clear_search = search_response.has_focus()
-                        && ui.input(|input| input.key_pressed(egui::Key::Escape));
+                        && ui.input_mut(|input| {
+                            input.consume_key(egui::Modifiers::NONE, egui::Key::Escape)
+                        });
                     if select_matches {
                         app.library.select_search_matches();
                     }
@@ -265,25 +270,25 @@ impl TopBar {
                 if app.ui.active_tab == AppTab::Develop {
                     if Self::history_icon_button(
                         ui,
-                        app.can_undo_edit(),
+                        app.action_enabled(AppAction::UndoEdit),
                         false,
                         theme::toolbar_icon_size(),
                         "Undo the last edit (Ctrl/Cmd+Z)",
                     )
                     .clicked()
                     {
-                        app.undo_edit();
+                        app.dispatch_action(AppAction::UndoEdit);
                     }
                     if Self::history_icon_button(
                         ui,
-                        app.can_redo_edit(),
+                        app.action_enabled(AppAction::RedoEdit),
                         true,
                         theme::toolbar_icon_size(),
                         "Redo the last edit (Ctrl/Cmd+Shift+Z or Ctrl+Y)",
                     )
                     .clicked()
                     {
-                        app.redo_edit();
+                        app.dispatch_action(AppAction::RedoEdit);
                     }
                     let save_tooltip = if app.sidecar_save_in_progress() {
                         "Saving non-destructive edits…"
@@ -299,13 +304,13 @@ impl TopBar {
                     };
                     let save_response = crate::ui::icons::phosphor_icon_button_enabled(
                         ui,
-                        app.can_save_edits(),
+                        app.action_enabled(AppAction::SaveEdits),
                         save_icon,
                         theme::toolbar_icon_size(),
                         save_tooltip,
                     );
                     if save_response.clicked() {
-                        app.save_edits_now();
+                        app.dispatch_action(AppAction::SaveEdits);
                     }
                     let original_visible = app.preview.original_visible();
                     let preview_icon = if original_visible {

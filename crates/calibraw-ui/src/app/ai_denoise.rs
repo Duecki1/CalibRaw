@@ -86,7 +86,9 @@ impl CalibRawApp {
 
     pub(crate) fn set_ai_denoise_enabled(&mut self, enabled: bool, frame: &eframe::Frame) {
         if !enabled {
-            self.ai.denoise_consent_open = false;
+            if matches!(self.ai.consent, AiConsentState::Denoise { .. }) {
+                self.ai.consent = AiConsentState::None;
+            }
             self.cancel_foreground_operation_if(ForegroundOperationKind::AiDenoise);
             let changed = self.develop.exposure.ai_denoise_enabled;
             self.develop.exposure.ai_denoise_enabled = false;
@@ -156,11 +158,12 @@ impl CalibRawApp {
         if saved_result_exists
             || (crate::ai_denoise::models_are_verified(&model_dir) && !runtime_download_needed)
         {
-            self.ai.runtime_download_consent_pending = false;
+            if matches!(self.ai.consent, AiConsentState::Denoise { .. }) {
+                self.ai.consent = AiConsentState::None;
+            }
             self.start_ai_denoise(frame, false);
         } else {
-            self.ai.runtime_download_consent_pending = runtime_download_needed;
-            self.ai.denoise_consent_open = true;
+            self.ai.consent = AiConsentState::Denoise { runtime_download_needed };
             self.egui_ctx.request_repaint();
         }
     }
@@ -263,7 +266,9 @@ impl CalibRawApp {
             allow_model_download,
             Arc::clone(&cancellation),
         );
-        self.ai.denoise_consent_open = false;
+        if matches!(self.ai.consent, AiConsentState::Denoise { .. }) {
+            self.ai.consent = AiConsentState::None;
+        }
         let progress = ForegroundProgress::indeterminate(if saved_result_exists {
             "Restoring saved AI denoise…"
         } else {
@@ -410,8 +415,9 @@ impl CalibRawApp {
 
     pub(crate) fn abandon_ai_denoise_worker(&mut self) {
         self.cancel_foreground_operation_if(ForegroundOperationKind::AiDenoise);
-        self.ai.denoise_consent_open = false;
-        self.ai.runtime_download_consent_pending = false;
+        if matches!(self.ai.consent, AiConsentState::Denoise { .. }) {
+            self.ai.consent = AiConsentState::None;
+        }
     }
 
     pub(crate) fn resume_persisted_ai_denoise(&mut self, frame: &eframe::Frame) {
@@ -445,10 +451,9 @@ impl CalibRawApp {
     }
 
     pub(crate) fn show_ai_denoise_dialogs(&mut self, ctx: &egui::Context, frame: &eframe::Frame) {
-        if self.ai.denoise_consent_open {
+        if let AiConsentState::Denoise { runtime_download_needed } = self.ai.consent {
             let model_download_needed =
                 !crate::ai_denoise::models_are_verified(&self.rawnind_model_dir());
-            let runtime_download_needed = self.ai.runtime_download_consent_pending;
             let title = match (model_download_needed, runtime_download_needed) {
                 (true, true) => "Download AI denoise models and ONNX Runtime?",
                 (true, false) => "Download RawNIND AI denoise models?",
@@ -516,12 +521,11 @@ impl CalibRawApp {
                     crate::ui::theme::DialogKeyboard::CLOSE_ONLY,
                 ) {
                     crate::ui::theme::DialogAction::Confirm => {
-                        self.ai.runtime_download_consent_pending = false;
+                        self.ai.consent = AiConsentState::None;
                         self.start_ai_denoise(frame, model_download_needed);
                     }
                     crate::ui::theme::DialogAction::Cancel => {
-                        self.ai.runtime_download_consent_pending = false;
-                        self.ai.denoise_consent_open = false;
+                        self.ai.consent = AiConsentState::None;
                         self.develop.exposure.ai_denoise_enabled = false;
                     }
                     crate::ui::theme::DialogAction::None => {}

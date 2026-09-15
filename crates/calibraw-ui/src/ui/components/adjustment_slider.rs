@@ -568,12 +568,15 @@ where
     }
 
     let focused = track_response.has_focus() || handle_response.has_focus();
-    if focused {
-        let (decrease, increase) = ui.input(|input| {
-            (
-                input.key_pressed(egui::Key::ArrowLeft) || input.key_pressed(egui::Key::ArrowDown),
-                input.key_pressed(egui::Key::ArrowRight) || input.key_pressed(egui::Key::ArrowUp),
-            )
+    let keyboard_enabled = track_response.enabled() && handle_response.enabled();
+    if focused && keyboard_enabled {
+        let decrease = ui.input_mut(|input| {
+            input.consume_key(egui::Modifiers::NONE, egui::Key::ArrowLeft)
+                || input.consume_key(egui::Modifiers::NONE, egui::Key::ArrowDown)
+        });
+        let increase = ui.input_mut(|input| {
+            input.consume_key(egui::Modifiers::NONE, egui::Key::ArrowRight)
+                || input.consume_key(egui::Modifiers::NONE, egui::Key::ArrowUp)
         });
         let direction = (increase as i8 - decrease as i8) as f64;
         if direction != 0.0 {
@@ -588,13 +591,14 @@ where
         || (track_response.is_pointer_button_down_on()
             && pointer.0.is_some_and(|origin| rect.contains(origin)));
     let hovered = track_response.hovered() || handle_response.hovered();
-    let widget_visuals = if active {
-        &ui.visuals().widgets.active
-    } else if hovered {
-        &ui.visuals().widgets.hovered
-    } else {
-        &ui.visuals().widgets.inactive
-    };
+    let interaction = crate::ui::theme::interaction_visuals_for_flags(
+        ui,
+        track_response.enabled() && handle_response.enabled(),
+        false,
+        active,
+        hovered,
+        focused,
+    );
 
     let painter = ui.painter();
     let gradient_color = gradient.map(|gradient| gradient_color_at(gradient, fraction));
@@ -638,12 +642,12 @@ where
     painter.circle_filled(
         handle_center,
         HANDLE_RADIUS,
-        visual_accent.unwrap_or(widget_visuals.bg_fill),
+        visual_accent.unwrap_or(interaction.fill),
     );
     painter.circle_stroke(
         handle_center,
         HANDLE_RADIUS,
-        Stroke::new(1.0, widget_visuals.fg_stroke.color),
+        Stroke::new(1.0, interaction.foreground),
     );
 
     let combined = track_response

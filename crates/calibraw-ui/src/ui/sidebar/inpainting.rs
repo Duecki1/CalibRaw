@@ -45,7 +45,7 @@ impl Sidebar {
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let clear = crate::ui::icons::phosphor_icon_button_enabled(
                         ui,
-                        active_stroke_count != 0 && !app.inpaint.processing(),
+                        active_stroke_count != 0 && !app.inpaint_processing(),
                         egui_phosphor::regular::TRASH,
                         crate::ui::theme::toolbar_icon_size(),
                         &format!("Clear all {} strokes", active_tool.label()),
@@ -60,7 +60,6 @@ impl Sidebar {
 
         let tool_help = inpaint_tool_help(app.inpaint.tool);
         crate::ui::theme::section_card_with_help(ui, "Tool", tool_help, |ui| {
-            let previous_tool = app.inpaint.tool;
             ui.horizontal(|ui| {
                 let spacing = ui.spacing().item_spacing.x;
                 let tool_width = ((ui.available_width() - spacing * 2.0) / 3.0).max(1.0);
@@ -74,19 +73,10 @@ impl Sidebar {
                     .on_hover_text(inpaint_tool_help(tool))
                     .clicked()
                     {
-                        app.inpaint.tool = tool;
+                        app.dispatch_action(AppAction::SelectInpaintTool(tool));
                     }
                 }
             });
-            if app.inpaint.tool != previous_tool {
-                app.finish_inpaint_stroke_opacity_edit();
-                app.inpaint.active_points.clear();
-                app.inpaint.last_brush_uv = None;
-                app.inpaint.source_pick_active = false;
-                app.inpaint.aligned_offset = None;
-                app.inpaint.hovered_stroke = None;
-                app.inpaint.selected_stroke = None;
-            }
 
             if app.inpaint.tool.retouch().is_some() {
                 let previous_alignment = app.inpaint.alignment;
@@ -114,7 +104,7 @@ impl Sidebar {
                 }
                 if ui
                     .add_enabled(
-                        !app.inpaint.processing(),
+                        !app.inpaint_processing(),
                         egui::Button::new(if app.inpaint.source_pick_active {
                             "Cancel source placement"
                         } else {
@@ -146,7 +136,7 @@ impl Sidebar {
 
         crate::ui::theme::card_gap(ui);
         crate::ui::theme::section_card(ui, "Brush", |ui| {
-            ui.add_enabled_ui(!app.inpaint.processing(), |ui| {
+            ui.add_enabled_ui(!app.inpaint_processing(), |ui| {
                 adjustment_slider_with_reset(
                     ui,
                     "Size",
@@ -226,7 +216,7 @@ impl Sidebar {
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             if crate::ui::icons::phosphor_icon_button_enabled(
                                 ui,
-                                !app.inpaint.processing(),
+                                !app.inpaint_processing(),
                                 egui_phosphor::regular::TRASH,
                                 crate::ui::theme::toolbar_icon_size(),
                                 "Delete this inpainting stroke",
@@ -299,7 +289,7 @@ impl Sidebar {
                     );
                 }
                 let changed = ui
-                    .add_enabled_ui(!app.inpaint.processing(), |ui| {
+                    .add_enabled_ui(!app.inpaint_processing(), |ui| {
                         adjustment_slider_with_reset(
                             ui,
                             "Opacity",
@@ -336,7 +326,7 @@ impl Sidebar {
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 let clear = ui
                     .add_enabled(
-                        active_stroke_count != 0 && !app.inpaint.processing(),
+                        active_stroke_count != 0 && !app.inpaint_processing(),
                         egui::Button::new(format!(
                             "{}  Clear all {} strokes",
                             egui_phosphor::regular::TRASH,

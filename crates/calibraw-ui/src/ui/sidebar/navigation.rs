@@ -104,7 +104,7 @@ impl Sidebar {
                                     .count();
                                 if crate::ui::icons::phosphor_icon_button_enabled(
                                     ui,
-                                    active_stroke_count != 0 && !app.inpaint.processing(),
+                                    active_stroke_count != 0 && !app.inpaint_processing(),
                                     egui_phosphor::regular::TRASH,
                                     crate::ui::theme::toolbar_icon_size(),
                                     &format!("Clear all {} strokes", active_tool.label()),
@@ -217,7 +217,6 @@ impl Sidebar {
         } else {
             56.0
         };
-        let previous = app.ui.sidebar_tab;
         let item_width = (ui.available_width() / 6.0).max(1.0);
         ui.horizontal(|ui| {
             for (tab, icon, label, tooltip) in [
@@ -254,11 +253,10 @@ impl Sidebar {
                 )
                 .clicked()
                 {
-                    app.ui.sidebar_tab = tab;
+                    app.dispatch_action(AppAction::SelectSidebarTab(tab));
                 }
             }
         });
-        Self::finish_sidebar_tab_change(app, previous);
     }
 
     fn show_mobile_context_tabs(ui: &mut Ui, app: &mut CalibRawApp) {
@@ -377,24 +375,20 @@ impl Sidebar {
 
         let (rect, response) = ui.allocate_exact_size(size, Sense::click());
         let painter = ui.painter_at(rect);
-        let visuals = ui.visuals();
+        let interaction = crate::ui::theme::interaction_visuals(ui, &response, selected);
         let tile_width = if size.y > 54.0 { 56.0 } else { 50.0 };
         let tile = egui::Rect::from_center_size(
             rect.center(),
             egui::vec2(size.x.min(tile_width), size.y - 4.0),
         );
-        if selected {
-            painter.rect_filled(tile, 6.0, visuals.selection.bg_fill);
-        } else if response.hovered() || response.highlighted() {
-            painter.rect_filled(tile, 6.0, visuals.widgets.hovered.bg_fill);
+        if interaction.state != crate::ui::theme::InteractionVisualState::Inactive {
+            painter.rect_filled(tile, 6.0, interaction.weak_fill);
         }
 
-        let color = if selected {
-            visuals.selection.stroke.color
-        } else if response.hovered() {
-            visuals.widgets.hovered.fg_stroke.color
+        let color = if interaction.state == crate::ui::theme::InteractionVisualState::Inactive {
+            ui.visuals().weak_text_color()
         } else {
-            visuals.weak_text_color()
+            interaction.foreground
         };
         let (icon_size, icon_center) = mobile_tab_icon_geometry(size.y, show_label);
         painter.text(
@@ -493,7 +487,6 @@ impl Sidebar {
 
         ui.set_min_width(ui.available_width());
         ui.spacing_mut().item_spacing.y = crate::ui::theme::SPACE_XS;
-        let previous = app.ui.sidebar_tab;
         ui.vertical_centered(|ui| {
             ui.add_space(5.0);
             for (tab, icon, tooltip) in [
@@ -517,7 +510,7 @@ impl Sidebar {
                 )
                 .clicked()
                 {
-                    app.ui.sidebar_tab = tab;
+                    app.dispatch_action(AppAction::SelectSidebarTab(tab));
                     app.develop_ui.sidebar_open = true;
                 }
             }
@@ -560,7 +553,6 @@ impl Sidebar {
                 app.develop_ui.sidebar_open = !app.develop_ui.sidebar_open;
             }
         });
-        Self::finish_sidebar_tab_change(app, previous);
     }
 
     #[cfg(target_os = "android")]
@@ -569,7 +561,6 @@ impl Sidebar {
 
         ui.set_width(Self::ANDROID_LANDSCAPE_TOOL_RAIL_WIDTH);
         ui.spacing_mut().item_spacing.y = 0.0;
-        let previous = app.ui.sidebar_tab;
         let show_labels = app.preferences.show_develop_navigation_labels;
         ui.vertical_centered(|ui| {
             for (tab, icon, label, tooltip) in [
@@ -606,26 +597,10 @@ impl Sidebar {
                 )
                 .clicked()
                 {
-                    app.ui.sidebar_tab = tab;
+                    app.dispatch_action(AppAction::SelectSidebarTab(tab));
                 }
             }
         });
-        Self::finish_sidebar_tab_change(app, previous);
-    }
-
-    fn finish_sidebar_tab_change(app: &mut CalibRawApp, previous: SidebarTab) {
-        if previous == SidebarTab::Crop && app.ui.sidebar_tab != SidebarTab::Crop {
-            app.develop_ui.crop_drag = None;
-            app.develop_ui.straighten_tool_active = false;
-            app.develop_ui.straighten_drag = None;
-        }
-        if app.ui.sidebar_tab != SidebarTab::Adjustments {
-            app.develop_ui.white_balance_picker_active = false;
-            app.develop_ui.white_balance_picker_drag = None;
-        }
-        if app.ui.sidebar_tab != previous {
-            app.sync_ai_model_runtime_context();
-        }
     }
 
     fn show_adjustments(

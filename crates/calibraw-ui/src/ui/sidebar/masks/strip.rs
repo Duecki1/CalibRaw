@@ -167,7 +167,7 @@ impl Sidebar {
                             }
                         }
                     }
-                    response.context_menu(|ui| {
+                    crate::ui::theme::context_menu(&response, |ui| {
                         let mut geometry_changed = false;
                         Self::mask_group_context_menu(
                             ui,
@@ -297,7 +297,7 @@ impl Sidebar {
                                     drag.hover_group = None;
                                 }
                             }
-                            response.context_menu(|ui| {
+                            crate::ui::theme::context_menu(&response, |ui| {
                                 Self::submask_context_menu(
                                     ui,
                                     &mut app.masks.stack.masks[index].components[component_index],

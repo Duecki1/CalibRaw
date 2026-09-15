@@ -166,17 +166,18 @@ impl Sidebar {
         };
         let (rect, response) = ui.allocate_exact_size(size, thumbnail_sense);
         let visuals = ui.visuals();
-        let fill = if selected {
-            visuals.selection.bg_fill.gamma_multiply(0.18)
-        } else if response.hovered() {
-            visuals.widgets.hovered.bg_fill
-        } else {
-            visuals.faint_bg_color
+        let interaction = crate::ui::theme::interaction_visuals(ui, &response, selected);
+        let fill = match interaction.state {
+            crate::ui::theme::InteractionVisualState::Selected => {
+                interaction.fill.gamma_multiply(0.18)
+            }
+            crate::ui::theme::InteractionVisualState::Inactive => visuals.faint_bg_color,
+            _ => interaction.weak_fill,
         };
-        let stroke = if selected {
-            Stroke::new(1.5, visuals.selection.bg_fill)
+        let stroke = if interaction.state == crate::ui::theme::InteractionVisualState::Selected {
+            Stroke::new(1.5, interaction.stroke.color)
         } else {
-            Stroke::new(1.0, visuals.widgets.noninteractive.bg_stroke.color)
+            interaction.stroke
         };
         let painter = ui.painter_at(rect);
         painter.rect_filled(rect, 6.0, fill);

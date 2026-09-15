@@ -1,6 +1,6 @@
 use crate::app::{
-    AdjustmentSection, CalibRawApp, ColorGradeTab, HslMixerColor, InpaintTool, MaskSection,
-    SidebarTab, ToneCurveTab,
+    AdjustmentSection, AppAction, CalibRawApp, ColorGradeTab, HslMixerColor, InpaintTool,
+    MaskSection, SidebarTab, ToneCurveTab,
 };
 use crate::pipeline::{
     AdjustmentGroup, BrushMode, DenoiseQuality, ExportBitDepth, ExportFormat, ExportResizeMode,

@@ -12,7 +12,7 @@ impl Preview {
         source_height: u32,
         response: &egui::Response,
     ) {
-        if app.inpaint.processing() {
+        if app.inpaint_processing() {
             return;
         }
         let lens_geometry = app
@@ -284,7 +284,7 @@ impl Preview {
             dab_size,
             64,
         );
-        let cursor_color = if app.inpaint.processing() {
+        let cursor_color = if app.inpaint_processing() {
             Color32::from_white_alpha(110)
         } else {
             Color32::WHITE

@@ -119,7 +119,9 @@ pub(crate) fn android_overflow_menu<R>(
     use eframe::egui::Popup;
 
     let response = android_overflow_button(ui, anchor_rect, id, edge);
-    Popup::menu(&response).show(add_contents);
+    Popup::menu(&response)
+        .close_behavior(eframe::egui::PopupCloseBehavior::CloseOnClickOutside)
+        .show(add_contents);
 
     response.on_hover_text("More actions")
 }

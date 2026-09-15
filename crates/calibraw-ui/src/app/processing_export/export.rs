@@ -327,7 +327,7 @@ impl CalibRawApp {
             || self.develop.preview_raw.is_none()
             || self.export.publish_pending
             || self.develop.load_receiver.is_some()
-            || self.inpaint.processing()
+            || self.inpaint_processing()
         {
             return None;
         }

@@ -264,8 +264,9 @@ impl CalibRawApp {
         self.ai.mask_update_subject_pending = false;
         self.ai.mask_update_object_queue.clear();
         self.ai.mask_update_failed = false;
-        self.ai.subject_consent_open = false;
-        self.ai.object_consent_open = false;
+        if self.ai.consent.is_mask_consent() {
+            self.ai.consent = AiConsentState::None;
+        }
         self.ai.object_pending_target = None;
         self.ai.object_cache = None;
         self.masks.dirty_layers = [false; MAX_LOCAL_MASKS];
