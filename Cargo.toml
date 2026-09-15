@@ -89,7 +89,7 @@ android_logger = "0.15"
 jni = "0.22"
 windows-sys = { version = "=0.61.2", features = ["Win32_Storage_FileSystem"] }
 
-bindgen = "=0.72.1"
+bindgen = "=0.73.2"
 pkg-config = "0.3"
 
 [profile.release]
