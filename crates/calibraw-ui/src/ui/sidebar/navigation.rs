@@ -43,9 +43,7 @@ impl Sidebar {
             return;
         }
 
-        if !cfg!(target_os = "android") {
-            Self::show_sidebar_header(ui, app);
-        }
+        Self::show_sidebar_header(ui, app);
         Self::show_histogram(ui, app);
         Self::show_sidebar_content(ui, app, layout, frame);
     }
@@ -422,6 +420,10 @@ impl Sidebar {
             egui::scroll_area::ScrollSource::default()
         };
         ui.scope(|ui| {
+            if layout == ScreenLayout::Vertical {
+                Self::begin_vertical_card_actions(ui.ctx());
+            }
+
             let mut scroll_style = egui::style::ScrollStyle::solid();
             scroll_style.bar_width = 7.0;
             scroll_style.bar_inner_margin = 7.0;
@@ -462,7 +464,7 @@ impl Sidebar {
                                 SidebarTab::Export => Self::show_export(ui, app, frame),
                                 SidebarTab::Info => Self::show_info(ui, app),
                             }
-                            if layout == ScreenLayout::Vertical || cfg!(target_os = "android") {
+                            if layout == ScreenLayout::Vertical {
                                 Self::show_mobile_footer_actions(ui, app);
                             }
                             ui.add_space(crate::ui::theme::SPACE_SM);
@@ -544,6 +546,7 @@ impl Sidebar {
                     }
                     SidebarTab::Export | SidebarTab::Info => {}
                 }
+                Self::show_vertical_card_footer_actions(ui);
                 Self::show_histogram_toggle(ui, app);
                 Self::show_clipping_toggles(ui, app);
             },
