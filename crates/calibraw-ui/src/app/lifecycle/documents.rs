@@ -79,7 +79,13 @@ impl CalibRawApp {
 
     pub fn open_path(&mut self, path: PathBuf, frame: &eframe::Frame) {
         let label = path.display().to_string();
-        self.ui.active_tab = AppTab::Develop;
+        if self.ai.library_mask_refresh.is_some() {
+            // Background refresh temporarily opens each document in Develop.
+            // Preserve that loading context without interactive AI cancellation.
+            self.ui.active_tab = AppTab::Develop;
+        } else {
+            self.activate_tab(AppTab::Develop);
+        }
         let sidecar_target = crate::sidecar::SidecarTarget::Desktop {
             raw_path: path.clone(),
         };

@@ -355,8 +355,7 @@ impl Settings {
             );
             let cache_size = app.thumbnail_cache_size_label();
             crate::ui::theme::action_row(ui, |ui| {
-                if ui
-                    .button("Clear thumbnail cache")
+                if crate::ui::theme::secondary_button(ui, "Clear thumbnail cache")
                     .on_hover_text("Delete generated previews and rebuild them when needed.")
                     .clicked()
                 {
@@ -541,16 +540,14 @@ impl Settings {
                 #[cfg(not(target_os = "android"))]
                 let choose_enabled = true;
 
-                if ui
-                    .add_enabled(choose_enabled, egui::Button::new(choose_label))
+                if crate::ui::theme::secondary_button_enabled(ui, choose_enabled, choose_label)
                     .on_hover_text(camera_folder_help)
                     .clicked()
                 {
                     app.choose_camera_profile_folder();
                 }
                 #[cfg(not(target_os = "android"))]
-                if ui
-                    .button("Auto-detect DCP profiles")
+                if crate::ui::theme::secondary_button(ui, "Auto-detect DCP profiles")
                     .on_hover_text("Check common CameraProfiles locations.")
                     .clicked()
                 {
@@ -560,8 +557,7 @@ impl Settings {
                     || app.preferences.camera_profile_auto_detect;
                 #[cfg(target_os = "android")]
                 let can_clear = can_clear && !app.android.picker_pending;
-                if ui
-                    .add_enabled(can_clear, egui::Button::new("Clear"))
+                if crate::ui::theme::secondary_button_enabled(ui, can_clear, "Clear")
                     .on_hover_text("Stop using the configured external DCP profile folder.")
                     .clicked()
                 {
@@ -701,20 +697,19 @@ impl Settings {
                             );
                         }
                         crate::ui::theme::action_row(ui, |ui| {
-                            if ui
-                                .button("Choose ONNX Runtime…")
+                            if crate::ui::theme::secondary_button(ui, "Choose ONNX Runtime…")
                                 .on_hover_text(manual_help)
                                 .clicked()
                             {
                                 app.choose_onnx_runtime();
                             }
-                            if ui
-                                .add_enabled(
-                                    app.ai.runtime_path.is_some(),
-                                    eframe::egui::Button::new("Clear"),
-                                )
-                                .on_hover_text("Forget the selected manual runtime.")
-                                .clicked()
+                            if crate::ui::theme::secondary_button_enabled(
+                                ui,
+                                app.ai.runtime_path.is_some(),
+                                "Clear",
+                            )
+                            .on_hover_text("Forget the selected manual runtime.")
+                            .clicked()
                             {
                                 app.clear_onnx_runtime();
                             }
@@ -749,8 +744,7 @@ impl Settings {
             let checking = app.version_check_in_progress();
             let status = app.version_check_status_text();
             crate::ui::theme::action_row(ui, |ui| {
-                if ui
-                    .add_enabled(!checking, egui::Button::new("Check now"))
+                if crate::ui::theme::secondary_button_enabled(ui, !checking, "Check now")
                     .on_hover_text("Check GitHub for the latest stable CalibRaw release.")
                     .clicked()
                 {
@@ -774,8 +768,7 @@ impl Settings {
             ui.hyperlink_to("Project source and license", PROJECT_REPOSITORY);
 
             crate::ui::theme::action_row(ui, |ui| {
-                if ui
-                    .button("Copy all legal text")
+                if crate::ui::theme::secondary_button(ui, "Copy all legal text")
                     .on_hover_text("Copy the project license and every bundled third-party notice.")
                     .clicked()
                 {
@@ -820,8 +813,7 @@ impl Settings {
 
             let mut diagnostic_log = diagnostics_snapshot_with_ai_backends();
             crate::ui::theme::action_row(ui, |ui| {
-                if ui
-                    .button("Copy log")
+                if crate::ui::theme::secondary_button(ui, "Copy log")
                     .on_hover_text("Copy the complete diagnostic report.")
                     .clicked()
                 {
@@ -837,8 +829,7 @@ impl Settings {
                     #[cfg(not(target_os = "android"))]
                     ui.ctx().copy_text(diagnostic_log.clone());
                 }
-                if ui
-                    .button("Clear events")
+                if crate::ui::theme::secondary_button(ui, "Clear events")
                     .on_hover_text("Clear recorded runtime events from the diagnostic report.")
                     .clicked()
                 {

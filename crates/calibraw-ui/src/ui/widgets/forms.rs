@@ -107,6 +107,18 @@ pub(crate) fn singleline_text_edit<'a>(text: &'a mut dyn egui::TextBuffer) -> eg
         .min_size(egui::vec2(0.0, CONTROL_HEIGHT))
 }
 
+/// Shared combo styling for both standalone controls and labeled form rows.
+pub(crate) fn combo_box(
+    id_salt: impl egui::AsIdSalt,
+    selected_text: impl Into<egui::WidgetText>,
+    width: f32,
+) -> egui::ComboBox {
+    egui::ComboBox::from_id_salt(id_salt)
+        .selected_text(selected_text)
+        .width(width)
+        .truncate()
+}
+
 pub(crate) fn form_combo(
     ui: &mut Ui,
     label: impl Into<egui::WidgetText>,
@@ -116,11 +128,7 @@ pub(crate) fn form_combo(
     add_contents: impl FnOnce(&mut Ui),
 ) {
     form_row(ui, label, preferred_width, |ui, width| {
-        egui::ComboBox::from_id_salt(id_salt)
-            .selected_text(selected_text)
-            .width(width)
-            .truncate()
-            .show_ui(ui, add_contents);
+        combo_box(id_salt, selected_text, width).show_ui(ui, add_contents);
     });
 }
 
@@ -153,11 +161,8 @@ pub(crate) fn responsive_combo_box<R>(
         });
     }
 
-    let response = egui::ComboBox::from_id_salt((id_salt, popup_fits_viewport))
-        .selected_text(selected_text)
-        .width(width)
+    let response = combo_box((id_salt, popup_fits_viewport), selected_text, width)
         .height(content_height)
-        .truncate()
         .show_ui(ui, add_contents);
 
     context.set_style_of(theme, original_style);
@@ -174,10 +179,7 @@ pub(crate) fn form_combo_with_help(
     add_contents: impl FnOnce(&mut Ui),
 ) {
     form_row_with_help(ui, label, preferred_width, help, |ui, width| {
-        egui::ComboBox::from_id_salt(id_salt)
-            .selected_text(selected_text)
-            .width(width)
-            .truncate()
+        combo_box(id_salt, selected_text, width)
             .show_ui(ui, add_contents)
             .response
             .on_hover_text(help);

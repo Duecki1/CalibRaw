@@ -63,7 +63,7 @@ impl Sidebar {
         paste_mask: &mut Option<usize>,
         mask_index: usize,
     ) {
-        if ui.button("Rename…").clicked() {
+        if crate::ui::theme::menu_item(ui, true, "Rename…").clicked() {
             Self::open_mask_rename_dialog(
                 ui.ctx(),
                 MaskRenameTarget::Group(mask_index),
@@ -76,10 +76,7 @@ impl Sidebar {
         if ui.checkbox(&mut enabled, "Enabled").changed() {
             *enabled_changed |= mask.common.set_enabled(enabled);
         }
-        if ui
-            .add_enabled(can_add_group, egui::Button::new("Duplicate"))
-            .clicked()
-        {
+        if crate::ui::theme::menu_item(ui, can_add_group, "Duplicate").clicked() {
             *duplicate_mask = Some((mask_index, false));
             ui.close();
         }
@@ -88,23 +85,19 @@ impl Sidebar {
             *geometry_changed = true;
             ui.close();
         }
-        if ui
-            .add_enabled(can_add_group, egui::Button::new("Duplicate & Invert"))
-            .clicked()
-        {
+        if crate::ui::theme::menu_item(ui, can_add_group, "Duplicate & Invert").clicked() {
             *duplicate_mask = Some((mask_index, true));
             ui.close();
         }
         ui.separator();
-        if ui.button("Copy Mask Group").clicked() {
+        if crate::ui::theme::menu_item(ui, true, "Copy Mask Group").clicked() {
             ui.ctx().data_mut(|data| {
                 data.insert_temp(Self::mask_group_clipboard_id(), mask.clone());
             });
             ui.close();
         }
         let can_paste = can_add_group && Self::copied_mask_group(ui.ctx()).is_some();
-        if ui
-            .add_enabled(can_paste, egui::Button::new("Paste Mask Group"))
+        if crate::ui::theme::menu_item(ui, can_paste, "Paste Mask Group")
             .on_disabled_hover_text("Copy a mask group first")
             .clicked()
         {
@@ -139,7 +132,7 @@ impl Sidebar {
         mask_index: usize,
         component_index: usize,
     ) {
-        if ui.button("Rename…").clicked() {
+        if crate::ui::theme::menu_item(ui, true, "Rename…").clicked() {
             Self::open_mask_rename_dialog(
                 ui.ctx(),
                 MaskRenameTarget::Component {
@@ -155,10 +148,7 @@ impl Sidebar {
         if ui.checkbox(&mut enabled, "Enabled").changed() {
             *geometry_changed |= component.common.set_enabled(enabled);
         }
-        if ui
-            .add_enabled(can_add_component, egui::Button::new("Duplicate"))
-            .clicked()
-        {
+        if crate::ui::theme::menu_item(ui, can_add_component, "Duplicate").clicked() {
             *duplicate_component = Some((mask_index, component_index, false));
             ui.close();
         }
@@ -167,23 +157,19 @@ impl Sidebar {
             *geometry_changed = true;
             ui.close();
         }
-        if ui
-            .add_enabled(can_add_component, egui::Button::new("Duplicate & Invert"))
-            .clicked()
-        {
+        if crate::ui::theme::menu_item(ui, can_add_component, "Duplicate & Invert").clicked() {
             *duplicate_component = Some((mask_index, component_index, true));
             ui.close();
         }
         ui.separator();
-        if ui.button("Copy Component").clicked() {
+        if crate::ui::theme::menu_item(ui, true, "Copy Component").clicked() {
             ui.ctx().data_mut(|data| {
                 data.insert_temp(Self::mask_component_clipboard_id(), component.clone());
             });
             ui.close();
         }
         let can_paste = can_add_component && Self::copied_mask_component(ui.ctx()).is_some();
-        if ui
-            .add_enabled(can_paste, egui::Button::new("Paste Component"))
+        if crate::ui::theme::menu_item(ui, can_paste, "Paste Component")
             .on_disabled_hover_text("Copy a component first")
             .clicked()
         {
@@ -288,27 +274,27 @@ impl Sidebar {
             ctx,
             crate::ui::theme::DIALOG_WIDTH_NARROW,
         )
-            .id(egui::Id::new("mask-rename-dialog-window"))
-            .show(ctx, |ui| {
-                let response = ui.add_sized(
-                    [ui.available_width(), ui.spacing().interact_size.y],
-                    crate::ui::theme::singleline_text_edit(&mut dialog.name),
-                );
-                crate::ui::theme::request_initial_focus(&response, &mut dialog.focus_requested);
-                let trimmed_is_empty = dialog.name.trim().is_empty();
-                match crate::ui::theme::dialog_confirmation_buttons(
-                    ui,
-                    "Cancel",
-                    "Rename",
-                    !trimmed_is_empty,
-                    false,
-                    crate::ui::theme::DialogKeyboard::CONFIRM_ON_ENTER,
-                ) {
-                    crate::ui::theme::DialogAction::Cancel => cancel = true,
-                    crate::ui::theme::DialogAction::Confirm => save = true,
-                    crate::ui::theme::DialogAction::None => {}
-                }
-            });
+        .id(egui::Id::new("mask-rename-dialog-window"))
+        .show(ctx, |ui| {
+            let response = ui.add_sized(
+                [ui.available_width(), ui.spacing().interact_size.y],
+                crate::ui::theme::singleline_text_edit(&mut dialog.name),
+            );
+            crate::ui::theme::request_initial_focus(&response, &mut dialog.focus_requested);
+            let trimmed_is_empty = dialog.name.trim().is_empty();
+            match crate::ui::theme::dialog_confirmation_buttons(
+                ui,
+                "Cancel",
+                "Rename",
+                !trimmed_is_empty,
+                false,
+                crate::ui::theme::DialogKeyboard::CONFIRM_ON_ENTER,
+            ) {
+                crate::ui::theme::DialogAction::Cancel => cancel = true,
+                crate::ui::theme::DialogAction::Confirm => save = true,
+                crate::ui::theme::DialogAction::None => {}
+            }
+        });
 
         if save {
             let renamed = match dialog.target {

@@ -1,4 +1,6 @@
 use super::*;
+#[cfg(target_os = "android")]
+use crate::app::AppTab;
 
 pub(crate) struct Library;
 
@@ -93,8 +95,8 @@ impl Library {
         let mut open_asset: Option<LibraryAsset> = None;
         let mut library_action = None;
 
-        let compact_header = crate::ui::layout::ResponsiveWidth::from_width(ui.available_width())
-            .is_compact();
+        let compact_header =
+            crate::ui::layout::ResponsiveWidth::from_width(ui.available_width()).is_compact();
         let mut selected_sort = app.library.sort_order();
         let mut selected_size = app.library.thumbnail_size();
         let mut selected_filter = app.library.review_filter;
@@ -467,7 +469,6 @@ impl Library {
         if let Some(asset) = open_asset {
             #[cfg(not(target_os = "android"))]
             if let Some(path) = asset.desktop_path().map(Path::to_path_buf) {
-                app.ui.active_tab = AppTab::Develop;
                 app.open_path(path, frame);
             }
             #[cfg(target_os = "android")]

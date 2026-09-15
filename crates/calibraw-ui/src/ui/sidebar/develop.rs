@@ -304,77 +304,53 @@ impl Sidebar {
                     let combo_width =
                         (ui.available_width() - picker_width - ui.spacing().item_spacing.x)
                             .clamp(1.0, 240.0);
-                    egui::ComboBox::from_id_salt("global-white-balance-preset")
-                        .selected_text(selection)
-                        .width(combo_width)
-                        .truncate()
-                        .show_ui(ui, |ui| {
-                            if ui.selectable_label(false, "as shot").clicked() {
-                                exposure.temperature = 0.0;
-                                exposure.tint = 0.0;
+                    crate::ui::theme::combo_box(
+                        "global-white-balance-preset",
+                        selection,
+                        combo_width,
+                    )
+                    .show_ui(ui, |ui| {
+                        if ui.selectable_label(false, "as shot").clicked() {
+                            exposure.temperature = 0.0;
+                            exposure.tint = 0.0;
+                            *white_balance_picker_active = false;
+                            changed = true;
+                        }
+                        if ui.selectable_label(false, "from image area").clicked() {
+                            *white_balance_picker_active = true;
+                        }
+                        ui.label(
+                            egui::RichText::new("reference")
+                                .strong()
+                                .color(ui.visuals().weak_text_color()),
+                        );
+                        if ui
+                            .selectable_label(false, "camera reference (D65)")
+                            .clicked()
+                        {
+                            if let Some((temperature, tint)) =
+                                raw.white_balance_offsets_from_temperature_tint(6504.0, 1.0)
+                            {
+                                exposure.temperature = temperature;
+                                exposure.tint = tint;
                                 *white_balance_picker_active = false;
                                 changed = true;
                             }
-                            if ui.selectable_label(false, "from image area").clicked() {
-                                *white_balance_picker_active = true;
-                            }
-                            ui.label(
-                                egui::RichText::new("reference")
-                                    .strong()
-                                    .color(ui.visuals().weak_text_color()),
-                            );
-                            if ui
-                                .selectable_label(false, "camera reference (D65)")
-                                .clicked()
-                            {
-                                if let Some((temperature, tint)) =
-                                    raw.white_balance_offsets_from_temperature_tint(6504.0, 1.0)
-                                {
-                                    exposure.temperature = temperature;
-                                    exposure.tint = tint;
-                                    *white_balance_picker_active = false;
-                                    changed = true;
-                                }
-                            }
-                            if !presets.is_empty() {
-                                ui.separator();
-                                ui.label(
-                                    egui::RichText::new(format!(
-                                        "{} {}",
-                                        raw.camera_make, raw.camera_model
-                                    ))
-                                    .strong(),
-                                );
-                                for preset in &presets {
-                                    if ui.selectable_label(false, &preset.name).clicked() {
-                                        if let Some((temperature, tint)) = raw
-                                            .white_balance_offsets_from_coefficients(
-                                                preset.coefficients,
-                                            )
-                                        {
-                                            exposure.temperature = temperature;
-                                            exposure.tint = tint;
-                                            *white_balance_picker_active = false;
-                                            changed = true;
-                                        }
-                                    }
-                                }
-                            }
+                        }
+                        if !presets.is_empty() {
                             ui.separator();
                             ui.label(
-                                egui::RichText::new("fixed temperature")
-                                    .strong()
-                                    .color(ui.visuals().weak_text_color()),
+                                egui::RichText::new(format!(
+                                    "{} {}",
+                                    raw.camera_make, raw.camera_model
+                                ))
+                                .strong(),
                             );
-                            for temperature in [2500.0, 3200.0, 4500.0, 6000.0, 8500.0] {
-                                if ui
-                                    .selectable_label(false, format!("{temperature:.0}K"))
-                                    .clicked()
-                                {
+                            for preset in &presets {
+                                if ui.selectable_label(false, &preset.name).clicked() {
                                     if let Some((temperature, tint)) = raw
-                                        .white_balance_offsets_from_temperature_tint(
-                                            temperature,
-                                            1.0,
+                                        .white_balance_offsets_from_coefficients(
+                                            preset.coefficients,
                                         )
                                     {
                                         exposure.temperature = temperature;
@@ -384,7 +360,29 @@ impl Sidebar {
                                     }
                                 }
                             }
-                        });
+                        }
+                        ui.separator();
+                        ui.label(
+                            egui::RichText::new("fixed temperature")
+                                .strong()
+                                .color(ui.visuals().weak_text_color()),
+                        );
+                        for temperature in [2500.0, 3200.0, 4500.0, 6000.0, 8500.0] {
+                            if ui
+                                .selectable_label(false, format!("{temperature:.0}K"))
+                                .clicked()
+                            {
+                                if let Some((temperature, tint)) = raw
+                                    .white_balance_offsets_from_temperature_tint(temperature, 1.0)
+                                {
+                                    exposure.temperature = temperature;
+                                    exposure.tint = tint;
+                                    *white_balance_picker_active = false;
+                                    changed = true;
+                                }
+                            }
+                        }
+                    });
                     let picker = crate::ui::icons::phosphor_icon_toggle_button(
                         ui,
                         egui_phosphor::regular::EYEDROPPER,

@@ -1,4 +1,4 @@
-use eframe::egui::{self, Align, Align2, DragValue, FontId, Layout, RichText, Sense, Stroke, Ui};
+use eframe::egui::{self, Align, Align2, DragValue, Layout, RichText, Sense, Stroke, Ui};
 use std::ops::RangeInclusive;
 
 #[cfg(not(target_os = "android"))]
@@ -330,19 +330,9 @@ where
                             options,
                         );
 
-                        let mut value_response = if ui.input(|input| input.has_touch_screen()) {
-                            touch_value_field(ui, (*value).to_f64(), decimals)
-                        } else {
-                            let response = ui.add_sized(
-                                [VALUE_FIELD_WIDTH, HEADER_HEIGHT],
-                                DragValue::new(value)
-                                    .range(range.clone())
-                                    .speed(speed)
-                                    .fixed_decimals(decimals),
-                            );
-                            changed |= response.changed();
-                            response
-                        };
+                        let (mut value_response, value_changed) =
+                            numeric_value_field(ui, value, range.clone(), decimals, speed);
+                        changed |= value_changed;
                         value_response = value_response.on_hover_text(reset_tooltip(hover_text));
                         if value_response.double_clicked() {
                             changed |= set_numeric(value, reset_value, decimals);
@@ -378,19 +368,9 @@ where
                         }
 
                         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                            let mut value_response = if ui.input(|input| input.has_touch_screen()) {
-                                touch_value_field(ui, (*value).to_f64(), decimals)
-                            } else {
-                                let response = ui.add_sized(
-                                    [VALUE_FIELD_WIDTH, HEADER_HEIGHT],
-                                    DragValue::new(value)
-                                        .range(range.clone())
-                                        .speed(speed)
-                                        .fixed_decimals(decimals),
-                                );
-                                changed |= response.changed();
-                                response
-                            };
+                            let (mut value_response, value_changed) =
+                                numeric_value_field(ui, value, range.clone(), decimals, speed);
+                            changed |= value_changed;
                             value_response =
                                 value_response.on_hover_text(reset_tooltip(hover_text));
                             if value_response.double_clicked() {
@@ -451,17 +431,47 @@ fn touch_value_field(ui: &mut Ui, value: f64, decimals: usize) -> egui::Response
         ui.allocate_exact_size(egui::vec2(VALUE_FIELD_WIDTH, HEADER_HEIGHT), Sense::click());
     let visuals = ui.style().interact(&response);
     let painter = ui.painter_at(rect);
-    painter.rect_filled(rect, 3.0, visuals.bg_fill);
-    painter.rect_stroke(rect, 3.0, visuals.bg_stroke, egui::StrokeKind::Inside);
+    painter.rect_filled(rect, visuals.corner_radius, visuals.bg_fill);
+    painter.rect_stroke(
+        rect,
+        visuals.corner_radius,
+        visuals.bg_stroke,
+        egui::StrokeKind::Inside,
+    );
     let formatted = format!("{value:.decimals$}");
     painter.text(
         rect.center(),
         Align2::CENTER_CENTER,
         formatted,
-        FontId::monospace(13.0),
+        egui::TextStyle::Monospace.resolve(ui.style()),
         visuals.fg_stroke.color,
     );
     response
+}
+
+fn numeric_value_field<Num>(
+    ui: &mut Ui,
+    value: &mut Num,
+    range: RangeInclusive<Num>,
+    decimals: usize,
+    speed: f64,
+) -> (egui::Response, bool)
+where
+    Num: egui::emath::Numeric + Copy,
+{
+    if ui.input(|input| input.has_touch_screen()) {
+        (touch_value_field(ui, value.to_f64(), decimals), false)
+    } else {
+        let response = ui.add_sized(
+            [VALUE_FIELD_WIDTH, HEADER_HEIGHT],
+            DragValue::new(value)
+                .range(range)
+                .speed(speed)
+                .fixed_decimals(decimals),
+        );
+        let changed = response.changed();
+        (response, changed)
+    }
 }
 
 fn guarded_slider<Num>(
@@ -517,31 +527,43 @@ where
         Sense::click(),
     );
 
-    if track_response.clicked() {
+    let enabled = track_response.enabled() && handle_response.enabled();
+    let slider_drag_id = ui.id().with("guarded-slider-drag");
+    if !enabled && slider_scroll_lock_owner(ui.ctx()).is_some_and(|owner| owner == slider_drag_id) {
+        ui.ctx().stop_dragging();
+        ui.ctx()
+            .data_mut(|data| data.remove::<egui::Id>(slider_scroll_lock_id()));
+    }
+
+    if enabled && track_response.clicked() {
         track_response.request_focus();
     }
-    if handle_response.clicked() {
+    if enabled && handle_response.clicked() {
         handle_response.request_focus();
     }
 
     let mut changed = false;
-    let reset_requested = track_response.double_clicked() || handle_response.double_clicked();
+    let reset_requested =
+        enabled && (track_response.double_clicked() || handle_response.double_clicked());
     if reset_requested {
         changed |= set_numeric(value, reset_value, decimals);
     }
-    let slider_drag_id = ui.id().with("guarded-slider-drag");
-    let pointer = ui.input(|input| {
-        (
-            input.pointer.press_origin(),
-            input.pointer.interact_pos(),
-            input.pointer.any_down(),
-        )
-    });
+    let pointer = if enabled {
+        ui.input(|input| {
+            (
+                input.pointer.press_origin(),
+                input.pointer.interact_pos(),
+                input.pointer.any_down(),
+            )
+        })
+    } else {
+        (None, None, false)
+    };
     let mut slider_drag_active = pointer.2
         && slider_scroll_lock_owner(ui.ctx()).is_some_and(|owner| owner == slider_drag_id);
     let slider_owns_pointer =
-        track_response.contains_pointer() || handle_response.contains_pointer();
-    if !reset_requested {
+        enabled && (track_response.contains_pointer() || handle_response.contains_pointer());
+    if enabled && !reset_requested {
         if let (Some(origin), Some(position), true) = pointer {
             if slider_drag_active {
                 lock_slider_scroll(ui.ctx(), slider_drag_id);
@@ -568,7 +590,7 @@ where
     }
 
     let focused = track_response.has_focus() || handle_response.has_focus();
-    let keyboard_enabled = track_response.enabled() && handle_response.enabled();
+    let keyboard_enabled = enabled;
     if focused && keyboard_enabled {
         let decrease = ui.input_mut(|input| {
             input.consume_key(egui::Modifiers::NONE, egui::Key::ArrowLeft)
@@ -592,12 +614,7 @@ where
             && pointer.0.is_some_and(|origin| rect.contains(origin)));
     let hovered = track_response.hovered() || handle_response.hovered();
     let interaction = crate::ui::theme::interaction_visuals_for_flags(
-        ui,
-        track_response.enabled() && handle_response.enabled(),
-        false,
-        active,
-        hovered,
-        focused,
+        ui, enabled, false, active, hovered, focused,
     );
 
     let painter = ui.painter();
@@ -911,8 +928,8 @@ where
 #[cfg(test)]
 mod tests {
     use super::{
-        adjustment_slider, compact_slider_widths, gradient_color_at, SliderGradient,
-        COMPACT_ROW_GAP, HEADER_HEIGHT, SLIDER_HEIGHT, VALUE_FIELD_WIDTH,
+        adjustment_slider, compact_slider_widths, gradient_color_at, slider_scroll_locked,
+        SliderGradient, COMPACT_ROW_GAP, HEADER_HEIGHT, SLIDER_HEIGHT, VALUE_FIELD_WIDTH,
     };
 
     fn pointer_input(events: Vec<eframe::egui::Event>) -> eframe::egui::RawInput {
@@ -940,9 +957,21 @@ mod tests {
         value: &mut u8,
         cover_slider: bool,
     ) {
+        show_test_slider_with_enabled_bar(ctx, input, value, true, cover_slider);
+    }
+
+    fn show_test_slider_with_enabled_bar(
+        ctx: &eframe::egui::Context,
+        input: eframe::egui::RawInput,
+        value: &mut u8,
+        enabled: bool,
+        cover_slider: bool,
+    ) {
         let _ = ctx.run_ui(input, |ui| {
             ui.set_width(400.0);
-            adjustment_slider(ui, "Quality", value, 1..=100, 0, 1.0, None);
+            ui.add_enabled_ui(enabled, |ui| {
+                adjustment_slider(ui, "Quality", value, 1..=100, 0, 1.0, None);
+            });
             if cover_slider {
                 eframe::egui::Area::new(eframe::egui::Id::new("test-bottom-bar"))
                     .order(eframe::egui::Order::Foreground)
@@ -1120,6 +1149,144 @@ mod tests {
             true,
         );
 
+        assert_eq!(value, 50);
+    }
+
+    #[test]
+    fn disabled_slider_does_not_start_or_continue_a_drag() {
+        use eframe::egui::{pos2, Event, Modifiers, PointerButton};
+
+        let ctx = eframe::egui::Context::default();
+        let mut value = 50;
+        show_test_slider_with_enabled_bar(&ctx, pointer_input(Vec::new()), &mut value, true, false);
+        let slider_y = HEADER_HEIGHT + 4.0 + SLIDER_HEIGHT * 0.5;
+        show_test_slider_with_enabled_bar(
+            &ctx,
+            pointer_input(vec![
+                Event::PointerMoved(pos2(100.0, slider_y)),
+                Event::PointerButton {
+                    pos: pos2(100.0, slider_y),
+                    button: PointerButton::Primary,
+                    pressed: true,
+                    modifiers: Modifiers::NONE,
+                },
+                Event::PointerMoved(pos2(300.0, slider_y)),
+            ]),
+            &mut value,
+            false,
+            false,
+        );
+        assert_eq!(value, 50);
+        assert!(!slider_scroll_locked(&ctx));
+
+        show_test_slider_with_enabled_bar(
+            &ctx,
+            pointer_input(vec![
+                Event::PointerMoved(pos2(100.0, slider_y)),
+                Event::PointerButton {
+                    pos: pos2(100.0, slider_y),
+                    button: PointerButton::Primary,
+                    pressed: true,
+                    modifiers: Modifiers::NONE,
+                },
+                Event::PointerMoved(pos2(300.0, slider_y)),
+            ]),
+            &mut value,
+            true,
+            false,
+        );
+        let dragged_value = value;
+        assert_ne!(dragged_value, 50);
+        assert!(slider_scroll_locked(&ctx));
+
+        show_test_slider_with_enabled_bar(
+            &ctx,
+            pointer_input(vec![Event::PointerMoved(pos2(350.0, slider_y))]),
+            &mut value,
+            false,
+            false,
+        );
+        assert_eq!(value, dragged_value);
+        assert!(!slider_scroll_locked(&ctx));
+        assert!(ctx.dragged_id().is_none());
+    }
+
+    #[test]
+    fn focused_slider_consumes_arrow_keys_for_one_step() {
+        use eframe::egui::{pos2, Event, Key, Modifiers, PointerButton};
+
+        let ctx = eframe::egui::Context::default();
+        let mut value = 50;
+        let slider_y = HEADER_HEIGHT + 4.0 + SLIDER_HEIGHT * 0.5;
+        show_test_slider(&ctx, pointer_input(Vec::new()), &mut value);
+        show_test_slider(
+            &ctx,
+            pointer_input(vec![Event::PointerButton {
+                pos: pos2(200.0, slider_y),
+                button: PointerButton::Primary,
+                pressed: true,
+                modifiers: Modifiers::NONE,
+            }]),
+            &mut value,
+        );
+        show_test_slider(
+            &ctx,
+            pointer_input(vec![Event::PointerButton {
+                pos: pos2(200.0, slider_y),
+                button: PointerButton::Primary,
+                pressed: false,
+                modifiers: Modifiers::NONE,
+            }]),
+            &mut value,
+        );
+        show_test_slider(
+            &ctx,
+            pointer_input(vec![Event::Key {
+                key: Key::ArrowRight,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: Modifiers::NONE,
+            }]),
+            &mut value,
+        );
+        assert_eq!(value, 51);
+        assert!(!ctx.input_mut(|input| { input.consume_key(Modifiers::NONE, Key::ArrowRight) }));
+    }
+
+    #[test]
+    fn disabled_focused_slider_ignores_arrow_keys() {
+        use eframe::egui::{pos2, Event, Key, Modifiers, PointerButton};
+
+        let ctx = eframe::egui::Context::default();
+        let mut value = 50;
+        let slider_y = HEADER_HEIGHT + 4.0 + SLIDER_HEIGHT * 0.5;
+        show_test_slider(&ctx, pointer_input(Vec::new()), &mut value);
+        for pressed in [true, false] {
+            show_test_slider(
+                &ctx,
+                pointer_input(vec![Event::PointerButton {
+                    pos: pos2(200.0, slider_y),
+                    button: PointerButton::Primary,
+                    pressed,
+                    modifiers: Modifiers::NONE,
+                }]),
+                &mut value,
+            );
+        }
+        show_test_slider_with_enabled_bar(
+            &ctx,
+            pointer_input(vec![Event::Key {
+                key: Key::ArrowRight,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: Modifiers::NONE,
+            }]),
+            &mut value,
+            false,
+            false,
+        );
         assert_eq!(value, 50);
     }
 

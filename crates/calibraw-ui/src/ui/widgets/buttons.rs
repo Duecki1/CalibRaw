@@ -1,6 +1,6 @@
-use eframe::egui::{self, Color32, InnerResponse, Response, RichText, Stroke, Ui};
 #[cfg(any(target_os = "android", test))]
 use eframe::egui::Vec2;
+use eframe::egui::{self, Color32, InnerResponse, Response, RichText, Stroke, Ui};
 
 use super::super::theme::{CARD_RADIUS, CONTROL_HEIGHT, SPACE_SM};
 #[cfg(any(target_os = "android", test))]
@@ -100,10 +100,7 @@ pub(crate) fn interaction_visuals(
     )
 }
 
-pub(crate) fn full_width_button(
-    ui: &mut Ui,
-    label: impl Into<egui::WidgetText>,
-) -> Response {
+pub(crate) fn full_width_button(ui: &mut Ui, label: impl Into<egui::WidgetText>) -> Response {
     ui.add_sized(
         [ui.available_width().max(1.0), CONTROL_HEIGHT],
         egui::Button::new(label.into()),
@@ -164,17 +161,11 @@ pub(crate) fn primary_button(
     primary_button_impl(ui, label, Some(width))
 }
 
-pub(crate) fn primary_action_button(
-    ui: &mut Ui,
-    label: impl Into<egui::WidgetText>,
-) -> Response {
+pub(crate) fn primary_action_button(ui: &mut Ui, label: impl Into<egui::WidgetText>) -> Response {
     primary_button_impl(ui, label, None)
 }
 
-pub(crate) fn secondary_button(
-    ui: &mut Ui,
-    label: impl Into<egui::WidgetText>,
-) -> Response {
+pub(crate) fn secondary_button(ui: &mut Ui, label: impl Into<egui::WidgetText>) -> Response {
     ui.add(
         egui::Button::new(label.into())
             .corner_radius(CARD_RADIUS)
@@ -182,10 +173,16 @@ pub(crate) fn secondary_button(
     )
 }
 
-pub(crate) fn destructive_button(
+pub(crate) fn secondary_button_enabled(
     ui: &mut Ui,
+    enabled: bool,
     label: impl Into<egui::WidgetText>,
 ) -> Response {
+    ui.add_enabled_ui(enabled, |ui| secondary_button(ui, label))
+        .inner
+}
+
+pub(crate) fn destructive_button(ui: &mut Ui, label: impl Into<egui::WidgetText>) -> Response {
     let color = ui.visuals().error_fg_color;
     ui.add(
         egui::Button::new(label.into().color(color))

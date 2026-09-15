@@ -17,7 +17,7 @@ impl Sidebar {
                     "The image used by existing masks changed. Refresh masks to rebuild content-aware masks and mask sources without deleting your edits.",
                 );
                 ui.add_space(crate::ui::theme::SPACE_XS);
-                if ui.button("Update masks").clicked() {
+                if crate::ui::theme::secondary_button(ui, "Update masks").clicked() {
                     app.request_update_all_ai_masks(frame);
                 }
             });
@@ -60,7 +60,8 @@ impl Sidebar {
         frame: &eframe::Frame,
         orientation: MaskStripOrientation,
     ) {
-        ui.spacing_mut().item_spacing = egui::vec2(crate::ui::theme::SPACE_XS, crate::ui::theme::SPACE_XXS);
+        ui.spacing_mut().item_spacing =
+            egui::vec2(crate::ui::theme::SPACE_XS, crate::ui::theme::SPACE_XXS);
 
         app.masks.stack.ensure_selection();
 
