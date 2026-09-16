@@ -123,13 +123,8 @@ impl Sidebar {
         let before = mask.effect;
         let enabled_before = mask.enabled;
         let effect = &mut mask.effect;
-        let action = Self::adjustment_card_without_visibility(
-            ui,
-            "Mask type",
-            true,
-            false,
-            true,
-            |ui| {
+        let action =
+            Self::adjustment_card_without_visibility(ui, "Mask type", true, false, true, |ui| {
                 ui.add_space(crate::ui::theme::SPACE_XS);
                 crate::ui::theme::responsive_combo_box(
                     ui,
@@ -170,8 +165,7 @@ impl Sidebar {
                         }
                     },
                 );
-            },
-        );
+            });
         match action {
             super::super::adjustment_cards::CardAction::None => {}
             super::super::adjustment_cards::CardAction::Toggle => {}

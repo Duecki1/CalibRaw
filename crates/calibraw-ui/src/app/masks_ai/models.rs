@@ -89,30 +89,30 @@ impl CalibRawApp {
         }
     }
 
-    /// The consent row shared by every local-AI download dialog: Cancel plus an accept button
-    /// that stays disabled while the runtime is still unusable.
+    /// The consent row shared by every local-AI download dialog: Cancel, plus an accept button
+    /// whose enablement the caller decides — AI Denoise gates on the model download, the mask and
+    /// Remove dialogs gate on the runtime being usable.
     pub(in crate::app) fn show_ai_consent_buttons(
-        &mut self,
         ui: &mut egui::Ui,
         accept_label: &str,
+        accept_enabled: bool,
     ) -> crate::ui::theme::DialogAction {
-        let ready = self.ai_runtime_ready();
         crate::ui::theme::dialog_confirmation_buttons(
             ui,
             "Cancel",
             accept_label,
-            ready,
+            accept_enabled,
             false,
             crate::ui::theme::DialogKeyboard::CLOSE_ONLY,
         )
     }
 
-    /// Privacy statement, the “Hugging Face privacy policy” link and the optional model licence
-    /// link, worded once for all three local-AI dialogs.
+    /// Privacy statement, the “Hugging Face privacy policy” link and the model's licence links,
+    /// worded once for all four local-AI consent dialogs.
     pub(in crate::app) fn show_hugging_face_privacy(
         ui: &mut egui::Ui,
         model_download_needed: bool,
-        license_link: Option<(&str, &str)>,
+        license_links: &[(&str, &str)],
     ) {
         ui.label(concat!(
             "When you continue, your device connects directly to Hugging Face. Hugging Face ",
@@ -120,9 +120,12 @@ impl CalibRawApp {
             "policy. CalibRaw sends no account identifier or telemetry."
         ));
         ui.horizontal_wrapped(|ui| {
-            ui.hyperlink_to("Hugging Face privacy policy", "https://huggingface.co/privacy");
+            ui.hyperlink_to(
+                "Hugging Face privacy policy",
+                "https://huggingface.co/privacy",
+            );
             if model_download_needed {
-                if let Some((label, url)) = license_link {
+                for &(label, url) in license_links {
                     ui.separator();
                     ui.hyperlink_to(label, url);
                 }

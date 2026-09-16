@@ -34,10 +34,7 @@ struct Sampling {
 
 impl Sampling {
     fn new(width: u32, height: u32, geometry: GeometryTransform) -> Self {
-        let extent = [
-            width.clamp(1, SAMPLE_EDGE),
-            height.clamp(1, SAMPLE_EDGE),
-        ];
+        let extent = [width.clamp(1, SAMPLE_EDGE), height.clamp(1, SAMPLE_EDGE)];
         let map =
             GeometryInverseMap::new_with_lens(geometry, None, width, height, extent[0], extent[1]);
         let origin = map.source_position(0.0, 0.0);

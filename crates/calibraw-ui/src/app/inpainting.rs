@@ -300,13 +300,18 @@ impl CalibRawApp {
             Self::show_hugging_face_privacy(
                 ui,
                 model_download_needed,
-                Some((
+                &[(
                     "Big-LaMa ONNX model card",
                     "https://huggingface.co/Carve/LaMa-ONNX",
-                )),
+                )],
             );
             self.show_manual_runtime_warning(ui);
-            match self.show_ai_consent_buttons(ui, "Consent, download and continue") {
+            let runtime_ready = self.ai_runtime_ready();
+            match Self::show_ai_consent_buttons(
+                ui,
+                "Consent, download and continue",
+                runtime_ready,
+            ) {
                 crate::ui::theme::DialogAction::Confirm => {
                     self.ai.consent = AiConsentState::None;
                     if let Some(brush) = self.inpaint.pending_brush.take() {

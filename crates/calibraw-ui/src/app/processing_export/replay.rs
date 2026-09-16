@@ -1253,7 +1253,8 @@ mod tests {
             quarter_turns: 1,
             vertical_transform: 3.0,
             ..GeometryTransform::default()
-        };        let mut masks = MaskStack::default();
+        };
+        let mut masks = MaskStack::default();
         let mut mask = crate::pipeline::LocalMask::new(MaskKind::Fullscreen, 1);
         mask.adjustments.exposure = 0.5;
         masks.masks.push(mask);
