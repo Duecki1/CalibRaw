@@ -251,13 +251,13 @@ ExternalProject_Add(calibraw_iconv
         "--prefix=${CALIBRAW_LENSFUN_STAGE}"
         --disable-shared
         --enable-static
+        --disable-nls
         --with-pic
     BUILD_COMMAND "${CALIBRAW_MAKE_EXECUTABLE}" "-j${CALIBRAW_BUILD_JOBS}"
     INSTALL_COMMAND "${CALIBRAW_MAKE_EXECUTABLE}" "-j${CALIBRAW_BUILD_JOBS}" install
     BUILD_BYPRODUCTS
         "${CALIBRAW_LENSFUN_STAGE}/lib/libiconv.a"
         "${CALIBRAW_LENSFUN_STAGE}/lib/libcharset.a"
-        "${CALIBRAW_LENSFUN_STAGE}/lib/libintl.a"
 )
 
 file(WRITE "${CALIBRAW_LENSFUN_STAGE}/lib/pkgconfig/iconv.pc"
