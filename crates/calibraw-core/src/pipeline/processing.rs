@@ -1043,9 +1043,8 @@ fn fill_padded_tile(raw: &LoadedRaw, tile: ExportTile, tile_raw: &mut LoadedRaw)
 mod tests {
     use super::{
         affected_stage, build_proxy, build_region_proxy, crop_raw, extract_padded_tile,
-        extract_padded_tile_into,
-        required_export_tile_halo, ExportTile, ProcessingStage, ProxySpec, TilePlan, TileSpec,
-        EXPORT_TILE_HALO, MIN_EXPORT_TILE_HALO,
+        extract_padded_tile_into, required_export_tile_halo, ExportTile, ProcessingStage,
+        ProxySpec, TilePlan, TileSpec, EXPORT_TILE_HALO, MIN_EXPORT_TILE_HALO,
     };
     use crate::pipeline::{
         AiDenoisedImage, CameraProfile, CfaKind, CompactPixelMap, DenoiseQuality, ExposureParams,

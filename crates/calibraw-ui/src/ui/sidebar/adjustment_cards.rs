@@ -20,6 +20,13 @@ impl CardActionLayout {
     }
 }
 
+#[derive(Clone, Copy)]
+struct VerticalCardActions {
+    title: &'static str,
+    show_visibility: bool,
+    scope: Option<usize>,
+}
+
 impl CardAction {
     pub(super) fn apply(self, exposure: &mut ExposureParams, group: AdjustmentGroup) -> bool {
         match self {
@@ -102,31 +109,131 @@ impl Sidebar {
         }
     }
 
+    fn vertical_card_actions_id() -> egui::Id {
+        egui::Id::new("develop-vertical-card-actions")
+    }
+
+    fn pending_vertical_card_action_id(scope: Option<usize>, title: &'static str) -> egui::Id {
+        egui::Id::new(("develop-vertical-card-action", scope, title))
+    }
+
+    pub(super) fn begin_vertical_card_actions(ctx: &egui::Context) {
+        ctx.data_mut(|data| {
+            data.remove::<Vec<VerticalCardActions>>(Self::vertical_card_actions_id())
+        });
+    }
+
+    fn register_vertical_card_actions(ui: &Ui, title: &'static str, show_visibility: bool) {
+        let scope = crate::app::preview_visibility::PreviewVisibility::current_scope(ui.ctx());
+        let id = Self::vertical_card_actions_id();
+        ui.ctx().data_mut(|data| {
+            let mut actions = data
+                .get_temp::<Vec<VerticalCardActions>>(id)
+                .unwrap_or_default();
+            if !actions
+                .iter()
+                .any(|entry| entry.title == title && entry.scope == scope)
+            {
+                actions.push(VerticalCardActions {
+                    title,
+                    show_visibility,
+                    scope,
+                });
+            }
+            data.insert_temp(id, actions);
+        });
+    }
+
+    fn take_pending_vertical_card_action(ctx: &egui::Context, title: &'static str) -> CardAction {
+        let scope = crate::app::preview_visibility::PreviewVisibility::current_scope(ctx);
+        let id = Self::pending_vertical_card_action_id(scope, title);
+        ctx.data_mut(|data| {
+            let action = data.get_temp::<CardAction>(id).unwrap_or_default();
+            data.remove::<CardAction>(id);
+            action
+        })
+    }
+
+    fn queue_vertical_card_action(
+        ctx: &egui::Context,
+        scope: Option<usize>,
+        title: &'static str,
+        action: CardAction,
+    ) {
+        ctx.data_mut(|data| {
+            data.insert_temp(Self::pending_vertical_card_action_id(scope, title), action)
+        });
+        ctx.request_repaint();
+    }
+
+    pub(super) fn show_vertical_card_footer_actions(ui: &mut Ui) {
+        let actions = ui
+            .ctx()
+            .data(|data| {
+                data.get_temp::<Vec<VerticalCardActions>>(Self::vertical_card_actions_id())
+            })
+            .unwrap_or_default();
+        let size = crate::ui::theme::toolbar_icon_size();
+
+        for entry in actions {
+            crate::app::preview_visibility::PreviewVisibility::set_mask_scope(
+                ui.ctx(),
+                entry.scope,
+            );
+
+            if crate::ui::icons::phosphor_icon_button(
+                ui,
+                egui_phosphor::regular::ARROW_COUNTER_CLOCKWISE,
+                size,
+                &format!("Reset {}", entry.title),
+            )
+            .clicked()
+            {
+                if entry.show_visibility {
+                    crate::app::preview_visibility::PreviewVisibility::show(ui.ctx(), entry.title);
+                }
+                Self::queue_vertical_card_action(
+                    ui.ctx(),
+                    entry.scope,
+                    entry.title,
+                    CardAction::Reset,
+                );
+            }
+
+            if entry.show_visibility {
+                let visible = crate::app::preview_visibility::PreviewVisibility::visible(
+                    ui.ctx(),
+                    entry.title,
+                );
+                if crate::ui::icons::phosphor_icon_toggle_button(
+                    ui,
+                    if visible {
+                        egui_phosphor::regular::EYE_SLASH
+                    } else {
+                        egui_phosphor::regular::EYE
+                    },
+                    !visible,
+                    size,
+                    &format!("{} {}", if visible { "Hide" } else { "Show" }, entry.title),
+                )
+                .clicked()
+                {
+                    crate::app::preview_visibility::PreviewVisibility::toggle(
+                        ui.ctx(),
+                        entry.title,
+                    );
+                }
+            }
+        }
+
+        crate::app::preview_visibility::PreviewVisibility::set_mask_scope(ui.ctx(), None);
+    }
+
     pub(super) fn adjustment_card(
         ui: &mut Ui,
         title: &'static str,
         default_open: bool,
         foldable: bool,
-        enabled: bool,
-        contents: impl FnOnce(&mut Ui),
-    ) -> CardAction {
-        Self::adjustment_card_with_enabled(
-            ui,
-            title,
-            default_open,
-            foldable,
-            enabled,
-            enabled,
-            contents,
-        )
-    }
-
-    pub(super) fn adjustment_card_with_enabled(
-        ui: &mut Ui,
-        title: &'static str,
-        default_open: bool,
-        foldable: bool,
-        enabled: bool,
         controls_enabled: bool,
         contents: impl FnOnce(&mut Ui),
     ) -> CardAction {
@@ -135,7 +242,6 @@ impl Sidebar {
             title,
             default_open,
             foldable,
-            enabled,
             controls_enabled,
             true,
             contents,
@@ -147,7 +253,6 @@ impl Sidebar {
         title: &'static str,
         default_open: bool,
         foldable: bool,
-        enabled: bool,
         controls_enabled: bool,
         contents: impl FnOnce(&mut Ui),
     ) -> CardAction {
@@ -156,19 +261,20 @@ impl Sidebar {
             title,
             default_open,
             foldable,
-            enabled,
             controls_enabled,
             false,
             contents,
         )
     }
 
+    /// `controls_enabled` only greys out the card body; the header (fold, reset, preview eye)
+    /// stays interactive so a disabled card can still be re-enabled. Pass an already-`&&`ed
+    /// expression – there is deliberately no second “card enabled” flag to keep in sync.
     fn adjustment_card_controls(
         ui: &mut Ui,
         title: &'static str,
         default_open: bool,
         foldable: bool,
-        enabled: bool,
         controls_enabled: bool,
         show_visibility: bool,
         contents: impl FnOnce(&mut Ui),
@@ -176,7 +282,6 @@ impl Sidebar {
         let visible = !show_visibility
             || crate::app::preview_visibility::PreviewVisibility::visible(ui.ctx(), title);
         let controls_enabled = controls_enabled && visible;
-        let _ = enabled;
         let mut action = CardAction::None;
         crate::ui::theme::content_card(ui, |ui| {
             ui.push_id(title, |ui| {
@@ -185,7 +290,16 @@ impl Sidebar {
                 let body = |ui: &mut Ui| {
                     ui.add_enabled_ui(controls_enabled, contents);
                 };
-                if foldable {
+                let viewport = ui.ctx().content_rect();
+                let vertical_screen = viewport.height() > viewport.width();
+                if vertical_screen {
+                    // Vertical-screen cards deliberately have no header. Their preview/reset
+                    // actions are registered here and rendered outside the cards in the shared
+                    // sidebar footer alongside the other mobile actions.
+                    body(ui);
+                    Self::register_vertical_card_actions(ui, title, show_visibility);
+                    action = Self::take_pending_vertical_card_action(ui.ctx(), title);
+                } else if foldable {
                     let mut header_clicked = false;
                     let mut header =
                         egui::collapsing_header::CollapsingState::load_with_default_open(
@@ -265,10 +379,7 @@ mod tests {
     use super::*;
     use crate::app::preview_visibility::PreviewVisibility;
 
-    fn optional_text_rect(
-        shapes: &[egui::epaint::ClippedShape],
-        text: &str,
-    ) -> Option<egui::Rect> {
+    fn optional_text_rect(shapes: &[egui::epaint::ClippedShape], text: &str) -> Option<egui::Rect> {
         fn find(shape: &egui::Shape, text: &str) -> Option<egui::Rect> {
             match shape {
                 egui::Shape::Text(shape) if shape.galley.text() == text => {
@@ -296,7 +407,6 @@ mod tests {
                 "Mask Properties",
                 true,
                 false,
-                true,
                 true,
                 |ui| {
                     assert!(ui.is_enabled());
@@ -327,7 +437,7 @@ mod tests {
                         egui::RawInput {
                             screen_rect: Some(egui::Rect::from_min_size(
                                 egui::Pos2::ZERO,
-                                egui::vec2(width, 400.0),
+                                egui::vec2(width, 180.0),
                             )),
                             events,
                             ..Default::default()
@@ -424,7 +534,7 @@ mod tests {
                         egui::RawInput {
                             screen_rect: Some(egui::Rect::from_min_size(
                                 egui::Pos2::ZERO,
-                                egui::vec2(width, 400.0),
+                                egui::vec2(width, 180.0),
                             )),
                             events: std::mem::take(&mut events),
                             ..Default::default()

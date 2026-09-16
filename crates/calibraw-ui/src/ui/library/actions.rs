@@ -1,5 +1,7 @@
 use super::*;
 
+const SELECTION_BAR_COUNT_LABEL_BREAKPOINT: f32 = 360.0;
+
 #[derive(Clone, Debug)]
 pub(crate) enum LibraryAction {
     #[cfg(not(target_os = "android"))]
@@ -41,7 +43,7 @@ pub(crate) fn library_image_context_menu(
                     ("Unflag", crate::sidecar::PhotoFlag::Unflagged),
                     ("Reject", crate::sidecar::PhotoFlag::Rejected),
                 ] {
-                    if ui.button(label).clicked() {
+                    if crate::ui::theme::menu_item(ui, true, label).clicked() {
                         action = Some(LibraryAction::Review(
                             context_assets.to_vec(),
                             super::review::ReviewChange::Flag(flag),
@@ -57,7 +59,7 @@ pub(crate) fn library_image_context_menu(
                     } else {
                         format!("{rating} stars")
                     };
-                    if ui.button(label).clicked() {
+                    if crate::ui::theme::menu_item(ui, true, label).clicked() {
                         action = Some(LibraryAction::Review(
                             context_assets.to_vec(),
                             super::review::ReviewChange::Rating(rating),
@@ -524,44 +526,53 @@ pub(super) fn selection_bar_actions(
         action = Some(SelectionBarCommand::Copy);
     }
     selection_bar_more_menu(ui, action_enabled, compact, |ui| {
-        if ui.button("Cut").clicked() {
+        if crate::ui::theme::menu_item(ui, true, "Cut").clicked() {
             action = Some(SelectionBarCommand::Cut);
             ui.close();
         }
-        if ui
-            .button(if selected_count > 1 {
+        if crate::ui::theme::menu_item(
+            ui,
+            true,
+            if selected_count > 1 {
                 "Duplicate selected (RAW + sidecars)"
             } else {
                 "Duplicate (RAW + sidecar)"
-            })
-            .clicked()
+            },
+        )
+        .clicked()
         {
             action = Some(SelectionBarCommand::Duplicate);
             ui.close();
         }
-        if selected_count == 1 && ui.button("Rename…").clicked() {
+        if selected_count == 1 && crate::ui::theme::menu_item(ui, true, "Rename…").clicked() {
             action = Some(SelectionBarCommand::Rename);
             ui.close();
         }
-        if ui
-            .button(if selected_count > 1 {
+        if crate::ui::theme::menu_item(
+            ui,
+            true,
+            if selected_count > 1 {
                 "Reset adjustments for selected"
             } else {
                 "Reset all adjustments"
-            })
-            .clicked()
+            },
+        )
+        .clicked()
         {
             action = Some(SelectionBarCommand::ResetAdjustments);
             ui.close();
         }
         ui.separator();
-        if ui
-            .button(if selected_count > 1 {
+        if crate::ui::theme::menu_item(
+            ui,
+            true,
+            if selected_count > 1 {
                 "Delete selected…"
             } else {
                 "Delete…"
-            })
-            .clicked()
+            },
+        )
+        .clicked()
         {
             action = Some(SelectionBarCommand::Delete);
             ui.close();
@@ -613,7 +624,7 @@ pub(super) fn show_library_selection_action_bar(
         return;
     }
     let bounds = ui.max_rect();
-    let compact = bounds.width() < 820.0;
+    let compact = !crate::ui::layout::ResponsiveWidth::from_width(bounds.width()).is_wide();
     let count = selected.len();
     let mut clear_selection = false;
     egui::Area::new(egui::Id::new("library-selection-action-bar"))
@@ -624,16 +635,21 @@ pub(super) fn show_library_selection_action_bar(
         .movable(false)
         .show(ui.ctx(), |ui| {
             egui::Frame::popup(ui.style())
-                .inner_margin(egui::Margin::symmetric(8, 6))
+                .inner_margin(egui::Margin::symmetric(crate::ui::theme::SPACE_SM as i8, 6))
                 .show(ui, |ui| {
-                    ui.spacing_mut().item_spacing.x = if compact { 4.0 } else { 6.0 };
+                    ui.spacing_mut().item_spacing.x = if compact {
+                        crate::ui::theme::SPACE_XS
+                    } else {
+                        6.0
+                    };
                     ui.spacing_mut().interact_size.y = crate::ui::theme::CONTROL_HEIGHT;
                     ui.horizontal(|ui| {
-                        let count_label = if compact && bounds.width() < 360.0 {
-                            count.to_string()
-                        } else {
-                            format!("{count} selected")
-                        };
+                        let count_label =
+                            if compact && bounds.width() < SELECTION_BAR_COUNT_LABEL_BREAKPOINT {
+                                count.to_string()
+                            } else {
+                                format!("{count} selected")
+                            };
                         ui.strong(count_label).on_hover_text(format!(
                             "{count} selected {}",
                             if count == 1 { "RAW" } else { "RAWs" }
@@ -777,9 +793,12 @@ pub(crate) fn show_library_action_overlays(
         } else {
             format!("Export {count} images")
         };
-        crate::ui::responsive_popup(egui::Window::new(title), ui.ctx(), 480.0)
+        crate::ui::theme::dialog_window(
+            egui::Window::new(title),
+            ui.ctx(),
+            crate::ui::theme::DIALOG_WIDTH_WIDE,
+        )
             .id(egui::Id::new("library-export-dialog"))
-            .collapsible(false)
             .resizable(true)
             .show(ui.ctx(), |ui| {
                 let format_changed = show_library_export_settings_controls(
@@ -794,7 +813,6 @@ pub(crate) fn show_library_action_overlays(
                 if format_changed {
                     selected_export_format = Some(dialog.format);
                 }
-                ui.add_space(10.0);
                 #[cfg(not(target_os = "android"))]
                 let help = if count > 1 {
                     "A destination folder will be selected for the batch. File names are generated from each RAW name."
@@ -803,25 +821,38 @@ pub(crate) fn show_library_action_overlays(
                 };
                 #[cfg(target_os = "android")]
                 let help = "Exports are saved to Pictures/CalibRaw. File names are generated from each RAW name.";
-                ui.horizontal(|ui| {
-                    if ui.button("Cancel").clicked() {
+                let label = if count == 1 {
+                    #[cfg(not(target_os = "android"))]
+                    { "Export 1 image…".to_owned() }
+                    #[cfg(target_os = "android")]
+                    { "Export 1 image".to_owned() }
+                } else {
+                    #[cfg(not(target_os = "android"))]
+                    { format!("Export {count} images…") }
+                    #[cfg(target_os = "android")]
+                    { format!("Export {count} images") }
+                };
+                crate::ui::theme::dialog_button_row(ui, |ui| {
+                    if crate::ui::theme::secondary_button(ui, "Cancel").clicked() {
                         close_export_dialog = true;
                     }
-                    let label = if count == 1 {
-                        #[cfg(not(target_os = "android"))]
-                        { "Export 1 image…".to_owned() }
-                        #[cfg(target_os = "android")]
-                        { "Export 1 image".to_owned() }
-                    } else {
-                        #[cfg(not(target_os = "android"))]
-                        { format!("Export {count} images…") }
-                        #[cfg(target_os = "android")]
-                        { format!("Export {count} images") }
-                    };
-                    if ui.button(label).on_hover_text(help).clicked() {
+                    if crate::ui::theme::primary_action_button(ui, label)
+                        .on_hover_text(help)
+                        .clicked()
+                    {
                         confirm_export = true;
                     }
                 });
+                if !close_export_dialog
+                    && !confirm_export
+                    && crate::ui::theme::dialog_keyboard_action(
+                        ui,
+                        crate::ui::theme::DialogKeyboard::CLOSE_ONLY,
+                        false,
+                    ) == crate::ui::theme::DialogAction::Cancel
+                {
+                    close_export_dialog = true;
+                }
             });
     }
 

@@ -71,9 +71,9 @@ pub(crate) fn show(ctx: &egui::Context, app: &mut CalibRawApp) {
                 }
             }
         }
-        ui.add_space(12.0);
+        ui.add_space(crate::ui::theme::SPACE_MD);
         ui.separator();
-        ui.add_space(8.0);
+        ui.add_space(crate::ui::theme::SPACE_SM);
         show_navigation(ui, step, &mut action);
     });
 
@@ -96,7 +96,7 @@ pub(crate) fn show(ctx: &egui::Context, app: &mut CalibRawApp) {
 
 fn show_step_body(ui: &mut egui::Ui, app: &mut CalibRawApp, step: OnboardingStep) {
     show_header(ui, step);
-    ui.add_space(8.0);
+    ui.add_space(crate::ui::theme::SPACE_SM);
     match step {
         OnboardingStep::Appearance => show_appearance(ui, app),
         OnboardingStep::Preview => show_preview(ui, app),
@@ -139,7 +139,7 @@ fn show_appearance(ui: &mut egui::Ui, app: &mut CalibRawApp) {
         app.set_ui_design(design);
     }
 
-    ui.add_space(8.0);
+    ui.add_space(crate::ui::theme::SPACE_SM);
     let mut backdrop = app.preferences.preview_backdrop;
     crate::ui::theme::form_combo_with_help(
         ui,
@@ -158,7 +158,7 @@ fn show_appearance(ui: &mut egui::Ui, app: &mut CalibRawApp) {
         app.set_preview_backdrop(backdrop);
     }
 
-    ui.add_space(8.0);
+    ui.add_space(crate::ui::theme::SPACE_SM);
     let sample_color = backdrop.color(app.ui.adaptive_preview_backdrop);
     let (sample, _) = ui.allocate_exact_size(
         egui::vec2(ui.available_width().max(1.0), 38.0),
@@ -198,7 +198,7 @@ fn show_preview(ui: &mut egui::Ui, app: &mut CalibRawApp) {
         app.preview_quality_changed();
     }
 
-    ui.add_space(8.0);
+    ui.add_space(crate::ui::theme::SPACE_SM);
     ui.small(match quality {
         PreviewQuality::Low => "75% render density · lowest GPU memory use",
         PreviewQuality::Medium => "100% render density · recommended balance",
@@ -275,7 +275,7 @@ fn show_ai(ui: &mut egui::Ui, app: &mut CalibRawApp) {
         app.set_ai_gpu_acceleration(acceleration);
     }
 
-    ui.add_space(8.0);
+    ui.add_space(crate::ui::theme::SPACE_SM);
     let mut quality = app.ai.birefnet_quality;
     let explanation = quality.model().explanation;
     crate::ui::theme::form_combo_with_help(
@@ -295,7 +295,7 @@ fn show_ai(ui: &mut egui::Ui, app: &mut CalibRawApp) {
     if quality != app.ai.birefnet_quality {
         app.set_birefnet_quality(quality);
     }
-    ui.add_space(8.0);
+    ui.add_space(crate::ui::theme::SPACE_SM);
     ui.small(quality.model().explanation);
     ui.small("AI models are downloaded only when you first use the corresponding tool.");
 }
@@ -314,10 +314,10 @@ fn show_discord(ui: &mut egui::Ui, app: &mut CalibRawApp) {
         app.set_discord_rich_presence(enabled);
     }
 
-    ui.add_space(8.0);
+    ui.add_space(crate::ui::theme::SPACE_SM);
     ui.small("This is optional and disabled by default. You can change it later in Settings.");
     if !app.discord_rich_presence_configured() {
-        ui.add_space(8.0);
+        ui.add_space(crate::ui::theme::SPACE_SM);
         ui.colored_label(
             ui.visuals().warn_fg_color,
             "Unavailable in this build: CALIBRAW_DISCORD_APPLICATION_ID is not configured.",
@@ -327,21 +327,21 @@ fn show_discord(ui: &mut egui::Ui, app: &mut CalibRawApp) {
 
 fn show_navigation(ui: &mut egui::Ui, step: OnboardingStep, action: &mut Option<OnboardingAction>) {
     ui.horizontal(|ui| {
-        if ui
-            .add_enabled(
-                step != OnboardingStep::Appearance,
-                egui::Button::new("Back"),
-            )
-            .clicked()
-        {
+        let back = ui
+            .add_enabled_ui(step != OnboardingStep::Appearance, |ui| {
+                crate::ui::theme::secondary_button(ui, "Back")
+            })
+            .inner;
+        if back.clicked() {
             *action = Some(OnboardingAction::Back);
         }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             let final_step = is_final_step(step);
-            if ui
-                .button(if final_step { "Finish setup" } else { "Next" })
-                .clicked()
-            {
+            let next = crate::ui::theme::secondary_button(
+                ui,
+                if final_step { "Finish setup" } else { "Next" },
+            );
+            if next.clicked() {
                 *action = Some(if final_step {
                     OnboardingAction::Finish
                 } else {

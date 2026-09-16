@@ -30,6 +30,19 @@ impl MaskState {
         stack: &MaskStack,
         target: &AiMaskTarget,
     ) -> std::result::Result<(usize, usize), String> {
+        // Copied masks can have identical geometry. Prefer the captured slot
+        // while it still matches, and only search for a moved target otherwise.
+        if stack
+            .masks
+            .get(target.mask_index)
+            .and_then(|mask| mask.components.get(target.component_index))
+            .is_some_and(|component| {
+                component.kind == target.kind && component.geometry == target.geometry
+            })
+        {
+            return Ok((target.mask_index, target.component_index));
+        }
+
         let matches = stack
             .masks
             .iter()
@@ -117,9 +130,9 @@ impl CalibRawApp {
 
         self.invalidate_generated_mask_sources();
         self.ai.masks_need_update = false;
-        self.ai.subject_consent_open = false;
-        self.ai.object_consent_open = false;
-        self.ai.runtime_download_consent_pending = false;
+        if self.ai.consent.is_mask_consent() {
+            self.ai.consent = AiConsentState::None;
+        }
         self.ai.object_error_dialog = None;
 
         if masks_changed {
@@ -333,8 +346,7 @@ impl CalibRawApp {
                 self.foreground_operation_kind(),
                 Some(ForegroundOperationKind::SubjectMask | ForegroundOperationKind::ObjectMask)
             )
-            || self.ai.subject_consent_open
-            || self.ai.object_consent_open
+            || self.ai.consent.is_mask_consent()
     }
 
     pub(crate) fn ai_mask_update_remaining_target_count(&self) -> usize {
@@ -472,7 +484,7 @@ impl CalibRawApp {
         let (update_subject, object_targets) = self.generated_ai_mask_targets();
         let update_ranges = self.has_range_mask_targets();
         if self.masks.stack.masks.is_empty() {
-            self.ai.masks_need_update = false;
+            self.save_completed_mask_update();
             return;
         }
         #[cfg(not(target_os = "android"))]
@@ -515,7 +527,7 @@ impl CalibRawApp {
         }
 
         if !update_subject && object_targets.is_empty() {
-            self.ai.masks_need_update = false;
+            self.save_completed_mask_update();
             self.ui.notice =
                 Some("Masks were refreshed for the current image geometry.".to_owned());
             self.egui_ctx.request_repaint();
@@ -533,11 +545,14 @@ impl CalibRawApp {
             if crate::ai_masks::birefnet_model_is_verified(self.ai.birefnet_quality, &path)
                 && !runtime_download_needed
             {
-                self.ai.runtime_download_consent_pending = false;
+                if matches!(self.ai.consent, AiConsentState::Subject { .. }) {
+                    self.ai.consent = AiConsentState::None;
+                }
                 self.start_subject_worker(path, false);
             } else {
-                self.ai.runtime_download_consent_pending = runtime_download_needed;
-                self.ai.subject_consent_open = true;
+                self.ai.consent = AiConsentState::Subject {
+                    runtime_download_needed,
+                };
                 self.egui_ctx.request_repaint();
             }
         } else {
@@ -552,8 +567,7 @@ impl CalibRawApp {
                 self.foreground_operation_kind(),
                 Some(ForegroundOperationKind::SubjectMask | ForegroundOperationKind::ObjectMask)
             )
-            || self.ai.subject_consent_open
-            || self.ai.object_consent_open
+            || self.ai.consent.is_mask_consent()
         {
             return;
         }
@@ -583,12 +597,15 @@ impl CalibRawApp {
             if crate::ai_masks::object_models_are_verified(&encoder, &decoder)
                 && !runtime_download_needed
             {
-                self.ai.runtime_download_consent_pending = false;
+                if matches!(self.ai.consent, AiConsentState::Object { .. }) {
+                    self.ai.consent = AiConsentState::None;
+                }
                 self.start_object_worker(mask_index, component_index, encoder, decoder, false);
             } else {
-                self.ai.runtime_download_consent_pending = runtime_download_needed;
                 self.ai.object_pending_target = Some((mask_index, component_index));
-                self.ai.object_consent_open = true;
+                self.ai.consent = AiConsentState::Object {
+                    runtime_download_needed,
+                };
                 self.egui_ctx.request_repaint();
             }
             return;
@@ -611,11 +628,19 @@ impl CalibRawApp {
                     .to_owned(),
             );
         } else {
-            self.ai.masks_need_update = false;
+            self.save_completed_mask_update();
             self.ui.notice =
                 Some("Masks were refreshed for the current image geometry.".to_owned());
         }
         self.egui_ctx.request_repaint();
+    }
+
+    fn save_completed_mask_update(&mut self) {
+        self.ai.masks_need_update = false;
+        // Refreshing may reproduce identical pixels, leaving the edit revision
+        // unchanged. Still persist the cleared flag, including after a pending
+        // save that captured the old flag.
+        self.queue_explicit_sidecar_save();
     }
 
     pub(in crate::app) fn cancel_ai_mask_update(&mut self) {
@@ -681,5 +706,91 @@ mod tests {
         assert!(state.detail_dirty_layers.iter().all(|dirty| *dirty));
         assert!(state.navigation_dirty_layers.iter().all(|dirty| *dirty));
         assert_eq!(state.overlay_revision, 11);
+    }
+
+    #[test]
+    fn ai_mask_update_resolves_identical_objects_in_copied_masks() {
+        let mut state = mask_state();
+        state.stack.add_mask(MaskKind::Subject);
+        state
+            .stack
+            .add_component(MaskKind::Object, crate::pipeline::MaskCombineMode::Add);
+        assert!(state.stack.duplicate_mask(0, true));
+
+        // Both copies can produce the same pixels on every refresh. Updating
+        // the first must not make the second impossible to resolve either.
+        for _ in 0..2 {
+            for mask_index in 0..2 {
+                let target = state.capture_ai_target(mask_index, 1).unwrap();
+                assert_eq!(state.resolve_ai_target(&target), Ok((mask_index, 1)));
+                let MaskGeometry::Object { mask, .. } =
+                    &mut state.stack.masks[mask_index].components[1].geometry
+                else {
+                    panic!("expected an object mask");
+                };
+                *mask = MaskImage::new(2, 2, vec![0, 255, 255, 0]);
+            }
+        }
+    }
+
+    #[test]
+    fn ai_mask_update_resolves_identical_components_in_the_same_mask() {
+        let mut state = mask_state();
+        state.stack.add_mask(MaskKind::Object);
+        assert!(state.stack.duplicate_component(0, 0, true));
+
+        for component_index in 0..2 {
+            let target = state.capture_ai_target(0, component_index).unwrap();
+            assert_eq!(state.resolve_ai_target(&target), Ok((0, component_index)));
+        }
+    }
+
+    #[test]
+    fn ai_mask_update_rejects_ambiguous_targets_after_reordering() {
+        let mut state = mask_state();
+        state.stack.add_mask(MaskKind::Object);
+        let target = state.capture_ai_target(0, 0).unwrap();
+        assert!(state.stack.duplicate_component(0, 0, false));
+        state
+            .stack
+            .add_component(MaskKind::Brush, crate::pipeline::MaskCombineMode::Add);
+        assert_eq!(state.stack.move_submask_component(0, 2, 0, 0), Some((0, 0)));
+
+        assert!(state
+            .resolve_ai_target(&target)
+            .unwrap_err()
+            .contains("ambiguous"));
+    }
+
+    #[cfg(not(target_os = "android"))]
+    #[test]
+    fn ai_mask_update_persists_completion_when_pixels_are_unchanged() {
+        let mut app = CalibRawApp::empty(&egui::Context::default());
+        let directory = tempfile::tempdir().unwrap();
+        app.persistence.sidecar_target = Some(crate::sidecar::SidecarTarget::Desktop {
+            raw_path: directory.path().join("copied-masks.ARW"),
+        });
+        app.masks.stack.add_mask(MaskKind::Object);
+        app.reset_edit_history();
+        let revision = app.edit_commit_revision();
+        app.persistence.sidecar_saved_revision = Some(revision);
+        // Keep the new save queued behind a save of the same edit revision.
+        app.persistence.sidecar_in_flight = Some(SidecarSaveJob {
+            generation: app.persistence.sidecar_generation,
+            revision,
+            explicit: false,
+        });
+        app.ai.masks_need_update = true;
+        app.ai.mask_update_active = true;
+
+        app.finish_ai_mask_update();
+
+        assert!(!app.ai.masks_need_update);
+        assert!(!app.ai.mask_update_active);
+        assert_eq!(app.edit_commit_revision(), revision);
+        let save = app.persistence.sidecar_pending.front().unwrap();
+        assert!(!save.edits.ai_masks_need_update);
+        assert_eq!(save.revision, revision);
+        assert_eq!(save.edits.masks.masks, app.masks.stack.masks);
     }
 }

@@ -436,6 +436,8 @@ impl CalibRawApp {
                     self.android.picker_pending = true;
                     self.ui.notice = None;
                     self.ui.status = format!("Opening {display_name}…");
+                    // Batch export owns this background transition; activating
+                    // interactively could cancel unrelated AI work.
                     self.ui.active_tab = AppTab::Library;
                     return;
                 }
@@ -548,6 +550,8 @@ impl CalibRawApp {
                 }
             })
             .is_some();
+        // Keep batch export in the library without invoking interactive tab
+        // transition side effects while its worker is active.
         self.ui.active_tab = AppTab::Library;
         if !started {
             self.cancel_android_export_destination(&cleanup);

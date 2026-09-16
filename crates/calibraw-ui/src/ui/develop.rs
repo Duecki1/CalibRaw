@@ -30,7 +30,7 @@ impl Develop {
         app: &mut CalibRawApp,
         frame: &eframe::Frame,
     ) {
-        if context.egui_wants_keyboard_input() {
+        if !app.navigation_shortcuts_allowed(context) {
             return;
         }
 
@@ -79,7 +79,10 @@ impl Develop {
 
         egui::Frame::new()
             .fill(ui.visuals().panel_fill)
-            .inner_margin(egui::Margin::symmetric(12, 10))
+            .inner_margin(egui::Margin::symmetric(
+                crate::ui::theme::CONTENT_MARGIN,
+                10,
+            ))
             .show(ui, |ui| {
                 ui.set_min_height(FILMSTRIP_CARD_HEIGHT);
                 show_filmstrip_contents(ui, app, frame);

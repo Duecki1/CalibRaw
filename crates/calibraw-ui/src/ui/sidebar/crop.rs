@@ -10,31 +10,11 @@ impl Sidebar {
         app.note_geometry_changed();
     }
 
-    fn show_crop(ui: &mut Ui, app: &mut CalibRawApp, layout: ScreenLayout) {
+    fn show_crop(ui: &mut Ui, app: &mut CalibRawApp, _layout: ScreenLayout) {
         let source_dimensions = app.develop.loaded_raw
             .as_ref()
             .map(|raw| (raw.width, raw.height))
             .unwrap_or((1, 1));
-
-        let compact_android = crate::ui::theme::is_compact_portrait(ui);
-        if layout == ScreenLayout::Vertical && !compact_android {
-            crate::ui::theme::toolbar_row(ui, |ui| {
-                ui.strong("Crop geometry");
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if crate::ui::icons::phosphor_icon_button(
-                        ui,
-                        egui_phosphor::regular::ARROW_COUNTER_CLOCKWISE,
-                        crate::ui::theme::toolbar_icon_size(),
-                        "Reset crop and geometry",
-                    )
-                    .clicked()
-                    {
-                        Self::reset_crop(app);
-                    }
-                });
-            });
-            ui.add_space(4.0);
-        }
 
         let before = app.develop.geometry;
         if app.develop_ui.crop_constraint_reference.is_none() {
@@ -178,22 +158,6 @@ impl Sidebar {
             .fit_crop_inside_transformed_source(source_dimensions.0, source_dimensions.1);
         if app.develop.geometry != before {
             app.note_geometry_changed();
-        }
-
-        if compact_android {
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui
-                    .button(format!(
-                        "{}  Reset crop and geometry",
-                        egui_phosphor::regular::ARROW_COUNTER_CLOCKWISE
-                    ))
-                    .on_hover_text("Reset crop and geometry")
-                    .clicked()
-                {
-                    Self::reset_crop(app);
-                }
-            });
-            ui.add_space(crate::ui::theme::SPACE_XS);
         }
     }
 

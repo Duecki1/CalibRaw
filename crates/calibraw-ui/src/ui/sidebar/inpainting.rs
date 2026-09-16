@@ -25,42 +25,11 @@ impl Sidebar {
     pub(crate) fn show_inpainting(
         ui: &mut Ui,
         app: &mut CalibRawApp,
-        layout: ScreenLayout,
+        _layout: ScreenLayout,
         _frame: &eframe::Frame,
     ) {
-        let active_tool = app.inpaint.tool;
-        let active_stroke_count = app
-            .inpaint
-            .edits
-            .strokes
-            .iter()
-            .filter(|stroke| {
-                active_tool.matches_stroke_tool(stroke.retouch.map(|retouch| retouch.tool))
-            })
-            .count();
-        let compact_android = crate::ui::theme::is_compact_portrait(ui);
-        if layout == ScreenLayout::Vertical && !compact_android {
-            crate::ui::theme::toolbar_row(ui, |ui| {
-                ui.strong("Inpainting");
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    let clear = crate::ui::icons::phosphor_icon_button_enabled(
-                        ui,
-                        active_stroke_count != 0 && !app.inpaint.processing(),
-                        egui_phosphor::regular::TRASH,
-                        crate::ui::theme::toolbar_icon_size(),
-                        &format!("Clear all {} strokes", active_tool.label()),
-                    );
-                    if clear.clicked() {
-                        app.clear_inpainting_tool();
-                    }
-                });
-            });
-            ui.add_space(4.0);
-        }
-
         let tool_help = inpaint_tool_help(app.inpaint.tool);
         crate::ui::theme::section_card_with_help(ui, "Tool", tool_help, |ui| {
-            let previous_tool = app.inpaint.tool;
             ui.horizontal(|ui| {
                 let spacing = ui.spacing().item_spacing.x;
                 let tool_width = ((ui.available_width() - spacing * 2.0) / 3.0).max(1.0);
@@ -74,19 +43,10 @@ impl Sidebar {
                     .on_hover_text(inpaint_tool_help(tool))
                     .clicked()
                     {
-                        app.inpaint.tool = tool;
+                        app.dispatch_action(AppAction::SelectInpaintTool(tool));
                     }
                 }
             });
-            if app.inpaint.tool != previous_tool {
-                app.finish_inpaint_stroke_opacity_edit();
-                app.inpaint.active_points.clear();
-                app.inpaint.last_brush_uv = None;
-                app.inpaint.source_pick_active = false;
-                app.inpaint.aligned_offset = None;
-                app.inpaint.hovered_stroke = None;
-                app.inpaint.selected_stroke = None;
-            }
 
             if app.inpaint.tool.retouch().is_some() {
                 let previous_alignment = app.inpaint.alignment;
@@ -113,15 +73,18 @@ impl Sidebar {
                     app.inpaint.aligned_offset = None;
                 }
                 if ui
-                    .add_enabled(
-                        !app.inpaint.processing(),
-                        egui::Button::new(if app.inpaint.source_pick_active {
-                            "Cancel source placement"
-                        } else {
-                            "Set source on canvas"
-                        })
-                        .selected(app.inpaint.source_pick_active),
-                    )
+                    .add_enabled_ui(!app.inpaint_processing(), |ui| {
+                        crate::ui::theme::toggle_button(
+                            ui,
+                            if app.inpaint.source_pick_active {
+                                "Cancel source placement"
+                            } else {
+                                "Set source on canvas"
+                            },
+                            app.inpaint.source_pick_active,
+                        )
+                    })
+                    .inner
                     .on_hover_text("Choose the source point used by Clone or Heal strokes.")
                     .clicked()
                 {
@@ -146,7 +109,7 @@ impl Sidebar {
 
         crate::ui::theme::card_gap(ui);
         crate::ui::theme::section_card(ui, "Brush", |ui| {
-            ui.add_enabled_ui(!app.inpaint.processing(), |ui| {
+            ui.add_enabled_ui(!app.inpaint_processing(), |ui| {
                 adjustment_slider_with_reset(
                     ui,
                     "Size",
@@ -184,7 +147,7 @@ impl Sidebar {
                 );
             });
             if let Some(status) = app.inpaint.processing_label.as_deref() {
-                ui.add_space(8.0);
+                ui.add_space(crate::ui::theme::SPACE_SM);
                 ui.horizontal(|ui| {
                     ui.spinner();
                     ui.label(egui::RichText::new(status).small());
@@ -226,7 +189,7 @@ impl Sidebar {
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             if crate::ui::icons::phosphor_icon_button_enabled(
                                 ui,
-                                !app.inpaint.processing(),
+                                !app.inpaint_processing(),
                                 egui_phosphor::regular::TRASH,
                                 crate::ui::theme::toolbar_icon_size(),
                                 "Delete this inpainting stroke",
@@ -289,9 +252,7 @@ impl Sidebar {
                     )
                 });
             if let Some((index, history_index, mut opacity, feather)) = selected_settings {
-                ui.add_space(8.0);
-                ui.separator();
-                ui.add_space(6.0);
+                crate::ui::theme::section_separator(ui);
                 ui.strong(format!("Selected stroke {}", history_index + 1));
                 if let Some(feather) = feather {
                     ui.label(
@@ -301,7 +262,7 @@ impl Sidebar {
                     );
                 }
                 let changed = ui
-                    .add_enabled_ui(!app.inpaint.processing(), |ui| {
+                    .add_enabled_ui(!app.inpaint_processing(), |ui| {
                         adjustment_slider_with_reset(
                             ui,
                             "Opacity",
@@ -326,31 +287,12 @@ impl Sidebar {
             }
 
             if app.preview.gpu_pipeline.is_none() {
-                ui.add_space(8.0);
+                ui.add_space(crate::ui::theme::SPACE_SM);
                 ui.colored_label(
                     ui.visuals().warn_fg_color,
                     "Open a RAW image to use inpainting tools.",
                 );
             }
         });
-
-        if compact_android {
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                let clear = ui
-                    .add_enabled(
-                        active_stroke_count != 0 && !app.inpaint.processing(),
-                        egui::Button::new(format!(
-                            "{}  Clear all {} strokes",
-                            egui_phosphor::regular::TRASH,
-                            active_tool.label()
-                        )),
-                    )
-                    .on_hover_text(format!("Clear all {} strokes", active_tool.label()));
-                if clear.clicked() {
-                    app.clear_inpainting_tool();
-                }
-            });
-            ui.add_space(crate::ui::theme::SPACE_XS);
-        }
     }
 }

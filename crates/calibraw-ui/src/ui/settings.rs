@@ -48,7 +48,7 @@ pub(crate) fn export_name_template_controls(
     ui.label("Name template");
     let changed = ui
         .add(
-            egui::TextEdit::singleline(&mut app.preferences.export_name_template)
+            crate::ui::theme::singleline_text_edit(&mut app.preferences.export_name_template)
                 .id_salt(id_salt)
                 .char_limit(crate::export_naming::MAX_EXPORT_NAME_TEMPLATE_CHARS)
                 .desired_width(f32::INFINITY)
@@ -111,7 +111,7 @@ pub(crate) fn export_name_template_controls(
         }
     }
     if app.preferences.export_name_template != crate::export_naming::DEFAULT_EXPORT_NAME_TEMPLATE
-        && ui.button("Reset to default").clicked()
+        && crate::ui::theme::secondary_button(ui, "Reset to default").clicked()
     {
         app.preferences.export_name_template =
             crate::export_naming::DEFAULT_EXPORT_NAME_TEMPLATE.to_owned();
@@ -135,12 +135,12 @@ impl Settings {
             ui.vertical(|ui| {
                 ui.set_width(content_width);
                 ui.set_max_width(content_width);
-                Self::show_content(ui, app, layout, content_width);
+                Self::show_content(ui, app, layout);
             });
         });
     }
 
-    fn show_content(ui: &mut Ui, app: &mut CalibRawApp, layout: ScreenLayout, content_width: f32) {
+    fn show_content(ui: &mut Ui, app: &mut CalibRawApp, layout: ScreenLayout) {
         #[cfg(target_os = "android")]
         crate::ui::theme::toolbar_row(ui, |ui| {
             if crate::ui::top_bar::TopBar::back_icon_button(
@@ -157,14 +157,14 @@ impl Settings {
         ui.heading("Settings");
         crate::ui::theme::card_gap(ui);
 
-        Self::group(ui, content_width, |ui| {
+        crate::ui::theme::content_card(ui, |ui| {
             crate::ui::theme::heading_with_help(
                 ui,
                 "Appearance",
                 "Choose the design used across every screen and the canvas color shown around the photo. Changes are saved and applied immediately.",
             );
 
-            ui.separator();
+            crate::ui::theme::section_separator(ui);
             let mut design = app.preferences.ui_design;
             crate::ui::theme::form_combo_with_help(
                 ui,
@@ -184,7 +184,7 @@ impl Settings {
                 app.set_ui_design(design);
             }
 
-            ui.separator();
+            crate::ui::theme::section_separator(ui);
             let mut backdrop = app.preferences.preview_backdrop;
             let backdrop_help = match backdrop {
                 crate::ui::theme::PreviewBackdrop::MatchPhoto => {
@@ -214,14 +214,14 @@ impl Settings {
 
         crate::ui::theme::card_gap(ui);
 
-        Self::group(ui, content_width, |ui| {
+        crate::ui::theme::content_card(ui, |ui| {
             crate::ui::theme::heading_with_help(
                 ui,
                 "Interface",
                 "Configure preview resolution, brush behavior, and library resource use.",
             );
 
-            ui.separator();
+            crate::ui::theme::section_separator(ui);
             if crate::ui::theme::checkbox_with_help(
                 ui,
                 &mut app.preferences.show_develop_navigation_labels,
@@ -235,7 +235,7 @@ impl Settings {
 
             #[cfg(not(target_os = "android"))]
             {
-                ui.separator();
+                crate::ui::theme::section_separator(ui);
                 let mut enabled = app.preferences.discord_rich_presence;
                 if crate::ui::theme::checkbox_with_help(
                     ui,
@@ -255,7 +255,7 @@ impl Settings {
                 }
             }
 
-            ui.separator();
+            crate::ui::theme::section_separator(ui);
             let previous_quality = app.preview.quality;
             crate::ui::theme::form_combo_with_help(
                 ui,
@@ -275,7 +275,7 @@ impl Settings {
                 app.preview_quality_changed();
             }
 
-            ui.separator();
+            crate::ui::theme::section_separator(ui);
             if crate::ui::theme::checkbox_with_help(
                 ui,
                 &mut app.preferences.image_relative_brush_size,
@@ -287,7 +287,7 @@ impl Settings {
                 app.persist_performance_settings();
             }
 
-            ui.separator();
+            crate::ui::theme::section_separator(ui);
             crate::ui::theme::strong_with_help(
                 ui,
                 "Library performance",
@@ -347,7 +347,7 @@ impl Settings {
                 app.set_thumbnail_worker_count(thumbnail_workers);
             }
 
-            ui.separator();
+            crate::ui::theme::section_separator(ui);
             crate::ui::theme::strong_with_help(
                 ui,
                 "Thumbnail cache",
@@ -355,8 +355,7 @@ impl Settings {
             );
             let cache_size = app.thumbnail_cache_size_label();
             crate::ui::theme::action_row(ui, |ui| {
-                if ui
-                    .button("Clear thumbnail cache")
+                if crate::ui::theme::secondary_button(ui, "Clear thumbnail cache")
                     .on_hover_text("Delete generated previews and rebuild them when needed.")
                     .clicked()
                 {
@@ -367,7 +366,7 @@ impl Settings {
         });
 
         crate::ui::theme::card_gap(ui);
-        Self::group(ui, content_width, |ui| {
+        crate::ui::theme::content_card(ui, |ui| {
             crate::ui::theme::heading_with_help(
                 ui,
                 "Copy & paste adjustments",
@@ -424,18 +423,18 @@ impl Settings {
         });
 
         crate::ui::theme::card_gap(ui);
-        Self::group(ui, content_width, |ui| {
+        crate::ui::theme::content_card(ui, |ui| {
             crate::ui::theme::heading_with_help(
                 ui,
                 "Export file names",
                 "Build export file names from the original name, dates, and capture metadata. The selected image format adds its extension automatically.",
             );
-            ui.separator();
+            crate::ui::theme::section_separator(ui);
             export_name_template_controls(ui, app, "settings-export-name-template");
         });
 
         crate::ui::theme::card_gap(ui);
-        Self::group(ui, content_width, |ui| {
+        crate::ui::theme::content_card(ui, |ui| {
             crate::ui::theme::heading_with_help(
                 ui,
                 "RAW color profiles",
@@ -480,7 +479,7 @@ impl Settings {
                 app.set_camera_profile_mode(mode);
             }
 
-            ui.separator();
+            crate::ui::theme::section_separator(ui);
             #[cfg(target_os = "android")]
             let camera_folder_help = "Choose a top-level CameraProfiles folder with Android's system picker. CalibRaw recursively imports only .dcp files into private persistent storage, groups matches by camera, and exposes them in Develop.";
             #[cfg(not(target_os = "android"))]
@@ -541,16 +540,14 @@ impl Settings {
                 #[cfg(not(target_os = "android"))]
                 let choose_enabled = true;
 
-                if ui
-                    .add_enabled(choose_enabled, egui::Button::new(choose_label))
+                if crate::ui::theme::secondary_button_enabled(ui, choose_enabled, choose_label)
                     .on_hover_text(camera_folder_help)
                     .clicked()
                 {
                     app.choose_camera_profile_folder();
                 }
                 #[cfg(not(target_os = "android"))]
-                if ui
-                    .button("Auto-detect DCP profiles")
+                if crate::ui::theme::secondary_button(ui, "Auto-detect DCP profiles")
                     .on_hover_text("Check common CameraProfiles locations.")
                     .clicked()
                 {
@@ -560,8 +557,7 @@ impl Settings {
                     || app.preferences.camera_profile_auto_detect;
                 #[cfg(target_os = "android")]
                 let can_clear = can_clear && !app.android.picker_pending;
-                if ui
-                    .add_enabled(can_clear, egui::Button::new("Clear"))
+                if crate::ui::theme::secondary_button_enabled(ui, can_clear, "Clear")
                     .on_hover_text("Stop using the configured external DCP profile folder.")
                     .clicked()
                 {
@@ -573,7 +569,7 @@ impl Settings {
         #[cfg(not(target_os = "android"))]
         {
             crate::ui::theme::card_gap(ui);
-            Self::group(ui, content_width, |ui| {
+            crate::ui::theme::content_card(ui, |ui| {
                 crate::ui::theme::heading_with_help(
                     ui,
                     "AI models",
@@ -591,7 +587,7 @@ impl Settings {
                     app.set_ai_gpu_acceleration(acceleration);
                 }
 
-                ui.separator();
+                crate::ui::theme::section_separator(ui);
                 crate::ui::theme::strong_with_help(
                     ui,
                     "Subject masks",
@@ -637,7 +633,7 @@ impl Settings {
                     }
                 });
 
-                ui.separator();
+                crate::ui::theme::section_separator(ui);
                 let runtime_help = "Automatic downloads the verified ONNX Runtime package matching this operating system and CPU architecture when an AI tool first needs it. Manual uses a local shared-library override.";
                 crate::ui::theme::strong_with_help(ui, "ONNX Runtime", runtime_help);
                 let previous_mode = app.ai.runtime_mode;
@@ -701,20 +697,19 @@ impl Settings {
                             );
                         }
                         crate::ui::theme::action_row(ui, |ui| {
-                            if ui
-                                .button("Choose ONNX Runtime…")
+                            if crate::ui::theme::secondary_button(ui, "Choose ONNX Runtime…")
                                 .on_hover_text(manual_help)
                                 .clicked()
                             {
                                 app.choose_onnx_runtime();
                             }
-                            if ui
-                                .add_enabled(
-                                    app.ai.runtime_path.is_some(),
-                                    eframe::egui::Button::new("Clear"),
-                                )
-                                .on_hover_text("Forget the selected manual runtime.")
-                                .clicked()
+                            if crate::ui::theme::secondary_button_enabled(
+                                ui,
+                                app.ai.runtime_path.is_some(),
+                                "Clear",
+                            )
+                            .on_hover_text("Forget the selected manual runtime.")
+                            .clicked()
                             {
                                 app.clear_onnx_runtime();
                             }
@@ -725,7 +720,7 @@ impl Settings {
         }
 
         crate::ui::theme::card_gap(ui);
-        Self::group(ui, content_width, |ui| {
+        crate::ui::theme::content_card(ui, |ui| {
             crate::ui::theme::heading_with_help(
                 ui,
                 "Updates",
@@ -733,7 +728,7 @@ impl Settings {
             );
             ui.strong(format!("CalibRaw {}", env!("CARGO_PKG_VERSION")));
 
-            ui.separator();
+            crate::ui::theme::section_separator(ui);
             let mut auto_check = app.preferences.auto_check_updates;
             if crate::ui::theme::checkbox_with_help(
                 ui,
@@ -749,8 +744,7 @@ impl Settings {
             let checking = app.version_check_in_progress();
             let status = app.version_check_status_text();
             crate::ui::theme::action_row(ui, |ui| {
-                if ui
-                    .add_enabled(!checking, egui::Button::new("Check now"))
+                if crate::ui::theme::secondary_button_enabled(ui, !checking, "Check now")
                     .on_hover_text("Check GitHub for the latest stable CalibRaw release.")
                     .clicked()
                 {
@@ -762,7 +756,7 @@ impl Settings {
         });
 
         crate::ui::theme::card_gap(ui);
-        Self::group(ui, content_width, |ui| {
+        crate::ui::theme::content_card(ui, |ui| {
             crate::ui::theme::heading_with_help(
                 ui,
                 "Legal & attributions",
@@ -774,8 +768,7 @@ impl Settings {
             ui.hyperlink_to("Project source and license", PROJECT_REPOSITORY);
 
             crate::ui::theme::action_row(ui, |ui| {
-                if ui
-                    .button("Copy all legal text")
+                if crate::ui::theme::secondary_button(ui, "Copy all legal text")
                     .on_hover_text("Copy the project license and every bundled third-party notice.")
                     .clicked()
                 {
@@ -811,7 +804,7 @@ impl Settings {
         });
 
         crate::ui::theme::card_gap(ui);
-        Self::group(ui, content_width, |ui| {
+        crate::ui::theme::content_card(ui, |ui| {
             crate::ui::theme::heading_with_help(
                 ui,
                 "Diagnostics",
@@ -820,8 +813,7 @@ impl Settings {
 
             let mut diagnostic_log = diagnostics_snapshot_with_ai_backends();
             crate::ui::theme::action_row(ui, |ui| {
-                if ui
-                    .button("Copy log")
+                if crate::ui::theme::secondary_button(ui, "Copy log")
                     .on_hover_text("Copy the complete diagnostic report.")
                     .clicked()
                 {
@@ -837,8 +829,7 @@ impl Settings {
                     #[cfg(not(target_os = "android"))]
                     ui.ctx().copy_text(diagnostic_log.clone());
                 }
-                if ui
-                    .button("Clear events")
+                if crate::ui::theme::secondary_button(ui, "Clear events")
                     .on_hover_text("Clear recorded runtime events from the diagnostic report.")
                     .clicked()
                 {
@@ -863,16 +854,6 @@ impl Settings {
                             .desired_width(f32::INFINITY),
                     );
                 });
-        });
-    }
-
-    fn group(ui: &mut Ui, total_width: f32, contents: impl FnOnce(&mut Ui)) {
-        let frame_width = f32::from(crate::ui::theme::CONTENT_MARGIN) * 2.0 + 6.0;
-        let inner_width = (total_width - frame_width).max(1.0);
-        crate::ui::theme::card_frame(ui).show(ui, |ui| {
-            ui.set_width(inner_width);
-            ui.set_max_width(inner_width);
-            contents(ui);
         });
     }
 

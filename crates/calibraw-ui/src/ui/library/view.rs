@@ -1,4 +1,6 @@
 use super::*;
+#[cfg(target_os = "android")]
+use crate::app::AppTab;
 
 pub(crate) struct Library;
 
@@ -71,7 +73,7 @@ impl Library {
                             crate::ui::theme::content_card(ui, |ui| {
                                 platform::show_local_folder_tree(ui, app, action_in_progress);
                             });
-                            ui.add_space(10.0);
+                            crate::ui::theme::card_gap(ui);
                         },
                     );
                 });
@@ -93,7 +95,8 @@ impl Library {
         let mut open_asset: Option<LibraryAsset> = None;
         let mut library_action = None;
 
-        let compact_header = ui.available_width() < 520.0;
+        let compact_header =
+            crate::ui::layout::ResponsiveWidth::from_width(ui.available_width()).is_compact();
         let mut selected_sort = app.library.sort_order();
         let mut selected_size = app.library.thumbnail_size();
         let mut selected_filter = app.library.review_filter;
@@ -101,7 +104,7 @@ impl Library {
         crate::ui::theme::card_header(ui, |ui| {
             crate::ui::theme::toolbar_row(ui, |ui| {
                 if compact_header {
-                    ui.spacing_mut().item_spacing.x = 4.0;
+                    ui.spacing_mut().item_spacing.x = crate::ui::theme::SPACE_XS;
                 }
                 if !app.library.folder_sidebar_open()
                     && crate::ui::icons::phosphor_icon_button(
@@ -466,7 +469,6 @@ impl Library {
         if let Some(asset) = open_asset {
             #[cfg(not(target_os = "android"))]
             if let Some(path) = asset.desktop_path().map(Path::to_path_buf) {
-                app.ui.active_tab = AppTab::Develop;
                 app.open_path(path, frame);
             }
             #[cfg(target_os = "android")]

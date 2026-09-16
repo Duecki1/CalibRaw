@@ -30,26 +30,10 @@ pub(super) fn show_library_folder_node(
 
     ui.push_id(&node.path, |ui| {
         ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = 4.0;
-            let disclosure_size = egui::vec2(26.0, crate::ui::theme::CONTROL_HEIGHT);
+            ui.spacing_mut().item_spacing.x = crate::ui::theme::SPACE_XS;
+            let disclosure_size = crate::ui::icons::folder_disclosure_size();
             if has_children {
-                let caret = if expanded {
-                    egui_phosphor::regular::CARET_DOWN
-                } else {
-                    egui_phosphor::regular::CARET_RIGHT
-                };
-                if ui
-                    .add_sized(
-                        disclosure_size,
-                        egui::Button::new(egui::RichText::new(caret).size(12.0)).frame(false),
-                    )
-                    .on_hover_text(if expanded {
-                        "Collapse folder"
-                    } else {
-                        "Expand folder"
-                    })
-                    .clicked()
-                {
+                if crate::ui::icons::folder_disclosure_button(ui, expanded).clicked() {
                     if expanded {
                         expanded_folders.remove(&node.path);
                     } else {
@@ -211,6 +195,7 @@ pub(super) fn apply_library_folder_ui_action(
                 kind: LibraryFolderNameDialogKind::Create { parent },
                 name: String::new(),
                 error: None,
+                focus_requested: false,
             });
         }
         LibraryFolderUiAction::Copy(path) => {
@@ -306,6 +291,7 @@ pub(super) fn apply_library_folder_ui_action(
                 kind: LibraryFolderNameDialogKind::Rename { source },
                 name,
                 error: None,
+                focus_requested: false,
             });
         }
         LibraryFolderUiAction::Delete(path) => {

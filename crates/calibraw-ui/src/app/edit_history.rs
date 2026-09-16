@@ -1,4 +1,7 @@
-use super::{needs_canonical_mask_source, AppTab, CalibRawApp, LensCorrectionState};
+use super::{
+    needs_canonical_mask_source, AiConsentState, AppAction, AppTab, CalibRawApp,
+    LensCorrectionState,
+};
 use crate::pipeline::{ExposureParams, MaskGeometry, MaskStack, ProcessingStage, RemoveEditState};
 use eframe::egui;
 use std::collections::VecDeque;
@@ -462,7 +465,7 @@ impl CalibRawApp {
     }
 
     pub(crate) fn handle_edit_history_shortcuts(&mut self, ctx: &egui::Context) {
-        if self.ui.active_tab != AppTab::Develop {
+        if self.ui.active_tab != AppTab::Develop || !self.app_shortcuts_allowed(ctx) {
             return;
         }
         let redo_shift_z = egui::KeyboardShortcut::new(
@@ -472,13 +475,19 @@ impl CalibRawApp {
         let redo_y = egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, egui::Key::Y);
         let undo = egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, egui::Key::Z);
 
-        let redo_requested = self.can_redo_edit()
+        let redo = AppAction::RedoEdit;
+        let redo_requested = self.action_enabled(redo)
             && (ctx.input_mut(|input| input.consume_shortcut(&redo_shift_z))
                 || ctx.input_mut(|input| input.consume_shortcut(&redo_y)));
         if redo_requested {
-            self.redo_edit();
-        } else if self.can_undo_edit() && ctx.input_mut(|input| input.consume_shortcut(&undo)) {
-            self.undo_edit();
+            self.dispatch_action(redo);
+            return;
+        }
+
+        let undo_action = AppAction::UndoEdit;
+        if self.action_enabled(undo_action) && ctx.input_mut(|input| input.consume_shortcut(&undo))
+        {
+            self.dispatch_action(undo_action);
         }
     }
 
@@ -508,7 +517,9 @@ impl CalibRawApp {
             self.inpaint.edits = Arc::clone(&snapshot.remove);
             self.inpaint.active_points.clear();
             self.inpaint.pending_brush = None;
-            self.inpaint.model_consent_open = false;
+            if matches!(self.ai.consent, AiConsentState::Remove { .. }) {
+                self.ai.consent = AiConsentState::None;
+            }
             self.inpaint.receiver = None;
             self.inpaint.processing_label = None;
         }
@@ -606,8 +617,9 @@ impl CalibRawApp {
             self.ai.masks_need_update =
                 subject || !objects.is_empty() || self.has_range_mask_targets();
         }
-        self.ai.subject_consent_open = false;
-        self.ai.object_consent_open = false;
+        if self.ai.consent.is_mask_consent() {
+            self.ai.consent = AiConsentState::None;
+        }
         self.ai.object_pending_target = None;
         self.ai.object_cache = None;
     }

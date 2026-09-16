@@ -83,7 +83,7 @@ impl CalibRawApp {
             crate::app::DesktopPickerEvent::LibraryFolder(Some(folder)) => {
                 self.library.open_folder(folder, &self.egui_ctx);
                 self.persist_performance_settings();
-                self.ui.active_tab = AppTab::Library;
+                self.activate_tab(AppTab::Library);
             }
             crate::app::DesktopPickerEvent::CameraProfileFolder(Some(folder)) => {
                 self.apply_camera_profile_folder(folder);
@@ -175,6 +175,8 @@ impl CalibRawApp {
                         profile_reload_owned_open && self.ui.active_tab == AppTab::Library;
                     let keep_library_for_reset =
                         reset_reload_owned_open && self.ui.active_tab == AppTab::Library;
+                    // Picker completion is owned by the background reload/batch
+                    // workflow, so avoid interactive tab-exit cancellation hooks.
                     self.ui.active_tab = if batch_owned_open
                         || library_refresh_owned_open
                         || keep_library_for_profile_reload
@@ -231,6 +233,8 @@ impl CalibRawApp {
                 } => {
                     self.develop_ui.loading_thumbnail.clear();
                     self.android.pending_android_library_reset_reload = false;
+                    // Batch import completion updates the visible tab directly;
+                    // no interactive operation should be cancelled here.
                     self.ui.active_tab = AppTab::Library;
                     self.library.refresh(&self.egui_ctx);
                     self.ui.status = match (imported, failed) {

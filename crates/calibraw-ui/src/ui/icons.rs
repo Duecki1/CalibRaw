@@ -113,13 +113,9 @@ pub(crate) fn phosphor_icon_toggle_button_enabled(
     tooltip: &str,
 ) -> Response {
     ui.add_enabled_ui(enabled, |ui| {
-        ui.add_sized(
-            size,
-            egui::Button::new(RichText::new(glyph).size(size.y * 0.55)).selected(selected),
-        )
+        phosphor_icon_toggle_button(ui, glyph, selected, size, tooltip)
     })
     .inner
-    .on_hover_text(tooltip)
 }
 
 pub(crate) fn phosphor_icon_button_enabled(
@@ -129,12 +125,99 @@ pub(crate) fn phosphor_icon_button_enabled(
     size: Vec2,
     tooltip: &str,
 ) -> Response {
-    ui.add_enabled_ui(enabled, |ui| {
-        ui.add_sized(
-            size,
-            egui::Button::new(RichText::new(glyph).size(size.y * 0.55)).frame(true),
-        )
+    ui.add_enabled_ui(enabled, |ui| phosphor_icon_button(ui, glyph, size, tooltip))
+        .inner
+}
+
+pub(crate) fn folder_disclosure_size() -> Vec2 {
+    egui::vec2(
+        if cfg!(target_os = "android") {
+            30.0
+        } else {
+            26.0
+        },
+        crate::ui::theme::CONTROL_HEIGHT,
+    )
+}
+
+pub(crate) fn folder_disclosure_button(ui: &mut Ui, expanded: bool) -> Response {
+    let glyph = if expanded {
+        regular::CARET_DOWN
+    } else {
+        regular::CARET_RIGHT
+    };
+    let font_size = if cfg!(target_os = "android") {
+        13.0
+    } else {
+        12.0
+    };
+    ui.add_sized(
+        folder_disclosure_size(),
+        egui::Button::new(RichText::new(glyph).size(font_size)).frame(false),
+    )
+    .on_hover_text(if expanded {
+        "Collapse folder"
+    } else {
+        "Expand folder"
     })
-    .inner
-    .on_hover_text(tooltip)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn conditional_icon_buttons_preserve_geometry_and_block_disabled_clicks() {
+        for design in crate::ui::theme::UiDesign::ALL {
+            for enabled in [false, true] {
+                let ctx = egui::Context::default();
+                crate::ui::theme::install(&ctx);
+                crate::ui::theme::apply(&ctx, design);
+                let mut rect = egui::Rect::NOTHING;
+                let mut clicked = false;
+                let mut show = |events| {
+                    let _ = ctx.run_ui(
+                        egui::RawInput {
+                            screen_rect: Some(egui::Rect::from_min_size(
+                                egui::Pos2::ZERO,
+                                egui::vec2(400.0, 200.0),
+                            )),
+                            events,
+                            ..Default::default()
+                        },
+                        |ui| {
+                            let size = egui::vec2(32.0, 20.0);
+                            let conditional = phosphor_icon_button_enabled(
+                                ui,
+                                enabled,
+                                regular::X,
+                                size,
+                                "Close",
+                            );
+                            let regular = phosphor_icon_button(ui, regular::X, size, "Close");
+                            assert_eq!(conditional.rect.size(), regular.rect.size());
+                            assert!(conditional.rect.height() >= crate::ui::theme::CONTROL_HEIGHT);
+                            assert_eq!(conditional.enabled(), enabled);
+                            rect = conditional.rect;
+                            clicked |= conditional.clicked();
+                        },
+                    );
+                    rect
+                };
+                let position = show(Vec::new()).center();
+                for pressed in [true, false] {
+                    show(vec![
+                        egui::Event::PointerMoved(position),
+                        egui::Event::PointerButton {
+                            pos: position,
+                            button: egui::PointerButton::Primary,
+                            pressed,
+                            modifiers: egui::Modifiers::NONE,
+                        },
+                    ]);
+                }
+                assert_eq!(clicked, enabled);
+            }
+        }
+    }
 }

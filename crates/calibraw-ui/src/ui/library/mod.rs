@@ -1,4 +1,4 @@
-use crate::app::{AppTab, CalibRawApp};
+use crate::app::CalibRawApp;
 #[cfg(not(target_os = "android"))]
 use crate::pipeline::{
     apply_lensfun_correction, build_proxy, is_supported_raw_path, lensfun_catalog,
@@ -643,6 +643,7 @@ struct LibraryFolderNameDialog {
     kind: LibraryFolderNameDialogKind,
     name: String,
     error: Option<String>,
+    focus_requested: bool,
 }
 
 struct LibraryRawNameDialog {
