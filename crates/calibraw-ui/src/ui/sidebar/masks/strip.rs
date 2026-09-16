@@ -16,8 +16,8 @@ impl Sidebar {
                 ui.label(
                     "The image used by existing masks changed. Refresh masks to rebuild content-aware masks and mask sources without deleting your edits.",
                 );
-                ui.add_space(4.0);
-                if ui.button("Update masks").clicked() {
+                ui.add_space(crate::ui::theme::SPACE_XS);
+                if crate::ui::theme::secondary_button(ui, "Update masks").clicked() {
                     app.request_update_all_ai_masks(frame);
                 }
             });
@@ -60,7 +60,8 @@ impl Sidebar {
         frame: &eframe::Frame,
         orientation: MaskStripOrientation,
     ) {
-        ui.spacing_mut().item_spacing = egui::vec2(4.0, 2.0);
+        ui.spacing_mut().item_spacing =
+            egui::vec2(crate::ui::theme::SPACE_XS, crate::ui::theme::SPACE_XXS);
 
         app.masks.stack.ensure_selection();
 
@@ -72,8 +73,6 @@ impl Sidebar {
         let mut select_component = None;
         let mut new_mask = None;
         let mut add_component = None;
-        let mut remove_mask = None;
-        let mut remove_component = None;
         let mut duplicate_mask = None;
         let mut paste_mask = None;
         let mut duplicate_component = None;
@@ -103,7 +102,7 @@ impl Sidebar {
                 ui.add_enabled_ui(app.masks.stack.masks.len() < MAX_LOCAL_MASKS, |ui| {
                     Self::create_mask_group_card(ui, &mut new_mask, orientation);
                 });
-                ui.add_space(2.0);
+                ui.add_space(crate::ui::theme::SPACE_XXS);
 
                 for index in (0..app.masks.stack.masks.len()).rev() {
                     let mask_name = app.masks.stack.masks[index].name.clone();
@@ -133,7 +132,6 @@ impl Sidebar {
                                 &mut geometry_changed,
                                 &mut duplicate_mask,
                                 &mut paste_mask,
-                                &mut remove_mask,
                                 index,
                             );
                             if geometry_changed {
@@ -170,7 +168,7 @@ impl Sidebar {
                             }
                         }
                     }
-                    response.context_menu(|ui| {
+                    crate::ui::theme::context_menu(&response, |ui| {
                         let mut geometry_changed = false;
                         Self::mask_group_context_menu(
                             ui,
@@ -180,7 +178,6 @@ impl Sidebar {
                             &mut geometry_changed,
                             &mut duplicate_mask,
                             &mut paste_mask,
-                            &mut remove_mask,
                             index,
                         );
                         if geometry_changed {
@@ -229,7 +226,6 @@ impl Sidebar {
                                 ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
                             }
                             let mut menu_geometry_changed = false;
-                            let mut menu_remove_component = None;
                             #[cfg(target_os = "android")]
                             let overflow_clicked = {
                                 let menu_id = ui.make_persistent_id((
@@ -252,7 +248,6 @@ impl Sidebar {
                                             &mut menu_geometry_changed,
                                             &mut duplicate_component,
                                             &mut paste_component,
-                                            &mut menu_remove_component,
                                             index,
                                             component_index,
                                         );
@@ -303,7 +298,7 @@ impl Sidebar {
                                     drag.hover_group = None;
                                 }
                             }
-                            response.context_menu(|ui| {
+                            crate::ui::theme::context_menu(&response, |ui| {
                                 Self::submask_context_menu(
                                     ui,
                                     &mut app.masks.stack.masks[index].components[component_index],
@@ -312,16 +307,12 @@ impl Sidebar {
                                     &mut menu_geometry_changed,
                                     &mut duplicate_component,
                                     &mut paste_component,
-                                    &mut menu_remove_component,
                                     index,
                                     component_index,
                                 );
                             });
                             if menu_geometry_changed {
                                 component_dirty_mask = Some(index);
-                            }
-                            if let Some(component_index) = menu_remove_component {
-                                remove_component = Some((index, component_index));
                             }
                         }
                         if displayed_drop_target.is_some_and(|(mask, insert)| {
@@ -337,7 +328,7 @@ impl Sidebar {
                             }
                         }
                         Self::create_submask_card(ui, &mut add_component, orientation);
-                        ui.add_space(2.0);
+                        ui.add_space(crate::ui::theme::SPACE_XXS);
                     }
                 }
             };
@@ -442,28 +433,12 @@ impl Sidebar {
                 app.sync_selected_mask_tool();
                 Self::refresh_mask_thumbnails(ui, app);
             }
-        } else if let Some(index) = remove_mask {
-            if app.masks.stack.delete_mask(index) {
-                app.mark_all_mask_layers_dirty();
-                app.sync_selected_mask_tool();
-                Self::refresh_mask_thumbnails(ui, app);
-            }
         } else if let Some((index, invert)) = duplicate_mask {
             if Self::duplicate_mask_group(app, index, invert) {
                 Self::refresh_mask_thumbnails(ui, app);
             }
         } else if let Some(index) = paste_mask {
             if Self::paste_mask_group(ui.ctx(), app, index) {
-                Self::refresh_mask_thumbnails(ui, app);
-            }
-        } else if let Some((mask_index, component_index)) = remove_component {
-            if app
-                .masks
-                .stack
-                .delete_component(mask_index, component_index)
-            {
-                app.mark_mask_geometry_dirty(mask_index);
-                app.sync_selected_mask_tool();
                 Self::refresh_mask_thumbnails(ui, app);
             }
         } else if let Some((mask_index, component_index, invert)) = duplicate_component {
@@ -512,5 +487,6 @@ impl Sidebar {
         }
 
         Self::show_mask_rename_dialog(ui.ctx(), app);
+        Self::show_mask_delete_dialog(ui, app);
     }
 }

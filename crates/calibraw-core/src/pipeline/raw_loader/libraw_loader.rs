@@ -1008,12 +1008,14 @@ fn read_exif_capture_metadata(path: &Path) -> Option<super::CaptureMetadata> {
         .read_from_container(&mut input)
         .or_else(|error| error.distill_partial_result(|_| {}))
         .ok()?;
-    let mut capture = super::CaptureMetadata::default();
-    capture.flash = metadata
-        .fields()
-        .find(|field| field.tag == exif::Tag::Flash)
-        .and_then(|field| field.value.get_uint(0))
-        .and_then(|value| u16::try_from(value).ok());
+    let mut capture = super::CaptureMetadata {
+        flash: metadata
+            .fields()
+            .find(|field| field.tag == exif::Tag::Flash)
+            .and_then(|field| field.value.get_uint(0))
+            .and_then(|value| u16::try_from(value).ok()),
+        ..Default::default()
+    };
     for field in metadata
         .fields()
         .filter(|field| field.ifd_num == exif::In::PRIMARY)
@@ -1292,6 +1294,10 @@ unsafe fn loaded_raw_from_context(
         aperture: finite_positive_or_zero(other.aperture),
         focus_distance: 0.0,
         capture_metadata: super::CaptureMetadata {
+            // `time_t` is `c_long`, so its width is platform-dependent: 32-bit on
+            // Windows/LLP32 targets, 64-bit on LP64. The cast normalises it to i64
+            // on every platform, so it cannot be dropped even when it is a no-op.
+            #[allow(clippy::unnecessary_cast)] // Width-normalising cast, not a numeric conversion.
             exif_dates: capture_dates_from_timestamp(other.timestamp as i64),
             iso_speed: finite_positive_or_zero(other.iso_speed),
             shutter_seconds: finite_positive_or_zero(other.shutter),

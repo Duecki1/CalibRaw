@@ -33,6 +33,9 @@ impl PreviewVisibility {
         state.scope = scope;
         state.write(ctx);
     }
+    pub(crate) fn current_scope(ctx: &egui::Context) -> Option<usize> {
+        Self::read(ctx).scope
+    }
     pub(crate) fn visible(ctx: &egui::Context, title: &'static str) -> bool {
         let state = Self::read(ctx);
         !state.hidden.contains(&(state.scope, title))

@@ -4,6 +4,44 @@ use eframe::egui::{
 };
 use serde::{Deserialize, Serialize};
 
+#[cfg(test)]
+use super::widgets::buttons::{destructive_button, interaction_visual_state};
+#[cfg(test)]
+use super::widgets::forms::form_row;
+
+#[cfg(test)]
+use super::dialogs::take_initial_focus_request;
+pub(crate) use super::dialogs::{
+    dialog_button_row, dialog_confirmation_buttons, dialog_keyboard_action, dialog_window,
+    request_initial_focus, DialogAction, DialogKeyboard, DIALOG_MARGIN, DIALOG_TEXT_FIELD_WIDTH,
+    DIALOG_WIDTH_DEFAULT, DIALOG_WIDTH_FORM, DIALOG_WIDTH_LARGE, DIALOG_WIDTH_NARROW,
+    DIALOG_WIDTH_WIDE,
+};
+#[cfg(test)]
+use super::responsive::compact_portrait_for_platform;
+use super::responsive::content_margin;
+pub(crate) use super::responsive::{card_gap, is_compact_portrait};
+#[cfg(target_os = "android")]
+pub use super::widgets::buttons::floating_action_button;
+#[cfg(any(target_os = "android", test))]
+pub(crate) use super::widgets::buttons::floating_action_rect;
+#[cfg(not(target_os = "android"))]
+pub(crate) use super::widgets::buttons::tab_button;
+pub(crate) use super::widgets::buttons::{
+    action_row, full_width_button, interaction_visuals, interaction_visuals_for_flags,
+    navigation_row, primary_action_button, primary_button, secondary_button,
+    secondary_button_enabled, segmented_button, toggle_button, toolbar_button,
+    InteractionVisualState,
+};
+pub(crate) use super::widgets::forms::{
+    checkbox_with_help, combo_box, form_combo, form_combo_with_help, heading_with_help,
+    property_row, responsive_combo_box, singleline_text_edit, strong_with_help,
+};
+pub(crate) use super::widgets::menus::{
+    context_menu, context_menu_item, destructive_menu_item, dropdown_menu, dropdown_submenu,
+    menu_item,
+};
+
 const DESKTOP_CONTROL_HEIGHT: f32 = 32.0;
 const ANDROID_CONTROL_HEIGHT: f32 = 40.0;
 pub(crate) const CONTROL_HEIGHT: f32 = platform_control_height(cfg!(target_os = "android"));
@@ -15,6 +53,7 @@ pub(crate) const TOOLBAR_HEIGHT: f32 = if cfg!(target_os = "android") {
 pub(crate) const TOOLBAR_ICON_EDGE: f32 = CONTROL_HEIGHT;
 #[cfg(not(target_os = "android"))]
 pub(crate) const TOOL_RAIL_ICON_EDGE: f32 = 40.0;
+pub(crate) const SPACE_XXS: f32 = 2.0;
 pub(crate) const SPACE_XS: f32 = 4.0;
 pub(crate) const SPACE_SM: f32 = 8.0;
 pub(crate) const SPACE_MD: f32 = 12.0;
@@ -22,9 +61,6 @@ pub(crate) const SPACE_LG: f32 = 16.0;
 pub(crate) const CARD_GAP: f32 = SPACE_SM;
 pub(crate) const CONTENT_MARGIN: i8 = 12;
 pub(crate) const CARD_RADIUS: f32 = 8.0;
-const COMPACT_PORTRAIT_CARD_GAP: f32 = SPACE_SM;
-const COMPACT_PORTRAIT_CONTENT_MARGIN: i8 = 8;
-pub(crate) const FORM_STACK_BREAKPOINT: f32 = 520.0;
 pub(crate) const HELP_BUTTON_EDGE: f32 = if cfg!(target_os = "android") {
     CONTROL_HEIGHT
 } else {
@@ -37,7 +73,7 @@ pub(crate) const PANEL_TITLE_TEXT_SIZE: f32 = 16.0;
 pub(crate) const FLOATING_ACTION_EDGE: f32 =
     platform_floating_action_edge(cfg!(target_os = "android"));
 #[cfg(any(target_os = "android", test))]
-pub(crate) const FLOATING_ACTION_MARGIN: f32 = 12.0;
+pub(crate) const FLOATING_ACTION_MARGIN: f32 = SPACE_MD;
 
 pub(crate) const CANVAS_BACKDROP: Color32 = Color32::from_rgb(13, 15, 18);
 pub(crate) const STATUS_WARNING: Color32 = Color32::from_rgb(244, 142, 48);
@@ -333,22 +369,6 @@ pub(crate) fn toolbar_icon_size() -> Vec2 {
     Vec2::splat(TOOLBAR_ICON_EDGE)
 }
 
-pub(crate) fn is_compact_portrait(ui: &Ui) -> bool {
-    compact_portrait_for_platform(ui.ctx().content_rect().size(), cfg!(target_os = "android"))
-}
-
-fn compact_portrait_for_platform(viewport: Vec2, android: bool) -> bool {
-    android && viewport.x < viewport.y
-}
-
-fn content_margin(ui: &Ui) -> i8 {
-    if is_compact_portrait(ui) {
-        COMPACT_PORTRAIT_CONTENT_MARGIN
-    } else {
-        CONTENT_MARGIN
-    }
-}
-
 #[cfg(not(target_os = "android"))]
 pub(crate) fn tool_rail_icon_size() -> Vec2 {
     Vec2::splat(TOOL_RAIL_ICON_EDGE)
@@ -491,321 +511,12 @@ pub(crate) fn section_card_with_help<R>(
     })
 }
 
-pub(crate) fn heading_with_help(ui: &mut Ui, title: impl Into<RichText>, help: &str) {
-    ui.heading(title).on_hover_text(help);
-}
-
-pub(crate) fn strong_with_help(ui: &mut Ui, title: impl Into<RichText>, help: &str) {
-    ui.label(title.into().strong()).on_hover_text(help);
-}
-
-pub(crate) fn checkbox_with_help(
-    ui: &mut Ui,
-    checked: &mut bool,
-    label: impl Into<egui::WidgetText>,
-    help: &str,
-) -> Response {
-    let width = ui.available_width().max(1.0);
-    ui.allocate_ui_with_layout(
-        egui::vec2(width, CONTROL_HEIGHT),
-        Layout::left_to_right(Align::Center),
-        |ui| ui.checkbox(checked, label).on_hover_text(help),
-    )
-    .inner
-}
-
-#[cfg(not(target_os = "android"))]
-pub(crate) fn tab_button(ui: &mut Ui, label: &str, selected: bool, width: f32) -> Response {
-    segmented_button(ui, RichText::new(label).strong(), selected, width)
-}
-
-pub(crate) fn segmented_button(
-    ui: &mut Ui,
-    label: impl Into<egui::WidgetText>,
-    selected: bool,
-    width: f32,
-) -> Response {
-    ui.add_sized(
-        [width, CONTROL_HEIGHT],
-        egui::Button::new(label.into())
-            .selected(selected)
-            .frame(true)
-            .truncate()
-            .corner_radius(CARD_RADIUS),
-    )
-}
-
-pub(crate) fn toolbar_button(
-    ui: &mut Ui,
-    label: impl Into<egui::WidgetText>,
-    width: f32,
-) -> Response {
-    ui.add_sized([width, CONTROL_HEIGHT], egui::Button::new(label.into()))
-}
-
-pub(crate) fn primary_button(
-    ui: &mut Ui,
-    label: impl Into<egui::WidgetText>,
-    width: f32,
-) -> Response {
-    let visuals = &ui.visuals().widgets.active;
-    ui.add_sized(
-        [width, CONTROL_HEIGHT],
-        egui::Button::new(label.into().color(Color32::WHITE))
-            .fill(visuals.weak_bg_fill)
-            .stroke(visuals.bg_stroke)
-            .corner_radius(CARD_RADIUS),
-    )
-}
-
-pub(crate) fn toggle_button(
-    ui: &mut Ui,
-    label: impl Into<egui::WidgetText>,
-    selected: bool,
-) -> Response {
-    ui.add(
-        egui::Button::new(label.into())
-            .selected(selected)
-            .frame(true)
-            .corner_radius(CARD_RADIUS),
-    )
-}
-
-pub(crate) fn navigation_row(
-    ui: &mut Ui,
-    label: impl Into<egui::WidgetText>,
-    selected: bool,
-    sense: egui::Sense,
-) -> Response {
-    ui.add_sized(
-        [ui.available_width().max(1.0), CONTROL_HEIGHT],
-        egui::Button::selectable(selected, ())
-            .left_text(label)
-            .truncate()
-            .sense(sense),
-    )
-}
-
-pub(crate) fn action_row<R>(
-    ui: &mut Ui,
-    add_contents: impl FnOnce(&mut Ui) -> R,
-) -> InnerResponse<R> {
-    ui.horizontal_wrapped(|ui| {
-        ui.spacing_mut().interact_size.y = CONTROL_HEIGHT;
-        ui.spacing_mut().item_spacing = egui::vec2(SPACE_SM, SPACE_SM);
-        add_contents(ui)
-    })
-}
-
-pub(crate) fn card_gap(ui: &mut Ui) {
-    let gap = if is_compact_portrait(ui) {
-        COMPACT_PORTRAIT_CARD_GAP
-    } else {
-        CARD_GAP
-    };
-    let explicit_space = (gap - ui.spacing().item_spacing.y).max(0.0);
-    ui.add_space(explicit_space);
-}
-
-pub(crate) fn singleline_text_edit<'a>(text: &'a mut dyn egui::TextBuffer) -> egui::TextEdit<'a> {
-    egui::TextEdit::singleline(text)
-        .vertical_align(Align::Center)
-        .margin(Margin::symmetric(8, 4))
-        .min_size(egui::vec2(0.0, CONTROL_HEIGHT))
-}
-
-#[cfg(any(target_os = "android", test))]
-pub(crate) fn floating_action_rect(bounds: egui::Rect) -> egui::Rect {
-    let size = Vec2::splat(FLOATING_ACTION_EDGE);
-    let inset = Vec2::splat(FLOATING_ACTION_MARGIN);
-    egui::Rect::from_min_size(bounds.right_bottom() - inset - size, size)
-}
-
-#[cfg(target_os = "android")]
-pub fn floating_action_button(
-    ui: &mut Ui,
-    rect: egui::Rect,
-    glyph: &str,
-    tooltip: &str,
-) -> Response {
-    let active = &ui.visuals().widgets.active;
-    let fill = active.weak_bg_fill;
-    let stroke = active.bg_stroke;
-    let corner_radius = active.corner_radius;
-    let icon_color = active.fg_stroke.color;
-    ui.put(
-        rect,
-        egui::Button::new(
-            RichText::new(glyph)
-                .size(FLOATING_ACTION_EDGE * 0.42)
-                .color(icon_color),
-        )
-        .min_size(rect.size())
-        .corner_radius(corner_radius)
-        .fill(fill)
-        .stroke(stroke),
-    )
-    .on_hover_text(tooltip)
-}
-
-pub(crate) fn form_combo(
-    ui: &mut Ui,
-    label: impl Into<egui::WidgetText>,
-    id_salt: impl egui::AsIdSalt,
-    selected_text: impl Into<egui::WidgetText>,
-    preferred_width: f32,
-    add_contents: impl FnOnce(&mut Ui),
-) {
-    if ui.available_width() < FORM_STACK_BREAKPOINT {
-        ui.vertical(|ui| {
-            ui.label(label);
-            let width = ui.available_width().max(1.0);
-            egui::ComboBox::from_id_salt(id_salt)
-                .selected_text(selected_text)
-                .width(width)
-                .truncate()
-                .show_ui(ui, add_contents);
-        });
-    } else {
-        ui.horizontal(|ui| {
-            ui.label(label);
-            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                let width = preferred_width.min(ui.available_width().max(1.0));
-                egui::ComboBox::from_id_salt(id_salt)
-                    .selected_text(selected_text)
-                    .width(width)
-                    .truncate()
-                    .show_ui(ui, add_contents);
-            });
-        });
-    }
-}
-
-pub(crate) fn responsive_combo_box<R>(
-    ui: &mut Ui,
-    id_salt: impl egui::AsIdSalt,
-    selected_text: impl Into<egui::WidgetText>,
-    width: f32,
-    item_count: usize,
-    add_contents: impl FnOnce(&mut Ui) -> R,
-) -> egui::InnerResponse<Option<R>> {
-    let popup_style = ui.ctx().global_style();
-    let spacing = &popup_style.spacing;
-    let item_count_f32 = item_count as f32;
-    let item_spacing_count = item_count.saturating_sub(1) as f32;
-    let popup_height = item_count_f32 * spacing.interact_size.y
-        + item_spacing_count * spacing.item_spacing.y
-        + spacing.menu_margin.sum().y
-        + 2.0 * ui.visuals().window_stroke.width
-        + 4.0;
-    let content_height = ui.ctx().content_rect().height();
-    let popup_fits_viewport = content_height >= popup_height;
-
-    let context = ui.ctx().clone();
-    let theme = context.theme();
-    let original_style = context.style_of(theme);
-    if original_style.spacing.default_area_size.y < popup_height {
-        context.style_mut_of(theme, |style| {
-            style.spacing.default_area_size.y = popup_height;
-        });
-    }
-
-    let response = egui::ComboBox::from_id_salt((id_salt, popup_fits_viewport))
-        .selected_text(selected_text)
-        .width(width)
-        .height(content_height)
-        .truncate()
-        .show_ui(ui, add_contents);
-
-    context.set_style_of(theme, original_style);
+pub(crate) fn section_separator(ui: &mut Ui) -> Response {
+    let extra_space = (SPACE_SM - ui.spacing().item_spacing.y).max(0.0);
+    ui.add_space(extra_space);
+    let response = ui.separator();
+    ui.add_space(extra_space);
     response
-}
-
-/// A right-click menu that retains the regular popup/widget styling used by
-/// combo boxes instead of egui's compact frameless menu override.
-pub(crate) fn context_menu<R>(
-    response: &Response,
-    add_contents: impl FnOnce(&mut Ui) -> R,
-) -> Option<InnerResponse<R>> {
-    egui::Popup::context_menu(response)
-        .style(egui::style::StyleModifier::default())
-        .show(add_contents)
-}
-
-/// A click-triggered dropdown that uses the same regular widget styling as
-/// combo boxes and context menus instead of egui's compact menu styling.
-pub(crate) fn dropdown_menu<R>(
-    response: &Response,
-    add_contents: impl FnOnce(&mut Ui) -> R,
-) -> Option<InnerResponse<R>> {
-    egui::Popup::menu(response)
-        .style(egui::style::StyleModifier::default())
-        .show(add_contents)
-}
-
-/// A submenu with the regular dropdown styling used by [`dropdown_menu`].
-pub(crate) fn dropdown_submenu<'a, R>(
-    ui: &mut Ui,
-    label: impl egui::IntoAtoms<'a>,
-    add_contents: impl FnOnce(&mut Ui) -> R,
-) -> Response {
-    let (response, _) = egui::menu::SubMenuButton::new(label)
-        .config(egui::menu::MenuConfig::new().style(egui::style::StyleModifier::default()))
-        .ui(ui, add_contents);
-    response
-}
-
-pub(crate) fn context_menu_item<'a>(
-    ui: &mut Ui,
-    enabled: bool,
-    label: impl egui::IntoAtoms<'a>,
-) -> Response {
-    ui.add_enabled(enabled, egui::Button::selectable(false, label))
-}
-
-pub(crate) fn form_combo_with_help(
-    ui: &mut Ui,
-    label: &str,
-    id_salt: impl egui::AsIdSalt,
-    selected_text: impl Into<egui::WidgetText>,
-    preferred_width: f32,
-    help: &str,
-    add_contents: impl FnOnce(&mut Ui),
-) {
-    if ui.available_width() < FORM_STACK_BREAKPOINT {
-        ui.vertical(|ui| {
-            let width = ui.available_width().max(1.0);
-            ui.allocate_ui_with_layout(
-                egui::vec2(width, HELP_BUTTON_EDGE),
-                Layout::left_to_right(Align::Center),
-                |ui| {
-                    ui.label(label).on_hover_text(help);
-                },
-            );
-            let width = ui.available_width().max(1.0);
-            egui::ComboBox::from_id_salt(id_salt)
-                .selected_text(selected_text)
-                .width(width)
-                .truncate()
-                .show_ui(ui, add_contents)
-                .response
-                .on_hover_text(help);
-        });
-    } else {
-        ui.horizontal(|ui| {
-            ui.label(label).on_hover_text(help);
-            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                let width = preferred_width.min(ui.available_width().max(1.0));
-                egui::ComboBox::from_id_salt(id_salt)
-                    .selected_text(selected_text)
-                    .width(width)
-                    .truncate()
-                    .show_ui(ui, add_contents)
-                    .response
-                    .on_hover_text(help);
-            });
-        });
-    }
 }
 
 pub(crate) fn install(ctx: &egui::Context) {
@@ -906,11 +617,7 @@ pub(crate) fn apply(ctx: &egui::Context, design: UiDesign) {
     style.spacing.item_spacing = egui::vec2(SPACE_SM, SPACE_SM);
     style.spacing.button_padding = egui::vec2(10.0, 5.0);
     style.spacing.interact_size.y = CONTROL_HEIGHT;
-    style.spacing.window_margin = Margin::same(if cfg!(target_os = "android") {
-        16
-    } else {
-        CONTENT_MARGIN
-    });
+    style.spacing.window_margin = Margin::same(DIALOG_MARGIN);
     style.spacing.menu_margin = Margin::same(SPACE_SM as i8);
     style.spacing.indent = SPACE_LG;
     ctx.set_style_of(theme, style);
@@ -977,6 +684,38 @@ mod tests {
     }
 
     #[test]
+    fn disabled_interaction_state_overrides_other_flags() {
+        assert_eq!(
+            super::interaction_visual_state(false, true, true, true, true),
+            super::InteractionVisualState::Disabled
+        );
+    }
+
+    #[test]
+    fn active_selected_and_focus_states_have_stable_priority() {
+        assert_eq!(
+            super::interaction_visual_state(true, true, true, true, true),
+            super::InteractionVisualState::Active
+        );
+        assert_eq!(
+            super::interaction_visual_state(true, true, false, true, true),
+            super::InteractionVisualState::Selected
+        );
+        assert_eq!(
+            super::interaction_visual_state(true, false, false, false, true),
+            super::InteractionVisualState::Focused
+        );
+        assert_eq!(
+            super::interaction_visual_state(true, false, false, true, false),
+            super::InteractionVisualState::Hovered
+        );
+        assert_eq!(
+            super::interaction_visual_state(true, false, false, false, false),
+            super::InteractionVisualState::Inactive
+        );
+    }
+
+    #[test]
     fn segmented_buttons_honor_their_assigned_width() {
         eframe::egui::__run_test_ui(|ui| {
             let width = 42.0;
@@ -984,6 +723,250 @@ mod tests {
             assert_eq!(response.rect.width(), width);
             assert_eq!(response.rect.height(), CONTROL_HEIGHT);
         });
+    }
+
+    #[test]
+    fn property_rows_share_control_height_and_vertical_alignment() {
+        eframe::egui::__run_test_ui(|ui| {
+            ui.set_width(360.0);
+            let row = super::property_row(ui, "Mode", |ui| {
+                ui.add_sized([96.0, CONTROL_HEIGHT], eframe::egui::Button::new("Value"))
+            });
+            assert_eq!(row.response.rect.height(), CONTROL_HEIGHT);
+            assert!((row.inner.rect.center().y - row.response.rect.center().y).abs() < 0.001);
+        });
+    }
+
+    #[test]
+    fn form_rows_expand_in_compact_mode_and_cap_controls_after_breakpoint() {
+        fn offered_control_width(width: f32) -> f32 {
+            let ctx = eframe::egui::Context::default();
+            let mut offered = 0.0;
+            let _ = ctx.run_ui(
+                eframe::egui::RawInput {
+                    screen_rect: Some(eframe::egui::Rect::from_min_size(
+                        eframe::egui::Pos2::ZERO,
+                        eframe::egui::vec2(width, 200.0),
+                    )),
+                    ..Default::default()
+                },
+                |ui| {
+                    ui.set_width(width);
+                    super::form_row(ui, "Quality", 220.0, |ui, control_width| {
+                        offered = control_width;
+                        ui.add_sized(
+                            [control_width, CONTROL_HEIGHT],
+                            eframe::egui::Button::new("Value"),
+                        );
+                    });
+                },
+            );
+            offered
+        }
+
+        assert!(offered_control_width(400.0) > 300.0);
+        assert!((offered_control_width(600.0) - 220.0).abs() < 0.001);
+        assert!((offered_control_width(900.0) - 220.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn full_width_buttons_use_standard_control_height() {
+        eframe::egui::__run_test_ui(|ui| {
+            ui.set_width(280.0);
+            let response = super::full_width_button(ui, "Continue");
+            assert_eq!(response.rect.height(), CONTROL_HEIGHT);
+            assert!((response.rect.width() - 280.0).abs() < 0.001);
+        });
+    }
+
+    fn key_press(key: eframe::egui::Key) -> eframe::egui::Event {
+        eframe::egui::Event::Key {
+            key,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: eframe::egui::Modifiers::NONE,
+        }
+    }
+
+    fn run_dialog_key(
+        key: eframe::egui::Key,
+        keyboard: super::DialogKeyboard,
+        confirm_enabled: bool,
+        consume_before_fallback: bool,
+    ) -> (super::DialogAction, bool, bool) {
+        let ctx = eframe::egui::Context::default();
+        let mut action = super::DialogAction::None;
+        let mut consumed_before_fallback = false;
+        let mut key_remains = false;
+        let _ = ctx.run_ui(
+            eframe::egui::RawInput {
+                events: vec![key_press(key)],
+                ..Default::default()
+            },
+            |ui| {
+                if consume_before_fallback {
+                    consumed_before_fallback =
+                        ui.input_mut(|input| input.consume_key(eframe::egui::Modifiers::NONE, key));
+                }
+                action = super::dialog_keyboard_action(ui, keyboard, confirm_enabled);
+                key_remains =
+                    ui.input_mut(|input| input.consume_key(eframe::egui::Modifiers::NONE, key));
+            },
+        );
+        (action, consumed_before_fallback, key_remains)
+    }
+
+    fn run_confirmation_key(
+        key: eframe::egui::Key,
+        keyboard: super::DialogKeyboard,
+        destructive: bool,
+        consume_before_buttons: bool,
+    ) -> (super::DialogAction, bool, bool) {
+        let ctx = eframe::egui::Context::default();
+        let mut action = super::DialogAction::None;
+        let mut consumed_before_buttons = false;
+        let mut key_remains = false;
+        let _ = ctx.run_ui(
+            eframe::egui::RawInput {
+                events: vec![key_press(key)],
+                ..Default::default()
+            },
+            |ui| {
+                if consume_before_buttons {
+                    consumed_before_buttons =
+                        ui.input_mut(|input| input.consume_key(eframe::egui::Modifiers::NONE, key));
+                }
+                action = super::dialog_confirmation_buttons(
+                    ui,
+                    "Cancel",
+                    "Confirm",
+                    true,
+                    destructive,
+                    keyboard,
+                );
+                key_remains =
+                    ui.input_mut(|input| input.consume_key(eframe::egui::Modifiers::NONE, key));
+            },
+        );
+        (action, consumed_before_buttons, key_remains)
+    }
+
+    #[test]
+    fn close_only_does_not_consume_enter() {
+        let (action, _, key_remains) = run_dialog_key(
+            eframe::egui::Key::Enter,
+            super::DialogKeyboard::CLOSE_ONLY,
+            true,
+            false,
+        );
+
+        assert_eq!(action, super::DialogAction::None);
+        assert!(key_remains);
+    }
+
+    #[test]
+    fn enter_fallback_confirms_simple_forms() {
+        let (action, _, key_remains) = run_confirmation_key(
+            eframe::egui::Key::Enter,
+            super::DialogKeyboard::CONFIRM_ON_ENTER,
+            false,
+            false,
+        );
+
+        assert_eq!(action, super::DialogAction::Confirm);
+        assert!(!key_remains);
+    }
+
+    #[test]
+    fn destructive_dialogs_disable_global_enter_confirmation() {
+        let (action, _, key_remains) = run_confirmation_key(
+            eframe::egui::Key::Enter,
+            super::DialogKeyboard::CONFIRM_ON_ENTER,
+            true,
+            false,
+        );
+
+        assert_eq!(action, super::DialogAction::None);
+        assert!(key_remains);
+    }
+
+    #[test]
+    fn consumed_enter_does_not_trigger_confirmation_fallback() {
+        let (action, consumed_before_buttons, key_remains) = run_confirmation_key(
+            eframe::egui::Key::Enter,
+            super::DialogKeyboard::CONFIRM_ON_ENTER,
+            false,
+            true,
+        );
+
+        assert!(consumed_before_buttons);
+        assert_eq!(action, super::DialogAction::None);
+        assert!(!key_remains);
+    }
+
+    #[test]
+    fn handled_keys_do_not_trigger_a_second_dialog_action() {
+        for key in [eframe::egui::Key::Enter, eframe::egui::Key::Escape] {
+            let (action, consumed_before_fallback, key_remains) =
+                run_dialog_key(key, super::DialogKeyboard::CONFIRM_ON_ENTER, true, true);
+
+            assert!(consumed_before_fallback);
+            assert_eq!(action, super::DialogAction::None);
+            assert!(!key_remains);
+        }
+    }
+
+    #[test]
+    fn destructive_menu_items_keep_default_button_geometry() {
+        eframe::egui::__run_test_ui(|ui| {
+            let (normal, destructive) = ui
+                .horizontal(|ui| {
+                    let normal = ui.button("Delete");
+                    let destructive = super::destructive_menu_item(ui, "Delete");
+                    (normal.rect.size(), destructive.rect.size())
+                })
+                .inner;
+
+            assert_eq!(normal, destructive);
+        });
+    }
+
+    #[test]
+    fn dialog_initial_focus_is_requested_only_once() {
+        let mut focus_requested = false;
+        assert!(super::take_initial_focus_request(&mut focus_requested));
+        assert!(focus_requested);
+        assert!(!super::take_initial_focus_request(&mut focus_requested));
+    }
+
+    #[test]
+    fn dialog_buttons_share_height_and_cancel_precedes_confirm() {
+        eframe::egui::__run_test_ui(|ui| {
+            let (cancel, confirm, destructive) = super::dialog_button_row(ui, |ui| {
+                let cancel = super::secondary_button(ui, "Cancel").rect;
+                let confirm = super::primary_action_button(ui, "Save").rect;
+                let destructive = super::destructive_button(ui, "Delete").rect;
+                (cancel, confirm, destructive)
+            })
+            .inner;
+
+            assert_eq!(cancel.height(), CONTROL_HEIGHT);
+            assert_eq!(confirm.height(), CONTROL_HEIGHT);
+            assert_eq!(destructive.height(), CONTROL_HEIGHT);
+            assert!(cancel.left() < confirm.left());
+            assert!(confirm.left() < destructive.left());
+        });
+    }
+
+    #[test]
+    fn dialog_margin_uses_the_theme_constant() {
+        let ctx = eframe::egui::Context::default();
+        super::apply(&ctx, UiDesign::default());
+        assert_eq!(
+            ctx.style_of(ctx.theme()).spacing.window_margin,
+            eframe::egui::Margin::same(super::DIALOG_MARGIN)
+        );
     }
 
     #[test]

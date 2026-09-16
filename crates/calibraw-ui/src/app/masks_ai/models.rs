@@ -7,7 +7,7 @@ impl CalibRawApp {
             return;
         }
         self.ai.runtime_mode = mode;
-        self.ai.runtime_download_consent_pending = false;
+        self.ai.consent = AiConsentState::None;
         self.persist_performance_settings();
         self.ui.notice = Some(
             "ONNX Runtime mode changed. Restart CalibRaw if an AI runtime was already used in this session."
@@ -57,6 +57,80 @@ impl CalibRawApp {
         }
         ui.label("This native runtime is required to execute the AI model locally. Its archive is downloaded from CalibRaw Artifacts, checked against its pinned size and SHA-256, and cached after extraction.");
         ui.label("Runtime license: MIT.");
+    }
+
+    /// Runtime details plus the note ordering the model and runtime downloads. Shared by every
+    /// local-AI consent dialog so the wording they all have to state correctly cannot drift.
+    pub(in crate::app) fn show_ai_consent_runtime_details(
+        &self,
+        ui: &mut egui::Ui,
+        model_download_needed: bool,
+        runtime_download_needed: bool,
+    ) {
+        #[cfg(not(target_os = "android"))]
+        if runtime_download_needed {
+            Self::show_automatic_onnx_runtime_download_details(ui);
+        }
+        if model_download_needed && runtime_download_needed {
+            ui.separator();
+            ui.label("CalibRaw downloads and verifies the model first, followed by ONNX Runtime. Both are cached locally.");
+        }
+    }
+
+    /// Warning shown when Manual runtime mode has no trusted library. Every local-AI consent
+    /// dialog has to say the same thing here.
+    pub(in crate::app) fn show_manual_runtime_warning(&self, ui: &mut egui::Ui) {
+        #[cfg(not(target_os = "android"))]
+        if self.ai.runtime_mode == OnnxRuntimeMode::Manual && self.ai.runtime_path.is_none() {
+            ui.colored_label(
+                egui::Color32::YELLOW,
+                "Manual runtime mode needs a trusted local ONNX Runtime library. Select one in Settings or switch to Automatic.",
+            );
+        }
+    }
+
+    /// The consent row shared by every local-AI download dialog: Cancel, plus an accept button
+    /// whose enablement the caller decides — AI Denoise gates on the model download, the mask and
+    /// Remove dialogs gate on the runtime being usable.
+    pub(in crate::app) fn show_ai_consent_buttons(
+        ui: &mut egui::Ui,
+        accept_label: &str,
+        accept_enabled: bool,
+    ) -> crate::ui::theme::DialogAction {
+        crate::ui::theme::dialog_confirmation_buttons(
+            ui,
+            "Cancel",
+            accept_label,
+            accept_enabled,
+            false,
+            crate::ui::theme::DialogKeyboard::CLOSE_ONLY,
+        )
+    }
+
+    /// Privacy statement, the “Hugging Face privacy policy” link and the model's licence links,
+    /// worded once for all four local-AI consent dialogs.
+    pub(in crate::app) fn show_hugging_face_privacy(
+        ui: &mut egui::Ui,
+        model_download_needed: bool,
+        license_links: &[(&str, &str)],
+    ) {
+        ui.label(concat!(
+            "When you continue, your device connects directly to Hugging Face. Hugging Face ",
+            "receives connection data such as your IP address and request time under its privacy ",
+            "policy. CalibRaw sends no account identifier or telemetry."
+        ));
+        ui.horizontal_wrapped(|ui| {
+            ui.hyperlink_to(
+                "Hugging Face privacy policy",
+                "https://huggingface.co/privacy",
+            );
+            if model_download_needed {
+                for &(label, url) in license_links {
+                    ui.separator();
+                    ui.hyperlink_to(label, url);
+                }
+            }
+        });
     }
 
     pub(in crate::app) fn ai_model_root(&self) -> PathBuf {

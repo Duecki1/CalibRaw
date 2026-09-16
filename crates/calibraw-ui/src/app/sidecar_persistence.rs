@@ -70,33 +70,35 @@ impl CalibRawApp {
             && self.persistence.sidecar_failed_revision == Some(self.edit_commit_revision());
         let mut retry = false;
         let mut close = false;
-        crate::ui::responsive_popup(egui::Window::new("Could not save edits"), ctx, 460.0)
-            .collapsible(false)
-            .resizable(true)
-            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
-            .show(ctx, |ui| {
-                ui.label("CalibRaw was unable to write the edit sidecar.");
-                ui.add_space(6.0);
-                ui.add(
-                    egui::Label::new(egui::RichText::new(&message).monospace())
-                        .wrap()
-                        .selectable(true),
-                );
-                ui.add_space(6.0);
-                ui.small("This error was added to the log in Settings → Diagnostics.");
-                ui.add_space(8.0);
-                ui.horizontal(|ui| {
-                    if ui
-                        .add_enabled(can_retry, egui::Button::new("Try again"))
-                        .clicked()
-                    {
-                        retry = true;
-                    }
-                    if ui.button("Close").clicked() {
-                        close = true;
-                    }
-                });
-            });
+        crate::ui::theme::dialog_window(
+            egui::Window::new("Could not save edits"),
+            ctx,
+            crate::ui::theme::DIALOG_WIDTH_WIDE,
+        )
+        .resizable(true)
+        .show(ctx, |ui| {
+            ui.label("CalibRaw was unable to write the edit sidecar.");
+            ui.add_space(6.0);
+            ui.add(
+                egui::Label::new(egui::RichText::new(&message).monospace())
+                    .wrap()
+                    .selectable(true),
+            );
+            ui.add_space(6.0);
+            ui.small("This error was added to the log in Settings → Diagnostics.");
+            match crate::ui::theme::dialog_confirmation_buttons(
+                ui,
+                "Close",
+                "Try again",
+                can_retry,
+                false,
+                crate::ui::theme::DialogKeyboard::CLOSE_ONLY,
+            ) {
+                crate::ui::theme::DialogAction::Cancel => close = true,
+                crate::ui::theme::DialogAction::Confirm => retry = true,
+                crate::ui::theme::DialogAction::None => {}
+            }
+        });
         if retry {
             self.persistence.sidecar_save_error_dialog = None;
             self.save_edits_now();
@@ -449,9 +451,13 @@ impl CalibRawApp {
     }
 
     pub(crate) fn handle_sidecar_shortcut(&mut self, ctx: &egui::Context) {
+        if !self.app_shortcuts_allowed(ctx) {
+            return;
+        }
         let save = egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, egui::Key::S);
-        if self.can_save_edits() && ctx.input_mut(|input| input.consume_shortcut(&save)) {
-            self.save_edits_now();
+        let action = AppAction::SaveEdits;
+        if self.action_enabled(action) && ctx.input_mut(|input| input.consume_shortcut(&save)) {
+            self.dispatch_action(action);
         }
     }
 

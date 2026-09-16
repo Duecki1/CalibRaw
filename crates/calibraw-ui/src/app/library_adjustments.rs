@@ -130,6 +130,8 @@ impl CalibRawApp {
                 Some(edit_override),
                 None,
             );
+            // Background reload returns to the library without triggering
+            // interactive tab-exit side effects (AI operation cancellation).
             self.ui.active_tab = AppTab::Library;
         }
 
@@ -155,6 +157,8 @@ impl CalibRawApp {
                         Some(edit_override),
                         None,
                     );
+                    // Background reload returns to the library without triggering
+                    // interactive tab-exit side effects (AI operation cancellation).
                     self.ui.active_tab = AppTab::Library;
                 }
                 crate::sidecar::SidecarTarget::Android {
@@ -169,6 +173,8 @@ impl CalibRawApp {
                         self.android.pending_android_profile_reload =
                             Some((profile_selection, edit_override));
                         self.android.picker_pending = true;
+                        // Keep the background profile reload in the library while
+                        // preserving its in-flight operation state.
                         self.ui.active_tab = AppTab::Library;
                     }
                     Err(error) => {
@@ -556,6 +562,8 @@ impl CalibRawApp {
             };
 
             self.open_path(job.source.clone(), frame);
+            // AI mask refresh owns this transition; activating interactively
+            // would cancel the refresh's document-bound operation.
             self.ui.active_tab = AppTab::Library;
             if self.develop.load_receiver.is_some() {
                 return;
@@ -607,6 +615,8 @@ impl CalibRawApp {
                     self.android.picker_pending = true;
                     self.ui.notice = None;
                     self.ui.status = format!("Opening {}…", job.display_name);
+                    // AI mask refresh owns this transition; activating interactively
+                    // would cancel the refresh's document-bound operation.
                     self.ui.active_tab = AppTab::Library;
                     return;
                 }
@@ -671,6 +681,8 @@ impl CalibRawApp {
             state.phase = LibraryAiMaskRefreshPhase::Updating;
         }
         self.request_update_all_ai_masks(frame);
+        // Completion is a background transition; preserve its operation state
+        // instead of invoking interactive AI cancellation hooks.
         self.ui.active_tab = AppTab::Library;
     }
 

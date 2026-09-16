@@ -186,10 +186,7 @@ pub(super) fn show_sort_filter_options(
         }
         ui.add_space(theme::SPACE_XS);
         ui.weak("Select several values to include them together.");
-        if ui
-            .add_enabled(filter.active(), egui::Button::new("Clear filters"))
-            .clicked()
-        {
+        if theme::menu_item(ui, filter.active(), "Clear filters").clicked() {
             *filter = LibraryReviewFilter::default();
         }
     }
@@ -228,23 +225,20 @@ pub(super) fn sort_filter_popup(
             String::new()
         }
     ));
-    egui::Popup::menu(&response)
-        .style(egui::style::StyleModifier::default())
-        .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
-        .show(|ui| {
-            egui::ScrollArea::vertical()
-                .max_height(480.0)
-                .show(ui, |ui| {
-                    show_sort_filter_options(ui, sort, filter);
-                    if let Some(size) = compact_size {
-                        ui.separator();
-                        ui.strong("Thumbnail size");
-                        ui.horizontal_wrapped(|ui| {
-                            for value in LibraryThumbnailSize::ALL {
-                                ui.selectable_value(size, value, value.label());
-                            }
-                        });
-                    }
-                });
-        });
+    theme::dropdown_menu(&response, |ui| {
+        egui::ScrollArea::vertical()
+            .max_height(480.0)
+            .show(ui, |ui| {
+                show_sort_filter_options(ui, sort, filter);
+                if let Some(size) = compact_size {
+                    ui.separator();
+                    ui.strong("Thumbnail size");
+                    ui.horizontal_wrapped(|ui| {
+                        for value in LibraryThumbnailSize::ALL {
+                            ui.selectable_value(size, value, value.label());
+                        }
+                    });
+                }
+            });
+    });
 }

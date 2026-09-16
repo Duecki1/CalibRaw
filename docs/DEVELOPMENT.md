@@ -19,6 +19,37 @@ of the test suite): `cargo bench -p calibraw-core --bench mask_rasterization`.
 It reports throughput for positive and erase dabs on a fixed 512x512 raster;
 the benchmark does not alter production rasterization or numerical behavior.
 
+## UI conventions
+
+`crates/calibraw-ui/src/ui/theme.rs` is the shared entry point for UI styling.
+Use its control heights, spacing, cards, toolbar rows, and widget helpers before
+adding screen-specific styling. Keep specialized image canvases, mask cards,
+and color controls in their existing components.
+
+- Use secondary/primary action buttons for forms and settings, `menu_item` for
+  regular menu actions, and `context_menu_item` for selectable navigation menus.
+  Preserve each menu's explicit `ui.close()` behavior.
+- Use `icons` helpers for icon actions and folder disclosure controls. Conditional
+  variants delegate to the same control so enabled state does not change sizing.
+- Use the shared form rows, text edits, and combo builders. The adjustment slider
+  owns value editing, reset, focus, and pointer/scroll handling on both desktop
+  and touch layouts.
+- Use `dialog_window`, dialog action rows, and keyboard helpers for existing
+  window dialogs. Keep initial focus requests one-time, and run keyboard fallback
+  after controls process input. Modal surfaces use themed egui frames; preserve
+  their existing dismissal and backdrop policies.
+- Route user tab navigation through `activate_tab`, and sidebar/tool changes
+  through `AppAction`. Background document loading and batch operations contain
+  documented exceptions: interactive tab activation can cancel their AI work.
+- Keep serialized preference names stable when changing UI labels or helpers.
+
+Run `cargo test -p calibraw-ui --lib --locked` for headless UI regressions.
+The ignored `portrait_gpu_layout_and_input` test additionally checks rendered
+preview geometry and pointer/touch behavior; it needs a GPU adapter and an
+isolated `XDG_CONFIG_HOME`. `CALIBRAW_PREVIEW_TEST_SCREENSHOT` optionally captures
+its rendered fixture. Review desktop and Android layouts in all four themes
+when a change affects appearance.
+
 ## Diagnostics and release helpers
 
 `scripts/generate_licenses.sh` is the canonical reproducible wrapper around

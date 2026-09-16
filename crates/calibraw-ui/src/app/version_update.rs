@@ -51,6 +51,12 @@ impl Default for VersionCheckState {
     }
 }
 
+impl VersionCheckState {
+    pub(super) fn dialog_open(&self) -> bool {
+        self.dialog.is_some()
+    }
+}
+
 fn normalized_version(tag: &str) -> Result<semver::Version, String> {
     let trimmed = tag.trim();
     let version = trimmed
@@ -240,10 +246,11 @@ impl CalibRawApp {
             Update,
         }
         let mut action = None;
-        crate::ui::responsive_popup(egui::Window::new("CalibRaw update available"), ctx, 480.0)
-            .collapsible(false)
-            .resizable(false)
-            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+        crate::ui::theme::dialog_window(
+            egui::Window::new("CalibRaw update available"),
+            ctx,
+            crate::ui::theme::DIALOG_WIDTH_WIDE,
+        )
             .show(ctx, |ui| {
                 ui.label(format!(
                     "CalibRaw {} is available. You are using version {}.",
@@ -255,25 +262,33 @@ impl CalibRawApp {
                     .as_deref()
                     .filter(|name| *name != release.tag)
                 {
-                    ui.add_space(4.0);
+                    ui.add_space(crate::ui::theme::SPACE_XS);
                     ui.strong(name);
                 }
                 ui.add_space(6.0);
                 ui.small(
                     "Close ignores this version permanently. Remind me next time shows it again after the next app start.",
                 );
-                ui.add_space(10.0);
-                ui.horizontal_wrapped(|ui| {
-                    if ui.button("Close").clicked() {
+                crate::ui::theme::dialog_button_row(ui, |ui| {
+                    if crate::ui::theme::secondary_button(ui, "Close").clicked() {
                         action = Some(Action::Ignore);
                     }
-                    if ui.button("Remind me next time").clicked() {
+                    if crate::ui::theme::secondary_button(ui, "Remind me next time").clicked() {
                         action = Some(Action::Remind);
                     }
-                    if ui.button("Update Now").clicked() {
+                    if crate::ui::theme::primary_action_button(ui, "Update Now").clicked() {
                         action = Some(Action::Update);
                     }
                 });
+                if action.is_none()
+                    && crate::ui::theme::dialog_keyboard_action(
+                        ui,
+                        crate::ui::theme::DialogKeyboard::CLOSE_ONLY,
+                        false,
+                    ) == crate::ui::theme::DialogAction::Cancel
+                {
+                    action = Some(Action::Remind);
+                }
             });
 
         match action {

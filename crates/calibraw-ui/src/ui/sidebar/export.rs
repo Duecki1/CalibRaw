@@ -4,11 +4,11 @@ fn show_export_action_panel<R>(
 ) -> egui::InnerResponse<R> {
     egui::Panel::bottom("develop-export-action")
         .resizable(false)
-        .exact_size(crate::ui::theme::CONTROL_HEIGHT + 16.0)
+        .exact_size(crate::ui::theme::CONTROL_HEIGHT + 2.0 * crate::ui::theme::SPACE_SM)
         .frame(
             egui::Frame::new()
                 .fill(ui.visuals().panel_fill)
-                .inner_margin(egui::Margin::symmetric(0, 8)),
+                .inner_margin(egui::Margin::symmetric(0, crate::ui::theme::SPACE_SM as i8)),
         )
         .show(ui, contents)
 }
@@ -37,7 +37,7 @@ pub(crate) fn export_settings_controls(
         ui.selectable_value(format, ExportFormat::Tiff, "TIFF");
     });
     enforce_export_bit_depth(*format, settings);
-    ui.add_space(6.0);
+    crate::ui::theme::card_gap(ui);
 
     if *format != ExportFormat::Jpeg {
         crate::ui::theme::section_card_with_help(
@@ -45,10 +45,11 @@ pub(crate) fn export_settings_controls(
             "Precision",
             "Choose the channel precision written to the exported file. Higher precision preserves more editing latitude but produces larger files.",
             |ui| {
-                egui::ComboBox::from_id_salt("export-bit-depth")
-                    .selected_text(settings.bit_depth.label())
-                    .width(ui.available_width().max(1.0))
-                    .truncate()
+                crate::ui::theme::combo_box(
+                    "export-bit-depth",
+                    settings.bit_depth.label(),
+                    ui.available_width().max(1.0),
+                )
                     .show_ui(ui, |ui| {
                         for depth in [
                             ExportBitDepth::Eight,
@@ -119,10 +120,7 @@ impl Sidebar {
 
         let response = ui
             .add_enabled_ui(export_enabled, |ui| {
-                ui.add_sized(
-                    [ui.available_width(), crate::ui::theme::CONTROL_HEIGHT],
-                    egui::Button::new("Export…"),
-                )
+                crate::ui::theme::full_width_button(ui, "Export…")
             })
             .inner;
         if response.clicked() {
@@ -166,7 +164,7 @@ impl Sidebar {
 
                 #[cfg(not(target_os = "android"))]
                 if let Some((fraction, phase)) = app.edit_replay_progress_state() {
-                    ui.add_space(8.0);
+                    ui.add_space(crate::ui::theme::SPACE_SM);
                     ui.add_sized(
                         [ui.available_width(), 18.0],
                         egui::ProgressBar::new(fraction).text(phase),
@@ -174,7 +172,7 @@ impl Sidebar {
                 }
 
                 if let Some((completed, total)) = app.export_progress_state() {
-                    ui.add_space(8.0);
+                    ui.add_space(crate::ui::theme::SPACE_SM);
                     let (fraction, text) = if total == 0 {
                         (0.0, "Preparing export…".to_owned())
                     } else {
@@ -198,22 +196,15 @@ impl Sidebar {
                     }
                 }
 
-                ui.add_space(10.0);
+                ui.add_space(crate::ui::theme::SPACE_SM);
                 #[cfg(not(target_os = "android"))]
                 let export_enabled = app.can_export();
                 #[cfg(not(target_os = "android"))]
-                let action_width = ui.available_width();
-                #[cfg(not(target_os = "android"))]
                 {
-                    ui.add_space(10.0);
-                    ui.separator();
-                    ui.add_space(10.0);
+                    crate::ui::theme::section_separator(ui);
                     let replay_response = ui
                         .add_enabled_ui(export_enabled, |ui| {
-                            ui.add_sized(
-                                [action_width, crate::ui::theme::CONTROL_HEIGHT],
-                                egui::Button::new("Create Edit Replay…"),
-                            )
+                            crate::ui::theme::full_width_button(ui, "Create Edit Replay…")
                         })
                         .inner
                         .on_hover_text(

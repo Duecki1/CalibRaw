@@ -86,7 +86,9 @@ impl CalibRawApp {
 
     pub(crate) fn set_ai_denoise_enabled(&mut self, enabled: bool, frame: &eframe::Frame) {
         if !enabled {
-            self.ai.denoise_consent_open = false;
+            if matches!(self.ai.consent, AiConsentState::Denoise { .. }) {
+                self.ai.consent = AiConsentState::None;
+            }
             self.cancel_foreground_operation_if(ForegroundOperationKind::AiDenoise);
             let changed = self.develop.exposure.ai_denoise_enabled;
             self.develop.exposure.ai_denoise_enabled = false;
@@ -156,11 +158,14 @@ impl CalibRawApp {
         if saved_result_exists
             || (crate::ai_denoise::models_are_verified(&model_dir) && !runtime_download_needed)
         {
-            self.ai.runtime_download_consent_pending = false;
+            if matches!(self.ai.consent, AiConsentState::Denoise { .. }) {
+                self.ai.consent = AiConsentState::None;
+            }
             self.start_ai_denoise(frame, false);
         } else {
-            self.ai.runtime_download_consent_pending = runtime_download_needed;
-            self.ai.denoise_consent_open = true;
+            self.ai.consent = AiConsentState::Denoise {
+                runtime_download_needed,
+            };
             self.egui_ctx.request_repaint();
         }
     }
@@ -263,7 +268,9 @@ impl CalibRawApp {
             allow_model_download,
             Arc::clone(&cancellation),
         );
-        self.ai.denoise_consent_open = false;
+        if matches!(self.ai.consent, AiConsentState::Denoise { .. }) {
+            self.ai.consent = AiConsentState::None;
+        }
         let progress = ForegroundProgress::indeterminate(if saved_result_exists {
             "Restoring saved AI denoise…"
         } else {
@@ -410,8 +417,9 @@ impl CalibRawApp {
 
     pub(crate) fn abandon_ai_denoise_worker(&mut self) {
         self.cancel_foreground_operation_if(ForegroundOperationKind::AiDenoise);
-        self.ai.denoise_consent_open = false;
-        self.ai.runtime_download_consent_pending = false;
+        if matches!(self.ai.consent, AiConsentState::Denoise { .. }) {
+            self.ai.consent = AiConsentState::None;
+        }
     }
 
     pub(crate) fn resume_persisted_ai_denoise(&mut self, frame: &eframe::Frame) {
@@ -445,25 +453,24 @@ impl CalibRawApp {
     }
 
     pub(crate) fn show_ai_denoise_dialogs(&mut self, ctx: &egui::Context, frame: &eframe::Frame) {
-        if self.ai.denoise_consent_open {
+        if let AiConsentState::Denoise {
+            runtime_download_needed,
+        } = self.ai.consent
+        {
             let model_download_needed =
                 !crate::ai_denoise::models_are_verified(&self.rawnind_model_dir());
-            let runtime_download_needed = self.ai.runtime_download_consent_pending;
             let title = match (model_download_needed, runtime_download_needed) {
                 (true, true) => "Download AI denoise models and ONNX Runtime?",
                 (true, false) => "Download RawNIND AI denoise models?",
                 (false, true) => "Download ONNX Runtime?",
                 (false, false) => "Prepare AI denoise?",
             };
-            crate::ui::responsive_popup(
+            crate::ui::theme::dialog_window(
                 egui::Window::new(title),
                 ctx,
-                540.0,
+                crate::ui::theme::DIALOG_WIDTH_LARGE,
             )
-            .collapsible(false)
-            .resizable(false)
             .movable(false)
-            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
             .show(ctx, |ui| {
                 ui.label("AI Denoise uses darktable-ai's RawNIND UtNet2 package: joint Bayer denoise/demosaic and a linear Rec.2020 model for X-Trans.");
                 if model_download_needed {
@@ -473,55 +480,44 @@ impl CalibRawApp {
                         RAWNIND_PACKAGE_BYTES as f64 / 1_000_000.0
                     ));
                 }
-                #[cfg(not(target_os = "android"))]
-                if runtime_download_needed {
-                    Self::show_automatic_onnx_runtime_download_details(ui);
-                }
-                if model_download_needed && runtime_download_needed {
-                    ui.separator();
-                    ui.label("CalibRaw downloads and verifies the model package first, followed by ONNX Runtime. Both are cached locally.");
-                }
+                self.show_ai_consent_runtime_details(
+                    ui,
+                    model_download_needed,
+                    runtime_download_needed,
+                );
                 ui.label("Inference is local; no photograph is uploaded.");
-                ui.label("Hugging Face receives ordinary connection data such as your IP address and request time. CalibRaw sends no account identifier or telemetry.");
-                #[cfg(not(target_os = "android"))]
-                if self.ai.runtime_mode == OnnxRuntimeMode::Manual
-                    && self.ai.runtime_path.is_none()
-                {
-                    ui.colored_label(
-                        egui::Color32::YELLOW,
-                        "Manual runtime mode needs a trusted local ONNX Runtime library. Select one in Settings or switch to Automatic.",
-                    );
-                }
-                ui.horizontal_wrapped(|ui| {
-                    ui.hyperlink_to(
-                        "Hugging Face privacy policy",
-                        "https://huggingface.co/privacy",
-                    );
-                    if model_download_needed {
-                        ui.separator();
-                        ui.hyperlink_to(
+                Self::show_hugging_face_privacy(
+                    ui,
+                    model_download_needed,
+                    &[
+                        (
                             "RawNIND model card",
                             "https://github.com/darktable-org/darktable-ai/tree/release-5.6.0/models/rawdenoise-nind",
-                        );
-                        ui.separator();
-                        ui.hyperlink_to(
+                        ),
+                        (
                             "GPL-3.0 license",
                             "https://github.com/darktable-org/darktable-ai/blob/release-5.6.0/LICENSE",
-                        );
-                    }
-                });
-                ui.add_space(8.0);
-                ui.horizontal(|ui| {
-                    if ui.button("Consent, download and apply").clicked() {
-                        self.ai.runtime_download_consent_pending = false;
+                        ),
+                    ],
+                );
+                self.show_manual_runtime_warning(ui);
+                // AI Denoise does not gate on the runtime here: this consent dialog starts the
+                // runtime download itself, so the accept button has to stay reachable.
+                match Self::show_ai_consent_buttons(
+                    ui,
+                    "Consent, download and apply",
+                    true,
+                ) {
+                    crate::ui::theme::DialogAction::Confirm => {
+                        self.ai.consent = AiConsentState::None;
                         self.start_ai_denoise(frame, model_download_needed);
                     }
-                    if ui.button("Cancel").clicked() {
-                        self.ai.runtime_download_consent_pending = false;
-                        self.ai.denoise_consent_open = false;
+                    crate::ui::theme::DialogAction::Cancel => {
+                        self.ai.consent = AiConsentState::None;
                         self.develop.exposure.ai_denoise_enabled = false;
                     }
-                });
+                    crate::ui::theme::DialogAction::None => {}
+                }
             });
         }
     }

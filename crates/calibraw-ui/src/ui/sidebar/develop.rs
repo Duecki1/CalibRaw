@@ -13,12 +13,11 @@ impl Sidebar {
             (lens, focal, aperture)
         });
 
-        let action = Self::adjustment_card_with_enabled(
+        let action = Self::adjustment_card(
             ui,
             "Lens Corrections",
             false,
             foldable,
-            app.develop.lens_correction.enabled,
             true,
             |ui| {
                 let lens_correction_busy = app.lens_correction_busy();
@@ -36,7 +35,7 @@ impl Sidebar {
                     state.applied = false;
                 }
 
-                ui.add_space(2.0);
+                ui.add_space(crate::ui::theme::SPACE_XXS);
                 egui::Grid::new("lens-correction-capture-metadata")
                     .num_columns(2)
                     .spacing(egui::vec2(10.0, 3.0))
@@ -65,26 +64,28 @@ impl Sidebar {
                         }
                     });
 
-                ui.add_space(4.0);
+                ui.add_space(crate::ui::theme::SPACE_XS);
                 let makers = state.makers();
                 let previous_maker = state.selected_maker.clone();
+                let selected_maker_text = if state.selected_maker.is_empty() {
+                    if state.selected_model.is_empty() {
+                        "Select a brand".to_owned()
+                    } else {
+                        "Unknown".to_owned()
+                    }
+                } else {
+                    state.selected_maker.clone()
+                };
                 ui.add_enabled_ui(
                     state.catalog.available && !makers.is_empty() && !lens_correction_busy,
                     |ui| {
-                        ui.label("Brand");
-                        egui::ComboBox::from_id_salt("lens-correction-brand")
-                            .selected_text(if state.selected_maker.is_empty() {
-                                if state.selected_model.is_empty() {
-                                    "Select a brand"
-                                } else {
-                                    "Unknown"
-                                }
-                            } else {
-                                state.selected_maker.as_str()
-                            })
-                            .width(ui.available_width().clamp(1.0, 240.0))
-                            .truncate()
-                            .show_ui(ui, |ui| {
+                        crate::ui::theme::form_combo(
+                            ui,
+                            "Brand",
+                            "lens-correction-brand",
+                            selected_maker_text,
+                            240.0,
+                            |ui| {
                                 for maker in &makers {
                                     ui.selectable_value(
                                         &mut state.selected_maker,
@@ -92,7 +93,8 @@ impl Sidebar {
                                         if maker.is_empty() { "Unknown" } else { maker },
                                     );
                                 }
-                            });
+                            },
+                        );
                     },
                 );
                 let mut selection_changed = state.selected_maker != previous_maker;
@@ -107,19 +109,21 @@ impl Sidebar {
 
                 let models = state.models_for_maker(&state.selected_maker);
                 let previous_model = state.selected_model.clone();
+                let selected_model_text = if state.selected_model.is_empty() {
+                    "Select a lens".to_owned()
+                } else {
+                    state.selected_model.clone()
+                };
                 ui.add_enabled_ui(
                     state.catalog.available && !models.is_empty() && !lens_correction_busy,
                     |ui| {
-                        ui.label("Lens");
-                        egui::ComboBox::from_id_salt("lens-correction-model")
-                            .selected_text(if state.selected_model.is_empty() {
-                                "Select a lens"
-                            } else {
-                                state.selected_model.as_str()
-                            })
-                            .width(ui.available_width().clamp(1.0, 240.0))
-                            .truncate()
-                            .show_ui(ui, |ui| {
+                        crate::ui::theme::form_combo(
+                            ui,
+                            "Lens",
+                            "lens-correction-model",
+                            selected_model_text,
+                            240.0,
+                            |ui| {
                                 for model in &models {
                                     ui.selectable_value(
                                         &mut state.selected_model,
@@ -127,7 +131,8 @@ impl Sidebar {
                                         model,
                                     );
                                 }
-                            });
+                            },
+                        );
                     },
                 );
                 selection_changed |= state.selected_model != previous_model;
@@ -298,77 +303,53 @@ impl Sidebar {
                     let combo_width =
                         (ui.available_width() - picker_width - ui.spacing().item_spacing.x)
                             .clamp(1.0, 240.0);
-                    egui::ComboBox::from_id_salt("global-white-balance-preset")
-                        .selected_text(selection)
-                        .width(combo_width)
-                        .truncate()
-                        .show_ui(ui, |ui| {
-                            if ui.selectable_label(false, "as shot").clicked() {
-                                exposure.temperature = 0.0;
-                                exposure.tint = 0.0;
+                    crate::ui::theme::combo_box(
+                        "global-white-balance-preset",
+                        selection,
+                        combo_width,
+                    )
+                    .show_ui(ui, |ui| {
+                        if ui.selectable_label(false, "as shot").clicked() {
+                            exposure.temperature = 0.0;
+                            exposure.tint = 0.0;
+                            *white_balance_picker_active = false;
+                            changed = true;
+                        }
+                        if ui.selectable_label(false, "from image area").clicked() {
+                            *white_balance_picker_active = true;
+                        }
+                        ui.label(
+                            egui::RichText::new("reference")
+                                .strong()
+                                .color(ui.visuals().weak_text_color()),
+                        );
+                        if ui
+                            .selectable_label(false, "camera reference (D65)")
+                            .clicked()
+                        {
+                            if let Some((temperature, tint)) =
+                                raw.white_balance_offsets_from_temperature_tint(6504.0, 1.0)
+                            {
+                                exposure.temperature = temperature;
+                                exposure.tint = tint;
                                 *white_balance_picker_active = false;
                                 changed = true;
                             }
-                            if ui.selectable_label(false, "from image area").clicked() {
-                                *white_balance_picker_active = true;
-                            }
-                            ui.label(
-                                egui::RichText::new("reference")
-                                    .strong()
-                                    .color(ui.visuals().weak_text_color()),
-                            );
-                            if ui
-                                .selectable_label(false, "camera reference (D65)")
-                                .clicked()
-                            {
-                                if let Some((temperature, tint)) =
-                                    raw.white_balance_offsets_from_temperature_tint(6504.0, 1.0)
-                                {
-                                    exposure.temperature = temperature;
-                                    exposure.tint = tint;
-                                    *white_balance_picker_active = false;
-                                    changed = true;
-                                }
-                            }
-                            if !presets.is_empty() {
-                                ui.separator();
-                                ui.label(
-                                    egui::RichText::new(format!(
-                                        "{} {}",
-                                        raw.camera_make, raw.camera_model
-                                    ))
-                                    .strong(),
-                                );
-                                for preset in &presets {
-                                    if ui.selectable_label(false, &preset.name).clicked() {
-                                        if let Some((temperature, tint)) = raw
-                                            .white_balance_offsets_from_coefficients(
-                                                preset.coefficients,
-                                            )
-                                        {
-                                            exposure.temperature = temperature;
-                                            exposure.tint = tint;
-                                            *white_balance_picker_active = false;
-                                            changed = true;
-                                        }
-                                    }
-                                }
-                            }
+                        }
+                        if !presets.is_empty() {
                             ui.separator();
                             ui.label(
-                                egui::RichText::new("fixed temperature")
-                                    .strong()
-                                    .color(ui.visuals().weak_text_color()),
+                                egui::RichText::new(format!(
+                                    "{} {}",
+                                    raw.camera_make, raw.camera_model
+                                ))
+                                .strong(),
                             );
-                            for temperature in [2500.0, 3200.0, 4500.0, 6000.0, 8500.0] {
-                                if ui
-                                    .selectable_label(false, format!("{temperature:.0}K"))
-                                    .clicked()
-                                {
+                            for preset in &presets {
+                                if ui.selectable_label(false, &preset.name).clicked() {
                                     if let Some((temperature, tint)) = raw
-                                        .white_balance_offsets_from_temperature_tint(
-                                            temperature,
-                                            1.0,
+                                        .white_balance_offsets_from_coefficients(
+                                            preset.coefficients,
                                         )
                                     {
                                         exposure.temperature = temperature;
@@ -378,7 +359,29 @@ impl Sidebar {
                                     }
                                 }
                             }
-                        });
+                        }
+                        ui.separator();
+                        ui.label(
+                            egui::RichText::new("fixed temperature")
+                                .strong()
+                                .color(ui.visuals().weak_text_color()),
+                        );
+                        for temperature in [2500.0, 3200.0, 4500.0, 6000.0, 8500.0] {
+                            if ui
+                                .selectable_label(false, format!("{temperature:.0}K"))
+                                .clicked()
+                            {
+                                if let Some((temperature, tint)) = raw
+                                    .white_balance_offsets_from_temperature_tint(temperature, 1.0)
+                                {
+                                    exposure.temperature = temperature;
+                                    exposure.tint = tint;
+                                    *white_balance_picker_active = false;
+                                    changed = true;
+                                }
+                            }
+                        }
+                    });
                     let picker = crate::ui::icons::phosphor_icon_toggle_button(
                         ui,
                         egui_phosphor::regular::EYEDROPPER,
@@ -527,9 +530,7 @@ impl Sidebar {
             ai_response.on_hover_text(
                 "Runs the pinned darktable-ai RawNIND model locally. Bayer uses joint denoise/demosaic; X-Trans uses the linear Rec.2020 variant.",
             );
-            ui.add_space(4.0);
-            ui.separator();
-            ui.add_space(4.0);
+            crate::ui::theme::section_separator(ui);
             crate::ui::theme::strong_with_help(
                 ui,
                 "Noise reduction",
@@ -595,9 +596,7 @@ impl Sidebar {
                 );
                 changed |= previous_quality != exposure.denoise_quality;
             });
-            ui.add_space(8.0);
-            ui.separator();
-            ui.add_space(4.0);
+            crate::ui::theme::section_separator(ui);
             crate::ui::theme::strong_with_help(
                 ui,
                 "Capture sharpening",
@@ -682,7 +681,7 @@ impl Sidebar {
                 Some("Removes or adds atmospheric veil while preserving color relationships."),
             );
 
-            ui.separator();
+            crate::ui::theme::section_separator(ui);
             ui.push_id("glow", |ui| {
                 ui.strong("Glow");
                 changed |= adjustment_slider(
@@ -698,7 +697,7 @@ impl Sidebar {
                 );
             });
 
-            ui.separator();
+            crate::ui::theme::section_separator(ui);
             ui.push_id("vignette", |ui| {
                 ui.strong("Vignette");
                 changed |= gradient_adjustment_slider(

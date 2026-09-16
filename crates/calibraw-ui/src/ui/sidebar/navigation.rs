@@ -104,7 +104,7 @@ impl Sidebar {
                                     .count();
                                 if crate::ui::icons::phosphor_icon_button_enabled(
                                     ui,
-                                    active_stroke_count != 0 && !app.inpaint.processing(),
+                                    active_stroke_count != 0 && !app.inpaint_processing(),
                                     egui_phosphor::regular::TRASH,
                                     crate::ui::theme::toolbar_icon_size(),
                                     &format!("Clear all {} strokes", active_tool.label()),
@@ -179,10 +179,7 @@ impl Sidebar {
 
         egui::CentralPanel::default()
             .frame(egui::Frame::new().inner_margin(egui::Margin::same(0)))
-            .show(ui, |ui| {
-                Self::show_sidebar_header(ui, app);
-                Self::show_sidebar_content(ui, app, ScreenLayout::Vertical, frame)
-            });
+            .show(ui, |ui| Self::show_sidebar_content(ui, app, ScreenLayout::Vertical, frame));
     }
 
     fn mobile_navigation_frame(ui: &Ui) -> egui::Frame {
@@ -217,7 +214,6 @@ impl Sidebar {
         } else {
             56.0
         };
-        let previous = app.ui.sidebar_tab;
         let item_width = (ui.available_width() / 6.0).max(1.0);
         ui.horizontal(|ui| {
             for (tab, icon, label, tooltip) in [
@@ -254,11 +250,10 @@ impl Sidebar {
                 )
                 .clicked()
                 {
-                    app.ui.sidebar_tab = tab;
+                    app.dispatch_action(AppAction::SelectSidebarTab(tab));
                 }
             }
         });
-        Self::finish_sidebar_tab_change(app, previous);
     }
 
     fn show_mobile_context_tabs(ui: &mut Ui, app: &mut CalibRawApp) {
@@ -377,24 +372,20 @@ impl Sidebar {
 
         let (rect, response) = ui.allocate_exact_size(size, Sense::click());
         let painter = ui.painter_at(rect);
-        let visuals = ui.visuals();
+        let interaction = crate::ui::theme::interaction_visuals(ui, &response, selected);
         let tile_width = if size.y > 54.0 { 56.0 } else { 50.0 };
         let tile = egui::Rect::from_center_size(
             rect.center(),
             egui::vec2(size.x.min(tile_width), size.y - 4.0),
         );
-        if selected {
-            painter.rect_filled(tile, 6.0, visuals.selection.bg_fill);
-        } else if response.hovered() || response.highlighted() {
-            painter.rect_filled(tile, 6.0, visuals.widgets.hovered.bg_fill);
+        if interaction.state != crate::ui::theme::InteractionVisualState::Inactive {
+            painter.rect_filled(tile, 6.0, interaction.weak_fill);
         }
 
-        let color = if selected {
-            visuals.selection.stroke.color
-        } else if response.hovered() {
-            visuals.widgets.hovered.fg_stroke.color
+        let color = if interaction.state == crate::ui::theme::InteractionVisualState::Inactive {
+            ui.visuals().weak_text_color()
         } else {
-            visuals.weak_text_color()
+            interaction.foreground
         };
         let (icon_size, icon_center) = mobile_tab_icon_geometry(size.y, show_label);
         painter.text(
@@ -429,6 +420,10 @@ impl Sidebar {
             egui::scroll_area::ScrollSource::default()
         };
         ui.scope(|ui| {
+            if layout == ScreenLayout::Vertical {
+                Self::begin_vertical_card_actions(ui.ctx());
+            }
+
             let mut scroll_style = egui::style::ScrollStyle::solid();
             scroll_style.bar_width = 7.0;
             scroll_style.bar_inner_margin = 7.0;
@@ -469,7 +464,10 @@ impl Sidebar {
                                 SidebarTab::Export => Self::show_export(ui, app, frame),
                                 SidebarTab::Info => Self::show_info(ui, app),
                             }
-                            ui.add_space(10.0);
+                            if layout == ScreenLayout::Vertical {
+                                Self::show_mobile_footer_actions(ui, app);
+                            }
+                            ui.add_space(crate::ui::theme::SPACE_SM);
                         },
                     );
                 });
@@ -487,13 +485,80 @@ impl Sidebar {
         });
     }
 
+    fn show_mobile_footer_actions(ui: &mut Ui, app: &mut CalibRawApp) {
+        ui.add_space(crate::ui::theme::SPACE_XS);
+        let width = ui.available_width().max(1.0);
+        ui.allocate_ui_with_layout(
+            egui::vec2(width, crate::ui::theme::TOOLBAR_HEIGHT),
+            egui::Layout::right_to_left(egui::Align::Center),
+            |ui| {
+                match app.ui.sidebar_tab {
+                    // Intentionally no global reset in Edit on mobile.
+                    SidebarTab::Adjustments => {}
+                    SidebarTab::Crop => {
+                        if crate::ui::icons::phosphor_icon_button(
+                            ui,
+                            egui_phosphor::regular::ARROW_COUNTER_CLOCKWISE,
+                            crate::ui::theme::toolbar_icon_size(),
+                            "Reset crop and geometry",
+                        )
+                        .clicked()
+                        {
+                            Self::reset_crop(app);
+                        }
+                    }
+                    SidebarTab::Masks => {
+                        if crate::ui::icons::phosphor_icon_button(
+                            ui,
+                            egui_phosphor::regular::ARROW_COUNTER_CLOCKWISE,
+                            crate::ui::theme::toolbar_icon_size(),
+                            "Reset all masks and clear the subject mask cache",
+                        )
+                        .clicked()
+                        {
+                            app.reset_masks();
+                        }
+                    }
+                    SidebarTab::Inpainting => {
+                        let active_tool = app.inpaint.tool;
+                        let active_stroke_count = app
+                            .inpaint
+                            .edits
+                            .strokes
+                            .iter()
+                            .filter(|stroke| {
+                                active_tool.matches_stroke_tool(
+                                    stroke.retouch.map(|retouch| retouch.tool),
+                                )
+                            })
+                            .count();
+                        if crate::ui::icons::phosphor_icon_button_enabled(
+                            ui,
+                            active_stroke_count != 0 && !app.inpaint_processing(),
+                            egui_phosphor::regular::TRASH,
+                            crate::ui::theme::toolbar_icon_size(),
+                            &format!("Clear all {} strokes", active_tool.label()),
+                        )
+                        .clicked()
+                        {
+                            app.clear_inpainting_tool();
+                        }
+                    }
+                    SidebarTab::Export | SidebarTab::Info => {}
+                }
+                Self::show_vertical_card_footer_actions(ui);
+                Self::show_histogram_toggle(ui, app);
+                Self::show_clipping_toggles(ui, app);
+            },
+        );
+    }
+
     #[cfg(not(target_os = "android"))]
     pub(crate) fn show_desktop_tool_rail(ui: &mut Ui, app: &mut CalibRawApp) {
         use crate::ui::icons::{icon_toggle_button, UiIcon};
 
         ui.set_min_width(ui.available_width());
         ui.spacing_mut().item_spacing.y = crate::ui::theme::SPACE_XS;
-        let previous = app.ui.sidebar_tab;
         ui.vertical_centered(|ui| {
             ui.add_space(5.0);
             for (tab, icon, tooltip) in [
@@ -517,7 +582,7 @@ impl Sidebar {
                 )
                 .clicked()
                 {
-                    app.ui.sidebar_tab = tab;
+                    app.dispatch_action(AppAction::SelectSidebarTab(tab));
                     app.develop_ui.sidebar_open = true;
                 }
             }
@@ -560,7 +625,6 @@ impl Sidebar {
                 app.develop_ui.sidebar_open = !app.develop_ui.sidebar_open;
             }
         });
-        Self::finish_sidebar_tab_change(app, previous);
     }
 
     #[cfg(target_os = "android")]
@@ -569,7 +633,6 @@ impl Sidebar {
 
         ui.set_width(Self::ANDROID_LANDSCAPE_TOOL_RAIL_WIDTH);
         ui.spacing_mut().item_spacing.y = 0.0;
-        let previous = app.ui.sidebar_tab;
         let show_labels = app.preferences.show_develop_navigation_labels;
         ui.vertical_centered(|ui| {
             for (tab, icon, label, tooltip) in [
@@ -606,26 +669,10 @@ impl Sidebar {
                 )
                 .clicked()
                 {
-                    app.ui.sidebar_tab = tab;
+                    app.dispatch_action(AppAction::SelectSidebarTab(tab));
                 }
             }
         });
-        Self::finish_sidebar_tab_change(app, previous);
-    }
-
-    fn finish_sidebar_tab_change(app: &mut CalibRawApp, previous: SidebarTab) {
-        if previous == SidebarTab::Crop && app.ui.sidebar_tab != SidebarTab::Crop {
-            app.develop_ui.crop_drag = None;
-            app.develop_ui.straighten_tool_active = false;
-            app.develop_ui.straighten_drag = None;
-        }
-        if app.ui.sidebar_tab != SidebarTab::Adjustments {
-            app.develop_ui.white_balance_picker_active = false;
-            app.develop_ui.white_balance_picker_drag = None;
-        }
-        if app.ui.sidebar_tab != previous {
-            app.sync_ai_model_runtime_context();
-        }
     }
 
     fn show_adjustments(
@@ -723,22 +770,6 @@ impl Sidebar {
                 true,
             );
             lens_changed |= Self::show_optics(ui, app, true);
-        }
-
-        if layout == ScreenLayout::Vertical && crate::ui::theme::is_compact_portrait(ui) {
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui
-                    .button(format!(
-                        "{}  Reset all adjustments",
-                        egui_phosphor::regular::ARROW_COUNTER_CLOCKWISE
-                    ))
-                    .on_hover_text("Reset all develop adjustments")
-                    .clicked()
-                {
-                    app.reset_develop_adjustments();
-                }
-            });
-            ui.add_space(crate::ui::theme::SPACE_XS);
         }
 
         if changed {

@@ -2,78 +2,82 @@ pub(crate) mod components;
 #[cfg(not(target_os = "android"))]
 pub(crate) mod develop;
 pub(crate) mod develop_viewport;
+mod dialogs;
 pub(crate) mod icons;
 pub(crate) mod layout;
 pub(crate) mod library;
 pub(crate) mod onboarding;
 pub(crate) mod preview;
+mod responsive;
 pub(crate) mod settings;
 pub(crate) mod sidebar;
 pub(crate) mod theme;
 pub(crate) mod top_bar;
+mod widgets;
 
+/// Desktop-only “save as” picker. The returned path always carries `extensions[0]`, so the
+/// encoder downstream of it never sees a file it cannot open.
+#[cfg(not(target_os = "android"))]
+pub(crate) fn choose_save_path(
+    filter: String,
+    extensions: &'static [&'static str],
+    default_name: &str,
+    initial_directory: Option<&std::path::Path>,
+) -> Option<std::path::PathBuf> {
+    let mut dialog = rfd::FileDialog::new()
+        .add_filter(filter, extensions)
+        .set_file_name(default_name);
+    if let Some(directory) = initial_directory.filter(|path| !path.as_os_str().is_empty()) {
+        dialog = dialog.set_directory(directory);
+    }
+    let fallback_extension = extensions.first()?;
+    let mut path = dialog.save_file()?;
+    let valid_extension = path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| {
+            extensions
+                .iter()
+                .any(|candidate| extension.eq_ignore_ascii_case(candidate))
+        });
+    if !valid_extension {
+        path.set_extension(fallback_extension);
+    }
+    Some(path)
+}
+
+/// Save picker for a developed-image export.
 #[cfg(not(target_os = "android"))]
 pub(crate) fn choose_export_file_path(
     format: crate::pipeline::ExportFormat,
     default_name: &str,
     initial_directory: Option<&std::path::Path>,
 ) -> Option<std::path::PathBuf> {
-    let mut dialog = rfd::FileDialog::new()
-        .add_filter(format!("{} image", format.label()), format.extensions())
-        .set_file_name(default_name);
-    if let Some(directory) = initial_directory.filter(|path| !path.as_os_str().is_empty()) {
-        dialog = dialog.set_directory(directory);
-    }
-    let mut path = dialog.save_file()?;
-    let valid_extension = path
-        .extension()
-        .and_then(|extension| extension.to_str())
-        .is_some_and(|extension| format.matches_extension(extension));
-    if !valid_extension {
-        path.set_extension(format.extension());
-    }
-    Some(path)
+    choose_save_path(
+        format!("{} image", format.label()),
+        format.extensions(),
+        default_name,
+        initial_directory,
+    )
 }
 
+/// Save picker for the Edit Replay MP4.
 #[cfg(not(target_os = "android"))]
 pub(crate) fn choose_edit_replay_file_path(
     default_name: &str,
     initial_directory: Option<&std::path::Path>,
 ) -> Option<std::path::PathBuf> {
-    let mut dialog = rfd::FileDialog::new()
-        .add_filter("MP4 video", &["mp4"])
-        .set_file_name(default_name);
-    if let Some(directory) = initial_directory.filter(|path| !path.as_os_str().is_empty()) {
-        dialog = dialog.set_directory(directory);
-    }
-    let mut path = dialog.save_file()?;
-    let valid_extension = path
-        .extension()
-        .and_then(|extension| extension.to_str())
-        .is_some_and(|extension| extension.eq_ignore_ascii_case("mp4"));
-    if !valid_extension {
-        path.set_extension("mp4");
-    }
-    Some(path)
+    choose_save_path(
+        "MP4 video".to_string(),
+        MP4_EXTENSIONS,
+        default_name,
+        initial_directory,
+    )
 }
 
-pub(crate) fn responsive_popup<'a>(
-    window: eframe::egui::Window<'a>,
-    ctx: &eframe::egui::Context,
-    preferred_width: f32,
-) -> eframe::egui::Window<'a> {
-    let available = ctx.content_rect().size() - eframe::egui::vec2(24.0, 24.0);
-    let available = eframe::egui::vec2(available.x.max(1.0), available.y.max(1.0));
-    let compact_portrait = available.x < 560.0 && available.y > available.x;
-    let window = window
-        .default_width(preferred_width.min(available.x))
-        .max_width(available.x)
-        .max_height(available.y)
-        .vscroll(compact_portrait);
-    #[cfg(target_os = "android")]
-    let window = window.order(eframe::egui::Order::Foreground);
-    window
-}
+/// Extension list for [`choose_edit_replay_file_path`]; also the container FFmpeg is asked for.
+#[cfg(not(target_os = "android"))]
+const MP4_EXTENSIONS: &[&str] = &["mp4"];
 
 #[cfg(any(target_os = "android", test))]
 const ANDROID_OVERFLOW_INSET: f32 = 5.0;
@@ -137,7 +141,9 @@ pub(crate) fn android_overflow_menu<R>(
     use eframe::egui::Popup;
 
     let response = android_overflow_button(ui, anchor_rect, id, edge);
-    Popup::menu(&response).show(add_contents);
+    Popup::menu(&response)
+        .close_behavior(eframe::egui::PopupCloseBehavior::CloseOnClickOutside)
+        .show(add_contents);
 
     response.on_hover_text("More actions")
 }

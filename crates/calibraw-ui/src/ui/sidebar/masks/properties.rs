@@ -123,20 +123,16 @@ impl Sidebar {
         let before = mask.effect;
         let enabled_before = mask.enabled;
         let effect = &mut mask.effect;
-        let action = Self::adjustment_card_without_visibility(
-            ui,
-            "Mask type",
-            true,
-            false,
-            enabled_before,
-            true,
-            |ui| {
-                ui.add_space(4.0);
-                egui::ComboBox::from_id_salt("mask-effect-picker")
-                    .selected_text(effect.label())
-                    .width(ui.available_width())
-                    .height(ui.ctx().content_rect().height())
-                    .show_ui(ui, |ui| {
+        let action =
+            Self::adjustment_card_without_visibility(ui, "Mask type", true, false, true, |ui| {
+                ui.add_space(crate::ui::theme::SPACE_XS);
+                crate::ui::theme::responsive_combo_box(
+                    ui,
+                    "mask-effect-picker",
+                    effect.label(),
+                    ui.available_width().max(1.0),
+                    1 + MaskEffectCategory::ALL.len(),
+                    |ui| {
                         ui.set_min_width(190.0);
                         if ui
                             .selectable_label(*effect == MaskEffect::Adjustment, "Adjustment")
@@ -167,9 +163,9 @@ impl Sidebar {
                                 }
                             });
                         }
-                    });
-            },
-        );
+                    },
+                );
+            });
         match action {
             super::super::adjustment_cards::CardAction::None => {}
             super::super::adjustment_cards::CardAction::Toggle => {}
@@ -336,7 +332,7 @@ impl Sidebar {
             return geometry_changed;
         };
 
-        ui.add_space(4.0);
+        ui.add_space(crate::ui::theme::SPACE_XS);
         ui.scope(|ui| {
             let is_fullscreen = matches!(&component.geometry, MaskGeometry::Fullscreen);
             ui.horizontal_wrapped(|ui| {
@@ -642,7 +638,7 @@ impl Sidebar {
                         Some("Controls the hard-edged selection brush. Its on-screen size stays constant while zooming for finer detail."),
                         0.055,
                     );
-                    ui.add_space(4.0);
+                    ui.add_space(crate::ui::theme::SPACE_XS);
                     geometry_changed |= Self::mask_grow_slider(ui, grow);
                     geometry_changed |= Self::mask_feather_slider(
                         ui,
