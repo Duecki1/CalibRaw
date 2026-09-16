@@ -1,4 +1,4 @@
-use image::{imageops::FilterType, DynamicImage, ImageFormat, Rgba, RgbaImage};
+use image::{imageops::FilterType, DynamicImage, ImageFormat, RgbaImage};
 use serde_json::Value;
 use std::env;
 use std::ffi::{OsStr, OsString};
@@ -799,58 +799,23 @@ fn command_build_android(args: BuildAndroidArgs) -> Result<()> {
     Ok(())
 }
 
-const ICON_BACKGROUND: Rgba<u8> = Rgba([17, 24, 39, 255]);
-const ICON_FOREGROUND: Rgba<u8> = Rgba([255, 255, 255, 255]);
-const ICON_OUTER_A: [(f64, f64); 7] = [
-    (54.0, 18.0),
-    (84.0, 88.0),
-    (69.0, 88.0),
-    (62.0, 70.0),
-    (46.0, 70.0),
-    (39.0, 88.0),
-    (24.0, 88.0),
-];
-const ICON_INNER_A: [(f64, f64); 3] = [(51.0, 57.0), (57.0, 57.0), (54.0, 44.0)];
-
-fn point_in_polygon(x: f64, y: f64, polygon: &[(f64, f64)]) -> bool {
-    let mut inside = false;
-    let mut previous = polygon.len() - 1;
-    for current in 0..polygon.len() {
-        let (xi, yi) = polygon[current];
-        let (xj, yj) = polygon[previous];
-        if ((yi > y) != (yj > y)) && x < (xj - xi) * (y - yi) / (yj - yi) + xi {
-            inside = !inside;
-        }
-        previous = current;
+fn load_icon_source() -> Result<RgbaImage> {
+    let path = workspace_root().join("CalibRawIcon.png");
+    let image = image::open(&path)
+        .map_err(|error| XtaskError::new(format!("cannot open {}: {error}", path.display())))?
+        .into_rgba8();
+    let (width, height) = image.dimensions();
+    if width == 0 || height == 0 || width != height {
+        return Err(XtaskError::new(format!(
+            "icon source must be a non-empty square PNG: {} is {width}x{height}",
+            path.display()
+        )));
     }
-    inside
+    Ok(image)
 }
 
-fn render_icon(edge: u32) -> RgbaImage {
-    let supersampling = 4_u32;
-    let render_edge = edge * supersampling;
-    let scale = f64::from(render_edge) / 108.0;
-    let scaled_outer: Vec<_> = ICON_OUTER_A
-        .iter()
-        .map(|(x, y)| (x * scale, y * scale))
-        .collect();
-    let scaled_inner: Vec<_> = ICON_INNER_A
-        .iter()
-        .map(|(x, y)| (x * scale, y * scale))
-        .collect();
-    let mut image = RgbaImage::from_pixel(render_edge, render_edge, ICON_BACKGROUND);
-    for y in 0..render_edge {
-        for x in 0..render_edge {
-            let sample_x = f64::from(x) + 0.5;
-            let sample_y = f64::from(y) + 0.5;
-            if point_in_polygon(sample_x, sample_y, &scaled_outer)
-                && !point_in_polygon(sample_x, sample_y, &scaled_inner)
-            {
-                image.put_pixel(x, y, ICON_FOREGROUND);
-            }
-        }
-    }
-    image::imageops::resize(&image, edge, edge, FilterType::Lanczos3)
+fn render_icon(source: &RgbaImage, edge: u32) -> RgbaImage {
+    image::imageops::resize(source, edge, edge, FilterType::Lanczos3)
 }
 
 fn encode_png(image: RgbaImage) -> Result<Vec<u8>> {
@@ -861,11 +826,11 @@ fn encode_png(image: RgbaImage) -> Result<Vec<u8>> {
     Ok(bytes.into_inner())
 }
 
-fn write_ico(path: &Path) -> Result<()> {
+fn write_ico(path: &Path, source: &RgbaImage) -> Result<()> {
     let sizes = [16_u32, 24, 32, 48, 64, 128, 256];
     let images: Vec<Vec<u8>> = sizes
         .iter()
-        .map(|edge| encode_png(render_icon(*edge)))
+        .map(|edge| encode_png(render_icon(source, *edge)))
         .collect::<Result<_>>()?;
     let mut file = File::create(path)
         .map_err(|error| XtaskError::new(format!("cannot create {}: {error}", path.display())))?;
@@ -889,16 +854,59 @@ fn write_ico(path: &Path) -> Result<()> {
     Ok(())
 }
 
+fn write_android_launcher_icons(source: &RgbaImage) -> Result<()> {
+    let root = workspace_root();
+    let mipmap = root.join("android/app/src/main/res/mipmap-anydpi");
+    fs::create_dir_all(&mipmap)?;
+    for name in ["ic_launcher.png", "ic_launcher_round.png"] {
+        DynamicImage::ImageRgba8(source.clone())
+            .save_with_format(mipmap.join(name), ImageFormat::Png)
+            .map_err(|error| XtaskError::new(format!("cannot write Android {name}: {error}")))?;
+    }
+
+    for obsolete in [
+        root.join("android/app/src/main/res/mipmap-anydpi/ic_launcher.xml"),
+        root.join("android/app/src/main/res/mipmap-anydpi/ic_launcher_round.xml"),
+    ] {
+        if obsolete.exists() {
+            fs::remove_file(&obsolete).map_err(|error| {
+                XtaskError::new(format!("cannot remove {}: {error}", obsolete.display()))
+            })?;
+        }
+    }
+
+    let mut cutout = source.clone();
+    for pixel in cutout.pixels_mut() {
+        if pixel[0] == 255 && pixel[1] == 255 && pixel[2] == 255 && pixel[3] == 255 {
+            pixel[3] = 0;
+        }
+    }
+    let foreground_edge = (source.width() * 66 / 100).max(1);
+    let scaled = render_icon(&cutout, foreground_edge);
+    let mut foreground = RgbaImage::new(source.width(), source.height());
+    let offset = i64::from((source.width() - foreground_edge) / 2);
+    image::imageops::overlay(&mut foreground, &scaled, offset, offset);
+
+    let drawable = root.join("android/app/src/main/res/drawable-nodpi");
+    fs::create_dir_all(&drawable)?;
+    DynamicImage::ImageRgba8(foreground)
+        .save_with_format(drawable.join("calibraw_icon_foreground.png"), ImageFormat::Png)
+        .map_err(|error| XtaskError::new(format!("cannot write Android adaptive icon: {error}")))?;
+    Ok(())
+}
+
 fn command_icons() -> Result<()> {
+    let source = load_icon_source()?;
     let output = workspace_root().join("packaging/icons");
     fs::create_dir_all(&output)?;
-    DynamicImage::ImageRgba8(render_icon(1024))
+    DynamicImage::ImageRgba8(render_icon(&source, 1024))
         .save_with_format(output.join("calibraw-1024.png"), ImageFormat::Png)
         .map_err(|error| XtaskError::new(format!("cannot write calibraw-1024.png: {error}")))?;
-    DynamicImage::ImageRgba8(render_icon(256))
+    DynamicImage::ImageRgba8(render_icon(&source, 256))
         .save_with_format(output.join("calibraw-256.png"), ImageFormat::Png)
         .map_err(|error| XtaskError::new(format!("cannot write calibraw-256.png: {error}")))?;
-    write_ico(&output.join("calibraw.ico"))?;
+    write_ico(&output.join("calibraw.ico"), &source)?;
+    write_android_launcher_icons(&source)?;
     Ok(())
 }
 
