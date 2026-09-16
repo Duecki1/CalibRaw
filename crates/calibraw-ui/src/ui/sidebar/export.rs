@@ -30,10 +30,20 @@ pub(crate) fn export_settings_controls(
     _fallback_picker_directory: Option<&std::path::Path>,
 ) -> bool {
     let previous_format = *format;
-    ui.horizontal_wrapped(|ui| {
-        ui.selectable_value(format, ExportFormat::Jpeg, "JPEG");
-        ui.selectable_value(format, ExportFormat::Png, "PNG");
-        ui.selectable_value(format, ExportFormat::Tiff, "TIFF");
+    ui.horizontal(|ui| {
+        let spacing = ui.spacing().item_spacing.x;
+        let format_width = ((ui.available_width() - spacing * 2.0) / 3.0).max(1.0);
+        for (export_format, label) in [
+            (ExportFormat::Jpeg, "JPEG"),
+            (ExportFormat::Png, "PNG"),
+            (ExportFormat::Tiff, "TIFF"),
+        ] {
+            if crate::ui::theme::segmented_button(ui, label, *format == export_format, format_width)
+                .clicked()
+            {
+                *format = export_format;
+            }
+        }
     });
     enforce_export_bit_depth(*format, settings);
     crate::ui::theme::card_gap(ui);
@@ -105,44 +115,6 @@ pub(crate) fn export_settings_controls(
     );
     crate::ui::theme::card_gap(ui);
 
-    if *format != ExportFormat::Jpeg {
-        crate::ui::theme::section_card_with_help(
-            ui,
-            "Precision",
-            "Choose the channel precision written to the exported file. Higher precision preserves more editing latitude but produces larger files.",
-            |ui| {
-                crate::ui::theme::combo_box(
-                    "export-bit-depth",
-                    settings.bit_depth.label(),
-                    ui.available_width().max(1.0),
-                )
-                    .show_ui(ui, |ui| {
-                        for depth in [
-                            ExportBitDepth::Eight,
-                            ExportBitDepth::Sixteen,
-                            ExportBitDepth::Float32Linear,
-                        ] {
-                            let supported = match *format {
-                                ExportFormat::Jpeg => depth == ExportBitDepth::Eight,
-                                ExportFormat::Png => !depth.is_float(),
-                                ExportFormat::Tiff => true,
-                            };
-                            if supported {
-                                ui.selectable_value(
-                                    &mut settings.bit_depth,
-                                    depth,
-                                    depth.label(),
-                                );
-                            }
-                        }
-                    })
-                    .response
-                    .on_hover_text("8-bit is broadly compatible; 16-bit retains more tonal precision; 32-bit float writes a scene-linear TIFF master.");
-            },
-        );
-        crate::ui::theme::card_gap(ui);
-    }
-
     crate::ui::theme::section_card(ui, "Metadata", |ui| {
         crate::ui::theme::checkbox_with_help(
             ui,
@@ -152,8 +124,8 @@ pub(crate) fn export_settings_controls(
         );
     });
 
+    crate::ui::theme::card_gap(ui);
     if *format == ExportFormat::Jpeg {
-        crate::ui::theme::card_gap(ui);
         crate::ui::theme::section_card(ui, "JPEG", |ui| {
             adjustment_slider_with_reset(
                 ui,
@@ -166,6 +138,37 @@ pub(crate) fn export_settings_controls(
                 crate::pipeline::ExportSettings::default().jpeg_quality,
             );
         });
+    } else {
+        crate::ui::theme::section_card_with_help(
+            ui,
+            "Precision",
+            "Choose the channel precision written to the exported file. Higher precision preserves more editing latitude but produces larger files.",
+            |ui| {
+                crate::ui::theme::combo_box(
+                    "export-bit-depth",
+                    settings.bit_depth.label(),
+                    ui.available_width().max(1.0),
+                )
+                .show_ui(ui, |ui| {
+                    for depth in [
+                        ExportBitDepth::Eight,
+                        ExportBitDepth::Sixteen,
+                        ExportBitDepth::Float32Linear,
+                    ] {
+                        let supported = match *format {
+                            ExportFormat::Jpeg => depth == ExportBitDepth::Eight,
+                            ExportFormat::Png => !depth.is_float(),
+                            ExportFormat::Tiff => true,
+                        };
+                        if supported {
+                            ui.selectable_value(&mut settings.bit_depth, depth, depth.label());
+                        }
+                    }
+                })
+                .response
+                .on_hover_text("8-bit is broadly compatible; 16-bit retains more tonal precision; 32-bit float writes a scene-linear TIFF master.");
+            },
+        );
     }
     *format != previous_format
 }
