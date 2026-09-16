@@ -144,8 +144,10 @@ mod tests {
     #[test]
     fn export_format_changes_keep_bit_depth_supported() {
         use crate::pipeline::{ExportBitDepth, ExportFormat, ExportSettings};
-        let mut settings = ExportSettings::default();
-        settings.bit_depth = ExportBitDepth::Float32Linear;
+        let mut settings = ExportSettings {
+            bit_depth: ExportBitDepth::Float32Linear,
+            ..ExportSettings::default()
+        };
         super::enforce_export_bit_depth(ExportFormat::Tiff, &mut settings);
         assert_eq!(settings.bit_depth, ExportBitDepth::Float32Linear);
         super::enforce_export_bit_depth(ExportFormat::Png, &mut settings);

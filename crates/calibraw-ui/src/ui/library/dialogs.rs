@@ -214,50 +214,48 @@ pub(super) fn show_ai_mask_refresh_progress(
         ui.ctx(),
         crate::ui::theme::DIALOG_WIDTH_NARROW,
     )
-        .id(egui::Id::new("library-ai-mask-refresh-progress"))
-        .show(ui.ctx(), |ui| {
-            ui.label(
-                egui::RichText::new(format!("{completed} / {total} AI masks updated")).strong(),
-            );
+    .id(egui::Id::new("library-ai-mask-refresh-progress"))
+    .show(ui.ctx(), |ui| {
+        ui.label(egui::RichText::new(format!("{completed} / {total} AI masks updated")).strong());
+        ui.add_space(6.0);
+        ui.add(
+            egui::ProgressBar::new(fraction)
+                .show_percentage()
+                .animate(completed < total),
+        );
+        if let Some(name) = current_name {
             ui.add_space(6.0);
-            ui.add(
-                egui::ProgressBar::new(fraction)
-                    .show_percentage()
-                    .animate(completed < total),
-            );
-            if let Some(name) = current_name {
-                ui.add_space(6.0);
-                ui.horizontal(|ui| {
-                    ui.spinner();
-                    ui.label(format!("Refreshing {name}…"));
-                });
-            }
-            if failed > 0 {
-                ui.label(
-                    egui::RichText::new(format!(
-                        "{failed} {} failed",
-                        if failed == 1 { "image" } else { "images" }
-                    ))
-                    .small()
-                    .color(ui.visuals().warn_fg_color),
-                );
-            }
-            crate::ui::theme::dialog_button_row(ui, |ui| {
-                if allow_minimize {
-                    minimize = crate::ui::theme::secondary_button(ui, "Minimize").clicked();
-                }
-                cancel |= crate::ui::theme::secondary_button(ui, "Cancel").clicked();
+            ui.horizontal(|ui| {
+                ui.spinner();
+                ui.label(format!("Refreshing {name}…"));
             });
-            if !cancel
-                && crate::ui::theme::dialog_keyboard_action(
-                    ui,
-                    crate::ui::theme::DialogKeyboard::CLOSE_ONLY,
-                    false,
-                ) == crate::ui::theme::DialogAction::Cancel
-            {
-                cancel = true;
+        }
+        if failed > 0 {
+            ui.label(
+                egui::RichText::new(format!(
+                    "{failed} {} failed",
+                    if failed == 1 { "image" } else { "images" }
+                ))
+                .small()
+                .color(ui.visuals().warn_fg_color),
+            );
+        }
+        crate::ui::theme::dialog_button_row(ui, |ui| {
+            if allow_minimize {
+                minimize = crate::ui::theme::secondary_button(ui, "Minimize").clicked();
             }
+            cancel |= crate::ui::theme::secondary_button(ui, "Cancel").clicked();
         });
+        if !cancel
+            && crate::ui::theme::dialog_keyboard_action(
+                ui,
+                crate::ui::theme::DialogKeyboard::CLOSE_ONLY,
+                false,
+            ) == crate::ui::theme::DialogAction::Cancel
+        {
+            cancel = true;
+        }
+    });
     (minimize, cancel)
 }
 
@@ -271,31 +269,31 @@ pub(super) fn show_android_library_folder_dialog(ui: &mut Ui, app: &mut CalibRaw
             ui.ctx(),
             crate::ui::theme::DIALOG_WIDTH_FORM,
         )
-            .id(egui::Id::new("android-library-folder-name-dialog"))
-            .show(ui.ctx(), |ui| {
-                ui.label("Folder name");
-                let response = ui.add(
-                    crate::ui::theme::singleline_text_edit(&mut dialog.name)
-                        .desired_width(f32::INFINITY)
-                        .id_source("android-library-folder-name-input"),
-                );
-                crate::ui::theme::request_initial_focus(&response, &mut dialog.focus_requested);
-                show_dialog_error(ui, dialog.error.as_deref());
-                match crate::ui::theme::dialog_confirmation_buttons(
-                    ui,
-                    "Cancel",
-                    "Create",
-                    true,
-                    false,
-                    crate::ui::theme::DialogKeyboard::CONFIRM_ON_ENTER,
-                ) {
-                    crate::ui::theme::DialogAction::Cancel => close = true,
-                    crate::ui::theme::DialogAction::Confirm => {
-                        create = Some((dialog.parent.clone(), dialog.name.clone()));
-                    }
-                    crate::ui::theme::DialogAction::None => {}
+        .id(egui::Id::new("android-library-folder-name-dialog"))
+        .show(ui.ctx(), |ui| {
+            ui.label("Folder name");
+            let response = ui.add(
+                crate::ui::theme::singleline_text_edit(&mut dialog.name)
+                    .desired_width(f32::INFINITY)
+                    .id_source("android-library-folder-name-input"),
+            );
+            crate::ui::theme::request_initial_focus(&response, &mut dialog.focus_requested);
+            show_dialog_error(ui, dialog.error.as_deref());
+            match crate::ui::theme::dialog_confirmation_buttons(
+                ui,
+                "Cancel",
+                "Create",
+                true,
+                false,
+                crate::ui::theme::DialogKeyboard::CONFIRM_ON_ENTER,
+            ) {
+                crate::ui::theme::DialogAction::Cancel => close = true,
+                crate::ui::theme::DialogAction::Confirm => {
+                    create = Some((dialog.parent.clone(), dialog.name.clone()));
                 }
-            });
+                crate::ui::theme::DialogAction::None => {}
+            }
+        });
     }
     if close {
         app.library.platform.folder_name_dialog = None;
@@ -331,67 +329,66 @@ pub(super) fn show_library_folder_dialogs(ui: &mut Ui, app: &mut CalibRawApp) {
             ui.ctx(),
             crate::ui::theme::DIALOG_WIDTH_FORM,
         )
-            .id(egui::Id::new("library-folder-name-dialog"))
-            .show(ui.ctx(), |ui| {
-                ui.label("Folder name");
-                let response = ui.add(
-                    crate::ui::theme::singleline_text_edit(&mut dialog.name)
-                        .desired_width(crate::ui::theme::DIALOG_TEXT_FIELD_WIDTH)
-                        .id_source("library-folder-name-input"),
-                );
-                crate::ui::theme::request_initial_focus(&response, &mut dialog.focus_requested);
-                show_dialog_error(ui, dialog.error.as_deref());
-                let confirm_label = match dialog.kind {
-                    LibraryFolderNameDialogKind::Create { .. } => "Create",
-                    LibraryFolderNameDialogKind::Rename { .. } => "Rename",
-                };
-                match crate::ui::theme::dialog_confirmation_buttons(
-                    ui,
-                    "Cancel",
-                    confirm_label,
-                    true,
-                    false,
-                    crate::ui::theme::DialogKeyboard::CONFIRM_ON_ENTER,
-                ) {
-                    crate::ui::theme::DialogAction::Cancel => close_name_dialog = true,
-                    crate::ui::theme::DialogAction::Confirm => {
-                        match validate_folder_name(&dialog.name) {
-                            Ok(_) => {
-                                let Some(root) = app.library.root_folder.clone() else {
-                                    close_name_dialog = true;
-                                    return;
-                                };
-                                name_operation = Some(match &dialog.kind {
-                                    LibraryFolderNameDialogKind::Create { parent } => {
-                                        LibraryFolderOperation::Create {
-                                            root,
-                                            parent: parent.clone(),
-                                            name: dialog.name.clone(),
-                                        }
-                                    }
-                                    LibraryFolderNameDialogKind::Rename { source } => {
-                                        let Some(parent) = source.parent() else {
-                                            dialog.error = Some(
-                                                "This folder has no parent folder.".to_owned(),
-                                            );
-                                            return;
-                                        };
-                                        LibraryFolderOperation::Move {
-                                            root,
-                                            source: source.clone(),
-                                            destination_parent: parent.to_path_buf(),
-                                            new_name: Some(dialog.name.clone()),
-                                        }
-                                    }
-                                });
+        .id(egui::Id::new("library-folder-name-dialog"))
+        .show(ui.ctx(), |ui| {
+            ui.label("Folder name");
+            let response = ui.add(
+                crate::ui::theme::singleline_text_edit(&mut dialog.name)
+                    .desired_width(crate::ui::theme::DIALOG_TEXT_FIELD_WIDTH)
+                    .id_source("library-folder-name-input"),
+            );
+            crate::ui::theme::request_initial_focus(&response, &mut dialog.focus_requested);
+            show_dialog_error(ui, dialog.error.as_deref());
+            let confirm_label = match dialog.kind {
+                LibraryFolderNameDialogKind::Create { .. } => "Create",
+                LibraryFolderNameDialogKind::Rename { .. } => "Rename",
+            };
+            match crate::ui::theme::dialog_confirmation_buttons(
+                ui,
+                "Cancel",
+                confirm_label,
+                true,
+                false,
+                crate::ui::theme::DialogKeyboard::CONFIRM_ON_ENTER,
+            ) {
+                crate::ui::theme::DialogAction::Cancel => close_name_dialog = true,
+                crate::ui::theme::DialogAction::Confirm => {
+                    match validate_folder_name(&dialog.name) {
+                        Ok(_) => {
+                            let Some(root) = app.library.root_folder.clone() else {
                                 close_name_dialog = true;
-                            }
-                            Err(error) => dialog.error = Some(error),
+                                return;
+                            };
+                            name_operation = Some(match &dialog.kind {
+                                LibraryFolderNameDialogKind::Create { parent } => {
+                                    LibraryFolderOperation::Create {
+                                        root,
+                                        parent: parent.clone(),
+                                        name: dialog.name.clone(),
+                                    }
+                                }
+                                LibraryFolderNameDialogKind::Rename { source } => {
+                                    let Some(parent) = source.parent() else {
+                                        dialog.error =
+                                            Some("This folder has no parent folder.".to_owned());
+                                        return;
+                                    };
+                                    LibraryFolderOperation::Move {
+                                        root,
+                                        source: source.clone(),
+                                        destination_parent: parent.to_path_buf(),
+                                        new_name: Some(dialog.name.clone()),
+                                    }
+                                }
+                            });
+                            close_name_dialog = true;
                         }
+                        Err(error) => dialog.error = Some(error),
                     }
-                    crate::ui::theme::DialogAction::None => {}
                 }
-            });
+                crate::ui::theme::DialogAction::None => {}
+            }
+        });
     }
     if close_name_dialog {
         app.library.folder_name_dialog = None;
@@ -409,33 +406,33 @@ pub(super) fn show_library_folder_dialogs(ui: &mut Ui, app: &mut CalibRawApp) {
             ui.ctx(),
             crate::ui::theme::DIALOG_WIDTH_DEFAULT,
         )
-            .id(egui::Id::new("library-folder-delete-confirmation"))
-            .show(ui.ctx(), |ui| {
-                ui.label(format!(
-                    "Delete {} and everything inside it?",
-                    target.display()
-                ));
-                ui.label(
-                    egui::RichText::new("This cannot be undone.")
-                        .strong()
-                        .color(ui.visuals().warn_fg_color),
-                );
-                match crate::ui::theme::dialog_confirmation_buttons(
-                    ui,
-                    "Cancel",
-                    "Delete Folder",
-                    true,
-                    true,
-                    crate::ui::theme::DialogKeyboard::CLOSE_ONLY,
-                ) {
-                    crate::ui::theme::DialogAction::Cancel => close_delete = true,
-                    crate::ui::theme::DialogAction::Confirm => {
-                        confirm_delete = true;
-                        close_delete = true;
-                    }
-                    crate::ui::theme::DialogAction::None => {}
+        .id(egui::Id::new("library-folder-delete-confirmation"))
+        .show(ui.ctx(), |ui| {
+            ui.label(format!(
+                "Delete {} and everything inside it?",
+                target.display()
+            ));
+            ui.label(
+                egui::RichText::new("This cannot be undone.")
+                    .strong()
+                    .color(ui.visuals().warn_fg_color),
+            );
+            match crate::ui::theme::dialog_confirmation_buttons(
+                ui,
+                "Cancel",
+                "Delete Folder",
+                true,
+                true,
+                crate::ui::theme::DialogKeyboard::CLOSE_ONLY,
+            ) {
+                crate::ui::theme::DialogAction::Cancel => close_delete = true,
+                crate::ui::theme::DialogAction::Confirm => {
+                    confirm_delete = true;
+                    close_delete = true;
                 }
-            });
+                crate::ui::theme::DialogAction::None => {}
+            }
+        });
     }
     if close_delete {
         app.library.folder_delete_confirmation = None;
@@ -487,36 +484,36 @@ pub(super) fn show_library_raw_name_dialog(
             ui.ctx(),
             crate::ui::theme::DIALOG_WIDTH_FORM,
         )
-            .id(egui::Id::new("library-raw-name-dialog"))
-            .show(ui.ctx(), |ui| {
-                ui.label("RAW filename");
-                let response = ui.add(
-                    crate::ui::theme::singleline_text_edit(&mut dialog.name)
-                        .desired_width(crate::ui::theme::DIALOG_TEXT_FIELD_WIDTH)
-                        .id_source("library-raw-name-input"),
-                );
-                crate::ui::theme::request_initial_focus(&response, &mut dialog.focus_requested);
-                show_dialog_error(ui, dialog.error.as_deref());
-                match crate::ui::theme::dialog_confirmation_buttons(
-                    ui,
-                    "Cancel",
-                    "Rename",
-                    true,
-                    false,
-                    crate::ui::theme::DialogKeyboard::CONFIRM_ON_ENTER,
-                ) {
-                    crate::ui::theme::DialogAction::Cancel => close = true,
-                    crate::ui::theme::DialogAction::Confirm => {
-                        match validate_library_item_name(&dialog.name, true) {
-                            Ok(()) => rename = Some((dialog.asset.clone(), dialog.name.clone())),
-                            Err(error) => {
-                                dialog.error = Some(error);
-                            }
+        .id(egui::Id::new("library-raw-name-dialog"))
+        .show(ui.ctx(), |ui| {
+            ui.label("RAW filename");
+            let response = ui.add(
+                crate::ui::theme::singleline_text_edit(&mut dialog.name)
+                    .desired_width(crate::ui::theme::DIALOG_TEXT_FIELD_WIDTH)
+                    .id_source("library-raw-name-input"),
+            );
+            crate::ui::theme::request_initial_focus(&response, &mut dialog.focus_requested);
+            show_dialog_error(ui, dialog.error.as_deref());
+            match crate::ui::theme::dialog_confirmation_buttons(
+                ui,
+                "Cancel",
+                "Rename",
+                true,
+                false,
+                crate::ui::theme::DialogKeyboard::CONFIRM_ON_ENTER,
+            ) {
+                crate::ui::theme::DialogAction::Cancel => close = true,
+                crate::ui::theme::DialogAction::Confirm => {
+                    match validate_library_item_name(&dialog.name, true) {
+                        Ok(()) => rename = Some((dialog.asset.clone(), dialog.name.clone())),
+                        Err(error) => {
+                            dialog.error = Some(error);
                         }
                     }
-                    crate::ui::theme::DialogAction::None => {}
                 }
-            });
+                crate::ui::theme::DialogAction::None => {}
+            }
+        });
     }
     if close {
         app.library.raw_name_dialog = None;

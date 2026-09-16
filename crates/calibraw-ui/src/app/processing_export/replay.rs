@@ -23,8 +23,15 @@ const OUTRO_HOLD_FRAMES: u32 = 60;
 const RENDER_PROGRESS_WEIGHT: f32 = 0.28;
 const BRAND_TITLE: &str = "CalibRaw";
 const BRAND_SUBTITLE: &str = "A fast, GPU-accelerated open source RAW editor.";
-const BRAND_ICON_PNG: &[u8] =
-    include_bytes!("../../../../../packaging/icons/calibraw-256.png");
+const BRAND_ICON_PNG: &[u8] = include_bytes!("../../../../../packaging/icons/calibraw-256.png");
+
+// Every hold has to outlive its own fades, otherwise a stage could leave a half-faded frame on
+// screen. These are relationships between constants, so they are checked at compile time.
+const _: () = assert!(SPLIT_HOLD_FRAMES >= REPLAY_FPS);
+const _: () = assert!(FULL_FRAME_HOLD_FRAMES >= REPLAY_FPS);
+const _: () = assert!(STAGE_HOLD_FRAMES >= REPLAY_FPS);
+const _: () = assert!(FINAL_HOLD_FRAMES >= REPLAY_FPS);
+const _: () = assert!(OUTRO_HOLD_FRAMES >= REPLAY_FPS * 2);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum ReplayStageKind {
@@ -205,11 +212,16 @@ fn ensure_ffmpeg_available() -> Result<(), String> {
             )
         })?;
     if !output.status.success() {
-        return Err(format!("FFmpeg encoder probe exited with {}", output.status));
+        return Err(format!(
+            "FFmpeg encoder probe exited with {}",
+            output.status
+        ));
     }
     let encoders = String::from_utf8_lossy(&output.stdout);
     if !encoders.contains("libx264") {
-        return Err("FFmpeg is available but does not provide the libx264 H.264 encoder".to_owned());
+        return Err(
+            "FFmpeg is available but does not provide the libx264 H.264 encoder".to_owned(),
+        );
     }
     Ok(())
 }
@@ -566,17 +578,26 @@ fn bitmap_text_width(text: &str, scale: i32) -> i32 {
     count * 5 * scale + (count - 1) * scale
 }
 
-fn draw_bitmap_text(
-    frame: &mut [u8],
-    width: u32,
-    height: u32,
-    text: &str,
-    start_x: i32,
-    start_y: i32,
+/// One line of the built-in bitmap font: where it starts, how large it is and how it blends.
+#[derive(Clone, Copy)]
+struct BitmapTextRun<'a> {
+    text: &'a str,
+    x: i32,
+    y: i32,
     scale: i32,
     color: [u8; 3],
     alpha: u8,
-) {
+}
+
+fn draw_bitmap_text(frame: &mut [u8], width: u32, height: u32, run: BitmapTextRun<'_>) {
+    let BitmapTextRun {
+        text,
+        x: start_x,
+        y: start_y,
+        scale,
+        color,
+        alpha,
+    } = run;
     let mut cursor_x = start_x;
     for character in text.chars() {
         let rows = glyph_rows(character);
@@ -616,18 +637,19 @@ fn brand_outro_frame(width: u32, height: u32) -> Result<Vec<u8>, String> {
     let icon_side = ((short_edge as f32 * 0.18).round() as u32).clamp(96, 256);
     let icon = image::imageops::resize(&icon, icon_side, icon_side, FilterType::Lanczos3);
 
-    let brand_scale = fitted_bitmap_scale(BRAND_TITLE, width * 3 / 4, (short_edge / 90).clamp(7, 14));
-    let subtitle_scale =
-        fitted_bitmap_scale(BRAND_SUBTITLE, width * 9 / 10, (short_edge / 230).clamp(3, 6));
+    let brand_scale =
+        fitted_bitmap_scale(BRAND_TITLE, width * 3 / 4, (short_edge / 90).clamp(7, 14));
+    let subtitle_scale = fitted_bitmap_scale(
+        BRAND_SUBTITLE,
+        width * 9 / 10,
+        (short_edge / 230).clamp(3, 6),
+    );
     let brand_height = 7 * brand_scale;
     let subtitle_height = 7 * subtitle_scale;
     let gap_after_icon = (short_edge as f32 * 0.055).round() as i32;
     let gap_after_title = (short_edge as f32 * 0.035).round() as i32;
-    let group_height = icon_side as i32
-        + gap_after_icon
-        + brand_height
-        + gap_after_title
-        + subtitle_height;
+    let group_height =
+        icon_side as i32 + gap_after_icon + brand_height + gap_after_title + subtitle_height;
     let group_top = ((height as i32 - group_height) / 2).max(0);
 
     let icon_x = (width.saturating_sub(icon_side) / 2) as usize;
@@ -646,27 +668,30 @@ fn brand_outro_frame(width: u32, height: u32) -> Result<Vec<u8>, String> {
         &mut frame,
         width,
         height,
-        BRAND_TITLE,
-        brand_x,
-        brand_y,
-        brand_scale,
-        [255, 255, 255],
-        255,
+        BitmapTextRun {
+            text: BRAND_TITLE,
+            x: brand_x,
+            y: brand_y,
+            scale: brand_scale,
+            color: [255, 255, 255],
+            alpha: 255,
+        },
     );
 
     let subtitle_y = brand_y + brand_height + gap_after_title;
-    let subtitle_x =
-        (width as i32 - bitmap_text_width(BRAND_SUBTITLE, subtitle_scale)) / 2;
+    let subtitle_x = (width as i32 - bitmap_text_width(BRAND_SUBTITLE, subtitle_scale)) / 2;
     draw_bitmap_text(
         &mut frame,
         width,
         height,
-        BRAND_SUBTITLE,
-        subtitle_x,
-        subtitle_y,
-        subtitle_scale,
-        [205, 205, 205],
-        255,
+        BitmapTextRun {
+            text: BRAND_SUBTITLE,
+            x: subtitle_x,
+            y: subtitle_y,
+            scale: subtitle_scale,
+            color: [205, 205, 205],
+            alpha: 255,
+        },
     );
     Ok(frame)
 }
@@ -678,8 +703,16 @@ fn rounded_rect_contains(x: i32, y: i32, width: i32, height: i32, radius: i32) -
     if x >= radius && x < width - radius || y >= radius && y < height - radius {
         return true;
     }
-    let cx = if x < radius { radius } else { width - radius - 1 };
-    let cy = if y < radius { radius } else { height - radius - 1 };
+    let cx = if x < radius {
+        radius
+    } else {
+        width - radius - 1
+    };
+    let cy = if y < radius {
+        radius
+    } else {
+        height - radius - 1
+    };
     let dx = x - cx;
     let dy = y - cy;
     dx * dx + dy * dy <= radius * radius
@@ -721,12 +754,14 @@ fn draw_stage_title(frame: &mut [u8], width: u32, height: u32, title: &str, alph
         frame,
         width,
         height,
-        &title,
-        box_x + padding_x,
-        box_y + padding_y,
-        scale,
-        [255, 255, 255],
-        text_alpha,
+        BitmapTextRun {
+            text: &title,
+            x: box_x + padding_x,
+            y: box_y + padding_y,
+            scale,
+            color: [255, 255, 255],
+            alpha: text_alpha,
+        },
     );
 }
 
@@ -805,42 +840,44 @@ fn run_edit_replay_worker(
 
     let original_state = ReplayRenderState::original(snapshot.original_exposure);
     let mut rendered = Vec::with_capacity(render_count);
-    let mut render_endpoint = |index: usize,
-                               label: &str,
-                               state: &ReplayRenderState|
-     -> Result<RenderedStill, String> {
-        let path = render_dir.path().join(format!("stage-{index:02}.png"));
-        let base = index as f32 / render_count as f32;
-        let step = 1.0 / render_count as f32;
-        let still = render_state(&snapshot, state, &path, &cancellation, |done, total| {
-            let tile_fraction = if total == 0 {
-                0.0
-            } else {
-                done as f32 / total as f32
-            };
+    let render_endpoint =
+        |index: usize, label: &str, state: &ReplayRenderState| -> Result<RenderedStill, String> {
+            let path = render_dir.path().join(format!("stage-{index:02}.png"));
+            let base = index as f32 / render_count as f32;
+            let step = 1.0 / render_count as f32;
+            let still = render_state(&snapshot, state, &path, &cancellation, |done, total| {
+                let tile_fraction = if total == 0 {
+                    0.0
+                } else {
+                    done as f32 / total as f32
+                };
+                send_progress(
+                    &sender,
+                    &repaint,
+                    RENDER_PROGRESS_WEIGHT * (base + step * tile_fraction),
+                    format!("Rendering {label}…"),
+                    0,
+                    0,
+                );
+            })?;
             send_progress(
                 &sender,
                 &repaint,
-                RENDER_PROGRESS_WEIGHT * (base + step * tile_fraction),
-                format!("Rendering {label}…"),
+                RENDER_PROGRESS_WEIGHT * ((index + 1) as f32 / render_count as f32),
+                format!("Rendered {label}"),
                 0,
                 0,
             );
-        })?;
-        send_progress(
-            &sender,
-            &repaint,
-            RENDER_PROGRESS_WEIGHT * ((index + 1) as f32 / render_count as f32),
-            format!("Rendered {label}"),
-            0,
-            0,
-        );
-        Ok(still)
-    };
+            Ok(still)
+        };
 
     rendered.push(render_endpoint(0, "original", &original_state)?);
     for (stage_index, stage) in stages.iter().enumerate() {
-        rendered.push(render_endpoint(stage_index + 1, stage.kind.label(), &stage.state)?);
+        rendered.push(render_endpoint(
+            stage_index + 1,
+            stage.kind.label(),
+            &stage.state,
+        )?);
     }
     let final_state = final_render_state(&snapshot);
     let final_still = render_endpoint(render_count - 1, "final edit", &final_state)?;
@@ -872,25 +909,23 @@ fn run_edit_replay_worker(
     let mut completed_frames = 0usize;
     let mut scratch = vec![0u8; canvas_width as usize * canvas_height as usize * 3];
 
-    let mut emit = |writer: &mut ReplayFrameWriter,
-                    frame: &[u8],
-                    phase: &str|
-     -> Result<(), String> {
-        write_video_frame(writer, &cancellation, frame)?;
-        completed_frames += 1;
-        if completed_frames == total_frames || completed_frames.is_multiple_of(3) {
-            let encode_fraction = completed_frames as f32 / total_frames.max(1) as f32;
-            send_progress(
-                &sender,
-                &repaint,
-                RENDER_PROGRESS_WEIGHT + (1.0 - RENDER_PROGRESS_WEIGHT) * encode_fraction,
-                phase,
-                completed_frames,
-                total_frames,
-            );
-        }
-        Ok(())
-    };
+    let mut emit =
+        |writer: &mut ReplayFrameWriter, frame: &[u8], phase: &str| -> Result<(), String> {
+            write_video_frame(writer, &cancellation, frame)?;
+            completed_frames += 1;
+            if completed_frames == total_frames || completed_frames.is_multiple_of(3) {
+                let encode_fraction = completed_frames as f32 / total_frames.max(1) as f32;
+                send_progress(
+                    &sender,
+                    &repaint,
+                    RENDER_PROGRESS_WEIGHT + (1.0 - RENDER_PROGRESS_WEIGHT) * encode_fraction,
+                    phase,
+                    completed_frames,
+                    total_frames,
+                );
+            }
+            Ok(())
+        };
 
     split_frame(
         &original_canvas,
@@ -1027,9 +1062,16 @@ fn run_edit_replay_worker(
     if cancellation.load(Ordering::Acquire) {
         return Err("edit replay cancelled".to_owned());
     }
-    crate::file_ops::replace_file(temporary.as_ref(), &destination)
-        .map_err(|error| format!("Could not publish replay {}: {error}", destination.display()))?;
-    if let Some(parent) = destination.parent().filter(|path| !path.as_os_str().is_empty()) {
+    crate::file_ops::replace_file(temporary.as_ref(), &destination).map_err(|error| {
+        format!(
+            "Could not publish replay {}: {error}",
+            destination.display()
+        )
+    })?;
+    if let Some(parent) = destination
+        .parent()
+        .filter(|path| !path.as_os_str().is_empty())
+    {
         let _ = crate::file_ops::sync_parent_directory(parent);
     }
     let _ = temporary.keep();
@@ -1096,8 +1138,7 @@ impl CalibRawApp {
                 );
                 let _ = sender.send(ReplayExportEvent::Finished(result));
                 repaint.request_repaint();
-            })
-        {
+            }) {
             Ok(_) => {
                 self.export.task = Some(ExportTask::new(
                     ExportTaskKind::Replay,
@@ -1158,7 +1199,8 @@ impl CalibRawApp {
                         .is_some_and(|task| task.cancelling);
                     match result {
                         Ok(path) => {
-                            self.ui.notice = Some(format!("Created edit replay {}", path.display()));
+                            self.ui.notice =
+                                Some(format!("Created edit replay {}", path.display()));
                         }
                         Err(error) if was_cancelled || error.contains("cancelled") => {
                             self.ui.notice = Some("Edit replay cancelled.".to_owned());
@@ -1206,11 +1248,12 @@ mod tests {
         let original_exposure = ExposureParams::scene_referred_default();
         let mut final_exposure = original_exposure;
         final_exposure.exposure = 0.75;
-        let mut geometry = GeometryTransform::default();
-        geometry.crop = [0.1, 0.1, 0.9, 0.9];
-        geometry.quarter_turns = 1;
-        geometry.vertical_transform = 3.0;
-        let mut masks = MaskStack::default();
+        let geometry = GeometryTransform {
+            crop: [0.1, 0.1, 0.9, 0.9],
+            quarter_turns: 1,
+            vertical_transform: 3.0,
+            ..GeometryTransform::default()
+        };        let mut masks = MaskStack::default();
         let mut mask = crate::pipeline::LocalMask::new(MaskKind::Fullscreen, 1);
         mask.adjustments.exposure = 0.5;
         masks.masks.push(mask);
@@ -1226,13 +1269,8 @@ mod tests {
             });
         remove.strokes.push(remove_stroke);
 
-        let stages = replay_stage_plan(
-            original_exposure,
-            final_exposure,
-            geometry,
-            &masks,
-            &remove,
-        );
+        let stages =
+            replay_stage_plan(original_exposure, final_exposure, geometry, &masks, &remove);
         let kinds = stages.iter().map(|stage| stage.kind).collect::<Vec<_>>();
         assert_eq!(
             kinds,
@@ -1284,7 +1322,9 @@ mod tests {
     #[test]
     fn unused_remove_entries_do_not_create_a_replay_stage() {
         let mut remove = RemoveEditState::default();
-        remove.strokes.push(crate::pipeline::RemoveStroke::default());
+        remove
+            .strokes
+            .push(crate::pipeline::RemoveStroke::default());
         assert!(!remove_used(&remove));
 
         remove.strokes[0]
@@ -1353,12 +1393,7 @@ mod tests {
     }
 
     #[test]
-    fn replay_includes_longer_holds_and_brand_outro() {
-        assert!(SPLIT_HOLD_FRAMES >= REPLAY_FPS);
-        assert!(FULL_FRAME_HOLD_FRAMES >= REPLAY_FPS);
-        assert!(STAGE_HOLD_FRAMES >= REPLAY_FPS);
-        assert!(FINAL_HOLD_FRAMES >= REPLAY_FPS);
-        assert!(OUTRO_HOLD_FRAMES >= REPLAY_FPS * 2);
+    fn replay_timeline_accounts_for_every_stage_and_the_brand_outro() {
         assert_eq!(
             total_replay_frames(0),
             SPLIT_HOLD_FRAMES

@@ -35,8 +35,8 @@ struct Sampling {
 impl Sampling {
     fn new(width: u32, height: u32, geometry: GeometryTransform) -> Self {
         let extent = [
-            width.min(SAMPLE_EDGE).max(1),
-            height.min(SAMPLE_EDGE).max(1),
+            width.clamp(1, SAMPLE_EDGE),
+            height.clamp(1, SAMPLE_EDGE),
         ];
         let map =
             GeometryInverseMap::new_with_lens(geometry, None, width, height, extent[0], extent[1]);
@@ -238,10 +238,14 @@ mod tests {
         let map = GeometryInverseMap::new_with_lens(geometry, None, 8000, 6000, 256, 256);
         for (x, y) in [(0.0, 0.0), (17.0, 201.0), (255.0, 255.0)] {
             let expected = map.source_position(x, y);
-            for axis in 0..2 {
-                let actual =
-                    sampling.origin[axis] + x * sampling.step_x[axis] + y * sampling.step_y[axis];
-                assert!((actual - expected[axis]).abs() < 0.1);
+            // The sampling grid only maps the two image axes; the affine
+            // reconstruction has to match the exact inverse map on both.
+            let actual = [
+                sampling.origin[0] + x * sampling.step_x[0] + y * sampling.step_y[0],
+                sampling.origin[1] + x * sampling.step_x[1] + y * sampling.step_y[1],
+            ];
+            for (actual, expected) in actual.into_iter().zip(expected.into_iter().take(2)) {
+                assert!((actual - expected).abs() < 0.1);
             }
         }
     }

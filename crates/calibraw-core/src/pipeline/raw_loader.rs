@@ -1744,9 +1744,11 @@ mod tests {
     fn opposed_chroma_for_exposure_uses_the_adjusted_white_balance() {
         let mut raw = colored_opposed_test_raw();
         let base_temperature = raw.as_shot_temperature_kelvin().unwrap();
-        let mut exposure = ExposureParams::default();
-        exposure.temperature = temperature_offset_from_kelvin(base_temperature, 8_000.0);
-        exposure.tint = 0.2;
+        let exposure = ExposureParams {
+            temperature: temperature_offset_from_kelvin(base_temperature, 8_000.0),
+            tint: 0.2,
+            ..Default::default()
+        };
 
         let adjusted = raw
             .adjusted_white_balance_and_camera_transform(exposure.temperature, exposure.tint)

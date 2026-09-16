@@ -71,7 +71,9 @@ impl CalibRawApp {
             self.start_object_worker(mask_index, component_index, encoder, decoder, false);
         } else {
             self.ai.object_pending_target = Some((mask_index, component_index));
-            self.ai.consent = AiConsentState::Object { runtime_download_needed };
+            self.ai.consent = AiConsentState::Object {
+                runtime_download_needed,
+            };
         }
     }
 

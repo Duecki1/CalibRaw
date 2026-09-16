@@ -123,11 +123,7 @@ impl Sidebar {
         });
     }
 
-    fn register_vertical_card_actions(
-        ui: &Ui,
-        title: &'static str,
-        show_visibility: bool,
-    ) {
+    fn register_vertical_card_actions(ui: &Ui, title: &'static str, show_visibility: bool) {
         let scope = crate::app::preview_visibility::PreviewVisibility::current_scope(ui.ctx());
         let id = Self::vertical_card_actions_id();
         ui.ctx().data_mut(|data| {
@@ -148,10 +144,7 @@ impl Sidebar {
         });
     }
 
-    fn take_pending_vertical_card_action(
-        ctx: &egui::Context,
-        title: &'static str,
-    ) -> CardAction {
+    fn take_pending_vertical_card_action(ctx: &egui::Context, title: &'static str) -> CardAction {
         let scope = crate::app::preview_visibility::PreviewVisibility::current_scope(ctx);
         let id = Self::pending_vertical_card_action_id(scope, title);
         ctx.data_mut(|data| {
@@ -197,10 +190,7 @@ impl Sidebar {
             .clicked()
             {
                 if entry.show_visibility {
-                    crate::app::preview_visibility::PreviewVisibility::show(
-                        ui.ctx(),
-                        entry.title,
-                    );
+                    crate::app::preview_visibility::PreviewVisibility::show(ui.ctx(), entry.title);
                 }
                 Self::queue_vertical_card_action(
                     ui.ctx(),
@@ -224,11 +214,7 @@ impl Sidebar {
                     },
                     !visible,
                     size,
-                    &format!(
-                        "{} {}",
-                        if visible { "Hide" } else { "Show" },
-                        entry.title
-                    ),
+                    &format!("{} {}", if visible { "Hide" } else { "Show" }, entry.title),
                 )
                 .clicked()
                 {
@@ -248,26 +234,6 @@ impl Sidebar {
         title: &'static str,
         default_open: bool,
         foldable: bool,
-        enabled: bool,
-        contents: impl FnOnce(&mut Ui),
-    ) -> CardAction {
-        Self::adjustment_card_with_enabled(
-            ui,
-            title,
-            default_open,
-            foldable,
-            enabled,
-            enabled,
-            contents,
-        )
-    }
-
-    pub(super) fn adjustment_card_with_enabled(
-        ui: &mut Ui,
-        title: &'static str,
-        default_open: bool,
-        foldable: bool,
-        enabled: bool,
         controls_enabled: bool,
         contents: impl FnOnce(&mut Ui),
     ) -> CardAction {
@@ -276,7 +242,6 @@ impl Sidebar {
             title,
             default_open,
             foldable,
-            enabled,
             controls_enabled,
             true,
             contents,
@@ -288,7 +253,6 @@ impl Sidebar {
         title: &'static str,
         default_open: bool,
         foldable: bool,
-        enabled: bool,
         controls_enabled: bool,
         contents: impl FnOnce(&mut Ui),
     ) -> CardAction {
@@ -297,19 +261,20 @@ impl Sidebar {
             title,
             default_open,
             foldable,
-            enabled,
             controls_enabled,
             false,
             contents,
         )
     }
 
+    /// `controls_enabled` only greys out the card body; the header (fold, reset, preview eye)
+    /// stays interactive so a disabled card can still be re-enabled. Pass an already-`&&`ed
+    /// expression – there is deliberately no second “card enabled” flag to keep in sync.
     fn adjustment_card_controls(
         ui: &mut Ui,
         title: &'static str,
         default_open: bool,
         foldable: bool,
-        enabled: bool,
         controls_enabled: bool,
         show_visibility: bool,
         contents: impl FnOnce(&mut Ui),
@@ -317,7 +282,6 @@ impl Sidebar {
         let visible = !show_visibility
             || crate::app::preview_visibility::PreviewVisibility::visible(ui.ctx(), title);
         let controls_enabled = controls_enabled && visible;
-        let _ = enabled;
         let mut action = CardAction::None;
         crate::ui::theme::content_card(ui, |ui| {
             ui.push_id(title, |ui| {
@@ -415,10 +379,7 @@ mod tests {
     use super::*;
     use crate::app::preview_visibility::PreviewVisibility;
 
-    fn optional_text_rect(
-        shapes: &[egui::epaint::ClippedShape],
-        text: &str,
-    ) -> Option<egui::Rect> {
+    fn optional_text_rect(shapes: &[egui::epaint::ClippedShape], text: &str) -> Option<egui::Rect> {
         fn find(shape: &egui::Shape, text: &str) -> Option<egui::Rect> {
             match shape {
                 egui::Shape::Text(shape) if shape.galley.text() == text => {
@@ -446,7 +407,6 @@ mod tests {
                 "Mask Properties",
                 true,
                 false,
-                true,
                 true,
                 |ui| {
                     assert!(ui.is_enabled());
