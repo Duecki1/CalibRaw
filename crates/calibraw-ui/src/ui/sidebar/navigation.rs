@@ -51,7 +51,7 @@ impl Sidebar {
     fn show_sidebar_header(ui: &mut Ui, app: &mut CalibRawApp) {
         let title = match app.ui.sidebar_tab {
             SidebarTab::Adjustments => "Edit",
-            SidebarTab::Crop => "Crop & Straighten",
+            SidebarTab::Crop => "Crop",
             SidebarTab::Masks => "Masking",
             SidebarTab::Inpainting => "Inpaint",
             SidebarTab::Export => "Export",
@@ -227,7 +227,7 @@ impl Sidebar {
                     SidebarTab::Crop,
                     regular::CROP,
                     "Crop",
-                    "Crop and straighten",
+                    "Crop",
                 ),
                 (SidebarTab::Masks, regular::SELECTION, "Mask", "Masking"),
                 (
@@ -563,7 +563,7 @@ impl Sidebar {
             ui.add_space(5.0);
             for (tab, icon, tooltip) in [
                 (SidebarTab::Adjustments, UiIcon::Adjustments, "Edit"),
-                (SidebarTab::Crop, UiIcon::Crop, "Crop and straighten"),
+                (SidebarTab::Crop, UiIcon::Crop, "Crop"),
                 (SidebarTab::Masks, UiIcon::Mask, "Masking"),
                 (
                     SidebarTab::Inpainting,
@@ -646,7 +646,7 @@ impl Sidebar {
                     SidebarTab::Crop,
                     regular::CROP,
                     "Crop",
-                    "Crop and straighten",
+                    "Crop",
                 ),
                 (SidebarTab::Masks, regular::SELECTION, "Mask", "Masking"),
                 (
