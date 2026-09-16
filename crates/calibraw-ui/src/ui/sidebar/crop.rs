@@ -20,30 +20,32 @@ impl Sidebar {
         if app.develop_ui.crop_constraint_reference.is_none() {
             app.develop_ui.crop_constraint_reference = Some(app.develop.geometry.crop);
         }
-        crate::ui::theme::section_card(ui, "Crop", |ui| {
+        crate::ui::theme::section_card(ui, "Aspect ratio", |ui| {
             let previous_aspect = app.develop.geometry.aspect_ratio;
-            crate::ui::theme::form_combo(
-                ui,
-                "Aspect ratio",
+            crate::ui::theme::combo_box(
                 "crop-aspect-ratio",
                 app.develop.geometry.aspect_ratio.label(),
-                150.0,
-                |ui| {
-                    for aspect in [
-                        CropAspectRatio::Free,
-                        CropAspectRatio::Original,
-                        CropAspectRatio::Square,
-                        CropAspectRatio::FourThree,
-                        CropAspectRatio::ThreeFour,
-                        CropAspectRatio::ThreeTwo,
-                        CropAspectRatio::TwoThree,
-                        CropAspectRatio::SixteenNine,
-                        CropAspectRatio::NineSixteen,
-                    ] {
-                        ui.selectable_value(&mut app.develop.geometry.aspect_ratio, aspect, aspect.label());
-                    }
-                },
-            );
+                ui.available_width().max(1.0),
+            )
+            .show_ui(ui, |ui| {
+                for aspect in [
+                    CropAspectRatio::Free,
+                    CropAspectRatio::Original,
+                    CropAspectRatio::Square,
+                    CropAspectRatio::FourThree,
+                    CropAspectRatio::ThreeFour,
+                    CropAspectRatio::ThreeTwo,
+                    CropAspectRatio::TwoThree,
+                    CropAspectRatio::SixteenNine,
+                    CropAspectRatio::NineSixteen,
+                ] {
+                    ui.selectable_value(
+                        &mut app.develop.geometry.aspect_ratio,
+                        aspect,
+                        aspect.label(),
+                    );
+                }
+            });
             if app.develop.geometry.aspect_ratio != previous_aspect {
                 Self::apply_crop_aspect(app, source_dimensions.0, source_dimensions.1);
                 app.develop_ui.crop_constraint_reference = Some(app.develop.geometry.crop);
