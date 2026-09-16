@@ -2,11 +2,7 @@ use super::{effect_card, effect_color, effect_slider};
 use crate::pipeline::{effect_params::edge_glow, EdgeGlowEffectSettings, MaskEffect};
 use eframe::egui::Ui;
 
-pub(crate) fn show(
-    ui: &mut Ui,
-    settings: &mut EdgeGlowEffectSettings,
-    enabled: &mut bool,
-) -> bool {
+pub(crate) fn show(ui: &mut Ui, settings: &mut EdgeGlowEffectSettings, enabled: &mut bool) -> bool {
     effect_card(
         ui,
         MaskEffect::EdgeGlow,

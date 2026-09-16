@@ -48,13 +48,18 @@ impl CalibRawApp {
                     Self::show_hugging_face_privacy(
                         ui,
                         model_download_needed,
-                        Some((
+                        &[(
                             "MIT model license",
                             "https://github.com/ZhengPeng7/BiRefNet/blob/main/LICENSE",
-                        )),
+                        )],
                     );
                     self.show_manual_runtime_warning(ui);
-                    match self.show_ai_consent_buttons(ui, "Consent, download and continue") {
+                    let runtime_ready = self.ai_runtime_ready();
+                    match Self::show_ai_consent_buttons(
+                        ui,
+                        "Consent, download and continue",
+                        runtime_ready,
+                    ) {
                         crate::ui::theme::DialogAction::Confirm => {
                             self.ai.consent = AiConsentState::None;
                             self.start_subject_worker(
@@ -109,13 +114,18 @@ impl CalibRawApp {
                     Self::show_hugging_face_privacy(
                         ui,
                         model_download_needed,
-                        Some((
+                        &[(
                             "Apache-2.0 model license",
                             "https://github.com/facebookresearch/sam2/blob/main/LICENSE",
-                        )),
+                        )],
                     );
                     self.show_manual_runtime_warning(ui);
-                    match self.show_ai_consent_buttons(ui, "Consent, download and continue") {
+                    let runtime_ready = self.ai_runtime_ready();
+                    match Self::show_ai_consent_buttons(
+                        ui,
+                        "Consent, download and continue",
+                        runtime_ready,
+                    ) {
                         crate::ui::theme::DialogAction::Confirm => {
                             self.ai.consent = AiConsentState::None;
                             if let Some((mask_index, component_index)) = self.ai.object_pending_target.take() {

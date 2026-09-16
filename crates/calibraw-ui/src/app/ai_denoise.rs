@@ -486,33 +486,27 @@ impl CalibRawApp {
                     runtime_download_needed,
                 );
                 ui.label("Inference is local; no photograph is uploaded.");
-                ui.label("Hugging Face receives ordinary connection data such as your IP address and request time. CalibRaw sends no account identifier or telemetry.");
-                self.show_manual_runtime_warning(ui);
-                ui.horizontal_wrapped(|ui| {
-                    ui.hyperlink_to(
-                        "Hugging Face privacy policy",
-                        "https://huggingface.co/privacy",
-                    );
-                    if model_download_needed {
-                        ui.separator();
-                        ui.hyperlink_to(
+                Self::show_hugging_face_privacy(
+                    ui,
+                    model_download_needed,
+                    &[
+                        (
                             "RawNIND model card",
                             "https://github.com/darktable-org/darktable-ai/tree/release-5.6.0/models/rawdenoise-nind",
-                        );
-                        ui.separator();
-                        ui.hyperlink_to(
+                        ),
+                        (
                             "GPL-3.0 license",
                             "https://github.com/darktable-org/darktable-ai/blob/release-5.6.0/LICENSE",
-                        );
-                    }
-                });
-                match crate::ui::theme::dialog_confirmation_buttons(
+                        ),
+                    ],
+                );
+                self.show_manual_runtime_warning(ui);
+                // AI Denoise does not gate on the runtime here: this consent dialog starts the
+                // runtime download itself, so the accept button has to stay reachable.
+                match Self::show_ai_consent_buttons(
                     ui,
-                    "Cancel",
                     "Consent, download and apply",
                     true,
-                    false,
-                    crate::ui::theme::DialogKeyboard::CLOSE_ONLY,
                 ) {
                     crate::ui::theme::DialogAction::Confirm => {
                         self.ai.consent = AiConsentState::None;

@@ -17,6 +17,7 @@ mod widgets;
 
 /// Desktop-only “save as” picker. The returned path always carries `extensions[0]`, so the
 /// encoder downstream of it never sees a file it cannot open.
+#[cfg(not(target_os = "android"))]
 pub(crate) fn choose_save_path(
     filter: String,
     extensions: &'static [&'static str],
@@ -75,6 +76,7 @@ pub(crate) fn choose_edit_replay_file_path(
 }
 
 /// Extension list for [`choose_edit_replay_file_path`]; also the container FFmpeg is asked for.
+#[cfg(not(target_os = "android"))]
 const MP4_EXTENSIONS: &[&str] = &["mp4"];
 
 #[cfg(any(target_os = "android", test))]
