@@ -331,9 +331,9 @@ pub enum ExportResizeMode {
 impl ExportResizeMode {
     pub const fn label(self) -> &'static str {
         match self {
-            Self::Original => "Original size",
-            Self::LongEdge => "Long edge",
-            Self::ShortEdge => "Short edge",
+            Self::Original => "Original",
+            Self::LongEdge => "Long Edge",
+            Self::ShortEdge => "Short Edge",
             Self::Width => "Width",
             Self::Height => "Height",
             Self::Percentage => "Percentage",
