@@ -96,57 +96,57 @@ impl CalibRawApp {
             ctx,
             crate::ui::theme::DIALOG_WIDTH_DEFAULT,
         )
-            .id(egui::Id::new("foreground-operation-progress"))
-            .movable(false)
-            .show(ctx, |ui| {
-                ui.label(&progress.phase);
-                if let Some(detail) = &progress.detail {
-                    ui.label(egui::RichText::new(detail).small());
+        .id(egui::Id::new("foreground-operation-progress"))
+        .movable(false)
+        .show(ctx, |ui| {
+            ui.label(&progress.phase);
+            if let Some(detail) = &progress.detail {
+                ui.label(egui::RichText::new(detail).small());
+            }
+            ui.add_space(6.0);
+            match progress.value {
+                ForegroundProgressValue::Indeterminate => {
+                    ui.add(egui::ProgressBar::new(0.0).animate(!cancelling));
                 }
-                ui.add_space(6.0);
-                match progress.value {
-                    ForegroundProgressValue::Indeterminate => {
+                ForegroundProgressValue::Units {
+                    completed,
+                    total,
+                    ref unit,
+                } => {
+                    if total == 0 {
                         ui.add(egui::ProgressBar::new(0.0).animate(!cancelling));
-                    }
-                    ForegroundProgressValue::Units {
-                        completed,
-                        total,
-                        ref unit,
-                    } => {
-                        if total == 0 {
-                            ui.add(egui::ProgressBar::new(0.0).animate(!cancelling));
-                        } else {
-                            let fraction = (completed as f32 / total as f32).clamp(0.0, 1.0);
-                            let text = unit.as_deref().map_or_else(
-                                || format!("{completed} / {total}"),
-                                |unit| format!("{completed} / {total} {unit}"),
-                            );
-                            ui.add(egui::ProgressBar::new(fraction).text(text));
-                        }
+                    } else {
+                        let fraction = (completed as f32 / total as f32).clamp(0.0, 1.0);
+                        let text = unit.as_deref().map_or_else(
+                            || format!("{completed} / {total}"),
+                            |unit| format!("{completed} / {total} {unit}"),
+                        );
+                        ui.add(egui::ProgressBar::new(fraction).text(text));
                     }
                 }
-                if cancelling {
-                    ui.label(egui::RichText::new("Stopping at the next safe point…").small());
-                }
-                crate::ui::theme::dialog_button_row(ui, |ui| {
-                    cancel |= ui
-                        .add_enabled_ui(!cancelling, |ui| {
-                            crate::ui::theme::secondary_button(ui, "Cancel")
-                        })
-                        .inner
-                        .clicked();
-                });
-                if !cancel
-                    && !cancelling
-                    && crate::ui::theme::dialog_keyboard_action(
-                        ui,
-                        crate::ui::theme::DialogKeyboard::CLOSE_ONLY,
-                        false,
-                    ) == crate::ui::theme::DialogAction::Cancel
-                {
-                    cancel = true;
-                }
+            }
+            if cancelling {
+                ui.label(egui::RichText::new("Stopping at the next safe point…").small());
+            }
+            crate::ui::theme::dialog_button_row(ui, |ui| {
+                cancel |= ui
+                    .add_enabled_ui(!cancelling, |ui| {
+                        crate::ui::theme::secondary_button(ui, "Cancel")
+                    })
+                    .inner
+                    .clicked();
             });
+            if !cancel
+                && !cancelling
+                && crate::ui::theme::dialog_keyboard_action(
+                    ui,
+                    crate::ui::theme::DialogKeyboard::CLOSE_ONLY,
+                    false,
+                ) == crate::ui::theme::DialogAction::Cancel
+            {
+                cancel = true;
+            }
+        });
         if cancel {
             self.cancel_foreground_operation();
         }

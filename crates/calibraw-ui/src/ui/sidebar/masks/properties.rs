@@ -128,7 +128,6 @@ impl Sidebar {
             "Mask type",
             true,
             false,
-            enabled_before,
             true,
             |ui| {
                 ui.add_space(crate::ui::theme::SPACE_XS);

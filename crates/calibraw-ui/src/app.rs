@@ -1122,10 +1122,18 @@ pub(crate) enum OnnxRuntimeMode {
 pub(crate) enum AiConsentState {
     #[default]
     None,
-    Subject { runtime_download_needed: bool },
-    Object { runtime_download_needed: bool },
-    Denoise { runtime_download_needed: bool },
-    Remove { runtime_download_needed: bool },
+    Subject {
+        runtime_download_needed: bool,
+    },
+    Object {
+        runtime_download_needed: bool,
+    },
+    Denoise {
+        runtime_download_needed: bool,
+    },
+    Remove {
+        runtime_download_needed: bool,
+    },
 }
 
 impl AiConsentState {

@@ -550,7 +550,9 @@ impl CalibRawApp {
                 }
                 self.start_subject_worker(path, false);
             } else {
-                self.ai.consent = AiConsentState::Subject { runtime_download_needed };
+                self.ai.consent = AiConsentState::Subject {
+                    runtime_download_needed,
+                };
                 self.egui_ctx.request_repaint();
             }
         } else {
@@ -601,7 +603,9 @@ impl CalibRawApp {
                 self.start_object_worker(mask_index, component_index, encoder, decoder, false);
             } else {
                 self.ai.object_pending_target = Some((mask_index, component_index));
-                self.ai.consent = AiConsentState::Object { runtime_download_needed };
+                self.ai.consent = AiConsentState::Object {
+                    runtime_download_needed,
+                };
                 self.egui_ctx.request_repaint();
             }
             return;

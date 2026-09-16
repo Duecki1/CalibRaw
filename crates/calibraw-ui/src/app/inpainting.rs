@@ -206,7 +206,9 @@ impl CalibRawApp {
         } else {
             self.inpaint.pending_brush = Some(brush);
             self.inpaint.pending_retouch = None;
-            self.ai.consent = AiConsentState::Remove { runtime_download_needed };
+            self.ai.consent = AiConsentState::Remove {
+                runtime_download_needed,
+            };
             self.egui_ctx.request_repaint();
         }
     }
@@ -252,7 +254,10 @@ impl CalibRawApp {
     }
 
     pub(crate) fn show_remove_model_dialog(&mut self, ctx: &egui::Context, frame: &eframe::Frame) {
-        let AiConsentState::Remove { runtime_download_needed } = self.ai.consent else {
+        let AiConsentState::Remove {
+            runtime_download_needed,
+        } = self.ai.consent
+        else {
             return;
         };
         let model_download_needed =
@@ -286,42 +291,22 @@ impl CalibRawApp {
                     &crate::remove::BIG_LAMA_MODEL_SHA256_HEX[..12]
                 ));
             }
-            #[cfg(not(target_os = "android"))]
-            if runtime_download_needed {
-                Self::show_automatic_onnx_runtime_download_details(ui);
-            }
-            if model_download_needed && runtime_download_needed {
-                ui.separator();
-                ui.label("CalibRaw downloads and verifies the model first, followed by ONNX Runtime. Both are cached locally.");
-            }
-            ui.label("Inference is local. No photograph or Remove stroke is uploaded.");
-            ui.label(concat!(
-                "When you continue, your device connects directly to Hugging Face. Hugging Face ",
-                "receives connection data such as your IP address and request time under its privacy ",
-                "policy. CalibRaw sends no account identifier or telemetry."
-            ));
-            ui.horizontal_wrapped(|ui| {
-                ui.hyperlink_to("Hugging Face privacy policy", "https://huggingface.co/privacy");
-                if model_download_needed {
-                    ui.separator();
-                    ui.hyperlink_to("Big-LaMa ONNX model card", "https://huggingface.co/Carve/LaMa-ONNX");
-                }
-            });
-            #[cfg(not(target_os = "android"))]
-            if self.ai.runtime_mode == OnnxRuntimeMode::Manual && self.ai.runtime_path.is_none() {
-                ui.colored_label(
-                    egui::Color32::YELLOW,
-                    "Manual runtime mode needs a trusted local ONNX Runtime library. Select one in Settings or switch to Automatic.",
-                );
-            }
-            match crate::ui::theme::dialog_confirmation_buttons(
+            self.show_ai_consent_runtime_details(
                 ui,
-                "Cancel",
-                "Consent, download and continue",
-                self.ai_runtime_ready(),
-                false,
-                crate::ui::theme::DialogKeyboard::CLOSE_ONLY,
-            ) {
+                model_download_needed,
+                runtime_download_needed,
+            );
+            ui.label("Inference is local. No photograph or Remove stroke is uploaded.");
+            Self::show_hugging_face_privacy(
+                ui,
+                model_download_needed,
+                Some((
+                    "Big-LaMa ONNX model card",
+                    "https://huggingface.co/Carve/LaMa-ONNX",
+                )),
+            );
+            self.show_manual_runtime_warning(ui);
+            match self.show_ai_consent_buttons(ui, "Consent, download and continue") {
                 crate::ui::theme::DialogAction::Confirm => {
                     self.ai.consent = AiConsentState::None;
                     if let Some(brush) = self.inpaint.pending_brush.take() {

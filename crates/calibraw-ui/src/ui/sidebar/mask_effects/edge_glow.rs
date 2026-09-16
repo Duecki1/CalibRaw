@@ -1,16 +1,19 @@
-use super::{effect_card_action, effect_color, effect_slider};
+use super::{effect_card, effect_color, effect_slider};
 use crate::pipeline::{effect_params::edge_glow, EdgeGlowEffectSettings, MaskEffect};
 use eframe::egui::Ui;
 
-pub(crate) fn show(ui: &mut Ui, settings: &mut EdgeGlowEffectSettings, enabled: &mut bool) -> bool {
-    let mut changed = false;
-    let action = super::super::Sidebar::adjustment_card(
+pub(crate) fn show(
+    ui: &mut Ui,
+    settings: &mut EdgeGlowEffectSettings,
+    enabled: &mut bool,
+) -> bool {
+    effect_card(
         ui,
-        MaskEffect::EdgeGlow.label(),
-        true,
-        false,
-        *enabled,
-        |ui| {
+        MaskEffect::EdgeGlow,
+        settings,
+        enabled,
+        |ui, settings| {
+            let mut changed = false;
             changed |= effect_slider(ui, &mut settings.amount, edge_glow::AMOUNT);
             changed |= effect_slider(ui, &mut settings.edge_width, edge_glow::EDGE_WIDTH);
             changed |= effect_slider(ui, &mut settings.detail, edge_glow::DETAIL);
@@ -21,7 +24,7 @@ pub(crate) fn show(ui: &mut Ui, settings: &mut EdgeGlowEffectSettings, enabled: 
                 &mut settings.color,
                 edge_glow::COLOR,
             );
+            changed
         },
-    );
-    changed | effect_card_action(action, settings, enabled)
+    )
 }

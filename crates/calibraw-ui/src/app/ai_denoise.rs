@@ -163,7 +163,9 @@ impl CalibRawApp {
             }
             self.start_ai_denoise(frame, false);
         } else {
-            self.ai.consent = AiConsentState::Denoise { runtime_download_needed };
+            self.ai.consent = AiConsentState::Denoise {
+                runtime_download_needed,
+            };
             self.egui_ctx.request_repaint();
         }
     }
@@ -451,7 +453,10 @@ impl CalibRawApp {
     }
 
     pub(crate) fn show_ai_denoise_dialogs(&mut self, ctx: &egui::Context, frame: &eframe::Frame) {
-        if let AiConsentState::Denoise { runtime_download_needed } = self.ai.consent {
+        if let AiConsentState::Denoise {
+            runtime_download_needed,
+        } = self.ai.consent
+        {
             let model_download_needed =
                 !crate::ai_denoise::models_are_verified(&self.rawnind_model_dir());
             let title = match (model_download_needed, runtime_download_needed) {
@@ -475,25 +480,14 @@ impl CalibRawApp {
                         RAWNIND_PACKAGE_BYTES as f64 / 1_000_000.0
                     ));
                 }
-                #[cfg(not(target_os = "android"))]
-                if runtime_download_needed {
-                    Self::show_automatic_onnx_runtime_download_details(ui);
-                }
-                if model_download_needed && runtime_download_needed {
-                    ui.separator();
-                    ui.label("CalibRaw downloads and verifies the model package first, followed by ONNX Runtime. Both are cached locally.");
-                }
+                self.show_ai_consent_runtime_details(
+                    ui,
+                    model_download_needed,
+                    runtime_download_needed,
+                );
                 ui.label("Inference is local; no photograph is uploaded.");
                 ui.label("Hugging Face receives ordinary connection data such as your IP address and request time. CalibRaw sends no account identifier or telemetry.");
-                #[cfg(not(target_os = "android"))]
-                if self.ai.runtime_mode == OnnxRuntimeMode::Manual
-                    && self.ai.runtime_path.is_none()
-                {
-                    ui.colored_label(
-                        egui::Color32::YELLOW,
-                        "Manual runtime mode needs a trusted local ONNX Runtime library. Select one in Settings or switch to Automatic.",
-                    );
-                }
+                self.show_manual_runtime_warning(ui);
                 ui.horizontal_wrapped(|ui| {
                     ui.hyperlink_to(
                         "Hugging Face privacy policy",

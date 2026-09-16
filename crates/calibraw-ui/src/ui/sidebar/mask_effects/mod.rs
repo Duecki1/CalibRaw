@@ -14,11 +14,57 @@ pub(super) mod tilt_shift;
 use super::{adjustment_slider_with_reset, MaskEffect, Ui};
 use crate::pipeline::effect_params::{ColorParamSpec, FloatParamSpec};
 
+/// The shared chrome around every mask-effect card: its title, enable state and
+/// reset action. Each effect contributes only its own controls through `body`,
+/// which reports whether any of them changed.
+fn effect_card<Settings>(
+    ui: &mut Ui,
+    effect: MaskEffect,
+    settings: &mut Settings,
+    enabled: &mut bool,
+    body: impl FnOnce(&mut Ui, &mut Settings) -> bool,
+) -> bool
+where
+    Settings: Default,
+{
+    let mut changed = false;
+    let action = super::Sidebar::adjustment_card(
+        ui,
+        effect.label(),
+        true,
+        false,
+        *enabled,
+        |ui| changed = body(ui, settings),
+    );
+    // Reset always has to be applied, so the card action is combined with `|`
+    // instead of short-circuiting.
+    changed | apply_card_action(action, settings)
+}
+
+fn apply_card_action<Settings>(
+    action: super::adjustment_cards::CardAction,
+    settings: &mut Settings,
+) -> bool
+where
+    Settings: Default,
+{
+    use super::adjustment_cards::CardAction;
+
+    match action {
+        CardAction::None => false,
+        CardAction::Toggle => false,
+        CardAction::Reset => {
+            *settings = Settings::default();
+            true
+        }
+    }
+}
+
 pub(super) fn effect_description(effect: MaskEffect) -> Option<&'static str> {
     match effect {
-        MaskEffect::LensBlur => {
-            Some("Uses an aperture-shaped scene-linear blur for natural bokeh.")
-        }
+        MaskEffect::LensBlur => Some(
+            "Uses an aperture-shaped scene-linear blur for natural bokeh.",
+        ),
         MaskEffect::LightRays => Some(
             "The mask is the light source. Rays converge on the source point and travel beyond the mask.",
         ),
@@ -30,22 +76,6 @@ pub(super) fn effect_description(effect: MaskEffect) -> Option<&'static str> {
         ),
         _ => None,
     }
-}
-
-fn effect_card_action<T: Default>(
-    action: super::adjustment_cards::CardAction,
-    settings: &mut T,
-    _enabled: &mut bool,
-) -> bool {
-    use super::adjustment_cards::CardAction;
-    match action {
-        CardAction::None => return false,
-        CardAction::Toggle => return false,
-        CardAction::Reset => {
-            *settings = T::default();
-        }
-    }
-    true
 }
 
 fn effect_slider(ui: &mut Ui, value: &mut f32, spec: FloatParamSpec) -> bool {
@@ -107,10 +137,9 @@ mod tests {
         macro_rules! check {
             ($field:ident) => {{
                 let mut mask = before.clone();
-                assert!(effect_card_action(
+                assert!(apply_card_action(
                     super::super::adjustment_cards::CardAction::Reset,
                     &mut mask.effect_settings.$field,
-                    &mut mask.common.enabled
                 ));
                 let mut expected = before.clone();
                 expected.effect_settings.$field = Default::default();

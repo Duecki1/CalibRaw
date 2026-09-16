@@ -75,30 +75,30 @@ impl CalibRawApp {
             ctx,
             crate::ui::theme::DIALOG_WIDTH_WIDE,
         )
-            .resizable(true)
-            .show(ctx, |ui| {
-                ui.label("CalibRaw was unable to write the edit sidecar.");
-                ui.add_space(6.0);
-                ui.add(
-                    egui::Label::new(egui::RichText::new(&message).monospace())
-                        .wrap()
-                        .selectable(true),
-                );
-                ui.add_space(6.0);
-                ui.small("This error was added to the log in Settings → Diagnostics.");
-                match crate::ui::theme::dialog_confirmation_buttons(
-                    ui,
-                    "Close",
-                    "Try again",
-                    can_retry,
-                    false,
-                    crate::ui::theme::DialogKeyboard::CLOSE_ONLY,
-                ) {
-                    crate::ui::theme::DialogAction::Cancel => close = true,
-                    crate::ui::theme::DialogAction::Confirm => retry = true,
-                    crate::ui::theme::DialogAction::None => {}
-                }
-            });
+        .resizable(true)
+        .show(ctx, |ui| {
+            ui.label("CalibRaw was unable to write the edit sidecar.");
+            ui.add_space(6.0);
+            ui.add(
+                egui::Label::new(egui::RichText::new(&message).monospace())
+                    .wrap()
+                    .selectable(true),
+            );
+            ui.add_space(6.0);
+            ui.small("This error was added to the log in Settings → Diagnostics.");
+            match crate::ui::theme::dialog_confirmation_buttons(
+                ui,
+                "Close",
+                "Try again",
+                can_retry,
+                false,
+                crate::ui::theme::DialogKeyboard::CLOSE_ONLY,
+            ) {
+                crate::ui::theme::DialogAction::Cancel => close = true,
+                crate::ui::theme::DialogAction::Confirm => retry = true,
+                crate::ui::theme::DialogAction::None => {}
+            }
+        });
         if retry {
             self.persistence.sidecar_save_error_dialog = None;
             self.save_edits_now();

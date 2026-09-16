@@ -54,7 +54,9 @@ impl CalibRawApp {
             }
             self.start_subject_worker(path, false);
         } else {
-            self.ai.consent = AiConsentState::Subject { runtime_download_needed };
+            self.ai.consent = AiConsentState::Subject {
+                runtime_download_needed,
+            };
         }
     }
 

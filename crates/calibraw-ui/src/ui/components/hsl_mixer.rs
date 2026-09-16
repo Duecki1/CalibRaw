@@ -121,8 +121,7 @@ fn color_selector_button(
         ui.allocate_exact_size(egui::vec2(width, SELECTOR_HEIGHT), Sense::click());
     let interaction = crate::ui::theme::interaction_visuals(ui, &response, selected);
 
-    ui.painter()
-        .rect_filled(rect, 4.0, interaction.weak_fill);
+    ui.painter().rect_filled(rect, 4.0, interaction.weak_fill);
     ui.painter()
         .rect_stroke(rect, 4.0, interaction.stroke, StrokeKind::Inside);
 

@@ -2,7 +2,10 @@ use super::*;
 
 impl CalibRawApp {
     pub(in crate::app) fn show_subject_dialogs(&mut self, ctx: &egui::Context) {
-        if let AiConsentState::Subject { runtime_download_needed } = self.ai.consent {
+        if let AiConsentState::Subject {
+            runtime_download_needed,
+        } = self.ai.consent
+        {
             let model = self.ai.birefnet_quality.model();
             let model_download_needed = !crate::ai_masks::birefnet_model_is_verified(
                 self.ai.birefnet_quality,
@@ -35,47 +38,23 @@ impl CalibRawApp {
                             model.bytes as f64 / 1_000_000.0
                         ));
                     }
-                    #[cfg(not(target_os = "android"))]
-                    if runtime_download_needed {
-                        Self::show_automatic_onnx_runtime_download_details(ui);
-                    }
-                    if model_download_needed && runtime_download_needed {
-                        ui.separator();
-                        ui.label("CalibRaw downloads and verifies the model first, followed by ONNX Runtime. Both are cached locally.");
-                    }
+                    self.show_ai_consent_runtime_details(
+                        ui,
+                        model_download_needed,
+                        runtime_download_needed,
+                    );
                     ui.label("Subject masks use BiRefNet's calibrated soft selection directly. Not Subject is the exact inverse of the subject alpha.");
                     ui.label("Inference is local. No photograph is uploaded.");
-                    ui.label("When you continue, your device connects directly to CalibRaw Artifacts on Hugging Face. Hugging Face receives connection data such as your IP address and request time under its privacy policy. CalibRaw sends no account identifier or telemetry.");
-                    ui.horizontal_wrapped(|ui| {
-                        ui.hyperlink_to(
-                            "Hugging Face privacy policy",
-                            "https://huggingface.co/privacy",
-                        );
-                        if model_download_needed {
-                            ui.separator();
-                            ui.hyperlink_to(
-                                "MIT model license",
-                                "https://github.com/ZhengPeng7/BiRefNet/blob/main/LICENSE",
-                            );
-                        }
-                    });
-                    #[cfg(not(target_os = "android"))]
-                    if self.ai.runtime_mode == OnnxRuntimeMode::Manual
-                        && self.ai.runtime_path.is_none()
-                    {
-                        ui.colored_label(
-                            egui::Color32::YELLOW,
-                            "Manual runtime mode needs a trusted local ONNX Runtime library. Select one in Settings or switch to Automatic.",
-                        );
-                    }
-                    match crate::ui::theme::dialog_confirmation_buttons(
+                    Self::show_hugging_face_privacy(
                         ui,
-                        "Cancel",
-                        "Consent, download and continue",
-                        self.ai_runtime_ready(),
-                        false,
-                        crate::ui::theme::DialogKeyboard::CLOSE_ONLY,
-                    ) {
+                        model_download_needed,
+                        Some((
+                            "MIT model license",
+                            "https://github.com/ZhengPeng7/BiRefNet/blob/main/LICENSE",
+                        )),
+                    );
+                    self.show_manual_runtime_warning(ui);
+                    match self.show_ai_consent_buttons(ui, "Consent, download and continue") {
                         crate::ui::theme::DialogAction::Confirm => {
                             self.ai.consent = AiConsentState::None;
                             self.start_subject_worker(
@@ -94,7 +73,10 @@ impl CalibRawApp {
                 });
         }
 
-        if let AiConsentState::Object { runtime_download_needed } = self.ai.consent {
+        if let AiConsentState::Object {
+            runtime_download_needed,
+        } = self.ai.consent
+        {
             let (encoder, decoder) = self.sam21_model_paths();
             let model_download_needed =
                 !crate::ai_masks::object_models_are_verified(&encoder, &decoder);
@@ -118,46 +100,22 @@ impl CalibRawApp {
                             SAM21_MODEL_BYTES_ESTIMATE as f64 / 1_000_000.0
                         ));
                     }
-                    #[cfg(not(target_os = "android"))]
-                    if runtime_download_needed {
-                        Self::show_automatic_onnx_runtime_download_details(ui);
-                    }
-                    if model_download_needed && runtime_download_needed {
-                        ui.separator();
-                        ui.label("CalibRaw downloads and verifies the model files first, followed by ONNX Runtime. Both are cached locally.");
-                    }
-                    ui.label("Inference is local. No photograph or prompt stroke is uploaded.");
-                    ui.label("When you continue, your device connects directly to Hugging Face. Hugging Face receives connection data such as your IP address and request time under its own privacy policy. CalibRaw sends no account identifier or telemetry.");
-                    ui.horizontal_wrapped(|ui| {
-                        ui.hyperlink_to(
-                            "Hugging Face privacy policy",
-                            "https://huggingface.co/privacy",
-                        );
-                        if model_download_needed {
-                            ui.separator();
-                            ui.hyperlink_to(
-                                "Apache-2.0 model license",
-                                "https://github.com/facebookresearch/sam2/blob/main/LICENSE",
-                            );
-                        }
-                    });
-                    #[cfg(not(target_os = "android"))]
-                    if self.ai.runtime_mode == OnnxRuntimeMode::Manual
-                        && self.ai.runtime_path.is_none()
-                    {
-                        ui.colored_label(
-                            egui::Color32::YELLOW,
-                            "Manual runtime mode needs a trusted local ONNX Runtime library. Select one in Settings or switch to Automatic.",
-                        );
-                    }
-                    match crate::ui::theme::dialog_confirmation_buttons(
+                    self.show_ai_consent_runtime_details(
                         ui,
-                        "Cancel",
-                        "Consent, download and continue",
-                        self.ai_runtime_ready(),
-                        false,
-                        crate::ui::theme::DialogKeyboard::CLOSE_ONLY,
-                    ) {
+                        model_download_needed,
+                        runtime_download_needed,
+                    );
+                    ui.label("Inference is local. No photograph or prompt stroke is uploaded.");
+                    Self::show_hugging_face_privacy(
+                        ui,
+                        model_download_needed,
+                        Some((
+                            "Apache-2.0 model license",
+                            "https://github.com/facebookresearch/sam2/blob/main/LICENSE",
+                        )),
+                    );
+                    self.show_manual_runtime_warning(ui);
+                    match self.show_ai_consent_buttons(ui, "Consent, download and continue") {
                         crate::ui::theme::DialogAction::Confirm => {
                             self.ai.consent = AiConsentState::None;
                             if let Some((mask_index, component_index)) = self.ai.object_pending_target.take() {
@@ -184,22 +142,22 @@ impl CalibRawApp {
                 ctx,
                 crate::ui::theme::DIALOG_WIDTH_DEFAULT,
             )
-                .resizable(true)
-                .show(ctx, |ui| {
-                    ui.label(message);
-                    crate::ui::theme::dialog_button_row(ui, |ui| {
-                        close |= crate::ui::theme::secondary_button(ui, "Close").clicked();
-                    });
-                    if !close
-                        && crate::ui::theme::dialog_keyboard_action(
-                            ui,
-                            crate::ui::theme::DialogKeyboard::CLOSE_ONLY,
-                            false,
-                        ) == crate::ui::theme::DialogAction::Cancel
-                    {
-                        close = true;
-                    }
+            .resizable(true)
+            .show(ctx, |ui| {
+                ui.label(message);
+                crate::ui::theme::dialog_button_row(ui, |ui| {
+                    close |= crate::ui::theme::secondary_button(ui, "Close").clicked();
                 });
+                if !close
+                    && crate::ui::theme::dialog_keyboard_action(
+                        ui,
+                        crate::ui::theme::DialogKeyboard::CLOSE_ONLY,
+                        false,
+                    ) == crate::ui::theme::DialogAction::Cancel
+                {
+                    close = true;
+                }
+            });
             if close {
                 self.ai.object_error_dialog = None;
             }

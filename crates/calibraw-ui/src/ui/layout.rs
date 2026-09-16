@@ -39,8 +39,7 @@ impl ResponsiveWidth {
 impl ScreenLayout {
     pub(crate) const MIN_HORIZONTAL_SIDEBAR_WIDTH: f32 = 320.0;
     #[cfg(not(target_os = "android"))]
-    pub(crate) const MAX_HORIZONTAL_SIDEBAR_WIDTH: f32 =
-        ResponsiveWidth::COMPACT_MAX_WIDTH;
+    pub(crate) const MAX_HORIZONTAL_SIDEBAR_WIDTH: f32 = ResponsiveWidth::COMPACT_MAX_WIDTH;
     pub(crate) const MIN_VERTICAL_SIDEBAR_HEIGHT: f32 = 240.0;
 
     pub(crate) fn from_size(size: Vec2) -> Self {
@@ -75,30 +74,12 @@ mod tests {
 
     #[test]
     fn responsive_width_uses_shared_compact_medium_and_wide_breakpoints() {
-        assert_eq!(
-            ResponsiveWidth::from_width(319.0),
-            ResponsiveWidth::Compact
-        );
-        assert_eq!(
-            ResponsiveWidth::from_width(519.0),
-            ResponsiveWidth::Compact
-        );
-        assert_eq!(
-            ResponsiveWidth::from_width(520.0),
-            ResponsiveWidth::Medium
-        );
-        assert_eq!(
-            ResponsiveWidth::from_width(819.0),
-            ResponsiveWidth::Medium
-        );
-        assert_eq!(
-            ResponsiveWidth::from_width(820.0),
-            ResponsiveWidth::Wide
-        );
-        assert_eq!(
-            ResponsiveWidth::from_width(1200.0),
-            ResponsiveWidth::Wide
-        );
+        assert_eq!(ResponsiveWidth::from_width(319.0), ResponsiveWidth::Compact);
+        assert_eq!(ResponsiveWidth::from_width(519.0), ResponsiveWidth::Compact);
+        assert_eq!(ResponsiveWidth::from_width(520.0), ResponsiveWidth::Medium);
+        assert_eq!(ResponsiveWidth::from_width(819.0), ResponsiveWidth::Medium);
+        assert_eq!(ResponsiveWidth::from_width(820.0), ResponsiveWidth::Wide);
+        assert_eq!(ResponsiveWidth::from_width(1200.0), ResponsiveWidth::Wide);
     }
 
     #[test]

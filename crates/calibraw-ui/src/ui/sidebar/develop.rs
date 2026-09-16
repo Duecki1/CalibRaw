@@ -13,12 +13,11 @@ impl Sidebar {
             (lens, focal, aperture)
         });
 
-        let action = Self::adjustment_card_with_enabled(
+        let action = Self::adjustment_card(
             ui,
             "Lens Corrections",
             false,
             foldable,
-            app.develop.lens_correction.enabled,
             true,
             |ui| {
                 let lens_correction_busy = app.lens_correction_busy();

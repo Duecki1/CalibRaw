@@ -307,7 +307,6 @@ impl Sidebar {
                         "Mask Properties",
                         true,
                         true,
-                        mask.enabled,
                         true,
                         |ui| {
                             geometry_changed |= Self::show_vertical_mask_properties(
@@ -390,7 +389,6 @@ impl Sidebar {
                                     "Mask Properties",
                                     true,
                                     false,
-                                    mask.enabled,
                                     true,
                                     |ui| {
                                         geometry_changed |= Self::show_vertical_mask_properties(
@@ -442,7 +440,6 @@ impl Sidebar {
                             "Mask Properties",
                             true,
                             false,
-                            mask.enabled,
                             true,
                             |ui| {
                                 geometry_changed |= Self::show_vertical_mask_properties(

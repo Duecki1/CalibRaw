@@ -485,8 +485,7 @@ impl CalibRawApp {
         }
 
         let undo_action = AppAction::UndoEdit;
-        if self.action_enabled(undo_action)
-            && ctx.input_mut(|input| input.consume_shortcut(&undo))
+        if self.action_enabled(undo_action) && ctx.input_mut(|input| input.consume_shortcut(&undo))
         {
             self.dispatch_action(undo_action);
         }
