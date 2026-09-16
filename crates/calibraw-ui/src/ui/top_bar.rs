@@ -8,16 +8,16 @@ pub(crate) struct TopBar;
 const LIBRARY_SIDEBAR_ALIGNMENT_ID: &str = "library-sidebar-toolbar-alignment-x";
 
 #[cfg(not(target_os = "android"))]
-pub(crate) fn load_app_icon_texture(ctx: &egui::Context) -> egui::TextureHandle {
+pub(crate) fn load_toolbar_brand_texture(ctx: &egui::Context) -> egui::TextureHandle {
     let image = image::load_from_memory(include_bytes!(
-        "../../../../packaging/icons/calibraw-256.png"
+        "../../../../packaging/icons/CalibRawIconTransHoriz.png"
     ))
-    .expect("embedded toolbar icon must be a valid PNG")
+    .expect("embedded toolbar brand must be a valid PNG")
     .into_rgba8();
     let size = [image.width() as usize, image.height() as usize];
     let pixels = image.into_raw();
     ctx.load_texture(
-        "calibraw-toolbar-app-icon",
+        "calibraw-toolbar-brand",
         egui::ColorImage::from_rgba_unmultiplied(size, &pixels),
         egui::TextureOptions::LINEAR,
     )
@@ -170,32 +170,86 @@ impl TopBar {
     }
 
     #[cfg(not(target_os = "android"))]
+    fn toolbar_brand_size() -> egui::Vec2 {
+        let height = 24.0_f32.min(theme::TOOLBAR_HEIGHT);
+        // CalibRawIconTransHoriz.png is 440x160, so preserve its 2.75:1 aspect.
+        egui::vec2(height * 2.75, height)
+    }
+
+    #[cfg(not(target_os = "android"))]
+    fn show_toolbar_brand(ui: &mut Ui, app: &CalibRawApp) {
+        ui.add(
+            egui::Image::new((
+                app.toolbar_brand_texture.id(),
+                Self::toolbar_brand_size(),
+            ))
+            .sense(egui::Sense::hover()),
+        )
+        .on_hover_text("CalibRaw");
+    }
+
+    #[cfg(not(target_os = "android"))]
+    fn toolbar_brand_can_be_centered(tab: AppTab, width: f32) -> bool {
+        // Centering is purely decorative, so only do it when both sides have a
+        // generous amount of guaranteed room. At smaller/windowed widths the
+        // brand becomes a normal right-side layout item instead, which means it
+        // can never cover search/Open Folder, edit actions, task indicators, or
+        // the Develop review controls.
+        let minimum_width = match tab {
+            AppTab::Library => 1500.0,
+            AppTab::Develop => 1100.0,
+            AppTab::Settings => 900.0,
+        };
+        width >= minimum_width
+    }
+
+    #[cfg(not(target_os = "android"))]
+    fn paint_centered_toolbar_brand(ui: &Ui, app: &CalibRawApp) {
+        let brand_size = Self::toolbar_brand_size();
+        let brand_center = egui::pos2(ui.max_rect().center().x, ui.min_rect().center().y);
+        let brand_rect = egui::Rect::from_center_size(brand_center, brand_size);
+        ui.painter().image(
+            app.toolbar_brand_texture.id(),
+            brand_rect,
+            egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0)),
+            egui::Color32::WHITE,
+        );
+    }
+
+    #[cfg(not(target_os = "android"))]
     fn show_desktop(ui: &mut Ui, app: &mut CalibRawApp, _frame: &eframe::Frame) {
         theme::prepare_toolbar(ui);
-        let compact = ui.available_width() < 620.0;
-        let compact_review = ui.available_width() < 760.0;
-        let tab_width = if compact { 72.0 } else { 82.0 };
+        let toolbar_width = ui.available_width();
+        let compact = toolbar_width < 620.0;
+        let compact_review = toolbar_width < 760.0;
+        let center_brand = Self::toolbar_brand_can_be_centered(app.ui.active_tab, toolbar_width);
+        // The three navigation tabs consume the space previously used by the
+        // square app icon and its separator, keeping the Library sidebar alignment
+        // essentially unchanged while giving each tab a wider hit target.
+        let tab_width = if compact { 88.0 } else { 98.0 };
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if app.ui.active_tab == AppTab::Develop
-                && crate::ui::library::show_current_photo_review(ui, app, compact_review)
-            {
+            if app.ui.active_tab == AppTab::Develop {
+                // Review controls stay at the far right. In the fallback/windowed
+                // layout the brand is a real item immediately to their left, so the
+                // sword is always left of the stars/flags and can never cover them.
+                if crate::ui::library::show_current_photo_review(ui, app, compact_review) {
+                    ui.separator();
+                }
+                if !center_brand {
+                    Self::show_toolbar_brand(ui, app);
+                    ui.separator();
+                }
+            } else if !center_brand {
+                // When there is not enough room to center safely, park the brand on
+                // the right and reserve its width in layout. This prevents overlap
+                // with Open Folder, search, task indicators, or the navigation tabs.
+                Self::show_toolbar_brand(ui, app);
                 ui.separator();
             }
+
             app.show_export_task_indicator(ui);
             Self::show_thumbnail_task_indicator(ui, app);
             ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                ui.allocate_ui_with_layout(
-                    egui::Vec2::splat(theme::CONTROL_HEIGHT),
-                    egui::Layout::centered_and_justified(egui::Direction::LeftToRight),
-                    |ui| {
-                        ui.add(
-                            egui::Image::new(&app.app_icon_texture)
-                                .fit_to_exact_size(egui::Vec2::splat(28.0)),
-                        )
-                        .on_hover_text("CalibRaw");
-                    },
-                );
-                ui.separator();
                 for (tab, label) in [
                     (AppTab::Library, "Library"),
                     (AppTab::Develop, "Develop"),
@@ -338,6 +392,10 @@ impl TopBar {
                 }
             });
         });
+
+        if center_brand {
+            Self::paint_centered_toolbar_brand(ui, app);
+        }
     }
 }
 
