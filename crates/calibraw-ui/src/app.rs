@@ -1246,7 +1246,7 @@ pub struct CalibRawApp {
     #[cfg(not(target_os = "android"))]
     discord_presence: DiscordPresence,
     #[cfg(not(target_os = "android"))]
-    pub(crate) app_icon_texture: egui::TextureHandle,
+    pub(crate) toolbar_brand_texture: egui::TextureHandle,
     egui_ctx: egui::Context,
     foreground_operation: Option<ForegroundOperation>,
     #[cfg(target_os = "android")]
