@@ -30,13 +30,79 @@ pub(crate) fn export_settings_controls(
     _fallback_picker_directory: Option<&std::path::Path>,
 ) -> bool {
     let previous_format = *format;
-    settings.resize_mode = ExportResizeMode::Original;
     ui.horizontal_wrapped(|ui| {
         ui.selectable_value(format, ExportFormat::Jpeg, "JPEG");
         ui.selectable_value(format, ExportFormat::Png, "PNG");
         ui.selectable_value(format, ExportFormat::Tiff, "TIFF");
     });
     enforce_export_bit_depth(*format, settings);
+    crate::ui::theme::card_gap(ui);
+
+    crate::ui::theme::section_card_with_help(
+        ui,
+        "Resize",
+        "Choose how the exported image is sized. Edge and dimension modes preserve the aspect ratio.",
+        |ui| {
+            crate::ui::theme::combo_box(
+                "export-resize-mode",
+                settings.resize_mode.label(),
+                ui.available_width().max(1.0),
+            )
+            .show_ui(ui, |ui| {
+                for mode in [
+                    ExportResizeMode::Original,
+                    ExportResizeMode::LongEdge,
+                    ExportResizeMode::ShortEdge,
+                    ExportResizeMode::Width,
+                    ExportResizeMode::Height,
+                    ExportResizeMode::Percentage,
+                ] {
+                    ui.selectable_value(&mut settings.resize_mode, mode, mode.label());
+                }
+            });
+
+            match settings.resize_mode {
+                ExportResizeMode::Original => {}
+                ExportResizeMode::Percentage => {
+                    crate::ui::theme::form_row(ui, "Scale", 112.0, |ui, width| {
+                        ui.add_sized(
+                            [width, crate::ui::theme::CONTROL_HEIGHT],
+                            egui::DragValue::new(&mut settings.percentage)
+                                .range(1.0..=400.0)
+                                .speed(1.0)
+                                .suffix("%")
+                                .fixed_decimals(0),
+                        )
+                        .on_hover_text("Percentage of the original image dimensions.");
+                    });
+                }
+                ExportResizeMode::LongEdge
+                | ExportResizeMode::ShortEdge
+                | ExportResizeMode::Width
+                | ExportResizeMode::Height => {
+                    crate::ui::theme::form_row(ui, "Pixels", 112.0, |ui, width| {
+                        ui.add_sized(
+                            [width, crate::ui::theme::CONTROL_HEIGHT],
+                            egui::DragValue::new(&mut settings.edge_or_dimension)
+                                .range(1..=crate::pipeline::MAX_EXPORT_EDGE)
+                                .speed(10.0)
+                                .suffix(" px"),
+                        )
+                        .on_hover_text("Target size in pixels; the aspect ratio is preserved.");
+                    });
+                }
+            }
+
+            if settings.resize_mode != ExportResizeMode::Original {
+                crate::ui::theme::checkbox_with_help(
+                    ui,
+                    &mut settings.allow_upscale,
+                    "Allow upscaling",
+                    "Allow exports to exceed the original image dimensions when the requested size is larger.",
+                );
+            }
+        },
+    );
     crate::ui::theme::card_gap(ui);
 
     if *format != ExportFormat::Jpeg {

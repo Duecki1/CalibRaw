@@ -34,7 +34,7 @@ pub(crate) use super::widgets::buttons::{
     InteractionVisualState,
 };
 pub(crate) use super::widgets::forms::{
-    checkbox_with_help, combo_box, form_combo, form_combo_with_help, heading_with_help,
+    checkbox_with_help, combo_box, form_combo, form_combo_with_help, form_row, heading_with_help,
     property_row, responsive_combo_box, singleline_text_edit, strong_with_help,
 };
 pub(crate) use super::widgets::menus::{
