@@ -2637,13 +2637,13 @@ insights.
 ## GNU General Public License v3.0 or later (`GPL-3.0-or-later`)
 
 Used by:
-- `calibraw-ai 0.0.1` — https://github.com/Duecki1/CalibRaw
-- `calibraw-cli 0.0.1` — https://github.com/Duecki1/CalibRaw
-- `calibraw-core 0.0.1` — https://github.com/Duecki1/CalibRaw
-- `calibraw-ffi 0.0.1` — https://github.com/Duecki1/CalibRaw
-- `calibraw-gpu 0.0.1` — https://github.com/Duecki1/CalibRaw
-- `calibraw-ui 0.0.1` — https://github.com/Duecki1/CalibRaw
-- `xtask 0.0.1` — https://github.com/Duecki1/CalibRaw
+- `calibraw-ai 1.0.0` — https://github.com/Duecki1/CalibRaw
+- `calibraw-cli 1.0.0` — https://github.com/Duecki1/CalibRaw
+- `calibraw-core 1.0.0` — https://github.com/Duecki1/CalibRaw
+- `calibraw-ffi 1.0.0` — https://github.com/Duecki1/CalibRaw
+- `calibraw-gpu 1.0.0` — https://github.com/Duecki1/CalibRaw
+- `calibraw-ui 1.0.0` — https://github.com/Duecki1/CalibRaw
+- `xtask 1.0.0` — https://github.com/Duecki1/CalibRaw
 
 ```text
 GNU GENERAL PUBLIC LICENSE
