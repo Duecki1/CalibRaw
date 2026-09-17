@@ -24,14 +24,14 @@ Download the latest release [here](https://github.com/Duecki1/CalibRaw/releases)
 - **Creative effects:** Unique mask effects like light rays, lens blur, motion blur, fog, Glow, and more.
 - **Optional AI:** Local Subject & Object masks, [AI Denoise](https://github.com/darktable-org/darktable-ai), and AI object removal.
 - **Multi-platform:** Native builds for Linux, Android, Windows, and macOS.
-- **Flexible export:** High-quality export to PNG, JPEG, and color-managed TIFF.
-- **HDR merge:** Select two or more RAW exposures in the desktop library and choose **HDR merge** from the bottom selection bar or right-click menu. A popup shows merge progress and the result. Small camera shifts and rotations are aligned automatically, and an editable `-HDR.tif` is saved beside the first selected source. The 32-bit scene-linear Rec.2020 master preserves the highlight and shadow range captured across the bracket. Use exposures of the same static scene from the same camera; this basic merge does not include moving-subject deghosting. Source adjustments are excluded from the merge.
+- **HDR merge:** Select 2 or more images to HDR merge them.
+- **Automatic Lens Correction** via Lensfun database
 
 ## Contributing
 Feel free to open a Pull Request or create an issue :D.
 
 ### Roadmap / To-Do
-- [ ] Bundle ONNX Runtime
+- [x] Bundle ONNX Runtime
 - [ ] Currently waiting for feedback
 
 ## Special Thanks
