@@ -310,6 +310,7 @@ impl CalibRawApp {
         self.develop.load_receiver = Some(receiver);
         self.develop.loading_label = Some(label.clone());
         self.ui.notice = None;
+        self.ui.unsupported_file_dialog = None;
         self.refresh_status();
 
         let spawn_result = std::thread::Builder::new()
@@ -398,6 +399,9 @@ impl CalibRawApp {
                         Err(_) => Err(anyhow::anyhow!("RAW decode gate was poisoned")),
                     },
                 };
+                let decode_is_unsupported = decoded.as_ref().err().is_some_and(|error| {
+                    decode_error_is_unsupported(&format!("{error:#}"))
+                });
                 match &decoded {
                     Ok(raw) => {
                         crate::diagnostics::record(format!(
@@ -416,6 +420,7 @@ impl CalibRawApp {
                     remove_temporary_raw(&path);
                 }
 
+                let failure_label = label.clone();
                 let result = (|| {
                     let (
                         mut rendered_exposure,
@@ -854,6 +859,11 @@ impl CalibRawApp {
                         open_started.elapsed().as_secs_f64()
                     ));
                 }
+                let result = result.map_err(|message| LoadFailure {
+                    label: failure_label,
+                    message,
+                    unsupported: decode_is_unsupported,
+                });
                 let _ = sender.send(LoadEvent::Finished(result));
                 repaint.request_repaint();
             });
@@ -1046,8 +1056,19 @@ impl CalibRawApp {
                 self.on_library_batch_load_finished(true, frame);
             }
             Err(error) => {
-                self.ui.notice = Some(format!("Failed to decode or render RAW: {error}"));
-                log::error!("RAW load failed: {error}");
+                self.ui.notice = Some(format!(
+                    "Failed to decode or render RAW: {}",
+                    error.message
+                ));
+                let interactive_open =
+                    self.ai.library_mask_refresh.is_none() && self.export.batch.is_none();
+                if error.unsupported && interactive_open {
+                    self.ui.unsupported_file_dialog = Some(UnsupportedFileDialog {
+                        label: error.label.clone(),
+                        detail: error.message.clone(),
+                    });
+                }
+                log::error!("RAW load failed: {}", error.message);
                 self.on_library_ai_mask_refresh_load_finished(false, frame);
                 #[cfg(target_os = "android")]
                 if batch_owned_load {
@@ -1057,5 +1078,102 @@ impl CalibRawApp {
                 self.on_library_batch_load_finished(false, frame);
             }
         }
+    }
+}
+
+fn decode_error_is_unsupported(message: &str) -> bool {
+    let message = message.to_ascii_lowercase();
+
+    // For DNG fallback errors, only classify the LibRaw result. Rawler's panic
+    // guard intentionally says "malformed or unsupported", which is too broad
+    // to present to users as a definite unsupported-format result.
+    let decoder_detail = message
+        .split_once("libraw fallback also failed")
+        .map(|(_, libraw_detail)| libraw_detail)
+        .unwrap_or(message.as_str());
+
+    decoder_detail.contains("unsupported") || decoder_detail.contains("not supported")
+}
+
+impl CalibRawApp {
+    pub(in crate::app) fn show_unsupported_file_dialog(&mut self, ctx: &egui::Context) {
+        let Some(dialog) = self.ui.unsupported_file_dialog.clone() else {
+            return;
+        };
+
+        let mut close = false;
+        crate::ui::theme::dialog_window(
+            egui::Window::new("Unsupported RAW file"),
+            ctx,
+            crate::ui::theme::DIALOG_WIDTH_WIDE,
+        )
+        .resizable(true)
+        .show(ctx, |ui| {
+            ui.add(
+                egui::Label::new(egui::RichText::new(&dialog.label).strong()).wrap(),
+            );
+            ui.add_space(6.0);
+            ui.label(
+                "CalibRaw could not decode this file with the available RAW decoders. \
+                 The camera or RAW variant may not be supported yet.",
+            );
+            ui.add_space(8.0);
+            egui::CollapsingHeader::new("Technical details")
+                .default_open(false)
+                .show(ui, |ui| {
+                    ui.add(
+                        egui::Label::new(egui::RichText::new(&dialog.detail).monospace())
+                            .wrap()
+                            .selectable(true),
+                    );
+                });
+            crate::ui::theme::dialog_button_row(ui, |ui| {
+                close |= crate::ui::theme::secondary_button(ui, "Close").clicked();
+            });
+            if !close
+                && crate::ui::theme::dialog_keyboard_action(
+                    ui,
+                    crate::ui::theme::DialogKeyboard::CLOSE_ONLY,
+                    false,
+                ) == crate::ui::theme::DialogAction::Cancel
+            {
+                close = true;
+            }
+        });
+
+        if close {
+            self.ui.unsupported_file_dialog = None;
+        }
+    }
+}
+
+#[cfg(test)]
+mod unsupported_file_dialog_tests {
+    use super::decode_error_is_unsupported;
+
+    #[test]
+    fn libraw_unsupported_format_is_classified_as_unsupported() {
+        assert!(decode_error_is_unsupported(
+            "LibRaw failed to open RAW file: Unsupported file format (-2)"
+        ));
+    }
+
+    #[test]
+    fn dng_fallback_uses_libraw_failure_for_classification() {
+        assert!(decode_error_is_unsupported(
+            "Rawler RAW decode failed first (planar DNG samples are unsupported); \
+             LibRaw fallback also failed: LibRaw failed to open RAW file: Unsupported file format (-2)"
+        ));
+        assert!(!decode_error_is_unsupported(
+            "Rawler RAW decode failed first (Rawler encountered malformed or unsupported RAW data); \
+             LibRaw fallback also failed: LibRaw failed to open RAW file: Input/output error (-100005)"
+        ));
+    }
+
+    #[test]
+    fn ordinary_decode_errors_are_not_mislabeled_as_unsupported() {
+        assert!(!decode_error_is_unsupported("RAW input is too large"));
+        assert!(!decode_error_is_unsupported("permission denied"));
+        assert!(!decode_error_is_unsupported("truncated input"));
     }
 }

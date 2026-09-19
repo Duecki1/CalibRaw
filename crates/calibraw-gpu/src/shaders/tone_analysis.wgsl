@@ -71,7 +71,8 @@ fn tone_unexposed_working_at(pos: vec2<i32>) -> vec3<f32> {
     let camera_rgb = tone_source_scene_at(pos);
 
     var working = Color::cam_to_working(camera_rgb);
-    if Common::camera_uniforms._pad_0_field > 0.5 {
+    if Common::camera_uniforms._pad_0_field > 0.5
+        && Common::camera_uniforms._pad_2_field <= 0.5 {
         working = BasicAdjustments::apply_temperature_tint_values(
             working,
             Common::camera_uniforms.temperature,

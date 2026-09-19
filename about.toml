@@ -27,3 +27,8 @@ targets = [
 ]
 ignore-dev-dependencies = true
 workarounds = ["ring", "rustls", "rustix"]
+
+# Rawler is intentionally the only copyleft Rust decoder dependency. Keep its
+# LGPL exception scoped to this package instead of widening the global list.
+[rawler]
+accepted = ["LGPL-2.1"]

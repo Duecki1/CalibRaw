@@ -872,6 +872,21 @@ fn pack_camera_params(ctx: &GpuParamContext<'_>) -> CameraUniforms {
                 .tint
                 .clamp(-GLOBAL_TINT_OFFSET_LIMIT, GLOBAL_TINT_OFFSET_LIMIT),
         );
+    let camera_linear_raster = raw.is_camera_linear_raster();
+    // LinearRaw DNGs arrive as a raster of camera-space RGB samples. The
+    // raster shader does not have the CFA sampler's per-channel WB multiply,
+    // so fold the current WB into the camera transform exactly once here.
+    let camera_transform = if camera_linear_raster {
+        let mut transform = camera_transform;
+        for row in &mut transform {
+            for (column, gain) in white_balance.iter().enumerate() {
+                row[column] *= *gain;
+            }
+        }
+        transform
+    } else {
+        camera_transform
+    };
     let mut profile_layout = raw.camera_profile.gpu_layout();
     profile_layout.flags[3] = profile_weight.clamp(0.0, 1.0).to_bits();
     let profile_stages = profile_layout.stages();
@@ -922,12 +937,18 @@ fn pack_camera_params(ctx: &GpuParamContext<'_>) -> CameraUniforms {
         } else {
             0.0
         },
-        _pad_1: if !raw.is_pre_demosaiced_raster() || raster_uses_scene_view_transform(exposure) {
+        _pad_1: if camera_linear_raster
+            || !raw.is_pre_demosaiced_raster()
+            || raster_uses_scene_view_transform(exposure)
+        {
             1.0
         } else {
             0.0
         },
-        _pad_2: 0.0,
+        // Camera-space rasters already receive WB through cam_to_srgb above;
+        // suppress the generic raster temperature adaptation to avoid applying
+        // a second colour adjustment.
+        _pad_2: if camera_linear_raster { 1.0 } else { 0.0 },
         highlight_options: [
             highlight_method,
             opposed_chroma[0],
