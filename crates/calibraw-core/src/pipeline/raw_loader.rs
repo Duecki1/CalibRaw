@@ -1401,6 +1401,33 @@ fn extension_is_dng(path: &Path) -> bool {
 }
 
 #[cfg(libraw_available)]
+fn try_rawler_then_libraw<T>(
+    path: &Path,
+    operation: &str,
+    rawler: impl FnOnce() -> Result<T>,
+    libraw: impl FnOnce() -> Result<T>,
+) -> Result<T> {
+    match rawler() {
+        Ok(value) => Ok(value),
+        Err(rawler_error) => {
+            let rawler_detail = format!("{rawler_error:#}");
+            log::warn!(
+                "Rawler {operation} failed for {}; falling back to LibRaw: {rawler_detail}",
+                path.display()
+            );
+            crate::diagnostics::record(format!(
+                "Rawler {operation} failed; retrying DNG through LibRaw: {rawler_detail}"
+            ));
+            libraw().with_context(|| {
+                format!(
+                    "Rawler {operation} failed first ({rawler_detail}); LibRaw fallback also failed"
+                )
+            })
+        }
+    }
+}
+
+#[cfg(libraw_available)]
 pub fn load_raw_file(path: &Path) -> Result<LoadedRaw> {
     load_raw_file_with_profile_config(path, CameraProfileMode::Automatic, None)
 }
@@ -1424,11 +1451,25 @@ pub fn load_raw_file_with_profile_selection(
     if tiff_routes_to_raster(path)? {
         super::tiff_loader::load_raster_tiff(path)
     } else if extension_is_dng(path) {
-        rawler_loader::load_raw_file_with_profile_selection(
+        try_rawler_then_libraw(
             path,
-            mode,
-            profile_folder,
-            selected_profile,
+            "RAW decode",
+            || {
+                rawler_loader::load_raw_file_with_profile_selection(
+                    path,
+                    mode,
+                    profile_folder,
+                    selected_profile,
+                )
+            },
+            || {
+                libraw_loader::load_raw_file_with_profile_selection(
+                    path,
+                    mode,
+                    profile_folder,
+                    selected_profile,
+                )
+            },
         )
     } else {
         libraw_loader::load_raw_file_with_profile_selection(
@@ -1445,7 +1486,12 @@ pub fn load_raw_file_with_dcp(path: &Path, profile_path: &Path) -> Result<Loaded
     if tiff_routes_to_raster(path)? {
         super::tiff_loader::load_raster_tiff(path)
     } else if extension_is_dng(path) {
-        rawler_loader::load_raw_file_with_dcp(path, profile_path)
+        try_rawler_then_libraw(
+            path,
+            "DCP-backed RAW decode",
+            || rawler_loader::load_raw_file_with_dcp(path, profile_path),
+            || libraw_loader::load_raw_file_with_dcp(path, profile_path),
+        )
     } else {
         libraw_loader::load_raw_file_with_dcp(path, profile_path)
     }
@@ -1456,7 +1502,12 @@ pub fn load_raw_embedded_thumbnail(path: &Path, maximum_edge: u32) -> Result<Raw
     if tiff_routes_to_raster(path)? {
         super::tiff_loader::load_raster_tiff_thumbnail(path, maximum_edge)
     } else if extension_is_dng(path) {
-        rawler_loader::load_raw_embedded_thumbnail(path, maximum_edge)
+        try_rawler_then_libraw(
+            path,
+            "embedded thumbnail decode",
+            || rawler_loader::load_raw_embedded_thumbnail(path, maximum_edge),
+            || libraw_loader::load_raw_embedded_thumbnail(path, maximum_edge),
+        )
     } else {
         libraw_loader::load_raw_embedded_thumbnail(path, maximum_edge)
     }
@@ -1467,7 +1518,12 @@ pub fn load_raw_thumbnail(path: &Path, maximum_edge: u32) -> Result<RawThumbnail
     if tiff_routes_to_raster(path)? {
         super::tiff_loader::load_raster_tiff_thumbnail(path, maximum_edge)
     } else if extension_is_dng(path) {
-        rawler_loader::load_raw_thumbnail(path, maximum_edge)
+        try_rawler_then_libraw(
+            path,
+            "thumbnail decode",
+            || rawler_loader::load_raw_thumbnail(path, maximum_edge),
+            || libraw_loader::load_raw_thumbnail(path, maximum_edge),
+        )
     } else {
         libraw_loader::load_raw_thumbnail(path, maximum_edge)
     }
@@ -1486,7 +1542,12 @@ pub fn load_raw_display_metadata(path: &Path) -> Result<RawDisplayMetadata> {
             ..Default::default()
         })
     } else if extension_is_dng(path) {
-        rawler_loader::load_raw_display_metadata(path)
+        try_rawler_then_libraw(
+            path,
+            "display metadata decode",
+            || rawler_loader::load_raw_display_metadata(path),
+            || libraw_loader::load_raw_display_metadata(path),
+        )
     } else {
         libraw_loader::load_raw_display_metadata(path)
     }
@@ -1524,6 +1585,64 @@ mod routing_tests {
         assert!(extension_is_dng(Path::new("phone.DNG")));
         assert!(!extension_is_dng(Path::new("camera.cr3")));
         assert!(!extension_is_dng(Path::new("camera.nef")));
+    }
+
+    #[cfg(libraw_available)]
+    #[test]
+    fn dng_rawler_failure_falls_back_to_libraw() {
+        use std::cell::Cell;
+
+        let fallback_called = Cell::new(false);
+        let value = super::try_rawler_then_libraw(
+            Path::new("fallback.dng"),
+            "test decode",
+            || Err::<u32, _>(anyhow::anyhow!("Rawler rejected this DNG")),
+            || {
+                fallback_called.set(true);
+                Ok(42)
+            },
+        )
+        .expect("LibRaw fallback should recover the decode");
+
+        assert_eq!(value, 42);
+        assert!(fallback_called.get());
+    }
+
+    #[cfg(libraw_available)]
+    #[test]
+    fn dng_rawler_success_does_not_call_libraw() {
+        use std::cell::Cell;
+
+        let fallback_called = Cell::new(false);
+        let value = super::try_rawler_then_libraw(
+            Path::new("rawler.dng"),
+            "test decode",
+            || Ok(7_u32),
+            || {
+                fallback_called.set(true);
+                Ok(42)
+            },
+        )
+        .expect("Rawler success should be returned directly");
+
+        assert_eq!(value, 7);
+        assert!(!fallback_called.get());
+    }
+
+    #[cfg(libraw_available)]
+    #[test]
+    fn dng_double_failure_preserves_rawler_context() {
+        let error = super::try_rawler_then_libraw::<u32>(
+            Path::new("broken.dng"),
+            "test decode",
+            || Err(anyhow::anyhow!("Rawler reason")),
+            || Err(anyhow::anyhow!("LibRaw reason")),
+        )
+        .expect_err("both decoders should fail");
+        let message = format!("{error:#}");
+
+        assert!(message.contains("Rawler reason"));
+        assert!(message.contains("LibRaw reason"));
     }
 }
 

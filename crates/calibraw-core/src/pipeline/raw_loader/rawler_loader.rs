@@ -862,6 +862,7 @@ pub(super) fn load_raw_thumbnail(path: &Path, maximum_edge: u32) -> Result<RawTh
                 log::warn!(
                     "DNG embedded preview extraction failed; developing a thumbnail from RAW pixels: {embedded_error:#}"
                 );
+                let _render_permit = crate::thumbnail_cache::acquire_rendered_thumbnail_worker();
                 validate_layout(&input)?;
                 let raw = input
                     .decoder
