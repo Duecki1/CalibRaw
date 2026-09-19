@@ -32,14 +32,15 @@ Download the latest release [here](https://github.com/Duecki1/CalibRaw/releases)
 
 ## Supported RAW Formats
 
-```
+CalibRaw currently recognizes the following RAW file extensions:
+
+```text
 .3fr   .ari   .arw   .bay   .bmq   .cap   .cine  .cr2   .cr3   .crw
-.cs1   .dc2   .dcr   .dcs   .drf   .eip   .erf   .fff   .gpr
+.cs1   .dc2   .dcr   .dcs   .dng   .drf   .eip   .erf   .fff   .gpr
 .iiq   .k25   .kc2   .kdc   .mdc   .mef   .mos   .mrw   .nef   .nrw
-.obm   .orf   .pef   .ptx   .pxn   .qtk   .r3d   .raf   .rdc
+.obm   .orf   .pef   .ptx   .pxn   .qtk   .r3d   .raf   .raw   .rdc
 .rw2   .rwl   .rwz   .sr2   .srf   .srw   .sti   .tif   .tiff  .x3f
 ```
-DNG Suppport is planned/halfway implemented.
 
 ## Contributing
 Feel free to open a Pull Request or create an issue :D.
@@ -47,7 +48,7 @@ Feel free to open a Pull Request or create an issue :D.
 ### Roadmap / To-Do
 - [x] Bundle ONNX Runtime
 - [ ] Currently waiting for feedback
-- [ ] DNG Support
+- [x] DNG Support
 
 ## Special Thanks
 
