@@ -35,6 +35,12 @@ confidence-threshold = 0.93
 include-dev = true
 unused-allowed-license = "allow"
 
+# Rawler is intentionally the only copyleft Rust decoder dependency. Keep its
+# LGPL exception scoped to this package instead of widening the global list.
+exceptions = [
+    { allow = ["LGPL-2.1"], name = "rawler" },
+]
+
 [licenses.private]
 ignore = false
 

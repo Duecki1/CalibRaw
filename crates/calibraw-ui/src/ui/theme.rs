@@ -7,9 +7,6 @@ use serde::{Deserialize, Serialize};
 #[cfg(test)]
 use super::widgets::buttons::{destructive_button, interaction_visual_state};
 #[cfg(test)]
-use super::widgets::forms::form_row;
-
-#[cfg(test)]
 use super::dialogs::take_initial_focus_request;
 pub(crate) use super::dialogs::{
     dialog_button_row, dialog_confirmation_buttons, dialog_keyboard_action, dialog_window,

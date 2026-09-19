@@ -619,6 +619,13 @@ impl LoadedRaw {
             })
     }
 
+    /// A raster decoded from camera-space LinearRaw samples. Unlike normal
+    /// scene rasters, these pixels still need the camera white balance and
+    /// camera-to-working transform applied by the GPU.
+    pub fn is_camera_linear_raster(&self) -> bool {
+        self.is_pre_demosaiced_raster() && self.white_balance_model.is_some()
+    }
+
     pub fn scene_linear_raster(&self) -> Option<&[f32]> {
         self.scene_linear_raster.as_deref()
     }
@@ -1387,13 +1394,24 @@ pub fn load_raw_file_with_profile_selection(
     load_raw_file(path)
 }
 
+// Keep LibRaw's established camera support and only try Rawler when opening,
+// unpacking, or adapting the result fails (including multi-channel DNG buffers).
+#[cfg(libraw_available)]
+fn rawler_fallback<T>(libraw: Result<T>, fallback: impl FnOnce() -> Result<T>) -> Result<T> {
+    match libraw {
+        Ok(value) => Ok(value),
+        Err(libraw_error) => {
+            crate::diagnostics::record(format!(
+                "LibRaw could not load this input; trying Rawler: {libraw_error:#}"
+            ));
+            fallback().with_context(|| format!("LibRaw failed ({libraw_error:#}); Rawler fallback failed"))
+        }
+    }
+}
+
 #[cfg(libraw_available)]
 pub fn load_raw_file(path: &Path) -> Result<LoadedRaw> {
-    if tiff_routes_to_raster(path)? {
-        super::tiff_loader::load_raster_tiff(path)
-    } else {
-        libraw_loader::load_raw_file(path)
-    }
+    load_raw_file_with_profile_config(path, CameraProfileMode::Automatic, None)
 }
 
 #[cfg(libraw_available)]
@@ -1402,11 +1420,7 @@ pub fn load_raw_file_with_profile_config(
     mode: CameraProfileMode,
     profile_folder: Option<&Path>,
 ) -> Result<LoadedRaw> {
-    if tiff_routes_to_raster(path)? {
-        super::tiff_loader::load_raster_tiff(path)
-    } else {
-        libraw_loader::load_raw_file_with_profile_config(path, mode, profile_folder)
-    }
+    load_raw_file_with_profile_selection(path, mode, profile_folder, None)
 }
 
 #[cfg(libraw_available)]
@@ -1419,11 +1433,9 @@ pub fn load_raw_file_with_profile_selection(
     if tiff_routes_to_raster(path)? {
         super::tiff_loader::load_raster_tiff(path)
     } else {
-        libraw_loader::load_raw_file_with_profile_selection(
-            path,
-            mode,
-            profile_folder,
-            selected_profile,
+        rawler_fallback(
+            libraw_loader::load_raw_file_with_profile_selection(path, mode, profile_folder, selected_profile),
+            || rawler_loader::load_raw_file_with_profile_selection(path, mode, profile_folder, selected_profile),
         )
     }
 }
@@ -1433,7 +1445,9 @@ pub fn load_raw_file_with_dcp(path: &Path, profile_path: &Path) -> Result<Loaded
     if tiff_routes_to_raster(path)? {
         super::tiff_loader::load_raster_tiff(path)
     } else {
-        libraw_loader::load_raw_file_with_dcp(path, profile_path)
+        rawler_fallback(libraw_loader::load_raw_file_with_dcp(path, profile_path), || {
+            rawler_loader::load_raw_file_with_dcp(path, profile_path)
+        })
     }
 }
 
@@ -1442,7 +1456,9 @@ pub fn load_raw_embedded_thumbnail(path: &Path, maximum_edge: u32) -> Result<Raw
     if tiff_routes_to_raster(path)? {
         super::tiff_loader::load_raster_tiff_thumbnail(path, maximum_edge)
     } else {
-        libraw_loader::load_raw_embedded_thumbnail(path, maximum_edge)
+        rawler_fallback(libraw_loader::load_raw_embedded_thumbnail(path, maximum_edge), || {
+            rawler_loader::load_raw_embedded_thumbnail(path, maximum_edge)
+        })
     }
 }
 
@@ -1451,7 +1467,9 @@ pub fn load_raw_thumbnail(path: &Path, maximum_edge: u32) -> Result<RawThumbnail
     if tiff_routes_to_raster(path)? {
         super::tiff_loader::load_raster_tiff_thumbnail(path, maximum_edge)
     } else {
-        libraw_loader::load_raw_thumbnail(path, maximum_edge)
+        rawler_fallback(libraw_loader::load_raw_thumbnail(path, maximum_edge), || {
+            rawler_loader::load_raw_embedded_thumbnail(path, maximum_edge)
+        })
     }
 }
 
@@ -1468,7 +1486,9 @@ pub fn load_raw_display_metadata(path: &Path) -> Result<RawDisplayMetadata> {
             ..Default::default()
         })
     } else {
-        libraw_loader::load_raw_display_metadata(path)
+        rawler_fallback(libraw_loader::load_raw_display_metadata(path), || {
+            rawler_loader::load_raw_display_metadata(path)
+        })
     }
 }
 
@@ -1490,6 +1510,34 @@ pub fn prewarm_dcp_profile_index(_folder: &Path) {}
 
 #[cfg(libraw_available)]
 mod libraw_loader;
+#[cfg(libraw_available)]
+mod rawler_loader;
+
+#[cfg(all(test, libraw_available))]
+mod routing_tests {
+    use super::rawler_fallback;
+
+    #[test]
+    fn successful_libraw_result_does_not_invoke_rawler() {
+        assert_eq!(rawler_fallback(Ok(42), || panic!("unnecessary fallback")).unwrap(), 42);
+    }
+
+    #[test]
+    fn rawler_can_recover_an_unsupported_libraw_layout() {
+        assert_eq!(rawler_fallback(Err(anyhow::anyhow!("multi-channel buffer")), || Ok(42)).unwrap(), 42);
+    }
+
+    #[test]
+    fn failed_fallback_reports_both_backends() {
+        let result: anyhow::Result<()> = rawler_fallback(
+            Err(anyhow::anyhow!("unsupported LibRaw layout")),
+            || Err(anyhow::anyhow!("unsupported Rawler geometry")),
+        );
+        let message = format!("{:#}", result.unwrap_err());
+        assert!(message.contains("unsupported LibRaw layout"));
+        assert!(message.contains("unsupported Rawler geometry"));
+    }
+}
 
 #[cfg(test)]
 mod extension_tests {

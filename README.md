@@ -26,6 +26,9 @@ Download the latest release [here](https://github.com/Duecki1/CalibRaw/releases)
 - **Multi-platform:** Native builds for Linux, Android, Windows, and macOS.
 - **HDR merge:** Select 2 or more images to HDR merge them.
 - **Automatic Lens Correction** via Lensfun database
+- **RAW compatibility fallback:** LibRaw remains the primary camera RAW backend;
+  Rawler handles selected DNG variants when it provides better compatibility.
+  See the [RAW compatibility notes](docs/raw-compatibility.md).
 
 ## Contributing
 Feel free to open a Pull Request or create an issue :D.
@@ -40,6 +43,8 @@ Feel free to open a Pull Request or create an issue :D.
 - **[RapidRAW](https://github.com/CyberSys/RapidRAW)** – for workflow and interface inspiration that sparked the creation of this project.
 - **[GIMP](https://www.gimp.org/) & [Ansel](https://ansel.photos/)** – for image editing algorithms and foundations.
 - **[LibRaw](https://github.com/LibRaw/LibRaw) & [Lensfun](https://github.com/lensfun/lensfun)** – for the underlying decoding and lens-correction backends.
+- **[Rawler](https://github.com/dnglab/dnglab)** – for selected DNG and RAW
+  compatibility paths.
 
 *Check [Third-Party Notices](THIRD_PARTY_LICENSES.md) for a more detailed list.*
 

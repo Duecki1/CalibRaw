@@ -40,12 +40,79 @@ fn resolve_default_exposure_ev(baseline_exposure: Option<f32>, profile_offset_ev
     (baseline + profile_offset_ev).clamp(-5.0, 5.0)
 }
 
-fn apply_resolved_default_exposure(
+pub(super) fn apply_resolved_default_exposure(
     camera_profile: &mut CameraProfile,
     baseline_exposure: Option<f32>,
 ) {
     camera_profile.default_exposure_ev =
         resolve_default_exposure_ev(baseline_exposure, camera_profile.profile_exposure_offset_ev);
+}
+
+pub(super) fn resolve_camera_profiles(
+    path: &Path,
+    mode: CameraProfileMode,
+    profile_folder: Option<&Path>,
+    selected_profile: Option<&Path>,
+    camera_make: &str,
+    camera_model: &str,
+) -> (
+    Option<DcpProfile>,
+    Option<PathBuf>,
+    Vec<CameraProfileCandidate>,
+) {
+    let raw_camera_signature = match mode {
+        CameraProfileMode::Automatic => {
+            read_optional_profile(path).and_then(|profile| profile.camera_calibration_signature)
+        }
+        CameraProfileMode::DcpProfiles => {
+            read_optional_profile(path).and_then(|profile| profile.camera_calibration_signature)
+        }
+        CameraProfileMode::MatrixOnly => None,
+    };
+    let mut matches = profile_folder
+        .map(|folder| find_matching_dcp_profiles(folder, camera_make, camera_model))
+        .transpose()
+        .unwrap_or_else(|error| {
+            if let Some(folder) = profile_folder {
+                log::warn!(
+                    "could not search DCP profile folder {}: {error:#}",
+                    folder.display()
+                );
+            }
+            None
+        })
+        .unwrap_or_default();
+    let available_camera_profiles = matches
+        .iter()
+        .map(|candidate| CameraProfileCandidate {
+            path: candidate.path.clone(),
+            name: candidate.name.clone(),
+        })
+        .collect::<Vec<_>>();
+    let explicitly_selected = selected_profile.and_then(|requested| {
+        matches
+            .iter()
+            .position(|candidate| candidate.path == requested)
+            .map(|index| matches.remove(index))
+    });
+    let external_profile = if mode == CameraProfileMode::MatrixOnly {
+        None
+    } else {
+        explicitly_selected.or_else(|| {
+            (mode.prefers_external_dcp() && !matches.is_empty()).then(|| matches.remove(0))
+        })
+    };
+    let (selected_profile_path, selected_profile) = external_profile
+        .map(|mut candidate| {
+            candidate.profile.camera_calibration_signature = raw_camera_signature;
+            (Some(candidate.path), Some(candidate.profile))
+        })
+        .unwrap_or((None, None));
+    (
+        selected_profile,
+        selected_profile_path,
+        available_camera_profiles,
+    )
 }
 
 #[cfg(target_os = "android")]
@@ -83,18 +150,6 @@ mod ffi {
     include!(concat!(env!("OUT_DIR"), "/bindings.rs"));
 }
 
-pub(super) fn load_raw_file(path: &Path) -> Result<LoadedRaw> {
-    load_raw_file_with_profile_config(path, CameraProfileMode::Automatic, None)
-}
-
-pub(super) fn load_raw_file_with_profile_config(
-    path: &Path,
-    mode: CameraProfileMode,
-    profile_folder: Option<&Path>,
-) -> Result<LoadedRaw> {
-    load_raw_file_with_profile_selection(path, mode, profile_folder, None)
-}
-
 pub(super) fn load_raw_file_with_profile_selection(
     path: &Path,
     mode: CameraProfileMode,
@@ -117,27 +172,6 @@ pub(super) fn load_raw_file_with_profile_selection(
     ));
     unsafe { validate_opened_raw_geometry(&ctx) }?;
 
-    let profile_metadata_started = Instant::now();
-    let embedded_profile_metadata = match mode {
-        CameraProfileMode::MatrixOnly => None,
-        CameraProfileMode::Automatic | CameraProfileMode::DcpProfiles => {
-            read_optional_profile(path)
-        }
-    };
-    let raw_camera_signature = match mode {
-        CameraProfileMode::Automatic => embedded_profile_metadata
-            .as_ref()
-            .and_then(|profile| profile.camera_calibration_signature.clone()),
-        CameraProfileMode::DcpProfiles => {
-            embedded_profile_metadata.and_then(|profile| profile.camera_calibration_signature)
-        }
-        CameraProfileMode::MatrixOnly => None,
-    };
-    crate::diagnostics::record(format!(
-        "Embedded camera-profile metadata read in {:.3}s",
-        profile_metadata_started.elapsed().as_secs_f64()
-    ));
-
     let (camera_make, camera_model) = unsafe {
         let iparams = &(*ctx.raw).rawdata.iparams;
         (
@@ -146,85 +180,20 @@ pub(super) fn load_raw_file_with_profile_selection(
         )
     };
 
-    let external_profiles_started = Instant::now();
-    let mut matches = profile_folder
-        .map(|folder| find_matching_dcp_profiles(folder, &camera_make, &camera_model))
-        .transpose()
-        .unwrap_or_else(|error| {
-            if let Some(folder) = profile_folder {
-                log::warn!(
-                    "could not search DCP profile folder {}: {error:#}",
-                    folder.display()
-                );
-            }
-            None
-        })
-        .unwrap_or_default();
+    let profile_started = Instant::now();
+    let (selected_profile, selected_profile_path, available_camera_profiles) =
+        resolve_camera_profiles(
+            path,
+            mode,
+            profile_folder,
+            selected_profile,
+            &camera_make,
+            &camera_model,
+        );
     crate::diagnostics::record(format!(
-        "External camera-profile lookup finished in {:.3}s",
-        external_profiles_started.elapsed().as_secs_f64()
+        "Camera-profile resolution finished in {:.3}s",
+        profile_started.elapsed().as_secs_f64()
     ));
-
-    let available_camera_profiles = matches
-        .iter()
-        .map(|candidate| CameraProfileCandidate {
-            path: candidate.path.clone(),
-            name: candidate.name.clone(),
-        })
-        .collect::<Vec<_>>();
-
-    let explicitly_selected = selected_profile.and_then(|requested| {
-        matches
-            .iter()
-            .position(|candidate| candidate.path == requested)
-            .map(|index| matches.remove(index))
-    });
-    if selected_profile.is_some() && explicitly_selected.is_none() {
-        crate::diagnostics::record(format!(
-            "Camera profile: requested profile is not a valid match for {} {}; falling back to automatic selection",
-            camera_make, camera_model
-        ));
-    }
-    let external_profile = if mode == CameraProfileMode::MatrixOnly {
-        None
-    } else {
-        explicitly_selected.or_else(|| {
-            (mode.prefers_external_dcp() && !matches.is_empty()).then(|| matches.remove(0))
-        })
-    };
-
-    let (selected_profile_path, selected_profile) = if let Some(mut candidate) = external_profile {
-        candidate.profile.camera_calibration_signature = raw_camera_signature;
-        crate::diagnostics::record(format!(
-            "Camera profile: external DCP '{}' for {} {}",
-            candidate.path.display(),
-            camera_make,
-            camera_model
-        ));
-        (Some(candidate.path), Some(candidate.profile))
-    } else {
-        match mode {
-            CameraProfileMode::Automatic => {
-                crate::diagnostics::record(format!(
-                    "Camera profile: automatic default to embedded camera matrix for {} {}",
-                    camera_make, camera_model
-                ));
-            }
-            CameraProfileMode::DcpProfiles => {
-                crate::diagnostics::record(format!(
-                    "Camera profile: no matching external DCP for {} {}; using camera matrix",
-                    camera_make, camera_model
-                ));
-            }
-            CameraProfileMode::MatrixOnly => {
-                crate::diagnostics::record(format!(
-                    "Camera profile: matrix-only for {} {}",
-                    camera_make, camera_model
-                ));
-            }
-        }
-        (None, None)
-    };
 
     let unpack_started = Instant::now();
     check_libraw(unsafe { ffi::libraw_unpack(ctx.raw) }, "unpack RAW file")?;
@@ -608,7 +577,7 @@ unsafe fn thumbnail_from_processed(
     })
 }
 
-fn validate_input_file(path: &Path, maximum_bytes: u64, label: &str) -> Result<()> {
+pub(super) fn validate_input_file(path: &Path, maximum_bytes: u64, label: &str) -> Result<()> {
     let source =
         fs::metadata(path).with_context(|| format!("inspect {label} {}", path.display()))?;
     anyhow::ensure!(source.is_file(), "{label} is not a regular file");
@@ -953,7 +922,7 @@ fn normalize_camera_name(value: &str) -> String {
         .collect()
 }
 
-fn read_optional_profile(path: &Path) -> Option<DcpProfile> {
+pub(super) fn read_optional_profile(path: &Path) -> Option<DcpProfile> {
     match DcpProfile::from_path(path) {
         Ok(profile) => profile,
         Err(error) => {
@@ -995,7 +964,7 @@ fn load_raw_file_with_selected_profile(
     Ok(loaded)
 }
 
-fn read_exif_capture_metadata(path: &Path) -> Option<super::CaptureMetadata> {
+pub(super) fn read_exif_capture_metadata(path: &Path) -> Option<super::CaptureMetadata> {
     const MAX_EXIF_SCAN_BYTES: u64 = 256_000_000;
     if std::fs::metadata(path).ok()?.len() > MAX_EXIF_SCAN_BYTES {
         return None;
@@ -1625,7 +1594,7 @@ fn logical_rgb_channel(cdesc: [u8; 4], cfa_channel: usize) -> Option<usize> {
     }
 }
 
-fn white_balance(mut wb: [f32; 4], cdesc: [u8; 4]) -> [f32; 4] {
+pub(super) fn white_balance(mut wb: [f32; 4], cdesc: [u8; 4]) -> [f32; 4] {
     let mut green_sum = 0.0;
     let mut green_count = 0.0;
 
@@ -1759,6 +1728,90 @@ fn camera_to_working_physical(xyz_to_cam: [[f32; 3]; 4]) -> [[f32; 4]; 3] {
         }
     }
     physical
+}
+
+/// Builds the camera colour stage from decoder-neutral metadata.  Rawler and
+/// LibRaw can therefore share the same DCP and working-space treatment without
+/// manufacturing a LibRaw FFI colour-data value.
+pub(super) fn camera_to_working_matrix_from_profiles(
+    xyz_to_cam: [[f32; 3]; 4],
+    wb_coeffs: [f32; 4],
+    cdesc: [u8; 4],
+    embedded_profile: Option<&DcpProfile>,
+    selected_profile: Option<&DcpProfile>,
+    analog_balance: [[f32; 4]; 4],
+) -> Result<([[f32; 4]; 3], f32, Option<CameraWhiteBalanceModel>)> {
+    let profile = selected_profile.or(embedded_profile);
+    let (matrix, weight, color_model) = if let Some(profile) = profile {
+        let endpoints = profile.matrices.iter().filter_map(|set| {
+            Some(DngColorEndpoint {
+                cct: set.illuminant.and_then(calibration_illuminant_cct),
+                color_matrix: set
+                    .color_matrix
+                    .filter(|matrix| matrix4x3_is_valid(*matrix))?,
+                calibration: parsed_calibration(
+                    set,
+                    identity_4x4(),
+                    profile.calibration_is_compatible(),
+                ),
+                forward_matrix: set
+                    .forward_matrix
+                    .filter(|matrix| matrix3x4_is_valid(*matrix)),
+            })
+        });
+        let endpoints = endpoints.collect::<Vec<_>>();
+        if let Some(first) = endpoints.first().copied() {
+            let second = endpoints.get(1).copied().unwrap_or(first);
+            let fallback_calibration = std::array::from_fn(|index| {
+                embedded_profile
+                    .and_then(|embedded| embedded.matrices[index].camera_calibration)
+                    .unwrap_or_else(identity_4x4)
+            });
+            let initial_model = CameraColorModel::Dng {
+                endpoints: Box::new([first, second]),
+                analog_balance,
+            };
+            let interpolated = interpolated_parsed_dng_profile_with_fallbacks(
+                profile,
+                wb_coeffs,
+                analog_balance,
+                profile.calibration_is_compatible(),
+                fallback_calibration,
+                estimate_cct_from_model(&initial_model, wb_coeffs),
+            )
+            .ok_or_else(|| anyhow!("DCP profile has no usable color matrix"))?;
+            let weight = interpolated.weight;
+            let matrix =
+                dng_camera_to_working(interpolated, analog_balance, wb_coeffs, wb_coeffs, cdesc)?;
+            let color_model = Some(CameraColorModel::Dng {
+                endpoints: Box::new([first, second]),
+                analog_balance,
+            });
+            (matrix, weight, color_model)
+        } else {
+            (cam_to_working(xyz_to_cam, cdesc), 0.0, None)
+        }
+    } else {
+        (cam_to_working(xyz_to_cam, cdesc), 0.0, None)
+    };
+    if matrix.iter().flatten().any(|value| !value.is_finite())
+        || matrix.iter().flatten().all(|value| value.abs() <= 1e-12)
+    {
+        return Err(anyhow!("camera colour matrix is invalid or singular"));
+    }
+    let color_model = color_model.or(Some(CameraColorModel::Matrix {
+        xyz_to_camera: xyz_to_cam,
+    }));
+    Ok((
+        matrix,
+        weight,
+        color_model.map(|color| CameraWhiteBalanceModel {
+            base_wb: wb_coeffs,
+            cdesc,
+            base_cct: cct_from_profile_weight(&color, weight).unwrap_or(6504.0),
+            color,
+        }),
+    ))
 }
 
 #[derive(Clone, Copy)]
@@ -2126,6 +2179,27 @@ fn interpolated_parsed_dng_profile(
     analog_balance: [[f32; 4]; 4],
     calibration_compatible: bool,
 ) -> Option<InterpolatedDngProfile> {
+    interpolated_parsed_dng_profile_with_fallbacks(
+        profile,
+        wb_coeffs,
+        analog_balance,
+        calibration_compatible,
+        [
+            color.dng_color[0].calibration,
+            color.dng_color[1].calibration,
+        ],
+        estimate_scene_cct(color, wb_coeffs, cdesc),
+    )
+}
+
+fn interpolated_parsed_dng_profile_with_fallbacks(
+    profile: &DcpProfile,
+    wb_coeffs: [f32; 4],
+    analog_balance: [[f32; 4]; 4],
+    calibration_compatible: bool,
+    fallback_calibration: [[[f32; 4]; 4]; 2],
+    initial_scene_cct: Option<f32>,
+) -> Option<InterpolatedDngProfile> {
     let first = &profile.matrices[0];
     let second = &profile.matrices[1];
     let valid = [
@@ -2137,7 +2211,7 @@ fn interpolated_parsed_dng_profile(
         [true, false] => {
             return parsed_single_dng_profile(
                 first,
-                color.dng_color[0].calibration,
+                fallback_calibration[0],
                 0.0,
                 calibration_compatible,
             )
@@ -2145,7 +2219,7 @@ fn interpolated_parsed_dng_profile(
         [false, true] => {
             return parsed_single_dng_profile(
                 second,
-                color.dng_color[1].calibration,
+                fallback_calibration[1],
                 1.0,
                 calibration_compatible,
             )
@@ -2155,21 +2229,14 @@ fn interpolated_parsed_dng_profile(
 
     let cct0 = calibration_illuminant_cct(first.illuminant?)?;
     let cct1 = calibration_illuminant_cct(second.illuminant?)?;
-    let mut scene_cct =
-        estimate_scene_cct(color, wb_coeffs, cdesc).unwrap_or_else(|| (cct0 * cct1).sqrt());
+    let mut scene_cct = initial_scene_cct.unwrap_or_else(|| (cct0 * cct1).sqrt());
     let neutral = camera_neutral(wb_coeffs);
     let first_color = first.color_matrix?;
     let second_color = second.color_matrix?;
-    let first_calibration = parsed_calibration(
-        first,
-        color.dng_color[0].calibration,
-        calibration_compatible,
-    );
-    let second_calibration = parsed_calibration(
-        second,
-        color.dng_color[1].calibration,
-        calibration_compatible,
-    );
+    let first_calibration =
+        parsed_calibration(first, fallback_calibration[0], calibration_compatible);
+    let second_calibration =
+        parsed_calibration(second, fallback_calibration[1], calibration_compatible);
 
     let mut weight = mired_interpolation_weight(scene_cct, cct0, cct1);
     for _ in 0..6 {
@@ -2904,8 +2971,9 @@ mod tests {
         daylight_white_balance, effective_black_level, identity_4x4,
         matching_thumbnail_orientation, oriented_source_pos, resolve_default_exposure_ev,
         valid_baseline_exposure, validate_embedded_thumbnail_metadata, white_balance, white_levels,
-        CameraColorModel, CameraProfile, CameraWhiteBalanceModel, CfaKind, DngColorEndpoint,
-        MAX_EMBEDDED_THUMBNAIL_BYTES, MISSING_BASELINE_EXPOSURE_FALLBACK_EV,
+        CameraColorModel, CameraProfile, CameraWhiteBalanceModel, CfaKind, DcpMatrixSet,
+        DcpProfile, DngColorEndpoint, MAX_EMBEDDED_THUMBNAIL_BYTES,
+        MISSING_BASELINE_EXPOSURE_FALLBACK_EV,
     };
 
     #[test]
@@ -3093,6 +3161,102 @@ mod tests {
                 "camera neutral mapped to {mapped_neutral} in working channel {channel}"
             );
         }
+    }
+
+    fn dcp_with_matrix(red: f32, blue: f32) -> DcpProfile {
+        let first = DcpMatrixSet {
+            illuminant: Some(21),
+            color_matrix: Some([
+                [red, 0.0, 0.0],
+                [0.0, 1.0, 0.0],
+                [0.0, 0.0, blue],
+                [0.0, 0.0, 0.0],
+            ]),
+            camera_calibration: Some(identity_4x4()),
+            forward_matrix: Some([
+                [1.0, 0.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0, 0.0],
+                [0.0, 0.0, 1.0, 0.0],
+            ]),
+            ..DcpMatrixSet::default()
+        };
+        let second = DcpMatrixSet {
+            illuminant: Some(17),
+            color_matrix: Some([
+                [blue, 0.0, 0.0],
+                [0.0, 1.0, 0.0],
+                [0.0, 0.0, red],
+                [0.0, 0.0, 0.0],
+            ]),
+            ..first.clone()
+        };
+        DcpProfile {
+            matrices: [first, second],
+            ..DcpProfile::default()
+        }
+    }
+
+    #[test]
+    fn decoder_neutral_interpolation_responds_to_white_balance() {
+        let profile = dcp_with_matrix(1.2, 0.8);
+        let cold = super::interpolated_parsed_dng_profile_with_fallbacks(
+            &profile,
+            [3.0, 1.0, 0.8, 1.0],
+            identity_4x4(),
+            true,
+            [identity_4x4(); 2],
+            None,
+        )
+        .unwrap();
+        let warm = super::interpolated_parsed_dng_profile_with_fallbacks(
+            &profile,
+            [0.8, 1.0, 3.0, 1.0],
+            identity_4x4(),
+            true,
+            [identity_4x4(); 2],
+            None,
+        )
+        .unwrap();
+        assert_ne!(cold.weight, warm.weight);
+    }
+
+    #[test]
+    fn decoder_neutral_color_helper_uses_selected_dcp_and_preserves_wb_model() {
+        let embedded = dcp_with_matrix(1.0, 1.0);
+        let selected = dcp_with_matrix(2.0, 3.0);
+        let (matrix, weight, model) = super::camera_to_working_matrix_from_profiles(
+            [
+                [1.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0],
+                [0.0, 0.0, 1.0],
+                [0.0, 0.0, 0.0],
+            ],
+            [2.0, 1.0, 1.5, 1.0],
+            RGBG,
+            Some(&embedded),
+            Some(&selected),
+            identity_4x4(),
+        )
+        .unwrap();
+        assert_eq!(weight, 0.0);
+        assert!(matrix.iter().flatten().all(|value| value.is_finite()));
+        let CameraColorModel::Dng { endpoints, .. } = model.unwrap().color else {
+            panic!("DCP metadata should produce a DNG color model")
+        };
+        assert_eq!(endpoints[0].color_matrix[0][0], 2.0);
+    }
+
+    #[test]
+    fn decoder_neutral_color_helper_rejects_singular_camera_metadata() {
+        let result = super::camera_to_working_matrix_from_profiles(
+            [[0.0; 3]; 4],
+            [1.0, 1.0, 1.0, 1.0],
+            RGBG,
+            None,
+            None,
+            identity_4x4(),
+        );
+        assert!(result.is_err());
     }
 
     #[test]
