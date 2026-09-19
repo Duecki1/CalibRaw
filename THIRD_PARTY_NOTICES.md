@@ -129,7 +129,7 @@ upstream licenses.
 ## Rust dependencies
 
 CalibRaw uses [Rawler 0.8.0](https://github.com/dnglab/dnglab/tree/0.8.0/rawler)
-for selected RAW and DNG decoding paths. Rawler is Copyright (C) Daniel
+as the explicit decoder backend for `.dng` files. Rawler is Copyright (C) Daniel
 Vogelbacher, Pedro Côrte-Real, and contributors, and is licensed under
 [LGPL-2.1](https://www.gnu.org/licenses/old-licenses/lgpl-2.1.html). Rawler's
 JPEG-XL DNG support uses the pure-Rust `jxl-oxide` decoder and does not add a

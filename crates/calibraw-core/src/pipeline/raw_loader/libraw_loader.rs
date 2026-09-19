@@ -2514,11 +2514,24 @@ fn interpolate_optional_forward_matrix(
     }
 }
 
-fn identity_fallback_4x4(matrix: [[f32; 4]; 4]) -> [[f32; 4]; 4] {
-    if matrix
-        .iter()
-        .flatten()
-        .any(|v| v.is_finite() && v.abs() > 1e-8)
+fn identity_fallback_4x4(mut matrix: [[f32; 4]; 4]) -> [[f32; 4]; 4] {
+    if !matrix.iter().flatten().all(|value| value.is_finite()) {
+        return identity_4x4();
+    }
+
+    // LibRaw exposes ordinary three-channel DNG CameraCalibration matrices in
+    // its four-plane storage. For RGB DNGs the unused fourth row/column may be
+    // all zero, which makes the storage matrix singular even though the actual
+    // 3x3 calibration is perfectly usable. Complete only that inactive plane
+    // as identity before the ForwardMatrix path needs a 4x4 inverse.
+    let fourth_plane_unused = matrix[3].iter().all(|value| value.abs() <= 1e-8)
+        && (0..3).all(|row| matrix[row][3].abs() <= 1e-8);
+    if fourth_plane_unused {
+        matrix[3][3] = 1.0;
+    }
+
+    if matrix.iter().flatten().any(|value| value.abs() > 1e-8)
+        && invert_4x4(matrix).is_some()
     {
         matrix
     } else {
@@ -3273,6 +3286,22 @@ mod tests {
     fn non_rgb_cfa_is_rejected_instead_of_silently_miscolored() {
         assert!(canonical_cfa_map(*b"GMCY").is_err());
         assert!(canonical_cfa_map(*b"RGBG").is_ok());
+    }
+
+    #[test]
+    fn three_channel_dng_calibration_completes_the_unused_fourth_plane() {
+        let matrix = [
+            [1.1, 0.0, 0.0, 0.0],
+            [0.0, 0.9, 0.0, 0.0],
+            [0.0, 0.0, 1.05, 0.0],
+            [0.0, 0.0, 0.0, 0.0],
+        ];
+        let completed = identity_fallback_4x4(matrix);
+        assert_eq!(completed[3][3], 1.0);
+        assert!(invert_4x4(completed).is_some());
+        assert_eq!(completed[0][0], 1.1);
+        assert_eq!(completed[1][1], 0.9);
+        assert_eq!(completed[2][2], 1.05);
     }
 
     #[test]
