@@ -1467,7 +1467,7 @@ pub fn load_raw_thumbnail(path: &Path, maximum_edge: u32) -> Result<RawThumbnail
     if tiff_routes_to_raster(path)? {
         super::tiff_loader::load_raster_tiff_thumbnail(path, maximum_edge)
     } else if extension_is_dng(path) {
-        rawler_loader::load_raw_embedded_thumbnail(path, maximum_edge)
+        rawler_loader::load_raw_thumbnail(path, maximum_edge)
     } else {
         libraw_loader::load_raw_thumbnail(path, maximum_edge)
     }
