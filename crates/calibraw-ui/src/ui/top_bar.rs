@@ -41,6 +41,69 @@ fn develop_slider_to_zoom(position: f32) -> f32 {
 }
 
 #[cfg(not(target_os = "android"))]
+fn develop_toolbar_dock_geometry(
+    ctx: &egui::Context,
+    app: &CalibRawApp,
+    toolbar_right: f32,
+) -> Option<(f32, f32)> {
+    if app.ui.active_tab != AppTab::Develop {
+        return None;
+    }
+
+    let sidebar_id = egui::Id::new("develop_sidebar_right");
+    let separator_x = if app.develop_ui.sidebar_open {
+        if app.ui.sidebar_tab == crate::app::SidebarTab::Masks {
+            egui::PanelState::load(ctx, egui::Id::new("develop_horizontal_mask_strip"))
+                .map(|state| state.outer_rect.left())
+                .or_else(|| {
+                    egui::PanelState::load(ctx, sidebar_id).map(|state| {
+                        state.outer_rect.left()
+                            - crate::ui::sidebar::Sidebar::HORIZONTAL_MASK_STRIP_WIDTH
+                    })
+                })
+        } else {
+            egui::PanelState::load(ctx, sidebar_id).map(|state| state.outer_rect.left())
+        }
+    } else {
+        egui::PanelState::load(ctx, egui::Id::new("develop_tool_rail"))
+            .map(|state| state.outer_rect.left())
+    };
+
+    let separator_x = separator_x.unwrap_or_else(|| {
+        // Panel state is available after the first layout pass. Until then use
+        // the same sizing rules as the Develop dock as a one-frame fallback.
+        let viewport_size = ctx.content_rect().size();
+        let mut dock_width = crate::ui::sidebar::Sidebar::DESKTOP_TOOL_RAIL_WIDTH;
+        if app.develop_ui.sidebar_open {
+            let panel_max = (viewport_size.x * 0.48).clamp(
+                crate::ui::layout::ScreenLayout::MIN_HORIZONTAL_SIDEBAR_WIDTH,
+                crate::ui::layout::ScreenLayout::MAX_HORIZONTAL_SIDEBAR_WIDTH,
+            );
+            let default_width = crate::ui::layout::ScreenLayout::Horizontal
+                .sidebar_default_size(viewport_size)
+                .min(panel_max);
+            let sidebar_width = ctx.data_mut(|data| {
+                data.get_persisted::<f32>(sidebar_id.with("user-width"))
+                    .unwrap_or(default_width)
+                    .clamp(
+                        crate::ui::layout::ScreenLayout::MIN_HORIZONTAL_SIDEBAR_WIDTH,
+                        panel_max,
+                    )
+            });
+            dock_width += sidebar_width;
+            if app.ui.sidebar_tab == crate::app::SidebarTab::Masks {
+                dock_width += crate::ui::sidebar::Sidebar::HORIZONTAL_MASK_STRIP_WIDTH;
+            }
+        }
+        ctx.content_rect().right() - dock_width
+    });
+
+    let width = toolbar_right - separator_x;
+    (separator_x.is_finite() && width.is_finite())
+        .then_some((separator_x, width.max(crate::ui::theme::SPACE_SM)))
+}
+
+#[cfg(not(target_os = "android"))]
 pub(crate) fn load_toolbar_brand_texture(ctx: &egui::Context) -> egui::TextureHandle {
     let image = image::load_from_memory(include_bytes!(
         "../../../../packaging/icons/CalibRawIconTransHoriz.png"
@@ -247,19 +310,27 @@ impl TopBar {
     }
 
     #[cfg(not(target_os = "android"))]
-    fn show_develop_zoom_control(ui: &mut Ui, app: &mut CalibRawApp, compact: bool) {
+    fn show_develop_zoom_control(ui: &mut Ui, app: &mut CalibRawApp) {
         let enabled = app.preview.gpu_pipeline.is_some();
-        let slider_width = if compact { 68.0 } else { 92.0 };
+        let available_width = ui.available_width().max(1.0);
+        let compact = available_width < 176.0;
         let readout_width = if compact { 43.0 } else { 49.0 };
+        let icon_width = 16.0;
+        let item_spacing = 4.0;
+        // Everything except the track has a fixed width. Give the shared slider
+        // exactly the rest so it cannot push the toolbar break away from the dock.
+        let slider_width =
+            (available_width - readout_width - icon_width - item_spacing * 2.0).max(1.0);
         let reset_position = develop_zoom_to_slider(1.0);
         let mut slider_position = develop_zoom_to_slider(app.preview.zoom);
         let mut requested_zoom = None;
         let mut reset_requested = false;
 
         ui.add_enabled_ui(enabled, |ui| {
-            ui.spacing_mut().item_spacing.x = 4.0;
+            ui.spacing_mut().item_spacing.x = item_spacing;
 
-            let icon_response = ui.add(
+            let icon_response = ui.add_sized(
+                [icon_width, theme::CONTROL_HEIGHT],
                 egui::Label::new(
                     egui::RichText::new(egui_phosphor::regular::MAGNIFYING_GLASS)
                         .size(15.0),
@@ -340,18 +411,49 @@ impl TopBar {
         let tab_width = if compact { 88.0 } else { 98.0 };
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             if app.ui.active_tab == AppTab::Develop {
-                // Review controls stay at the far right, with zoom immediately to
-                // their left so image scale is always visible while culling. In the
-                // fallback/windowed layout the brand remains a normal reserved item
-                // farther left and cannot cover either control group.
-                let review_visible =
-                    crate::ui::library::show_current_photo_review(ui, app, compact_review);
-                if review_visible {
-                    ui.separator();
-                }
-                if app.develop.current_path.is_some() {
-                    Self::show_develop_zoom_control(ui, app, toolbar_width < 900.0);
-                    ui.separator();
+                // Keep the toolbar break aligned with the visible Develop dock on
+                // the right so the top separator stays in the same vertical line as
+                // the sidebar/tool-rail edge below it.
+                let dock_geometry =
+                    develop_toolbar_dock_geometry(ui.ctx(), app, ui.max_rect().right())
+                        .filter(|(_, width)| *width >= 220.0);
+                if let Some((dock_separator_x, reserved_width)) = dock_geometry {
+                    let dock_response = ui.allocate_ui_with_layout(
+                        egui::vec2(reserved_width, theme::TOOLBAR_HEIGHT),
+                        egui::Layout::right_to_left(egui::Align::Center),
+                        |ui| {
+                            let review_visible = crate::ui::library::show_current_photo_review(
+                                ui,
+                                app,
+                                compact_review,
+                            );
+                            if review_visible {
+                                ui.separator();
+                            }
+                            if app.develop.current_path.is_some() {
+                                Self::show_develop_zoom_control(ui, app);
+                            }
+                        },
+                    );
+                    let stroke = ui.visuals().widgets.noninteractive.bg_stroke;
+                    // Do not infer this line from the toolbar child's rect: the
+                    // toolbar frame has its own inset. Paint at the actual Panel
+                    // edge loaded above so the line is pixel-identical below.
+                    ui.painter().vline(
+                        dock_separator_x,
+                        dock_response.response.rect.y_range(),
+                        stroke,
+                    );
+                } else {
+                    let review_visible =
+                        crate::ui::library::show_current_photo_review(ui, app, compact_review);
+                    if review_visible {
+                        ui.separator();
+                    }
+                    if app.develop.current_path.is_some() {
+                        Self::show_develop_zoom_control(ui, app);
+                        ui.separator();
+                    }
                 }
                 if !center_brand {
                     Self::show_toolbar_brand(ui, app);
@@ -555,4 +657,5 @@ mod tests {
             assert!((round_trip - zoom).abs() < 1e-4, "zoom={zoom}, got={round_trip}");
         }
     }
+
 }
