@@ -8,6 +8,39 @@ pub(crate) struct TopBar;
 const LIBRARY_SIDEBAR_ALIGNMENT_ID: &str = "library-sidebar-toolbar-alignment-x";
 
 #[cfg(not(target_os = "android"))]
+const DEVELOP_ZOOM_FIT_POSITION: f32 = 0.18;
+
+#[cfg(not(target_os = "android"))]
+fn develop_zoom_to_slider(zoom: f32) -> f32 {
+    let min = crate::ui::preview::MIN_PREVIEW_ZOOM;
+    let max = crate::ui::preview::MAX_PREVIEW_ZOOM;
+    let zoom = zoom.clamp(min, max);
+    if zoom <= 1.0 {
+        let span = (1.0 - min).max(f32::EPSILON);
+        ((zoom - min) / span * DEVELOP_ZOOM_FIT_POSITION).clamp(0.0, DEVELOP_ZOOM_FIT_POSITION)
+    } else {
+        let logarithmic = zoom.ln() / max.ln();
+        (DEVELOP_ZOOM_FIT_POSITION + logarithmic * (1.0 - DEVELOP_ZOOM_FIT_POSITION))
+            .clamp(DEVELOP_ZOOM_FIT_POSITION, 1.0)
+    }
+}
+
+#[cfg(not(target_os = "android"))]
+fn develop_slider_to_zoom(position: f32) -> f32 {
+    let min = crate::ui::preview::MIN_PREVIEW_ZOOM;
+    let max = crate::ui::preview::MAX_PREVIEW_ZOOM;
+    let position = position.clamp(0.0, 1.0);
+    if position <= DEVELOP_ZOOM_FIT_POSITION {
+        let fraction = position / DEVELOP_ZOOM_FIT_POSITION.max(f32::EPSILON);
+        egui::lerp(min..=1.0, fraction)
+    } else {
+        let fraction =
+            (position - DEVELOP_ZOOM_FIT_POSITION) / (1.0 - DEVELOP_ZOOM_FIT_POSITION);
+        (max.ln() * fraction).exp().clamp(1.0, max)
+    }
+}
+
+#[cfg(not(target_os = "android"))]
 pub(crate) fn load_toolbar_brand_texture(ctx: &egui::Context) -> egui::TextureHandle {
     let image = image::load_from_memory(include_bytes!(
         "../../../../packaging/icons/CalibRawIconTransHoriz.png"
@@ -214,6 +247,87 @@ impl TopBar {
     }
 
     #[cfg(not(target_os = "android"))]
+    fn show_develop_zoom_control(ui: &mut Ui, app: &mut CalibRawApp, compact: bool) {
+        let enabled = app.preview.gpu_pipeline.is_some();
+        let slider_width = if compact { 68.0 } else { 92.0 };
+        let readout_width = if compact { 43.0 } else { 49.0 };
+        let reset_position = develop_zoom_to_slider(1.0);
+        let mut slider_position = develop_zoom_to_slider(app.preview.zoom);
+        let mut requested_zoom = None;
+        let mut reset_requested = false;
+
+        ui.add_enabled_ui(enabled, |ui| {
+            ui.spacing_mut().item_spacing.x = 4.0;
+
+            let icon_response = ui.add(
+                egui::Label::new(
+                    egui::RichText::new(egui_phosphor::regular::MAGNIFYING_GLASS)
+                        .size(15.0),
+                )
+                .sense(egui::Sense::click()),
+            );
+            if icon_response.double_clicked() {
+                reset_requested = true;
+            }
+
+            let slider_interaction =
+                crate::ui::components::adjustment_slider::inline_adjustment_slider_with_reset(
+                    ui,
+                    "develop-preview-zoom",
+                    &mut slider_position,
+                    0.0..=1.0,
+                    slider_width,
+                    5,
+                    0.01,
+                    Some("Preview zoom"),
+                    reset_position,
+                );
+            if slider_interaction.changed {
+                requested_zoom = Some(develop_slider_to_zoom(slider_position));
+            }
+            reset_requested |= slider_interaction.reset_requested;
+
+            let displayed_zoom = if reset_requested {
+                1.0
+            } else {
+                requested_zoom.unwrap_or(app.preview.zoom)
+            };
+            let zoom_text = format!("{:.0}%", displayed_zoom * 100.0);
+            let readout_response = ui.add_sized(
+                [readout_width, theme::CONTROL_HEIGHT],
+                egui::Label::new(egui::RichText::new(zoom_text).monospace())
+                    .sense(egui::Sense::click()),
+            );
+            if readout_response.double_clicked() {
+                reset_requested = true;
+            }
+
+            icon_response
+                .union(readout_response)
+                .on_hover_text("Preview zoom. Double-click to reset to 100%.");
+        });
+
+        if reset_requested {
+            if (app.preview.zoom - 1.0).abs() > f32::EPSILON
+                || app.preview.center != [0.5, 0.5]
+            {
+                app.preview.zoom = 1.0;
+                app.preview.center = [0.5, 0.5];
+                app.note_preview_motion();
+            }
+        } else if let Some(zoom) = requested_zoom {
+            let zoom = zoom.clamp(
+                crate::ui::preview::MIN_PREVIEW_ZOOM,
+                crate::ui::preview::MAX_PREVIEW_ZOOM,
+            );
+            if (app.preview.zoom - zoom).abs() > f32::EPSILON {
+                app.preview.zoom = zoom;
+                app.note_preview_motion();
+            }
+        }
+    }
+
+    #[cfg(not(target_os = "android"))]
     fn show_desktop(ui: &mut Ui, app: &mut CalibRawApp, _frame: &eframe::Frame) {
         theme::prepare_toolbar(ui);
         let toolbar_width = ui.available_width();
@@ -226,10 +340,17 @@ impl TopBar {
         let tab_width = if compact { 88.0 } else { 98.0 };
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             if app.ui.active_tab == AppTab::Develop {
-                // Review controls stay at the far right. In the fallback/windowed
-                // layout the brand is a real item immediately to their left, so the
-                // sword is always left of the stars/flags and can never cover them.
-                if crate::ui::library::show_current_photo_review(ui, app, compact_review) {
+                // Review controls stay at the far right, with zoom immediately to
+                // their left so image scale is always visible while culling. In the
+                // fallback/windowed layout the brand remains a normal reserved item
+                // farther left and cannot cover either control group.
+                let review_visible =
+                    crate::ui::library::show_current_photo_review(ui, app, compact_review);
+                if review_visible {
+                    ui.separator();
+                }
+                if app.develop.current_path.is_some() {
+                    Self::show_develop_zoom_control(ui, app, toolbar_width < 900.0);
                     ui.separator();
                 }
                 if !center_brand {
@@ -415,5 +536,23 @@ mod tests {
             TopBar::library_sidebar_default_width(&ctx, 70.0),
             Some(341.0)
         );
+    }
+
+    #[test]
+    fn develop_zoom_slider_keeps_fit_visible_and_round_trips_zoom() {
+        assert!((develop_zoom_to_slider(1.0) - DEVELOP_ZOOM_FIT_POSITION).abs() < 1e-6);
+        assert!((develop_slider_to_zoom(DEVELOP_ZOOM_FIT_POSITION) - 1.0).abs() < 1e-6);
+
+        for zoom in [
+            crate::ui::preview::MIN_PREVIEW_ZOOM,
+            0.85,
+            1.0,
+            2.0,
+            8.0,
+            crate::ui::preview::MAX_PREVIEW_ZOOM,
+        ] {
+            let round_trip = develop_slider_to_zoom(develop_zoom_to_slider(zoom));
+            assert!((round_trip - zoom).abs() < 1e-4, "zoom={zoom}, got={round_trip}");
+        }
     }
 }
