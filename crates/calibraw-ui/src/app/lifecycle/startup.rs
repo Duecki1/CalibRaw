@@ -231,6 +231,7 @@ impl CalibRawApp {
                 status: "Open a RAW or TIFF file to get started.".to_owned(),
                 adaptive_preview_backdrop: crate::ui::theme::CANVAS_BACKDROP,
                 notice: None,
+                unsupported_file_dialog: None,
                 onboarding_step: (!performance.onboarding_completed)
                     .then_some(OnboardingStep::Appearance),
                 version_check: Default::default(),
@@ -502,6 +503,7 @@ impl CalibRawApp {
                 status: "Open a RAW or TIFF file to get started.".to_owned(),
                 adaptive_preview_backdrop: crate::ui::theme::CANVAS_BACKDROP,
                 notice: None,
+                unsupported_file_dialog: None,
                 onboarding_step: (!performance.onboarding_completed)
                     .then_some(OnboardingStep::Appearance),
                 version_check: Default::default(),

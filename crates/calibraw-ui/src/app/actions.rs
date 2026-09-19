@@ -46,6 +46,7 @@ impl CalibRawApp {
 
     fn transient_ui_open(&self, ctx: &egui::Context) -> bool {
         self.ui.onboarding_step.is_some()
+            || self.ui.unsupported_file_dialog.is_some()
             || self.ui.version_check.dialog_open()
             || self.library.transient_dialog_open()
             || self.ai.consent.is_open()
