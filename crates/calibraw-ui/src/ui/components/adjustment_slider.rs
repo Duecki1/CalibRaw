@@ -273,6 +273,47 @@ where
     )
 }
 
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct AdjustmentSliderInteraction {
+    pub(crate) changed: bool,
+    pub(crate) reset_requested: bool,
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn inline_adjustment_slider_with_reset<Num>(
+    ui: &mut Ui,
+    id_source: &str,
+    value: &mut Num,
+    range: RangeInclusive<Num>,
+    width: f32,
+    decimals: usize,
+    speed: f64,
+    hover_text: Option<&str>,
+    reset_value: Num,
+) -> AdjustmentSliderInteraction
+where
+    Num: egui::emath::Numeric + Copy,
+{
+    ui.push_id(id_source, |ui| {
+        guarded_slider(
+            ui,
+            value,
+            range,
+            width,
+            reset_value.to_f64(),
+            SliderOptions {
+                decimals,
+                speed,
+                hover_text,
+                explicit_reset_value: Some(reset_value.to_f64()),
+                accent: None,
+                gradient: None,
+            },
+        )
+    })
+    .inner
+}
+
 fn adjustment_slider_impl<Num>(
     ui: &mut Ui,
     label: &str,
@@ -328,7 +369,8 @@ where
                             track_width,
                             reset_value,
                             options,
-                        );
+                        )
+                        .changed;
 
                         let (mut value_response, value_changed) =
                             numeric_value_field(ui, value, range.clone(), decimals, speed);
@@ -380,7 +422,15 @@ where
                     },
                 );
 
-                changed |= guarded_slider(ui, value, range, control_width, reset_value, options);
+                changed |= guarded_slider(
+                    ui,
+                    value,
+                    range,
+                    control_width,
+                    reset_value,
+                    options,
+                )
+                .changed;
                 ui.add_space(ROW_BOTTOM_SPACE);
             }
         });
@@ -481,7 +531,7 @@ fn guarded_slider<Num>(
     width: f32,
     reset_value: f64,
     options: SliderOptions<'_>,
-) -> bool
+) -> AdjustmentSliderInteraction
 where
     Num: egui::emath::Numeric + Copy,
 {
@@ -672,7 +722,10 @@ where
         .on_hover_cursor(egui::CursorIcon::ResizeHorizontal);
     combined.on_hover_text(reset_tooltip(hover_text));
 
-    changed
+    AdjustmentSliderInteraction {
+        changed,
+        reset_requested,
+    }
 }
 
 fn reset_tooltip(hover_text: Option<&str>) -> String {
@@ -812,18 +865,24 @@ fn gradient_color_at(gradient: SliderGradient, fraction: f32) -> egui::Color32 {
             }
         }
         SliderGradient::Colorfulness => {
+            // Saturation and vibrance both operate continuously on chroma across
+            // their full bipolar ranges. Keep one stable hue on the track and
+            // vary only its colorfulness: the negative end approaches gray,
+            // zero keeps a recognizable reference color, and the positive end
+            // becomes more saturated. This avoids suggesting that color only
+            // starts changing to the right of zero.
+            let (hue, reference_saturation, reference_value) =
+                rgb_to_hsv(crate::ui::theme::COLORFULNESS_BLUE);
             if t <= 0.5 {
-                lerp_color(
-                    crate::ui::theme::COLORFULNESS_SHADOW,
-                    crate::ui::theme::COLORFULNESS_MID,
-                    t * 2.0,
-                )
+                let u = t * 2.0;
+                hsv_color(hue, reference_saturation * u, reference_value)
             } else {
                 let u = (t - 0.5) * 2.0;
-                let hue = u * 360.0;
-                let saturation = egui::lerp(0.0..=0.94, u.sqrt());
-                let value = egui::lerp(0.70..=0.92, u);
-                hsv_color(hue, saturation, value)
+                hsv_color(
+                    hue,
+                    egui::lerp(reference_saturation..=1.0, u),
+                    reference_value,
+                )
             }
         }
         SliderGradient::Saturation(color) => {
@@ -928,8 +987,9 @@ where
 #[cfg(test)]
 mod tests {
     use super::{
-        adjustment_slider, compact_slider_widths, gradient_color_at, slider_scroll_locked,
-        SliderGradient, COMPACT_ROW_GAP, HEADER_HEIGHT, SLIDER_HEIGHT, VALUE_FIELD_WIDTH,
+        adjustment_slider, compact_slider_widths, gradient_color_at, rgb_to_hsv,
+        slider_scroll_locked, SliderGradient, COMPACT_ROW_GAP, HEADER_HEIGHT, SLIDER_HEIGHT,
+        VALUE_FIELD_WIDTH,
     };
 
     fn pointer_input(events: Vec<eframe::egui::Event>) -> eframe::egui::RawInput {
@@ -1056,8 +1116,70 @@ mod tests {
     }
 
     #[test]
+    fn inline_slider_reports_double_click_reset_even_when_value_is_already_reset() {
+        use eframe::egui::{pos2, Event, Modifiers, PointerButton};
+
+        let ctx = eframe::egui::Context::default();
+        let reset_value = 0.18_f32;
+        let mut value = reset_value;
+        let mut reset_seen = false;
+        let mut time = 0.0;
+
+        let mut show = |events| {
+            let mut input = pointer_input(events);
+            input.time = Some(time);
+            time += 0.05;
+            let _ = ctx.run_ui(input, |ui| {
+                let interaction = super::inline_adjustment_slider_with_reset(
+                    ui,
+                    "inline-reset-test",
+                    &mut value,
+                    0.0..=1.0,
+                    100.0,
+                    5,
+                    0.01,
+                    None,
+                    reset_value,
+                );
+                reset_seen |= interaction.reset_requested;
+            });
+        };
+
+        show(Vec::new());
+        let pos = pos2(50.0, SLIDER_HEIGHT * 0.5);
+        for _ in 0..2 {
+            for pressed in [true, false] {
+                show(vec![
+                    Event::PointerMoved(pos),
+                    Event::PointerButton {
+                        pos,
+                        button: PointerButton::Primary,
+                        pressed,
+                        modifiers: Modifiers::NONE,
+                    },
+                ]);
+            }
+        }
+
+        assert!(reset_seen);
+        assert_eq!(value, reset_value);
+    }
+
+    #[test]
     fn slider_header_reserves_the_full_themed_control_height() {
         assert_eq!(HEADER_HEIGHT, crate::ui::theme::CONTROL_HEIGHT);
+    }
+
+    #[test]
+    fn colorfulness_gradient_uses_one_hue_and_increases_chroma_across_zero() {
+        let quarter = rgb_to_hsv(gradient_color_at(SliderGradient::Colorfulness, 0.25));
+        let neutral = rgb_to_hsv(gradient_color_at(SliderGradient::Colorfulness, 0.50));
+        let positive = rgb_to_hsv(gradient_color_at(SliderGradient::Colorfulness, 0.75));
+
+        assert!((quarter.0 - neutral.0).abs() < 1.0);
+        assert!((neutral.0 - positive.0).abs() < 1.0);
+        assert!(quarter.1 < neutral.1);
+        assert!(neutral.1 < positive.1);
     }
 
     #[test]

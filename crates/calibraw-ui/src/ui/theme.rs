@@ -119,8 +119,7 @@ pub(crate) const TEMPERATURE_WARM: Color32 = Color32::from_rgb(244, 157, 62);
 pub(crate) const TINT_GREEN: Color32 = Color32::from_rgb(76, 181, 112);
 pub(crate) const TINT_NEUTRAL: Color32 = Color32::from_gray(202);
 pub(crate) const TINT_MAGENTA: Color32 = Color32::from_rgb(222, 84, 174);
-pub(crate) const COLORFULNESS_SHADOW: Color32 = Color32::from_gray(92);
-pub(crate) const COLORFULNESS_MID: Color32 = Color32::from_gray(178);
+pub(crate) const COLORFULNESS_BLUE: Color32 = Color32::from_rgb(73, 130, 232);
 pub(crate) const LUMINANCE_BLACK: Color32 = Color32::from_rgb(10, 10, 10);
 pub(crate) const LUMINANCE_WHITE: Color32 = Color32::from_rgb(246, 246, 246);
 

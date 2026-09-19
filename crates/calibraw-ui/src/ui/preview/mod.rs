@@ -11,12 +11,12 @@ use crate::pipeline::{
 use crate::ui::mask_component_color;
 use eframe::egui::{self, Color32, Mesh, Pos2, Rect, Sense, Shape, Stroke, Ui};
 
-const MIN_PREVIEW_ZOOM: f32 = if cfg!(target_os = "android") {
+pub(crate) const MIN_PREVIEW_ZOOM: f32 = if cfg!(target_os = "android") {
     0.25
 } else {
     0.70
 };
-const MAX_PREVIEW_ZOOM: f32 = 32.0;
+pub(crate) const MAX_PREVIEW_ZOOM: f32 = 32.0;
 
 fn physical_pixels_per_point(ctx: &egui::Context) -> f32 {
     let native = ctx.input(|input| input.viewport().native_pixels_per_point);
