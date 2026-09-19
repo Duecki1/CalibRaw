@@ -116,7 +116,6 @@ fn bayer_odd_crop_rotation_preserves_samples_cfa_and_black_phase() {
     assert_eq!(raw.black_levels_per_pixel[5], 40.0);
     assert_eq!(raw.black_levels, [10.0, 20.0, 40.0, 30.0]);
     assert_eq!(raw.color_indices.storage_slice().len(), 4);
-    assert_eq!(raw.black_levels_per_pixel.storage_slice().len(), 4);
     assert_eq!(raw.wb_coeffs, [2.0, 1.0, 4.0, 1.0]);
     assert_eq!(
         load_raw_display_metadata(file.path()).unwrap().dimensions,
@@ -154,7 +153,7 @@ fn integer_and_float_linearraw_keep_normalized_camera_rgb() {
 }
 
 #[test]
-fn jpeg_xl_dng_decodes_through_public_fallback() {
+fn jpeg_xl_dng_decodes_through_public_dng_route() {
     let file = fixture(true, false, true, |_| {});
     let raw = super::super::load_raw_file(file.path()).unwrap();
     assert!(raw.is_camera_linear_raster());
@@ -195,15 +194,74 @@ fn rejects_oversized_headers_and_tiles_before_pixel_decode() {
 }
 
 #[test]
-fn unsupported_corrections_and_channels_are_rejected() {
-    for tag in [
-        DngTag::OpcodeList1,
-        DngTag::OpcodeList2,
-        DngTag::OpcodeList3,
-        DngTag::BlackLevelDeltaH,
-        DngTag::BlackLevelDeltaV,
-    ] {
-        let file = fixture(true, false, false, |root| root.add_tag(tag, Value::Byte(vec![0u8; 4])));
+fn samsung_expert_raw_style_linear_jxl_layout_is_accepted() {
+    let file = fixture(true, false, true, |root| {
+        root.add_tag(
+            TiffCommonTag::BitsPerSample,
+            Value::Short(vec![14u16, 14, 14]),
+        );
+        root.add_tag(TiffCommonTag::Orientation, 6u16);
+        root.add_tag(DngTag::BlackLevelRepeatDim, Value::Short(vec![2u16, 2]));
+        root.add_tag(DngTag::BlackLevel, Value::Short(vec![0u16; 12]));
+        root.add_tag(DngTag::WhiteLevel, Value::Long(vec![16383u32; 3]));
+        root.add_tag(
+            DngTag::CameraCalibration1,
+            Value::SRational(vec![
+                SRational::new(65, 64),
+                SRational::new(0, 1),
+                SRational::new(0, 1),
+                SRational::new(0, 1),
+                SRational::new(1, 1),
+                SRational::new(0, 1),
+                SRational::new(0, 1),
+                SRational::new(0, 1),
+                SRational::new(261, 256),
+            ]),
+        );
+        root.add_tag(
+            DngTag::ForwardMatrix1,
+            Value::SRational((0..9)
+                .map(|i| SRational::new(if i % 4 == 0 { 1 } else { 0 }, 1))
+                .collect()),
+        );
+        root.add_tag(DngTag::OpcodeList2, Value::Byte(vec![0u8; 4]));
+    });
+    let raw = super::super::load_raw_file(file.path()).unwrap();
+    assert!(raw.is_camera_linear_raster());
+    assert_eq!([raw.width, raw.height], [16, 16]);
+}
+
+#[test]
+fn jpeg_xl_linearraw_with_opcode_list2_is_accepted() {
+    let file = fixture(true, false, true, |root| {
+        root.add_tag(DngTag::OpcodeList2, Value::Byte(vec![0u8; 4]));
+    });
+    let raw = super::super::load_raw_file(file.path()).unwrap();
+    assert!(raw.is_camera_linear_raster());
+    assert_eq!([raw.width, raw.height], [16, 16]);
+}
+
+#[test]
+fn opcode_list2_does_not_block_phone_style_dngs() {
+    let file = fixture(true, false, false, |root| {
+        root.add_tag(DngTag::OpcodeList2, Value::Byte(vec![0u8; 4]))
+    });
+    let raw = load_raw_file_with_profile_selection(
+        file.path(),
+        CameraProfileMode::Automatic,
+        None,
+        None,
+    )
+    .unwrap();
+    assert!(raw.is_camera_linear_raster());
+}
+
+#[test]
+fn unsupported_opcode_lists_black_level_deltas_and_channels_are_rejected() {
+    for tag in [DngTag::OpcodeList1, DngTag::OpcodeList3] {
+        let file = fixture(true, false, false, |root| {
+            root.add_tag(tag, Value::Byte(vec![0u8; 4]))
+        });
         let error = load_raw_file_with_profile_selection(
             file.path(),
             CameraProfileMode::Automatic,
@@ -212,6 +270,19 @@ fn unsupported_corrections_and_channels_are_rejected() {
         )
         .unwrap_err();
         assert!(format!("{error:#}").contains("correction"));
+    }
+    for tag in [DngTag::BlackLevelDeltaH, DngTag::BlackLevelDeltaV] {
+        let file = fixture(true, false, false, |root| {
+            root.add_tag(tag, Value::Byte(vec![0u8; 4]))
+        });
+        let error = load_raw_file_with_profile_selection(
+            file.path(),
+            CameraProfileMode::Automatic,
+            None,
+            None,
+        )
+        .unwrap_err();
+        assert!(format!("{error:#}").contains("black-level correction"));
     }
     let file = fixture(true, false, false, |root| {
         root.add_tag(TiffCommonTag::SamplesPerPixel, 4u16)

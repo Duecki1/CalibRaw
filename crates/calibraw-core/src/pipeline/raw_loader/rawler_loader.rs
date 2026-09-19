@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! Isolated DNG compatibility backend. Rawler owns container and pixel decoding;
+//! Isolated DNG backend. Rawler owns container and pixel decoding;
 //! CalibRaw owns validation and adapts the result to its existing colour pipeline.
 
 use super::libraw_loader as shared;
@@ -188,7 +188,7 @@ fn open(path: &Path) -> Result<Input> {
     // through this API. Leave those formats to LibRaw rather than bypass limits.
     ensure!(
         decoder.format_hint() == FormatHint::DNG,
-        "Rawler compatibility fallback currently supports DNG containers only"
+        "Rawler DNG backend supports DNG containers only"
     );
     let raw = decoder
         .ifd(WellKnownIFD::Raw)?
@@ -236,19 +236,33 @@ fn validate_layout(input: &Input) -> Result<()> {
             "non-square DNG pixels are unsupported"
         );
     }
-    // Rawler 0.8 applies LinearizationTable and supported interleave factors.
-    // It does not apply these corrections. Reject instead of silently ignoring
-    // them; no private opcode/TIFF/codec implementation is maintained here.
-    for tag in [
-        DngTag::BlackLevelDeltaH,
-        DngTag::BlackLevelDeltaV,
-        DngTag::OpcodeList1,
-        DngTag::OpcodeList2,
-        DngTag::OpcodeList3,
-    ] {
+    // Rawler 0.8 applies LinearizationTable and supported interleave factors,
+    // but it does not apply DNG opcode lists. Samsung Expert RAW / phone DNGs
+    // commonly carry lens-shading GainMap corrections in OpcodeList2. Treat the
+    // missing correction as a documented rendering limitation rather than a
+    // decode blocker, otherwise valid LinearRaw JPEG-XL images cannot open.
+    if entry(raw, DngTag::OpcodeList2 as u16).is_some() {
+        log::warn!(
+            "DNG OpcodeList2 is present but Rawler 0.8 does not apply DNG opcodes; decoding without the stage-2 correction"
+        );
+        crate::diagnostics::record(
+            "DNG OpcodeList2 present; Rawler decoded pixels without applying the stage-2 opcode list",
+        );
+    }
+    // Keep other unimplemented raw-stage corrections strict. Ignoring these
+    // could change the interpretation of the sensor samples in less predictable
+    // ways, and CalibRaw deliberately does not maintain a private opcode parser.
+    for tag in [DngTag::OpcodeList1, DngTag::OpcodeList3] {
         ensure!(
             entry(raw, tag as u16).is_none(),
             "Rawler cannot apply DNG correction {:?}",
+            tag
+        );
+    }
+    for tag in [DngTag::BlackLevelDeltaH, DngTag::BlackLevelDeltaV] {
+        ensure!(
+            entry(raw, tag as u16).is_none(),
+            "Rawler cannot apply DNG black-level correction {:?}",
             tag
         );
     }
@@ -702,7 +716,7 @@ pub(super) fn load_raw_file_with_profile_selection(
         let mut loaded = adapt(image, &input, path, profile)?;
         loaded.camera_profile_source = source;
         loaded.available_camera_profiles = candidates;
-        crate::diagnostics::record("DNG decoded through Rawler compatibility backend");
+        crate::diagnostics::record("DNG decoded through Rawler backend");
         Ok(loaded)
     })
 }
