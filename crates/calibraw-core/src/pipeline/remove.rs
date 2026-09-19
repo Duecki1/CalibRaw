@@ -427,10 +427,10 @@ pub fn canonical_remove_scene_to_pipeline_scene(
 }
 
 pub fn pipeline_scene_to_working_rec2020(raw: &LoadedRaw, rgb: [f32; 3]) -> [f32; 3] {
-    if raw.is_pre_demosaiced_raster() {
+    if raw.is_pre_demosaiced_raster() && !raw.is_camera_linear_raster() {
         return rgb;
     }
-    let m = &raw.cam_to_srgb;
+    let m = remove_camera_transform(raw);
     [
         m[0][0] * rgb[0] + m[0][1] * rgb[1] + m[0][2] * rgb[2],
         m[1][0] * rgb[0] + m[1][1] * rgb[1] + m[1][2] * rgb[2],
@@ -438,11 +438,24 @@ pub fn pipeline_scene_to_working_rec2020(raw: &LoadedRaw, rgb: [f32; 3]) -> [f32
     ]
 }
 
+// Sensor pipeline scenes have WB applied already; camera rasters do not.
+fn remove_camera_transform(raw: &LoadedRaw) -> [[f32; 4]; 3] {
+    let mut matrix = raw.cam_to_srgb;
+    if raw.is_camera_linear_raster() {
+        for row in &mut matrix {
+            for (value, gain) in row.iter_mut().zip(raw.wb_coeffs) {
+                *value *= gain;
+            }
+        }
+    }
+    matrix
+}
+
 fn invert_remove_camera_matrix(raw: &LoadedRaw) -> Option<[[f32; 3]; 3]> {
-    if raw.is_pre_demosaiced_raster() {
+    if raw.is_pre_demosaiced_raster() && !raw.is_camera_linear_raster() {
         return Some([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]);
     }
-    let m = &raw.cam_to_srgb;
+    let m = remove_camera_transform(raw);
     let a = m[0][0];
     let b = m[0][1];
     let c = m[0][2];
@@ -481,7 +494,7 @@ pub fn working_rec2020_to_canonical_remove_scene(
     exposure: &ExposureParams,
     rgb: [f32; 3],
 ) -> [f32; 3] {
-    if raw.is_pre_demosaiced_raster() {
+    if raw.is_pre_demosaiced_raster() && !raw.is_camera_linear_raster() {
         return rgb;
     }
     let Some(m) = invert_remove_camera_matrix(raw) else {

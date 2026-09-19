@@ -890,7 +890,10 @@ fn write_android_launcher_icons(source: &RgbaImage) -> Result<()> {
     let drawable = root.join("android/app/src/main/res/drawable-nodpi");
     fs::create_dir_all(&drawable)?;
     DynamicImage::ImageRgba8(foreground)
-        .save_with_format(drawable.join("calibraw_icon_foreground.png"), ImageFormat::Png)
+        .save_with_format(
+            drawable.join("calibraw_icon_foreground.png"),
+            ImageFormat::Png,
+        )
         .map_err(|error| XtaskError::new(format!("cannot write Android adaptive icon: {error}")))?;
     Ok(())
 }

@@ -84,6 +84,12 @@ fn raster_with_metadata(
     output.aperture = raw.aperture;
     output.focus_distance = raw.focus_distance;
     output.capture_metadata = raw.capture_metadata.clone();
+    output.wb_coeffs = raw.wb_coeffs;
+    output.cam_to_srgb = raw.cam_to_srgb;
+    output.black_levels = raw.black_levels;
+    output.white_levels = raw.white_levels;
+    output.white_balance_model = raw.white_balance_model.clone();
+    output.cfa_kind = raw.cfa_kind;
     output.noise_profile = raw.noise_profile;
     output.camera_profile = raw.camera_profile.clone();
     output.camera_profile_source = raw.camera_profile_source.clone();
@@ -1496,6 +1502,18 @@ mod tests {
             &padded.scene_linear_raster().unwrap()[(3 * 4 + 3) * 3..(3 * 4 + 3) * 3 + 3],
             &[3.0, 3.0, 6.0]
         );
+    }
+
+    #[test]
+    fn raster_derivatives_preserve_camera_transform_metadata() {
+        let mut raw = test_raster(4, 4);
+        raw.wb_coeffs = [2.0, 1.0, 0.5, 1.0];
+        raw.cam_to_srgb = [[1.0, 2.0, 3.0, 0.0], [4.0, 5.0, 6.0, 0.0], [7.0, 8.0, 9.0, 0.0]];
+        let cropped = crop_raw(&raw, 1, 1, 2, 2);
+        assert_eq!(cropped.wb_coeffs, raw.wb_coeffs);
+        assert_eq!(cropped.cam_to_srgb, raw.cam_to_srgb);
+        assert_eq!(cropped.white_levels, raw.white_levels);
+        assert_eq!(cropped.black_levels, raw.black_levels);
     }
 
     #[test]
