@@ -179,11 +179,8 @@ impl TopBar {
     #[cfg(not(target_os = "android"))]
     fn show_toolbar_brand(ui: &mut Ui, app: &CalibRawApp) {
         ui.add(
-            egui::Image::new((
-                app.toolbar_brand_texture.id(),
-                Self::toolbar_brand_size(),
-            ))
-            .sense(egui::Sense::hover()),
+            egui::Image::new((app.toolbar_brand_texture.id(), Self::toolbar_brand_size()))
+                .sense(egui::Sense::hover()),
         )
         .on_hover_text("CalibRaw");
     }
