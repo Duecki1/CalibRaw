@@ -296,6 +296,23 @@ fn unsupported_opcode_lists_black_level_deltas_and_channels_are_rejected() {
     .is_err());
 }
 
+
+#[test]
+fn dng_thumbnail_uses_rawler_preview_chain_and_raw_develop_fallback() {
+    // This synthetic DNG deliberately has no root NewSubFileType/JPEG preview.
+    // The old hand-rolled thumbnail parser rejected it immediately and the UI
+    // entered the retry loop. The public thumbnail path must still produce a
+    // preview, falling back to a Rawler-developed image when no embedded one exists.
+    let file = fixture(true, false, false, |_| {});
+    let thumbnail = super::super::load_raw_thumbnail(file.path(), 8).unwrap();
+    assert!(thumbnail.width > 0 && thumbnail.height > 0);
+    assert!(thumbnail.width <= 8 && thumbnail.height <= 8);
+    assert_eq!(
+        thumbnail.rgba.len(),
+        thumbnail.width as usize * thumbnail.height as usize * 4
+    );
+}
+
 #[test]
 fn malformed_and_truncated_dngs_return_errors() {
     let file = tempfile::Builder::new().suffix(".dng").tempfile().unwrap();

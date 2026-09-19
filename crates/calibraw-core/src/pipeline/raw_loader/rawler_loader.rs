@@ -14,11 +14,11 @@ use rawler::decoders::{
     Decoder, FormatHint, Orientation, RawDecodeParams, RawMetadata, WellKnownIFD,
 };
 use rawler::formats::tiff::{Entry, IFD};
+use rawler::imgop::develop::RawDevelop;
 use rawler::rawimage::{RawImage, RawImageData, RawPhotometricInterpretation};
 use rawler::rawsource::RawSource;
 use rawler::tags::{DngTag, TiffCommonTag};
 use std::{
-    io::Cursor,
     panic::{catch_unwind, AssertUnwindSafe},
     path::Path,
     rc::Rc,
@@ -771,78 +771,111 @@ pub(super) fn load_raw_display_metadata(path: &Path) -> Result<RawDisplayMetadat
     })
 }
 
+fn thumbnail_from_dynamic_image(
+    preview: image::DynamicImage,
+    maximum_edge: u32,
+    orientation: Orientation,
+) -> Result<RawThumbnail> {
+    ensure!(maximum_edge > 0, "thumbnail edge must be non-zero");
+    let resized = preview
+        .thumbnail(maximum_edge.min(8192), maximum_edge.min(8192))
+        .to_rgba8();
+    ensure!(
+        resized.width() > 0 && resized.height() > 0,
+        "DNG preview has invalid dimensions"
+    );
+    let geometry = Geometry {
+        sensor_width: resized.width() as usize,
+        sensor_height: resized.height() as usize,
+        x: 0,
+        y: 0,
+        width: resized.width() as usize,
+        height: resized.height() as usize,
+        orientation,
+    };
+    let [width, height] = geometry.dimensions();
+    let byte_len = (width as usize)
+        .checked_mul(height as usize)
+        .and_then(|pixels| pixels.checked_mul(4))
+        .context("DNG thumbnail allocation overflow")?;
+    let mut rgba = Vec::new();
+    rgba.try_reserve_exact(byte_len)?;
+    for y in 0..height as usize {
+        for x in 0..width as usize {
+            let (sx, sy) = geometry.source(x, y);
+            rgba.extend_from_slice(&resized.get_pixel(sx as u32, sy as u32).0);
+        }
+    }
+    Ok(RawThumbnail {
+        width,
+        height,
+        rgba,
+    })
+}
+
+fn embedded_thumbnail(input: &Input) -> Result<image::DynamicImage> {
+    let params = RawDecodeParams::default();
+    let mut failures = Vec::new();
+
+    match input.decoder.thumbnail_image(&input.source, &params) {
+        Ok(Some(image)) => return Ok(image),
+        Ok(None) => {}
+        Err(error) => failures.push(format!("thumbnail: {error}")),
+    }
+    match input.decoder.preview_image(&input.source, &params) {
+        Ok(Some(image)) => return Ok(image),
+        Ok(None) => {}
+        Err(error) => failures.push(format!("preview: {error}")),
+    }
+    match input.decoder.full_image(&input.source, &params) {
+        Ok(Some(image)) => return Ok(image),
+        Ok(None) => {}
+        Err(error) => failures.push(format!("full image: {error}")),
+    }
+
+    if failures.is_empty() {
+        bail!("DNG has no embedded thumbnail or preview")
+    } else {
+        bail!("DNG has no usable embedded thumbnail or preview ({})", failures.join("; "))
+    }
+}
+
 pub(super) fn load_raw_embedded_thumbnail(path: &Path, maximum_edge: u32) -> Result<RawThumbnail> {
     guarded(|| {
         ensure!(maximum_edge > 0, "thumbnail edge must be non-zero");
         let input = open(path)?;
-        // Only decode a JPEG preview whose byte range can be bounded. No RAW
-        // decode is performed here and image's allocation limits cover the JPEG.
-        let root = &input.root;
-        ensure!(
-            number(root, TiffCommonTag::NewSubFileType as u16)?.unwrap_or(0) & 1 != 0,
-            "DNG has no root preview"
-        );
-        let (offset, size) = if let (Some(o), Some(s)) = (number(root, 513)?, number(root, 514)?) {
-            (o, s)
-        } else {
-            ensure!(
-                matches!(
-                    number(root, TiffCommonTag::Compression as u16)?,
-                    Some(7 | 34892)
-                ),
-                "DNG preview is not JPEG"
-            );
-            (
-                number(root, TiffCommonTag::StripOffsets as u16)?
-                    .context("missing preview offset")?,
-                number(root, TiffCommonTag::StripByteCounts as u16)?
-                    .context("missing preview size")?,
-            )
-        };
-        ensure!(
-            size > 0 && size <= 64 * 1024 * 1024,
-            "DNG preview exceeds payload limit"
-        );
-        let end = offset.checked_add(size).context("preview range overflow")?;
-        let bytes = input
-            .source
-            .buf()
-            .get(offset..end)
-            .context("DNG preview outside file")?;
-        let mut reader =
-            image::ImageReader::with_format(Cursor::new(bytes), image::ImageFormat::Jpeg);
-        let mut limits = image::Limits::default();
-        limits.max_image_width = Some(8192);
-        limits.max_image_height = Some(8192);
-        limits.max_alloc = Some(64 * 1024 * 1024);
-        reader.limits(limits);
-        let preview = reader.decode().context("decode bounded DNG JPEG preview")?;
-        let resized = preview
-            .thumbnail(maximum_edge.min(8192), maximum_edge.min(8192))
-            .to_rgba8();
-        let geometry = Geometry {
-            sensor_width: resized.width() as usize,
-            sensor_height: resized.height() as usize,
-            x: 0,
-            y: 0,
-            width: resized.width() as usize,
-            height: resized.height() as usize,
-            orientation: input.geometry.orientation,
-        };
-        let [width, height] = geometry.dimensions();
-        let mut rgba = Vec::new();
-        rgba.try_reserve_exact(width as usize * height as usize * 4)?;
-        for y in 0..height as usize {
-            for x in 0..width as usize {
-                let (sx, sy) = geometry.source(x, y);
-                rgba.extend_from_slice(&resized.get_pixel(sx as u32, sy as u32).0);
+        let orientation = input.geometry.orientation;
+        let preview = embedded_thumbnail(&input)?;
+        thumbnail_from_dynamic_image(preview, maximum_edge, orientation)
+    })
+}
+
+pub(super) fn load_raw_thumbnail(path: &Path, maximum_edge: u32) -> Result<RawThumbnail> {
+    guarded(|| {
+        ensure!(maximum_edge > 0, "thumbnail edge must be non-zero");
+        let input = open(path)?;
+        let orientation = input.geometry.orientation;
+
+        match embedded_thumbnail(&input) {
+            Ok(preview) => thumbnail_from_dynamic_image(preview, maximum_edge, orientation),
+            Err(embedded_error) => {
+                log::warn!(
+                    "DNG embedded preview extraction failed; developing a thumbnail from RAW pixels: {embedded_error:#}"
+                );
+                validate_layout(&input)?;
+                let raw = input
+                    .decoder
+                    .raw_image(&input.source, &RawDecodeParams::default(), false)
+                    .context("decode DNG pixels for thumbnail fallback")?;
+                let developed = RawDevelop::default()
+                    .develop_intermediate(&raw)
+                    .context("develop DNG thumbnail fallback")?
+                    .to_dynamic_image()
+                    .context("Rawler could not convert developed DNG thumbnail to an image")?;
+                thumbnail_from_dynamic_image(developed, maximum_edge, orientation)
+                    .with_context(|| format!("embedded DNG preview failed first: {embedded_error:#}"))
             }
         }
-        Ok(RawThumbnail {
-            width,
-            height,
-            rgba,
-        })
     })
 }
 
