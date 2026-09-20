@@ -129,7 +129,7 @@ pub(crate) fn dialog_confirmation_buttons(
         let confirm = ui
             .add_enabled_ui(confirm_enabled, |ui| {
                 if destructive {
-                    destructive_button(ui, confirm_label.clone())
+                    destructive_button(ui, confirm_label)
                 } else {
                     primary_action_button(ui, confirm_label)
                 }

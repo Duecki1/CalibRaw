@@ -6,6 +6,14 @@ pub(crate) struct TopBar;
 
 #[cfg(not(target_os = "android"))]
 const LIBRARY_SIDEBAR_ALIGNMENT_ID: &str = "library-sidebar-toolbar-alignment-x";
+#[cfg(not(target_os = "android"))]
+const DEVELOP_DOCK_MIN_WIDTH: f32 = 220.0;
+#[cfg(not(target_os = "android"))]
+const TOOLBAR_COMPACT_WIDTH: f32 = 620.0;
+#[cfg(not(target_os = "android"))]
+const TOOLBAR_COMPACT_REVIEW_WIDTH: f32 = 760.0;
+#[cfg(not(target_os = "android"))]
+const TOOLBAR_COMPACT_ZOOM_WIDTH: f32 = 176.0;
 
 #[cfg(not(target_os = "android"))]
 const DEVELOP_ZOOM_FIT_POSITION: f32 = 0.18;
@@ -34,8 +42,7 @@ fn develop_slider_to_zoom(position: f32) -> f32 {
         let fraction = position / DEVELOP_ZOOM_FIT_POSITION.max(f32::EPSILON);
         egui::lerp(min..=1.0, fraction)
     } else {
-        let fraction =
-            (position - DEVELOP_ZOOM_FIT_POSITION) / (1.0 - DEVELOP_ZOOM_FIT_POSITION);
+        let fraction = (position - DEVELOP_ZOOM_FIT_POSITION) / (1.0 - DEVELOP_ZOOM_FIT_POSITION);
         (max.ln() * fraction).exp().clamp(1.0, max)
     }
 }
@@ -50,10 +57,10 @@ fn develop_toolbar_dock_geometry(
         return None;
     }
 
-    let sidebar_id = egui::Id::new("develop_sidebar_right");
+    let sidebar_id = egui::Id::new(crate::ui::layout::DEVELOP_SIDEBAR_ID);
     let separator_x = if app.develop_ui.sidebar_open {
         if app.ui.sidebar_tab == crate::app::SidebarTab::Masks {
-            egui::PanelState::load(ctx, egui::Id::new("develop_horizontal_mask_strip"))
+            egui::PanelState::load(ctx, egui::Id::new(crate::ui::layout::DEVELOP_MASK_STRIP_ID))
                 .map(|state| state.outer_rect.left())
                 .or_else(|| {
                     egui::PanelState::load(ctx, sidebar_id).map(|state| {
@@ -65,7 +72,7 @@ fn develop_toolbar_dock_geometry(
             egui::PanelState::load(ctx, sidebar_id).map(|state| state.outer_rect.left())
         }
     } else {
-        egui::PanelState::load(ctx, egui::Id::new("develop_tool_rail"))
+        egui::PanelState::load(ctx, egui::Id::new(crate::ui::layout::DEVELOP_TOOL_RAIL_ID))
             .map(|state| state.outer_rect.left())
     };
 
@@ -75,21 +82,18 @@ fn develop_toolbar_dock_geometry(
         let viewport_size = ctx.content_rect().size();
         let mut dock_width = crate::ui::sidebar::Sidebar::DESKTOP_TOOL_RAIL_WIDTH;
         if app.develop_ui.sidebar_open {
-            let panel_max = (viewport_size.x * 0.48).clamp(
-                crate::ui::layout::ScreenLayout::MIN_HORIZONTAL_SIDEBAR_WIDTH,
-                crate::ui::layout::ScreenLayout::MAX_HORIZONTAL_SIDEBAR_WIDTH,
-            );
+            let panel_max =
+                crate::ui::layout::ScreenLayout::develop_sidebar_max_width(viewport_size);
             let default_width = crate::ui::layout::ScreenLayout::Horizontal
                 .sidebar_default_size(viewport_size)
                 .min(panel_max);
-            let sidebar_width = ctx.data_mut(|data| {
-                data.get_persisted::<f32>(sidebar_id.with("user-width"))
-                    .unwrap_or(default_width)
-                    .clamp(
-                        crate::ui::layout::ScreenLayout::MIN_HORIZONTAL_SIDEBAR_WIDTH,
-                        panel_max,
-                    )
-            });
+            let sidebar_width = crate::ui::layout::develop_sidebar_user_width(
+                ctx,
+                sidebar_id,
+                default_width,
+                crate::ui::layout::ScreenLayout::MIN_HORIZONTAL_SIDEBAR_WIDTH,
+                panel_max,
+            );
             dock_width += sidebar_width;
             if app.ui.sidebar_tab == crate::app::SidebarTab::Masks {
                 dock_width += crate::ui::sidebar::Sidebar::HORIZONTAL_MASK_STRIP_WIDTH;
@@ -174,6 +178,68 @@ impl TopBar {
         crate::ui::icons::phosphor_icon_button_enabled(ui, enabled, icon, size, hover_text)
     }
 
+    fn show_history_controls(ui: &mut Ui, app: &mut CalibRawApp, shortcuts: bool) {
+        let undo_tip = if shortcuts {
+            "Undo the last edit (Ctrl/Cmd+Z)"
+        } else {
+            "Undo the last edit"
+        };
+        let redo_tip = if shortcuts {
+            "Redo the last edit (Ctrl/Cmd+Shift+Z or Ctrl+Y)"
+        } else {
+            "Redo the last edit"
+        };
+        for (redo, tooltip) in [(false, undo_tip), (true, redo_tip)] {
+            if Self::history_icon_button(
+                ui,
+                app.action_enabled(if redo {
+                    AppAction::RedoEdit
+                } else {
+                    AppAction::UndoEdit
+                }),
+                redo,
+                theme::toolbar_icon_size(),
+                tooltip,
+            )
+            .clicked()
+            {
+                app.dispatch_action(if redo {
+                    AppAction::RedoEdit
+                } else {
+                    AppAction::UndoEdit
+                });
+            }
+        }
+    }
+
+    fn show_save_control(ui: &mut Ui, app: &mut CalibRawApp, shortcut: bool) {
+        let tooltip = if app.sidecar_save_in_progress() {
+            "Saving non-destructive edits…"
+        } else if app.sidecar_save_succeeded_recently() {
+            "Edits saved"
+        } else if shortcut {
+            "Save non-destructive edits beside the RAW (Ctrl/Cmd+S)"
+        } else {
+            "Save non-destructive edits"
+        };
+        let icon = if app.sidecar_save_succeeded_recently() {
+            egui_phosphor::regular::CHECK
+        } else {
+            egui_phosphor::regular::FLOPPY_DISK
+        };
+        if crate::ui::icons::phosphor_icon_button_enabled(
+            ui,
+            app.action_enabled(AppAction::SaveEdits),
+            icon,
+            theme::toolbar_icon_size(),
+            tooltip,
+        )
+        .clicked()
+        {
+            app.dispatch_action(AppAction::SaveEdits);
+        }
+    }
+
     fn show_thumbnail_task_indicator(ui: &mut Ui, app: &CalibRawApp) {
         let Some(progress) = app.library.thumbnail_background_progress() else {
             return;
@@ -211,56 +277,14 @@ impl TopBar {
             app.show_export_task_indicator(ui);
             Self::show_thumbnail_task_indicator(ui, app);
 
-            let save_tooltip = if app.sidecar_save_in_progress() {
-                "Saving non-destructive edits…"
-            } else if app.sidecar_save_succeeded_recently() {
-                "Edits saved"
-            } else {
-                "Save non-destructive edits"
-            };
-            let save_icon = if app.sidecar_save_succeeded_recently() {
-                egui_phosphor::regular::CHECK
-            } else {
-                egui_phosphor::regular::FLOPPY_DISK
-            };
-            let save_response = crate::ui::icons::phosphor_icon_button_enabled(
-                ui,
-                app.action_enabled(AppAction::SaveEdits),
-                save_icon,
-                theme::toolbar_icon_size(),
-                save_tooltip,
-            );
-            if save_response.clicked() {
-                app.dispatch_action(AppAction::SaveEdits);
-            }
+            Self::show_save_control(ui, app, false);
             crate::ui::library::show_current_photo_review(ui, app, true);
 
             ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
                 if Self::back_icon_button(ui, theme::toolbar_icon_size()).clicked() {
                     app.activate_tab(AppTab::Library);
                 }
-                if Self::history_icon_button(
-                    ui,
-                    app.action_enabled(AppAction::UndoEdit),
-                    false,
-                    theme::toolbar_icon_size(),
-                    "Undo the last edit",
-                )
-                .clicked()
-                {
-                    app.dispatch_action(AppAction::UndoEdit);
-                }
-                if Self::history_icon_button(
-                    ui,
-                    app.action_enabled(AppAction::RedoEdit),
-                    true,
-                    theme::toolbar_icon_size(),
-                    "Redo the last edit",
-                )
-                .clicked()
-                {
-                    app.dispatch_action(AppAction::RedoEdit);
-                }
+                Self::show_history_controls(ui, app, false);
             });
         });
     }
@@ -313,7 +337,7 @@ impl TopBar {
     fn show_develop_zoom_control(ui: &mut Ui, app: &mut CalibRawApp) {
         let enabled = app.preview.gpu_pipeline.is_some();
         let available_width = ui.available_width().max(1.0);
-        let compact = available_width < 176.0;
+        let compact = available_width < TOOLBAR_COMPACT_ZOOM_WIDTH;
         let readout_width = if compact { 43.0 } else { 49.0 };
         let icon_width = 16.0;
         let item_spacing = 4.0;
@@ -332,8 +356,7 @@ impl TopBar {
             let icon_response = ui.add_sized(
                 [icon_width, theme::CONTROL_HEIGHT],
                 egui::Label::new(
-                    egui::RichText::new(egui_phosphor::regular::MAGNIFYING_GLASS)
-                        .size(15.0),
+                    egui::RichText::new(egui_phosphor::regular::MAGNIFYING_GLASS).size(15.0),
                 )
                 .sense(egui::Sense::click()),
             );
@@ -379,9 +402,7 @@ impl TopBar {
         });
 
         if reset_requested {
-            if (app.preview.zoom - 1.0).abs() > f32::EPSILON
-                || app.preview.center != [0.5, 0.5]
-            {
+            if (app.preview.zoom - 1.0).abs() > f32::EPSILON || app.preview.center != [0.5, 0.5] {
                 app.preview.zoom = 1.0;
                 app.preview.center = [0.5, 0.5];
                 app.note_preview_motion();
@@ -399,11 +420,29 @@ impl TopBar {
     }
 
     #[cfg(not(target_os = "android"))]
+    fn show_develop_review_and_zoom(
+        ui: &mut Ui,
+        app: &mut CalibRawApp,
+        compact_review: bool,
+        separator_after_zoom: bool,
+    ) {
+        if crate::ui::library::show_current_photo_review(ui, app, compact_review) {
+            ui.separator();
+        }
+        if app.develop.current_path.is_some() {
+            Self::show_develop_zoom_control(ui, app);
+            if separator_after_zoom {
+                ui.separator();
+            }
+        }
+    }
+
+    #[cfg(not(target_os = "android"))]
     fn show_desktop(ui: &mut Ui, app: &mut CalibRawApp, _frame: &eframe::Frame) {
         theme::prepare_toolbar(ui);
         let toolbar_width = ui.available_width();
-        let compact = toolbar_width < 620.0;
-        let compact_review = toolbar_width < 760.0;
+        let compact = toolbar_width < TOOLBAR_COMPACT_WIDTH;
+        let compact_review = toolbar_width < TOOLBAR_COMPACT_REVIEW_WIDTH;
         let center_brand = Self::toolbar_brand_can_be_centered(app.ui.active_tab, toolbar_width);
         // The three navigation tabs consume the space previously used by the
         // square app icon and its separator, keeping the Library sidebar alignment
@@ -416,23 +455,13 @@ impl TopBar {
                 // the sidebar/tool-rail edge below it.
                 let dock_geometry =
                     develop_toolbar_dock_geometry(ui.ctx(), app, ui.max_rect().right())
-                        .filter(|(_, width)| *width >= 220.0);
+                        .filter(|(_, width)| *width >= DEVELOP_DOCK_MIN_WIDTH);
                 if let Some((dock_separator_x, reserved_width)) = dock_geometry {
                     let dock_response = ui.allocate_ui_with_layout(
                         egui::vec2(reserved_width, theme::TOOLBAR_HEIGHT),
                         egui::Layout::right_to_left(egui::Align::Center),
                         |ui| {
-                            let review_visible = crate::ui::library::show_current_photo_review(
-                                ui,
-                                app,
-                                compact_review,
-                            );
-                            if review_visible {
-                                ui.separator();
-                            }
-                            if app.develop.current_path.is_some() {
-                                Self::show_develop_zoom_control(ui, app);
-                            }
+                            Self::show_develop_review_and_zoom(ui, app, compact_review, false);
                         },
                     );
                     let stroke = ui.visuals().widgets.noninteractive.bg_stroke;
@@ -445,15 +474,7 @@ impl TopBar {
                         stroke,
                     );
                 } else {
-                    let review_visible =
-                        crate::ui::library::show_current_photo_review(ui, app, compact_review);
-                    if review_visible {
-                        ui.separator();
-                    }
-                    if app.develop.current_path.is_some() {
-                        Self::show_develop_zoom_control(ui, app);
-                        ui.separator();
-                    }
+                    Self::show_develop_review_and_zoom(ui, app, compact_review, true);
                 }
                 if !center_brand {
                     Self::show_toolbar_brand(ui, app);
@@ -542,50 +563,8 @@ impl TopBar {
                 }
 
                 if app.ui.active_tab == AppTab::Develop {
-                    if Self::history_icon_button(
-                        ui,
-                        app.action_enabled(AppAction::UndoEdit),
-                        false,
-                        theme::toolbar_icon_size(),
-                        "Undo the last edit (Ctrl/Cmd+Z)",
-                    )
-                    .clicked()
-                    {
-                        app.dispatch_action(AppAction::UndoEdit);
-                    }
-                    if Self::history_icon_button(
-                        ui,
-                        app.action_enabled(AppAction::RedoEdit),
-                        true,
-                        theme::toolbar_icon_size(),
-                        "Redo the last edit (Ctrl/Cmd+Shift+Z or Ctrl+Y)",
-                    )
-                    .clicked()
-                    {
-                        app.dispatch_action(AppAction::RedoEdit);
-                    }
-                    let save_tooltip = if app.sidecar_save_in_progress() {
-                        "Saving non-destructive edits…"
-                    } else if app.sidecar_save_succeeded_recently() {
-                        "Edits saved"
-                    } else {
-                        "Save non-destructive edits beside the RAW (Ctrl/Cmd+S)"
-                    };
-                    let save_icon = if app.sidecar_save_succeeded_recently() {
-                        egui_phosphor::regular::CHECK
-                    } else {
-                        egui_phosphor::regular::FLOPPY_DISK
-                    };
-                    let save_response = crate::ui::icons::phosphor_icon_button_enabled(
-                        ui,
-                        app.action_enabled(AppAction::SaveEdits),
-                        save_icon,
-                        theme::toolbar_icon_size(),
-                        save_tooltip,
-                    );
-                    if save_response.clicked() {
-                        app.dispatch_action(AppAction::SaveEdits);
-                    }
+                    Self::show_history_controls(ui, app, true);
+                    Self::show_save_control(ui, app, true);
                     let original_visible = app.preview.original_visible();
                     let preview_icon = if original_visible {
                         egui_phosphor::regular::EYE
@@ -654,8 +633,10 @@ mod tests {
             crate::ui::preview::MAX_PREVIEW_ZOOM,
         ] {
             let round_trip = develop_slider_to_zoom(develop_zoom_to_slider(zoom));
-            assert!((round_trip - zoom).abs() < 1e-4, "zoom={zoom}, got={round_trip}");
+            assert!(
+                (round_trip - zoom).abs() < 1e-4,
+                "zoom={zoom}, got={round_trip}"
+            );
         }
     }
-
 }

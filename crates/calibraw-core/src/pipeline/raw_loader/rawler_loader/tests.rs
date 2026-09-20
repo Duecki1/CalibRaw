@@ -63,9 +63,11 @@ fn fixture(
     root.add_tag(DngTag::UniqueCameraModel, "Test Synthetic");
     root.add_tag(
         DngTag::ColorMatrix1,
-        Value::SRational((0..9)
-            .map(|i| SRational::new(if i % 4 == 0 { 1 } else { 0 }, 1))
-            .collect::<Vec<_>>()),
+        Value::SRational(
+            (0..9)
+                .map(|i| SRational::new(if i % 4 == 0 { 1 } else { 0 }, 1))
+                .collect::<Vec<_>>(),
+        ),
     );
     root.add_tag(DngTag::CalibrationIlluminant1, 21u16);
     root.add_tag(
@@ -220,9 +222,11 @@ fn samsung_expert_raw_style_linear_jxl_layout_is_accepted() {
         );
         root.add_tag(
             DngTag::ForwardMatrix1,
-            Value::SRational((0..9)
-                .map(|i| SRational::new(if i % 4 == 0 { 1 } else { 0 }, 1))
-                .collect()),
+            Value::SRational(
+                (0..9)
+                    .map(|i| SRational::new(if i % 4 == 0 { 1 } else { 0 }, 1))
+                    .collect(),
+            ),
         );
         root.add_tag(DngTag::OpcodeList2, Value::Byte(vec![0u8; 4]));
     });
@@ -246,13 +250,9 @@ fn opcode_list2_does_not_block_phone_style_dngs() {
     let file = fixture(true, false, false, |root| {
         root.add_tag(DngTag::OpcodeList2, Value::Byte(vec![0u8; 4]))
     });
-    let raw = load_raw_file_with_profile_selection(
-        file.path(),
-        CameraProfileMode::Automatic,
-        None,
-        None,
-    )
-    .unwrap();
+    let raw =
+        load_raw_file_with_profile_selection(file.path(), CameraProfileMode::Automatic, None, None)
+            .unwrap();
     assert!(raw.is_camera_linear_raster());
 }
 
@@ -296,13 +296,12 @@ fn unsupported_opcode_lists_black_level_deltas_and_channels_are_rejected() {
     .is_err());
 }
 
-
 #[test]
-fn dng_thumbnail_uses_rawler_preview_chain_and_raw_develop_fallback() {
+fn dng_thumbnail_uses_preview_chain_and_bounded_rawler_fallback() {
     // This synthetic DNG deliberately has no root NewSubFileType/JPEG preview.
     // The old hand-rolled thumbnail parser rejected it immediately and the UI
     // entered the retry loop. The public thumbnail path must still produce a
-    // preview, falling back to a Rawler-developed image when no embedded one exists.
+    // preview, allowing Rawler development only because this source is tiny.
     let file = fixture(true, false, false, |_| {});
     let thumbnail = super::super::load_raw_thumbnail(file.path(), 8).unwrap();
     assert!(thumbnail.width > 0 && thumbnail.height > 0);
@@ -311,6 +310,13 @@ fn dng_thumbnail_uses_rawler_preview_chain_and_raw_develop_fallback() {
         thumbnail.rgba.len(),
         thumbnail.width as usize * thumbnail.height as usize * 4
     );
+}
+
+#[test]
+fn rawler_thumbnail_development_is_limited_to_small_sources() {
+    assert!(super::rawler_thumbnail_fallback_allowed(2048, 2048));
+    assert!(!super::rawler_thumbnail_fallback_allowed(2049, 2048));
+    assert!(!super::rawler_thumbnail_fallback_allowed(2048, 2049));
 }
 
 #[test]

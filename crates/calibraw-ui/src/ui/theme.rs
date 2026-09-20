@@ -5,8 +5,6 @@ use eframe::egui::{
 use serde::{Deserialize, Serialize};
 
 #[cfg(test)]
-use super::widgets::buttons::{destructive_button, interaction_visual_state};
-#[cfg(test)]
 use super::dialogs::take_initial_focus_request;
 pub(crate) use super::dialogs::{
     dialog_button_row, dialog_confirmation_buttons, dialog_keyboard_action, dialog_window,
@@ -30,6 +28,8 @@ pub(crate) use super::widgets::buttons::{
     secondary_button_enabled, segmented_button, toggle_button, toolbar_button,
     InteractionVisualState,
 };
+#[cfg(test)]
+use super::widgets::buttons::{destructive_button, interaction_visual_state};
 pub(crate) use super::widgets::forms::{
     checkbox_with_help, combo_box, form_combo, form_combo_with_help, form_row, heading_with_help,
     property_row, responsive_combo_box, singleline_text_edit, strong_with_help,

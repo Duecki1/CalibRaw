@@ -1508,7 +1508,11 @@ mod tests {
     fn raster_derivatives_preserve_camera_transform_metadata() {
         let mut raw = test_raster(4, 4);
         raw.wb_coeffs = [2.0, 1.0, 0.5, 1.0];
-        raw.cam_to_srgb = [[1.0, 2.0, 3.0, 0.0], [4.0, 5.0, 6.0, 0.0], [7.0, 8.0, 9.0, 0.0]];
+        raw.cam_to_srgb = [
+            [1.0, 2.0, 3.0, 0.0],
+            [4.0, 5.0, 6.0, 0.0],
+            [7.0, 8.0, 9.0, 0.0],
+        ];
         let cropped = crop_raw(&raw, 1, 1, 2, 2);
         assert_eq!(cropped.wb_coeffs, raw.wb_coeffs);
         assert_eq!(cropped.cam_to_srgb, raw.cam_to_srgb);

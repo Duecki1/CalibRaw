@@ -25,6 +25,13 @@ use std::{
     sync::Arc,
 };
 
+const TIFF_TAG_PLANAR_CONFIGURATION: u16 = 284;
+const MAX_RAWLER_THUMBNAIL_FALLBACK_EDGE: usize = 2048;
+
+fn rawler_thumbnail_fallback_allowed(width: usize, height: usize) -> bool {
+    width <= MAX_RAWLER_THUMBNAIL_FALLBACK_EDGE && height <= MAX_RAWLER_THUMBNAIL_FALLBACK_EDGE
+}
+
 fn guarded<T>(operation: impl FnOnce() -> Result<T>) -> Result<T> {
     catch_unwind(AssertUnwindSafe(operation))
         .map_err(|_| anyhow!("Rawler encountered malformed or unsupported RAW data"))?
@@ -217,7 +224,7 @@ fn validate_layout(input: &Input) -> Result<()> {
         "unsupported DNG photometric interpretation {photometric} with {cpp} channels"
     );
     ensure!(
-        number(raw, 284 /* PlanarConfiguration */)?.unwrap_or(1) == 1,
+        number(raw, TIFF_TAG_PLANAR_CONFIGURATION)?.unwrap_or(1) == 1,
         "planar DNG samples are unsupported"
     );
     ensure!(
@@ -319,7 +326,7 @@ fn validate_layout(input: &Input) -> Result<()> {
 }
 
 fn embedded_profile(path: &Path, input: &Input) -> Result<DcpProfile> {
-    let mut profile = shared::read_optional_profile(path).unwrap_or_default();
+    let mut profile = shared::read_optional_profile(path)?.unwrap_or_default();
     for (i, (color, calibration, forward, illuminant)) in [
         (
             DngTag::ColorMatrix1,
@@ -381,7 +388,7 @@ fn positive(value: Option<rawler::formats::tiff::Rational>) -> f32 {
 
 fn capture_metadata(path: &Path, md: &RawMetadata) -> CaptureMetadata {
     let exif = &md.exif;
-    let mut capture = shared::read_exif_capture_metadata(path).unwrap_or_default();
+    let mut capture = shared::read_exif_capture_metadata_or_default(path);
     if capture.exif_dates.is_empty() {
         capture.exif_dates = [
             (0x9003, &exif.date_time_original),
@@ -712,11 +719,11 @@ pub(super) fn load_raw_file_with_profile_selection(
             selected,
             &image.make,
             &image.model,
-        );
+        )?;
         let mut loaded = adapt(image, &input, path, profile)?;
         loaded.camera_profile_source = source;
         loaded.available_camera_profiles = candidates;
-        crate::diagnostics::record("DNG decoded through Rawler backend");
+        crate::diagnostics::record("RAW decode completed through Rawler backend");
         Ok(loaded)
     })
 }
@@ -827,16 +834,13 @@ fn embedded_thumbnail(input: &Input) -> Result<image::DynamicImage> {
         Ok(None) => {}
         Err(error) => failures.push(format!("preview: {error}")),
     }
-    match input.decoder.full_image(&input.source, &params) {
-        Ok(Some(image)) => return Ok(image),
-        Ok(None) => {}
-        Err(error) => failures.push(format!("full image: {error}")),
-    }
-
     if failures.is_empty() {
         bail!("DNG has no embedded thumbnail or preview")
     } else {
-        bail!("DNG has no usable embedded thumbnail or preview ({})", failures.join("; "))
+        bail!(
+            "DNG has no usable embedded thumbnail or preview ({})",
+            failures.join("; ")
+        )
     }
 }
 
@@ -859,22 +863,30 @@ pub(super) fn load_raw_thumbnail(path: &Path, maximum_edge: u32) -> Result<RawTh
         match embedded_thumbnail(&input) {
             Ok(preview) => thumbnail_from_dynamic_image(preview, maximum_edge, orientation),
             Err(embedded_error) => {
-                log::warn!(
-                    "DNG embedded preview extraction failed; developing a thumbnail from RAW pixels: {embedded_error:#}"
+                // Rawler has no scaled-develop API. Only use its full intermediate
+                // for genuinely small sources; larger files return an error so the
+                // shared router can use LibRaw's half-size fallback instead.
+                ensure!(
+                    rawler_thumbnail_fallback_allowed(
+                        input.geometry.sensor_width,
+                        input.geometry.sensor_height
+                    ),
+                    "DNG has no embedded preview and is too large for the bounded Rawler thumbnail fallback"
                 );
                 let _render_permit = crate::thumbnail_cache::acquire_rendered_thumbnail_worker();
                 validate_layout(&input)?;
                 let raw = input
                     .decoder
                     .raw_image(&input.source, &RawDecodeParams::default(), false)
-                    .context("decode DNG pixels for thumbnail fallback")?;
+                    .context("decode small DNG for thumbnail fallback")?;
                 let developed = RawDevelop::default()
                     .develop_intermediate(&raw)
-                    .context("develop DNG thumbnail fallback")?
+                    .context("develop small DNG thumbnail fallback")?
                     .to_dynamic_image()
                     .context("Rawler could not convert developed DNG thumbnail to an image")?;
-                thumbnail_from_dynamic_image(developed, maximum_edge, orientation)
-                    .with_context(|| format!("embedded DNG preview failed first: {embedded_error:#}"))
+                thumbnail_from_dynamic_image(developed, maximum_edge, orientation).with_context(
+                    || format!("embedded DNG preview failed first: {embedded_error:#}"),
+                )
             }
         }
     })

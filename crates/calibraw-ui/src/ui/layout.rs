@@ -1,4 +1,33 @@
+#[cfg(not(target_os = "android"))]
+use eframe::egui;
 use eframe::egui::Vec2;
+
+pub(crate) const DEVELOP_TOOL_RAIL_ID: &str = "develop_tool_rail";
+pub(crate) const DEVELOP_SIDEBAR_ID: &str = "develop_sidebar_right";
+pub(crate) const DEVELOP_MASK_STRIP_ID: &str = "develop_horizontal_mask_strip";
+
+/// Returns the width explicitly selected with the Develop sidebar resize handle.
+///
+/// `egui::Panel` also persists content-driven width changes, so this separate
+/// value keeps newly revealed controls from overriding the user's choice.
+#[cfg(not(target_os = "android"))]
+pub(crate) fn develop_sidebar_user_width(
+    ctx: &egui::Context,
+    panel_id: egui::Id,
+    default_width: f32,
+    min_width: f32,
+    max_width: f32,
+) -> f32 {
+    ctx.data_mut(|data| {
+        data.get_persisted::<f32>(panel_id.with("user-width"))
+            .or_else(|| {
+                data.get_persisted::<egui::PanelState>(panel_id)
+                    .map(|state| state.size().x)
+            })
+            .unwrap_or(default_width)
+            .clamp(min_width, max_width)
+    })
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ScreenLayout {
@@ -64,6 +93,14 @@ impl ScreenLayout {
             }
             Self::Vertical => (viewport.y * 0.40).clamp(Self::MIN_VERTICAL_SIDEBAR_HEIGHT, 480.0),
         }
+    }
+
+    #[cfg(not(target_os = "android"))]
+    pub(crate) fn develop_sidebar_max_width(viewport: Vec2) -> f32 {
+        (viewport.x * 0.48).clamp(
+            Self::MIN_HORIZONTAL_SIDEBAR_WIDTH,
+            Self::MAX_HORIZONTAL_SIDEBAR_WIDTH,
+        )
     }
 }
 

@@ -47,8 +47,8 @@ pub use processing::{
 };
 pub use raw_loader::{invalidate_dcp_profile_index, prewarm_dcp_profile_index};
 pub use raw_loader::{
-    is_supported_raw_path, load_raw_display_dimensions, load_raw_display_metadata,
-    load_raw_embedded_thumbnail, load_raw_file, load_raw_file_with_dcp,
+    is_supported_raw_path, is_unsupported_raw_error, load_raw_display_dimensions,
+    load_raw_display_metadata, load_raw_embedded_thumbnail, load_raw_file, load_raw_file_with_dcp,
     load_raw_file_with_profile_config, load_raw_file_with_profile_selection, load_raw_thumbnail,
     AiDenoisedImage, CameraProfileCandidate, CameraProfileMode, CfaKind, CompactPixelMap,
     LoadedRaw, RawDisplayMetadata, RawThumbnail, SUPPORTED_RAW_EXTENSIONS,
