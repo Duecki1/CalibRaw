@@ -51,7 +51,7 @@ fn tone_raster_scene_bilinear(pos: vec2<f32>) -> vec3<f32> {
 
 fn tone_source_scene_at(pos: vec2<i32>) -> vec3<f32> {
     var rgb = textureLoad(tone_scene_tex, Common::clamp_pos(pos), 0).xyz;
-    if Common::camera_uniforms._pad_0_field <= 0.5 {
+    if Common::camera_uniforms.pre_demosaiced_raster <= 0.5 {
         return rgb;
     }
     if abs(Common::camera_uniforms.ca_red) > 1e-6 {
@@ -71,8 +71,8 @@ fn tone_unexposed_working_at(pos: vec2<i32>) -> vec3<f32> {
     let camera_rgb = tone_source_scene_at(pos);
 
     var working = Color::cam_to_working(camera_rgb);
-    if Common::camera_uniforms._pad_0_field > 0.5
-        && Common::camera_uniforms._pad_2_field <= 0.5 {
+    if Common::camera_uniforms.pre_demosaiced_raster > 0.5
+        && Common::camera_uniforms.camera_linear_raster <= 0.5 {
         working = BasicAdjustments::apply_temperature_tint_values(
             working,
             Common::camera_uniforms.temperature,
