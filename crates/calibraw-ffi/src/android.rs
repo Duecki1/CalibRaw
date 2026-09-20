@@ -598,8 +598,9 @@ pub fn load_library_thumbnail(
             result?
         }
     };
-    if let Err(error) = crate::thumbnail_cache::save_jpeg(&cache_path, &thumbnail) {
-        log::warn!("could not persist Android RAW thumbnail: {error}");
+    match crate::thumbnail_cache::save_jpeg(&cache_path, &thumbnail) {
+        Ok(()) => maintain_thumbnail_cache(app),
+        Err(error) => log::warn!("could not persist Android RAW thumbnail: {error}"),
     }
     Ok(thumbnail)
 }
@@ -653,6 +654,20 @@ pub fn thumbnail_cache_size_bytes(app: &AndroidApp) -> Result<u64, String> {
     })
     .map_err(|error| format!("could not measure Android thumbnail cache: {error:#}"))?;
     u64::try_from(bytes).map_err(|_| "Android returned a negative thumbnail cache size".to_owned())
+}
+
+fn maintain_thumbnail_cache(app: &AndroidApp) {
+    if let Err(error) = with_storage_manager(app, |env, storage_manager| {
+        env.call_method(
+            storage_manager,
+            jni::jni_str!("maintainThumbnailCache"),
+            jni::jni_sig!(() -> void),
+            &[],
+        )?;
+        Ok(())
+    }) {
+        log::warn!("could not maintain Android thumbnail cache: {error:#}");
+    }
 }
 
 pub fn load_library_display_dimensions(app: &AndroidApp, uri: &str) -> Result<[u32; 2], String> {
@@ -836,6 +851,7 @@ pub fn save_developed_thumbnail_cache(
         let _ = fs::remove_file(&fingerprint_path);
         return Err("edit sidecar changed while its thumbnail was being cached".to_owned());
     }
+    maintain_thumbnail_cache(app);
     Ok(())
 }
 

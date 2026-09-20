@@ -187,6 +187,32 @@ public final class AndroidStorageContractTest {
     }
 
     @Test
+    public void thumbnailPathLookupTouchesHitsWithoutTrimmingTheWholeCache() throws Exception {
+        File directory = temporaryFolder.newFolder("thumbnail-cache-lookup");
+        String identity = "developed\ncontent://library/photo/1";
+        File cached = ThumbnailCache.pathInDirectory(directory, identity, ".developed.jpg");
+        File oldest = new File(directory, "oldest.raw.jpg");
+        File middle = new File(directory, "middle.raw.jpg");
+        writeSparseFile(oldest, 50L * 1024L * 1024L, 1_000L);
+        writeSparseFile(middle, 50L * 1024L * 1024L, 2_000L);
+        writeSparseFile(cached, 50L * 1024L * 1024L, 3_000L);
+
+        File lookedUp = ThumbnailCache.pathInDirectory(directory, identity, ".developed.jpg");
+
+        assertEquals(cached.getCanonicalFile(), lookedUp.getCanonicalFile());
+        assertTrue(cached.lastModified() > 3_000L);
+        assertTrue(oldest.exists());
+        assertTrue(middle.exists());
+        assertTrue(directoryBytes(directory) > 128L * 1024L * 1024L);
+
+        ThumbnailCache.trim(directory);
+
+        assertFalse(oldest.exists());
+        assertTrue(cached.exists());
+        assertTrue(directoryBytes(directory) <= 128L * 1024L * 1024L);
+    }
+
+    @Test
     public void boundedStreamsEnforceLimitsAndRecoverFromZeroProgressReads() throws Exception {
         ByteArrayOutputStream output = new ByteArrayOutputStream();
         long copied = BoundedStreams.copy(

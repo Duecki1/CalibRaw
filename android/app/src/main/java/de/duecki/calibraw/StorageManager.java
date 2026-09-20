@@ -342,6 +342,10 @@ final class StorageManager {
         return thumbnailCache.sizeBytes();
     }
 
+    void maintainThumbnailCache() {
+        thumbnailCache.maintain();
+    }
+
     String materializeRawLibraryDocument(String uriText, String displayName) throws Exception {
         Uri uri = Uri.parse(uriText);
         verifyRawLibraryIdentity(uri, displayName);
