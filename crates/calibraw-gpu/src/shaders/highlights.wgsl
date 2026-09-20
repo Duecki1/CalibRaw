@@ -15,17 +15,21 @@ const DARKTABLE_OPPOSED_CLIP_MAGIC: f32 = 0.987;
 fn lch_reconstructed_cfa_at(pos: vec2<i32>) -> f32 {
     let center = Common::clamp_pos(pos);
     let center_color = RawSampling::color_at(center);
+    let center_physical_channel = RawSampling::cfa_channel_at(center);
     let original = RawSampling::raw_camera_at(center);
-    let clip = RawSampling::shared_highlight_clip();
+    let center_clip = RawSampling::shared_highlight_clip_for_cfa_channel(center_physical_channel);
     let strength = clamp(Common::camera_uniforms.highlight_reconstruction, 0.0, 1.0);
 
     if center.x >= i32(Common::camera_uniforms.width) - 1 || center.y >= i32(Common::camera_uniforms.height) - 1 {
-        return mix(original, min(original, clip), strength);
+        return mix(original, min(original, center_clip), strength);
     }
 
     var r = 0.0;
+    var r_clip = 0.0;
     var b = 0.0;
+    var b_clip = 0.0;
     var g_min = 1e20;
+    var g_min_clip = 0.0;
     var g_max = -1e20;
     var have_r = false;
     var have_b = false;
@@ -35,18 +39,25 @@ fn lch_reconstructed_cfa_at(pos: vec2<i32>) -> f32 {
     for (var dy = 0; dy <= 1; dy = dy + 1) {
         for (var dx = 0; dx <= 1; dx = dx + 1) {
             let p = center + vec2<i32>(dx, dy);
+            let physical_channel = RawSampling::cfa_channel_at(p);
             let channel = RawSampling::color_at(p);
             let value = RawSampling::raw_camera_at(p);
-            clipped = clipped || value >= clip;
+            let channel_clip = RawSampling::shared_highlight_clip_for_cfa_channel(physical_channel);
+            clipped = clipped || RawSampling::is_raw_clipped(p);
             if channel == 0u {
                 r = value;
+                r_clip = channel_clip;
                 have_r = true;
             } else if channel == 1u {
-                g_min = min(g_min, value);
+                if value < g_min {
+                    g_min = value;
+                    g_min_clip = channel_clip;
+                }
                 g_max = max(g_max, value);
                 greens = greens + 1u;
             } else {
                 b = value;
+                b_clip = channel_clip;
                 have_b = true;
             }
         }
@@ -56,9 +67,9 @@ fn lch_reconstructed_cfa_at(pos: vec2<i32>) -> f32 {
         return original;
     }
 
-    let ro = min(r, clip);
-    let go = min(g_min, clip);
-    let bo = min(b, clip);
+    let ro = min(r, r_clip);
+    let go = min(g_min, g_min_clip);
+    let bo = min(b, b_clip);
     let lightness = (r + g_max + b) / 3.0;
     var chroma = DARKTABLE_SQRT3 * (r - g_max);
     var hue_axis = 2.0 * b - g_max - r;
