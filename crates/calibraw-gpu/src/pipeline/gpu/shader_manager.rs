@@ -1,6 +1,7 @@
 use super::{
     work_shader_source, CfaKind, SHADER_BASIC_ADJUSTMENTS, SHADER_COLOR, SHADER_COMMON,
     SHADER_CREATIVE_EFFECTS, SHADER_DETAIL_CAPTURE, SHADER_DETAIL_SCALE_SPACE,
+    SHADER_DETAIL_UTILS,
     SHADER_MASK_ATMOSPHERE, SHADER_MASK_BLUR, SHADER_MASK_EDGE_GLOW, SHADER_MASK_EFFECTS_SHARED,
     SHADER_MASK_GLOW, SHADER_MASK_LENS_BLUR, SHADER_MASK_LIGHT_RAYS, SHADER_MASK_MOTION_BLUR,
     SHADER_MASK_NEON, SHADER_MASK_PIXELATE, SHADER_MASK_RADIAL_BLUR, SHADER_MASK_TILT_SHIFT,
@@ -108,6 +109,11 @@ impl ShaderManager {
             "calibraw::noise_ca_finish",
             "noise_ca_finish.wgsl",
             SHADER_NOISE_CA_FINISH,
+        )?;
+        manager.register(
+            "calibraw::detail_utils",
+            "detail_utils.wgsl",
+            SHADER_DETAIL_UTILS,
         )?;
         manager.register(
             "calibraw::detail_capture",

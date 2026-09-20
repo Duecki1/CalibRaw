@@ -145,6 +145,7 @@ const SHADER_BASIC_ADJUSTMENTS: &str = include_str!("../shaders/basic_adjustment
 const SHADER_TONE_COMMON: &str = include_str!("../shaders/tone_common.wgsl");
 const SHADER_TONEMAP: &str = include_str!("../shaders/tonemap.wgsl");
 const SHADER_NOISE_CA_FINISH: &str = include_str!("../shaders/noise_ca_finish.wgsl");
+const SHADER_DETAIL_UTILS: &str = include_str!("../shaders/detail_utils.wgsl");
 const SHADER_DETAIL_CAPTURE: &str = include_str!("../shaders/detail_capture.wgsl");
 const SHADER_DETAIL_SCALE_SPACE: &str = include_str!("../shaders/detail_scale_space.wgsl");
 

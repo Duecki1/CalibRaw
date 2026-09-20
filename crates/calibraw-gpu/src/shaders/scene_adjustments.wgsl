@@ -4,6 +4,7 @@
 #import calibraw::basic_adjustments as BasicAdjustments
 #import calibraw::tonemap as Tonemap
 #import calibraw::detail_capture as DetailCapture
+#import calibraw::detail_utils as DetailUtils
 
 @group(0) @binding(11) var scene_tex: texture_2d<f32>;
 @group(0) @binding(12) var out_tex: texture_storage_2d<rgba8unorm, write>;
@@ -171,17 +172,9 @@ fn log_luminance(rgb: vec3<f32>) -> f32 {
     return log2(Common::safe_luma(rgb));
 }
 
-fn presence_reference_scale() -> f32 {
-    return clamp(
-        f32(min(Common::camera_uniforms.full_width, Common::camera_uniforms.full_height)) / 1080.0,
-        0.55,
-        3.0,
-    );
-}
-
 fn presence_step(reference_pixels: f32, maximum: i32) -> i32 {
     return clamp(
-        i32(round(reference_pixels * presence_reference_scale())),
+        i32(round(reference_pixels * DetailUtils::presence_reference_scale())),
         1,
         maximum,
     );
@@ -241,10 +234,6 @@ fn atrous_log_luminance(pos: vec2<i32>, step: i32, range_strength: f32) -> f32 {
         }
     }
     return sum / max(sum_w, 1e-6);
-}
-
-fn soft_detail_threshold(detail: f32, threshold: f32) -> f32 {
-    return sign(detail) * max(abs(detail) - threshold, 0.0);
 }
 
 fn local_curve_block(mask_index: u32, curve: u32, block: u32) -> vec4<f32> {

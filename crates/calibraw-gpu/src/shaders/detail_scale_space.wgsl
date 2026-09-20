@@ -2,6 +2,7 @@
 #import calibraw::color as Color
 #import calibraw::basic_adjustments as BasicAdjustments
 #import calibraw::scene_adjustments as SceneAdjustments
+#import calibraw::detail_utils as DetailUtils
 #import calibraw::tone_common as ToneCommon
 #import calibraw::tonemap as Tonemap
 
@@ -52,7 +53,7 @@ fn apply_texture_and_clarity_values(
     let signal_gate = smoothstep(-7.4, -2.35, center_ev);
     let shadow_noise = 1.0 - signal_gate;
     let texture_threshold = mix(0.028, 0.006, signal_gate) * mix(1.0, 1.65, shadow_noise);
-    let positive_texture = SceneAdjustments::soft_detail_threshold(texture_band_ev, texture_threshold);
+    let positive_texture = DetailUtils::soft_detail_threshold(texture_band_ev, texture_threshold);
     var negative_texture_base_ev = fine_base_ev;
     if texture < 0.0 {
         negative_texture_base_ev = SceneAdjustments::bilateral_log_luminance(
@@ -66,7 +67,7 @@ fn apply_texture_and_clarity_values(
 
     let midtone_gate = smoothstep(-7.0, -2.25, center_ev)
         * (1.0 - 0.74 * smoothstep(0.9, 3.6, center_ev));
-    let selected_clarity = SceneAdjustments::soft_detail_threshold(clarity_band_ev, 0.0065);
+    let selected_clarity = DetailUtils::soft_detail_threshold(clarity_band_ev, 0.0065);
     let halo_guard = creative_edge_guard(pos);
     let percentiles = Tonemap::tone_percentiles();
     let center_relative_ev = center_ev - log2(ToneCommon::SCENE_MIDDLE_GREY);
