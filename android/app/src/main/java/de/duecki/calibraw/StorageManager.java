@@ -91,6 +91,8 @@ final class StorageManager {
             return;
         }
         long now = System.currentTimeMillis();
+        // Export staging has its own scavenger, and the persistent thumbnail cache uses
+        // bounded local deletion retries; neither is delegated to this RAW cleanup pass.
         File[] cachedFiles = storage.getCacheDir().listFiles((directory, name) ->
                 name.startsWith("calibraw-library-")
                         || name.startsWith("calibraw-import-")
@@ -152,12 +154,19 @@ final class StorageManager {
     }
 
     private static void deleteStaleFile(File file, long now) {
-        long modified = file.lastModified();
-        boolean isStale = modified > 0L
-                && now >= modified
-                && now - modified >= STALE_TEMP_FILE_AGE_MS;
-        if (file.isFile() && isStale && !file.delete() && file.exists()) {
-            file.deleteOnExit();
+        try {
+            long modified = file.lastModified();
+            boolean isStale = modified > 0L
+                    && now >= modified
+                    && now - modified >= STALE_TEMP_FILE_AGE_MS;
+            if (file.isFile() && isStale && !file.delete() && file.exists()) {
+                Log.w(
+                        LOG_TAG,
+                        "Could not delete stale RAW temporary file; "
+                                + "a later RAW scavenging pass will retry: " + file);
+            }
+        } catch (RuntimeException error) {
+            Log.w(LOG_TAG, "Could not clean up stale RAW temporary file " + file, error);
         }
     }
 
@@ -355,8 +364,8 @@ final class StorageManager {
             completed = true;
             return cached.getAbsolutePath();
         } finally {
-            if (!completed && !cached.delete() && cached.exists()) {
-                cached.deleteOnExit();
+            if (!completed) {
+                deleteRawTemporaryFile(cached, "incomplete RAW materialization");
             }
         }
     }
@@ -498,8 +507,8 @@ final class StorageManager {
             completed = true;
             return cached.getAbsolutePath();
         } finally {
-            if (!completed && !cached.delete() && cached.exists()) {
-                cached.deleteOnExit();
+            if (!completed) {
+                deleteRawTemporaryFile(cached, "incomplete sidecar materialization");
             }
         }
     }
@@ -569,9 +578,26 @@ final class StorageManager {
             completed = true;
             return new StoredRaw(Uri.fromFile(destination), destination.getName());
         } finally {
-            if (!completed && !partial.delete() && partial.exists()) {
-                partial.deleteOnExit();
+            if (!completed) {
+                deleteRawTemporaryFile(partial, "incomplete RAW import");
             }
+        }
+    }
+
+    private static void deleteRawTemporaryFile(File file, String description) {
+        try {
+            if (!file.delete() && file.exists()) {
+                Log.w(
+                        LOG_TAG,
+                        "Could not delete " + description
+                                + "; the RAW temporary-file scavenger will retry: " + file);
+            }
+        } catch (RuntimeException error) {
+            Log.w(
+                    LOG_TAG,
+                    "Could not delete " + description
+                            + "; the RAW temporary-file scavenger will retry: " + file,
+                    error);
         }
     }
 

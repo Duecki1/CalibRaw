@@ -82,7 +82,7 @@ public final class CalibRawActivity extends NativeActivity {
         exportPublisher = new ExportPublisher(this, CalibRawActivity::nativeOnExportPublished);
 
         configureSystemBarsAndInsets();
-        scavengeTemporaryRawFilesAsync();
+        scavengeTemporaryFilesAsync();
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             getOnBackInvokedDispatcher().registerOnBackInvokedCallback(
                     OnBackInvokedDispatcher.PRIORITY_DEFAULT,
@@ -94,13 +94,19 @@ public final class CalibRawActivity extends NativeActivity {
         }
     }
 
-    private void scavengeTemporaryRawFilesAsync() {
+    private void scavengeTemporaryFilesAsync() {
         StorageManager manager = storageManager;
+        ExportPublisher publisher = exportPublisher;
         startupMaintenanceExecutor.execute(() -> {
             try {
                 manager.scavengeTemporaryRawFiles();
             } catch (RuntimeException error) {
                 Log.w(LOG_TAG, "Could not scavenge temporary RAW files", error);
+            }
+            try {
+                publisher.scavengeCachedExports();
+            } catch (RuntimeException error) {
+                Log.w(LOG_TAG, "Could not scavenge cached exports", error);
             }
         });
     }

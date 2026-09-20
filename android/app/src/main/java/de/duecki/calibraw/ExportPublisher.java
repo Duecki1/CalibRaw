@@ -10,6 +10,7 @@ import android.os.Build;
 import android.os.Environment;
 import android.os.ParcelFileDescriptor;
 import android.provider.MediaStore;
+import android.util.Log;
 
 import java.io.File;
 import java.io.FileInputStream;
@@ -20,6 +21,9 @@ import java.util.concurrent.atomic.AtomicReference;
 
 final class ExportPublisher {
     static final int WRITE_EXPORT_PERMISSION = 1002;
+    private static final String LOG_TAG = "CalibRaw";
+    private static final int DELETE_ATTEMPTS = 3;
+    private static final long STALE_EXPORT_CACHE_AGE_MS = 24L * 60L * 60L * 1000L;
     private static final String EXPORT_RELATIVE_PATH =
             AndroidStorageContract.exportRelativePath(Environment.DIRECTORY_PICTURES);
 
@@ -138,9 +142,7 @@ final class ExportPublisher {
         } catch (Exception error) {
             callbacks.onExportPublished("", error.toString());
         } finally {
-            if (!cachedFile.delete() && cachedFile.exists()) {
-                cachedFile.deleteOnExit();
-            }
+            deleteCachedExport(cachedFile);
         }
     }
 
@@ -244,10 +246,53 @@ final class ExportPublisher {
         return true;
     }
 
+    void scavengeCachedExports() {
+        File directory = new File(activity.getCacheDir(), "exports");
+        File[] cachedExports = directory.listFiles();
+        if (cachedExports == null) {
+            return;
+        }
+        long now = System.currentTimeMillis();
+        for (File cached : cachedExports) {
+            if (Thread.currentThread().isInterrupted()) {
+                return;
+            }
+            long modified = cached.lastModified();
+            boolean isStale = cached.isFile()
+                    && modified > 0L
+                    && now >= modified
+                    && now - modified >= STALE_EXPORT_CACHE_AGE_MS;
+            if (isStale) {
+                deleteCachedExport(cached);
+            }
+        }
+    }
+
     private static void deleteCachedExport(String cachedPath) {
-        File cached = new File(cachedPath);
-        if (!cached.delete() && cached.exists()) {
-            cached.deleteOnExit();
+        deleteCachedExport(new File(cachedPath));
+    }
+
+    private static void deleteCachedExport(File cached) {
+        try {
+            for (int attempt = 1; attempt <= DELETE_ATTEMPTS; attempt++) {
+                if (!cached.exists() || cached.delete()) {
+                    return;
+                }
+                if (attempt < DELETE_ATTEMPTS) {
+                    Thread.yield();
+                }
+            }
+            Log.w(
+                    LOG_TAG,
+                    "Could not delete export-cache file after " + DELETE_ATTEMPTS
+                            + " attempts; the export-cache scavenger will retry stale files: "
+                            + cached);
+        } catch (RuntimeException error) {
+            Log.w(
+                    LOG_TAG,
+                    "Could not delete export-cache file; "
+                            + "the export-cache scavenger will retry stale files: " + cached,
+                    error);
         }
     }
 

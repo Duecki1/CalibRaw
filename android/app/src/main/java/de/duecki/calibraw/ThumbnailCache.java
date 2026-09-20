@@ -14,6 +14,7 @@ final class ThumbnailCache {
     private static final String LOG_TAG = "CalibRaw";
     private static final int MAX_ENTRIES = 512;
     private static final long MAX_BYTES = 128L * 1024L * 1024L;
+    private static final int DELETE_ATTEMPTS = 3;
 
     private final AndroidStorageAccess storage;
 
@@ -63,7 +64,11 @@ final class ThumbnailCache {
     }
 
     void clear() {
-        clearDirectory(persistentDirectory());
+        try {
+            clearDirectory(persistentDirectory());
+        } catch (RuntimeException error) {
+            Log.w(LOG_TAG, "Could not clear thumbnail cache", error);
+        }
     }
 
     long sizeBytes() {
@@ -99,12 +104,15 @@ final class ThumbnailCache {
         }
         File[] entries = directory.listFiles();
         if (entries == null) {
-            throw new IllegalStateException("Could not inspect thumbnail cache " + directory);
+            Log.w(LOG_TAG, "Could not inspect thumbnail cache " + directory);
+            return;
         }
         for (File entry : entries) {
-            if (!entry.isFile() || (!entry.delete() && entry.exists())) {
-                throw new IllegalStateException("Could not clear thumbnail cache entry " + entry);
+            if (!entry.isFile()) {
+                Log.w(LOG_TAG, "Skipping unexpected thumbnail-cache entry " + entry);
+                continue;
             }
+            deleteFile(entry);
         }
     }
 
@@ -202,8 +210,21 @@ final class ThumbnailCache {
     }
 
     private static void deleteFile(File file) {
-        if (!file.delete() && file.exists()) {
-            file.deleteOnExit();
+        try {
+            for (int attempt = 1; attempt <= DELETE_ATTEMPTS; attempt++) {
+                if (!file.exists() || file.delete()) {
+                    return;
+                }
+                if (attempt < DELETE_ATTEMPTS) {
+                    Thread.yield();
+                }
+            }
+            Log.w(
+                    LOG_TAG,
+                    "Could not delete thumbnail-cache file after " + DELETE_ATTEMPTS
+                            + " attempts; leaving it in place: " + file);
+        } catch (RuntimeException error) {
+            Log.w(LOG_TAG, "Could not delete thumbnail-cache file " + file, error);
         }
     }
 }
