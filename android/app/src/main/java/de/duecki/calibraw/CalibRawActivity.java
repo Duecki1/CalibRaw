@@ -111,6 +111,18 @@ public final class CalibRawActivity extends NativeActivity {
         });
     }
 
+    public void scavengeCameraProfileMirrors(String activeMirrorPath) {
+        ProfileImporter importer = profileImporter;
+        final String configuredMirror = activeMirrorPath == null ? "" : activeMirrorPath;
+        startupMaintenanceExecutor.execute(() -> {
+            try {
+                importer.scavengeCameraProfileMirrors(configuredMirror);
+            } catch (Exception error) {
+                Log.w(LOG_TAG, "Could not scavenge stale camera-profile mirrors", error);
+            }
+        });
+    }
+
     @SuppressWarnings("deprecation") // Required on API 30–34; API 35+ is always edge-to-edge.
     private void configureSystemBarsAndInsets() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {

@@ -13,6 +13,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.nio.file.Path;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
@@ -207,6 +208,87 @@ public final class AndroidStorageContractTest {
         } catch (StorageLimitExceededException expected) {
             assertEquals("too large", expected.getMessage());
         }
+    }
+
+    @Test
+    public void cameraProfileScavengerPreservesActiveAndRecentMirrors() throws Exception {
+        File filesDirectory = temporaryFolder.newFolder("app-files");
+        long nowMillis = 10L * ProfileImporter.CAMERA_PROFILE_MIRROR_GRACE_MILLIS;
+
+        File active = new File(filesDirectory, "camera-profiles-100");
+        File stale = new File(filesDirectory, "camera-profiles-200");
+        File recent = new File(filesDirectory, "camera-profiles-300");
+        File unrelated = new File(filesDirectory, "camera-profiles-manual");
+        assertTrue(active.mkdirs());
+        assertTrue(stale.mkdirs());
+        assertTrue(recent.mkdirs());
+        assertTrue(unrelated.mkdirs());
+        Files.write(new File(stale, "profile.dcp").toPath(), new byte[] {1});
+
+        long staleTime = nowMillis - ProfileImporter.CAMERA_PROFILE_MIRROR_GRACE_MILLIS - 1L;
+        assertTrue(active.setLastModified(staleTime));
+        assertTrue(stale.setLastModified(staleTime));
+        assertTrue(recent.setLastModified(nowMillis - 1L));
+        assertTrue(unrelated.setLastModified(staleTime));
+
+        ProfileImporter.scavengeCameraProfileMirrors(
+                filesDirectory, active.getAbsolutePath(), nowMillis);
+
+        assertTrue(active.isDirectory());
+        assertFalse(stale.exists());
+        assertTrue(recent.isDirectory());
+        assertTrue(unrelated.isDirectory());
+    }
+
+    @Test
+    public void cameraProfileScavengerDoesNotFollowSymlinks() throws Exception {
+        File filesDirectory = temporaryFolder.newFolder("symlink-app-files");
+        File outside = temporaryFolder.newFolder("outside-profile-target");
+        Files.write(new File(outside, "keep.dcp").toPath(), new byte[] {1, 2, 3});
+
+        Path mirrorLink = new File(filesDirectory, "camera-profiles-400").toPath();
+        try {
+            Files.createSymbolicLink(mirrorLink, outside.toPath());
+        } catch (UnsupportedOperationException | IOException | SecurityException error) {
+            return;
+        }
+
+        File stale = new File(filesDirectory, "camera-profiles-500");
+        assertTrue(stale.mkdirs());
+        Path nestedLink = new File(stale, "outside-link").toPath();
+        Files.createSymbolicLink(nestedLink, outside.toPath());
+        long nowMillis = 10L * ProfileImporter.CAMERA_PROFILE_MIRROR_GRACE_MILLIS;
+        assertTrue(stale.setLastModified(
+                nowMillis - ProfileImporter.CAMERA_PROFILE_MIRROR_GRACE_MILLIS - 1L));
+
+        ProfileImporter.scavengeCameraProfileMirrors(filesDirectory, "", nowMillis);
+
+        assertTrue(Files.isSymbolicLink(mirrorLink));
+        assertFalse(stale.exists());
+        assertTrue(outside.isDirectory());
+        assertTrue(new File(outside, "keep.dcp").isFile());
+    }
+
+    @Test
+    public void cameraProfileScavengerAbortsForConfiguredPathOutsideOwnedStorage()
+            throws Exception {
+        File filesDirectory = temporaryFolder.newFolder("validated-app-files");
+        File stale = new File(filesDirectory, "camera-profiles-600");
+        assertTrue(stale.mkdirs());
+        long nowMillis = 10L * ProfileImporter.CAMERA_PROFILE_MIRROR_GRACE_MILLIS;
+        assertTrue(stale.setLastModified(
+                nowMillis - ProfileImporter.CAMERA_PROFILE_MIRROR_GRACE_MILLIS - 1L));
+
+        File outside = temporaryFolder.newFolder("camera-profiles-700");
+        try {
+            ProfileImporter.scavengeCameraProfileMirrors(
+                    filesDirectory, outside.getAbsolutePath(), nowMillis);
+            fail("configured path outside app-owned files should abort scavenging");
+        } catch (IllegalArgumentException expected) {
+        }
+
+        assertTrue(stale.isDirectory());
+        assertTrue(outside.isDirectory());
     }
 
     private static void writeSparseFile(File file, long bytes, long modified) throws Exception {

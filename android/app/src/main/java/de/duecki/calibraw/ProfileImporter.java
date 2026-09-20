@@ -8,9 +8,15 @@ import android.util.Log;
 
 import java.io.File;
 import java.io.FileOutputStream;
+import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.nio.file.FileVisitResult;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
+import java.nio.file.Path;
+import java.nio.file.SimpleFileVisitor;
+import java.nio.file.attribute.BasicFileAttributes;
 import java.util.Locale;
 
 final class ProfileImporter {
@@ -20,6 +26,7 @@ final class ProfileImporter {
     private static final int MAX_DCP_FILES = 10_000;
     private static final int MAX_DCP_TREE_DEPTH = 16;
     private static final String CAMERA_PROFILE_MIRROR_PREFIX = "camera-profiles-";
+    static final long CAMERA_PROFILE_MIRROR_GRACE_MILLIS = 24L * 60L * 60L * 1000L;
     private static final String CAMERA_PROFILE_PICKER_URI_KEY = "camera-profile-tree-uri";
 
     interface Callbacks {
@@ -78,6 +85,63 @@ final class ProfileImporter {
                 },
                 "CalibRaw camera profile cleanup")
                 .start();
+    }
+
+    void scavengeCameraProfileMirrors(String activeMirrorPath) throws Exception {
+        scavengeCameraProfileMirrors(
+                storage.getFilesDir(), activeMirrorPath, System.currentTimeMillis());
+    }
+
+    static void scavengeCameraProfileMirrors(
+            File filesDirectory, String activeMirrorPath, long nowMillis) throws Exception {
+        File canonicalFilesDirectory = filesDirectory.getCanonicalFile();
+        String requestedActivePath = activeMirrorPath == null ? "" : activeMirrorPath;
+        File activeMirror = requestedActivePath.isEmpty()
+                ? null
+                : validatedOwnedCameraProfileMirror(
+                        canonicalFilesDirectory, new File(requestedActivePath));
+
+        File[] entries = canonicalFilesDirectory.listFiles();
+        if (entries == null) {
+            throw new IllegalStateException(
+                    "Could not list CalibRaw's private files directory");
+        }
+
+        Exception firstDeleteError = null;
+        for (File entry : entries) {
+            if (!isCameraProfileMirrorName(entry.getName())
+                    || Files.isSymbolicLink(entry.toPath())) {
+                continue;
+            }
+
+            File mirror;
+            try {
+                mirror = validatedOwnedCameraProfileMirror(canonicalFilesDirectory, entry);
+            } catch (Exception unsafePath) {
+                continue;
+            }
+            if (!mirror.isDirectory() || mirror.equals(activeMirror)) {
+                continue;
+            }
+
+            long modifiedMillis = mirror.lastModified();
+            if (modifiedMillis <= 0L
+                    || modifiedMillis > nowMillis
+                    || nowMillis - modifiedMillis < CAMERA_PROFILE_MIRROR_GRACE_MILLIS) {
+                continue;
+            }
+
+            try {
+                deleteDirectoryTreeChecked(mirror);
+            } catch (Exception error) {
+                if (firstDeleteError == null) {
+                    firstDeleteError = error;
+                }
+            }
+        }
+        if (firstDeleteError != null) {
+            throw firstDeleteError;
+        }
     }
 
     private void importCameraProfileFolder(Uri treeUri, String label) {
@@ -296,20 +360,26 @@ final class ProfileImporter {
         if (mirrorPath.isEmpty()) {
             return;
         }
-        File requestedMirror = new File(mirrorPath);
+        File filesDirectory = storage.getFilesDir().getCanonicalFile();
+        File mirror = validatedOwnedCameraProfileMirror(
+                filesDirectory, new File(mirrorPath));
+        deleteDirectoryTreeChecked(mirror);
+    }
+
+    private static File validatedOwnedCameraProfileMirror(
+            File canonicalFilesDirectory, File requestedMirror) throws Exception {
         if (Files.isSymbolicLink(requestedMirror.toPath())) {
             throw new IllegalArgumentException(
                     "Refusing to follow a camera-profile mirror symbolic link");
         }
-        File filesDirectory = storage.getFilesDir().getCanonicalFile();
         File mirror = requestedMirror.getCanonicalFile();
         if (!isCameraProfileMirrorName(mirror.getName())
                 || mirror.getParentFile() == null
-                || !filesDirectory.equals(mirror.getParentFile())) {
+                || !canonicalFilesDirectory.equals(mirror.getParentFile())) {
             throw new IllegalArgumentException(
-                    "Refusing to remove a path outside CalibRaw camera-profile storage");
+                    "Refusing to use a path outside CalibRaw camera-profile storage");
         }
-        deleteDirectoryTreeChecked(mirror);
+        return mirror;
     }
 
     private static boolean isCameraProfileMirrorName(String name) {
@@ -330,22 +400,28 @@ final class ProfileImporter {
     }
 
     private static void deleteDirectoryTreeChecked(File file) throws Exception {
-        boolean symbolicLink = Files.isSymbolicLink(file.toPath());
-        if (!symbolicLink && !file.exists()) {
+        Path root = file.toPath();
+        if (!Files.exists(root, LinkOption.NOFOLLOW_LINKS)) {
             return;
         }
-        if (!symbolicLink && file.isDirectory()) {
-            File[] children = file.listFiles();
-            if (children == null) {
-                throw new IllegalStateException("Could not list camera-profile mirror " + file);
+        Files.walkFileTree(root, new SimpleFileVisitor<Path>() {
+            @Override
+            public FileVisitResult visitFile(Path path, BasicFileAttributes attributes)
+                    throws IOException {
+                Files.delete(path);
+                return FileVisitResult.CONTINUE;
             }
-            for (File child : children) {
-                deleteDirectoryTreeChecked(child);
+
+            @Override
+            public FileVisitResult postVisitDirectory(Path directory, IOException error)
+                    throws IOException {
+                if (error != null) {
+                    throw error;
+                }
+                Files.delete(directory);
+                return FileVisitResult.CONTINUE;
             }
-        }
-        if (!Files.deleteIfExists(file.toPath()) && file.exists()) {
-            throw new IllegalStateException("Could not remove camera-profile mirror " + file);
-        }
+        });
     }
 
     private static void deleteDirectoryTree(File file) {

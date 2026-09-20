@@ -291,6 +291,26 @@ pub fn remove_camera_profile_mirror(app: &AndroidApp, path: &Path) -> Result<(),
     .map_err(|error| format!("could not schedule Android camera-profile cleanup: {error:#}"))
 }
 
+pub fn scavenge_camera_profile_mirrors(
+    app: &AndroidApp,
+    active_mirror: Option<&Path>,
+) -> Result<(), String> {
+    let active_mirror = active_mirror
+        .map(|path| path.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    with_activity(app, |env, activity| {
+        let active_mirror = env.new_string(&active_mirror)?;
+        env.call_method(
+            activity,
+            jni::jni_str!("scavengeCameraProfileMirrors"),
+            jni::jni_sig!((JString) -> void),
+            &[JValue::Object(&active_mirror)],
+        )?;
+        Ok(())
+    })
+    .map_err(|error| format!("could not schedule Android camera-profile scavenging: {error:#}"))
+}
+
 pub fn clear_camera_profile_folder_picker_location(app: &AndroidApp) -> Result<(), String> {
     with_profile_importer(app, |env, profile_importer| {
         env.call_method(
