@@ -312,6 +312,12 @@ impl CalibRawApp {
             }
         }
         let performance = crate::performance_settings::load(performance_settings_path.as_deref());
+        if let Err(error) = crate::android::scavenge_camera_profile_mirrors(
+            &android_app,
+            performance.camera_profile_folder.as_deref(),
+        ) {
+            log::warn!("{error}");
+        }
         prewarm_dcp_profile_folder(performance.camera_profile_folder.clone());
         let gpu_export_prewarm = Arc::new(crate::pipeline::GpuProgramPrewarm::new());
         let gpu_preview_prewarm_receiver =
