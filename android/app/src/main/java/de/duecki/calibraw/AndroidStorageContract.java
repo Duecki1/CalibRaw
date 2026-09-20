@@ -30,36 +30,6 @@ final class AndroidStorageContract {
 
     private AndroidStorageContract() {}
 
-    /**
-     * JNI document identity contract with calibraw-ffi: two percent-encoded UTF-8 fields,
-     * {@code <uri>\t<display-name>}. The literal tab is the only field separator, so tabs and
-     * newlines in either value are encoded as data.
-     */
-    static String encodeJniDocumentIdentity(String uri, String displayName) {
-        return percentEncodeJniField(uri) + "\t" + percentEncodeJniField(displayName);
-    }
-
-    private static String percentEncodeJniField(String value) {
-        StringBuilder encoded = new StringBuilder(value.length());
-        for (byte raw : value.getBytes(StandardCharsets.UTF_8)) {
-            int current = raw & 0xff;
-            if ((current >= 'a' && current <= 'z')
-                    || (current >= 'A' && current <= 'Z')
-                    || (current >= '0' && current <= '9')
-                    || current == '-'
-                    || current == '.'
-                    || current == '_'
-                    || current == '~') {
-                encoded.append((char) current);
-            } else {
-                encoded.append('%');
-                encoded.append(Character.toUpperCase(Character.forDigit(current >>> 4, 16)));
-                encoded.append(Character.toUpperCase(Character.forDigit(current & 0xf, 16)));
-            }
-        }
-        return encoded.toString();
-    }
-
     static File rawLibraryDirectory(File externalMediaRoot) {
         return new File(externalMediaRoot, RAW_LIBRARY_DIRECTORY_NAME);
     }
