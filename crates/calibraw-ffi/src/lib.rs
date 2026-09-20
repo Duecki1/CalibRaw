@@ -26,9 +26,6 @@ pub mod thumbnail_cache {
     pub use calibraw_core::thumbnail_cache::*;
 }
 
-#[cfg(any(test, target_os = "android"))]
-mod android_jni_contract;
-
 #[cfg(target_os = "android")]
 mod android;
 #[cfg(target_os = "android")]
