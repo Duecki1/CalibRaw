@@ -512,15 +512,39 @@ fn upload_raster_scene_texture(
         "scene-linear raster has {} values, expected {expected}",
         rgb.len()
     );
+    upload_rgba_texture_chunks(
+        queue,
+        texture,
+        format,
+        raw,
+        |index| {
+            [
+                half::f16::from_f32(rgb[index * 3]).to_bits(),
+                half::f16::from_f32(rgb[index * 3 + 1]).to_bits(),
+                half::f16::from_f32(rgb[index * 3 + 2]).to_bits(),
+            ]
+        },
+        |index| [rgb[index * 3], rgb[index * 3 + 1], rgb[index * 3 + 2]],
+    )
+}
+
+fn upload_rgba_texture_chunks(
+    queue: &wgpu::Queue,
+    texture: &wgpu::Texture,
+    format: wgpu::TextureFormat,
+    raw: &LoadedRaw,
+    pixel_f16: impl Fn(usize) -> [u16; 3],
+    pixel_f32: impl Fn(usize) -> [f32; 3],
+) -> Result<()> {
     let bytes_per_texel = match format {
-        wgpu::TextureFormat::Rgba16Float => 8usize,
-        wgpu::TextureFormat::Rgba32Float => 16usize,
-        _ => return Err(anyhow!("unsupported raster scene format {format:?}")),
+        wgpu::TextureFormat::Rgba16Float => 8,
+        wgpu::TextureFormat::Rgba32Float => 16,
+        _ => return Err(anyhow!("unsupported scene texture format {format:?}")),
     };
     let bytes_per_row = raw
         .width
-        .checked_mul(bytes_per_texel as u32)
-        .ok_or_else(|| anyhow!("raster scene upload row byte count overflows"))?;
+        .checked_mul(bytes_per_texel)
+        .ok_or_else(|| anyhow!("scene texture upload row byte count overflows"))?;
     let rows_per_chunk = (MAX_UPLOAD_SCRATCH_BYTES / bytes_per_row as usize).max(1) as u32;
     let row_elements = raw.width as usize * 4;
 
@@ -530,74 +554,107 @@ fn upload_raster_scene_texture(
         match format {
             wgpu::TextureFormat::Rgba16Float => {
                 let mut rgba = vec![0u16; row_count as usize * row_elements];
-                for pixel in 0..pixels {
-                    let source = (first_row as usize * raw.width as usize + pixel) * 3;
-                    let destination = pixel * 4;
-                    rgba[destination] = half::f16::from_f32(rgb[source]).to_bits();
-                    rgba[destination + 1] = half::f16::from_f32(rgb[source + 1]).to_bits();
-                    rgba[destination + 2] = half::f16::from_f32(rgb[source + 2]).to_bits();
-                    rgba[destination + 3] = half::f16::ONE.to_bits();
+                for pixel_index in 0..pixels {
+                    let source = first_row as usize * raw.width as usize + pixel_index;
+                    let destination = pixel_index * 4;
+                    rgba[destination..destination + 4]
+                        .copy_from_slice(&pack_rgba16_pixel(pixel_f16(source)));
                 }
-                queue.write_texture(
-                    wgpu::TexelCopyTextureInfo {
-                        texture,
-                        mip_level: 0,
-                        origin: wgpu::Origin3d {
-                            x: 0,
-                            y: first_row,
-                            z: 0,
-                        },
-                        aspect: wgpu::TextureAspect::All,
-                    },
-                    bytemuck::cast_slice(&rgba),
-                    wgpu::TexelCopyBufferLayout {
-                        offset: 0,
-                        bytes_per_row: Some(bytes_per_row),
-                        rows_per_image: Some(row_count),
-                    },
-                    wgpu::Extent3d {
-                        width: raw.width,
-                        height: row_count,
-                        depth_or_array_layers: 1,
-                    },
+                write_texture_chunk(
+                    queue,
+                    texture,
+                    first_row,
+                    row_count,
+                    raw.width,
+                    bytes_per_row,
+                    &rgba,
                 );
             }
             wgpu::TextureFormat::Rgba32Float => {
                 let mut rgba = vec![0.0f32; row_count as usize * row_elements];
-                for pixel in 0..pixels {
-                    let source = (first_row as usize * raw.width as usize + pixel) * 3;
-                    let destination = pixel * 4;
-                    rgba[destination..destination + 3].copy_from_slice(&rgb[source..source + 3]);
-                    rgba[destination + 3] = 1.0;
+                for pixel_index in 0..pixels {
+                    let source = first_row as usize * raw.width as usize + pixel_index;
+                    let destination = pixel_index * 4;
+                    rgba[destination..destination + 4]
+                        .copy_from_slice(&pack_rgba32_pixel(pixel_f32(source)));
                 }
-                queue.write_texture(
-                    wgpu::TexelCopyTextureInfo {
-                        texture,
-                        mip_level: 0,
-                        origin: wgpu::Origin3d {
-                            x: 0,
-                            y: first_row,
-                            z: 0,
-                        },
-                        aspect: wgpu::TextureAspect::All,
-                    },
-                    bytemuck::cast_slice(&rgba),
-                    wgpu::TexelCopyBufferLayout {
-                        offset: 0,
-                        bytes_per_row: Some(bytes_per_row),
-                        rows_per_image: Some(row_count),
-                    },
-                    wgpu::Extent3d {
-                        width: raw.width,
-                        height: row_count,
-                        depth_or_array_layers: 1,
-                    },
+                write_texture_chunk(
+                    queue,
+                    texture,
+                    first_row,
+                    row_count,
+                    raw.width,
+                    bytes_per_row,
+                    &rgba,
                 );
             }
             _ => unreachable!(),
         }
     }
     Ok(())
+}
+
+fn pack_rgba16_pixel([red, green, blue]: [u16; 3]) -> [u16; 4] {
+    [red, green, blue, half::f16::ONE.to_bits()]
+}
+
+fn pack_rgba32_pixel([red, green, blue]: [f32; 3]) -> [f32; 4] {
+    [red, green, blue, 1.0]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{pack_rgba16_pixel, pack_rgba32_pixel};
+
+    #[test]
+    fn rgba16_packing_preserves_source_bits() {
+        let pixel = [0x7e01, 0xfc01, 0x0001];
+        assert_eq!(pack_rgba16_pixel(pixel), [0x7e01, 0xfc01, 0x0001, 0x3c00]);
+    }
+
+    #[test]
+    fn rgba32_packing_preserves_special_values() {
+        let pixel = [f32::from_bits(0x7fc1_2345), f32::INFINITY, -0.0];
+        let packed = pack_rgba32_pixel(pixel);
+        assert_eq!(packed[0].to_bits(), 0x7fc1_2345);
+        assert_eq!(packed[1].to_bits(), f32::INFINITY.to_bits());
+        assert_eq!(packed[2].to_bits(), (-0.0f32).to_bits());
+        assert_eq!(packed[3], 1.0);
+    }
+}
+
+fn write_texture_chunk<T: bytemuck::Pod>(
+    queue: &wgpu::Queue,
+    texture: &wgpu::Texture,
+    first_row: u32,
+    row_count: u32,
+    width: u32,
+    bytes_per_row: u32,
+    data: &[T],
+) {
+    queue.write_texture(
+        wgpu::TexelCopyTextureInfo {
+            texture,
+            mip_level: 0,
+            origin: wgpu::Origin3d {
+                x: 0,
+                y: first_row,
+                z: 0,
+            },
+            aspect: wgpu::TextureAspect::All,
+        },
+        bytemuck::cast_slice(data),
+        wgpu::TexelCopyBufferLayout {
+            offset: 0,
+            bytes_per_row: Some(bytes_per_row),
+            rows_per_image: Some(row_count),
+        },
+        wgpu::Extent3d {
+            width,
+            height: row_count,
+            depth_or_array_layers: 1,
+        },
+    );
 }
 
 pub(super) fn upload_ai_scene_texture(
@@ -620,92 +677,26 @@ pub(super) fn upload_ai_scene_texture(
         image.is_valid_for(raw.width, raw.height),
         "AI-denoise texture dimensions do not match the RAW"
     );
-    let row_elements = raw.width as usize * 4;
-    let bytes_per_texel = match format {
-        wgpu::TextureFormat::Rgba16Float => 8usize,
-        wgpu::TextureFormat::Rgba32Float => 16usize,
-        _ => return Err(anyhow!("unsupported AI-denoise scene format {format:?}")),
-    };
-    let bytes_per_row = raw
-        .width
-        .checked_mul(bytes_per_texel as u32)
-        .ok_or_else(|| anyhow!("AI-denoise upload row byte count overflows"))?;
-    let rows_per_chunk = (MAX_UPLOAD_SCRATCH_BYTES / bytes_per_row as usize).max(1) as u32;
-
-    for first_row in (0..raw.height).step_by(rows_per_chunk as usize) {
-        let row_count = rows_per_chunk.min(raw.height - first_row);
-        let pixels = row_count as usize * raw.width as usize;
-        match format {
-            wgpu::TextureFormat::Rgba16Float => {
-                let mut rgba = vec![0u16; row_count as usize * row_elements];
-                for pixel in 0..pixels {
-                    let source = (first_row as usize * raw.width as usize + pixel) * 3;
-                    let destination = pixel * 4;
-                    rgba[destination..destination + 3].copy_from_slice(&rgb16f[source..source + 3]);
-                    rgba[destination + 3] = half::f16::ONE.to_bits();
-                }
-                queue.write_texture(
-                    wgpu::TexelCopyTextureInfo {
-                        texture,
-                        mip_level: 0,
-                        origin: wgpu::Origin3d {
-                            x: 0,
-                            y: first_row,
-                            z: 0,
-                        },
-                        aspect: wgpu::TextureAspect::All,
-                    },
-                    bytemuck::cast_slice(&rgba),
-                    wgpu::TexelCopyBufferLayout {
-                        offset: 0,
-                        bytes_per_row: Some(bytes_per_row),
-                        rows_per_image: Some(row_count),
-                    },
-                    wgpu::Extent3d {
-                        width: raw.width,
-                        height: row_count,
-                        depth_or_array_layers: 1,
-                    },
-                );
-            }
-            wgpu::TextureFormat::Rgba32Float => {
-                let mut rgba = vec![0.0f32; row_count as usize * row_elements];
-                for pixel in 0..pixels {
-                    let source = (first_row as usize * raw.width as usize + pixel) * 3;
-                    let destination = pixel * 4;
-                    for channel in 0..3 {
-                        rgba[destination + channel] =
-                            half::f16::from_bits(rgb16f[source + channel]).to_f32();
-                    }
-                    rgba[destination + 3] = 1.0;
-                }
-                queue.write_texture(
-                    wgpu::TexelCopyTextureInfo {
-                        texture,
-                        mip_level: 0,
-                        origin: wgpu::Origin3d {
-                            x: 0,
-                            y: first_row,
-                            z: 0,
-                        },
-                        aspect: wgpu::TextureAspect::All,
-                    },
-                    bytemuck::cast_slice(&rgba),
-                    wgpu::TexelCopyBufferLayout {
-                        offset: 0,
-                        bytes_per_row: Some(bytes_per_row),
-                        rows_per_image: Some(row_count),
-                    },
-                    wgpu::Extent3d {
-                        width: raw.width,
-                        height: row_count,
-                        depth_or_array_layers: 1,
-                    },
-                );
-            }
-            _ => unreachable!(),
-        }
-    }
+    upload_rgba_texture_chunks(
+        queue,
+        texture,
+        format,
+        raw,
+        |index| {
+            [
+                rgb16f[index * 3],
+                rgb16f[index * 3 + 1],
+                rgb16f[index * 3 + 2],
+            ]
+        },
+        |index| {
+            [
+                half::f16::from_bits(rgb16f[index * 3]).to_f32(),
+                half::f16::from_bits(rgb16f[index * 3 + 1]).to_f32(),
+                half::f16::from_bits(rgb16f[index * 3 + 2]).to_f32(),
+            ]
+        },
+    )?;
     Ok(true)
 }
 

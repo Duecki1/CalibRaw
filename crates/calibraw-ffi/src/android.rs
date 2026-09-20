@@ -189,6 +189,10 @@ fn direct_exports() -> &'static Mutex<HashMap<PathBuf, DirectExportTarget>> {
     DIRECT_EXPORTS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
+fn take_queued<T>(queue: &'static Mutex<VecDeque<T>>) -> Option<T> {
+    queue.lock().ok()?.pop_front()
+}
+
 fn request_repaint() {
     if let Ok(installed) = EGUI_CONTEXT.lock() {
         if let Some(context) = installed.as_ref() {
@@ -234,15 +238,15 @@ pub fn system_bar_insets_points(pixels_per_point: f32) -> [f32; 4] {
 }
 
 pub fn take_picker_result() -> Option<PickerResult> {
-    results().lock().ok()?.pop_front()
+    take_queued(results())
 }
 
 pub fn take_camera_profile_folder_result() -> Option<CameraProfileFolderResult> {
-    camera_profile_folder_results().lock().ok()?.pop_front()
+    take_queued(camera_profile_folder_results())
 }
 
 pub fn take_export_publish_result() -> Option<ExportPublishResult> {
-    export_results().lock().ok()?.pop_front()
+    take_queued(export_results())
 }
 
 pub fn set_light_system_bars(app: &AndroidApp, light: bool) -> Result<(), String> {
