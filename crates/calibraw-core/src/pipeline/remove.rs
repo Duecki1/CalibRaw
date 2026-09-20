@@ -1,4 +1,7 @@
-use super::{ExposureParams, LoadedRaw};
+use super::{
+    color_profile::{perceptual_gamut_compress, srgb_decode, srgb_encode},
+    ExposureParams, LoadedRaw,
+};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::sync::{Arc, OnceLock};
 
@@ -647,43 +650,6 @@ pub fn model_srgb_to_display_linear_rec2020(rgb: [f32; 3]) -> [f32; 3] {
         0.069_097_3 * linear[0] + 0.919_540_4 * linear[1] + 0.011_362_3 * linear[2],
         0.016_391_4 * linear[0] + 0.088_013_3 * linear[1] + 0.895_595_3 * linear[2],
     ]
-}
-
-fn perceptual_gamut_compress(rgb: [f32; 3]) -> [f32; 3] {
-    let min = rgb[0].min(rgb[1]).min(rgb[2]);
-    let max = rgb[0].max(rgb[1]).max(rgb[2]);
-    if min >= 0.0 && max <= 1.0 {
-        return rgb;
-    }
-    let luma = (rgb[0] * 0.212_672_9 + rgb[1] * 0.715_152_2 + rgb[2] * 0.072_175).clamp(0.0, 1.0);
-    let mut scale: f32 = 1.0;
-    for value in rgb {
-        let delta = value - luma;
-        if delta > 0.0 {
-            scale = scale.min((1.0 - luma) / delta);
-        } else if delta < 0.0 {
-            scale = scale.min((0.0 - luma) / delta);
-        }
-    }
-    rgb.map(|value| (luma + (value - luma) * scale.clamp(0.0, 1.0)).clamp(0.0, 1.0))
-}
-
-fn srgb_encode(value: f32) -> f32 {
-    let value = value.clamp(0.0, 1.0);
-    if value <= 0.003_130_8 {
-        value * 12.92
-    } else {
-        1.055 * value.powf(1.0 / 2.4) - 0.055
-    }
-}
-
-fn srgb_decode(value: f32) -> f32 {
-    let value = value.clamp(0.0, 1.0);
-    if value <= 0.040_45 {
-        value / 12.92
-    } else {
-        ((value + 0.055) / 1.055).powf(2.4)
-    }
 }
 
 mod arc_u8_base64 {

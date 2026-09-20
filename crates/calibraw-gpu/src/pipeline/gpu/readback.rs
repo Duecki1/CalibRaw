@@ -89,16 +89,7 @@ pub(super) fn read_rgba8_texture_region_blocking(
     readback.map_async(wgpu::MapMode::Read, .., move |result| {
         let _ = sender.send(result);
     });
-    device
-        .poll(wgpu::PollType::Wait {
-            submission_index: Some(submission),
-            timeout: None,
-        })
-        .map_err(|error| anyhow!("GPU poll failed during thumbnail readback: {error}"))?;
-    receiver
-        .recv()
-        .map_err(|_| anyhow!("GPU thumbnail readback callback was dropped"))?
-        .map_err(|error| anyhow!("GPU thumbnail readback mapping failed: {error}"))?;
+    wait_for_mapping(device, submission, receiver, "thumbnail", "thumbnail")?;
 
     let mapped = readback.get_mapped_range(..);
     let rgba_len = usize::try_from(
@@ -144,7 +135,7 @@ pub(super) fn read_rgba8_texture_region_blocking(
 pub struct PendingRgba32Readback {
     readback: wgpu::Buffer,
     submission: wgpu::SubmissionIndex,
-    receiver: std::sync::mpsc::Receiver<Result<(), String>>,
+    receiver: std::sync::mpsc::Receiver<Result<(), wgpu::BufferAsyncError>>,
     width: u32,
     height: u32,
     padded_bytes_per_row: u32,
@@ -152,18 +143,13 @@ pub struct PendingRgba32Readback {
 
 impl PendingRgba32Readback {
     pub fn finish(self, device: &wgpu::Device) -> Result<Vec<f32>> {
-        device
-            .poll(wgpu::PollType::Wait {
-                submission_index: Some(self.submission),
-                timeout: None,
-            })
-            .map_err(|error| {
-                anyhow!("GPU poll failed during pipelined export readback: {error}")
-            })?;
-        self.receiver
-            .recv()
-            .map_err(|_| anyhow!("GPU export readback callback was dropped"))?
-            .map_err(|error| anyhow!("GPU export readback mapping failed: {error}"))?;
+        wait_for_mapping(
+            device,
+            self.submission,
+            self.receiver,
+            "pipelined export",
+            "export",
+        )?;
 
         let mapped = self.readback.get_mapped_range(..);
         let capacity = usize::try_from(
@@ -251,7 +237,7 @@ pub(super) fn begin_rgba32_texture_region_rgb_readback(
     let submission = queue.submit(Some(encoder.finish()));
     let (sender, receiver) = std::sync::mpsc::channel();
     readback.map_async(wgpu::MapMode::Read, .., move |result| {
-        let _ = sender.send(result.map_err(|error| error.to_string()));
+        let _ = sender.send(result);
     });
     Ok(PendingRgba32Readback {
         readback,
@@ -407,16 +393,7 @@ pub(super) fn map_rgba32_readback_rgb(
     readback.map_async(wgpu::MapMode::Read, .., move |result| {
         let _ = sender.send(result);
     });
-    device
-        .poll(wgpu::PollType::Wait {
-            submission_index: Some(submission),
-            timeout: None,
-        })
-        .map_err(|error| anyhow!("GPU poll failed during scene readback: {error}"))?;
-    receiver
-        .recv()
-        .map_err(|_| anyhow!("GPU scene readback callback was dropped"))?
-        .map_err(|error| anyhow!("GPU scene readback mapping failed: {error}"))?;
+    wait_for_mapping(device, submission, receiver, "scene", "scene")?;
 
     let mapped = readback.get_mapped_range(..);
     let capacity = usize::try_from(
@@ -448,6 +425,25 @@ pub(super) fn map_rgba32_readback_rgb(
         return Err(anyhow!("scene texture readback contains NaN or infinity"));
     }
     Ok(rgb)
+}
+
+fn wait_for_mapping(
+    device: &wgpu::Device,
+    submission: wgpu::SubmissionIndex,
+    receiver: std::sync::mpsc::Receiver<Result<(), wgpu::BufferAsyncError>>,
+    operation: &str,
+    label: &str,
+) -> Result<()> {
+    device
+        .poll(wgpu::PollType::Wait {
+            submission_index: Some(submission),
+            timeout: None,
+        })
+        .map_err(|error| anyhow!("GPU poll failed during {operation} readback: {error}"))?;
+    receiver
+        .recv()
+        .map_err(|_| anyhow!("GPU {label} readback callback was dropped"))?
+        .map_err(|error| anyhow!("GPU {label} readback mapping failed: {error}"))
 }
 
 #[cfg(test)]

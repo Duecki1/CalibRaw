@@ -10,11 +10,7 @@ impl Preview {
         source_height: u32,
         response: &egui::Response,
     ) {
-        let lens_geometry = app
-            .develop
-            .loaded_raw
-            .as_ref()
-            .and_then(|raw| raw.lens_geometry.clone());
+        let lens_geometry = loaded_lens_geometry(app).cloned();
         let pointer = response
             .interact_pointer_pos()
             .filter(|position| preview_rect.contains(*position));
@@ -79,11 +75,7 @@ impl Preview {
         let Some(area) = app.develop_ui.white_balance_picker_drag else {
             return;
         };
-        let lens_geometry = app
-            .develop
-            .loaded_raw
-            .as_ref()
-            .and_then(|raw| raw.lens_geometry.as_deref());
+        let lens_geometry = loaded_lens_geometry(app).map(AsRef::as_ref);
         let start = final_geometry_native_source_to_screen(
             image_rect,
             app.develop.geometry,

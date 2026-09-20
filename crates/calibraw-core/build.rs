@@ -274,13 +274,7 @@ fn find_lensfun_header(include_paths: &[PathBuf]) -> Option<PathBuf> {
 }
 
 fn generate_lensfun_bindings(header: &Path, include_paths: &[PathBuf]) {
-    let bindings = bindgen::Builder::default()
-        .header(header.to_string_lossy())
-        .clang_args(
-            include_paths
-                .iter()
-                .map(|path| format!("-I{}", path.to_string_lossy())),
-        )
+    let bindings = binding_builder(header, include_paths)
         .allowlist_function(
             "lf_(free|mlstr_get|db_new|db_destroy|db_load|db_load_file|db_find_cameras|db_find_cameras_ext|db_find_lenses_hd|db_get_lenses|modifier_new|modifier_destroy|modifier_initialize|modifier_get_auto_scale|modifier_add_coord_callback_scale|modifier_apply_subpixel_geometry_distortion|modifier_apply_color_modification)",
         )
@@ -290,17 +284,9 @@ fn generate_lensfun_bindings(header: &Path, include_paths: &[PathBuf]) {
         .allowlist_var("LF_(NO_ERROR|SEARCH_.*|PF_F32|MODIFY_.*|CR_.*|VERSION.*)")
         .prepend_enum_name(false)
         .layout_tests(true)
-        .parse_callbacks(Box::new(bindgen::CargoCallbacks::new()))
         .generate()
         .unwrap_or_else(|error| panic!("could not generate Lensfun bindings from {}: {error}", header.display()));
-
-    let output_dir = std::env::var("OUT_DIR")
-        .unwrap_or_else(|error| panic!("Cargo did not set OUT_DIR: {error}"));
-    let output = PathBuf::from(output_dir).join("lensfun_bindings.rs");
-    bindings
-        .write_to_file(&output)
-        .unwrap_or_else(|error| panic!("could not write {}: {error}", output.display()));
-    normalize_generated_bindings(&output);
+    write_bindings(bindings, "lensfun_bindings.rs", "Lensfun");
 }
 
 fn configure_desktop_libraw() {
@@ -370,34 +356,48 @@ fn find_libraw_header(include_paths: &[PathBuf]) -> Option<PathBuf> {
 }
 
 fn generate_bindings(header: &Path, include_paths: &[PathBuf], android_min_sdk: Option<u32>) {
-    let mut builder = bindgen::Builder::default()
+    let mut builder = binding_builder(header, include_paths)
+        .allowlist_function("libraw_.*")
+        .allowlist_type("libraw_.*")
+        .allowlist_var("LIBRAW_.*")
+        .layout_tests(false);
+
+    if let Some(api) = android_min_sdk {
+        builder = builder.clang_arg(format!("-D__ANDROID_MIN_SDK_VERSION__={api}"));
+    }
+
+    let bindings = builder.generate().unwrap_or_else(|error| {
+        panic!(
+            "could not generate LibRaw bindings from {}: {error}",
+            header.display()
+        )
+    });
+    write_bindings(bindings, "bindings.rs", "LibRaw");
+    println!("cargo:rustc-cfg=libraw_available");
+}
+
+fn binding_builder(header: &Path, include_paths: &[PathBuf]) -> bindgen::Builder {
+    bindgen::Builder::default()
         .header(header.to_string_lossy())
         .clang_args(
             include_paths
                 .iter()
                 .map(|path| format!("-I{}", path.to_string_lossy())),
         )
-        .allowlist_function("libraw_.*")
-        .allowlist_type("libraw_.*")
-        .allowlist_var("LIBRAW_.*")
-        .layout_tests(false)
-        .parse_callbacks(Box::new(bindgen::CargoCallbacks::new()));
+        .parse_callbacks(Box::new(bindgen::CargoCallbacks::new()))
+}
 
-    if let Some(api) = android_min_sdk {
-        builder = builder.clang_arg(format!("-D__ANDROID_MIN_SDK_VERSION__={api}"));
-    }
-
-    let bindings = builder
-        .generate()
-        .expect("Unable to generate LibRaw bindings");
-
-    let out_dir = PathBuf::from(std::env::var("OUT_DIR").unwrap());
-    let output = out_dir.join("bindings.rs");
-    bindings
-        .write_to_file(&output)
-        .expect("Couldn't write LibRaw bindings");
+fn write_bindings(bindings: bindgen::Bindings, file_name: &str, library_name: &str) {
+    let output_dir = std::env::var("OUT_DIR")
+        .unwrap_or_else(|error| panic!("Cargo did not set OUT_DIR: {error}"));
+    let output = PathBuf::from(output_dir).join(file_name);
+    bindings.write_to_file(&output).unwrap_or_else(|error| {
+        panic!(
+            "could not write {library_name} bindings to {}: {error}",
+            output.display()
+        )
+    });
     normalize_generated_bindings(&output);
-    println!("cargo:rustc-cfg=libraw_available");
 }
 
 fn normalize_generated_bindings(path: &Path) {

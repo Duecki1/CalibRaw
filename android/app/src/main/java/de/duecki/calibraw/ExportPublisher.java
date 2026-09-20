@@ -196,7 +196,7 @@ final class ExportPublisher {
         if (!directory.isDirectory() && !directory.mkdirs()) {
             throw new IllegalStateException("Could not create " + directory);
         }
-        File destination = uniqueFile(directory, displayName);
+        File destination = AndroidStorageContract.uniqueFile(directory, displayName);
         try (InputStream input = new FileInputStream(cachedFile);
              FileOutputStream output = new FileOutputStream(destination)) {
             BoundedStreams.copy(input, output, Long.MAX_VALUE, "Export is too large");
@@ -208,22 +208,6 @@ final class ExportPublisher {
                 new String[]{mimeType},
                 null);
         return destination.getAbsolutePath();
-    }
-
-    private static File uniqueFile(File directory, String displayName) {
-        File candidate = new File(directory, displayName);
-        if (!candidate.exists()) {
-            return candidate;
-        }
-        int dot = displayName.lastIndexOf('.');
-        String stem = dot > 0 ? displayName.substring(0, dot) : displayName;
-        String extension = dot > 0 ? displayName.substring(dot) : "";
-        for (int suffix = 1; ; suffix++) {
-            candidate = new File(directory, stem + "-" + suffix + extension);
-            if (!candidate.exists()) {
-                return candidate;
-            }
-        }
     }
 
     private static String normalizeExportMimeType(String mimeType) {

@@ -249,20 +249,17 @@ tasks.register("buildRustRelease") {
 // avoids a preBuild <-> externalNativeBuild dependency cycle. Native work is
 // omitted when calibrawBuildRust=false so JVM-only unit tests remain host-only.
 if (buildRustEnabled) {
-    tasks.matching { it.name == "mergeDebugAssets" }.configureEach {
-        dependsOn("externalNativeBuildDebug")
+    def wireNativeBuild = { String variant, String rustTask ->
+        tasks.matching { it.name == "merge${variant}Assets" }.configureEach {
+            dependsOn("externalNativeBuild${variant}")
+        }
+        tasks.matching {
+            it.name == "merge${variant}NativeLibs"
+                    || it.name == "merge${variant}JniLibFolders"
+        }.configureEach {
+            dependsOn(rustTask)
+        }
     }
-    tasks.matching { it.name == "mergeReleaseAssets" }.configureEach {
-        dependsOn("externalNativeBuildRelease")
-    }
-    tasks.matching {
-        it.name == "mergeDebugNativeLibs" || it.name == "mergeDebugJniLibFolders"
-    }.configureEach {
-        dependsOn("buildRustDebug")
-    }
-    tasks.matching {
-        it.name == "mergeReleaseNativeLibs" || it.name == "mergeReleaseJniLibFolders"
-    }.configureEach {
-        dependsOn("buildRustRelease")
-    }
+    wireNativeBuild("Debug", "buildRustDebug")
+    wireNativeBuild("Release", "buildRustRelease")
 }

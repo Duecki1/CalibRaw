@@ -5,6 +5,7 @@ pub mod color_profile;
 pub mod geometry;
 pub mod hdr;
 pub mod lensfun;
+mod mask_region;
 pub mod masks;
 pub mod noise;
 pub mod processing;
@@ -29,6 +30,7 @@ pub use geometry::{
     GeometryTransform, LensGeometryMap,
 };
 pub use lensfun::{apply_lensfun_correction, lensfun_catalog, LensfunCatalog, LensfunLens};
+pub use mask_region::{mask_region_texture_extent, mask_source_region_uv};
 pub use masks::{
     effect_params, ellipse_outline_points, export_mask_atlas_edge, export_mask_atlas_edge_limit,
     mask_atlas_edge, rasterize_brush_dabs, BlurEffectSettings, BrushDab, BrushMode,
