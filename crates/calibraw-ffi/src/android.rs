@@ -1,3 +1,4 @@
+use crate::android_jni_contract::{decode_document_identity, decode_uri_component};
 use android_activity::AndroidApp;
 use jni::{
     errors::LogContextErrorAndDefault,
@@ -928,20 +929,10 @@ pub fn import_local_library_document(
         Ok(env.cast_local::<JString>(object)?.to_string())
     })
     .map_err(|error| format!("could not import local RAW into Android library: {error:#}"))?;
-    let (uri, display_name) = identity.split_once('\n').ok_or_else(|| {
-        "could not import local RAW into Android library: Android returned an invalid document identity"
-            .to_owned()
+    let (uri, display_name) = decode_document_identity(&identity).map_err(|error| {
+        format!("could not import local RAW into Android library: {error}")
     })?;
-    if uri.is_empty() || display_name.is_empty() {
-        return Err(
-            "could not import local RAW into Android library: Android returned an empty document identity"
-                .to_owned(),
-        );
-    }
-    Ok(ImportedLibraryDocument {
-        uri: uri.to_owned(),
-        display_name: display_name.to_owned(),
-    })
+    Ok(ImportedLibraryDocument { uri, display_name })
 }
 
 pub fn delete_imported_library_document(
@@ -1281,37 +1272,6 @@ fn with_export_publisher<T>(
             .l()?;
         operation(env, &export_publisher)
     })
-}
-
-fn decode_uri_component(encoded: &str) -> Result<String, String> {
-    let bytes = encoded.as_bytes();
-    let mut decoded = Vec::with_capacity(bytes.len());
-    let mut index = 0;
-    while index < bytes.len() {
-        if bytes[index] != b'%' {
-            decoded.push(bytes[index]);
-            index += 1;
-            continue;
-        }
-        if index + 2 >= bytes.len() {
-            return Err("truncated percent escape in Android library record".to_owned());
-        }
-        let high = hex_digit(bytes[index + 1])?;
-        let low = hex_digit(bytes[index + 2])?;
-        decoded.push((high << 4) | low);
-        index += 3;
-    }
-    String::from_utf8(decoded)
-        .map_err(|error| format!("Android library record is not valid UTF-8: {error}"))
-}
-
-fn hex_digit(value: u8) -> Result<u8, String> {
-    match value {
-        b'0'..=b'9' => Ok(value - b'0'),
-        b'a'..=b'f' => Ok(value - b'a' + 10),
-        b'A'..=b'F' => Ok(value - b'A' + 10),
-        _ => Err("invalid percent escape in Android library record".to_owned()),
-    }
 }
 
 pub fn prepare_direct_export(

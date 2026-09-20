@@ -21,6 +21,14 @@ public final class AndroidStorageContractTest {
     @Rule public final TemporaryFolder temporaryFolder = new TemporaryFolder();
 
     @Test
+    public void jniDocumentIdentityEncodesNewlinesUnambiguously() {
+        assertEquals(
+                "content%3A%2F%2Flibrary%2Fraw%252F1\tscan%0Apart%091.dng",
+                AndroidStorageContract.encodeJniDocumentIdentity(
+                        "content://library/raw%2F1", "scan\npart\t1.dng"));
+    }
+
+    @Test
     public void namesAndRawFileIdentityFollowTheStorageContract() throws Exception {
         File root = temporaryFolder.getRoot();
         File media = new File(root, "media");
