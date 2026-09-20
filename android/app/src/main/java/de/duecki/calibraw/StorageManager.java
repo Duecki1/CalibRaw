@@ -16,8 +16,10 @@ import java.io.FileOutputStream;
 import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Comparator;
 import java.util.HashSet;
 import java.util.Locale;
+import java.util.PriorityQueue;
 import java.util.Set;
 
 final class StorageManager {
@@ -625,10 +627,7 @@ final class StorageManager {
     private String listCombinedRawLibrary() {
         ArrayList<RawLibraryRecord> records = new ArrayList<>();
         records.addAll(listFileRawLibrary(selectedRawLibraryDirectory()));
-        records.sort((left, right) -> {
-            int modifiedOrder = Long.compare(right.modifiedSeconds, left.modifiedSeconds);
-            return modifiedOrder != 0 ? modifiedOrder : left.uri.compareTo(right.uri);
-        });
+        records.sort(RAW_LIBRARY_OUTPUT_ORDER);
 
         StringBuilder result = new StringBuilder();
         Set<String> seenUris = new HashSet<>();
@@ -686,23 +685,54 @@ final class StorageManager {
         if (files == null) {
             return result;
         }
-        Arrays.sort(files, (left, right) -> Long.compare(right.lastModified(), left.lastModified()));
-        for (File file : files) {
-            // Preserve one sentinel beyond the UI limit.
-            if (result.size() > MAX_RAW_LIBRARY_FILES) {
-                break;
-            }
-            if (!file.isFile() || !AndroidStorageContract.isRawName(file.getName())) {
-                continue;
-            }
+
+        // Preserve one sentinel beyond the UI limit.
+        int retainedLimit = MAX_RAW_LIBRARY_FILES + 1;
+        PriorityQueue<RawLibraryCandidate> retained =
+                selectRawLibraryCandidates(files, retainedLimit);
+        for (RawLibraryCandidate candidate : retained) {
+            File file = candidate.file;
             result.add(new RawLibraryRecord(
                     Uri.fromFile(file).toString(),
                     file.getName(),
                     file.getAbsolutePath(),
                     Math.max(0, file.length()),
-                    Math.max(0, file.lastModified() / 1000)));
+                    Math.max(0, candidate.modifiedMillis / 1000)));
         }
         return result;
+    }
+
+    static PriorityQueue<RawLibraryCandidate> selectRawLibraryCandidates(
+            File[] files, int retainedLimit) {
+        PriorityQueue<RawLibraryCandidate> retained = new PriorityQueue<>(
+                retainedLimit, RAW_LIBRARY_CUTOFF_WORST_FIRST);
+        for (int index = 0; index < files.length; index++) {
+            File file = files[index];
+            long modifiedMillis = file.lastModified();
+            if (!file.isFile() || !AndroidStorageContract.isRawName(file.getName())) {
+                continue;
+            }
+            retainRawLibraryCandidate(
+                    retained,
+                    new RawLibraryCandidate(file, modifiedMillis, index),
+                    retainedLimit);
+        }
+        return retained;
+    }
+
+    private static void retainRawLibraryCandidate(
+            PriorityQueue<RawLibraryCandidate> retained,
+            RawLibraryCandidate candidate,
+            int retainedLimit) {
+        if (retained.size() < retainedLimit) {
+            retained.add(candidate);
+            return;
+        }
+        RawLibraryCandidate cutoff = retained.peek();
+        if (cutoff != null && RAW_LIBRARY_CUTOFF_WORST_FIRST.compare(candidate, cutoff) > 0) {
+            retained.poll();
+            retained.add(candidate);
+        }
     }
 
     private static void appendLibraryRecord(
@@ -769,7 +799,34 @@ final class StorageManager {
         }
     }
 
-    private static final class RawLibraryRecord {
+    // The heap head is the record the old stable millisecond sort would drop first:
+    // oldest mtime, then latest position in the original listFiles() result.
+    static final Comparator<RawLibraryCandidate> RAW_LIBRARY_CUTOFF_WORST_FIRST =
+            (left, right) -> {
+                int modifiedOrder = Long.compare(left.modifiedMillis, right.modifiedMillis);
+                return modifiedOrder != 0
+                        ? modifiedOrder
+                        : Integer.compare(right.enumerationOrder, left.enumerationOrder);
+            };
+
+    static final Comparator<RawLibraryRecord> RAW_LIBRARY_OUTPUT_ORDER = (left, right) -> {
+        int modifiedOrder = Long.compare(right.modifiedSeconds, left.modifiedSeconds);
+        return modifiedOrder != 0 ? modifiedOrder : left.uri.compareTo(right.uri);
+    };
+
+    static final class RawLibraryCandidate {
+        final File file;
+        final long modifiedMillis;
+        final int enumerationOrder;
+
+        RawLibraryCandidate(File file, long modifiedMillis, int enumerationOrder) {
+            this.file = file;
+            this.modifiedMillis = modifiedMillis;
+            this.enumerationOrder = enumerationOrder;
+        }
+    }
+
+    static final class RawLibraryRecord {
         final String uri;
         final String displayName;
         final String displayPath;
