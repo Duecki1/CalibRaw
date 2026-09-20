@@ -348,7 +348,7 @@ final class StorageManager {
 
     String materializeRawLibraryDocument(String uriText, String displayName) throws Exception {
         Uri uri = Uri.parse(uriText);
-        verifyRawLibraryIdentity(uri, displayName);
+        verifyFileRawLibraryIdentity(uri, displayName);
         String safeName = AndroidStorageContract.safeRawName(displayName);
         int dot = safeName.lastIndexOf('.');
         String suffix = dot >= 0 ? safeName.substring(dot) : ".raw";
@@ -394,7 +394,7 @@ final class StorageManager {
 
     void removeRawSidecar(String rawUriText, String displayName) throws Exception {
         Uri rawUri = Uri.parse(rawUriText);
-        verifyRawLibraryIdentity(rawUri, displayName);
+        verifyFileRawLibraryIdentity(rawUri, displayName);
         AndroidStorageContract.deleteSidecar(
                 new File(rawUri.getPath()).getParentFile(), displayName);
     }
@@ -436,7 +436,7 @@ final class StorageManager {
             String displayName,
             String requestedName) throws Exception {
         Uri rawUri = Uri.parse(rawUriText);
-        verifyRawLibraryIdentity(rawUri, displayName);
+        verifyFileRawLibraryIdentity(rawUri, displayName);
         String safeName = AndroidStorageContract.safeRawName(requestedName);
         if (!safeName.equals(requestedName) || !AndroidStorageContract.isRawName(requestedName)) {
             throw new IllegalArgumentException("Enter a safe supported RAW filename");
@@ -475,7 +475,7 @@ final class StorageManager {
 
     void deleteRawLibraryDocument(String rawUriText, String displayName) throws Exception {
         Uri rawUri = Uri.parse(rawUriText);
-        verifyRawLibraryIdentity(rawUri, displayName);
+        verifyFileRawLibraryIdentity(rawUri, displayName);
         File raw = new File(rawUri.getPath());
         if (raw.exists() && !raw.delete()) {
             throw new IllegalStateException("Could not delete the RAW file");
@@ -491,7 +491,7 @@ final class StorageManager {
 
     String materializeRawSidecar(String rawUriText, String displayName) throws Exception {
         Uri rawUri = Uri.parse(rawUriText);
-        verifyRawLibraryIdentity(rawUri, displayName);
+        verifyFileRawLibraryIdentity(rawUri, displayName);
         File sidecar = new File(
                 new File(rawUri.getPath()).getParentFile(), AndroidStorageContract.sidecarDisplayName(displayName));
         if (!sidecar.isFile()) {
@@ -532,13 +532,9 @@ final class StorageManager {
             throw new IllegalStateException("CalibRaw sidecar staging file is missing or too large");
         }
         Uri rawUri = Uri.parse(rawUriText);
-        verifyRawLibraryIdentity(rawUri, displayName);
+        verifyFileRawLibraryIdentity(rawUri, displayName);
         return AndroidStorageContract.publishSidecarAtomically(
                 cached, new File(rawUri.getPath()).getParentFile(), displayName, MAX_SIDECAR_BYTES);
-    }
-
-    private void verifyRawLibraryIdentity(Uri rawUri, String expectedDisplayName) throws Exception {
-        verifyFileRawLibraryIdentity(rawUri, expectedDisplayName);
     }
 
     private void verifyFileRawLibraryIdentity(
@@ -608,7 +604,7 @@ final class StorageManager {
     }
 
     private void deliverLibraryRawFd(Uri source, String displayName) throws Exception {
-        verifyRawLibraryIdentity(source, displayName);
+        verifyFileRawLibraryIdentity(source, displayName);
         int fd = openRawLibraryFd(source.toString());
         boolean handedOff = false;
         try {
