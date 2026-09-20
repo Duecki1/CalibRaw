@@ -399,7 +399,8 @@ final class StorageManager {
                         imported.uri.toString(),
                         imported.displayName);
             }
-            return imported.uri.toString() + "\n" + imported.displayName;
+            return AndroidStorageContract.encodeJniDocumentIdentity(
+                    imported.uri.toString(), imported.displayName);
         } catch (Exception error) {
             if (imported != null) {
                 try {
