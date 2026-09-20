@@ -18,9 +18,31 @@ use anyhow::{Context, Result};
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::fmt;
 use std::ops::{Deref, DerefMut, Index};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
+
+#[derive(Debug)]
+struct UnsupportedRawFormat {
+    detail: String,
+}
+
+impl fmt::Display for UnsupportedRawFormat {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(&self.detail)
+    }
+}
+
+impl std::error::Error for UnsupportedRawFormat {}
+
+/// Reports whether a decoder failure has been explicitly categorized as an
+/// unsupported RAW format. Callers should not infer this from display text.
+pub fn is_unsupported_raw_error(error: &anyhow::Error) -> bool {
+    error
+        .chain()
+        .any(|cause| cause.downcast_ref::<UnsupportedRawFormat>().is_some())
+}
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -1416,7 +1438,7 @@ fn try_rawler_then_libraw<T>(
                 path.display()
             );
             crate::diagnostics::record(format!(
-                "Rawler {operation} failed; retrying DNG through LibRaw: {rawler_detail}"
+                "Rawler {operation} failed; retrying through LibRaw: {rawler_detail}"
             ));
             libraw().with_context(|| {
                 format!(
@@ -1576,7 +1598,7 @@ mod rawler_loader;
 
 #[cfg(test)]
 mod routing_tests {
-    use super::extension_is_dng;
+    use super::{extension_is_dng, is_unsupported_raw_error, UnsupportedRawFormat};
     use std::path::Path;
 
     #[test]
@@ -1585,6 +1607,18 @@ mod routing_tests {
         assert!(extension_is_dng(Path::new("phone.DNG")));
         assert!(!extension_is_dng(Path::new("camera.cr3")));
         assert!(!extension_is_dng(Path::new("camera.nef")));
+    }
+
+    #[test]
+    fn unsupported_format_classification_uses_typed_error_chain() {
+        let error = anyhow::Error::new(UnsupportedRawFormat {
+            detail: "unsupported test format".to_owned(),
+        })
+        .context("decoder fallback failed");
+        assert!(is_unsupported_raw_error(&error));
+
+        let untyped = anyhow::anyhow!("this message says unsupported but has no category");
+        assert!(!is_unsupported_raw_error(&untyped));
     }
 
     #[cfg(libraw_available)]

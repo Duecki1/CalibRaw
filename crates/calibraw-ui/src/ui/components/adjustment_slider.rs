@@ -279,6 +279,47 @@ pub(crate) struct AdjustmentSliderInteraction {
     pub(crate) reset_requested: bool,
 }
 
+/// Render a resettable slider from a shared floating-point parameter
+/// specification. Keeping this mapping here avoids every caller repeating the
+/// spec-to-slider conversion.
+pub(crate) fn float_param_slider(
+    ui: &mut Ui,
+    value: &mut f32,
+    spec: crate::pipeline::effect_params::FloatParamSpec,
+) -> bool {
+    adjustment_slider_with_reset(
+        ui,
+        spec.label,
+        value,
+        spec.range(),
+        spec.decimals,
+        spec.step,
+        spec.tooltip,
+        spec.default,
+    )
+}
+
+/// Render a resettable floating-point parameter slider with a custom track
+/// gradient.
+pub(crate) fn gradient_float_param_slider(
+    ui: &mut Ui,
+    value: &mut f32,
+    spec: crate::pipeline::effect_params::FloatParamSpec,
+    gradient: SliderGradient,
+) -> bool {
+    gradient_adjustment_slider_with_reset(
+        ui,
+        spec.label,
+        value,
+        spec.range(),
+        spec.decimals,
+        spec.step,
+        spec.tooltip,
+        gradient,
+        spec.default,
+    )
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn inline_adjustment_slider_with_reset<Num>(
     ui: &mut Ui,
@@ -422,15 +463,8 @@ where
                     },
                 );
 
-                changed |= guarded_slider(
-                    ui,
-                    value,
-                    range,
-                    control_width,
-                    reset_value,
-                    options,
-                )
-                .changed;
+                changed |=
+                    guarded_slider(ui, value, range, control_width, reset_value, options).changed;
                 ui.add_space(ROW_BOTTOM_SPACE);
             }
         });

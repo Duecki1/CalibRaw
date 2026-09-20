@@ -11,8 +11,10 @@ pub(super) mod radial_blur;
 pub(super) mod smoke;
 pub(super) mod tilt_shift;
 
-use super::{adjustment_slider_with_reset, MaskEffect, Ui};
-use crate::pipeline::effect_params::{ColorParamSpec, FloatParamSpec};
+use super::{MaskEffect, Ui};
+use crate::pipeline::effect_params::ColorParamSpec;
+
+pub(super) use crate::ui::components::adjustment_slider::float_param_slider as effect_slider;
 
 /// The shared chrome around every mask-effect card: its title, enable state and
 /// reset action. Each effect contributes only its own controls through `body`,
@@ -71,19 +73,6 @@ pub(super) fn effect_description(effect: MaskEffect) -> Option<&'static str> {
         ),
         _ => None,
     }
-}
-
-fn effect_slider(ui: &mut Ui, value: &mut f32, spec: FloatParamSpec) -> bool {
-    adjustment_slider_with_reset(
-        ui,
-        spec.label,
-        value,
-        spec.range(),
-        spec.decimals,
-        spec.step,
-        spec.tooltip,
-        spec.default,
-    )
 }
 
 fn effect_color(

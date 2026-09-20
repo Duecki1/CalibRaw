@@ -55,17 +55,14 @@ pub(super) fn resolve_camera_profiles(
     selected_profile: Option<&Path>,
     camera_make: &str,
     camera_model: &str,
-) -> (
+) -> Result<(
     Option<DcpProfile>,
     Option<PathBuf>,
     Vec<CameraProfileCandidate>,
-) {
+)> {
     let raw_camera_signature = match mode {
-        CameraProfileMode::Automatic => {
-            read_optional_profile(path).and_then(|profile| profile.camera_calibration_signature)
-        }
-        CameraProfileMode::DcpProfiles => {
-            read_optional_profile(path).and_then(|profile| profile.camera_calibration_signature)
+        CameraProfileMode::Automatic | CameraProfileMode::DcpProfiles => {
+            read_optional_profile(path)?.and_then(|profile| profile.camera_calibration_signature)
         }
         CameraProfileMode::MatrixOnly => None,
     };
@@ -108,11 +105,11 @@ pub(super) fn resolve_camera_profiles(
             (Some(candidate.path), Some(candidate.profile))
         })
         .unwrap_or((None, None));
-    (
+    Ok((
         selected_profile,
         selected_profile_path,
         available_camera_profiles,
-    )
+    ))
 }
 
 #[cfg(target_os = "android")]
@@ -157,7 +154,7 @@ pub(super) fn load_raw_file_with_profile_selection(
     selected_profile: Option<&Path>,
 ) -> Result<LoadedRaw> {
     validate_input_file(path, MAX_RAW_FILE_BYTES, "RAW input")?;
-    let source_metadata = read_exif_capture_metadata(path).unwrap_or_default();
+    let source_metadata = read_exif_capture_metadata_or_default(path);
 
     let c_path = path_to_libraw_cstring(path)?;
     let ctx = LibRawContext::new()?;
@@ -189,7 +186,7 @@ pub(super) fn load_raw_file_with_profile_selection(
             selected_profile,
             &camera_make,
             &camera_model,
-        );
+        )?;
     crate::diagnostics::record(format!(
         "Camera-profile resolution finished in {:.3}s",
         profile_started.elapsed().as_secs_f64()
@@ -227,7 +224,7 @@ pub(super) fn load_raw_file_with_dcp(path: &Path, profile_path: &Path) -> Result
         .with_context(|| format!("read DCP profile {}", profile_path.display()))?
         .ok_or_else(|| anyhow!("{} is not a DNG camera profile", profile_path.display()))?;
 
-    if let Some(raw_profile) = read_optional_profile(path) {
+    if let Some(raw_profile) = read_optional_profile(path)? {
         selected.camera_calibration_signature = raw_profile.camera_calibration_signature;
     }
     let display_name = dcp_profile_display_name(selected.name.as_deref(), profile_path);
@@ -922,17 +919,9 @@ fn normalize_camera_name(value: &str) -> String {
         .collect()
 }
 
-pub(super) fn read_optional_profile(path: &Path) -> Option<DcpProfile> {
-    match DcpProfile::from_path(path) {
-        Ok(profile) => profile,
-        Err(error) => {
-            log::warn!(
-                "ignoring malformed embedded DCP profile in {}: {error:#}",
-                path.display()
-            );
-            None
-        }
-    }
+pub(super) fn read_optional_profile(path: &Path) -> Result<Option<DcpProfile>> {
+    DcpProfile::from_path(path)
+        .with_context(|| format!("read embedded DCP profile {}", path.display()))
 }
 
 fn load_raw_file_with_selected_profile(
@@ -940,7 +929,7 @@ fn load_raw_file_with_selected_profile(
     dcp_profile: Option<DcpProfile>,
 ) -> Result<LoadedRaw> {
     validate_input_file(path, MAX_RAW_FILE_BYTES, "RAW input")?;
-    let source_metadata = read_exif_capture_metadata(path).unwrap_or_default();
+    let source_metadata = read_exif_capture_metadata_or_default(path);
 
     let c_path = path_to_libraw_cstring(path)?;
     let ctx = LibRawContext::new()?;
@@ -964,19 +953,24 @@ fn load_raw_file_with_selected_profile(
     Ok(loaded)
 }
 
-pub(super) fn read_exif_capture_metadata(path: &Path) -> Option<super::CaptureMetadata> {
+pub(super) fn read_exif_capture_metadata(path: &Path) -> Result<super::CaptureMetadata> {
     const MAX_EXIF_SCAN_BYTES: u64 = 256_000_000;
-    if std::fs::metadata(path).ok()?.len() > MAX_EXIF_SCAN_BYTES {
-        return None;
+    if std::fs::metadata(path)
+        .with_context(|| format!("inspect EXIF source {}", path.display()))?
+        .len()
+        > MAX_EXIF_SCAN_BYTES
+    {
+        return Ok(Default::default());
     }
-    let file = std::fs::File::open(path).ok()?;
+    let file = std::fs::File::open(path)
+        .with_context(|| format!("open EXIF source {}", path.display()))?;
     let mut input = std::io::BufReader::new(file);
     let mut reader = exif::Reader::new();
     reader.continue_on_error(true);
     let metadata = reader
         .read_from_container(&mut input)
         .or_else(|error| error.distill_partial_result(|_| {}))
-        .ok()?;
+        .context("read EXIF metadata")?;
     let mut capture = super::CaptureMetadata {
         flash: metadata
             .fields()
@@ -1003,7 +997,21 @@ pub(super) fn read_exif_capture_metadata(path: &Path) -> Option<super::CaptureMe
             }
         }
     }
-    Some(capture)
+    Ok(capture)
+}
+
+pub(super) fn read_exif_capture_metadata_or_default(path: &Path) -> super::CaptureMetadata {
+    read_exif_capture_metadata(path).unwrap_or_else(|error| {
+        log::warn!(
+            "could not read EXIF metadata from {}: {error:#}",
+            path.display()
+        );
+        crate::diagnostics::record(format!(
+            "EXIF metadata fallback used for {}: {error:#}",
+            path.display()
+        ));
+        Default::default()
+    })
 }
 
 #[cfg(unix)]
@@ -2530,9 +2538,7 @@ fn identity_fallback_4x4(mut matrix: [[f32; 4]; 4]) -> [[f32; 4]; 4] {
         matrix[3][3] = 1.0;
     }
 
-    if matrix.iter().flatten().any(|value| value.abs() > 1e-8)
-        && invert_4x4(matrix).is_some()
-    {
+    if matrix.iter().flatten().any(|value| value.abs() > 1e-8) && invert_4x4(matrix).is_some() {
         matrix
     } else {
         identity_4x4()
@@ -2935,6 +2941,8 @@ fn finite_positive_or_zero(value: f32) -> f32 {
 }
 
 fn check_libraw(err: i32, action: &str) -> Result<()> {
+    const LIBRAW_UNSUPPORTED_FILE: i32 = -2;
+
     if err == 0 {
         return Ok(());
     }
@@ -2948,7 +2956,12 @@ fn check_libraw(err: i32, action: &str) -> Result<()> {
         }
     };
 
-    Err(anyhow!("LibRaw failed to {action}: {message} ({err})"))
+    let detail = format!("LibRaw failed to {action}: {message} ({err})");
+    if err == LIBRAW_UNSUPPORTED_FILE {
+        Err(anyhow::Error::new(super::UnsupportedRawFormat { detail }))
+    } else {
+        Err(anyhow!("{detail}"))
+    }
 }
 
 /// LibRaw represents camera wall-clock time as seconds from the Unix epoch.
@@ -2981,11 +2994,11 @@ mod tests {
     use super::{
         adjusted_white_balance_coefficients, apply_resolved_default_exposure, black_levels,
         cam_to_working, canonical_cfa_map, canonicalize_f32x4, cfa_kind_from_filters,
-        daylight_white_balance, effective_black_level, identity_4x4,
-        matching_thumbnail_orientation, oriented_source_pos, resolve_default_exposure_ev,
-        valid_baseline_exposure, validate_embedded_thumbnail_metadata, white_balance, white_levels,
-        CameraColorModel, CameraProfile, CameraWhiteBalanceModel, CfaKind, DcpMatrixSet,
-        DcpProfile, DngColorEndpoint, MAX_EMBEDDED_THUMBNAIL_BYTES,
+        daylight_white_balance, effective_black_level, identity_4x4, identity_fallback_4x4,
+        invert_4x4, matching_thumbnail_orientation, oriented_source_pos,
+        resolve_default_exposure_ev, valid_baseline_exposure, validate_embedded_thumbnail_metadata,
+        white_balance, white_levels, CameraColorModel, CameraProfile, CameraWhiteBalanceModel,
+        CfaKind, DcpMatrixSet, DcpProfile, DngColorEndpoint, MAX_EMBEDDED_THUMBNAIL_BYTES,
         MISSING_BASELINE_EXPOSURE_FALLBACK_EV,
     };
 
@@ -3191,7 +3204,6 @@ mod tests {
                 [0.0, 1.0, 0.0, 0.0],
                 [0.0, 0.0, 1.0, 0.0],
             ]),
-            ..DcpMatrixSet::default()
         };
         let second = DcpMatrixSet {
             illuminant: Some(17),
@@ -3201,7 +3213,8 @@ mod tests {
                 [0.0, 0.0, red],
                 [0.0, 0.0, 0.0],
             ]),
-            ..first.clone()
+            camera_calibration: first.camera_calibration,
+            forward_matrix: first.forward_matrix,
         };
         DcpProfile {
             matrices: [first, second],

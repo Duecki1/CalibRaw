@@ -57,6 +57,52 @@ impl ByteOrder {
     }
 }
 
+struct TiffHeader {
+    order: ByteOrder,
+    big_tiff: bool,
+    first_ifd: u64,
+    file_len: u64,
+}
+
+fn open_tiff(path: &Path) -> Result<(File, TiffHeader)> {
+    let mut file = File::open(path).with_context(|| format!("open TIFF {}", path.display()))?;
+    let file_len = file
+        .metadata()
+        .with_context(|| format!("inspect TIFF {}", path.display()))?
+        .len();
+    let mut bytes = [0u8; 16];
+    file.read_exact(&mut bytes[..8])
+        .with_context(|| format!("read TIFF header {}", path.display()))?;
+    let order = match &bytes[..2] {
+        b"II" => ByteOrder::Little,
+        b"MM" => ByteOrder::Big,
+        _ => return Err(anyhow!("{} is not a TIFF container", path.display())),
+    };
+    let (big_tiff, first_ifd) = match order.u16([bytes[2], bytes[3]]) {
+        42 => (false, u64::from(order.u32(bytes[4..8].try_into()?))),
+        43 => {
+            file.read_exact(&mut bytes[8..16])
+                .with_context(|| format!("read BigTIFF header {}", path.display()))?;
+            anyhow::ensure!(
+                order.u16([bytes[4], bytes[5]]) == 8 && order.u16([bytes[6], bytes[7]]) == 0,
+                "unsupported BigTIFF header in {}",
+                path.display()
+            );
+            (true, order.u64(bytes[8..16].try_into()?))
+        }
+        _ => return Err(anyhow!("{} has an invalid TIFF magic", path.display())),
+    };
+    Ok((
+        file,
+        TiffHeader {
+            order,
+            big_tiff,
+            first_ifd,
+            file_len,
+        },
+    ))
+}
+
 pub(super) fn is_tiff_path(path: &Path) -> bool {
     path.extension()
         .and_then(|extension| extension.to_str())
@@ -66,39 +112,13 @@ pub(super) fn is_tiff_path(path: &Path) -> bool {
 }
 
 pub(super) fn inspect_tiff_container(path: &Path) -> Result<TiffContainerKind> {
-    let mut file = File::open(path).with_context(|| format!("open TIFF {}", path.display()))?;
-    let file_len = file
-        .metadata()
-        .with_context(|| format!("inspect TIFF {}", path.display()))?
-        .len();
-    let mut header = [0u8; 16];
-    file.read_exact(&mut header[..8])
-        .with_context(|| format!("read TIFF header {}", path.display()))?;
-    let order = match &header[..2] {
-        b"II" => ByteOrder::Little,
-        b"MM" => ByteOrder::Big,
-        _ => return Err(anyhow!("{} is not a TIFF container", path.display())),
-    };
-    let magic = order.u16([header[2], header[3]]);
-    let (big_tiff, first_ifd) = match magic {
-        42 => (
-            false,
-            u64::from(order.u32(header[4..8].try_into().unwrap())),
-        ),
-        43 => {
-            file.read_exact(&mut header[8..16])
-                .with_context(|| format!("read BigTIFF header {}", path.display()))?;
-            let offset_size = order.u16([header[4], header[5]]);
-            let reserved = order.u16([header[6], header[7]]);
-            anyhow::ensure!(
-                offset_size == 8 && reserved == 0,
-                "unsupported BigTIFF header in {}",
-                path.display()
-            );
-            (true, order.u64(header[8..16].try_into().unwrap()))
-        }
-        _ => return Err(anyhow!("{} has an invalid TIFF magic", path.display())),
-    };
+    let (mut file, header) = open_tiff(path)?;
+    let TiffHeader {
+        order,
+        big_tiff,
+        first_ifd,
+        file_len,
+    } = header;
 
     let mut pending = vec![first_ifd];
     let mut visited = std::collections::HashSet::new();
@@ -323,8 +343,7 @@ fn decode_scene_linear_rec2020(path: &Path) -> Result<(u32, u32, Vec<f32>)> {
                 "embedded TIFF ICC conversion produced NaN or infinity"
             ));
         }
-    } else if source_is_float {
-    } else {
+    } else if !source_is_float {
         rgb.par_chunks_exact_mut(3).for_each(|pixel| {
             let r = srgb_to_linear(pixel[0]);
             let g = srgb_to_linear(pixel[1]);
@@ -390,39 +409,13 @@ pub(super) fn load_raster_tiff_thumbnail(path: &Path, maximum_edge: u32) -> Resu
 }
 
 fn read_embedded_icc_profile(path: &Path) -> Result<Option<Vec<u8>>> {
-    let mut file = File::open(path).with_context(|| format!("open TIFF {}", path.display()))?;
-    let file_len = file
-        .metadata()
-        .with_context(|| format!("inspect TIFF {}", path.display()))?
-        .len();
-    let mut header = [0u8; 16];
-    file.read_exact(&mut header[..8])
-        .with_context(|| format!("read TIFF header {}", path.display()))?;
-    let order = match &header[..2] {
-        b"II" => ByteOrder::Little,
-        b"MM" => ByteOrder::Big,
-        _ => return Err(anyhow!("{} is not a TIFF container", path.display())),
-    };
-    let magic = order.u16([header[2], header[3]]);
-    let (big_tiff, first_ifd) = match magic {
-        42 => (
-            false,
-            u64::from(order.u32(header[4..8].try_into().unwrap())),
-        ),
-        43 => {
-            file.read_exact(&mut header[8..16])
-                .with_context(|| format!("read BigTIFF header {}", path.display()))?;
-            let offset_size = order.u16([header[4], header[5]]);
-            let reserved = order.u16([header[6], header[7]]);
-            anyhow::ensure!(
-                offset_size == 8 && reserved == 0,
-                "unsupported BigTIFF header in {}",
-                path.display()
-            );
-            (true, order.u64(header[8..16].try_into().unwrap()))
-        }
-        _ => return Err(anyhow!("{} has an invalid TIFF magic", path.display())),
-    };
+    let (mut file, header) = open_tiff(path)?;
+    let TiffHeader {
+        order,
+        big_tiff,
+        first_ifd,
+        file_len,
+    } = header;
 
     let mut pending = vec![first_ifd];
     let mut visited = std::collections::HashSet::new();

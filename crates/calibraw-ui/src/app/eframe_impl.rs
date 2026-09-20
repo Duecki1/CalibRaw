@@ -1,31 +1,5 @@
 use super::*;
 
-/// Returns the width selected with the sidebar resize handle.
-///
-/// `egui::Panel` normally records the size of its contents. That is useful for
-/// small utility panels, but not for the Develop sidebar: revealing controls
-/// such as brush or subject-refinement settings must not widen a sidebar the
-/// user has already sized. Keep a separate persisted value that is updated
-/// only while the panel resize handle is being dragged.
-#[cfg(not(target_os = "android"))]
-fn develop_sidebar_user_width(
-    ctx: &egui::Context,
-    panel_id: egui::Id,
-    default_width: f32,
-    min_width: f32,
-    max_width: f32,
-) -> f32 {
-    ctx.data_mut(|data| {
-        data.get_persisted::<f32>(panel_id.with("user-width"))
-            .or_else(|| {
-                data.get_persisted::<egui::PanelState>(panel_id)
-                    .map(|state| state.size().x)
-            })
-            .unwrap_or(default_width)
-            .clamp(min_width, max_width)
-    })
-}
-
 #[cfg(not(target_os = "android"))]
 fn set_develop_sidebar_panel_width(ctx: &egui::Context, panel_id: egui::Id, width: f32) {
     ctx.data_mut(|data| {
@@ -246,19 +220,16 @@ impl eframe::App for CalibRawApp {
                 ScreenLayout::Horizontal => {
                     #[cfg(not(target_os = "android"))]
                     {
-                        egui::Panel::right("develop_tool_rail")
+                        egui::Panel::right(crate::ui::layout::DEVELOP_TOOL_RAIL_ID)
                             .resizable(false)
                             .exact_size(Sidebar::DESKTOP_TOOL_RAIL_WIDTH)
                             .frame(crate::ui::theme::panel_frame(ui))
                             .show(ui, |ui| Sidebar::show_desktop_tool_rail(ui, self));
 
                         if self.develop_ui.sidebar_open {
-                            let panel_id = egui::Id::new("develop_sidebar_right");
-                            let panel_max = (viewport_size.x * 0.48).clamp(
-                                ScreenLayout::MIN_HORIZONTAL_SIDEBAR_WIDTH,
-                                ScreenLayout::MAX_HORIZONTAL_SIDEBAR_WIDTH,
-                            );
-                            let panel_width = develop_sidebar_user_width(
+                            let panel_id = egui::Id::new(crate::ui::layout::DEVELOP_SIDEBAR_ID);
+                            let panel_max = ScreenLayout::develop_sidebar_max_width(viewport_size);
+                            let panel_width = crate::ui::layout::develop_sidebar_user_width(
                                 ui.ctx(),
                                 panel_id,
                                 sidebar_size.min(panel_max),
@@ -297,7 +268,7 @@ impl eframe::App for CalibRawApp {
                         });
 
                     #[cfg(target_os = "android")]
-                    egui::Panel::right("develop_sidebar_right")
+                    egui::Panel::right(crate::ui::layout::DEVELOP_SIDEBAR_ID)
                         .resizable(true)
                         .min_size(ScreenLayout::MIN_HORIZONTAL_SIDEBAR_WIDTH)
                         .default_size(sidebar_size)
@@ -306,7 +277,7 @@ impl eframe::App for CalibRawApp {
 
                     #[cfg(not(target_os = "android"))]
                     if self.develop_ui.sidebar_open && self.ui.sidebar_tab == SidebarTab::Masks {
-                        egui::Panel::right("develop_horizontal_mask_strip")
+                        egui::Panel::right(crate::ui::layout::DEVELOP_MASK_STRIP_ID)
                             .resizable(false)
                             .exact_size(Sidebar::HORIZONTAL_MASK_STRIP_WIDTH)
                             .frame(crate::ui::theme::panel_frame(ui))
@@ -316,7 +287,7 @@ impl eframe::App for CalibRawApp {
                     }
                     #[cfg(target_os = "android")]
                     if self.ui.sidebar_tab == SidebarTab::Masks {
-                        egui::Panel::right("develop_horizontal_mask_strip")
+                        egui::Panel::right(crate::ui::layout::DEVELOP_MASK_STRIP_ID)
                             .resizable(false)
                             .exact_size(Sidebar::HORIZONTAL_MASK_STRIP_WIDTH)
                             .frame(crate::ui::theme::panel_frame(ui))
