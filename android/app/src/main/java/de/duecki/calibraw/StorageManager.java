@@ -87,6 +87,9 @@ final class StorageManager {
     }
 
     void scavengeTemporaryRawFiles() {
+        if (Thread.currentThread().isInterrupted()) {
+            return;
+        }
         long now = System.currentTimeMillis();
         File[] cachedFiles = storage.getCacheDir().listFiles((directory, name) ->
                 name.startsWith("calibraw-library-")
@@ -94,6 +97,9 @@ final class StorageManager {
                         || name.startsWith("calibraw-sidecar-")
                         || name.startsWith("calibraw-thumbnail-"));
         deleteStaleFiles(cachedFiles, now);
+        if (Thread.currentThread().isInterrupted()) {
+            return;
+        }
 
         File library = rawLibraryDirectory();
         try {
@@ -108,6 +114,9 @@ final class StorageManager {
             return;
         }
         for (File file : files) {
+            if (Thread.currentThread().isInterrupted()) {
+                return;
+            }
             deleteStaleFile(file, now);
         }
     }
@@ -117,7 +126,9 @@ final class StorageManager {
             File canonicalLibrary,
             long now,
             int depth) throws Exception {
-        if (depth > MAX_RAW_LIBRARY_FOLDER_DEPTH || !directory.isDirectory()) {
+        if (Thread.currentThread().isInterrupted()
+                || depth > MAX_RAW_LIBRARY_FOLDER_DEPTH
+                || !directory.isDirectory()) {
             return;
         }
         File canonicalDirectory = directory.getCanonicalFile();
@@ -129,6 +140,9 @@ final class StorageManager {
             return;
         }
         for (File entry : entries) {
+            if (Thread.currentThread().isInterrupted()) {
+                return;
+            }
             if (entry.isDirectory()) {
                 deleteStaleLibraryTemporaryFiles(entry, canonicalLibrary, now, depth + 1);
             } else if (AndroidStorageContract.isLibraryTemporaryFileName(entry.getName())) {
