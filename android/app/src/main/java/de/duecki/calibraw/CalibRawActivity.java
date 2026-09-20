@@ -108,6 +108,7 @@ public final class CalibRawActivity extends NativeActivity {
             } catch (RuntimeException error) {
                 Log.w(LOG_TAG, "Could not scavenge cached exports", error);
             }
+            manager.maintainThumbnailCache();
         });
     }
 

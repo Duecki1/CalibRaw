@@ -51,6 +51,7 @@ final class ThumbnailCache {
             deleteFile(destinationFingerprint);
             throw error;
         }
+        maintain();
     }
 
     void clearDeveloped(String uriText) {
@@ -75,8 +76,19 @@ final class ThumbnailCache {
         return directorySize(persistentDirectory());
     }
 
+    void maintain() {
+        try {
+            trim(persistentDirectory());
+        } catch (RuntimeException error) {
+            Log.w(LOG_TAG, "Could not maintain thumbnail cache", error);
+        }
+    }
+
     private File path(String identity, String suffix) throws Exception {
-        File directory = persistentDirectory();
+        return pathInDirectory(persistentDirectory(), identity, suffix);
+    }
+
+    static File pathInDirectory(File directory, String identity, String suffix) throws Exception {
         byte[] digest = MessageDigest.getInstance("SHA-256").digest(
                 identity.getBytes(StandardCharsets.UTF_8));
         StringBuilder name = new StringBuilder();
@@ -85,7 +97,6 @@ final class ThumbnailCache {
         }
         File cached = new File(directory, name.append(suffix).toString());
         touch(cached);
-        trim(directory);
         return cached;
     }
 
