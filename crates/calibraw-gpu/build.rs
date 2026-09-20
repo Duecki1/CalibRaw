@@ -43,6 +43,8 @@ fn main() {
         "xtrans/markesteijn_accumulate.wgsl",
         "xtrans_demosaic.wgsl",
         "xtrans_finish.wgsl",
+        "preview_histogram.wgsl",
+        "preview_clipping.wgsl",
     ] {
         println!("cargo:rerun-if-changed=src/shaders/{shader}");
     }
