@@ -112,6 +112,26 @@ pub(super) fn is_tiff_path(path: &Path) -> bool {
 }
 
 pub(super) fn inspect_tiff_container(path: &Path) -> Result<TiffContainerKind> {
+    Ok(walk_tiff_fields(path, |file, tag, field| {
+        if matches!(tag, 33421 | 33422) {
+            return Ok(Some(TiffContainerKind::Sensor));
+        }
+        if tag == 262 && field.count == 1 {
+            if let Some(value) = scalar_u64(file, field)? {
+                if matches!(value, 32803 | 34892) {
+                    return Ok(Some(TiffContainerKind::Sensor));
+                }
+            }
+        }
+        Ok(None)
+    })?
+    .unwrap_or(TiffContainerKind::Raster))
+}
+
+fn walk_tiff_fields<T>(
+    path: &Path,
+    mut visit: impl FnMut(&mut File, u16, TiffFieldRef) -> Result<Option<T>>,
+) -> Result<Option<T>> {
     let (mut file, header) = open_tiff(path)?;
     let TiffHeader {
         order,
@@ -119,7 +139,6 @@ pub(super) fn inspect_tiff_container(path: &Path) -> Result<TiffContainerKind> {
         first_ifd,
         file_len,
     } = header;
-
     let mut pending = vec![first_ifd];
     let mut visited = std::collections::HashSet::new();
     let mut inspected = 0usize;
@@ -131,7 +150,6 @@ pub(super) fn inspect_tiff_container(path: &Path) -> Result<TiffContainerKind> {
         inspected += 1;
         anyhow::ensure!(ifd_offset < file_len, "TIFF IFD offset is outside the file");
         file.seek(SeekFrom::Start(ifd_offset))?;
-
         let entry_count = if big_tiff {
             read_u64(&mut file, order)?
         } else {
@@ -141,7 +159,6 @@ pub(super) fn inspect_tiff_container(path: &Path) -> Result<TiffContainerKind> {
             entry_count <= MAX_TIFF_IFD_ENTRIES,
             "TIFF IFD contains too many entries"
         );
-
         let entry_size = if big_tiff { 20u64 } else { 12u64 };
         let count_size = if big_tiff { 8u64 } else { 2u64 };
         let entries_start = ifd_offset
@@ -160,7 +177,6 @@ pub(super) fn inspect_tiff_container(path: &Path) -> Result<TiffContainerKind> {
                 .is_some_and(|end| end <= file_len),
             "TIFF IFD extends outside the file"
         );
-
         for entry_index in 0..entry_count {
             let entry_offset = entries_start + entry_index * entry_size;
             file.seek(SeekFrom::Start(entry_offset))?;
@@ -186,25 +202,14 @@ pub(super) fn inspect_tiff_container(path: &Path) -> Result<TiffContainerKind> {
                 value_or_offset,
                 file_len,
             };
-
-            if matches!(tag, 33421 | 33422) {
-                return Ok(TiffContainerKind::Sensor);
+            if let Some(value) = visit(&mut file, tag, field)? {
+                return Ok(Some(value));
             }
-
-            if tag == 262 && count == 1 {
-                if let Some(value) = scalar_u64(&mut file, field)? {
-                    if matches!(value, 32803 | 34892) {
-                        return Ok(TiffContainerKind::Sensor);
-                    }
-                }
-            }
-
             if tag == 330 && pending.len() < MAX_TIFF_SUBIFDS {
                 let offsets = integer_values(&mut file, field, MAX_TIFF_SUBIFDS - pending.len())?;
                 pending.extend(offsets.into_iter().filter(|offset| *offset != 0));
             }
         }
-
         file.seek(SeekFrom::Start(next_pos))?;
         let next_ifd = if big_tiff {
             read_u64(&mut file, order)?
@@ -215,8 +220,7 @@ pub(super) fn inspect_tiff_container(path: &Path) -> Result<TiffContainerKind> {
             pending.push(next_ifd);
         }
     }
-
-    Ok(TiffContainerKind::Raster)
+    Ok(None)
 }
 
 fn read_u16(reader: &mut File, order: ByteOrder) -> Result<u16> {
@@ -409,120 +413,32 @@ pub(super) fn load_raster_tiff_thumbnail(path: &Path, maximum_edge: u32) -> Resu
 }
 
 fn read_embedded_icc_profile(path: &Path) -> Result<Option<Vec<u8>>> {
-    let (mut file, header) = open_tiff(path)?;
-    let TiffHeader {
-        order,
-        big_tiff,
-        first_ifd,
-        file_len,
-    } = header;
-
-    let mut pending = vec![first_ifd];
-    let mut visited = std::collections::HashSet::new();
-    let mut inspected = 0usize;
-    while let Some(ifd_offset) = pending.pop() {
-        if ifd_offset == 0 || !visited.insert(ifd_offset) {
-            continue;
+    walk_tiff_fields(path, |file, tag, field| {
+        if tag != 34675 {
+            return Ok(None);
         }
-        anyhow::ensure!(inspected < MAX_TIFF_IFDS, "TIFF contains too many IFDs");
-        inspected += 1;
-        anyhow::ensure!(ifd_offset < file_len, "TIFF IFD offset is outside the file");
-        file.seek(SeekFrom::Start(ifd_offset))?;
-
-        let entry_count = if big_tiff {
-            read_u64(&mut file, order)?
-        } else {
-            u64::from(read_u16(&mut file, order)?)
-        };
         anyhow::ensure!(
-            entry_count <= MAX_TIFF_IFD_ENTRIES,
-            "TIFF IFD contains too many entries"
+            matches!(field.field_type, 1 | 7),
+            "TIFF ICC profile tag has unsupported field type {}",
+            field.field_type
         );
-        let entry_size = if big_tiff { 20u64 } else { 12u64 };
-        let count_size = if big_tiff { 8u64 } else { 2u64 };
-        let entries_start = ifd_offset
-            .checked_add(count_size)
-            .context("TIFF IFD offset overflow")?;
-        let entries_bytes = entry_count
-            .checked_mul(entry_size)
-            .context("TIFF IFD size overflow")?;
-        let next_pos = entries_start
-            .checked_add(entries_bytes)
-            .context("TIFF IFD size overflow")?;
-        let next_width = if big_tiff { 8u64 } else { 4u64 };
         anyhow::ensure!(
-            next_pos
-                .checked_add(next_width)
-                .is_some_and(|end| end <= file_len),
-            "TIFF IFD extends outside the file"
+            (MIN_TIFF_ICC_BYTES..=MAX_TIFF_ICC_BYTES).contains(&field.count),
+            "TIFF ICC profile has an invalid size"
         );
-
-        for entry_index in 0..entry_count {
-            let entry_offset = entries_start + entry_index * entry_size;
-            file.seek(SeekFrom::Start(entry_offset))?;
-            let tag = read_u16(&mut file, order)?;
-            let field_type = read_u16(&mut file, order)?;
-            let count = if big_tiff {
-                read_u64(&mut file, order)?
-            } else {
-                u64::from(read_u32(&mut file, order)?)
-            };
-            let value_field_offset = file.stream_position()?;
-            let value_or_offset = if big_tiff {
-                read_u64(&mut file, order)?
-            } else {
-                u64::from(read_u32(&mut file, order)?)
-            };
-            let field = TiffFieldRef {
-                order,
-                big_tiff,
-                field_type,
-                count,
-                value_field_offset,
-                value_or_offset,
-                file_len,
-            };
-
-            if tag == 34675 {
-                anyhow::ensure!(
-                    matches!(field_type, 1 | 7),
-                    "TIFF ICC profile tag has unsupported field type {field_type}"
-                );
-                anyhow::ensure!(
-                    (MIN_TIFF_ICC_BYTES..=MAX_TIFF_ICC_BYTES).contains(&count),
-                    "TIFF ICC profile has an invalid size"
-                );
-                let data_offset = field.data_offset(count);
-                anyhow::ensure!(
-                    data_offset
-                        .checked_add(count)
-                        .is_some_and(|end| end <= file_len),
-                    "TIFF ICC profile extends outside the file"
-                );
-                file.seek(SeekFrom::Start(data_offset))?;
-                let mut bytes =
-                    vec![0u8; usize::try_from(count).context("TIFF ICC profile size overflow")?];
-                file.read_exact(&mut bytes)?;
-                return Ok(Some(normalize_icc_profile(bytes)?));
-            }
-
-            if tag == 330 && pending.len() < MAX_TIFF_SUBIFDS {
-                let offsets = integer_values(&mut file, field, MAX_TIFF_SUBIFDS - pending.len())?;
-                pending.extend(offsets.into_iter().filter(|offset| *offset != 0));
-            }
-        }
-
-        file.seek(SeekFrom::Start(next_pos))?;
-        let next_ifd = if big_tiff {
-            read_u64(&mut file, order)?
-        } else {
-            u64::from(read_u32(&mut file, order)?)
-        };
-        if next_ifd != 0 {
-            pending.push(next_ifd);
-        }
-    }
-    Ok(None)
+        let data_offset = field.data_offset(field.count);
+        anyhow::ensure!(
+            data_offset
+                .checked_add(field.count)
+                .is_some_and(|end| end <= field.file_len),
+            "TIFF ICC profile extends outside the file"
+        );
+        file.seek(SeekFrom::Start(data_offset))?;
+        let mut bytes =
+            vec![0u8; usize::try_from(field.count).context("TIFF ICC profile size overflow")?];
+        file.read_exact(&mut bytes)?;
+        Ok(Some(normalize_icc_profile(bytes)?))
+    })
 }
 
 fn normalize_icc_profile(mut bytes: Vec<u8>) -> Result<Vec<u8>> {
@@ -572,16 +488,74 @@ mod tests {
     use super::*;
     use image::{ImageBuffer, Rgb};
 
+    fn temp_tiff_file(label: &str, suffix: &str) -> tempfile::NamedTempFile {
+        tempfile::Builder::new()
+            .prefix(&format!("calibraw-{label}-"))
+            .suffix(suffix)
+            .tempfile()
+            .unwrap()
+    }
+
+    fn put_u16(bytes: &mut [u8], offset: usize, value: u16) {
+        bytes[offset..offset + 2].copy_from_slice(&value.to_le_bytes());
+    }
+
+    fn put_u32(bytes: &mut [u8], offset: usize, value: u32) {
+        bytes[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
+    }
+
+    fn classic_ifd_chain_with_subifd() -> Vec<u8> {
+        let mut bytes = vec![0; 80];
+        bytes[0..2].copy_from_slice(b"II");
+        put_u16(&mut bytes, 2, 42);
+        put_u32(&mut bytes, 4, 8);
+
+        // The first IFD points to both a chained IFD and a SubIFD.
+        put_u16(&mut bytes, 8, 1);
+        put_u16(&mut bytes, 10, 330);
+        put_u16(&mut bytes, 12, 4);
+        put_u32(&mut bytes, 14, 1);
+        put_u32(&mut bytes, 18, 56);
+        put_u32(&mut bytes, 22, 32);
+
+        // The chained IFD is a normal raster IFD.
+        put_u16(&mut bytes, 32, 1);
+        put_u16(&mut bytes, 34, 256);
+        put_u16(&mut bytes, 36, 3);
+        put_u32(&mut bytes, 38, 1);
+        put_u16(&mut bytes, 42, 1);
+        put_u32(&mut bytes, 46, 0);
+
+        // The SubIFD identifies the container as a sensor TIFF.
+        put_u16(&mut bytes, 56, 1);
+        put_u16(&mut bytes, 58, 33421);
+        put_u16(&mut bytes, 60, 3);
+        put_u32(&mut bytes, 62, 1);
+        put_u16(&mut bytes, 66, 1);
+        put_u32(&mut bytes, 70, 0);
+        bytes
+    }
+
+    fn big_tiff_with_sensor_ifd() -> Vec<u8> {
+        let mut bytes = vec![0; 64];
+        bytes[0..2].copy_from_slice(b"II");
+        put_u16(&mut bytes, 2, 43);
+        put_u16(&mut bytes, 4, 8);
+        put_u16(&mut bytes, 6, 0);
+        bytes[8..16].copy_from_slice(&16u64.to_le_bytes());
+        bytes[16..24].copy_from_slice(&1u64.to_le_bytes());
+        put_u16(&mut bytes, 24, 33422);
+        put_u16(&mut bytes, 26, 3);
+        bytes[28..36].copy_from_slice(&1u64.to_le_bytes());
+        bytes[36..44].copy_from_slice(&1u64.to_le_bytes());
+        bytes[44..52].copy_from_slice(&0u64.to_le_bytes());
+        bytes
+    }
+
     #[test]
     fn cfa_photometric_tiff_routes_to_sensor_loader() {
-        let path = std::env::temp_dir().join(format!(
-            "calibraw-sensor-tiff-{}-{}.tif",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
+        let file = temp_tiff_file("sensor-tiff", ".tif");
+        let path = file.path();
         let mut bytes = Vec::new();
         bytes.extend_from_slice(b"II");
         bytes.extend_from_slice(&42u16.to_le_bytes());
@@ -593,24 +567,49 @@ mod tests {
         bytes.extend_from_slice(&32803u16.to_le_bytes());
         bytes.extend_from_slice(&0u16.to_le_bytes());
         bytes.extend_from_slice(&0u32.to_le_bytes());
-        std::fs::write(&path, bytes).unwrap();
+        std::fs::write(path, bytes).unwrap();
         assert_eq!(
-            inspect_tiff_container(&path).unwrap(),
+            inspect_tiff_container(path).unwrap(),
             TiffContainerKind::Sensor
         );
-        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn inspect_walks_chained_and_sub_ifds_before_returning_sensor_kind() {
+        let file = temp_tiff_file("ifd-walk", ".tif");
+        std::fs::write(file.path(), classic_ifd_chain_with_subifd()).unwrap();
+        assert_eq!(
+            inspect_tiff_container(file.path()).unwrap(),
+            TiffContainerKind::Sensor
+        );
+    }
+
+    #[test]
+    fn inspect_supports_bigtiff_ifd_entries() {
+        let file = temp_tiff_file("bigtiff", ".tif");
+        std::fs::write(file.path(), big_tiff_with_sensor_ifd()).unwrap();
+        assert_eq!(
+            inspect_tiff_container(file.path()).unwrap(),
+            TiffContainerKind::Sensor
+        );
+    }
+
+    #[test]
+    fn inspect_rejects_ifd_offsets_outside_the_file() {
+        let file = temp_tiff_file("bad-ifd-offset", ".tif");
+        let mut bytes = vec![0; 32];
+        bytes[0..2].copy_from_slice(b"II");
+        put_u16(&mut bytes, 2, 42);
+        put_u32(&mut bytes, 4, 4096);
+        std::fs::write(file.path(), bytes).unwrap();
+        let error = inspect_tiff_container(file.path()).unwrap_err().to_string();
+        assert!(error.contains("IFD offset is outside the file"), "{error}");
     }
 
     #[test]
     fn rendered_rgb_with_copied_color_matrix_metadata_stays_on_raster_path() {
-        let path = std::env::temp_dir().join(format!(
-            "calibraw-rendered-metadata-tiff-{}-{}.tif",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
+        let file = temp_tiff_file("rendered-metadata-tiff", ".tif");
+        let path = file.path();
         let mut bytes = Vec::new();
         bytes.extend_from_slice(b"II");
         bytes.extend_from_slice(&42u16.to_le_bytes());
@@ -633,13 +632,12 @@ mod tests {
         bytes.extend_from_slice(&1u32.to_le_bytes());
         bytes.extend_from_slice(&0u32.to_le_bytes());
         bytes.extend_from_slice(&0u32.to_le_bytes());
-        std::fs::write(&path, bytes).unwrap();
+        std::fs::write(path, bytes).unwrap();
 
         assert_eq!(
-            inspect_tiff_container(&path).unwrap(),
+            inspect_tiff_container(path).unwrap(),
             TiffContainerKind::Raster
         );
-        let _ = std::fs::remove_file(path);
     }
 
     #[test]
@@ -661,61 +659,41 @@ mod tests {
 
     #[test]
     fn integer_tiff_decodes_to_scene_linear_rec2020() {
-        let path = std::env::temp_dir().join(format!(
-            "calibraw-raster-tiff-{}-{}.TIFF",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
+        let file = temp_tiff_file("raster-tiff", ".TIFF");
+        let path = file.path();
         let image = ImageBuffer::<Rgb<u16>, Vec<u16>>::from_raw(1, 1, vec![65535, 0, 0]).unwrap();
-        image.save_with_format(&path, ImageFormat::Tiff).unwrap();
+        image.save_with_format(path, ImageFormat::Tiff).unwrap();
         assert_eq!(
-            inspect_tiff_container(&path).unwrap(),
+            inspect_tiff_container(path).unwrap(),
             TiffContainerKind::Raster
         );
-        let loaded = load_raster_tiff(&path).unwrap();
+        let loaded = load_raster_tiff(path).unwrap();
         assert!(loaded.is_pre_demosaiced_raster());
         let rgb = loaded.scene_linear_raster().unwrap();
         assert!((rgb[0] - REC709_TO_REC2020[0][0]).abs() < 2e-4);
         assert!((rgb[1] - REC709_TO_REC2020[1][0]).abs() < 2e-4);
         assert!((rgb[2] - REC709_TO_REC2020[2][0]).abs() < 2e-4);
-        let _ = std::fs::remove_file(path);
     }
 
     #[test]
     fn raster_tiff_thumbnail_preserves_black_and_white_endpoints() {
-        let path = std::env::temp_dir().join(format!(
-            "calibraw-raster-thumb-{}-{}.tif",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
+        let file = temp_tiff_file("raster-thumb", ".tif");
+        let path = file.path();
         let image =
             ImageBuffer::<Rgb<u16>, Vec<u16>>::from_raw(2, 1, vec![0, 0, 0, 65535, 65535, 65535])
                 .unwrap();
-        image.save_with_format(&path, ImageFormat::Tiff).unwrap();
+        image.save_with_format(path, ImageFormat::Tiff).unwrap();
 
-        let thumbnail = load_raster_tiff_thumbnail(&path, 512).unwrap();
+        let thumbnail = load_raster_tiff_thumbnail(path, 512).unwrap();
         assert_eq!([thumbnail.width, thumbnail.height], [2, 1]);
         assert_eq!(&thumbnail.rgba[0..4], &[0, 0, 0, 255]);
         assert_eq!(&thumbnail.rgba[4..8], &[255, 255, 255, 255]);
-        let _ = std::fs::remove_file(path);
     }
 
     #[test]
     fn reads_embedded_icc_profile_tag() {
-        let path = std::env::temp_dir().join(format!(
-            "calibraw-icc-tiff-{}-{}.tif",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
+        let file = temp_tiff_file("icc-tiff", ".tif");
+        let path = file.path();
         let mut icc = vec![0u8; 132];
         icc[0..4].copy_from_slice(&132u32.to_be_bytes());
         icc[8] = 4;
@@ -736,9 +714,8 @@ mod tests {
         bytes.extend_from_slice(&(payload_offset as u32).to_le_bytes());
         bytes.extend_from_slice(&0u32.to_le_bytes());
         bytes.extend_from_slice(&icc);
-        std::fs::write(&path, bytes).unwrap();
+        std::fs::write(path, bytes).unwrap();
 
-        assert_eq!(read_embedded_icc_profile(&path).unwrap(), Some(icc));
-        let _ = std::fs::remove_file(path);
+        assert_eq!(read_embedded_icc_profile(path).unwrap(), Some(icc));
     }
 }

@@ -529,8 +529,9 @@ final class StorageManager {
         if (!directory.isDirectory() && !directory.mkdirs()) {
             throw new IllegalStateException("Could not create " + directory);
         }
-        File destination = uniqueRawFile(directory, AndroidStorageContract.safeRawName(requestedName));
-        File partial = uniqueRawFile(
+        File destination = AndroidStorageContract.uniqueFile(
+                directory, AndroidStorageContract.safeRawName(requestedName));
+        File partial = AndroidStorageContract.uniqueFile(
                 directory,
                 AndroidStorageContract.importPartialName(destination.getName()));
         boolean completed = false;
@@ -724,22 +725,6 @@ final class StorageManager {
         try {
             new File(uri.getPath()).delete();
         } catch (Exception ignored) {
-        }
-    }
-
-    private static File uniqueRawFile(File directory, String displayName) {
-        File candidate = new File(directory, displayName);
-        if (!candidate.exists()) {
-            return candidate;
-        }
-        int dot = displayName.lastIndexOf('.');
-        String stem = dot > 0 ? displayName.substring(0, dot) : displayName;
-        String suffix = dot > 0 ? displayName.substring(dot) : "";
-        for (int index = 1; ; index++) {
-            candidate = new File(directory, stem + "-" + index + suffix);
-            if (!candidate.exists()) {
-                return candidate;
-            }
         }
     }
 

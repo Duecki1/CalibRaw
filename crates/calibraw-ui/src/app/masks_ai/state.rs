@@ -1,6 +1,32 @@
 use super::*;
 
 impl MaskState {
+    /// Clear mask interaction state and derived caches without changing the stack.
+    pub(in crate::app) fn reset_transient_state(&mut self) {
+        self.active_tool = None;
+        self.brush_mode = BrushMode::Paint;
+        self.subject_refinement_active = false;
+        self.drag = None;
+        self.last_brush_point = None;
+        self.touch_gesture_backup = None;
+        self.interaction_dirty_layer = None;
+        self.interaction_last_upload = None;
+        self.interaction_has_uncommitted_change = false;
+        self.overlay_revision = self.overlay_revision.wrapping_add(1);
+        self.overlay_texture = None;
+        self.overlay_texture_key = None;
+        self.overlay_blink = None;
+        self.thumbnail_group_textures.clear();
+        self.thumbnail_component_mask = None;
+        self.thumbnail_component_textures.clear();
+        self.thumbnail_revision = self.overlay_revision;
+        self.source_cache = None;
+        self.subject_cache = None;
+        self.dirty_layers.fill(false);
+        self.detail_dirty_layers.fill(false);
+        self.navigation_dirty_layers.fill(false);
+    }
+
     pub(in crate::app) fn capture_ai_target(
         &self,
         mask_index: usize,
@@ -106,26 +132,7 @@ impl CalibRawApp {
 
         self.finish_mask_geometry_interaction();
         self.masks.stack.clear();
-        self.masks.active_tool = None;
-        self.masks.brush_mode = BrushMode::Paint;
-        self.masks.subject_refinement_active = false;
-        self.masks.drag = None;
-        self.masks.last_brush_point = None;
-        self.masks.touch_gesture_backup = None;
-        self.masks.interaction_dirty_layer = None;
-        self.masks.interaction_last_upload = None;
-        self.masks.interaction_has_uncommitted_change = false;
-        self.masks.overlay_revision = self.masks.overlay_revision.wrapping_add(1);
-        self.masks.overlay_texture = None;
-        self.masks.overlay_texture_key = None;
-        self.masks.overlay_blink = None;
-        self.masks.thumbnail_group_textures.clear();
-        self.masks.thumbnail_component_mask = None;
-        self.masks.thumbnail_component_textures.clear();
-        self.masks.thumbnail_revision = self.masks.overlay_revision;
-        self.masks.dirty_layers.fill(false);
-        self.masks.detail_dirty_layers.fill(false);
-        self.masks.navigation_dirty_layers.fill(false);
+        self.masks.reset_transient_state();
         self.develop_ui.mask_section = MaskSection::Properties;
 
         self.invalidate_generated_mask_sources();

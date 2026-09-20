@@ -823,21 +823,12 @@ pub fn materialize_library_document(
     raw_uri: &str,
     display_name: &str,
 ) -> Result<PathBuf, String> {
-    let raw_uri = raw_uri.to_owned();
-    let display_name = display_name.to_owned();
-    let path = with_storage_manager(app, |env, storage_manager| {
-        let raw_uri = env.new_string(&raw_uri)?;
-        let display_name = env.new_string(&display_name)?;
-        let object = env
-            .call_method(
-                storage_manager,
-                jni::jni_str!("materializeRawLibraryDocument"),
-                jni::jni_sig!((JString, JString) -> JString),
-                &[JValue::Object(&raw_uri), JValue::Object(&display_name)],
-            )?
-            .l()?;
-        Ok(env.cast_local::<JString>(object)?.to_string())
-    })
+    let path = materialize_storage_path(
+        app,
+        jni::jni_str!("materializeRawLibraryDocument"),
+        raw_uri,
+        display_name,
+    )
     .map_err(|error| format!("could not materialize Android RAW: {error:#}"))?;
     if path.is_empty() {
         Err("Android returned no RAW staging path".to_owned())
@@ -851,28 +842,39 @@ fn materialize_library_thumbnail(
     raw_uri: &str,
     display_name: &str,
 ) -> Result<PathBuf, String> {
-    let raw_uri = raw_uri.to_owned();
-    let display_name = display_name.to_owned();
-    let path = with_storage_manager(app, |env, storage_manager| {
-        let raw_uri = env.new_string(&raw_uri)?;
-        let display_name = env.new_string(&display_name)?;
-        let object = env
-            .call_method(
-                storage_manager,
-                jni::jni_str!("materializeRawLibraryThumbnail"),
-                jni::jni_sig!((JString, JString) -> JString),
-                &[JValue::Object(&raw_uri), JValue::Object(&display_name)],
-            )?
-            .l()?;
-        let path = env.cast_local::<JString>(object)?;
-        Ok(path.to_string())
-    })
+    let path = materialize_storage_path(
+        app,
+        jni::jni_str!("materializeRawLibraryThumbnail"),
+        raw_uri,
+        display_name,
+    )
     .map_err(|error| format!("could not materialize Android RAW thumbnail: {error:#}"))?;
     if path.is_empty() {
         Err("Android returned no RAW thumbnail staging path".to_owned())
     } else {
         Ok(PathBuf::from(path))
     }
+}
+
+fn materialize_storage_path(
+    app: &AndroidApp,
+    method: impl AsRef<jni::strings::JNIStr>,
+    raw_uri: &str,
+    display_name: &str,
+) -> jni::errors::Result<String> {
+    with_storage_manager(app, |env, storage_manager| {
+        let raw_uri = env.new_string(raw_uri)?;
+        let display_name = env.new_string(display_name)?;
+        let object = env
+            .call_method(
+                storage_manager,
+                method,
+                jni::jni_sig!((JString, JString) -> JString),
+                &[JValue::Object(&raw_uri), JValue::Object(&display_name)],
+            )?
+            .l()?;
+        Ok(env.cast_local::<JString>(object)?.to_string())
+    })
 }
 
 pub fn open_library_document(

@@ -733,19 +733,7 @@ fn extract_sam_encoder_output(
         data.to_vec()
     };
 
-    let shape = shape
-        .iter()
-        .map(|dimension| usize::try_from(*dimension).context("negative SAM tensor dimension"))
-        .collect::<Result<Vec<_>>>()?;
-    let expected = shape.iter().try_fold(1usize, |product, dimension| {
-        product
-            .checked_mul(*dimension)
-            .context("SAM tensor shape overflow")
-    })?;
-    anyhow::ensure!(
-        expected == values.len(),
-        "SAM tensor shape does not match its data"
-    );
+    let shape = sam_tensor_shape(shape, values.len())?;
     Ok(SamTensorData {
         shape,
         values: values.into(),
@@ -768,6 +756,14 @@ fn extract_f32_output(
         data.iter().all(|value| value.is_finite()),
         "SAM 2.1 {label} contains non-finite values"
     );
+    let shape = sam_tensor_shape(shape, data.len())?;
+    Ok(SamTensorData {
+        shape,
+        values: data.to_vec().into(),
+    })
+}
+
+fn sam_tensor_shape(shape: &ort::value::Shape, value_count: usize) -> Result<Vec<usize>> {
     let shape = shape
         .iter()
         .map(|dimension| usize::try_from(*dimension).context("negative SAM tensor dimension"))
@@ -778,13 +774,10 @@ fn extract_f32_output(
             .context("SAM tensor shape overflow")
     })?;
     anyhow::ensure!(
-        expected == data.len(),
+        expected == value_count,
         "SAM tensor shape does not match its data"
     );
-    Ok(SamTensorData {
-        shape,
-        values: data.to_vec().into(),
-    })
+    Ok(shape)
 }
 
 struct DecodedSamMask {

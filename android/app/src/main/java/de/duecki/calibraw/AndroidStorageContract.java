@@ -126,6 +126,23 @@ final class AndroidStorageContract {
         return ".calibraw-import-" + destinationName + ".part";
     }
 
+    /** Returns the requested file name, adding a numeric suffix when needed. */
+    static File uniqueFile(File directory, String displayName) {
+        File candidate = new File(directory, displayName);
+        if (!candidate.exists()) {
+            return candidate;
+        }
+        int dot = displayName.lastIndexOf('.');
+        String stem = dot > 0 ? displayName.substring(0, dot) : displayName;
+        String extension = dot > 0 ? displayName.substring(dot) : "";
+        for (int suffix = 1; ; suffix++) {
+            candidate = new File(directory, stem + "-" + suffix + extension);
+            if (!candidate.exists()) {
+                return candidate;
+            }
+        }
+    }
+
     static boolean isLibraryTemporaryFileName(String name) {
         if (name == null || !name.endsWith(".part")) {
             return false;

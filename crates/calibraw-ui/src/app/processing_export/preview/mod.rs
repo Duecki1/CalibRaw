@@ -1,5 +1,6 @@
 use super::*;
 use crate::pipeline::TONE_GUIDE_CELL_SIZE;
+pub(in crate::app) use crate::pipeline::{mask_region_texture_extent, mask_source_region_uv};
 
 pub(in crate::app) fn aligned_detail_axis(
     min_uv: f32,
@@ -221,35 +222,6 @@ pub(in crate::app) fn detail_mask_source_region(
         .saturating_add(margin)
         .clamp(y0 + 1, full_height);
     [x0, y0, x1 - x0, y1 - y0]
-}
-
-pub(in crate::app) fn mask_source_region_uv(
-    region: [u32; 4],
-    full_width: u32,
-    full_height: u32,
-) -> [f32; 4] {
-    let width = full_width.max(1) as f32;
-    let height = full_height.max(1) as f32;
-    [
-        region[0] as f32 / width,
-        region[1] as f32 / height,
-        region[0].saturating_add(region[2]) as f32 / width,
-        region[1].saturating_add(region[3]) as f32 / height,
-    ]
-}
-
-pub(in crate::app) fn mask_region_texture_extent(region: [u32; 4], max_edge: u32) -> [u32; 2] {
-    let width = region[2].max(1);
-    let height = region[3].max(1);
-    let longest = width.max(height);
-    if longest <= max_edge {
-        return [width, height];
-    }
-    let scale = max_edge.max(1) as f64 / longest as f64;
-    [
-        ((width as f64 * scale).round() as u32).clamp(1, max_edge.max(1)),
-        ((height as f64 * scale).round() as u32).clamp(1, max_edge.max(1)),
-    ]
 }
 
 pub(super) const DETAIL_ZOOM_START: f32 = 1.0005;

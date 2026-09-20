@@ -1130,21 +1130,12 @@ pub(super) fn create_black_texture(
     queue: &wgpu::Queue,
     raw: &LoadedRaw,
 ) -> wgpu::Texture {
-    let sensor_size = if raw.is_pre_demosaiced_raster() {
-        texture_size(1, 1)
-    } else {
-        texture_size(raw.width, raw.height)
-    };
-    let texture = device.create_texture(&wgpu::TextureDescriptor {
-        label: Some("calibraw per-pixel black levels"),
-        size: sensor_size,
-        mip_level_count: 1,
-        sample_count: 1,
-        dimension: wgpu::TextureDimension::D2,
-        format: wgpu::TextureFormat::R32Float,
-        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-        view_formats: &[wgpu::TextureFormat::R32Float],
-    });
+    let texture = create_per_pixel_texture(
+        device,
+        raw,
+        wgpu::TextureFormat::R32Float,
+        "calibraw per-pixel black levels",
+    );
     if !raw.is_pre_demosaiced_raster() {
         upload_black_texture(queue, &texture, raw);
     }
@@ -1218,25 +1209,39 @@ pub(super) fn create_color_texture(
     queue: &wgpu::Queue,
     raw: &LoadedRaw,
 ) -> wgpu::Texture {
+    let texture = create_per_pixel_texture(
+        device,
+        raw,
+        wgpu::TextureFormat::R8Uint,
+        "calibraw CFA color indices",
+    );
+    if !raw.is_pre_demosaiced_raster() {
+        upload_color_texture(queue, &texture, raw);
+    }
+    texture
+}
+
+fn create_per_pixel_texture(
+    device: &wgpu::Device,
+    raw: &LoadedRaw,
+    format: wgpu::TextureFormat,
+    label: &'static str,
+) -> wgpu::Texture {
     let sensor_size = if raw.is_pre_demosaiced_raster() {
         texture_size(1, 1)
     } else {
         texture_size(raw.width, raw.height)
     };
-    let texture = device.create_texture(&wgpu::TextureDescriptor {
-        label: Some("calibraw CFA color indices"),
+    device.create_texture(&wgpu::TextureDescriptor {
+        label: Some(label),
         size: sensor_size,
         mip_level_count: 1,
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
-        format: wgpu::TextureFormat::R8Uint,
+        format,
         usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-        view_formats: &[wgpu::TextureFormat::R8Uint],
-    });
-    if !raw.is_pre_demosaiced_raster() {
-        upload_color_texture(queue, &texture, raw);
-    }
-    texture
+        view_formats: &[format],
+    })
 }
 
 pub(super) fn upload_color_texture(queue: &wgpu::Queue, texture: &wgpu::Texture, raw: &LoadedRaw) {
