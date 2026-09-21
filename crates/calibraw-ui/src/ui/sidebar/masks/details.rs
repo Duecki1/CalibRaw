@@ -302,9 +302,8 @@ impl Sidebar {
 
             match orientation {
                 MaskStripOrientation::Horizontal => {
-                    let action = Self::adjustment_card_without_visibility(
+                    let action = Self::mask_properties_card(
                         ui,
-                        "Mask Properties",
                         true,
                         true,
                         true,
@@ -384,9 +383,8 @@ impl Sidebar {
                     if mask.effect.uses_adjustments() {
                         match mask_section {
                             MaskSection::Properties => {
-                                let action = Self::adjustment_card_without_visibility(
+                                let action = Self::mask_properties_card(
                                     ui,
-                                    "Mask Properties",
                                     true,
                                     false,
                                     true,
@@ -435,9 +433,8 @@ impl Sidebar {
                             }
                         }
                     } else {
-                        let action = Self::adjustment_card_without_visibility(
+                        let action = Self::mask_properties_card(
                             ui,
-                            "Mask Properties",
                             true,
                             false,
                             true,

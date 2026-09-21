@@ -10,7 +10,7 @@ pub(super) enum CardAction {
 
 struct CardActionLayout {
     action: CardAction,
-    buttons: [egui::Rect; 2],
+    buttons: [egui::Rect; 3],
     button_count: usize,
 }
 
@@ -24,6 +24,7 @@ impl CardActionLayout {
 struct VerticalCardActions {
     title: &'static str,
     show_visibility: bool,
+    show_mask_overlay_toggle: bool,
     scope: Option<usize>,
 }
 
@@ -80,6 +81,7 @@ impl Sidebar {
         title: &str,
         visible: bool,
         show_visibility: bool,
+        show_mask_overlay_toggle: bool,
     ) -> CardActionLayout {
         let mut action = CardAction::None;
         let buttons = ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -93,6 +95,28 @@ impl Sidebar {
             if reset.clicked() {
                 action = CardAction::Reset;
             }
+            let overlay = show_mask_overlay_toggle.then(|| {
+                let forced = crate::app::preview_visibility::PreviewVisibility::mask_overlay_forced(
+                    ui.ctx(),
+                );
+                let response = crate::ui::icons::phosphor_icon_toggle_button(
+                    ui,
+                    egui_phosphor::regular::EYE,
+                    forced,
+                    size,
+                    if forced {
+                        "Use automatic mask overlay visibility"
+                    } else {
+                        "Always show the selected mask overlay"
+                    },
+                );
+                if response.clicked() {
+                    crate::app::preview_visibility::PreviewVisibility::toggle_mask_overlay(
+                        ui.ctx(),
+                    );
+                }
+                response
+            });
             if show_visibility {
                 // Like the topbar eye, highlight the button when edits are bypassed.
                 let eye = crate::ui::icons::phosphor_icon_toggle_button(
@@ -105,9 +129,15 @@ impl Sidebar {
                 if eye.clicked() {
                     action = CardAction::Toggle;
                 }
-                ([eye.rect, reset.rect], 2)
+                if let Some(overlay) = overlay {
+                    ([eye.rect, overlay.rect, reset.rect], 3)
+                } else {
+                    ([eye.rect, reset.rect, egui::Rect::NOTHING], 2)
+                }
+            } else if let Some(overlay) = overlay {
+                ([overlay.rect, reset.rect, egui::Rect::NOTHING], 2)
             } else {
-                ([reset.rect, egui::Rect::NOTHING], 1)
+                ([reset.rect, egui::Rect::NOTHING, egui::Rect::NOTHING], 1)
             }
         });
         CardActionLayout {
@@ -131,7 +161,12 @@ impl Sidebar {
         });
     }
 
-    fn register_vertical_card_actions(ui: &Ui, title: &'static str, show_visibility: bool) {
+    fn register_vertical_card_actions(
+        ui: &Ui,
+        title: &'static str,
+        show_visibility: bool,
+        show_mask_overlay_toggle: bool,
+    ) {
         let scope = crate::app::preview_visibility::PreviewVisibility::current_scope(ui.ctx());
         let id = Self::vertical_card_actions_id();
         ui.ctx().data_mut(|data| {
@@ -145,6 +180,7 @@ impl Sidebar {
                 actions.push(VerticalCardActions {
                     title,
                     show_visibility,
+                    show_mask_overlay_toggle,
                     scope,
                 });
             }
@@ -208,6 +244,29 @@ impl Sidebar {
                 );
             }
 
+            if entry.show_mask_overlay_toggle {
+                let forced = crate::app::preview_visibility::PreviewVisibility::mask_overlay_forced(
+                    ui.ctx(),
+                );
+                if crate::ui::icons::phosphor_icon_toggle_button(
+                    ui,
+                    egui_phosphor::regular::EYE,
+                    forced,
+                    size,
+                    if forced {
+                        "Use automatic mask overlay visibility"
+                    } else {
+                        "Always show the selected mask overlay"
+                    },
+                )
+                .clicked()
+                {
+                    crate::app::preview_visibility::PreviewVisibility::toggle_mask_overlay(
+                        ui.ctx(),
+                    );
+                }
+            }
+
             if entry.show_visibility {
                 let visible = crate::app::preview_visibility::PreviewVisibility::visible(
                     ui.ctx(),
@@ -248,6 +307,7 @@ impl Sidebar {
             foldable,
             controls_enabled,
             true,
+            false,
             contents,
         )
     }
@@ -267,6 +327,26 @@ impl Sidebar {
             foldable,
             controls_enabled,
             false,
+            false,
+            contents,
+        )
+    }
+
+    pub(super) fn mask_properties_card(
+        ui: &mut Ui,
+        default_open: bool,
+        foldable: bool,
+        controls_enabled: bool,
+        contents: impl FnOnce(&mut Ui),
+    ) -> CardAction {
+        Self::adjustment_card_controls(
+            ui,
+            "Mask Properties",
+            default_open,
+            foldable,
+            controls_enabled,
+            false,
+            true,
             contents,
         )
     }
@@ -281,6 +361,7 @@ impl Sidebar {
         foldable: bool,
         controls_enabled: bool,
         show_visibility: bool,
+        show_mask_overlay_toggle: bool,
         contents: impl FnOnce(&mut Ui),
     ) -> CardAction {
         let visible = !show_visibility
@@ -301,7 +382,12 @@ impl Sidebar {
                     // actions are registered here and rendered outside the cards in the shared
                     // sidebar footer alongside the other mobile actions.
                     body(ui);
-                    Self::register_vertical_card_actions(ui, title, show_visibility);
+                    Self::register_vertical_card_actions(
+                        ui,
+                        title,
+                        show_visibility,
+                        show_mask_overlay_toggle,
+                    );
                     action = Self::take_pending_vertical_card_action(ui.ctx(), title);
                 } else if foldable {
                     let mut header_clicked = false;
@@ -315,7 +401,13 @@ impl Sidebar {
                             let available = ui.available_rect_before_wrap();
                             Self::adjustment_card_title(ui, title);
                             let card_actions =
-                                Self::card_actions(ui, title, visible, show_visibility);
+                                Self::card_actions(
+                                    ui,
+                                    title,
+                                    visible,
+                                    show_visibility,
+                                    show_mask_overlay_toggle,
+                                );
                             action = card_actions.action;
                             let buttons = card_actions.button_rects();
                             // The built-in arrow already toggles. Make the rest of the
@@ -355,7 +447,14 @@ impl Sidebar {
                 } else {
                     ui.horizontal(|ui| {
                         Self::adjustment_card_title(ui, title);
-                        action = Self::card_actions(ui, title, visible, show_visibility).action;
+                        action = Self::card_actions(
+                            ui,
+                            title,
+                            visible,
+                            show_visibility,
+                            show_mask_overlay_toggle,
+                        )
+                        .action;
                     });
                     body(ui);
                 }
@@ -426,6 +525,58 @@ mod tests {
         .is_some());
         assert!(optional_text_rect(&output.shapes, egui_phosphor::regular::EYE).is_none());
         assert!(optional_text_rect(&output.shapes, egui_phosphor::regular::EYE_SLASH).is_none());
+    }
+
+    #[test]
+    fn mask_properties_card_has_overlay_toggle_next_to_reset() {
+        let ctx = egui::Context::default();
+        crate::ui::theme::install(&ctx);
+        let mut events = Vec::new();
+        let mut overlay = egui::Pos2::ZERO;
+        let mut reset = egui::Pos2::ZERO;
+
+        for step in 0..4 {
+            let output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(400.0, 180.0),
+                    )),
+                    events: std::mem::take(&mut events),
+                    ..Default::default()
+                },
+                |ui| {
+                    let action = Sidebar::mask_properties_card(ui, true, false, true, |ui| {
+                        ui.label("Controls");
+                    });
+                    assert!(!matches!(action, CardAction::Toggle));
+                },
+            );
+
+            if step == 0 {
+                let eye = text_rect(&output.shapes, egui_phosphor::regular::EYE);
+                let reset_rect = text_rect(
+                    &output.shapes,
+                    egui_phosphor::regular::ARROW_COUNTER_CLOCKWISE,
+                );
+                assert!(eye.right() <= reset_rect.left());
+                overlay = eye.center();
+                reset = reset_rect.center();
+            }
+
+            events.push(egui::Event::PointerMoved(overlay));
+            if matches!(step, 1 | 2) {
+                events.push(egui::Event::PointerButton {
+                    pos: overlay,
+                    button: egui::PointerButton::Primary,
+                    pressed: step == 1,
+                    modifiers: egui::Modifiers::NONE,
+                });
+            }
+        }
+
+        assert!(PreviewVisibility::mask_overlay_forced(&ctx));
+        assert_ne!(overlay, reset);
     }
 
     #[test]

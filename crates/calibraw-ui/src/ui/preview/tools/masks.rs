@@ -518,21 +518,24 @@ impl Preview {
         let subtract = crate::ui::theme::MASK_SUBTRACT;
         let painter = ui.painter_at(overlay_rect);
 
-        let steady_target: Option<Option<usize>> = neutral.then_some(None);
+        let force_overlay =
+            crate::app::preview_visibility::PreviewVisibility::mask_overlay_forced(ui.ctx());
+        let steady_target: Option<Option<usize>> = (neutral || force_overlay).then_some(None);
+        let hidden_target = if force_overlay { steady_target } else { None };
         let mut coverage_target = steady_target;
         if let Some((started, blink)) = app.masks.overlay_blink {
             let elapsed = started.elapsed().as_secs_f32();
             coverage_target = match blink {
                 MaskOverlayBlink::GroupTwice if elapsed < 0.18 => Some(None),
-                MaskOverlayBlink::GroupTwice if elapsed < 0.32 => None,
+                MaskOverlayBlink::GroupTwice if elapsed < 0.32 => hidden_target,
                 MaskOverlayBlink::GroupTwice if elapsed < 0.50 => Some(None),
-                MaskOverlayBlink::GroupTwice if elapsed < 0.64 => None,
+                MaskOverlayBlink::GroupTwice if elapsed < 0.64 => hidden_target,
                 MaskOverlayBlink::ComponentThenGroup if elapsed < 0.22 => {
                     selected_component.map(Some)
                 }
-                MaskOverlayBlink::ComponentThenGroup if elapsed < 0.35 => None,
+                MaskOverlayBlink::ComponentThenGroup if elapsed < 0.35 => hidden_target,
                 MaskOverlayBlink::ComponentThenGroup if elapsed < 0.57 => Some(None),
-                MaskOverlayBlink::ComponentThenGroup if elapsed < 0.70 => None,
+                MaskOverlayBlink::ComponentThenGroup if elapsed < 0.70 => hidden_target,
                 _ => {
                     app.masks.overlay_blink = None;
                     steady_target
@@ -570,10 +573,10 @@ impl Preview {
             coverage_target = if editing_live_mask {
                 selected_component.map(Some)
             } else {
-                None
+                hidden_target
             };
         }
-        if mask.enabled {
+        if mask.enabled || force_overlay {
             if let Some(component) = coverage_target {
                 Self::paint_coverage_texture(
                     ui,
