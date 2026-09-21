@@ -47,20 +47,10 @@ impl Develop {
         let Some(current_path) = app.develop.current_path.as_deref() else {
             return;
         };
-        let Some(current_index) = app.library.filmstrip_index_for_path(current_path) else {
-            return;
-        };
-        let target_index = if direction < 0 {
-            current_index.checked_sub(1)
-        } else {
-            current_index
-                .checked_add(1)
-                .filter(|index| *index < app.library.filmstrip_len())
-        };
-        let Some(target_index) = target_index else {
-            return;
-        };
-        let Some(item) = app.library.filmstrip_item(target_index) else {
+        let Some(item) = app
+            .library
+            .adjacent_library_item_for_path(current_path, direction > 0)
+        else {
             return;
         };
 

@@ -1509,6 +1509,68 @@ fn review_sort_orders_preserve_selection_and_use_names_for_ties() {
 
 #[cfg(not(target_os = "android"))]
 #[test]
+fn develop_arrow_navigation_matches_filtered_library_sort_order() {
+    use crate::sidecar::{PhotoFlag, PhotoReview};
+
+    let mut library = LibraryState::new();
+    for (name, flag, rating) in [
+        ("alpha.dng", PhotoFlag::Picked, 2),
+        ("bravo.nef", PhotoFlag::Picked, 5),
+        ("charlie.dng", PhotoFlag::Rejected, 4),
+        ("delta.dng", PhotoFlag::Picked, 5),
+        ("echo.dng", PhotoFlag::Picked, 3),
+    ] {
+        let mut entry = new_library_entry(test_asset(name));
+        entry.review = PhotoReview { flag, rating };
+        library.entries.push(entry);
+    }
+
+    *library.search_query_mut() = ".dng".to_owned();
+    library.review_filter.flags[0] = true;
+    library.set_sort_order(LibrarySortOrder::RatingHighestFirst);
+
+    let visible_names = library
+        .filtered_entry_indices()
+        .into_iter()
+        .map(|index| library.entries[index].asset.display_name.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(visible_names, ["delta.dng", "echo.dng", "alpha.dng"]);
+
+    let next = library
+        .adjacent_library_item_for_path(Path::new("delta.dng"), true)
+        .unwrap();
+    assert_eq!(next.asset.display_name, "echo.dng");
+    let previous = library
+        .adjacent_library_item_for_path(Path::new("alpha.dng"), false)
+        .unwrap();
+    assert_eq!(previous.asset.display_name, "echo.dng");
+
+    // If the currently developed image no longer matches the active filter,
+    // navigation still lands on the nearest visible image in Library order.
+    let next_from_hidden = library
+        .adjacent_library_item_for_path(Path::new("charlie.dng"), true)
+        .unwrap();
+    assert_eq!(next_from_hidden.asset.display_name, "echo.dng");
+    let previous_from_hidden = library
+        .adjacent_library_item_for_path(Path::new("charlie.dng"), false)
+        .unwrap();
+    assert_eq!(previous_from_hidden.asset.display_name, "delta.dng");
+
+    library.set_sort_order(LibrarySortOrder::NameAscending);
+    let visible_names = library
+        .filtered_entry_indices()
+        .into_iter()
+        .map(|index| library.entries[index].asset.display_name.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(visible_names, ["alpha.dng", "delta.dng", "echo.dng"]);
+    let next = library
+        .adjacent_library_item_for_path(Path::new("alpha.dng"), true)
+        .unwrap();
+    assert_eq!(next.asset.display_name, "delta.dng");
+}
+
+#[cfg(not(target_os = "android"))]
+#[test]
 fn cropped_preview_updates_gallery_and_filmstrip_proportions() {
     let context = egui::Context::default();
     let mut library = LibraryState::new();

@@ -33,11 +33,18 @@ impl CalibRawApp {
         true
     }
 
-    pub(crate) fn app_shortcuts_allowed(&self, ctx: &egui::Context) -> bool {
-        !ctx.egui_wants_keyboard_input()
-            && !egui::Popup::is_any_open(ctx)
+    fn shortcut_overlays_clear(&self, ctx: &egui::Context) -> bool {
+        !egui::Popup::is_any_open(ctx)
             && ctx.memory(|memory| memory.top_modal_layer().is_none())
             && !self.transient_ui_open(ctx)
+    }
+
+    pub(crate) fn app_shortcuts_allowed(&self, ctx: &egui::Context) -> bool {
+        !ctx.egui_wants_keyboard_input() && self.shortcut_overlays_clear(ctx)
+    }
+
+    pub(crate) fn edit_history_shortcuts_allowed(&self, ctx: &egui::Context) -> bool {
+        self.shortcut_overlays_clear(ctx)
     }
 
     pub(crate) fn navigation_shortcuts_allowed(&self, ctx: &egui::Context) -> bool {
@@ -153,6 +160,21 @@ mod tests {
 
         ctx.memory_mut(|memory| memory.request_focus(focus_id));
         assert!(!app.navigation_shortcuts_allowed(&ctx));
+    }
+
+    #[test]
+    fn focused_widgets_do_not_block_develop_edit_history_shortcuts() {
+        let ctx = egui::Context::default();
+        crate::ui::theme::install(&ctx);
+        let app = CalibRawApp::empty(&ctx);
+        let focus_id = egui::Id::new("edit-history-focus-test");
+
+        ctx.memory_mut(|memory| memory.request_focus(focus_id));
+        assert!(app.edit_history_shortcuts_allowed(&ctx));
+
+        egui::Popup::open_id(&ctx, egui::Id::new("edit-history-popup-test"));
+        assert!(!app.edit_history_shortcuts_allowed(&ctx));
+        egui::Popup::close_all(&ctx);
     }
 
     #[test]
