@@ -34,9 +34,9 @@ cargo xtask verify-android-16kb android/app/build/outputs/apk/debug/app-debug.ap
 
 ## GitHub release signing
 
-Pushes to `main` and manual runs of the **Build Linux and Android** workflow
-build a signed release APK. Pull requests build a debug APK because repository
-secrets are not available to untrusted forks.
+Only direct pushes to `main` in the **Build Linux and Android** workflow build a
+signed release APK. Pull requests, pushes to other branches, and manual runs
+build a debug APK and do not access the release-signing secrets.
 
 Create the upload keystore once and keep it backed up securely. Losing it means
 future APK updates cannot be signed with the same identity.

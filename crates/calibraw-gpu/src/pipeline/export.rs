@@ -1,11 +1,12 @@
 use super::geometry::GeometryInverseMap;
 use super::{
     build_region_proxy, export_mask_atlas_edge, extract_padded_tile, extract_padded_tile_into,
-    mask_atlas_edge, required_export_tile_halo, CfaKind, ExposureParams, GeometryTransform,
-    GpuParams, GpuProgramPrewarm, LensGeometryMap, LoadedRaw, MaskStack, NativeRect,
-    ProcessingQuality, ProcessingStage, ProxySpec, RawGpuPipeline, RawGpuProgramTemplate,
-    RemoveEditState, RemoveSceneContext, SrgbOutputLut, TilePlan, TileSpec, EXPORT_TILE_HALO,
-    MAX_LOCAL_MASKS, MIN_EXPORT_TILE_HALO, TONE_GUIDE_CELL_SIZE,
+    mask_atlas_edge, mask_region_texture_extent, mask_source_region_uv, required_export_tile_halo,
+    CfaKind, ExposureParams, GeometryTransform, GpuParams, GpuProgramPrewarm, LensGeometryMap,
+    LoadedRaw, MaskStack, NativeRect, ProcessingQuality, ProcessingStage, ProxySpec,
+    RawGpuPipeline, RawGpuProgramTemplate, RemoveEditState, RemoveSceneContext, SrgbOutputLut,
+    TilePlan, TileSpec, EXPORT_TILE_HALO, MAX_LOCAL_MASKS, MIN_EXPORT_TILE_HALO,
+    TONE_GUIDE_CELL_SIZE,
 };
 use crate::file_ops::{replace_file, sync_parent_directory};
 use anyhow::{Context, Result};
@@ -3091,31 +3092,6 @@ fn tile_mask_source_region(
     let y1 = (i64::from(tile_origin_y) + i64::from(tile_height) + margin)
         .clamp(y0 + 1, i64::from(full_height));
     [x0 as u32, y0 as u32, (x1 - x0) as u32, (y1 - y0) as u32]
-}
-
-fn mask_source_region_uv(region: [u32; 4], full_width: u32, full_height: u32) -> [f32; 4] {
-    let width = full_width.max(1) as f32;
-    let height = full_height.max(1) as f32;
-    [
-        region[0] as f32 / width,
-        region[1] as f32 / height,
-        region[0].saturating_add(region[2]) as f32 / width,
-        region[1].saturating_add(region[3]) as f32 / height,
-    ]
-}
-
-fn mask_region_texture_extent(region: [u32; 4], max_edge: u32) -> [u32; 2] {
-    let width = region[2].max(1);
-    let height = region[3].max(1);
-    let longest = width.max(height);
-    if longest <= max_edge {
-        return [width, height];
-    }
-    let scale = max_edge.max(1) as f64 / longest as f64;
-    [
-        ((width as f64 * scale).round() as u32).clamp(1, max_edge.max(1)),
-        ((height as f64 * scale).round() as u32).clamp(1, max_edge.max(1)),
-    ]
 }
 
 fn upload_mask_atlas(

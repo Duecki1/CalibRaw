@@ -12,14 +12,18 @@ import android.view.View;
 import android.view.WindowInsets;
 import android.view.WindowInsetsController;
 import android.widget.Toast;
+import android.util.Log;
 import android.window.OnBackInvokedDispatcher;
 
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 public final class CalibRawActivity extends NativeActivity {
+    private static final String LOG_TAG = "CalibRaw";
     private static final int OPEN_RAW_DOCUMENT = 1001;
     private static final int OPEN_CAMERA_PROFILE_FOLDER = 1003;
 
@@ -27,6 +31,9 @@ public final class CalibRawActivity extends NativeActivity {
     private ProfileImporter profileImporter;
     private ExportPublisher exportPublisher;
     private TaskNotificationController taskNotificationController;
+    private final ExecutorService startupMaintenanceExecutor =
+            Executors.newSingleThreadExecutor(runnable ->
+                    new Thread(runnable, "CalibRaw startup maintenance"));
 
     static {
         System.loadLibrary("calibraw");
@@ -75,7 +82,7 @@ public final class CalibRawActivity extends NativeActivity {
         exportPublisher = new ExportPublisher(this, CalibRawActivity::nativeOnExportPublished);
 
         configureSystemBarsAndInsets();
-        storageManager.scavengeTemporaryRawFiles();
+        scavengeTemporaryFilesAsync();
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             getOnBackInvokedDispatcher().registerOnBackInvokedCallback(
                     OnBackInvokedDispatcher.PRIORITY_DEFAULT,
@@ -85,6 +92,36 @@ public final class CalibRawActivity extends NativeActivity {
                         }
                     });
         }
+    }
+
+    private void scavengeTemporaryFilesAsync() {
+        StorageManager manager = storageManager;
+        ExportPublisher publisher = exportPublisher;
+        startupMaintenanceExecutor.execute(() -> {
+            try {
+                manager.scavengeTemporaryRawFiles();
+            } catch (RuntimeException error) {
+                Log.w(LOG_TAG, "Could not scavenge temporary RAW files", error);
+            }
+            try {
+                publisher.scavengeCachedExports();
+            } catch (RuntimeException error) {
+                Log.w(LOG_TAG, "Could not scavenge cached exports", error);
+            }
+            manager.maintainThumbnailCache();
+        });
+    }
+
+    public void scavengeCameraProfileMirrors(String activeMirrorPath) {
+        ProfileImporter importer = profileImporter;
+        final String configuredMirror = activeMirrorPath == null ? "" : activeMirrorPath;
+        startupMaintenanceExecutor.execute(() -> {
+            try {
+                importer.scavengeCameraProfileMirrors(configuredMirror);
+            } catch (Exception error) {
+                Log.w(LOG_TAG, "Could not scavenge stale camera-profile mirrors", error);
+            }
+        });
     }
 
     @SuppressWarnings("deprecation") // Required on API 30–34; API 35+ is always edge-to-edge.
@@ -289,6 +326,7 @@ public final class CalibRawActivity extends NativeActivity {
 
     @Override
     protected void onDestroy() {
+        startupMaintenanceExecutor.shutdownNow();
         if (taskNotificationController != null) {
             taskNotificationController.clear();
         }

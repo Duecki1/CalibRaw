@@ -13,6 +13,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.nio.file.Path;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
@@ -178,6 +179,32 @@ public final class AndroidStorageContractTest {
     }
 
     @Test
+    public void thumbnailPathLookupTouchesHitsWithoutTrimmingTheWholeCache() throws Exception {
+        File directory = temporaryFolder.newFolder("thumbnail-cache-lookup");
+        String identity = "developed\ncontent://library/photo/1";
+        File cached = ThumbnailCache.pathInDirectory(directory, identity, ".developed.jpg");
+        File oldest = new File(directory, "oldest.raw.jpg");
+        File middle = new File(directory, "middle.raw.jpg");
+        writeSparseFile(oldest, 50L * 1024L * 1024L, 1_000L);
+        writeSparseFile(middle, 50L * 1024L * 1024L, 2_000L);
+        writeSparseFile(cached, 50L * 1024L * 1024L, 3_000L);
+
+        File lookedUp = ThumbnailCache.pathInDirectory(directory, identity, ".developed.jpg");
+
+        assertEquals(cached.getCanonicalFile(), lookedUp.getCanonicalFile());
+        assertTrue(cached.lastModified() > 3_000L);
+        assertTrue(oldest.exists());
+        assertTrue(middle.exists());
+        assertTrue(directoryBytes(directory) > 128L * 1024L * 1024L);
+
+        ThumbnailCache.trim(directory);
+
+        assertFalse(oldest.exists());
+        assertTrue(cached.exists());
+        assertTrue(directoryBytes(directory) <= 128L * 1024L * 1024L);
+    }
+
+    @Test
     public void boundedStreamsEnforceLimitsAndRecoverFromZeroProgressReads() throws Exception {
         ByteArrayOutputStream output = new ByteArrayOutputStream();
         long copied = BoundedStreams.copy(
@@ -201,6 +228,169 @@ public final class AndroidStorageContractTest {
         }
     }
 
+    @Test
+    public void cameraProfileScavengerPreservesActiveAndRecentMirrors() throws Exception {
+        File filesDirectory = temporaryFolder.newFolder("app-files");
+        long nowMillis = 10L * ProfileImporter.CAMERA_PROFILE_MIRROR_GRACE_MILLIS;
+
+        File active = new File(filesDirectory, "camera-profiles-100");
+        File stale = new File(filesDirectory, "camera-profiles-200");
+        File recent = new File(filesDirectory, "camera-profiles-300");
+        File unrelated = new File(filesDirectory, "camera-profiles-manual");
+        assertTrue(active.mkdirs());
+        assertTrue(stale.mkdirs());
+        assertTrue(recent.mkdirs());
+        assertTrue(unrelated.mkdirs());
+        Files.write(new File(stale, "profile.dcp").toPath(), new byte[] {1});
+
+        long staleTime = nowMillis - ProfileImporter.CAMERA_PROFILE_MIRROR_GRACE_MILLIS - 1L;
+        assertTrue(active.setLastModified(staleTime));
+        assertTrue(stale.setLastModified(staleTime));
+        assertTrue(recent.setLastModified(nowMillis - 1L));
+        assertTrue(unrelated.setLastModified(staleTime));
+
+        ProfileImporter.scavengeCameraProfileMirrors(
+                filesDirectory, active.getAbsolutePath(), nowMillis);
+
+        assertTrue(active.isDirectory());
+        assertFalse(stale.exists());
+        assertTrue(recent.isDirectory());
+        assertTrue(unrelated.isDirectory());
+    }
+
+    @Test
+    public void cameraProfileScavengerDoesNotFollowSymlinks() throws Exception {
+        File filesDirectory = temporaryFolder.newFolder("symlink-app-files");
+        File outside = temporaryFolder.newFolder("outside-profile-target");
+        Files.write(new File(outside, "keep.dcp").toPath(), new byte[] {1, 2, 3});
+
+        Path mirrorLink = new File(filesDirectory, "camera-profiles-400").toPath();
+        try {
+            Files.createSymbolicLink(mirrorLink, outside.toPath());
+        } catch (UnsupportedOperationException | IOException | SecurityException error) {
+            return;
+        }
+
+        File stale = new File(filesDirectory, "camera-profiles-500");
+        assertTrue(stale.mkdirs());
+        Path nestedLink = new File(stale, "outside-link").toPath();
+        Files.createSymbolicLink(nestedLink, outside.toPath());
+        long nowMillis = 10L * ProfileImporter.CAMERA_PROFILE_MIRROR_GRACE_MILLIS;
+        assertTrue(stale.setLastModified(
+                nowMillis - ProfileImporter.CAMERA_PROFILE_MIRROR_GRACE_MILLIS - 1L));
+
+        ProfileImporter.scavengeCameraProfileMirrors(filesDirectory, "", nowMillis);
+
+        assertTrue(Files.isSymbolicLink(mirrorLink));
+        assertFalse(stale.exists());
+        assertTrue(outside.isDirectory());
+        assertTrue(new File(outside, "keep.dcp").isFile());
+    }
+
+    @Test
+    public void cameraProfileScavengerAbortsForConfiguredPathOutsideOwnedStorage()
+            throws Exception {
+        File filesDirectory = temporaryFolder.newFolder("validated-app-files");
+        File stale = new File(filesDirectory, "camera-profiles-600");
+        assertTrue(stale.mkdirs());
+        long nowMillis = 10L * ProfileImporter.CAMERA_PROFILE_MIRROR_GRACE_MILLIS;
+        assertTrue(stale.setLastModified(
+                nowMillis - ProfileImporter.CAMERA_PROFILE_MIRROR_GRACE_MILLIS - 1L));
+
+        File outside = temporaryFolder.newFolder("camera-profiles-700");
+        try {
+            ProfileImporter.scavengeCameraProfileMirrors(
+                    filesDirectory, outside.getAbsolutePath(), nowMillis);
+            fail("configured path outside app-owned files should abort scavenging");
+        } catch (IllegalArgumentException expected) {
+        }
+
+        assertTrue(stale.isDirectory());
+        assertTrue(outside.isDirectory());
+    }
+
+    @Test
+    public void rawLibrarySelectionReadsModifiedTimeOnceAndPreservesStableCutoffTies() {
+        CountingFile newest = new CountingFile("newest.dng", 3_000L);
+        CountingFile boundaryFirst = new CountingFile("boundary-first.dng", 1_000L);
+        CountingFile boundarySecond = new CountingFile("boundary-second.dng", 1_000L);
+        CountingFile boundaryThird = new CountingFile("boundary-third.dng", 1_000L);
+        CountingFile middle = new CountingFile("middle.dng", 2_000L);
+        CountingFile ignored = new CountingFile("ignored.jpg", 9_000L);
+
+        java.util.PriorityQueue<StorageManager.RawLibraryCandidate> retained =
+                StorageManager.selectRawLibraryCandidates(
+                        new File[] {
+                            newest,
+                            boundaryFirst,
+                            boundarySecond,
+                            boundaryThird,
+                            middle,
+                            ignored
+                        },
+                        3);
+
+        java.util.HashSet<String> retainedNames = new java.util.HashSet<>();
+        for (StorageManager.RawLibraryCandidate candidate : retained) {
+            retainedNames.add(candidate.file.getName());
+        }
+        assertEquals(3, retainedNames.size());
+        assertTrue(retainedNames.contains("newest.dng"));
+        assertTrue(retainedNames.contains("middle.dng"));
+        assertTrue(retainedNames.contains("boundary-first.dng"));
+        assertFalse(retainedNames.contains("boundary-second.dng"));
+        assertFalse(retainedNames.contains("boundary-third.dng"));
+
+        assertEquals(1, newest.lastModifiedCalls);
+        assertEquals(1, boundaryFirst.lastModifiedCalls);
+        assertEquals(1, boundarySecond.lastModifiedCalls);
+        assertEquals(1, boundaryThird.lastModifiedCalls);
+        assertEquals(1, middle.lastModifiedCalls);
+        assertEquals(1, ignored.lastModifiedCalls);
+    }
+
+    @Test
+    public void rawLibraryCutoffStillUsesMillisBeforeSecondLevelOutputOrdering() {
+        CountingFile newestWithinSecond = new CountingFile("z-newest.dng", 1_999L);
+        CountingFile middleWithinSecond = new CountingFile("a-middle.dng", 1_500L);
+        CountingFile oldestWithinSecond = new CountingFile("b-oldest.dng", 1_000L);
+
+        java.util.PriorityQueue<StorageManager.RawLibraryCandidate> retained =
+                StorageManager.selectRawLibraryCandidates(
+                        new File[] {
+                            newestWithinSecond,
+                            middleWithinSecond,
+                            oldestWithinSecond
+                        },
+                        2);
+
+        java.util.ArrayList<StorageManager.RawLibraryRecord> records = new java.util.ArrayList<>();
+        for (StorageManager.RawLibraryCandidate candidate : retained) {
+            String name = candidate.file.getName();
+            records.add(new StorageManager.RawLibraryRecord(
+                    "file:///" + name, name, "/" + name, 1, candidate.modifiedMillis / 1000));
+        }
+        records.sort(StorageManager.RAW_LIBRARY_OUTPUT_ORDER);
+
+        assertEquals(2, records.size());
+        assertEquals("file:///a-middle.dng", records.get(0).uri);
+        assertEquals("file:///z-newest.dng", records.get(1).uri);
+    }
+
+    @Test
+    public void rawLibraryOutputOrderRemainsModifiedSecondsThenUri() {
+        java.util.ArrayList<StorageManager.RawLibraryRecord> records = new java.util.ArrayList<>();
+        records.add(new StorageManager.RawLibraryRecord("file:///c.dng", "c.dng", "/c.dng", 1, 10));
+        records.add(new StorageManager.RawLibraryRecord("file:///a.dng", "a.dng", "/a.dng", 1, 10));
+        records.add(new StorageManager.RawLibraryRecord("file:///b.dng", "b.dng", "/b.dng", 1, 11));
+
+        records.sort(StorageManager.RAW_LIBRARY_OUTPUT_ORDER);
+
+        assertEquals("file:///b.dng", records.get(0).uri);
+        assertEquals("file:///a.dng", records.get(1).uri);
+        assertEquals("file:///c.dng", records.get(2).uri);
+    }
+
     private static void writeSparseFile(File file, long bytes, long modified) throws Exception {
         try (java.io.RandomAccessFile output = new java.io.RandomAccessFile(file, "rw")) {
             output.setLength(bytes);
@@ -216,6 +406,27 @@ public final class AndroidStorageContractTest {
             bytes += Math.max(0L, entry.length());
         }
         return bytes;
+    }
+
+    private static final class CountingFile extends File {
+        private final long modifiedMillis;
+        int lastModifiedCalls;
+
+        CountingFile(String path, long modifiedMillis) {
+            super(path);
+            this.modifiedMillis = modifiedMillis;
+        }
+
+        @Override
+        public boolean isFile() {
+            return true;
+        }
+
+        @Override
+        public long lastModified() {
+            lastModifiedCalls++;
+            return modifiedMillis;
+        }
     }
 
     private static final class ZeroProgressInputStream extends InputStream {

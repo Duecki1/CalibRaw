@@ -129,7 +129,7 @@ pub(in crate::ui::library) fn scan_folder_with_limit(
         return Err(format!("{} is not a folder", folder.display()));
     }
 
-    let mut assets = BinaryHeap::with_capacity(maximum_files);
+    let mut ranked_assets = BinaryHeap::with_capacity(maximum_files);
     let mut warning_count = 0usize;
     let mut truncated = false;
     let entries = std::fs::read_dir(folder)
@@ -171,20 +171,20 @@ pub(in crate::ui::library) fn scan_folder_with_limit(
             None,
         );
         let candidate = RankedLibraryAsset::new(asset);
-        if assets.len() < maximum_files {
-            assets.push(candidate);
+        if ranked_assets.len() < maximum_files {
+            ranked_assets.push(candidate);
         } else {
             truncated = true;
-            if assets
+            if ranked_assets
                 .peek()
                 .is_some_and(|worst_retained| candidate < *worst_retained)
             {
-                assets.pop();
-                assets.push(candidate);
+                ranked_assets.pop();
+                ranked_assets.push(candidate);
             }
         }
     }
-    let mut assets = assets.into_vec();
+    let mut assets = ranked_assets.into_vec();
     assets.sort();
     let mut assets = assets
         .into_iter()

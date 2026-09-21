@@ -70,7 +70,7 @@ code is included or adapted. RapidRAW itself is AGPL-3.0.
 `data/wb_presets.json` is a compact snapshot derived from darktable's white
 balance preset database. It is covered by the darktable GPL-3.0-or-later notice
 above. The exact CalibRaw snapshot has SHA-256
-`70abcc507668b9a3588a650902666369e27bfc3261dec9e04391b45f172624e7`.
+`a3cefd7cbd6ff107dc7c28f0b363b673aa4061d37180408d4ee4150ff8af5b0c`.
 
 Release packages include the Lensfun profile database. Lensfun licenses its
 database under

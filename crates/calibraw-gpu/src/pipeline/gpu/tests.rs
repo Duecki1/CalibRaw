@@ -53,10 +53,17 @@ fn shader_f32_const(source: &str, name: &str) -> f32 {
         .unwrap_or_else(|error| panic!("shader constant {name} is not numeric: {error}"))
 }
 
-fn shared_highlight_clip_for_test(highlight_clip: f32, wb: [f32; 4]) -> f32 {
+fn shared_highlight_sensor_clip_for_test(highlight_clip: f32) -> f32 {
     let safety = shader_f32_const(SHADER_RAW_SAMPLING, "SHARED_HIGHLIGHT_CLIP_SAFETY");
-    let min_wb = wb.into_iter().fold(f32::INFINITY, f32::min);
-    safety * highlight_clip.max(0.01) * min_wb.max(1e-6)
+    safety * highlight_clip.max(0.01)
+}
+
+fn shared_highlight_channel_clip_for_test(
+    highlight_clip: f32,
+    wb: [f32; 4],
+    channel: usize,
+) -> f32 {
+    shared_highlight_sensor_clip_for_test(highlight_clip) * wb[channel].max(1e-6)
 }
 
 fn adjacent_f32(value: f32, above: bool) -> f32 {
@@ -66,11 +73,17 @@ fn adjacent_f32(value: f32, above: bool) -> f32 {
 }
 
 #[test]
-fn lch_and_rcd_share_common_highlight_clip_definition() {
-    assert!(SHADER_RAW_SAMPLING.contains("fn shared_highlight_clip() -> f32"));
-    assert!(SHADER_RAW_SAMPLING.contains("raw_camera_at(p) >= shared_highlight_clip()"));
+fn lch_and_rcd_share_sensor_space_highlight_clip_definition() {
+    assert!(SHADER_RAW_SAMPLING.contains("fn shared_highlight_sensor_clip() -> f32"));
+    assert!(SHADER_RAW_SAMPLING
+        .contains("return raw_sensor_at(p) >= shared_highlight_sensor_clip();"));
+    assert!(SHADER_RAW_SAMPLING
+        .contains("fn shared_highlight_clip_for_cfa_channel(channel: u32) -> f32"));
+    assert!(!SHADER_RAW_SAMPLING.contains("min_wb"));
     assert!(SHADER_HIGHLIGHTS.contains("#import calibraw::raw_sampling as RawSampling"));
-    assert!(SHADER_HIGHLIGHTS.contains("let clip = RawSampling::shared_highlight_clip();"));
+    assert!(SHADER_HIGHLIGHTS.contains("clipped = clipped || RawSampling::is_raw_clipped(p);"));
+    assert!(SHADER_HIGHLIGHTS
+        .contains("RawSampling::shared_highlight_clip_for_cfa_channel(physical_channel)"));
     assert!(!SHADER_HIGHLIGHTS.contains("fn lch_common_clip()"));
 
     validate_shader("highlights", SHADER_HIGHLIGHTS, ProcessingQuality::Preview);
@@ -82,31 +95,43 @@ fn lch_and_rcd_share_common_highlight_clip_definition() {
 }
 
 #[test]
-fn common_highlight_clip_classifies_adjacent_values_consistently() {
+fn unequal_wb_does_not_move_raw_highlight_clipping_boundary() {
     let highlight_clip = 1.0;
-    let wb = [2.0, 1.0, 1.5, 1.0];
-    let clip = shared_highlight_clip_for_test(highlight_clip, wb);
-    let below = adjacent_f32(clip, false);
-    let above = adjacent_f32(clip, true);
+    let wb = [2.2, 1.0, 1.6, 1.0];
+    let sensor_clip = shared_highlight_sensor_clip_for_test(highlight_clip);
+    let below = adjacent_f32(sensor_clip, false);
+    let above = adjacent_f32(sensor_clip, true);
 
-    let raw_sampling_clipped = |value: f32| value >= clip;
-    let lch_clipped = |value: f32| value >= clip;
+    for (channel, gain) in wb.into_iter().enumerate() {
+        let channel_clip = shared_highlight_channel_clip_for_test(highlight_clip, wb, channel);
+        assert_eq!(below >= sensor_clip, below * gain >= channel_clip, "channel={channel}");
+        assert_eq!(above >= sensor_clip, above * gain >= channel_clip, "channel={channel}");
+    }
 
-    assert!(!raw_sampling_clipped(below));
-    assert!(!lch_clipped(below));
-    assert!(raw_sampling_clipped(above));
-    assert!(lch_clipped(above));
-
-    // This boundary would have exposed the former LCh 1.0-vs-shared 0.995 drift.
-    let former_lch_clip = highlight_clip * wb.into_iter().fold(f32::INFINITY, f32::min);
-    assert!(above < former_lch_clip);
+    // The old min(wb) threshold incorrectly marked high-gain channels clipped
+    // even though the underlying sensor sample was comfortably below white.
+    let raw_sensor = 0.75 * sensor_clip;
+    let old_min_wb_clip = sensor_clip * wb.into_iter().fold(f32::INFINITY, f32::min);
+    assert!(raw_sensor < sensor_clip);
+    assert!(raw_sensor * wb[0] >= old_min_wb_clip);
+    assert!(raw_sensor * wb[2] >= old_min_wb_clip);
+    assert!(raw_sensor * wb[0] < shared_highlight_channel_clip_for_test(highlight_clip, wb, 0));
+    assert!(raw_sensor * wb[2] < shared_highlight_channel_clip_for_test(highlight_clip, wb, 2));
 }
 
 #[test]
-fn opposed_sensor_and_wb_domain_clipping_are_equivalent() {
+fn opposed_sensor_and_channel_wb_clipping_are_equivalent_with_unequal_wb() {
     const DARKTABLE_OPPOSED_CLIP_MAGIC: f32 = 0.987;
 
+    assert_eq!(
+        shader_f32_const(SHADER_HIGHLIGHTS, "DARKTABLE_OPPOSED_CLIP_MAGIC"),
+        DARKTABLE_OPPOSED_CLIP_MAGIC
+    );
+    assert!(SHADER_RAW_SAMPLING
+        .contains("raw_sensor_at(p) >= 0.987 * max(Common::camera_uniforms.highlight_clip, 0.01)"));
+
     let highlight_clip = 1.03_f32;
+    let wb = [2.2_f32, 1.0, 1.6, 1.0];
     let sensor_clip = DARKTABLE_OPPOSED_CLIP_MAGIC * highlight_clip.max(0.01);
     let sensor_values = [
         adjacent_f32(sensor_clip, false),
@@ -116,13 +141,16 @@ fn opposed_sensor_and_wb_domain_clipping_are_equivalent() {
         1.5 * sensor_clip,
     ];
 
-    for wb in [0.5_f32, 1.0, 1.75, 2.4] {
+    for (channel, gain) in wb.into_iter().enumerate() {
         for raw_sensor in sensor_values {
-            let raw_camera = raw_sensor * wb;
+            let raw_camera = raw_sensor * gain;
             let sensor_domain = raw_sensor >= sensor_clip;
-            let wb_domain =
-                raw_camera >= DARKTABLE_OPPOSED_CLIP_MAGIC * highlight_clip.max(0.01) * wb;
-            assert_eq!(sensor_domain, wb_domain, "wb={wb}, raw_sensor={raw_sensor}");
+            let wb_domain = raw_camera
+                >= DARKTABLE_OPPOSED_CLIP_MAGIC * highlight_clip.max(0.01) * gain;
+            assert_eq!(
+                sensor_domain, wb_domain,
+                "channel={channel}, wb={gain}, raw_sensor={raw_sensor}"
+            );
         }
     }
 }

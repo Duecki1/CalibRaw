@@ -28,13 +28,18 @@ struct VerticalCardActions {
 }
 
 impl CardAction {
-    pub(super) fn apply(self, exposure: &mut ExposureParams, group: AdjustmentGroup) -> bool {
+    fn apply_reset(self, reset: impl FnOnce()) -> bool {
         match self {
-            Self::None => return false,
-            Self::Toggle => return false,
-            Self::Reset => exposure.reset_group(group),
+            Self::None | Self::Toggle => false,
+            Self::Reset => {
+                reset();
+                true
+            }
         }
-        true
+    }
+
+    pub(super) fn apply(self, exposure: &mut ExposureParams, group: AdjustmentGroup) -> bool {
+        self.apply_reset(|| exposure.reset_group(group))
     }
 
     pub(super) fn apply_local(
@@ -42,13 +47,20 @@ impl CardAction {
         adjustments: &mut crate::pipeline::LocalAdjustments,
         group: AdjustmentGroup,
     ) -> bool {
-        match self {
-            Self::None => return false,
-            Self::Toggle => return false,
-            Self::Reset => adjustments.reset_group(group),
-        }
-        true
+        self.apply_reset(|| adjustments.reset_group(group))
     }
+}
+
+fn visibility_icon(visible: bool) -> &'static str {
+    if visible {
+        egui_phosphor::regular::EYE_SLASH
+    } else {
+        egui_phosphor::regular::EYE
+    }
+}
+
+fn visibility_label(visible: bool, title: &str) -> String {
+    format!("{} {title}", if visible { "Hide" } else { "Show" })
 }
 
 impl Sidebar {
@@ -85,14 +97,10 @@ impl Sidebar {
                 // Like the topbar eye, highlight the button when edits are bypassed.
                 let eye = crate::ui::icons::phosphor_icon_toggle_button(
                     ui,
-                    if visible {
-                        egui_phosphor::regular::EYE_SLASH
-                    } else {
-                        egui_phosphor::regular::EYE
-                    },
+                    visibility_icon(visible),
                     !visible,
                     size,
-                    &format!("{} {title}", if visible { "Hide" } else { "Show" }),
+                    &visibility_label(visible, title),
                 );
                 if eye.clicked() {
                     action = CardAction::Toggle;
@@ -207,14 +215,10 @@ impl Sidebar {
                 );
                 if crate::ui::icons::phosphor_icon_toggle_button(
                     ui,
-                    if visible {
-                        egui_phosphor::regular::EYE_SLASH
-                    } else {
-                        egui_phosphor::regular::EYE
-                    },
+                    visibility_icon(visible),
                     !visible,
                     size,
-                    &format!("{} {}", if visible { "Hide" } else { "Show" }, entry.title),
+                    &visibility_label(visible, entry.title),
                 )
                 .clicked()
                 {

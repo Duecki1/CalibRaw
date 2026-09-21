@@ -681,7 +681,7 @@ pub(super) fn display_linear_rec2020_to_srgb(rgb: [f32; 3]) -> [f32; 3] {
     perceptual_gamut_compress(linear).map(srgb_encode)
 }
 
-fn perceptual_gamut_compress(rgb: [f32; 3]) -> [f32; 3] {
+pub(super) fn perceptual_gamut_compress(rgb: [f32; 3]) -> [f32; 3] {
     let min = rgb[0].min(rgb[1]).min(rgb[2]);
     let max = rgb[0].max(rgb[1]).max(rgb[2]);
     if min >= 0.0 && max <= 1.0 {
@@ -700,7 +700,7 @@ fn perceptual_gamut_compress(rgb: [f32; 3]) -> [f32; 3] {
     rgb.map(|value| (luma + (value - luma) * scale.clamp(0.0, 1.0)).clamp(0.0, 1.0))
 }
 
-fn srgb_encode(value: f32) -> f32 {
+pub(super) fn srgb_encode(value: f32) -> f32 {
     let value = value.clamp(0.0, 1.0);
     if value <= 0.003_130_8 {
         value * 12.92
@@ -709,7 +709,7 @@ fn srgb_encode(value: f32) -> f32 {
     }
 }
 
-fn srgb_decode(value: f32) -> f32 {
+pub(super) fn srgb_decode(value: f32) -> f32 {
     let value = value.clamp(0.0, 1.0);
     if value <= 0.040_45 {
         value / 12.92

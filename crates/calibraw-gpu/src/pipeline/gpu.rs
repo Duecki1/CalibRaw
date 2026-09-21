@@ -29,6 +29,10 @@ use resources::*;
 use shader_manager::ShaderManager;
 
 #[cfg(test)]
+mod black_tone_tests;
+#[cfg(test)]
+mod blacks_pipeline_tests;
+#[cfg(test)]
 mod tests;
 
 const GPU_PARAMS_ABI_VERSION: u32 = 5;
@@ -145,6 +149,7 @@ const SHADER_BASIC_ADJUSTMENTS: &str = include_str!("../shaders/basic_adjustment
 const SHADER_TONE_COMMON: &str = include_str!("../shaders/tone_common.wgsl");
 const SHADER_TONEMAP: &str = include_str!("../shaders/tonemap.wgsl");
 const SHADER_NOISE_CA_FINISH: &str = include_str!("../shaders/noise_ca_finish.wgsl");
+const SHADER_DETAIL_UTILS: &str = include_str!("../shaders/detail_utils.wgsl");
 const SHADER_DETAIL_CAPTURE: &str = include_str!("../shaders/detail_capture.wgsl");
 const SHADER_DETAIL_SCALE_SPACE: &str = include_str!("../shaders/detail_scale_space.wgsl");
 
@@ -240,9 +245,9 @@ struct CameraUniforms {
     dual_threshold: f32,
     frequency_chroma: f32,
     tint: f32,
-    _pad_0: f32,
-    _pad_1: f32,
-    _pad_2: f32,
+    pre_demosaiced_raster: f32,
+    scene_view_transform_enabled: f32,
+    camera_linear_raster: f32,
     highlight_options: [f32; 4],
     noise_shot: [f32; 4],
     noise_read: [f32; 4],
@@ -932,12 +937,12 @@ fn pack_camera_params(ctx: &GpuParamContext<'_>) -> CameraUniforms {
         tint: exposure
             .tint
             .clamp(-GLOBAL_TINT_OFFSET_LIMIT, GLOBAL_TINT_OFFSET_LIMIT),
-        _pad_0: if raw.is_pre_demosaiced_raster() {
+        pre_demosaiced_raster: if raw.is_pre_demosaiced_raster() {
             1.0
         } else {
             0.0
         },
-        _pad_1: if camera_linear_raster
+        scene_view_transform_enabled: if camera_linear_raster
             || !raw.is_pre_demosaiced_raster()
             || raster_uses_scene_view_transform(exposure)
         {
@@ -948,7 +953,7 @@ fn pack_camera_params(ctx: &GpuParamContext<'_>) -> CameraUniforms {
         // Camera-space rasters already receive WB through cam_to_srgb above;
         // suppress the generic raster temperature adaptation to avoid applying
         // a second colour adjustment.
-        _pad_2: if camera_linear_raster { 1.0 } else { 0.0 },
+        camera_linear_raster: if camera_linear_raster { 1.0 } else { 0.0 },
         highlight_options: [
             highlight_method,
             opposed_chroma[0],

@@ -101,10 +101,7 @@ impl XtaskError {
     }
 
     fn silent(code: i32) -> Self {
-        Self {
-            message: String::new(),
-            code: if code == 0 { 1 } else { code },
-        }
+        Self::with_code(String::new(), code)
     }
 }
 
@@ -302,24 +299,14 @@ struct BuildContract {
 
 fn load_build_contract() -> Result<BuildContract> {
     let root = workspace_root();
-    let output = Command::new("cargo")
-        .args(["metadata", "--locked", "--no-deps", "--format-version", "1"])
-        .current_dir(&root)
-        .output()
-        .map_err(|error| XtaskError::new(format!("could not execute cargo metadata: {error}")))?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
-        return Err(XtaskError::with_code(
-            if stderr.is_empty() {
-                "cargo metadata failed".to_owned()
-            } else {
-                format!("cargo metadata failed: {stderr}")
-            },
-            output.status.code().unwrap_or(1),
-        ));
-    }
+    let output = run_command_bytes(
+        Command::new("cargo")
+            .args(["metadata", "--locked", "--no-deps", "--format-version", "1"])
+            .current_dir(&root),
+        "cargo metadata",
+    )?;
 
-    let document: Value = serde_json::from_slice(&output.stdout)?;
+    let document: Value = serde_json::from_slice(&output)?;
     let metadata = document
         .get("metadata")
         .and_then(Value::as_object)
@@ -418,14 +405,11 @@ fn run_checked(command: &mut Command, description: &str) -> Result<()> {
     if status.success() {
         Ok(())
     } else {
-        Err(XtaskError::with_code(
-            String::new(),
-            status.code().unwrap_or(1),
-        ))
+        Err(XtaskError::silent(status.code().unwrap_or(1)))
     }
 }
 
-fn run_command_output(command: &mut Command, description: &str) -> Result<String> {
+fn run_command_bytes(command: &mut Command, description: &str) -> Result<Vec<u8>> {
     let output = command
         .output()
         .map_err(|error| XtaskError::new(format!("could not execute {description}: {error}")))?;
@@ -440,7 +424,11 @@ fn run_command_output(command: &mut Command, description: &str) -> Result<String
             output.status.code().unwrap_or(1),
         ));
     }
-    String::from_utf8(output.stdout).map_err(|error| {
+    Ok(output.stdout)
+}
+
+fn run_command_output(command: &mut Command, description: &str) -> Result<String> {
+    String::from_utf8(run_command_bytes(command, description)?).map_err(|error| {
         XtaskError::new(format!("{description} produced non-UTF-8 output: {error}"))
     })
 }
@@ -593,6 +581,28 @@ fn find_host_libclang(ndk_host: &Path) -> Option<PathBuf> {
         .and_then(|library| library.parent().map(Path::to_path_buf))
 }
 
+fn validate_android_profile(profile: &str) -> Result<()> {
+    if matches!(profile, "debug" | "release") {
+        Ok(())
+    } else {
+        Err(XtaskError::usage(format!(
+            "Unknown profile '{profile}' (use release or debug)"
+        )))
+    }
+}
+
+fn require_lensfun_assets(staged: &Path) -> Result<()> {
+    let assets = staged.join("apk-assets/lensfun");
+    if directory_has_extension(&assets, "xml")? {
+        Ok(())
+    } else {
+        Err(XtaskError::new(format!(
+            "Lensfun XML database is missing from {}",
+            assets.display()
+        )))
+    }
+}
+
 fn run_gradle_android_native_dependencies(
     root: &Path,
     abi: &str,
@@ -600,11 +610,7 @@ fn run_gradle_android_native_dependencies(
     min_sdk: u64,
 ) -> Result<()> {
     android_abi_config(abi, min_sdk)?;
-    if !matches!(profile, "debug" | "release") {
-        return Err(XtaskError::usage(format!(
-            "Unknown profile '{profile}' (use release or debug)"
-        )));
-    }
+    validate_android_profile(profile)?;
     let gradlew = root.join(if cfg!(windows) {
         "gradlew.bat"
     } else {
@@ -655,13 +661,7 @@ fn command_build_android_dependency(
             require_file(&staged.join("include/lensfun/lensfun.h"))?;
             require_file(&staged.join("lib/liblensfun.a"))?;
             require_file(&staged.join("lib/libglib-2.0.a"))?;
-            let assets = staged.join("apk-assets/lensfun");
-            if !directory_has_extension(&assets, "xml")? {
-                return Err(XtaskError::new(format!(
-                    "Lensfun XML database is missing from {}",
-                    assets.display()
-                )));
-            }
+            require_lensfun_assets(&staged)?;
             println!(
                 "AGP/CMake staged Lensfun for {} in {}",
                 args.abi,
@@ -676,12 +676,7 @@ fn command_build_android(args: BuildAndroidArgs) -> Result<()> {
     let contract = load_build_contract()?;
     let root = workspace_root();
     let (clang_target, cxx_triple) = android_abi_config(&args.abi, contract.min_sdk)?;
-    if !matches!(args.profile.as_str(), "debug" | "release") {
-        return Err(XtaskError::usage(format!(
-            "Unknown profile '{}' (use release or debug)",
-            args.profile
-        )));
-    }
+    validate_android_profile(&args.profile)?;
 
     let ndk = android_ndk_root(&root, &contract.ndk_version, true)?;
     let ndk_host = ndk_host_root(&ndk)?;
@@ -785,13 +780,7 @@ fn command_build_android(args: BuildAndroidArgs) -> Result<()> {
     require_file(&abi_jni.join("libcalibraw.so"))?;
     require_file(&abi_jni.join("libc++_shared.so"))?;
 
-    let lensfun_assets = lensfun_root.join("apk-assets/lensfun");
-    if !directory_has_extension(&lensfun_assets, "xml")? {
-        return Err(XtaskError::new(format!(
-            "Lensfun XML database is missing from {}",
-            lensfun_assets.display()
-        )));
-    }
+    require_lensfun_assets(&lensfun_root)?;
     println!(
         "Rust, LibRaw, and Lensfun Android libraries are ready for Gradle ({}, {}).",
         args.abi, args.profile
@@ -958,7 +947,7 @@ fn command_verify_android_16kb(args: AndroidArgs) -> Result<()> {
         println!("No 64-bit native libraries found; ELF 16 KB check not applicable.");
     }
     for (archive_path, library) in &libraries {
-        verify_elf_alignment(&objdump, archive_path, library)?;
+        verify_elf_alignment(&objdump, library)?;
         println!("16 KB ELF aligned: {archive_path}");
     }
 
@@ -1036,7 +1025,7 @@ fn is_simple_file_name(value: &str) -> bool {
         && value != ".."
 }
 
-fn verify_elf_alignment(objdump: &Path, _archive_path: &str, library: &Path) -> Result<()> {
+fn verify_elf_alignment(objdump: &Path, library: &Path) -> Result<()> {
     let output = Command::new(objdump)
         .arg("-p")
         .arg(library)

@@ -1,4 +1,5 @@
 #import calibraw::common as Common
+#import calibraw::detail_utils as DetailUtils
 
 // Some Mali Vulkan compilers crash when image operands are function parameters.
 @group(0) @binding(22) var adjustment_base_tex: texture_2d<f32>;
@@ -11,21 +12,9 @@ fn log_luminance(rgb: vec3<f32>) -> f32 {
     return log2(Common::safe_luma(rgb));
 }
 
-fn presence_reference_scale() -> f32 {
-    return clamp(
-        f32(min(Common::camera_uniforms.full_width, Common::camera_uniforms.full_height)) / 1080.0,
-        0.55,
-        3.0,
-    );
-}
-
-fn soft_detail_threshold(detail: f32, threshold: f32) -> f32 {
-    return sign(detail) * max(abs(detail) - threshold, 0.0);
-}
-
 fn capture_detail_scale() -> f32 {
     let tuning = Common::effects_uniforms.capture_scale_sigma;
-    return clamp(sqrt(presence_reference_scale()), tuning.x, tuning.y);
+    return clamp(sqrt(DetailUtils::presence_reference_scale()), tuning.x, tuning.y);
 }
 
 fn capture_sharpen_blur_ev(
@@ -156,7 +145,7 @@ fn apply_capture_sharpening(
         * mix(0.52, 0.34, detail)
         * mix(1.0, 0.12, edge_noise_relief);
     let detail_threshold = max(fixed_threshold, sensor_threshold);
-    let thresholded = soft_detail_threshold(selected_band, detail_threshold);
+    let thresholded = DetailUtils::soft_detail_threshold(selected_band, detail_threshold);
     let coherence = mix(1.0, capture_impulse_coherence(pos, center_ev), 0.72 + 0.20 * detail);
 
     var edge_mask = 1.0;

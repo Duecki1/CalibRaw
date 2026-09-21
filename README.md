@@ -1,8 +1,8 @@
 # CalibRaw
 CalibRaw is a fast, GPU-accelerated RAW photo editor. <br>
-It was made not to focus on design, but to be performant and non-destructive to the export.
+It is designed for responsive performance and non-destructive editing.
 
-I developed this project to provide a performant, approachable, open-source RAW editing workflow. <br>
+CalibRaw provides an approachable, open-source RAW editing workflow. <br>
 CalibRaw is available for Linux, Android, Windows, and macOS, with Linux and Android being the primary focus.
 
 Download the latest release [here](https://github.com/Duecki1/CalibRaw/releases).
@@ -21,11 +21,11 @@ Download the latest release [here](https://github.com/Duecki1/CalibRaw/releases)
 - **Non-destructive:** All edits and adjustments are non-destructive and saved to lightweight `.calibraw` sidecar files.
 - **Advanced demosaicing:** Features Bayer RCD, Fujifilm X-Trans (Markesteijn), and noise-resilient Dual Demosaicing.
 - **Masking:** Supports brush and shape masks with independent tone curves and adjustments.
-- **Creative effects:** Unique mask effects like light rays, lens blur, motion blur, fog, Glow, and more.
+- **Creative effects:** Mask effects such as light rays, lens blur, motion blur, fog, glow, and more.
 - **Optional AI:** Local Subject & Object masks, [AI Denoise](https://github.com/darktable-org/darktable-ai), and AI object removal.
 - **Multi-platform:** Native builds for Linux, Android, Windows, and macOS.
 - **HDR merge:** Select 2 or more images to HDR merge them.
-- **Automatic Lens Correction** via Lensfun database
+- **Automatic lens correction:** Uses the Lensfun database.
 - **RAW compatibility fallback:** LibRaw remains the primary camera RAW backend;
   Rawler handles selected DNG variants when it provides better compatibility.
   See the [RAW compatibility notes](docs/raw-compatibility.md).
@@ -43,11 +43,11 @@ CalibRaw currently recognizes the following RAW file extensions:
 ```
 
 ## Contributing
-Feel free to open a Pull Request or create an issue :D.
+Contributions are welcome. Please open a pull request or create an issue.
 
 ### Roadmap / To-Do
 - [x] Bundle ONNX Runtime
-- [ ] Currently waiting for feedback
+- [ ] Gather community feedback
 - [x] DNG Support
 
 ## Special Thanks

@@ -292,6 +292,7 @@ impl CalibRawApp {
             preview_backdrop: self.preferences.preview_backdrop,
             onboarding_completed: self.preferences.onboarding_completed,
             auto_check_updates: self.preferences.auto_check_updates,
+            github_update_check_allowed: self.preferences.github_update_check_allowed,
             ignored_update_version: self.preferences.ignored_update_version.clone(),
             birefnet_quality: self.ai.birefnet_quality,
             #[cfg(not(target_os = "android"))]

@@ -1,5 +1,24 @@
 use super::super::*;
 
+fn numbered_file_name(
+    original: &std::ffi::OsStr,
+    stem: &std::ffi::OsStr,
+    extension: Option<&std::ffi::OsStr>,
+    number: usize,
+) -> OsString {
+    if number == 0 {
+        return original.to_os_string();
+    }
+
+    let mut file_name = stem.to_os_string();
+    file_name.push(format!(" ({number})"));
+    if let Some(extension) = extension {
+        file_name.push(".");
+        file_name.push(extension);
+    }
+    file_name
+}
+
 pub(in crate::ui::library) fn copy_file_create_new(
     source: &Path,
     destination: &Path,
@@ -47,17 +66,7 @@ pub(in crate::ui::library) fn copy_raw_bundle_to_folder(
     let extension = requested_path.extension().map(OsString::from);
     let source_sidecar = crate::sidecar::sidecar_path_for_raw(source_raw);
     for number in 0..=10_000usize {
-        let file_name = if number == 0 {
-            requested_name.to_os_string()
-        } else {
-            let mut candidate = stem.clone();
-            candidate.push(format!(" ({number})"));
-            if let Some(extension) = &extension {
-                candidate.push(".");
-                candidate.push(extension);
-            }
-            candidate
-        };
+        let file_name = numbered_file_name(requested_name, &stem, extension.as_deref(), number);
         let destination_raw = destination_folder.join(file_name);
         let destination_sidecar = crate::sidecar::sidecar_path_for_raw(&destination_raw);
         if destination_raw.exists() || destination_sidecar.exists() {
@@ -221,17 +230,7 @@ pub(in crate::ui::library) fn import_raw_into_folder(
     let extension = source.extension().map(OsString::from);
 
     for number in 0..=10_000usize {
-        let file_name = if number == 0 {
-            original_name.clone()
-        } else {
-            let mut file_name = stem.clone();
-            file_name.push(format!(" ({number})"));
-            if let Some(extension) = &extension {
-                file_name.push(".");
-                file_name.push(extension);
-            }
-            file_name
-        };
+        let file_name = numbered_file_name(&original_name, &stem, extension.as_deref(), number);
         let destination = folder.join(file_name);
 
         if destination.exists() {

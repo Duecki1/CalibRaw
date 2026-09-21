@@ -1,5 +1,7 @@
 package de.duecki.calibraw;
 
+import android.util.Log;
+
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
@@ -13,6 +15,8 @@ import java.util.Locale;
 import java.util.Set;
 
 final class AndroidStorageContract {
+    private static final String LOG_TAG = "CalibRaw";
+
     static final String RAW_LIBRARY_DIRECTORY_NAME = ".library";
     static final int MAX_RAW_NAME_BYTES = 220;
     static final int MAX_EXPORT_NAME_BYTES = 240;
@@ -124,6 +128,23 @@ final class AndroidStorageContract {
 
     static String importPartialName(String destinationName) {
         return ".calibraw-import-" + destinationName + ".part";
+    }
+
+    /** Returns the requested file name, adding a numeric suffix when needed. */
+    static File uniqueFile(File directory, String displayName) {
+        File candidate = new File(directory, displayName);
+        if (!candidate.exists()) {
+            return candidate;
+        }
+        int dot = displayName.lastIndexOf('.');
+        String stem = dot > 0 ? displayName.substring(0, dot) : displayName;
+        String extension = dot > 0 ? displayName.substring(dot) : "";
+        for (int suffix = 1; ; suffix++) {
+            candidate = new File(directory, stem + "-" + suffix + extension);
+            if (!candidate.exists()) {
+                return candidate;
+            }
+        }
     }
 
     static boolean isLibraryTemporaryFileName(String name) {
@@ -242,8 +263,21 @@ final class AndroidStorageContract {
             published = true;
             return destination.getAbsolutePath();
         } finally {
-            if (!published && !temporary.delete() && temporary.exists()) {
-                temporary.deleteOnExit();
+            if (!published) {
+                try {
+                    if (!temporary.delete() && temporary.exists()) {
+                        Log.w(
+                                LOG_TAG,
+                                "Could not delete unpublished sidecar temporary file; "
+                                        + "the RAW library scavenger will retry: " + temporary);
+                    }
+                } catch (RuntimeException error) {
+                    Log.w(
+                            LOG_TAG,
+                            "Could not delete unpublished sidecar temporary file; "
+                                    + "the RAW library scavenger will retry: " + temporary,
+                            error);
+                }
             }
         }
     }
