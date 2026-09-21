@@ -29,6 +29,10 @@ use resources::*;
 use shader_manager::ShaderManager;
 
 #[cfg(test)]
+mod black_tone_tests;
+#[cfg(test)]
+mod blacks_pipeline_tests;
+#[cfg(test)]
 mod tests;
 
 const GPU_PARAMS_ABI_VERSION: u32 = 5;
