@@ -1054,6 +1054,7 @@ pub(crate) struct PreferencesState {
     pub(crate) preview_backdrop: PreviewBackdrop,
     pub(crate) onboarding_completed: bool,
     pub(crate) auto_check_updates: bool,
+    pub(crate) github_update_check_allowed: Option<bool>,
     pub(crate) ignored_update_version: Option<String>,
     pub(crate) adjustment_copy_settings: AdjustmentCopySettings,
     pub(crate) performance_settings_path: Option<PathBuf>,

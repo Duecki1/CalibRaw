@@ -730,22 +730,58 @@ impl Settings {
 
             crate::ui::theme::section_separator(ui);
             let mut auto_check = app.preferences.auto_check_updates;
-            if crate::ui::theme::checkbox_with_help(
-                ui,
-                &mut auto_check,
-                "Automatically check for updates via GitHub",
-                "Checks GitHub once when CalibRaw starts. GitHub receives standard connection information such as your IP address. No photo, path, account identifier, or telemetry is sent.",
-            )
-            .changed()
-            {
-                app.set_auto_check_updates(auto_check);
+            let permission_denied = app.version_check_permission_denied();
+            ui.add_enabled_ui(!permission_denied, |ui| {
+                if crate::ui::theme::checkbox_with_help(
+                    ui,
+                    &mut auto_check,
+                    "Automatically check for updates via GitHub",
+                    "Requires GitHub version-check permission. When enabled, CalibRaw checks once at startup. The connection exposes its public IP address and sends CalibRaw/<version> as its User-Agent; CalibRaw sends no photos, paths, account identifier, or analytics/telemetry.",
+                )
+                .changed()
+                {
+                    app.set_auto_check_updates(auto_check);
+                }
+            });
+            if permission_denied {
+                ui.small(
+                    "Automatic and manual GitHub checks are disabled. Use ‘Review privacy & permission’ to explicitly change this choice.",
+                );
             }
+
+            ui.small(format!(
+                "GitHub permission: {}",
+                app.version_check_permission_text()
+            ));
+            crate::ui::theme::action_row(ui, |ui| {
+                if crate::ui::theme::secondary_button(ui, "Review privacy & permission").clicked() {
+                    app.review_version_check_privacy();
+                }
+                if crate::ui::theme::secondary_button_enabled(
+                    ui,
+                    app.version_check_permission_granted(),
+                    "Revoke permission",
+                )
+                .on_hover_text("Stops future GitHub version checks and disables automatic checks.")
+                .clicked()
+                {
+                    app.revoke_version_check_permission();
+                }
+            });
 
             let checking = app.version_check_in_progress();
             let status = app.version_check_status_text();
             crate::ui::theme::action_row(ui, |ui| {
-                if crate::ui::theme::secondary_button_enabled(ui, !checking, "Check now")
-                    .on_hover_text("Check GitHub for the latest stable CalibRaw release.")
+                if crate::ui::theme::secondary_button_enabled(
+                    ui,
+                    !checking && !permission_denied,
+                    "Check now",
+                )
+                    .on_hover_text(if permission_denied {
+                        "GitHub checks are blocked because permission was declined. Use ‘Review privacy & permission’ to change that choice first."
+                    } else {
+                        "Check GitHub for the latest stable CalibRaw release. If permission has not been decided yet, CalibRaw asks first."
+                    })
                     .clicked()
                 {
                     app.check_for_updates(true);

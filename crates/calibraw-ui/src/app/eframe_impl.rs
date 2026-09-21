@@ -425,6 +425,7 @@ impl eframe::App for CalibRawApp {
         }
         crate::ui::onboarding::show(ui.ctx(), self);
         self.show_unsupported_file_dialog(ui.ctx());
+        self.show_version_check_consent_dialog(ui.ctx());
         self.show_version_update_dialog(ui.ctx());
         self.show_subject_dialogs(ui.ctx());
         self.show_remove_model_dialog(ui.ctx(), frame);
