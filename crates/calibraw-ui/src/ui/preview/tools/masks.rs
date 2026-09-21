@@ -15,11 +15,7 @@ impl Preview {
         source_height: u32,
         response: &egui::Response,
     ) {
-        let lens_geometry = app
-            .develop
-            .loaded_raw
-            .as_ref()
-            .and_then(|raw| raw.lens_geometry.clone());
+        let lens_geometry = loaded_lens_geometry(app).cloned();
         let Some(mask_index) = app.masks.stack.selected_mask else {
             app.finish_mask_geometry_interaction();
             app.masks.active_tool = None;
@@ -489,11 +485,7 @@ impl Preview {
         source_width: u32,
         source_height: u32,
     ) {
-        let lens_geometry = app
-            .develop
-            .loaded_raw
-            .as_ref()
-            .and_then(|raw| raw.lens_geometry.clone());
+        let lens_geometry = loaded_lens_geometry(app).cloned();
         let Some(mask_index) = app.masks.stack.selected_mask else {
             return;
         };

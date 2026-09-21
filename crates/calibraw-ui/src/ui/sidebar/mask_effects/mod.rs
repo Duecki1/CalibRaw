@@ -48,8 +48,7 @@ where
     use super::adjustment_cards::CardAction;
 
     match action {
-        CardAction::None => false,
-        CardAction::Toggle => false,
+        CardAction::None | CardAction::Toggle => false,
         CardAction::Reset => {
             *settings = Settings::default();
             true

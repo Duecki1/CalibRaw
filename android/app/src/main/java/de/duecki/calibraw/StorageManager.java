@@ -16,8 +16,10 @@ import java.io.FileOutputStream;
 import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Comparator;
 import java.util.HashSet;
 import java.util.Locale;
+import java.util.PriorityQueue;
 import java.util.Set;
 
 final class StorageManager {
@@ -87,13 +89,21 @@ final class StorageManager {
     }
 
     void scavengeTemporaryRawFiles() {
+        if (Thread.currentThread().isInterrupted()) {
+            return;
+        }
         long now = System.currentTimeMillis();
+        // Export staging has its own scavenger, and the persistent thumbnail cache uses
+        // bounded local deletion retries; neither is delegated to this RAW cleanup pass.
         File[] cachedFiles = storage.getCacheDir().listFiles((directory, name) ->
                 name.startsWith("calibraw-library-")
                         || name.startsWith("calibraw-import-")
                         || name.startsWith("calibraw-sidecar-")
                         || name.startsWith("calibraw-thumbnail-"));
         deleteStaleFiles(cachedFiles, now);
+        if (Thread.currentThread().isInterrupted()) {
+            return;
+        }
 
         File library = rawLibraryDirectory();
         try {
@@ -108,6 +118,9 @@ final class StorageManager {
             return;
         }
         for (File file : files) {
+            if (Thread.currentThread().isInterrupted()) {
+                return;
+            }
             deleteStaleFile(file, now);
         }
     }
@@ -117,7 +130,9 @@ final class StorageManager {
             File canonicalLibrary,
             long now,
             int depth) throws Exception {
-        if (depth > MAX_RAW_LIBRARY_FOLDER_DEPTH || !directory.isDirectory()) {
+        if (Thread.currentThread().isInterrupted()
+                || depth > MAX_RAW_LIBRARY_FOLDER_DEPTH
+                || !directory.isDirectory()) {
             return;
         }
         File canonicalDirectory = directory.getCanonicalFile();
@@ -129,6 +144,9 @@ final class StorageManager {
             return;
         }
         for (File entry : entries) {
+            if (Thread.currentThread().isInterrupted()) {
+                return;
+            }
             if (entry.isDirectory()) {
                 deleteStaleLibraryTemporaryFiles(entry, canonicalLibrary, now, depth + 1);
             } else if (AndroidStorageContract.isLibraryTemporaryFileName(entry.getName())) {
@@ -138,12 +156,19 @@ final class StorageManager {
     }
 
     private static void deleteStaleFile(File file, long now) {
-        long modified = file.lastModified();
-        boolean isStale = modified > 0L
-                && now >= modified
-                && now - modified >= STALE_TEMP_FILE_AGE_MS;
-        if (file.isFile() && isStale && !file.delete() && file.exists()) {
-            file.deleteOnExit();
+        try {
+            long modified = file.lastModified();
+            boolean isStale = modified > 0L
+                    && now >= modified
+                    && now - modified >= STALE_TEMP_FILE_AGE_MS;
+            if (file.isFile() && isStale && !file.delete() && file.exists()) {
+                Log.w(
+                        LOG_TAG,
+                        "Could not delete stale RAW temporary file; "
+                                + "a later RAW scavenging pass will retry: " + file);
+            }
+        } catch (RuntimeException error) {
+            Log.w(LOG_TAG, "Could not clean up stale RAW temporary file " + file, error);
         }
     }
 
@@ -317,9 +342,13 @@ final class StorageManager {
         return thumbnailCache.sizeBytes();
     }
 
+    void maintainThumbnailCache() {
+        thumbnailCache.maintain();
+    }
+
     String materializeRawLibraryDocument(String uriText, String displayName) throws Exception {
         Uri uri = Uri.parse(uriText);
-        verifyRawLibraryIdentity(uri, displayName);
+        verifyFileRawLibraryIdentity(uri, displayName);
         String safeName = AndroidStorageContract.safeRawName(displayName);
         int dot = safeName.lastIndexOf('.');
         String suffix = dot >= 0 ? safeName.substring(dot) : ".raw";
@@ -341,8 +370,8 @@ final class StorageManager {
             completed = true;
             return cached.getAbsolutePath();
         } finally {
-            if (!completed && !cached.delete() && cached.exists()) {
-                cached.deleteOnExit();
+            if (!completed) {
+                deleteRawTemporaryFile(cached, "incomplete RAW materialization");
             }
         }
     }
@@ -365,7 +394,7 @@ final class StorageManager {
 
     void removeRawSidecar(String rawUriText, String displayName) throws Exception {
         Uri rawUri = Uri.parse(rawUriText);
-        verifyRawLibraryIdentity(rawUri, displayName);
+        verifyFileRawLibraryIdentity(rawUri, displayName);
         AndroidStorageContract.deleteSidecar(
                 new File(rawUri.getPath()).getParentFile(), displayName);
     }
@@ -406,7 +435,7 @@ final class StorageManager {
             String displayName,
             String requestedName) throws Exception {
         Uri rawUri = Uri.parse(rawUriText);
-        verifyRawLibraryIdentity(rawUri, displayName);
+        verifyFileRawLibraryIdentity(rawUri, displayName);
         String safeName = AndroidStorageContract.safeRawName(requestedName);
         if (!safeName.equals(requestedName) || !AndroidStorageContract.isRawName(requestedName)) {
             throw new IllegalArgumentException("Enter a safe supported RAW filename");
@@ -445,7 +474,7 @@ final class StorageManager {
 
     void deleteRawLibraryDocument(String rawUriText, String displayName) throws Exception {
         Uri rawUri = Uri.parse(rawUriText);
-        verifyRawLibraryIdentity(rawUri, displayName);
+        verifyFileRawLibraryIdentity(rawUri, displayName);
         File raw = new File(rawUri.getPath());
         if (raw.exists() && !raw.delete()) {
             throw new IllegalStateException("Could not delete the RAW file");
@@ -461,7 +490,7 @@ final class StorageManager {
 
     String materializeRawSidecar(String rawUriText, String displayName) throws Exception {
         Uri rawUri = Uri.parse(rawUriText);
-        verifyRawLibraryIdentity(rawUri, displayName);
+        verifyFileRawLibraryIdentity(rawUri, displayName);
         File sidecar = new File(
                 new File(rawUri.getPath()).getParentFile(), AndroidStorageContract.sidecarDisplayName(displayName));
         if (!sidecar.isFile()) {
@@ -483,8 +512,8 @@ final class StorageManager {
             completed = true;
             return cached.getAbsolutePath();
         } finally {
-            if (!completed && !cached.delete() && cached.exists()) {
-                cached.deleteOnExit();
+            if (!completed) {
+                deleteRawTemporaryFile(cached, "incomplete sidecar materialization");
             }
         }
     }
@@ -502,13 +531,9 @@ final class StorageManager {
             throw new IllegalStateException("CalibRaw sidecar staging file is missing or too large");
         }
         Uri rawUri = Uri.parse(rawUriText);
-        verifyRawLibraryIdentity(rawUri, displayName);
+        verifyFileRawLibraryIdentity(rawUri, displayName);
         return AndroidStorageContract.publishSidecarAtomically(
                 cached, new File(rawUri.getPath()).getParentFile(), displayName, MAX_SIDECAR_BYTES);
-    }
-
-    private void verifyRawLibraryIdentity(Uri rawUri, String expectedDisplayName) throws Exception {
-        verifyFileRawLibraryIdentity(rawUri, expectedDisplayName);
     }
 
     private void verifyFileRawLibraryIdentity(
@@ -529,8 +554,9 @@ final class StorageManager {
         if (!directory.isDirectory() && !directory.mkdirs()) {
             throw new IllegalStateException("Could not create " + directory);
         }
-        File destination = uniqueRawFile(directory, AndroidStorageContract.safeRawName(requestedName));
-        File partial = uniqueRawFile(
+        File destination = AndroidStorageContract.uniqueFile(
+                directory, AndroidStorageContract.safeRawName(requestedName));
+        File partial = AndroidStorageContract.uniqueFile(
                 directory,
                 AndroidStorageContract.importPartialName(destination.getName()));
         boolean completed = false;
@@ -553,14 +579,31 @@ final class StorageManager {
             completed = true;
             return new StoredRaw(Uri.fromFile(destination), destination.getName());
         } finally {
-            if (!completed && !partial.delete() && partial.exists()) {
-                partial.deleteOnExit();
+            if (!completed) {
+                deleteRawTemporaryFile(partial, "incomplete RAW import");
             }
         }
     }
 
+    private static void deleteRawTemporaryFile(File file, String description) {
+        try {
+            if (!file.delete() && file.exists()) {
+                Log.w(
+                        LOG_TAG,
+                        "Could not delete " + description
+                                + "; the RAW temporary-file scavenger will retry: " + file);
+            }
+        } catch (RuntimeException error) {
+            Log.w(
+                    LOG_TAG,
+                    "Could not delete " + description
+                            + "; the RAW temporary-file scavenger will retry: " + file,
+                    error);
+        }
+    }
+
     private void deliverLibraryRawFd(Uri source, String displayName) throws Exception {
-        verifyRawLibraryIdentity(source, displayName);
+        verifyFileRawLibraryIdentity(source, displayName);
         int fd = openRawLibraryFd(source.toString());
         boolean handedOff = false;
         try {
@@ -583,10 +626,7 @@ final class StorageManager {
     private String listCombinedRawLibrary() {
         ArrayList<RawLibraryRecord> records = new ArrayList<>();
         records.addAll(listFileRawLibrary(selectedRawLibraryDirectory()));
-        records.sort((left, right) -> {
-            int modifiedOrder = Long.compare(right.modifiedSeconds, left.modifiedSeconds);
-            return modifiedOrder != 0 ? modifiedOrder : left.uri.compareTo(right.uri);
-        });
+        records.sort(RAW_LIBRARY_OUTPUT_ORDER);
 
         StringBuilder result = new StringBuilder();
         Set<String> seenUris = new HashSet<>();
@@ -644,23 +684,54 @@ final class StorageManager {
         if (files == null) {
             return result;
         }
-        Arrays.sort(files, (left, right) -> Long.compare(right.lastModified(), left.lastModified()));
-        for (File file : files) {
-            // Preserve one sentinel beyond the UI limit.
-            if (result.size() > MAX_RAW_LIBRARY_FILES) {
-                break;
-            }
-            if (!file.isFile() || !AndroidStorageContract.isRawName(file.getName())) {
-                continue;
-            }
+
+        // Preserve one sentinel beyond the UI limit.
+        int retainedLimit = MAX_RAW_LIBRARY_FILES + 1;
+        PriorityQueue<RawLibraryCandidate> retained =
+                selectRawLibraryCandidates(files, retainedLimit);
+        for (RawLibraryCandidate candidate : retained) {
+            File file = candidate.file;
             result.add(new RawLibraryRecord(
                     Uri.fromFile(file).toString(),
                     file.getName(),
                     file.getAbsolutePath(),
                     Math.max(0, file.length()),
-                    Math.max(0, file.lastModified() / 1000)));
+                    Math.max(0, candidate.modifiedMillis / 1000)));
         }
         return result;
+    }
+
+    static PriorityQueue<RawLibraryCandidate> selectRawLibraryCandidates(
+            File[] files, int retainedLimit) {
+        PriorityQueue<RawLibraryCandidate> retained = new PriorityQueue<>(
+                retainedLimit, RAW_LIBRARY_CUTOFF_WORST_FIRST);
+        for (int index = 0; index < files.length; index++) {
+            File file = files[index];
+            long modifiedMillis = file.lastModified();
+            if (!file.isFile() || !AndroidStorageContract.isRawName(file.getName())) {
+                continue;
+            }
+            retainRawLibraryCandidate(
+                    retained,
+                    new RawLibraryCandidate(file, modifiedMillis, index),
+                    retainedLimit);
+        }
+        return retained;
+    }
+
+    private static void retainRawLibraryCandidate(
+            PriorityQueue<RawLibraryCandidate> retained,
+            RawLibraryCandidate candidate,
+            int retainedLimit) {
+        if (retained.size() < retainedLimit) {
+            retained.add(candidate);
+            return;
+        }
+        RawLibraryCandidate cutoff = retained.peek();
+        if (cutoff != null && RAW_LIBRARY_CUTOFF_WORST_FIRST.compare(candidate, cutoff) > 0) {
+            retained.poll();
+            retained.add(candidate);
+        }
     }
 
     private static void appendLibraryRecord(
@@ -727,23 +798,34 @@ final class StorageManager {
         }
     }
 
-    private static File uniqueRawFile(File directory, String displayName) {
-        File candidate = new File(directory, displayName);
-        if (!candidate.exists()) {
-            return candidate;
-        }
-        int dot = displayName.lastIndexOf('.');
-        String stem = dot > 0 ? displayName.substring(0, dot) : displayName;
-        String suffix = dot > 0 ? displayName.substring(dot) : "";
-        for (int index = 1; ; index++) {
-            candidate = new File(directory, stem + "-" + index + suffix);
-            if (!candidate.exists()) {
-                return candidate;
-            }
+    // The heap head is the record the old stable millisecond sort would drop first:
+    // oldest mtime, then latest position in the original listFiles() result.
+    static final Comparator<RawLibraryCandidate> RAW_LIBRARY_CUTOFF_WORST_FIRST =
+            (left, right) -> {
+                int modifiedOrder = Long.compare(left.modifiedMillis, right.modifiedMillis);
+                return modifiedOrder != 0
+                        ? modifiedOrder
+                        : Integer.compare(right.enumerationOrder, left.enumerationOrder);
+            };
+
+    static final Comparator<RawLibraryRecord> RAW_LIBRARY_OUTPUT_ORDER = (left, right) -> {
+        int modifiedOrder = Long.compare(right.modifiedSeconds, left.modifiedSeconds);
+        return modifiedOrder != 0 ? modifiedOrder : left.uri.compareTo(right.uri);
+    };
+
+    static final class RawLibraryCandidate {
+        final File file;
+        final long modifiedMillis;
+        final int enumerationOrder;
+
+        RawLibraryCandidate(File file, long modifiedMillis, int enumerationOrder) {
+            this.file = file;
+            this.modifiedMillis = modifiedMillis;
+            this.enumerationOrder = enumerationOrder;
         }
     }
 
-    private static final class RawLibraryRecord {
+    static final class RawLibraryRecord {
         final String uri;
         final String displayName;
         final String displayPath;

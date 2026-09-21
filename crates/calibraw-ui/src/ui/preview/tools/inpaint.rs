@@ -15,11 +15,7 @@ impl Preview {
         if app.inpaint_processing() {
             return;
         }
-        let lens_geometry = app
-            .develop
-            .loaded_raw
-            .as_ref()
-            .and_then(|raw| raw.lens_geometry.clone());
+        let lens_geometry = loaded_lens_geometry(app).cloned();
         let pointer = response
             .interact_pointer_pos()
             .filter(|position| preview_rect.contains(*position));
@@ -180,11 +176,7 @@ impl Preview {
         if app.ui.sidebar_tab != SidebarTab::Inpainting {
             return;
         }
-        let lens_geometry = app
-            .develop
-            .loaded_raw
-            .as_ref()
-            .and_then(|raw| raw.lens_geometry.as_deref());
+        let lens_geometry = loaded_lens_geometry(app).map(AsRef::as_ref);
         let painter = ui.painter_at(preview_rect);
 
         let highlighted = if app.inpaint.stroke_opacity_edit_pending {

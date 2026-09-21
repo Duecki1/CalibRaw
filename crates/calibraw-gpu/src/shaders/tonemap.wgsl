@@ -553,8 +553,8 @@ fn apply_rgb_point_curves(rgb: vec3<f32>) -> vec3<f32> {
 }
 
 const DISPLAY_BLACKS_LIFT_DECAY: f32 = 0.035;
-const DISPLAY_BLACKS_CRUSH_TAIL_DECAY: f32 = 0.070;
-const DISPLAY_BLACKS_DEEP_CRUSH_EV: f32 = 10.50;
+const DISPLAY_BLACKS_CRUSH_HALF_LUMA: f32 = 0.035;
+const DISPLAY_BLACKS_CRUSH_EV: f32 = 4.0;
 
 fn apply_display_blacks_toe_amount(rgb: vec3<f32>, amount: f32) -> vec3<f32> {
     if abs(amount) < 1e-7 {
@@ -575,9 +575,13 @@ fn apply_display_blacks_toe_amount(rgb: vec3<f32>, amount: f32) -> vec3<f32> {
         let weight = 0.08 + 0.92 * exp2(-luminance / DISPLAY_BLACKS_LIFT_DECAY);
         offset_ev = amount * 1.75 * weight * hdr_guard;
     } else {
-        let deep = 1.0 - ToneCommon::tone_smoothstep(0.012, 0.030, luminance);
-        let tail = 0.10 + 2.35 * exp2(-luminance / DISPLAY_BLACKS_CRUSH_TAIL_DECAY);
-        offset_ev = -(-amount) * (DISPLAY_BLACKS_DEEP_CRUSH_EV * deep + tail) * hdr_guard;
+        // A narrow deep-black cutoff expands tiny shadow differences into
+        // visible speckles. Use a broad rational toe instead: before the HDR
+        // fade, its logarithmic contrast is bounded by
+        // 1 + DISPLAY_BLACKS_CRUSH_EV * ln(2) / 4 (less than 1.7).
+        // The finite gain at zero avoids both a hard clip and a singular toe.
+        let weight = 1.0 / (1.0 + luminance / DISPLAY_BLACKS_CRUSH_HALF_LUMA);
+        offset_ev = amount * DISPLAY_BLACKS_CRUSH_EV * weight * hdr_guard;
     }
     let target_luminance = luminance * exp2(offset_ev);
     return rgb * (target_luminance / luminance);

@@ -41,6 +41,8 @@ pub(crate) struct PerformanceSettings {
     #[serde(default = "default_true")]
     pub auto_check_updates: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub github_update_check_allowed: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ignored_update_version: Option<String>,
     #[serde(default)]
     pub birefnet_quality: crate::ai_masks::BiRefNetQuality,
@@ -174,6 +176,7 @@ impl Default for PerformanceSettings {
             preview_backdrop: crate::ui::theme::PreviewBackdrop::default(),
             onboarding_completed: false,
             auto_check_updates: true,
+            github_update_check_allowed: None,
             ignored_update_version: None,
             birefnet_quality: crate::ai_masks::BiRefNetQuality::default(),
             #[cfg(not(target_os = "android"))]
@@ -217,6 +220,9 @@ impl PerformanceSettings {
             .clamp(1, crate::ui::library::maximum_thumbnail_worker_count());
         self.birefnet_quality =
             subject_quality_for_platform(self.birefnet_quality, cfg!(target_os = "android"));
+        if self.github_update_check_allowed == Some(false) {
+            self.auto_check_updates = false;
+        }
         self.export_name_template =
             crate::export_naming::sanitize_template_setting(&self.export_name_template);
         self
@@ -382,6 +388,7 @@ mod tests {
             preview_backdrop: crate::ui::theme::PreviewBackdrop::White,
             onboarding_completed: true,
             auto_check_updates: false,
+            github_update_check_allowed: Some(false),
             ignored_update_version: Some("v98.0.0".to_owned()),
             birefnet_quality: crate::ai_masks::BiRefNetQuality::High,
             #[cfg(not(target_os = "android"))]
@@ -442,6 +449,7 @@ mod tests {
         );
         assert!(settings.onboarding_completed);
         assert!(!settings.auto_check_updates);
+        assert_eq!(settings.github_update_check_allowed, Some(false));
         assert_eq!(settings.ignored_update_version.as_deref(), Some("v98.0.0"));
         assert_eq!(
             settings.birefnet_quality,
@@ -475,6 +483,19 @@ mod tests {
     }
 
     #[test]
+    fn denied_github_permission_disables_automatic_checks() {
+        let settings = PerformanceSettings {
+            auto_check_updates: true,
+            github_update_check_allowed: Some(false),
+            ..Default::default()
+        }
+        .sanitized();
+
+        assert!(!settings.auto_check_updates);
+        assert_eq!(settings.github_update_check_allowed, Some(false));
+    }
+
+    #[test]
     fn omitted_settings_fields_use_current_defaults() {
         let settings: PerformanceSettings =
             serde_json::from_str(r#"{"version":1,"raw_cache_files":1,"thumbnail_workers":1}"#)
@@ -497,6 +518,7 @@ mod tests {
         );
         assert!(!settings.render_edited_thumbnails_during_indexing);
         assert!(settings.auto_check_updates);
+        assert!(settings.github_update_check_allowed.is_none());
         assert!(settings.ignored_update_version.is_none());
         assert_eq!(
             settings.birefnet_quality,

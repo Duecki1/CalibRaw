@@ -246,25 +246,7 @@ impl CalibRawApp {
         self.develop.target_exposure = initial_exposure;
         self.masks.stack.clear();
         self.reset_inpainting_state();
-        self.masks.active_tool = None;
-        self.masks.brush_mode = BrushMode::Paint;
-        self.masks.subject_refinement_active = false;
-        self.masks.drag = None;
-        self.masks.last_brush_point = None;
-        self.masks.touch_gesture_backup = None;
-        self.masks.interaction_dirty_layer = None;
-        self.masks.interaction_last_upload = None;
-        self.masks.interaction_has_uncommitted_change = false;
-        self.masks.overlay_revision = self.masks.overlay_revision.wrapping_add(1);
-        self.masks.overlay_texture = None;
-        self.masks.overlay_texture_key = None;
-        self.masks.overlay_blink = None;
-        self.masks.thumbnail_group_textures.clear();
-        self.masks.thumbnail_component_mask = None;
-        self.masks.thumbnail_component_textures.clear();
-        self.masks.thumbnail_revision = self.masks.overlay_revision;
-        self.masks.source_cache = None;
-        self.masks.subject_cache = None;
+        self.masks.reset_transient_state();
         self.ai.masks_need_update = false;
         self.ai.mask_update_active = false;
         self.ai.mask_update_subject_pending = false;
@@ -275,9 +257,6 @@ impl CalibRawApp {
         }
         self.ai.object_pending_target = None;
         self.ai.object_cache = None;
-        self.masks.dirty_layers = [false; MAX_LOCAL_MASKS];
-        self.masks.detail_dirty_layers = [false; MAX_LOCAL_MASKS];
-        self.masks.navigation_dirty_layers = [false; MAX_LOCAL_MASKS];
         self.preview.pending_stage = None;
         self.preview.detail_pending_stage = None;
         self.preview.navigation_pending_stage = None;

@@ -161,32 +161,35 @@ fn fnv1a_step(hash: u64, byte: u8) -> u64 {
     (hash ^ u64::from(byte)).wrapping_mul(0x100000001b3)
 }
 
-fn sampled_u16_fingerprint(values: &[u16]) -> u64 {
+fn sampled_fingerprint<T, Get, Bytes, ByteIter>(length: usize, get: Get, bytes: Bytes) -> u64
+where
+    Get: Fn(usize) -> T,
+    Bytes: Fn(T) -> ByteIter,
+    ByteIter: IntoIterator<Item = u8>,
+{
     let mut hash = 0xcbf29ce484222325u64;
-    for index in sample_indices(values.len()) {
-        for byte in values[index].to_le_bytes() {
+    for index in sample_indices(length) {
+        for byte in bytes(get(index)) {
             hash = fnv1a_step(hash, byte);
         }
     }
     hash
+}
+
+fn sampled_u16_fingerprint(values: &[u16]) -> u64 {
+    sampled_fingerprint(values.len(), |index| values[index], u16::to_le_bytes)
 }
 
 fn sampled_u8_fingerprint(values: &CompactPixelMap<u8>) -> u64 {
-    let mut hash = 0xcbf29ce484222325u64;
-    for index in sample_indices(values.len()) {
-        hash = fnv1a_step(hash, values[index]);
-    }
-    hash
+    sampled_fingerprint(values.len(), |index| values[index], std::iter::once)
 }
 
 fn sampled_f32_fingerprint(values: &CompactPixelMap<f32>) -> u64 {
-    let mut hash = 0xcbf29ce484222325u64;
-    for index in sample_indices(values.len()) {
-        for byte in values[index].to_bits().to_le_bytes() {
-            hash = fnv1a_step(hash, byte);
-        }
-    }
-    hash
+    sampled_fingerprint(
+        values.len(),
+        |index| values[index].to_bits(),
+        u32::to_le_bytes,
+    )
 }
 
 fn sampled_cfa_counts(values: &CompactPixelMap<u8>) -> [usize; 4] {

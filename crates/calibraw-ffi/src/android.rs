@@ -189,6 +189,10 @@ fn direct_exports() -> &'static Mutex<HashMap<PathBuf, DirectExportTarget>> {
     DIRECT_EXPORTS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
+fn take_queued<T>(queue: &'static Mutex<VecDeque<T>>) -> Option<T> {
+    queue.lock().ok()?.pop_front()
+}
+
 fn request_repaint() {
     if let Ok(installed) = EGUI_CONTEXT.lock() {
         if let Some(context) = installed.as_ref() {
@@ -234,15 +238,15 @@ pub fn system_bar_insets_points(pixels_per_point: f32) -> [f32; 4] {
 }
 
 pub fn take_picker_result() -> Option<PickerResult> {
-    results().lock().ok()?.pop_front()
+    take_queued(results())
 }
 
 pub fn take_camera_profile_folder_result() -> Option<CameraProfileFolderResult> {
-    camera_profile_folder_results().lock().ok()?.pop_front()
+    take_queued(camera_profile_folder_results())
 }
 
 pub fn take_export_publish_result() -> Option<ExportPublishResult> {
-    export_results().lock().ok()?.pop_front()
+    take_queued(export_results())
 }
 
 pub fn set_light_system_bars(app: &AndroidApp, light: bool) -> Result<(), String> {
@@ -284,6 +288,26 @@ pub fn remove_camera_profile_mirror(app: &AndroidApp, path: &Path) -> Result<(),
         Ok(())
     })
     .map_err(|error| format!("could not schedule Android camera-profile cleanup: {error:#}"))
+}
+
+pub fn scavenge_camera_profile_mirrors(
+    app: &AndroidApp,
+    active_mirror: Option<&Path>,
+) -> Result<(), String> {
+    let active_mirror = active_mirror
+        .map(|path| path.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    with_activity(app, |env, activity| {
+        let active_mirror = env.new_string(&active_mirror)?;
+        env.call_method(
+            activity,
+            jni::jni_str!("scavengeCameraProfileMirrors"),
+            jni::jni_sig!((JString) -> void),
+            &[JValue::Object(&active_mirror)],
+        )?;
+        Ok(())
+    })
+    .map_err(|error| format!("could not schedule Android camera-profile scavenging: {error:#}"))
 }
 
 pub fn clear_camera_profile_folder_picker_location(app: &AndroidApp) -> Result<(), String> {
@@ -573,8 +597,9 @@ pub fn load_library_thumbnail(
             result?
         }
     };
-    if let Err(error) = crate::thumbnail_cache::save_jpeg(&cache_path, &thumbnail) {
-        log::warn!("could not persist Android RAW thumbnail: {error}");
+    match crate::thumbnail_cache::save_jpeg(&cache_path, &thumbnail) {
+        Ok(()) => maintain_thumbnail_cache(app),
+        Err(error) => log::warn!("could not persist Android RAW thumbnail: {error}"),
     }
     Ok(thumbnail)
 }
@@ -628,6 +653,20 @@ pub fn thumbnail_cache_size_bytes(app: &AndroidApp) -> Result<u64, String> {
     })
     .map_err(|error| format!("could not measure Android thumbnail cache: {error:#}"))?;
     u64::try_from(bytes).map_err(|_| "Android returned a negative thumbnail cache size".to_owned())
+}
+
+fn maintain_thumbnail_cache(app: &AndroidApp) {
+    if let Err(error) = with_storage_manager(app, |env, storage_manager| {
+        env.call_method(
+            storage_manager,
+            jni::jni_str!("maintainThumbnailCache"),
+            jni::jni_sig!(() -> void),
+            &[],
+        )?;
+        Ok(())
+    }) {
+        log::warn!("could not maintain Android thumbnail cache: {error:#}");
+    }
 }
 
 pub fn load_library_display_dimensions(app: &AndroidApp, uri: &str) -> Result<[u32; 2], String> {
@@ -811,6 +850,7 @@ pub fn save_developed_thumbnail_cache(
         let _ = fs::remove_file(&fingerprint_path);
         return Err("edit sidecar changed while its thumbnail was being cached".to_owned());
     }
+    maintain_thumbnail_cache(app);
     Ok(())
 }
 
@@ -819,21 +859,12 @@ pub fn materialize_library_document(
     raw_uri: &str,
     display_name: &str,
 ) -> Result<PathBuf, String> {
-    let raw_uri = raw_uri.to_owned();
-    let display_name = display_name.to_owned();
-    let path = with_storage_manager(app, |env, storage_manager| {
-        let raw_uri = env.new_string(&raw_uri)?;
-        let display_name = env.new_string(&display_name)?;
-        let object = env
-            .call_method(
-                storage_manager,
-                jni::jni_str!("materializeRawLibraryDocument"),
-                jni::jni_sig!((JString, JString) -> JString),
-                &[JValue::Object(&raw_uri), JValue::Object(&display_name)],
-            )?
-            .l()?;
-        Ok(env.cast_local::<JString>(object)?.to_string())
-    })
+    let path = materialize_storage_path(
+        app,
+        jni::jni_str!("materializeRawLibraryDocument"),
+        raw_uri,
+        display_name,
+    )
     .map_err(|error| format!("could not materialize Android RAW: {error:#}"))?;
     if path.is_empty() {
         Err("Android returned no RAW staging path".to_owned())
@@ -847,28 +878,39 @@ fn materialize_library_thumbnail(
     raw_uri: &str,
     display_name: &str,
 ) -> Result<PathBuf, String> {
-    let raw_uri = raw_uri.to_owned();
-    let display_name = display_name.to_owned();
-    let path = with_storage_manager(app, |env, storage_manager| {
-        let raw_uri = env.new_string(&raw_uri)?;
-        let display_name = env.new_string(&display_name)?;
-        let object = env
-            .call_method(
-                storage_manager,
-                jni::jni_str!("materializeRawLibraryThumbnail"),
-                jni::jni_sig!((JString, JString) -> JString),
-                &[JValue::Object(&raw_uri), JValue::Object(&display_name)],
-            )?
-            .l()?;
-        let path = env.cast_local::<JString>(object)?;
-        Ok(path.to_string())
-    })
+    let path = materialize_storage_path(
+        app,
+        jni::jni_str!("materializeRawLibraryThumbnail"),
+        raw_uri,
+        display_name,
+    )
     .map_err(|error| format!("could not materialize Android RAW thumbnail: {error:#}"))?;
     if path.is_empty() {
         Err("Android returned no RAW thumbnail staging path".to_owned())
     } else {
         Ok(PathBuf::from(path))
     }
+}
+
+fn materialize_storage_path(
+    app: &AndroidApp,
+    method: impl AsRef<jni::strings::JNIStr>,
+    raw_uri: &str,
+    display_name: &str,
+) -> jni::errors::Result<String> {
+    with_storage_manager(app, |env, storage_manager| {
+        let raw_uri = env.new_string(raw_uri)?;
+        let display_name = env.new_string(display_name)?;
+        let object = env
+            .call_method(
+                storage_manager,
+                method,
+                jni::jni_sig!((JString, JString) -> JString),
+                &[JValue::Object(&raw_uri), JValue::Object(&display_name)],
+            )?
+            .l()?;
+        Ok(env.cast_local::<JString>(object)?.to_string())
+    })
 }
 
 pub fn open_library_document(

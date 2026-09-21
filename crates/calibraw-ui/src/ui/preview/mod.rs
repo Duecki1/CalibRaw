@@ -10,6 +10,7 @@ use crate::pipeline::{
 };
 use crate::ui::mask_component_color;
 use eframe::egui::{self, Color32, Mesh, Pos2, Rect, Sense, Shape, Stroke, Ui};
+use std::sync::Arc;
 
 pub(crate) const MIN_PREVIEW_ZOOM: f32 = if cfg!(target_os = "android") {
     0.25
@@ -17,6 +18,14 @@ pub(crate) const MIN_PREVIEW_ZOOM: f32 = if cfg!(target_os = "android") {
     0.70
 };
 pub(crate) const MAX_PREVIEW_ZOOM: f32 = 32.0;
+
+/// Borrow the active lens geometry; tools can clone the Arc before editing state.
+pub(super) fn loaded_lens_geometry(app: &CalibRawApp) -> Option<&Arc<LensGeometryMap>> {
+    app.develop
+        .loaded_raw
+        .as_ref()
+        .and_then(|raw| raw.lens_geometry.as_ref())
+}
 
 fn physical_pixels_per_point(ctx: &egui::Context) -> f32 {
     let native = ctx.input(|input| input.viewport().native_pixels_per_point);
@@ -165,11 +174,7 @@ impl Preview {
             .as_ref()
             .map(|raw| (raw.width, raw.height))
             .unwrap_or((pipeline_width, pipeline_height));
-        let lens_geometry = app
-            .develop
-            .loaded_raw
-            .as_ref()
-            .and_then(|raw| raw.lens_geometry.clone());
+        let lens_geometry = loaded_lens_geometry(app).cloned();
         let crop_preview =
             app.ui.sidebar_tab == SidebarTab::Crop && !app.preview.original_visible();
         let final_geometry_preview =

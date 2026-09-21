@@ -1,5 +1,5 @@
 use serde::Deserialize;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::OnceLock;
 
 #[derive(Clone, Debug)]
@@ -31,6 +31,26 @@ struct Preset {
     channels: [f32; 4],
 }
 
+fn parse_database(source: &str) -> Result<Database, String> {
+    let database: Database = serde_json::from_str(source)
+        .map_err(|error| format!("invalid white-balance preset database: {error}"))?;
+    let mut seen = HashSet::new();
+    for maker in &database.wb_presets {
+        for model in &maker.models {
+            for preset in &model.presets {
+                let key = (&maker.maker, &model.model, &preset.name);
+                if !seen.insert(key) {
+                    return Err(format!(
+                        "duplicate white-balance preset for {} {}: {}",
+                        maker.maker, model.model, preset.name
+                    ));
+                }
+            }
+        }
+    }
+    Ok(database)
+}
+
 fn normalized_camera_name(value: &str) -> String {
     value
         .chars()
@@ -44,7 +64,7 @@ pub fn for_camera(camera_maker: &str, camera_model: &str) -> Vec<WhiteBalancePre
     static CATALOG: OnceLock<Option<Catalog>> = OnceLock::new();
     let Some(catalog) = CATALOG
         .get_or_init(|| {
-            let database: Database = serde_json::from_str(include_str!(concat!(
+            let database = parse_database(include_str!(concat!(
                 env!("CARGO_MANIFEST_DIR"),
                 "/../../data/wb_presets.json"
             )))
@@ -91,12 +111,69 @@ pub fn for_camera(camera_maker: &str, camera_model: &str) -> Vec<WhiteBalancePre
 
 #[cfg(test)]
 mod tests {
-    use super::for_camera;
+    use super::{for_camera, parse_database};
+
+    fn preset_coefficients(maker: &str, model: &str, name: &str) -> Vec<[f32; 4]> {
+        for_camera(maker, model)
+            .into_iter()
+            .filter(|preset| preset.name == name)
+            .map(|preset| preset.coefficients)
+            .collect()
+    }
 
     #[test]
     fn bundled_darktable_database_matches_camera_names_robustly() {
         let presets = for_camera("SONY", "ILCE-7CM2");
         assert!(presets.iter().any(|preset| preset.name == "Daylight"));
         assert!(presets.iter().any(|preset| preset.name == "8500K"));
+    }
+
+    #[test]
+    fn bundled_database_has_unique_camera_preset_names() {
+        parse_database(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../data/wb_presets.json"
+        )))
+        .expect("bundled white-balance presets must not contain duplicate model/preset names");
+    }
+
+    #[test]
+    fn duplicate_camera_preset_names_are_rejected() {
+        let duplicate = r#"{
+            "wb_presets": [{
+                "maker": "Panasonic",
+                "models": [{
+                    "model": "DC-S9",
+                    "presets": [
+                        {"name": "Shade", "channels": [2.3, 1.0, 1.5, 0.0]},
+                        {"name": "Shade", "channels": [2.4, 1.0, 1.6, 0.0]}
+                    ]
+                }]
+            }]
+        }"#;
+
+        let error = match parse_database(duplicate) {
+            Ok(_) => panic!("duplicate preset names must fail"),
+            Err(error) => error,
+        };
+        assert!(error.contains("Panasonic DC-S9: Shade"));
+    }
+
+    #[test]
+    fn authoritative_panasonic_zero_tuning_coefficients_are_retained() {
+        // Upstream contains conflicting zero-tuning rows for these presets. Keep the
+        // values that are continuous with the corresponding fine-tuning series.
+        assert_eq!(
+            preset_coefficients("Panasonic", "DC-S9", "Shade"),
+            vec![[2.33984375, 1.0, 1.5390625, 0.0]]
+        );
+        assert_eq!(
+            preset_coefficients("Panasonic", "DC-S9", "Cloudy"),
+            vec![[2.21484375, 1.0, 1.61328125, 0.0]]
+        );
+        assert_eq!(
+            preset_coefficients("Panasonic", "DMC-G2", "Cloudy"),
+            vec![[2.030418, 1.0, 1.326996, 0.0]]
+        );
     }
 }

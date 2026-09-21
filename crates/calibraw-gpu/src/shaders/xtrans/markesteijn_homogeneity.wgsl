@@ -29,8 +29,7 @@ fn mark_drv_threshold(pos: vec2<i32>) -> f32 {
     return max(minimum * 8.0, 1e-12);
 }
 
-fn mark_local_homogeneity(pos: vec2<i32>, index: u32) -> f32 {
-    let threshold = mark_drv_threshold(pos);
+fn mark_local_homogeneity(pos: vec2<i32>, index: u32, threshold: f32) -> f32 {
     var count = 0.0;
     for (var dy = -1; dy <= 1; dy = dy + 1) {
         for (var dx = -1; dx <= 1; dx = dx + 1) {

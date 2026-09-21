@@ -10,7 +10,7 @@
 #import calibraw::xtrans::markesteijn_refine::{mark2_pass2}
 #import calibraw::xtrans::markesteijn_candidates::{mark_has_margin}
 #import calibraw::xtrans::markesteijn_derivatives::{mark_derivative}
-#import calibraw::xtrans::markesteijn_homogeneity::{MARK_HOMO_MARGIN, mark_local_homogeneity}
+#import calibraw::xtrans::markesteijn_homogeneity::{MARK_HOMO_MARGIN, mark_drv_threshold, mark_local_homogeneity}
 #import calibraw::xtrans::markesteijn_accumulate::{mark_accumulate}
 
 
@@ -97,17 +97,18 @@ fn xtrans_markesteijn_homogeneity(@builtin(global_invocation_id) gid: vec3<u32>)
         textureStore(mark_homo_4_7_write, pos, vec4<f32>(0.0));
         return;
     }
+    let threshold = mark_drv_threshold(pos);
     textureStore(mark_homo_0_3_write, pos, vec4<f32>(
-        mark_local_homogeneity(pos, 0u),
-        mark_local_homogeneity(pos, 1u),
-        mark_local_homogeneity(pos, 2u),
-        mark_local_homogeneity(pos, 3u),
+        mark_local_homogeneity(pos, 0u, threshold),
+        mark_local_homogeneity(pos, 1u, threshold),
+        mark_local_homogeneity(pos, 2u, threshold),
+        mark_local_homogeneity(pos, 3u, threshold),
     ));
     textureStore(mark_homo_4_7_write, pos, vec4<f32>(
-        mark_local_homogeneity(pos, 4u),
-        mark_local_homogeneity(pos, 5u),
-        mark_local_homogeneity(pos, 6u),
-        mark_local_homogeneity(pos, 7u),
+        mark_local_homogeneity(pos, 4u, threshold),
+        mark_local_homogeneity(pos, 5u, threshold),
+        mark_local_homogeneity(pos, 6u, threshold),
+        mark_local_homogeneity(pos, 7u, threshold),
     ));
 }
 
