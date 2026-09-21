@@ -31,6 +31,7 @@ android.iml
 *.keystore.base64
 
 # Generated
+THIRD_PARTY_LICENSES.md
 dist/
 .pytest_cache/
 __pycache__/

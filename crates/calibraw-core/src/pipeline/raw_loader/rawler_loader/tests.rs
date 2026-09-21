@@ -22,6 +22,9 @@ fn fixture(
         (0..256).map(|v| v as u16 + 100).collect()
     };
     let (offset, size) = if jxl {
+        // Repository-owned synthetic 16x16 RGB fixture (no camera/third-party content)
+        // with repeated 16-bit samples [8192, 16384, 32768], generated with cjxl 0.12.0:
+        // cjxl input.ppm linearraw-16bit.jxl --distance=0 --effort=3
         let bytes = include_bytes!("../../../../tests/fixtures/linearraw-16bit.jxl");
         (writer.write_data(bytes).unwrap(), bytes.len() as u32)
     } else if float {

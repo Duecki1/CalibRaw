@@ -556,6 +556,9 @@ const DISPLAY_BLACKS_LIFT_DECAY: f32 = 0.035;
 const DISPLAY_BLACKS_CRUSH_HALF_LUMA: f32 = 0.035;
 const DISPLAY_BLACKS_CRUSH_EV: f32 = 4.0;
 
+// Negative Blacks uses a bounded rational toe: offset_ev = amount * 4 /
+// (1 + Y / 0.035) * hdr_guard. Bounding the shadow gain suppresses noise
+// amplification without spatial denoising while preserving RGB channel ratios.
 fn apply_display_blacks_toe_amount(rgb: vec3<f32>, amount: f32) -> vec3<f32> {
     if abs(amount) < 1e-7 {
         return rgb;

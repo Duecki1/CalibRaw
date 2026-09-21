@@ -28,7 +28,7 @@ Download the latest release [here](https://github.com/Duecki1/CalibRaw/releases)
 - **Automatic lens correction:** Uses the Lensfun database.
 - **RAW compatibility fallback:** LibRaw remains the primary camera RAW backend;
   Rawler handles selected DNG variants when it provides better compatibility.
-  See the [RAW compatibility notes](docs/raw-compatibility.md).
+  See [Supported RAW Formats](#supported-raw-formats).
 
 ## Supported RAW Formats
 
@@ -59,7 +59,7 @@ Contributions are welcome. Please open a pull request or create an issue.
 - **[Rawler](https://github.com/dnglab/dnglab)** – for selected DNG and RAW
   compatibility paths.
 
-*Check [Third-Party Notices](THIRD_PARTY_LICENSES.md) for a more detailed list.*
+*Check [Third-Party Notices](THIRD_PARTY_NOTICES.md) for a more detailed list.*
 
 ## AI Notice
 
@@ -69,7 +69,7 @@ CalibRaw also supports optional, locally run AI models for smart masking, denois
 
 ## License
 
-CalibRaw is GPL-3.0-or-later. See [COPYING](COPYING), [NOTICE.md](NOTICE.md), and
-[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). Complete resolved Rust
-dependency, font, and icon terms are in
-[THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md).
+CalibRaw is GPL-3.0-or-later. See [COPYING](COPYING) and the consolidated
+[Third-Party Notices](THIRD_PARTY_NOTICES.md). Release artifacts also include the
+generated `THIRD_PARTY_LICENSES.md` with complete resolved Rust dependency,
+font, and icon terms.

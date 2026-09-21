@@ -1,9 +1,9 @@
 # Rust dependency licenses
 
 This file is generated from `Cargo.lock` by cargo-about. It covers the resolved
-Rust dependencies used by CalibRaw's supported release targets. Regenerate it with:
+Rust dependencies used by CalibRaw's supported release targets. Release packaging regenerates it with cargo-about 0.9.2 via:
 
-`scripts/generate_licenses.sh THIRD_PARTY_LICENSES.md`
+`bash scripts/prepare_release_licenses.sh`
 
 {{#each licenses}}
 ## {{{name}}} (`{{id}}`)
