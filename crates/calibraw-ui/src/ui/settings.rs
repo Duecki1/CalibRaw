@@ -7,12 +7,12 @@ use crate::ui::layout::ScreenLayout;
 use crate::ui::library::maximum_thumbnail_worker_count;
 use eframe::egui::{self, Ui};
 
-const PROJECT_NOTICE: &str = include_str!("../../../../NOTICE.md");
 const PROJECT_LICENSE: &str = include_str!("../../../../COPYING");
 const PROJECT_LICENSE_ID: &str = env!("CARGO_PKG_LICENSE");
 const PROJECT_REPOSITORY: &str = env!("CARGO_PKG_REPOSITORY");
 const THIRD_PARTY_NOTICES: &str = include_str!("../../../../THIRD_PARTY_NOTICES.md");
-const RUST_DEPENDENCY_LICENSES: &str = include_str!("../../../../THIRD_PARTY_LICENSES.md");
+const RUST_DEPENDENCY_LICENSES: &str =
+    include_str!(concat!(env!("OUT_DIR"), "/THIRD_PARTY_LICENSES.md"));
 
 pub(crate) struct Settings;
 
@@ -822,7 +822,7 @@ impl Settings {
                     .clicked()
                 {
                     let legal_text = format!(
-                        "{PROJECT_NOTICE}\n\n{PROJECT_LICENSE}\n\n{THIRD_PARTY_NOTICES}\n\n{RUST_DEPENDENCY_LICENSES}"
+                        "{PROJECT_LICENSE}\n\n{THIRD_PARTY_NOTICES}\n\n{RUST_DEPENDENCY_LICENSES}"
                     );
                     #[cfg(target_os = "android")]
                     match app.copy_text_to_clipboard("CalibRaw legal notices", &legal_text) {
@@ -838,13 +838,10 @@ impl Settings {
                 }
             });
 
-            egui::CollapsingHeader::new("Project notice")
-                .default_open(false)
-                .show(ui, |ui| Self::legal_text(ui, PROJECT_NOTICE, 8));
             egui::CollapsingHeader::new("GNU GPL v3 or later")
                 .default_open(false)
                 .show(ui, |ui| Self::legal_text(ui, PROJECT_LICENSE, 16));
-            egui::CollapsingHeader::new("Adapted source, data, native libraries, and AI models")
+            egui::CollapsingHeader::new("Project and third-party notices")
                 .default_open(false)
                 .show(ui, |ui| Self::legal_text(ui, THIRD_PARTY_NOTICES, 18));
             egui::CollapsingHeader::new("Rust dependencies, fonts, and icons")

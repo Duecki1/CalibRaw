@@ -21,7 +21,7 @@ test -n "$LENSFUN_DB"
 
 rm -rf AppDir dist appimage-packaging
 mkdir -p dist appimage-packaging AppDir/usr/share/calibraw/lensfun AppDir/usr/share/doc/calibraw
-install -m 0644 COPYING NOTICE.md THIRD_PARTY_NOTICES.md THIRD_PARTY_LICENSES.md \
+install -m 0644 COPYING THIRD_PARTY_NOTICES.md THIRD_PARTY_LICENSES.md \
   AppDir/usr/share/doc/calibraw/
 cp -a "$LENSFUN_DB"/. AppDir/usr/share/calibraw/lensfun/
 test -n "$(find AppDir/usr/share/calibraw/lensfun -name '*.xml' -print -quit)"

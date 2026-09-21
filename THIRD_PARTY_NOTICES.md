@@ -1,5 +1,21 @@
 # Third-party notices
 
+CalibRaw
+Copyright (C) 2026 Duecki and CalibRaw contributors
+
+CalibRaw is licensed under GPL-3.0-or-later; see [COPYING](COPYING). Code adapted
+from darktable, Ansel, and GIMP retains the upstream authors' copyright and
+compatible GPL terms. This includes RAW reconstruction and view-transform
+algorithms, plus clone/heal behavior and the perceptual Laplace healing solver.
+RapidRAW influenced the interface and workflow, but its AGPL-3.0 source is not
+part of CalibRaw.
+
+Third-party libraries, models, and profile databases retain their own licenses.
+See the third-party notices below and the complete resolved Rust dependency
+terms in the generated `THIRD_PARTY_LICENSES.md` release bundle.
+Names and trademarks belong to their owners; attribution does not imply
+endorsement.
+
 CalibRaw is GPL-3.0-or-later software, but it uses adapted source, data, native
 libraries, and optional downloaded AI models from other projects. Those works
 retain their own copyright and license terms. A name below identifies
@@ -144,8 +160,8 @@ and the Phosphor icon font; their MIT, OFL-1.1, Ubuntu Font Licence 1.0, and
 other applicable terms are reproduced with the crate notices.
 
 Complete resolved Rust dependency license texts and package attribution are in
-[`THIRD_PARTY_LICENSES.md`](THIRD_PARTY_LICENSES.md). Regenerate that file from
-`Cargo.lock` with the command documented at its top.
+the generated `THIRD_PARTY_LICENSES.md` release bundle. Regenerate it from
+`Cargo.lock` with `bash scripts/prepare_release_licenses.sh`.
 
 ## License policy
 

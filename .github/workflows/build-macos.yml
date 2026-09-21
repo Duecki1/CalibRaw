@@ -79,6 +79,7 @@ jobs:
           export SOURCE_DATE_EPOCH="$(git show -s --format=%ct "$revision")"
           export LIBCLANG_PATH="$(brew --prefix llvm)/lib"
 
+          bash scripts/prepare_release_licenses.sh
           cargo build \
             --locked \
             --release \
@@ -112,7 +113,7 @@ jobs:
 
           cp "target/${{ matrix.target }}/release/calibraw" "$executable"
           chmod +x "$executable"
-          cp COPYING NOTICE.md THIRD_PARTY_NOTICES.md THIRD_PARTY_LICENSES.md README.md "$contents/Resources/"
+          cp COPYING THIRD_PARTY_NOTICES.md THIRD_PARTY_LICENSES.md README.md "$contents/Resources/"
 
           icon_source="packaging/icons/calibraw-1024.png"
           iconset="$contents/Resources/CalibRaw.iconset"

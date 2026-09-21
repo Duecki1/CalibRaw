@@ -140,6 +140,7 @@ jobs:
           export CALIBRAW_SOURCE_REVISION="$revision"
           export SOURCE_DATE_EPOCH="$(git show -s --format=%ct "$revision")"
 
+          bash scripts/prepare_release_licenses.sh
           cargo build \
             --locked \
             --release \
@@ -166,7 +167,7 @@ jobs:
           rm -rf dist
           mkdir -p "$package_dir"
           cp "$release_dir/calibraw.exe" "$package_dir/"
-          cp COPYING NOTICE.md THIRD_PARTY_NOTICES.md THIRD_PARTY_LICENSES.md README.md "$package_dir/"
+          cp COPYING THIRD_PARTY_NOTICES.md THIRD_PARTY_LICENSES.md README.md "$package_dir/"
 
           lensfun_db="$(find ${{ matrix.msys_prefix }}/share/lensfun -type f -name '*.xml' -printf '%h\n' | head -n 1)"
           test -n "$lensfun_db"
