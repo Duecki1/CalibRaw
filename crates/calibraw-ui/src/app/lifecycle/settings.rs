@@ -276,6 +276,7 @@ impl CalibRawApp {
     pub(crate) fn persist_performance_settings(&self) -> bool {
         let settings = crate::performance_settings::PerformanceSettings {
             develop_histogram_open: self.develop_ui.histogram_open,
+            app_usage_ms: crate::app::duration_millis_saturating(self.app_usage_duration()),
             raw_cache_files: self.develop.raw_cache_limit,
             thumbnail_workers: self.library.thumbnail_worker_count(),
             render_edited_thumbnails_during_indexing: self

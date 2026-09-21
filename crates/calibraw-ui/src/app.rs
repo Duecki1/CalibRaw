@@ -510,6 +510,7 @@ pub(crate) struct LoadedPreview {
     sidecar_generation: u64,
     sidecar_warning: Option<String>,
     sidecar_needs_rewrite: bool,
+    editing_time_ms: u64,
     selected_camera_profile: Option<PathBuf>,
     geometry: GeometryTransform,
 }
@@ -574,6 +575,7 @@ pub(crate) struct SidecarSaveRequest {
     revision: u64,
     explicit: bool,
     edits: SidecarEditState,
+    editing_time_ms: u64,
     #[cfg(target_os = "android")]
     review: crate::sidecar::PhotoReview,
 }
@@ -1215,6 +1217,13 @@ pub(crate) struct PersistenceState {
     pub(crate) developed_thumbnail_receiver: Option<mpsc::Receiver<DevelopedThumbnailEvent>>,
 }
 
+pub(crate) struct UsageState {
+    pub(crate) app_persisted: Duration,
+    pub(crate) app_started_at: Instant,
+    pub(crate) raw_accumulated: Duration,
+    pub(crate) raw_active_since: Option<Instant>,
+}
+
 pub(crate) struct InpaintState {
     pub(crate) tool: InpaintTool,
     pub(crate) brush_size: f32,
@@ -1256,6 +1265,7 @@ pub struct CalibRawApp {
     pub(crate) inpaint: InpaintState,
     pub(crate) export: ExportState,
     pub(crate) persistence: PersistenceState,
+    pub(crate) usage: UsageState,
     pub(crate) preferences: PreferencesState,
     pub(crate) ui: UiState,
     #[cfg(not(target_os = "android"))]
@@ -1289,6 +1299,52 @@ fn collect_pipeline_update_results(
 }
 
 impl CalibRawApp {
+    pub(crate) fn app_usage_duration(&self) -> Duration {
+        self.usage
+            .app_persisted
+            .saturating_add(self.usage.app_started_at.elapsed())
+    }
+
+    pub(crate) fn raw_edit_duration(&self) -> Duration {
+        self.usage.raw_accumulated.saturating_add(
+            self.usage
+                .raw_active_since
+                .map(|started| started.elapsed())
+                .unwrap_or_default(),
+        )
+    }
+
+    pub(crate) fn raw_editing_time_ms(&self) -> u64 {
+        duration_millis_saturating(self.raw_edit_duration())
+    }
+
+    pub(in crate::app) fn install_raw_edit_timer(&mut self, editing_time_ms: u64) {
+        self.usage.raw_accumulated = Duration::from_millis(editing_time_ms);
+        self.usage.raw_active_since = self.raw_edit_timer_should_run().then(Instant::now);
+    }
+
+    pub(in crate::app) fn clear_raw_edit_timer(&mut self) {
+        self.usage.raw_accumulated = Duration::ZERO;
+        self.usage.raw_active_since = None;
+    }
+
+    fn pause_raw_edit_timer(&mut self) {
+        let Some(started) = self.usage.raw_active_since.take() else {
+            return;
+        };
+        self.usage.raw_accumulated = self.usage.raw_accumulated.saturating_add(started.elapsed());
+    }
+
+    fn resume_raw_edit_timer(&mut self) {
+        if self.usage.raw_active_since.is_none() && self.raw_edit_timer_should_run() {
+            self.usage.raw_active_since = Some(Instant::now());
+        }
+    }
+
+    fn raw_edit_timer_should_run(&self) -> bool {
+        self.develop.loaded_raw.is_some() && self.ui.active_tab == AppTab::Develop
+    }
+
     pub(crate) fn sync_ai_model_runtime_context(&mut self) {
         let context = if self.ui.active_tab == AppTab::Develop {
             match self.ui.sidebar_tab {
@@ -1326,6 +1382,7 @@ impl CalibRawApp {
             return;
         }
         if self.ui.active_tab == AppTab::Develop && tab != AppTab::Develop {
+            self.pause_raw_edit_timer();
             self.set_original_preview_requested(false);
             self.clear_android_original_hold();
         }
@@ -1339,6 +1396,9 @@ impl CalibRawApp {
             self.ui.thumbnail_cache_size_receiver = None;
         }
         self.ui.active_tab = tab;
+        if tab == AppTab::Develop {
+            self.resume_raw_edit_timer();
+        }
         self.sync_ai_model_runtime_context();
         #[cfg(target_os = "android")]
         crate::android::set_back_navigation_active(tab != AppTab::Library);
@@ -1408,6 +1468,27 @@ impl CalibRawApp {
     #[cfg(target_os = "android")]
     pub(crate) fn copy_text_to_clipboard(&self, label: &str, text: &str) -> Result<(), String> {
         crate::android::copy_text_to_clipboard(&self.android.android_app, label, text)
+    }
+}
+
+pub(crate) fn duration_millis_saturating(duration: Duration) -> u64 {
+    duration.as_millis().min(u128::from(u64::MAX)) as u64
+}
+
+pub(crate) fn format_usage_duration(duration: Duration) -> String {
+    let total_seconds = duration.as_secs();
+    let days = total_seconds / 86_400;
+    let hours = (total_seconds / 3_600) % 24;
+    let minutes = (total_seconds / 60) % 60;
+    let seconds = total_seconds % 60;
+    if days > 0 {
+        format!("{days}d {hours:02}h {minutes:02}m {seconds:02}s")
+    } else if hours > 0 {
+        format!("{hours}h {minutes:02}m {seconds:02}s")
+    } else if minutes > 0 {
+        format!("{minutes}m {seconds:02}s")
+    } else {
+        format!("{seconds}s")
     }
 }
 

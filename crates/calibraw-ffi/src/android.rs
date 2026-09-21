@@ -783,8 +783,9 @@ pub fn load_developed_thumbnail_cache(
         let _ = fs::remove_file(&fingerprint_path);
         return Ok(None);
     };
-    let fingerprint =
-        crate::thumbnail_cache::fingerprint_file(&sidecar_path, crate::sidecar::MAX_SIDECAR_BYTES);
+    let fingerprint = crate::sidecar::read_bounded(&sidecar_path)
+        .map_err(|error| error.to_string())
+        .and_then(|bytes| crate::sidecar::render_fingerprint(&bytes));
     let _ = fs::remove_file(&sidecar_path);
     let fingerprint = fingerprint?;
     let cached = fs::read_to_string(&fingerprint_path).map_err(|error| {
@@ -815,8 +816,9 @@ pub fn save_developed_thumbnail_cache(
     let Some(sidecar_path) = materialize_raw_sidecar(app, raw_uri, display_name)? else {
         return Err("edit sidecar disappeared before thumbnail capture".to_owned());
     };
-    let fingerprint =
-        crate::thumbnail_cache::fingerprint_file(&sidecar_path, crate::sidecar::MAX_SIDECAR_BYTES);
+    let fingerprint = crate::sidecar::read_bounded(&sidecar_path)
+        .map_err(|error| error.to_string())
+        .and_then(|bytes| crate::sidecar::render_fingerprint(&bytes));
     let _ = fs::remove_file(&sidecar_path);
     let fingerprint = fingerprint?;
     let cache_path = developed_thumbnail_cache_path(app, raw_uri)?;
@@ -842,8 +844,9 @@ pub fn save_developed_thumbnail_cache(
         let _ = fs::remove_file(&fingerprint_path);
         return Err("edit sidecar changed while its thumbnail was being cached".to_owned());
     };
-    let latest =
-        crate::thumbnail_cache::fingerprint_file(&sidecar_path, crate::sidecar::MAX_SIDECAR_BYTES);
+    let latest = crate::sidecar::read_bounded(&sidecar_path)
+        .map_err(|error| error.to_string())
+        .and_then(|bytes| crate::sidecar::render_fingerprint(&bytes));
     let _ = fs::remove_file(&sidecar_path);
     if latest? != fingerprint {
         let _ = fs::remove_file(&cache_path);
@@ -1075,6 +1078,50 @@ pub fn remove_raw_sidecar(
     })
     .map_err(|error| format!("could not reset Android RAW adjustments: {error:#}"))?;
 
+    clear_developed_thumbnail_cache(app, raw_uri);
+    Ok(())
+}
+
+pub fn reset_android_adjustments(
+    app: &AndroidApp,
+    raw_uri: &str,
+    display_name: &str,
+) -> Result<(), String> {
+    reset_android_adjustments_impl(app, raw_uri, display_name, None)
+}
+
+pub fn reset_android_adjustments_with_editing_time(
+    app: &AndroidApp,
+    raw_uri: &str,
+    display_name: &str,
+    editing_time_ms: u64,
+) -> Result<(), String> {
+    reset_android_adjustments_impl(app, raw_uri, display_name, Some(editing_time_ms))
+}
+
+fn reset_android_adjustments_impl(
+    app: &AndroidApp,
+    raw_uri: &str,
+    display_name: &str,
+    editing_time_override_ms: Option<u64>,
+) -> Result<(), String> {
+    let metadata = load_android_sidecar_metadata(app, raw_uri, display_name)
+        .map_err(|error| error.to_string())?
+        .unwrap_or_default();
+    let review = metadata.review;
+    let editing_time_ms = editing_time_override_ms.unwrap_or(metadata.editing_time_ms);
+    if review == crate::sidecar::PhotoReview::default() && editing_time_ms == 0 {
+        return remove_raw_sidecar(app, raw_uri, display_name);
+    }
+    save_android_with_review_and_editing_time(
+        app,
+        raw_uri,
+        display_name,
+        crate::sidecar::default_edit_state(),
+        review,
+        editing_time_ms,
+    )
+    .map_err(|error| error.to_string())?;
     clear_developed_thumbnail_cache(app, raw_uri);
     Ok(())
 }
@@ -1765,18 +1812,18 @@ pub fn load_android(
     result.map(Some)
 }
 
-pub fn load_android_review(
+fn load_android_sidecar_metadata(
     app: &AndroidApp,
     raw_uri: &str,
     display_name: &str,
-) -> Result<Option<crate::sidecar::PhotoReview>, crate::sidecar::SidecarError> {
+) -> Result<Option<crate::sidecar::SidecarMetadata>, crate::sidecar::SidecarError> {
     let Some(path) = materialize_raw_sidecar(app, raw_uri, display_name)
         .map_err(crate::sidecar::SidecarError::Platform)?
     else {
         return Ok(None);
     };
     let result = crate::sidecar::read_bounded(&path)
-        .and_then(|bytes| crate::sidecar::decode_photo_review(&bytes));
+        .and_then(|bytes| crate::sidecar::decode_sidecar_metadata(&bytes));
     if let Err(error) = fs::remove_file(&path) {
         log::warn!(
             "could not remove Android sidecar cache {}: {error}",
@@ -1786,14 +1833,32 @@ pub fn load_android_review(
     result.map(Some)
 }
 
+pub fn load_android_review(
+    app: &AndroidApp,
+    raw_uri: &str,
+    display_name: &str,
+) -> Result<Option<crate::sidecar::PhotoReview>, crate::sidecar::SidecarError> {
+    load_android_sidecar_metadata(app, raw_uri, display_name)
+        .map(|metadata| metadata.map(|metadata| metadata.review))
+}
+
 pub fn save_android(
     app: &AndroidApp,
     raw_uri: &str,
     display_name: &str,
     edits: crate::sidecar::EditState,
 ) -> Result<String, crate::sidecar::SidecarError> {
-    let review = load_android_review(app, raw_uri, display_name)?.unwrap_or_default();
-    save_android_with_review(app, raw_uri, display_name, edits, review)
+    let metadata = load_android_sidecar_metadata(app, raw_uri, display_name)?.unwrap_or_default();
+    let review = metadata.review;
+    let editing_time_ms = metadata.editing_time_ms;
+    save_android_with_review_and_editing_time(
+        app,
+        raw_uri,
+        display_name,
+        edits,
+        review,
+        editing_time_ms,
+    )
 }
 
 pub fn save_android_with_review(
@@ -1803,7 +1868,32 @@ pub fn save_android_with_review(
     edits: crate::sidecar::EditState,
     review: crate::sidecar::PhotoReview,
 ) -> Result<String, crate::sidecar::SidecarError> {
-    let bytes = crate::sidecar::encode_with_review(edits, review)?;
+    let editing_time_ms = load_android_sidecar_metadata(app, raw_uri, display_name)?
+        .map(|metadata| metadata.editing_time_ms)
+        .unwrap_or(0);
+    save_android_with_review_and_editing_time(
+        app,
+        raw_uri,
+        display_name,
+        edits,
+        review,
+        editing_time_ms,
+    )
+}
+
+pub fn save_android_with_review_and_editing_time(
+    app: &AndroidApp,
+    raw_uri: &str,
+    display_name: &str,
+    edits: crate::sidecar::EditState,
+    review: crate::sidecar::PhotoReview,
+    editing_time_ms: u64,
+) -> Result<String, crate::sidecar::SidecarError> {
+    let bytes = crate::sidecar::encode_with_review_and_editing_time(
+        edits,
+        review,
+        editing_time_ms,
+    )?;
     let path = create_raw_sidecar_cache(app).map_err(crate::sidecar::SidecarError::Platform)?;
     let result = crate::sidecar::write_synced(&path, &bytes).and_then(|()| {
         publish_raw_sidecar(app, &path, raw_uri, display_name)

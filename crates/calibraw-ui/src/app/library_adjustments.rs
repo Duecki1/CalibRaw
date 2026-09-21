@@ -247,12 +247,22 @@ impl CalibRawApp {
         asset: &crate::ui::library::LibraryAsset,
         edits: SidecarEditState,
     ) -> Result<(), String> {
+        let is_current = self.library_asset_is_current(asset);
         #[cfg(not(target_os = "android"))]
         {
             let path = asset
                 .desktop_path()
                 .ok_or_else(|| "Library asset is not available from desktop storage".to_owned())?;
-            crate::sidecar::save_desktop(path, edits).map_err(|error| error.to_string())?;
+            let result = if is_current {
+                crate::sidecar::save_desktop_with_editing_time(
+                    path,
+                    edits,
+                    self.raw_editing_time_ms(),
+                )
+            } else {
+                crate::sidecar::save_desktop(path, edits)
+            };
+            result.map_err(|error| error.to_string())?;
             crate::sidecar::invalidate_developed_thumbnail_cache(path)?;
             Ok(())
         }
@@ -261,9 +271,24 @@ impl CalibRawApp {
             let uri = asset
                 .android_uri()
                 .ok_or_else(|| "Library asset is not available from Android storage".to_owned())?;
-            crate::sidecar::save_android(&self.android.android_app, uri, &asset.display_name, edits)
-                .map(|_| ())
-                .map_err(|error| error.to_string())
+            let result = if is_current {
+                crate::sidecar::save_android_with_review_and_editing_time(
+                    &self.android.android_app,
+                    uri,
+                    &asset.display_name,
+                    edits,
+                    self.develop.review,
+                    self.raw_editing_time_ms(),
+                )
+            } else {
+                crate::sidecar::save_android(
+                    &self.android.android_app,
+                    uri,
+                    &asset.display_name,
+                    edits,
+                )
+            };
+            result.map(|_| ()).map_err(|error| error.to_string())
         }
     }
 

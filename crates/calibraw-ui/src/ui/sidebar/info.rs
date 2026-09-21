@@ -21,6 +21,12 @@ impl Sidebar {
 
         crate::ui::theme::section_card(ui, "File", |ui| {
             metadata_row(ui, "Name", &file_name);
+            metadata_row(
+                ui,
+                "Editing time",
+                &crate::app::format_usage_duration(app.raw_edit_duration()),
+            );
+            ui.ctx().request_repaint_after(std::time::Duration::from_secs(1));
             #[cfg(not(target_os = "android"))]
             if let Some(path) = app.develop.current_path.as_deref() {
                 if let Some(parent) = path.parent() {

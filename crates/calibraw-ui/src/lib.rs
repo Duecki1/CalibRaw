@@ -22,6 +22,7 @@ pub mod sidecar {
     #[cfg(target_os = "android")]
     pub use calibraw_ffi::{
         load_android, load_android_review, save_android, save_android_with_review,
+        save_android_with_review_and_editing_time,
     };
 }
 

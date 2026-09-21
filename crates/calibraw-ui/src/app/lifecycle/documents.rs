@@ -212,6 +212,9 @@ impl CalibRawApp {
         self.abandon_ai_denoise_worker();
         self.preview.rebuild_receiver = None;
         self.preview.detail_rebuild_receiver = None;
+        let editing_time_override_ms = (edit_override.is_some()
+            && self.persistence.sidecar_target.as_ref() == Some(&sidecar_target))
+            .then(|| self.raw_editing_time_ms());
         let sidecar_generation = self.begin_sidecar_open();
         crate::app::preview_visibility::PreviewVisibility::clear(&self.egui_ctx);
         let reusable_preview_pipeline = {
@@ -410,6 +413,7 @@ impl CalibRawApp {
                         pasted_ai_masks_need_update,
                         mut sidecar_warning,
                         mut sidecar_needs_rewrite,
+                        editing_time_ms,
                         geometry,
                         use_adaptive_detail_defaults,
                     ) = if let Some(edits) = edit_override {
@@ -421,6 +425,7 @@ impl CalibRawApp {
                             edits.ai_masks_need_update,
                             None,
                             true,
+                            editing_time_override_ms.unwrap_or(0),
                             edits.geometry.sanitized(),
                             false,
                         )
@@ -440,6 +445,7 @@ impl CalibRawApp {
                                     loaded.edits.ai_masks_need_update,
                                     warning,
                                     loaded.migrated,
+                                    loaded.editing_time_ms,
                                     loaded.edits.geometry.sanitized(),
                                     use_adaptive_detail_defaults,
                                 )
@@ -452,6 +458,7 @@ impl CalibRawApp {
                                 false,
                                 None,
                                 false,
+                                0,
                                 GeometryTransform::default(),
                                 true,
                             ),
@@ -465,6 +472,7 @@ impl CalibRawApp {
                                     "Could not load this RAW's sidecar; using default edits: {error}"
                                 )),
                                 false,
+                                0,
                                 GeometryTransform::default(),
                                 true,
                             ),
@@ -828,6 +836,7 @@ impl CalibRawApp {
                         sidecar_generation,
                         sidecar_warning,
                         sidecar_needs_rewrite,
+                        editing_time_ms,
                         selected_camera_profile,
                         geometry,
                     })
@@ -947,6 +956,7 @@ impl CalibRawApp {
                 self.develop.original_raw = Some(loaded.original_raw);
                 self.develop.loaded_raw = Some(loaded.full_raw);
                 self.develop.preview_raw = Some(loaded.preview_raw);
+                self.install_raw_edit_timer(loaded.editing_time_ms);
                 self.preview.program_template = Some(loaded.pipeline.program_template());
                 self.preview.gpu_pipeline = Some(loaded.pipeline);
                 self.develop.review = loaded.review;

@@ -160,6 +160,19 @@ impl Settings {
         crate::ui::theme::content_card(ui, |ui| {
             crate::ui::theme::heading_with_help(
                 ui,
+                "Usage",
+                "Shows the accumulated time CalibRaw has been running across sessions.",
+            );
+            ui.strong(crate::app::format_usage_duration(app.app_usage_duration()));
+            ui.small("Total app use");
+            ui.ctx().request_repaint_after(std::time::Duration::from_secs(1));
+        });
+
+        crate::ui::theme::card_gap(ui);
+
+        crate::ui::theme::content_card(ui, |ui| {
+            crate::ui::theme::heading_with_help(
+                ui,
                 "Appearance",
                 "Choose the design used across every screen and the canvas color shown around the photo. Changes are saved and applied immediately.",
             );
