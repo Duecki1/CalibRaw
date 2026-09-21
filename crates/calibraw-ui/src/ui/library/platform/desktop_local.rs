@@ -42,6 +42,23 @@ impl LibraryState {
             .copied()
     }
 
+    pub(crate) fn adjacent_library_item_for_path(
+        &self,
+        path: &Path,
+        forward: bool,
+    ) -> Option<DesktopFilmstripItem> {
+        let current_index = self.filmstrip_index_for_path(path)?;
+        let visible_indices = self.filtered_entry_indices();
+        let target_position = match visible_indices.binary_search(&current_index) {
+            Ok(position) if forward => position.checked_add(1),
+            Ok(position) => position.checked_sub(1),
+            Err(position) if forward => Some(position),
+            Err(position) => position.checked_sub(1),
+        }?;
+        let target_index = *visible_indices.get(target_position)?;
+        self.filmstrip_item(target_index)
+    }
+
     pub(crate) fn desktop_asset_bytes(&self, path: &Path) -> Option<u64> {
         let index = self.filmstrip_index_for_path(path)?;
         Some(self.entries.get(index)?.asset.metadata.bytes)

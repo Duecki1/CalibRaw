@@ -465,7 +465,7 @@ impl CalibRawApp {
     }
 
     pub(crate) fn handle_edit_history_shortcuts(&mut self, ctx: &egui::Context) {
-        if self.ui.active_tab != AppTab::Develop || !self.app_shortcuts_allowed(ctx) {
+        if self.ui.active_tab != AppTab::Develop || !self.edit_history_shortcuts_allowed(ctx) {
             return;
         }
         let redo_shift_z = egui::KeyboardShortcut::new(
