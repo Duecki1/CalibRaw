@@ -10,6 +10,8 @@ const MAX_SETTINGS_BYTES: u64 = 64 * 1024;
 pub(crate) struct PerformanceSettings {
     #[serde(default)]
     pub develop_histogram_open: bool,
+    #[serde(default)]
+    pub app_usage_ms: u64,
     #[serde(default = "settings_version")]
     pub version: u32,
     #[serde(default = "default_raw_cache_files")]
@@ -161,6 +163,7 @@ impl Default for PerformanceSettings {
     fn default() -> Self {
         Self {
             develop_histogram_open: false,
+            app_usage_ms: 0,
             version: SETTINGS_VERSION,
             raw_cache_files: default_raw_cache_files(),
             thumbnail_workers: default_thumbnail_workers(),
@@ -373,6 +376,7 @@ mod tests {
     fn invalid_values_are_clamped() {
         let settings = PerformanceSettings {
             develop_histogram_open: true,
+            app_usage_ms: 123_456,
             version: 99,
             raw_cache_files: usize::MAX,
             thumbnail_workers: 0,
@@ -423,6 +427,7 @@ mod tests {
         }
         .sanitized();
         assert_eq!(settings.version, SETTINGS_VERSION);
+        assert_eq!(settings.app_usage_ms, 123_456);
         assert_eq!(
             settings.raw_cache_files,
             crate::app::maximum_raw_cache_limit()
@@ -538,6 +543,7 @@ mod tests {
         assert!(!settings.image_relative_brush_size);
         assert!(!settings.show_develop_navigation_labels);
         assert!(!settings.develop_histogram_open);
+        assert_eq!(settings.app_usage_ms, 0);
         assert_eq!(
             settings.export_name_template,
             crate::export_naming::DEFAULT_EXPORT_NAME_TEMPLATE

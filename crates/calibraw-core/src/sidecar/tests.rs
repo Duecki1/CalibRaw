@@ -753,6 +753,24 @@ fn reset_all_adjustments_removes_sidecar_masks_and_thumbnail_caches() {
     fs::remove_dir_all(directory).unwrap();
 }
 
+#[cfg(not(target_os = "android"))]
+#[test]
+fn reset_all_adjustments_preserves_editing_time_metadata() {
+    let directory = temporary_directory("reset-all-timer");
+    let raw = directory.join("timed.CR3");
+    fs::write(&raw, b"raw").unwrap();
+
+    save_desktop_with_editing_time(&raw, sample_edits(), 42_000).unwrap();
+    assert!(reset_desktop_adjustments_with_editing_time(&raw, 84_000).unwrap());
+
+    let reset = load_desktop(&raw).unwrap().unwrap();
+    assert_eq!(reset.editing_time_ms, 84_000);
+    assert_eq!(reset.review, PhotoReview::default());
+    assert!(!edit_state_has_adjustments(&reset.edits));
+
+    fs::remove_dir_all(directory).unwrap();
+}
+
 #[test]
 fn corrupt_and_future_sidecars_are_rejected() {
     assert!(matches!(
@@ -765,6 +783,7 @@ fn corrupt_and_future_sidecars_are_rejected() {
         format: SIDECAR_FORMAT.to_owned(),
         schema_version: SIDECAR_SCHEMA_VERSION + 1,
         review: PhotoReview::default(),
+        editing_time_ms: 0,
         edits,
         mask_assets: Vec::new(),
         mask_asset_refs: Vec::new(),
@@ -1029,6 +1048,16 @@ fn encoded_review_is_available_with_decoded_edits() {
     assert_eq!(decode_photo_review(&encoded).unwrap(), review);
     let loaded = decode(&encoded).unwrap();
     assert_eq!(loaded.review, review);
+    assert_eq!(loaded.editing_time_ms, 0);
+}
+
+#[test]
+fn editing_time_round_trips_as_sidecar_metadata() {
+    let encoded =
+        encode_with_review_and_editing_time(sample_edits(), PhotoReview::default(), 98_765)
+            .unwrap();
+    let loaded = decode(&encoded).unwrap();
+    assert_eq!(loaded.editing_time_ms, 98_765);
 }
 
 #[cfg(not(target_os = "android"))]
@@ -1045,22 +1074,30 @@ fn photo_review_survives_development_saves_and_reset() {
     assert_eq!(load_photo_review(&raw).unwrap(), review);
     assert!(!load_photo_preview_info(&raw).unwrap().1);
     let edits = sample_edits();
-    save_desktop(&raw, edits.clone()).unwrap();
+    save_desktop_with_editing_time(&raw, edits.clone(), 12_345).unwrap();
     assert_eq!(load_photo_review(&raw).unwrap(), review);
+    assert_eq!(load_desktop(&raw).unwrap().unwrap().editing_time_ms, 12_345);
     assert!(load_photo_preview_info(&raw).unwrap().1);
     let fingerprint = desktop_sidecar_fingerprint(&raw).unwrap();
     let changed = PhotoReview {
         flag: PhotoFlag::Rejected,
         rating: 2,
     };
-    save_photo_review(&raw, changed).unwrap();
+    save_photo_review_with_editing_time(&raw, changed, 23_456).unwrap();
     assert_eq!(desktop_sidecar_fingerprint(&raw).unwrap(), fingerprint);
-    assert_eq!(load_desktop(&raw).unwrap().unwrap().edits, edits);
+    let reviewed = load_desktop(&raw).unwrap().unwrap();
+    assert_eq!(reviewed.edits, edits);
+    assert_eq!(reviewed.editing_time_ms, 23_456);
+    save_desktop_with_editing_time(&raw, edits.clone(), 54_321).unwrap();
+    assert_eq!(desktop_sidecar_fingerprint(&raw).unwrap(), fingerprint);
+    assert_eq!(load_desktop(&raw).unwrap().unwrap().editing_time_ms, 54_321);
+    save_desktop(&raw, edits.clone()).unwrap();
+    assert_eq!(load_desktop(&raw).unwrap().unwrap().editing_time_ms, 54_321);
     reset_desktop_adjustments(&raw).unwrap();
     assert_eq!(load_photo_review(&raw).unwrap(), changed);
-    assert!(!edit_state_has_adjustments(
-        &load_desktop(&raw).unwrap().unwrap().edits
-    ));
+    let reset = load_desktop(&raw).unwrap().unwrap();
+    assert_eq!(reset.editing_time_ms, 54_321);
+    assert!(!edit_state_has_adjustments(&reset.edits));
     fs::remove_dir_all(directory).unwrap();
 }
 

@@ -164,6 +164,7 @@ impl CalibRawApp {
         self.persistence.sidecar_saved_revision = None;
         self.persistence.sidecar_failed_revision = None;
         self.persistence.sidecar_autosave_deadline = None;
+        self.clear_raw_edit_timer();
         self.persistence.sidecar_generation
     }
 
@@ -233,6 +234,7 @@ impl CalibRawApp {
             revision,
             explicit,
             edits: self.capture_sidecar_edit_state(),
+            editing_time_ms: self.raw_editing_time_ms(),
             #[cfg(target_os = "android")]
             review: self.develop.review,
         };
@@ -345,8 +347,20 @@ impl CalibRawApp {
     ) -> Result<(), String> {
         let was_current =
             self.detach_current_android_document_for_library_action(raw_uri, display_name);
-        let result =
-            crate::android::remove_raw_sidecar(&self.android.android_app, raw_uri, display_name);
+        let result = if was_current {
+            crate::android::reset_android_adjustments_with_editing_time(
+                &self.android.android_app,
+                raw_uri,
+                display_name,
+                self.raw_editing_time_ms(),
+            )
+        } else {
+            crate::android::reset_android_adjustments(
+                &self.android.android_app,
+                raw_uri,
+                display_name,
+            )
+        };
         if was_current && result.is_ok() {
             self.reload_android_library_document_after_reset(raw_uri, display_name);
         }
@@ -925,7 +939,11 @@ pub(super) fn save_sidecar_request(
 ) -> Result<String, String> {
     match request.target {
         crate::sidecar::SidecarTarget::Desktop { raw_path } => {
-            crate::sidecar::save_desktop(&raw_path, request.edits)
+            crate::sidecar::save_desktop_with_editing_time(
+                &raw_path,
+                request.edits,
+                request.editing_time_ms,
+            )
                 .map(|path| path.display().to_string())
                 .map_err(|error| error.to_string())
         }
@@ -933,12 +951,13 @@ pub(super) fn save_sidecar_request(
         crate::sidecar::SidecarTarget::Android {
             raw_uri,
             display_name,
-        } => crate::sidecar::save_android_with_review(
+        } => crate::sidecar::save_android_with_review_and_editing_time(
             android_app,
             &raw_uri,
             &display_name,
             request.edits,
             request.review,
+            request.editing_time_ms,
         )
         .map_err(|error| error.to_string()),
     }

@@ -203,6 +203,12 @@ impl CalibRawApp {
                 developed_thumbnail_in_flight: None,
                 developed_thumbnail_receiver: None,
             },
+            usage: UsageState {
+                app_persisted: Duration::from_millis(performance.app_usage_ms),
+                app_started_at: Instant::now(),
+                raw_accumulated: Duration::ZERO,
+                raw_active_since: None,
+            },
             preferences: PreferencesState {
                 image_relative_brush_size: performance.image_relative_brush_size,
                 show_develop_navigation_labels: performance.show_develop_navigation_labels,
@@ -484,6 +490,12 @@ impl CalibRawApp {
                 developed_thumbnail_pending: None,
                 developed_thumbnail_in_flight: None,
                 developed_thumbnail_receiver: None,
+            },
+            usage: UsageState {
+                app_persisted: Duration::from_millis(performance.app_usage_ms),
+                app_started_at: Instant::now(),
+                raw_accumulated: Duration::ZERO,
+                raw_active_since: None,
             },
             preferences: PreferencesState {
                 image_relative_brush_size: performance.image_relative_brush_size,

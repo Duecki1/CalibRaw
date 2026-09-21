@@ -321,6 +321,12 @@ pub struct PhotoReview {
     pub rating: u8,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct SidecarMetadata {
+    pub review: PhotoReview,
+    pub editing_time_ms: u64,
+}
+
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 struct SidecarDocument {
     format: String,
@@ -328,6 +334,8 @@ struct SidecarDocument {
     edits: EditState,
     #[serde(default)]
     review: PhotoReview,
+    #[serde(default, skip_serializing_if = "is_zero_u64")]
+    editing_time_ms: u64,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     mask_assets: Vec<SidecarMaskAsset>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -336,6 +344,10 @@ struct SidecarDocument {
     remove_assets: Vec<SidecarRemoveAsset>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     remove_asset_refs: Vec<SidecarRemoveAssetRef>,
+}
+
+const fn is_zero_u64(value: &u64) -> bool {
+    *value == 0
 }
 
 #[derive(Deserialize)]
@@ -1014,6 +1026,7 @@ fn restore_remove_assets(
 pub struct LoadedSidecar {
     pub edits: EditState,
     pub review: PhotoReview,
+    pub editing_time_ms: u64,
     pub migrated: bool,
 }
 
@@ -1072,8 +1085,16 @@ pub fn encode(edits: EditState) -> Result<Vec<u8>, SidecarError> {
 }
 
 pub fn encode_with_review(
+    edits: EditState,
+    review: PhotoReview,
+) -> Result<Vec<u8>, SidecarError> {
+    encode_with_review_and_editing_time(edits, review, 0)
+}
+
+pub fn encode_with_review_and_editing_time(
     mut edits: EditState,
     review: PhotoReview,
+    editing_time_ms: u64,
 ) -> Result<Vec<u8>, SidecarError> {
     if review.rating > 5 {
         return Err(SidecarError::Invalid(
@@ -1089,6 +1110,7 @@ pub fn encode_with_review(
         schema_version: SIDECAR_SCHEMA_VERSION,
         edits,
         review,
+        editing_time_ms,
         mask_assets,
         mask_asset_refs,
         remove_assets,
@@ -1163,6 +1185,7 @@ pub fn decode(bytes: &[u8]) -> Result<LoadedSidecar, SidecarError> {
             rating: document.review.rating.min(5),
             ..document.review
         },
+        editing_time_ms: document.editing_time_ms,
         migrated,
     })
 }
@@ -1185,58 +1208,110 @@ pub fn save_desktop(raw_path: &Path, edits: EditState) -> Result<PathBuf, Sideca
         .lock()
         .unwrap_or_else(|error| error.into_inner());
     let path = sidecar_path_for_raw(raw_path);
-    let review = load_photo_review(raw_path)?;
-    let bytes = encode_with_review(edits, review)?;
+    let metadata = load_sidecar_metadata(raw_path)?;
+    let bytes = encode_with_review_and_editing_time(
+        edits,
+        metadata.review,
+        metadata.editing_time_ms,
+    )?;
+    atomic_write(&path, &bytes)?;
+    Ok(path)
+}
+
+pub fn save_desktop_with_editing_time(
+    raw_path: &Path,
+    edits: EditState,
+    editing_time_ms: u64,
+) -> Result<PathBuf, SidecarError> {
+    let _guard = SIDECAR_SAVE_LOCK
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    let path = sidecar_path_for_raw(raw_path);
+    let review = load_sidecar_metadata(raw_path)?.review;
+    let bytes = encode_with_review_and_editing_time(edits, review, editing_time_ms)?;
     atomic_write(&path, &bytes)?;
     Ok(path)
 }
 
 #[cfg(not(target_os = "android"))]
 pub fn reset_desktop_adjustments(raw_path: &Path) -> Result<bool, String> {
-    let review = load_photo_review(raw_path).map_err(|error| error.to_string())?;
-    if review == PhotoReview::default() {
+    reset_desktop_adjustments_impl(raw_path, None)
+}
+
+#[cfg(not(target_os = "android"))]
+pub fn reset_desktop_adjustments_with_editing_time(
+    raw_path: &Path,
+    editing_time_ms: u64,
+) -> Result<bool, String> {
+    reset_desktop_adjustments_impl(raw_path, Some(editing_time_ms))
+}
+
+#[cfg(not(target_os = "android"))]
+fn reset_desktop_adjustments_impl(
+    raw_path: &Path,
+    editing_time_override_ms: Option<u64>,
+) -> Result<bool, String> {
+    let metadata = load_sidecar_metadata(raw_path).map_err(|error| error.to_string())?;
+    let review = metadata.review;
+    let editing_time_ms = editing_time_override_ms.unwrap_or(metadata.editing_time_ms);
+    if review == PhotoReview::default() && editing_time_ms == 0 {
         return remove_desktop_edits(raw_path);
     }
-    save_desktop(raw_path, default_edit_state()).map_err(|error| error.to_string())?;
+    save_desktop_with_editing_time(raw_path, default_edit_state(), editing_time_ms)
+        .map_err(|error| error.to_string())?;
     invalidate_developed_thumbnail_cache(raw_path)?;
     Ok(true)
 }
 
-/// Read review metadata without decoding embedded masks or development state.
-pub fn decode_photo_review(bytes: &[u8]) -> Result<PhotoReview, SidecarError> {
+/// Read review/timer metadata without decoding embedded masks or development state.
+pub fn decode_sidecar_metadata(bytes: &[u8]) -> Result<SidecarMetadata, SidecarError> {
     if bytes.len() as u64 > MAX_SIDECAR_BYTES {
         return Err(SidecarError::TooLarge(bytes.len() as u64));
     }
     #[derive(Deserialize)]
-    struct ReviewHeader {
+    struct MetadataHeader {
         format: String,
         schema_version: u32,
         #[serde(default)]
         review: PhotoReview,
+        #[serde(default)]
+        editing_time_ms: u64,
     }
-    let header: ReviewHeader =
+    let header: MetadataHeader =
         serde_json::from_slice(bytes).map_err(|error| SidecarError::Invalid(error.to_string()))?;
     if header.format != SIDECAR_FORMAT || header.schema_version != SIDECAR_SCHEMA_VERSION {
         return Err(SidecarError::Unsupported(
             "unsupported review sidecar".to_owned(),
         ));
     }
-    Ok(PhotoReview {
-        rating: header.review.rating.min(5),
-        ..header.review
+    Ok(SidecarMetadata {
+        review: PhotoReview {
+            rating: header.review.rating.min(5),
+            ..header.review
+        },
+        editing_time_ms: header.editing_time_ms,
     })
+}
+
+pub fn decode_photo_review(bytes: &[u8]) -> Result<PhotoReview, SidecarError> {
+    decode_sidecar_metadata(bytes).map(|metadata| metadata.review)
+}
+
+/// Read review/timer metadata from a desktop sidecar, returning defaults when absent.
+pub fn load_sidecar_metadata(raw_path: &Path) -> Result<SidecarMetadata, SidecarError> {
+    let bytes = match read_bounded(&sidecar_path_for_raw(raw_path)) {
+        Ok(bytes) => bytes,
+        Err(SidecarError::Io(error)) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(SidecarMetadata::default())
+        }
+        Err(error) => return Err(error),
+    };
+    decode_sidecar_metadata(&bytes)
 }
 
 /// Read review metadata without decoding embedded masks or development state.
 pub fn load_photo_review(raw_path: &Path) -> Result<PhotoReview, SidecarError> {
-    let bytes = match read_bounded(&sidecar_path_for_raw(raw_path)) {
-        Ok(bytes) => bytes,
-        Err(SidecarError::Io(error)) if error.kind() == std::io::ErrorKind::NotFound => {
-            return Ok(PhotoReview::default())
-        }
-        Err(error) => return Err(error),
-    };
-    decode_photo_review(&bytes)
+    load_sidecar_metadata(raw_path).map(|metadata| metadata.review)
 }
 
 /// Inspect preview geometry and edit presence without decoding embedded image assets.
@@ -1274,6 +1349,22 @@ pub fn load_photo_preview_info(raw_path: &Path) -> Result<(GeometryTransform, bo
 }
 
 pub fn save_photo_review(raw_path: &Path, review: PhotoReview) -> Result<(), SidecarError> {
+    save_photo_review_impl(raw_path, review, None)
+}
+
+pub fn save_photo_review_with_editing_time(
+    raw_path: &Path,
+    review: PhotoReview,
+    editing_time_ms: u64,
+) -> Result<(), SidecarError> {
+    save_photo_review_impl(raw_path, review, Some(editing_time_ms))
+}
+
+fn save_photo_review_impl(
+    raw_path: &Path,
+    review: PhotoReview,
+    editing_time_override_ms: Option<u64>,
+) -> Result<(), SidecarError> {
     let _guard = SIDECAR_SAVE_LOCK
         .lock()
         .unwrap_or_else(|error| error.into_inner());
@@ -1283,7 +1374,7 @@ pub fn save_photo_review(raw_path: &Path, review: PhotoReview) -> Result<(), Sid
         ));
     }
     // Validate the existing document before modifying it, preserving all adjustment assets.
-    load_photo_review(raw_path)?;
+    load_sidecar_metadata(raw_path)?;
     let path = sidecar_path_for_raw(raw_path);
     let bytes = match read_bounded(&path) {
         Ok(bytes) => bytes,
@@ -1296,6 +1387,15 @@ pub fn save_photo_review(raw_path: &Path, review: PhotoReview) -> Result<(), Sid
         serde_json::from_slice(&bytes).map_err(|error| SidecarError::Invalid(error.to_string()))?;
     document["review"] =
         serde_json::to_value(review).map_err(|error| SidecarError::Invalid(error.to_string()))?;
+    if let Some(editing_time_ms) = editing_time_override_ms {
+        if editing_time_ms == 0 {
+            if let Some(object) = document.as_object_mut() {
+                object.remove("editing_time_ms");
+            }
+        } else {
+            document["editing_time_ms"] = editing_time_ms.into();
+        }
+    }
     let bytes =
         serde_json::to_vec(&document).map_err(|error| SidecarError::Invalid(error.to_string()))?;
     if bytes.len() as u64 > MAX_SIDECAR_BYTES {
@@ -1316,6 +1416,27 @@ pub fn read_bounded(path: &Path) -> Result<Vec<u8>, SidecarError> {
         return Err(SidecarError::TooLarge(bytes.len() as u64));
     }
     Ok(bytes)
+}
+
+/// Fingerprint only sidecar content that can affect rendered pixels.
+/// Review metadata and accumulated editing time intentionally do not invalidate thumbnails.
+pub fn render_fingerprint(bytes: &[u8]) -> Result<u64, String> {
+    let canonical = if let Ok(mut document) = serde_json::from_slice::<serde_json::Value>(bytes) {
+        if let Some(object) = document.as_object_mut() {
+            object.remove("review");
+            object.remove("editing_time_ms");
+        }
+        serde_json::to_vec(&document)
+            .map_err(|error| format!("could not fingerprint edit sidecar: {error}"))?
+    } else {
+        bytes.to_vec()
+    };
+    let mut fingerprint = 0xcbf2_9ce4_8422_2325u64;
+    for byte in canonical {
+        fingerprint ^= u64::from(byte);
+        fingerprint = fingerprint.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    Ok(fingerprint)
 }
 
 #[cfg(target_os = "android")]

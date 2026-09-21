@@ -34,14 +34,18 @@ pub(super) fn reset_asset_adjustments(
     asset: &LibraryAsset,
 ) -> Result<bool, String> {
     #[cfg(not(target_os = "android"))]
-    let _ = app;
-
-    #[cfg(not(target_os = "android"))]
     {
         let path = asset
             .desktop_path()
             .ok_or_else(|| "Library asset is not available from desktop storage".to_owned())?;
-        crate::sidecar::reset_desktop_adjustments(path)
+        if app.develop.current_path.as_deref() == Some(path) {
+            crate::sidecar::reset_desktop_adjustments_with_editing_time(
+                path,
+                app.raw_editing_time_ms(),
+            )
+        } else {
+            crate::sidecar::reset_desktop_adjustments(path)
+        }
     }
     #[cfg(target_os = "android")]
     {
