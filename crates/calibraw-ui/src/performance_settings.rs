@@ -496,6 +496,38 @@ mod tests {
     }
 
     #[test]
+    fn github_permission_choice_survives_disk_round_trip() {
+        let path = std::env::temp_dir().join(format!(
+            "calibraw-version-consent-{}-{:?}.json",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_file(&path);
+
+        let allowed = PerformanceSettings {
+            auto_check_updates: true,
+            github_update_check_allowed: Some(true),
+            ..Default::default()
+        };
+        save(Some(&path), allowed).expect("allowed GitHub preference should save");
+        let restored = load(Some(&path));
+        assert_eq!(restored.github_update_check_allowed, Some(true));
+        assert!(restored.auto_check_updates);
+
+        let denied = PerformanceSettings {
+            auto_check_updates: true,
+            github_update_check_allowed: Some(false),
+            ..restored
+        };
+        save(Some(&path), denied).expect("denied GitHub preference should save");
+        let restored = load(Some(&path));
+        assert_eq!(restored.github_update_check_allowed, Some(false));
+        assert!(!restored.auto_check_updates);
+
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
     fn omitted_settings_fields_use_current_defaults() {
         let settings: PerformanceSettings =
             serde_json::from_str(r#"{"version":1,"raw_cache_files":1,"thumbnail_workers":1}"#)

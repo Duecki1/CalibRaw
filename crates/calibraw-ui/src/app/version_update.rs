@@ -232,6 +232,18 @@ impl CalibRawApp {
         self.ui.version_check.consent_dialog = Some(VersionCheckConsentRequest::Settings);
     }
 
+    fn persist_version_check_preferences(&mut self) -> bool {
+        if self.persist_performance_settings() {
+            true
+        } else {
+            self.ui.notice = Some(
+                "Could not save the GitHub version-check preference. The choice will only apply until CalibRaw closes."
+                    .to_owned(),
+            );
+            false
+        }
+    }
+
     pub(crate) fn revoke_version_check_permission(&mut self) {
         self.preferences.github_update_check_allowed = Some(false);
         self.preferences.auto_check_updates = false;
@@ -239,7 +251,7 @@ impl CalibRawApp {
         self.ui.version_check.consent_dialog = None;
         self.ui.version_check.dialog = None;
         self.ui.version_check.status = VersionCheckStatus::NotChecked;
-        self.persist_performance_settings();
+        self.persist_version_check_preferences();
     }
 
     pub(crate) fn version_check_in_progress(&self) -> bool {
@@ -472,7 +484,7 @@ impl CalibRawApp {
                 self.ui.version_check.consent_dialog = None;
                 if request == VersionCheckConsentRequest::Startup {
                     self.preferences.auto_check_updates = false;
-                    self.persist_performance_settings();
+                    self.persist_version_check_preferences();
                 }
             }
             Some(ConsentAction::Deny) => {
@@ -482,7 +494,7 @@ impl CalibRawApp {
                 self.ui.version_check.consent_dialog = None;
                 self.ui.version_check.dialog = None;
                 self.ui.version_check.status = VersionCheckStatus::NotChecked;
-                self.persist_performance_settings();
+                self.persist_version_check_preferences();
             }
             Some(ConsentAction::Allow) => {
                 self.preferences.github_update_check_allowed = Some(true);
@@ -494,7 +506,7 @@ impl CalibRawApp {
                     self.preferences.auto_check_updates = true;
                 }
                 self.ui.version_check.consent_dialog = None;
-                self.persist_performance_settings();
+                self.persist_version_check_preferences();
                 if request != VersionCheckConsentRequest::Settings {
                     self.start_version_check(request == VersionCheckConsentRequest::Manual);
                 }
