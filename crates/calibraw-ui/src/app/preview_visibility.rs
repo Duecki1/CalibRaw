@@ -7,6 +7,7 @@ use std::collections::HashSet;
 pub(crate) struct PreviewVisibility {
     hidden: HashSet<(Option<usize>, &'static str)>,
     scope: Option<usize>,
+    force_mask_overlay: bool,
     pending: bool,
     source_changed: bool,
     rebuild_required: bool,
@@ -35,6 +36,15 @@ impl PreviewVisibility {
     }
     pub(crate) fn current_scope(ctx: &egui::Context) -> Option<usize> {
         Self::read(ctx).scope
+    }
+    pub(crate) fn mask_overlay_forced(ctx: &egui::Context) -> bool {
+        Self::read(ctx).force_mask_overlay
+    }
+    pub(crate) fn toggle_mask_overlay(ctx: &egui::Context) {
+        let mut state = Self::read(ctx);
+        state.force_mask_overlay = !state.force_mask_overlay;
+        state.write(ctx);
+        ctx.request_repaint();
     }
     pub(crate) fn visible(ctx: &egui::Context, title: &'static str) -> bool {
         let state = Self::read(ctx);
@@ -344,6 +354,19 @@ mod tests {
             PreviewVisibility::read(&ctx).exposure(saved.exposure),
             saved.exposure
         );
+    }
+
+    #[test]
+    fn forced_mask_overlay_is_session_only_and_defaults_off() {
+        let ctx = egui::Context::default();
+        assert!(!PreviewVisibility::mask_overlay_forced(&ctx));
+        PreviewVisibility::toggle_mask_overlay(&ctx);
+        assert!(PreviewVisibility::mask_overlay_forced(&ctx));
+        PreviewVisibility::toggle_mask_overlay(&ctx);
+        assert!(!PreviewVisibility::mask_overlay_forced(&ctx));
+        PreviewVisibility::toggle_mask_overlay(&ctx);
+        PreviewVisibility::clear(&ctx);
+        assert!(!PreviewVisibility::mask_overlay_forced(&ctx));
     }
 
     #[test]
