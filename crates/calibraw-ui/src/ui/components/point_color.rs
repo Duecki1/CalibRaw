@@ -157,15 +157,24 @@ pub(crate) fn point_color(
             SliderGradient::Luminance(accent));
         adjustment_slider_with_reset(ui, "Range", &mut point.range, 0.0..=100.0, 0, 1.0,
             Some("Widen or narrow all three selection ranges together."), 50.0);
+        let mut feather = point_color_feather(point);
+        if adjustment_slider_with_reset(ui, "Feather", &mut feather, 0.0..=100.0, 0, 1.0,
+            Some("Control how gradually the selection fades at its edges. This keeps the outer range fixed and moves the inner full-strength boundaries for hue, saturation, and luminance together."), 50.0) {
+            set_point_color_feather(point, feather);
+        }
         egui::CollapsingHeader::new("Refine range").show(ui, |ui| {
-            ui.weak("Outer handles control falloff; inner handles select fully affected colors.");
+            ui.weak("Outer handles set the selection limits; inner handles set where the feather reaches full strength.");
             let sample = point.sample_hsl;
             range_editor(ui, "Hue range", &mut point.hue_range, sample, 0);
             range_editor(ui, "Saturation range", &mut point.saturation_range, sample, 1);
             range_editor(ui, "Luminance range", &mut point.luminance_range, sample, 2);
         });
-        ui.checkbox(&mut state.visualize_range, "Visualize range")
-            .on_hover_text("Keep the selected range in color and show other colors in gray. This preview is never exported.");
+        if theme::toggle_button(ui, "Visualize range", state.visualize_range)
+            .on_hover_text("Show the selected range with the same blue translucent overlay used for masks. Feathered pixels use a softer overlay. This preview is never exported.")
+            .clicked()
+        {
+            state.visualize_range = !state.visualize_range;
+        }
     });
     before != *colors
 }
@@ -299,6 +308,38 @@ fn point_picker(ui: &mut Ui, point: &mut PointColor) {
         .line_segment(line, Stroke::new(2.0, Color32::WHITE));
 }
 
+fn range_feather(range: PointColorRange) -> f32 {
+    let width = range.max - range.min;
+    if !width.is_finite() || width <= f32::EPSILON {
+        return 0.0;
+    }
+    (((range.inner_min - range.min) + (range.max - range.inner_max)) / width).clamp(0.0, 1.0)
+}
+
+fn point_color_feather(point: &PointColor) -> f32 {
+    let feather = range_feather(point.hue_range)
+        + range_feather(point.saturation_range)
+        + range_feather(point.luminance_range);
+    feather / 3.0 * 100.0
+}
+
+fn set_range_feather(range: &mut PointColorRange, feather: f32) {
+    let amount = (feather / 100.0).clamp(0.0, 1.0);
+    let center = if range.min <= 0.0 && range.max >= 0.0 {
+        0.0
+    } else {
+        (range.min + range.max) * 0.5
+    };
+    range.inner_min = egui::lerp(range.min..=center, amount);
+    range.inner_max = egui::lerp(range.max..=center, amount);
+}
+
+fn set_point_color_feather(point: &mut PointColor, feather: f32) {
+    set_range_feather(&mut point.hue_range, feather);
+    set_range_feather(&mut point.saturation_range, feather);
+    set_range_feather(&mut point.luminance_range, feather);
+}
+
 fn set_range_handle(range: &mut PointColorRange, index: usize, value: f32, limit: f32) {
     let mut values = [range.min, range.inner_min, range.inner_max, range.max];
     let low = if index == 0 {
@@ -396,6 +437,44 @@ mod tests {
                 assert!(range.max <= 0.5);
             }
         }
+    }
+
+    #[test]
+    fn simple_feather_defaults_to_fifty_percent() {
+        let point = PointColor::from_srgb([0.8, 0.3, 0.2]);
+        assert!((point_color_feather(&point) - 50.0).abs() < 1e-5);
+    }
+
+    #[test]
+    fn simple_feather_preserves_outer_bounds_and_moves_all_inner_handles() {
+        let mut point = PointColor::from_srgb([0.8, 0.3, 0.2]);
+        let hue_outer = (point.hue_range.min, point.hue_range.max);
+        let saturation_outer = (point.saturation_range.min, point.saturation_range.max);
+        let luminance_outer = (point.luminance_range.min, point.luminance_range.max);
+
+        set_point_color_feather(&mut point, 0.0);
+        assert_eq!((point.hue_range.min, point.hue_range.max), hue_outer);
+        assert_eq!((point.saturation_range.min, point.saturation_range.max), saturation_outer);
+        assert_eq!((point.luminance_range.min, point.luminance_range.max), luminance_outer);
+        assert_eq!(point.hue_range.inner_min, point.hue_range.min);
+        assert_eq!(point.hue_range.inner_max, point.hue_range.max);
+        assert_eq!(point.saturation_range.inner_min, point.saturation_range.min);
+        assert_eq!(point.saturation_range.inner_max, point.saturation_range.max);
+        assert_eq!(point.luminance_range.inner_min, point.luminance_range.min);
+        assert_eq!(point.luminance_range.inner_max, point.luminance_range.max);
+        assert!((point_color_feather(&point) - 0.0).abs() < 1e-5);
+
+        set_point_color_feather(&mut point, 100.0);
+        assert_eq!((point.hue_range.min, point.hue_range.max), hue_outer);
+        assert_eq!((point.saturation_range.min, point.saturation_range.max), saturation_outer);
+        assert_eq!((point.luminance_range.min, point.luminance_range.max), luminance_outer);
+        assert_eq!(point.hue_range.inner_min, 0.0);
+        assert_eq!(point.hue_range.inner_max, 0.0);
+        assert_eq!(point.saturation_range.inner_min, 0.0);
+        assert_eq!(point.saturation_range.inner_max, 0.0);
+        assert_eq!(point.luminance_range.inner_min, 0.0);
+        assert_eq!(point.luminance_range.inner_max, 0.0);
+        assert!((point_color_feather(&point) - 100.0).abs() < 1e-5);
     }
 
     #[test]

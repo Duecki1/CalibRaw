@@ -16,10 +16,23 @@ use crate::pipeline::{
 #[test]
 fn point_color_shader_uses_display_srgb_hsl_and_combined_unadjusted_selection() {
     assert!(SHADER_VIEW_TRANSFORM.contains("fn apply_point_colors(input_rgb: vec3<f32>)"));
+    assert!(SHADER_VIEW_TRANSFORM.contains("fn point_color_selection_weight(sample: vec3<f32>, index: u32)"));
     assert!(SHADER_VIEW_TRANSFORM.contains("point_color_hue_weight"));
     assert!(SHADER_VIEW_TRANSFORM.contains("point_color_hsl_to_rgb"));
     assert!(SHADER_VIEW_TRANSFORM.contains("display_linear = apply_point_colors(display_linear)"));
     assert!(SHADER_VIEW_TRANSFORM.contains("hue_shift = hue_shift + point.shifts.x * weight"));
+}
+
+#[test]
+fn point_color_visualization_matches_the_mask_overlay_style() {
+    assert!(SHADER_VIEW_TRANSFORM.contains(
+        "let overlay_rgb = vec3<f32>(78.0 / 255.0, 163.0 / 255.0, 1.0);"
+    ));
+    assert!(SHADER_VIEW_TRANSFORM
+        .contains("let overlay_alpha = selected_weight * (92.0 / 255.0);"));
+    assert!(SHADER_VIEW_TRANSFORM.contains("output_rgb = mix(output_rgb, overlay_rgb, overlay_alpha);"));
+    assert!(!SHADER_VIEW_TRANSFORM
+        .contains("adjusted = mix(vec3<f32>(luminance), adjusted, selected_weight);"));
 }
 
 fn validate_shader(name: &str, source: &str, quality: ProcessingQuality) {

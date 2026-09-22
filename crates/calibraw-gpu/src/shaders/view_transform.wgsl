@@ -454,6 +454,17 @@ fn point_color_hsl_to_rgb(hsl: vec3<f32>) -> vec3<f32> {
     return Common::SRGB_TO_REC2020 * mix(lo, hi, cutoff);
 }
 
+fn point_color_selection_weight(sample: vec3<f32>, index: u32) -> f32 {
+    let count = min(Common::scene_tone_uniforms.point_color_meta.x, 8u);
+    if index >= count { return 0.0; }
+    let point = Common::scene_tone_uniforms.point_colors[index];
+    let range_scale = 0.2 + 1.6 * clamp(point.sample_range.w, 0.0, 100.0) / 100.0;
+    let hue_weight = point_color_hue_weight(sample.x - point.sample_range.x, point.hue_range, range_scale);
+    let saturation_weight = point_color_range_weight((sample.y - point.sample_range.y) / range_scale, point.saturation_range);
+    let luminance_weight = point_color_range_weight((sample.z - point.sample_range.z) / range_scale, point.luminance_range);
+    return hue_weight * saturation_weight * luminance_weight;
+}
+
 fn apply_point_colors(input_rgb: vec3<f32>) -> vec3<f32> {
     let count = min(Common::scene_tone_uniforms.point_color_meta.x, 8u);
     if count == 0u { return input_rgb; }
@@ -461,38 +472,24 @@ fn apply_point_colors(input_rgb: vec3<f32>) -> vec3<f32> {
     var hue_shift = 0.0;
     var saturation_shift = 0.0;
     var luminance_shift = 0.0;
-    var selected_weight = 0.0;
     for (var index = 0u; index < count; index = index + 1u) {
         let point = Common::scene_tone_uniforms.point_colors[index];
-        let range_scale = 0.2 + 1.6 * clamp(point.sample_range.w, 0.0, 100.0) / 100.0;
-        let hue_weight = point_color_hue_weight(sample.x - point.sample_range.x, point.hue_range, range_scale);
-        let saturation_weight = point_color_range_weight((sample.y - point.sample_range.y) / range_scale, point.saturation_range);
-        let luminance_weight = point_color_range_weight((sample.z - point.sample_range.z) / range_scale, point.luminance_range);
-        let weight = hue_weight * saturation_weight * luminance_weight;
-        if (Common::scene_tone_uniforms.point_color_meta.y == index + 1u) {
-            selected_weight = weight;
-        }
+        let weight = point_color_selection_weight(sample, index);
         hue_shift = hue_shift + point.shifts.x * weight;
         saturation_shift = saturation_shift + point.shifts.y * weight;
         luminance_shift = luminance_shift + point.shifts.z * weight;
     }
-    if max(abs(hue_shift), max(abs(saturation_shift), abs(luminance_shift))) < 1e-7
-        && Common::scene_tone_uniforms.point_color_meta.y == 0u {
+    if max(abs(hue_shift), max(abs(saturation_shift), abs(luminance_shift))) < 1e-7 {
         return input_rgb;
     }
     // Preserve out-of-sRGB information instead of clipping unrelated wide-gamut
     // colors merely because another point color is being edited.
     let residual = input_rgb - point_color_hsl_to_rgb(sample);
-    var adjusted = residual + point_color_hsl_to_rgb(vec3<f32>(
+    return residual + point_color_hsl_to_rgb(vec3<f32>(
         sample.x + hue_shift,
         sample.y + saturation_shift,
         sample.z + luminance_shift,
     ));
-    if (Common::scene_tone_uniforms.point_color_meta.y > 0u) {
-        let luminance = dot(adjusted, vec3<f32>(0.2627, 0.6780, 0.0593));
-        adjusted = mix(vec3<f32>(luminance), adjusted, selected_weight);
-    }
-    return adjusted;
 }
 
 fn apply_local_color_mixer(pos: vec2<i32>, input_rgb: vec3<f32>) -> vec3<f32> {
@@ -575,8 +572,23 @@ fn apply_view_node(@builtin(global_invocation_id) gid: vec3<u32>) {
         textureStore(SceneAdjustments::display_linear_out, pos, vec4<f32>(display_linear, 1.0));
         return;
     }
+    // Point Color selection is evaluated before its own adjustments so changing a
+    // selected color cannot move pixels in or out of the visualization.
+    let point_color_sample = point_color_hsl(display_linear);
     display_linear = apply_point_colors(display_linear);
     display_linear = CreativeEffects::apply_vignette(pos, display_linear);
     textureStore(SceneAdjustments::display_linear_out, pos, vec4<f32>(display_linear, 1.0));
-    textureStore(SceneAdjustments::out_tex, pos, vec4<f32>(Profile::apply_output_lut(display_linear), 1.0));
+
+    var output_rgb = Profile::apply_output_lut(display_linear);
+    let visualize_index = Common::scene_tone_uniforms.point_color_meta.y;
+    if visualize_index > 0u {
+        let selected_weight = point_color_selection_weight(point_color_sample, visualize_index - 1u);
+        // Match the mask overlay: theme::MASK_ADD = sRGB(78, 163, 255) with
+        // coverage alpha scaled to 92/255. Applying this after the output LUT
+        // keeps the preview image intact and uses selection weight as coverage.
+        let overlay_rgb = vec3<f32>(78.0 / 255.0, 163.0 / 255.0, 1.0);
+        let overlay_alpha = selected_weight * (92.0 / 255.0);
+        output_rgb = mix(output_rgb, overlay_rgb, overlay_alpha);
+    }
+    textureStore(SceneAdjustments::out_tex, pos, vec4<f32>(output_rgb, 1.0));
 }
