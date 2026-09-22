@@ -421,9 +421,9 @@ pub(super) fn read_float_texture_pixel_blocking(
         }
     };
     let mut rgb = [0.0; 3];
-    for channel in 0..3 {
+    for (channel, value) in rgb.iter_mut().enumerate() {
         let offset = channel * (bytes_per_pixel as usize / 4);
-        rgb[channel] = if bytes_per_pixel == 8 {
+        *value = if bytes_per_pixel == 8 {
             let bytes = <[u8; 2]>::try_from(&pixel[offset..offset + 2])
                 .map_err(|_| anyhow!("GPU RGBA16F channel has an invalid width"))?;
             half::f16::from_bits(u16::from_le_bytes(bytes)).to_f32()
