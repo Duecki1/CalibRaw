@@ -790,6 +790,13 @@ impl Sidebar {
             lens_changed |= Self::show_optics(ui, app, true);
         }
 
+        if (layout != ScreenLayout::Vertical
+            || app.develop_ui.adjustment_section == AdjustmentSection::Effects)
+            && Self::show_effect_components(ui, &mut app.masks.stack.global_effects, true)
+        {
+            app.mark_mask_adjustments_dirty();
+        }
+
         if !white_balance_was_active && app.develop_ui.white_balance_picker_active {
             app.develop_ui.point_color.picker_active = false;
         }

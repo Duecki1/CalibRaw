@@ -272,7 +272,8 @@ fn mask_effect_packing_preserves_shader_id_activity_and_clamps() {
     mask.effect_settings.blur.amount = 150.0;
     mask.effect_settings.blur.radius = 99.0;
 
-    let packed = pack_effect_mask(&mask).expect("Blur is a GPU-backed mask effect");
+    let packed = pack_effect_mask(mask.effect, &mask.effect_settings, mask.enabled)
+        .expect("Blur is a GPU-backed mask effect");
     assert_eq!(packed.metadata[0], 1);
     assert_eq!(packed.metadata[1], 1);
     assert_eq!(packed.metadata[2], 0);
@@ -283,10 +284,122 @@ fn mask_effect_packing_preserves_shader_id_activity_and_clamps() {
     assert_eq!(packed.adjust_0, [100.0, 16.0, 0.0, 0.0]);
 
     mask.enabled = false;
-    let disabled = pack_effect_mask(&mask).expect("Blur remains representable when disabled");
+    let disabled = pack_effect_mask(mask.effect, &mask.effect_settings, mask.enabled)
+        .expect("Blur remains representable when disabled");
     assert_eq!(disabled.metadata[0], 0);
     assert_eq!(disabled.metadata[1], 0);
     assert_eq!(disabled.adjust_0, packed.adjust_0);
+}
+
+#[test]
+fn effect_components_share_mask_layer_and_global_effects_cover_image() {
+    assert!(super::SHADER_COMMON.contains(&format!(
+        "const MAX_RENDER_MASK_SLOTS: u32 = {}u;",
+        super::MAX_RENDER_MASK_SLOTS
+    )));
+    let mut mask = LocalMask::new(MaskKind::Fullscreen, 1);
+    mask.adjustments.exposure = 0.5;
+    let mut blur = crate::pipeline::EffectComponent::new(MaskEffect::Blur);
+    blur.settings.blur.amount = 60.0;
+    let mut glow = crate::pipeline::EffectComponent::new(MaskEffect::Glow);
+    glow.settings.glow.amount = 40.0;
+    mask.effect_components = vec![blur, glow];
+
+    let mut global = crate::pipeline::EffectComponent::new(MaskEffect::Pixelate);
+    global.settings.pixelate.amount = 25.0;
+    let masks = MaskStack {
+        masks: vec![mask],
+        global_effects: vec![global],
+        ..Default::default()
+    };
+    let packed = super::pack_mask_params(&masks);
+    assert_eq!(super::render_mask_slot_count(&masks), 4);
+    assert_eq!(packed[0].point_color_meta[2], 0);
+    assert_eq!(packed[1].point_color_meta[2], 0);
+    assert_eq!(packed[2].point_color_meta[2], 0);
+    assert_eq!(packed[3].point_color_meta[2], u32::MAX);
+    assert_eq!(
+        packed[1].metadata[3] >> super::MASK_EFFECT_ID_SHIFT,
+        MaskEffect::Blur.shader_id()
+    );
+    assert_eq!(
+        packed[2].metadata[3] >> super::MASK_EFFECT_ID_SHIFT,
+        MaskEffect::Glow.shader_id()
+    );
+    assert_eq!(
+        packed[3].metadata[3] >> super::MASK_EFFECT_ID_SHIFT,
+        MaskEffect::Pixelate.shader_id()
+    );
+}
+
+#[test]
+fn global_and_fullscreen_mask_effects_render_the_same_pixels() -> anyhow::Result<()> {
+    let Some((device, queue)) = request_test_device() else {
+        return Ok(());
+    };
+    const EDGE: u32 = 32;
+    let pixels = (0..EDGE * EDGE)
+        .flat_map(|index| {
+            let value = if (index % EDGE / 4 + index / EDGE / 4) % 2 == 0 {
+                0.1
+            } else {
+                0.8
+            };
+            [value; 3]
+        })
+        .collect();
+    let source = LoadedRaw::from_scene_linear_rec2020(EDGE, EDGE, pixels)?;
+    let exposure = ExposureParams {
+        sharpen_amount: 0.0,
+        ..Default::default()
+    };
+    let mut component = crate::pipeline::EffectComponent::new(MaskEffect::Pixelate);
+    component.settings.pixelate.amount = 100.0;
+    component.settings.pixelate.block_size = 16.0;
+    let mut mask = LocalMask::new(MaskKind::Fullscreen, 1);
+    mask.effect_components.push(component.clone());
+    let local = MaskStack {
+        masks: vec![mask],
+        ..Default::default()
+    };
+    let global = MaskStack {
+        global_effects: vec![component],
+        ..Default::default()
+    };
+    let pipeline = RawGpuPipeline::new_headless_with_quality_and_mask_edge(
+        &device,
+        &queue,
+        &source,
+        &GpuParams::new(&exposure, &local, &source),
+        ProcessingQuality::Preview,
+        64,
+    )?;
+    pipeline.update_mask_layer(&queue, 0, &vec![half::f16::ONE.to_bits(); 64 * 64])?;
+    let render = |masks: &MaskStack| -> anyhow::Result<Vec<u8>> {
+        pipeline.recompute(&queue, &device, &GpuParams::new(&exposure, masks, &source));
+        pipeline.read_output_region_blocking(&device, &queue, 0, 0, EDGE, EDGE)
+    };
+    let baseline = render(&MaskStack::default())?;
+    let local_output = render(&local)?;
+    let global_output = render(&global)?;
+    assert!(local_output != baseline, "Pixelate did not alter the image");
+    assert!(
+        local_output == global_output,
+        "Local and global effects differ"
+    );
+    let mut combined = local.clone();
+    let mut fog = crate::pipeline::EffectComponent::new(MaskEffect::Fog);
+    fog.settings.fog.amount = 80.0;
+    fog.settings.fog.density = 80.0;
+    combined.masks[0].effect_components.push(fog);
+    let stacked_output = render(&combined)?;
+    assert!(stacked_output != local_output, "Second effect did not combine");
+    combined.masks[0].adjustments.exposure = 1.0;
+    assert!(
+        render(&combined)? != stacked_output,
+        "Local adjustment did not combine with the effect"
+    );
+    Ok(())
 }
 
 fn tone_percentile_exposure_follow_from_shader() -> f32 {

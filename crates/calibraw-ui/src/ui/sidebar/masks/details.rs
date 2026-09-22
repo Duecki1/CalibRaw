@@ -1,13 +1,5 @@
 use super::*;
 
-fn mask_effect_picker_visible(
-    orientation: MaskStripOrientation,
-    vertical_section: Option<MaskSection>,
-) -> bool {
-    orientation == MaskStripOrientation::Horizontal
-        || vertical_section == Some(MaskSection::Properties)
-}
-
 fn mask_creation_menu_button<R>(
     ui: &mut Ui,
     id_salt: impl egui::AsIdSalt,
@@ -271,16 +263,12 @@ impl Sidebar {
             Some(mask_index),
         );
 
-        let vertical_section = (orientation == MaskStripOrientation::Vertical).then(|| {
-            if !app.masks.stack.masks[mask_index].effect.uses_adjustments() {
-                app.develop_ui.mask_section = MaskSection::Properties;
-            }
-            app.develop_ui.mask_section
-        });
+        let vertical_section =
+            (orientation == MaskStripOrientation::Vertical).then_some(app.develop_ui.mask_section);
 
         let mut geometry_changed = false;
         let mut adjustments_changed = false;
-        let mut effect_changed = false;
+        let light_rays_changed;
         let mut edit_header_rect = None;
         let mut request_subject = false;
         let mut request_object = false;
@@ -312,10 +300,14 @@ impl Sidebar {
 
         {
             let mask = &mut app.masks.stack.masks[mask_index];
-            if mask_effect_picker_visible(orientation, vertical_section) {
-                effect_changed |= Self::show_mask_effect_picker(ui, mask);
-                crate::ui::theme::card_gap(ui);
+            let light_rays_before = mask.has_light_rays_effect();
+            if mask.effect != MaskEffect::Adjustment {
+                mask.migrate_legacy_effect();
+                adjustments_changed |= mask.effect == MaskEffect::Adjustment;
             }
+            adjustments_changed |= ui
+                .checkbox(&mut mask.adjustments_enabled, "Local adjustments")
+                .changed();
 
             match orientation {
                 MaskStripOrientation::Horizontal => {
@@ -343,25 +335,25 @@ impl Sidebar {
                     geometry_changed |=
                         Self::apply_mask_properties_action(mask, component_index, action);
 
-                    if mask.effect.uses_adjustments() {
-                        edit_header_rect = Some(
-                            Self::render_mask_edit_header(ui, || {
-                                mask.adjustments.reset();
-                                adjustments_changed = true;
-                            })
-                            .response
-                            .rect,
-                        );
-                        crate::ui::theme::card_gap(ui);
+                    edit_header_rect = Some(
+                        Self::render_mask_edit_header(ui, || {
+                            mask.adjustments.reset();
+                            adjustments_changed = true;
+                        })
+                        .response
+                        .rect,
+                    );
+                    crate::ui::theme::card_gap(ui);
 
-                        for (section, label, default_open) in [
-                            (MaskSection::Light, "Light", true),
-                            (MaskSection::ToneCurve, "Tone Curve", false),
-                            (MaskSection::Color, "Color", false),
-                            (MaskSection::ColorGrading, "Color Grading", false),
-                            (MaskSection::Effects, "Effects", false),
-                            (MaskSection::ColorMixer, "Color Mixer", false),
-                        ] {
+                    for (section, label, default_open) in [
+                        (MaskSection::Light, "Light", true),
+                        (MaskSection::ToneCurve, "Tone Curve", false),
+                        (MaskSection::Color, "Color", false),
+                        (MaskSection::ColorGrading, "Color Grading", false),
+                        (MaskSection::Effects, "Effects", false),
+                        (MaskSection::ColorMixer, "Color Mixer", false),
+                    ] {
+                        ui.add_enabled_ui(mask.adjustments_enabled, |ui| {
                             adjustments_changed |= Self::show_local_adjustment_card(
                                 ui,
                                 &mut mask.adjustments,
@@ -377,9 +369,7 @@ impl Sidebar {
                                     &mut local_point_color_tab,
                                 ),
                             );
-                        }
-                    } else {
-                        adjustments_changed |= Self::show_mask_effect_settings(ui, mask);
+                        });
                     }
                 }
                 MaskStripOrientation::Vertical => {
@@ -393,38 +383,34 @@ impl Sidebar {
                         MaskSection::Effects => "Effects",
                         MaskSection::ColorMixer => "Color Mixer",
                     };
-                    if mask.effect.uses_adjustments() {
-                        match mask_section {
-                            MaskSection::Properties => {
-                                let action =
-                                    Self::mask_properties_card(ui, true, false, true, |ui| {
-                                        geometry_changed |= Self::show_vertical_mask_properties(
-                                            ui,
-                                            mask,
-                                            component_index,
-                                            &mut brush_mode,
-                                            (
-                                                &mut request_subject,
-                                                birefnet_quality,
-                                                birefnet_quality_change_enabled,
-                                            ),
-                                            (
-                                                &mut refinement_active,
-                                                &mut refinement_size,
-                                                &mut refinement_feather,
-                                                &mut refinement_flow,
-                                                &mut clear_refinement,
-                                            ),
-                                            &mut request_object,
-                                        );
-                                    });
-                                geometry_changed |= Self::apply_mask_properties_action(
+                    match mask_section {
+                        MaskSection::Properties => {
+                            let action = Self::mask_properties_card(ui, true, false, true, |ui| {
+                                geometry_changed |= Self::show_vertical_mask_properties(
+                                    ui,
                                     mask,
                                     component_index,
-                                    action,
+                                    &mut brush_mode,
+                                    (
+                                        &mut request_subject,
+                                        birefnet_quality,
+                                        birefnet_quality_change_enabled,
+                                    ),
+                                    (
+                                        &mut refinement_active,
+                                        &mut refinement_size,
+                                        &mut refinement_feather,
+                                        &mut refinement_flow,
+                                        &mut clear_refinement,
+                                    ),
+                                    &mut request_object,
                                 );
-                            }
-                            section => {
+                            });
+                            geometry_changed |=
+                                Self::apply_mask_properties_action(mask, component_index, action);
+                        }
+                        section => {
+                            ui.add_enabled_ui(mask.adjustments_enabled, |ui| {
                                 adjustments_changed |= Self::show_local_adjustment_card(
                                     ui,
                                     &mut mask.adjustments,
@@ -440,41 +426,23 @@ impl Sidebar {
                                         &mut local_point_color_tab,
                                     ),
                                 );
-                            }
+                            });
                         }
-                    } else {
-                        let action = Self::mask_properties_card(ui, true, false, true, |ui| {
-                            geometry_changed |= Self::show_vertical_mask_properties(
-                                ui,
-                                mask,
-                                component_index,
-                                &mut brush_mode,
-                                (
-                                    &mut request_subject,
-                                    birefnet_quality,
-                                    birefnet_quality_change_enabled,
-                                ),
-                                (
-                                    &mut refinement_active,
-                                    &mut refinement_size,
-                                    &mut refinement_feather,
-                                    &mut refinement_flow,
-                                    &mut clear_refinement,
-                                ),
-                                &mut request_object,
-                            );
-                        });
-                        geometry_changed |=
-                            Self::apply_mask_properties_action(mask, component_index, action);
-                        adjustments_changed |= Self::show_mask_effect_settings(ui, mask);
                     }
                 }
             }
+            if orientation == MaskStripOrientation::Horizontal
+                || vertical_section == Some(MaskSection::Properties)
+            {
+                let fullscreen = Self::is_plain_fullscreen_mask(mask);
+                adjustments_changed |=
+                    Self::show_effect_components(ui, &mut mask.effect_components, fullscreen);
+            }
+            light_rays_changed = light_rays_before != mask.has_light_rays_effect();
         }
 
         if crate::ui::theme::is_compact_portrait(ui)
             && vertical_section.is_some_and(|section| section != MaskSection::Properties)
-            && app.masks.stack.masks[mask_index].effect.uses_adjustments()
         {
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if ui
@@ -530,41 +498,12 @@ impl Sidebar {
             app.request_object_mask(mask_index, component_index);
         }
         Self::apply_mask_geometry_change(ui, app, mask_index, geometry_changed);
-        if effect_changed {
-            app.develop_ui.mask_section = MaskSection::Properties;
-            app.develop_ui.mask_point_color.picker_active = false;
-            app.develop_ui.mask_point_color.visualize_range = false;
+        if light_rays_changed {
             app.mark_mask_geometry_dirty(mask_index);
-        }
-        if adjustments_changed || effect_changed {
+        } else if adjustments_changed {
             app.mark_mask_adjustments_dirty();
         }
         crate::app::preview_visibility::PreviewVisibility::set_mask_scope(ui.ctx(), None);
         edit_header_rect
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{mask_effect_picker_visible, MaskSection, MaskStripOrientation};
-
-    #[test]
-    fn portrait_mask_type_only_appears_in_properties() {
-        assert!(mask_effect_picker_visible(
-            MaskStripOrientation::Vertical,
-            Some(MaskSection::Properties),
-        ));
-        assert!(!mask_effect_picker_visible(
-            MaskStripOrientation::Vertical,
-            Some(MaskSection::Light),
-        ));
-        assert!(!mask_effect_picker_visible(
-            MaskStripOrientation::Vertical,
-            Some(MaskSection::Color),
-        ));
-        assert!(mask_effect_picker_visible(
-            MaskStripOrientation::Horizontal,
-            None,
-        ));
     }
 }

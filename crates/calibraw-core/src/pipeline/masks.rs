@@ -15,6 +15,7 @@ pub use effects::{
 };
 
 pub const MAX_LOCAL_MASKS: usize = 32;
+pub const MAX_EFFECT_COMPONENTS: usize = 12;
 pub const MAX_MASK_COMPONENTS: usize = 64;
 pub const MAX_PATH_POINTS: usize = 256;
 pub const MASK_ATLAS_EDGE_DESKTOP: u32 = 2048;
@@ -729,6 +730,10 @@ pub struct LocalMask {
     pub effect: MaskEffect,
     #[serde(default, skip_serializing_if = "MaskEffectSettings::is_default")]
     pub effect_settings: MaskEffectSettings,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub effect_components: Vec<EffectComponent>,
+    #[serde(default = "default_enabled")]
+    pub adjustments_enabled: bool,
     pub opacity: f32,
     pub components: Vec<MaskComponent>,
     pub adjustments: LocalAdjustments,
@@ -754,6 +759,8 @@ impl LocalMask {
             common: MaskCommon::new(format!("Mask {number}")),
             effect: MaskEffect::default(),
             effect_settings: MaskEffectSettings::default(),
+            effect_components: Vec::new(),
+            adjustments_enabled: true,
             opacity: 1.0,
             components: vec![MaskComponent::new(kind, MaskCombineMode::Add)],
             adjustments: LocalAdjustments::default(),
@@ -763,11 +770,99 @@ impl LocalMask {
     pub fn set_opacity(&mut self, opacity: f32) -> bool {
         set_if_changed(&mut self.opacity, opacity)
     }
+
+    pub fn migrate_legacy_effect(&mut self) {
+        if self.effect != MaskEffect::Adjustment {
+            if self.effect_components.len() >= MAX_EFFECT_COMPONENTS {
+                return;
+            }
+            self.effect_components.push(EffectComponent {
+                effect: self.effect,
+                enabled: true,
+                settings: std::mem::take(&mut self.effect_settings),
+            });
+            if !self.adjustments.is_neutral() {
+                self.adjustments_enabled = false;
+            }
+            self.effect = MaskEffect::Adjustment;
+        }
+    }
+
+    pub fn has_active_edit(&self) -> bool {
+        (!self.adjustments.is_neutral()
+            && self.adjustments_enabled
+            && self.effect == MaskEffect::Adjustment)
+            || self
+                .effect_components
+                .iter()
+                .any(EffectComponent::is_active)
+            || (self.effect != MaskEffect::Adjustment
+                && EffectComponent {
+                    effect: self.effect,
+                    enabled: true,
+                    settings: self.effect_settings,
+                }
+                .is_active())
+    }
+
+    pub fn has_light_rays_effect(&self) -> bool {
+        self.effect == MaskEffect::LightRays
+            || self
+                .effect_components
+                .iter()
+                .any(|component| component.enabled && component.effect == MaskEffect::LightRays)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, serde::Deserialize, serde::Serialize)]
+pub struct EffectComponent {
+    pub effect: MaskEffect,
+    #[serde(default = "default_enabled")]
+    pub enabled: bool,
+    #[serde(default, skip_serializing_if = "MaskEffectSettings::is_default")]
+    pub settings: MaskEffectSettings,
+}
+
+const fn default_enabled() -> bool {
+    true
+}
+
+impl EffectComponent {
+    pub fn new(effect: MaskEffect) -> Self {
+        Self {
+            effect,
+            enabled: true,
+            settings: MaskEffectSettings::default(),
+        }
+    }
+
+    pub fn is_active(&self) -> bool {
+        if !self.enabled {
+            return false;
+        }
+        match self.effect {
+            MaskEffect::Adjustment => false,
+            MaskEffect::Blur => self.settings.blur.is_active(),
+            MaskEffect::LensBlur => self.settings.lens_blur.is_active(),
+            MaskEffect::MotionBlur => self.settings.motion_blur.is_active(),
+            MaskEffect::RadialBlur => self.settings.radial_blur.is_active(),
+            MaskEffect::TiltShift => self.settings.tilt_shift.is_active(),
+            MaskEffect::Glow => self.settings.glow.is_active(),
+            MaskEffect::LightRays => self.settings.light_rays.is_active(),
+            MaskEffect::Neon => self.settings.neon.is_active(),
+            MaskEffect::EdgeGlow => self.settings.edge_glow.is_active(),
+            MaskEffect::Pixelate => self.settings.pixelate.is_active(),
+            MaskEffect::Fog => self.settings.fog.is_active(),
+            MaskEffect::Smoke => self.settings.smoke.is_active(),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq, serde::Deserialize, serde::Serialize)]
 pub struct MaskStack {
     pub masks: Vec<LocalMask>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub global_effects: Vec<EffectComponent>,
     pub selected_mask: Option<usize>,
     pub selected_component: Option<usize>,
     #[serde(skip, default)]

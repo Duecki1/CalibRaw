@@ -125,128 +125,117 @@ impl Sidebar {
         true
     }
 
-    pub(super) fn show_mask_effect_picker(ui: &mut Ui, mask: &mut LocalMask) -> bool {
-        let before = mask.effect;
-        let enabled_before = mask.enabled;
-        let effect = &mut mask.effect;
-        let action =
-            Self::adjustment_card_without_visibility(ui, "Mask type", true, false, true, |ui| {
-                ui.add_space(crate::ui::theme::SPACE_XS);
-                crate::ui::theme::responsive_combo_box(
-                    ui,
-                    "mask-effect-picker",
-                    effect.label(),
-                    ui.available_width().max(1.0),
-                    1 + MaskEffectCategory::ALL.len(),
-                    |ui| {
-                        ui.set_min_width(190.0);
-                        if ui
-                            .selectable_label(*effect == MaskEffect::Adjustment, "Adjustment")
-                            .on_hover_text(
-                                "Use the mask with the existing local adjustment controls.",
-                            )
-                            .clicked()
-                        {
-                            *effect = MaskEffect::Adjustment;
-                            ui.close();
-                        }
-
-                        ui.separator();
-                        for category in MaskEffectCategory::ALL {
-                            ui.menu_button(category.label(), |ui| {
-                                ui.set_min_width(180.0);
-                                for candidate in MaskEffect::ALL {
-                                    if candidate.category() != Some(category) {
-                                        continue;
-                                    }
-                                    if ui
-                                        .selectable_label(*effect == candidate, candidate.label())
-                                        .clicked()
-                                    {
-                                        *effect = candidate;
-                                        ui.close();
-                                    }
-                                }
-                            });
-                        }
-                    },
-                );
+    pub(crate) fn show_effect_components(
+        ui: &mut Ui,
+        components: &mut Vec<crate::pipeline::EffectComponent>,
+        is_fullscreen_mask: bool,
+    ) -> bool {
+        let mut changed = false;
+        let mut remove = None;
+        for (index, component) in components.iter_mut().enumerate() {
+            ui.push_id(index, |ui| {
+                ui.horizontal(|ui| {
+                    changed |= ui.checkbox(&mut component.enabled, "Enabled").changed();
+                    if ui.button("Remove").clicked() {
+                        remove = Some(index);
+                    }
+                });
+                changed |= Self::show_effect_component_settings(ui, component, is_fullscreen_mask);
+                crate::ui::theme::card_gap(ui);
             });
-        match action {
-            super::super::adjustment_cards::CardAction::None => {}
-            super::super::adjustment_cards::CardAction::Toggle => {}
-            super::super::adjustment_cards::CardAction::Reset => {
-                mask.effect = MaskEffect::default();
-                mask.enabled = true;
-            }
         }
-        before != mask.effect || enabled_before != mask.enabled
+        if let Some(index) = remove {
+            components.remove(index);
+            changed = true;
+        }
+        if components.len() < crate::pipeline::MAX_EFFECT_COMPONENTS {
+            ui.menu_button(format!("{}  Add", egui_phosphor::regular::PLUS), |ui| {
+                for category in MaskEffectCategory::ALL {
+                    if !MaskEffect::ALL.iter().any(|effect| {
+                        effect.category() == Some(category)
+                            && !components
+                                .iter()
+                                .any(|component| component.effect == *effect)
+                    }) {
+                        continue;
+                    }
+                    ui.menu_button(category.label(), |ui| {
+                        for effect in MaskEffect::ALL {
+                            if effect.category() == Some(category)
+                                && !components
+                                    .iter()
+                                    .any(|component| component.effect == effect)
+                                && ui.button(effect.label()).clicked()
+                            {
+                                components.push(crate::pipeline::EffectComponent::new(effect));
+                                changed = true;
+                                ui.close();
+                            }
+                        }
+                    });
+                }
+            });
+        }
+        changed
     }
 
-    pub(super) fn show_mask_effect_settings(ui: &mut Ui, mask: &mut LocalMask) -> bool {
-        match mask.effect {
-            MaskEffect::Blur => mask_effects::blur::show(
-                ui,
-                &mut mask.effect_settings.blur,
-                &mut mask.common.enabled,
-            ),
+    pub(super) fn show_effect_component_settings(
+        ui: &mut Ui,
+        component: &mut crate::pipeline::EffectComponent,
+        is_fullscreen_mask: bool,
+    ) -> bool {
+        match component.effect {
+            MaskEffect::Blur => {
+                mask_effects::blur::show(ui, &mut component.settings.blur, &mut component.enabled)
+            }
             MaskEffect::LensBlur => mask_effects::lens_blur::show(
                 ui,
-                &mut mask.effect_settings.lens_blur,
-                &mut mask.common.enabled,
+                &mut component.settings.lens_blur,
+                &mut component.enabled,
             ),
             MaskEffect::MotionBlur => mask_effects::motion_blur::show(
                 ui,
-                &mut mask.effect_settings.motion_blur,
-                &mut mask.common.enabled,
+                &mut component.settings.motion_blur,
+                &mut component.enabled,
             ),
             MaskEffect::RadialBlur => mask_effects::radial_blur::show(
                 ui,
-                &mut mask.effect_settings.radial_blur,
-                &mut mask.common.enabled,
+                &mut component.settings.radial_blur,
+                &mut component.enabled,
             ),
-            MaskEffect::TiltShift => {
-                let is_fullscreen_mask = Self::is_plain_fullscreen_mask(mask);
-                mask_effects::tilt_shift::show(
-                    ui,
-                    &mut mask.effect_settings.tilt_shift,
-                    &mut mask.common.enabled,
-                    is_fullscreen_mask,
-                )
-            }
+            MaskEffect::TiltShift => mask_effects::tilt_shift::show(
+                ui,
+                &mut component.settings.tilt_shift,
+                &mut component.enabled,
+                is_fullscreen_mask,
+            ),
             MaskEffect::EdgeGlow => mask_effects::edge_glow::show(
                 ui,
-                &mut mask.effect_settings.edge_glow,
-                &mut mask.common.enabled,
+                &mut component.settings.edge_glow,
+                &mut component.enabled,
             ),
-            MaskEffect::Glow => mask_effects::glow::show(
-                ui,
-                &mut mask.effect_settings.glow,
-                &mut mask.common.enabled,
-            ),
+            MaskEffect::Glow => {
+                mask_effects::glow::show(ui, &mut component.settings.glow, &mut component.enabled)
+            }
             MaskEffect::LightRays => mask_effects::light_rays::show(
                 ui,
-                &mut mask.effect_settings.light_rays,
-                &mut mask.common.enabled,
+                &mut component.settings.light_rays,
+                &mut component.enabled,
             ),
-            MaskEffect::Neon => mask_effects::neon::show(
-                ui,
-                &mut mask.effect_settings.neon,
-                &mut mask.common.enabled,
-            ),
+            MaskEffect::Neon => {
+                mask_effects::neon::show(ui, &mut component.settings.neon, &mut component.enabled)
+            }
             MaskEffect::Pixelate => mask_effects::pixelate::show(
                 ui,
-                &mut mask.effect_settings.pixelate,
-                &mut mask.common.enabled,
+                &mut component.settings.pixelate,
+                &mut component.enabled,
             ),
             MaskEffect::Fog => {
-                mask_effects::fog::show(ui, &mut mask.effect_settings.fog, &mut mask.common.enabled)
+                mask_effects::fog::show(ui, &mut component.settings.fog, &mut component.enabled)
             }
-            MaskEffect::Smoke => mask_effects::smoke::show(
-                ui,
-                &mut mask.effect_settings.smoke,
-                &mut mask.common.enabled,
-            ),
+            MaskEffect::Smoke => {
+                mask_effects::smoke::show(ui, &mut component.settings.smoke, &mut component.enabled)
+            }
             MaskEffect::Adjustment => false,
         }
     }

@@ -193,7 +193,7 @@ fn apply_hue_rotation_value(input_rgb: vec3<f32>, degrees: f32) -> vec3<f32> {
 
 fn apply_local_hue_rotations(pos: vec2<i32>, input_rgb: vec3<f32>) -> vec3<f32> {
     var rgb = input_rgb;
-    let count = min(Common::scene_tone_uniforms.mask_counts.x, 32u);
+    let count = min(Common::scene_tone_uniforms.mask_counts.x, Common::MAX_RENDER_MASK_SLOTS);
     for (var index = 0u; index < count; index = index + 1u) {
         let state = Common::mask_data[index].metadata;
         if state.x == 0u || Common::mask_effect_id(state) != 0u || (state.w & 4u) == 0u { continue; }
@@ -294,7 +294,7 @@ fn apply_color_grading_wheels(
 
 fn apply_local_color_grading(pos: vec2<i32>, input_rgb: vec3<f32>) -> vec3<f32> {
     var rgb = input_rgb;
-    let count = min(Common::scene_tone_uniforms.mask_counts.x, 32u);
+    let count = min(Common::scene_tone_uniforms.mask_counts.x, Common::MAX_RENDER_MASK_SLOTS);
     for (var index = 0u; index < count; index = index + 1u) {
         let state = Common::mask_data[index].metadata;
         if state.x == 0u || Common::mask_effect_id(state) != 0u || (state.w & 2u) == 0u { continue; }
@@ -489,7 +489,7 @@ fn apply_point_colors(input_rgb: vec3<f32>) -> vec3<f32> {
 fn apply_local_point_colors(pos: vec2<i32>, input_rgb: vec3<f32>) -> vec3<f32> {
     if (Common::scene_tone_uniforms.point_color_meta.w & 1u) == 0u { return input_rgb; }
     var rgb = input_rgb;
-    let count = min(Common::scene_tone_uniforms.mask_counts.x, 32u);
+    let count = min(Common::scene_tone_uniforms.mask_counts.x, Common::MAX_RENDER_MASK_SLOTS);
     for (var index = 0u; index < count; index = index + 1u) {
         let state = Common::mask_data[index].metadata;
         if state.x == 0u || Common::mask_effect_id(state) != 0u { continue; }
@@ -510,7 +510,7 @@ fn apply_local_point_colors(pos: vec2<i32>, input_rgb: vec3<f32>) -> vec3<f32> {
 
 fn local_point_color_visualization(pos: vec2<i32>, input_rgb: vec3<f32>) -> f32 {
     if (Common::scene_tone_uniforms.point_color_meta.w & 2u) == 0u { return 0.0; }
-    let count = min(Common::scene_tone_uniforms.mask_counts.x, 32u);
+    let count = min(Common::scene_tone_uniforms.mask_counts.x, Common::MAX_RENDER_MASK_SLOTS);
     for (var index = 0u; index < count; index = index + 1u) {
         let state = Common::mask_data[index].metadata;
         let color_meta = Common::mask_data[index].point_color_meta;
@@ -524,7 +524,7 @@ fn local_point_color_visualization(pos: vec2<i32>, input_rgb: vec3<f32>) -> f32 
 
 fn apply_local_color_mixer(pos: vec2<i32>, input_rgb: vec3<f32>) -> vec3<f32> {
     var rgb = input_rgb;
-    let count = min(Common::scene_tone_uniforms.mask_counts.x, 32u);
+    let count = min(Common::scene_tone_uniforms.mask_counts.x, Common::MAX_RENDER_MASK_SLOTS);
     for (var index = 0u; index < count; index = index + 1u) {
         let state = Common::mask_data[index].metadata;
         if state.x == 0u || Common::mask_effect_id(state) != 0u || (state.w & 1u) == 0u { continue; }
@@ -558,7 +558,7 @@ fn apply_view_transform(scene_rgb: vec3<f32>) -> vec3<f32> {
 
 fn apply_local_display_blacks(pos: vec2<i32>, input_rgb: vec3<f32>) -> vec3<f32> {
     var rgb = input_rgb;
-    let count = min(Common::scene_tone_uniforms.mask_counts.x, 32u);
+    let count = min(Common::scene_tone_uniforms.mask_counts.x, Common::MAX_RENDER_MASK_SLOTS);
     for (var index = 0u; index < count; index = index + 1u) {
         let state = Common::mask_data[index].metadata;
         if state.x == 0u || state.y == 0u || Common::mask_effect_id(state) != 0u { continue; }

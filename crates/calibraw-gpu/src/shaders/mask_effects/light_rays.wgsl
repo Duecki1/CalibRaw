@@ -4,6 +4,8 @@ const LIGHT_RAY_MAX_TAP_COUNT: u32 = 40u;
 const LIGHT_RAY_PI: f32 = 3.141592653589793;
 
 fn light_ray_emission_at(uv: vec2<f32>, mask_index: u32) -> f32 {
+    let layer = Common::mask_data[mask_index].point_color_meta.z;
+    if layer == 0xffffffffu { return 1.0; }
     if any(uv < vec2<f32>(0.0)) || any(uv > vec2<f32>(1.0)) {
         return 0.0;
     }
@@ -16,7 +18,7 @@ fn light_ray_emission_at(uv: vec2<f32>, mask_index: u32) -> f32 {
         SceneAdjustments::light_rays_mask_tex,
         SceneAdjustments::local_mask_sampler,
         clamp(uv, half_texel, vec2<f32>(1.0) - half_texel),
-        i32(mask_index),
+        i32(layer),
         0.0,
     ).x;
 }
@@ -92,7 +94,7 @@ fn light_ray_path_energy(
 
 fn apply_light_rays(pos: vec2<i32>, input_rgb: vec3<f32>) -> vec3<f32> {
     var rgb = input_rgb;
-    let count = min(Common::scene_tone_uniforms.mask_counts.x, 32u);
+    let count = min(Common::scene_tone_uniforms.mask_counts.x, Common::MAX_RENDER_MASK_SLOTS);
     for (var index = 0u; index < count; index = index + 1u) {
         let state = Common::mask_data[index].metadata;
         if state.x == 0u || state.y == 0u
