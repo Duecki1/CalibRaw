@@ -71,7 +71,7 @@ fn visibility_label(visible: bool, title: &str) -> String {
 }
 
 impl Sidebar {
-    fn adjustment_card_title(ui: &mut Ui, title: &str) {
+    pub(super) fn adjustment_card_title(ui: &mut Ui, title: &str) {
         let response = ui.strong(title);
         if let Some(help) = MaskEffect::ALL
             .iter()
@@ -320,28 +320,6 @@ impl Sidebar {
         )
     }
 
-    pub(super) fn adjustment_card_without_visibility(
-        ui: &mut Ui,
-        title: &'static str,
-        default_open: bool,
-        foldable: bool,
-        controls_enabled: bool,
-        contents: impl FnOnce(&mut Ui),
-    ) -> CardAction {
-        Self::adjustment_card_controls(
-            ui,
-            title,
-            default_open,
-            foldable,
-            controls_enabled,
-            CardHeaderControls {
-                show_visibility: false,
-                show_mask_overlay_toggle: false,
-            },
-            contents,
-        )
-    }
-
     pub(super) fn mask_properties_card(
         ui: &mut Ui,
         default_open: bool,
@@ -511,34 +489,6 @@ mod tests {
 
     fn text_rect(shapes: &[egui::epaint::ClippedShape], text: &str) -> egui::Rect {
         optional_text_rect(shapes, text).expect("header text")
-    }
-
-    #[test]
-    fn structural_card_has_reset_without_preview_eye() {
-        let ctx = egui::Context::default();
-        PreviewVisibility::set_mask_scope(&ctx, Some(0));
-        PreviewVisibility::toggle(&ctx, "Mask Properties");
-        let output = ctx.run_ui(Default::default(), |ui| {
-            Sidebar::adjustment_card_without_visibility(
-                ui,
-                "Mask Properties",
-                true,
-                false,
-                true,
-                |ui| {
-                    assert!(ui.is_enabled());
-                    ui.label("Controls");
-                },
-            );
-        });
-
-        assert!(optional_text_rect(
-            &output.shapes,
-            egui_phosphor::regular::ARROW_COUNTER_CLOCKWISE
-        )
-        .is_some());
-        assert!(optional_text_rect(&output.shapes, egui_phosphor::regular::EYE).is_none());
-        assert!(optional_text_rect(&output.shapes, egui_phosphor::regular::EYE_SLASH).is_none());
     }
 
     #[test]

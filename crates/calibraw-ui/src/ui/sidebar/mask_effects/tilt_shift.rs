@@ -6,6 +6,7 @@ pub(crate) fn show(
     ui: &mut Ui,
     settings: &mut TiltShiftEffectSettings,
     enabled: &mut bool,
+    remove: &mut bool,
     is_fullscreen_mask: bool,
 ) -> bool {
     effect_card(
@@ -13,6 +14,7 @@ pub(crate) fn show(
         MaskEffect::TiltShift,
         settings,
         enabled,
+        remove,
         |ui, settings| {
             let mut changed = false;
             if !is_fullscreen_mask {

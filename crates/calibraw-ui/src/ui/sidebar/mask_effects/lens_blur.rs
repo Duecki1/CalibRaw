@@ -2,12 +2,18 @@ use super::{effect_card, effect_slider};
 use crate::pipeline::{effect_params::lens_blur, LensBlurEffectSettings, MaskEffect};
 use eframe::egui::Ui;
 
-pub(crate) fn show(ui: &mut Ui, settings: &mut LensBlurEffectSettings, enabled: &mut bool) -> bool {
+pub(crate) fn show(
+    ui: &mut Ui,
+    settings: &mut LensBlurEffectSettings,
+    enabled: &mut bool,
+    remove: &mut bool,
+) -> bool {
     effect_card(
         ui,
         MaskEffect::LensBlur,
         settings,
         enabled,
+        remove,
         |ui, settings| {
             let mut changed = false;
             changed |= effect_slider(ui, &mut settings.amount, lens_blur::AMOUNT);

@@ -134,14 +134,16 @@ impl Sidebar {
         let mut remove = None;
         for (index, component) in components.iter_mut().enumerate() {
             ui.push_id(index, |ui| {
-                ui.horizontal(|ui| {
-                    changed |= ui.checkbox(&mut component.enabled, "Enabled").changed();
-                    if ui.button("Remove").clicked() {
-                        remove = Some(index);
-                    }
-                });
-                changed |= Self::show_effect_component_settings(ui, component, is_fullscreen_mask);
-                crate::ui::theme::card_gap(ui);
+                let mut remove_component = false;
+                changed |= Self::show_effect_component_settings(
+                    ui,
+                    component,
+                    &mut remove_component,
+                    is_fullscreen_mask,
+                );
+                if remove_component {
+                    remove = Some(index);
+                }
             });
         }
         if let Some(index) = remove {
@@ -182,60 +184,83 @@ impl Sidebar {
     pub(super) fn show_effect_component_settings(
         ui: &mut Ui,
         component: &mut crate::pipeline::EffectComponent,
+        remove: &mut bool,
         is_fullscreen_mask: bool,
     ) -> bool {
         match component.effect {
-            MaskEffect::Blur => {
-                mask_effects::blur::show(ui, &mut component.settings.blur, &mut component.enabled)
-            }
+            MaskEffect::Blur => mask_effects::blur::show(
+                ui,
+                &mut component.settings.blur,
+                &mut component.enabled,
+                remove,
+            ),
             MaskEffect::LensBlur => mask_effects::lens_blur::show(
                 ui,
                 &mut component.settings.lens_blur,
                 &mut component.enabled,
+                remove,
             ),
             MaskEffect::MotionBlur => mask_effects::motion_blur::show(
                 ui,
                 &mut component.settings.motion_blur,
                 &mut component.enabled,
+                remove,
             ),
             MaskEffect::RadialBlur => mask_effects::radial_blur::show(
                 ui,
                 &mut component.settings.radial_blur,
                 &mut component.enabled,
+                remove,
             ),
             MaskEffect::TiltShift => mask_effects::tilt_shift::show(
                 ui,
                 &mut component.settings.tilt_shift,
                 &mut component.enabled,
+                remove,
                 is_fullscreen_mask,
             ),
             MaskEffect::EdgeGlow => mask_effects::edge_glow::show(
                 ui,
                 &mut component.settings.edge_glow,
                 &mut component.enabled,
+                remove,
             ),
-            MaskEffect::Glow => {
-                mask_effects::glow::show(ui, &mut component.settings.glow, &mut component.enabled)
-            }
+            MaskEffect::Glow => mask_effects::glow::show(
+                ui,
+                &mut component.settings.glow,
+                &mut component.enabled,
+                remove,
+            ),
             MaskEffect::LightRays => mask_effects::light_rays::show(
                 ui,
                 &mut component.settings.light_rays,
                 &mut component.enabled,
+                remove,
             ),
-            MaskEffect::Neon => {
-                mask_effects::neon::show(ui, &mut component.settings.neon, &mut component.enabled)
-            }
+            MaskEffect::Neon => mask_effects::neon::show(
+                ui,
+                &mut component.settings.neon,
+                &mut component.enabled,
+                remove,
+            ),
             MaskEffect::Pixelate => mask_effects::pixelate::show(
                 ui,
                 &mut component.settings.pixelate,
                 &mut component.enabled,
+                remove,
             ),
-            MaskEffect::Fog => {
-                mask_effects::fog::show(ui, &mut component.settings.fog, &mut component.enabled)
-            }
-            MaskEffect::Smoke => {
-                mask_effects::smoke::show(ui, &mut component.settings.smoke, &mut component.enabled)
-            }
+            MaskEffect::Fog => mask_effects::fog::show(
+                ui,
+                &mut component.settings.fog,
+                &mut component.enabled,
+                remove,
+            ),
+            MaskEffect::Smoke => mask_effects::smoke::show(
+                ui,
+                &mut component.settings.smoke,
+                &mut component.enabled,
+                remove,
+            ),
             MaskEffect::Adjustment => false,
         }
     }
