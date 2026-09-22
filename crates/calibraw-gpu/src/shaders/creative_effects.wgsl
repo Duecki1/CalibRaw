@@ -182,8 +182,12 @@ fn glow_diffuse_at(pos: vec2<i32>, stage: u32) -> vec4<f32> {
     let center = textureLoad(SceneAdjustments::glow_work_tex, Common::clamp_pos(pos), 0);
     let glow_mix = glow_stage_mix(stage);
     var halation_mix = 1.0;
-    if stage == 3u { halation_mix = 0.35; }
-    if stage == 4u || Common::effects_uniforms.film_effects.z == 0.0 { halation_mix = 0.0; }
+    // Halation needs a visibly broader shoulder than the old three-stage kernel.
+    // Keep it tighter than glow, but retain some energy in the two widest stages
+    // so the fringe survives normal preview scaling and display tone mapping.
+    if stage == 3u { halation_mix = 0.90; }
+    if stage == 4u { halation_mix = 0.45; }
+    if Common::effects_uniforms.film_effects.z == 0.0 { halation_mix = 0.0; }
     let stage_mix = vec4<f32>(vec3<f32>(glow_mix), halation_mix);
     if max(glow_mix, halation_mix) < 1e-6 {
         return center;
@@ -209,8 +213,15 @@ fn glow_diffuse_at(pos: vec2<i32>, stage: u32) -> vec4<f32> {
 fn halation_emission(rgb: vec3<f32>) -> f32 {
     if Common::effects_uniforms.film_effects.z == 0.0 { return 0.0; }
     let luminance = Common::safe_luma(Color::gamut_project_nonnegative_rec2020(rgb));
-    let excess = max(luminance - 0.6, 0.0);
-    return min(excess, 64.0) * smoothstep(0.6, 1.4, luminance);
+
+    // Let common bright detail contribute, then roll the source energy off smoothly
+    // so strong speculars produce a pronounced fringe without exploding.
+    let threshold = ToneCommon::SCENE_MIDDLE_GREY * 1.20;
+    let gate_end = max(threshold * 2.25, 0.55);
+    let gate = smoothstep(threshold, gate_end, luminance);
+    let excess = max(luminance - threshold, 0.0);
+    let compressed_excess = excess / (0.20 + excess);
+    return 0.65 * gate * compressed_excess;
 }
 
 fn halation_amount_at(pos: vec2<i32>) -> f32 {
@@ -235,8 +246,11 @@ fn apply_halation(pos: vec2<i32>, rgb: vec3<f32>) -> vec3<f32> {
     let source = halation_emission(SceneAdjustments::local_effects_at(pos));
     // Remove the unscattered core: uniform fields do not acquire a red cast.
     let halo = max(scattered - source, 0.0);
-    let warm_rec2020 = Common::SRGB_TO_REC2020 * vec3<f32>(1.0, 0.12, 0.015);
-    return rgb + warm_rec2020 * (0.65 * amount * halo);
+    let warm_rec2020 = Common::SRGB_TO_REC2020 * vec3<f32>(1.0, 0.20, 0.025);
+    // Halation is added before tone mapping, which strongly compresses the fringe.
+    // Give the effect enough scene-linear energy for the full slider range to read
+    // clearly while preserving the unscattered highlight core above.
+    return rgb + warm_rec2020 * (2.25 * amount * halo);
 }
 
 fn apply_glow(pos: vec2<i32>, rgb: vec3<f32>) -> vec3<f32> {
