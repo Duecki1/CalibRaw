@@ -1,6 +1,6 @@
 pub(crate) mod adjustment_slider;
 pub(crate) mod color_grading;
-pub(crate) mod effect_color_picker;
+pub(crate) mod color_picker;
 pub(crate) mod hsl_mixer;
 pub(crate) mod point_color;
 pub(crate) mod tone_curve_editor;

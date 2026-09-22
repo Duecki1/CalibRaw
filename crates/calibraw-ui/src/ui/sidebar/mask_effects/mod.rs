@@ -80,17 +80,13 @@ fn effect_color(
     color: &mut [f32; 3],
     spec: ColorParamSpec,
 ) -> bool {
-    let mut changed = false;
-    crate::ui::theme::property_row(ui, spec.label, |ui| {
-        changed |= crate::ui::components::effect_color_picker::effect_color_picker(
-            ui,
-            id_salt,
-            color,
-            spec.title,
-            spec.tooltip,
-        );
-    });
-    changed
+    crate::ui::components::color_picker::sidebar_color_picker(
+        ui,
+        id_salt,
+        color,
+        spec.label,
+        spec.tooltip,
+    )
 }
 
 #[cfg(test)]
