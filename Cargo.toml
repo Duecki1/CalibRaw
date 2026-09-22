@@ -75,7 +75,7 @@ zip = { version = "0.6.6", default-features = false, features = ["deflate"] }
 
 eframe = { version = "0.35", default-features = false }
 egui = "0.35"
-egui-phosphor = "0.13"
+egui-phosphor = "0.14"
 egui-wgpu = "0.35"
 wgpu = "29"
 naga = { version = "29", features = ["wgsl-in"] }
