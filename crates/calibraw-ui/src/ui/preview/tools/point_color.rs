@@ -149,7 +149,7 @@ fn rec2020_to_srgb(rgb: [f32; 3]) -> [f32; 3] {
     // The preview's display-linear attachment is linear Rec. 2020. PointColor
     // stores encoded sRGB samples, so convert primaries before applying the OETF.
     [
-        1.6604910 * rgb[0] - 0.5876411 * rgb[1] - 0.0728499 * rgb[2],
+        1.660_491 * rgb[0] - 0.5876411 * rgb[1] - 0.0728499 * rgb[2],
         -0.1245505 * rgb[0] + 1.1328999 * rgb[1] - 0.0083494 * rgb[2],
         -0.0181508 * rgb[0] - 0.1005789 * rgb[1] + 1.1187297 * rgb[2],
     ]

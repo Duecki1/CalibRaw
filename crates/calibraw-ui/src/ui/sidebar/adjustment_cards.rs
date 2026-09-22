@@ -28,6 +28,12 @@ struct VerticalCardActions {
     scope: Option<usize>,
 }
 
+#[derive(Clone, Copy)]
+struct CardHeaderControls {
+    show_visibility: bool,
+    show_mask_overlay_toggle: bool,
+}
+
 impl CardAction {
     fn apply_reset(self, reset: impl FnOnce()) -> bool {
         match self {
@@ -306,8 +312,10 @@ impl Sidebar {
             default_open,
             foldable,
             controls_enabled,
-            true,
-            false,
+            CardHeaderControls {
+                show_visibility: true,
+                show_mask_overlay_toggle: false,
+            },
             contents,
         )
     }
@@ -326,8 +334,10 @@ impl Sidebar {
             default_open,
             foldable,
             controls_enabled,
-            false,
-            false,
+            CardHeaderControls {
+                show_visibility: false,
+                show_mask_overlay_toggle: false,
+            },
             contents,
         )
     }
@@ -345,8 +355,10 @@ impl Sidebar {
             default_open,
             foldable,
             controls_enabled,
-            false,
-            true,
+            CardHeaderControls {
+                show_visibility: false,
+                show_mask_overlay_toggle: true,
+            },
             contents,
         )
     }
@@ -360,10 +372,13 @@ impl Sidebar {
         default_open: bool,
         foldable: bool,
         controls_enabled: bool,
-        show_visibility: bool,
-        show_mask_overlay_toggle: bool,
+        header_controls: CardHeaderControls,
         contents: impl FnOnce(&mut Ui),
     ) -> CardAction {
+        let CardHeaderControls {
+            show_visibility,
+            show_mask_overlay_toggle,
+        } = header_controls;
         let visible = !show_visibility
             || crate::app::preview_visibility::PreviewVisibility::visible(ui.ctx(), title);
         let controls_enabled = controls_enabled && visible;
