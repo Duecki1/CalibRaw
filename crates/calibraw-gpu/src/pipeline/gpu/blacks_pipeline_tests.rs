@@ -1,6 +1,4 @@
-use super::{
-    tests::request_test_device_with_info, GpuParams, ProcessingQuality, RawGpuPipeline,
-};
+use super::{tests::request_test_device_with_info, GpuParams, ProcessingQuality, RawGpuPipeline};
 use crate::pipeline::{ExposureParams, LoadedRaw, LocalMask, MaskKind, MaskStack};
 
 #[test]
