@@ -22,6 +22,8 @@ struct MaskData {
     hsl_saturation_1_field: vec4<f32>,
     hsl_luminance_0_field: vec4<f32>,
     hsl_luminance_1_field: vec4<f32>,
+    point_colors: array<PointColor, 8>,
+    point_color_meta: vec4<u32>,
 }
 
 fn mask_effect_id(metadata: vec4<u32>) -> u32 {

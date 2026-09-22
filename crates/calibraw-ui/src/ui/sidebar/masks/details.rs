@@ -257,6 +257,15 @@ impl Sidebar {
         orientation: MaskStripOrientation,
     ) -> Option<egui::Rect> {
         let (mask_index, component_index) = app.masks.stack.ensure_selection()?;
+        if app.develop_ui.mask_point_color_mask != Some(mask_index) {
+            let was_visualizing = app.develop_ui.mask_point_color.visualize_range;
+            app.develop_ui.mask_point_color = Default::default();
+            app.develop_ui.mask_point_color_mask = Some(mask_index);
+            if was_visualizing {
+                crate::app::preview_visibility::PreviewVisibility::invalidate_mask_cache(ui.ctx());
+                app.queue_preview_processing(crate::pipeline::ProcessingStage::Output);
+            }
+        }
         crate::app::preview_visibility::PreviewVisibility::set_mask_scope(
             ui.ctx(),
             Some(mask_index),
@@ -290,6 +299,14 @@ impl Sidebar {
         let mut local_curve_tab = app.develop_ui.tone_curve_tab;
         let mut local_color_grade_tab = app.develop_ui.color_grade_tab;
         let mut local_hsl_mixer_color = app.develop_ui.hsl_mixer_color;
+        let mut local_point_color = app.develop_ui.mask_point_color.clone();
+        let mut local_point_color_tab = app.develop_ui.mask_point_color_tab;
+        let previous_point_color_preview = (
+            local_point_color.visualize_range,
+            local_point_color.selected,
+            local_point_color.picker_active,
+            local_point_color_tab,
+        );
         let birefnet_quality = app.ai.birefnet_quality;
         let birefnet_quality_change_enabled = app.birefnet_quality_change_enabled();
 
@@ -356,6 +373,8 @@ impl Sidebar {
                                     &mut local_curve_tab,
                                     &mut local_color_grade_tab,
                                     &mut local_hsl_mixer_color,
+                                    &mut local_point_color,
+                                    &mut local_point_color_tab,
                                 ),
                             );
                         }
@@ -417,6 +436,8 @@ impl Sidebar {
                                         &mut local_curve_tab,
                                         &mut local_color_grade_tab,
                                         &mut local_hsl_mixer_color,
+                                        &mut local_point_color,
+                                        &mut local_point_color_tab,
                                     ),
                                 );
                             }
@@ -474,6 +495,19 @@ impl Sidebar {
         app.develop_ui.tone_curve_tab = local_curve_tab;
         app.develop_ui.color_grade_tab = local_color_grade_tab;
         app.develop_ui.hsl_mixer_color = local_hsl_mixer_color;
+        app.develop_ui.mask_point_color = local_point_color;
+        app.develop_ui.mask_point_color_tab = local_point_color_tab;
+        if previous_point_color_preview
+            != (
+                app.develop_ui.mask_point_color.visualize_range,
+                app.develop_ui.mask_point_color.selected,
+                app.develop_ui.mask_point_color.picker_active,
+                app.develop_ui.mask_point_color_tab,
+            )
+        {
+            crate::app::preview_visibility::PreviewVisibility::invalidate_mask_cache(ui.ctx());
+            app.queue_preview_processing(crate::pipeline::ProcessingStage::Output);
+        }
         app.masks.brush_mode = brush_mode;
         app.masks.subject_refinement_active = refinement_active;
         let refinement_settings_changed = app.masks.stack.subject_refinement.size
@@ -498,6 +532,8 @@ impl Sidebar {
         Self::apply_mask_geometry_change(ui, app, mask_index, geometry_changed);
         if effect_changed {
             app.develop_ui.mask_section = MaskSection::Properties;
+            app.develop_ui.mask_point_color.picker_active = false;
+            app.develop_ui.mask_point_color.visualize_range = false;
             app.mark_mask_geometry_dirty(mask_index);
         }
         if adjustments_changed || effect_changed {

@@ -637,6 +637,10 @@ pub struct LocalAdjustments {
     pub hsl_hue: [f32; 8],
     pub hsl_saturation: [f32; 8],
     pub hsl_luminance: [f32; 8],
+    #[serde(default)]
+    pub point_colors: super::PointColors,
+    #[serde(skip)]
+    pub point_color_visualize: Option<usize>,
     pub color_grading: super::ColorGrading,
 }
 
@@ -666,6 +670,8 @@ impl Default for LocalAdjustments {
             hsl_hue: [0.0; 8],
             hsl_saturation: [0.0; 8],
             hsl_luminance: [0.0; 8],
+            point_colors: super::PointColors::default(),
+            point_color_visualize: None,
             color_grading: super::ColorGrading::default(),
         }
     }
@@ -696,6 +702,10 @@ impl LocalAdjustments {
         if normalized.color_grading.is_neutral() {
             normalized.color_grading = super::ColorGrading::default();
         }
+        if !normalized.point_colors.has_adjustments() {
+            normalized.point_colors.clear();
+        }
+        normalized.point_color_visualize = None;
         normalized == Self::default()
     }
 

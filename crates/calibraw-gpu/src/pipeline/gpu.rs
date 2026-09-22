@@ -40,7 +40,7 @@ mod point_color_tests;
 #[cfg(test)]
 mod tests;
 
-const GPU_PARAMS_ABI_VERSION: u32 = 7;
+const GPU_PARAMS_ABI_VERSION: u32 = 8;
 const MASK_EFFECT_ID_SHIFT: u32 = 8;
 pub(super) const LIGHT_RAYS_MASK_ATLAS_EDGE: u32 = if cfg!(target_os = "android") {
     256
@@ -408,9 +408,11 @@ struct MaskData {
     hsl_saturation_1: [f32; 4],
     hsl_luminance_0: [f32; 4],
     hsl_luminance_1: [f32; 4],
+    point_colors: [PackedPointColor; MAX_POINT_COLORS],
+    point_color_meta: [u32; 4],
 }
 
-const _: () = assert!(std::mem::size_of::<MaskData>() == 768);
+const _: () = assert!(std::mem::size_of::<MaskData>() == 1_424);
 
 #[derive(Clone, Debug)]
 pub struct GpuParams {
@@ -851,6 +853,10 @@ fn pack_adjustment_mask(mask: &LocalMask) -> MaskData {
     let (hsl_hue_0, hsl_hue_1) = split_eight(adjustment.hsl_hue);
     let (hsl_saturation_0, hsl_saturation_1) = split_eight(adjustment.hsl_saturation);
     let (hsl_luminance_0, hsl_luminance_1) = split_eight(adjustment.hsl_luminance);
+    let mut point_colors = [PackedPointColor::zeroed(); MAX_POINT_COLORS];
+    for (destination, point) in point_colors.iter_mut().zip(adjustment.point_colors.iter()) {
+        *destination = pack_point_color(*point);
+    }
     MaskData {
         metadata: [
             u32::from(adjustment_enabled),
@@ -897,6 +903,15 @@ fn pack_adjustment_mask(mask: &LocalMask) -> MaskData {
         hsl_saturation_1,
         hsl_luminance_0,
         hsl_luminance_1,
+        point_colors,
+        point_color_meta: [
+            adjustment.point_colors.len() as u32,
+            adjustment
+                .point_color_visualize
+                .map_or(0, |index| (index + 1) as u32),
+            0,
+            0,
+        ],
     }
 }
 
@@ -1064,6 +1079,15 @@ fn pack_scene_tone_params(ctx: &GpuParamContext<'_>) -> SceneToneUniforms {
     let (hsl_hue_0, hsl_hue_1) = split_eight(exposure.hsl_hue);
     let (hsl_saturation_0, hsl_saturation_1) = split_eight(exposure.hsl_saturation);
     let (hsl_luminance_0, hsl_luminance_1) = split_eight(exposure.hsl_luminance);
+    let local_point_color_flags = u32::from(masks.masks.iter().any(|mask| {
+        mask.enabled
+            && mask.effect.uses_adjustments()
+            && mask.adjustments.point_colors.has_adjustments()
+    })) | (u32::from(masks.masks.iter().any(|mask| {
+        mask.enabled
+            && mask.effect.uses_adjustments()
+            && mask.adjustments.point_color_visualize.is_some()
+    })) << 1);
     let tone_curve = pack_point_curve(&exposure.tone_curve);
     let tone_curve_red = pack_point_curve(&exposure.tone_curve_red);
     let tone_curve_green = pack_point_curve(&exposure.tone_curve_green);
@@ -1155,7 +1179,7 @@ fn pack_scene_tone_params(ctx: &GpuParamContext<'_>) -> SceneToneUniforms {
                 .point_color_visualize
                 .map_or(0, |index| (index + 1) as u32),
             0,
-            0,
+            local_point_color_flags,
         ],
     }
 }
@@ -2834,8 +2858,7 @@ impl RawGpuPipeline {
         )
     }
 
-    /// Read a color before point color, vignette, and the output profile. Both
-    /// preview (half float) and export (float) pipelines use this same domain.
+    /// Read the display color before global point-color adjustments.
     pub fn read_point_color_sample_blocking(
         &self,
         device: &wgpu::Device,
@@ -2844,12 +2867,36 @@ impl RawGpuPipeline {
         x: u32,
         y: u32,
     ) -> Result<[f32; 3]> {
+        self.read_point_color_sample_with_mode(device, queue, params, x, y, false)
+    }
+
+    /// Read the display color at the input to local point-color adjustments.
+    pub fn read_local_point_color_sample_blocking(
+        &self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        params: &GpuParams,
+        x: u32,
+        y: u32,
+    ) -> Result<[f32; 3]> {
+        self.read_point_color_sample_with_mode(device, queue, params, x, y, true)
+    }
+
+    fn read_point_color_sample_with_mode(
+        &self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        params: &GpuParams,
+        x: u32,
+        y: u32,
+        after_global: bool,
+    ) -> Result<[f32; 3]> {
         anyhow::ensure!(
             x < self.width && y < self.height,
             "point color sample is outside the image"
         );
         let mut sample_params = params.clone();
-        sample_params.scene_tone.point_color_meta[2] = 1;
+        sample_params.scene_tone.point_color_meta[2] = if after_global { 2 } else { 1 };
         self.upload_params(queue, &sample_params);
         let render = |label| {
             let mut encoder = device

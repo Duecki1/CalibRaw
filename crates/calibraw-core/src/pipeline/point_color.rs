@@ -72,16 +72,24 @@ pub struct PointColor {
     pub luminance_shift: f32,
     #[serde(default = "default_range_width")]
     pub range: f32,
-    #[serde(default)]
+    #[serde(default = "default_hue_range")]
     pub hue_range: PointColorRange,
-    #[serde(default)]
+    #[serde(default = "default_channel_range")]
     pub saturation_range: PointColorRange,
-    #[serde(default)]
+    #[serde(default = "default_channel_range")]
     pub luminance_range: PointColorRange,
 }
 
 const fn default_range_width() -> f32 {
     50.0
+}
+
+const fn default_hue_range() -> PointColorRange {
+    PointColorRange::new(-0.125, -0.0625, 0.0625, 0.125)
+}
+
+const fn default_channel_range() -> PointColorRange {
+    PointColorRange::new(-0.5, -0.25, 0.25, 0.5)
 }
 
 impl Default for PointColor {
@@ -98,9 +106,9 @@ impl PointColor {
             saturation_shift: 0.0,
             luminance_shift: 0.0,
             range: default_range_width(),
-            hue_range: PointColorRange::new(-0.125, -0.0625, 0.0625, 0.125),
-            saturation_range: PointColorRange::new(-0.5, -0.25, 0.25, 0.5),
-            luminance_range: PointColorRange::new(-0.5, -0.25, 0.25, 0.5),
+            hue_range: default_hue_range(),
+            saturation_range: default_channel_range(),
+            luminance_range: default_channel_range(),
         }
     }
 
@@ -174,6 +182,13 @@ impl PointColors {
     }
     pub fn is_empty(&self) -> bool {
         self.len == 0
+    }
+    pub fn has_adjustments(&self) -> bool {
+        self.iter().any(|point| {
+            point.hue_shift.abs() > 1e-6
+                || point.saturation_shift.abs() > 1e-6
+                || point.luminance_shift.abs() > 1e-6
+        })
     }
     pub fn as_slice(&self) -> &[PointColor] {
         &self.values[..self.len()]
@@ -350,6 +365,19 @@ mod tests {
         assert_eq!(encoded.as_array().unwrap().len(), MAX_POINT_COLORS);
         let decoded: PointColors = serde_json::from_value(encoded).unwrap();
         assert_eq!(decoded, colors);
+    }
+
+    #[test]
+    fn missing_ranges_use_valid_sample_defaults() {
+        let mut saved = serde_json::to_value(PointColor::from_srgb([0.8, 0.2, 0.1])).unwrap();
+        let object = saved.as_object_mut().unwrap();
+        object.remove("hue_range");
+        object.remove("saturation_range");
+        object.remove("luminance_range");
+        let restored: PointColor = serde_json::from_value(saved).unwrap();
+        assert_eq!(restored.hue_range, default_hue_range());
+        assert_eq!(restored.saturation_range, default_channel_range());
+        assert_eq!(restored.luminance_range, default_channel_range());
     }
 
     #[test]

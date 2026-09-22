@@ -40,7 +40,7 @@ fn white_balance_picker_owns_canvas(sidebar_tab: SidebarTab, picker_active: bool
 }
 
 fn point_color_picker_owns_canvas(sidebar_tab: SidebarTab, picker_active: bool) -> bool {
-    sidebar_tab == SidebarTab::Adjustments && picker_active
+    matches!(sidebar_tab, SidebarTab::Adjustments | SidebarTab::Masks) && picker_active
 }
 
 fn show_centered_preview_message(
@@ -219,7 +219,10 @@ impl Preview {
         );
         let point_color_canvas = point_color_picker_owns_canvas(
             app.ui.sidebar_tab,
-            app.develop_ui.point_color.picker_active,
+            match app.ui.sidebar_tab {
+                SidebarTab::Masks => app.develop_ui.mask_point_color.picker_active,
+                _ => app.develop_ui.point_color.picker_active,
+            },
         );
         if !white_balance_canvas {
             app.develop_ui.white_balance_picker_drag = None;
@@ -229,6 +232,9 @@ impl Preview {
             SidebarTab::Masks | SidebarTab::Inpainting
         ) || white_balance_canvas;
         let interaction_id = match app.ui.sidebar_tab {
+            SidebarTab::Masks if point_color_canvas => {
+                ui.id().with("develop-preview-mask-point-color-interaction")
+            }
             SidebarTab::Masks => ui.id().with("develop-preview-mask-interaction"),
             SidebarTab::Inpainting => ui.id().with("develop-preview-inpaint-interaction"),
             SidebarTab::Adjustments if white_balance_canvas => {
@@ -611,7 +617,7 @@ impl Preview {
             }
 
             if app.ui.sidebar_tab == SidebarTab::Masks {
-                if !touch_navigation && !fit_gesture {
+                if !touch_navigation && !fit_gesture && !point_color_canvas {
                     Self::handle_mask_interaction(
                         ui,
                         app,

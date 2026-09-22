@@ -36,6 +36,20 @@ fn point_color_visualization_matches_the_mask_overlay_style() {
         .contains("adjusted = mix(vec3<f32>(luminance), adjusted, selected_weight);"));
 }
 
+#[test]
+fn local_point_colors_pack_with_mask_adjustments() {
+    let mut mask = LocalMask::new(MaskKind::Fullscreen, 1);
+    let mut point = crate::pipeline::PointColor::from_srgb([0.8, 0.2, 0.1]);
+    point.hue_shift = 25.0;
+    mask.adjustments.point_colors.push(point);
+    mask.adjustments.point_color_visualize = Some(0);
+    let packed = super::pack_adjustment_mask(&mask);
+    assert_eq!(packed.metadata[0], 1);
+    assert_eq!(packed.metadata[1], 1);
+    assert_eq!(packed.point_color_meta[0..2], [1, 1]);
+    assert!((packed.point_colors[0].shifts[0] - 0.125).abs() < 1e-6);
+}
+
 fn validate_shader(name: &str, source: &str, quality: ProcessingQuality) {
     let format = processing_work_format(quality);
     let mut manager = ShaderManager::new(

@@ -86,6 +86,15 @@ impl CalibRawApp {
             self.develop_ui.white_balance_picker_active = false;
             self.develop_ui.white_balance_picker_drag = None;
         }
+        if tab != SidebarTab::Masks {
+            let was_visualizing = self.develop_ui.mask_point_color.visualize_range;
+            self.develop_ui.mask_point_color.picker_active = false;
+            self.develop_ui.mask_point_color.visualize_range = false;
+            if was_visualizing {
+                super::preview_visibility::PreviewVisibility::invalidate_mask_cache(&self.egui_ctx);
+                self.queue_preview_processing(crate::pipeline::ProcessingStage::Output);
+            }
+        }
         self.sync_ai_model_runtime_context();
     }
 

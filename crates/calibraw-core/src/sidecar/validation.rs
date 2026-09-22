@@ -455,10 +455,24 @@ fn validate_exposure(exposure: &ExposureParams) -> Result<(), SidecarError> {
     finite("global HSL hue", &exposure.hsl_hue)?;
     finite("global HSL saturation", &exposure.hsl_saturation)?;
     finite("global HSL luminance", &exposure.hsl_luminance)?;
-    if exposure.point_colors.len() > crate::pipeline::MAX_POINT_COLORS {
+    validate_point_colors(&exposure.point_colors)?;
+    validate_curves(
+        &[
+            &exposure.tone_curve,
+            &exposure.tone_curve_red,
+            &exposure.tone_curve_green,
+            &exposure.tone_curve_blue,
+        ],
+        "global tone curve",
+    )?;
+    validate_grading(&exposure.color_grading, "global color grading")
+}
+
+fn validate_point_colors(colors: &crate::pipeline::PointColors) -> Result<(), SidecarError> {
+    if colors.len() > crate::pipeline::MAX_POINT_COLORS {
         return invalid("sidecar contains too many point colors");
     }
-    for point in exposure.point_colors.iter() {
+    for point in colors.iter() {
         finite(
             "point color",
             &[
@@ -504,16 +518,7 @@ fn validate_exposure(exposure: &ExposureParams) -> Result<(), SidecarError> {
         validate_point_color_range(point.saturation_range, 1.0, "point color saturation range")?;
         validate_point_color_range(point.luminance_range, 1.0, "point color luminance range")?;
     }
-    validate_curves(
-        &[
-            &exposure.tone_curve,
-            &exposure.tone_curve_red,
-            &exposure.tone_curve_green,
-            &exposure.tone_curve_blue,
-        ],
-        "global tone curve",
-    )?;
-    validate_grading(&exposure.color_grading, "global color grading")
+    Ok(())
 }
 
 fn validate_point_color_range(
@@ -558,6 +563,7 @@ fn validate_local_adjustments(
     finite("local HSL hue", &adjustments.hsl_hue)?;
     finite("local HSL saturation", &adjustments.hsl_saturation)?;
     finite("local HSL luminance", &adjustments.hsl_luminance)?;
+    validate_point_colors(&adjustments.point_colors)?;
     validate_curves(
         &[
             &adjustments.tone_curve,

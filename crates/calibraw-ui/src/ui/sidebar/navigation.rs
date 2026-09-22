@@ -356,6 +356,15 @@ impl Sidebar {
                     .clicked()
                     {
                         app.develop_ui.mask_section = section;
+                        if section != MaskSection::ColorMixer {
+                            let was_visualizing = app.develop_ui.mask_point_color.visualize_range;
+                            app.develop_ui.mask_point_color.picker_active = false;
+                            app.develop_ui.mask_point_color.visualize_range = false;
+                            if was_visualizing {
+                                crate::app::preview_visibility::PreviewVisibility::invalidate_mask_cache(ui.ctx());
+                                app.queue_preview_processing(crate::pipeline::ProcessingStage::Output);
+                            }
+                        }
                     }
                 }
             }
