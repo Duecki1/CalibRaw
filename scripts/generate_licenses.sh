@@ -4,7 +4,15 @@ set -euo pipefail
 cargo_about_version="0.9.2"
 if ! command -v cargo-about >/dev/null 2>&1 \
     || [ "$(cargo about --version 2>/dev/null || true)" != "cargo-about ${cargo_about_version}" ]; then
-  cargo install cargo-about --version "$cargo_about_version" --locked --features cli
+  cargo_about_install_args=(
+    --version "$cargo_about_version"
+    --locked
+    --features cli
+  )
+  if [ "${MSYSTEM:-}" = "CLANGARM64" ]; then
+    cargo_about_install_args+=(--target aarch64-pc-windows-gnullvm)
+  fi
+  cargo install cargo-about "${cargo_about_install_args[@]}"
 fi
 
 output=${1:-THIRD_PARTY_LICENSES.md}
