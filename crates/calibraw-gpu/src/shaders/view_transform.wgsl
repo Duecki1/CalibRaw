@@ -416,7 +416,11 @@ fn point_color_range_weight(value: f32, range: vec4<f32>) -> f32 {
         return smoothstep(0.0, 1.0, 1.0 + distance_min / span);
     }
     let span = max(range.w - range.z, 1e-5);
-    return smoothstep(0.0, 1.0, 1.0 - distance_max / span);
+    // distance_max is negative above inner_max. Add it so the weight falls
+    // from 1 at inner_max to 0 at max. Subtracting it makes the value > 1,
+    // which clamps to 1 and causes every high-side color (including unrelated
+    // hues through the wrapped hue checks) to be selected at full strength.
+    return smoothstep(0.0, 1.0, 1.0 + distance_max / span);
 }
 
 fn point_color_hue_weight(value: f32, range: vec4<f32>, scale: f32) -> f32 {
