@@ -5,8 +5,9 @@ use crate::pipeline::{
     canonical_remove_scene_to_pipeline_scene, effect_params, export_mask_atlas_edge_limit,
     mask_atlas_edge, pipeline_scene_to_working_rec2020, AiDenoisedImage, CfaKind, ExposureParams,
     GeometryTransform, HighlightReconstructionMethod, LoadedRaw, LocalMask, MaskEffect, MaskStack,
-    PointCurve, ProcessingStage, RawThumbnail, RemoveEditState, RemovePatch, SigmoidParams,
-    SrgbOutputLut, GLOBAL_TEMPERATURE_LIMIT, GLOBAL_TINT_OFFSET_LIMIT, MAX_LOCAL_MASKS,
+    PointColor, PointCurve, ProcessingStage, RawThumbnail, RemoveEditState, RemovePatch,
+    SigmoidParams, SrgbOutputLut, GLOBAL_TEMPERATURE_LIMIT, GLOBAL_TINT_OFFSET_LIMIT,
+    MAX_LOCAL_MASKS, MAX_POINT_COLORS,
 };
 use anyhow::{anyhow, Context, Result};
 use bytemuck::{Pod, Zeroable};
@@ -34,8 +35,10 @@ mod black_tone_tests;
 mod blacks_pipeline_tests;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod point_color_tests;
 
-const GPU_PARAMS_ABI_VERSION: u32 = 5;
+const GPU_PARAMS_ABI_VERSION: u32 = 6;
 const MASK_EFFECT_ID_SHIFT: u32 = 8;
 pub(super) const LIGHT_RAYS_MASK_ATLAS_EDGE: u32 = if cfg!(target_os = "android") {
     256
@@ -44,11 +47,11 @@ pub(super) const LIGHT_RAYS_MASK_ATLAS_EDGE: u32 = if cfg!(target_os = "android"
 };
 const GPU_PARAMS_ABI_SIZE_BYTES: u32 = 1_072;
 const CAMERA_UNIFORMS_SIZE_BYTES: u32 = 368;
-const SCENE_TONE_UNIFORMS_SIZE_BYTES: u32 = 768;
+const SCENE_TONE_UNIFORMS_SIZE_BYTES: u32 = 1_424;
 const EFFECTS_UNIFORMS_SIZE_BYTES: u32 = 208;
 const GPU_STAGE_UNIFORM_SIZE_BYTES: u32 =
     CAMERA_UNIFORMS_SIZE_BYTES + SCENE_TONE_UNIFORMS_SIZE_BYTES + EFFECTS_UNIFORMS_SIZE_BYTES;
-const GPU_STAGE_UNIFORM_ALLOCATION_BYTES: u64 = 512 + 768 + 256;
+const GPU_STAGE_UNIFORM_ALLOCATION_BYTES: u64 = 512 + 1_424 + 256;
 const MASK_DATA_SIZE_BYTES: u64 = (std::mem::size_of::<MaskData>() * MAX_LOCAL_MASKS) as u64;
 const WORK_FORMAT_MARKER: &str = "rgba16float /* CALIBRAW_WORK_FORMAT */";
 const WORKGROUP_EDGE: u32 = 8;
@@ -278,6 +281,16 @@ struct CameraUniforms {
     _pad_camera_1: u32,
 }
 
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Pod, Zeroable)]
+struct PackedPointColor {
+    sample_range: [f32; 4],
+    hue_range: [f32; 4],
+    saturation_range: [f32; 4],
+    luminance_range: [f32; 4],
+    shifts: [f32; 4],
+}
+
 const _: () = assert!(std::mem::size_of::<CameraUniforms>() == CAMERA_UNIFORMS_SIZE_BYTES as usize);
 
 fn raster_uses_scene_view_transform(exposure: &ExposureParams) -> bool {
@@ -338,6 +351,8 @@ struct SceneToneUniforms {
     xyz_to_rec2020: [[f32; 4]; 3],
     xyz_to_bradford: [[f32; 4]; 3],
     bradford_to_xyz: [[f32; 4]; 3],
+    point_colors: [PackedPointColor; MAX_POINT_COLORS],
+    point_color_meta: [u32; 4],
 }
 
 const _: () =
@@ -363,7 +378,7 @@ struct EffectsUniforms {
 
 const _: () =
     assert!(std::mem::size_of::<EffectsUniforms>() == EFFECTS_UNIFORMS_SIZE_BYTES as usize);
-const _: () = assert!(GPU_STAGE_UNIFORM_SIZE_BYTES == 1_344);
+const _: () = assert!(GPU_STAGE_UNIFORM_SIZE_BYTES == 2_000);
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
@@ -422,6 +437,23 @@ fn split_eight(values: [f32; 8]) -> ([f32; 4], [f32; 4]) {
         [values[0], values[1], values[2], values[3]],
         [values[4], values[5], values[6], values[7]],
     )
+}
+
+fn pack_point_color(point: PointColor) -> PackedPointColor {
+    let point = point.sanitized();
+    let range = |r: crate::pipeline::PointColorRange| [r.min, r.inner_min, r.inner_max, r.max];
+    PackedPointColor {
+        sample_range: [point.sample_hsl[0], point.sample_hsl[1], point.sample_hsl[2], point.range],
+        hue_range: range(point.hue_range),
+        saturation_range: range(point.saturation_range),
+        luminance_range: range(point.luminance_range),
+        shifts: [
+            point.hue_shift / 200.0,
+            point.saturation_shift / 100.0,
+            point.luminance_shift / 100.0,
+            0.0,
+        ],
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -1019,6 +1051,10 @@ fn pack_scene_tone_params(ctx: &GpuParamContext<'_>) -> SceneToneUniforms {
     let tone_curve_red = pack_point_curve(&exposure.tone_curve_red);
     let tone_curve_green = pack_point_curve(&exposure.tone_curve_green);
     let tone_curve_blue = pack_point_curve(&exposure.tone_curve_blue);
+    let mut point_colors = [PackedPointColor::zeroed(); MAX_POINT_COLORS];
+    for (destination, point) in point_colors.iter_mut().zip(exposure.point_colors.iter()) {
+        *destination = pack_point_color(*point);
+    }
 
     SceneToneUniforms {
         exposure: exposure.exposure,
@@ -1094,6 +1130,13 @@ fn pack_scene_tone_params(ctx: &GpuParamContext<'_>) -> SceneToneUniforms {
             [0.986_992_9, 0.432_305_3, -0.008_528_7, 0.0],
             [-0.147_054_3, 0.518_360_3, 0.040_042_8, 0.0],
             [0.159_962_7, 0.049_291_2, 0.968_486_7, 0.0],
+        ],
+        point_colors,
+        point_color_meta: [
+            exposure.point_colors.len() as u32,
+            exposure.point_color_visualize.map_or(0, |index| (index + 1) as u32),
+            0,
+            0,
         ],
     }
 }
@@ -2751,6 +2794,38 @@ impl RawGpuPipeline {
                 label: "calibraw tiled export readback",
             },
         )
+    }
+
+    /// Read a color before point color, vignette, and the output profile. Both
+    /// preview (half float) and export (float) pipelines use this same domain.
+    pub fn read_point_color_sample_blocking(
+        &self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        params: &GpuParams,
+        x: u32,
+        y: u32,
+    ) -> Result<[f32; 3]> {
+        anyhow::ensure!(x < self.width && y < self.height, "point color sample is outside the image");
+        let mut sample_params = params.clone();
+        sample_params.scene_tone.point_color_meta[2] = 1;
+        self.upload_params(queue, &sample_params);
+        let render = |label| {
+            let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some(label) });
+            if params.needs_blur_passes() {
+                self.encode_bound_pass(&mut encoder, &self.post_blur_render_pass, label);
+            } else {
+                self.encode_pass(&mut encoder, self.adjustment_render_pass_index);
+            }
+            queue.submit(Some(encoder.finish()));
+        };
+        render("calibraw point color sample");
+        let result = read_float_texture_pixel_blocking(device, queue, &self.display_linear_texture, self.scene_format, x, y);
+        // Restore even on a mapping failure; visualization must never remain in
+        // the shared export/display attachment after a sampler operation.
+        self.upload_params(queue, params);
+        render("calibraw restore point color preview");
+        result
     }
 
     pub fn begin_display_linear_region_readback(

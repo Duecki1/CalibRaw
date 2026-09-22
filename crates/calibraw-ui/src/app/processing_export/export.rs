@@ -878,6 +878,7 @@ impl CalibRawApp {
 
     pub(crate) fn reset_develop_adjustments(&mut self) {
         self.develop.exposure = ExposureParams::scene_referred_default();
+        self.develop_ui.point_color = Default::default();
         self.develop_ui.white_balance_picker_active = false;
         self.develop_ui.white_balance_picker_drag = None;
         self.mark_pipeline_dirty();

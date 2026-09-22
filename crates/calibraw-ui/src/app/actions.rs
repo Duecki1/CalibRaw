@@ -81,6 +81,8 @@ impl CalibRawApp {
             self.develop_ui.straighten_drag = None;
         }
         if tab != SidebarTab::Adjustments {
+            self.develop_ui.point_color.picker_active = false;
+            self.develop_ui.point_color.visualize_range = false;
             self.develop_ui.white_balance_picker_active = false;
             self.develop_ui.white_balance_picker_drag = None;
         }

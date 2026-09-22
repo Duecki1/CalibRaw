@@ -1044,6 +1044,8 @@ pub(crate) struct DevelopUiState {
     pub(crate) tone_curve_tab: ToneCurveTab,
     pub(crate) color_grade_tab: ColorGradeTab,
     pub(crate) hsl_mixer_color: HslMixerColor,
+    pub(crate) point_color: crate::ui::components::point_color::PointColorUiState,
+    pub(crate) point_color_tab: bool,
 }
 
 pub(crate) struct PreferencesState {

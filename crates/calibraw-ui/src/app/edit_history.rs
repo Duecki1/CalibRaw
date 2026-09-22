@@ -665,6 +665,36 @@ mod tests {
     }
 
     #[test]
+    fn point_color_sampling_adjustment_and_deletion_round_trip_through_history() {
+        let (mut exposure, masks, lens) = state();
+        let mut history = EditHistory::new(&exposure, &masks, &lens);
+        exposure.point_colors.push(crate::pipeline::PointColor::from_srgb([0.7, 0.1, 0.2]));
+        history.note_change();
+        history.observe(&exposure, &masks, &lens, false);
+        let sampled = exposure;
+        exposure.point_colors[0].hue_shift = 35.0;
+        exposure.point_colors[0].saturation_range.inner_max = 0.1;
+        history.note_change();
+        history.observe(&exposure, &masks, &lens, false);
+        let adjusted = exposure;
+        exposure.point_colors.clear();
+        history.note_change();
+        history.observe(&exposure, &masks, &lens, false);
+        exposure = history.undo(&exposure, &masks, &lens).unwrap().0.exposure;
+        assert_eq!(exposure, adjusted);
+        exposure = history.undo(&exposure, &masks, &lens).unwrap().0.exposure;
+        assert_eq!(exposure, sampled);
+        exposure = history.undo(&exposure, &masks, &lens).unwrap().0.exposure;
+        assert!(exposure.point_colors.is_empty());
+        exposure = history.redo(&exposure, &masks, &lens).unwrap().0.exposure;
+        assert_eq!(exposure, sampled);
+        exposure = history.redo(&exposure, &masks, &lens).unwrap().0.exposure;
+        assert_eq!(exposure, adjusted);
+        exposure = history.redo(&exposure, &masks, &lens).unwrap().0.exposure;
+        assert!(exposure.point_colors.is_empty());
+    }
+
+    #[test]
     fn selection_navigation_does_not_create_history() {
         let (exposure, mut masks, lens) = state();
         masks.add_mask(MaskKind::Radial).unwrap();

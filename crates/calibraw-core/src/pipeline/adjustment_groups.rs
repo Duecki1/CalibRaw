@@ -68,6 +68,7 @@ impl ExposureParams {
                 self.hsl_hue = defaults.hsl_hue;
                 self.hsl_saturation = defaults.hsl_saturation;
                 self.hsl_luminance = defaults.hsl_luminance;
+                self.point_colors = defaults.point_colors;
             }
         }
     }
@@ -139,7 +140,7 @@ mod tests {
             (AdjustmentGroup::ColorGrading, "color_grading"),
             (AdjustmentGroup::Detail, "luminance_denoise chroma_denoise denoise_detail denoise_quality ai_denoise_enabled sharpen_amount sharpen_radius sharpen_detail sharpen_masking"),
             (AdjustmentGroup::Effects, "texture clarity dehaze glow_amount glow_radius glow_threshold vignette_amount vignette_midpoint vignette_roundness vignette_feather vignette_highlights"),
-            (AdjustmentGroup::ColorMixer, "hsl_hue hsl_saturation hsl_luminance"),
+            (AdjustmentGroup::ColorMixer, "hsl_hue hsl_saturation hsl_luminance point_colors"),
         ];
         for local in [false, true] {
             let defaults = if local {

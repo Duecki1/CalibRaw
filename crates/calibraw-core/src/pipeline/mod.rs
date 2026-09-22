@@ -8,6 +8,7 @@ pub mod lensfun;
 mod mask_region;
 pub mod masks;
 pub mod noise;
+pub mod point_color;
 pub mod processing;
 pub mod raw_loader;
 pub mod remove;
@@ -42,6 +43,7 @@ pub use masks::{
     SubjectRefinement, TiltShiftEffectSettings, MAX_LOCAL_MASKS, MAX_MASK_COMPONENTS,
 };
 pub use noise::{AdaptiveDetailDefaults, DenoiseQuality, NoiseProfile};
+pub use point_color::{PointColor, PointColorRange, PointColors, MAX_POINT_COLORS};
 pub use processing::{
     affected_stage, build_proxy, build_region_proxy, crop_raw, extract_padded_tile,
     extract_padded_tile_into, required_export_tile_halo, ExportTile, ProcessingStage, ProxySpec,

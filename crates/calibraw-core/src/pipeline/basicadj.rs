@@ -278,6 +278,11 @@ pub struct ExposureParams {
     pub hsl_saturation: [f32; 8],
     pub hsl_luminance: [f32; 8],
 
+    #[serde(default)]
+    pub point_colors: super::PointColors,
+    #[serde(skip)]
+    pub point_color_visualize: Option<usize>,
+
     pub color_grading: ColorGrading,
 }
 
@@ -359,6 +364,8 @@ impl Default for ExposureParams {
             hsl_hue: [0.0; 8],
             hsl_saturation: [0.0; 8],
             hsl_luminance: [0.0; 8],
+            point_colors: super::PointColors::default(),
+            point_color_visualize: None,
             color_grading: ColorGrading::default(),
         }
     }
@@ -525,5 +532,13 @@ mod tests {
         let decoded: ExposureParams =
             serde_json::from_value(serialized).expect("deserialize exposure");
         assert_eq!(decoded.hue, 0.0);
+    }
+
+    #[test]
+    fn exposure_without_point_colors_deserializes_to_empty() {
+        let mut serialized = serde_json::to_value(ExposureParams::default()).unwrap();
+        serialized.as_object_mut().unwrap().remove("point_colors");
+        let decoded: ExposureParams = serde_json::from_value(serialized).unwrap();
+        assert!(decoded.point_colors.is_empty());
     }
 }

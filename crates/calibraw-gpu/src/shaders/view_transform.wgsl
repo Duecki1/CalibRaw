@@ -383,6 +383,114 @@ fn apply_color_mixer(pos: vec2<i32>, rgb: vec3<f32>) -> vec3<f32> {
     );
 }
 
+fn point_color_hsl(rgb: vec3<f32>) -> vec3<f32> {
+    let linear_srgb = clamp(Common::REC2020_TO_SRGB * rgb, vec3<f32>(0.0), vec3<f32>(1.0));
+    let srgb = Color::srgb_oetf(linear_srgb);
+    let cmax = max(srgb.r, max(srgb.g, srgb.b));
+    let cmin = min(srgb.r, min(srgb.g, srgb.b));
+    let delta = cmax - cmin;
+    let luminance = 0.5 * (cmax + cmin);
+    if delta < 1e-7 {
+        return vec3<f32>(0.0, 0.0, luminance);
+    }
+    var hue = 0.0;
+    if cmax == srgb.r {
+        hue = (srgb.g - srgb.b) / delta;
+        if hue < 0.0 { hue = hue + 6.0; }
+    } else if cmax == srgb.g {
+        hue = (srgb.b - srgb.r) / delta + 2.0;
+    } else {
+        hue = (srgb.r - srgb.g) / delta + 4.0;
+    }
+    hue = hue / 6.0;
+    let saturation = delta / max(1.0 - abs(2.0 * luminance - 1.0), 1e-7);
+    return vec3<f32>(fract(hue + 1.0), saturation, luminance);
+}
+
+fn point_color_range_weight(value: f32, range: vec4<f32>) -> f32 {
+    let distance_min = value - range.y;
+    let distance_max = range.z - value;
+    if distance_min >= 0.0 && distance_max >= 0.0 { return 1.0; }
+    if distance_min < 0.0 {
+        let span = max(range.y - range.x, 1e-5);
+        return smoothstep(0.0, 1.0, 1.0 + distance_min / span);
+    }
+    let span = max(range.w - range.z, 1e-5);
+    return smoothstep(0.0, 1.0, 1.0 - distance_max / span);
+}
+
+fn point_color_hue_weight(value: f32, range: vec4<f32>, scale: f32) -> f32 {
+    let wrapped = fract(value + 1.0);
+    var best = 0.0;
+    for (var offset = -1; offset <= 1; offset = offset + 1) {
+        best = max(best, point_color_range_weight((wrapped + f32(offset)) / scale, range));
+    }
+    return best;
+}
+
+fn point_color_hsl_to_rgb(hsl: vec3<f32>) -> vec3<f32> {
+    let h = fract(hsl.x + 1.0) * 6.0;
+    let s = clamp(hsl.y, 0.0, 1.0);
+    let l = clamp(hsl.z, 0.0, 1.0);
+    let chroma = (1.0 - abs(2.0 * l - 1.0)) * s;
+    let x = chroma * (1.0 - abs(fract(h / 2.0) * 2.0 - 1.0));
+    var rgb = vec3<f32>(0.0);
+    if h < 1.0 { rgb = vec3<f32>(chroma, x, 0.0); }
+    else if h < 2.0 { rgb = vec3<f32>(x, chroma, 0.0); }
+    else if h < 3.0 { rgb = vec3<f32>(0.0, chroma, x); }
+    else if h < 4.0 { rgb = vec3<f32>(0.0, x, chroma); }
+    else if h < 5.0 { rgb = vec3<f32>(x, 0.0, chroma); }
+    else { rgb = vec3<f32>(chroma, 0.0, x); }
+    let m = l - 0.5 * chroma;
+    let encoded = rgb + vec3<f32>(m);
+    let magnitude = abs(encoded);
+    let lo = encoded / 12.92;
+    let hi = sign(encoded) * pow((magnitude + 0.055) / 1.055, vec3<f32>(2.4));
+    let cutoff = step(vec3<f32>(0.04045), magnitude);
+    return Common::SRGB_TO_REC2020 * mix(lo, hi, cutoff);
+}
+
+fn apply_point_colors(input_rgb: vec3<f32>) -> vec3<f32> {
+    let count = min(Common::scene_tone_uniforms.point_color_meta.x, 8u);
+    if count == 0u { return input_rgb; }
+    let sample = point_color_hsl(input_rgb);
+    var hue_shift = 0.0;
+    var saturation_shift = 0.0;
+    var luminance_shift = 0.0;
+    var selected_weight = 0.0;
+    for (var index = 0u; index < count; index = index + 1u) {
+        let point = Common::scene_tone_uniforms.point_colors[index];
+        let range_scale = 0.2 + 1.6 * clamp(point.sample_range.w, 0.0, 100.0) / 100.0;
+        let hue_weight = point_color_hue_weight(sample.x - point.sample_range.x, point.hue_range, range_scale);
+        let saturation_weight = point_color_range_weight((sample.y - point.sample_range.y) / range_scale, point.saturation_range);
+        let luminance_weight = point_color_range_weight((sample.z - point.sample_range.z) / range_scale, point.luminance_range);
+        let weight = hue_weight * saturation_weight * luminance_weight;
+        if (Common::scene_tone_uniforms.point_color_meta.y == index + 1u) {
+            selected_weight = weight;
+        }
+        hue_shift = hue_shift + point.shifts.x * weight;
+        saturation_shift = saturation_shift + point.shifts.y * weight;
+        luminance_shift = luminance_shift + point.shifts.z * weight;
+    }
+    if max(abs(hue_shift), max(abs(saturation_shift), abs(luminance_shift))) < 1e-7
+        && Common::scene_tone_uniforms.point_color_meta.y == 0u {
+        return input_rgb;
+    }
+    // Preserve out-of-sRGB information instead of clipping unrelated wide-gamut
+    // colors merely because another point color is being edited.
+    let residual = input_rgb - point_color_hsl_to_rgb(sample);
+    var adjusted = residual + point_color_hsl_to_rgb(vec3<f32>(
+        sample.x + hue_shift,
+        sample.y + saturation_shift,
+        sample.z + luminance_shift,
+    ));
+    if (Common::scene_tone_uniforms.point_color_meta.y > 0u) {
+        let luminance = dot(adjusted, vec3<f32>(0.2627, 0.6780, 0.0593));
+        adjusted = mix(vec3<f32>(luminance), adjusted, selected_weight);
+    }
+    return adjusted;
+}
+
 fn apply_local_color_mixer(pos: vec2<i32>, input_rgb: vec3<f32>) -> vec3<f32> {
     var rgb = input_rgb;
     let count = min(Common::scene_tone_uniforms.mask_counts.x, 32u);
@@ -457,6 +565,13 @@ fn apply_view_node(@builtin(global_invocation_id) gid: vec3<u32>) {
     var display_linear = apply_view_transform(graded);
     display_linear = Tonemap::apply_display_blacks_toe_value(display_linear, Common::scene_tone_uniforms.basic_tone.w);
     display_linear = apply_local_display_blacks(pos, display_linear);
+    // The sampler reads exactly the same pre-adjustment domain as the selection.
+    // This mode is temporary and restored before the canvas is presented.
+    if Common::scene_tone_uniforms.point_color_meta.z != 0u {
+        textureStore(SceneAdjustments::display_linear_out, pos, vec4<f32>(display_linear, 1.0));
+        return;
+    }
+    display_linear = apply_point_colors(display_linear);
     display_linear = CreativeEffects::apply_vignette(pos, display_linear);
     textureStore(SceneAdjustments::display_linear_out, pos, vec4<f32>(display_linear, 1.0));
     textureStore(SceneAdjustments::out_tex, pos, vec4<f32>(Profile::apply_output_lut(display_linear), 1.0));

@@ -39,6 +39,10 @@ fn white_balance_picker_owns_canvas(sidebar_tab: SidebarTab, picker_active: bool
     sidebar_tab == SidebarTab::Adjustments && picker_active
 }
 
+fn point_color_picker_owns_canvas(sidebar_tab: SidebarTab, picker_active: bool) -> bool {
+    sidebar_tab == SidebarTab::Adjustments && picker_active
+}
+
 fn show_centered_preview_message(
     ui: &mut Ui,
     available: egui::Vec2,
@@ -213,6 +217,10 @@ impl Preview {
             app.ui.sidebar_tab,
             app.develop_ui.white_balance_picker_active,
         );
+        let point_color_canvas = point_color_picker_owns_canvas(
+            app.ui.sidebar_tab,
+            app.develop_ui.point_color.picker_active,
+        );
         if !white_balance_canvas {
             app.develop_ui.white_balance_picker_drag = None;
         }
@@ -226,9 +234,12 @@ impl Preview {
             SidebarTab::Adjustments if white_balance_canvas => {
                 ui.id().with("develop-preview-white-balance-interaction")
             }
+            SidebarTab::Adjustments if point_color_canvas => {
+                ui.id().with("develop-preview-point-color-interaction")
+            }
             _ => ui.id().with("develop-preview-interaction"),
         };
-        let interaction_sense = if white_balance_canvas {
+        let interaction_sense = if white_balance_canvas || point_color_canvas {
             Sense::drag()
         } else {
             Sense::click_and_drag()
@@ -284,8 +295,11 @@ impl Preview {
         }
 
         #[cfg(target_os = "android")]
-        let original_hold_tracking =
-            Self::handle_android_original_hold(ui, app, interaction_rect, touch_navigation);
+        let original_hold_tracking = if point_color_canvas {
+            false
+        } else {
+            Self::handle_android_original_hold(ui, app, interaction_rect, touch_navigation)
+        };
         #[cfg(not(target_os = "android"))]
         let original_hold_tracking = false;
 
@@ -312,6 +326,7 @@ impl Preview {
         let pan_with_primary = !touch_navigation
             && !original_hold_tracking
             && !brush_canvas
+            && !point_color_canvas
             && app.ui.sidebar_tab != SidebarTab::Crop
             && response.dragged_by(egui::PointerButton::Primary);
         let pan_with_middle = !touch_navigation && response.dragged_by(egui::PointerButton::Middle);
@@ -324,7 +339,10 @@ impl Preview {
             moved |= delta.length_sq() > 0.0;
         }
 
-        let fit_gesture = !white_balance_canvas && !touch_navigation && response.double_clicked();
+        let fit_gesture = !white_balance_canvas
+            && !point_color_canvas
+            && !touch_navigation
+            && response.double_clicked();
         if fit_gesture {
             app.cancel_mask_touch_gesture();
             app.inpaint.active_points.clear();
@@ -574,6 +592,22 @@ impl Preview {
                     source_dimensions.0,
                     source_dimensions.1,
                 );
+            }
+
+            if point_color_canvas {
+                if !touch_navigation {
+                    Self::handle_point_color_picker(
+                        ui,
+                        app,
+                        frame,
+                        image_rect,
+                        visible_screen,
+                        source_dimensions.0,
+                        source_dimensions.1,
+                        &response,
+                    );
+                }
+                Self::paint_point_color_picker(ui, app, visible_screen, &response);
             }
 
             if app.ui.sidebar_tab == SidebarTab::Masks {

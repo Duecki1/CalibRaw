@@ -426,6 +426,55 @@ fn validate_exposure(exposure: &ExposureParams) -> Result<(), SidecarError> {
     finite("global HSL hue", &exposure.hsl_hue)?;
     finite("global HSL saturation", &exposure.hsl_saturation)?;
     finite("global HSL luminance", &exposure.hsl_luminance)?;
+    if exposure.point_colors.len() > crate::pipeline::MAX_POINT_COLORS {
+        return invalid("sidecar contains too many point colors");
+    }
+    for point in exposure.point_colors.iter() {
+        finite(
+            "point color",
+            &[
+                point.sample_hsl[0],
+                point.sample_hsl[1],
+                point.sample_hsl[2],
+                point.hue_shift,
+                point.saturation_shift,
+                point.luminance_shift,
+                point.range,
+                point.hue_range.min,
+                point.hue_range.inner_min,
+                point.hue_range.inner_max,
+                point.hue_range.max,
+                point.saturation_range.min,
+                point.saturation_range.inner_min,
+                point.saturation_range.inner_max,
+                point.saturation_range.max,
+                point.luminance_range.min,
+                point.luminance_range.inner_min,
+                point.luminance_range.inner_max,
+                point.luminance_range.max,
+            ],
+        )?;
+        for value in point.sample_hsl {
+            bounded("point color sample", value, 0.0, 1.0)?;
+        }
+        bounded("point color hue shift", point.hue_shift, -100.0, 100.0)?;
+        bounded(
+            "point color saturation shift",
+            point.saturation_shift,
+            -100.0,
+            100.0,
+        )?;
+        bounded(
+            "point color luminance shift",
+            point.luminance_shift,
+            -100.0,
+            100.0,
+        )?;
+        bounded("point color range", point.range, 0.0, 100.0)?;
+        validate_point_color_range(point.hue_range, 0.5, "point color hue range")?;
+        validate_point_color_range(point.saturation_range, 1.0, "point color saturation range")?;
+        validate_point_color_range(point.luminance_range, 1.0, "point color luminance range")?;
+    }
     validate_curves(
         &[
             &exposure.tone_curve,
@@ -436,6 +485,23 @@ fn validate_exposure(exposure: &ExposureParams) -> Result<(), SidecarError> {
         "global tone curve",
     )?;
     validate_grading(&exposure.color_grading, "global color grading")
+}
+
+fn validate_point_color_range(
+    range: crate::pipeline::PointColorRange,
+    limit: f32,
+    label: &str,
+) -> Result<(), SidecarError> {
+    for value in [range.min, range.inner_min, range.inner_max, range.max] {
+        bounded(label, value, -limit, limit)?;
+    }
+    if range.min > range.inner_min
+        || range.inner_min > range.inner_max
+        || range.inner_max > range.max
+    {
+        return invalid("point color range bounds are out of order");
+    }
+    Ok(())
 }
 
 fn validate_local_adjustments(

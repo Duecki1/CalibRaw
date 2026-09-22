@@ -13,6 +13,15 @@ use crate::pipeline::{
     NativeRect, PointCurve, ProcessingStage, TONE_GUIDE_CELL_SIZE,
 };
 
+#[test]
+fn point_color_shader_uses_display_srgb_hsl_and_combined_unadjusted_selection() {
+    assert!(SHADER_VIEW_TRANSFORM.contains("fn apply_point_colors(input_rgb: vec3<f32>)"));
+    assert!(SHADER_VIEW_TRANSFORM.contains("point_color_hue_weight"));
+    assert!(SHADER_VIEW_TRANSFORM.contains("point_color_hsl_to_rgb"));
+    assert!(SHADER_VIEW_TRANSFORM.contains("display_linear = apply_point_colors(display_linear)"));
+    assert!(SHADER_VIEW_TRANSFORM.contains("hue_shift = hue_shift + point.shifts.x * weight"));
+}
+
 fn validate_shader(name: &str, source: &str, quality: ProcessingQuality) {
     let format = processing_work_format(quality);
     let mut manager = ShaderManager::new(

@@ -315,6 +315,10 @@ impl Sidebar {
                     .clicked()
                     {
                         app.develop_ui.adjustment_section = section;
+                        if section != AdjustmentSection::ColorMixer {
+                            app.develop_ui.point_color.picker_active = false;
+                            app.develop_ui.point_color.visualize_range = false;
+                        }
                         if section != AdjustmentSection::Color {
                             app.develop_ui.white_balance_picker_active = false;
                             app.develop_ui.white_balance_picker_drag = None;
@@ -687,6 +691,7 @@ impl Sidebar {
         let mut lens_changed = false;
         let mut ai_denoise_request = None;
         let white_balance_raw = app.develop.loaded_raw.clone();
+        let white_balance_was_active = app.develop_ui.white_balance_picker_active;
         if layout == ScreenLayout::Vertical {
             match app.develop_ui.adjustment_section {
                 AdjustmentSection::Light => {
@@ -731,6 +736,8 @@ impl Sidebar {
                         ui,
                         &mut app.develop.exposure,
                         &mut app.develop_ui.hsl_mixer_color,
+                        &mut app.develop_ui.point_color,
+                        &mut app.develop_ui.point_color_tab,
                         false,
                     );
                 }
@@ -767,11 +774,20 @@ impl Sidebar {
                 ui,
                 &mut app.develop.exposure,
                 &mut app.develop_ui.hsl_mixer_color,
+                &mut app.develop_ui.point_color,
+                &mut app.develop_ui.point_color_tab,
                 true,
             );
             lens_changed |= Self::show_optics(ui, app, true);
         }
 
+        if !white_balance_was_active && app.develop_ui.white_balance_picker_active {
+            app.develop_ui.point_color.picker_active = false;
+        }
+        if app.develop_ui.point_color.picker_active {
+            app.develop_ui.white_balance_picker_active = false;
+            app.develop_ui.white_balance_picker_drag = None;
+        }
         if changed {
             app.develop.exposure.sanitize_tone_curves();
             app.mark_pipeline_dirty();
