@@ -161,6 +161,11 @@ fn filtered_mask_stack(masks: &MaskStack, include_manual: bool, include_ai: bool
     }
 
     MaskStack {
+        global_effects: if include_manual {
+            masks.global_effects.clone()
+        } else {
+            Vec::new()
+        },
         masks: masks
             .masks
             .iter()

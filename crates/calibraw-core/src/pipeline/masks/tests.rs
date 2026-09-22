@@ -1295,3 +1295,31 @@ fn new_object_stroke_preserves_completed_submask_and_respects_limit() {
         original
     );
 }
+
+#[test]
+fn legacy_mask_effect_migrates_into_an_editable_component() {
+    let mut mask = LocalMask::new(MaskKind::Fullscreen, 1);
+    mask.effect = MaskEffect::Blur;
+    mask.effect_settings.blur.amount = 45.0;
+    mask.adjustments.exposure = 1.0;
+    mask.migrate_legacy_effect();
+    assert_eq!(mask.effect, MaskEffect::Adjustment);
+    assert_eq!(mask.effect_components.len(), 1);
+    assert_eq!(mask.effect_components[0].effect, MaskEffect::Blur);
+    assert_eq!(mask.effect_components[0].settings.blur.amount, 45.0);
+    assert!(mask.effect_settings.is_default());
+    assert!(!mask.adjustments_enabled);
+    mask.migrate_legacy_effect();
+    assert_eq!(mask.effect_components.len(), 1);
+}
+
+#[test]
+fn light_rays_mask_source_tracks_component_enablement() {
+    let mut mask = LocalMask::new(MaskKind::Fullscreen, 1);
+    assert!(!mask.has_light_rays_effect());
+    mask.effect_components
+        .push(EffectComponent::new(MaskEffect::LightRays));
+    assert!(mask.has_light_rays_effect());
+    mask.effect_components[0].enabled = false;
+    assert!(!mask.has_light_rays_effect());
+}

@@ -63,6 +63,8 @@ fn local_mask_texture_uv(region_uv: vec2<f32>) -> vec2<f32> {
 }
 
 fn local_mask_weight(pos: vec2<i32>, index: u32) -> f32 {
+    let layer = Common::mask_data[index].point_color_meta.z;
+    if layer == 0xffffffffu { return 1.0; }
     let uv = local_mask_uv(pos);
     if any(uv < vec2<f32>(0.0)) || any(uv > vec2<f32>(1.0)) {
         return 0.0;
@@ -71,14 +73,14 @@ fn local_mask_weight(pos: vec2<i32>, index: u32) -> f32 {
         local_mask_tex,
         local_mask_sampler,
         local_mask_texture_uv(uv),
-        i32(index),
+        i32(layer),
         0.0,
     ).x;
 }
 
 fn apply_local_exposure_nodes(pos: vec2<i32>, input_rgb: vec3<f32>) -> vec3<f32> {
     var rgb = input_rgb;
-    let count = min(Common::scene_tone_uniforms.mask_counts.x, 32u);
+    let count = min(Common::scene_tone_uniforms.mask_counts.x, Common::MAX_RENDER_MASK_SLOTS);
     for (var index = 0u; index < count; index = index + 1u) {
         let state = Common::mask_data[index].metadata;
         if state.x == 0u || state.y == 0u || Common::mask_effect_id(state) != 0u { continue; }
@@ -358,7 +360,7 @@ fn apply_local_curves_for_mask(mask_index: u32, input_rgb: vec3<f32>) -> vec3<f3
 
 fn apply_local_scene_tone_nodes(pos: vec2<i32>, input_rgb: vec3<f32>) -> vec3<f32> {
     var rgb = input_rgb;
-    let count = min(Common::scene_tone_uniforms.mask_counts.x, 32u);
+    let count = min(Common::scene_tone_uniforms.mask_counts.x, Common::MAX_RENDER_MASK_SLOTS);
     for (var index = 0u; index < count; index = index + 1u) {
         let state = Common::mask_data[index].metadata;
         if state.x == 0u || state.y == 0u || Common::mask_effect_id(state) != 0u { continue; }

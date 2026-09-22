@@ -35,13 +35,13 @@ pub use mask_region::{mask_region_texture_extent, mask_source_region_uv};
 pub use masks::{
     effect_params, ellipse_outline_points, export_mask_atlas_edge, export_mask_atlas_edge_limit,
     mask_atlas_edge, path_outline_points, rasterize_brush_dabs, BlurEffectSettings, BrushDab,
-    BrushMode, EdgeGlowEffectSettings, FogEffectSettings, GlowEffectSettings, LensBlurEffectSettings,
-    LightRaysEffectSettings, LocalAdjustments, LocalMask, MaskCombineMode, MaskCommon,
-    MaskComponent, MaskEffect, MaskEffectCategory, MaskEffectSettings, MaskGeometry, MaskImage,
-    MaskKind, MaskRgbImage, MaskStack, MotionBlurEffectSettings, NeonEffectSettings, ObjectStroke,
-    PathPoint, PixelateEffectSettings, RadialBlurEffectSettings, RadialBlurMode, SmokeEffectSettings,
-    SubjectRefinement, TiltShiftEffectSettings, MAX_LOCAL_MASKS, MAX_MASK_COMPONENTS,
-    MAX_PATH_POINTS,
+    BrushMode, EdgeGlowEffectSettings, EffectComponent, FogEffectSettings, GlowEffectSettings,
+    LensBlurEffectSettings, LightRaysEffectSettings, LocalAdjustments, LocalMask, MaskCombineMode,
+    MaskCommon, MaskComponent, MaskEffect, MaskEffectCategory, MaskEffectSettings, MaskGeometry,
+    MaskImage, MaskKind, MaskRgbImage, MaskStack, MotionBlurEffectSettings, NeonEffectSettings,
+    ObjectStroke, PathPoint, PixelateEffectSettings, RadialBlurEffectSettings, RadialBlurMode,
+    SmokeEffectSettings, SubjectRefinement, TiltShiftEffectSettings, MAX_EFFECT_COMPONENTS,
+    MAX_LOCAL_MASKS, MAX_MASK_COMPONENTS, MAX_PATH_POINTS,
 };
 pub use noise::{AdaptiveDetailDefaults, DenoiseQuality, NoiseProfile};
 pub use point_color::{PointColor, PointColorRange, PointColors, MAX_POINT_COLORS};

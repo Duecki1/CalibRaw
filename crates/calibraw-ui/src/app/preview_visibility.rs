@@ -404,8 +404,6 @@ mod tests {
             "Effects",
             "Color Mixer",
             "Mask Properties",
-            "Mask type",
-            "Blur",
             "Subject refinement",
         ] {
             PreviewVisibility::toggle(&ctx, title);

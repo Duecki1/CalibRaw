@@ -30,9 +30,14 @@ where
     Settings: Default,
 {
     let mut changed = false;
-    let action = super::Sidebar::adjustment_card(ui, effect.label(), true, false, *enabled, |ui| {
-        changed = body(ui, settings)
-    });
+    let action = super::Sidebar::adjustment_card_without_visibility(
+        ui,
+        effect.label(),
+        true,
+        false,
+        *enabled,
+        |ui| changed = body(ui, settings),
+    );
     // Reset always has to be applied, so the card action is combined with `|`
     // instead of short-circuiting.
     changed | apply_card_action(action, settings)

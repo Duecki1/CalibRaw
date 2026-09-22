@@ -248,6 +248,7 @@ impl EditHistory {
             false
         } else if mask_change_pending {
             self.current.masks.masks == masks.masks
+                && self.current.masks.global_effects == masks.global_effects
         } else {
             true
         };
@@ -636,6 +637,30 @@ mod tests {
             MaskStack::default(),
             LensCorrectionState::default(),
         )
+    }
+
+    #[test]
+    fn global_effect_changes_round_trip_through_history() {
+        let (exposure, mut masks, lens) = state();
+        let mut history = EditHistory::new(&exposure, &masks, &lens);
+        masks
+            .global_effects
+            .push(crate::pipeline::EffectComponent::new(
+                crate::pipeline::MaskEffect::Blur,
+            ));
+        history.note_mask_change();
+        history.observe(&exposure, &masks, &lens, false);
+        let (undone, masks_changed, _) = history.undo(&exposure, &masks, &lens).unwrap();
+        assert!(masks_changed);
+        assert!(undone.materialize_masks().global_effects.is_empty());
+        let (redone, masks_changed, _) = history
+            .redo(&exposure, &undone.materialize_masks(), &lens)
+            .unwrap();
+        assert!(masks_changed);
+        assert_eq!(
+            redone.materialize_masks().global_effects,
+            masks.global_effects
+        );
     }
 
     #[test]

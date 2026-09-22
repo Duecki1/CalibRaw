@@ -1,6 +1,6 @@
 
 fn mask_glow_active() -> bool {
-    let count = min(Common::scene_tone_uniforms.mask_counts.x, 32u);
+    let count = min(Common::scene_tone_uniforms.mask_counts.x, Common::MAX_RENDER_MASK_SLOTS);
     for (var index = 0u; index < count; index = index + 1u) {
         let state = Common::mask_data[index].metadata;
         if state.x != 0u && state.y != 0u && Common::mask_effect_id(state) == MASK_EFFECT_GLOW_ID {
@@ -12,7 +12,7 @@ fn mask_glow_active() -> bool {
 
 fn mask_glow_source_at(pos: vec2<i32>) -> vec3<f32> {
     var emission = vec3<f32>(0.0);
-    let count = min(Common::scene_tone_uniforms.mask_counts.x, 32u);
+    let count = min(Common::scene_tone_uniforms.mask_counts.x, Common::MAX_RENDER_MASK_SLOTS);
     for (var index = 0u; index < count; index = index + 1u) {
         let state = Common::mask_data[index].metadata;
         if state.x == 0u || state.y == 0u || Common::mask_effect_id(state) != MASK_EFFECT_GLOW_ID { continue; }
@@ -30,7 +30,7 @@ fn mask_glow_source_at(pos: vec2<i32>) -> vec3<f32> {
 
 fn apply_mask_glow_cores(pos: vec2<i32>, input_rgb: vec3<f32>) -> vec3<f32> {
     var rgb = input_rgb;
-    let count = min(Common::scene_tone_uniforms.mask_counts.x, 32u);
+    let count = min(Common::scene_tone_uniforms.mask_counts.x, Common::MAX_RENDER_MASK_SLOTS);
     for (var index = 0u; index < count; index = index + 1u) {
         let state = Common::mask_data[index].metadata;
         if state.x == 0u || state.y == 0u || Common::mask_effect_id(state) != MASK_EFFECT_GLOW_ID { continue; }

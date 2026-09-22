@@ -1,3 +1,5 @@
+const MAX_RENDER_MASK_SLOTS: u32 = 428u;
+
 
 // Naga reserves trailing numeric suffixes when rewriting composable modules.
 // Exported struct member names must therefore not end in a digit.

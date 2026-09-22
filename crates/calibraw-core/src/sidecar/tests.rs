@@ -481,6 +481,24 @@ fn neon_mask_settings_round_trip_through_the_sidecar() {
 }
 
 #[test]
+fn effect_components_round_trip_through_the_sidecar() {
+    let mut edits = sample_edits();
+    let masks = Arc::make_mut(&mut edits.masks);
+    masks.add_mask(MaskKind::Fullscreen).unwrap();
+    let mut blur = crate::pipeline::EffectComponent::new(crate::pipeline::MaskEffect::Blur);
+    blur.settings.blur.amount = 55.0;
+    let mut glow = crate::pipeline::EffectComponent::new(crate::pipeline::MaskEffect::Glow);
+    glow.settings.glow.amount = 30.0;
+    glow.enabled = false;
+    masks.masks[0].effect_components = vec![blur.clone(), glow.clone()];
+    masks.global_effects.push(blur);
+
+    let loaded = decode(&encode(edits.clone()).unwrap()).unwrap();
+    assert_eq!(loaded.edits, edits);
+    assert_eq!(loaded.edits.masks.masks[0].effect_components[1], glow);
+}
+
+#[test]
 fn glow_mask_settings_round_trip_through_the_sidecar() {
     let mut edits = sample_edits();
     let masks = Arc::make_mut(&mut edits.masks);

@@ -51,14 +51,14 @@ impl Preview {
         app.masks.active_tool = Some(kind);
         let geometry_can_leave_image =
             matches!(kind, MaskKind::Radial | MaskKind::Linear | MaskKind::Path)
-            && (app.masks.drag.is_some()
-                || app
-                    .masks
-                    .stack
-                    .masks
-                    .get(mask_index)
-                    .and_then(|mask| mask.components.get(component_index))
-                    .is_some_and(|component| component.geometry.is_initialized()));
+                && (app.masks.drag.is_some()
+                    || app
+                        .masks
+                        .stack
+                        .masks
+                        .get(mask_index)
+                        .and_then(|mask| mask.components.get(component_index))
+                        .is_some_and(|component| component.geometry.is_initialized()));
         let pointer_bounds = if geometry_can_leave_image {
             overlay_rect
         } else {
@@ -421,7 +421,8 @@ impl Preview {
                 },
                 (MaskGeometry::Path { points, .. }, MaskKind::Path) => match app.masks.drag {
                     Some(MaskDragState::AddPathPoint { index, anchor }) => {
-                        if index == points.len() && points.len() < crate::pipeline::MAX_PATH_POINTS {
+                        if index == points.len() && points.len() < crate::pipeline::MAX_PATH_POINTS
+                        {
                             points.push(crate::pipeline::PathPoint::corner(anchor));
                             changed = true;
                         }
@@ -555,25 +556,7 @@ impl Preview {
             return;
         };
         let selected_component = app.masks.stack.selected_component;
-        let neutral = match mask.effect {
-            crate::pipeline::MaskEffect::Adjustment => mask.adjustments.is_neutral(),
-            crate::pipeline::MaskEffect::Blur => !mask.effect_settings.blur.is_active(),
-            crate::pipeline::MaskEffect::LensBlur => !mask.effect_settings.lens_blur.is_active(),
-            crate::pipeline::MaskEffect::MotionBlur => {
-                !mask.effect_settings.motion_blur.is_active()
-            }
-            crate::pipeline::MaskEffect::RadialBlur => {
-                !mask.effect_settings.radial_blur.is_active()
-            }
-            crate::pipeline::MaskEffect::TiltShift => !mask.effect_settings.tilt_shift.is_active(),
-            crate::pipeline::MaskEffect::EdgeGlow => !mask.effect_settings.edge_glow.is_active(),
-            crate::pipeline::MaskEffect::Glow => !mask.effect_settings.glow.is_active(),
-            crate::pipeline::MaskEffect::LightRays => !mask.effect_settings.light_rays.is_active(),
-            crate::pipeline::MaskEffect::Neon => !mask.effect_settings.neon.is_active(),
-            crate::pipeline::MaskEffect::Pixelate => !mask.effect_settings.pixelate.is_active(),
-            crate::pipeline::MaskEffect::Fog => !mask.effect_settings.fog.is_active(),
-            crate::pipeline::MaskEffect::Smoke => !mask.effect_settings.smoke.is_active(),
-        };
+        let neutral = !mask.has_active_edit();
         let accent = selected_component
             .map(mask_component_color)
             .unwrap_or(crate::ui::theme::MASK_ADD);

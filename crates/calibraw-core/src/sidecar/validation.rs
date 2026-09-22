@@ -136,24 +136,16 @@ pub(super) fn validate_edit_state(edits: &EditState) -> Result<(), SidecarError>
         bounded("subject refinement dab feather", dab.feather, 0.0, 1.0)?;
     }
 
+    validate_effect_components(&stack.global_effects)?;
+
     for (mask_index, mask) in stack.masks.iter().enumerate() {
         finite("mask opacity", &[mask.opacity])?;
         if !(0.0..=1.0).contains(&mask.opacity) {
             return invalid("mask opacity is outside 0..1");
         }
         validate_local_adjustments(&mask.adjustments)?;
-        validate_blur_effect(&mask.effect_settings.blur)?;
-        validate_lens_blur_effect(&mask.effect_settings.lens_blur)?;
-        validate_motion_blur_effect(&mask.effect_settings.motion_blur)?;
-        validate_radial_blur_effect(&mask.effect_settings.radial_blur)?;
-        validate_tilt_shift_effect(&mask.effect_settings.tilt_shift)?;
-        validate_edge_glow_effect(&mask.effect_settings.edge_glow)?;
-        validate_glow_effect(&mask.effect_settings.glow)?;
-        validate_light_rays_effect(&mask.effect_settings.light_rays)?;
-        validate_neon_effect(&mask.effect_settings.neon)?;
-        validate_pixelate_effect(&mask.effect_settings.pixelate)?;
-        validate_fog_effect(&mask.effect_settings.fog)?;
-        validate_smoke_effect(&mask.effect_settings.smoke)?;
+        validate_effect_settings(&mask.effect_settings)?;
+        validate_effect_components(&mask.effect_components)?;
         if mask.name.len() > MAX_EDIT_NAME_BYTES {
             return invalid("mask name is unreasonably long");
         }
@@ -590,6 +582,39 @@ fn validate_neon_effect(neon: &crate::pipeline::NeonEffectSettings) -> Result<()
         &neon.color,
     )?;
     validate_effect_color(crate::pipeline::MaskEffect::Neon, neon::COLOR, neon.color)
+}
+
+fn validate_effect_components(
+    components: &[crate::pipeline::EffectComponent],
+) -> Result<(), SidecarError> {
+    if components.len() > crate::pipeline::MAX_EFFECT_COMPONENTS {
+        return invalid("too many effect components");
+    }
+    for component in components {
+        if component.effect == crate::pipeline::MaskEffect::Adjustment {
+            return invalid("Adjustment is not an effect component");
+        }
+        validate_effect_settings(&component.settings)?;
+    }
+    Ok(())
+}
+
+fn validate_effect_settings(
+    settings: &crate::pipeline::MaskEffectSettings,
+) -> Result<(), SidecarError> {
+    validate_blur_effect(&settings.blur)?;
+    validate_lens_blur_effect(&settings.lens_blur)?;
+    validate_motion_blur_effect(&settings.motion_blur)?;
+    validate_radial_blur_effect(&settings.radial_blur)?;
+    validate_tilt_shift_effect(&settings.tilt_shift)?;
+    validate_edge_glow_effect(&settings.edge_glow)?;
+    validate_glow_effect(&settings.glow)?;
+    validate_light_rays_effect(&settings.light_rays)?;
+    validate_neon_effect(&settings.neon)?;
+    validate_pixelate_effect(&settings.pixelate)?;
+    validate_fog_effect(&settings.fog)?;
+    validate_smoke_effect(&settings.smoke)?;
+    Ok(())
 }
 
 fn validate_blur_effect(blur: &crate::pipeline::BlurEffectSettings) -> Result<(), SidecarError> {
