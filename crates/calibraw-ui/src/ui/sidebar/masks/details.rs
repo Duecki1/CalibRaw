@@ -305,10 +305,6 @@ impl Sidebar {
                 mask.migrate_legacy_effect();
                 adjustments_changed |= mask.effect == MaskEffect::Adjustment;
             }
-            adjustments_changed |= ui
-                .checkbox(&mut mask.adjustments_enabled, "Local adjustments")
-                .changed();
-
             match orientation {
                 MaskStripOrientation::Horizontal => {
                     let action = Self::mask_properties_card(ui, true, true, true, |ui| {
@@ -353,23 +349,25 @@ impl Sidebar {
                         (MaskSection::Effects, "Effects", false),
                         (MaskSection::ColorMixer, "Color Mixer", false),
                     ] {
-                        ui.add_enabled_ui(mask.adjustments_enabled, |ui| {
-                            adjustments_changed |= Self::show_local_adjustment_card(
-                                ui,
-                                &mut mask.adjustments,
-                                section,
-                                label,
-                                default_open,
-                                true,
-                                (
-                                    &mut local_curve_tab,
-                                    &mut local_color_grade_tab,
-                                    &mut local_hsl_mixer_color,
-                                    &mut local_point_color,
-                                    &mut local_point_color_tab,
-                                ),
-                            );
-                        });
+                        let changed = Self::show_local_adjustment_card(
+                            ui,
+                            &mut mask.adjustments,
+                            section,
+                            label,
+                            default_open,
+                            true,
+                            (
+                                &mut local_curve_tab,
+                                &mut local_color_grade_tab,
+                                &mut local_hsl_mixer_color,
+                                &mut local_point_color,
+                                &mut local_point_color_tab,
+                            ),
+                        );
+                        if changed {
+                            mask.adjustments_enabled = true;
+                            adjustments_changed = true;
+                        }
                     }
                 }
                 MaskStripOrientation::Vertical => {
@@ -410,23 +408,25 @@ impl Sidebar {
                                 Self::apply_mask_properties_action(mask, component_index, action);
                         }
                         section => {
-                            ui.add_enabled_ui(mask.adjustments_enabled, |ui| {
-                                adjustments_changed |= Self::show_local_adjustment_card(
-                                    ui,
-                                    &mut mask.adjustments,
-                                    section,
-                                    section_title,
-                                    true,
-                                    false,
-                                    (
-                                        &mut local_curve_tab,
-                                        &mut local_color_grade_tab,
-                                        &mut local_hsl_mixer_color,
-                                        &mut local_point_color,
-                                        &mut local_point_color_tab,
-                                    ),
-                                );
-                            });
+                            let changed = Self::show_local_adjustment_card(
+                                ui,
+                                &mut mask.adjustments,
+                                section,
+                                section_title,
+                                true,
+                                false,
+                                (
+                                    &mut local_curve_tab,
+                                    &mut local_color_grade_tab,
+                                    &mut local_hsl_mixer_color,
+                                    &mut local_point_color,
+                                    &mut local_point_color_tab,
+                                ),
+                            );
+                            if changed {
+                                mask.adjustments_enabled = true;
+                                adjustments_changed = true;
+                            }
                         }
                     }
                 }
