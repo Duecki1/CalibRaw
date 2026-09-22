@@ -146,7 +146,7 @@ impl CalibRawApp {
             && self.develop_ui.point_color.visualize_range
             && !self.develop_ui.point_color.picker_active
             && self.develop_ui.point_color.selected < exposure.point_colors.len())
-            .then_some(self.develop_ui.point_color.selected);
+        .then_some(self.develop_ui.point_color.selected);
         exposure
     }
     pub(crate) fn preview_mask_stack(&self) -> Arc<MaskStack> {
@@ -172,7 +172,8 @@ impl CalibRawApp {
         let exposure = self.preview_exposure();
         if !state.pending {
             // Range visualization is a preview aid, never an edit or history entry.
-            if exposure.point_color_visualize != self.develop.target_exposure.point_color_visualize {
+            if exposure.point_color_visualize != self.develop.target_exposure.point_color_visualize
+            {
                 self.develop.target_exposure = exposure;
                 self.queue_preview_processing(ProcessingStage::Output);
             }
@@ -207,7 +208,10 @@ mod tests {
     fn point_color_range_preview_never_changes_saved_edits_or_history() {
         let ctx = egui::Context::default();
         let mut app = CalibRawApp::empty(&ctx);
-        app.develop.exposure.point_colors.push(crate::pipeline::PointColor::from_srgb([0.8, 0.2, 0.1]));
+        app.develop
+            .exposure
+            .point_colors
+            .push(crate::pipeline::PointColor::from_srgb([0.8, 0.2, 0.1]));
         app.develop.target_exposure = app.develop.exposure;
         app.ui.sidebar_tab = SidebarTab::Adjustments;
         app.develop_ui.point_color_tab = true;

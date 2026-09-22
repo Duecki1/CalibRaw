@@ -668,7 +668,9 @@ mod tests {
     fn point_color_sampling_adjustment_and_deletion_round_trip_through_history() {
         let (mut exposure, masks, lens) = state();
         let mut history = EditHistory::new(&exposure, &masks, &lens);
-        exposure.point_colors.push(crate::pipeline::PointColor::from_srgb([0.7, 0.1, 0.2]));
+        exposure
+            .point_colors
+            .push(crate::pipeline::PointColor::from_srgb([0.7, 0.1, 0.2]));
         history.note_change();
         history.observe(&exposure, &masks, &lens, false);
         let sampled = exposure;

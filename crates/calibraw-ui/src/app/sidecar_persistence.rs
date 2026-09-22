@@ -944,8 +944,8 @@ pub(super) fn save_sidecar_request(
                 request.edits,
                 request.editing_time_ms,
             )
-                .map(|path| path.display().to_string())
-                .map_err(|error| error.to_string())
+            .map(|path| path.display().to_string())
+            .map_err(|error| error.to_string())
         }
         #[cfg(target_os = "android")]
         crate::sidecar::SidecarTarget::Android {

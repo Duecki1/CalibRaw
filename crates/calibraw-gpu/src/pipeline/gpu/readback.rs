@@ -364,7 +364,9 @@ pub(super) fn read_float_texture_pixel_blocking(
     y: u32,
 ) -> Result<[f32; 3]> {
     if x >= texture.width() || y >= texture.height() {
-        return Err(anyhow!("GPU float readback pixel is outside texture bounds"));
+        return Err(anyhow!(
+            "GPU float readback pixel is outside texture bounds"
+        ));
     }
     let bytes_per_pixel = match format {
         wgpu::TextureFormat::Rgba16Float => 8u32,
@@ -378,10 +380,9 @@ pub(super) fn read_float_texture_pixel_blocking(
         usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
         mapped_at_creation: false,
     });
-    let mut encoder =
-        device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("calibraw float pixel readback"),
-        });
+    let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+        label: Some("calibraw float pixel readback"),
+    });
     encoder.copy_texture_to_buffer(
         wgpu::TexelCopyTextureInfo {
             texture,

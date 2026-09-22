@@ -67,14 +67,10 @@ pub(crate) fn sidebar_color_picker(
                 let gap = PICKER_GAP.min(width * 0.06);
                 let plane_width = (width - strip_width - gap).max(1.0);
 
-                let (rect, _) = ui.allocate_exact_size(
-                    egui::vec2(width, PICKER_HEIGHT),
-                    Sense::hover(),
-                );
-                let plane = egui::Rect::from_min_size(
-                    rect.min,
-                    egui::vec2(plane_width, rect.height()),
-                );
+                let (rect, _) =
+                    ui.allocate_exact_size(egui::vec2(width, PICKER_HEIGHT), Sense::hover());
+                let plane =
+                    egui::Rect::from_min_size(rect.min, egui::vec2(plane_width, rect.height()));
                 let hue_strip = egui::Rect::from_min_max(
                     egui::pos2(rect.right() - strip_width, rect.top()),
                     rect.max,
@@ -104,11 +100,7 @@ pub(crate) fn sidebar_color_picker(
                 }
 
                 let hue_response = ui
-                    .interact(
-                        hue_strip,
-                        ui.id().with("hue"),
-                        Sense::click_and_drag(),
-                    )
+                    .interact(hue_strip, ui.id().with("hue"), Sense::click_and_drag())
                     .on_hover_text("Drag to choose hue");
                 if pointer_is_operating(&hue_response) {
                     if let Some(pointer) = hue_response.interact_pointer_pos() {
@@ -172,13 +164,7 @@ fn color_swatch_button(ui: &mut Ui, color: Color32, expanded: bool) -> Response 
     response
 }
 
-fn paint_saturation_value_plane(
-    ui: &Ui,
-    rect: egui::Rect,
-    hue: f32,
-    saturation: f32,
-    value: f32,
-) {
+fn paint_saturation_value_plane(ui: &Ui, rect: egui::Rect, hue: f32, saturation: f32, value: f32) {
     let painter = ui.painter_at(rect);
     painter.rect_filled(rect, 4.0, ui.visuals().extreme_bg_color);
     painter.add(Shape::mesh(saturation_value_mesh(rect, hue)));

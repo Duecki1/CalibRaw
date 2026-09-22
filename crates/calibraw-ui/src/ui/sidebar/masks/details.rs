@@ -302,33 +302,27 @@ impl Sidebar {
 
             match orientation {
                 MaskStripOrientation::Horizontal => {
-                    let action = Self::mask_properties_card(
-                        ui,
-                        true,
-                        true,
-                        true,
-                        |ui| {
-                            geometry_changed |= Self::show_vertical_mask_properties(
-                                ui,
-                                mask,
-                                component_index,
-                                &mut brush_mode,
-                                (
-                                    &mut request_subject,
-                                    birefnet_quality,
-                                    birefnet_quality_change_enabled,
-                                ),
-                                (
-                                    &mut refinement_active,
-                                    &mut refinement_size,
-                                    &mut refinement_feather,
-                                    &mut refinement_flow,
-                                    &mut clear_refinement,
-                                ),
-                                &mut request_object,
-                            );
-                        },
-                    );
+                    let action = Self::mask_properties_card(ui, true, true, true, |ui| {
+                        geometry_changed |= Self::show_vertical_mask_properties(
+                            ui,
+                            mask,
+                            component_index,
+                            &mut brush_mode,
+                            (
+                                &mut request_subject,
+                                birefnet_quality,
+                                birefnet_quality_change_enabled,
+                            ),
+                            (
+                                &mut refinement_active,
+                                &mut refinement_size,
+                                &mut refinement_feather,
+                                &mut refinement_flow,
+                                &mut clear_refinement,
+                            ),
+                            &mut request_object,
+                        );
+                    });
                     geometry_changed |=
                         Self::apply_mask_properties_action(mask, component_index, action);
 
@@ -383,12 +377,8 @@ impl Sidebar {
                     if mask.effect.uses_adjustments() {
                         match mask_section {
                             MaskSection::Properties => {
-                                let action = Self::mask_properties_card(
-                                    ui,
-                                    true,
-                                    false,
-                                    true,
-                                    |ui| {
+                                let action =
+                                    Self::mask_properties_card(ui, true, false, true, |ui| {
                                         geometry_changed |= Self::show_vertical_mask_properties(
                                             ui,
                                             mask,
@@ -408,8 +398,7 @@ impl Sidebar {
                                             ),
                                             &mut request_object,
                                         );
-                                    },
-                                );
+                                    });
                                 geometry_changed |= Self::apply_mask_properties_action(
                                     mask,
                                     component_index,
@@ -433,33 +422,27 @@ impl Sidebar {
                             }
                         }
                     } else {
-                        let action = Self::mask_properties_card(
-                            ui,
-                            true,
-                            false,
-                            true,
-                            |ui| {
-                                geometry_changed |= Self::show_vertical_mask_properties(
-                                    ui,
-                                    mask,
-                                    component_index,
-                                    &mut brush_mode,
-                                    (
-                                        &mut request_subject,
-                                        birefnet_quality,
-                                        birefnet_quality_change_enabled,
-                                    ),
-                                    (
-                                        &mut refinement_active,
-                                        &mut refinement_size,
-                                        &mut refinement_feather,
-                                        &mut refinement_flow,
-                                        &mut clear_refinement,
-                                    ),
-                                    &mut request_object,
-                                );
-                            },
-                        );
+                        let action = Self::mask_properties_card(ui, true, false, true, |ui| {
+                            geometry_changed |= Self::show_vertical_mask_properties(
+                                ui,
+                                mask,
+                                component_index,
+                                &mut brush_mode,
+                                (
+                                    &mut request_subject,
+                                    birefnet_quality,
+                                    birefnet_quality_change_enabled,
+                                ),
+                                (
+                                    &mut refinement_active,
+                                    &mut refinement_size,
+                                    &mut refinement_feather,
+                                    &mut refinement_flow,
+                                    &mut clear_refinement,
+                                ),
+                                &mut request_object,
+                            );
+                        });
                         geometry_changed |=
                             Self::apply_mask_properties_action(mask, component_index, action);
                         adjustments_changed |= Self::show_mask_effect_settings(ui, mask);
