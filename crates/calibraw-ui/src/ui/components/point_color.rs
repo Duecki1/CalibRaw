@@ -2,6 +2,7 @@ use crate::pipeline::{PointColor, PointColorRange, PointColors, MAX_POINT_COLORS
 use crate::ui::components::adjustment_slider::{
     accented_gradient_adjustment_slider, adjustment_slider_with_reset, SliderGradient,
 };
+use crate::ui::components::color_picker::sidebar_color_picker;
 use crate::ui::{icons, theme};
 use eframe::egui::{self, Color32, Mesh, Rect, Sense, Shape, Stroke, StrokeKind, Ui};
 use egui_phosphor::regular;
@@ -143,7 +144,16 @@ pub(crate) fn point_color(
         return before != *colors;
     };
     ui.push_id(("point-color-controls", state.selected), |ui| {
-        point_picker(ui, point);
+        let mut target_rgb = point.sample_rgb();
+        if sidebar_color_picker(
+            ui,
+            "target-color",
+            &mut target_rgb,
+            "Target color",
+            "Choose which color in the photo is affected",
+        ) {
+            set_target_color(point, target_rgb);
+        }
         let accent = rgb_color(point.sample_rgb());
         let hue = point.sample_hsl[0] * 360.0;
         accented_gradient_adjustment_slider(ui, "Hue Shift", &mut point.hue_shift, -100.0..=100.0,
@@ -155,6 +165,7 @@ pub(crate) fn point_color(
         accented_gradient_adjustment_slider(ui, "Luminance Shift", &mut point.luminance_shift, -100.0..=100.0,
             0, 1.0, Some("Brighten or darken the selected colors."), accent,
             SliderGradient::Luminance(accent));
+        adjusted_color_readout(ui, point);
         adjustment_slider_with_reset(ui, "Range", &mut point.range, 0.0..=100.0, 0, 1.0,
             Some("Widen or narrow all three selection ranges together."), 50.0);
         let mut feather = point_color_feather(point);
@@ -195,6 +206,38 @@ fn hsl_color(hsl: [f32; 3]) -> Color32 {
     rgb_color(point.sample_rgb())
 }
 
+fn set_target_color(point: &mut PointColor, rgb: [f32; 3]) {
+    point.sample_hsl = PointColor::from_srgb(rgb).sample_hsl;
+}
+
+fn adjusted_color_readout(ui: &mut Ui, point: &PointColor) {
+    let color = hsl_color(adjusted_hsl(
+        point,
+        point.hue_shift,
+        point.saturation_shift,
+        point.luminance_shift,
+    ));
+    theme::property_row(ui, "Adjusted color", |ui| {
+        ui.label(
+            egui::RichText::new(format!(
+                "#{:02X}{:02X}{:02X}",
+                color.r(),
+                color.g(),
+                color.b()
+            ))
+            .monospace(),
+        );
+        let (rect, _) = ui.allocate_exact_size(egui::vec2(18.0, 18.0), Sense::hover());
+        ui.painter().rect_filled(rect, 4.0, color);
+        ui.painter().rect_stroke(
+            rect,
+            4.0,
+            ui.visuals().widgets.noninteractive.bg_stroke,
+            StrokeKind::Inside,
+        );
+    });
+}
+
 fn gradient(ui: &Ui, rect: Rect, columns: usize, rows: usize, color: impl Fn(f32, f32) -> Color32) {
     let mut mesh = Mesh::default();
     for y in 0..=rows {
@@ -216,96 +259,6 @@ fn gradient(ui: &Ui, rect: Rect, columns: usize, rows: usize, color: impl Fn(f32
         }
     }
     ui.painter().add(Shape::mesh(mesh));
-}
-
-fn point_picker(ui: &mut Ui, point: &mut PointColor) {
-    let (rect, _) = ui.allocate_exact_size(
-        egui::vec2(ui.available_width().max(1.0), 112.0),
-        Sense::hover(),
-    );
-    let strip_width = (rect.width() * 0.09).clamp(1.0, 22.0);
-    let gap = 8.0_f32.min(rect.width() * 0.05);
-    let plane = Rect::from_min_max(
-        rect.min,
-        egui::pos2(rect.right() - strip_width - gap, rect.bottom()),
-    );
-    let strip = Rect::from_min_max(egui::pos2(rect.right() - strip_width, rect.top()), rect.max);
-    let plane_response = ui
-        .interact(
-            plane,
-            ui.id().with("hue-saturation-plane"),
-            Sense::click_and_drag(),
-        )
-        .on_hover_text("Drag to shift hue and saturation. Double-click to reset both.");
-    let strip_response = ui
-        .interact(
-            strip,
-            ui.id().with("luminance-strip"),
-            Sense::click_and_drag(),
-        )
-        .on_hover_text("Drag to shift luminance. Double-click to reset.");
-    if plane_response.double_clicked() {
-        point.hue_shift = 0.0;
-        point.saturation_shift = 0.0;
-    } else if plane_response.clicked() || plane_response.dragged() {
-        if let Some(pos) = plane_response.interact_pointer_pos() {
-            point.hue_shift =
-                (((pos.x - plane.left()) / plane.width()).clamp(0.0, 1.0) - 0.5) * 200.0;
-            point.saturation_shift =
-                (0.5 - ((pos.y - plane.top()) / plane.height()).clamp(0.0, 1.0)) * 200.0;
-        }
-    }
-    if strip_response.double_clicked() {
-        point.luminance_shift = 0.0;
-    } else if strip_response.clicked() || strip_response.dragged() {
-        if let Some(pos) = strip_response.interact_pointer_pos() {
-            point.luminance_shift =
-                (0.5 - ((pos.y - strip.top()) / strip.height()).clamp(0.0, 1.0)) * 200.0;
-        }
-    }
-    gradient(ui, plane, 48, 12, |x, y| {
-        hsl_color(adjusted_hsl(
-            point,
-            (x - 0.5) * 200.0,
-            (0.5 - y) * 200.0,
-            point.luminance_shift,
-        ))
-    });
-    gradient(ui, strip, 1, 32, |_, y| {
-        hsl_color(adjusted_hsl(
-            point,
-            point.hue_shift,
-            point.saturation_shift,
-            (0.5 - y) * 200.0,
-        ))
-    });
-    for area in [plane, strip] {
-        ui.painter().rect_stroke(
-            area,
-            2.0,
-            ui.visuals().widgets.noninteractive.bg_stroke,
-            StrokeKind::Inside,
-        );
-    }
-    ui.painter().circle_stroke(
-        plane.center(),
-        3.0,
-        Stroke::new(1.0, Color32::from_white_alpha(130)),
-    );
-    let marker = egui::pos2(
-        egui::lerp(plane.x_range(), 0.5 + point.hue_shift / 200.0),
-        egui::lerp(plane.y_range(), 0.5 - point.saturation_shift / 200.0),
-    );
-    ui.painter()
-        .circle_stroke(marker, 6.0, Stroke::new(3.0, Color32::BLACK));
-    ui.painter()
-        .circle_stroke(marker, 6.0, Stroke::new(1.5, Color32::WHITE));
-    let y = egui::lerp(strip.y_range(), 0.5 - point.luminance_shift / 200.0);
-    let line = [egui::pos2(strip.left(), y), egui::pos2(strip.right(), y)];
-    ui.painter()
-        .line_segment(line, Stroke::new(4.0, Color32::BLACK));
-    ui.painter()
-        .line_segment(line, Stroke::new(2.0, Color32::WHITE));
 }
 
 fn range_feather(range: PointColorRange) -> f32 {
@@ -415,9 +368,9 @@ fn range_editor(
 
 fn rgb_color(rgb: [f32; 3]) -> Color32 {
     Color32::from_rgb(
-        (rgb[0].clamp(0.0, 1.0) * 255.0) as u8,
-        (rgb[1].clamp(0.0, 1.0) * 255.0) as u8,
-        (rgb[2].clamp(0.0, 1.0) * 255.0) as u8,
+        (rgb[0].clamp(0.0, 1.0) * 255.0).round() as u8,
+        (rgb[1].clamp(0.0, 1.0) * 255.0).round() as u8,
+        (rgb[2].clamp(0.0, 1.0) * 255.0).round() as u8,
     )
 }
 
@@ -442,6 +395,30 @@ mod tests {
     fn simple_feather_defaults_to_fifty_percent() {
         let point = PointColor::from_srgb([0.8, 0.3, 0.2]);
         assert!((point_color_feather(&point) - 50.0).abs() < 1e-5);
+    }
+
+    #[test]
+    fn changing_target_color_keeps_adjustments_and_ranges() {
+        let mut point = PointColor::from_srgb([0.8, 0.3, 0.2]);
+        point.hue_shift = 15.0;
+        point.saturation_shift = -20.0;
+        point.luminance_shift = 8.0;
+        point.range = 35.0;
+        let before = point;
+
+        set_target_color(&mut point, [0.2, 0.6, 0.9]);
+
+        assert_eq!(
+            point.sample_hsl,
+            PointColor::from_srgb([0.2, 0.6, 0.9]).sample_hsl
+        );
+        assert_eq!(point.hue_shift, before.hue_shift);
+        assert_eq!(point.saturation_shift, before.saturation_shift);
+        assert_eq!(point.luminance_shift, before.luminance_shift);
+        assert_eq!(point.range, before.range);
+        assert_eq!(point.hue_range, before.hue_range);
+        assert_eq!(point.saturation_range, before.saturation_range);
+        assert_eq!(point.luminance_range, before.luminance_range);
     }
 
     #[test]
