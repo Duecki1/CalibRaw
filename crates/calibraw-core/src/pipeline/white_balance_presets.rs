@@ -165,11 +165,11 @@ mod tests {
         // values that are continuous with the corresponding fine-tuning series.
         assert_eq!(
             preset_coefficients("Panasonic", "DC-S9", "Shade"),
-            vec![[2.33984375, 1.0, 1.5390625, 0.0]]
+            vec![[2.339_843_8, 1.0, 1.5390625, 0.0]]
         );
         assert_eq!(
             preset_coefficients("Panasonic", "DC-S9", "Cloudy"),
-            vec![[2.21484375, 1.0, 1.61328125, 0.0]]
+            vec![[2.214_843_8, 1.0, 1.613_281_3, 0.0]]
         );
         assert_eq!(
             preset_coefficients("Panasonic", "DMC-G2", "Cloudy"),

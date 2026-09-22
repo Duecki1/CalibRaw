@@ -148,7 +148,7 @@ fn preview_and_high_quality_point_color_outputs_agree() -> anyhow::Result<()> {
 }
 
 #[test]
-fn sampling_domain_is_stable_and_visualization_grays_out_other_colors() -> anyhow::Result<()> {
+fn sampling_domain_is_stable_and_visualization_preserves_unselected_colors() -> anyhow::Result<()> {
     let Some((device, queue)) = request_test_device() else {
         eprintln!("point color GPU regression skipped: no headless wgpu adapter");
         return Ok(());
@@ -197,8 +197,8 @@ fn sampling_domain_is_stable_and_visualization_grays_out_other_colors() -> anyho
     )?;
     assert!((red[0] - red[1]).abs() > 1e-3 || (red[1] - red[2]).abs() > 1e-3);
     assert!(
-        (green[0] - green[1]).abs() < 2e-3 && (green[1] - green[2]).abs() < 2e-3,
-        "green visualization pixel was {:?}",
+        (green[0] - green[1]).abs() > 1e-3 || (green[1] - green[2]).abs() > 1e-3,
+        "unselected green visualization pixel lost its chroma: {:?}",
         green
     );
     Ok(())

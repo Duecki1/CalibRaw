@@ -1094,7 +1094,7 @@ fn photo_review_survives_development_saves_and_reset() {
     save_desktop_with_editing_time(&raw, edits.clone(), 54_321).unwrap();
     assert_eq!(desktop_sidecar_fingerprint(&raw).unwrap(), fingerprint);
     assert_eq!(load_desktop(&raw).unwrap().unwrap().editing_time_ms, 54_321);
-    save_desktop(&raw, edits.clone()).unwrap();
+    save_desktop(&raw, edits).unwrap();
     assert_eq!(load_desktop(&raw).unwrap().unwrap().editing_time_ms, 54_321);
     reset_desktop_adjustments(&raw).unwrap();
     assert_eq!(load_photo_review(&raw).unwrap(), changed);
