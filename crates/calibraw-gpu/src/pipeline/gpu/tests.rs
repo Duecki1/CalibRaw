@@ -525,7 +525,8 @@ fn gpu_params_pack_the_same_full_source_opposed_reference_for_moved_tiles() {
         .any(|value| value.abs() > 1e-5));
 }
 
-pub(super) fn request_test_device() -> Option<(wgpu::Device, wgpu::Queue)> {
+pub(super) fn request_test_device_with_info(
+) -> Option<(wgpu::Device, wgpu::Queue, wgpu::AdapterInfo)> {
     let instance = wgpu::Instance::default();
     let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
         power_preference: wgpu::PowerPreference::LowPower,
@@ -540,12 +541,18 @@ pub(super) fn request_test_device() -> Option<(wgpu::Device, wgpu::Queue)> {
         }))
     })
     .ok()?;
-    eprintln!("TEST ADAPTER {:?}", adapter.get_info());
-    pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+    let info = adapter.get_info();
+    eprintln!("TEST ADAPTER {info:?}");
+    let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
         label: Some("calibraw tone crop consistency test"),
         ..Default::default()
     }))
-    .ok()
+    .ok()?;
+    Some((device, queue, info))
+}
+
+pub(super) fn request_test_device() -> Option<(wgpu::Device, wgpu::Queue)> {
+    request_test_device_with_info().map(|(device, queue, _)| (device, queue))
 }
 
 fn render_tone_consistency_crop(
