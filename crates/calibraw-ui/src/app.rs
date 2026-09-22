@@ -1060,6 +1060,9 @@ pub(crate) struct DevelopUiState {
     pub(crate) hsl_mixer_color: HslMixerColor,
     pub(crate) point_color: crate::ui::components::point_color::PointColorUiState,
     pub(crate) point_color_tab: bool,
+    pub(crate) mask_point_color: crate::ui::components::point_color::PointColorUiState,
+    pub(crate) mask_point_color_tab: bool,
+    pub(crate) mask_point_color_mask: Option<usize>,
 }
 
 pub(crate) struct PreferencesState {

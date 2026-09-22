@@ -1,8 +1,5 @@
 use super::super::*;
 
-/// Handles the one-shot point-color sampler.  The sampler reads the display-linear
-/// texture through a temporary pre-point-color render, so choosing a pixel never
-/// feeds an already adjusted color back into the adjustment.
 impl Preview {
     pub(in crate::ui::preview) fn handle_point_color_picker(
         ui: &Ui,
@@ -14,13 +11,50 @@ impl Preview {
         source_height: u32,
         response: &egui::Response,
     ) {
-        if app.ui.sidebar_tab != SidebarTab::Adjustments
-            || !app.develop_ui.point_color.picker_active
-        {
+        let mask_index = match app.ui.sidebar_tab {
+            SidebarTab::Adjustments if app.develop_ui.point_color.picker_active => None,
+            SidebarTab::Masks if app.develop_ui.mask_point_color.picker_active => {
+                let Some(index) = app.masks.stack.selected_mask else {
+                    app.develop_ui.mask_point_color.picker_active = false;
+                    return;
+                };
+                if !app
+                    .masks
+                    .stack
+                    .masks
+                    .get(index)
+                    .is_some_and(|mask| mask.effect.uses_adjustments())
+                {
+                    app.develop_ui.mask_point_color.picker_active = false;
+                    return;
+                }
+                Some(index)
+            }
+            _ => return,
+        };
+        let colors_len = if let Some(index) = mask_index {
+            app.masks
+                .stack
+                .masks
+                .get(index)
+                .map_or(0, |mask| mask.adjustments.point_colors.len())
+        } else {
+            app.develop.exposure.point_colors.len()
+        };
+        if colors_len >= crate::pipeline::MAX_POINT_COLORS {
+            if mask_index.is_some() {
+                app.develop_ui.mask_point_color.picker_active = false;
+            } else {
+                app.develop_ui.point_color.picker_active = false;
+            }
             return;
         }
         if ui.input(|input| input.key_pressed(egui::Key::Escape)) {
-            app.develop_ui.point_color.picker_active = false;
+            if mask_index.is_some() {
+                app.develop_ui.mask_point_color.picker_active = false;
+            } else {
+                app.develop_ui.point_color.picker_active = false;
+            }
             return;
         }
         let Some(pointer) = response
@@ -44,10 +78,6 @@ impl Preview {
             return;
         }
 
-        if app.develop.exposure.point_colors.len() >= crate::pipeline::MAX_POINT_COLORS {
-            app.develop_ui.point_color.picker_active = false;
-            return;
-        }
         if app.preview.pending_stage.is_some() {
             app.ui.notice =
                 Some("Preview is updating. Sample the color again when it is ready.".into());
@@ -73,7 +103,13 @@ impl Preview {
             raw,
         )
         .with_vignette_geometry(app.develop.geometry);
-        let rgb = match pipeline.read_point_color_sample_blocking(
+        let sample = if mask_index.is_some() {
+            crate::pipeline::RawGpuPipeline::read_local_point_color_sample_blocking
+        } else {
+            crate::pipeline::RawGpuPipeline::read_point_color_sample_blocking
+        };
+        let rgb = match sample(
+            pipeline,
             &render_state.device,
             &render_state.queue,
             &params,
@@ -89,7 +125,20 @@ impl Preview {
         let srgb_linear = rec2020_to_srgb(rgb);
         let srgb = srgb_linear.map(linear_to_srgb);
         let point = crate::pipeline::PointColor::from_srgb(srgb);
-        if app.develop.exposure.point_colors.push(point) {
+        if let Some(index) = mask_index {
+            if let Some(mask) = app.masks.stack.masks.get_mut(index) {
+                if mask.adjustments.point_colors.push(point) {
+                    app.develop_ui.mask_point_color.selected =
+                        mask.adjustments.point_colors.len() - 1;
+                    app.develop_ui.mask_point_color.picker_active = false;
+                    crate::app::preview_visibility::PreviewVisibility::invalidate_mask_cache(
+                        ui.ctx(),
+                    );
+                    app.mark_mask_adjustments_dirty();
+                    ui.ctx().request_repaint();
+                }
+            }
+        } else if app.develop.exposure.point_colors.push(point) {
             app.develop_ui.point_color.selected = app.develop.exposure.point_colors.len() - 1;
             app.develop_ui.point_color.picker_active = false;
             app.mark_pipeline_dirty();
@@ -103,9 +152,12 @@ impl Preview {
         preview_rect: Rect,
         response: &egui::Response,
     ) {
-        if app.ui.sidebar_tab != SidebarTab::Adjustments
-            || !app.develop_ui.point_color.picker_active
-        {
+        let active = match app.ui.sidebar_tab {
+            SidebarTab::Adjustments => app.develop_ui.point_color.picker_active,
+            SidebarTab::Masks => app.develop_ui.mask_point_color.picker_active,
+            _ => false,
+        };
+        if !active {
             return;
         }
         let painter = ui.painter_at(preview_rect);

@@ -29,6 +29,11 @@ impl PreviewVisibility {
     pub(crate) fn clear(ctx: &egui::Context) {
         ctx.data_mut(|data| data.remove::<Self>(Self::id()));
     }
+    pub(crate) fn invalidate_mask_cache(ctx: &egui::Context) {
+        let mut state = Self::read(ctx);
+        state.masks = None;
+        state.write(ctx);
+    }
     pub(crate) fn set_mask_scope(ctx: &egui::Context, scope: Option<usize>) {
         let mut state = Self::read(ctx);
         state.scope = scope;
@@ -154,7 +159,20 @@ impl CalibRawApp {
         if let Some(masks) = state.masks {
             return masks;
         }
-        let masks = Arc::new(state.project_masks(&self.masks.stack));
+        let mut masks = state.project_masks(&self.masks.stack);
+        if self.ui.sidebar_tab == SidebarTab::Masks
+            && self.develop_ui.mask_point_color_tab
+            && self.develop_ui.mask_point_color.visualize_range
+            && !self.develop_ui.mask_point_color.picker_active
+        {
+            if let Some(mask) = masks.selected_mask_mut() {
+                let selected = self.develop_ui.mask_point_color.selected;
+                if selected < mask.adjustments.point_colors.len() {
+                    mask.adjustments.point_color_visualize = Some(selected);
+                }
+            }
+        }
+        let masks = Arc::new(masks);
         state.masks = Some(Arc::clone(&masks));
         state.write(&self.egui_ctx);
         masks
@@ -234,6 +252,44 @@ mod tests {
         app.sync_preview_visibility();
         assert_eq!(app.develop.target_exposure.point_color_visualize, None);
         assert_eq!(app.capture_sidecar_edit_state().exposure, saved.exposure);
+    }
+
+    #[cfg(not(target_os = "android"))]
+    #[test]
+    fn local_point_color_range_preview_is_only_in_projected_masks() {
+        let ctx = egui::Context::default();
+        let mut app = CalibRawApp::empty(&ctx);
+        let mut mask = LocalMask::new(crate::pipeline::MaskKind::Fullscreen, 1);
+        mask.adjustments
+            .point_colors
+            .push(crate::pipeline::PointColor::from_srgb([0.8, 0.2, 0.1]));
+        app.masks.stack.masks.push(mask);
+        app.masks.stack.selected_mask = Some(0);
+        app.ui.sidebar_tab = SidebarTab::Masks;
+        app.develop_ui.mask_point_color_tab = true;
+        app.develop_ui.mask_point_color.visualize_range = true;
+        let saved = app.capture_sidecar_edit_state();
+
+        assert_eq!(
+            app.preview_mask_stack().masks[0]
+                .adjustments
+                .point_color_visualize,
+            Some(0)
+        );
+        assert_eq!(
+            app.masks.stack.masks[0].adjustments.point_color_visualize,
+            None
+        );
+        assert_eq!(app.capture_sidecar_edit_state().masks, saved.masks);
+
+        app.develop_ui.mask_point_color.picker_active = true;
+        PreviewVisibility::invalidate_mask_cache(&ctx);
+        assert_eq!(
+            app.preview_mask_stack().masks[0]
+                .adjustments
+                .point_color_visualize,
+            None
+        );
     }
 
     fn edits() -> crate::sidecar::EditState {

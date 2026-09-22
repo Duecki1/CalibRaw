@@ -1,5 +1,7 @@
 use super::{tests::request_test_device, GpuParams, ProcessingQuality, RawGpuPipeline};
-use crate::pipeline::{ExposureParams, LoadedRaw, MaskStack, PointColor, ProcessingStage};
+use crate::pipeline::{
+    ExposureParams, LoadedRaw, LocalMask, MaskKind, MaskStack, PointColor, ProcessingStage,
+};
 
 const WIDTH: u32 = 4;
 const HEIGHT: u32 = 1;
@@ -52,6 +54,58 @@ fn max_delta(a: &[f32], b: &[f32], pixel: usize) -> f32 {
         .zip(&b[pixel * 3..pixel * 3 + 3])
         .map(|(left, right)| (left - right).abs())
         .fold(0.0, f32::max)
+}
+
+#[test]
+fn local_point_color_respects_color_and_mask_coverage() -> anyhow::Result<()> {
+    let Some((device, queue)) = request_test_device() else {
+        eprintln!("point color GPU regression skipped: no headless wgpu adapter");
+        return Ok(());
+    };
+    let source = source()?;
+    let exposure = ExposureParams::scene_referred_default();
+    let mut masks = MaskStack::default();
+    let mut mask = LocalMask::new(MaskKind::Fullscreen, 1);
+    let mut point = PointColor::from_srgb([0.8, 0.05, 0.03]);
+    point.hue_shift = 30.0;
+    mask.adjustments.point_colors.push(point);
+    masks.masks.push(mask);
+    let params = GpuParams::new(&exposure, &masks, &source);
+    let render = |coverage: u16| -> anyhow::Result<Vec<f32>> {
+        let pipeline = RawGpuPipeline::new_headless_with_quality_and_mask_edge(
+            &device,
+            &queue,
+            &source,
+            &params,
+            ProcessingQuality::High,
+            64,
+        )?;
+        pipeline.update_mask_layer(&queue, 0, &vec![coverage; 64 * 64])?;
+        pipeline.dispatch_stage(&queue, &device, &params, ProcessingStage::Raw);
+        pipeline.dispatch_stage(&queue, &device, &params, ProcessingStage::Tone);
+        pipeline.dispatch_stage(&queue, &device, &params, ProcessingStage::Output);
+        let mut output = Vec::new();
+        for x in 0..WIDTH {
+            output.extend_from_slice(
+                &super::read_float_texture_pixel_blocking(
+                    &device,
+                    &queue,
+                    &pipeline.display_linear_texture,
+                    pipeline.scene_format,
+                    x,
+                    0,
+                )
+                .map_err(|error| anyhow::anyhow!("pixel {x}: {error:#}"))?,
+            );
+        }
+        Ok(output)
+    };
+    let unmasked = render(0).map_err(|error| anyhow::anyhow!("zero coverage: {error:#}"))?;
+    let masked = render(half::f16::from_f32(1.0).to_bits())
+        .map_err(|error| anyhow::anyhow!("full coverage: {error:#}"))?;
+    assert!(max_delta(&unmasked, &masked, 0) > 1e-3);
+    assert!(max_delta(&unmasked, &masked, 1) < 2e-4);
+    Ok(())
 }
 
 #[test]
@@ -178,6 +232,12 @@ fn sampling_domain_is_stable_and_visualization_preserves_unselected_colors() -> 
     let edited_params = GpuParams::new(&baseline_exposure, &masks, &source);
     let after = pipeline.read_point_color_sample_blocking(&device, &queue, &edited_params, 0, 0)?;
     assert!(before.iter().zip(after).all(|(a, b)| (a - b).abs() < 2e-3));
+    let local_input =
+        pipeline.read_local_point_color_sample_blocking(&device, &queue, &edited_params, 0, 0)?;
+    assert!(before
+        .iter()
+        .zip(local_input)
+        .any(|(a, b)| (a - b).abs() > 1e-3));
 
     let red = super::read_float_texture_pixel_blocking(
         &device,

@@ -638,6 +638,12 @@ impl Preview {
                 hidden_target
             };
         }
+        if app.develop_ui.mask_point_color_tab
+            && (app.develop_ui.mask_point_color.visualize_range
+                || app.develop_ui.mask_point_color.picker_active)
+        {
+            coverage_target = None;
+        }
         if mask.enabled || force_overlay {
             if let Some(component) = coverage_target {
                 Self::paint_coverage_texture(

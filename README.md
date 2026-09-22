@@ -40,7 +40,7 @@ CalibRaw runs natively on **Linux**, **Android**, **Windows**, and **macOS** wit
 ## Tooling & Workflow
 
 ### Color & Tone
-- **Point Color:** Click any color to target it, refine its Hue/Saturation/Luminance span, view the affected pixels with a visual mask overlay, and apply exact shifts.
+- **Point Color:** Sample a color in global or mask HSL controls, refine its Hue/Saturation/Luminance span, preview the selected range, and apply targeted shifts.
 - **8-Band Color Mixer:** Adjust Hue, Saturation, and Luminance across 8 individual color bands.
 - **3-Way Color Grading:** Dedicated Shadows, Midtones, Highlights, and Global color wheels mapped through Oklab color space.
 - **Tone Curves:** Luminance curve and individual Red, Green, and Blue splines with monotonic limits.

@@ -114,6 +114,8 @@ impl LocalAdjustments {
                 self.hsl_hue = defaults.hsl_hue;
                 self.hsl_saturation = defaults.hsl_saturation;
                 self.hsl_luminance = defaults.hsl_luminance;
+                self.point_colors = defaults.point_colors;
+                self.point_color_visualize = None;
             }
         }
     }
@@ -122,6 +124,7 @@ impl LocalAdjustments {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::pipeline::PointColor;
     use serde_json::Value;
 
     fn edited(value: &mut Value) {
@@ -185,5 +188,31 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn local_point_colors_round_trip_and_old_masks_default_to_empty() {
+        let mut edits = LocalAdjustments::default();
+        edits
+            .point_colors
+            .push(PointColor::from_srgb([0.8, 0.2, 0.1]));
+        assert!(edits.is_neutral());
+        edits.point_colors[0].hue_shift = 20.0;
+        assert!(!edits.is_neutral());
+        edits.point_color_visualize = Some(0);
+        let saved = serde_json::to_value(edits).unwrap();
+        assert!(saved.get("point_color_visualize").is_none());
+        let restored: LocalAdjustments = serde_json::from_value(saved.clone()).unwrap();
+        assert_eq!(restored.point_colors, edits.point_colors);
+        assert_eq!(restored.point_color_visualize, None);
+
+        let mut old = saved;
+        old.as_object_mut().unwrap().remove("point_colors");
+        let restored: LocalAdjustments = serde_json::from_value(old).unwrap();
+        assert!(restored.point_colors.is_empty());
+
+        edits.reset_group(AdjustmentGroup::ColorMixer);
+        assert!(edits.point_colors.is_empty());
+        assert_eq!(edits.point_color_visualize, None);
     }
 }
