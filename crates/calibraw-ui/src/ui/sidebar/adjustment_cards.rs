@@ -400,14 +400,13 @@ impl Sidebar {
                         .show_header(ui, |ui| {
                             let available = ui.available_rect_before_wrap();
                             Self::adjustment_card_title(ui, title);
-                            let card_actions =
-                                Self::card_actions(
-                                    ui,
-                                    title,
-                                    visible,
-                                    show_visibility,
-                                    show_mask_overlay_toggle,
-                                );
+                            let card_actions = Self::card_actions(
+                                ui,
+                                title,
+                                visible,
+                                show_visibility,
+                                show_mask_overlay_toggle,
+                            );
                             action = card_actions.action;
                             let buttons = card_actions.button_rects();
                             // The built-in arrow already toggles. Make the rest of the

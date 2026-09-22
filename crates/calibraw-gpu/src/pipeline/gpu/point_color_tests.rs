@@ -27,12 +27,7 @@ fn render(exposure: &ExposureParams, quality: ProcessingQuality) -> anyhow::Resu
     let masks = MaskStack::default();
     let params = GpuParams::new(exposure, &masks, &source);
     let pipeline = RawGpuPipeline::new_headless_with_quality_and_mask_edge(
-        &device,
-        &queue,
-        &source,
-        &params,
-        quality,
-        64,
+        &device, &queue, &source, &params, quality, 64,
     )?;
     pipeline.dispatch_stage(&queue, &device, &params, ProcessingStage::Raw);
     pipeline.dispatch_stage(&queue, &device, &params, ProcessingStage::Tone);
@@ -65,7 +60,10 @@ fn zero_shift_point_color_is_an_identity() -> anyhow::Result<()> {
         eprintln!("point color GPU regression skipped: no headless wgpu adapter");
         return Ok(());
     };
-    let baseline = render(&ExposureParams::scene_referred_default(), ProcessingQuality::High)?;
+    let baseline = render(
+        &ExposureParams::scene_referred_default(),
+        ProcessingQuality::High,
+    )?;
     let mut exposure = ExposureParams::scene_referred_default();
     exposure
         .point_colors
@@ -85,7 +83,10 @@ fn sampled_hue_shift_changes_matching_patch_only() -> anyhow::Result<()> {
         eprintln!("point color GPU regression skipped: no headless wgpu adapter");
         return Ok(());
     };
-    let baseline = render(&ExposureParams::scene_referred_default(), ProcessingQuality::High)?;
+    let baseline = render(
+        &ExposureParams::scene_referred_default(),
+        ProcessingQuality::High,
+    )?;
     let mut exposure = ExposureParams::scene_referred_default();
     let mut point = PointColor::from_srgb([0.8, 0.05, 0.03]);
     point.hue_shift = 30.0;
@@ -167,7 +168,8 @@ fn sampling_domain_is_stable_and_visualization_grays_out_other_colors() -> anyho
     pipeline.dispatch_stage(&queue, &device, &baseline_params, ProcessingStage::Raw);
     pipeline.dispatch_stage(&queue, &device, &baseline_params, ProcessingStage::Tone);
     pipeline.dispatch_stage(&queue, &device, &baseline_params, ProcessingStage::Output);
-    let before = pipeline.read_point_color_sample_blocking(&device, &queue, &baseline_params, 0, 0)?;
+    let before =
+        pipeline.read_point_color_sample_blocking(&device, &queue, &baseline_params, 0, 0)?;
 
     let mut point = PointColor::from_srgb([0.8, 0.05, 0.03]);
     point.hue_shift = 30.0;
@@ -178,10 +180,20 @@ fn sampling_domain_is_stable_and_visualization_grays_out_other_colors() -> anyho
     assert!(before.iter().zip(after).all(|(a, b)| (a - b).abs() < 2e-3));
 
     let red = super::read_float_texture_pixel_blocking(
-        &device, &queue, &pipeline.display_linear_texture, pipeline.scene_format, 0, 0,
+        &device,
+        &queue,
+        &pipeline.display_linear_texture,
+        pipeline.scene_format,
+        0,
+        0,
     )?;
     let green = super::read_float_texture_pixel_blocking(
-        &device, &queue, &pipeline.display_linear_texture, pipeline.scene_format, 1, 0,
+        &device,
+        &queue,
+        &pipeline.display_linear_texture,
+        pipeline.scene_format,
+        1,
+        0,
     )?;
     assert!((red[0] - red[1]).abs() > 1e-3 || (red[1] - red[2]).abs() > 1e-3);
     assert!(

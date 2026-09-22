@@ -16,7 +16,8 @@ use crate::pipeline::{
 #[test]
 fn point_color_shader_uses_display_srgb_hsl_and_combined_unadjusted_selection() {
     assert!(SHADER_VIEW_TRANSFORM.contains("fn apply_point_colors(input_rgb: vec3<f32>)"));
-    assert!(SHADER_VIEW_TRANSFORM.contains("fn point_color_selection_weight(sample: vec3<f32>, index: u32)"));
+    assert!(SHADER_VIEW_TRANSFORM
+        .contains("fn point_color_selection_weight(sample: vec3<f32>, index: u32)"));
     assert!(SHADER_VIEW_TRANSFORM.contains("point_color_hue_weight"));
     assert!(SHADER_VIEW_TRANSFORM.contains("point_color_hsl_to_rgb"));
     assert!(SHADER_VIEW_TRANSFORM.contains("display_linear = apply_point_colors(display_linear)"));
@@ -25,12 +26,12 @@ fn point_color_shader_uses_display_srgb_hsl_and_combined_unadjusted_selection() 
 
 #[test]
 fn point_color_visualization_matches_the_mask_overlay_style() {
-    assert!(SHADER_VIEW_TRANSFORM.contains(
-        "let overlay_rgb = vec3<f32>(78.0 / 255.0, 163.0 / 255.0, 1.0);"
-    ));
     assert!(SHADER_VIEW_TRANSFORM
-        .contains("let overlay_alpha = selected_weight * (92.0 / 255.0);"));
-    assert!(SHADER_VIEW_TRANSFORM.contains("output_rgb = mix(output_rgb, overlay_rgb, overlay_alpha);"));
+        .contains("let overlay_rgb = vec3<f32>(78.0 / 255.0, 163.0 / 255.0, 1.0);"));
+    assert!(SHADER_VIEW_TRANSFORM.contains("let overlay_alpha = selected_weight * (92.0 / 255.0);"));
+    assert!(
+        SHADER_VIEW_TRANSFORM.contains("output_rgb = mix(output_rgb, overlay_rgb, overlay_alpha);")
+    );
     assert!(!SHADER_VIEW_TRANSFORM
         .contains("adjusted = mix(vec3<f32>(luminance), adjusted, selected_weight);"));
 }
@@ -97,8 +98,9 @@ fn adjacent_f32(value: f32, above: bool) -> f32 {
 #[test]
 fn lch_and_rcd_share_sensor_space_highlight_clip_definition() {
     assert!(SHADER_RAW_SAMPLING.contains("fn shared_highlight_sensor_clip() -> f32"));
-    assert!(SHADER_RAW_SAMPLING
-        .contains("return raw_sensor_at(p) >= shared_highlight_sensor_clip();"));
+    assert!(
+        SHADER_RAW_SAMPLING.contains("return raw_sensor_at(p) >= shared_highlight_sensor_clip();")
+    );
     assert!(SHADER_RAW_SAMPLING
         .contains("fn shared_highlight_clip_for_cfa_channel(channel: u32) -> f32"));
     assert!(!SHADER_RAW_SAMPLING.contains("min_wb"));
@@ -126,8 +128,16 @@ fn unequal_wb_does_not_move_raw_highlight_clipping_boundary() {
 
     for (channel, gain) in wb.into_iter().enumerate() {
         let channel_clip = shared_highlight_channel_clip_for_test(highlight_clip, wb, channel);
-        assert_eq!(below >= sensor_clip, below * gain >= channel_clip, "channel={channel}");
-        assert_eq!(above >= sensor_clip, above * gain >= channel_clip, "channel={channel}");
+        assert_eq!(
+            below >= sensor_clip,
+            below * gain >= channel_clip,
+            "channel={channel}"
+        );
+        assert_eq!(
+            above >= sensor_clip,
+            above * gain >= channel_clip,
+            "channel={channel}"
+        );
     }
 
     // The old min(wb) threshold incorrectly marked high-gain channels clipped
@@ -167,8 +177,8 @@ fn opposed_sensor_and_channel_wb_clipping_are_equivalent_with_unequal_wb() {
         for raw_sensor in sensor_values {
             let raw_camera = raw_sensor * gain;
             let sensor_domain = raw_sensor >= sensor_clip;
-            let wb_domain = raw_camera
-                >= DARKTABLE_OPPOSED_CLIP_MAGIC * highlight_clip.max(0.01) * gain;
+            let wb_domain =
+                raw_camera >= DARKTABLE_OPPOSED_CLIP_MAGIC * highlight_clip.max(0.01) * gain;
             assert_eq!(
                 sensor_domain, wb_domain,
                 "channel={channel}, wb={gain}, raw_sensor={raw_sensor}"

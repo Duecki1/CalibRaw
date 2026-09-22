@@ -214,7 +214,7 @@ impl CalibRawApp {
         self.preview.detail_rebuild_receiver = None;
         let editing_time_override_ms = (edit_override.is_some()
             && self.persistence.sidecar_target.as_ref() == Some(&sidecar_target))
-            .then(|| self.raw_editing_time_ms());
+        .then(|| self.raw_editing_time_ms());
         let sidecar_generation = self.begin_sidecar_open();
         crate::app::preview_visibility::PreviewVisibility::clear(&self.egui_ctx);
         let reusable_preview_pipeline = {

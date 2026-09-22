@@ -1084,10 +1084,7 @@ pub fn encode(edits: EditState) -> Result<Vec<u8>, SidecarError> {
     encode_with_review(edits, PhotoReview::default())
 }
 
-pub fn encode_with_review(
-    edits: EditState,
-    review: PhotoReview,
-) -> Result<Vec<u8>, SidecarError> {
+pub fn encode_with_review(edits: EditState, review: PhotoReview) -> Result<Vec<u8>, SidecarError> {
     encode_with_review_and_editing_time(edits, review, 0)
 }
 
@@ -1209,11 +1206,8 @@ pub fn save_desktop(raw_path: &Path, edits: EditState) -> Result<PathBuf, Sideca
         .unwrap_or_else(|error| error.into_inner());
     let path = sidecar_path_for_raw(raw_path);
     let metadata = load_sidecar_metadata(raw_path)?;
-    let bytes = encode_with_review_and_editing_time(
-        edits,
-        metadata.review,
-        metadata.editing_time_ms,
-    )?;
+    let bytes =
+        encode_with_review_and_editing_time(edits, metadata.review, metadata.editing_time_ms)?;
     atomic_write(&path, &bytes)?;
     Ok(path)
 }

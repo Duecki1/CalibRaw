@@ -448,13 +448,34 @@ mod tests {
     fn simple_feather_preserves_core_and_expands_outer_bounds() {
         let mut point = PointColor::from_srgb([0.8, 0.3, 0.2]);
         let hue_core = (point.hue_range.inner_min, point.hue_range.inner_max);
-        let saturation_core = (point.saturation_range.inner_min, point.saturation_range.inner_max);
-        let luminance_core = (point.luminance_range.inner_min, point.luminance_range.inner_max);
+        let saturation_core = (
+            point.saturation_range.inner_min,
+            point.saturation_range.inner_max,
+        );
+        let luminance_core = (
+            point.luminance_range.inner_min,
+            point.luminance_range.inner_max,
+        );
 
         set_point_color_feather(&mut point, 0.0);
-        assert_eq!((point.hue_range.inner_min, point.hue_range.inner_max), hue_core);
-        assert_eq!((point.saturation_range.inner_min, point.saturation_range.inner_max), saturation_core);
-        assert_eq!((point.luminance_range.inner_min, point.luminance_range.inner_max), luminance_core);
+        assert_eq!(
+            (point.hue_range.inner_min, point.hue_range.inner_max),
+            hue_core
+        );
+        assert_eq!(
+            (
+                point.saturation_range.inner_min,
+                point.saturation_range.inner_max
+            ),
+            saturation_core
+        );
+        assert_eq!(
+            (
+                point.luminance_range.inner_min,
+                point.luminance_range.inner_max
+            ),
+            luminance_core
+        );
         assert_eq!(point.hue_range.min, point.hue_range.inner_min);
         assert_eq!(point.hue_range.max, point.hue_range.inner_max);
         assert_eq!(point.saturation_range.min, point.saturation_range.inner_min);
@@ -464,9 +485,24 @@ mod tests {
         assert!((point_color_feather(&point) - 0.0).abs() < 1e-5);
 
         set_point_color_feather(&mut point, 100.0);
-        assert_eq!((point.hue_range.inner_min, point.hue_range.inner_max), hue_core);
-        assert_eq!((point.saturation_range.inner_min, point.saturation_range.inner_max), saturation_core);
-        assert_eq!((point.luminance_range.inner_min, point.luminance_range.inner_max), luminance_core);
+        assert_eq!(
+            (point.hue_range.inner_min, point.hue_range.inner_max),
+            hue_core
+        );
+        assert_eq!(
+            (
+                point.saturation_range.inner_min,
+                point.saturation_range.inner_max
+            ),
+            saturation_core
+        );
+        assert_eq!(
+            (
+                point.luminance_range.inner_min,
+                point.luminance_range.inner_max
+            ),
+            luminance_core
+        );
         assert_eq!(point.hue_range.min, -0.1875);
         assert_eq!(point.hue_range.max, 0.1875);
         assert_eq!(point.saturation_range.min, -0.75);

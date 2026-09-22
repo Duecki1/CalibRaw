@@ -66,7 +66,10 @@ fn halation_gpu_preserves_flat_fields_and_cores_and_respects_masks() -> anyhow::
         ..Default::default()
     };
     let no_masks = MaskStack::default();
-    let initial_masks = MaskStack { masks: vec![LocalMask::new(MaskKind::Fullscreen, 1); 2], ..Default::default() };
+    let initial_masks = MaskStack {
+        masks: vec![LocalMask::new(MaskKind::Fullscreen, 1); 2],
+        ..Default::default()
+    };
     let initial = GpuParams::new(&neutral, &initial_masks, &source);
     for quality in [ProcessingQuality::High] {
         let pipeline = RawGpuPipeline::new_headless_with_quality_and_mask_edge(
@@ -110,8 +113,14 @@ fn halation_gpu_preserves_flat_fields_and_cores_and_respects_masks() -> anyhow::
             &vec![half::f16::ONE.to_bits(); (EDGE * EDGE) as usize],
         )?;
         let local = render(&neutral, &masks)?;
-        eprintln!("DEBUG mask rgb={:?}", &local[i..i+3]);
-        let (worst, difference) = global.iter().zip(&local).enumerate().map(|(i,(a,b))| (i, (a-b).abs())).max_by(|a,b| a.1.total_cmp(&b.1)).unwrap();
+        eprintln!("DEBUG mask rgb={:?}", &local[i..i + 3]);
+        let (worst, difference) = global
+            .iter()
+            .zip(&local)
+            .enumerate()
+            .map(|(i, (a, b))| (i, (a - b).abs()))
+            .max_by(|a, b| a.1.total_cmp(&b.1))
+            .unwrap();
         eprintln!("global/local max difference {difference} at {worst}: global={}, local={}, baseline={}, halo global={}, local={}", global[worst], local[worst], baseline[worst], global[i], local[i]);
         assert!(
             global

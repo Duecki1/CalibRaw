@@ -162,7 +162,8 @@ impl Settings {
             );
             ui.strong(crate::app::format_usage_duration(app.app_usage_duration()));
             ui.small("Total app use");
-            ui.ctx().request_repaint_after(std::time::Duration::from_secs(1));
+            ui.ctx()
+                .request_repaint_after(std::time::Duration::from_secs(1));
         });
 
         crate::ui::theme::card_gap(ui);
