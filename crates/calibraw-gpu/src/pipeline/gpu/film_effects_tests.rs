@@ -50,8 +50,10 @@ fn halation_gpu_preserves_flat_fields_and_cores_and_respects_masks() -> anyhow::
     const EDGE: u32 = 64;
     let pixels = (0..W * H)
         .flat_map(|i| {
+            // Use a normal bright scene-linear highlight, not an extreme HDR value.
+            // This guards against halation becoming effectively invisible in real photos.
             let level = if (80..112).contains(&(i % W)) {
-                4.0
+                0.8
             } else {
                 0.08
             };
@@ -92,7 +94,7 @@ fn halation_gpu_preserves_flat_fields_and_cores_and_respects_masks() -> anyhow::
         let i = pixel(78);
         let delta: Vec<_> = (0..3).map(|c| global[i + c] - baseline[i + c]).collect();
         assert!(
-            delta[0] > 0.001 && delta[0] > delta[1] && delta[1] > delta[2],
+            delta[0] > 0.004 && delta[0] > delta[1] && delta[1] > delta[2],
             "expected warm halo: {delta:?}"
         );
 
