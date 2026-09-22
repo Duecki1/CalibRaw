@@ -4,7 +4,7 @@ set -euo pipefail
 cargo_about_version="0.9.2"
 if ! command -v cargo-about >/dev/null 2>&1 \
     || [ "$(cargo about --version 2>/dev/null || true)" != "cargo-about ${cargo_about_version}" ]; then
-  cargo install cargo-about --version "$cargo_about_version" --locked
+  cargo install cargo-about --version "$cargo_about_version" --locked --features cli
 fi
 
 output=${1:-THIRD_PARTY_LICENSES.md}
