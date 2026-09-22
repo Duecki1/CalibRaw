@@ -306,7 +306,7 @@ jobs:
             export LIBCLANG_PATH="$(dirname "$LIBCLANG_SO")"
           fi
 
-          bash scripts/prepare_release_licenses.sh
+          bash scripts/generate_licenses.sh
           CALIBRAW_ALLOW_NO_LIBRAW=1 cargo check --locked --workspace
           ./gradlew --version
 

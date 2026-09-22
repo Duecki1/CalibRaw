@@ -52,7 +52,7 @@ export CALIBRAW_REQUIRE_COMMITTED_SOURCE=1
 export CALIBRAW_SOURCE_REVISION="$REVISION"
 export SOURCE_DATE_EPOCH="$(git show -s --format=%ct "$REVISION")"
 
-bash scripts/prepare_release_licenses.sh
+bash scripts/generate_licenses.sh
 cargo build --release --locked
 strip target/release/calibraw
 

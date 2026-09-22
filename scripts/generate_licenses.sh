@@ -1,6 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+cargo_about_version="0.9.2"
+if ! command -v cargo-about >/dev/null 2>&1 \
+    || [ "$(cargo about --version 2>/dev/null || true)" != "cargo-about ${cargo_about_version}" ]; then
+  cargo install cargo-about --version "$cargo_about_version" --locked
+fi
+
 output=${1:-THIRD_PARTY_LICENSES.md}
 temporary=$(mktemp "${TMPDIR:-/tmp}/calibraw-licenses.XXXXXX")
 trap 'rm -f "$temporary"' EXIT
