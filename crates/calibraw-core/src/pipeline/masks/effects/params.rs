@@ -100,6 +100,16 @@ pub mod adjustment {
     float_param!(TEXTURE, "Texture", -100.0, 100.0, 0.0, 1.0, 0, None);
     float_param!(CLARITY, "Clarity", -100.0, 100.0, 0.0, 1.0, 0, None);
     float_param!(DEHAZE, "Dehaze", -100.0, 100.0, 0.0, 1.0, 0, None);
+    float_param!(
+        HALATION,
+        "Halation",
+        0.0,
+        100.0,
+        0.0,
+        1.0,
+        0,
+        Some("Adds a warm film halo around bright edges inside the mask.")
+    );
 }
 
 pub mod blur {

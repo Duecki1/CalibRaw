@@ -804,7 +804,15 @@ pub fn required_export_tile_halo(exposure: &ExposureParams, masks: &MaskStack) -
     let mask_glow_active = masks.masks.iter().any(|mask| {
         mask.enabled && mask.effect == MaskEffect::Glow && mask.effect_settings.glow.is_active()
     });
-    if exposure.glow_amount.abs() > 1e-6 || mask_glow_active {
+    // Halation shares the diffusion passes with glow, with smaller support.
+    let mask_halation_active = masks.masks.iter().any(|mask| {
+        mask.enabled && mask.effect.uses_adjustments() && mask.adjustments.halation_amount > 1e-6
+    });
+    if exposure.glow_amount.abs() > 1e-6
+        || mask_glow_active
+        || exposure.halation_amount > 1e-6
+        || mask_halation_active
+    {
         support += GLOW_SUPPORT;
     }
 
@@ -1406,6 +1414,28 @@ mod tests {
         creative_masks.masks[0].effect_settings.pixelate.amount = 0.0;
         assert_eq!(
             required_export_tile_halo(&exposure, &creative_masks),
+            MIN_EXPORT_TILE_HALO
+        );
+
+        exposure.grain_amount = 100.0;
+        assert_eq!(
+            required_export_tile_halo(&exposure, &masks),
+            MIN_EXPORT_TILE_HALO
+        );
+        exposure.halation_amount = 100.0;
+        let halation_halo = required_export_tile_halo(&exposure, &masks);
+        assert!(halation_halo > MIN_EXPORT_TILE_HALO);
+        exposure.halation_amount = 0.0;
+        let mut halation_masks = MaskStack::default();
+        halation_masks.add_mask(crate::pipeline::MaskKind::Fullscreen);
+        halation_masks.masks[0].adjustments.halation_amount = 100.0;
+        assert_eq!(
+            required_export_tile_halo(&exposure, &halation_masks),
+            halation_halo
+        );
+        halation_masks.masks[0].enabled = false;
+        assert_eq!(
+            required_export_tile_halo(&exposure, &halation_masks),
             MIN_EXPORT_TILE_HALO
         );
 

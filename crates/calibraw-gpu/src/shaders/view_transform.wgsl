@@ -577,6 +577,7 @@ fn apply_view_node(@builtin(global_invocation_id) gid: vec3<u32>) {
     let point_color_sample = point_color_hsl(display_linear);
     display_linear = apply_point_colors(display_linear);
     display_linear = CreativeEffects::apply_vignette(pos, display_linear);
+    display_linear = CreativeEffects::apply_grain(pos, display_linear);
     textureStore(SceneAdjustments::display_linear_out, pos, vec4<f32>(display_linear, 1.0));
 
     var output_rgb = Profile::apply_output_lut(display_linear);

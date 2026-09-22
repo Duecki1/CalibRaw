@@ -34,11 +34,13 @@ mod black_tone_tests;
 #[cfg(test)]
 mod blacks_pipeline_tests;
 #[cfg(test)]
-mod tests;
+mod film_effects_tests;
 #[cfg(test)]
 mod point_color_tests;
+#[cfg(test)]
+mod tests;
 
-const GPU_PARAMS_ABI_VERSION: u32 = 6;
+const GPU_PARAMS_ABI_VERSION: u32 = 7;
 const MASK_EFFECT_ID_SHIFT: u32 = 8;
 pub(super) const LIGHT_RAYS_MASK_ATLAS_EDGE: u32 = if cfg!(target_os = "android") {
     256
@@ -48,7 +50,7 @@ pub(super) const LIGHT_RAYS_MASK_ATLAS_EDGE: u32 = if cfg!(target_os = "android"
 const GPU_PARAMS_ABI_SIZE_BYTES: u32 = 1_072;
 const CAMERA_UNIFORMS_SIZE_BYTES: u32 = 368;
 const SCENE_TONE_UNIFORMS_SIZE_BYTES: u32 = 1_424;
-const EFFECTS_UNIFORMS_SIZE_BYTES: u32 = 208;
+const EFFECTS_UNIFORMS_SIZE_BYTES: u32 = 224;
 const GPU_STAGE_UNIFORM_SIZE_BYTES: u32 =
     CAMERA_UNIFORMS_SIZE_BYTES + SCENE_TONE_UNIFORMS_SIZE_BYTES + EFFECTS_UNIFORMS_SIZE_BYTES;
 const GPU_STAGE_UNIFORM_ALLOCATION_BYTES: u64 = 512 + 1_424 + 256;
@@ -363,6 +365,8 @@ const _: () =
 struct EffectsUniforms {
     presence: [f32; 4],
     creative_effects: [f32; 4],
+    // Halation amount, grain amount, any active halation, reserved.
+    film_effects: [f32; 4],
     vignette: [f32; 4],
     vignette_options: [f32; 4],
     vignette_frame: [f32; 4],
@@ -378,7 +382,7 @@ struct EffectsUniforms {
 
 const _: () =
     assert!(std::mem::size_of::<EffectsUniforms>() == EFFECTS_UNIFORMS_SIZE_BYTES as usize);
-const _: () = assert!(GPU_STAGE_UNIFORM_SIZE_BYTES == 2_000);
+const _: () = assert!(GPU_STAGE_UNIFORM_SIZE_BYTES == 2_016);
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
@@ -387,6 +391,8 @@ struct MaskData {
     adjust_0: [f32; 4],
     adjust_1: [f32; 4],
     adjust_2: [f32; 4],
+    // Local halation amount; remaining lanes reserved (grain is global only).
+    film_effects: [f32; 4],
     curves: [[f32; 4]; 8],
     grade_shadows: [f32; 4],
     grade_midtones: [f32; 4],
@@ -404,7 +410,7 @@ struct MaskData {
     hsl_luminance_1: [f32; 4],
 }
 
-const _: () = assert!(std::mem::size_of::<MaskData>() == 752);
+const _: () = assert!(std::mem::size_of::<MaskData>() == 768);
 
 #[derive(Clone, Debug)]
 pub struct GpuParams {
@@ -443,7 +449,12 @@ fn pack_point_color(point: PointColor) -> PackedPointColor {
     let point = point.sanitized();
     let range = |r: crate::pipeline::PointColorRange| [r.min, r.inner_min, r.inner_max, r.max];
     PackedPointColor {
-        sample_range: [point.sample_hsl[0], point.sample_hsl[1], point.sample_hsl[2], point.range],
+        sample_range: [
+            point.sample_hsl[0],
+            point.sample_hsl[1],
+            point.sample_hsl[2],
+            point.range,
+        ],
         hue_range: range(point.hue_range),
         saturation_range: range(point.saturation_range),
         luminance_range: range(point.luminance_range),
@@ -865,6 +876,12 @@ fn pack_adjustment_mask(mask: &LocalMask) -> MaskData {
             effect_params::adjustment::CLARITY.clamp(adjustment.clarity),
             effect_params::adjustment::DEHAZE.clamp(adjustment.dehaze),
         ],
+        film_effects: [
+            effect_params::adjustment::HALATION.clamp(adjustment.halation_amount),
+            0.0,
+            0.0,
+            0.0,
+        ],
         curves: pack_local_point_curve(&adjustment.tone_curve),
         grade_shadows: pack_color_grade_wheel(adjustment.color_grading.shadows),
         grade_midtones: pack_color_grade_wheel(adjustment.color_grading.midtones),
@@ -1134,7 +1151,9 @@ fn pack_scene_tone_params(ctx: &GpuParamContext<'_>) -> SceneToneUniforms {
         point_colors,
         point_color_meta: [
             exposure.point_colors.len() as u32,
-            exposure.point_color_visualize.map_or(0, |index| (index + 1) as u32),
+            exposure
+                .point_color_visualize
+                .map_or(0, |index| (index + 1) as u32),
             0,
             0,
         ],
@@ -1168,6 +1187,20 @@ fn pack_effect_params(ctx: &GpuParamContext<'_>, mask_data: &[MaskData]) -> Effe
             global_glow_radius.max(local_glow_radius),
             exposure.glow_threshold.clamp(0.0, 100.0),
             exposure.sharpen_amount.clamp(0.0, 150.0),
+        ],
+        film_effects: [
+            exposure.halation_amount.clamp(0.0, 100.0),
+            exposure.grain_amount.clamp(0.0, 100.0),
+            if exposure.halation_amount > 1e-6
+                || mask_data
+                    .iter()
+                    .any(|mask| mask.metadata[0] != 0 && mask.film_effects[0] > 1e-6)
+            {
+                1.0
+            } else {
+                0.0
+            },
+            0.0,
         ],
         vignette: [
             exposure.vignette_amount.clamp(-100.0, 100.0),
@@ -1347,7 +1380,8 @@ impl GpuParams {
             || self.effects.presence[..3]
                 .iter()
                 .any(|value| value.abs() > 1e-6);
-        let creative = self.effects.creative_effects[0].abs() > 1e-6;
+        let creative =
+            self.effects.creative_effects[0].abs() > 1e-6 || self.effects.film_effects[0] > 1e-6;
         let local_count = (self.scene_tone.mask_counts[0] as usize).min(MAX_LOCAL_MASKS);
         let local_effects = (0..local_count).any(|index| {
             let local = self.mask_data[index];
@@ -1378,19 +1412,23 @@ impl GpuParams {
                 || local.adjust_1[3].abs() > 1e-6;
             let curves = state[2] != 0;
             let presence_or_saturation = local.adjust_2.iter().any(|value| value.abs() > 1e-6);
-            tone || white_balance || curves || presence_or_saturation
+            tone || white_balance
+                || curves
+                || presence_or_saturation
+                || local.film_effects[0] > 1e-6
         });
         global_effects || creative || local_effects
     }
 
     fn needs_glow_passes(&self) -> bool {
-        if self.effects.creative_effects[0].abs() > 1e-6 {
+        if self.effects.creative_effects[0].abs() > 1e-6 || self.effects.film_effects[0] > 1e-6 {
             return true;
         }
         let local_count = (self.scene_tone.mask_counts[0] as usize).min(MAX_LOCAL_MASKS);
         self.mask_data[..local_count].iter().any(|mask| {
             mask.metadata[0] != 0
-                && mask.metadata[3] >> MASK_EFFECT_ID_SHIFT == MaskEffect::Glow.shader_id()
+                && (mask.metadata[3] >> MASK_EFFECT_ID_SHIFT == MaskEffect::Glow.shader_id()
+                    || mask.film_effects[0] > 1e-6)
         })
     }
 
@@ -2806,12 +2844,16 @@ impl RawGpuPipeline {
         x: u32,
         y: u32,
     ) -> Result<[f32; 3]> {
-        anyhow::ensure!(x < self.width && y < self.height, "point color sample is outside the image");
+        anyhow::ensure!(
+            x < self.width && y < self.height,
+            "point color sample is outside the image"
+        );
         let mut sample_params = params.clone();
         sample_params.scene_tone.point_color_meta[2] = 1;
         self.upload_params(queue, &sample_params);
         let render = |label| {
-            let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some(label) });
+            let mut encoder = device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some(label) });
             if params.needs_blur_passes() {
                 self.encode_bound_pass(&mut encoder, &self.post_blur_render_pass, label);
             } else {
@@ -2820,7 +2862,14 @@ impl RawGpuPipeline {
             queue.submit(Some(encoder.finish()));
         };
         render("calibraw point color sample");
-        let result = read_float_texture_pixel_blocking(device, queue, &self.display_linear_texture, self.scene_format, x, y);
+        let result = read_float_texture_pixel_blocking(
+            device,
+            queue,
+            &self.display_linear_texture,
+            self.scene_format,
+            x,
+            y,
+        );
         // Restore even on a mapping failure; visualization must never remain in
         // the shared export/display attachment after a sampler operation.
         self.upload_params(queue, params);

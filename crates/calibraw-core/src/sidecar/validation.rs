@@ -408,6 +408,8 @@ fn validate_exposure(exposure: &ExposureParams) -> Result<(), SidecarError> {
             exposure.sharpen_radius,
             exposure.sharpen_detail,
             exposure.sharpen_masking,
+            exposure.halation_amount,
+            exposure.grain_amount,
             exposure.glow_amount,
             exposure.glow_radius,
             exposure.glow_threshold,
@@ -523,6 +525,7 @@ fn validate_local_adjustments(
             adjustments.texture,
             adjustments.clarity,
             adjustments.dehaze,
+            adjustments.halation_amount,
         ],
     )?;
     finite("local HSL hue", &adjustments.hsl_hue)?;

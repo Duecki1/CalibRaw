@@ -177,6 +177,7 @@ impl Sidebar {
         changed |= float_param_slider(ui, &mut adjustment.texture, params::TEXTURE);
         changed |= float_param_slider(ui, &mut adjustment.clarity, params::CLARITY);
         changed |= float_param_slider(ui, &mut adjustment.dehaze, params::DEHAZE);
+        changed |= float_param_slider(ui, &mut adjustment.halation_amount, params::HALATION);
         changed
     }
 

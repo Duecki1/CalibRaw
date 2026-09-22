@@ -530,6 +530,7 @@ pub(super) fn request_test_device() -> Option<(wgpu::Device, wgpu::Queue)> {
         }))
     })
     .ok()?;
+    eprintln!("TEST ADAPTER {:?}", adapter.get_info());
     pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
         label: Some("calibraw tone crop consistency test"),
         ..Default::default()
