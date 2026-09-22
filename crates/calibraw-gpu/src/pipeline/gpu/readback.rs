@@ -353,6 +353,93 @@ pub(super) fn read_rgba32_texture_rgb_blocking(
     )
 }
 
+/// Reads one RGB pixel from a floating point texture, supporting both preview
+/// (RGBA16F) and export (RGBA32F) processing surfaces.
+pub(super) fn read_float_texture_pixel_blocking(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    texture: &wgpu::Texture,
+    format: wgpu::TextureFormat,
+    x: u32,
+    y: u32,
+) -> Result<[f32; 3]> {
+    if x >= texture.width() || y >= texture.height() {
+        return Err(anyhow!("GPU float readback pixel is outside texture bounds"));
+    }
+    let bytes_per_pixel = match format {
+        wgpu::TextureFormat::Rgba16Float => 8u32,
+        wgpu::TextureFormat::Rgba32Float => 16u32,
+        other => return Err(anyhow!("unsupported GPU float readback format {other:?}")),
+    };
+    let padded_bytes_per_row = 256u32;
+    let readback = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("calibraw float pixel readback"),
+        size: u64::from(padded_bytes_per_row),
+        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+        mapped_at_creation: false,
+    });
+    let mut encoder =
+        device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("calibraw float pixel readback"),
+        });
+    encoder.copy_texture_to_buffer(
+        wgpu::TexelCopyTextureInfo {
+            texture,
+            mip_level: 0,
+            origin: wgpu::Origin3d { x, y, z: 0 },
+            aspect: wgpu::TextureAspect::All,
+        },
+        wgpu::TexelCopyBufferInfo {
+            buffer: &readback,
+            layout: wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(padded_bytes_per_row),
+                rows_per_image: Some(1),
+            },
+        },
+        wgpu::Extent3d {
+            width: 1,
+            height: 1,
+            depth_or_array_layers: 1,
+        },
+    );
+    let submission = queue.submit(Some(encoder.finish()));
+    let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+    readback.map_async(wgpu::MapMode::Read, .., move |result| {
+        let _ = sender.send(result);
+    });
+    wait_for_mapping(device, submission, receiver, "float pixel", "float pixel")?;
+
+    let mapped = readback.get_mapped_range(..);
+    let pixel = match mapped.get(..bytes_per_pixel as usize) {
+        Some(pixel) => pixel,
+        None => {
+            drop(mapped);
+            readback.unmap();
+            return Err(anyhow!("GPU float pixel readback buffer is truncated"));
+        }
+    };
+    let mut rgb = [0.0; 3];
+    for channel in 0..3 {
+        let offset = channel * (bytes_per_pixel as usize / 4);
+        rgb[channel] = if bytes_per_pixel == 8 {
+            let bytes = <[u8; 2]>::try_from(&pixel[offset..offset + 2])
+                .map_err(|_| anyhow!("GPU RGBA16F channel has an invalid width"))?;
+            half::f16::from_bits(u16::from_le_bytes(bytes)).to_f32()
+        } else {
+            let bytes = <[u8; 4]>::try_from(&pixel[offset..offset + 4])
+                .map_err(|_| anyhow!("GPU RGBA32F channel has an invalid width"))?;
+            f32::from_le_bytes(bytes)
+        };
+    }
+    drop(mapped);
+    readback.unmap();
+    if rgb.iter().any(|value| !value.is_finite()) {
+        return Err(anyhow!("float pixel readback contains NaN or infinity"));
+    }
+    Ok(rgb)
+}
+
 pub(super) fn create_rgba32_readback_buffer(
     device: &wgpu::Device,
     width: u32,

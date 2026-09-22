@@ -112,6 +112,8 @@ impl CalibRawApp {
                 tone_curve_tab: ToneCurveTab::default(),
                 color_grade_tab: ColorGradeTab::default(),
                 hsl_mixer_color: HslMixerColor::default(),
+                point_color: Default::default(),
+                point_color_tab: false,
             },
             masks: MaskState {
                 stack: masks,
@@ -404,6 +406,8 @@ impl CalibRawApp {
                 tone_curve_tab: ToneCurveTab::default(),
                 color_grade_tab: ColorGradeTab::default(),
                 hsl_mixer_color: HslMixerColor::default(),
+                point_color: Default::default(),
+                point_color_tab: false,
             },
             masks: MaskState {
                 stack: masks,

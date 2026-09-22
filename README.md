@@ -21,6 +21,7 @@ Download the latest release [here](https://github.com/Duecki1/CalibRaw/releases)
 - **Non-destructive:** All edits and adjustments are non-destructive and saved to lightweight `.calibraw` sidecar files.
 - **Advanced demosaicing:** Features Bayer RCD, Fujifilm X-Trans (Markesteijn), and noise-resilient Dual Demosaicing.
 - **Masking:** Supports brush and shape masks with independent tone curves and adjustments.
+- **Point Color:** Sample colors in the Color Mixer, refine their hue, saturation, and luminance ranges, and preview exactly which colors are affected.
 - **Creative effects:** Mask effects such as light rays, lens blur, motion blur, fog, glow, and more.
 - **Optional AI:** Local Subject & Object masks, [AI Denoise](https://github.com/darktable-org/darktable-ai), and AI object removal.
 - **Multi-platform:** Native builds for Linux, Android, Windows, and macOS.

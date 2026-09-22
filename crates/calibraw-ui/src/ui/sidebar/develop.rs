@@ -759,17 +759,34 @@ impl Sidebar {
         ui: &mut Ui,
         exposure: &mut ExposureParams,
         selected_color: &mut HslMixerColor,
+        point_color: &mut crate::ui::components::point_color::PointColorUiState,
+        point_color_tab: &mut bool,
         foldable: bool,
     ) -> bool {
         let mut changed = false;
         let action = Self::adjustment_card(ui, "Color Mixer", false, foldable, true, |ui| {
-            changed |= hsl_mixer(
-                ui,
-                selected_color,
-                &mut exposure.hsl_hue,
-                &mut exposure.hsl_saturation,
-                &mut exposure.hsl_luminance,
-            );
+            ui.horizontal(|ui| {
+                ui.selectable_value(point_color_tab, false, "Mixer");
+                ui.selectable_value(point_color_tab, true, "Point Color");
+            });
+            ui.add_space(crate::ui::theme::SPACE_XS);
+            if *point_color_tab {
+                changed |= crate::ui::components::point_color::point_color(
+                    ui,
+                    &mut exposure.point_colors,
+                    point_color,
+                );
+            } else {
+                point_color.picker_active = false;
+                point_color.visualize_range = false;
+                changed |= hsl_mixer(
+                    ui,
+                    selected_color,
+                    &mut exposure.hsl_hue,
+                    &mut exposure.hsl_saturation,
+                    &mut exposure.hsl_luminance,
+                );
+            }
         });
         changed |= action.apply(exposure, AdjustmentGroup::ColorMixer);
         changed

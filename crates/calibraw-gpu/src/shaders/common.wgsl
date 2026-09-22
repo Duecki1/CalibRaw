@@ -120,6 +120,16 @@ struct SceneToneUniforms {
     xyz_to_rec2020_field: mat3x3<f32>,
     xyz_to_bradford: mat3x3<f32>,
     bradford_to_xyz: mat3x3<f32>,
+    point_colors: array<PointColor, 8>,
+    point_color_meta: vec4<u32>,
+}
+
+struct PointColor {
+    sample_range: vec4<f32>,
+    hue_range: vec4<f32>,
+    saturation_range: vec4<f32>,
+    luminance_range: vec4<f32>,
+    shifts: vec4<f32>,
 }
 
 struct EffectsUniforms {

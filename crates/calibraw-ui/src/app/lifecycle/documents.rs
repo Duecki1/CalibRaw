@@ -228,6 +228,7 @@ impl CalibRawApp {
         self.develop.original_raw = None;
         self.develop.loaded_raw = None;
         self.develop.preview_raw = None;
+        self.develop_ui.point_color = Default::default();
         self.develop_ui.white_balance_picker_active = false;
         self.develop_ui.white_balance_picker_drag = None;
         self.develop.current_path = None;
