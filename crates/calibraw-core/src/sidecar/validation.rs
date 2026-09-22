@@ -254,6 +254,32 @@ pub(super) fn validate_edit_state(edits: &EditState) -> Result<(), SidecarError>
                     }
                     bounded("linear feather", *feather, 0.0, 16.0)?;
                 }
+                MaskGeometry::Path { points, feather } => {
+                    finite("path feather", &[*feather])?;
+                    bounded("path feather", *feather, 0.0, 1.0)?;
+                    if points.len() > MAX_PATH_POINTS {
+                        return invalid("path mask contains too many points");
+                    }
+                    for point in points {
+                        finite(
+                            "path point",
+                            &[
+                                point.position[0],
+                                point.position[1],
+                                point.handle_in[0],
+                                point.handle_in[1],
+                                point.handle_out[0],
+                                point.handle_out[1],
+                            ],
+                        )?;
+                        for value in point.position {
+                            bounded("path point position", value, -16.0, 16.0)?;
+                        }
+                        for value in point.handle_in.into_iter().chain(point.handle_out) {
+                            bounded("path point handle", value, -32.0, 32.0)?;
+                        }
+                    }
+                }
                 MaskGeometry::Ai {
                     mask,
                     grow,
@@ -362,6 +388,7 @@ fn geometry_matches_kind(kind: MaskKind, geometry: &MaskGeometry) -> bool {
             | (MaskKind::Brush, MaskGeometry::Brush { .. })
             | (MaskKind::Radial, MaskGeometry::Radial { .. })
             | (MaskKind::Linear, MaskGeometry::Linear { .. })
+            | (MaskKind::Path, MaskGeometry::Path { .. })
             | (
                 MaskKind::Subject | MaskKind::Background,
                 MaskGeometry::Ai { .. }

@@ -636,6 +636,20 @@ pub(crate) enum MaskDragState {
         start: [f32; 2],
         end: [f32; 2],
     },
+    AddPathPoint {
+        index: usize,
+        anchor: [f32; 2],
+    },
+    MovePathPoint {
+        index: usize,
+    },
+    MovePathHandle {
+        index: usize,
+        outgoing: bool,
+    },
+    CreatePathHandles {
+        index: usize,
+    },
 }
 
 pub(crate) const MAX_DESKTOP_RAW_CACHE_FILES: usize = 8;

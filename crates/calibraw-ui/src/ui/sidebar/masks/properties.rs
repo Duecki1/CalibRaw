@@ -75,6 +75,12 @@ impl Sidebar {
                             *end = b;
                             *initialized = ready;
                         }
+                        (
+                            MaskGeometry::Path { points, .. },
+                            MaskGeometry::Path { points: saved, .. },
+                        ) => {
+                            *points = saved;
+                        }
                         (MaskGeometry::Ai { mask, .. }, MaskGeometry::Ai { mask: saved, .. }) => {
                             *mask = saved
                         }
@@ -485,6 +491,52 @@ impl Sidebar {
                         1.0,
                     );
                 }
+                MaskGeometry::Path { points, feather } => {
+                    ui.label(concat!(
+                        "Click to add polygon points. Click-drag while adding a point to create a ",
+                        "smooth Bézier point. Drag anchors or handles to edit the path; ",
+                        "Alt/Option-drag an anchor to create symmetric handles."
+                    ));
+                    geometry_changed |= Self::mask_feather_slider(
+                        ui,
+                        "Feather",
+                        feather,
+                        0.0..=1.0,
+                        "Softens the freeform path boundary.",
+                        0.0,
+                    );
+                    ui.horizontal_wrapped(|ui| {
+                        if ui
+                            .small_button("Straighten")
+                            .on_hover_text("Convert all path points to straight corners")
+                            .clicked()
+                        {
+                            for point in points.iter_mut() {
+                                point.handle_in = [0.0, 0.0];
+                                point.handle_out = [0.0, 0.0];
+                            }
+                            geometry_changed = true;
+                        }
+                        if ui
+                            .small_button("Undo point")
+                            .on_hover_text("Remove the last path point")
+                            .clicked()
+                        {
+                            geometry_changed |= points.pop().is_some();
+                        }
+                        if ui
+                            .small_button("Clear")
+                            .on_hover_text("Clear path")
+                            .clicked()
+                        {
+                            if !points.is_empty() {
+                                points.clear();
+                                geometry_changed = true;
+                            }
+                        }
+                    });
+                    ui.small(format!("{} point(s)", points.len()));
+                }
                 MaskGeometry::Ai {
                     mask: generated_mask,
                     grow,
@@ -794,6 +846,38 @@ mod card_tests {
                 assert_eq!(dabs, &[dab]);
             }
             _ => panic!("brush selection changed type"),
+        }
+    }
+
+    #[test]
+    fn properties_reset_keeps_freeform_path_geometry() {
+        let mut mask = LocalMask::new(MaskKind::Path, 1);
+        let saved = vec![
+            crate::pipeline::PathPoint::corner([0.2, 0.2]),
+            crate::pipeline::PathPoint {
+                position: [0.8, 0.2],
+                handle_in: [-0.1, 0.0],
+                handle_out: [0.1, 0.0],
+            },
+            crate::pipeline::PathPoint::corner([0.5, 0.8]),
+        ];
+        if let MaskGeometry::Path { points, feather } = &mut mask.components[0].geometry {
+            *points = saved.clone();
+            *feather = 0.75;
+        }
+
+        Sidebar::apply_mask_properties_action(
+            &mut mask,
+            0,
+            super::super::super::adjustment_cards::CardAction::Reset,
+        );
+
+        match &mask.components[0].geometry {
+            MaskGeometry::Path { points, feather } => {
+                assert_eq!(points, &saved);
+                assert_eq!(*feather, 0.0);
+            }
+            _ => panic!("path selection changed type"),
         }
     }
 }

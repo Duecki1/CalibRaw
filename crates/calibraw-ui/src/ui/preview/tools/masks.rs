@@ -49,7 +49,8 @@ impl Preview {
         let subject_refining = app.masks.subject_refinement_active
             && matches!(kind, MaskKind::Subject | MaskKind::Background);
         app.masks.active_tool = Some(kind);
-        let geometry_can_leave_image = matches!(kind, MaskKind::Radial | MaskKind::Linear)
+        let geometry_can_leave_image =
+            matches!(kind, MaskKind::Radial | MaskKind::Linear | MaskKind::Path)
             && (app.masks.drag.is_some()
                 || app
                     .masks
@@ -218,6 +219,7 @@ impl Preview {
 
         if app.masks.drag.is_none() && kind != MaskKind::Brush && kind != MaskKind::Object {
             let geometry = &app.masks.stack.masks[mask_index].components[component_index].geometry;
+            let path_curve_modifier = ui.input(|input| input.modifiers.alt);
             app.masks.drag = begin_mask_drag(
                 geometry,
                 uv,
@@ -227,6 +229,7 @@ impl Preview {
                 lens_geometry.as_deref(),
                 source_width,
                 source_height,
+                path_curve_modifier,
             );
         }
 
@@ -413,6 +416,65 @@ impl Preview {
                             midpoint[1] + half_y / source_height.max(1) as f32,
                         ];
                         changed = true;
+                    }
+                    _ => {}
+                },
+                (MaskGeometry::Path { points, .. }, MaskKind::Path) => match app.masks.drag {
+                    Some(MaskDragState::AddPathPoint { index, anchor }) => {
+                        if index == points.len() && points.len() < crate::pipeline::MAX_PATH_POINTS {
+                            points.push(crate::pipeline::PathPoint::corner(anchor));
+                            changed = true;
+                        }
+                        if let Some(point) = points.get_mut(index) {
+                            let dx = uv[0] - anchor[0];
+                            let dy = uv[1] - anchor[1];
+                            let px = dx * source_width.max(1) as f32;
+                            let py = dy * source_height.max(1) as f32;
+                            if px * px + py * py >= 9.0 {
+                                let incoming = [-dx, -dy];
+                                let outgoing = [dx, dy];
+                                if point.handle_in != incoming || point.handle_out != outgoing {
+                                    point.handle_in = incoming;
+                                    point.handle_out = outgoing;
+                                    changed = true;
+                                }
+                            }
+                        }
+                    }
+                    Some(MaskDragState::MovePathPoint { index }) => {
+                        if let Some(point) = points.get_mut(index) {
+                            if point.position != uv {
+                                point.position = uv;
+                                changed = true;
+                            }
+                        }
+                    }
+                    Some(MaskDragState::MovePathHandle { index, outgoing }) => {
+                        if let Some(point) = points.get_mut(index) {
+                            let offset = [uv[0] - point.position[0], uv[1] - point.position[1]];
+                            let target = if outgoing {
+                                &mut point.handle_out
+                            } else {
+                                &mut point.handle_in
+                            };
+                            if *target != offset {
+                                *target = offset;
+                                changed = true;
+                            }
+                        }
+                    }
+                    Some(MaskDragState::CreatePathHandles { index }) => {
+                        if let Some(point) = points.get_mut(index) {
+                            let dx = uv[0] - point.position[0];
+                            let dy = uv[1] - point.position[1];
+                            let incoming = [-dx, -dy];
+                            let outgoing = [dx, dy];
+                            if point.handle_in != incoming || point.handle_out != outgoing {
+                                point.handle_in = incoming;
+                                point.handle_out = outgoing;
+                                changed = true;
+                            }
+                        }
                     }
                     _ => {}
                 },
@@ -755,6 +817,70 @@ impl Preview {
                         ));
                     }
                 }
+                MaskGeometry::Path { points, .. } => {
+                    if points.len() >= 3 {
+                        let outline = crate::pipeline::path_outline_points(points, 16)
+                            .into_iter()
+                            .map(|uv| {
+                                final_geometry_native_source_to_screen(
+                                    image_rect,
+                                    app.develop.geometry,
+                                    lens_geometry.as_deref(),
+                                    source_width,
+                                    source_height,
+                                    uv,
+                                )
+                            })
+                            .collect::<Vec<_>>();
+                        painter.add(Shape::line(outline, Stroke::new(2.0, color)));
+                    } else if points.len() >= 2 {
+                        let outline = points
+                            .iter()
+                            .map(|point| {
+                                final_geometry_native_source_to_screen(
+                                    image_rect,
+                                    app.develop.geometry,
+                                    lens_geometry.as_deref(),
+                                    source_width,
+                                    source_height,
+                                    point.position,
+                                )
+                            })
+                            .collect::<Vec<_>>();
+                        painter.add(Shape::line(outline, Stroke::new(2.0, color)));
+                    }
+                    for point in points {
+                        let anchor = final_geometry_native_source_to_screen(
+                            image_rect,
+                            app.develop.geometry,
+                            lens_geometry.as_deref(),
+                            source_width,
+                            source_height,
+                            point.position,
+                        );
+                        for handle in [point.incoming(), point.outgoing()] {
+                            let dx = handle[0] - point.position[0];
+                            let dy = handle[1] - point.position[1];
+                            if dx * dx + dy * dy <= 1e-10 {
+                                continue;
+                            }
+                            let handle_screen = final_geometry_native_source_to_screen(
+                                image_rect,
+                                app.develop.geometry,
+                                lens_geometry.as_deref(),
+                                source_width,
+                                source_height,
+                                handle,
+                            );
+                            painter.line_segment(
+                                [anchor, handle_screen],
+                                Stroke::new(1.0, color.gamma_multiply(0.65)),
+                            );
+                            painter.circle_stroke(handle_screen, 4.5, Stroke::new(1.5, color));
+                        }
+                        painter.circle_filled(anchor, 5.0, color);
+                    }
+                }
                 _ => {}
             }
         }
@@ -1037,6 +1163,9 @@ impl Preview {
                     .is_some_and(|component| component.geometry.is_initialized()) =>
             {
                 "Drag across the image to create a linear gradient"
+            }
+            MaskKind::Path => {
+                "Click to add points · drag to curve · Alt/Option-drag a point for handles"
             }
             MaskKind::ColorRange
                 if !app

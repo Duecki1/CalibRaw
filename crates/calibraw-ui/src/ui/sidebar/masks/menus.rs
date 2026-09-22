@@ -8,6 +8,7 @@ impl Sidebar {
             MaskKind::Brush,
             MaskKind::Radial,
             MaskKind::Linear,
+            MaskKind::Path,
             MaskKind::Subject,
             MaskKind::Background,
             MaskKind::Object,

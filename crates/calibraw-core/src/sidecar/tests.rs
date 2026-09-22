@@ -106,8 +106,9 @@ fn manual_and_ai_masks_can_be_copied_independently() {
     let mut source = sample_edits();
     let mut source_masks = MaskStack::default();
     source_masks.add_mask(MaskKind::Brush);
+    source_masks.add_mask(MaskKind::Path);
     source_masks.add_mask(MaskKind::Subject);
-    if let MaskGeometry::Ai { mask, .. } = &mut source_masks.masks[1].components[0].geometry {
+    if let MaskGeometry::Ai { mask, .. } = &mut source_masks.masks[2].components[0].geometry {
         *mask = Some(crate::pipeline::MaskImage::new(2, 2, vec![0, 64, 192, 255]).unwrap());
     }
     source_masks.subject_refinement.stroke_starts.push(0);
@@ -137,11 +138,17 @@ fn manual_and_ai_masks_can_be_copied_independently() {
         },
     );
 
-    assert_eq!(destination.masks.masks.len(), 1);
-    assert_eq!(
-        destination.masks.masks[0].components[0].kind,
-        MaskKind::Brush
-    );
+    assert_eq!(destination.masks.masks.len(), 2);
+    assert!(destination
+        .masks
+        .masks
+        .iter()
+        .any(|mask| mask.components[0].kind == MaskKind::Brush));
+    assert!(destination
+        .masks
+        .masks
+        .iter()
+        .any(|mask| mask.components[0].kind == MaskKind::Path));
     assert!(!destination.ai_masks_need_update);
     assert!(destination.masks.subject_refinement.is_empty());
     assert!(destination.subject_refinement.is_none());
@@ -159,12 +166,17 @@ fn manual_and_ai_masks_can_be_copied_independently() {
         },
     );
 
-    assert_eq!(destination.masks.masks.len(), 2);
+    assert_eq!(destination.masks.masks.len(), 3);
     assert!(destination
         .masks
         .masks
         .iter()
         .any(|mask| mask.components[0].kind == MaskKind::Brush));
+    assert!(destination
+        .masks
+        .masks
+        .iter()
+        .any(|mask| mask.components[0].kind == MaskKind::Path));
     assert!(destination
         .masks
         .masks
