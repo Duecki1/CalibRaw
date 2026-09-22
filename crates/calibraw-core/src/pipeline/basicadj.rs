@@ -265,6 +265,10 @@ pub struct ExposureParams {
     #[serde(default)]
     pub sharpen_masking: f32,
 
+    #[serde(default)]
+    pub halation_amount: f32,
+    #[serde(default)]
+    pub grain_amount: f32,
     pub glow_amount: f32,
     pub glow_radius: f32,
     pub glow_threshold: f32,
@@ -353,6 +357,8 @@ impl Default for ExposureParams {
             sharpen_radius: default_sharpen_radius(),
             sharpen_detail: default_sharpen_detail(),
             sharpen_masking: 0.0,
+            halation_amount: 0.0,
+            grain_amount: 0.0,
             glow_amount: 0.0,
             glow_radius: 50.0,
             glow_threshold: 60.0,

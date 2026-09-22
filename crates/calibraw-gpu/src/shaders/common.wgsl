@@ -6,6 +6,7 @@ struct MaskData {
     adjust_0_field: vec4<f32>,
     adjust_1_field: vec4<f32>,
     adjust_2_field: vec4<f32>,
+    film_effects: vec4<f32>,
     curves: array<vec4<f32>, 8>,
     grade_shadows: vec4<f32>,
     grade_midtones: vec4<f32>,
@@ -135,6 +136,8 @@ struct PointColor {
 struct EffectsUniforms {
     presence: vec4<f32>,
     creative_effects: vec4<f32>,
+    // Halation amount, grain amount, any active halation, reserved.
+    film_effects: vec4<f32>,
     vignette: vec4<f32>,
     vignette_options: vec4<f32>,
     vignette_frame: vec4<f32>,

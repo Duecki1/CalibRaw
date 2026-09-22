@@ -176,25 +176,67 @@ fn glow_stage_mix(stage: u32) -> f32 {
     }
 }
 
-fn glow_diffuse_at(pos: vec2<i32>, stage: u32) -> vec3<f32> {
-    let center = glow_work_at(pos);
-    let stage_mix = glow_stage_mix(stage);
-    if stage_mix < 1e-6 {
+// RGB carries glow; alpha independently carries halation highlight energy.
+// Both use normalized diffusion, but halation stays tighter than glow.
+fn glow_diffuse_at(pos: vec2<i32>, stage: u32) -> vec4<f32> {
+    let center = textureLoad(SceneAdjustments::glow_work_tex, Common::clamp_pos(pos), 0);
+    let glow_mix = glow_stage_mix(stage);
+    var halation_mix = 1.0;
+    if stage == 3u { halation_mix = 0.35; }
+    if stage == 4u || Common::effects_uniforms.film_effects.z == 0.0 { halation_mix = 0.0; }
+    let stage_mix = vec4<f32>(vec3<f32>(glow_mix), halation_mix);
+    if max(glow_mix, halation_mix) < 1e-6 {
         return center;
     }
 
     let step = glow_stage_step(stage);
-    var sum = vec3<f32>(0.0);
+    var sum = vec4<f32>(0.0);
     var sum_weight = 0.0;
     for (var ky = -2; ky <= 2; ky = ky + 1) {
         for (var kx = -2; kx <= 2; kx = kx + 1) {
             let weight = SceneAdjustments::atrous_kernel_weight(kx) * SceneAdjustments::atrous_kernel_weight(ky);
-            let sample_pos = pos + vec2<i32>(kx * step, ky * step);
-            sum = sum + glow_work_at(sample_pos) * weight;
+            let sample_pos = Common::clamp_pos(pos + vec2<i32>(kx * step, ky * step));
+            sum = sum + textureLoad(SceneAdjustments::glow_work_tex, sample_pos, 0) * weight;
             sum_weight = sum_weight + weight;
         }
     }
     return mix(center, sum / max(sum_weight, 1e-6), stage_mix);
+}
+
+// Independently implemented highlight-only approximation of film-base scatter.
+// Reference: https://github.com/hotgluebanjo/halation-dctl (blur / frequency separation).
+// Work in scene-linear light, before the display transform, and preserve cores.
+fn halation_emission(rgb: vec3<f32>) -> f32 {
+    if Common::effects_uniforms.film_effects.z == 0.0 { return 0.0; }
+    let luminance = Common::safe_luma(Color::gamut_project_nonnegative_rec2020(rgb));
+    let excess = max(luminance - 0.6, 0.0);
+    return min(excess, 64.0) * smoothstep(0.6, 1.4, luminance);
+}
+
+fn halation_amount_at(pos: vec2<i32>) -> f32 {
+    if Common::effects_uniforms.film_effects.z == 0.0 { return 0.0; }
+    var amount = Common::effects_uniforms.film_effects.x / 100.0;
+    let count = min(Common::scene_tone_uniforms.mask_counts.x, 32u);
+    for (var index = 0u; index < count; index = index + 1u) {
+        let state = Common::mask_data[index].metadata;
+        let local_amount = Common::mask_data[index].film_effects.x;
+        if state.x == 0u || Common::mask_effect_id(state) != 0u
+            || local_amount <= 0.0 { continue; }
+        // Apply the mask to the result, retaining natural halos from nearby lights.
+        amount = amount + local_amount / 100.0 * SceneAdjustments::local_mask_weight(pos, index);
+    }
+    return clamp(amount, 0.0, 1.0);
+}
+
+fn apply_halation(pos: vec2<i32>, rgb: vec3<f32>) -> vec3<f32> {
+    let amount = halation_amount_at(pos);
+    if amount <= 1e-6 { return rgb; }
+    let scattered = textureLoad(SceneAdjustments::glow_work_tex, Common::clamp_pos(pos), 0).w;
+    let source = halation_emission(SceneAdjustments::local_effects_at(pos));
+    // Remove the unscattered core: uniform fields do not acquire a red cast.
+    let halo = max(scattered - source, 0.0);
+    let warm_rec2020 = Common::SRGB_TO_REC2020 * vec3<f32>(1.0, 0.12, 0.015);
+    return rgb + warm_rec2020 * (0.65 * amount * halo);
 }
 
 fn apply_glow(pos: vec2<i32>, rgb: vec3<f32>) -> vec3<f32> {
@@ -447,13 +489,13 @@ fn prepare_glow_source(@builtin(global_invocation_id) gid: vec3<u32>) {
     let emission = glow_emission(SceneAdjustments::local_effects_at(pos), glow_cutoff())
         * global_amount
         + mask_glow_source_at(pos);
-    textureStore(SceneAdjustments::glow_work_out, pos, vec4<f32>(emission, 1.0));
+    textureStore(SceneAdjustments::glow_work_out, pos, vec4<f32>(emission, halation_emission(SceneAdjustments::local_effects_at(pos))));
 }
 
 fn store_glow_stage(gid: vec3<u32>, stage: u32) {
     if gid.x >= Common::camera_uniforms.width || gid.y >= Common::camera_uniforms.height { return; }
     let pos = vec2<i32>(i32(gid.x), i32(gid.y));
-    textureStore(SceneAdjustments::glow_work_out, pos, vec4<f32>(glow_diffuse_at(pos, stage), 1.0));
+    textureStore(SceneAdjustments::glow_work_out, pos, glow_diffuse_at(pos, stage));
 }
 
 @compute @workgroup_size(8, 8, 1)
@@ -487,8 +529,62 @@ fn apply_creative_effects(@builtin(global_invocation_id) gid: vec3<u32>) {
     let pos = vec2<i32>(i32(gid.x), i32(gid.y));
     var rgb = SceneAdjustments::local_effects_at(pos);
     rgb = apply_local_creative_mask_effect_nodes(pos, rgb);
+    rgb = apply_halation(pos, rgb);
     rgb = apply_glow(pos, rgb);
     rgb = apply_mask_glow_cores(pos, rgb);
     rgb = apply_light_rays(pos, rgb);
     textureStore(SceneAdjustments::creative_effects_out, pos, vec4<f32>(rgb, 1.0));
+}
+
+// Film-like grain uses correlated, zero-mean noise in perceptual lightness.
+// Design reference (multiscale noise / midtone response):
+// https://github.com/darktable-org/darktable/blob/master/src/iop/grain.c
+// This implementation uses an integer hash, with no frame/time-dependent seed.
+fn grain_hash(value: u32) -> u32 {
+    var hash = value;
+    hash = (hash ^ (hash >> 16u)) * 0x7feb352du;
+    hash = (hash ^ (hash >> 15u)) * 0x846ca68bu;
+    return hash ^ (hash >> 16u);
+}
+
+fn grain_noise_at(cell: vec2<i32>) -> f32 {
+    let seed = grain_hash(bitcast<u32>(cell.x) ^ grain_hash(bitcast<u32>(cell.y) + 0x9e3779b9u));
+    let first = grain_hash(seed);
+    let second = grain_hash(seed + 0x68bc21ebu);
+    let u = (f32(first & 0xffffu) + 0.5) / 65536.0;
+    let v = (f32(second & 0xffffu) + 0.5) / 65536.0;
+    return sqrt(-2.0 * log(u)) * cos(6.28318530718 * v);
+}
+
+fn grain_field(point: vec2<f32>) -> f32 {
+    let cell = vec2<i32>(floor(point));
+    let f = fract(point);
+    let blend = f * f * (vec2<f32>(3.0) - 2.0 * f);
+    let top = mix(grain_noise_at(cell), grain_noise_at(cell + vec2<i32>(1, 0)), blend.x);
+    let bottom = mix(grain_noise_at(cell + vec2<i32>(0, 1)), grain_noise_at(cell + vec2<i32>(1, 1)), blend.x);
+    // Normalize variance so grid intersections don't appear as heavier grain.
+    let variance = (blend * blend + (1.0 - blend) * (1.0 - blend));
+    return mix(top, bottom, blend.y) * inverseSqrt(variance.x * variance.y);
+}
+
+fn apply_grain(pos: vec2<i32>, rgb: vec3<f32>) -> vec3<f32> {
+    let amount = Common::effects_uniforms.film_effects.y / 100.0;
+    if amount <= 1e-6 { return rgb; }
+    let luminance = max(dot(rgb, vec3<f32>(0.2627, 0.6780, 0.0593)), 0.0);
+    if luminance <= 1e-8 || luminance >= 1.0 { return rgb; }
+    // A fixed film-plane scale keeps grain size consistent across image sizes.
+    let short_edge = f32(min(Common::camera_uniforms.full_width, Common::camera_uniforms.full_height));
+    let global_pos = clamp(pos + Common::tile_origin(), vec2<i32>(0), Common::full_image_max());
+    let point = (vec2<f32>(global_pos) + vec2<f32>(0.5)) * (2160.0 / max(short_edge, 1.0));
+    let rotated = vec2<f32>(0.8 * point.x - 0.6 * point.y, 0.6 * point.x + 0.8 * point.y);
+    let noise = (0.8 * grain_field(rotated / 1.35)
+        + 0.35 * grain_field(rotated / 2.7 + vec2<f32>(37.1, 91.7))) / 0.873212;
+    let lightness = pow(luminance, 1.0 / 3.0);
+    let envelope = 4.0 * lightness * (1.0 - lightness);
+    // Reduce unresolved grain in small previews instead of aliasing full-strength noise.
+    let footprint = min(short_edge / 2160.0, 1.0);
+    let delta = 0.035 * amount * envelope * noise * footprint;
+    let grained = clamp(lightness + delta, 0.0, 1.0);
+    // A shared gain retains chromaticity and creates no chroma speckles.
+    return rgb * (grained * grained * grained / luminance);
 }

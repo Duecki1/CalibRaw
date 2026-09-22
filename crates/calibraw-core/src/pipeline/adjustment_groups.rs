@@ -55,6 +55,8 @@ impl ExposureParams {
                 self.texture = defaults.texture;
                 self.clarity = defaults.clarity;
                 self.dehaze = defaults.dehaze;
+                self.halation_amount = defaults.halation_amount;
+                self.grain_amount = defaults.grain_amount;
                 self.glow_amount = defaults.glow_amount;
                 self.glow_radius = defaults.glow_radius;
                 self.glow_threshold = defaults.glow_threshold;
@@ -106,6 +108,7 @@ impl LocalAdjustments {
                 self.texture = defaults.texture;
                 self.clarity = defaults.clarity;
                 self.dehaze = defaults.dehaze;
+                self.halation_amount = defaults.halation_amount;
             }
             AdjustmentGroup::ColorMixer => {
                 self.hsl_hue = defaults.hsl_hue;
@@ -139,7 +142,7 @@ mod tests {
             (AdjustmentGroup::Color, "temperature tint hue saturation vibrance"),
             (AdjustmentGroup::ColorGrading, "color_grading"),
             (AdjustmentGroup::Detail, "luminance_denoise chroma_denoise denoise_detail denoise_quality ai_denoise_enabled sharpen_amount sharpen_radius sharpen_detail sharpen_masking"),
-            (AdjustmentGroup::Effects, "texture clarity dehaze glow_amount glow_radius glow_threshold vignette_amount vignette_midpoint vignette_roundness vignette_feather vignette_highlights"),
+            (AdjustmentGroup::Effects, "texture clarity dehaze halation_amount grain_amount glow_amount glow_radius glow_threshold vignette_amount vignette_midpoint vignette_roundness vignette_feather vignette_highlights"),
             (AdjustmentGroup::ColorMixer, "hsl_hue hsl_saturation hsl_luminance point_colors"),
         ];
         for local in [false, true] {

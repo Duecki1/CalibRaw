@@ -12,8 +12,11 @@ use std::time::{SystemTime, UNIX_EPOCH};
 fn sample_edits() -> EditState {
     let mut exposure = ExposureParams::scene_referred_default();
     exposure.dehaze = 27.0;
+    exposure.halation_amount = 42.0;
+    exposure.grain_amount = 31.0;
     let mut masks = MaskStack::default();
     masks.add_mask(MaskKind::Radial);
+    masks.masks[0].adjustments.halation_amount = 63.0;
     EditState {
         exposure,
         geometry: GeometryTransform::default(),
@@ -1121,4 +1124,18 @@ fn invalid_review_updates_leave_existing_sidecar_untouched() {
     assert!(save_photo_review(&raw, PhotoReview::default()).is_err());
     assert_eq!(fs::read(&path).unwrap(), b"broken");
     fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn legacy_edits_default_film_effects_to_zero() {
+    let mut global = serde_json::to_value(ExposureParams::default()).unwrap();
+    global.as_object_mut().unwrap().remove("halation_amount");
+    global.as_object_mut().unwrap().remove("grain_amount");
+    let restored: ExposureParams = serde_json::from_value(global).unwrap();
+    assert_eq!(restored.halation_amount, 0.0);
+    assert_eq!(restored.grain_amount, 0.0);
+    let mut local = serde_json::to_value(crate::pipeline::LocalAdjustments::default()).unwrap();
+    local.as_object_mut().unwrap().remove("halation_amount");
+    let restored: crate::pipeline::LocalAdjustments = serde_json::from_value(local).unwrap();
+    assert!(restored.is_neutral());
 }
