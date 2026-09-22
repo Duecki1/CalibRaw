@@ -151,10 +151,7 @@ impl Settings {
             {
                 app.activate_tab(crate::app::AppTab::Library);
             }
-            ui.heading("Settings");
         });
-        #[cfg(not(target_os = "android"))]
-        ui.heading("Settings");
         crate::ui::theme::card_gap(ui);
 
         crate::ui::theme::content_card(ui, |ui| {
