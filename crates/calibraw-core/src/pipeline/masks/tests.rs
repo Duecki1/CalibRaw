@@ -18,6 +18,7 @@ fn common_mask_properties_mutate_through_shared_model_api() {
         MaskKind::Brush,
         MaskKind::Radial,
         MaskKind::Linear,
+        MaskKind::Path,
         MaskKind::Subject,
         MaskKind::Object,
         MaskKind::LuminanceRange,
@@ -39,6 +40,7 @@ fn common_mask_properties_mutate_through_shared_model_api() {
             MaskGeometry::Brush { feather, .. }
             | MaskGeometry::Radial { feather, .. }
             | MaskGeometry::Linear { feather, .. }
+            | MaskGeometry::Path { feather, .. }
             | MaskGeometry::Ai { feather, .. }
             | MaskGeometry::Object { feather, .. }
             | MaskGeometry::LuminanceRange { feather, .. }
@@ -47,6 +49,60 @@ fn common_mask_properties_mutate_through_shared_model_api() {
         };
         assert_eq!(feather, 0.37);
     }
+}
+
+#[test]
+fn freeform_path_rasterizes_polygon_and_round_trips_bezier_handles() {
+    let mut stack = MaskStack::default();
+    assert_eq!(stack.add_mask(MaskKind::Path), Some((0, 0)));
+    let MaskGeometry::Path { points, feather } =
+        &mut stack.masks[0].components[0].geometry
+    else {
+        panic!("path kind must create path geometry");
+    };
+    *feather = 0.2;
+    points.extend([
+        PathPoint::corner([0.2, 0.2]),
+        PathPoint {
+            position: [0.8, 0.2],
+            handle_in: [-0.08, 0.0],
+            handle_out: [0.08, 0.0],
+        },
+        PathPoint::corner([0.8, 0.8]),
+        PathPoint::corner([0.2, 0.8]),
+    ]);
+    assert!(stack.masks[0].components[0].geometry.is_initialized());
+
+    let coverage = stack.rasterize_layer(0, 64, 64, 640, 640);
+    assert!(coverage[32 * 64 + 32] > 200, "path center should be selected");
+    assert!(coverage[2 * 64 + 2] < 16, "far outside should stay unselected");
+
+    let encoded = serde_json::to_string(&stack).expect("serialize path mask");
+    let restored: MaskStack = serde_json::from_str(&encoded).expect("deserialize path mask");
+    assert_eq!(restored, stack);
+}
+
+#[test]
+fn path_outline_uses_bezier_handles_and_closes_shape() {
+    let points = vec![
+        PathPoint {
+            position: [0.1, 0.5],
+            handle_in: [0.0, 0.0],
+            handle_out: [0.2, -0.3],
+        },
+        PathPoint {
+            position: [0.9, 0.5],
+            handle_in: [-0.2, -0.3],
+            handle_out: [0.0, 0.0],
+        },
+        PathPoint::corner([0.5, 0.9]),
+    ];
+    let outline = path_outline_points(&points, 8);
+    assert_eq!(outline.first(), outline.last());
+    assert!(
+        outline.iter().any(|point| point[1] < 0.45),
+        "Bezier handles should bend the first segment"
+    );
 }
 
 #[test]
@@ -468,6 +524,39 @@ fn cropped_mask_remaps_geometry_to_the_visible_region() {
     assert!((center[1] - 0.5).abs() < 1e-6);
     assert!((radius[0] - 0.2).abs() < 1e-6);
     assert!((radius[1] - 0.2).abs() < 1e-6);
+}
+
+#[test]
+fn cropped_path_remaps_anchors_handles_and_feather() {
+    let mut stack = MaskStack::default();
+    stack.add_mask(MaskKind::Path);
+    if let MaskGeometry::Path { points, feather } =
+        &mut stack.selected_component_mut().unwrap().geometry
+    {
+        points.push(PathPoint {
+            position: [0.75, 0.5],
+            handle_in: [-0.10, -0.05],
+            handle_out: [0.15, 0.10],
+        });
+        points.push(PathPoint::corner([0.9, 0.7]));
+        points.push(PathPoint::corner([0.6, 0.8]));
+        *feather = 0.4;
+    }
+
+    let cropped = stack.cropped_for_region(50, 0, 50, 100, 100, 100);
+    let MaskGeometry::Path { points, feather } =
+        &cropped.selected_component().unwrap().geometry
+    else {
+        panic!("expected path mask");
+    };
+    assert!((points[0].position[0] - 0.5).abs() < 1e-6);
+    assert!((points[0].position[1] - 0.5).abs() < 1e-6);
+    assert!((points[0].handle_in[0] + 0.2).abs() < 1e-6);
+    assert!((points[0].handle_in[1] + 0.05).abs() < 1e-6);
+    assert!((points[0].handle_out[0] - 0.3).abs() < 1e-6);
+    assert!((points[0].handle_out[1] - 0.10).abs() < 1e-6);
+    let expected_feather = 0.4 * 2.0f32.powf(1.0 / 1.30);
+    assert!((*feather - expected_feather).abs() < 1e-6);
 }
 
 #[test]

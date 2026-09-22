@@ -16,6 +16,7 @@ pub use effects::{
 
 pub const MAX_LOCAL_MASKS: usize = 32;
 pub const MAX_MASK_COMPONENTS: usize = 64;
+pub const MAX_PATH_POINTS: usize = 256;
 pub const MASK_ATLAS_EDGE_DESKTOP: u32 = 2048;
 pub const MASK_ATLAS_EDGE_ANDROID: u32 = 1024;
 pub const MASK_ATLAS_EDGE_EXPORT_DESKTOP: u32 = 4096;
@@ -51,6 +52,7 @@ pub enum MaskKind {
     Fullscreen,
     Radial,
     Linear,
+    Path,
     Subject,
     Background,
     Object,
@@ -66,6 +68,7 @@ impl MaskKind {
             Self::Fullscreen => "Fullscreen",
             Self::Radial => "Radial Gradient",
             Self::Linear => "Linear Gradient",
+            Self::Path => "Freeform / Path",
             Self::Subject => "Select Subject",
             Self::Background => "Select Not Subject",
             Self::Object => "Select Object",
@@ -82,12 +85,46 @@ impl MaskKind {
                 | Self::Fullscreen
                 | Self::Radial
                 | Self::Linear
+                | Self::Path
                 | Self::Subject
                 | Self::Background
                 | Self::Object
                 | Self::LuminanceRange
                 | Self::ColorRange
         )
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, serde::Deserialize, serde::Serialize)]
+pub struct PathPoint {
+    pub position: [f32; 2],
+    #[serde(default)]
+    pub handle_in: [f32; 2],
+    #[serde(default)]
+    pub handle_out: [f32; 2],
+}
+
+impl PathPoint {
+    pub const fn corner(position: [f32; 2]) -> Self {
+        Self {
+            position,
+            handle_in: [0.0, 0.0],
+            handle_out: [0.0, 0.0],
+        }
+    }
+
+    pub fn incoming(self) -> [f32; 2] {
+        [
+            self.position[0] + self.handle_in[0],
+            self.position[1] + self.handle_in[1],
+        ]
+    }
+
+    pub fn outgoing(self) -> [f32; 2] {
+        [
+            self.position[0] + self.handle_out[0],
+            self.position[1] + self.handle_out[1],
+        ]
     }
 }
 
@@ -336,6 +373,12 @@ pub enum MaskGeometry {
         feather: f32,
         initialized: bool,
     },
+    Path {
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        points: Vec<PathPoint>,
+        #[serde(default)]
+        feather: f32,
+    },
     Ai {
         mask: Option<MaskImage>,
         #[serde(default)]
@@ -430,6 +473,10 @@ impl MaskGeometry {
                 feather: 1.0,
                 initialized: false,
             },
+            MaskKind::Path => Self::Path {
+                points: Vec::new(),
+                feather: 0.0,
+            },
             MaskKind::Subject | MaskKind::Background => Self::Ai {
                 mask: None,
                 grow: 0.0,
@@ -467,6 +514,7 @@ impl MaskGeometry {
             Self::Fullscreen => true,
             Self::Brush { dabs, .. } => !dabs.is_empty(),
             Self::Radial { initialized, .. } | Self::Linear { initialized, .. } => *initialized,
+            Self::Path { points, .. } => points.len() >= 3,
             Self::Ai { mask, .. } | Self::Object { mask, .. } => mask.is_some(),
             Self::LuminanceRange { source, .. } => source.is_some(),
             Self::ColorRange {
@@ -481,6 +529,7 @@ impl MaskGeometry {
             Self::Brush { feather, .. }
             | Self::Radial { feather, .. }
             | Self::Linear { feather, .. }
+            | Self::Path { feather, .. }
             | Self::Ai { feather, .. }
             | Self::Object { feather, .. }
             | Self::LuminanceRange { feather, .. }
@@ -764,6 +813,16 @@ impl MaskStack {
                     MaskGeometry::Linear { start, end, .. } => {
                         remap_point(start);
                         remap_point(end);
+                    }
+                    MaskGeometry::Path { points, feather } => {
+                        for point in points {
+                            remap_point(&mut point.position);
+                            point.handle_in[0] /= du.max(f32::EPSILON);
+                            point.handle_in[1] /= dv.max(f32::EPSILON);
+                            point.handle_out[0] /= du.max(f32::EPSILON);
+                            point.handle_out[1] /= dv.max(f32::EPSILON);
+                        }
+                        *feather *= image_scale.powf(1.0 / 1.30);
                     }
                     MaskGeometry::Ai {
                         mask,
@@ -1383,6 +1442,9 @@ fn rasterize_component(
             feather,
             initialized: true,
         } => rasterize_linear(space, *start, *end, *feather),
+        MaskGeometry::Path { points, feather } if points.len() >= 3 => {
+            rasterize_path(space, points, *feather)
+        }
         MaskGeometry::Ai {
             mask: Some(mask),
             grow,
@@ -1515,6 +1577,7 @@ fn component_shape_margin_pixels(component: &MaskComponent, image_edge: f32) -> 
         MaskGeometry::LuminanceRange { grow, .. } | MaskGeometry::ColorRange { grow, .. } => {
             shape_margin(*grow, 0.0)
         }
+        MaskGeometry::Path { feather, .. } => shape_margin(0.0, *feather),
         _ => 2.0,
     }
 }
@@ -2215,6 +2278,97 @@ fn rasterize_radial(
                 *value = 1.0 - smoothstep(inner, 1.0, distance);
             }
         });
+    out
+}
+
+/// Flatten a closed freeform path into normalized source-coordinate line
+/// segments. Straight points (zero-length handles) remain polygon corners;
+/// non-zero handles form cubic Bézier segments.
+pub fn path_outline_points(points: &[PathPoint], segments_per_curve: usize) -> Vec<[f32; 2]> {
+    if points.len() < 2 {
+        return points.iter().map(|point| point.position).collect();
+    }
+    let steps = segments_per_curve.max(1);
+    let mut out = Vec::with_capacity(points.len() * steps + 1);
+    for index in 0..points.len() {
+        let current = points[index];
+        let next = points[(index + 1) % points.len()];
+        if index == 0 {
+            out.push(current.position);
+        }
+        let p0 = current.position;
+        let p1 = current.outgoing();
+        let p2 = next.incoming();
+        let p3 = next.position;
+        for step in 1..=steps {
+            let t = step as f32 / steps as f32;
+            let omt = 1.0 - t;
+            let omt2 = omt * omt;
+            let t2 = t * t;
+            out.push([
+                omt2 * omt * p0[0]
+                    + 3.0 * omt2 * t * p1[0]
+                    + 3.0 * omt * t2 * p2[0]
+                    + t2 * t * p3[0],
+                omt2 * omt * p0[1]
+                    + 3.0 * omt2 * t * p1[1]
+                    + 3.0 * omt * t2 * p2[1]
+                    + t2 * t * p3[1],
+            ]);
+        }
+    }
+    out
+}
+
+fn rasterize_path(space: MaskRasterSpace, points: &[PathPoint], feather: f32) -> Vec<f32> {
+    let [width, height] = space.raster;
+    if width == 0 || height == 0 || points.len() < 3 {
+        return vec![0.0; width as usize * height as usize];
+    }
+
+    // A small fixed subdivision is enough for the mask atlas while keeping
+    // scanline rasterization bounded even for large paths.
+    let outline = path_outline_points(points, 12);
+    if outline.len() < 4 {
+        return vec![0.0; width as usize * height as usize];
+    }
+    let edges = outline
+        .windows(2)
+        .map(|pair| {
+            (
+                [pair[0][0] * width as f32, pair[0][1] * height as f32],
+                [pair[1][0] * width as f32, pair[1][1] * height as f32],
+            )
+        })
+        .collect::<Vec<_>>();
+    let row_stride = width as usize;
+    let mut out = vec![0.0f32; row_stride * height as usize];
+    out.par_chunks_mut(row_stride)
+        .enumerate()
+        .for_each(|(y, row)| {
+            let py = y as f32 + 0.5;
+            let mut intersections = Vec::with_capacity(edges.len() / 2 + 2);
+            for &(a, b) in &edges {
+                if (a[1] <= py && b[1] > py) || (b[1] <= py && a[1] > py) {
+                    let t = (py - a[1]) / (b[1] - a[1]);
+                    intersections.push(a[0] + (b[0] - a[0]) * t);
+                }
+            }
+            intersections.sort_unstable_by(|a, b| a.total_cmp(b));
+            for pair in intersections.chunks_exact(2) {
+                let left = pair[0].min(pair[1]);
+                let right = pair[0].max(pair[1]);
+                let start = (left - 0.5).ceil().max(0.0) as usize;
+                let end = (right - 0.5).floor().min(width.saturating_sub(1) as f32) as isize;
+                if end >= start as isize {
+                    row[start..=end as usize].fill(1.0);
+                }
+            }
+        });
+
+    if feather > 1e-5 {
+        shape_probability_mask(&mut out, width, height, 0.0, feather);
+    }
     out
 }
 
