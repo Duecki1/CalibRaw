@@ -378,6 +378,8 @@ pub enum MaskGeometry {
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         points: Vec<PathPoint>,
         #[serde(default)]
+        grow: f32,
+        #[serde(default)]
         feather: f32,
     },
     Ai {
@@ -476,6 +478,7 @@ impl MaskGeometry {
             },
             MaskKind::Path => Self::Path {
                 points: Vec::new(),
+                grow: 0.0,
                 feather: 0.0,
             },
             MaskKind::Subject | MaskKind::Background => Self::Ai {
@@ -526,16 +529,24 @@ impl MaskGeometry {
     }
 
     pub fn set_feather(&mut self, value: f32) -> bool {
+        if let Self::Brush { feather, dabs, .. } = self {
+            if !set_if_changed(feather, value) {
+                return false;
+            }
+            for dab in dabs {
+                dab.feather = value;
+            }
+            return true;
+        }
         let feather = match self {
-            Self::Brush { feather, .. }
-            | Self::Radial { feather, .. }
+            Self::Radial { feather, .. }
             | Self::Linear { feather, .. }
             | Self::Path { feather, .. }
             | Self::Ai { feather, .. }
             | Self::Object { feather, .. }
             | Self::LuminanceRange { feather, .. }
             | Self::ColorRange { feather, .. } => feather,
-            Self::Fullscreen | Self::Placeholder => return false,
+            Self::Fullscreen | Self::Brush { .. } | Self::Placeholder => return false,
         };
         set_if_changed(feather, value)
     }
@@ -919,7 +930,11 @@ impl MaskStack {
                         remap_point(start);
                         remap_point(end);
                     }
-                    MaskGeometry::Path { points, feather } => {
+                    MaskGeometry::Path {
+                        points,
+                        grow,
+                        feather,
+                    } => {
                         for point in points {
                             remap_point(&mut point.position);
                             point.handle_in[0] /= du.max(f32::EPSILON);
@@ -927,6 +942,7 @@ impl MaskStack {
                             point.handle_out[0] /= du.max(f32::EPSILON);
                             point.handle_out[1] /= dv.max(f32::EPSILON);
                         }
+                        *grow *= image_scale;
                         *feather *= image_scale.powf(1.0 / 1.30);
                     }
                     MaskGeometry::Ai {
@@ -1547,9 +1563,11 @@ fn rasterize_component(
             feather,
             initialized: true,
         } => rasterize_linear(space, *start, *end, *feather),
-        MaskGeometry::Path { points, feather } if points.len() >= 3 => {
-            rasterize_path(space, points, *feather)
-        }
+        MaskGeometry::Path {
+            points,
+            grow,
+            feather,
+        } if points.len() >= 3 => rasterize_path(space, points, *grow, *feather),
         MaskGeometry::Ai {
             mask: Some(mask),
             grow,
@@ -1671,9 +1689,7 @@ fn rasterize_mask_image(width: u32, height: u32, mask: &MaskImage) -> Vec<f32> {
 
 fn component_shape_margin_pixels(component: &MaskComponent, image_edge: f32) -> f32 {
     let shape_margin = |grow: f32, feather: f32| {
-        grow.abs().clamp(0.0, 1.0) * image_edge * 0.05
-            + feather.clamp(0.0, 1.0).powf(1.30) * image_edge * 0.045
-            + 2.0
+        grow.abs() * image_edge * 0.05 + mask_feather_radius(image_edge, feather) + 2.0
     };
     match &component.geometry {
         MaskGeometry::Ai { grow, feather, .. } | MaskGeometry::Object { grow, feather, .. } => {
@@ -1682,7 +1698,7 @@ fn component_shape_margin_pixels(component: &MaskComponent, image_edge: f32) -> 
         MaskGeometry::LuminanceRange { grow, .. } | MaskGeometry::ColorRange { grow, .. } => {
             shape_margin(*grow, 0.0)
         }
-        MaskGeometry::Path { feather, .. } => shape_margin(0.0, *feather),
+        MaskGeometry::Path { grow, feather, .. } => shape_margin(*grow, *feather),
         _ => 2.0,
     }
 }
@@ -1757,7 +1773,7 @@ fn shape_probability_mask(mask: &mut [f32], width: u32, height: u32, grow: f32, 
         // Whole-pixel radii keep full-frame and export-tile crops bit-identical.
         // Subpixel radii remain continuous near zero, where that progression is
         // most visible in the UI.
-        let raw_radius = feather.powf(1.30) * edge * 0.045;
+        let raw_radius = mask_feather_radius(edge, feather);
         let feather_radius = if raw_radius < 1.0 {
             raw_radius
         } else {
@@ -1767,25 +1783,59 @@ fn shape_probability_mask(mask: &mut [f32], width: u32, height: u32, grow: f32, 
         return;
     }
 
+    shape_distance_mask(mask, width, height, grow, feather, false);
+}
+
+fn mask_feather_radius(short_edge: f32, feather: f32) -> f32 {
+    feather.max(0.0).powf(1.30) * short_edge * 0.045
+}
+
+// Both generated masks and drawn paths use the same signed-distance grow and
+// feather widths. Paths keep their drawn outline as the outer feather edge.
+fn shape_distance_mask(
+    mask: &mut [f32],
+    width: u32,
+    height: u32,
+    grow: f32,
+    feather: f32,
+    feather_inside: bool,
+) {
+    if width == 0 || height == 0 || mask.is_empty() {
+        return;
+    }
     let width = width as usize;
     let height = height as usize;
     let binary = mask
         .iter()
         .map(|value| u8::from(*value >= 0.5))
         .collect::<Vec<_>>();
+    if binary.iter().all(|value| *value == binary[0]) {
+        return;
+    }
     let distance_to_inside = chamfer_distance(&binary, width, height, 1);
     let distance_to_outside = chamfer_distance(&binary, width, height, 0);
     let edge = width.min(height) as f32;
     let grow_radius = grow * edge * 0.05;
-    let feather_radius = (feather.powf(1.30) * edge * 0.045).max(0.75);
+    let mut feather_radius = mask_feather_radius(edge, feather);
+    if feather_inside {
+        let deepest_inside = distance_to_outside
+            .iter()
+            .zip(&binary)
+            .filter(|(_, inside)| **inside == 1)
+            .map(|(distance, _)| *distance)
+            .fold(0.0f32, f32::max);
+        feather_radius = feather_radius.min(deepest_inside * 0.8);
+    }
 
     mask.par_iter_mut().enumerate().for_each(|(index, value)| {
         let confidence_offset = (*value - 0.5) * 0.5;
         let signed_distance = distance_to_outside[index] - distance_to_inside[index]
             + confidence_offset
             + grow_radius;
-        *value = if feather <= 1e-5 {
+        *value = if feather_radius <= 1e-5 {
             smoothstep(-0.75, 0.75, signed_distance)
+        } else if feather_inside {
+            smoothstep(0.0, feather_radius, signed_distance)
         } else {
             smoothstep(-feather_radius, feather_radius, signed_distance)
         };
@@ -1903,11 +1953,7 @@ fn rasterize_color_range(
             + (color[1] - target[1]).powi(2)
             + (color[2] - target[2]).powi(2))
         .sqrt();
-        1.0 - smoothstep(
-            (tolerance - softness).max(0.0),
-            tolerance + softness,
-            distance,
-        )
+        1.0 - smoothstep(tolerance, tolerance + softness, distance)
     })
 }
 
@@ -2425,7 +2471,12 @@ pub fn path_outline_points(points: &[PathPoint], segments_per_curve: usize) -> V
     out
 }
 
-fn rasterize_path(space: MaskRasterSpace, points: &[PathPoint], feather: f32) -> Vec<f32> {
+fn rasterize_path(
+    space: MaskRasterSpace,
+    points: &[PathPoint],
+    grow: f32,
+    feather: f32,
+) -> Vec<f32> {
     let [width, height] = space.raster;
     if width == 0 || height == 0 || points.len() < 3 {
         return vec![0.0; width as usize * height as usize];
@@ -2471,8 +2522,8 @@ fn rasterize_path(space: MaskRasterSpace, points: &[PathPoint], feather: f32) ->
             }
         });
 
-    if feather > 1e-5 {
-        shape_probability_mask(&mut out, width, height, 0.0, feather);
+    if grow.abs() > 1e-5 || feather > 1e-5 {
+        shape_distance_mask(&mut out, width, height, grow, feather, true);
     }
     out
 }
@@ -2503,7 +2554,7 @@ fn rasterize_linear(
             for (x, value) in row.iter_mut().enumerate() {
                 let px = (x as f32 + 0.5) / width as f32 * image_width.max(1) as f32;
                 let t = ((px - sx) * dx + (py - sy) * dy) / length_sq;
-                *value = 1.0 - smoothstep(edge0, edge1, t);
+                *value = ((edge1 - t) / (edge1 - edge0)).clamp(0.0, 1.0);
             }
         });
     out
