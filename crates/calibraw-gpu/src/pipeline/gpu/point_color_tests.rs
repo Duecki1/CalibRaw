@@ -56,6 +56,22 @@ fn max_delta(a: &[f32], b: &[f32], pixel: usize) -> f32 {
         .fold(0.0, f32::max)
 }
 
+fn sampled_srgb(rgb: [f32; 3]) -> [f32; 3] {
+    let linear = [
+        1.660_491 * rgb[0] - 0.587_641_1 * rgb[1] - 0.072_849_9 * rgb[2],
+        -0.124_550_5 * rgb[0] + 1.132_899_9 * rgb[1] - 0.008_349_4 * rgb[2],
+        -0.018_150_8 * rgb[0] - 0.100_578_9 * rgb[1] + 1.118_729_7 * rgb[2],
+    ];
+    linear.map(|value| {
+        let value = value.clamp(0.0, 1.0);
+        if value <= 0.003_130_8 {
+            value * 12.92
+        } else {
+            1.055 * value.powf(1.0 / 2.4) - 0.055
+        }
+    })
+}
+
 #[test]
 fn local_point_color_respects_color_and_mask_coverage() -> anyhow::Result<()> {
     let Some((device, queue)) = request_test_device() else {
@@ -205,6 +221,131 @@ fn sampled_hue_shift_changes_matching_patch_only() -> anyhow::Result<()> {
         &baseline[3..6],
         &shifted[3..6]
     );
+    Ok(())
+}
+
+#[test]
+fn isolated_color_noise_does_not_punch_a_hole_in_the_selection() -> anyhow::Result<()> {
+    let Some((device, queue)) = request_test_device() else {
+        eprintln!("point color GPU regression skipped: no headless wgpu adapter");
+        return Ok(());
+    };
+    const SIZE: u32 = 9;
+    let mut pixels = Vec::with_capacity((SIZE * SIZE * 3) as usize);
+    for y in 0..SIZE {
+        for x in 0..SIZE {
+            let rgb = if x == 4 && y == 4 {
+                [0.30, 0.17, 0.035]
+            } else if x == SIZE - 1 {
+                [0.02, 0.03, 0.10]
+            } else {
+                [0.30, 0.09, 0.035]
+            };
+            pixels.extend_from_slice(&rgb);
+        }
+    }
+    let source = LoadedRaw::from_scene_linear_rec2020(SIZE, SIZE, pixels)?;
+    let masks = MaskStack::default();
+    let mut exposure = ExposureParams::scene_referred_default();
+    let params = GpuParams::new(&exposure, &masks, &source);
+    let pipeline = RawGpuPipeline::new_headless_with_quality_and_mask_edge(
+        &device,
+        &queue,
+        &source,
+        &params,
+        ProcessingQuality::High,
+        64,
+    )?;
+    pipeline.dispatch_stage(&queue, &device, &params, ProcessingStage::Raw);
+    pipeline.dispatch_stage(&queue, &device, &params, ProcessingStage::Tone);
+    pipeline.dispatch_stage(&queue, &device, &params, ProcessingStage::Output);
+    let baseline = pipeline.read_output_region_blocking(&device, &queue, 0, 0, SIZE, SIZE)?;
+    let target =
+        sampled_srgb(pipeline.read_point_color_sample_blocking(&device, &queue, &params, 2, 2)?);
+    let noisy =
+        sampled_srgb(pipeline.read_point_color_sample_blocking(&device, &queue, &params, 4, 4)?);
+    let mut point = PointColor::from_srgb(target);
+    point.hue_range = crate::pipeline::PointColorRange::new(-0.06, -0.02, 0.02, 0.06);
+    assert!(point.weight_for_srgb(noisy) < 0.05);
+    exposure.point_colors.push(point);
+    exposure.point_color_visualize = Some(0);
+    let params = GpuParams::new(&exposure, &masks, &source);
+    let pipeline = RawGpuPipeline::new_headless_with_quality_and_mask_edge(
+        &device,
+        &queue,
+        &source,
+        &params,
+        ProcessingQuality::High,
+        64,
+    )?;
+    pipeline.dispatch_stage(&queue, &device, &params, ProcessingStage::Raw);
+    pipeline.dispatch_stage(&queue, &device, &params, ProcessingStage::Tone);
+    pipeline.dispatch_stage(&queue, &device, &params, ProcessingStage::Output);
+    let visual = pipeline.read_output_region_blocking(&device, &queue, 0, 0, SIZE, SIZE)?;
+    let selection = |x: u32, y: u32| {
+        let index = ((y * SIZE + x) * 4 + 2) as usize;
+        let before = f32::from(baseline[index]);
+        let after = f32::from(visual[index]);
+        ((after - before) / (255.0 - before) / (92.0 / 255.0)).clamp(0.0, 1.0)
+    };
+    assert!(selection(3, 4) > 0.9);
+    assert!(
+        selection(4, 4) > 0.75,
+        "isolated color noise lost its selection"
+    );
+    assert!(selection(7, 4) > 0.9);
+    assert!(selection(8, 4) < 0.1, "selection bled across a color edge");
+
+    exposure.point_color_visualize = None;
+    for hue_shift in [-100.0, 100.0] {
+        exposure.point_colors[0].hue_shift = hue_shift;
+        let params = GpuParams::new(&exposure, &masks, &source);
+        let pipeline = RawGpuPipeline::new_headless_with_quality_and_mask_edge(
+            &device,
+            &queue,
+            &source,
+            &params,
+            ProcessingQuality::High,
+            64,
+        )?;
+        pipeline.dispatch_stage(&queue, &device, &params, ProcessingStage::Raw);
+        pipeline.dispatch_stage(&queue, &device, &params, ProcessingStage::Tone);
+        pipeline.dispatch_stage(&queue, &device, &params, ProcessingStage::Output);
+        let shifted = pipeline.read_output_region_blocking(&device, &queue, 0, 0, SIZE, SIZE)?;
+        let color_distance = |pixels: &[u8]| {
+            let first = ((4 * SIZE + 3) * 4) as usize;
+            let noisy = ((4 * SIZE + 4) * 4) as usize;
+            (0..3)
+                .map(|channel| {
+                    (i32::from(pixels[first + channel]) - i32::from(pixels[noisy + channel]))
+                        .unsigned_abs()
+                })
+                .max()
+                .unwrap_or(0)
+        };
+        let effect = |x: u32| {
+            let index = ((4 * SIZE + x) * 4) as usize;
+            (0..3)
+                .map(|channel| {
+                    (i32::from(shifted[index + channel]) - i32::from(baseline[index + channel]))
+                        .unsigned_abs()
+                })
+                .max()
+                .unwrap_or(0)
+        };
+        assert!(
+            effect(3) > 100,
+            "the {hue_shift} hue shift did not reach the selected color"
+        );
+        assert!(
+            effect(4) > effect(3) * 3 / 4,
+            "a noisy pixel missed the {hue_shift} hue shift"
+        );
+        assert!(
+            color_distance(&shifted) < color_distance(&baseline) + 25,
+            "the {hue_shift} hue shift amplified color noise"
+        );
+    }
     Ok(())
 }
 

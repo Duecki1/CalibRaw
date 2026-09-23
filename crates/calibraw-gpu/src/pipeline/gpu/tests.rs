@@ -15,13 +15,16 @@ use crate::pipeline::{
 
 #[test]
 fn point_color_shader_uses_display_srgb_hsl_and_combined_unadjusted_selection() {
-    assert!(SHADER_VIEW_TRANSFORM.contains("fn apply_point_colors(input_rgb: vec3<f32>)"));
+    assert!(SHADER_VIEW_TRANSFORM
+        .contains("fn apply_point_colors(input_rgb: vec3<f32>, selection_sample: vec3<f32>)"));
     assert!(SHADER_VIEW_TRANSFORM
         .contains("fn point_color_selection_weight(sample: vec3<f32>, index: u32)"));
     assert!(SHADER_VIEW_TRANSFORM.contains("point_color_hue_weight"));
     assert!(SHADER_VIEW_TRANSFORM.contains("point_color_hsl_to_rgb"));
-    assert!(SHADER_VIEW_TRANSFORM.contains("display_linear = apply_point_colors(display_linear)"));
-    assert!(SHADER_VIEW_TRANSFORM.contains("hue_shift = hue_shift + point.shifts.x * weight"));
+    assert!(SHADER_VIEW_TRANSFORM
+        .contains("display_linear = apply_point_colors(display_linear, point_color_sample)"));
+    assert!(SHADER_VIEW_TRANSFORM
+        .contains("color_delta = color_delta + (adjusted - input_rgb) * weight"));
 }
 
 #[test]
@@ -393,7 +396,10 @@ fn global_and_fullscreen_mask_effects_render_the_same_pixels() -> anyhow::Result
     fog.settings.fog.density = 80.0;
     combined.masks[0].effect_components.push(fog);
     let stacked_output = render(&combined)?;
-    assert!(stacked_output != local_output, "Second effect did not combine");
+    assert!(
+        stacked_output != local_output,
+        "Second effect did not combine"
+    );
     combined.masks[0].adjustments.exposure = 1.0;
     assert!(
         render(&combined)? != stacked_output,

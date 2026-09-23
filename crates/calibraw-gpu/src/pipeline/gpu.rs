@@ -1233,7 +1233,7 @@ fn pack_scene_tone_params(ctx: &GpuParamContext<'_>) -> SceneToneUniforms {
                 .point_color_visualize
                 .map_or(0, |index| (index + 1) as u32),
             0,
-            local_point_color_flags,
+            local_point_color_flags | (u32::from(exposure.point_colors.has_adjustments()) << 2),
         ],
     }
 }
