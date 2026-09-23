@@ -71,7 +71,7 @@ impl MaskKind {
             Self::Linear => "Linear Gradient",
             Self::Path => "Freeform / Path",
             Self::Subject => "Select Subject",
-            Self::Background => "Select Not Subject",
+            Self::Background => "Select Background",
             Self::Object => "Select Object",
             Self::LuminanceRange => "Luminance Range",
             Self::ColorRange => "Color Range",
@@ -1080,6 +1080,13 @@ impl MaskStack {
     }
 
     pub fn ensure_selection(&mut self) -> Option<(usize, usize)> {
+        // Older sidecars stored the generated default component name as text.
+        // Keep user-renamed components intact while updating that old default.
+        for component in self.masks.iter_mut().flat_map(|mask| &mut mask.components) {
+            if component.kind == MaskKind::Background && component.name == "Select Not Subject" {
+                component.name = MaskKind::Background.label().to_owned();
+            }
+        }
         if self.masks.is_empty() {
             self.selected_mask = None;
             self.selected_component = None;
@@ -1589,7 +1596,7 @@ fn rasterize_component(
             } else {
                 *grow
             };
-            shape_probability_mask(&mut coverage, width, height, grow, *feather);
+            shape_probability_mask_from_source(&mut coverage, width, height, grow, *feather, mask);
             if component.kind == MaskKind::Background {
                 coverage
                     .par_iter_mut()
@@ -1604,7 +1611,7 @@ fn rasterize_component(
             ..
         } => {
             let mut coverage = rasterize_mask_image(width, height, mask);
-            shape_probability_mask(&mut coverage, width, height, *grow, *feather);
+            shape_probability_mask_from_source(&mut coverage, width, height, *grow, *feather, mask);
             coverage
         }
         MaskGeometry::Object {
@@ -1753,6 +1760,85 @@ fn chamfer_distance(binary: &[u8], width: usize, height: usize, target: u8) -> V
 }
 
 fn shape_probability_mask(mask: &mut [f32], width: u32, height: u32, grow: f32, feather: f32) {
+    shape_probability_mask_with_radius(mask, width, height, grow, feather, None);
+}
+
+fn shape_probability_mask_from_source(
+    coverage: &mut [f32],
+    width: u32,
+    height: u32,
+    grow: f32,
+    feather: f32,
+    source: &MaskImage,
+) {
+    let needs_distance_feather = feather > 1e-5
+        && (grow.abs() > 1e-5 || mask_feather_radius(width.min(height) as f32, feather) > 1.0);
+    let core_radius = needs_distance_feather
+        .then(|| source_mask_core_radius(source, width, height))
+        .flatten()
+        .map(|radius| {
+            let inward_grow = grow.min(0.0) * width.min(height) as f32 * 0.05;
+            (radius + inward_grow).max(0.5)
+        });
+    shape_probability_mask_with_radius(coverage, width, height, grow, feather, core_radius);
+}
+
+fn source_mask_core_radius(source: &MaskImage, width: u32, height: u32) -> Option<f32> {
+    if source.width == 0 || source.height == 0 {
+        return None;
+    }
+    let source_width = source.width as usize;
+    let source_height = source.height as usize;
+    let sample_width = (source.sampling_rect[2] - source.sampling_rect[0])
+        .abs()
+        .max(1e-6);
+    let sample_height = (source.sampling_rect[3] - source.sampling_rect[1])
+        .abs()
+        .max(1e-6);
+    let scale_x = width as f32 / source.width as f32 / sample_width;
+    let scale_y = height as f32 / source.height as f32 / sample_height;
+    let mut horizontal_runs = vec![0u32; source.pixels.len()];
+    for y in 0..source_height {
+        let mut x = 0;
+        while x < source_width {
+            let start = x;
+            while x < source_width && source.pixels[y * source_width + x] >= 128 {
+                x += 1;
+            }
+            let length = (x - start) as u32;
+            for column in start..x {
+                horizontal_runs[y * source_width + column] = length;
+            }
+            x += usize::from(length == 0);
+        }
+    }
+    let mut thickest = 0.0f32;
+    for x in 0..source_width {
+        let mut y = 0;
+        while y < source_height {
+            let start = y;
+            while y < source_height && source.pixels[y * source_width + x] >= 128 {
+                y += 1;
+            }
+            let vertical = (y - start) as f32 * scale_y;
+            for row in start..y {
+                let horizontal = horizontal_runs[row * source_width + x] as f32 * scale_x;
+                thickest = thickest.max(horizontal.min(vertical));
+            }
+            y += usize::from(vertical == 0.0);
+        }
+    }
+    (thickest > 0.0).then_some(thickest * 0.45)
+}
+
+fn shape_probability_mask_with_radius(
+    mask: &mut [f32],
+    width: u32,
+    height: u32,
+    grow: f32,
+    feather: f32,
+    core_radius: Option<f32>,
+) {
     if width == 0 || height == 0 || mask.is_empty() {
         return;
     }
@@ -1765,25 +1851,34 @@ fn shape_probability_mask(mask: &mut [f32], width: u32, height: u32, grow: f32, 
         return;
     }
 
-    // Generated masks already contain a subpixel anti-aliased boundary. Blur
-    // that alpha directly when only Feather is requested; rebuilding it from a
-    // binary distance field creates visible atlas-resolution stair-steps.
-    if grow.abs() <= 1e-5 {
-        let edge = width.min(height) as f32;
-        // Whole-pixel radii keep full-frame and export-tile crops bit-identical.
-        // Subpixel radii remain continuous near zero, where that progression is
-        // most visible in the UI.
-        let raw_radius = mask_feather_radius(edge, feather);
-        let feather_radius = if raw_radius < 1.0 {
-            raw_radius
-        } else {
-            raw_radius.round()
-        };
-        blur_probability_mask(mask, width as usize, height as usize, feather_radius);
+    let raw_radius = mask_feather_radius(width.min(height) as f32, feather);
+    // Fine feathers retain the generated matte's subpixel alpha. Blend into
+    // contour feathering over a short interval so moving the slider never
+    // makes a visible jump between the two methods.
+    if grow.abs() <= 1e-5 && raw_radius < 3.0 {
+        let original = (raw_radius > 1.0).then(|| mask.to_vec());
+        blur_probability_mask(mask, width as usize, height as usize, raw_radius);
+        if let Some(mut contoured) = original {
+            shape_distance_mask(
+                &mut contoured,
+                width,
+                height,
+                grow,
+                feather,
+                false,
+                core_radius,
+            );
+            let blend = smoothstep(1.0, 3.0, raw_radius);
+            mask.par_iter_mut()
+                .zip(contoured.into_par_iter())
+                .for_each(|(blurred, contour)| {
+                    *blurred += (contour - *blurred) * blend;
+                });
+        }
         return;
     }
 
-    shape_distance_mask(mask, width, height, grow, feather, false);
+    shape_distance_mask(mask, width, height, grow, feather, false, core_radius);
 }
 
 fn mask_feather_radius(short_edge: f32, feather: f32) -> f32 {
@@ -1799,6 +1894,7 @@ fn shape_distance_mask(
     grow: f32,
     feather: f32,
     feather_inside: bool,
+    core_radius: Option<f32>,
 ) {
     if width == 0 || height == 0 || mask.is_empty() {
         return;
@@ -1817,14 +1913,14 @@ fn shape_distance_mask(
     let edge = width.min(height) as f32;
     let grow_radius = grow * edge * 0.05;
     let mut feather_radius = mask_feather_radius(edge, feather);
-    if feather_inside {
+    if feather_radius > 0.0 {
         let deepest_inside = distance_to_outside
             .iter()
             .zip(&binary)
             .filter(|(_, inside)| **inside == 1)
             .map(|(distance, _)| *distance)
             .fold(0.0f32, f32::max);
-        feather_radius = feather_radius.min(deepest_inside * 0.8);
+        feather_radius = feather_radius.min(core_radius.unwrap_or(deepest_inside * 0.8));
     }
 
     mask.par_iter_mut().enumerate().for_each(|(index, value)| {
@@ -1926,7 +2022,7 @@ fn rasterize_luminance_range(
 ) -> Vec<f32> {
     let low = low.min(high).clamp(0.0, 1.0);
     let high = high.max(low).clamp(0.0, 1.0);
-    let transition = feather.clamp(0.001, 1.0) * 0.35;
+    let transition = feather.clamp(0.0, 1.0) * 0.35;
     sample_rgb_mask(width, height, source, |rgb| {
         let linear = rgb.map(srgb_to_linear);
         let luminance = 0.2126 * linear[0] + 0.7152 * linear[1] + 0.0722 * linear[2];
@@ -2523,7 +2619,7 @@ fn rasterize_path(
         });
 
     if grow.abs() > 1e-5 || feather > 1e-5 {
-        shape_distance_mask(&mut out, width, height, grow, feather, true);
+        shape_distance_mask(&mut out, width, height, grow, feather, true, None);
     }
     out
 }
@@ -2554,7 +2650,7 @@ fn rasterize_linear(
             for (x, value) in row.iter_mut().enumerate() {
                 let px = (x as f32 + 0.5) / width as f32 * image_width.max(1) as f32;
                 let t = ((px - sx) * dx + (py - sy) * dy) / length_sq;
-                *value = ((edge1 - t) / (edge1 - edge0)).clamp(0.0, 1.0);
+                *value = 1.0 - smoothstep(edge0, edge1, t);
             }
         });
     out

@@ -145,14 +145,17 @@ fn freeform_feather_stays_inside_outline_and_grow_moves_its_edge() {
 }
 
 #[test]
-fn linear_gradient_has_even_falloff_between_its_outer_lines() {
+fn linear_gradient_has_centered_falloff_and_smooth_outer_lines() {
     let space = MaskRasterSpace::new(128, 1, 128, 1);
     let coverage = rasterize_linear(space, [0.25, 0.0], [0.75, 0.0], 1.0);
     assert_eq!(coverage[16], 1.0);
     assert_eq!(coverage[112], 0.0);
     assert!((coverage[64] - 0.5).abs() < 0.02);
-    assert!((coverage[48] - 0.75).abs() < 0.02);
-    assert!((coverage[80] - 0.25).abs() < 0.02);
+    assert!((coverage[48] + coverage[79] - 1.0).abs() < 0.02);
+    assert!(coverage[48] > 0.8);
+    assert!(coverage[79] < 0.2);
+    assert!(coverage[32] > 0.999, "full-strength edge has a visible cut");
+    assert!(coverage[95] < 0.001, "zero-strength edge has a visible cut");
 }
 
 #[test]
@@ -883,6 +886,144 @@ fn feathered_background_is_the_exact_subject_complement() {
 }
 
 #[test]
+fn strong_subject_feather_keeps_a_small_subject_core_and_background_complement() {
+    let mut pixels = vec![0u8; 128 * 128];
+    for y in 60..68 {
+        for x in 60..68 {
+            pixels[y * 128 + x] = 255;
+        }
+    }
+    let source = MaskImage::new(128, 128, pixels).unwrap();
+    let mut stack = MaskStack::default();
+    for kind in [MaskKind::Subject, MaskKind::Background] {
+        stack.add_mask(kind);
+        if let MaskGeometry::Ai { mask, feather, .. } =
+            &mut stack.selected_component_mut().unwrap().geometry
+        {
+            *mask = Some(source.clone());
+            *feather = 1.0;
+        }
+    }
+    let subject = stack.rasterize_layer(0, 128, 128, 128, 128);
+    let background = stack.rasterize_layer(1, 128, 128, 128, 128);
+    assert_eq!(subject[64 * 128 + 64], 255);
+    assert_eq!(subject[20 * 128 + 20], 0);
+    assert!(subject.iter().any(|value| *value > 0 && *value < 255));
+    assert!(subject
+        .iter()
+        .zip(background)
+        .all(|(subject, background)| *subject as u16 + background as u16 == 255));
+}
+
+#[test]
+fn padded_crop_subject_feather_matches_full_frame_at_a_partial_subject_edge() {
+    let mut pixels = vec![0u8; 128 * 128];
+    for y in 60..68 {
+        for x in 60..68 {
+            pixels[y * 128 + x] = 255;
+        }
+    }
+    let mut stack = MaskStack::default();
+    stack.add_mask(MaskKind::Subject);
+    if let MaskGeometry::Ai { mask, feather, .. } =
+        &mut stack.selected_component_mut().unwrap().geometry
+    {
+        *mask = MaskImage::new(128, 128, pixels);
+        *feather = 1.0;
+    }
+    let full = stack.rasterize_layer(0, 128, 128, 128, 128);
+    // Export tiles include the mask's edge margin around their visible area.
+    let crop = stack.cropped_for_region(52, 52, 52, 52, 128, 128);
+    let cropped = crop.rasterize_layer(0, 52, 52, 52, 52);
+    for y in 0..32 {
+        assert_eq!(
+            &cropped[(y + 10) * 52 + 10..(y + 10) * 52 + 42],
+            &full[(y + 62) * 128 + 62..(y + 62) * 128 + 94]
+        );
+    }
+}
+
+#[test]
+fn strong_object_feather_keeps_a_small_object_core() {
+    let mut pixels = vec![0u8; 128 * 128];
+    for y in 60..68 {
+        for x in 60..68 {
+            pixels[y * 128 + x] = 255;
+        }
+    }
+    let mut stack = MaskStack::default();
+    stack.add_mask(MaskKind::Object);
+    if let MaskGeometry::Object { mask, feather, .. } =
+        &mut stack.selected_component_mut().unwrap().geometry
+    {
+        *mask = MaskImage::new(128, 128, pixels);
+        *feather = 1.0;
+    }
+    let coverage = stack.rasterize_layer(0, 128, 128, 128, 128);
+    assert_eq!(coverage[64 * 128 + 64], 255);
+    assert!(coverage.iter().any(|value| *value > 0 && *value < 255));
+}
+
+#[test]
+fn inward_grow_and_feather_keep_the_remaining_subject_core() {
+    let mut pixels = vec![0u8; 128 * 128];
+    for y in 56..72 {
+        for x in 56..72 {
+            pixels[y * 128 + x] = 255;
+        }
+    }
+    let mut stack = MaskStack::default();
+    stack.add_mask(MaskKind::Subject);
+    if let MaskGeometry::Ai {
+        mask,
+        grow,
+        feather,
+    } = &mut stack.selected_component_mut().unwrap().geometry
+    {
+        *mask = MaskImage::new(128, 128, pixels);
+        *grow = -0.5;
+        *feather = 1.0;
+    }
+    let coverage = stack.rasterize_layer(0, 128, 128, 128, 128);
+    assert_eq!(coverage[64 * 128 + 64], 255);
+    assert_eq!(coverage[40 * 128 + 40], 0);
+    assert!(coverage.iter().any(|value| *value > 0 && *value < 255));
+}
+
+#[test]
+fn feather_preserves_a_thin_diagonal_subject() {
+    let mut pixels = vec![0u8; 128 * 128];
+    for y in 24usize..104 {
+        for x in y - 1..=y + 1 {
+            pixels[y * 128 + x] = 255;
+        }
+    }
+    let mut stack = MaskStack::default();
+    stack.add_mask(MaskKind::Subject);
+    if let MaskGeometry::Ai { mask, feather, .. } =
+        &mut stack.selected_component_mut().unwrap().geometry
+    {
+        *mask = MaskImage::new(128, 128, pixels);
+        *feather = 1.0;
+    }
+    let coverage = stack.rasterize_layer(0, 128, 128, 128, 128);
+    assert_eq!(coverage[64 * 128 + 64], 255);
+    assert_eq!(coverage[20 * 128 + 100], 0);
+}
+
+#[test]
+fn legacy_background_label_updates_without_overwriting_custom_names() {
+    let mut stack = MaskStack::default();
+    stack.add_mask(MaskKind::Background);
+    stack.masks[0].components[0].name = "Select Not Subject".into();
+    stack.add_mask(MaskKind::Background);
+    stack.masks[1].components[0].name = "Sky".into();
+    stack.ensure_selection();
+    assert_eq!(stack.masks[0].components[0].name, "Select Background");
+    assert_eq!(stack.masks[1].components[0].name, "Sky");
+}
+
+#[test]
 fn shared_subject_refinement_updates_subject_and_background_as_exact_inverses() {
     let raw = MaskImage::new(32, 32, vec![128; 32 * 32]).unwrap();
     let mut stack = MaskStack::default();
@@ -1042,6 +1183,29 @@ fn ai_feather_preserves_the_half_alpha_contour() {
 }
 
 #[test]
+fn generated_feather_has_no_algorithm_change_jump() {
+    let mut original = vec![0.0; 128 * 128];
+    for y in 40..88 {
+        for x in 40..88 {
+            original[y * 128 + x] = 1.0;
+        }
+    }
+    for radius in [1.0f32, 3.0] {
+        let feather = (radius / (128.0 * 0.045)).powf(1.0 / 1.30);
+        let mut before = original.clone();
+        let mut after = original.clone();
+        shape_probability_mask(&mut before, 128, 128, 0.0, feather - 0.001);
+        shape_probability_mask(&mut after, 128, 128, 0.0, feather + 0.001);
+        let largest_change = before
+            .iter()
+            .zip(&after)
+            .map(|(a, b)| (a - b).abs())
+            .fold(0.0f32, f32::max);
+        assert!(largest_change < 0.02, "Feather jumps at radius {radius}");
+    }
+}
+
+#[test]
 fn luminance_and_color_ranges_use_the_cached_preview() {
     let source = MaskRgbImage::new(2, 1, vec![0, 0, 0, 255, 255, 0, 0, 255]).unwrap();
     let mut stack = MaskStack::default();
@@ -1078,6 +1242,15 @@ fn luminance_and_color_ranges_use_the_cached_preview() {
     let color = stack.rasterize_layer(1, 2, 1, 2, 1);
     assert!(color[0] < 8);
     assert!(color[1] > 240);
+}
+
+#[test]
+fn zero_luminance_feather_has_a_hard_range_boundary() {
+    let source = MaskRgbImage::new(1, 1, vec![120, 120, 120, 255]).unwrap();
+    let hard = rasterize_luminance_range(1, 1, &source, 0.2, 0.8, 0.0);
+    let soft = rasterize_luminance_range(1, 1, &source, 0.2, 0.8, 1.0);
+    assert_eq!(hard[0], 0.0);
+    assert!(soft[0] > 0.0);
 }
 
 #[test]
