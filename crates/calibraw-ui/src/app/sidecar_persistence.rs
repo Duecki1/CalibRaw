@@ -56,6 +56,7 @@ impl CalibRawApp {
         let message = format!("Could not save edits: {}", detail.as_ref());
         self.ui.notice = Some(message.clone());
         self.persistence.sidecar_save_error_dialog = Some(message.clone());
+        self.persistence.sidecar_recovery = None;
         crate::diagnostics::record(format!("Edit save failed: {}", detail.as_ref()));
         log::error!("{message}");
         self.egui_ctx.request_repaint();
@@ -68,8 +69,13 @@ impl CalibRawApp {
         let can_retry = self.can_save_edits()
             && !self.sidecar_save_in_progress()
             && self.persistence.sidecar_failed_revision == Some(self.edit_commit_revision());
+        #[cfg(not(target_os = "android"))]
+        let can_recover =
+            self.persistence.sidecar_recovery.is_some() && !self.sidecar_save_in_progress();
         let mut retry = false;
         let mut close = false;
+        #[cfg(not(target_os = "android"))]
+        let mut recover = false;
         crate::ui::theme::dialog_window(
             egui::Window::new("Could not save edits"),
             ctx,
@@ -86,6 +92,14 @@ impl CalibRawApp {
             );
             ui.add_space(6.0);
             ui.small("This error was added to the log in Settings → Diagnostics.");
+            #[cfg(not(target_os = "android"))]
+            if self.persistence.sidecar_recovery.is_some() {
+                ui.add_space(8.0);
+                ui.label("This sidecar uses an unsupported format or version. You can back up its exact contents and create a new sidecar with the edits currently in memory. Its previous review rating will not be carried over.");
+                if ui.add_enabled(can_recover, egui::Button::new("Back up sidecar and create new one")).clicked() {
+                    recover = true;
+                }
+            }
             match crate::ui::theme::dialog_confirmation_buttons(
                 ui,
                 "Close",
@@ -101,9 +115,67 @@ impl CalibRawApp {
         });
         if retry {
             self.persistence.sidecar_save_error_dialog = None;
+            self.persistence.sidecar_recovery = None;
             self.save_edits_now();
+        } else if {
+            #[cfg(not(target_os = "android"))]
+            {
+                recover
+            }
+            #[cfg(target_os = "android")]
+            {
+                false
+            }
+        } {
+            #[cfg(not(target_os = "android"))]
+            self.recover_unsupported_sidecar();
         } else if close {
             self.persistence.sidecar_save_error_dialog = None;
+            self.persistence.sidecar_recovery = None;
+        }
+    }
+
+    #[cfg(not(target_os = "android"))]
+    fn recover_unsupported_sidecar(&mut self) {
+        let Some(request) = self.persistence.sidecar_recovery.clone() else {
+            return;
+        };
+        let crate::sidecar::SidecarTarget::Desktop { raw_path } = &request.target;
+        let current = self.persistence.sidecar_target.as_ref() == Some(&request.target);
+        let edits = if current {
+            self.capture_sidecar_edit_state()
+        } else {
+            request.edits
+        };
+        let editing_time_ms = if current {
+            self.raw_editing_time_ms()
+        } else {
+            request.editing_time_ms
+        };
+        match crate::sidecar::backup_and_replace_desktop_sidecar(raw_path, edits, editing_time_ms) {
+            Ok(backup) => {
+                self.persistence.sidecar_save_error_dialog = None;
+                self.persistence.sidecar_recovery = None;
+                self.ui.notice = Some(format!(
+                    "Sidecar backed up to {}. Edits saved in a new sidecar.",
+                    backup.display()
+                ));
+                if current {
+                    self.persistence.sidecar_failed_revision = None;
+                    let revision = self.edit_commit_revision();
+                    self.persistence.sidecar_saved_revision = Some(revision);
+                    self.queue_developed_thumbnail_refresh(
+                        self.persistence.sidecar_generation,
+                        revision,
+                    );
+                }
+            }
+            Err(error) => {
+                let message = format!("Could not back up and replace sidecar: {error}");
+                log::error!("{message}");
+                self.persistence.sidecar_save_error_dialog = Some(message.clone());
+                self.ui.notice = Some(message);
+            }
         }
     }
 
@@ -509,12 +581,19 @@ impl CalibRawApp {
         let spawn = std::thread::Builder::new()
             .name("calibraw-sidecar-save".to_owned())
             .spawn(move || {
+                let recovery = request.clone();
                 let result = save_sidecar_request(
                     request,
                     #[cfg(target_os = "android")]
                     &android_app,
                 );
-                let _ = sender.send(SidecarSaveEvent { job, result });
+                let recovery = matches!(&result, Err(crate::sidecar::SidecarError::Unsupported(_)))
+                    .then_some(recovery);
+                let _ = sender.send(SidecarSaveEvent {
+                    job,
+                    result,
+                    recovery,
+                });
                 repaint.request_repaint();
             });
 
@@ -601,7 +680,8 @@ impl CalibRawApp {
                     }
                 }
                 Err(error) => {
-                    self.report_sidecar_save_failure(Some(event.job.revision), error);
+                    self.report_sidecar_save_failure(Some(event.job.revision), error.to_string());
+                    self.persistence.sidecar_recovery = event.recovery;
                 }
             }
         } else if let Err(error) = event.result {
@@ -609,6 +689,7 @@ impl CalibRawApp {
                 None,
                 format!("saving a previously opened RAW failed: {error}"),
             );
+            self.persistence.sidecar_recovery = event.recovery;
         }
     }
 
@@ -936,7 +1017,7 @@ impl CalibRawApp {
 pub(super) fn save_sidecar_request(
     request: SidecarSaveRequest,
     #[cfg(target_os = "android")] android_app: &calibraw_ffi::AndroidApp,
-) -> Result<String, String> {
+) -> Result<String, crate::sidecar::SidecarError> {
     match request.target {
         crate::sidecar::SidecarTarget::Desktop { raw_path } => {
             crate::sidecar::save_desktop_with_editing_time(
@@ -945,7 +1026,6 @@ pub(super) fn save_sidecar_request(
                 request.editing_time_ms,
             )
             .map(|path| path.display().to_string())
-            .map_err(|error| error.to_string())
         }
         #[cfg(target_os = "android")]
         crate::sidecar::SidecarTarget::Android {
@@ -958,8 +1038,7 @@ pub(super) fn save_sidecar_request(
             request.edits,
             request.review,
             request.editing_time_ms,
-        )
-        .map_err(|error| error.to_string()),
+        ),
     }
 }
 

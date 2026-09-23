@@ -589,7 +589,8 @@ pub(crate) struct SidecarSaveJob {
 
 pub(crate) struct SidecarSaveEvent {
     job: SidecarSaveJob,
-    result: Result<String, String>,
+    result: Result<String, crate::sidecar::SidecarError>,
+    recovery: Option<SidecarSaveRequest>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1110,6 +1111,7 @@ pub(crate) struct UiState {
     pub(crate) status: String,
     pub(crate) adaptive_preview_backdrop: egui::Color32,
     pub(crate) notice: Option<String>,
+    pub(crate) gpu_memory_error_dialog: bool,
     pub(crate) unsupported_file_dialog: Option<UnsupportedFileDialog>,
     pub(crate) onboarding_step: Option<OnboardingStep>,
     pub(in crate::app) version_check: version_update::VersionCheckState,
@@ -1230,6 +1232,7 @@ pub(crate) struct PersistenceState {
     pub(crate) sidecar_receiver: Option<mpsc::Receiver<SidecarSaveEvent>>,
     pub(crate) sidecar_save_feedback_until: Option<Instant>,
     pub(crate) sidecar_save_error_dialog: Option<String>,
+    pub(crate) sidecar_recovery: Option<SidecarSaveRequest>,
     pub(crate) sidecar_autosave_deadline: Option<SidecarAutosaveDeadline>,
     pub(crate) developed_thumbnail_pending: Option<DevelopedThumbnailJob>,
     pub(crate) developed_thumbnail_in_flight: Option<DevelopedThumbnailJob>,
