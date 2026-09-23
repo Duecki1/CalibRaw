@@ -29,3 +29,21 @@ fn mask_effect_picker_color_to_working(color: vec3<f32>) -> vec3<f32> {
     );
     return max(Common::SRGB_TO_REC2020 * linear_srgb, vec3<f32>(0.0));
 }
+
+fn mask_effect_source_linear_at(pos: vec2<f32>) -> vec3<f32> {
+    // Manual bilinear filtering also works with the non-filterable 32-bit
+    // working texture used for high-quality processing.
+    let base = vec2<i32>(floor(pos));
+    let fraction = fract(pos);
+    let top = mix(
+        SceneAdjustments::local_effects_at(base),
+        SceneAdjustments::local_effects_at(base + vec2<i32>(1, 0)),
+        fraction.x,
+    );
+    let bottom = mix(
+        SceneAdjustments::local_effects_at(base + vec2<i32>(0, 1)),
+        SceneAdjustments::local_effects_at(base + vec2<i32>(1, 1)),
+        fraction.x,
+    );
+    return mix(top, bottom, fraction.y);
+}

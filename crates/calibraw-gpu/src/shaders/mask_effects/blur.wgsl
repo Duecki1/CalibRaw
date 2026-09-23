@@ -97,6 +97,7 @@ fn apply_mask_blur_stage(
 
         let primary = Common::mask_data[index].adjust_0_field;
         let secondary = Common::mask_data[index].adjust_1_field;
+        if primary.y <= 1e-6 { continue; }
         var amount = clamp(primary.x / 100.0, 0.0, 1.0)
             * SceneAdjustments::local_mask_weight(pos, index);
         if effect_id == MASK_EFFECT_TILT_SHIFT_ID {

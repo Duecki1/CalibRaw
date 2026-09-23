@@ -1,5 +1,5 @@
 
-const MASK_TILT_SHIFT_SAMPLE_COUNT: u32 = 24u;
+const MASK_TILT_SHIFT_MAX_SAMPLE_COUNT: u32 = 64u;
 const MASK_TILT_SHIFT_GOLDEN_ANGLE: f32 = 2.39996323;
 const MASK_TILT_SHIFT_PI: f32 = 3.14159265;
 
@@ -28,14 +28,14 @@ fn mask_tilt_shift_weight(
 
 fn mask_tilt_shift_at(pos: vec2<i32>, primary: vec4<f32>) -> vec3<f32> {
     let radius = f32(SceneAdjustments::presence_step(primary.y, 144));
+    let sample_count = u32(clamp(ceil(radius * 0.5), 24.0, f32(MASK_TILT_SHIFT_MAX_SAMPLE_COUNT)));
     var sum = vec3<f32>(0.0);
-    for (var index = 0u; index < MASK_TILT_SHIFT_SAMPLE_COUNT; index = index + 1u) {
-        let unit = (f32(index) + 0.5) / f32(MASK_TILT_SHIFT_SAMPLE_COUNT);
+    for (var index = 0u; index < MASK_TILT_SHIFT_MAX_SAMPLE_COUNT; index = index + 1u) {
+        if index >= sample_count { break; }
+        let unit = (f32(index) + 0.5) / f32(sample_count);
         let angle = f32(index) * MASK_TILT_SHIFT_GOLDEN_ANGLE;
         let offset = vec2<f32>(cos(angle), sin(angle)) * (radius * sqrt(unit));
-        sum = sum + SceneAdjustments::local_effects_at(
-            pos + vec2<i32>(round(offset)),
-        );
+        sum = sum + mask_effect_source_linear_at(vec2<f32>(pos) + offset);
     }
-    return sum / f32(MASK_TILT_SHIFT_SAMPLE_COUNT);
+    return sum / f32(sample_count);
 }

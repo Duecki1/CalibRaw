@@ -1,14 +1,12 @@
 
-const LIGHT_RAY_MIN_TAP_COUNT: u32 = 16u;
-const LIGHT_RAY_MAX_TAP_COUNT: u32 = 40u;
+const LIGHT_RAY_MIN_TAP_COUNT: u32 = 24u;
+const LIGHT_RAY_MAX_TAP_COUNT: u32 = 80u;
 const LIGHT_RAY_PI: f32 = 3.141592653589793;
 
 fn light_ray_emission_at(uv: vec2<f32>, mask_index: u32) -> f32 {
     let layer = Common::mask_data[mask_index].point_color_meta.z;
     if layer == 0xffffffffu { return 1.0; }
-    if any(uv < vec2<f32>(0.0)) || any(uv > vec2<f32>(1.0)) {
-        return 0.0;
-    }
+    // Extend the boundary texel for cone samples that straddle the frame.
     let atlas_size = vec2<f32>(max(
         textureDimensions(SceneAdjustments::light_rays_mask_tex),
         vec2<u32>(1u),
@@ -28,13 +26,18 @@ fn light_ray_angular_pattern(
     ray_count: f32,
     variation: f32,
     softness: f32,
+    angular_footprint: f32,
 ) -> f32 {
     let primary_frequency = floor(clamp(ray_count, 4.0, 96.0) + 0.5);
     let secondary_frequency = max(floor(primary_frequency * 0.53 + 0.5), 2.0);
     let detail_frequency = primary_frequency * 2.0 + 3.0;
-    let wave = sin(angle * primary_frequency + 0.73) * 0.55
-        + sin(angle * secondary_frequency + 2.11) * 0.30
-        + sin(angle * detail_frequency + 4.37) * 0.15;
+    // Suppress frequencies that are narrower than a pixel close to the source.
+    let wave = sin(angle * primary_frequency + 0.73)
+            * (0.55 * (1.0 - smoothstep(0.5, 1.5, primary_frequency * angular_footprint)))
+        + sin(angle * secondary_frequency + 2.11)
+            * (0.30 * (1.0 - smoothstep(0.5, 1.5, secondary_frequency * angular_footprint)))
+        + sin(angle * detail_frequency + 4.37)
+            * (0.15 * (1.0 - smoothstep(0.5, 1.5, detail_frequency * angular_footprint)));
     let ridge = pow(
         clamp(0.5 + 0.5 * wave, 0.0, 1.0),
         mix(7.0, 0.72, clamp(softness, 0.0, 1.0)),
@@ -58,9 +61,23 @@ fn light_ray_path_energy(
     );
     let radial_pixels = (output_uv - source_uv) * full_size;
     let radial_length = length(radial_pixels);
-    let normalized_length = radial_length / max(min(full_size.x, full_size.y), 1.0);
+    // The output pixel lies inside the image. Integrate only the part of the
+    // path that intersects it, so an off-frame source cannot create tap bands.
+    let path = source_uv - output_uv;
+    var visible_end = 1.0;
+    for (var axis = 0u; axis < 2u; axis = axis + 1u) {
+        if path[axis] > 1e-6 {
+            visible_end = min(visible_end, (1.0 - output_uv[axis]) / path[axis]);
+        } else if path[axis] < -1e-6 {
+            visible_end = min(visible_end, -output_uv[axis] / path[axis]);
+        }
+    }
+    visible_end = clamp(visible_end, 0.0, 1.0);
+    if visible_end <= 1e-6 { return 0.0; }
+    let normalized_length = radial_length * visible_end
+        / max(min(full_size.x, full_size.y), 1.0);
     let tap_count = u32(clamp(
-        ceil(f32(LIGHT_RAY_MIN_TAP_COUNT) + normalized_length * 16.0),
+        ceil(f32(LIGHT_RAY_MIN_TAP_COUNT) + normalized_length * 48.0),
         f32(LIGHT_RAY_MIN_TAP_COUNT),
         f32(LIGHT_RAY_MAX_TAP_COUNT),
     ));
@@ -76,7 +93,7 @@ fn light_ray_path_energy(
         if tap >= tap_count {
             break;
         }
-        let progress = (f32(tap) + 0.5) / f32(tap_count);
+        let progress = visible_end * (f32(tap) + 0.5) / f32(tap_count);
         let base_uv = mix(output_uv, source_uv, progress);
         let remaining_radius = radial_length * (1.0 - progress);
         let bow = sin(LIGHT_RAY_PI * progress);
@@ -129,13 +146,12 @@ fn apply_light_rays(pos: vec2<i32>, input_rgb: vec3<f32>) -> vec3<f32> {
 
         let fade = clamp(secondary.w / 100.0, 0.0, 1.0);
         let softness = clamp(tertiary.w / 100.0, 0.0, 1.0);
-        let gathered = light_ray_path_energy(
-            output_uv,
-            source_uv,
-            index,
-            tertiary.x,
-            softness,
-        );
+        var gathered = 1.0;
+        if Common::mask_data[index].point_color_meta.z != 0xffffffffu {
+            gathered = light_ray_path_energy(
+                output_uv, source_uv, index, tertiary.x, softness,
+            );
+        }
         let reach = max(1.0 - radial_distance / maximum_length, 0.0);
         let distance_falloff = pow(reach, mix(0.35, 2.8, fade));
         let angle = atan2(radial_pixels.y, radial_pixels.x);
@@ -144,6 +160,7 @@ fn apply_light_rays(pos: vec2<i32>, input_rgb: vec3<f32>) -> vec3<f32> {
             tertiary.y,
             tertiary.z / 100.0,
             softness,
+            0.7 / max(length(radial_pixels), 1.0),
         );
         let shaft = (1.0 - exp(-gathered * 7.0))
             * distance_falloff * angular_pattern;

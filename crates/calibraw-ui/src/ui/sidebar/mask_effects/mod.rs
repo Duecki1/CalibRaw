@@ -32,48 +32,68 @@ where
     crate::ui::theme::content_card(ui, |ui| {
         ui.push_id(effect.label(), |ui| {
             ui.spacing_mut().interact_size.y = ui.spacing().interact_size.y.max(26.0);
-            ui.horizontal(|ui| {
+            let mut header_clicked = false;
+            let mut header = egui::collapsing_header::CollapsingState::load_with_default_open(
+                ui.ctx(),
+                ui.make_persistent_id("expanded"),
+                true,
+            )
+            .show_header(ui, |ui| {
+                let available = ui.available_rect_before_wrap();
                 super::Sidebar::adjustment_card_title(ui, effect.label());
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    let size = egui::vec2(26.0, 26.0);
-                    reset = crate::ui::icons::phosphor_icon_button(
-                        ui,
-                        egui_phosphor::regular::ARROW_COUNTER_CLOCKWISE,
-                        size,
-                        &format!("Reset {}", effect.label()),
-                    )
-                    .clicked();
-                    *remove = crate::ui::icons::phosphor_icon_button(
-                        ui,
-                        egui_phosphor::regular::TRASH,
-                        size,
-                        &format!("Remove {}", effect.label()),
-                    )
-                    .clicked();
-                    let icon = if *enabled {
-                        egui_phosphor::regular::EYE_SLASH
-                    } else {
-                        egui_phosphor::regular::EYE
-                    };
-                    if crate::ui::icons::phosphor_icon_toggle_button(
-                        ui,
-                        icon,
-                        !*enabled,
-                        size,
-                        &format!(
-                            "{} {}",
-                            if *enabled { "Hide" } else { "Show" },
-                            effect.label()
-                        ),
-                    )
-                    .clicked()
-                    {
-                        *enabled = !*enabled;
-                        changed = true;
-                    }
-                });
+                let buttons = ui
+                    .with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        let size = egui::vec2(26.0, 26.0);
+                        let reset_button = crate::ui::icons::phosphor_icon_button(
+                            ui,
+                            egui_phosphor::regular::ARROW_COUNTER_CLOCKWISE,
+                            size,
+                            &format!("Reset {}", effect.label()),
+                        );
+                        reset = reset_button.clicked();
+                        let remove_button = crate::ui::icons::phosphor_icon_button(
+                            ui,
+                            egui_phosphor::regular::TRASH,
+                            size,
+                            &format!("Remove {}", effect.label()),
+                        );
+                        *remove = remove_button.clicked();
+                        let icon = if *enabled {
+                            egui_phosphor::regular::EYE_SLASH
+                        } else {
+                            egui_phosphor::regular::EYE
+                        };
+                        let visibility_button = crate::ui::icons::phosphor_icon_toggle_button(
+                            ui,
+                            icon,
+                            !*enabled,
+                            size,
+                            &format!(
+                                "{} {}",
+                                if *enabled { "Hide" } else { "Show" },
+                                effect.label()
+                            ),
+                        );
+                        if visibility_button.clicked() {
+                            *enabled = !*enabled;
+                            changed = true;
+                        }
+                        [
+                            visibility_button.rect,
+                            remove_button.rect,
+                            reset_button.rect,
+                        ]
+                    })
+                    .inner;
+                header_clicked =
+                    super::Sidebar::card_header_background_clicked(ui, available, &buttons);
             });
-            ui.add_enabled_ui(*enabled, |ui| changed |= body(ui, settings));
+            if header_clicked {
+                header.toggle();
+            }
+            header.body_unindented(|ui| {
+                ui.add_enabled_ui(*enabled, |ui| changed |= body(ui, settings));
+            });
         });
     });
     crate::ui::theme::card_gap(ui);
@@ -217,6 +237,73 @@ mod tests {
             let (_, _, removed) = render(click(trash.center(), false));
             assert!(removed);
         }
+    }
+
+    #[test]
+    fn effect_card_title_folds_body_and_keeps_header_actions_available() {
+        let ctx = egui::Context::default();
+        crate::ui::theme::install(&ctx);
+        let mut settings = crate::pipeline::BlurEffectSettings::default();
+        let mut enabled = true;
+        let mut remove = false;
+        let mut time = 0.0;
+        let mut render = |events| {
+            time += 0.25;
+            let mut body_shown = false;
+            let output = ctx.run_ui(
+                egui::RawInput {
+                    time: Some(time),
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(400.0, 180.0),
+                    )),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    effect_card(
+                        ui,
+                        MaskEffect::Blur,
+                        &mut settings,
+                        &mut enabled,
+                        &mut remove,
+                        |ui, _| {
+                            body_shown = true;
+                            ui.label("Amount");
+                            false
+                        },
+                    );
+                },
+            );
+            (output.shapes, body_shown, enabled)
+        };
+        let click = |position, pressed| {
+            vec![
+                egui::Event::PointerMoved(position),
+                egui::Event::PointerButton {
+                    pos: position,
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ]
+        };
+        let (shapes, body_shown, _) = render(Vec::new());
+        assert!(body_shown);
+        let title = icon_rect(&shapes, "Blur");
+        let eye = icon_rect(&shapes, egui_phosphor::regular::EYE_SLASH);
+        render(click(title.center(), true));
+        render(click(title.center(), false));
+        let (_, body_shown, _) = render(Vec::new());
+        assert!(!body_shown);
+        render(click(eye.center(), true));
+        let (_, body_shown, enabled) = render(click(eye.center(), false));
+        assert!(!body_shown);
+        assert!(!enabled);
+        render(click(title.center(), true));
+        render(click(title.center(), false));
+        let (_, body_shown, _) = render(Vec::new());
+        assert!(body_shown);
     }
 
     #[test]

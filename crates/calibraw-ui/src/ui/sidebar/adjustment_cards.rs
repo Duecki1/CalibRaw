@@ -82,6 +82,38 @@ impl Sidebar {
         }
     }
 
+    pub(super) fn card_header_background_clicked(
+        ui: &mut Ui,
+        available: egui::Rect,
+        buttons: &[egui::Rect],
+    ) -> bool {
+        let button_top = buttons[0].top();
+        let button_bottom = buttons[0].bottom();
+        let mut left = available.left();
+        let mut clicked = false;
+        for (index, right) in buttons
+            .iter()
+            .map(egui::Rect::left)
+            .chain(std::iter::once(available.right()))
+            .enumerate()
+        {
+            if right > left {
+                let rect = egui::Rect::from_min_max(
+                    egui::pos2(left, button_top),
+                    egui::pos2(right, button_bottom),
+                );
+                clicked |= ui
+                    .interact(rect, ui.id().with(("header", index)), egui::Sense::click())
+                    .on_hover_cursor(egui::CursorIcon::PointingHand)
+                    .clicked();
+            }
+            if let Some(button) = buttons.get(index) {
+                left = button.right();
+            }
+        }
+        clicked
+    }
+
     fn card_actions(
         ui: &mut Ui,
         title: &str,
@@ -402,35 +434,9 @@ impl Sidebar {
                             );
                             action = card_actions.action;
                             let buttons = card_actions.button_rects();
-                            // The built-in arrow already toggles. Make the rest of the
-                            // header clickable, excluding each action button's bounds.
-                            let button_top = buttons[0].top();
-                            let button_bottom = buttons[0].bottom();
-                            let mut left = available.left();
-                            for (index, right) in buttons
-                                .iter()
-                                .map(egui::Rect::left)
-                                .chain(std::iter::once(available.right()))
-                                .enumerate()
-                            {
-                                if right > left {
-                                    let rect = egui::Rect::from_min_max(
-                                        egui::pos2(left, button_top),
-                                        egui::pos2(right, button_bottom),
-                                    );
-                                    header_clicked |= ui
-                                        .interact(
-                                            rect,
-                                            ui.id().with(("header", index)),
-                                            egui::Sense::click(),
-                                        )
-                                        .on_hover_cursor(egui::CursorIcon::PointingHand)
-                                        .clicked();
-                                }
-                                if let Some(button) = buttons.get(index) {
-                                    left = button.right();
-                                }
-                            }
+                            // The built-in arrow already toggles.
+                            header_clicked =
+                                Self::card_header_background_clicked(ui, available, buttons);
                         });
                     if header_clicked {
                         header.toggle();
