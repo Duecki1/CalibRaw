@@ -119,10 +119,15 @@ impl PointColor {
     pub fn weight_for_hsl(&self, hsl: [f32; 3]) -> f32 {
         let scale = 0.2 + 1.6 * (self.range.clamp(0.0, 100.0) / 100.0);
         let hue_offset = hsl[0] - self.sample_hsl[0];
-        let hue_weight = [-1.0_f32, 0.0, 1.0]
+        let selected_hue = [-1.0_f32, 0.0, 1.0]
             .into_iter()
             .map(|turn| self.hue_range.weight((hue_offset + turn) / scale))
             .fold(0.0, f32::max);
+        let chroma = |hsl: [f32; 3]| (1.0 - (2.0 * hsl[2] - 1.0).abs()) * hsl[1];
+        let colored_target = smoothstep((chroma(self.sample_hsl) - 0.04) / 0.08);
+        let reliable_sample = smoothstep((chroma(hsl) - 0.008) / 0.052);
+        let chroma_weight = 1.0 - colored_target * (1.0 - reliable_sample);
+        let hue_weight = 1.0 - colored_target * (1.0 - selected_hue);
         hue_weight
             * self
                 .saturation_range
@@ -130,6 +135,7 @@ impl PointColor {
             * self
                 .luminance_range
                 .weight((hsl[2] - self.sample_hsl[2]) / scale)
+            * chroma_weight
     }
 
     pub fn weight_for_srgb(&self, rgb: [f32; 3]) -> f32 {
@@ -384,6 +390,24 @@ mod tests {
     fn point_color_weight_is_one_at_the_sample() {
         let color = PointColor::from_srgb([0.2, 0.6, 0.4]);
         assert_eq!(color.weight_for_hsl(color.sample_hsl), 1.0);
+    }
+
+    #[test]
+    fn colored_target_ignores_nearly_neutral_pixels_even_with_a_wide_range() {
+        let mut color = PointColor::from_srgb([0.2, 0.7, 0.2]);
+        color.hue_range = PointColorRange::new(-0.5, -0.5, 0.5, 0.5);
+        color.saturation_range = PointColorRange::new(-1.0, -1.0, 1.0, 1.0);
+        color.luminance_range = PointColorRange::new(-1.0, -1.0, 1.0, 1.0);
+        let near_gray = [color.sample_hsl[0], 0.01, color.sample_hsl[2]];
+        assert!(color.weight_for_hsl(near_gray) < 0.1);
+        assert_eq!(color.weight_for_hsl(color.sample_hsl), 1.0);
+    }
+
+    #[test]
+    fn neutral_target_does_not_depend_on_noisy_hue() {
+        let color = PointColor::from_srgb([0.5, 0.5, 0.5]);
+        let near_gray = [0.37, 0.01, color.sample_hsl[2]];
+        assert!(color.weight_for_hsl(near_gray) > 0.99);
     }
 
     #[test]

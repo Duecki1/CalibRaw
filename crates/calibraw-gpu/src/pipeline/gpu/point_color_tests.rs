@@ -16,7 +16,7 @@ fn source() -> anyhow::Result<LoadedRaw> {
             0.50, 0.025, 0.015, // red
             0.025, 0.50, 0.025, // green
             0.20, 0.20, 0.20, // neutral
-            0.05, 0.05, 0.05, // neutral
+            0.05, 0.0505, 0.05, // near-neutral color noise
         ],
     )
 }
@@ -128,6 +128,57 @@ fn zero_shift_point_color_is_an_identity() -> anyhow::Result<()> {
         .iter()
         .zip(&with_point)
         .all(|(left, right)| (left - right).abs() < 2e-5));
+    Ok(())
+}
+
+#[test]
+fn increasing_saturation_does_not_colorize_neutral_pixels() -> anyhow::Result<()> {
+    let Some((_, _)) = request_test_device() else {
+        eprintln!("point color GPU regression skipped: no headless wgpu adapter");
+        return Ok(());
+    };
+    let mut exposure = ExposureParams::scene_referred_default();
+    let mut point = PointColor::from_srgb([0.5, 0.5, 0.5]);
+    point.saturation_shift = 100.0;
+    point.hue_range = crate::pipeline::PointColorRange::new(-0.5, -0.5, 0.5, 0.5);
+    point.saturation_range = crate::pipeline::PointColorRange::new(-1.0, -1.0, 1.0, 1.0);
+    point.luminance_range = crate::pipeline::PointColorRange::new(-1.0, -1.0, 1.0, 1.0);
+    exposure.point_colors.push(point);
+
+    let output = render(&exposure, ProcessingQuality::High)?;
+    for pixel in [2, 3] {
+        let rgb = &output[pixel * 3..pixel * 3 + 3];
+        let spread = rgb.iter().copied().fold(f32::NEG_INFINITY, f32::max)
+            - rgb.iter().copied().fold(f32::INFINITY, f32::min);
+        assert!(
+            spread < 2e-3,
+            "neutral pixel {pixel} was colorized: {rgb:?}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn neutral_target_adjusts_near_neutral_pixel_regardless_of_noise_hue() -> anyhow::Result<()> {
+    let Some((_, _)) = request_test_device() else {
+        eprintln!("point color GPU regression skipped: no headless wgpu adapter");
+        return Ok(());
+    };
+    let baseline = render(
+        &ExposureParams::scene_referred_default(),
+        ProcessingQuality::High,
+    )?;
+    let mut exposure = ExposureParams::scene_referred_default();
+    let mut point = PointColor::from_srgb([0.5, 0.5, 0.5]);
+    point.luminance_shift = 20.0;
+    point.luminance_range = crate::pipeline::PointColorRange::new(-1.0, -1.0, 1.0, 1.0);
+    exposure.point_colors.push(point);
+
+    let adjusted = render(&exposure, ProcessingQuality::High)?;
+    assert!(
+        max_delta(&baseline, &adjusted, 3) > 1e-3,
+        "near-neutral color noise made a gray target miss its pixel"
+    );
     Ok(())
 }
 

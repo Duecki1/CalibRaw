@@ -193,7 +193,7 @@ pub(crate) fn point_color(
 fn adjusted_hsl(point: &PointColor, hue: f32, saturation: f32, luminance: f32) -> [f32; 3] {
     [
         (point.sample_hsl[0] + hue / 200.0).rem_euclid(1.0),
-        (point.sample_hsl[1] + saturation / 100.0).clamp(0.0, 1.0),
+        (point.sample_hsl[1] * (1.0 + saturation / 100.0).max(0.0)).clamp(0.0, 1.0),
         (point.sample_hsl[2] + luminance / 100.0).clamp(0.0, 1.0),
     ]
 }
