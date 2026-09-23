@@ -98,6 +98,82 @@ mod tests {
     use eframe::egui;
 
     #[test]
+    fn mobile_effect_tabs_keep_add_after_every_component() {
+        use crate::pipeline::{EffectComponent, MaskEffect};
+
+        fn label_rect(shapes: &[egui::epaint::ClippedShape], label: &str) -> egui::Rect {
+            fn find(shape: &egui::Shape, label: &str) -> Option<egui::Rect> {
+                match shape {
+                    egui::Shape::Text(text) if text.galley.text() == label => {
+                        Some(egui::Rect::from_min_size(text.pos, text.galley.size()))
+                    }
+                    egui::Shape::Vec(shapes) => shapes.iter().find_map(|shape| find(shape, label)),
+                    _ => None,
+                }
+            }
+            shapes
+                .iter()
+                .find_map(|shape| find(&shape.shape, label))
+                .expect("mobile effect tab label")
+        }
+
+        let ctx = egui::Context::default();
+        crate::ui::theme::install(&ctx);
+        let mut components = vec![
+            EffectComponent::new(MaskEffect::Blur),
+            EffectComponent::new(MaskEffect::Glow),
+        ];
+        let mut selection = None;
+        let render = |components: &mut Vec<EffectComponent>,
+                      selection: &mut Option<MaskEffect>,
+                      events: Vec<egui::Event>| {
+            ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(600.0, 100.0),
+                    )),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    ui.horizontal(|ui| {
+                        assert!(!super::Sidebar::show_mobile_effect_tabs(
+                            ui, components, selection, 44.0, true,
+                        ));
+                    });
+                },
+            )
+            .shapes
+        };
+
+        let shapes = render(&mut components, &mut selection, Vec::new());
+        assert!(label_rect(&shapes, "Blur").left() < label_rect(&shapes, "Glow").left());
+        assert!(label_rect(&shapes, "Glow").left() < label_rect(&shapes, "Add").left());
+
+        let glow = label_rect(&shapes, "Glow").center();
+        let click = |pressed| {
+            vec![
+                egui::Event::PointerMoved(glow),
+                egui::Event::PointerButton {
+                    pos: glow,
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ]
+        };
+        render(&mut components, &mut selection, click(true));
+        render(&mut components, &mut selection, click(false));
+        assert_eq!(selection, Some(MaskEffect::Glow));
+
+        components.push(EffectComponent::new(MaskEffect::Fog));
+        let shapes = render(&mut components, &mut selection, Vec::new());
+        assert!(label_rect(&shapes, "Glow").left() < label_rect(&shapes, "Fog").left());
+        assert!(label_rect(&shapes, "Fog").left() < label_rect(&shapes, "Add").left());
+    }
+
+    #[test]
     fn export_action_stays_visible_above_scrolling_settings() {
         for size in [
             egui::vec2(320.0, 180.0),

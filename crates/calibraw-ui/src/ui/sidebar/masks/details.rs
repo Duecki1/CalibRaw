@@ -407,6 +407,15 @@ impl Sidebar {
                             geometry_changed |=
                                 Self::apply_mask_properties_action(mask, component_index, action);
                         }
+                        MaskSection::Effects if app.develop_ui.mask_effect_component.is_some() => {
+                            let fullscreen = Self::is_plain_fullscreen_mask(mask);
+                            adjustments_changed |= Self::show_selected_effect_component(
+                                ui,
+                                &mut mask.effect_components,
+                                &mut app.develop_ui.mask_effect_component,
+                                fullscreen,
+                            );
+                        }
                         section => {
                             let changed = Self::show_local_adjustment_card(
                                 ui,
@@ -431,9 +440,7 @@ impl Sidebar {
                     }
                 }
             }
-            if orientation == MaskStripOrientation::Horizontal
-                || vertical_section == Some(MaskSection::Properties)
-            {
+            if orientation == MaskStripOrientation::Horizontal {
                 let fullscreen = Self::is_plain_fullscreen_mask(mask);
                 adjustments_changed |=
                     Self::show_effect_components(ui, &mut mask.effect_components, fullscreen);
