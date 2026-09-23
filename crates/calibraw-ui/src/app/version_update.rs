@@ -352,9 +352,7 @@ impl CalibRawApp {
         }
 
         let available = ctx.content_rect().size() - egui::vec2(32.0, 32.0);
-        let width = available
-            .x
-            .clamp(1.0, crate::ui::theme::DIALOG_WIDTH_LARGE);
+        let width = available.x.clamp(1.0, crate::ui::theme::DIALOG_WIDTH_LARGE);
         let max_body_height = (available.y - crate::ui::theme::CONTROL_HEIGHT - 48.0).max(1.0);
         let mut action = None;
 

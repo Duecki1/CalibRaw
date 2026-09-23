@@ -15,7 +15,9 @@ pub use effects::{
 };
 
 pub const MAX_LOCAL_MASKS: usize = 32;
+pub const MAX_EFFECT_COMPONENTS: usize = 12;
 pub const MAX_MASK_COMPONENTS: usize = 64;
+pub const MAX_PATH_POINTS: usize = 256;
 pub const MASK_ATLAS_EDGE_DESKTOP: u32 = 2048;
 pub const MASK_ATLAS_EDGE_ANDROID: u32 = 1024;
 pub const MASK_ATLAS_EDGE_EXPORT_DESKTOP: u32 = 4096;
@@ -51,6 +53,7 @@ pub enum MaskKind {
     Fullscreen,
     Radial,
     Linear,
+    Path,
     Subject,
     Background,
     Object,
@@ -66,6 +69,7 @@ impl MaskKind {
             Self::Fullscreen => "Fullscreen",
             Self::Radial => "Radial Gradient",
             Self::Linear => "Linear Gradient",
+            Self::Path => "Freeform / Path",
             Self::Subject => "Select Subject",
             Self::Background => "Select Not Subject",
             Self::Object => "Select Object",
@@ -82,12 +86,46 @@ impl MaskKind {
                 | Self::Fullscreen
                 | Self::Radial
                 | Self::Linear
+                | Self::Path
                 | Self::Subject
                 | Self::Background
                 | Self::Object
                 | Self::LuminanceRange
                 | Self::ColorRange
         )
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, serde::Deserialize, serde::Serialize)]
+pub struct PathPoint {
+    pub position: [f32; 2],
+    #[serde(default)]
+    pub handle_in: [f32; 2],
+    #[serde(default)]
+    pub handle_out: [f32; 2],
+}
+
+impl PathPoint {
+    pub const fn corner(position: [f32; 2]) -> Self {
+        Self {
+            position,
+            handle_in: [0.0, 0.0],
+            handle_out: [0.0, 0.0],
+        }
+    }
+
+    pub fn incoming(self) -> [f32; 2] {
+        [
+            self.position[0] + self.handle_in[0],
+            self.position[1] + self.handle_in[1],
+        ]
+    }
+
+    pub fn outgoing(self) -> [f32; 2] {
+        [
+            self.position[0] + self.handle_out[0],
+            self.position[1] + self.handle_out[1],
+        ]
     }
 }
 
@@ -336,6 +374,12 @@ pub enum MaskGeometry {
         feather: f32,
         initialized: bool,
     },
+    Path {
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        points: Vec<PathPoint>,
+        #[serde(default)]
+        feather: f32,
+    },
     Ai {
         mask: Option<MaskImage>,
         #[serde(default)]
@@ -430,6 +474,10 @@ impl MaskGeometry {
                 feather: 1.0,
                 initialized: false,
             },
+            MaskKind::Path => Self::Path {
+                points: Vec::new(),
+                feather: 0.0,
+            },
             MaskKind::Subject | MaskKind::Background => Self::Ai {
                 mask: None,
                 grow: 0.0,
@@ -467,6 +515,7 @@ impl MaskGeometry {
             Self::Fullscreen => true,
             Self::Brush { dabs, .. } => !dabs.is_empty(),
             Self::Radial { initialized, .. } | Self::Linear { initialized, .. } => *initialized,
+            Self::Path { points, .. } => points.len() >= 3,
             Self::Ai { mask, .. } | Self::Object { mask, .. } => mask.is_some(),
             Self::LuminanceRange { source, .. } => source.is_some(),
             Self::ColorRange {
@@ -481,6 +530,7 @@ impl MaskGeometry {
             Self::Brush { feather, .. }
             | Self::Radial { feather, .. }
             | Self::Linear { feather, .. }
+            | Self::Path { feather, .. }
             | Self::Ai { feather, .. }
             | Self::Object { feather, .. }
             | Self::LuminanceRange { feather, .. }
@@ -579,6 +629,8 @@ pub struct LocalAdjustments {
     pub texture: f32,
     pub clarity: f32,
     pub dehaze: f32,
+    #[serde(default)]
+    pub halation_amount: f32,
     pub tone_curve: super::PointCurve,
     pub tone_curve_red: super::PointCurve,
     pub tone_curve_green: super::PointCurve,
@@ -586,6 +638,10 @@ pub struct LocalAdjustments {
     pub hsl_hue: [f32; 8],
     pub hsl_saturation: [f32; 8],
     pub hsl_luminance: [f32; 8],
+    #[serde(default)]
+    pub point_colors: super::PointColors,
+    #[serde(skip)]
+    pub point_color_visualize: Option<usize>,
     pub color_grading: super::ColorGrading,
 }
 
@@ -607,6 +663,7 @@ impl Default for LocalAdjustments {
             texture: adjustment::TEXTURE.default,
             clarity: adjustment::CLARITY.default,
             dehaze: adjustment::DEHAZE.default,
+            halation_amount: adjustment::HALATION.default,
             tone_curve: super::PointCurve::linear(),
             tone_curve_red: super::PointCurve::linear(),
             tone_curve_green: super::PointCurve::linear(),
@@ -614,6 +671,8 @@ impl Default for LocalAdjustments {
             hsl_hue: [0.0; 8],
             hsl_saturation: [0.0; 8],
             hsl_luminance: [0.0; 8],
+            point_colors: super::PointColors::default(),
+            point_color_visualize: None,
             color_grading: super::ColorGrading::default(),
         }
     }
@@ -644,6 +703,10 @@ impl LocalAdjustments {
         if normalized.color_grading.is_neutral() {
             normalized.color_grading = super::ColorGrading::default();
         }
+        if !normalized.point_colors.has_adjustments() {
+            normalized.point_colors.clear();
+        }
+        normalized.point_color_visualize = None;
         normalized == Self::default()
     }
 
@@ -667,6 +730,10 @@ pub struct LocalMask {
     pub effect: MaskEffect,
     #[serde(default, skip_serializing_if = "MaskEffectSettings::is_default")]
     pub effect_settings: MaskEffectSettings,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub effect_components: Vec<EffectComponent>,
+    #[serde(default = "default_enabled")]
+    pub adjustments_enabled: bool,
     pub opacity: f32,
     pub components: Vec<MaskComponent>,
     pub adjustments: LocalAdjustments,
@@ -692,6 +759,8 @@ impl LocalMask {
             common: MaskCommon::new(format!("Mask {number}")),
             effect: MaskEffect::default(),
             effect_settings: MaskEffectSettings::default(),
+            effect_components: Vec::new(),
+            adjustments_enabled: true,
             opacity: 1.0,
             components: vec![MaskComponent::new(kind, MaskCombineMode::Add)],
             adjustments: LocalAdjustments::default(),
@@ -701,11 +770,99 @@ impl LocalMask {
     pub fn set_opacity(&mut self, opacity: f32) -> bool {
         set_if_changed(&mut self.opacity, opacity)
     }
+
+    pub fn migrate_legacy_effect(&mut self) {
+        if self.effect != MaskEffect::Adjustment {
+            if self.effect_components.len() >= MAX_EFFECT_COMPONENTS {
+                return;
+            }
+            self.effect_components.push(EffectComponent {
+                effect: self.effect,
+                enabled: true,
+                settings: std::mem::take(&mut self.effect_settings),
+            });
+            if !self.adjustments.is_neutral() {
+                self.adjustments_enabled = false;
+            }
+            self.effect = MaskEffect::Adjustment;
+        }
+    }
+
+    pub fn has_active_edit(&self) -> bool {
+        (!self.adjustments.is_neutral()
+            && self.adjustments_enabled
+            && self.effect == MaskEffect::Adjustment)
+            || self
+                .effect_components
+                .iter()
+                .any(EffectComponent::is_active)
+            || (self.effect != MaskEffect::Adjustment
+                && EffectComponent {
+                    effect: self.effect,
+                    enabled: true,
+                    settings: self.effect_settings,
+                }
+                .is_active())
+    }
+
+    pub fn has_light_rays_effect(&self) -> bool {
+        self.effect == MaskEffect::LightRays
+            || self
+                .effect_components
+                .iter()
+                .any(|component| component.enabled && component.effect == MaskEffect::LightRays)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, serde::Deserialize, serde::Serialize)]
+pub struct EffectComponent {
+    pub effect: MaskEffect,
+    #[serde(default = "default_enabled")]
+    pub enabled: bool,
+    #[serde(default, skip_serializing_if = "MaskEffectSettings::is_default")]
+    pub settings: MaskEffectSettings,
+}
+
+const fn default_enabled() -> bool {
+    true
+}
+
+impl EffectComponent {
+    pub fn new(effect: MaskEffect) -> Self {
+        Self {
+            effect,
+            enabled: true,
+            settings: MaskEffectSettings::default(),
+        }
+    }
+
+    pub fn is_active(&self) -> bool {
+        if !self.enabled {
+            return false;
+        }
+        match self.effect {
+            MaskEffect::Adjustment => false,
+            MaskEffect::Blur => self.settings.blur.is_active(),
+            MaskEffect::LensBlur => self.settings.lens_blur.is_active(),
+            MaskEffect::MotionBlur => self.settings.motion_blur.is_active(),
+            MaskEffect::RadialBlur => self.settings.radial_blur.is_active(),
+            MaskEffect::TiltShift => self.settings.tilt_shift.is_active(),
+            MaskEffect::Glow => self.settings.glow.is_active(),
+            MaskEffect::LightRays => self.settings.light_rays.is_active(),
+            MaskEffect::Neon => self.settings.neon.is_active(),
+            MaskEffect::EdgeGlow => self.settings.edge_glow.is_active(),
+            MaskEffect::Pixelate => self.settings.pixelate.is_active(),
+            MaskEffect::Fog => self.settings.fog.is_active(),
+            MaskEffect::Smoke => self.settings.smoke.is_active(),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq, serde::Deserialize, serde::Serialize)]
 pub struct MaskStack {
     pub masks: Vec<LocalMask>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub global_effects: Vec<EffectComponent>,
     pub selected_mask: Option<usize>,
     pub selected_component: Option<usize>,
     #[serde(skip, default)]
@@ -761,6 +918,16 @@ impl MaskStack {
                     MaskGeometry::Linear { start, end, .. } => {
                         remap_point(start);
                         remap_point(end);
+                    }
+                    MaskGeometry::Path { points, feather } => {
+                        for point in points {
+                            remap_point(&mut point.position);
+                            point.handle_in[0] /= du.max(f32::EPSILON);
+                            point.handle_in[1] /= dv.max(f32::EPSILON);
+                            point.handle_out[0] /= du.max(f32::EPSILON);
+                            point.handle_out[1] /= dv.max(f32::EPSILON);
+                        }
+                        *feather *= image_scale.powf(1.0 / 1.30);
                     }
                     MaskGeometry::Ai {
                         mask,
@@ -1380,6 +1547,9 @@ fn rasterize_component(
             feather,
             initialized: true,
         } => rasterize_linear(space, *start, *end, *feather),
+        MaskGeometry::Path { points, feather } if points.len() >= 3 => {
+            rasterize_path(space, points, *feather)
+        }
         MaskGeometry::Ai {
             mask: Some(mask),
             grow,
@@ -1512,6 +1682,7 @@ fn component_shape_margin_pixels(component: &MaskComponent, image_edge: f32) -> 
         MaskGeometry::LuminanceRange { grow, .. } | MaskGeometry::ColorRange { grow, .. } => {
             shape_margin(*grow, 0.0)
         }
+        MaskGeometry::Path { feather, .. } => shape_margin(0.0, *feather),
         _ => 2.0,
     }
 }
@@ -2212,6 +2383,97 @@ fn rasterize_radial(
                 *value = 1.0 - smoothstep(inner, 1.0, distance);
             }
         });
+    out
+}
+
+/// Flatten a closed freeform path into normalized source-coordinate line
+/// segments. Straight points (zero-length handles) remain polygon corners;
+/// non-zero handles form cubic Bézier segments.
+pub fn path_outline_points(points: &[PathPoint], segments_per_curve: usize) -> Vec<[f32; 2]> {
+    if points.len() < 2 {
+        return points.iter().map(|point| point.position).collect();
+    }
+    let steps = segments_per_curve.max(1);
+    let mut out = Vec::with_capacity(points.len() * steps + 1);
+    for index in 0..points.len() {
+        let current = points[index];
+        let next = points[(index + 1) % points.len()];
+        if index == 0 {
+            out.push(current.position);
+        }
+        let p0 = current.position;
+        let p1 = current.outgoing();
+        let p2 = next.incoming();
+        let p3 = next.position;
+        for step in 1..=steps {
+            let t = step as f32 / steps as f32;
+            let omt = 1.0 - t;
+            let omt2 = omt * omt;
+            let t2 = t * t;
+            out.push([
+                omt2 * omt * p0[0]
+                    + 3.0 * omt2 * t * p1[0]
+                    + 3.0 * omt * t2 * p2[0]
+                    + t2 * t * p3[0],
+                omt2 * omt * p0[1]
+                    + 3.0 * omt2 * t * p1[1]
+                    + 3.0 * omt * t2 * p2[1]
+                    + t2 * t * p3[1],
+            ]);
+        }
+    }
+    out
+}
+
+fn rasterize_path(space: MaskRasterSpace, points: &[PathPoint], feather: f32) -> Vec<f32> {
+    let [width, height] = space.raster;
+    if width == 0 || height == 0 || points.len() < 3 {
+        return vec![0.0; width as usize * height as usize];
+    }
+
+    // A small fixed subdivision is enough for the mask atlas while keeping
+    // scanline rasterization bounded even for large paths.
+    let outline = path_outline_points(points, 12);
+    if outline.len() < 4 {
+        return vec![0.0; width as usize * height as usize];
+    }
+    let edges = outline
+        .windows(2)
+        .map(|pair| {
+            (
+                [pair[0][0] * width as f32, pair[0][1] * height as f32],
+                [pair[1][0] * width as f32, pair[1][1] * height as f32],
+            )
+        })
+        .collect::<Vec<_>>();
+    let row_stride = width as usize;
+    let mut out = vec![0.0f32; row_stride * height as usize];
+    out.par_chunks_mut(row_stride)
+        .enumerate()
+        .for_each(|(y, row)| {
+            let py = y as f32 + 0.5;
+            let mut intersections = Vec::with_capacity(edges.len() / 2 + 2);
+            for &(a, b) in &edges {
+                if (a[1] <= py && b[1] > py) || (b[1] <= py && a[1] > py) {
+                    let t = (py - a[1]) / (b[1] - a[1]);
+                    intersections.push(a[0] + (b[0] - a[0]) * t);
+                }
+            }
+            intersections.sort_unstable_by(|a, b| a.total_cmp(b));
+            for pair in intersections.chunks_exact(2) {
+                let left = pair[0].min(pair[1]);
+                let right = pair[0].max(pair[1]);
+                let start = (left - 0.5).ceil().max(0.0) as usize;
+                let end = (right - 0.5).floor().min(width.saturating_sub(1) as f32) as isize;
+                if end >= start as isize {
+                    row[start..=end as usize].fill(1.0);
+                }
+            }
+        });
+
+    if feather > 1e-5 {
+        shape_probability_mask(&mut out, width, height, 0.0, feather);
+    }
     out
 }
 

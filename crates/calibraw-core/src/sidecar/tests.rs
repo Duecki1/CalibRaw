@@ -12,8 +12,11 @@ use std::time::{SystemTime, UNIX_EPOCH};
 fn sample_edits() -> EditState {
     let mut exposure = ExposureParams::scene_referred_default();
     exposure.dehaze = 27.0;
+    exposure.halation_amount = 42.0;
+    exposure.grain_amount = 31.0;
     let mut masks = MaskStack::default();
     masks.add_mask(MaskKind::Radial);
+    masks.masks[0].adjustments.halation_amount = 63.0;
     EditState {
         exposure,
         geometry: GeometryTransform::default(),
@@ -103,8 +106,9 @@ fn manual_and_ai_masks_can_be_copied_independently() {
     let mut source = sample_edits();
     let mut source_masks = MaskStack::default();
     source_masks.add_mask(MaskKind::Brush);
+    source_masks.add_mask(MaskKind::Path);
     source_masks.add_mask(MaskKind::Subject);
-    if let MaskGeometry::Ai { mask, .. } = &mut source_masks.masks[1].components[0].geometry {
+    if let MaskGeometry::Ai { mask, .. } = &mut source_masks.masks[2].components[0].geometry {
         *mask = Some(crate::pipeline::MaskImage::new(2, 2, vec![0, 64, 192, 255]).unwrap());
     }
     source_masks.subject_refinement.stroke_starts.push(0);
@@ -134,11 +138,17 @@ fn manual_and_ai_masks_can_be_copied_independently() {
         },
     );
 
-    assert_eq!(destination.masks.masks.len(), 1);
-    assert_eq!(
-        destination.masks.masks[0].components[0].kind,
-        MaskKind::Brush
-    );
+    assert_eq!(destination.masks.masks.len(), 2);
+    assert!(destination
+        .masks
+        .masks
+        .iter()
+        .any(|mask| mask.components[0].kind == MaskKind::Brush));
+    assert!(destination
+        .masks
+        .masks
+        .iter()
+        .any(|mask| mask.components[0].kind == MaskKind::Path));
     assert!(!destination.ai_masks_need_update);
     assert!(destination.masks.subject_refinement.is_empty());
     assert!(destination.subject_refinement.is_none());
@@ -156,12 +166,17 @@ fn manual_and_ai_masks_can_be_copied_independently() {
         },
     );
 
-    assert_eq!(destination.masks.masks.len(), 2);
+    assert_eq!(destination.masks.masks.len(), 3);
     assert!(destination
         .masks
         .masks
         .iter()
         .any(|mask| mask.components[0].kind == MaskKind::Brush));
+    assert!(destination
+        .masks
+        .masks
+        .iter()
+        .any(|mask| mask.components[0].kind == MaskKind::Path));
     assert!(destination
         .masks
         .masks
@@ -463,6 +478,24 @@ fn neon_mask_settings_round_trip_through_the_sidecar() {
     assert_eq!(neon_mask.effect_settings.neon.edge_width, 4.5);
     assert_eq!(neon_mask.effect_settings.neon.color, [1.0, 0.15, 0.65]);
     assert_eq!(neon_mask.adjustments.exposure, 1.0);
+}
+
+#[test]
+fn effect_components_round_trip_through_the_sidecar() {
+    let mut edits = sample_edits();
+    let masks = Arc::make_mut(&mut edits.masks);
+    masks.add_mask(MaskKind::Fullscreen).unwrap();
+    let mut blur = crate::pipeline::EffectComponent::new(crate::pipeline::MaskEffect::Blur);
+    blur.settings.blur.amount = 55.0;
+    let mut glow = crate::pipeline::EffectComponent::new(crate::pipeline::MaskEffect::Glow);
+    glow.settings.glow.amount = 30.0;
+    glow.enabled = false;
+    masks.masks[0].effect_components = vec![blur.clone(), glow.clone()];
+    masks.global_effects.push(blur);
+
+    let loaded = decode(&encode(edits.clone()).unwrap()).unwrap();
+    assert_eq!(loaded.edits, edits);
+    assert_eq!(loaded.edits.masks.masks[0].effect_components[1], glow);
 }
 
 #[test]
@@ -1091,7 +1124,7 @@ fn photo_review_survives_development_saves_and_reset() {
     save_desktop_with_editing_time(&raw, edits.clone(), 54_321).unwrap();
     assert_eq!(desktop_sidecar_fingerprint(&raw).unwrap(), fingerprint);
     assert_eq!(load_desktop(&raw).unwrap().unwrap().editing_time_ms, 54_321);
-    save_desktop(&raw, edits.clone()).unwrap();
+    save_desktop(&raw, edits).unwrap();
     assert_eq!(load_desktop(&raw).unwrap().unwrap().editing_time_ms, 54_321);
     reset_desktop_adjustments(&raw).unwrap();
     assert_eq!(load_photo_review(&raw).unwrap(), changed);
@@ -1121,4 +1154,18 @@ fn invalid_review_updates_leave_existing_sidecar_untouched() {
     assert!(save_photo_review(&raw, PhotoReview::default()).is_err());
     assert_eq!(fs::read(&path).unwrap(), b"broken");
     fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn legacy_edits_default_film_effects_to_zero() {
+    let mut global = serde_json::to_value(ExposureParams::default()).unwrap();
+    global.as_object_mut().unwrap().remove("halation_amount");
+    global.as_object_mut().unwrap().remove("grain_amount");
+    let restored: ExposureParams = serde_json::from_value(global).unwrap();
+    assert_eq!(restored.halation_amount, 0.0);
+    assert_eq!(restored.grain_amount, 0.0);
+    let mut local = serde_json::to_value(crate::pipeline::LocalAdjustments::default()).unwrap();
+    local.as_object_mut().unwrap().remove("halation_amount");
+    let restored: crate::pipeline::LocalAdjustments = serde_json::from_value(local).unwrap();
+    assert!(restored.is_neutral());
 }

@@ -636,6 +636,20 @@ pub(crate) enum MaskDragState {
         start: [f32; 2],
         end: [f32; 2],
     },
+    AddPathPoint {
+        index: usize,
+        anchor: [f32; 2],
+    },
+    MovePathPoint {
+        index: usize,
+    },
+    MovePathHandle {
+        index: usize,
+        outgoing: bool,
+    },
+    CreatePathHandles {
+        index: usize,
+    },
 }
 
 pub(crate) const MAX_DESKTOP_RAW_CACHE_FILES: usize = 8;
@@ -1044,6 +1058,11 @@ pub(crate) struct DevelopUiState {
     pub(crate) tone_curve_tab: ToneCurveTab,
     pub(crate) color_grade_tab: ColorGradeTab,
     pub(crate) hsl_mixer_color: HslMixerColor,
+    pub(crate) point_color: crate::ui::components::point_color::PointColorUiState,
+    pub(crate) point_color_tab: bool,
+    pub(crate) mask_point_color: crate::ui::components::point_color::PointColorUiState,
+    pub(crate) mask_point_color_tab: bool,
+    pub(crate) mask_point_color_mask: Option<usize>,
 }
 
 pub(crate) struct PreferencesState {

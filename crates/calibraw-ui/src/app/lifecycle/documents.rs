@@ -214,7 +214,7 @@ impl CalibRawApp {
         self.preview.detail_rebuild_receiver = None;
         let editing_time_override_ms = (edit_override.is_some()
             && self.persistence.sidecar_target.as_ref() == Some(&sidecar_target))
-            .then(|| self.raw_editing_time_ms());
+        .then(|| self.raw_editing_time_ms());
         let sidecar_generation = self.begin_sidecar_open();
         crate::app::preview_visibility::PreviewVisibility::clear(&self.egui_ctx);
         let reusable_preview_pipeline = {
@@ -228,6 +228,9 @@ impl CalibRawApp {
         self.develop.original_raw = None;
         self.develop.loaded_raw = None;
         self.develop.preview_raw = None;
+        self.develop_ui.point_color = Default::default();
+        self.develop_ui.mask_point_color = Default::default();
+        self.develop_ui.mask_point_color_mask = None;
         self.develop_ui.white_balance_picker_active = false;
         self.develop_ui.white_balance_picker_drag = None;
         self.develop.current_path = None;

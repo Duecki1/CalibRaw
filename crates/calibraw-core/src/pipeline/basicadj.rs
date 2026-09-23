@@ -265,6 +265,10 @@ pub struct ExposureParams {
     #[serde(default)]
     pub sharpen_masking: f32,
 
+    #[serde(default)]
+    pub halation_amount: f32,
+    #[serde(default)]
+    pub grain_amount: f32,
     pub glow_amount: f32,
     pub glow_radius: f32,
     pub glow_threshold: f32,
@@ -277,6 +281,11 @@ pub struct ExposureParams {
     pub hsl_hue: [f32; 8],
     pub hsl_saturation: [f32; 8],
     pub hsl_luminance: [f32; 8],
+
+    #[serde(default)]
+    pub point_colors: super::PointColors,
+    #[serde(skip)]
+    pub point_color_visualize: Option<usize>,
 
     pub color_grading: ColorGrading,
 }
@@ -348,6 +357,8 @@ impl Default for ExposureParams {
             sharpen_radius: default_sharpen_radius(),
             sharpen_detail: default_sharpen_detail(),
             sharpen_masking: 0.0,
+            halation_amount: 0.0,
+            grain_amount: 0.0,
             glow_amount: 0.0,
             glow_radius: 50.0,
             glow_threshold: 60.0,
@@ -359,6 +370,8 @@ impl Default for ExposureParams {
             hsl_hue: [0.0; 8],
             hsl_saturation: [0.0; 8],
             hsl_luminance: [0.0; 8],
+            point_colors: super::PointColors::default(),
+            point_color_visualize: None,
             color_grading: ColorGrading::default(),
         }
     }
@@ -525,5 +538,13 @@ mod tests {
         let decoded: ExposureParams =
             serde_json::from_value(serialized).expect("deserialize exposure");
         assert_eq!(decoded.hue, 0.0);
+    }
+
+    #[test]
+    fn exposure_without_point_colors_deserializes_to_empty() {
+        let mut serialized = serde_json::to_value(ExposureParams::default()).unwrap();
+        serialized.as_object_mut().unwrap().remove("point_colors");
+        let decoded: ExposureParams = serde_json::from_value(serialized).unwrap();
+        assert!(decoded.point_colors.is_empty());
     }
 }

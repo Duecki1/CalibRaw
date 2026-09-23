@@ -140,7 +140,7 @@ jobs:
           export CALIBRAW_SOURCE_REVISION="$revision"
           export SOURCE_DATE_EPOCH="$(git show -s --format=%ct "$revision")"
 
-          bash scripts/prepare_release_licenses.sh
+          bash scripts/generate_licenses.sh
           cargo build \
             --locked \
             --release \

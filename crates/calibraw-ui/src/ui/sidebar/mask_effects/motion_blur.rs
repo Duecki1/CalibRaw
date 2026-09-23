@@ -6,12 +6,14 @@ pub(crate) fn show(
     ui: &mut Ui,
     settings: &mut MotionBlurEffectSettings,
     enabled: &mut bool,
+    remove: &mut bool,
 ) -> bool {
     effect_card(
         ui,
         MaskEffect::MotionBlur,
         settings,
         enabled,
+        remove,
         |ui, settings| {
             let mut changed = false;
             changed |= effect_slider(ui, &mut settings.amount, motion_blur::AMOUNT);

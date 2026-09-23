@@ -1,3 +1,5 @@
+const MAX_RENDER_MASK_SLOTS: u32 = 428u;
+
 
 // Naga reserves trailing numeric suffixes when rewriting composable modules.
 // Exported struct member names must therefore not end in a digit.
@@ -6,6 +8,7 @@ struct MaskData {
     adjust_0_field: vec4<f32>,
     adjust_1_field: vec4<f32>,
     adjust_2_field: vec4<f32>,
+    film_effects: vec4<f32>,
     curves: array<vec4<f32>, 8>,
     grade_shadows: vec4<f32>,
     grade_midtones: vec4<f32>,
@@ -21,6 +24,8 @@ struct MaskData {
     hsl_saturation_1_field: vec4<f32>,
     hsl_luminance_0_field: vec4<f32>,
     hsl_luminance_1_field: vec4<f32>,
+    point_colors: array<PointColor, 8>,
+    point_color_meta: vec4<u32>,
 }
 
 fn mask_effect_id(metadata: vec4<u32>) -> u32 {
@@ -120,11 +125,23 @@ struct SceneToneUniforms {
     xyz_to_rec2020_field: mat3x3<f32>,
     xyz_to_bradford: mat3x3<f32>,
     bradford_to_xyz: mat3x3<f32>,
+    point_colors: array<PointColor, 8>,
+    point_color_meta: vec4<u32>,
+}
+
+struct PointColor {
+    sample_range: vec4<f32>,
+    hue_range: vec4<f32>,
+    saturation_range: vec4<f32>,
+    luminance_range: vec4<f32>,
+    shifts: vec4<f32>,
 }
 
 struct EffectsUniforms {
     presence: vec4<f32>,
     creative_effects: vec4<f32>,
+    // Halation amount, grain amount, any active halation, reserved.
+    film_effects: vec4<f32>,
     vignette: vec4<f32>,
     vignette_options: vec4<f32>,
     vignette_frame: vec4<f32>,
