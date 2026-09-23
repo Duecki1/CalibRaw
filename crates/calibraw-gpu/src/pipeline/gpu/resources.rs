@@ -411,7 +411,10 @@ pub(super) fn gpu_working_set_limit_bytes() -> u64 {
     if cfg!(target_os = "android") {
         ANDROID_GPU_WORKING_SET_LIMIT_BYTES
     } else {
-        DESKTOP_GPU_WORKING_SET_LIMIT_BYTES
+        // Desktop VRAM varies widely. The fixed estimate is useful in tests, but
+        // must not reject a valid allocation before the driver has a chance to
+        // allocate it. Real OOM is reported by the GPU error scopes.
+        u64::MAX
     }
 }
 
@@ -1417,6 +1420,15 @@ mod resource_plan_tests {
         let plan = build_gpu_resource_plan(input()).unwrap();
         assert!(validate_gpu_resource_plan(&plan, plan.admitted_gpu_bytes).is_ok());
         assert!(validate_gpu_resource_plan(&plan, plan.admitted_gpu_bytes - 1).is_err());
+    }
+
+    #[cfg(not(target_os = "android"))]
+    #[test]
+    fn desktop_allocation_is_not_rejected_by_a_fixed_process_cap() {
+        assert_eq!(gpu_working_set_limit_bytes(), u64::MAX);
+        let mut plan = build_gpu_resource_plan(input()).unwrap();
+        plan.admitted_gpu_bytes = DESKTOP_GPU_WORKING_SET_LIMIT_BYTES + 1;
+        assert!(validate_gpu_resource_plan(&plan, gpu_working_set_limit_bytes()).is_ok());
     }
 
     #[test]

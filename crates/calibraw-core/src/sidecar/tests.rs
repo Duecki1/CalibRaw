@@ -804,6 +804,30 @@ fn reset_all_adjustments_preserves_editing_time_metadata() {
     fs::remove_dir_all(directory).unwrap();
 }
 
+#[cfg(not(target_os = "android"))]
+#[test]
+fn unsupported_sidecar_recovery_preserves_original_bytes_and_pending_edits() {
+    let directory = temporary_directory("unsupported-recovery");
+    let raw = directory.join("photo.CR3");
+    fs::write(&raw, b"raw").unwrap();
+    let path = sidecar_path_for_raw(&raw);
+    let original = br#"{"format":"CalibRaw edit sidecar","schema_version":99,"review":{"rating":4},"future_feature":{"value":17}}"#;
+    fs::write(&path, original).unwrap();
+    let edits = sample_edits();
+
+    assert!(matches!(
+        save_desktop_with_editing_time(&raw, edits.clone(), 123),
+        Err(SidecarError::Unsupported(_))
+    ));
+    let backup = backup_and_replace_desktop_sidecar(&raw, edits.clone(), 123).unwrap();
+    assert_eq!(fs::read(&backup).unwrap(), original);
+    let reopened = load_desktop(&raw).unwrap().unwrap();
+    assert_eq!(reopened.edits, edits);
+    assert_eq!(reopened.editing_time_ms, 123);
+
+    fs::remove_dir_all(directory).unwrap();
+}
+
 #[test]
 fn corrupt_and_future_sidecars_are_rejected() {
     assert!(matches!(

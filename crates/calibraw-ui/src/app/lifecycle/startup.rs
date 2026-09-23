@@ -203,6 +203,7 @@ impl CalibRawApp {
                 sidecar_receiver: None,
                 sidecar_save_feedback_until: None,
                 sidecar_save_error_dialog: None,
+                sidecar_recovery: None,
                 sidecar_autosave_deadline: None,
                 developed_thumbnail_pending: None,
                 developed_thumbnail_in_flight: None,
@@ -243,6 +244,7 @@ impl CalibRawApp {
                 status: "Open a RAW or TIFF file to get started.".to_owned(),
                 adaptive_preview_backdrop: crate::ui::theme::CANVAS_BACKDROP,
                 notice: None,
+                gpu_memory_error_dialog: false,
                 unsupported_file_dialog: None,
                 onboarding_step: (!performance.onboarding_completed)
                     .then_some(OnboardingStep::Appearance),
@@ -496,6 +498,7 @@ impl CalibRawApp {
                 sidecar_receiver: None,
                 sidecar_save_feedback_until: None,
                 sidecar_save_error_dialog: None,
+                sidecar_recovery: None,
                 sidecar_autosave_deadline: None,
                 developed_thumbnail_pending: None,
                 developed_thumbnail_in_flight: None,
@@ -533,6 +536,7 @@ impl CalibRawApp {
                 status: "Open a RAW or TIFF file to get started.".to_owned(),
                 adaptive_preview_backdrop: crate::ui::theme::CANVAS_BACKDROP,
                 notice: None,
+                gpu_memory_error_dialog: false,
                 unsupported_file_dialog: None,
                 onboarding_step: (!performance.onboarding_completed)
                     .then_some(OnboardingStep::Appearance),

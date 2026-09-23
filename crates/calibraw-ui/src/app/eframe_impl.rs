@@ -82,6 +82,7 @@ impl eframe::App for CalibRawApp {
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
         if calibraw_ai::take_ai_gpu_memory_failure() {
             self.stop_ai_after_gpu_memory_failure();
+            self.ui.gpu_memory_error_dialog = true;
             self.ui.notice = Some(
                 "An AI model ran out of GPU memory. Its job was stopped, GPU AI was disabled, and optional preview textures were released. You can re-enable GPU AI in Settings after reducing Subject mask quality."
                     .to_owned(),
@@ -89,6 +90,7 @@ impl eframe::App for CalibRawApp {
         }
         if calibraw_gpu::take_gpu_out_of_memory() {
             self.stop_ai_after_gpu_memory_failure();
+            self.ui.gpu_memory_error_dialog = true;
             self.ui.notice = Some(
                 "GPU memory was exhausted. CalibRaw stopped AI work, disabled GPU AI, and released optional preview textures. Close other GPU-heavy apps or lower Preview Quality before retrying."
                     .to_owned(),
@@ -431,6 +433,25 @@ impl eframe::App for CalibRawApp {
         self.show_remove_model_dialog(ui.ctx(), frame);
         self.show_ai_denoise_dialogs(ui.ctx(), frame);
         self.show_sidecar_save_error_dialog(ui.ctx());
+        if self.ui.gpu_memory_error_dialog {
+            let mut close = false;
+            crate::ui::theme::dialog_window(
+                egui::Window::new("GPU memory exhausted"),
+                ui.ctx(),
+                crate::ui::theme::DIALOG_WIDTH_WIDE,
+            )
+            .show(ui.ctx(), |ui| {
+                ui.label("CalibRaw ran out of GPU memory while processing the image. The current operation could not finish.");
+                ui.add_space(6.0);
+                ui.label("Optional previews were released. Close other GPU-heavy apps or lower Preview Quality, then try again.");
+                if ui.button("Close").clicked() {
+                    close = true;
+                }
+            });
+            if close {
+                self.ui.gpu_memory_error_dialog = false;
+            }
+        }
         self.show_foreground_operation_dialog(ui.ctx());
         self.show_export_task_dialog(ui.ctx());
         let edit_interaction_active = sidecar_interaction_active(ui.ctx());

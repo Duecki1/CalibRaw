@@ -1236,6 +1236,55 @@ pub fn save_desktop_with_editing_time(
     Ok(path)
 }
 
+/// Preserve an unreadable or newer desktop sidecar before replacing it with a
+/// current-schema document. The caller must explicitly request this recovery.
+#[cfg(not(target_os = "android"))]
+pub fn backup_and_replace_desktop_sidecar(
+    raw_path: &Path,
+    edits: EditState,
+    editing_time_ms: u64,
+) -> Result<PathBuf, SidecarError> {
+    let _guard = SIDECAR_SAVE_LOCK
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    let path = sidecar_path_for_raw(raw_path);
+    let bytes =
+        encode_with_review_and_editing_time(edits, PhotoReview::default(), editing_time_ms)?;
+    let mut source = File::open(&path)?;
+    let backup = loop {
+        let mut name = path.as_os_str().to_owned();
+        name.push(format!(
+            ".backup-{}-{}",
+            std::process::id(),
+            NEXT_TEMPORARY_ID.fetch_add(1, Ordering::Relaxed)
+        ));
+        let candidate = PathBuf::from(name);
+        match OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&candidate)
+        {
+            Ok(mut destination) => {
+                let copied = std::io::copy(&mut source, &mut destination)
+                    .and_then(|_| destination.sync_all());
+                if let Err(error) = copied {
+                    drop(destination);
+                    let _ = fs::remove_file(&candidate);
+                    return Err(SidecarError::Io(error));
+                }
+                break candidate;
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(SidecarError::Io(error)),
+        }
+    };
+    if let Some(parent) = backup.parent() {
+        sync_parent_directory(parent)?;
+    }
+    atomic_write(&path, &bytes)?;
+    Ok(backup)
+}
+
 #[cfg(not(target_os = "android"))]
 pub fn reset_desktop_adjustments(raw_path: &Path) -> Result<bool, String> {
     reset_desktop_adjustments_impl(raw_path, None)

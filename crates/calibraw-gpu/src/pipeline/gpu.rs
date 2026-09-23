@@ -60,6 +60,7 @@ const MASK_DATA_SIZE_BYTES: u64 = (std::mem::size_of::<MaskData>() * MAX_RENDER_
 const WORK_FORMAT_MARKER: &str = "rgba16float /* CALIBRAW_WORK_FORMAT */";
 const WORKGROUP_EDGE: u32 = 8;
 const TONE_STATS_SIZE_BYTES: u64 = 2 * std::mem::size_of::<[f32; 4]>() as u64;
+#[cfg(test)]
 const DESKTOP_GPU_WORKING_SET_LIMIT_BYTES: u64 = 1_500 * 1024 * 1024;
 const ANDROID_GPU_WORKING_SET_LIMIT_BYTES: u64 = 384 * 1024 * 1024;
 
