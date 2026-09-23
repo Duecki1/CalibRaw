@@ -23,9 +23,28 @@ impl CardActionLayout {
 #[derive(Clone, Copy)]
 struct VerticalCardActions {
     title: &'static str,
-    show_visibility: bool,
-    show_mask_overlay_toggle: bool,
+    kind: VerticalCardKind,
     scope: Option<usize>,
+}
+
+#[derive(Clone, Copy)]
+enum VerticalCardKind {
+    Adjustment {
+        show_visibility: bool,
+        show_mask_overlay_toggle: bool,
+    },
+    Effect {
+        enabled: bool,
+    },
+}
+
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+pub(super) enum EffectCardAction {
+    #[default]
+    None,
+    Reset,
+    Toggle,
+    Remove,
 }
 
 #[derive(Clone, Copy)]
@@ -193,6 +212,10 @@ impl Sidebar {
         egui::Id::new(("develop-vertical-card-action", scope, title))
     }
 
+    fn pending_vertical_effect_action_id(scope: Option<usize>, title: &'static str) -> egui::Id {
+        egui::Id::new(("develop-vertical-effect-action", scope, title))
+    }
+
     pub(super) fn begin_vertical_card_actions(ctx: &egui::Context) {
         ctx.data_mut(|data| {
             data.remove::<Vec<VerticalCardActions>>(Self::vertical_card_actions_id())
@@ -205,6 +228,21 @@ impl Sidebar {
         show_visibility: bool,
         show_mask_overlay_toggle: bool,
     ) {
+        Self::register_vertical_actions(
+            ui,
+            title,
+            VerticalCardKind::Adjustment {
+                show_visibility,
+                show_mask_overlay_toggle,
+            },
+        );
+    }
+
+    pub(super) fn register_vertical_effect_actions(ui: &Ui, title: &'static str, enabled: bool) {
+        Self::register_vertical_actions(ui, title, VerticalCardKind::Effect { enabled });
+    }
+
+    fn register_vertical_actions(ui: &Ui, title: &'static str, kind: VerticalCardKind) {
         let scope = crate::app::preview_visibility::PreviewVisibility::current_scope(ui.ctx());
         let id = Self::vertical_card_actions_id();
         ui.ctx().data_mut(|data| {
@@ -215,12 +253,7 @@ impl Sidebar {
                 .iter()
                 .any(|entry| entry.title == title && entry.scope == scope)
             {
-                actions.push(VerticalCardActions {
-                    title,
-                    show_visibility,
-                    show_mask_overlay_toggle,
-                    scope,
-                });
+                actions.push(VerticalCardActions { title, kind, scope });
             }
             data.insert_temp(id, actions);
         });
@@ -248,6 +281,34 @@ impl Sidebar {
         ctx.request_repaint();
     }
 
+    pub(super) fn take_pending_vertical_effect_action(
+        ctx: &egui::Context,
+        title: &'static str,
+    ) -> EffectCardAction {
+        let scope = crate::app::preview_visibility::PreviewVisibility::current_scope(ctx);
+        let id = Self::pending_vertical_effect_action_id(scope, title);
+        ctx.data_mut(|data| {
+            let action = data.get_temp::<EffectCardAction>(id).unwrap_or_default();
+            data.remove::<EffectCardAction>(id);
+            action
+        })
+    }
+
+    fn queue_vertical_effect_action(
+        ctx: &egui::Context,
+        scope: Option<usize>,
+        title: &'static str,
+        action: EffectCardAction,
+    ) {
+        ctx.data_mut(|data| {
+            data.insert_temp(
+                Self::pending_vertical_effect_action_id(scope, title),
+                action,
+            )
+        });
+        ctx.request_repaint();
+    }
+
     pub(super) fn show_vertical_card_footer_actions(ui: &mut Ui) {
         let actions = ui
             .ctx()
@@ -271,18 +332,75 @@ impl Sidebar {
             )
             .clicked()
             {
-                if entry.show_visibility {
-                    crate::app::preview_visibility::PreviewVisibility::show(ui.ctx(), entry.title);
+                match entry.kind {
+                    VerticalCardKind::Adjustment {
+                        show_visibility, ..
+                    } => {
+                        if show_visibility {
+                            crate::app::preview_visibility::PreviewVisibility::show(
+                                ui.ctx(),
+                                entry.title,
+                            );
+                        }
+                        Self::queue_vertical_card_action(
+                            ui.ctx(),
+                            entry.scope,
+                            entry.title,
+                            CardAction::Reset,
+                        );
+                    }
+                    VerticalCardKind::Effect { .. } => Self::queue_vertical_effect_action(
+                        ui.ctx(),
+                        entry.scope,
+                        entry.title,
+                        EffectCardAction::Reset,
+                    ),
                 }
-                Self::queue_vertical_card_action(
-                    ui.ctx(),
-                    entry.scope,
-                    entry.title,
-                    CardAction::Reset,
-                );
             }
 
-            if entry.show_mask_overlay_toggle {
+            if let VerticalCardKind::Effect { enabled } = entry.kind {
+                if crate::ui::icons::phosphor_icon_button(
+                    ui,
+                    egui_phosphor::regular::TRASH,
+                    size,
+                    &format!("Remove {}", entry.title),
+                )
+                .clicked()
+                {
+                    Self::queue_vertical_effect_action(
+                        ui.ctx(),
+                        entry.scope,
+                        entry.title,
+                        EffectCardAction::Remove,
+                    );
+                }
+                if crate::ui::icons::phosphor_icon_toggle_button(
+                    ui,
+                    visibility_icon(enabled),
+                    !enabled,
+                    size,
+                    &visibility_label(enabled, entry.title),
+                )
+                .clicked()
+                {
+                    Self::queue_vertical_effect_action(
+                        ui.ctx(),
+                        entry.scope,
+                        entry.title,
+                        EffectCardAction::Toggle,
+                    );
+                }
+                continue;
+            }
+
+            let VerticalCardKind::Adjustment {
+                show_visibility,
+                show_mask_overlay_toggle,
+            } = entry.kind
+            else {
+                unreachable!()
+            };
+            if show_mask_overlay_toggle {
                 let forced = crate::app::preview_visibility::PreviewVisibility::mask_overlay_forced(
                     ui.ctx(),
                 );
@@ -305,7 +423,7 @@ impl Sidebar {
                 }
             }
 
-            if entry.show_visibility {
+            if show_visibility {
                 let visible = crate::app::preview_visibility::PreviewVisibility::visible(
                     ui.ctx(),
                     entry.title,

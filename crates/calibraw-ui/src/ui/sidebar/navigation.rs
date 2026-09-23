@@ -179,7 +179,9 @@ impl Sidebar {
 
         egui::CentralPanel::default()
             .frame(egui::Frame::new().inner_margin(egui::Margin::same(0)))
-            .show(ui, |ui| Self::show_sidebar_content(ui, app, ScreenLayout::Vertical, frame));
+            .show(ui, |ui| {
+                Self::show_sidebar_content(ui, app, ScreenLayout::Vertical, frame)
+            });
     }
 
     fn mobile_navigation_frame(ui: &Ui) -> egui::Frame {
@@ -223,12 +225,7 @@ impl Sidebar {
                     "Edit",
                     "Edit adjustments",
                 ),
-                (
-                    SidebarTab::Crop,
-                    regular::CROP,
-                    "Crop",
-                    "Crop",
-                ),
+                (SidebarTab::Crop, regular::CROP, "Crop", "Crop"),
                 (SidebarTab::Masks, regular::SELECTION, "Mask", "Masking"),
                 (
                     SidebarTab::Inpainting,
@@ -308,13 +305,16 @@ impl Sidebar {
                         icon,
                         label,
                         show_labels,
-                        app.develop_ui.adjustment_section == section,
+                        app.develop_ui.adjustment_section == section
+                            && (section != AdjustmentSection::Effects
+                                || app.develop_ui.effect_component.is_none()),
                         egui::vec2(Self::CONTEXT_TAB_WIDTH, tab_height),
                         label,
                     )
                     .clicked()
                     {
                         app.develop_ui.adjustment_section = section;
+                        app.develop_ui.effect_component = None;
                         if section != AdjustmentSection::ColorMixer {
                             app.develop_ui.point_color.picker_active = false;
                             app.develop_ui.point_color.visualize_range = false;
@@ -325,8 +325,33 @@ impl Sidebar {
                         }
                     }
                 }
+                let selected_before = app.develop_ui.effect_component;
+                let added = Self::show_mobile_effect_tabs(
+                    ui,
+                    &mut app.masks.stack.global_effects,
+                    &mut app.develop_ui.effect_component,
+                    tab_height,
+                    show_labels,
+                );
+                if added || selected_before != app.develop_ui.effect_component {
+                    app.develop_ui.point_color.picker_active = false;
+                    app.develop_ui.point_color.visualize_range = false;
+                    app.develop_ui.white_balance_picker_active = false;
+                    app.develop_ui.white_balance_picker_drag = None;
+                }
+                if added {
+                    app.develop_ui.adjustment_section = AdjustmentSection::Effects;
+                    app.mark_mask_adjustments_dirty();
+                } else if app.develop_ui.effect_component.is_some() {
+                    // The selected component tab shares the Effects content section.
+                    app.develop_ui.adjustment_section = AdjustmentSection::Effects;
+                }
             }
             SidebarTab::Masks => {
+                if app.develop_ui.mask_effect_mask != app.masks.stack.selected_mask {
+                    app.develop_ui.mask_effect_mask = app.masks.stack.selected_mask;
+                    app.develop_ui.mask_effect_component = None;
+                }
                 let adjustment_mask = app
                     .masks
                     .stack
@@ -349,13 +374,16 @@ impl Sidebar {
                         icon,
                         label,
                         show_labels,
-                        app.develop_ui.mask_section == section,
+                        app.develop_ui.mask_section == section
+                            && (section != MaskSection::Effects
+                                || app.develop_ui.mask_effect_component.is_none()),
                         egui::vec2(Self::CONTEXT_TAB_WIDTH, tab_height),
                         label,
                     )
                     .clicked()
                     {
                         app.develop_ui.mask_section = section;
+                        app.develop_ui.mask_effect_component = None;
                         if section != MaskSection::ColorMixer {
                             let was_visualizing = app.develop_ui.mask_point_color.visualize_range;
                             app.develop_ui.mask_point_color.picker_active = false;
@@ -367,9 +395,106 @@ impl Sidebar {
                         }
                     }
                 }
+                if let Some(mask_index) = app.masks.stack.selected_mask {
+                    let mask = &mut app.masks.stack.masks[mask_index];
+                    let light_rays_before = mask.has_light_rays_effect();
+                    let selected_before = app.develop_ui.mask_effect_component;
+                    let added = Self::show_mobile_effect_tabs(
+                        ui,
+                        &mut mask.effect_components,
+                        &mut app.develop_ui.mask_effect_component,
+                        tab_height,
+                        show_labels,
+                    );
+                    if added || selected_before != app.develop_ui.mask_effect_component {
+                        let was_visualizing = app.develop_ui.mask_point_color.visualize_range;
+                        app.develop_ui.mask_point_color.picker_active = false;
+                        app.develop_ui.mask_point_color.visualize_range = false;
+                        if was_visualizing {
+                            crate::app::preview_visibility::PreviewVisibility::invalidate_mask_cache(
+                                ui.ctx(),
+                            );
+                            app.queue_preview_processing(
+                                crate::pipeline::ProcessingStage::Output,
+                            );
+                        }
+                    }
+                    if added {
+                        app.develop_ui.mask_section = MaskSection::Effects;
+                        if light_rays_before != app.masks.stack.masks[mask_index].has_light_rays_effect() {
+                            app.mark_mask_geometry_dirty(mask_index);
+                        } else {
+                            app.mark_mask_adjustments_dirty();
+                        }
+                    } else if app.develop_ui.mask_effect_component.is_some() {
+                        app.develop_ui.mask_section = MaskSection::Effects;
+                    }
+                }
             }
             SidebarTab::Crop | SidebarTab::Inpainting | SidebarTab::Export | SidebarTab::Info => {}
         });
+    }
+
+    fn show_mobile_effect_tabs(
+        ui: &mut Ui,
+        components: &mut Vec<crate::pipeline::EffectComponent>,
+        selection: &mut Option<MaskEffect>,
+        tab_height: f32,
+        show_labels: bool,
+    ) -> bool {
+        use egui_phosphor::regular;
+
+        let mut selected_tab = None;
+        for component in components.iter() {
+            let effect = component.effect;
+            let clicked = ui
+                .push_id(("effect-component-tab", effect.label()), |ui| {
+                    Self::mobile_icon_tab(
+                        ui,
+                        regular::SPARKLE,
+                        effect.label(),
+                        show_labels,
+                        *selection == Some(effect),
+                        egui::vec2(Self::CONTEXT_TAB_WIDTH, tab_height),
+                        effect.label(),
+                    )
+                    .clicked()
+                })
+                .inner;
+            if clicked {
+                selected_tab = Some(effect);
+            }
+        }
+        if let Some(effect) = selected_tab {
+            *selection = Some(effect);
+        }
+
+        if components.len() >= crate::pipeline::MAX_EFFECT_COMPONENTS {
+            return false;
+        }
+        let response = ui
+            .push_id("add-effect-tab", |ui| {
+                Self::mobile_icon_tab(
+                    ui,
+                    regular::PLUS,
+                    "Add",
+                    show_labels,
+                    false,
+                    egui::vec2(Self::CONTEXT_TAB_WIDTH, tab_height),
+                    "Add effect",
+                )
+            })
+            .inner;
+        let mut added = None;
+        crate::ui::theme::dropdown_menu(&response, |ui| {
+            added = Self::effect_creation_menu(ui, components);
+        });
+        if let Some(effect) = added {
+            components.push(crate::pipeline::EffectComponent::new(effect));
+            *selection = Some(effect);
+            return true;
+        }
+        false
     }
 
     fn mobile_icon_tab(
@@ -540,9 +665,8 @@ impl Sidebar {
                             .strokes
                             .iter()
                             .filter(|stroke| {
-                                active_tool.matches_stroke_tool(
-                                    stroke.retouch.map(|retouch| retouch.tool),
-                                )
+                                active_tool
+                                    .matches_stroke_tool(stroke.retouch.map(|retouch| retouch.tool))
                             })
                             .count();
                         if crate::ui::icons::phosphor_icon_button_enabled(
@@ -655,12 +779,7 @@ impl Sidebar {
                     "Edit",
                     "Edit adjustments",
                 ),
-                (
-                    SidebarTab::Crop,
-                    regular::CROP,
-                    "Crop",
-                    "Crop",
-                ),
+                (SidebarTab::Crop, regular::CROP, "Crop", "Crop"),
                 (SidebarTab::Masks, regular::SELECTION, "Mask", "Masking"),
                 (
                     SidebarTab::Inpainting,
@@ -738,7 +857,9 @@ impl Sidebar {
                     ai_denoise_request = request;
                 }
                 AdjustmentSection::Effects => {
-                    changed |= Self::show_presence(ui, &mut app.develop.exposure, false);
+                    if app.develop_ui.effect_component.is_none() {
+                        changed |= Self::show_presence(ui, &mut app.develop.exposure, false);
+                    }
                 }
                 AdjustmentSection::ColorMixer => {
                     changed |= Self::show_hsl(
@@ -790,10 +911,18 @@ impl Sidebar {
             lens_changed |= Self::show_optics(ui, app, true);
         }
 
-        if (layout != ScreenLayout::Vertical
-            || app.develop_ui.adjustment_section == AdjustmentSection::Effects)
-            && Self::show_effect_components(ui, &mut app.masks.stack.global_effects, true)
-        {
+        if layout == ScreenLayout::Vertical {
+            if app.develop_ui.adjustment_section == AdjustmentSection::Effects
+                && Self::show_selected_effect_component(
+                    ui,
+                    &mut app.masks.stack.global_effects,
+                    &mut app.develop_ui.effect_component,
+                    true,
+                )
+            {
+                app.mark_mask_adjustments_dirty();
+            }
+        } else if Self::show_effect_components(ui, &mut app.masks.stack.global_effects, true) {
             app.mark_mask_adjustments_dirty();
         }
 

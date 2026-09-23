@@ -1,6 +1,37 @@
 use super::*;
 
 impl Sidebar {
+    pub(crate) fn effect_creation_menu(
+        ui: &mut Ui,
+        components: &[crate::pipeline::EffectComponent],
+    ) -> Option<MaskEffect> {
+        let mut selected = None;
+        for category in MaskEffectCategory::ALL {
+            if !MaskEffect::ALL.iter().any(|effect| {
+                effect.category() == Some(category)
+                    && !components
+                        .iter()
+                        .any(|component| component.effect == *effect)
+            }) {
+                continue;
+            }
+            ui.menu_button(category.label(), |ui| {
+                for effect in MaskEffect::ALL {
+                    if effect.category() == Some(category)
+                        && !components
+                            .iter()
+                            .any(|component| component.effect == effect)
+                        && ui.button(effect.label()).clicked()
+                    {
+                        selected = Some(effect);
+                        ui.close();
+                    }
+                }
+            });
+        }
+        selected
+    }
+
     pub(super) fn apply_mask_properties_action(
         mask: &mut LocalMask,
         component_index: usize,
@@ -152,33 +183,47 @@ impl Sidebar {
         }
         if components.len() < crate::pipeline::MAX_EFFECT_COMPONENTS {
             ui.menu_button(format!("{}  Add", egui_phosphor::regular::PLUS), |ui| {
-                for category in MaskEffectCategory::ALL {
-                    if !MaskEffect::ALL.iter().any(|effect| {
-                        effect.category() == Some(category)
-                            && !components
-                                .iter()
-                                .any(|component| component.effect == *effect)
-                    }) {
-                        continue;
-                    }
-                    ui.menu_button(category.label(), |ui| {
-                        for effect in MaskEffect::ALL {
-                            if effect.category() == Some(category)
-                                && !components
-                                    .iter()
-                                    .any(|component| component.effect == effect)
-                                && ui.button(effect.label()).clicked()
-                            {
-                                components.push(crate::pipeline::EffectComponent::new(effect));
-                                changed = true;
-                                ui.close();
-                            }
-                        }
-                    });
+                if let Some(effect) = Self::effect_creation_menu(ui, components) {
+                    components.push(crate::pipeline::EffectComponent::new(effect));
+                    changed = true;
                 }
             });
         }
         changed
+    }
+
+    pub(crate) fn show_selected_effect_component(
+        ui: &mut Ui,
+        components: &mut Vec<crate::pipeline::EffectComponent>,
+        selection: &mut Option<MaskEffect>,
+        is_fullscreen_mask: bool,
+    ) -> bool {
+        let Some(effect) = *selection else {
+            return false;
+        };
+        let Some(index) = components
+            .iter()
+            .position(|component| component.effect == effect)
+        else {
+            *selection = None;
+            return false;
+        };
+        let mut remove = false;
+        let changed = ui
+            .push_id(index, |ui| {
+                Self::show_effect_component_settings(
+                    ui,
+                    &mut components[index],
+                    &mut remove,
+                    is_fullscreen_mask,
+                )
+            })
+            .inner;
+        if remove {
+            components.remove(index);
+            *selection = None;
+        }
+        changed || remove
     }
 
     pub(super) fn show_effect_component_settings(
