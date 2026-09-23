@@ -452,10 +452,19 @@ fn point_color_hsl_to_rgb(hsl: vec3<f32>) -> vec3<f32> {
 
 fn point_color_weight(sample: vec3<f32>, point: Common::PointColor) -> f32 {
     let range_scale = 0.2 + 1.6 * clamp(point.sample_range.w, 0.0, 100.0) / 100.0;
-    let hue_weight = point_color_hue_weight(sample.x - point.sample_range.x, point.hue_range, range_scale);
+    let selected_hue = point_color_hue_weight(sample.x - point.sample_range.x, point.hue_range, range_scale);
     let saturation_weight = point_color_range_weight((sample.y - point.sample_range.y) / range_scale, point.saturation_range);
     let luminance_weight = point_color_range_weight((sample.z - point.sample_range.z) / range_scale, point.luminance_range);
-    return hue_weight * saturation_weight * luminance_weight;
+    // Hue on nearly neutral pixels is mostly noise. Suppress those pixels
+    // when the selected target has a meaningful chroma, while preserving
+    // neutral targets whose hue is intentionally irrelevant.
+    let sample_chroma = (1.0 - abs(2.0 * sample.z - 1.0)) * sample.y;
+    let target_chroma = (1.0 - abs(2.0 * point.sample_range.z - 1.0)) * point.sample_range.y;
+    let colored_target = smoothstep(0.04, 0.12, target_chroma);
+    let reliable_sample = smoothstep(0.008, 0.06, sample_chroma);
+    let hue_weight = mix(1.0, selected_hue, colored_target);
+    return hue_weight * saturation_weight * luminance_weight
+        * mix(1.0, reliable_sample, colored_target);
 }
 
 fn point_color_selection_weight(sample: vec3<f32>, index: u32) -> f32 {
@@ -466,7 +475,10 @@ fn point_color_selection_weight(sample: vec3<f32>, index: u32) -> f32 {
 fn apply_point_color_values(input_rgb: vec3<f32>, sample: vec3<f32>, shifts: vec3<f32>) -> vec3<f32> {
     if max(abs(shifts.x), max(abs(shifts.y), abs(shifts.z))) < 1e-7 { return input_rgb; }
     let residual = input_rgb - point_color_hsl_to_rgb(sample);
-    return residual + point_color_hsl_to_rgb(sample + shifts);
+    // A saturation increase should strengthen existing color, not inject a
+    // saturated arbitrary hue into grayscale noise.
+    let adjusted = vec3<f32>(sample.x + shifts.x, sample.y * max(1.0 + shifts.y, 0.0), sample.z + shifts.z);
+    return residual + point_color_hsl_to_rgb(adjusted);
 }
 
 fn apply_point_colors(input_rgb: vec3<f32>) -> vec3<f32> {
