@@ -55,6 +55,8 @@ impl ExposureParams {
                 self.texture = defaults.texture;
                 self.clarity = defaults.clarity;
                 self.dehaze = defaults.dehaze;
+                self.halation_amount = defaults.halation_amount;
+                self.grain_amount = defaults.grain_amount;
                 self.glow_amount = defaults.glow_amount;
                 self.glow_radius = defaults.glow_radius;
                 self.glow_threshold = defaults.glow_threshold;
@@ -68,6 +70,7 @@ impl ExposureParams {
                 self.hsl_hue = defaults.hsl_hue;
                 self.hsl_saturation = defaults.hsl_saturation;
                 self.hsl_luminance = defaults.hsl_luminance;
+                self.point_colors = defaults.point_colors;
             }
         }
     }
@@ -105,11 +108,14 @@ impl LocalAdjustments {
                 self.texture = defaults.texture;
                 self.clarity = defaults.clarity;
                 self.dehaze = defaults.dehaze;
+                self.halation_amount = defaults.halation_amount;
             }
             AdjustmentGroup::ColorMixer => {
                 self.hsl_hue = defaults.hsl_hue;
                 self.hsl_saturation = defaults.hsl_saturation;
                 self.hsl_luminance = defaults.hsl_luminance;
+                self.point_colors = defaults.point_colors;
+                self.point_color_visualize = None;
             }
         }
     }
@@ -118,6 +124,7 @@ impl LocalAdjustments {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::pipeline::PointColor;
     use serde_json::Value;
 
     fn edited(value: &mut Value) {
@@ -138,8 +145,8 @@ mod tests {
             (AdjustmentGroup::Color, "temperature tint hue saturation vibrance"),
             (AdjustmentGroup::ColorGrading, "color_grading"),
             (AdjustmentGroup::Detail, "luminance_denoise chroma_denoise denoise_detail denoise_quality ai_denoise_enabled sharpen_amount sharpen_radius sharpen_detail sharpen_masking"),
-            (AdjustmentGroup::Effects, "texture clarity dehaze glow_amount glow_radius glow_threshold vignette_amount vignette_midpoint vignette_roundness vignette_feather vignette_highlights"),
-            (AdjustmentGroup::ColorMixer, "hsl_hue hsl_saturation hsl_luminance"),
+            (AdjustmentGroup::Effects, "texture clarity dehaze halation_amount grain_amount glow_amount glow_radius glow_threshold vignette_amount vignette_midpoint vignette_roundness vignette_feather vignette_highlights"),
+            (AdjustmentGroup::ColorMixer, "hsl_hue hsl_saturation hsl_luminance point_colors"),
         ];
         for local in [false, true] {
             let defaults = if local {
@@ -181,5 +188,31 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn local_point_colors_round_trip_and_old_masks_default_to_empty() {
+        let mut edits = LocalAdjustments::default();
+        edits
+            .point_colors
+            .push(PointColor::from_srgb([0.8, 0.2, 0.1]));
+        assert!(edits.is_neutral());
+        edits.point_colors[0].hue_shift = 20.0;
+        assert!(!edits.is_neutral());
+        edits.point_color_visualize = Some(0);
+        let saved = serde_json::to_value(edits).unwrap();
+        assert!(saved.get("point_color_visualize").is_none());
+        let restored: LocalAdjustments = serde_json::from_value(saved.clone()).unwrap();
+        assert_eq!(restored.point_colors, edits.point_colors);
+        assert_eq!(restored.point_color_visualize, None);
+
+        let mut old = saved;
+        old.as_object_mut().unwrap().remove("point_colors");
+        let restored: LocalAdjustments = serde_json::from_value(old).unwrap();
+        assert!(restored.point_colors.is_empty());
+
+        edits.reset_group(AdjustmentGroup::ColorMixer);
+        assert!(edits.point_colors.is_empty());
+        assert_eq!(edits.point_color_visualize, None);
     }
 }

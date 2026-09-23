@@ -6,12 +6,14 @@ pub(crate) fn show(
     ui: &mut Ui,
     settings: &mut LightRaysEffectSettings,
     enabled: &mut bool,
+    remove: &mut bool,
 ) -> bool {
     effect_card(
         ui,
         MaskEffect::LightRays,
         settings,
         enabled,
+        remove,
         |ui, settings| {
             let mut changed = false;
             changed |= effect_slider(ui, &mut settings.amount, light_rays::AMOUNT);

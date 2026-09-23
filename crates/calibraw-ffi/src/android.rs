@@ -1889,11 +1889,8 @@ pub fn save_android_with_review_and_editing_time(
     review: crate::sidecar::PhotoReview,
     editing_time_ms: u64,
 ) -> Result<String, crate::sidecar::SidecarError> {
-    let bytes = crate::sidecar::encode_with_review_and_editing_time(
-        edits,
-        review,
-        editing_time_ms,
-    )?;
+    let bytes =
+        crate::sidecar::encode_with_review_and_editing_time(edits, review, editing_time_ms)?;
     let path = create_raw_sidecar_cache(app).map_err(crate::sidecar::SidecarError::Platform)?;
     let result = crate::sidecar::write_synced(&path, &bytes).and_then(|()| {
         publish_raw_sidecar(app, &path, raw_uri, display_name)

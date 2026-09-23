@@ -8,6 +8,7 @@ impl Sidebar {
             MaskKind::Brush,
             MaskKind::Radial,
             MaskKind::Linear,
+            MaskKind::Path,
             MaskKind::Subject,
             MaskKind::Background,
             MaskKind::Object,
@@ -375,6 +376,8 @@ impl Sidebar {
                 let changed = match dialog.target {
                     MaskDeleteTarget::Group(mask_index) => {
                         if app.masks.stack.delete_mask(mask_index) {
+                            app.develop_ui.mask_point_color = Default::default();
+                            app.develop_ui.mask_point_color_mask = None;
                             app.mark_all_mask_layers_dirty();
                             app.sync_selected_mask_tool();
                             true

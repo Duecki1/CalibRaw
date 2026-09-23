@@ -248,6 +248,7 @@ impl EditHistory {
             false
         } else if mask_change_pending {
             self.current.masks.masks == masks.masks
+                && self.current.masks.global_effects == masks.global_effects
         } else {
             true
         };
@@ -639,6 +640,30 @@ mod tests {
     }
 
     #[test]
+    fn global_effect_changes_round_trip_through_history() {
+        let (exposure, mut masks, lens) = state();
+        let mut history = EditHistory::new(&exposure, &masks, &lens);
+        masks
+            .global_effects
+            .push(crate::pipeline::EffectComponent::new(
+                crate::pipeline::MaskEffect::Blur,
+            ));
+        history.note_mask_change();
+        history.observe(&exposure, &masks, &lens, false);
+        let (undone, masks_changed, _) = history.undo(&exposure, &masks, &lens).unwrap();
+        assert!(masks_changed);
+        assert!(undone.materialize_masks().global_effects.is_empty());
+        let (redone, masks_changed, _) = history
+            .redo(&exposure, &undone.materialize_masks(), &lens)
+            .unwrap();
+        assert!(masks_changed);
+        assert_eq!(
+            redone.materialize_masks().global_effects,
+            masks.global_effects
+        );
+    }
+
+    #[test]
     fn interaction_changes_are_coalesced_into_one_step() {
         let (mut exposure, masks, lens) = state();
         let mut history = EditHistory::new(&exposure, &masks, &lens);
@@ -662,6 +687,38 @@ mod tests {
             history.redo(&exposure, &masks, &lens).unwrap();
         assert!(!masks_changed);
         assert_eq!(redone.exposure.exposure, 2.0);
+    }
+
+    #[test]
+    fn point_color_sampling_adjustment_and_deletion_round_trip_through_history() {
+        let (mut exposure, masks, lens) = state();
+        let mut history = EditHistory::new(&exposure, &masks, &lens);
+        exposure
+            .point_colors
+            .push(crate::pipeline::PointColor::from_srgb([0.7, 0.1, 0.2]));
+        history.note_change();
+        history.observe(&exposure, &masks, &lens, false);
+        let sampled = exposure;
+        exposure.point_colors[0].hue_shift = 35.0;
+        exposure.point_colors[0].saturation_range.inner_max = 0.1;
+        history.note_change();
+        history.observe(&exposure, &masks, &lens, false);
+        let adjusted = exposure;
+        exposure.point_colors.clear();
+        history.note_change();
+        history.observe(&exposure, &masks, &lens, false);
+        exposure = history.undo(&exposure, &masks, &lens).unwrap().0.exposure;
+        assert_eq!(exposure, adjusted);
+        exposure = history.undo(&exposure, &masks, &lens).unwrap().0.exposure;
+        assert_eq!(exposure, sampled);
+        exposure = history.undo(&exposure, &masks, &lens).unwrap().0.exposure;
+        assert!(exposure.point_colors.is_empty());
+        exposure = history.redo(&exposure, &masks, &lens).unwrap().0.exposure;
+        assert_eq!(exposure, sampled);
+        exposure = history.redo(&exposure, &masks, &lens).unwrap().0.exposure;
+        assert_eq!(exposure, adjusted);
+        exposure = history.redo(&exposure, &masks, &lens).unwrap().0.exposure;
+        assert!(exposure.point_colors.is_empty());
     }
 
     #[test]

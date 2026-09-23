@@ -8,12 +8,14 @@ pub(crate) fn show(
     ui: &mut Ui,
     settings: &mut RadialBlurEffectSettings,
     enabled: &mut bool,
+    remove: &mut bool,
 ) -> bool {
     effect_card(
         ui,
         MaskEffect::RadialBlur,
         settings,
         enabled,
+        remove,
         |ui, settings| {
             let mut changed = false;
             changed |= mode_selector(ui, &mut settings.mode);

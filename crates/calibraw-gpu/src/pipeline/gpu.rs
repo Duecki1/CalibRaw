@@ -5,8 +5,9 @@ use crate::pipeline::{
     canonical_remove_scene_to_pipeline_scene, effect_params, export_mask_atlas_edge_limit,
     mask_atlas_edge, pipeline_scene_to_working_rec2020, AiDenoisedImage, CfaKind, ExposureParams,
     GeometryTransform, HighlightReconstructionMethod, LoadedRaw, LocalMask, MaskEffect, MaskStack,
-    PointCurve, ProcessingStage, RawThumbnail, RemoveEditState, RemovePatch, SigmoidParams,
-    SrgbOutputLut, GLOBAL_TEMPERATURE_LIMIT, GLOBAL_TINT_OFFSET_LIMIT, MAX_LOCAL_MASKS,
+    PointColor, PointCurve, ProcessingStage, RawThumbnail, RemoveEditState, RemovePatch,
+    SigmoidParams, SrgbOutputLut, GLOBAL_TEMPERATURE_LIMIT, GLOBAL_TINT_OFFSET_LIMIT,
+    MAX_EFFECT_COMPONENTS, MAX_LOCAL_MASKS, MAX_POINT_COLORS,
 };
 use anyhow::{anyhow, Context, Result};
 use bytemuck::{Pod, Zeroable};
@@ -33,9 +34,13 @@ mod black_tone_tests;
 #[cfg(test)]
 mod blacks_pipeline_tests;
 #[cfg(test)]
+mod film_effects_tests;
+#[cfg(test)]
+mod point_color_tests;
+#[cfg(test)]
 mod tests;
 
-const GPU_PARAMS_ABI_VERSION: u32 = 5;
+const GPU_PARAMS_ABI_VERSION: u32 = 8;
 const MASK_EFFECT_ID_SHIFT: u32 = 8;
 pub(super) const LIGHT_RAYS_MASK_ATLAS_EDGE: u32 = if cfg!(target_os = "android") {
     256
@@ -44,12 +49,14 @@ pub(super) const LIGHT_RAYS_MASK_ATLAS_EDGE: u32 = if cfg!(target_os = "android"
 };
 const GPU_PARAMS_ABI_SIZE_BYTES: u32 = 1_072;
 const CAMERA_UNIFORMS_SIZE_BYTES: u32 = 368;
-const SCENE_TONE_UNIFORMS_SIZE_BYTES: u32 = 768;
-const EFFECTS_UNIFORMS_SIZE_BYTES: u32 = 208;
+const SCENE_TONE_UNIFORMS_SIZE_BYTES: u32 = 1_424;
+const EFFECTS_UNIFORMS_SIZE_BYTES: u32 = 224;
 const GPU_STAGE_UNIFORM_SIZE_BYTES: u32 =
     CAMERA_UNIFORMS_SIZE_BYTES + SCENE_TONE_UNIFORMS_SIZE_BYTES + EFFECTS_UNIFORMS_SIZE_BYTES;
-const GPU_STAGE_UNIFORM_ALLOCATION_BYTES: u64 = 512 + 768 + 256;
-const MASK_DATA_SIZE_BYTES: u64 = (std::mem::size_of::<MaskData>() * MAX_LOCAL_MASKS) as u64;
+const GPU_STAGE_UNIFORM_ALLOCATION_BYTES: u64 = 512 + 1_424 + 256;
+const MAX_RENDER_MASK_SLOTS: usize =
+    MAX_LOCAL_MASKS * (MAX_EFFECT_COMPONENTS + 1) + MAX_EFFECT_COMPONENTS;
+const MASK_DATA_SIZE_BYTES: u64 = (std::mem::size_of::<MaskData>() * MAX_RENDER_MASK_SLOTS) as u64;
 const WORK_FORMAT_MARKER: &str = "rgba16float /* CALIBRAW_WORK_FORMAT */";
 const WORKGROUP_EDGE: u32 = 8;
 const TONE_STATS_SIZE_BYTES: u64 = 2 * std::mem::size_of::<[f32; 4]>() as u64;
@@ -278,6 +285,16 @@ struct CameraUniforms {
     _pad_camera_1: u32,
 }
 
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Pod, Zeroable)]
+struct PackedPointColor {
+    sample_range: [f32; 4],
+    hue_range: [f32; 4],
+    saturation_range: [f32; 4],
+    luminance_range: [f32; 4],
+    shifts: [f32; 4],
+}
+
 const _: () = assert!(std::mem::size_of::<CameraUniforms>() == CAMERA_UNIFORMS_SIZE_BYTES as usize);
 
 fn raster_uses_scene_view_transform(exposure: &ExposureParams) -> bool {
@@ -338,6 +355,8 @@ struct SceneToneUniforms {
     xyz_to_rec2020: [[f32; 4]; 3],
     xyz_to_bradford: [[f32; 4]; 3],
     bradford_to_xyz: [[f32; 4]; 3],
+    point_colors: [PackedPointColor; MAX_POINT_COLORS],
+    point_color_meta: [u32; 4],
 }
 
 const _: () =
@@ -348,6 +367,8 @@ const _: () =
 struct EffectsUniforms {
     presence: [f32; 4],
     creative_effects: [f32; 4],
+    // Halation amount, grain amount, any active halation, reserved.
+    film_effects: [f32; 4],
     vignette: [f32; 4],
     vignette_options: [f32; 4],
     vignette_frame: [f32; 4],
@@ -363,7 +384,7 @@ struct EffectsUniforms {
 
 const _: () =
     assert!(std::mem::size_of::<EffectsUniforms>() == EFFECTS_UNIFORMS_SIZE_BYTES as usize);
-const _: () = assert!(GPU_STAGE_UNIFORM_SIZE_BYTES == 1_344);
+const _: () = assert!(GPU_STAGE_UNIFORM_SIZE_BYTES == 2_016);
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
@@ -372,6 +393,8 @@ struct MaskData {
     adjust_0: [f32; 4],
     adjust_1: [f32; 4],
     adjust_2: [f32; 4],
+    // Local halation amount; remaining lanes reserved (grain is global only).
+    film_effects: [f32; 4],
     curves: [[f32; 4]; 8],
     grade_shadows: [f32; 4],
     grade_midtones: [f32; 4],
@@ -387,9 +410,11 @@ struct MaskData {
     hsl_saturation_1: [f32; 4],
     hsl_luminance_0: [f32; 4],
     hsl_luminance_1: [f32; 4],
+    point_colors: [PackedPointColor; MAX_POINT_COLORS],
+    point_color_meta: [u32; 4],
 }
 
-const _: () = assert!(std::mem::size_of::<MaskData>() == 752);
+const _: () = assert!(std::mem::size_of::<MaskData>() == 1_424);
 
 #[derive(Clone, Debug)]
 pub struct GpuParams {
@@ -422,6 +447,28 @@ fn split_eight(values: [f32; 8]) -> ([f32; 4], [f32; 4]) {
         [values[0], values[1], values[2], values[3]],
         [values[4], values[5], values[6], values[7]],
     )
+}
+
+fn pack_point_color(point: PointColor) -> PackedPointColor {
+    let point = point.sanitized();
+    let range = |r: crate::pipeline::PointColorRange| [r.min, r.inner_min, r.inner_max, r.max];
+    PackedPointColor {
+        sample_range: [
+            point.sample_hsl[0],
+            point.sample_hsl[1],
+            point.sample_hsl[2],
+            point.range,
+        ],
+        hue_range: range(point.hue_range),
+        saturation_range: range(point.saturation_range),
+        luminance_range: range(point.luminance_range),
+        shifts: [
+            point.hue_shift / 200.0,
+            point.saturation_shift / 100.0,
+            point.luminance_shift / 100.0,
+            0.0,
+        ],
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -562,17 +609,21 @@ fn effect_mask_data(
     }
 }
 
-fn pack_effect_mask(mask: &LocalMask) -> Option<MaskData> {
+fn pack_effect_mask(
+    effect: MaskEffect,
+    settings: &crate::pipeline::MaskEffectSettings,
+    enabled: bool,
+) -> Option<MaskData> {
     let zero = [0.0; 4];
-    let data = match mask.effect {
+    let data = match effect {
         MaskEffect::Blur => {
-            let effect = mask.effect_settings.blur;
+            let config = settings.blur;
             effect_mask_data(
-                mask.effect,
-                mask.enabled && effect.is_active(),
+                effect,
+                enabled && config.is_active(),
                 [
-                    effect_params::blur::AMOUNT.clamp(effect.amount),
-                    effect_params::blur::RADIUS.clamp(effect.radius),
+                    effect_params::blur::AMOUNT.clamp(config.amount),
+                    effect_params::blur::RADIUS.clamp(config.radius),
                     0.0,
                     0.0,
                 ],
@@ -581,20 +632,20 @@ fn pack_effect_mask(mask: &LocalMask) -> Option<MaskData> {
             )
         }
         MaskEffect::LensBlur => {
-            let effect = mask.effect_settings.lens_blur;
+            let config = settings.lens_blur;
             effect_mask_data(
-                mask.effect,
-                mask.enabled && effect.is_active(),
+                effect,
+                enabled && config.is_active(),
                 [
-                    effect_params::lens_blur::AMOUNT.clamp(effect.amount),
-                    effect_params::lens_blur::RADIUS.clamp(effect.radius),
+                    effect_params::lens_blur::AMOUNT.clamp(config.amount),
+                    effect_params::lens_blur::RADIUS.clamp(config.radius),
                     effect_params::lens_blur::BLADES
-                        .clamp(effect.blades)
+                        .clamp(config.blades)
                         .round(),
-                    effect_params::lens_blur::ROTATION.clamp(effect.rotation),
+                    effect_params::lens_blur::ROTATION.clamp(config.rotation),
                 ],
                 [
-                    effect_params::lens_blur::HIGHLIGHTS.clamp(effect.highlight_boost),
+                    effect_params::lens_blur::HIGHLIGHTS.clamp(config.highlight_boost),
                     0.0,
                     0.0,
                     0.0,
@@ -603,14 +654,14 @@ fn pack_effect_mask(mask: &LocalMask) -> Option<MaskData> {
             )
         }
         MaskEffect::MotionBlur => {
-            let effect = mask.effect_settings.motion_blur;
+            let config = settings.motion_blur;
             effect_mask_data(
-                mask.effect,
-                mask.enabled && effect.is_active(),
+                effect,
+                enabled && config.is_active(),
                 [
-                    effect_params::motion_blur::AMOUNT.clamp(effect.amount),
-                    effect_params::motion_blur::DISTANCE.clamp(effect.distance),
-                    effect_params::motion_blur::ANGLE.clamp(effect.angle),
+                    effect_params::motion_blur::AMOUNT.clamp(config.amount),
+                    effect_params::motion_blur::DISTANCE.clamp(config.distance),
+                    effect_params::motion_blur::ANGLE.clamp(config.angle),
                     0.0,
                 ],
                 zero,
@@ -618,66 +669,66 @@ fn pack_effect_mask(mask: &LocalMask) -> Option<MaskData> {
             )
         }
         MaskEffect::RadialBlur => {
-            let effect = mask.effect_settings.radial_blur;
+            let config = settings.radial_blur;
             effect_mask_data(
-                mask.effect,
-                mask.enabled && effect.is_active(),
+                effect,
+                enabled && config.is_active(),
                 [
-                    effect_params::radial_blur::AMOUNT.clamp(effect.amount),
-                    effect_params::radial_blur::STRENGTH.clamp(effect.strength),
-                    effect_params::radial_blur::CENTER_X.clamp(effect.center[0]),
-                    effect_params::radial_blur::CENTER_Y.clamp(effect.center[1]),
+                    effect_params::radial_blur::AMOUNT.clamp(config.amount),
+                    effect_params::radial_blur::STRENGTH.clamp(config.strength),
+                    effect_params::radial_blur::CENTER_X.clamp(config.center[0]),
+                    effect_params::radial_blur::CENTER_Y.clamp(config.center[1]),
                 ],
-                [effect.mode.shader_value(), 0.0, 0.0, 0.0],
+                [config.mode.shader_value(), 0.0, 0.0, 0.0],
                 zero,
             )
         }
         MaskEffect::TiltShift => {
-            let effect = mask.effect_settings.tilt_shift;
+            let config = settings.tilt_shift;
             effect_mask_data(
-                mask.effect,
-                mask.enabled && effect.is_active(),
+                effect,
+                enabled && config.is_active(),
                 [
-                    effect_params::tilt_shift::AMOUNT.clamp(effect.amount),
-                    effect_params::tilt_shift::RADIUS.clamp(effect.radius),
-                    effect_params::tilt_shift::CENTER_X.clamp(effect.center[0]),
-                    effect_params::tilt_shift::CENTER_Y.clamp(effect.center[1]),
+                    effect_params::tilt_shift::AMOUNT.clamp(config.amount),
+                    effect_params::tilt_shift::RADIUS.clamp(config.radius),
+                    effect_params::tilt_shift::CENTER_X.clamp(config.center[0]),
+                    effect_params::tilt_shift::CENTER_Y.clamp(config.center[1]),
                 ],
                 [
-                    effect_params::tilt_shift::ANGLE.clamp(effect.angle),
-                    effect_params::tilt_shift::FOCUS_WIDTH.clamp(effect.focus_width),
-                    effect_params::tilt_shift::FEATHER.clamp(effect.feather),
+                    effect_params::tilt_shift::ANGLE.clamp(config.angle),
+                    effect_params::tilt_shift::FOCUS_WIDTH.clamp(config.focus_width),
+                    effect_params::tilt_shift::FEATHER.clamp(config.feather),
                     0.0,
                 ],
                 zero,
             )
         }
         MaskEffect::EdgeGlow => {
-            let effect = mask.effect_settings.edge_glow;
-            let color = effect_params::edge_glow::COLOR.clamp(effect.color);
+            let config = settings.edge_glow;
+            let color = effect_params::edge_glow::COLOR.clamp(config.color);
             effect_mask_data(
-                mask.effect,
-                mask.enabled && effect.is_active(),
+                effect,
+                enabled && config.is_active(),
                 [
-                    effect_params::edge_glow::AMOUNT.clamp(effect.amount),
-                    effect_params::edge_glow::EDGE_WIDTH.clamp(effect.edge_width),
-                    effect_params::edge_glow::DETAIL.clamp(effect.detail),
-                    effect_params::edge_glow::GLOW.clamp(effect.glow),
+                    effect_params::edge_glow::AMOUNT.clamp(config.amount),
+                    effect_params::edge_glow::EDGE_WIDTH.clamp(config.edge_width),
+                    effect_params::edge_glow::DETAIL.clamp(config.detail),
+                    effect_params::edge_glow::GLOW.clamp(config.glow),
                 ],
                 [color[0], color[1], color[2], 0.0],
                 zero,
             )
         }
         MaskEffect::Glow => {
-            let effect = mask.effect_settings.glow;
-            let color = effect_params::glow::COLOR.clamp(effect.color);
+            let config = settings.glow;
+            let color = effect_params::glow::COLOR.clamp(config.color);
             effect_mask_data(
-                mask.effect,
-                mask.enabled && effect.is_active(),
+                effect,
+                enabled && config.is_active(),
                 [
-                    effect_params::glow::AMOUNT.clamp(effect.amount),
-                    effect_params::glow::RADIUS.clamp(effect.radius),
-                    effect_params::glow::CORE.clamp(effect.core),
+                    effect_params::glow::AMOUNT.clamp(config.amount),
+                    effect_params::glow::RADIUS.clamp(config.radius),
+                    effect_params::glow::CORE.clamp(config.core),
                     0.0,
                 ],
                 [color[0], color[1], color[2], 0.0],
@@ -685,60 +736,60 @@ fn pack_effect_mask(mask: &LocalMask) -> Option<MaskData> {
             )
         }
         MaskEffect::Neon => {
-            let effect = mask.effect_settings.neon;
-            let color = effect_params::neon::COLOR.clamp(effect.color);
+            let config = settings.neon;
+            let color = effect_params::neon::COLOR.clamp(config.color);
             effect_mask_data(
-                mask.effect,
-                mask.enabled && effect.is_active(),
+                effect,
+                enabled && config.is_active(),
                 [
-                    effect_params::neon::AMOUNT.clamp(effect.amount),
-                    effect_params::neon::EDGE_WIDTH.clamp(effect.edge_width),
-                    effect_params::neon::DETAIL.clamp(effect.detail),
-                    effect_params::neon::GLOW.clamp(effect.glow),
+                    effect_params::neon::AMOUNT.clamp(config.amount),
+                    effect_params::neon::EDGE_WIDTH.clamp(config.edge_width),
+                    effect_params::neon::DETAIL.clamp(config.detail),
+                    effect_params::neon::GLOW.clamp(config.glow),
                 ],
                 [
                     color[0],
                     color[1],
                     color[2],
-                    effect_params::neon::BACKGROUND.clamp(effect.background),
+                    effect_params::neon::BACKGROUND.clamp(config.background),
                 ],
                 zero,
             )
         }
         MaskEffect::LightRays => {
-            let effect = mask.effect_settings.light_rays;
-            let color = effect_params::light_rays::COLOR.clamp(effect.color);
+            let config = settings.light_rays;
+            let color = effect_params::light_rays::COLOR.clamp(config.color);
             effect_mask_data(
-                mask.effect,
-                mask.enabled && effect.is_active(),
+                effect,
+                enabled && config.is_active(),
                 [
-                    effect_params::light_rays::AMOUNT.clamp(effect.amount),
-                    effect_params::light_rays::LENGTH.clamp(effect.length),
-                    effect_params::light_rays::SOURCE_X.clamp(effect.source[0]),
-                    effect_params::light_rays::SOURCE_Y.clamp(effect.source[1]),
+                    effect_params::light_rays::AMOUNT.clamp(config.amount),
+                    effect_params::light_rays::LENGTH.clamp(config.length),
+                    effect_params::light_rays::SOURCE_X.clamp(config.source[0]),
+                    effect_params::light_rays::SOURCE_Y.clamp(config.source[1]),
                 ],
                 [
                     color[0],
                     color[1],
                     color[2],
-                    effect_params::light_rays::FADE.clamp(effect.fade),
+                    effect_params::light_rays::FADE.clamp(config.fade),
                 ],
                 [
-                    effect_params::light_rays::SPREAD.clamp(effect.spread),
-                    effect_params::light_rays::RAY_COUNT.clamp(effect.ray_count),
-                    effect_params::light_rays::VARIATION.clamp(effect.variation),
-                    effect_params::light_rays::SOFTNESS.clamp(effect.softness),
+                    effect_params::light_rays::SPREAD.clamp(config.spread),
+                    effect_params::light_rays::RAY_COUNT.clamp(config.ray_count),
+                    effect_params::light_rays::VARIATION.clamp(config.variation),
+                    effect_params::light_rays::SOFTNESS.clamp(config.softness),
                 ],
             )
         }
         MaskEffect::Pixelate => {
-            let effect = mask.effect_settings.pixelate;
+            let config = settings.pixelate;
             effect_mask_data(
-                mask.effect,
-                mask.enabled && effect.is_active(),
+                effect,
+                enabled && config.is_active(),
                 [
-                    effect_params::pixelate::AMOUNT.clamp(effect.amount),
-                    effect_params::pixelate::BLOCK_SIZE.clamp(effect.block_size),
+                    effect_params::pixelate::AMOUNT.clamp(config.amount),
+                    effect_params::pixelate::BLOCK_SIZE.clamp(config.block_size),
                     0.0,
                     0.0,
                 ],
@@ -747,47 +798,47 @@ fn pack_effect_mask(mask: &LocalMask) -> Option<MaskData> {
             )
         }
         MaskEffect::Fog => {
-            let effect = mask.effect_settings.fog;
-            let color = effect_params::fog::COLOR.clamp(effect.color);
+            let config = settings.fog;
+            let color = effect_params::fog::COLOR.clamp(config.color);
             effect_mask_data(
-                mask.effect,
-                mask.enabled && effect.is_active(),
+                effect,
+                enabled && config.is_active(),
                 [
-                    effect_params::fog::AMOUNT.clamp(effect.amount),
-                    effect_params::fog::DENSITY.clamp(effect.density),
-                    effect_params::fog::SCALE.clamp(effect.scale),
-                    effect_params::fog::SOFTNESS.clamp(effect.softness),
+                    effect_params::fog::AMOUNT.clamp(config.amount),
+                    effect_params::fog::DENSITY.clamp(config.density),
+                    effect_params::fog::SCALE.clamp(config.scale),
+                    effect_params::fog::SOFTNESS.clamp(config.softness),
                 ],
                 [
                     color[0],
                     color[1],
                     color[2],
-                    effect_params::fog::VARIATION.clamp(effect.variation),
+                    effect_params::fog::VARIATION.clamp(config.variation),
                 ],
-                [effect_params::fog::SEED.clamp(effect.seed), 0.0, 0.0, 0.0],
+                [effect_params::fog::SEED.clamp(config.seed), 0.0, 0.0, 0.0],
             )
         }
         MaskEffect::Smoke => {
-            let effect = mask.effect_settings.smoke;
-            let color = effect_params::smoke::COLOR.clamp(effect.color);
+            let config = settings.smoke;
+            let color = effect_params::smoke::COLOR.clamp(config.color);
             effect_mask_data(
-                mask.effect,
-                mask.enabled && effect.is_active(),
+                effect,
+                enabled && config.is_active(),
                 [
-                    effect_params::smoke::AMOUNT.clamp(effect.amount),
-                    effect_params::smoke::DENSITY.clamp(effect.density),
-                    effect_params::smoke::SCALE.clamp(effect.scale),
-                    effect_params::smoke::TURBULENCE.clamp(effect.turbulence),
+                    effect_params::smoke::AMOUNT.clamp(config.amount),
+                    effect_params::smoke::DENSITY.clamp(config.density),
+                    effect_params::smoke::SCALE.clamp(config.scale),
+                    effect_params::smoke::TURBULENCE.clamp(config.turbulence),
                 ],
                 [
                     color[0],
                     color[1],
                     color[2],
-                    effect_params::smoke::ANGLE.clamp(effect.angle),
+                    effect_params::smoke::ANGLE.clamp(config.angle),
                 ],
                 [
-                    effect_params::smoke::SOFTNESS.clamp(effect.softness),
-                    effect_params::smoke::SEED.clamp(effect.seed),
+                    effect_params::smoke::SOFTNESS.clamp(config.softness),
+                    effect_params::smoke::SEED.clamp(config.seed),
                     0.0,
                     0.0,
                 ],
@@ -800,7 +851,8 @@ fn pack_effect_mask(mask: &LocalMask) -> Option<MaskData> {
 
 fn pack_adjustment_mask(mask: &LocalMask) -> MaskData {
     let adjustment = mask.adjustments;
-    let adjustment_enabled = mask.enabled && mask.effect.uses_adjustments();
+    let adjustment_enabled =
+        mask.enabled && mask.adjustments_enabled && mask.effect.uses_adjustments();
     let has_hsl = adjustment.has_color_mixer();
     let curve_flags = adjustment.curve_feature_flags();
     let has_grading = adjustment.has_color_grading();
@@ -808,6 +860,10 @@ fn pack_adjustment_mask(mask: &LocalMask) -> MaskData {
     let (hsl_hue_0, hsl_hue_1) = split_eight(adjustment.hsl_hue);
     let (hsl_saturation_0, hsl_saturation_1) = split_eight(adjustment.hsl_saturation);
     let (hsl_luminance_0, hsl_luminance_1) = split_eight(adjustment.hsl_luminance);
+    let mut point_colors = [PackedPointColor::zeroed(); MAX_POINT_COLORS];
+    for (destination, point) in point_colors.iter_mut().zip(adjustment.point_colors.iter()) {
+        *destination = pack_point_color(*point);
+    }
     MaskData {
         metadata: [
             u32::from(adjustment_enabled),
@@ -833,6 +889,12 @@ fn pack_adjustment_mask(mask: &LocalMask) -> MaskData {
             effect_params::adjustment::CLARITY.clamp(adjustment.clarity),
             effect_params::adjustment::DEHAZE.clamp(adjustment.dehaze),
         ],
+        film_effects: [
+            effect_params::adjustment::HALATION.clamp(adjustment.halation_amount),
+            0.0,
+            0.0,
+            0.0,
+        ],
         curves: pack_local_point_curve(&adjustment.tone_curve),
         grade_shadows: pack_color_grade_wheel(adjustment.color_grading.shadows),
         grade_midtones: pack_color_grade_wheel(adjustment.color_grading.midtones),
@@ -848,13 +910,62 @@ fn pack_adjustment_mask(mask: &LocalMask) -> MaskData {
         hsl_saturation_1,
         hsl_luminance_0,
         hsl_luminance_1,
+        point_colors,
+        point_color_meta: [
+            adjustment.point_colors.len() as u32,
+            adjustment
+                .point_color_visualize
+                .map_or(0, |index| (index + 1) as u32),
+            0,
+            0,
+        ],
     }
 }
 
+fn render_mask_slot_count(masks: &MaskStack) -> usize {
+    masks
+        .masks
+        .iter()
+        .map(|mask| 1 + mask.effect_components.len())
+        .sum::<usize>()
+        + masks.global_effects.len()
+}
+
 fn pack_mask_params(masks: &MaskStack) -> Box<[MaskData]> {
-    let mut packed = vec![MaskData::zeroed(); MAX_LOCAL_MASKS].into_boxed_slice();
-    for (destination, mask) in packed.iter_mut().zip(masks.masks.iter()) {
-        *destination = pack_effect_mask(mask).unwrap_or_else(|| pack_adjustment_mask(mask));
+    let mut packed = vec![MaskData::zeroed(); MAX_RENDER_MASK_SLOTS].into_boxed_slice();
+    let mut slot = 0;
+    for (layer, mask) in masks.masks.iter().enumerate() {
+        if mask.effect == MaskEffect::Adjustment {
+            packed[slot] = pack_adjustment_mask(mask);
+            packed[slot].point_color_meta[2] = layer as u32;
+            slot += 1;
+        } else if let Some(mut data) =
+            pack_effect_mask(mask.effect, &mask.effect_settings, mask.enabled)
+        {
+            data.point_color_meta[2] = layer as u32;
+            packed[slot] = data;
+            slot += 1;
+        }
+        for component in &mask.effect_components {
+            if let Some(mut data) = pack_effect_mask(
+                component.effect,
+                &component.settings,
+                mask.enabled && component.enabled,
+            ) {
+                data.point_color_meta[2] = layer as u32;
+                packed[slot] = data;
+                slot += 1;
+            }
+        }
+    }
+    for component in &masks.global_effects {
+        if let Some(mut data) =
+            pack_effect_mask(component.effect, &component.settings, component.enabled)
+        {
+            data.point_color_meta[2] = u32::MAX;
+            packed[slot] = data;
+            slot += 1;
+        }
     }
     packed
 }
@@ -1015,10 +1126,25 @@ fn pack_scene_tone_params(ctx: &GpuParamContext<'_>) -> SceneToneUniforms {
     let (hsl_hue_0, hsl_hue_1) = split_eight(exposure.hsl_hue);
     let (hsl_saturation_0, hsl_saturation_1) = split_eight(exposure.hsl_saturation);
     let (hsl_luminance_0, hsl_luminance_1) = split_eight(exposure.hsl_luminance);
+    let local_point_color_flags = u32::from(masks.masks.iter().any(|mask| {
+        mask.enabled
+            && mask.adjustments_enabled
+            && mask.effect.uses_adjustments()
+            && mask.adjustments.point_colors.has_adjustments()
+    })) | (u32::from(masks.masks.iter().any(|mask| {
+        mask.enabled
+            && mask.adjustments_enabled
+            && mask.effect.uses_adjustments()
+            && mask.adjustments.point_color_visualize.is_some()
+    })) << 1);
     let tone_curve = pack_point_curve(&exposure.tone_curve);
     let tone_curve_red = pack_point_curve(&exposure.tone_curve_red);
     let tone_curve_green = pack_point_curve(&exposure.tone_curve_green);
     let tone_curve_blue = pack_point_curve(&exposure.tone_curve_blue);
+    let mut point_colors = [PackedPointColor::zeroed(); MAX_POINT_COLORS];
+    for (destination, point) in point_colors.iter_mut().zip(exposure.point_colors.iter()) {
+        *destination = pack_point_color(*point);
+    }
 
     SceneToneUniforms {
         exposure: exposure.exposure,
@@ -1069,7 +1195,12 @@ fn pack_scene_tone_params(ctx: &GpuParamContext<'_>) -> SceneToneUniforms {
         hsl_saturation_1,
         hsl_luminance_0,
         hsl_luminance_1,
-        mask_counts: [masks.masks.len().min(MAX_LOCAL_MASKS) as u32, 0, 0, 0],
+        mask_counts: [
+            render_mask_slot_count(masks).min(MAX_RENDER_MASK_SLOTS) as u32,
+            0,
+            0,
+            0,
+        ],
         grade_shadows: pack_color_grade_wheel(exposure.color_grading.shadows),
         grade_midtones: pack_color_grade_wheel(exposure.color_grading.midtones),
         grade_highlights: pack_color_grade_wheel(exposure.color_grading.highlights),
@@ -1094,6 +1225,15 @@ fn pack_scene_tone_params(ctx: &GpuParamContext<'_>) -> SceneToneUniforms {
             [0.986_992_9, 0.432_305_3, -0.008_528_7, 0.0],
             [-0.147_054_3, 0.518_360_3, 0.040_042_8, 0.0],
             [0.159_962_7, 0.049_291_2, 0.968_486_7, 0.0],
+        ],
+        point_colors,
+        point_color_meta: [
+            exposure.point_colors.len() as u32,
+            exposure
+                .point_color_visualize
+                .map_or(0, |index| (index + 1) as u32),
+            0,
+            local_point_color_flags,
         ],
     }
 }
@@ -1125,6 +1265,20 @@ fn pack_effect_params(ctx: &GpuParamContext<'_>, mask_data: &[MaskData]) -> Effe
             global_glow_radius.max(local_glow_radius),
             exposure.glow_threshold.clamp(0.0, 100.0),
             exposure.sharpen_amount.clamp(0.0, 150.0),
+        ],
+        film_effects: [
+            exposure.halation_amount.clamp(0.0, 100.0),
+            exposure.grain_amount.clamp(0.0, 100.0),
+            if exposure.halation_amount > 1e-6
+                || mask_data
+                    .iter()
+                    .any(|mask| mask.metadata[0] != 0 && mask.film_effects[0] > 1e-6)
+            {
+                1.0
+            } else {
+                0.0
+            },
+            0.0,
         ],
         vignette: [
             exposure.vignette_amount.clamp(-100.0, 100.0),
@@ -1304,8 +1458,9 @@ impl GpuParams {
             || self.effects.presence[..3]
                 .iter()
                 .any(|value| value.abs() > 1e-6);
-        let creative = self.effects.creative_effects[0].abs() > 1e-6;
-        let local_count = (self.scene_tone.mask_counts[0] as usize).min(MAX_LOCAL_MASKS);
+        let creative =
+            self.effects.creative_effects[0].abs() > 1e-6 || self.effects.film_effects[0] > 1e-6;
+        let local_count = (self.scene_tone.mask_counts[0] as usize).min(MAX_RENDER_MASK_SLOTS);
         let local_effects = (0..local_count).any(|index| {
             let local = self.mask_data[index];
             let state = local.metadata;
@@ -1335,24 +1490,28 @@ impl GpuParams {
                 || local.adjust_1[3].abs() > 1e-6;
             let curves = state[2] != 0;
             let presence_or_saturation = local.adjust_2.iter().any(|value| value.abs() > 1e-6);
-            tone || white_balance || curves || presence_or_saturation
+            tone || white_balance
+                || curves
+                || presence_or_saturation
+                || local.film_effects[0] > 1e-6
         });
         global_effects || creative || local_effects
     }
 
     fn needs_glow_passes(&self) -> bool {
-        if self.effects.creative_effects[0].abs() > 1e-6 {
+        if self.effects.creative_effects[0].abs() > 1e-6 || self.effects.film_effects[0] > 1e-6 {
             return true;
         }
-        let local_count = (self.scene_tone.mask_counts[0] as usize).min(MAX_LOCAL_MASKS);
+        let local_count = (self.scene_tone.mask_counts[0] as usize).min(MAX_RENDER_MASK_SLOTS);
         self.mask_data[..local_count].iter().any(|mask| {
             mask.metadata[0] != 0
-                && mask.metadata[3] >> MASK_EFFECT_ID_SHIFT == MaskEffect::Glow.shader_id()
+                && (mask.metadata[3] >> MASK_EFFECT_ID_SHIFT == MaskEffect::Glow.shader_id()
+                    || mask.film_effects[0] > 1e-6)
         })
     }
 
     fn needs_blur_passes(&self) -> bool {
-        let local_count = (self.scene_tone.mask_counts[0] as usize).min(MAX_LOCAL_MASKS);
+        let local_count = (self.scene_tone.mask_counts[0] as usize).min(MAX_RENDER_MASK_SLOTS);
         self.mask_data[..local_count].iter().any(|mask| {
             if mask.metadata[0] == 0 {
                 return false;
@@ -1369,7 +1528,7 @@ impl GpuParams {
     }
 
     fn needs_progressive_blur_passes(&self) -> bool {
-        let local_count = (self.scene_tone.mask_counts[0] as usize).min(MAX_LOCAL_MASKS);
+        let local_count = (self.scene_tone.mask_counts[0] as usize).min(MAX_RENDER_MASK_SLOTS);
         self.mask_data[..local_count].iter().any(|mask| {
             mask.metadata[0] != 0
                 && mask.metadata[3] >> MASK_EFFECT_ID_SHIFT == MaskEffect::Blur.shader_id()
@@ -2453,7 +2612,7 @@ impl RawGpuPipeline {
             .take(self.mask_layer_capacity)
             .enumerate()
         {
-            if mask.effect != MaskEffect::LightRays {
+            if !mask.has_light_rays_effect() {
                 continue;
             }
             let values = masks.rasterize_layer_f16(layer, edge, edge, image_width, image_height);
@@ -2751,6 +2910,72 @@ impl RawGpuPipeline {
                 label: "calibraw tiled export readback",
             },
         )
+    }
+
+    /// Read the display color before global point-color adjustments.
+    pub fn read_point_color_sample_blocking(
+        &self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        params: &GpuParams,
+        x: u32,
+        y: u32,
+    ) -> Result<[f32; 3]> {
+        self.read_point_color_sample_with_mode(device, queue, params, x, y, false)
+    }
+
+    /// Read the display color at the input to local point-color adjustments.
+    pub fn read_local_point_color_sample_blocking(
+        &self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        params: &GpuParams,
+        x: u32,
+        y: u32,
+    ) -> Result<[f32; 3]> {
+        self.read_point_color_sample_with_mode(device, queue, params, x, y, true)
+    }
+
+    fn read_point_color_sample_with_mode(
+        &self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        params: &GpuParams,
+        x: u32,
+        y: u32,
+        after_global: bool,
+    ) -> Result<[f32; 3]> {
+        anyhow::ensure!(
+            x < self.width && y < self.height,
+            "point color sample is outside the image"
+        );
+        let mut sample_params = params.clone();
+        sample_params.scene_tone.point_color_meta[2] = if after_global { 2 } else { 1 };
+        self.upload_params(queue, &sample_params);
+        let render = |label| {
+            let mut encoder = device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some(label) });
+            if params.needs_blur_passes() {
+                self.encode_bound_pass(&mut encoder, &self.post_blur_render_pass, label);
+            } else {
+                self.encode_pass(&mut encoder, self.adjustment_render_pass_index);
+            }
+            queue.submit(Some(encoder.finish()));
+        };
+        render("calibraw point color sample");
+        let result = read_float_texture_pixel_blocking(
+            device,
+            queue,
+            &self.display_linear_texture,
+            self.scene_format,
+            x,
+            y,
+        );
+        // Restore even on a mapping failure; visualization must never remain in
+        // the shared export/display attachment after a sampler operation.
+        self.upload_params(queue, params);
+        render("calibraw restore point color preview");
+        result
     }
 
     pub fn begin_display_linear_region_readback(

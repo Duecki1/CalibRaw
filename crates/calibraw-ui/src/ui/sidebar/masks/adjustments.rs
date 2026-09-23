@@ -38,7 +38,13 @@ impl Sidebar {
         title: &'static str,
         default_open: bool,
         foldable: bool,
-        tabs: (&mut ToneCurveTab, &mut ColorGradeTab, &mut HslMixerColor),
+        tabs: (
+            &mut ToneCurveTab,
+            &mut ColorGradeTab,
+            &mut HslMixerColor,
+            &mut crate::ui::components::point_color::PointColorUiState,
+            &mut bool,
+        ),
     ) -> bool {
         let group = match section {
             MaskSection::Light => AdjustmentGroup::Light,
@@ -52,7 +58,7 @@ impl Sidebar {
         let mut changed = false;
         let action = Self::adjustment_card(ui, title, default_open, foldable, true, |ui| {
             changed |= Self::show_local_mask_adjustment_section(
-                ui, adjustment, section, tabs.0, tabs.1, tabs.2,
+                ui, adjustment, section, tabs.0, tabs.1, tabs.2, tabs.3, tabs.4,
             )
             .0;
         });
@@ -66,6 +72,8 @@ impl Sidebar {
         selected_tab: &mut ToneCurveTab,
         selected_grade_tab: &mut ColorGradeTab,
         selected_hsl_color: &mut HslMixerColor,
+        point_color: &mut crate::ui::components::point_color::PointColorUiState,
+        point_color_tab: &mut bool,
     ) -> (bool, bool) {
         match section {
             MaskSection::Properties => (false, false),
@@ -81,7 +89,13 @@ impl Sidebar {
             ),
             MaskSection::Effects => (Self::show_local_mask_effects(ui, adjustment), false),
             MaskSection::ColorMixer => (
-                Self::show_local_mask_color_mixer(ui, adjustment, selected_hsl_color),
+                Self::show_local_mask_color_mixer(
+                    ui,
+                    adjustment,
+                    selected_hsl_color,
+                    point_color,
+                    point_color_tab,
+                ),
                 false,
             ),
         }
@@ -177,6 +191,7 @@ impl Sidebar {
         changed |= float_param_slider(ui, &mut adjustment.texture, params::TEXTURE);
         changed |= float_param_slider(ui, &mut adjustment.clarity, params::CLARITY);
         changed |= float_param_slider(ui, &mut adjustment.dehaze, params::DEHAZE);
+        changed |= float_param_slider(ui, &mut adjustment.halation_amount, params::HALATION);
         changed
     }
 
@@ -214,13 +229,30 @@ impl Sidebar {
         ui: &mut Ui,
         adjustment: &mut crate::pipeline::LocalAdjustments,
         selected_color: &mut HslMixerColor,
+        point_color: &mut crate::ui::components::point_color::PointColorUiState,
+        point_color_tab: &mut bool,
     ) -> bool {
-        hsl_mixer(
-            ui,
-            selected_color,
-            &mut adjustment.hsl_hue,
-            &mut adjustment.hsl_saturation,
-            &mut adjustment.hsl_luminance,
-        )
+        ui.horizontal(|ui| {
+            ui.selectable_value(point_color_tab, false, "Mixer");
+            ui.selectable_value(point_color_tab, true, "Point Color");
+        });
+        ui.add_space(crate::ui::theme::SPACE_XS);
+        if *point_color_tab {
+            crate::ui::components::point_color::point_color(
+                ui,
+                &mut adjustment.point_colors,
+                point_color,
+            )
+        } else {
+            point_color.picker_active = false;
+            point_color.visualize_range = false;
+            hsl_mixer(
+                ui,
+                selected_color,
+                &mut adjustment.hsl_hue,
+                &mut adjustment.hsl_saturation,
+                &mut adjustment.hsl_luminance,
+            )
+        }
     }
 }

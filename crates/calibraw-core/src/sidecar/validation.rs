@@ -136,24 +136,16 @@ pub(super) fn validate_edit_state(edits: &EditState) -> Result<(), SidecarError>
         bounded("subject refinement dab feather", dab.feather, 0.0, 1.0)?;
     }
 
+    validate_effect_components(&stack.global_effects)?;
+
     for (mask_index, mask) in stack.masks.iter().enumerate() {
         finite("mask opacity", &[mask.opacity])?;
         if !(0.0..=1.0).contains(&mask.opacity) {
             return invalid("mask opacity is outside 0..1");
         }
         validate_local_adjustments(&mask.adjustments)?;
-        validate_blur_effect(&mask.effect_settings.blur)?;
-        validate_lens_blur_effect(&mask.effect_settings.lens_blur)?;
-        validate_motion_blur_effect(&mask.effect_settings.motion_blur)?;
-        validate_radial_blur_effect(&mask.effect_settings.radial_blur)?;
-        validate_tilt_shift_effect(&mask.effect_settings.tilt_shift)?;
-        validate_edge_glow_effect(&mask.effect_settings.edge_glow)?;
-        validate_glow_effect(&mask.effect_settings.glow)?;
-        validate_light_rays_effect(&mask.effect_settings.light_rays)?;
-        validate_neon_effect(&mask.effect_settings.neon)?;
-        validate_pixelate_effect(&mask.effect_settings.pixelate)?;
-        validate_fog_effect(&mask.effect_settings.fog)?;
-        validate_smoke_effect(&mask.effect_settings.smoke)?;
+        validate_effect_settings(&mask.effect_settings)?;
+        validate_effect_components(&mask.effect_components)?;
         if mask.name.len() > MAX_EDIT_NAME_BYTES {
             return invalid("mask name is unreasonably long");
         }
@@ -253,6 +245,32 @@ pub(super) fn validate_edit_state(edits: &EditState) -> Result<(), SidecarError>
                         bounded("linear point", *value, -16.0, 16.0)?;
                     }
                     bounded("linear feather", *feather, 0.0, 16.0)?;
+                }
+                MaskGeometry::Path { points, feather } => {
+                    finite("path feather", &[*feather])?;
+                    bounded("path feather", *feather, 0.0, 1.0)?;
+                    if points.len() > MAX_PATH_POINTS {
+                        return invalid("path mask contains too many points");
+                    }
+                    for point in points {
+                        finite(
+                            "path point",
+                            &[
+                                point.position[0],
+                                point.position[1],
+                                point.handle_in[0],
+                                point.handle_in[1],
+                                point.handle_out[0],
+                                point.handle_out[1],
+                            ],
+                        )?;
+                        for value in point.position {
+                            bounded("path point position", value, -16.0, 16.0)?;
+                        }
+                        for value in point.handle_in.into_iter().chain(point.handle_out) {
+                            bounded("path point handle", value, -32.0, 32.0)?;
+                        }
+                    }
                 }
                 MaskGeometry::Ai {
                     mask,
@@ -362,6 +380,7 @@ fn geometry_matches_kind(kind: MaskKind, geometry: &MaskGeometry) -> bool {
             | (MaskKind::Brush, MaskGeometry::Brush { .. })
             | (MaskKind::Radial, MaskGeometry::Radial { .. })
             | (MaskKind::Linear, MaskGeometry::Linear { .. })
+            | (MaskKind::Path, MaskGeometry::Path { .. })
             | (
                 MaskKind::Subject | MaskKind::Background,
                 MaskGeometry::Ai { .. }
@@ -408,6 +427,8 @@ fn validate_exposure(exposure: &ExposureParams) -> Result<(), SidecarError> {
             exposure.sharpen_radius,
             exposure.sharpen_detail,
             exposure.sharpen_masking,
+            exposure.halation_amount,
+            exposure.grain_amount,
             exposure.glow_amount,
             exposure.glow_radius,
             exposure.glow_threshold,
@@ -426,6 +447,7 @@ fn validate_exposure(exposure: &ExposureParams) -> Result<(), SidecarError> {
     finite("global HSL hue", &exposure.hsl_hue)?;
     finite("global HSL saturation", &exposure.hsl_saturation)?;
     finite("global HSL luminance", &exposure.hsl_luminance)?;
+    validate_point_colors(&exposure.point_colors)?;
     validate_curves(
         &[
             &exposure.tone_curve,
@@ -436,6 +458,76 @@ fn validate_exposure(exposure: &ExposureParams) -> Result<(), SidecarError> {
         "global tone curve",
     )?;
     validate_grading(&exposure.color_grading, "global color grading")
+}
+
+fn validate_point_colors(colors: &crate::pipeline::PointColors) -> Result<(), SidecarError> {
+    if colors.len() > crate::pipeline::MAX_POINT_COLORS {
+        return invalid("sidecar contains too many point colors");
+    }
+    for point in colors.iter() {
+        finite(
+            "point color",
+            &[
+                point.sample_hsl[0],
+                point.sample_hsl[1],
+                point.sample_hsl[2],
+                point.hue_shift,
+                point.saturation_shift,
+                point.luminance_shift,
+                point.range,
+                point.hue_range.min,
+                point.hue_range.inner_min,
+                point.hue_range.inner_max,
+                point.hue_range.max,
+                point.saturation_range.min,
+                point.saturation_range.inner_min,
+                point.saturation_range.inner_max,
+                point.saturation_range.max,
+                point.luminance_range.min,
+                point.luminance_range.inner_min,
+                point.luminance_range.inner_max,
+                point.luminance_range.max,
+            ],
+        )?;
+        for value in point.sample_hsl {
+            bounded("point color sample", value, 0.0, 1.0)?;
+        }
+        bounded("point color hue shift", point.hue_shift, -100.0, 100.0)?;
+        bounded(
+            "point color saturation shift",
+            point.saturation_shift,
+            -100.0,
+            100.0,
+        )?;
+        bounded(
+            "point color luminance shift",
+            point.luminance_shift,
+            -100.0,
+            100.0,
+        )?;
+        bounded("point color range", point.range, 0.0, 100.0)?;
+        validate_point_color_range(point.hue_range, 0.5, "point color hue range")?;
+        validate_point_color_range(point.saturation_range, 1.0, "point color saturation range")?;
+        validate_point_color_range(point.luminance_range, 1.0, "point color luminance range")?;
+    }
+    Ok(())
+}
+
+fn validate_point_color_range(
+    range: crate::pipeline::PointColorRange,
+    limit: f32,
+    label: &str,
+) -> Result<(), SidecarError> {
+    for value in [range.min, range.inner_min, range.inner_max, range.max] {
+        bounded(label, value, -limit, limit)?;
+    }
+    if range.min > range.inner_min
+        || range.inner_min > range.inner_max
+        || range.inner_max > range.max
+    {
+        return invalid("point color range bounds are out of order");
+    }
+    Ok(())
 }
 
 fn validate_local_adjustments(
@@ -457,11 +549,13 @@ fn validate_local_adjustments(
             adjustments.texture,
             adjustments.clarity,
             adjustments.dehaze,
+            adjustments.halation_amount,
         ],
     )?;
     finite("local HSL hue", &adjustments.hsl_hue)?;
     finite("local HSL saturation", &adjustments.hsl_saturation)?;
     finite("local HSL luminance", &adjustments.hsl_luminance)?;
+    validate_point_colors(&adjustments.point_colors)?;
     validate_curves(
         &[
             &adjustments.tone_curve,
@@ -488,6 +582,39 @@ fn validate_neon_effect(neon: &crate::pipeline::NeonEffectSettings) -> Result<()
         &neon.color,
     )?;
     validate_effect_color(crate::pipeline::MaskEffect::Neon, neon::COLOR, neon.color)
+}
+
+fn validate_effect_components(
+    components: &[crate::pipeline::EffectComponent],
+) -> Result<(), SidecarError> {
+    if components.len() > crate::pipeline::MAX_EFFECT_COMPONENTS {
+        return invalid("too many effect components");
+    }
+    for component in components {
+        if component.effect == crate::pipeline::MaskEffect::Adjustment {
+            return invalid("Adjustment is not an effect component");
+        }
+        validate_effect_settings(&component.settings)?;
+    }
+    Ok(())
+}
+
+fn validate_effect_settings(
+    settings: &crate::pipeline::MaskEffectSettings,
+) -> Result<(), SidecarError> {
+    validate_blur_effect(&settings.blur)?;
+    validate_lens_blur_effect(&settings.lens_blur)?;
+    validate_motion_blur_effect(&settings.motion_blur)?;
+    validate_radial_blur_effect(&settings.radial_blur)?;
+    validate_tilt_shift_effect(&settings.tilt_shift)?;
+    validate_edge_glow_effect(&settings.edge_glow)?;
+    validate_glow_effect(&settings.glow)?;
+    validate_light_rays_effect(&settings.light_rays)?;
+    validate_neon_effect(&settings.neon)?;
+    validate_pixelate_effect(&settings.pixelate)?;
+    validate_fog_effect(&settings.fog)?;
+    validate_smoke_effect(&settings.smoke)?;
+    Ok(())
 }
 
 fn validate_blur_effect(blur: &crate::pipeline::BlurEffectSettings) -> Result<(), SidecarError> {

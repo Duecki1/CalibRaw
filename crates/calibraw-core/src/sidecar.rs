@@ -2,7 +2,7 @@ use crate::file_ops::{replace_file, sync_parent_directory};
 use crate::pipeline::remove::RemovePatchSidecarCache;
 use crate::pipeline::{
     ExposureParams, GeometryTransform, MaskGeometry, MaskImage, MaskKind, MaskStack,
-    RemoveEditState, SubjectRefinement, MAX_LOCAL_MASKS, MAX_MASK_COMPONENTS,
+    RemoveEditState, SubjectRefinement, MAX_LOCAL_MASKS, MAX_MASK_COMPONENTS, MAX_PATH_POINTS,
     REMOVE_MAX_PATCHES_PER_STROKE, REMOVE_MAX_STROKES,
 };
 use serde::{Deserialize, Serialize};
@@ -147,7 +147,11 @@ pub fn default_edit_state() -> EditState {
 fn is_manual_mask_kind(kind: MaskKind) -> bool {
     matches!(
         kind,
-        MaskKind::Brush | MaskKind::Fullscreen | MaskKind::Radial | MaskKind::Linear
+        MaskKind::Brush
+            | MaskKind::Fullscreen
+            | MaskKind::Radial
+            | MaskKind::Linear
+            | MaskKind::Path
     )
 }
 
@@ -157,6 +161,11 @@ fn filtered_mask_stack(masks: &MaskStack, include_manual: bool, include_ai: bool
     }
 
     MaskStack {
+        global_effects: if include_manual {
+            masks.global_effects.clone()
+        } else {
+            Vec::new()
+        },
         masks: masks
             .masks
             .iter()
@@ -1084,10 +1093,7 @@ pub fn encode(edits: EditState) -> Result<Vec<u8>, SidecarError> {
     encode_with_review(edits, PhotoReview::default())
 }
 
-pub fn encode_with_review(
-    edits: EditState,
-    review: PhotoReview,
-) -> Result<Vec<u8>, SidecarError> {
+pub fn encode_with_review(edits: EditState, review: PhotoReview) -> Result<Vec<u8>, SidecarError> {
     encode_with_review_and_editing_time(edits, review, 0)
 }
 
@@ -1209,11 +1215,8 @@ pub fn save_desktop(raw_path: &Path, edits: EditState) -> Result<PathBuf, Sideca
         .unwrap_or_else(|error| error.into_inner());
     let path = sidecar_path_for_raw(raw_path);
     let metadata = load_sidecar_metadata(raw_path)?;
-    let bytes = encode_with_review_and_editing_time(
-        edits,
-        metadata.review,
-        metadata.editing_time_ms,
-    )?;
+    let bytes =
+        encode_with_review_and_editing_time(edits, metadata.review, metadata.editing_time_ms)?;
     atomic_write(&path, &bytes)?;
     Ok(path)
 }
@@ -1549,6 +1552,7 @@ fn estimate_sidecar_bytes(masks: &MaskStack) -> Result<u64, SidecarError> {
     const MASK_HEADROOM: u64 = 16 * 1024;
     const COMPONENT_HEADROOM: u64 = 2 * 1024;
     const BRUSH_DAB_HEADROOM: u64 = 256;
+    const PATH_POINT_HEADROOM: u64 = 192;
     const OBJECT_STROKE_HEADROOM: u64 = 128;
     const OBJECT_POINT_HEADROOM: u64 = 96;
     const MASK_PNG_FIXED_HEADROOM: u64 = 64 * 1024;
@@ -1570,6 +1574,9 @@ fn estimate_sidecar_bytes(masks: &MaskStack) -> Result<u64, SidecarError> {
             match &component.geometry {
                 MaskGeometry::Brush { dabs, .. } => {
                     checked_add_scaled(&mut estimated, dabs.len(), BRUSH_DAB_HEADROOM)?
+                }
+                MaskGeometry::Path { points, .. } => {
+                    checked_add_scaled(&mut estimated, points.len(), PATH_POINT_HEADROOM)?
                 }
                 MaskGeometry::Ai {
                     mask: Some(image), ..
@@ -1614,6 +1621,7 @@ fn measure_sidecar_dynamic_bytes(masks: &MaskStack) -> Result<u64, SidecarError>
     const OBJECT_STROKE_HEADROOM: u64 = 128;
     const OBJECT_POINT_HEADROOM: u64 = 96;
     const BRUSH_DAB_HEADROOM: u64 = 256;
+    const PATH_POINT_HEADROOM: u64 = 192;
 
     let mut measured = DOCUMENT_HEADROOM;
     checked_add_scaled(
@@ -1632,6 +1640,9 @@ fn measure_sidecar_dynamic_bytes(masks: &MaskStack) -> Result<u64, SidecarError>
             match &component.geometry {
                 MaskGeometry::Brush { dabs, .. } => {
                     checked_add_scaled(&mut measured, dabs.len(), BRUSH_DAB_HEADROOM)?
+                }
+                MaskGeometry::Path { points, .. } => {
+                    checked_add_scaled(&mut measured, points.len(), PATH_POINT_HEADROOM)?
                 }
                 MaskGeometry::Ai {
                     mask: Some(image), ..

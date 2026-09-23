@@ -28,6 +28,12 @@ struct VerticalCardActions {
     scope: Option<usize>,
 }
 
+#[derive(Clone, Copy)]
+struct CardHeaderControls {
+    show_visibility: bool,
+    show_mask_overlay_toggle: bool,
+}
+
 impl CardAction {
     fn apply_reset(self, reset: impl FnOnce()) -> bool {
         match self {
@@ -65,7 +71,7 @@ fn visibility_label(visible: bool, title: &str) -> String {
 }
 
 impl Sidebar {
-    fn adjustment_card_title(ui: &mut Ui, title: &str) {
+    pub(super) fn adjustment_card_title(ui: &mut Ui, title: &str) {
         let response = ui.strong(title);
         if let Some(help) = MaskEffect::ALL
             .iter()
@@ -306,28 +312,10 @@ impl Sidebar {
             default_open,
             foldable,
             controls_enabled,
-            true,
-            false,
-            contents,
-        )
-    }
-
-    pub(super) fn adjustment_card_without_visibility(
-        ui: &mut Ui,
-        title: &'static str,
-        default_open: bool,
-        foldable: bool,
-        controls_enabled: bool,
-        contents: impl FnOnce(&mut Ui),
-    ) -> CardAction {
-        Self::adjustment_card_controls(
-            ui,
-            title,
-            default_open,
-            foldable,
-            controls_enabled,
-            false,
-            false,
+            CardHeaderControls {
+                show_visibility: true,
+                show_mask_overlay_toggle: false,
+            },
             contents,
         )
     }
@@ -345,8 +333,10 @@ impl Sidebar {
             default_open,
             foldable,
             controls_enabled,
-            false,
-            true,
+            CardHeaderControls {
+                show_visibility: false,
+                show_mask_overlay_toggle: true,
+            },
             contents,
         )
     }
@@ -360,10 +350,13 @@ impl Sidebar {
         default_open: bool,
         foldable: bool,
         controls_enabled: bool,
-        show_visibility: bool,
-        show_mask_overlay_toggle: bool,
+        header_controls: CardHeaderControls,
         contents: impl FnOnce(&mut Ui),
     ) -> CardAction {
+        let CardHeaderControls {
+            show_visibility,
+            show_mask_overlay_toggle,
+        } = header_controls;
         let visible = !show_visibility
             || crate::app::preview_visibility::PreviewVisibility::visible(ui.ctx(), title);
         let controls_enabled = controls_enabled && visible;
@@ -400,14 +393,13 @@ impl Sidebar {
                         .show_header(ui, |ui| {
                             let available = ui.available_rect_before_wrap();
                             Self::adjustment_card_title(ui, title);
-                            let card_actions =
-                                Self::card_actions(
-                                    ui,
-                                    title,
-                                    visible,
-                                    show_visibility,
-                                    show_mask_overlay_toggle,
-                                );
+                            let card_actions = Self::card_actions(
+                                ui,
+                                title,
+                                visible,
+                                show_visibility,
+                                show_mask_overlay_toggle,
+                            );
                             action = card_actions.action;
                             let buttons = card_actions.button_rects();
                             // The built-in arrow already toggles. Make the rest of the
@@ -497,34 +489,6 @@ mod tests {
 
     fn text_rect(shapes: &[egui::epaint::ClippedShape], text: &str) -> egui::Rect {
         optional_text_rect(shapes, text).expect("header text")
-    }
-
-    #[test]
-    fn structural_card_has_reset_without_preview_eye() {
-        let ctx = egui::Context::default();
-        PreviewVisibility::set_mask_scope(&ctx, Some(0));
-        PreviewVisibility::toggle(&ctx, "Mask Properties");
-        let output = ctx.run_ui(Default::default(), |ui| {
-            Sidebar::adjustment_card_without_visibility(
-                ui,
-                "Mask Properties",
-                true,
-                false,
-                true,
-                |ui| {
-                    assert!(ui.is_enabled());
-                    ui.label("Controls");
-                },
-            );
-        });
-
-        assert!(optional_text_rect(
-            &output.shapes,
-            egui_phosphor::regular::ARROW_COUNTER_CLOCKWISE
-        )
-        .is_some());
-        assert!(optional_text_rect(&output.shapes, egui_phosphor::regular::EYE).is_none());
-        assert!(optional_text_rect(&output.shapes, egui_phosphor::regular::EYE_SLASH).is_none());
     }
 
     #[test]

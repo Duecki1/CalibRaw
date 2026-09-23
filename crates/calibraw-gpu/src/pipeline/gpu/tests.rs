@@ -13,6 +13,43 @@ use crate::pipeline::{
     NativeRect, PointCurve, ProcessingStage, TONE_GUIDE_CELL_SIZE,
 };
 
+#[test]
+fn point_color_shader_uses_display_srgb_hsl_and_combined_unadjusted_selection() {
+    assert!(SHADER_VIEW_TRANSFORM.contains("fn apply_point_colors(input_rgb: vec3<f32>)"));
+    assert!(SHADER_VIEW_TRANSFORM
+        .contains("fn point_color_selection_weight(sample: vec3<f32>, index: u32)"));
+    assert!(SHADER_VIEW_TRANSFORM.contains("point_color_hue_weight"));
+    assert!(SHADER_VIEW_TRANSFORM.contains("point_color_hsl_to_rgb"));
+    assert!(SHADER_VIEW_TRANSFORM.contains("display_linear = apply_point_colors(display_linear)"));
+    assert!(SHADER_VIEW_TRANSFORM.contains("hue_shift = hue_shift + point.shifts.x * weight"));
+}
+
+#[test]
+fn point_color_visualization_matches_the_mask_overlay_style() {
+    assert!(SHADER_VIEW_TRANSFORM
+        .contains("let overlay_rgb = vec3<f32>(78.0 / 255.0, 163.0 / 255.0, 1.0);"));
+    assert!(SHADER_VIEW_TRANSFORM.contains("let overlay_alpha = selected_weight * (92.0 / 255.0);"));
+    assert!(
+        SHADER_VIEW_TRANSFORM.contains("output_rgb = mix(output_rgb, overlay_rgb, overlay_alpha);")
+    );
+    assert!(!SHADER_VIEW_TRANSFORM
+        .contains("adjusted = mix(vec3<f32>(luminance), adjusted, selected_weight);"));
+}
+
+#[test]
+fn local_point_colors_pack_with_mask_adjustments() {
+    let mut mask = LocalMask::new(MaskKind::Fullscreen, 1);
+    let mut point = crate::pipeline::PointColor::from_srgb([0.8, 0.2, 0.1]);
+    point.hue_shift = 25.0;
+    mask.adjustments.point_colors.push(point);
+    mask.adjustments.point_color_visualize = Some(0);
+    let packed = super::pack_adjustment_mask(&mask);
+    assert_eq!(packed.metadata[0], 1);
+    assert_eq!(packed.metadata[1], 1);
+    assert_eq!(packed.point_color_meta[0..2], [1, 1]);
+    assert!((packed.point_colors[0].shifts[0] - 0.125).abs() < 1e-6);
+}
+
 fn validate_shader(name: &str, source: &str, quality: ProcessingQuality) {
     let format = processing_work_format(quality);
     let mut manager = ShaderManager::new(
@@ -75,8 +112,9 @@ fn adjacent_f32(value: f32, above: bool) -> f32 {
 #[test]
 fn lch_and_rcd_share_sensor_space_highlight_clip_definition() {
     assert!(SHADER_RAW_SAMPLING.contains("fn shared_highlight_sensor_clip() -> f32"));
-    assert!(SHADER_RAW_SAMPLING
-        .contains("return raw_sensor_at(p) >= shared_highlight_sensor_clip();"));
+    assert!(
+        SHADER_RAW_SAMPLING.contains("return raw_sensor_at(p) >= shared_highlight_sensor_clip();")
+    );
     assert!(SHADER_RAW_SAMPLING
         .contains("fn shared_highlight_clip_for_cfa_channel(channel: u32) -> f32"));
     assert!(!SHADER_RAW_SAMPLING.contains("min_wb"));
@@ -104,8 +142,16 @@ fn unequal_wb_does_not_move_raw_highlight_clipping_boundary() {
 
     for (channel, gain) in wb.into_iter().enumerate() {
         let channel_clip = shared_highlight_channel_clip_for_test(highlight_clip, wb, channel);
-        assert_eq!(below >= sensor_clip, below * gain >= channel_clip, "channel={channel}");
-        assert_eq!(above >= sensor_clip, above * gain >= channel_clip, "channel={channel}");
+        assert_eq!(
+            below >= sensor_clip,
+            below * gain >= channel_clip,
+            "channel={channel}"
+        );
+        assert_eq!(
+            above >= sensor_clip,
+            above * gain >= channel_clip,
+            "channel={channel}"
+        );
     }
 
     // The old min(wb) threshold incorrectly marked high-gain channels clipped
@@ -145,8 +191,8 @@ fn opposed_sensor_and_channel_wb_clipping_are_equivalent_with_unequal_wb() {
         for raw_sensor in sensor_values {
             let raw_camera = raw_sensor * gain;
             let sensor_domain = raw_sensor >= sensor_clip;
-            let wb_domain = raw_camera
-                >= DARKTABLE_OPPOSED_CLIP_MAGIC * highlight_clip.max(0.01) * gain;
+            let wb_domain =
+                raw_camera >= DARKTABLE_OPPOSED_CLIP_MAGIC * highlight_clip.max(0.01) * gain;
             assert_eq!(
                 sensor_domain, wb_domain,
                 "channel={channel}, wb={gain}, raw_sensor={raw_sensor}"
@@ -226,7 +272,8 @@ fn mask_effect_packing_preserves_shader_id_activity_and_clamps() {
     mask.effect_settings.blur.amount = 150.0;
     mask.effect_settings.blur.radius = 99.0;
 
-    let packed = pack_effect_mask(&mask).expect("Blur is a GPU-backed mask effect");
+    let packed = pack_effect_mask(mask.effect, &mask.effect_settings, mask.enabled)
+        .expect("Blur is a GPU-backed mask effect");
     assert_eq!(packed.metadata[0], 1);
     assert_eq!(packed.metadata[1], 1);
     assert_eq!(packed.metadata[2], 0);
@@ -237,10 +284,122 @@ fn mask_effect_packing_preserves_shader_id_activity_and_clamps() {
     assert_eq!(packed.adjust_0, [100.0, 16.0, 0.0, 0.0]);
 
     mask.enabled = false;
-    let disabled = pack_effect_mask(&mask).expect("Blur remains representable when disabled");
+    let disabled = pack_effect_mask(mask.effect, &mask.effect_settings, mask.enabled)
+        .expect("Blur remains representable when disabled");
     assert_eq!(disabled.metadata[0], 0);
     assert_eq!(disabled.metadata[1], 0);
     assert_eq!(disabled.adjust_0, packed.adjust_0);
+}
+
+#[test]
+fn effect_components_share_mask_layer_and_global_effects_cover_image() {
+    assert!(super::SHADER_COMMON.contains(&format!(
+        "const MAX_RENDER_MASK_SLOTS: u32 = {}u;",
+        super::MAX_RENDER_MASK_SLOTS
+    )));
+    let mut mask = LocalMask::new(MaskKind::Fullscreen, 1);
+    mask.adjustments.exposure = 0.5;
+    let mut blur = crate::pipeline::EffectComponent::new(MaskEffect::Blur);
+    blur.settings.blur.amount = 60.0;
+    let mut glow = crate::pipeline::EffectComponent::new(MaskEffect::Glow);
+    glow.settings.glow.amount = 40.0;
+    mask.effect_components = vec![blur, glow];
+
+    let mut global = crate::pipeline::EffectComponent::new(MaskEffect::Pixelate);
+    global.settings.pixelate.amount = 25.0;
+    let masks = MaskStack {
+        masks: vec![mask],
+        global_effects: vec![global],
+        ..Default::default()
+    };
+    let packed = super::pack_mask_params(&masks);
+    assert_eq!(super::render_mask_slot_count(&masks), 4);
+    assert_eq!(packed[0].point_color_meta[2], 0);
+    assert_eq!(packed[1].point_color_meta[2], 0);
+    assert_eq!(packed[2].point_color_meta[2], 0);
+    assert_eq!(packed[3].point_color_meta[2], u32::MAX);
+    assert_eq!(
+        packed[1].metadata[3] >> super::MASK_EFFECT_ID_SHIFT,
+        MaskEffect::Blur.shader_id()
+    );
+    assert_eq!(
+        packed[2].metadata[3] >> super::MASK_EFFECT_ID_SHIFT,
+        MaskEffect::Glow.shader_id()
+    );
+    assert_eq!(
+        packed[3].metadata[3] >> super::MASK_EFFECT_ID_SHIFT,
+        MaskEffect::Pixelate.shader_id()
+    );
+}
+
+#[test]
+fn global_and_fullscreen_mask_effects_render_the_same_pixels() -> anyhow::Result<()> {
+    let Some((device, queue)) = request_test_device() else {
+        return Ok(());
+    };
+    const EDGE: u32 = 32;
+    let pixels = (0..EDGE * EDGE)
+        .flat_map(|index| {
+            let value = if (index % EDGE / 4 + index / EDGE / 4) % 2 == 0 {
+                0.1
+            } else {
+                0.8
+            };
+            [value; 3]
+        })
+        .collect();
+    let source = LoadedRaw::from_scene_linear_rec2020(EDGE, EDGE, pixels)?;
+    let exposure = ExposureParams {
+        sharpen_amount: 0.0,
+        ..Default::default()
+    };
+    let mut component = crate::pipeline::EffectComponent::new(MaskEffect::Pixelate);
+    component.settings.pixelate.amount = 100.0;
+    component.settings.pixelate.block_size = 16.0;
+    let mut mask = LocalMask::new(MaskKind::Fullscreen, 1);
+    mask.effect_components.push(component.clone());
+    let local = MaskStack {
+        masks: vec![mask],
+        ..Default::default()
+    };
+    let global = MaskStack {
+        global_effects: vec![component],
+        ..Default::default()
+    };
+    let pipeline = RawGpuPipeline::new_headless_with_quality_and_mask_edge(
+        &device,
+        &queue,
+        &source,
+        &GpuParams::new(&exposure, &local, &source),
+        ProcessingQuality::Preview,
+        64,
+    )?;
+    pipeline.update_mask_layer(&queue, 0, &vec![half::f16::ONE.to_bits(); 64 * 64])?;
+    let render = |masks: &MaskStack| -> anyhow::Result<Vec<u8>> {
+        pipeline.recompute(&queue, &device, &GpuParams::new(&exposure, masks, &source));
+        pipeline.read_output_region_blocking(&device, &queue, 0, 0, EDGE, EDGE)
+    };
+    let baseline = render(&MaskStack::default())?;
+    let local_output = render(&local)?;
+    let global_output = render(&global)?;
+    assert!(local_output != baseline, "Pixelate did not alter the image");
+    assert!(
+        local_output == global_output,
+        "Local and global effects differ"
+    );
+    let mut combined = local.clone();
+    let mut fog = crate::pipeline::EffectComponent::new(MaskEffect::Fog);
+    fog.settings.fog.amount = 80.0;
+    fog.settings.fog.density = 80.0;
+    combined.masks[0].effect_components.push(fog);
+    let stacked_output = render(&combined)?;
+    assert!(stacked_output != local_output, "Second effect did not combine");
+    combined.masks[0].adjustments.exposure = 1.0;
+    assert!(
+        render(&combined)? != stacked_output,
+        "Local adjustment did not combine with the effect"
+    );
+    Ok(())
 }
 
 fn tone_percentile_exposure_follow_from_shader() -> f32 {
@@ -493,7 +652,8 @@ fn gpu_params_pack_the_same_full_source_opposed_reference_for_moved_tiles() {
         .any(|value| value.abs() > 1e-5));
 }
 
-pub(super) fn request_test_device() -> Option<(wgpu::Device, wgpu::Queue)> {
+pub(super) fn request_test_device_with_info(
+) -> Option<(wgpu::Device, wgpu::Queue, wgpu::AdapterInfo)> {
     let instance = wgpu::Instance::default();
     let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
         power_preference: wgpu::PowerPreference::LowPower,
@@ -508,11 +668,18 @@ pub(super) fn request_test_device() -> Option<(wgpu::Device, wgpu::Queue)> {
         }))
     })
     .ok()?;
-    pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+    let info = adapter.get_info();
+    eprintln!("TEST ADAPTER {info:?}");
+    let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
         label: Some("calibraw tone crop consistency test"),
         ..Default::default()
     }))
-    .ok()
+    .ok()?;
+    Some((device, queue, info))
+}
+
+pub(super) fn request_test_device() -> Option<(wgpu::Device, wgpu::Queue)> {
+    request_test_device_with_info().map(|(device, queue, _)| (device, queue))
 }
 
 fn render_tone_consistency_crop(

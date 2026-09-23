@@ -193,7 +193,7 @@ fn apply_hue_rotation_value(input_rgb: vec3<f32>, degrees: f32) -> vec3<f32> {
 
 fn apply_local_hue_rotations(pos: vec2<i32>, input_rgb: vec3<f32>) -> vec3<f32> {
     var rgb = input_rgb;
-    let count = min(Common::scene_tone_uniforms.mask_counts.x, 32u);
+    let count = min(Common::scene_tone_uniforms.mask_counts.x, Common::MAX_RENDER_MASK_SLOTS);
     for (var index = 0u; index < count; index = index + 1u) {
         let state = Common::mask_data[index].metadata;
         if state.x == 0u || Common::mask_effect_id(state) != 0u || (state.w & 4u) == 0u { continue; }
@@ -294,7 +294,7 @@ fn apply_color_grading_wheels(
 
 fn apply_local_color_grading(pos: vec2<i32>, input_rgb: vec3<f32>) -> vec3<f32> {
     var rgb = input_rgb;
-    let count = min(Common::scene_tone_uniforms.mask_counts.x, 32u);
+    let count = min(Common::scene_tone_uniforms.mask_counts.x, Common::MAX_RENDER_MASK_SLOTS);
     for (var index = 0u; index < count; index = index + 1u) {
         let state = Common::mask_data[index].metadata;
         if state.x == 0u || Common::mask_effect_id(state) != 0u || (state.w & 2u) == 0u { continue; }
@@ -383,9 +383,148 @@ fn apply_color_mixer(pos: vec2<i32>, rgb: vec3<f32>) -> vec3<f32> {
     );
 }
 
+fn point_color_hsl(rgb: vec3<f32>) -> vec3<f32> {
+    let linear_srgb = clamp(Common::REC2020_TO_SRGB * rgb, vec3<f32>(0.0), vec3<f32>(1.0));
+    let srgb = Color::srgb_oetf(linear_srgb);
+    let cmax = max(srgb.r, max(srgb.g, srgb.b));
+    let cmin = min(srgb.r, min(srgb.g, srgb.b));
+    let delta = cmax - cmin;
+    let luminance = 0.5 * (cmax + cmin);
+    if delta < 1e-7 {
+        return vec3<f32>(0.0, 0.0, luminance);
+    }
+    var hue = 0.0;
+    if cmax == srgb.r {
+        hue = (srgb.g - srgb.b) / delta;
+        if hue < 0.0 { hue = hue + 6.0; }
+    } else if cmax == srgb.g {
+        hue = (srgb.b - srgb.r) / delta + 2.0;
+    } else {
+        hue = (srgb.r - srgb.g) / delta + 4.0;
+    }
+    hue = hue / 6.0;
+    let saturation = delta / max(1.0 - abs(2.0 * luminance - 1.0), 1e-7);
+    return vec3<f32>(fract(hue + 1.0), saturation, luminance);
+}
+
+fn point_color_range_weight(value: f32, range: vec4<f32>) -> f32 {
+    let distance_min = value - range.y;
+    let distance_max = range.z - value;
+    if distance_min >= 0.0 && distance_max >= 0.0 { return 1.0; }
+    if distance_min < 0.0 {
+        let span = max(range.y - range.x, 1e-5);
+        return smoothstep(0.0, 1.0, 1.0 + distance_min / span);
+    }
+    let span = max(range.w - range.z, 1e-5);
+    return smoothstep(0.0, 1.0, 1.0 + distance_max / span);
+}
+
+fn point_color_hue_weight(value: f32, range: vec4<f32>, scale: f32) -> f32 {
+    let wrapped = fract(value + 1.0);
+    var best = 0.0;
+    for (var offset = -1; offset <= 1; offset = offset + 1) {
+        best = max(best, point_color_range_weight((wrapped + f32(offset)) / scale, range));
+    }
+    return best;
+}
+
+fn point_color_hsl_to_rgb(hsl: vec3<f32>) -> vec3<f32> {
+    let h = fract(hsl.x + 1.0) * 6.0;
+    let s = clamp(hsl.y, 0.0, 1.0);
+    let l = clamp(hsl.z, 0.0, 1.0);
+    let chroma = (1.0 - abs(2.0 * l - 1.0)) * s;
+    let x = chroma * (1.0 - abs(fract(h / 2.0) * 2.0 - 1.0));
+    var rgb = vec3<f32>(0.0);
+    if h < 1.0 { rgb = vec3<f32>(chroma, x, 0.0); }
+    else if h < 2.0 { rgb = vec3<f32>(x, chroma, 0.0); }
+    else if h < 3.0 { rgb = vec3<f32>(0.0, chroma, x); }
+    else if h < 4.0 { rgb = vec3<f32>(0.0, x, chroma); }
+    else if h < 5.0 { rgb = vec3<f32>(x, 0.0, chroma); }
+    else { rgb = vec3<f32>(chroma, 0.0, x); }
+    let m = l - 0.5 * chroma;
+    let encoded = rgb + vec3<f32>(m);
+    let magnitude = abs(encoded);
+    let lo = encoded / 12.92;
+    let hi = sign(encoded) * pow((magnitude + 0.055) / 1.055, vec3<f32>(2.4));
+    let cutoff = step(vec3<f32>(0.04045), magnitude);
+    return Common::SRGB_TO_REC2020 * mix(lo, hi, cutoff);
+}
+
+fn point_color_weight(sample: vec3<f32>, point: Common::PointColor) -> f32 {
+    let range_scale = 0.2 + 1.6 * clamp(point.sample_range.w, 0.0, 100.0) / 100.0;
+    let hue_weight = point_color_hue_weight(sample.x - point.sample_range.x, point.hue_range, range_scale);
+    let saturation_weight = point_color_range_weight((sample.y - point.sample_range.y) / range_scale, point.saturation_range);
+    let luminance_weight = point_color_range_weight((sample.z - point.sample_range.z) / range_scale, point.luminance_range);
+    return hue_weight * saturation_weight * luminance_weight;
+}
+
+fn point_color_selection_weight(sample: vec3<f32>, index: u32) -> f32 {
+    if index >= min(Common::scene_tone_uniforms.point_color_meta.x, 8u) { return 0.0; }
+    return point_color_weight(sample, Common::scene_tone_uniforms.point_colors[index]);
+}
+
+fn apply_point_color_values(input_rgb: vec3<f32>, sample: vec3<f32>, shifts: vec3<f32>) -> vec3<f32> {
+    if max(abs(shifts.x), max(abs(shifts.y), abs(shifts.z))) < 1e-7 { return input_rgb; }
+    let residual = input_rgb - point_color_hsl_to_rgb(sample);
+    return residual + point_color_hsl_to_rgb(sample + shifts);
+}
+
+fn apply_point_colors(input_rgb: vec3<f32>) -> vec3<f32> {
+    let count = min(Common::scene_tone_uniforms.point_color_meta.x, 8u);
+    if count == 0u { return input_rgb; }
+    let sample = point_color_hsl(input_rgb);
+    var hue_shift = 0.0;
+    var saturation_shift = 0.0;
+    var luminance_shift = 0.0;
+    for (var index = 0u; index < count; index = index + 1u) {
+        let point = Common::scene_tone_uniforms.point_colors[index];
+        let weight = point_color_selection_weight(sample, index);
+        hue_shift = hue_shift + point.shifts.x * weight;
+        saturation_shift = saturation_shift + point.shifts.y * weight;
+        luminance_shift = luminance_shift + point.shifts.z * weight;
+    }
+    return apply_point_color_values(input_rgb, sample, vec3<f32>(hue_shift, saturation_shift, luminance_shift));
+}
+
+fn apply_local_point_colors(pos: vec2<i32>, input_rgb: vec3<f32>) -> vec3<f32> {
+    if (Common::scene_tone_uniforms.point_color_meta.w & 1u) == 0u { return input_rgb; }
+    var rgb = input_rgb;
+    let count = min(Common::scene_tone_uniforms.mask_counts.x, Common::MAX_RENDER_MASK_SLOTS);
+    for (var index = 0u; index < count; index = index + 1u) {
+        let state = Common::mask_data[index].metadata;
+        if state.x == 0u || Common::mask_effect_id(state) != 0u { continue; }
+        let color_count = min(Common::mask_data[index].point_color_meta.x, 8u);
+        if color_count == 0u { continue; }
+        let mask_weight = SceneAdjustments::local_mask_weight(pos, index);
+        if mask_weight <= 1e-5 { continue; }
+        let sample = point_color_hsl(rgb);
+        var shifts = vec3<f32>(0.0);
+        for (var color_index = 0u; color_index < color_count; color_index = color_index + 1u) {
+            let point = Common::mask_data[index].point_colors[color_index];
+            shifts = shifts + point.shifts.xyz * point_color_weight(sample, point);
+        }
+        rgb = mix(rgb, apply_point_color_values(rgb, sample, shifts), mask_weight);
+    }
+    return rgb;
+}
+
+fn local_point_color_visualization(pos: vec2<i32>, input_rgb: vec3<f32>) -> f32 {
+    if (Common::scene_tone_uniforms.point_color_meta.w & 2u) == 0u { return 0.0; }
+    let count = min(Common::scene_tone_uniforms.mask_counts.x, Common::MAX_RENDER_MASK_SLOTS);
+    for (var index = 0u; index < count; index = index + 1u) {
+        let state = Common::mask_data[index].metadata;
+        let color_meta = Common::mask_data[index].point_color_meta;
+        let selected = color_meta.y;
+        if selected == 0u || selected > color_meta.x || state.x == 0u || Common::mask_effect_id(state) != 0u { continue; }
+        let mask_weight = SceneAdjustments::local_mask_weight(pos, index);
+        return mask_weight * point_color_weight(point_color_hsl(input_rgb), Common::mask_data[index].point_colors[selected - 1u]);
+    }
+    return 0.0;
+}
+
 fn apply_local_color_mixer(pos: vec2<i32>, input_rgb: vec3<f32>) -> vec3<f32> {
     var rgb = input_rgb;
-    let count = min(Common::scene_tone_uniforms.mask_counts.x, 32u);
+    let count = min(Common::scene_tone_uniforms.mask_counts.x, Common::MAX_RENDER_MASK_SLOTS);
     for (var index = 0u; index < count; index = index + 1u) {
         let state = Common::mask_data[index].metadata;
         if state.x == 0u || Common::mask_effect_id(state) != 0u || (state.w & 1u) == 0u { continue; }
@@ -419,7 +558,7 @@ fn apply_view_transform(scene_rgb: vec3<f32>) -> vec3<f32> {
 
 fn apply_local_display_blacks(pos: vec2<i32>, input_rgb: vec3<f32>) -> vec3<f32> {
     var rgb = input_rgb;
-    let count = min(Common::scene_tone_uniforms.mask_counts.x, 32u);
+    let count = min(Common::scene_tone_uniforms.mask_counts.x, Common::MAX_RENDER_MASK_SLOTS);
     for (var index = 0u; index < count; index = index + 1u) {
         let state = Common::mask_data[index].metadata;
         if state.x == 0u || state.y == 0u || Common::mask_effect_id(state) != 0u { continue; }
@@ -457,7 +596,35 @@ fn apply_view_node(@builtin(global_invocation_id) gid: vec3<u32>) {
     var display_linear = apply_view_transform(graded);
     display_linear = Tonemap::apply_display_blacks_toe_value(display_linear, Common::scene_tone_uniforms.basic_tone.w);
     display_linear = apply_local_display_blacks(pos, display_linear);
+    // Sampling modes capture the input to global or local point color.
+    if Common::scene_tone_uniforms.point_color_meta.z == 1u {
+        textureStore(SceneAdjustments::display_linear_out, pos, vec4<f32>(display_linear, 1.0));
+        return;
+    }
+    // Keep the global range preview anchored to the unadjusted color.
+    let point_color_sample = point_color_hsl(display_linear);
+    display_linear = apply_point_colors(display_linear);
+    if Common::scene_tone_uniforms.point_color_meta.z == 2u {
+        textureStore(SceneAdjustments::display_linear_out, pos, vec4<f32>(display_linear, 1.0));
+        return;
+    }
+    let local_selection = local_point_color_visualization(pos, display_linear);
+    display_linear = apply_local_point_colors(pos, display_linear);
     display_linear = CreativeEffects::apply_vignette(pos, display_linear);
+    display_linear = CreativeEffects::apply_grain(pos, display_linear);
     textureStore(SceneAdjustments::display_linear_out, pos, vec4<f32>(display_linear, 1.0));
-    textureStore(SceneAdjustments::out_tex, pos, vec4<f32>(Profile::apply_output_lut(display_linear), 1.0));
+
+    var output_rgb = Profile::apply_output_lut(display_linear);
+    let visualize_index = Common::scene_tone_uniforms.point_color_meta.y;
+    if visualize_index > 0u || local_selection > 0.0 {
+        let selected_weight = max(
+            select(0.0, point_color_selection_weight(point_color_sample, visualize_index - 1u), visualize_index > 0u),
+            local_selection,
+        );
+        // Match the mask overlay after the output LUT.
+        let overlay_rgb = vec3<f32>(78.0 / 255.0, 163.0 / 255.0, 1.0);
+        let overlay_alpha = selected_weight * (92.0 / 255.0);
+        output_rgb = mix(output_rgb, overlay_rgb, overlay_alpha);
+    }
+    textureStore(SceneAdjustments::out_tex, pos, vec4<f32>(output_rgb, 1.0));
 }

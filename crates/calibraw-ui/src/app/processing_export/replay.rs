@@ -309,34 +309,24 @@ fn transform_used(geometry: GeometryTransform) -> bool {
 }
 
 fn masks_used(masks: &MaskStack) -> bool {
-    masks.masks.iter().any(|mask| {
-        if !mask.enabled || mask.opacity <= 1e-6 {
-            return false;
-        }
-        if !mask
-            .components
-            .iter()
-            .any(|component| component.enabled && component.geometry.is_initialized())
-        {
-            return false;
-        }
+    masks
+        .global_effects
+        .iter()
+        .any(crate::pipeline::EffectComponent::is_active)
+        || masks.masks.iter().any(|mask| {
+            if !mask.enabled || mask.opacity <= 1e-6 {
+                return false;
+            }
+            if !mask
+                .components
+                .iter()
+                .any(|component| component.enabled && component.geometry.is_initialized())
+            {
+                return false;
+            }
 
-        match mask.effect {
-            crate::pipeline::MaskEffect::Adjustment => !mask.adjustments.is_neutral(),
-            crate::pipeline::MaskEffect::Blur => mask.effect_settings.blur.is_active(),
-            crate::pipeline::MaskEffect::LensBlur => mask.effect_settings.lens_blur.is_active(),
-            crate::pipeline::MaskEffect::MotionBlur => mask.effect_settings.motion_blur.is_active(),
-            crate::pipeline::MaskEffect::RadialBlur => mask.effect_settings.radial_blur.is_active(),
-            crate::pipeline::MaskEffect::TiltShift => mask.effect_settings.tilt_shift.is_active(),
-            crate::pipeline::MaskEffect::Glow => mask.effect_settings.glow.is_active(),
-            crate::pipeline::MaskEffect::LightRays => mask.effect_settings.light_rays.is_active(),
-            crate::pipeline::MaskEffect::Neon => mask.effect_settings.neon.is_active(),
-            crate::pipeline::MaskEffect::EdgeGlow => mask.effect_settings.edge_glow.is_active(),
-            crate::pipeline::MaskEffect::Pixelate => mask.effect_settings.pixelate.is_active(),
-            crate::pipeline::MaskEffect::Fog => mask.effect_settings.fog.is_active(),
-            crate::pipeline::MaskEffect::Smoke => mask.effect_settings.smoke.is_active(),
-        }
-    })
+            mask.has_active_edit()
+        })
 }
 
 fn remove_used(remove: &RemoveEditState) -> bool {

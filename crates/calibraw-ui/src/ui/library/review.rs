@@ -581,19 +581,15 @@ pub(super) fn apply_review(app: &mut CalibRawApp, assets: Vec<LibraryAsset>, cha
         let Some(path) = asset.desktop_path() else {
             continue;
         };
-        let current_editing_time_ms = (app.develop.current_path.as_deref() == Some(path))
-            .then(|| app.raw_editing_time_ms());
+        let current_editing_time_ms =
+            (app.develop.current_path.as_deref() == Some(path)).then(|| app.raw_editing_time_ms());
         let result = crate::sidecar::load_photo_review(path).and_then(|mut review| {
             match change {
                 ReviewChange::Flag(flag) => review.flag = flag,
                 ReviewChange::Rating(rating) => review.rating = rating,
             }
             if let Some(editing_time_ms) = current_editing_time_ms {
-                crate::sidecar::save_photo_review_with_editing_time(
-                    path,
-                    review,
-                    editing_time_ms,
-                )?;
+                crate::sidecar::save_photo_review_with_editing_time(path, review, editing_time_ms)?;
             } else {
                 crate::sidecar::save_photo_review(path, review)?;
             }

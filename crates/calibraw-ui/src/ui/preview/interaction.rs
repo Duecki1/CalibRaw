@@ -85,6 +85,7 @@ pub(super) fn begin_mask_drag(
     lens_geometry: Option<&LensGeometryMap>,
     source_width: u32,
     source_height: u32,
+    path_curve_modifier: bool,
 ) -> Option<MaskDragState> {
     match geometry {
         MaskGeometry::Radial {
@@ -215,6 +216,54 @@ pub(super) fn begin_mask_drag(
             } else {
                 None
             }
+        }
+        MaskGeometry::Path { points, .. } => {
+            for (index, point) in points.iter().enumerate() {
+                for (outgoing, handle) in [
+                    (false, point.incoming()),
+                    (true, point.outgoing()),
+                ] {
+                    let dx = handle[0] - point.position[0];
+                    let dy = handle[1] - point.position[1];
+                    if dx * dx + dy * dy <= 1e-10 {
+                        continue;
+                    }
+                    let screen = final_geometry_native_source_to_screen(
+                        image_rect,
+                        display_geometry,
+                        lens_geometry,
+                        source_width,
+                        source_height,
+                        handle,
+                    );
+                    if screen.distance(pointer) <= 18.0 {
+                        return Some(MaskDragState::MovePathHandle { index, outgoing });
+                    }
+                }
+            }
+            for (index, point) in points.iter().enumerate() {
+                let screen = final_geometry_native_source_to_screen(
+                    image_rect,
+                    display_geometry,
+                    lens_geometry,
+                    source_width,
+                    source_height,
+                    point.position,
+                );
+                if screen.distance(pointer) <= 20.0 {
+                    return Some(if path_curve_modifier {
+                        MaskDragState::CreatePathHandles { index }
+                    } else {
+                        MaskDragState::MovePathPoint { index }
+                    });
+                }
+            }
+            (points.len() < crate::pipeline::MAX_PATH_POINTS).then_some(
+                MaskDragState::AddPathPoint {
+                    index: points.len(),
+                    anchor: uv,
+                },
+            )
         }
         _ => None,
     }
