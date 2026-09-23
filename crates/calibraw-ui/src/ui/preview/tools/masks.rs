@@ -753,7 +753,10 @@ impl Preview {
                         *end,
                         48,
                     );
-                    painter.add(Shape::line(axis, Stroke::new(2.0, color)));
+                    painter.add(Shape::line(
+                        axis,
+                        Stroke::new(1.0, color.gamma_multiply(0.65)),
+                    ));
                     let a = final_geometry_native_source_to_screen(
                         image_rect,
                         app.develop.geometry,
@@ -788,6 +791,18 @@ impl Preview {
                     painter.circle_stroke(rotation_handle, 6.0, Stroke::new(2.0, color));
 
                     let width_factor = feather.clamp(0.02, 1.0);
+                    let center_line = linear_isot_geometry_screen_points(
+                        image_rect,
+                        app.develop.geometry,
+                        lens_geometry.as_deref(),
+                        source_width,
+                        source_height,
+                        *start,
+                        *end,
+                        0.5,
+                        64,
+                    );
+                    painter.add(Shape::line(center_line, Stroke::new(2.0, color)));
                     for t in [0.5 - 0.5 * width_factor, 0.5 + 0.5 * width_factor] {
                         let boundary = linear_isot_geometry_screen_points(
                             image_rect,

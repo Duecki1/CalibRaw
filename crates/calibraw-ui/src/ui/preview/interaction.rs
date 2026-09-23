@@ -196,7 +196,7 @@ pub(super) fn begin_mask_drag(
                 Some(MaskDragState::LinearEnd)
             } else if distance_to_polyline(
                 pointer,
-                &linear_axis_geometry_screen_points(
+                &linear_isot_geometry_screen_points(
                     image_rect,
                     display_geometry,
                     lens_geometry,
@@ -204,9 +204,23 @@ pub(super) fn begin_mask_drag(
                     source_height,
                     *start,
                     *end,
+                    0.5,
                     32,
                 ),
             ) <= 18.0
+                || distance_to_polyline(
+                    pointer,
+                    &linear_axis_geometry_screen_points(
+                        image_rect,
+                        display_geometry,
+                        lens_geometry,
+                        source_width,
+                        source_height,
+                        *start,
+                        *end,
+                        32,
+                    ),
+                ) <= 18.0
             {
                 Some(MaskDragState::MoveLinear {
                     pointer: uv,
@@ -219,10 +233,7 @@ pub(super) fn begin_mask_drag(
         }
         MaskGeometry::Path { points, .. } => {
             for (index, point) in points.iter().enumerate() {
-                for (outgoing, handle) in [
-                    (false, point.incoming()),
-                    (true, point.outgoing()),
-                ] {
+                for (outgoing, handle) in [(false, point.incoming()), (true, point.outgoing())] {
                     let dx = handle[0] - point.position[0];
                     let dy = handle[1] - point.position[1];
                     if dx * dx + dy * dy <= 1e-10 {

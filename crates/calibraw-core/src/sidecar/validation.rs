@@ -246,8 +246,13 @@ pub(super) fn validate_edit_state(edits: &EditState) -> Result<(), SidecarError>
                     }
                     bounded("linear feather", *feather, 0.0, 16.0)?;
                 }
-                MaskGeometry::Path { points, feather } => {
-                    finite("path feather", &[*feather])?;
+                MaskGeometry::Path {
+                    points,
+                    grow,
+                    feather,
+                } => {
+                    finite("path shape", &[*grow, *feather])?;
+                    bounded("path grow", *grow, -1.0, 1.0)?;
                     bounded("path feather", *feather, 0.0, 1.0)?;
                     if points.len() > MAX_PATH_POINTS {
                         return invalid("path mask contains too many points");

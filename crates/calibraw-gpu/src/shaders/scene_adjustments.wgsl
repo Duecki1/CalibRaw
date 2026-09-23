@@ -88,8 +88,7 @@ fn apply_local_exposure_nodes(pos: vec2<i32>, input_rgb: vec3<f32>) -> vec3<f32>
         if abs(value) <= 1e-7 { continue; }
         let weight = local_mask_weight(pos, index);
         if weight <= 1e-5 { continue; }
-        let adjusted = rgb * exp2(value);
-        rgb = mix(rgb, adjusted, weight);
+        rgb = rgb * exp2(value * weight);
     }
     return rgb;
 }

@@ -52,11 +52,33 @@ fn common_mask_properties_mutate_through_shared_model_api() {
 }
 
 #[test]
+fn brush_feather_updates_recorded_strokes() {
+    let mut geometry = MaskGeometry::for_kind(MaskKind::Brush);
+    if let MaskGeometry::Brush { dabs, .. } = &mut geometry {
+        dabs.push(BrushDab::default());
+    }
+    assert!(geometry.set_feather(0.1));
+    let MaskGeometry::Brush { feather, dabs, .. } = geometry else {
+        unreachable!();
+    };
+    assert_eq!(feather, 0.1);
+    assert_eq!(dabs[0].feather, 0.1);
+}
+
+#[test]
+fn old_freeform_masks_default_to_zero_grow() {
+    let geometry: MaskGeometry =
+        serde_json::from_str(r#"{"Path":{"points":[],"feather":0.2}}"#).unwrap();
+    assert!(matches!(geometry, MaskGeometry::Path { grow: 0.0, .. }));
+}
+
+#[test]
 fn freeform_path_rasterizes_polygon_and_round_trips_bezier_handles() {
     let mut stack = MaskStack::default();
     assert_eq!(stack.add_mask(MaskKind::Path), Some((0, 0)));
-    let MaskGeometry::Path { points, feather } =
-        &mut stack.masks[0].components[0].geometry
+    let MaskGeometry::Path {
+        points, feather, ..
+    } = &mut stack.masks[0].components[0].geometry
     else {
         panic!("path kind must create path geometry");
     };
@@ -74,12 +96,72 @@ fn freeform_path_rasterizes_polygon_and_round_trips_bezier_handles() {
     assert!(stack.masks[0].components[0].geometry.is_initialized());
 
     let coverage = stack.rasterize_layer(0, 64, 64, 640, 640);
-    assert!(coverage[32 * 64 + 32] > 200, "path center should be selected");
-    assert!(coverage[2 * 64 + 2] < 16, "far outside should stay unselected");
+    assert!(
+        coverage[32 * 64 + 32] > 200,
+        "path center should be selected"
+    );
+    assert!(
+        coverage[2 * 64 + 2] < 16,
+        "far outside should stay unselected"
+    );
 
     let encoded = serde_json::to_string(&stack).expect("serialize path mask");
     let restored: MaskStack = serde_json::from_str(&encoded).expect("deserialize path mask");
     assert_eq!(restored, stack);
+}
+
+#[test]
+fn freeform_feather_stays_inside_outline_and_grow_moves_its_edge() {
+    let mut stack = MaskStack::default();
+    stack.add_mask(MaskKind::Path);
+    let MaskGeometry::Path {
+        points, feather, ..
+    } = &mut stack.selected_component_mut().unwrap().geometry
+    else {
+        unreachable!();
+    };
+    points.extend([
+        PathPoint::corner([0.25, 0.25]),
+        PathPoint::corner([0.75, 0.25]),
+        PathPoint::corner([0.75, 0.75]),
+        PathPoint::corner([0.25, 0.75]),
+    ]);
+    *feather = 1.0;
+    let soft = stack.rasterize_layer(0, 128, 128, 128, 128);
+    assert_eq!(soft[64 * 128 + 29], 0);
+    assert!(soft[64 * 128 + 33] < 255);
+    assert_eq!(soft[64 * 128 + 64], 255);
+
+    if let MaskGeometry::Path { grow, .. } = &mut stack.selected_component_mut().unwrap().geometry {
+        *grow = 0.5;
+    }
+    let grown = stack.rasterize_layer(0, 128, 128, 128, 128);
+    assert!(grown[64 * 128 + 31] > soft[64 * 128 + 31]);
+    if let MaskGeometry::Path { grow, .. } = &mut stack.selected_component_mut().unwrap().geometry {
+        *grow = -0.5;
+    }
+    let shrunk = stack.rasterize_layer(0, 128, 128, 128, 128);
+    assert!(shrunk[64 * 128 + 36] < soft[64 * 128 + 36]);
+}
+
+#[test]
+fn linear_gradient_has_even_falloff_between_its_outer_lines() {
+    let space = MaskRasterSpace::new(128, 1, 128, 1);
+    let coverage = rasterize_linear(space, [0.25, 0.0], [0.75, 0.0], 1.0);
+    assert_eq!(coverage[16], 1.0);
+    assert_eq!(coverage[112], 0.0);
+    assert!((coverage[64] - 0.5).abs() < 0.02);
+    assert!((coverage[48] - 0.75).abs() < 0.02);
+    assert!((coverage[80] - 0.25).abs() < 0.02);
+}
+
+#[test]
+fn color_range_feather_preserves_selected_colors() {
+    let source = MaskRgbImage::new(2, 1, vec![255, 0, 0, 255, 250, 4, 4, 255]).unwrap();
+    let hard = rasterize_color_range(2, 1, &source, [1.0, 0.0, 0.0], 0.15, 0.0);
+    let soft = rasterize_color_range(2, 1, &source, [1.0, 0.0, 0.0], 0.15, 1.0);
+    assert_eq!(hard[1], 1.0);
+    assert_eq!(soft[1], 1.0);
 }
 
 #[test]
@@ -530,8 +612,11 @@ fn cropped_mask_remaps_geometry_to_the_visible_region() {
 fn cropped_path_remaps_anchors_handles_and_feather() {
     let mut stack = MaskStack::default();
     stack.add_mask(MaskKind::Path);
-    if let MaskGeometry::Path { points, feather } =
-        &mut stack.selected_component_mut().unwrap().geometry
+    if let MaskGeometry::Path {
+        points,
+        grow,
+        feather,
+    } = &mut stack.selected_component_mut().unwrap().geometry
     {
         points.push(PathPoint {
             position: [0.75, 0.5],
@@ -541,11 +626,15 @@ fn cropped_path_remaps_anchors_handles_and_feather() {
         points.push(PathPoint::corner([0.9, 0.7]));
         points.push(PathPoint::corner([0.6, 0.8]));
         *feather = 0.4;
+        *grow = 0.2;
     }
 
     let cropped = stack.cropped_for_region(50, 0, 50, 100, 100, 100);
-    let MaskGeometry::Path { points, feather } =
-        &cropped.selected_component().unwrap().geometry
+    let MaskGeometry::Path {
+        points,
+        grow,
+        feather,
+    } = &cropped.selected_component().unwrap().geometry
     else {
         panic!("expected path mask");
     };
@@ -557,6 +646,35 @@ fn cropped_path_remaps_anchors_handles_and_feather() {
     assert!((points[0].handle_out[1] - 0.10).abs() < 1e-6);
     let expected_feather = 0.4 * 2.0f32.powf(1.0 / 1.30);
     assert!((*feather - expected_feather).abs() < 1e-6);
+    assert!((*grow - 0.4).abs() < 1e-6);
+}
+
+#[test]
+fn cropped_radial_mask_keeps_its_feather_width() {
+    let mut stack = MaskStack::default();
+    stack.add_mask(MaskKind::Radial);
+    if let MaskGeometry::Radial {
+        center,
+        radius,
+        feather,
+        initialized,
+        ..
+    } = &mut stack.selected_component_mut().unwrap().geometry
+    {
+        *center = [0.5, 0.5];
+        *radius = [0.25, 0.2];
+        *feather = 0.8;
+        *initialized = true;
+    }
+    let full = stack.rasterize_layer(0, 128, 128, 128, 128);
+    let crop = stack.cropped_for_region(24, 24, 80, 80, 128, 128);
+    let cropped = crop.rasterize_layer(0, 80, 80, 80, 80);
+    for y in 0..80 {
+        assert_eq!(
+            &cropped[y * 80..(y + 1) * 80],
+            &full[(y + 24) * 128 + 24..(y + 24) * 128 + 104]
+        );
+    }
 }
 
 #[test]

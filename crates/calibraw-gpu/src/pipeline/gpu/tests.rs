@@ -340,6 +340,57 @@ fn effect_components_share_mask_layer_and_global_effects_cover_image() {
 }
 
 #[test]
+fn half_mask_exposure_matches_half_the_ev_for_both_signs() -> anyhow::Result<()> {
+    let Some((device, queue)) = request_test_device() else {
+        return Ok(());
+    };
+    const EDGE: u32 = 16;
+    const MASK_EDGE: usize = 64;
+    let source =
+        LoadedRaw::from_scene_linear_rec2020(EDGE, EDGE, vec![0.02; (EDGE * EDGE * 3) as usize])?;
+    let exposure = ExposureParams {
+        sharpen_amount: 0.0,
+        ..Default::default()
+    };
+    let mut masks = MaskStack::default();
+    masks.add_mask(MaskKind::Fullscreen);
+    let pipeline = RawGpuPipeline::new_headless_with_quality_and_mask_edge(
+        &device,
+        &queue,
+        &source,
+        &GpuParams::new(&exposure, &masks, &source),
+        ProcessingQuality::High,
+        MASK_EDGE as u32,
+    )?;
+    let mut render = |ev: f32, weight: f32| -> anyhow::Result<Vec<f32>> {
+        masks.masks[0].adjustments.exposure = ev;
+        let atlas = vec![half::f16::from_f32(weight).to_bits(); MASK_EDGE * MASK_EDGE];
+        pipeline.update_mask_layer(&queue, 0, &atlas)?;
+        pipeline.recompute(&queue, &device, &GpuParams::new(&exposure, &masks, &source));
+        pipeline.read_display_linear_region_blocking(&device, &queue, 0, 0, EDGE, EDGE)
+    };
+    let baseline = render(0.0, 1.0)?;
+    for ev in [-5.0, 5.0] {
+        let half_coverage = render(ev, 0.5)?;
+        let half_ev = render(ev * 0.5, 1.0)?;
+        assert!(
+            half_coverage
+                .iter()
+                .zip(&baseline)
+                .any(|(actual, original)| (actual - original).abs() > 0.005),
+            "{ev} EV did not change the rendered image"
+        );
+        for (actual, expected) in half_coverage.iter().zip(&half_ev) {
+            assert!(
+                (actual - expected).abs() < 0.002,
+                "{ev} EV midpoint shifted"
+            );
+        }
+    }
+    Ok(())
+}
+
+#[test]
 fn global_and_fullscreen_mask_effects_render_the_same_pixels() -> anyhow::Result<()> {
     let Some((device, queue)) = request_test_device() else {
         return Ok(());

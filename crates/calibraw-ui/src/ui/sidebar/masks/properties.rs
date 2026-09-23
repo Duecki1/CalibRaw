@@ -472,7 +472,7 @@ impl Sidebar {
                         Some("Brush stays the same size on screen; zoom in for finer image-space detail."),
                         0.055,
                     );
-                    geometry_changed |= Self::mask_feather_slider(
+                    let feather_changed = Self::mask_feather_slider(
                         ui,
                         "Feather",
                         feather,
@@ -480,6 +480,12 @@ impl Sidebar {
                         "Softness from the brush core to its edge.",
                         0.55,
                     );
+                    if feather_changed {
+                        for dab in dabs.iter_mut() {
+                            dab.feather = *feather;
+                        }
+                        geometry_changed = true;
+                    }
                     ui.horizontal(|ui| {
                         if crate::ui::theme::toggle_button(ui, "Opacity", *opacity_enabled)
                             .on_hover_text(
@@ -550,18 +556,19 @@ impl Sidebar {
                         1.0,
                     );
                 }
-                MaskGeometry::Path { points, feather } => {
+                MaskGeometry::Path { points, grow, feather } => {
                     ui.label(concat!(
                         "Click to add polygon points. Click-drag while adding a point to create a ",
                         "smooth Bézier point. Drag anchors or handles to edit the path; ",
                         "Alt/Option-drag an anchor to create symmetric handles."
                     ));
+                    geometry_changed |= Self::mask_grow_slider(ui, grow);
                     geometry_changed |= Self::mask_feather_slider(
                         ui,
                         "Feather",
                         feather,
                         0.0..=1.0,
-                        "Softens the freeform path boundary.",
+                        "Softens only the inside of the freeform path edge.",
                         0.0,
                     );
                     ui.horizontal_wrapped(|ui| {
@@ -920,8 +927,14 @@ mod card_tests {
             },
             crate::pipeline::PathPoint::corner([0.5, 0.8]),
         ];
-        if let MaskGeometry::Path { points, feather } = &mut mask.components[0].geometry {
+        if let MaskGeometry::Path {
+            points,
+            grow,
+            feather,
+        } = &mut mask.components[0].geometry
+        {
             *points = saved.clone();
+            *grow = 0.5;
             *feather = 0.75;
         }
 
@@ -932,8 +945,13 @@ mod card_tests {
         );
 
         match &mask.components[0].geometry {
-            MaskGeometry::Path { points, feather } => {
+            MaskGeometry::Path {
+                points,
+                grow,
+                feather,
+            } => {
                 assert_eq!(points, &saved);
+                assert_eq!(*grow, 0.0);
                 assert_eq!(*feather, 0.0);
             }
             _ => panic!("path selection changed type"),
