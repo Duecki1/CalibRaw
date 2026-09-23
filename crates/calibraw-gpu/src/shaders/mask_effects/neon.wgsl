@@ -49,7 +49,8 @@ fn apply_neon(
     let neon_color = mask_effect_picker_color_to_working(secondary.xyz);
     let source_luma = max(Common::safe_luma(source_rgb), 0.0);
     let edge_visibility = mix(0.78, 1.12, clamp(sqrt(source_luma), 0.0, 1.0));
-    let emitted = neon_color * emission * edge_visibility * (0.45 + 2.35 * amount);
+    let emitted = neon_color * emission * edge_visibility * 2.8;
     let retained = source_rgb * background;
-    return Color::perceptual_gamut_compress_nonnegative_rec2020(retained + emitted);
+    let stylized = Color::perceptual_gamut_compress_nonnegative_rec2020(retained + emitted);
+    return mix(source_rgb, stylized, amount);
 }

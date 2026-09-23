@@ -66,7 +66,10 @@ fn validate_shader(name: &str, source: &str, quality: ProcessingQuality) {
     .unwrap();
     let source = match quality {
         ProcessingQuality::Preview => std::borrow::Cow::Borrowed(source),
-        ProcessingQuality::High => work_shader_source(source, format).unwrap(),
+        ProcessingQuality::High if source.contains("CALIBRAW_WORK_FORMAT") => {
+            work_shader_source(source, format).unwrap()
+        }
+        ProcessingQuality::High => std::borrow::Cow::Borrowed(source),
     };
     let module = manager
         .compose_naga_module(source.as_ref(), "shader_test.wgsl")
@@ -235,6 +238,7 @@ fn high_quality_shaders_validate() {
         ("color denoise", SHADER_COLOR_DENOISE),
         ("Remove composite", SHADER_REMOVE_COMPOSITE),
         ("scene adjustments", SHADER_SCENE_ADJUSTMENTS),
+        ("creative effects", SHADER_CREATIVE_EFFECTS),
     ] {
         validate_shader(name, source, ProcessingQuality::High);
     }
@@ -405,6 +409,125 @@ fn global_and_fullscreen_mask_effects_render_the_same_pixels() -> anyhow::Result
         render(&combined)? != stacked_output,
         "Local adjustment did not combine with the effect"
     );
+    Ok(())
+}
+
+#[test]
+fn off_frame_light_rays_match_fullscreen_mask() -> anyhow::Result<()> {
+    let Some((device, queue)) = request_test_device() else {
+        return Ok(());
+    };
+    const EDGE: u32 = 32;
+    let source =
+        LoadedRaw::from_scene_linear_rec2020(EDGE, EDGE, vec![0.05; (EDGE * EDGE * 3) as usize])?;
+    let exposure = ExposureParams {
+        sharpen_amount: 0.0,
+        ..Default::default()
+    };
+    let mut rays = crate::pipeline::EffectComponent::new(MaskEffect::LightRays);
+    rays.settings.light_rays.amount = 100.0;
+    rays.settings.light_rays.length = 200.0;
+    rays.settings.light_rays.source = [-25.0, 50.0];
+    rays.settings.light_rays.variation = 0.0;
+    let local = MaskStack {
+        masks: vec![{
+            let mut mask = LocalMask::new(MaskKind::Fullscreen, 1);
+            mask.effect_components.push(rays.clone());
+            mask
+        }],
+        ..Default::default()
+    };
+    let global = MaskStack {
+        global_effects: vec![rays],
+        ..Default::default()
+    };
+    let pipeline = RawGpuPipeline::new_headless_with_quality_and_mask_edge(
+        &device,
+        &queue,
+        &source,
+        &GpuParams::new(&exposure, &local, &source),
+        ProcessingQuality::Preview,
+        64,
+    )?;
+    pipeline.update_light_rays_mask_layer(
+        &queue,
+        0,
+        &vec![
+            half::f16::ONE.to_bits();
+            (super::LIGHT_RAYS_MASK_ATLAS_EDGE * super::LIGHT_RAYS_MASK_ATLAS_EDGE) as usize
+        ],
+    )?;
+    let render = |masks: &MaskStack| -> anyhow::Result<Vec<u8>> {
+        pipeline.recompute(&queue, &device, &GpuParams::new(&exposure, masks, &source));
+        pipeline.read_output_region_blocking(&device, &queue, 0, 0, EDGE, EDGE)
+    };
+    let baseline = render(&MaskStack::default())?;
+    let masked = render(&local)?;
+    let unmasked = render(&global)?;
+    assert_ne!(masked, baseline, "Light Rays had no visible effect");
+    assert_eq!(
+        masked, unmasked,
+        "off-frame source changed emission at the image edge"
+    );
+    Ok(())
+}
+
+#[test]
+fn neon_amount_approaches_the_unmodified_image_smoothly() -> anyhow::Result<()> {
+    let Some((device, queue)) = request_test_device() else {
+        return Ok(());
+    };
+    const EDGE: u32 = 32;
+    let pixels = (0..EDGE * EDGE)
+        .flat_map(|index| {
+            let x = index % EDGE;
+            let y = index / EDGE;
+            [if (8..24).contains(&x) && (8..24).contains(&y) {
+                0.8
+            } else {
+                0.05
+            }; 3]
+        })
+        .collect();
+    let source = LoadedRaw::from_scene_linear_rec2020(EDGE, EDGE, pixels)?;
+    let exposure = ExposureParams {
+        sharpen_amount: 0.0,
+        ..Default::default()
+    };
+    let mut neon = crate::pipeline::EffectComponent::new(MaskEffect::Neon);
+    neon.settings.neon.background = 0.0;
+    let mut masks = MaskStack {
+        global_effects: vec![neon],
+        ..Default::default()
+    };
+    let pipeline = RawGpuPipeline::new_headless_with_quality_and_mask_edge(
+        &device,
+        &queue,
+        &source,
+        &GpuParams::new(&exposure, &masks, &source),
+        ProcessingQuality::Preview,
+        64,
+    )?;
+    let render = |masks: &MaskStack| -> anyhow::Result<Vec<u8>> {
+        pipeline.recompute(&queue, &device, &GpuParams::new(&exposure, masks, &source));
+        pipeline.read_output_region_blocking(&device, &queue, 0, 0, EDGE, EDGE)
+    };
+    let baseline = render(&MaskStack::default())?;
+    masks.global_effects[0].settings.neon.amount = 0.01;
+    let subtle = render(&masks)?;
+    masks.global_effects[0].settings.neon.amount = 100.0;
+    let strong = render(&masks)?;
+    let maximum_subtle_change = baseline
+        .iter()
+        .zip(&subtle)
+        .map(|(before, after)| before.abs_diff(*after))
+        .max()
+        .unwrap_or(0);
+    assert!(
+        maximum_subtle_change <= 2,
+        "Neon jumps at a nearly zero Amount"
+    );
+    assert_ne!(strong, baseline, "Neon had no visible effect");
     Ok(())
 }
 
