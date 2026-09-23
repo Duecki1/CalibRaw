@@ -614,7 +614,7 @@ impl Sidebar {
                         *refinement_active,
                     )
                     .on_hover_text(
-                        "Fine-tune the shared Subject / Not Subject boundary with a brush.",
+                        "Fine-tune the shared Subject / Background boundary with a brush.",
                     )
                     .clicked()
                     {
@@ -727,7 +727,7 @@ impl Sidebar {
                         "Feather",
                         feather,
                         0.0..=1.0,
-                        "Softens the BiRefNet subject boundary.",
+                        "Softens the selection edge while keeping the subject interior solid.",
                         0.0,
                     );
                 }

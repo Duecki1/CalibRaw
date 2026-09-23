@@ -43,7 +43,7 @@ impl CalibRawApp {
                         model_download_needed,
                         runtime_download_needed,
                     );
-                    ui.label("Subject masks use BiRefNet's calibrated soft selection directly. Not Subject is the exact inverse of the subject alpha.");
+                    ui.label("Subject masks use BiRefNet's calibrated soft selection directly. Background selects the inverse of the subject alpha.");
                     ui.label("Inference is local. No photograph is uploaded.");
                     Self::show_hugging_face_privacy(
                         ui,
