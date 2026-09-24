@@ -1,6 +1,6 @@
 use super::*;
 
-const INPUT_EDGE: u32 = 384;
+const INPUT_EDGE: u32 = 320;
 
 pub(super) fn sky_mask(
     model_path: &Path,
@@ -19,35 +19,30 @@ pub(super) fn sky_mask(
         [1usize, 3, INPUT_EDGE as usize, INPUT_EDGE as usize],
         normalized,
     ))
-    .context("create SkyWater input tensor")?;
+    .context("create sky segmentation input tensor")?;
     let (output_width, output_height, sky_probabilities) = with_model_session(
-        AiModel::SkyWater,
+        AiModel::SkySeg,
         model_path,
-        SessionOptions::new("SkyWater SegFormer-B2"),
+        SessionOptions::new("SkySeg U2Net"),
         mask_model_retention(true),
         |session| {
-            session.run_with_fallback("SkyWater ONNX inference", |ort_session, _| {
+            session.run_with_fallback("SkySeg ONNX inference", |ort_session, _| {
                 let outputs = ort_session
                     .run(ort::inputs![&input])
-                    .context("run SkyWater ONNX inference")?;
+                    .context("run SkySeg ONNX inference")?;
                 let output = outputs
-                    .values()
-                    .next()
-                    .context("SkyWater returned no output tensors")?;
-                let (shape, logits) = output
+                    .get("1959")
+                    .context("SkySeg returned no primary sky output")?;
+                let (shape, probabilities) = output
                     .try_extract_tensor::<f32>()
-                    .context("read SkyWater output tensor")?;
-                let (width, height) = validate_output_shape(shape, logits.len())?;
-                Ok((
-                    width,
-                    height,
-                    sky_softmax(logits, width as usize * height as usize)?,
-                ))
+                    .context("read SkySeg output tensor")?;
+                let (width, height) = validate_output_shape(shape, probabilities.len())?;
+                Ok((width, height, sky_probabilities_to_mask(probabilities)?))
             })
         },
     )?;
     let mask = image::GrayImage::from_raw(output_width, output_height, sky_probabilities)
-        .context("SkyWater returned an invalid sky mask")?;
+        .context("SkySeg returned an invalid sky mask")?;
     let mut mask =
         image::imageops::resize(&mask, image.width(), image.height(), FilterType::Triangle)
             .into_raw();
@@ -64,40 +59,27 @@ pub(super) fn sky_mask(
 
 fn validate_output_shape(shape: &[i64], len: usize) -> Result<(u32, u32)> {
     anyhow::ensure!(
-        shape.len() == 4 && shape[0] == 1 && shape[1] == 4,
-        "unexpected SkyWater output shape {shape:?}; expected [1, 4, H, W]"
+        shape.len() == 4 && shape[0] == 1 && shape[1] == 1,
+        "unexpected SkySeg output shape {shape:?}; expected [1, 1, H, W]"
     );
-    let height = usize::try_from(shape[2]).context("invalid SkyWater output height")?;
-    let width = usize::try_from(shape[3]).context("invalid SkyWater output width")?;
+    let height = usize::try_from(shape[2]).context("invalid SkySeg output height")?;
+    let width = usize::try_from(shape[3]).context("invalid SkySeg output width")?;
     anyhow::ensure!(
-        width > 0 && height > 0 && width <= 384 && height <= 384,
-        "SkyWater output dimensions are invalid: {shape:?}"
+        width > 0 && height > 0 && width <= INPUT_EDGE as usize && height <= INPUT_EDGE as usize,
+        "SkySeg output dimensions are invalid: {shape:?}"
     );
     anyhow::ensure!(
-        len == width * height * 4,
-        "SkyWater output tensor length does not match {shape:?}"
+        len == width * height,
+        "SkySeg output tensor length does not match {shape:?}"
     );
     Ok((width as u32, height as u32))
 }
 
-fn sky_softmax(logits: &[f32], area: usize) -> Result<Vec<u8>> {
-    anyhow::ensure!(logits.len() == area * 4, "invalid SkyWater logits length");
-    let mut result = Vec::with_capacity(area);
-    for pixel in 0..area {
-        let classes = [
-            logits[pixel],
-            logits[area + pixel],
-            logits[2 * area + pixel],
-            logits[3 * area + pixel],
-        ];
-        anyhow::ensure!(
-            classes.iter().all(|value| value.is_finite()),
-            "SkyWater returned non-finite logits"
-        );
-        let maximum = classes.iter().copied().fold(f32::NEG_INFINITY, f32::max);
-        let exponentials = classes.map(|value| (value - maximum).exp());
-        let probability = exponentials[1] / exponentials.iter().sum::<f32>();
-        result.push((probability * 255.0 + 0.5) as u8);
+fn sky_probabilities_to_mask(probabilities: &[f32]) -> Result<Vec<u8>> {
+    let mut result = Vec::with_capacity(probabilities.len());
+    for &probability in probabilities {
+        anyhow::ensure!(probability.is_finite(), "SkySeg returned non-finite values");
+        result.push((probability.clamp(0.0, 1.0) * 255.0 + 0.5) as u8);
     }
     Ok(result)
 }
@@ -107,22 +89,20 @@ mod tests {
     use super::*;
 
     #[test]
-    fn sky_is_class_one_in_nchw_logits() {
-        let logits = [0.0, 9.0, 9.0, 0.0, 0.0, 0.0, 0.0, 0.0];
-        let mask = sky_softmax(&logits, 2).unwrap();
-        assert!(mask[0] > 250);
-        assert!(mask[1] < 5);
+    fn preserves_absolute_sky_probabilities() {
+        let mask = sky_probabilities_to_mask(&[0.0, 0.5, 1.0]).unwrap();
+        assert_eq!(mask, [0, 128, 255]);
     }
 
     #[test]
     fn rejects_wrong_output_shape() {
-        assert!(validate_output_shape(&[1, 3, 384, 384], 3 * 384 * 384).is_err());
+        assert!(validate_output_shape(&[1, 3, 320, 320], 3 * 320 * 320).is_err());
     }
 
     #[test]
     #[ignore = "requires the published model and ONNX Runtime"]
     fn published_model_runs_end_to_end() {
-        let path = std::env::var("CALIBRAW_TEST_SKYWATER_MODEL").unwrap();
+        let path = std::env::var("CALIBRAW_TEST_SKYSEG_MODEL").unwrap();
         super::initialize_runtime(None, None).unwrap();
         let image = ImageBuffer::from_pixel(64, 40, Rgba([100, 160, 220, 255]));
         let mask = sky_mask(Path::new(&path), &image).unwrap();
