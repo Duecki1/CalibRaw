@@ -215,7 +215,10 @@ fn masks_contain_content_aware_components(masks: &MaskStack) -> bool {
         mask.components
             .iter()
             .any(|component| match (component.kind, &component.geometry) {
-                (MaskKind::Subject | MaskKind::Background, MaskGeometry::Ai { .. }) => true,
+                (
+                    MaskKind::Subject | MaskKind::Background | MaskKind::Sky,
+                    MaskGeometry::Ai { .. },
+                ) => true,
                 (MaskKind::Object, MaskGeometry::Object { strokes, .. }) => strokes
                     .iter()
                     .any(|stroke| stroke.positive && !stroke.points.is_empty()),

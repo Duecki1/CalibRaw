@@ -8,6 +8,7 @@ impl Sidebar {
     ) {
         match kind {
             MaskKind::Subject | MaskKind::Background => app.request_subject_mask(frame),
+            MaskKind::Sky => app.request_sky_mask(frame),
             MaskKind::Object => {
                 if let Err(error) = app.capture_mask_source(frame) {
                     app.report_ai_mask_error(error);

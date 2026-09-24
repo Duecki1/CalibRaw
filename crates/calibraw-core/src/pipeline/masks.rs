@@ -56,6 +56,7 @@ pub enum MaskKind {
     Path,
     Subject,
     Background,
+    Sky,
     Object,
     LuminanceRange,
     ColorRange,
@@ -72,6 +73,7 @@ impl MaskKind {
             Self::Path => "Freeform / Path",
             Self::Subject => "Select Subject",
             Self::Background => "Select Background",
+            Self::Sky => "Select Sky",
             Self::Object => "Select Object",
             Self::LuminanceRange => "Luminance Range",
             Self::ColorRange => "Color Range",
@@ -89,6 +91,7 @@ impl MaskKind {
                 | Self::Path
                 | Self::Subject
                 | Self::Background
+                | Self::Sky
                 | Self::Object
                 | Self::LuminanceRange
                 | Self::ColorRange
@@ -481,7 +484,7 @@ impl MaskGeometry {
                 grow: 0.0,
                 feather: 0.0,
             },
-            MaskKind::Subject | MaskKind::Background => Self::Ai {
+            MaskKind::Subject | MaskKind::Background | MaskKind::Sky => Self::Ai {
                 mask: None,
                 grow: 0.0,
                 feather: 0.0,

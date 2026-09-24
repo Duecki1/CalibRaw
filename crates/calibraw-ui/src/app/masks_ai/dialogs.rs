@@ -2,6 +2,56 @@ use super::*;
 
 impl CalibRawApp {
     pub(in crate::app) fn show_subject_dialogs(&mut self, ctx: &egui::Context) {
+        if let AiConsentState::Sky {
+            runtime_download_needed,
+        } = self.ai.consent
+        {
+            let model_download_needed =
+                !crate::ai_masks::skywater_model_is_verified(&self.skywater_model_path());
+            let runtime_ready = self.ai_runtime_ready();
+            let mut action = crate::ui::theme::DialogAction::None;
+            crate::ui::theme::dialog_window(
+                "Download sky-selection model?", ctx, crate::ui::theme::DIALOG_WIDTH_LARGE,
+            ).show_with_footer(
+                ctx,
+                |ui| {
+                    Self::show_ai_download_summary(
+                        ui,
+                        "SkyWater SegFormer-B2 (~99 MB)",
+                        "create sky masks",
+                        model_download_needed,
+                        runtime_download_needed,
+                    );
+                    self.show_ai_download_details(
+                        ui,
+                        "sky-download-details",
+                        model_download_needed,
+                        runtime_download_needed,
+                        &[("MIT model license", "https://huggingface.co/Realcat/skywater_seg")],
+                        |ui| { ui.label("SkyWater SegFormer-B2 runs locally on a 384 × 384 image. It selects the sky class from the model output. License: MIT."); },
+                    );
+                    self.show_manual_runtime_warning(ui);
+                },
+                |ui| {
+                    action = Self::show_ai_consent_buttons(ui,
+                        if model_download_needed || runtime_download_needed { "Accept & download" } else { "Continue" },
+                        runtime_ready);
+                },
+            );
+            match action {
+                crate::ui::theme::DialogAction::Confirm => {
+                    self.ai.consent = AiConsentState::None;
+                    self.start_sky_worker(self.skywater_model_path(), model_download_needed);
+                }
+                crate::ui::theme::DialogAction::Cancel => {
+                    self.ai.consent = AiConsentState::None;
+                    if self.ai.mask_update_active {
+                        self.cancel_ai_mask_update();
+                    }
+                }
+                crate::ui::theme::DialogAction::None => {}
+            }
+        }
         if let AiConsentState::Subject {
             runtime_download_needed,
         } = self.ai.consent

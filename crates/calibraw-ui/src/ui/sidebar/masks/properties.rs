@@ -427,6 +427,7 @@ impl Sidebar {
                 }
             });
 
+            let is_sky = component.kind == MaskKind::Sky;
             match &mut component.geometry {
                 MaskGeometry::Fullscreen => {}
                 MaskGeometry::Brush {
@@ -607,7 +608,7 @@ impl Sidebar {
                     grow,
                     feather,
                 } => {
-                    if crate::ui::theme::toggle_button(
+                    if !is_sky && crate::ui::theme::toggle_button(
                         ui,
                         if *refinement_active { "Done" } else { "Refine" },
                         *refinement_active,
@@ -619,7 +620,7 @@ impl Sidebar {
                     {
                         *refinement_active = !*refinement_active;
                     }
-                    if *refinement_active {
+                    if !is_sky && *refinement_active {
                         let action = Self::adjustment_card(ui, "Subject refinement", true, false, true, |ui| {
                             ui.horizontal(|ui| {
                                 let width = ((ui.available_width()
@@ -702,14 +703,15 @@ impl Sidebar {
                     }
                     if generated_mask.is_none() {
                         ui.horizontal_wrapped(|ui| {
-                            ui.label(format!(
-                                "Generate in {} quality",
-                                birefnet_quality.label()
-                            ));
+                            if is_sky {
+                                ui.label("Generate with SkyWater SegFormer-B2");
+                            } else {
+                                ui.label(format!("Generate in {} quality", birefnet_quality.label()));
+                            }
                             if ui
                                 .add_enabled(
                                     birefnet_quality_change_enabled,
-                                    egui::Button::new("Generate subject mask"),
+                                    egui::Button::new(if is_sky { "Generate sky mask" } else { "Generate subject mask" }),
                                 )
                                 .clicked()
                             {
@@ -726,7 +728,7 @@ impl Sidebar {
                         "Feather",
                         feather,
                         0.0..=1.0,
-                        "Softens the selection edge while keeping the subject interior solid.",
+                        "Softens the selection edge while keeping the selected interior solid.",
                         0.0,
                     );
                 }
