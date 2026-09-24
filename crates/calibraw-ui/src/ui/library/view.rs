@@ -101,7 +101,8 @@ impl Library {
         let mut selected_size = app.library.thumbnail_size();
         let mut selected_filter = app.library.review_filter;
         let header_title = library_header_title(app);
-        crate::ui::theme::card_header(ui, |ui| {
+        let thumbnail_progress = app.library.thumbnail_background_progress();
+        let show_header = |ui: &mut Ui| {
             crate::ui::theme::toolbar_row(ui, |ui| {
                 if compact_header {
                     ui.spacing_mut().item_spacing.x = crate::ui::theme::SPACE_XS;
@@ -173,7 +174,22 @@ impl Library {
                     }
                 });
             });
-        });
+        };
+        if let Some(progress) = thumbnail_progress {
+            let label = if compact_header {
+                format!("{}/{}", progress.completed, progress.total)
+            } else {
+                format!("Previews {}/{}", progress.completed, progress.total)
+            };
+            crate::ui::theme::progress_card_header(
+                ui,
+                progress.completed as f32 / progress.total.max(1) as f32,
+                &label,
+                show_header,
+            );
+        } else {
+            crate::ui::theme::card_header(ui, show_header);
+        }
         app.set_library_sort_order(selected_sort);
         app.set_library_thumbnail_size(selected_size);
         app.library.review_filter = selected_filter;

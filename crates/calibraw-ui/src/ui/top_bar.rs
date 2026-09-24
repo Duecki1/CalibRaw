@@ -240,42 +240,10 @@ impl TopBar {
         }
     }
 
-    fn show_thumbnail_task_indicator(ui: &mut Ui, app: &CalibRawApp) {
-        let Some(progress) = app.library.thumbnail_background_progress() else {
-            return;
-        };
-        #[cfg(target_os = "android")]
-        if progress.paused {
-            return;
-        }
-        let fraction = progress.completed as f32 / progress.total.max(1) as f32;
-        #[cfg(not(target_os = "android"))]
-        let label = format!("Previews {}/{}", progress.completed, progress.total);
-        #[cfg(target_os = "android")]
-        let label = format!("{}/{}", progress.completed, progress.total);
-        #[cfg(not(target_os = "android"))]
-        let width = 112.0;
-        #[cfg(target_os = "android")]
-        let width = 72.0;
-        let response = ui.add_sized(
-            [width, theme::CONTROL_HEIGHT],
-            egui::ProgressBar::new(fraction)
-                .text(label)
-                .animate(!progress.paused),
-        );
-        let tooltip = if progress.paused {
-            "Thumbnail loading is paused while Develop has priority. It resumes in Library."
-        } else {
-            "Loading and rendering library thumbnails in the background."
-        };
-        response.on_hover_text(tooltip);
-    }
-
     pub(crate) fn show_portrait(ui: &mut Ui, app: &mut CalibRawApp, _frame: &eframe::Frame) {
         theme::prepare_toolbar(ui);
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             app.show_export_task_indicator(ui);
-            Self::show_thumbnail_task_indicator(ui, app);
 
             Self::show_save_control(ui, app, false);
             crate::ui::library::show_current_photo_review(ui, app, true);
@@ -489,7 +457,6 @@ impl TopBar {
             }
 
             app.show_export_task_indicator(ui);
-            Self::show_thumbnail_task_indicator(ui, app);
             ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
                 for (tab, label) in [
                     (AppTab::Library, "Library"),
