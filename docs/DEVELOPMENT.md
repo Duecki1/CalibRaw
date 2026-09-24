@@ -54,9 +54,9 @@ when a change affects appearance.
 
 `scripts/generate_licenses.sh` is the canonical reproducible wrapper around
 cargo-about. It normalizes generated line endings and writes the ignored
-`THIRD_PARTY_LICENSES.md` bundle used by release packaging. Release workflows
-pin cargo-about to 0.9.2; use the same version for local package generation with
-`bash scripts/prepare_release_licenses.sh`.
+`THIRD_PARTY_LICENSES.md` bundle used by release packaging. The script pins
+cargo-about to 0.9.2; run `bash scripts/generate_licenses.sh` to generate the
+bundle locally.
 
 `tools/colorchecker_wb_validate.py` compares rendered and reference D50 XYZ
 ColorChecker patches using CIEDE2000. Run `python3 tools/colorchecker_wb_validate.py
