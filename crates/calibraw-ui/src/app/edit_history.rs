@@ -714,41 +714,42 @@ mod tests {
         let mut history = EditHistory::new(&exposure, &masks, &lens);
         let ctx = egui::Context::default();
         let focus_id = egui::Id::new("history-arrow-field");
-        let mut frame = |pressed: Option<bool>, value: Option<f32>| {
-            let events = pressed.into_iter().map(|pressed| egui::Event::Key {
-                key: egui::Key::ArrowUp,
-                physical_key: None,
-                pressed,
-                repeat: false,
-                modifiers: egui::Modifiers::NONE,
-            });
-            let input = egui::RawInput {
-                events: events.collect(),
-                ..Default::default()
+        {
+            let mut frame = |pressed: Option<bool>, value: Option<f32>| {
+                let events = pressed.into_iter().map(|pressed| egui::Event::Key {
+                    key: egui::Key::ArrowUp,
+                    physical_key: None,
+                    pressed,
+                    repeat: false,
+                    modifiers: egui::Modifiers::NONE,
+                });
+                let input = egui::RawInput {
+                    events: events.collect(),
+                    ..Default::default()
+                };
+                let _ = ctx.run_ui(input, |ui| {
+                    ui.memory_mut(|memory| memory.request_focus(focus_id));
+                    if let Some(value) = value {
+                        exposure.exposure = value;
+                        history.note_change();
+                    }
+                    history.observe(
+                        &exposure,
+                        &masks,
+                        &lens,
+                        edit_history_interaction_active(ui.ctx()),
+                    );
+                });
+                history.undo.len()
             };
-            let _ = ctx.run_ui(input, |ui| {
-                ui.memory_mut(|memory| memory.request_focus(focus_id));
-                if let Some(value) = value {
-                    exposure.exposure = value;
-                    history.note_change();
-                }
-                history.observe(
-                    &exposure,
-                    &masks,
-                    &lens,
-                    edit_history_interaction_active(ui.ctx()),
-                );
-            });
-            history.undo.len()
-        };
 
-        frame(Some(true), Some(0.01));
-        frame(None, Some(0.02));
-        assert_eq!(frame(None, Some(0.03)), 0);
-        assert_eq!(frame(Some(false), None), 1);
-        frame(Some(true), Some(0.04));
-        assert_eq!(frame(Some(false), None), 2);
-        drop(frame);
+            frame(Some(true), Some(0.01));
+            frame(None, Some(0.02));
+            assert_eq!(frame(None, Some(0.03)), 0);
+            assert_eq!(frame(Some(false), None), 1);
+            frame(Some(true), Some(0.04));
+            assert_eq!(frame(Some(false), None), 2);
+        }
 
         let first = history.undo(&exposure, &masks, &lens).unwrap().0;
         assert_eq!(first.exposure.exposure, 0.03);
