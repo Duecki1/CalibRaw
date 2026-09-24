@@ -466,22 +466,97 @@ pub(crate) fn card_header<R>(
     ui: &mut Ui,
     add_contents: impl FnOnce(&mut Ui) -> R,
 ) -> InnerResponse<R> {
+    let inner_width = card_header_inner_width(ui);
+    card_header_frame(ui, ui.visuals().faint_bg_color).show(ui, |ui| {
+        size_card_header_content(ui, inner_width);
+        add_contents(ui)
+    })
+}
+
+fn card_header_frame(ui: &Ui, fill: Color32) -> Frame {
     let horizontal_margin = content_margin(ui) + 2;
-    let frame_width = f32::from(content_margin(ui)) * 2.0 + 6.0;
-    let inner_width = (ui.available_width() - frame_width).max(1.0);
     Frame::new()
-        .fill(ui.visuals().faint_bg_color)
+        .fill(fill)
         .inner_margin(Margin::symmetric(horizontal_margin, 10))
         .corner_radius(CARD_RADIUS)
         .stroke(Stroke::new(
             1.0,
             ui.visuals().widgets.noninteractive.bg_stroke.color,
         ))
-        .show(ui, |ui| {
-            ui.set_width(inner_width);
-            ui.set_max_width(inner_width);
-            add_contents(ui)
-        })
+}
+
+fn card_header_inner_width(ui: &Ui) -> f32 {
+    let frame_width = f32::from(content_margin(ui)) * 2.0 + 6.0;
+    (ui.available_width() - frame_width).max(1.0)
+}
+
+fn size_card_header_content(ui: &mut Ui, inner_width: f32) {
+    ui.set_width(inner_width);
+    ui.set_max_width(inner_width);
+}
+
+pub(crate) fn progress_card_header<R>(
+    ui: &mut Ui,
+    fraction: f32,
+    label: &str,
+    add_contents: impl FnOnce(&mut Ui) -> R,
+) -> InnerResponse<R> {
+    let inner_width = card_header_inner_width(ui);
+    let (track, fill) = if ui.visuals().dark_mode {
+        (
+            Color32::from_rgb(31, 43, 57),
+            Color32::from_rgb(54, 88, 123),
+        )
+    } else {
+        (
+            Color32::from_rgb(221, 234, 247),
+            Color32::from_rgb(166, 200, 231),
+        )
+    };
+    let frame = card_header_frame(ui, track);
+    let mut prepared = frame.begin(ui);
+    // Reserve the fill and text before the widgets so the card keeps its normal
+    // height and the controls remain legible above the progress display.
+    let fill_index = ui.painter().add(egui::Shape::Noop);
+    let text_index = ui.painter().add(egui::Shape::Noop);
+    size_card_header_content(&mut prepared.content_ui, inner_width);
+    let inner = add_contents(&mut prepared.content_ui);
+
+    let rect = frame
+        .widget_rect(prepared.content_ui.min_rect())
+        .shrink(frame.stroke.width);
+    let fraction = fraction.clamp(0.0, 1.0);
+    if fraction > 0.0 {
+        let fill_rect = egui::Rect::from_min_max(
+            rect.min,
+            egui::pos2(rect.left() + rect.width() * fraction, rect.bottom()),
+        );
+        let radius = if fraction >= 1.0 { CARD_RADIUS } else { 0.0 };
+        let corners = egui::CornerRadius {
+            nw: CARD_RADIUS as u8,
+            ne: radius as u8,
+            sw: CARD_RADIUS as u8,
+            se: radius as u8,
+        };
+        ui.painter().set(
+            fill_index,
+            egui::Shape::rect_filled(fill_rect, corners, fill),
+        );
+    }
+    let text_color = ui.visuals().text_color();
+    let text = ui.ctx().fonts_mut(|fonts| {
+        egui::Shape::text(
+            fonts,
+            rect.center(),
+            egui::Align2::CENTER_CENTER,
+            label,
+            egui::FontId::proportional(12.0),
+            text_color,
+        )
+    });
+    ui.painter().set(text_index, text);
+    let response = prepared.end(ui);
+    InnerResponse::new(inner, response)
 }
 
 pub(crate) fn section_card<R>(
