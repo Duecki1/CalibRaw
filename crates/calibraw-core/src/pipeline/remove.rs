@@ -186,6 +186,8 @@ pub struct RemoveStroke {
     pub patches: Vec<RemovePatch>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub retouch: Option<RetouchStroke>,
+    #[serde(default, skip_serializing_if = "RemoveBackend::is_local")]
+    pub backend: RemoveBackend,
     #[serde(default = "default_remove_stroke_opacity")]
     pub opacity: f32,
 }
@@ -196,8 +198,23 @@ impl Default for RemoveStroke {
             brush: RemoveBrushStroke::default(),
             patches: Vec::new(),
             retouch: None,
+            backend: RemoveBackend::Local,
             opacity: 1.0,
         }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RemoveBackend {
+    #[default]
+    Local,
+    Comfy,
+}
+
+impl RemoveBackend {
+    pub const fn is_local(&self) -> bool {
+        matches!(self, Self::Local)
     }
 }
 
@@ -341,12 +358,27 @@ pub fn plan_remove_context_crop(
     image_height: u32,
     mask: &RemoveMask,
 ) -> Option<NativeRect> {
+    plan_remove_context_crop_with_scale(image_width, image_height, mask, 3, 384)
+}
+
+/// Plans one crop around a removal mask. `context_scale` controls how much of
+/// the surrounding scene the model sees relative to the longest mask side.
+pub fn plan_remove_context_crop_with_scale(
+    image_width: u32,
+    image_height: u32,
+    mask: &RemoveMask,
+    context_scale: u32,
+    minimum_edge: u32,
+) -> Option<NativeRect> {
     if image_width == 0 || image_height == 0 || mask.is_empty() {
         return None;
     }
     let shortest = image_width.min(image_height).max(1);
     let mask_edge = mask.bounds.width.max(mask.bounds.height).max(1);
-    let desired = mask_edge.saturating_mul(3).max(384).min(shortest);
+    let desired = mask_edge
+        .saturating_mul(context_scale.max(1))
+        .max(minimum_edge)
+        .min(shortest);
     if mask_edge <= shortest {
         return Some(square_inside_image(
             image_width,
@@ -714,6 +746,27 @@ mod tests {
     use super::*;
 
     #[test]
+    fn remove_backend_round_trips_and_legacy_strokes_default_local() {
+        let mut stroke = RemoveStroke::default();
+        stroke.backend = RemoveBackend::Comfy;
+        let value = serde_json::to_value(&stroke).unwrap();
+        assert_eq!(
+            serde_json::from_value::<RemoveStroke>(value.clone())
+                .unwrap()
+                .backend,
+            RemoveBackend::Comfy
+        );
+        let mut legacy = value;
+        legacy.as_object_mut().unwrap().remove("backend");
+        assert_eq!(
+            serde_json::from_value::<RemoveStroke>(legacy)
+                .unwrap()
+                .backend,
+            RemoveBackend::Local
+        );
+    }
+
+    #[test]
     fn remove_brush_raster_is_hard_binary_before_dilation() {
         let brush = RemoveBrushStroke {
             points: vec![RemoveBrushPoint {
@@ -744,6 +797,25 @@ mod tests {
         assert_eq!(crop.width, crop.height);
         assert!(crop.width >= 900);
         assert_eq!(crop.intersect(mask.bounds), Some(mask.bounds));
+    }
+
+    #[test]
+    fn larger_context_contains_mask_and_reveals_more_surroundings() {
+        let mask = RemoveMask {
+            bounds: NativeRect {
+                x: 2800,
+                y: 2300,
+                width: 300,
+                height: 200,
+            },
+            pixels: vec![255; 300 * 200],
+        };
+        let lama = plan_remove_context_crop(7000, 6000, &mask).unwrap();
+        let qwen = plan_remove_context_crop_with_scale(7000, 6000, &mask, 6, 1024).unwrap();
+        assert_eq!(qwen.width, 1800);
+        assert_eq!(qwen.height, 1800);
+        assert!(qwen.width > lama.width);
+        assert_eq!(qwen.intersect(mask.bounds), Some(mask.bounds));
     }
 
     #[test]
@@ -820,6 +892,22 @@ mod tests {
                 scene[channel],
                 restored[channel]
             );
+        }
+    }
+
+    #[test]
+    fn remove_model_view_round_trips_blue_sky_colors() {
+        let raw = LoadedRaw::from_scene_linear_rec2020(1, 1, vec![0.12, 0.18, 0.09]).unwrap();
+        let exposure = ExposureParams::default();
+        for scene in [[0.06, 0.13, 0.27], [0.12, 0.21, 0.36], [0.20, 0.28, 0.43]] {
+            let model = remove_scene_to_model_srgb(&raw, scene, 2.0);
+            let restored = remove_model_srgb_to_canonical_scene(&raw, &exposure, model, 2.0);
+            for channel in 0..3 {
+                assert!(
+                    (restored[channel] - scene[channel]).abs() < 0.002,
+                    "scene={scene:?}, model={model:?}, restored={restored:?}"
+                );
+            }
         }
     }
 

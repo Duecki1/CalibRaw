@@ -304,6 +304,14 @@ impl CalibRawApp {
             onnx_runtime_mode: self.ai.runtime_mode,
             #[cfg(not(target_os = "android"))]
             discord_rich_presence: self.preferences.discord_rich_presence,
+            #[cfg(not(target_os = "android"))]
+            comfy_url: self.preferences.comfy_url.clone(),
+            #[cfg(not(target_os = "android"))]
+            comfy_prompt: self.preferences.comfy_prompt.clone(),
+            #[cfg(not(target_os = "android"))]
+            comfy_context_scale: self.preferences.comfy_context_scale,
+            #[cfg(not(target_os = "android"))]
+            comfy_workflow: self.preferences.comfy_workflow.clone(),
             camera_profile_mode: self.preferences.camera_profile_mode,
             camera_profile_folder: self.preferences.camera_profile_folder.clone(),
             camera_profile_folder_label: self.preferences.camera_profile_folder_label.clone(),

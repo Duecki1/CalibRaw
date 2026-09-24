@@ -2,6 +2,27 @@ use super::*;
 
 impl CalibRawApp {
     #[cfg(not(target_os = "android"))]
+    pub(crate) fn choose_comfy_workflow(&mut self) {
+        if self.ui.desktop_picker_receiver.is_some() {
+            return;
+        }
+        self.ui.desktop_picker_receiver = Some(spawn_ui_worker(&self.egui_ctx, move || {
+            let dialog = rfd::AsyncFileDialog::new()
+                .set_title("Import ComfyUI Qwen Remove workflow")
+                .add_filter("ComfyUI workflow", &["json"]);
+            let result = pollster::block_on(dialog.pick_file())
+                .map(|handle| {
+                    let path = handle.path().to_path_buf();
+                    let source = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+                    crate::remove::validate_comfy_workflow(&source)
+                        .map_err(|e| format!("{e:#}"))?;
+                    Ok((path, source))
+                })
+                .transpose();
+            crate::app::DesktopPickerEvent::ComfyWorkflow(result)
+        }));
+    }
+    #[cfg(not(target_os = "android"))]
     pub fn open_file_dialog(&mut self, _frame: &eframe::Frame) {
         if self.ui.desktop_picker_receiver.is_some() {
             return;
@@ -98,6 +119,14 @@ impl CalibRawApp {
             }
             crate::app::DesktopPickerEvent::OnnxRuntime(Err(error)) => {
                 self.ui.notice = Some(error);
+            }
+            crate::app::DesktopPickerEvent::ComfyWorkflow(Ok(Some((path, source)))) => {
+                self.preferences.comfy_workflow = Some(source);
+                self.persist_performance_settings();
+                self.ui.notice = Some(format!("Imported ComfyUI workflow from {}", path.display()));
+            }
+            crate::app::DesktopPickerEvent::ComfyWorkflow(Err(error)) => {
+                self.ui.notice = Some(format!("Could not import ComfyUI workflow: {error}"));
             }
             _ => {}
         }

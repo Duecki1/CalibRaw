@@ -61,6 +61,7 @@ pub(crate) enum DesktopPickerEvent {
     LibraryFolder(Option<PathBuf>),
     CameraProfileFolder(Option<PathBuf>),
     OnnxRuntime(Result<Option<(PathBuf, String)>, String>),
+    ComfyWorkflow(Result<Option<(PathBuf, String)>, String>),
 }
 
 #[cfg(target_os = "android")]
@@ -324,16 +325,23 @@ pub(crate) enum SidebarTab {
 pub(crate) enum InpaintTool {
     #[default]
     Remove,
+    #[cfg(not(target_os = "android"))]
+    ComfyRemove,
     Clone,
     Heal,
 }
 
 impl InpaintTool {
+    #[cfg(not(target_os = "android"))]
+    pub(crate) const ALL: [Self; 4] = [Self::Remove, Self::ComfyRemove, Self::Clone, Self::Heal];
+    #[cfg(target_os = "android")]
     pub(crate) const ALL: [Self; 3] = [Self::Remove, Self::Clone, Self::Heal];
 
     pub(crate) const fn label(self) -> &'static str {
         match self {
             Self::Remove => "Remove",
+            #[cfg(not(target_os = "android"))]
+            Self::ComfyRemove => "Qwen Remove",
             Self::Clone => "Clone",
             Self::Heal => "Heal",
         }
@@ -342,18 +350,39 @@ impl InpaintTool {
     pub(crate) const fn retouch(self) -> Option<RetouchTool> {
         match self {
             Self::Remove => None,
+            #[cfg(not(target_os = "android"))]
+            Self::ComfyRemove => None,
             Self::Clone => Some(RetouchTool::Clone),
             Self::Heal => Some(RetouchTool::Heal),
         }
     }
 
-    pub(crate) const fn matches_stroke_tool(self, retouch: Option<RetouchTool>) -> bool {
-        matches!(
-            (self, retouch),
-            (Self::Remove, None)
-                | (Self::Clone, Some(RetouchTool::Clone))
-                | (Self::Heal, Some(RetouchTool::Heal))
-        )
+    pub(crate) const fn matches_stroke_tool(self, stroke: &crate::pipeline::RemoveStroke) -> bool {
+        match self {
+            Self::Remove => {
+                stroke.retouch.is_none()
+                    && matches!(stroke.backend, crate::pipeline::RemoveBackend::Local)
+            }
+            #[cfg(not(target_os = "android"))]
+            Self::ComfyRemove => {
+                stroke.retouch.is_none()
+                    && matches!(stroke.backend, crate::pipeline::RemoveBackend::Comfy)
+            }
+            Self::Clone => matches!(
+                stroke.retouch,
+                Some(crate::pipeline::RetouchStroke {
+                    tool: RetouchTool::Clone,
+                    ..
+                })
+            ),
+            Self::Heal => matches!(
+                stroke.retouch,
+                Some(crate::pipeline::RetouchStroke {
+                    tool: RetouchTool::Heal,
+                    ..
+                })
+            ),
+        }
     }
 }
 
@@ -1075,6 +1104,14 @@ pub(crate) struct PreferencesState {
     pub(crate) export_name_template: String,
     #[cfg(not(target_os = "android"))]
     pub(crate) discord_rich_presence: bool,
+    #[cfg(not(target_os = "android"))]
+    pub(crate) comfy_url: String,
+    #[cfg(not(target_os = "android"))]
+    pub(crate) comfy_prompt: String,
+    #[cfg(not(target_os = "android"))]
+    pub(crate) comfy_context_scale: u32,
+    #[cfg(not(target_os = "android"))]
+    pub(crate) comfy_workflow: Option<String>,
     pub(crate) ui_design: UiDesign,
     pub(crate) preview_backdrop: PreviewBackdrop,
     pub(crate) onboarding_completed: bool,
@@ -1265,6 +1302,10 @@ pub(crate) struct InpaintState {
     pub(crate) pending_retouch: Option<RetouchStroke>,
     pub(crate) receiver: Option<mpsc::Receiver<RemoveEvent>>,
     pub(crate) cancellation: Option<Arc<AtomicBool>>,
+    #[cfg(not(target_os = "android"))]
+    pub(crate) comfy_handoff: Option<Arc<AtomicBool>>,
+    #[cfg(not(target_os = "android"))]
+    pub(crate) comfy_preview_released: bool,
     pub(crate) processing_label: Option<String>,
     pub(crate) hovered_stroke: Option<usize>,
     pub(crate) selected_stroke: Option<usize>,

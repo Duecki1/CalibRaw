@@ -3,6 +3,10 @@ fn inpaint_tool_help(tool: InpaintTool) -> &'static str {
         InpaintTool::Remove => {
             "Paint unwanted content. Big-LaMa repairs a native-resolution local context crop after release."
         }
+        #[cfg(not(target_os = "android"))]
+        InpaintTool::ComfyRemove => {
+            "Paint the area to remove. ComfyUI runs Qwen Image 2.1 on a 1024 px context crop; only the painted mask is blended back."
+        }
         InpaintTool::Clone => {
             "Copy pixels from a source. Ctrl-click (Command-click on macOS) or right-click the image to choose it."
         }
@@ -30,23 +34,19 @@ impl Sidebar {
     ) {
         let tool_help = inpaint_tool_help(app.inpaint.tool);
         crate::ui::theme::section_card_with_help(ui, "Tool", tool_help, |ui| {
-            ui.horizontal(|ui| {
-                let spacing = ui.spacing().item_spacing.x;
-                let tool_width = ((ui.available_width() - spacing * 2.0) / 3.0).max(1.0);
-                for tool in InpaintTool::ALL {
-                    if crate::ui::theme::segmented_button(
-                        ui,
-                        tool.label(),
-                        app.inpaint.tool == tool,
-                        tool_width,
-                    )
-                    .on_hover_text(inpaint_tool_help(tool))
-                    .clicked()
-                    {
-                        app.dispatch_action(AppAction::SelectInpaintTool(tool));
+            let columns = 2;
+            let spacing = ui.spacing().item_spacing.x;
+            let tool_width = ((ui.available_width() - spacing) / columns as f32).max(1.0);
+            for row in InpaintTool::ALL.chunks(columns) {
+                ui.horizontal(|ui| {
+                    for &tool in row {
+                        if crate::ui::theme::segmented_button(ui, tool.label(), app.inpaint.tool == tool, tool_width)
+                            .on_hover_text(inpaint_tool_help(tool)).clicked() {
+                            app.dispatch_action(AppAction::SelectInpaintTool(tool));
+                        }
                     }
-                }
-            });
+                });
+            }
 
             if app.inpaint.tool.retouch().is_some() {
                 let previous_alignment = app.inpaint.alignment;
@@ -169,7 +169,7 @@ impl Sidebar {
                 .filter_map(|(index, stroke)| {
                     app.inpaint
                         .tool
-                        .matches_stroke_tool(stroke.retouch.map(|retouch| retouch.tool))
+                        .matches_stroke_tool(stroke)
                         .then_some(index)
                 })
                 .collect::<Vec<_>>();

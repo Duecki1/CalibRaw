@@ -581,6 +581,60 @@ impl Settings {
         {
             crate::ui::theme::card_gap(ui);
             crate::ui::theme::content_card(ui, |ui| {
+                crate::ui::theme::heading_with_help(ui, "ComfyUI Remove", "Qwen Image 2.1 runs in your ComfyUI server using a 1024 px local crop. CalibRaw releases its preview GPU resources while the workflow runs.");
+                ui.label("ComfyUI server URL");
+                if ui
+                    .text_edit_singleline(&mut app.preferences.comfy_url)
+                    .changed()
+                {
+                    app.persist_performance_settings();
+                }
+                ui.label("Removal prompt");
+                if ui
+                    .add(
+                        egui::TextEdit::multiline(&mut app.preferences.comfy_prompt)
+                            .desired_rows(3)
+                            .desired_width(f32::INFINITY),
+                    )
+                    .changed()
+                {
+                    app.persist_performance_settings();
+                }
+                ui.label("Surrounding context");
+                if ui
+                    .add(
+                        egui::Slider::new(&mut app.preferences.comfy_context_scale, 3..=8)
+                            .suffix("× mask size"),
+                    )
+                    .changed()
+                {
+                    app.persist_performance_settings();
+                }
+                ui.small("Default 6×. More context helps Qwen understand the scene, but makes the painted subject smaller in its 1024 px input.");
+                ui.horizontal(|ui| {
+                    if crate::ui::theme::secondary_button(ui, "Import workflow…").clicked() {
+                        app.choose_comfy_workflow();
+                    }
+                    if crate::ui::theme::secondary_button_enabled(
+                        ui,
+                        app.preferences.comfy_workflow.is_some(),
+                        "Use shipped Qwen workflow",
+                    )
+                    .clicked()
+                    {
+                        app.preferences.comfy_workflow = None;
+                        app.persist_performance_settings();
+                    }
+                });
+                ui.small(if app.preferences.comfy_workflow.is_some() {
+                    "Custom workflow imported. Supports ComfyUI API JSON or a Qwen 2.1 UI export with named widgets."
+                } else {
+                    "Shipped Qwen Image 2.1 workflow is active (int8 model, 25 steps). Install its model files in ComfyUI first."
+                });
+                ui.small("For limited VRAM, start ComfyUI with --lowvram --cpu-vae --reserve-vram 1. The preview temporarily disappears during inference and returns afterward.");
+            });
+            crate::ui::theme::card_gap(ui);
+            crate::ui::theme::content_card(ui, |ui| {
                 crate::ui::theme::heading_with_help(
                     ui,
                     "AI models",

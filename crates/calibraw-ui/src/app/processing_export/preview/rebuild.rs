@@ -387,6 +387,10 @@ impl CalibRawApp {
     }
 
     pub(in crate::app) fn apply_pending_preview_quality(&mut self, _frame: &eframe::Frame) {
+        #[cfg(not(target_os = "android"))]
+        if self.inpaint.comfy_preview_released {
+            return;
+        }
         let preview_source = self.preview_source_raw();
         if self.preview.rebuild_receiver.is_some() {
             return;

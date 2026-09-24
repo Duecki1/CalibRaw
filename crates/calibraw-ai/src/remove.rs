@@ -9,13 +9,14 @@ use crate::model_install::ModelInstallSpec;
 use crate::model_runtime::{with_model_session, AiModel, AiRuntimeContext, ModelRetention};
 use crate::pipeline::{
     adaptive_remove_dilation, pipeline_scene_to_canonical_remove_scene,
-    pipeline_scene_to_working_rec2020, plan_remove_context_crop, rasterize_remove_brush,
+    pipeline_scene_to_working_rec2020, plan_remove_context_crop,
+    plan_remove_context_crop_with_scale, rasterize_remove_brush,
     remove_model_srgb_to_canonical_scene, remove_model_view_gain, remove_scene_to_model_srgb,
     render_remove_scene_crop, render_remove_scene_crop_resized,
     working_rec2020_to_canonical_remove_scene, DevelopedCropJob, ExposureParams, GeometryTransform,
-    GpuProgramPrewarm, LoadedRaw, MaskStack, NativeRect, RemoveBrushStroke, RemoveEditState,
-    RemoveMask, RemovePatch, RemoveStroke, ResizedRemoveSceneCrop, RetouchAlignment, RetouchStroke,
-    RetouchTool, BIG_LAMA_INPUT_EDGE,
+    GpuProgramPrewarm, LoadedRaw, MaskStack, NativeRect, RemoveBackend, RemoveBrushStroke,
+    RemoveEditState, RemoveMask, RemovePatch, RemoveStroke, ResizedRemoveSceneCrop,
+    RetouchAlignment, RetouchStroke, RetouchTool, BIG_LAMA_INPUT_EDGE,
 };
 use crate::ModelDownloadProgress;
 use anyhow::{Context, Result};
@@ -29,6 +30,11 @@ use std::{
     },
     time::Duration,
 };
+
+#[cfg(not(target_os = "android"))]
+mod comfy;
+#[cfg(not(target_os = "android"))]
+pub use comfy::{validate_comfy_workflow, ComfyRemoveConfig, DEFAULT_COMFY_PROMPT};
 
 pub const BIG_LAMA_MODEL_FILENAME: &str = "big-lama-places2-fp32-512.onnx";
 pub const BIG_LAMA_MODEL_URL: &str =
@@ -77,6 +83,10 @@ pub struct RemoveRequest {
     pub runtime_sha256: Option<String>,
     pub program_prewarm: Option<Arc<GpuProgramPrewarm>>,
     pub cancellation: Arc<AtomicBool>,
+    #[cfg(not(target_os = "android"))]
+    pub comfy: Option<ComfyRemoveConfig>,
+    #[cfg(not(target_os = "android"))]
+    pub comfy_handoff: Arc<AtomicBool>,
 }
 
 #[derive(Clone)]
@@ -97,7 +107,12 @@ pub struct RetouchRequest {
 #[derive(Debug)]
 pub enum RemoveEvent {
     DownloadProgress(ModelDownloadProgress),
-    Processing { completed: usize, total: usize },
+    Processing {
+        completed: usize,
+        total: usize,
+    },
+    #[cfg(not(target_os = "android"))]
+    ComfyReady,
     Finished(Result<RemoveStroke, String>),
 }
 
@@ -150,6 +165,10 @@ fn ensure_not_cancelled(cancellation: &AtomicBool) -> Result<()> {
 
 fn run_remove(request: RemoveRequest, events: &mpsc::Sender<RemoveEvent>) -> Result<RemoveStroke> {
     ensure_not_cancelled(&request.cancellation)?;
+    #[cfg(not(target_os = "android"))]
+    if request.comfy.is_some() {
+        return comfy::run_comfy_remove(request, events);
+    }
     crate::ai_masks::initialize_runtime(
         request.runtime_path.as_deref(),
         request.runtime_sha256.as_deref(),
@@ -212,6 +231,7 @@ fn run_remove(request: RemoveRequest, events: &mpsc::Sender<RemoveEvent>) -> Res
         brush,
         patches: vec![patch],
         retouch: None,
+        backend: RemoveBackend::Local,
         opacity: request.opacity,
     })
 }
@@ -282,6 +302,7 @@ fn run_retouch(request: RetouchRequest) -> Result<RemoveStroke> {
             brush: chunk,
             patches: vec![patch.clone()],
             retouch: Some(request.retouch),
+            backend: RemoveBackend::Local,
             opacity: request.retouch.opacity,
         });
         patches.push(patch);
@@ -290,6 +311,7 @@ fn run_retouch(request: RetouchRequest) -> Result<RemoveStroke> {
         brush: request.brush,
         patches,
         retouch: Some(request.retouch),
+        backend: RemoveBackend::Local,
         opacity: request.retouch.opacity,
     })
 }
@@ -974,10 +996,12 @@ fn infer_crop(
         view_gain,
         &model_output,
         &source_mask,
+        BIG_LAMA_INPUT_EDGE,
+        None,
     )
 }
 
-fn crop_binary_mask(crop: NativeRect, mask: &RemoveMask) -> GrayImage {
+pub(super) fn crop_binary_mask(crop: NativeRect, mask: &RemoveMask) -> GrayImage {
     let mut out = GrayImage::new(crop.width, crop.height);
     if let Some(intersection) = mask.bounds.intersect(crop) {
         for y in intersection.y..intersection.bottom() {
@@ -991,7 +1015,7 @@ fn crop_binary_mask(crop: NativeRect, mask: &RemoveMask) -> GrayImage {
     out
 }
 
-fn build_cached_patch(
+pub(super) fn build_cached_patch(
     crop: NativeRect,
     raw: &LoadedRaw,
     exposure: &ExposureParams,
@@ -999,19 +1023,52 @@ fn build_cached_patch(
     view_gain: f32,
     model_output: &Rgb32FImage,
     binary_mask: &GrayImage,
+    input_edge: u32,
+    inner_feather_model_px: Option<f32>,
 ) -> Result<RemovePatch> {
-    let scale = crop.width.max(crop.height) as f32 / BIG_LAMA_INPUT_EDGE as f32;
-    let sigma = (1.25 * scale).clamp(1.25, 5.0);
+    let scale = crop.width.max(crop.height) as f32 / input_edge as f32;
+    let sigma = if let Some(model_px) = inner_feather_model_px {
+        // Keep the fade broad in model space, but preserve a solid center on
+        // small brush strokes. The mask is still a hard compositing boundary.
+        let mut left = crop.width;
+        let mut top = crop.height;
+        let mut right = 0;
+        let mut bottom = 0;
+        for (x, y, pixel) in binary_mask.enumerate_pixels() {
+            if pixel[0] != 0 {
+                left = left.min(x);
+                top = top.min(y);
+                right = right.max(x + 1);
+                bottom = bottom.max(y + 1);
+            }
+        }
+        let narrow_side = right.saturating_sub(left).min(bottom.saturating_sub(top));
+        (model_px * scale).min(narrow_side as f32 / 6.0).max(0.8)
+    } else {
+        (1.25 * scale).clamp(1.25, 5.0)
+    };
     let blurred = image::imageops::blur(binary_mask, sigma);
+    let coverage_at = |x: u32, y: u32| -> u8 {
+        if binary_mask.get_pixel(x, y)[0] == 0 {
+            return 0;
+        }
+        let soft = blurred.get_pixel(x, y)[0];
+        if inner_feather_model_px.is_some() {
+            // A Gaussian blur is about half opaque at the original boundary.
+            // Remap that midpoint to zero, so the patch fades inward rather
+            // than making a visible jump from half opacity to untouched pixels.
+            soft.saturating_sub(128).saturating_mul(2)
+        } else {
+            soft
+        }
+    };
     let mut left = crop.width;
     let mut top = crop.height;
     let mut right = 0u32;
     let mut bottom = 0u32;
     for y in 0..crop.height {
         for x in 0..crop.width {
-            let binary = binary_mask.get_pixel(x, y)[0];
-            let soft = blurred.get_pixel(x, y)[0];
-            let alpha = if binary != 0 { soft } else { 0 };
+            let alpha = coverage_at(x, y);
             if alpha >= 2 {
                 left = left.min(x);
                 top = top.min(y);
@@ -1022,7 +1079,7 @@ fn build_cached_patch(
     }
     anyhow::ensure!(
         right > left && bottom > top,
-        "Big-LaMa patch has no compositing coverage"
+        "remove patch has no compositing coverage"
     );
     let bounds = NativeRect {
         x: crop.x + left,
@@ -1052,12 +1109,16 @@ fn build_cached_patch(
                 exposure,
                 [source_pixel[0], source_pixel[1], source_pixel[2]],
             );
-            let binary = binary_mask.get_pixel(x, y)[0];
-            let soft = blurred.get_pixel(x, y)[0];
-            let coverage = if binary != 0 { soft } else { 0 };
+            let coverage = coverage_at(x, y);
             let mix = coverage as f32 / 255.0;
             for channel in 0..3 {
-                let value = source[channel] * (1.0 - mix) + generated[channel] * mix;
+                let value = if inner_feather_model_px.is_some() {
+                    // The core compositor applies patch alpha. Qwen's model
+                    // pixels must not be preblended with the source as well.
+                    generated[channel]
+                } else {
+                    source[channel] * (1.0 - mix) + generated[channel] * mix
+                };
                 let finite = if value.is_finite() {
                     value
                 } else {
@@ -1204,6 +1265,8 @@ mod tests {
             1.0,
             &restored,
             &binary,
+            BIG_LAMA_INPUT_EDGE,
+            None,
         )
         .unwrap();
         assert_eq!(patch.bounds.x, crop.x + 18);
@@ -1211,6 +1274,61 @@ mod tests {
         assert_eq!(patch.bounds.right(), crop.x + 46);
         assert_eq!(patch.bounds.bottom(), crop.y + 44);
         assert!(patch.alpha.iter().all(|alpha| *alpha > 0));
+    }
+
+    #[test]
+    fn comfy_patch_fades_inward_and_applies_alpha_once() {
+        let crop = NativeRect {
+            x: 0,
+            y: 0,
+            width: 128,
+            height: 128,
+        };
+        let binary = GrayImage::from_fn(128, 128, |x, y| {
+            Luma([if (24..104).contains(&x) && (24..104).contains(&y) {
+                255
+            } else {
+                0
+            }])
+        });
+        let restored = Rgb32FImage::from_pixel(128, 128, Rgb([0.65, 0.55, 0.45]));
+        let source_scene = Rgb32FImage::from_pixel(128, 128, Rgb([0.18, 0.18, 0.18]));
+        let raw = LoadedRaw::from_scene_linear_rec2020(1, 1, vec![0.18, 0.18, 0.18]).unwrap();
+        let patch = build_cached_patch(
+            crop,
+            &raw,
+            &ExposureParams::default(),
+            &source_scene,
+            1.0,
+            &restored,
+            &binary,
+            128,
+            Some(10.0),
+        )
+        .unwrap();
+        let at = |x: u32, y: u32| {
+            let index = ((y - patch.bounds.y) * patch.bounds.width + x - patch.bounds.x) as usize;
+            (
+                patch.alpha[index],
+                &patch.rgb_scene16f[index * 3..index * 3 + 3],
+            )
+        };
+        let edge = at(24, 64);
+        let near = at(30, 64);
+        let center = at(64, 64);
+        assert!(edge.0 < near.0 && near.0 < center.0);
+        assert!(edge.0 < 100, "mask boundary must be nearly transparent");
+        assert!(
+            center.0 >= 250,
+            "center of mask should retain the generated fill"
+        );
+        assert_eq!(edge.1, center.1, "generated RGB must not be preblended");
+        let mut composed = vec![0.18; 128 * 128 * 3];
+        crate::pipeline::composite_patch_into_linear_region(&patch, crop, &mut composed);
+        assert_eq!(
+            &composed[(64 * 128 + 23) * 3..(64 * 128 + 23) * 3 + 3],
+            &[0.18; 3]
+        );
     }
 
     #[test]

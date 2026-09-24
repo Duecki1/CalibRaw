@@ -348,6 +348,7 @@ fn sidecar_round_trip_preserves_edit_state() {
             opacity: 0.8,
         }),
         opacity: 0.8,
+        backend: crate::pipeline::RemoveBackend::Local,
     });
     let encoded = encode(edits.clone()).unwrap();
     let document: serde_json::Value = serde_json::from_slice(&encoded).unwrap();
@@ -399,6 +400,7 @@ fn retouch_patches_are_deduplicated_and_png_compressed() {
             opacity: 1.0,
         }),
         opacity: 1.0,
+        backend: crate::pipeline::RemoveBackend::Local,
     });
 
     let encoded = encode(edits.clone()).unwrap();

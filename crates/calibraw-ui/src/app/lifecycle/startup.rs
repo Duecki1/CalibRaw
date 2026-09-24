@@ -181,6 +181,10 @@ impl CalibRawApp {
                 pending_retouch: None,
                 receiver: None,
                 cancellation: None,
+                #[cfg(not(target_os = "android"))]
+                comfy_handoff: None,
+                #[cfg(not(target_os = "android"))]
+                comfy_preview_released: false,
                 processing_label: None,
                 hovered_stroke: None,
                 selected_stroke: None,
@@ -223,6 +227,10 @@ impl CalibRawApp {
                 show_develop_navigation_labels: performance.show_develop_navigation_labels,
                 export_name_template: performance.export_name_template.clone(),
                 discord_rich_presence: performance.discord_rich_presence,
+                comfy_url: performance.comfy_url.clone(),
+                comfy_prompt: performance.comfy_prompt.clone(),
+                comfy_context_scale: performance.comfy_context_scale,
+                comfy_workflow: performance.comfy_workflow.clone(),
                 ui_design: performance.ui_design,
                 preview_backdrop: performance.preview_backdrop,
                 onboarding_completed: performance.onboarding_completed,
@@ -478,6 +486,10 @@ impl CalibRawApp {
                 pending_retouch: None,
                 receiver: None,
                 cancellation: None,
+                #[cfg(not(target_os = "android"))]
+                comfy_handoff: None,
+                #[cfg(not(target_os = "android"))]
+                comfy_preview_released: false,
                 processing_label: None,
                 hovered_stroke: None,
                 selected_stroke: None,

@@ -14,6 +14,11 @@ impl InpaintState {
         self.pending_brush = None;
         self.pending_retouch = None;
         self.receiver = None;
+        #[cfg(not(target_os = "android"))]
+        {
+            self.comfy_handoff = None;
+            self.comfy_preview_released = false;
+        }
         self.processing_label = None;
         self.hovered_stroke = None;
         self.selected_stroke = None;
@@ -42,6 +47,13 @@ impl CalibRawApp {
             cancellation.store(true, std::sync::atomic::Ordering::Release);
         }
         self.inpaint.receiver = None;
+        #[cfg(not(target_os = "android"))]
+        {
+            self.inpaint.comfy_handoff = None;
+            if std::mem::take(&mut self.inpaint.comfy_preview_released) {
+                self.preview.quality_dirty = true;
+            }
+        }
         self.inpaint.pending_brush = None;
         self.inpaint.pending_retouch = None;
         if matches!(self.ai.consent, AiConsentState::Remove { .. }) {
@@ -62,6 +74,13 @@ impl CalibRawApp {
             cancellation.store(true, std::sync::atomic::Ordering::Release);
         }
         self.inpaint.receiver = None;
+        #[cfg(not(target_os = "android"))]
+        {
+            self.inpaint.comfy_handoff = None;
+            if std::mem::take(&mut self.inpaint.comfy_preview_released) {
+                self.preview.quality_dirty = true;
+            }
+        }
         self.inpaint.pending_brush = None;
         self.inpaint.pending_retouch = None;
         if matches!(self.ai.consent, AiConsentState::Remove { .. }) {
@@ -82,13 +101,13 @@ impl CalibRawApp {
             .edits
             .strokes
             .iter()
-            .any(|stroke| tool.matches_stroke_tool(stroke.retouch.map(|retouch| retouch.tool)))
+            .any(|stroke| tool.matches_stroke_tool(stroke))
         {
             return;
         }
         Arc::make_mut(&mut self.inpaint.edits)
             .strokes
-            .retain(|stroke| !tool.matches_stroke_tool(stroke.retouch.map(|retouch| retouch.tool)));
+            .retain(|stroke| !tool.matches_stroke_tool(stroke));
         self.inpaint.hovered_stroke = None;
         self.inpaint.selected_stroke = None;
         self.note_remove_edit_changed();
@@ -160,6 +179,17 @@ impl CalibRawApp {
         #[cfg(target_os = "android")]
         let runtime_sha256 = None;
         let cancellation = Arc::new(AtomicBool::new(false));
+        #[cfg(not(target_os = "android"))]
+        let comfy = (self.inpaint.tool == InpaintTool::ComfyRemove).then(|| {
+            crate::remove::ComfyRemoveConfig {
+                url: self.preferences.comfy_url.clone(),
+                prompt: self.preferences.comfy_prompt.clone(),
+                workflow: self.preferences.comfy_workflow.clone(),
+                context_scale: self.preferences.comfy_context_scale,
+            }
+        });
+        #[cfg(not(target_os = "android"))]
+        let comfy_handoff = Arc::new(AtomicBool::new(false));
         let request = RemoveRequest {
             device: render_state.device.clone(),
             queue: render_state.queue.clone(),
@@ -176,10 +206,19 @@ impl CalibRawApp {
             runtime_sha256,
             program_prewarm: self.export.gpu_prewarm.clone(),
             cancellation: Arc::clone(&cancellation),
+            #[cfg(not(target_os = "android"))]
+            comfy: comfy.clone(),
+            #[cfg(not(target_os = "android"))]
+            comfy_handoff: Arc::clone(&comfy_handoff),
         };
         self.inpaint.pending_brush = Some(brush);
         self.inpaint.pending_retouch = None;
         self.inpaint.processing_label = Some("Preparing local context…".to_owned());
+        #[cfg(not(target_os = "android"))]
+        {
+            self.inpaint.comfy_handoff = comfy.map(|_| comfy_handoff);
+            self.inpaint.comfy_preview_released = false;
+        }
         self.inpaint.cancellation = Some(cancellation);
         self.inpaint.receiver = Some(spawn_remove(request));
         self.egui_ctx
@@ -189,6 +228,12 @@ impl CalibRawApp {
 
     pub(crate) fn start_remove_worker(&mut self, frame: &eframe::Frame, brush: RemoveBrushStroke) {
         if self.inpaint_processing() || brush.points.is_empty() {
+            return;
+        }
+        #[cfg(not(target_os = "android"))]
+        if self.inpaint.tool == InpaintTool::ComfyRemove {
+            let existing = self.inpaint.edits.as_ref().clone();
+            let _ = self.start_remove_request(frame, existing, brush, false);
             return;
         }
         #[cfg(not(target_os = "android"))]
@@ -335,7 +380,30 @@ impl CalibRawApp {
         });
     }
 
-    pub(crate) fn advance_remove_worker(&mut self, _frame: &eframe::Frame) {
+    pub(crate) fn advance_remove_worker(&mut self, frame: &eframe::Frame) {
+        #[cfg(not(target_os = "android"))]
+        if self.inpaint.comfy_preview_released {
+            if let Some(gate) = self.inpaint.comfy_handoff.as_ref() {
+                if !gate.load(std::sync::atomic::Ordering::Acquire) {
+                    let waited = frame.wgpu_render_state().is_some_and(|render_state| {
+                        render_state
+                            .device
+                            .poll(wgpu::PollType::Wait {
+                                submission_index: None,
+                                timeout: Some(Duration::from_secs(5)),
+                            })
+                            .is_ok()
+                    });
+                    if !waited {
+                        self.cancel_remove_processing();
+                        self.ui.notice =
+                            Some("GPU did not become idle for ComfyUI handoff.".to_owned());
+                        return;
+                    }
+                    gate.store(true, std::sync::atomic::Ordering::Release);
+                }
+            }
+        }
         let mut events = Vec::new();
         if let Some(receiver) = self.inpaint.receiver.as_ref() {
             while let Ok(event) = receiver.try_recv() {
@@ -351,6 +419,34 @@ impl CalibRawApp {
         }
         for event in events {
             match event {
+                #[cfg(not(target_os = "android"))]
+                RemoveEvent::ComfyReady => {
+                    if let Some(render_state) = frame.wgpu_render_state() {
+                        let previous = {
+                            let mut renderer = render_state.renderer.write();
+                            self.take_preview_pipeline_and_release_textures(&mut renderer)
+                        };
+                        drop(previous);
+                        self.preview.program_template = None;
+                        self.export.gpu_prewarm = None;
+                        self.preview.detail_rebuild_receiver = None;
+                        self.preview.rebuild_receiver = None;
+                        self.preview.quality_dirty = false;
+                        self.preview.detail_pending_stage = None;
+                        self.preview.navigation_pending_stage = None;
+                        self.masks.overlay_texture = None;
+                        self.masks.thumbnail_group_textures.clear();
+                        self.masks.thumbnail_component_textures.clear();
+                        self.inpaint.comfy_preview_released = true;
+                        self.inpaint.processing_label =
+                            Some("Qwen Image 2.1 running in ComfyUI…".to_owned());
+                    } else {
+                        self.cancel_remove_processing();
+                        self.ui.notice = Some(
+                            "GPU rendering became unavailable during ComfyUI handoff.".to_owned(),
+                        );
+                    }
+                }
                 RemoveEvent::DownloadProgress(progress) => {
                     let fraction = if progress.total == 0 {
                         0.0
@@ -364,11 +460,29 @@ impl CalibRawApp {
                     ));
                 }
                 RemoveEvent::Processing { .. } => {
-                    self.inpaint.processing_label = Some("Applying Big-LaMa…".to_owned());
+                    #[cfg(not(target_os = "android"))]
+                    let label = if self.inpaint.comfy_handoff.is_some() {
+                        "Finishing Qwen Remove…"
+                    } else {
+                        "Applying Big-LaMa…"
+                    };
+                    #[cfg(target_os = "android")]
+                    let label = "Applying Big-LaMa…";
+                    self.inpaint.processing_label = Some(label.to_owned());
                 }
                 RemoveEvent::Finished(result) => {
                     self.inpaint.receiver = None;
                     self.inpaint.cancellation = None;
+                    #[cfg(not(target_os = "android"))]
+                    let was_comfy = self.inpaint.comfy_handoff.take().is_some();
+                    #[cfg(target_os = "android")]
+                    let was_comfy = false;
+                    #[cfg(not(target_os = "android"))]
+                    {
+                        if std::mem::take(&mut self.inpaint.comfy_preview_released) {
+                            self.preview.quality_dirty = true;
+                        }
+                    }
                     let pending_brush = self.inpaint.pending_brush.take();
                     let pending_retouch = self.inpaint.pending_retouch.take();
                     self.inpaint.processing_label = None;
@@ -377,7 +491,13 @@ impl CalibRawApp {
                             let applied_tool = stroke
                                 .retouch
                                 .map(|retouch| retouch.tool.label())
-                                .unwrap_or("Remove");
+                                .unwrap_or(
+                                    if stroke.backend == crate::pipeline::RemoveBackend::Comfy {
+                                        "Qwen Remove"
+                                    } else {
+                                        "Remove"
+                                    },
+                                );
                             Arc::make_mut(&mut self.inpaint.edits).strokes.push(stroke);
                             self.inpaint.selected_stroke = None;
                             self.inpaint.hovered_stroke = None;
@@ -399,7 +519,7 @@ impl CalibRawApp {
                             } else if !error.contains("cancelled") {
                                 let tool = pending_retouch
                                     .map(|retouch| retouch.tool.label())
-                                    .unwrap_or("Remove");
+                                    .unwrap_or(if was_comfy { "Qwen Remove" } else { "Remove" });
                                 self.ui.notice = Some(format!("{tool} failed: {error}"));
                                 crate::diagnostics::record(format!("{tool} failed: {error}"));
                                 log::error!("{tool} failed: {error}");

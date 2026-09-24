@@ -97,9 +97,7 @@ impl Sidebar {
                                     .strokes
                                     .iter()
                                     .filter(|stroke| {
-                                        active_tool.matches_stroke_tool(
-                                            stroke.retouch.map(|retouch| retouch.tool),
-                                        )
+                                        active_tool.matches_stroke_tool(stroke)
                                     })
                                     .count();
                                 if crate::ui::icons::phosphor_icon_button_enabled(
@@ -665,8 +663,7 @@ impl Sidebar {
                             .strokes
                             .iter()
                             .filter(|stroke| {
-                                active_tool
-                                    .matches_stroke_tool(stroke.retouch.map(|retouch| retouch.tool))
+                                active_tool.matches_stroke_tool(stroke)
                             })
                             .count();
                         if crate::ui::icons::phosphor_icon_button_enabled(

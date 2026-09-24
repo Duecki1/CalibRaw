@@ -55,7 +55,13 @@ CalibRaw runs natively on **Linux**, **Android**, **Windows**, and **macOS** wit
 
 ### Masking & AI
 - **Masks:** Brush, Linear Gradient, Radial Gradient, and Shape masks with independent curves and adjustments.
-- **Local AI Tools:** One-click subject masking (BiRefNet), click-to-select object masking (Meta SAM 2.1), and healing (LaMa + Laplace solver). Runs entirely offline on your own hardware.
+- **Local AI Tools:** One-click subject masking (BiRefNet), click-to-select object masking (Meta SAM 2.1), and healing (LaMa + Laplace solver). An optional Qwen Image 2.1 Remove brush connects to a ComfyUI server on your own hardware.
+
+### Qwen Remove with ComfyUI (desktop)
+
+Start ComfyUI with Qwen Image 2.1 installed. The shipped workflow uses the int8 diffusion model and Qwen3-VL text encoder from [Comfy-Org/Qwen-Image-2.1](https://huggingface.co/Comfy-Org/Qwen-Image-2.1), plus its bf16 VAE. In Settings → ComfyUI Remove, enter the server URL (default `http://127.0.0.1:8188`), edit the instruction, or import a ComfyUI UI workflow with named widgets or an API-format JSON workflow. Imported workflows need one `LoadImage`, `LoadImageMask`, `TextEncodeQwenImage21`, and `SaveImage` node; CalibRaw replaces their image, mask, instruction, and output prefix for each stroke.
+
+Select **Qwen Remove** in the Remove sidebar and paint the unwanted subject. CalibRaw uploads only a 1024 × 1024 local context crop and its mask. The crop defaults to six times the mask's longest side, with a 1024 px native minimum where the image allows; adjust **Surrounding context** in Settings if needed. The generated image fades inward from the painted boundary and changes no pixels outside the mask. During inference CalibRaw releases its preview GPU resources and asks ComfyUI to unload models afterward. On smaller GPUs, launch ComfyUI with `--lowvram --cpu-vae --reserve-vram 1`; `--lowvram` may have no effect when ComfyUI's dynamic VRAM mode is active. A remote server URL sends the cropped image and mask to that server.
 - **GPU Creative Effects:** Stackable effect cards for masks or the full image, including Light Rays, Lens Blur (bokeh), Motion Blur, Radial Blur, Fog, Smoke, Glow, and Neon.
 
 ---

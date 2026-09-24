@@ -1,0 +1,130 @@
+{
+  "31": {
+    "class_type": "UNETLoader",
+    "inputs": {
+      "unet_name": "qwen_image_2.1_int8_convrot.safetensors",
+      "weight_dtype": "default"
+    }
+  },
+  "34": {
+    "class_type": "CLIPLoader",
+    "inputs": {
+      "clip_name": "qwen3vl_8b_int8_convrot.safetensors",
+      "type": "qwen_image",
+      "device": "default"
+    }
+  },
+  "32": {
+    "class_type": "VAELoader",
+    "inputs": {
+      "vae_name": "qwen_image_2.1_vae_bf16.safetensors"
+    }
+  },
+  "39": {
+    "class_type": "QwenImage21Cache",
+    "inputs": {
+      "model": [
+        "31",
+        0
+      ],
+      "device": "auto",
+      "dtype": "default"
+    }
+  },
+  "38": {
+    "class_type": "TextEncodeQwenImage21",
+    "inputs": {
+      "clip": [
+        "34",
+        0
+      ],
+      "images.image_1": [
+        "17",
+        0
+      ],
+      "images.image_2": [
+        "106",
+        0
+      ],
+      "vae": [
+        "32",
+        0
+      ],
+      "prompt": "In <image1>, remove only the subject shown in white in the mask <image2>. Fill the removed area naturally from the surrounding context. Preserve the rest of the scene, lighting, texture, and perspective.",
+      "negative_prompt": "",
+      "resolution": 0
+    }
+  },
+  "106": {
+    "class_type": "MaskToImage",
+    "inputs": {
+      "mask": [
+        "119",
+        0
+      ]
+    }
+  },
+  "17": {
+    "class_type": "LoadImage",
+    "inputs": {
+      "image": "CALIBRAW_IMAGE"
+    }
+  },
+  "3": {
+    "class_type": "KSampler",
+    "inputs": {
+      "model": [
+        "39",
+        0
+      ],
+      "positive": [
+        "38",
+        0
+      ],
+      "negative": [
+        "38",
+        1
+      ],
+      "latent_image": [
+        "38",
+        2
+      ],
+      "seed": 133040376099330,
+      "steps": 25,
+      "cfg": 1,
+      "sampler_name": "euler",
+      "scheduler": "simple",
+      "denoise": 1
+    }
+  },
+  "8": {
+    "class_type": "VAEDecode",
+    "inputs": {
+      "samples": [
+        "3",
+        0
+      ],
+      "vae": [
+        "32",
+        0
+      ]
+    }
+  },
+  "59": {
+    "class_type": "SaveImage",
+    "inputs": {
+      "images": [
+        "8",
+        0
+      ],
+      "filename_prefix": "CalibRaw_Remove"
+    }
+  },
+  "119": {
+    "class_type": "LoadImageMask",
+    "inputs": {
+      "image": "CALIBRAW_MASK",
+      "channel": "red"
+    }
+  }
+}

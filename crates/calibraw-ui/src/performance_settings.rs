@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 // First public settings layout. Bump when a public settings change needs migration.
 const SETTINGS_VERSION: u32 = 1;
-const MAX_SETTINGS_BYTES: u64 = 64 * 1024;
+const MAX_SETTINGS_BYTES: u64 = 1024 * 1024;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub(crate) struct PerformanceSettings {
@@ -60,6 +60,18 @@ pub(crate) struct PerformanceSettings {
     #[cfg(not(target_os = "android"))]
     #[serde(default)]
     pub discord_rich_presence: bool,
+    #[cfg(not(target_os = "android"))]
+    #[serde(default = "default_comfy_url")]
+    pub comfy_url: String,
+    #[cfg(not(target_os = "android"))]
+    #[serde(default = "default_comfy_prompt")]
+    pub comfy_prompt: String,
+    #[cfg(not(target_os = "android"))]
+    #[serde(default = "default_comfy_context_scale")]
+    pub comfy_context_scale: u32,
+    #[cfg(not(target_os = "android"))]
+    #[serde(default)]
+    pub comfy_workflow: Option<String>,
     #[serde(default)]
     pub camera_profile_mode: CameraProfileMode,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -159,6 +171,21 @@ const fn default_true() -> bool {
     true
 }
 
+#[cfg(not(target_os = "android"))]
+fn default_comfy_url() -> String {
+    "http://127.0.0.1:8188".to_owned()
+}
+
+#[cfg(not(target_os = "android"))]
+fn default_comfy_prompt() -> String {
+    calibraw_ai::remove::DEFAULT_COMFY_PROMPT.to_owned()
+}
+
+#[cfg(not(target_os = "android"))]
+const fn default_comfy_context_scale() -> u32 {
+    6
+}
+
 impl Default for PerformanceSettings {
     fn default() -> Self {
         Self {
@@ -190,6 +217,14 @@ impl Default for PerformanceSettings {
             onnx_runtime_mode: crate::app::OnnxRuntimeMode::default(),
             #[cfg(not(target_os = "android"))]
             discord_rich_presence: false,
+            #[cfg(not(target_os = "android"))]
+            comfy_url: default_comfy_url(),
+            #[cfg(not(target_os = "android"))]
+            comfy_prompt: default_comfy_prompt(),
+            #[cfg(not(target_os = "android"))]
+            comfy_context_scale: default_comfy_context_scale(),
+            #[cfg(not(target_os = "android"))]
+            comfy_workflow: None,
             camera_profile_mode: CameraProfileMode::default(),
             camera_profile_folder: None,
             camera_profile_folder_label: None,
@@ -228,6 +263,10 @@ impl PerformanceSettings {
         }
         self.export_name_template =
             crate::export_naming::sanitize_template_setting(&self.export_name_template);
+        #[cfg(not(target_os = "android"))]
+        {
+            self.comfy_context_scale = self.comfy_context_scale.clamp(3, 8);
+        }
         self
     }
 }
@@ -403,6 +442,14 @@ mod tests {
             onnx_runtime_mode: crate::app::OnnxRuntimeMode::Manual,
             #[cfg(not(target_os = "android"))]
             discord_rich_presence: true,
+            #[cfg(not(target_os = "android"))]
+            comfy_url: default_comfy_url(),
+            #[cfg(not(target_os = "android"))]
+            comfy_prompt: default_comfy_prompt(),
+            #[cfg(not(target_os = "android"))]
+            comfy_context_scale: 99,
+            #[cfg(not(target_os = "android"))]
+            comfy_workflow: None,
             camera_profile_mode: CameraProfileMode::DcpProfiles,
             camera_profile_folder: Some(PathBuf::from("profiles")),
             camera_profile_folder_label: Some("CameraProfiles".to_owned()),
@@ -433,6 +480,8 @@ mod tests {
             crate::app::maximum_raw_cache_limit()
         );
         assert_eq!(settings.thumbnail_workers, 1);
+        #[cfg(not(target_os = "android"))]
+        assert_eq!(settings.comfy_context_scale, 8);
         assert!(settings.render_edited_thumbnails_during_indexing);
         assert_eq!(
             settings.library_thumbnail_size,
@@ -558,6 +607,8 @@ mod tests {
         assert!(settings.auto_check_updates);
         assert!(settings.github_update_check_allowed.is_none());
         assert!(settings.ignored_update_version.is_none());
+        #[cfg(not(target_os = "android"))]
+        assert_eq!(settings.comfy_context_scale, 6);
         assert_eq!(
             settings.birefnet_quality,
             crate::ai_masks::BiRefNetQuality::Low
