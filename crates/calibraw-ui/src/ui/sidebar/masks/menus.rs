@@ -11,6 +11,7 @@ impl Sidebar {
             MaskKind::Path,
             MaskKind::Subject,
             MaskKind::Background,
+            MaskKind::Sky,
             MaskKind::Object,
             MaskKind::LuminanceRange,
             MaskKind::ColorRange,

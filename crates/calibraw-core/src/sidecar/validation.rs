@@ -387,7 +387,7 @@ fn geometry_matches_kind(kind: MaskKind, geometry: &MaskGeometry) -> bool {
             | (MaskKind::Linear, MaskGeometry::Linear { .. })
             | (MaskKind::Path, MaskGeometry::Path { .. })
             | (
-                MaskKind::Subject | MaskKind::Background,
+                MaskKind::Subject | MaskKind::Background | MaskKind::Sky,
                 MaskGeometry::Ai { .. }
             )
             | (MaskKind::Object, MaskGeometry::Object { .. })
