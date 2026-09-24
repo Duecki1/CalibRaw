@@ -594,11 +594,10 @@ impl Sidebar {
                             .small_button("Clear")
                             .on_hover_text("Clear path")
                             .clicked()
+                            && !points.is_empty()
                         {
-                            if !points.is_empty() {
-                                points.clear();
-                                geometry_changed = true;
-                            }
+                            points.clear();
+                            geometry_changed = true;
                         }
                     });
                     ui.small(format!("{} point(s)", points.len()));

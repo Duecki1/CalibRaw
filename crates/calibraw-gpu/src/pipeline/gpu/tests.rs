@@ -398,7 +398,7 @@ fn global_and_fullscreen_mask_effects_render_the_same_pixels() -> anyhow::Result
     const EDGE: u32 = 32;
     let pixels = (0..EDGE * EDGE)
         .flat_map(|index| {
-            let value = if (index % EDGE / 4 + index / EDGE / 4) % 2 == 0 {
+            let value = if (index % EDGE / 4 + index / EDGE / 4).is_multiple_of(2) {
                 0.1
             } else {
                 0.8
@@ -445,7 +445,7 @@ fn global_and_fullscreen_mask_effects_render_the_same_pixels() -> anyhow::Result
         local_output == global_output,
         "Local and global effects differ"
     );
-    let mut combined = local.clone();
+    let mut combined = local;
     let mut fog = crate::pipeline::EffectComponent::new(MaskEffect::Fog);
     fog.settings.fog.amount = 80.0;
     fog.settings.fog.density = 80.0;
