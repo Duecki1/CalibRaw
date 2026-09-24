@@ -1265,7 +1265,7 @@ pub(crate) struct InpaintState {
     pub(crate) pending_retouch: Option<RetouchStroke>,
     pub(crate) receiver: Option<mpsc::Receiver<RemoveEvent>>,
     pub(crate) cancellation: Option<Arc<AtomicBool>>,
-    pub(crate) processing_label: Option<String>,
+    pub(crate) processing_progress: Option<ForegroundProgress>,
     pub(crate) hovered_stroke: Option<usize>,
     pub(crate) selected_stroke: Option<usize>,
     pub(crate) stroke_opacity_edit_pending: bool,

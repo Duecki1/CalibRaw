@@ -77,7 +77,7 @@ impl CalibRawApp {
         #[cfg(not(target_os = "android"))]
         let mut recover = false;
         crate::ui::theme::dialog_window(
-            egui::Window::new("Could not save edits"),
+            "Could not save edits",
             ctx,
             crate::ui::theme::DIALOG_WIDTH_WIDE,
         )

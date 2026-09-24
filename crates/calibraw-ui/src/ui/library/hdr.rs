@@ -139,7 +139,7 @@ impl LibraryState {
         }
         let mut dismiss = false;
         crate::ui::theme::dialog_window(
-            egui::Window::new("HDR merge"),
+            "HDR merge",
             ui.ctx(),
             crate::ui::theme::DIALOG_WIDTH_DEFAULT,
         )

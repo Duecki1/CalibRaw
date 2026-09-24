@@ -40,6 +40,115 @@ impl ForegroundOperationKind {
     }
 }
 
+pub(super) fn show_processing_dialog(
+    ctx: &egui::Context,
+    id: &str,
+    title: &str,
+    progress: &ForegroundProgress,
+    cancelling: bool,
+) -> bool {
+    let mut cancel = false;
+    crate::ui::theme::dialog_window(title, ctx, crate::ui::theme::DIALOG_WIDTH_FORM)
+        .id(egui::Id::new(id))
+        .movable(false)
+        .show(ctx, |ui| {
+            let measured =
+                matches!(progress.value, ForegroundProgressValue::Units { total, .. } if total > 0);
+            ui.horizontal(|ui| {
+                if !measured {
+                    ui.add(egui::Spinner::new().size(20.0));
+                    ui.add_space(crate::ui::theme::SPACE_XS);
+                }
+                ui.add(egui::Label::new(egui::RichText::new(&progress.phase).size(14.0)).wrap());
+            });
+
+            if let ForegroundProgressValue::Units {
+                completed,
+                total,
+                ref unit,
+            } = progress.value
+            {
+                if total > 0 {
+                    let fraction = (completed as f32 / total as f32).clamp(0.0, 1.0);
+                    ui.add_space(crate::ui::theme::SPACE_MD);
+                    ui.add(
+                        egui::ProgressBar::new(fraction)
+                            .desired_height(10.0)
+                            .fill(ui.visuals().selection.bg_fill),
+                    );
+                    ui.horizontal(|ui| {
+                        let units = unit.as_deref().map_or_else(
+                            || format!("{completed} / {total}"),
+                            |unit| format!("{completed} / {total} {unit}"),
+                        );
+                        ui.label(
+                            egui::RichText::new(progress.detail.as_deref().unwrap_or(&units))
+                                .small()
+                                .color(ui.visuals().weak_text_color()),
+                        );
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            ui.label(
+                                egui::RichText::new(format!("{:.0}%", fraction * 100.0))
+                                    .small()
+                                    .strong(),
+                            );
+                        });
+                    });
+                } else if let Some(detail) = &progress.detail {
+                    ui.label(
+                        egui::RichText::new(detail)
+                            .small()
+                            .color(ui.visuals().weak_text_color()),
+                    );
+                }
+            } else if let Some(detail) = &progress.detail {
+                ui.label(
+                    egui::RichText::new(detail)
+                        .small()
+                        .color(ui.visuals().weak_text_color()),
+                );
+            }
+
+            if cancelling {
+                ui.label(
+                    egui::RichText::new("Stopping at the next safe point…")
+                        .small()
+                        .color(ui.visuals().weak_text_color()),
+                );
+            }
+            ui.add_space(crate::ui::theme::SPACE_SM);
+            ui.separator();
+            ui.add_space(crate::ui::theme::SPACE_XS);
+            ui.allocate_ui_with_layout(
+                egui::vec2(
+                    ui.available_width().max(1.0),
+                    crate::ui::theme::CONTROL_HEIGHT,
+                ),
+                egui::Layout::right_to_left(egui::Align::Center),
+                |ui| {
+                    cancel = ui
+                        .add_enabled_ui(!cancelling, |ui| {
+                            crate::ui::theme::secondary_button(ui, "Cancel")
+                        })
+                        .inner
+                        .clicked();
+                },
+            );
+            if !cancel
+                && !cancelling
+                && crate::ui::theme::dialog_keyboard_action(
+                    ui,
+                    crate::ui::theme::DialogKeyboard::CLOSE_ONLY,
+                    false,
+                ) == crate::ui::theme::DialogAction::Cancel
+            {
+                cancel = true;
+            }
+        });
+    ctx.request_repaint_after(Duration::from_millis(50));
+    cancel
+}
+
 impl CalibRawApp {
     pub(crate) fn foreground_operation_kind(&self) -> Option<ForegroundOperationKind> {
         self.foreground_operation
@@ -90,67 +199,15 @@ impl CalibRawApp {
         let kind = operation.kind;
         let progress = operation.progress.clone();
         let cancelling = operation.cancelling;
-        let mut cancel = false;
-        crate::ui::theme::dialog_window(
-            egui::Window::new(kind.title()),
+        if show_processing_dialog(
             ctx,
-            crate::ui::theme::DIALOG_WIDTH_DEFAULT,
-        )
-        .id(egui::Id::new("foreground-operation-progress"))
-        .movable(false)
-        .show(ctx, |ui| {
-            ui.label(&progress.phase);
-            if let Some(detail) = &progress.detail {
-                ui.label(egui::RichText::new(detail).small());
-            }
-            ui.add_space(6.0);
-            match progress.value {
-                ForegroundProgressValue::Indeterminate => {
-                    ui.add(egui::ProgressBar::new(0.0).animate(!cancelling));
-                }
-                ForegroundProgressValue::Units {
-                    completed,
-                    total,
-                    ref unit,
-                } => {
-                    if total == 0 {
-                        ui.add(egui::ProgressBar::new(0.0).animate(!cancelling));
-                    } else {
-                        let fraction = (completed as f32 / total as f32).clamp(0.0, 1.0);
-                        let text = unit.as_deref().map_or_else(
-                            || format!("{completed} / {total}"),
-                            |unit| format!("{completed} / {total} {unit}"),
-                        );
-                        ui.add(egui::ProgressBar::new(fraction).text(text));
-                    }
-                }
-            }
-            if cancelling {
-                ui.label(egui::RichText::new("Stopping at the next safe point…").small());
-            }
-            crate::ui::theme::dialog_button_row(ui, |ui| {
-                cancel |= ui
-                    .add_enabled_ui(!cancelling, |ui| {
-                        crate::ui::theme::secondary_button(ui, "Cancel")
-                    })
-                    .inner
-                    .clicked();
-            });
-            if !cancel
-                && !cancelling
-                && crate::ui::theme::dialog_keyboard_action(
-                    ui,
-                    crate::ui::theme::DialogKeyboard::CLOSE_ONLY,
-                    false,
-                ) == crate::ui::theme::DialogAction::Cancel
-            {
-                cancel = true;
-            }
-        });
-        if cancel {
+            "foreground-operation-progress",
+            kind.title(),
+            &progress,
+            cancelling,
+        ) {
             self.cancel_foreground_operation();
         }
-        ctx.request_repaint_after(Duration::from_millis(50));
     }
 }
 

@@ -465,60 +465,64 @@ impl CalibRawApp {
                 (false, true) => "Download ONNX Runtime?",
                 (false, false) => "Prepare AI denoise?",
             };
-            crate::ui::theme::dialog_window(
-                egui::Window::new(title),
-                ctx,
-                crate::ui::theme::DIALOG_WIDTH_LARGE,
-            )
-            .movable(false)
-            .show(ctx, |ui| {
-                ui.label("AI Denoise uses darktable-ai's RawNIND UtNet2 package: joint Bayer denoise/demosaic and a linear Rec.2020 model for X-Trans.");
-                if model_download_needed {
-                    ui.strong("AI denoise models");
-                    ui.label(format!(
-                        "RawNIND package: {:.1} MB download, producing about 62 MB of verified ONNX models in CalibRaw's cache. Model and integration license: GPL-3.0.",
-                        RAWNIND_PACKAGE_BYTES as f64 / 1_000_000.0
-                    ));
-                }
-                self.show_ai_consent_runtime_details(
-                    ui,
-                    model_download_needed,
-                    runtime_download_needed,
+            let mut action = crate::ui::theme::DialogAction::None;
+            crate::ui::theme::dialog_window(title, ctx, crate::ui::theme::DIALOG_WIDTH_LARGE)
+                .movable(false)
+                .show_with_footer(
+                    ctx,
+                    |ui| {
+                        Self::show_ai_download_summary(
+                            ui,
+                            &format!("RawNIND (~{:.1} MB)", RAWNIND_PACKAGE_BYTES as f64 / 1_000_000.0),
+                            "apply AI denoise",
+                            model_download_needed,
+                            runtime_download_needed,
+                        );
+                        self.show_ai_download_details(
+                            ui,
+                            "denoise-download-details",
+                            model_download_needed,
+                            runtime_download_needed,
+                            &[
+                                (
+                                    "RawNIND model card",
+                                    "https://github.com/darktable-org/darktable-ai/tree/release-5.6.0/models/rawdenoise-nind",
+                                ),
+                                (
+                                    "GPL-3.0 license",
+                                    "https://github.com/darktable-org/darktable-ai/blob/release-5.6.0/LICENSE",
+                                ),
+                            ],
+                            |ui| {
+                                ui.label("RawNIND handles Bayer denoise/demosaic and X-Trans images. The verified models are cached locally under GPL-3.0.");
+                            },
+                        );
+                        self.show_manual_runtime_warning(ui);
+                    },
+                    |ui| {
+                        // This action starts the runtime download when needed.
+                        action = Self::show_ai_consent_buttons(
+                            ui,
+                            if model_download_needed || runtime_download_needed {
+                                "Accept & download"
+                            } else {
+                                "Apply"
+                            },
+                            true,
+                        );
+                    },
                 );
-                ui.label("Inference is local; no photograph is uploaded.");
-                Self::show_hugging_face_privacy(
-                    ui,
-                    model_download_needed,
-                    &[
-                        (
-                            "RawNIND model card",
-                            "https://github.com/darktable-org/darktable-ai/tree/release-5.6.0/models/rawdenoise-nind",
-                        ),
-                        (
-                            "GPL-3.0 license",
-                            "https://github.com/darktable-org/darktable-ai/blob/release-5.6.0/LICENSE",
-                        ),
-                    ],
-                );
-                self.show_manual_runtime_warning(ui);
-                // AI Denoise does not gate on the runtime here: this consent dialog starts the
-                // runtime download itself, so the accept button has to stay reachable.
-                match Self::show_ai_consent_buttons(
-                    ui,
-                    "Consent, download and apply",
-                    true,
-                ) {
-                    crate::ui::theme::DialogAction::Confirm => {
-                        self.ai.consent = AiConsentState::None;
-                        self.start_ai_denoise(frame, model_download_needed);
-                    }
-                    crate::ui::theme::DialogAction::Cancel => {
-                        self.ai.consent = AiConsentState::None;
-                        self.develop.exposure.ai_denoise_enabled = false;
-                    }
-                    crate::ui::theme::DialogAction::None => {}
+            match action {
+                crate::ui::theme::DialogAction::Confirm => {
+                    self.ai.consent = AiConsentState::None;
+                    self.start_ai_denoise(frame, model_download_needed);
                 }
-            });
+                crate::ui::theme::DialogAction::Cancel => {
+                    self.ai.consent = AiConsentState::None;
+                    self.develop.exposure.ai_denoise_enabled = false;
+                }
+                crate::ui::theme::DialogAction::None => {}
+            }
         }
     }
 }

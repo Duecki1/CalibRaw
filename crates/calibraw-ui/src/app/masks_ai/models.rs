@@ -55,26 +55,76 @@ impl CalibRawApp {
                 std::env::consts::ARCH
             ));
         }
-        ui.label("This native runtime is required to execute the AI model locally. Its archive is downloaded from CalibRaw Artifacts, checked against its pinned size and SHA-256, and cached after extraction.");
-        ui.label("Runtime license: MIT.");
+        ui.label("Downloaded from CalibRaw Artifacts, SHA-256 verified, and cached locally (MIT license).");
+        ui.hyperlink_to(
+            "Runtime source",
+            "https://huggingface.co/Duecki/CalibRaw-Artifacts/tree/main/onnxruntime",
+        );
     }
 
-    /// Runtime details plus the note ordering the model and runtime downloads. Shared by every
-    /// local-AI consent dialog so the wording they all have to state correctly cannot drift.
+    /// Runtime details shared by every local-AI consent dialog.
     pub(in crate::app) fn show_ai_consent_runtime_details(
         &self,
         ui: &mut egui::Ui,
-        model_download_needed: bool,
         runtime_download_needed: bool,
     ) {
         #[cfg(not(target_os = "android"))]
         if runtime_download_needed {
             Self::show_automatic_onnx_runtime_download_details(ui);
         }
-        if model_download_needed && runtime_download_needed {
-            ui.separator();
-            ui.label("CalibRaw downloads and verifies the model first, followed by ONNX Runtime. Both are cached locally.");
+    }
+
+    pub(in crate::app) fn show_ai_download_summary(
+        ui: &mut egui::Ui,
+        model_name: &str,
+        task: &str,
+        model_download_needed: bool,
+        runtime_download_needed: bool,
+    ) {
+        let download = match (model_download_needed, runtime_download_needed) {
+            (true, true) => format!("{model_name} and ONNX Runtime"),
+            (true, false) => model_name.to_owned(),
+            (false, true) => "ONNX Runtime".to_owned(),
+            (false, false) => String::new(),
+        };
+        if download.is_empty() {
+            ui.label(format!("CalibRaw will {task} locally."));
+        } else {
+            ui.label(format!(
+                "CalibRaw will download {download} to {task} locally."
+            ));
+            ui.label("Your photo stays on this device; Hugging Face receives your IP address.");
         }
+    }
+
+    pub(in crate::app) fn show_ai_download_details(
+        &self,
+        ui: &mut egui::Ui,
+        id: &'static str,
+        model_download_needed: bool,
+        runtime_download_needed: bool,
+        license_links: &[(&str, &str)],
+        model_details: impl FnOnce(&mut egui::Ui),
+    ) {
+        if !model_download_needed && !runtime_download_needed {
+            return;
+        }
+        egui::CollapsingHeader::new("Model, runtime and privacy details")
+            .id_salt(id)
+            .show(ui, |ui| {
+                if model_download_needed {
+                    model_details(ui);
+                }
+                self.show_ai_consent_runtime_details(ui, runtime_download_needed);
+                Self::show_hugging_face_privacy(
+                    ui,
+                    if model_download_needed {
+                        license_links
+                    } else {
+                        &[]
+                    },
+                );
+            });
     }
 
     /// Warning shown when Manual runtime mode has no trusted library. Every local-AI consent
@@ -107,28 +157,20 @@ impl CalibRawApp {
         )
     }
 
-    /// Privacy statement, the “Hugging Face privacy policy” link and the model's licence links,
-    /// worded once for all four local-AI consent dialogs.
+    /// Privacy statement and links shared by all four local-AI consent dialogs.
     pub(in crate::app) fn show_hugging_face_privacy(
         ui: &mut egui::Ui,
-        model_download_needed: bool,
         license_links: &[(&str, &str)],
     ) {
-        ui.label(concat!(
-            "When you continue, your device connects directly to Hugging Face. Hugging Face ",
-            "receives connection data such as your IP address and request time under its privacy ",
-            "policy. CalibRaw sends no account identifier or telemetry."
-        ));
+        ui.label("Hugging Face receives your IP address and request time; CalibRaw sends no photo, account ID, or telemetry.");
         ui.horizontal_wrapped(|ui| {
             ui.hyperlink_to(
                 "Hugging Face privacy policy",
                 "https://huggingface.co/privacy",
             );
-            if model_download_needed {
-                for &(label, url) in license_links {
-                    ui.separator();
-                    ui.hyperlink_to(label, url);
-                }
+            for &(label, url) in license_links {
+                ui.separator();
+                ui.hyperlink_to(label, url);
             }
         });
     }

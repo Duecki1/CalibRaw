@@ -794,7 +794,7 @@ pub(crate) fn show_library_action_overlays(
             format!("Export {count} images")
         };
         crate::ui::theme::dialog_window(
-            egui::Window::new(title),
+            title,
             ui.ctx(),
             crate::ui::theme::DIALOG_WIDTH_WIDE,
         )
@@ -833,14 +833,14 @@ pub(crate) fn show_library_action_overlays(
                     { format!("Export {count} images") }
                 };
                 crate::ui::theme::dialog_button_row(ui, |ui| {
-                    if crate::ui::theme::secondary_button(ui, "Cancel").clicked() {
-                        close_export_dialog = true;
-                    }
                     if crate::ui::theme::primary_action_button(ui, label)
                         .on_hover_text(help)
                         .clicked()
                     {
                         confirm_export = true;
+                    }
+                    if crate::ui::theme::secondary_button(ui, "Cancel").clicked() {
+                        close_export_dialog = true;
                     }
                 });
                 if !close_export_dialog

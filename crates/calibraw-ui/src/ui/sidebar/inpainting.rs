@@ -146,11 +146,16 @@ impl Sidebar {
                     1.0,
                 );
             });
-            if let Some(status) = app.inpaint.processing_label.as_deref() {
+            if let Some(status) = app
+                .inpaint
+                .processing_progress
+                .as_ref()
+                .filter(|_| app.inpaint.pending_retouch.is_some())
+            {
                 ui.add_space(crate::ui::theme::SPACE_SM);
                 ui.horizontal(|ui| {
                     ui.spinner();
-                    ui.label(egui::RichText::new(status).small());
+                    ui.label(egui::RichText::new(&status.phase).small());
                 });
             }
         });

@@ -270,32 +270,28 @@ impl Sidebar {
         };
         let mut save = false;
         let mut cancel = false;
-        crate::ui::theme::dialog_window(
-            egui::Window::new(title),
-            ctx,
-            crate::ui::theme::DIALOG_WIDTH_NARROW,
-        )
-        .id(egui::Id::new("mask-rename-dialog-window"))
-        .show(ctx, |ui| {
-            let response = ui.add_sized(
-                [ui.available_width(), ui.spacing().interact_size.y],
-                crate::ui::theme::singleline_text_edit(&mut dialog.name),
-            );
-            crate::ui::theme::request_initial_focus(&response, &mut dialog.focus_requested);
-            let trimmed_is_empty = dialog.name.trim().is_empty();
-            match crate::ui::theme::dialog_confirmation_buttons(
-                ui,
-                "Cancel",
-                "Rename",
-                !trimmed_is_empty,
-                false,
-                crate::ui::theme::DialogKeyboard::CONFIRM_ON_ENTER,
-            ) {
-                crate::ui::theme::DialogAction::Cancel => cancel = true,
-                crate::ui::theme::DialogAction::Confirm => save = true,
-                crate::ui::theme::DialogAction::None => {}
-            }
-        });
+        crate::ui::theme::dialog_window(title, ctx, crate::ui::theme::DIALOG_WIDTH_NARROW)
+            .id(egui::Id::new("mask-rename-dialog-window"))
+            .show(ctx, |ui| {
+                let response = ui.add_sized(
+                    [ui.available_width(), ui.spacing().interact_size.y],
+                    crate::ui::theme::singleline_text_edit(&mut dialog.name),
+                );
+                crate::ui::theme::request_initial_focus(&response, &mut dialog.focus_requested);
+                let trimmed_is_empty = dialog.name.trim().is_empty();
+                match crate::ui::theme::dialog_confirmation_buttons(
+                    ui,
+                    "Cancel",
+                    "Rename",
+                    !trimmed_is_empty,
+                    false,
+                    crate::ui::theme::DialogKeyboard::CONFIRM_ON_ENTER,
+                ) {
+                    crate::ui::theme::DialogAction::Cancel => cancel = true,
+                    crate::ui::theme::DialogAction::Confirm => save = true,
+                    crate::ui::theme::DialogAction::None => {}
+                }
+            });
 
         if save {
             let renamed = match dialog.target {
@@ -348,23 +344,19 @@ impl Sidebar {
             ),
         };
         let mut action = crate::ui::theme::DialogAction::None;
-        crate::ui::theme::dialog_window(
-            egui::Window::new(title),
-            &ctx,
-            crate::ui::theme::DIALOG_WIDTH_NARROW,
-        )
-        .id(egui::Id::new("mask-delete-dialog-window"))
-        .show(&ctx, |ui| {
-            ui.label(message);
-            action = crate::ui::theme::dialog_confirmation_buttons(
-                ui,
-                "Cancel",
-                confirm_label,
-                true,
-                true,
-                crate::ui::theme::DialogKeyboard::CLOSE_ONLY,
-            );
-        });
+        crate::ui::theme::dialog_window(title, &ctx, crate::ui::theme::DIALOG_WIDTH_NARROW)
+            .id(egui::Id::new("mask-delete-dialog-window"))
+            .show(&ctx, |ui| {
+                ui.label(message);
+                action = crate::ui::theme::dialog_confirmation_buttons(
+                    ui,
+                    "Cancel",
+                    confirm_label,
+                    true,
+                    true,
+                    crate::ui::theme::DialogKeyboard::CLOSE_ONLY,
+                );
+            });
 
         match action {
             crate::ui::theme::DialogAction::Cancel => {

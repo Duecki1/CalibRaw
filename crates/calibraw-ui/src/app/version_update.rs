@@ -127,6 +127,17 @@ fn fetch_latest_release() -> Result<Option<AvailableUpdate>, String> {
     }))
 }
 
+fn github_consent_body_height(available_height: f32, width: f32) -> f32 {
+    let footer_reserve = if width < 220.0 {
+        crate::ui::theme::CONTROL_HEIGHT * 3.0 + 32.0
+    } else if width < 480.0 {
+        crate::ui::theme::CONTROL_HEIGHT * 2.0 + 24.0
+    } else {
+        crate::ui::theme::CONTROL_HEIGHT + 16.0
+    };
+    (available_height - footer_reserve - 48.0).max(1.0)
+}
+
 impl CalibRawApp {
     fn start_version_check(&mut self, requested_manually: bool) {
         // This is the final gate before any GitHub network request. Keep it here even
@@ -353,7 +364,7 @@ impl CalibRawApp {
 
         let available = ctx.content_rect().size() - egui::vec2(32.0, 32.0);
         let width = available.x.clamp(1.0, crate::ui::theme::DIALOG_WIDTH_LARGE);
-        let max_body_height = (available.y - crate::ui::theme::CONTROL_HEIGHT - 48.0).max(1.0);
+        let max_body_height = github_consent_body_height(available.y, width);
         let mut action = None;
 
         egui::Modal::new(egui::Id::new("calibraw-github-version-check-consent")).show(ctx, |ui| {
@@ -363,115 +374,80 @@ impl CalibRawApp {
                 .max_height(max_body_height)
                 .auto_shrink([false, true])
                 .show(ui, |ui| {
-                    ui.heading("Privacy / Datenschutz");
-                    ui.add_space(crate::ui::theme::SPACE_XS);
-                    ui.strong("GitHub version checks");
-                    ui.label(
-                        "CalibRaw can contact GitHub's Releases API to see whether a newer stable version is available. This is optional and is not required to edit or export photos.",
-                    );
-
-                    ui.add_space(crate::ui::theme::SPACE_SM);
-                    ui.strong("What is sent to GitHub");
-                    ui.label(format!(
-                        "• The public IP address used for the connection and normal HTTPS connection/request metadata.\n\
-                         • A User-Agent identifying CalibRaw and its installed version: CalibRaw/{}.\n\
-                         • A request for the latest CalibRaw release metadata.\n\n\
-                         CalibRaw does not send photos, file paths, project data, a CalibRaw account identifier, or analytics/telemetry as part of this check.",
-                        env!("CARGO_PKG_VERSION")
-                    ));
-
-                    ui.add_space(crate::ui::theme::SPACE_SM);
-                    ui.strong("How the check works");
-                    ui.label(
-                        "If automatic checks are enabled, CalibRaw checks once when the app starts. It does not download or install an update automatically. The response is used only to compare the published version with the installed version.",
-                    );
-                    ui.label(
-                        "GitHub processes connection and service-usage data under its own privacy statement. CalibRaw stores your permission choice, the automatic-check setting, and any ignored release version locally in its settings.",
-                    );
-
-                    ui.add_space(crate::ui::theme::SPACE_SM);
-                    ui.strong("Your choice");
-                    ui.label(
-                        "Permission is optional. If you choose Don't allow, automatic and manual GitHub version checks stay blocked until you explicitly change this permission under Settings → Updates. You can also revoke an existing permission there. Revoking stops future requests; it cannot undo a request that has already been made.",
-                    );
-                    ui.hyperlink_to(
-                        "GitHub privacy statement / Datenschutzerklärung",
-                        GITHUB_PRIVACY_URL,
-                    );
-
-                    ui.add_space(crate::ui::theme::SPACE_SM);
-                    match request {
-                        VersionCheckConsentRequest::Startup => {
-                            ui.small(
-                                "Choose Not now to keep using CalibRaw without automatic checks, or allow the optional startup check.",
-                            );
-                        }
-                        VersionCheckConsentRequest::EnableAutomatic => {
-                            ui.small(
-                                "Automatic checking will only be enabled if you allow GitHub version-check connections.",
-                            );
-                        }
-                        VersionCheckConsentRequest::Manual => {
-                            ui.small(
-                                "To check now, allow GitHub version checks. If you decline, CalibRaw will not contact GitHub again unless you explicitly change this permission in Settings.",
-                            );
-                        }
-                        VersionCheckConsentRequest::Settings => {
-                            ui.small(format!(
-                                "Current permission: {}",
-                                self.version_check_permission_text()
+                    ui.heading("GitHub update checks");
+                    let action = match request {
+                        VersionCheckConsentRequest::Manual => "check GitHub for updates now",
+                        VersionCheckConsentRequest::Settings => "check GitHub for updates",
+                        _ => "check GitHub for updates at startup",
+                    };
+                    ui.label(format!("CalibRaw can {action} if you allow it."));
+                    ui.label("GitHub sees your IP address and app version; no photos or file paths are sent.");
+                    ui.horizontal_wrapped(|ui| {
+                        ui.hyperlink_to("GitHub privacy policy", GITHUB_PRIVACY_URL);
+                    });
+                    egui::CollapsingHeader::new("More about this permission")
+                        .id_salt("github-update-consent-details")
+                        .show(ui, |ui| {
+                            ui.label(format!(
+                                "CalibRaw requests release metadata with User-Agent CalibRaw/{}; it never downloads or installs updates automatically.",
+                                env!("CARGO_PKG_VERSION")
                             ));
-                        }
-                    }
+                            ui.label("You can change this permission in Settings → Updates. GitHub handles connection data under its privacy policy.");
+                            if request == VersionCheckConsentRequest::Settings {
+                                ui.small(format!(
+                                    "Current permission: {}",
+                                    self.version_check_permission_text()
+                                ));
+                            }
+                        });
                 });
 
             crate::ui::theme::dialog_button_row(ui, |ui| match request {
                 VersionCheckConsentRequest::Startup => {
+                    let label = if width < 240.0 { "Allow" } else { "Allow automatic checks" };
+                    if crate::ui::theme::primary_action_button(ui, label).clicked() {
+                        action = Some(ConsentAction::Allow);
+                    }
+                    if crate::ui::theme::secondary_button(ui, "Don't allow").clicked() {
+                        action = Some(ConsentAction::Deny);
+                    }
                     if crate::ui::theme::secondary_button(ui, "Not now").clicked() {
                         action = Some(ConsentAction::Dismiss);
                     }
-                    if crate::ui::theme::secondary_button(ui, "Don't allow").clicked() {
-                        action = Some(ConsentAction::Deny);
-                    }
-                    if crate::ui::theme::primary_action_button(ui, "Allow automatic checks")
-                        .clicked()
-                    {
-                        action = Some(ConsentAction::Allow);
-                    }
                 }
                 VersionCheckConsentRequest::EnableAutomatic => {
-                    if crate::ui::theme::secondary_button(ui, "Cancel").clicked() {
-                        action = Some(ConsentAction::Dismiss);
+                    let label = if width < 240.0 { "Allow" } else { "Allow automatic checks" };
+                    if crate::ui::theme::primary_action_button(ui, label).clicked() {
+                        action = Some(ConsentAction::Allow);
                     }
                     if crate::ui::theme::secondary_button(ui, "Don't allow").clicked() {
                         action = Some(ConsentAction::Deny);
                     }
-                    if crate::ui::theme::primary_action_button(ui, "Allow automatic checks")
-                        .clicked()
-                    {
-                        action = Some(ConsentAction::Allow);
+                    if crate::ui::theme::secondary_button(ui, "Cancel").clicked() {
+                        action = Some(ConsentAction::Dismiss);
                     }
                 }
                 VersionCheckConsentRequest::Manual => {
-                    if crate::ui::theme::secondary_button(ui, "Cancel").clicked() {
-                        action = Some(ConsentAction::Dismiss);
-                    }
-                    if crate::ui::theme::secondary_button(ui, "Don't allow").clicked() {
-                        action = Some(ConsentAction::Deny);
-                    }
                     if crate::ui::theme::primary_action_button(ui, "Allow & check").clicked() {
                         action = Some(ConsentAction::Allow);
                     }
-                }
-                VersionCheckConsentRequest::Settings => {
+                    if crate::ui::theme::secondary_button(ui, "Don't allow").clicked() {
+                        action = Some(ConsentAction::Deny);
+                    }
                     if crate::ui::theme::secondary_button(ui, "Cancel").clicked() {
                         action = Some(ConsentAction::Dismiss);
+                    }
+                }
+                VersionCheckConsentRequest::Settings => {
+                    let label = if width < 240.0 { "Allow" } else { "Allow & remember" };
+                    if crate::ui::theme::primary_action_button(ui, label).clicked() {
+                        action = Some(ConsentAction::Allow);
                     }
                     if crate::ui::theme::secondary_button(ui, "Don't allow").clicked() {
                         action = Some(ConsentAction::Deny);
                     }
-                    if crate::ui::theme::primary_action_button(ui, "Allow & remember").clicked() {
-                        action = Some(ConsentAction::Allow);
+                    if crate::ui::theme::secondary_button(ui, "Cancel").clicked() {
+                        action = Some(ConsentAction::Dismiss);
                     }
                 }
             });
@@ -528,7 +504,7 @@ impl CalibRawApp {
         }
         let mut action = None;
         crate::ui::theme::dialog_window(
-            egui::Window::new("CalibRaw update available"),
+            "CalibRaw update available",
             ctx,
             crate::ui::theme::DIALOG_WIDTH_WIDE,
         )
@@ -551,14 +527,14 @@ impl CalibRawApp {
                     "Close ignores this version permanently. Remind me next time shows it again after the next app start.",
                 );
                 crate::ui::theme::dialog_button_row(ui, |ui| {
-                    if crate::ui::theme::secondary_button(ui, "Close").clicked() {
-                        action = Some(Action::Ignore);
+                    if crate::ui::theme::primary_action_button(ui, "Update Now").clicked() {
+                        action = Some(Action::Update);
                     }
                     if crate::ui::theme::secondary_button(ui, "Remind me next time").clicked() {
                         action = Some(Action::Remind);
                     }
-                    if crate::ui::theme::primary_action_button(ui, "Update Now").clicked() {
-                        action = Some(Action::Update);
+                    if crate::ui::theme::secondary_button(ui, "Close").clicked() {
+                        action = Some(Action::Ignore);
                     }
                 });
                 if action.is_none()
@@ -629,5 +605,62 @@ mod tests {
     fn manual_checks_work_when_automatic_checks_are_disabled() {
         assert!(should_show_update(true, false, false));
         assert!(!should_show_update(false, false, false));
+    }
+
+    #[test]
+    fn github_consent_actions_stay_on_screen_when_details_scroll() {
+        let ctx = egui::Context::default();
+        for (screen_width, screen_height) in [(720.0, 700.0), (320.0, 260.0), (180.0, 260.0)] {
+            let mut footer_rect = None;
+            for _ in 0..3 {
+                let _ = ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(egui::Rect::from_min_size(
+                            egui::Pos2::ZERO,
+                            egui::vec2(screen_width, screen_height),
+                        )),
+                        ..Default::default()
+                    },
+                    |root| {
+                        let available = root.ctx().content_rect().size() - egui::vec2(32.0, 32.0);
+                        let width = available.x.clamp(1.0, crate::ui::theme::DIALOG_WIDTH_LARGE);
+                        egui::Modal::new(egui::Id::new("github-consent-geometry-test")).show(
+                            root.ctx(),
+                            |ui| {
+                                ui.set_width(width);
+                                ui.set_max_width(width);
+                                egui::ScrollArea::vertical()
+                                    .max_height(github_consent_body_height(available.y, width))
+                                    .auto_shrink([false, true])
+                                    .show(ui, |ui| {
+                                        ui.heading("GitHub update checks");
+                                        for _ in 0..12 {
+                                            ui.label("Expanded permission details that need to scroll in a short window.");
+                                        }
+                                    });
+                                footer_rect = Some(
+                                    crate::ui::theme::dialog_button_row(ui, |ui| {
+                                        crate::ui::theme::primary_action_button(ui, "Allow");
+                                        crate::ui::theme::secondary_button(ui, "Don't allow");
+                                        crate::ui::theme::secondary_button(ui, "Not now");
+                                    })
+                                    .response
+                                    .rect,
+                                );
+                            },
+                        );
+                    },
+                );
+            }
+            let footer = footer_rect.expect("consent footer should render");
+            let viewport = egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(screen_width, screen_height),
+            );
+            assert!(
+                viewport.contains_rect(footer),
+                "viewport {screen_width}x{screen_height}, footer {footer:?}"
+            );
+        }
     }
 }
