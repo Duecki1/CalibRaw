@@ -622,9 +622,9 @@ impl CalibRawApp {
 
             if self.masks.stack.masks[mask_index].components[component_index].kind == MaskKind::Sky
             {
-                let path = self.skywater_model_path();
+                let path = self.skyseg_model_path();
                 let runtime_download_needed = self.automatic_onnx_runtime_download_needed();
-                if crate::ai_masks::skywater_model_is_verified(&path) && !runtime_download_needed {
+                if crate::ai_masks::skyseg_model_is_verified(&path) && !runtime_download_needed {
                     self.start_sky_worker(path, false);
                 } else {
                     self.ai.consent = AiConsentState::Sky {

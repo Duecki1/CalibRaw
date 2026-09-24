@@ -159,9 +159,9 @@ impl CalibRawApp {
             self.report_ai_mask_error(error);
             return;
         }
-        let path = self.skywater_model_path();
+        let path = self.skyseg_model_path();
         let runtime_download_needed = self.automatic_onnx_runtime_download_needed();
-        if crate::ai_masks::skywater_model_is_verified(&path) && !runtime_download_needed {
+        if crate::ai_masks::skyseg_model_is_verified(&path) && !runtime_download_needed {
             self.start_sky_worker(path, false);
         } else {
             self.ai.consent = AiConsentState::Sky {
@@ -183,7 +183,7 @@ impl CalibRawApp {
         let (runtime_path, runtime_sha256) = self.onnx_runtime_for_ai();
         #[cfg(target_os = "android")]
         let (runtime_path, runtime_sha256) = (None, None);
-        let model_present = crate::ai_masks::skywater_model_is_verified(&model_path);
+        let model_present = crate::ai_masks::skyseg_model_is_verified(&model_path);
         let cancellation = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let receiver = spawn_subject_mask(
             SubjectMaskWorkerRequest {
@@ -205,9 +205,9 @@ impl CalibRawApp {
             document_id: self.persistence.sidecar_generation,
             cancellation,
             progress: ForegroundProgress::indeterminate(if model_present {
-                "Running SkyWater SegFormer-B2 locally…"
+                "Running SkySeg U2Net locally…"
             } else {
-                "Preparing SkyWater SegFormer-B2 download…"
+                "Preparing SkySeg U2Net download…"
             }),
             cancelling: false,
             receiver: ForegroundOperationReceiver::Subject(receiver),
@@ -266,7 +266,7 @@ impl CalibRawApp {
                 }
                 SubjectMaskEvent::Inferencing => {
                     operation.progress = ForegroundProgress::indeterminate(if sky {
-                        "Running SkyWater SegFormer-B2 locally…".to_owned()
+                        "Running SkySeg U2Net locally…".to_owned()
                     } else {
                         format!(
                             "Running {} quality locally with {}…",

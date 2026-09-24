@@ -203,9 +203,9 @@ impl CalibRawApp {
             .join(self.ai.birefnet_quality.model().cache_filename)
     }
 
-    pub(in crate::app) fn skywater_model_path(&self) -> PathBuf {
+    pub(in crate::app) fn skyseg_model_path(&self) -> PathBuf {
         self.ai_model_root()
-            .join(crate::ai_masks::SKYWATER_MODEL_FILENAME)
+            .join(crate::ai_masks::SKYSEG_MODEL_FILENAME)
     }
 
     pub(in crate::app) fn big_lama_model_path(&self) -> PathBuf {

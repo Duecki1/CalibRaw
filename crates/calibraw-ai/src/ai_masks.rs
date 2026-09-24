@@ -44,18 +44,18 @@ pub const BIREFNET_HIGH_MODEL_BYTES: u64 = 1_098_928_953;
 pub const BIREFNET_HIGH_MODEL_URL: &str = "https://huggingface.co/Duecki/CalibRaw-Artifacts/resolve/91085ce0ec322a4a7cbd20059688690218e52f9a/models/briefnet/birefnet-highQ.onnx";
 pub const BIREFNET_HIGH_MODEL_SHA256_HEX: &str =
     "db0217e99b25e0c4f6f4dca2892ff1f7ea7aba38fb6ad84f93122a4024be536a";
-pub const SKYWATER_MODEL_FILENAME: &str = "skywater-segformer-b2-fp32.onnx";
-pub const SKYWATER_MODEL_BYTES: u64 = 99_310_780;
-const SKYWATER_MODEL_INSTALL: ModelInstallSpec = ModelInstallSpec {
+pub const SKYSEG_MODEL_FILENAME: &str = "skyseg-u2net-fp32.onnx";
+pub const SKYSEG_MODEL_BYTES: u64 = 175_997_079;
+const SKYSEG_MODEL_INSTALL: ModelInstallSpec = ModelInstallSpec {
     artifact: ModelArtifact {
-        name: "SkyWater SegFormer-B2",
-        url: Some("https://huggingface.co/Realcat/skywater_seg/resolve/ec20751e8551a7d3cc3652dd7fa7e7f89ca9fc95/skywater_segformer_b2_fp32.onnx"),
-        sha256: "e4e9a6927c2d910c3243f86e392b18da715b41c03e6e6f41672f8f6b8eaa71b5",
-        size: ArtifactSize::Exact(SKYWATER_MODEL_BYTES),
-        progress_total: SKYWATER_MODEL_BYTES,
+        name: "SkySeg U2Net",
+        url: Some("https://huggingface.co/JianyuanWang/skyseg/resolve/3ba8c6df1d9ba9ff26f637c7ba9568ac11a9aa7f/skyseg.onnx"),
+        sha256: "ab9c34c64c3d821220a2886a4a06da4642ffa14d5b30e8d5339056a089aa1d39",
+        size: ArtifactSize::Exact(SKYSEG_MODEL_BYTES),
+        progress_total: SKYSEG_MODEL_BYTES,
     },
     download: BIREFNET_DOWNLOAD,
-    progress_label: "SkyWater SegFormer-B2",
+    progress_label: "SkySeg U2Net",
 };
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -216,8 +216,8 @@ pub fn birefnet_model_is_verified(quality: BiRefNetQuality, path: &Path) -> bool
     quality.model().install().is_installed(path)
 }
 
-pub fn skywater_model_is_verified(path: &Path) -> bool {
-    SKYWATER_MODEL_INSTALL.is_installed(path)
+pub fn skyseg_model_is_verified(path: &Path) -> bool {
+    SKYSEG_MODEL_INSTALL.is_installed(path)
 }
 
 pub fn object_models_are_verified(encoder: &Path, decoder: &Path) -> bool {
@@ -251,7 +251,7 @@ pub fn spawn_subject_mask(
                 (|| {
                     ensure_ai_not_cancelled(&cancellation)?;
                     if request.sky {
-                        SKYWATER_MODEL_INSTALL.ensure_installed(
+                        SKYSEG_MODEL_INSTALL.ensure_installed(
                             &request.model_path,
                             request.allow_download,
                             |progress| {

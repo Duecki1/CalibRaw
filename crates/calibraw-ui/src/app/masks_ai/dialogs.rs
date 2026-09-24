@@ -7,7 +7,7 @@ impl CalibRawApp {
         } = self.ai.consent
         {
             let model_download_needed =
-                !crate::ai_masks::skywater_model_is_verified(&self.skywater_model_path());
+                !crate::ai_masks::skyseg_model_is_verified(&self.skyseg_model_path());
             let runtime_ready = self.ai_runtime_ready();
             let mut action = crate::ui::theme::DialogAction::None;
             crate::ui::theme::dialog_window(
@@ -17,7 +17,7 @@ impl CalibRawApp {
                 |ui| {
                     Self::show_ai_download_summary(
                         ui,
-                        "SkyWater SegFormer-B2 (~99 MB)",
+                        "SkySeg U2Net (~176 MB)",
                         "create sky masks",
                         model_download_needed,
                         runtime_download_needed,
@@ -27,8 +27,8 @@ impl CalibRawApp {
                         "sky-download-details",
                         model_download_needed,
                         runtime_download_needed,
-                        &[("MIT model license", "https://huggingface.co/Realcat/skywater_seg")],
-                        |ui| { ui.label("SkyWater SegFormer-B2 runs locally on a 384 × 384 image. It selects the sky class from the model output. License: MIT."); },
+                        &[("MIT model license", "https://github.com/xiongzhu666/Sky-Segmentation-and-Post-processing/blob/main/LICENSE")],
+                        |ui| { ui.label("SkySeg U2Net runs locally on a 320 × 320 image and produces a sky probability mask. License: MIT."); },
                     );
                     self.show_manual_runtime_warning(ui);
                 },
@@ -41,7 +41,7 @@ impl CalibRawApp {
             match action {
                 crate::ui::theme::DialogAction::Confirm => {
                     self.ai.consent = AiConsentState::None;
-                    self.start_sky_worker(self.skywater_model_path(), model_download_needed);
+                    self.start_sky_worker(self.skyseg_model_path(), model_download_needed);
                 }
                 crate::ui::theme::DialogAction::Cancel => {
                     self.ai.consent = AiConsentState::None;

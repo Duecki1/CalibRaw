@@ -704,7 +704,7 @@ impl Sidebar {
                     if generated_mask.is_none() {
                         ui.horizontal_wrapped(|ui| {
                             if is_sky {
-                                ui.label("Generate with SkyWater SegFormer-B2");
+                                ui.label("Generate with SkySeg U2Net");
                             } else {
                                 ui.label(format!("Generate in {} quality", birefnet_quality.label()));
                             }

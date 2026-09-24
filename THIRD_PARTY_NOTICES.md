@@ -105,8 +105,33 @@ from CalibRaw's GPL license; users must comply with the model terms for their us
 | --- | --- | --- |
 | Remove | [Carve/LaMa-ONNX Big-LaMa](https://huggingface.co/Carve/LaMa-ONNX/tree/a3ee2fca54baebec351b8fa7786154ffa7555aa6), an ONNX port of the original LaMa model | Apache-2.0 |
 | Subject selection | [BiRefNet v1 ONNX checkpoints](https://github.com/ZhengPeng7/BiRefNet/releases/tag/v1) | MIT |
+| Sky selection | [SkySeg U2Net FP32 ONNX mirror](https://huggingface.co/JianyuanWang/skyseg/tree/3ba8c6df1d9ba9ff26f637c7ba9568ac11a9aa7f), [original model by xiongzhu666](https://github.com/xiongzhu666/Sky-Segmentation-and-Post-processing) | [MIT](https://github.com/xiongzhu666/Sky-Segmentation-and-Post-processing/blob/main/LICENSE); training image provenance is not published |
 | Object selection | [SAM 2.1 Hiera Tiny ONNX encoder and decoder](https://huggingface.co/akiyamanx/sam2.1-hiera-tiny-onnx/tree/aa11669045f8d82c74e46f8f77c9b56792c90ebb), based on Meta SAM 2 | Apache-2.0 |
 | RAW denoise | [darktable-ai RawNIND release 5.6.0](https://github.com/darktable-org/darktable-ai/tree/release-5.6.0/models/rawdenoise-nind) | GPL-3.0 |
+
+The SkySeg model's upstream MIT notice is reproduced here:
+
+> MIT License
+>
+> Copyright (c) 2021 xiongzhu666
+>
+> Permission is hereby granted, free of charge, to any person obtaining a copy
+> of this software and associated documentation files (the "Software"), to deal
+> in the Software without restriction, including without limitation the rights
+> to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+> copies of the Software, and to permit persons to whom the Software is
+> furnished to do so, subject to the following conditions:
+>
+> The above copyright notice and this permission notice shall be included in all
+> copies or substantial portions of the Software.
+>
+> THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+> IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+> FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+> AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+> LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+> OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+> SOFTWARE.
 
 ## Native libraries and release packages
 
