@@ -7,7 +7,26 @@ use eframe::egui;
 use std::collections::VecDeque;
 use std::sync::Arc;
 
-const EDIT_HISTORY_LIMIT: usize = if cfg!(target_os = "android") { 32 } else { 64 };
+const EDIT_HISTORY_LIMIT: usize = if cfg!(target_os = "android") {
+    128
+} else {
+    256
+};
+
+fn edit_history_interaction_active(ctx: &egui::Context) -> bool {
+    ctx.input(|input| input.pointer.any_down())
+        || (ctx.memory(|memory| memory.focused().is_some())
+            && ctx.input(|input| {
+                [
+                    egui::Key::ArrowUp,
+                    egui::Key::ArrowDown,
+                    egui::Key::ArrowLeft,
+                    egui::Key::ArrowRight,
+                ]
+                .into_iter()
+                .any(|key| input.key_down(key))
+            }))
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct LensEditState {
@@ -412,7 +431,7 @@ impl CalibRawApp {
     }
 
     pub(crate) fn observe_edit_history(&mut self, ctx: &egui::Context) {
-        let interaction_active = ctx.input(|input| input.pointer.any_down());
+        let interaction_active = edit_history_interaction_active(ctx);
         self.persistence.history.observe(
             &self.develop.exposure,
             &self.masks.stack,
@@ -687,6 +706,54 @@ mod tests {
             history.redo(&exposure, &masks, &lens).unwrap();
         assert!(!masks_changed);
         assert_eq!(redone.exposure.exposure, 2.0);
+    }
+
+    #[test]
+    fn held_arrow_changes_commit_once_on_release() {
+        let (mut exposure, masks, lens) = state();
+        let mut history = EditHistory::new(&exposure, &masks, &lens);
+        let ctx = egui::Context::default();
+        let focus_id = egui::Id::new("history-arrow-field");
+        let mut frame = |pressed: Option<bool>, value: Option<f32>| {
+            let events = pressed.into_iter().map(|pressed| egui::Event::Key {
+                key: egui::Key::ArrowUp,
+                physical_key: None,
+                pressed,
+                repeat: false,
+                modifiers: egui::Modifiers::NONE,
+            });
+            let input = egui::RawInput {
+                events: events.collect(),
+                ..Default::default()
+            };
+            let _ = ctx.run_ui(input, |ui| {
+                ui.memory_mut(|memory| memory.request_focus(focus_id));
+                if let Some(value) = value {
+                    exposure.exposure = value;
+                    history.note_change();
+                }
+                history.observe(
+                    &exposure,
+                    &masks,
+                    &lens,
+                    edit_history_interaction_active(ui.ctx()),
+                );
+            });
+            history.undo.len()
+        };
+
+        frame(Some(true), Some(0.01));
+        frame(None, Some(0.02));
+        assert_eq!(frame(None, Some(0.03)), 0);
+        assert_eq!(frame(Some(false), None), 1);
+        frame(Some(true), Some(0.04));
+        assert_eq!(frame(Some(false), None), 2);
+        drop(frame);
+
+        let first = history.undo(&exposure, &masks, &lens).unwrap().0;
+        assert_eq!(first.exposure.exposure, 0.03);
+        let second = history.undo(&first.exposure, &masks, &lens).unwrap().0;
+        assert_eq!(second.exposure.exposure, 0.0);
     }
 
     #[test]
