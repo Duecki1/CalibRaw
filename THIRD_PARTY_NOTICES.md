@@ -163,7 +163,7 @@ other applicable terms are reproduced with the crate notices.
 
 Complete resolved Rust dependency license texts and package attribution are in
 the generated `THIRD_PARTY_LICENSES.md` release bundle. Regenerate it from
-`Cargo.lock` with `bash scripts/prepare_release_licenses.sh`.
+`Cargo.lock` with `bash scripts/generate_licenses.sh`.
 
 ## License policy
 
