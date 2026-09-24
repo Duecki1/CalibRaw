@@ -113,20 +113,15 @@ impl CalibRawApp {
                 crate::ui::theme::DialogAction::None => {}
             }
         });
+        #[cfg(not(target_os = "android"))]
+        let should_recover = recover;
+        #[cfg(target_os = "android")]
+        let should_recover = false;
         if retry {
             self.persistence.sidecar_save_error_dialog = None;
             self.persistence.sidecar_recovery = None;
             self.save_edits_now();
-        } else if {
-            #[cfg(not(target_os = "android"))]
-            {
-                recover
-            }
-            #[cfg(target_os = "android")]
-            {
-                false
-            }
-        } {
+        } else if should_recover {
             #[cfg(not(target_os = "android"))]
             self.recover_unsupported_sidecar();
         } else if close {

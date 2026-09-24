@@ -260,8 +260,10 @@ mod tests {
     fn portrait_effect_card_has_no_header_and_uses_shared_footer_actions() {
         let ctx = egui::Context::default();
         crate::ui::theme::install(&ctx);
-        let mut settings = crate::pipeline::BlurEffectSettings::default();
-        settings.amount = 0.7;
+        let mut settings = crate::pipeline::BlurEffectSettings {
+            amount: 0.7,
+            ..Default::default()
+        };
         let mut enabled = true;
         let mut remove = false;
         let mut render = |events| {

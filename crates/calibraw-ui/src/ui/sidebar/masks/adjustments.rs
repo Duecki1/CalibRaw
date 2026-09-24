@@ -57,10 +57,7 @@ impl Sidebar {
         };
         let mut changed = false;
         let action = Self::adjustment_card(ui, title, default_open, foldable, true, |ui| {
-            changed |= Self::show_local_mask_adjustment_section(
-                ui, adjustment, section, tabs.0, tabs.1, tabs.2, tabs.3, tabs.4,
-            )
-            .0;
+            changed |= Self::show_local_mask_adjustment_section(ui, adjustment, section, tabs).0;
         });
         changed | action.apply_local(adjustment, group)
     }
@@ -69,33 +66,29 @@ impl Sidebar {
         ui: &mut Ui,
         adjustment: &mut crate::pipeline::LocalAdjustments,
         section: MaskSection,
-        selected_tab: &mut ToneCurveTab,
-        selected_grade_tab: &mut ColorGradeTab,
-        selected_hsl_color: &mut HslMixerColor,
-        point_color: &mut crate::ui::components::point_color::PointColorUiState,
-        point_color_tab: &mut bool,
+        tabs: (
+            &mut ToneCurveTab,
+            &mut ColorGradeTab,
+            &mut HslMixerColor,
+            &mut crate::ui::components::point_color::PointColorUiState,
+            &mut bool,
+        ),
     ) -> (bool, bool) {
         match section {
             MaskSection::Properties => (false, false),
             MaskSection::Light => Self::show_local_mask_light(ui, adjustment),
             MaskSection::ToneCurve => (
-                Self::show_local_mask_tone_curve(ui, adjustment, selected_tab),
+                Self::show_local_mask_tone_curve(ui, adjustment, tabs.0),
                 false,
             ),
             MaskSection::Color => (Self::show_local_mask_color(ui, adjustment), false),
             MaskSection::ColorGrading => (
-                Self::show_local_mask_color_grading(ui, adjustment, selected_grade_tab),
+                Self::show_local_mask_color_grading(ui, adjustment, tabs.1),
                 false,
             ),
             MaskSection::Effects => (Self::show_local_mask_effects(ui, adjustment), false),
             MaskSection::ColorMixer => (
-                Self::show_local_mask_color_mixer(
-                    ui,
-                    adjustment,
-                    selected_hsl_color,
-                    point_color,
-                    point_color_tab,
-                ),
+                Self::show_local_mask_color_mixer(ui, adjustment, tabs.2, tabs.3, tabs.4),
                 false,
             ),
         }
