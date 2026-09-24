@@ -23,21 +23,10 @@ pub(crate) fn show(ui: &mut Ui, app: &mut CalibRawApp, frame: &eframe::Frame) {
     let top_height = crate::ui::theme::TOOLBAR_HEIGHT + 12.0;
     let top = Rect::from_min_size(canvas.min, egui::vec2(canvas.width(), top_height));
     let height_id = egui::Id::new("portrait-tool-sheet-height");
-    let default_height = if app.ui.sidebar_tab == SidebarTab::Masks {
-        (canvas.height() * 0.45).max(360.0)
-    } else {
-        (canvas.height() * 0.34).max(260.0)
-    };
-    let mut requested = context
+    let default_height = (canvas.height() * 0.45).max(360.0);
+    let requested = context
         .data(|data| data.get_temp::<f32>(height_id))
         .unwrap_or(default_height);
-    let tab_id = height_id.with("tab");
-    let previous_tab = context.data(|data| data.get_temp::<SidebarTab>(tab_id));
-    if app.ui.sidebar_tab == SidebarTab::Masks && previous_tab != Some(SidebarTab::Masks) {
-        requested = requested.max(default_height);
-        context.data_mut(|data| data.insert_temp(height_id, requested));
-    }
-    context.data_mut(|data| data.insert_temp(tab_id, app.ui.sidebar_tab));
     let mut height = sheet_height(canvas.height(), requested);
 
     show_top_controls(&context, top, app, frame);
