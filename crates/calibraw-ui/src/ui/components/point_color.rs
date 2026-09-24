@@ -1,6 +1,7 @@
 use crate::pipeline::{PointColor, PointColorRange, PointColors, MAX_POINT_COLORS};
 use crate::ui::components::adjustment_slider::{
-    accented_gradient_adjustment_slider, adjustment_slider_with_reset, SliderGradient,
+    accented_gradient_adjustment_slider, adjustment_slider_with_reset, step_focused_numeric_field,
+    SliderGradient,
 };
 use crate::ui::components::color_picker::sidebar_color_picker;
 use crate::ui::{icons, theme};
@@ -357,8 +358,15 @@ fn range_editor(
             ui.spacing_mut().item_spacing.x = 3.0;
             for (index, name) in ["Fade in", "Full from", "Full to", "Fade out"].into_iter().enumerate() {
                 let mut value = [range.min, range.inner_min, range.inner_max, range.max][index] * 100.0;
-                if ui.add(egui::DragValue::new(&mut value).range(-limit * 100.0..=limit * 100.0)
-                    .speed(0.5).max_decimals(1)).on_hover_text(format!("{name}: offset from sampled color")).changed() {
+                let field_id = ui.next_auto_id();
+                let field_range = -limit * 100.0..=limit * 100.0;
+                let stepped = step_focused_numeric_field(ui, field_id, &mut value, field_range.clone());
+                let display_decimals = if ui.memory(|memory| memory.has_focus(field_id))
+                    || (value - value.round()).abs() > 0.0001
+                { 2 } else { 1 };
+                let response = ui.add(egui::DragValue::new(&mut value).range(field_range)
+                    .speed(0.5).fixed_decimals(display_decimals)).on_hover_text(format!("{name}: offset from sampled color"));
+                if stepped || response.changed() {
                     set_range_handle(range, index, value / 100.0, limit);
                 }
             }

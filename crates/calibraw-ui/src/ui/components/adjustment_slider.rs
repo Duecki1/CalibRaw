@@ -1,5 +1,6 @@
 use eframe::egui::{self, Align, Align2, DragValue, Layout, RichText, Sense, Stroke, Ui};
 use std::ops::RangeInclusive;
+use std::time::Duration;
 
 #[cfg(not(target_os = "android"))]
 const VALUE_FIELD_WIDTH: f32 = 72.0;
@@ -31,6 +32,14 @@ const COMPACT_ROW_BOTTOM_SPACE: f32 = 1.0;
 const COMPACT_LABEL_MIN_WIDTH: f32 = 76.0;
 const COMPACT_LABEL_MAX_WIDTH: f32 = 104.0;
 const COMPACT_TRACK_MIN_WIDTH: f32 = 64.0;
+const ARROW_REPEAT_DELAY: f64 = 0.35;
+const ARROW_REPEAT_INTERVAL: f64 = 0.05;
+
+#[derive(Clone, Copy, Default)]
+struct ArrowRepeat {
+    direction: i8,
+    next_at: f64,
+}
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum SliderGradient {
@@ -546,16 +555,97 @@ where
     if ui.input(|input| input.has_touch_screen()) {
         (touch_value_field(ui, value.to_f64(), decimals), false)
     } else {
-        let response = ui.add_sized(
-            [VALUE_FIELD_WIDTH, HEADER_HEIGHT],
-            DragValue::new(value)
-                .range(range)
-                .speed(speed)
-                .fixed_decimals(decimals),
-        );
-        let changed = response.changed();
-        (response, changed)
+        ui.allocate_ui_with_layout(
+            egui::vec2(VALUE_FIELD_WIDTH, HEADER_HEIGHT),
+            Layout::centered_and_justified(ui.layout().main_dir()),
+            |ui| {
+                let id = ui.next_auto_id();
+                let mut changed = step_focused_numeric_field(ui, id, value, range.clone());
+                let display_decimals = if !Num::INTEGRAL
+                    && (ui.memory(|memory| memory.has_focus(id))
+                        || (value.to_f64() - value.to_f64().round()).abs() > 0.0001)
+                {
+                    decimals.max(2)
+                } else {
+                    decimals
+                };
+                let response = ui.add(
+                    DragValue::new(value)
+                        .range(range)
+                        .speed(speed)
+                        .fixed_decimals(display_decimals),
+                );
+                changed |= response.changed();
+                (response, changed)
+            },
+        )
+        .inner
     }
+}
+
+pub(crate) fn step_focused_numeric_field<Num>(
+    ui: &mut Ui,
+    id: egui::Id,
+    value: &mut Num,
+    range: RangeInclusive<Num>,
+) -> bool
+where
+    Num: egui::emath::Numeric + Copy,
+{
+    let direction = focused_number_arrow_step(ui, id);
+    if direction == 0 {
+        return false;
+    }
+    let step = if Num::INTEGRAL { 1.0 } else { 0.01 };
+    let start = range.start().to_f64();
+    let end = range.end().to_f64();
+    let next = (value.to_f64() + f64::from(direction) * step).clamp(start.min(end), start.max(end));
+    let changed = set_numeric(value, next, if Num::INTEGRAL { 0 } else { 2 });
+    if changed {
+        // DragValue caches the text being edited under its widget ID.
+        ui.data_mut(|data| data.remove_temp::<String>(id));
+    }
+    changed
+}
+
+fn focused_number_arrow_step(ui: &mut Ui, id: egui::Id) -> i8 {
+    let repeat_id = id.with("arrow-repeat");
+    if !ui.is_enabled() || !ui.memory(|memory| memory.has_focus(id)) {
+        ui.data_mut(|data| data.remove_temp::<ArrowRepeat>(repeat_id));
+        return 0;
+    }
+
+    let (now, up, down) = ui.input_mut(|input| {
+        let up_pressed = input.consume_key(egui::Modifiers::NONE, egui::Key::ArrowUp);
+        let down_pressed = input.consume_key(egui::Modifiers::NONE, egui::Key::ArrowDown);
+        (
+            input.time,
+            input.key_down(egui::Key::ArrowUp) || up_pressed,
+            input.key_down(egui::Key::ArrowDown) || down_pressed,
+        )
+    });
+    let direction = i8::from(up) - i8::from(down);
+    if direction == 0 {
+        ui.data_mut(|data| data.remove_temp::<ArrowRepeat>(repeat_id));
+        return 0;
+    }
+
+    let previous = ui.data(|data| data.get_temp::<ArrowRepeat>(repeat_id));
+    let (step, next_at) = match previous {
+        Some(previous) if previous.direction == direction && now < previous.next_at => {
+            (0, previous.next_at)
+        }
+        Some(previous) if previous.direction == direction => {
+            (direction, now + ARROW_REPEAT_INTERVAL)
+        }
+        _ => (direction, now + ARROW_REPEAT_DELAY),
+    };
+    ui.data_mut(|data| {
+        data.insert_temp(repeat_id, ArrowRepeat { direction, next_at });
+    });
+    ui.ctx()
+        .request_repaint_after(Duration::from_secs_f64((next_at - now).max(0.0)));
+    step
 }
 
 fn guarded_slider<Num>(
@@ -1408,6 +1498,82 @@ mod tests {
         );
         assert_eq!(value, 51);
         assert!(!ctx.input_mut(|input| { input.consume_key(Modifiers::NONE, Key::ArrowRight) }));
+    }
+
+    #[test]
+    fn focused_number_arrows_step_by_hundredths_and_repeat_after_delay() {
+        use eframe::egui::{pos2, Event, Key, Modifiers, PointerButton};
+
+        let ctx = eframe::egui::Context::default();
+        let mut value = 1.0_f32;
+        let mut show = |time, events| {
+            let mut input = pointer_input(events);
+            input.time = Some(time);
+            let mut focused = false;
+            let _ = ctx.run_ui(input, |ui| {
+                let (response, _) = super::numeric_value_field(ui, &mut value, 0.0..=2.0, 2, 0.05);
+                focused = response.has_focus();
+            });
+            (value, focused)
+        };
+
+        show(0.0, Vec::new());
+        let up = Event::Key {
+            key: Key::ArrowUp,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: Modifiers::NONE,
+        };
+        assert!((show(0.001, vec![up.clone()]).0 - 1.0).abs() < 0.0001);
+        assert!(ctx.input_mut(|input| input.consume_key(Modifiers::NONE, Key::ArrowUp)));
+        show(
+            0.002,
+            vec![Event::Key {
+                key: Key::ArrowUp,
+                physical_key: None,
+                pressed: false,
+                repeat: false,
+                modifiers: Modifiers::NONE,
+            }],
+        );
+        let field = pos2(VALUE_FIELD_WIDTH * 0.5, HEADER_HEIGHT * 0.5);
+        for pressed in [true, false] {
+            show(
+                if pressed { 0.01 } else { 0.02 },
+                vec![
+                    Event::PointerMoved(field),
+                    Event::PointerButton {
+                        pos: field,
+                        button: PointerButton::Primary,
+                        pressed,
+                        modifiers: Modifiers::NONE,
+                    },
+                ],
+            );
+        }
+        assert!(show(0.03, Vec::new()).1);
+        assert!((show(0.10, vec![up]).0 - 1.01).abs() < 0.0001);
+        assert!((show(0.40, Vec::new()).0 - 1.01).abs() < 0.0001);
+        assert!((show(0.46, Vec::new()).0 - 1.02).abs() < 0.0001);
+        assert!((show(0.52, Vec::new()).0 - 1.03).abs() < 0.0001);
+        let release = Event::Key {
+            key: Key::ArrowUp,
+            physical_key: None,
+            pressed: false,
+            repeat: false,
+            modifiers: Modifiers::NONE,
+        };
+        assert!((show(0.53, vec![release]).0 - 1.03).abs() < 0.0001);
+        assert!((show(1.0, Vec::new()).0 - 1.03).abs() < 0.0001);
+        let down = Event::Key {
+            key: Key::ArrowDown,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: Modifiers::NONE,
+        };
+        assert!((show(1.1, vec![down]).0 - 1.02).abs() < 0.0001);
     }
 
     #[test]

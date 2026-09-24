@@ -76,15 +76,32 @@ pub(crate) fn export_settings_controls(
                 ExportResizeMode::Original => {}
                 ExportResizeMode::Percentage => {
                     crate::ui::theme::form_row(ui, "Scale", 112.0, |ui, width| {
-                        ui.add_sized(
-                            [width, crate::ui::theme::CONTROL_HEIGHT],
-                            egui::DragValue::new(&mut settings.percentage)
-                                .range(1.0..=400.0)
-                                .speed(1.0)
-                                .suffix("%")
-                                .fixed_decimals(0),
-                        )
-                        .on_hover_text("Percentage of the original image dimensions.");
+                        ui.allocate_ui_with_layout(
+                            egui::vec2(width, crate::ui::theme::CONTROL_HEIGHT),
+                            egui::Layout::centered_and_justified(ui.layout().main_dir()),
+                            |ui| {
+                                let id = ui.next_auto_id();
+                                crate::ui::components::adjustment_slider::step_focused_numeric_field(
+                                    ui, id, &mut settings.percentage, 1.0..=400.0,
+                                );
+                                let decimals = if ui.memory(|memory| memory.has_focus(id))
+                                    || (settings.percentage - settings.percentage.round()).abs()
+                                        > 0.0001
+                                {
+                                    2
+                                } else {
+                                    0
+                                };
+                                ui.add(
+                                    egui::DragValue::new(&mut settings.percentage)
+                                        .range(1.0..=400.0)
+                                        .speed(1.0)
+                                        .suffix("%")
+                                        .fixed_decimals(decimals),
+                                )
+                                .on_hover_text("Percentage of the original image dimensions.");
+                            },
+                        );
                     });
                 }
                 ExportResizeMode::LongEdge
@@ -92,14 +109,26 @@ pub(crate) fn export_settings_controls(
                 | ExportResizeMode::Width
                 | ExportResizeMode::Height => {
                     crate::ui::theme::form_row(ui, "Pixels", 112.0, |ui, width| {
-                        ui.add_sized(
-                            [width, crate::ui::theme::CONTROL_HEIGHT],
-                            egui::DragValue::new(&mut settings.edge_or_dimension)
-                                .range(1..=crate::pipeline::MAX_EXPORT_EDGE)
-                                .speed(10.0)
-                                .suffix(" px"),
-                        )
-                        .on_hover_text("Target size in pixels; the aspect ratio is preserved.");
+                        ui.allocate_ui_with_layout(
+                            egui::vec2(width, crate::ui::theme::CONTROL_HEIGHT),
+                            egui::Layout::centered_and_justified(ui.layout().main_dir()),
+                            |ui| {
+                                let id = ui.next_auto_id();
+                                crate::ui::components::adjustment_slider::step_focused_numeric_field(
+                                    ui,
+                                    id,
+                                    &mut settings.edge_or_dimension,
+                                    1..=crate::pipeline::MAX_EXPORT_EDGE,
+                                );
+                                ui.add(
+                                    egui::DragValue::new(&mut settings.edge_or_dimension)
+                                        .range(1..=crate::pipeline::MAX_EXPORT_EDGE)
+                                        .speed(10.0)
+                                        .suffix(" px"),
+                                )
+                                .on_hover_text("Target size in pixels; the aspect ratio is preserved.");
+                            },
+                        );
                     });
                 }
             }
