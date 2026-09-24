@@ -30,7 +30,7 @@ CalibRaw runs natively on **Linux**, **Android**, **Windows**, and **macOS** wit
 - **Color Grading & Point Color:** Sample colors directly with an eyedropper, fine-tune custom Hue, Saturation, and Luminance ranges, and preview affected areas with a live selection mask.
 - **Advanced Demosaicing:** Shader-based Bayer RCD, Fujifilm X-Trans (Markesteijn 3-pass), and Dual Demosaicing to reduce noise and artifacts in high-ISO images.
 - **Sigmoid Tone Mapping:** Smooth highlight roll-off inspired by modern scene-referred color workflows, paired with Opposed and LCh highlight recovery.
-- **Local AI Masking (Offline):** Optional, locally-run ONNX models for subject selection (BiRefNet), object segmentation (Meta SAM 2.1), healing (LaMa), and AI denoise.
+- **Local AI Tools (Offline):** Masks, AI Denoise, and AI Remove.
 - **Native Android App:** A real ARM64 NDK build with 16 KB memory page support, touch layouts, and MediaStore exporting.
 - **Non-Destructive Edits:** All sliders, curves, and masks are saved to lightweight `.calibraw` JSON sidecar files.
 - **Tiled Export & CLI:** Exports large RAW files in tiles to avoid GPU memory limits, plus a command-line tool for batch rendering.
@@ -56,7 +56,7 @@ CalibRaw runs natively on **Linux**, **Android**, **Windows**, and **macOS** wit
 
 ### Masking & AI
 - **Masks:** Brush, Linear Gradient, Radial Gradient, and Shape masks with independent curves and adjustments.
-- **Local AI Tools:** One-click subject masking (BiRefNet), sky masking ([SkySeg U2Net](https://github.com/xiongzhu666/Sky-Segmentation-and-Post-processing)) with grow and feather controls, click-to-select object masking (Meta SAM 2.1), and healing (LaMa + Laplace solver). Models run locally after their first download.
+- **Local AI Tools:** High quality subject, sky, and object masks, AI Denoise, and AI Remove.
 - **GPU Creative Effects:** Stackable effect cards for masks or the full image, including Light Rays, Lens Blur (bokeh), Motion Blur, Radial Blur, Fog, Smoke, Glow, and Neon.
 
 ---
