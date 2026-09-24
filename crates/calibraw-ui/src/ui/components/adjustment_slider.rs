@@ -596,7 +596,7 @@ where
     if direction == 0 {
         return false;
     }
-    let step = if Num::INTEGRAL { 1.0 } else { 0.01 };
+    let step = numeric_arrow_step(&range);
     let start = range.start().to_f64();
     let end = range.end().to_f64();
     let next = (value.to_f64() + f64::from(direction) * step).clamp(start.min(end), start.max(end));
@@ -606,6 +606,18 @@ where
         ui.data_mut(|data| data.remove_temp::<String>(id));
     }
     changed
+}
+
+fn numeric_arrow_step<Num>(range: &RangeInclusive<Num>) -> f64
+where
+    Num: egui::emath::Numeric,
+{
+    if Num::INTEGRAL {
+        return 1.0;
+    }
+    // 0.2% of the largest endpoint: 0.01 for Exposure (±5), 0.2 for ±100.
+    let maximum = range.start().to_f64().abs().max(range.end().to_f64().abs());
+    (maximum / 500.0).max(0.01)
 }
 
 fn focused_number_arrow_step(ui: &mut Ui, id: egui::Id) -> i8 {
@@ -1503,15 +1515,19 @@ mod tests {
     #[test]
     fn focused_number_arrows_step_by_hundredths_and_repeat_after_delay() {
         use eframe::egui::{pos2, Event, Key, Modifiers, PointerButton};
+        use std::cell::Cell;
 
         let ctx = eframe::egui::Context::default();
         let mut value = 1.0_f32;
+        let maximum = Cell::new(5.0_f32);
         let mut show = |time, events| {
             let mut input = pointer_input(events);
             input.time = Some(time);
             let mut focused = false;
             let _ = ctx.run_ui(input, |ui| {
-                let (response, _) = super::numeric_value_field(ui, &mut value, 0.0..=2.0, 2, 0.05);
+                let limit = maximum.get();
+                let (response, _) =
+                    super::numeric_value_field(ui, &mut value, -limit..=limit, 2, 0.05);
                 focused = response.has_focus();
             });
             (value, focused)
@@ -1574,6 +1590,40 @@ mod tests {
             modifiers: Modifiers::NONE,
         };
         assert!((show(1.1, vec![down]).0 - 1.02).abs() < 0.0001);
+        show(
+            1.11,
+            vec![Event::Key {
+                key: Key::ArrowDown,
+                physical_key: None,
+                pressed: false,
+                repeat: false,
+                modifiers: Modifiers::NONE,
+            }],
+        );
+        maximum.set(100.0);
+        assert!(
+            (show(
+                1.2,
+                vec![Event::Key {
+                    key: Key::ArrowUp,
+                    physical_key: None,
+                    pressed: true,
+                    repeat: false,
+                    modifiers: Modifiers::NONE,
+                }]
+            )
+            .0 - 1.22)
+                .abs()
+                < 0.0001
+        );
+    }
+
+    #[test]
+    fn focused_number_step_scales_with_slider_maximum() {
+        assert!((super::numeric_arrow_step(&(-5.0_f32..=5.0)) - 0.01).abs() < 0.0001);
+        assert!((super::numeric_arrow_step(&(-100.0_f32..=100.0)) - 0.2).abs() < 0.0001);
+        assert!((super::numeric_arrow_step(&(0.0_f32..=100.0)) - 0.2).abs() < 0.0001);
+        assert_eq!(super::numeric_arrow_step(&(1_u32..=100_u32)), 1.0);
     }
 
     #[test]
