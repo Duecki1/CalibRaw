@@ -6,7 +6,7 @@ use std::path::Path;
 mod dcp;
 mod icc;
 
-use crate::color_math::{rec2020_from_oklab, rec2020_to_oklab};
+use crate::color_math::{rec2020_from_oklab, rec2020_to_linear_srgb, rec2020_to_oklab};
 use dcp::{profile_from_tags, profile_identity_from_tags, TiffReader};
 
 #[cfg(test)]
@@ -670,15 +670,7 @@ fn mul3(matrix: [[f32; 3]; 3], vector: [f32; 3]) -> [f32; 3] {
 }
 
 pub(super) fn display_linear_rec2020_to_srgb(rgb: [f32; 3]) -> [f32; 3] {
-    let linear = mul3(
-        [
-            [1.660_491, -0.587_641_1, -0.072_849_9],
-            [-0.124_550_5, 1.132_899_9, -0.008_349_4],
-            [-0.018_150_8, -0.100_578_9, 1.118_729_7],
-        ],
-        rgb,
-    );
-    perceptual_gamut_compress(linear).map(srgb_encode)
+    perceptual_gamut_compress(rec2020_to_linear_srgb(rgb)).map(srgb_encode)
 }
 
 pub(super) fn perceptual_gamut_compress(rgb: [f32; 3]) -> [f32; 3] {

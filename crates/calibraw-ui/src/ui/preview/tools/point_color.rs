@@ -122,7 +122,9 @@ impl Preview {
                 return;
             }
         };
-        let srgb_linear = rec2020_to_srgb(rgb);
+        // The preview attachment is linear Rec.2020; point colors store encoded sRGB.
+        let srgb_linear = calibraw_core::color_math::rec2020_to_linear_srgb(rgb)
+            .map(|value| value.clamp(0.0, 1.0));
         let srgb = srgb_linear.map(linear_to_srgb);
         let point = crate::pipeline::PointColor::from_srgb(srgb);
         if let Some(index) = mask_index {
@@ -195,17 +197,6 @@ fn linear_to_srgb(value: f32) -> f32 {
     } else {
         1.055 * value.powf(1.0 / 2.4) - 0.055
     }
-}
-
-fn rec2020_to_srgb(rgb: [f32; 3]) -> [f32; 3] {
-    // The preview's display-linear attachment is linear Rec. 2020. PointColor
-    // stores encoded sRGB samples, so convert primaries before applying the OETF.
-    [
-        1.660_491 * rgb[0] - 0.5876411 * rgb[1] - 0.0728499 * rgb[2],
-        -0.1245505 * rgb[0] + 1.1328999 * rgb[1] - 0.0083494 * rgb[2],
-        -0.0181508 * rgb[0] - 0.1005789 * rgb[1] + 1.1187297 * rgb[2],
-    ]
-    .map(|value| value.clamp(0.0, 1.0))
 }
 
 #[cfg(test)]

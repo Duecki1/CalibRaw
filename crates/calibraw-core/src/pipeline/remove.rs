@@ -2,6 +2,7 @@ use super::{
     color_profile::{perceptual_gamut_compress, srgb_decode, srgb_encode},
     ExposureParams, LoadedRaw,
 };
+use crate::color_math::rec2020_to_linear_srgb;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::sync::{Arc, OnceLock};
 
@@ -635,12 +636,7 @@ fn composite_patch_into_linear_region_with_opacity(
 }
 
 pub fn display_linear_rec2020_to_model_srgb(rgb: [f32; 3]) -> [f32; 3] {
-    let linear = [
-        1.660_491 * rgb[0] - 0.587_641_1 * rgb[1] - 0.072_849_9 * rgb[2],
-        -0.124_550_5 * rgb[0] + 1.132_899_9 * rgb[1] - 0.008_349_4 * rgb[2],
-        -0.018_150_8 * rgb[0] - 0.100_578_9 * rgb[1] + 1.118_729_7 * rgb[2],
-    ];
-    perceptual_gamut_compress(linear).map(srgb_encode)
+    perceptual_gamut_compress(rec2020_to_linear_srgb(rgb)).map(srgb_encode)
 }
 
 pub fn model_srgb_to_display_linear_rec2020(rgb: [f32; 3]) -> [f32; 3] {

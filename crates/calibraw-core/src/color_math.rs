@@ -51,14 +51,19 @@ fn oklab_to_linear_srgb(lab: [f32; 3]) -> [f32; 3] {
 }
 
 pub fn rec2020_to_oklab(rgb: [f32; 3]) -> [f32; 3] {
-    linear_srgb_to_oklab(mul3(
+    linear_srgb_to_oklab(rec2020_to_linear_srgb(rgb))
+}
+
+/// Convert linear Rec.2020 primaries to linear sRGB without gamut mapping.
+pub fn rec2020_to_linear_srgb(rgb: [f32; 3]) -> [f32; 3] {
+    mul3(
         [
             [1.660_491, -0.587_641_1, -0.072_849_9],
             [-0.124_550_5, 1.132_899_9, -0.008_349_4],
             [-0.018_150_8, -0.100_578_9, 1.118_729_7],
         ],
         rgb,
-    ))
+    )
 }
 
 pub fn rec2020_from_oklab(lab: [f32; 3]) -> [f32; 3] {
@@ -75,6 +80,15 @@ pub fn rec2020_from_oklab(lab: [f32; 3]) -> [f32; 3] {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rec2020_to_linear_srgb_maps_srgb_red() {
+        let red_in_rec2020 = [0.627_403_9, 0.069_097_3, 0.016_391_4];
+        let converted = rec2020_to_linear_srgb(red_in_rec2020);
+        for (actual, expected) in converted.into_iter().zip([1.0, 0.0, 0.0]) {
+            assert!((actual - expected).abs() < 1e-6);
+        }
+    }
 
     #[test]
     fn rec2020_oklab_round_trips() {
