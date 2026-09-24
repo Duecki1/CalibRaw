@@ -418,7 +418,7 @@ impl Settings {
                 ui,
                 &mut settings.ai_masks,
                 "AI masks",
-                "Subject, background, object, luminance-range, and color-range components. Source-dependent results are marked for regeneration on the destination image.",
+                "Subject, background, sky, object, luminance-range, and color-range components. Source-dependent results are marked for regeneration on the destination image.",
             )
                 .changed();
             changed |= crate::ui::theme::checkbox_with_help(

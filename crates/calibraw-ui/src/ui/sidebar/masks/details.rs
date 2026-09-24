@@ -499,7 +499,11 @@ impl Sidebar {
             app.note_mask_edit_changed();
         }
         if request_subject {
-            app.request_subject_mask(frame);
+            if app.masks.stack.masks[mask_index].components[component_index].kind == MaskKind::Sky {
+                app.request_sky_mask(frame);
+            } else {
+                app.request_subject_mask(frame);
+            }
         }
         if request_object {
             app.request_object_mask(mask_index, component_index);
