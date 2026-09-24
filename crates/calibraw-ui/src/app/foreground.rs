@@ -33,6 +33,7 @@ impl ForegroundOperationKind {
     pub(crate) const fn title(self) -> &'static str {
         match self {
             Self::SubjectMask => "Preparing subject mask",
+            Self::SkyMask => "Preparing sky mask",
             Self::ObjectMask => "Preparing object mask",
             Self::AiDenoise => "Applying AI denoise",
             Self::LensCorrection => "Applying lens correction",
@@ -214,7 +215,9 @@ impl CalibRawApp {
 impl CalibRawApp {
     pub(in crate::app) fn poll_foreground_operation(&mut self, frame: &eframe::Frame) {
         match self.foreground_operation_kind() {
-            Some(ForegroundOperationKind::SubjectMask) => self.poll_subject_worker(),
+            Some(ForegroundOperationKind::SubjectMask | ForegroundOperationKind::SkyMask) => {
+                self.poll_subject_worker()
+            }
             Some(ForegroundOperationKind::ObjectMask) => self.poll_object_worker(),
             Some(ForegroundOperationKind::AiDenoise) => self.poll_ai_denoise_worker(),
             Some(ForegroundOperationKind::LensCorrection) => {

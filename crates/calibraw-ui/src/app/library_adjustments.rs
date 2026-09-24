@@ -397,7 +397,9 @@ pub(super) fn ai_mask_refresh_target_count(masks: &crate::pipeline::MaskStack) -
         .flat_map(|mask| &mask.components)
         .filter(|component| match (component.kind, &component.geometry) {
             (
-                crate::pipeline::MaskKind::Subject | crate::pipeline::MaskKind::Background,
+                crate::pipeline::MaskKind::Subject
+                | crate::pipeline::MaskKind::Background
+                | crate::pipeline::MaskKind::Sky,
                 crate::pipeline::MaskGeometry::Ai { .. },
             ) => true,
             (
@@ -742,7 +744,11 @@ impl CalibRawApp {
         }
         if matches!(
             self.foreground_operation_kind(),
-            Some(ForegroundOperationKind::SubjectMask | ForegroundOperationKind::ObjectMask)
+            Some(
+                ForegroundOperationKind::SubjectMask
+                    | ForegroundOperationKind::SkyMask
+                    | ForegroundOperationKind::ObjectMask
+            )
         ) {
             self.cancel_foreground_operation();
         }

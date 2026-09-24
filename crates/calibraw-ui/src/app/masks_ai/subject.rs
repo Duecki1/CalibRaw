@@ -22,7 +22,10 @@ impl CalibRawApp {
     }
 
     pub(crate) fn birefnet_quality_change_enabled(&self) -> bool {
-        !self.foreground_operation_is(ForegroundOperationKind::SubjectMask)
+        !matches!(
+            self.foreground_operation_kind(),
+            Some(ForegroundOperationKind::SubjectMask | ForegroundOperationKind::SkyMask)
+        )
     }
 
     pub(crate) fn request_subject_mask(&mut self, frame: &eframe::Frame) {
@@ -89,6 +92,7 @@ impl CalibRawApp {
         let cancellation = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let receiver = spawn_subject_mask(
             SubjectMaskWorkerRequest {
+                sky: false,
                 quality: self.ai.birefnet_quality,
                 crop_refinement,
                 model_path,
@@ -141,13 +145,101 @@ impl CalibRawApp {
         self.blink_selected_mask();
     }
 
+    pub(crate) fn request_sky_mask(&mut self, frame: &eframe::Frame) {
+        if self.foreground_operation_active() {
+            self.ui.notice =
+                Some("Finish or cancel the current editing operation first.".to_owned());
+            return;
+        }
+        #[cfg(not(target_os = "android"))]
+        if !self.validate_onnx_runtime_for_ai() {
+            return;
+        }
+        if let Err(error) = self.capture_mask_source(frame) {
+            self.report_ai_mask_error(error);
+            return;
+        }
+        let path = self.skywater_model_path();
+        let runtime_download_needed = self.automatic_onnx_runtime_download_needed();
+        if crate::ai_masks::skywater_model_is_verified(&path) && !runtime_download_needed {
+            self.start_sky_worker(path, false);
+        } else {
+            self.ai.consent = AiConsentState::Sky {
+                runtime_download_needed,
+            };
+        }
+    }
+
+    pub(in crate::app) fn start_sky_worker(&mut self, model_path: PathBuf, allow_download: bool) {
+        if self.foreground_operation_active() {
+            return;
+        }
+        let Some(source) = self.masks.source_cache.clone() else {
+            self.ui.notice =
+                Some("The preview could not be prepared for sky selection.".to_owned());
+            return;
+        };
+        #[cfg(not(target_os = "android"))]
+        let (runtime_path, runtime_sha256) = self.onnx_runtime_for_ai();
+        #[cfg(target_os = "android")]
+        let (runtime_path, runtime_sha256) = (None, None);
+        let model_present = crate::ai_masks::skywater_model_is_verified(&model_path);
+        let cancellation = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let receiver = spawn_subject_mask(
+            SubjectMaskWorkerRequest {
+                sky: true,
+                quality: self.ai.birefnet_quality,
+                crop_refinement: false,
+                model_path,
+                allow_download,
+                runtime_path,
+                runtime_sha256,
+                width: source.width,
+                height: source.height,
+                rgba: source.rgba.to_vec(),
+            },
+            Arc::clone(&cancellation),
+        );
+        self.begin_foreground_operation(ForegroundOperation {
+            kind: ForegroundOperationKind::SkyMask,
+            document_id: self.persistence.sidecar_generation,
+            cancellation,
+            progress: ForegroundProgress::indeterminate(if model_present {
+                "Running SkyWater SegFormer-B2 locally…"
+            } else {
+                "Preparing SkyWater SegFormer-B2 download…"
+            }),
+            cancelling: false,
+            receiver: ForegroundOperationReceiver::Subject(receiver),
+            context: ForegroundOperationContext::Subject,
+        });
+    }
+
+    pub(in crate::app) fn apply_sky_mask(&mut self, mask: MaskImage) {
+        for local_mask in &mut self.masks.stack.masks {
+            for component in &mut local_mask.components {
+                if component.kind == MaskKind::Sky {
+                    if let MaskGeometry::Ai { mask: target, .. } = &mut component.geometry {
+                        *target = Some(mask.clone());
+                    }
+                }
+            }
+        }
+        self.mark_all_mask_layers_dirty();
+        self.blink_selected_mask();
+    }
+
     pub(in crate::app) fn poll_subject_worker(&mut self) {
-        if !self.foreground_operation_is(ForegroundOperationKind::SubjectMask) {
+        if !matches!(
+            self.foreground_operation_kind(),
+            Some(ForegroundOperationKind::SubjectMask | ForegroundOperationKind::SkyMask)
+        ) {
             return;
         }
         let Some(mut operation) = self.foreground_operation.take() else {
             return;
         };
+        let sky = operation.kind == ForegroundOperationKind::SkyMask;
         let ForegroundOperationReceiver::Subject(receiver) = &operation.receiver else {
             self.foreground_operation = Some(operation);
             return;
@@ -173,26 +265,32 @@ impl CalibRawApp {
                     ));
                 }
                 SubjectMaskEvent::Inferencing => {
-                    operation.progress = ForegroundProgress::indeterminate(format!(
-                        "Running {} quality locally with {}…",
-                        self.ai.birefnet_quality.label(),
-                        self.ai.birefnet_quality.model().checkpoint
-                    ));
+                    operation.progress = ForegroundProgress::indeterminate(if sky {
+                        "Running SkyWater SegFormer-B2 locally…".to_owned()
+                    } else {
+                        format!(
+                            "Running {} quality locally with {}…",
+                            self.ai.birefnet_quality.label(),
+                            self.ai.birefnet_quality.model().checkpoint
+                        )
+                    });
                 }
                 SubjectMaskEvent::Finished(result) => finished = Some(result),
             }
         }
         if finished.is_none() && disconnected {
-            finished = Some(Err(
-                "The subject-mask worker stopped unexpectedly.".to_owned()
-            ));
+            finished = Some(Err(format!(
+                "The {}-mask worker stopped unexpectedly.",
+                if sky { "sky" } else { "subject" }
+            )));
         }
         let Some(result) = finished else {
             self.foreground_operation = Some(operation);
             return;
         };
 
-        let updating_all = self.ai.mask_update_active && self.ai.mask_update_subject_pending;
+        let updating_all =
+            self.ai.mask_update_active && (sky || self.ai.mask_update_subject_pending);
         let cancelled = operation.is_cancelled();
         let stale = operation.document_id != self.persistence.sidecar_generation;
 
@@ -202,14 +300,25 @@ impl CalibRawApp {
             match result {
                 Ok(result) => {
                     if let Some(mask) = result.into_probability_mask() {
-                        self.apply_subject_mask(mask);
+                        if sky {
+                            self.apply_sky_mask(mask);
+                        } else {
+                            self.apply_subject_mask(mask);
+                        }
                         succeeded = true;
                     } else {
-                        error_message =
-                            Some("Subject selection returned an invalid mask image.".to_owned());
+                        error_message = Some(format!(
+                            "{} selection returned an invalid mask image.",
+                            if sky { "Sky" } else { "Subject" }
+                        ));
                     }
                 }
-                Err(error) => error_message = Some(format!("Subject selection failed: {error}")),
+                Err(error) => {
+                    error_message = Some(format!(
+                        "{} selection failed: {error}",
+                        if sky { "Sky" } else { "Subject" }
+                    ))
+                }
             }
         }
 
@@ -217,7 +326,9 @@ impl CalibRawApp {
             if cancelled || stale {
                 self.cancel_ai_mask_update();
             } else {
-                self.ai.mask_update_subject_pending = false;
+                if !sky {
+                    self.ai.mask_update_subject_pending = false;
+                }
                 self.ai.mask_update_failed |= !succeeded;
                 if let Some(message) = error_message {
                     self.ui.notice = Some(message);
@@ -227,9 +338,15 @@ impl CalibRawApp {
         } else if !cancelled && !succeeded {
             let message = error_message.unwrap_or_else(|| {
                 if stale {
-                    "Subject selection became stale before inference completed.".to_owned()
+                    format!(
+                        "{} selection became stale before inference completed.",
+                        if sky { "Sky" } else { "Subject" }
+                    )
                 } else {
-                    "Subject selection did not produce a mask.".to_owned()
+                    format!(
+                        "{} selection did not produce a mask.",
+                        if sky { "Sky" } else { "Subject" }
+                    )
                 }
             });
             self.ui.notice = Some(message);
