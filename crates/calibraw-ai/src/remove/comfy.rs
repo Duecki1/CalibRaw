@@ -22,6 +22,9 @@ fn post_json(agent: &ureq::Agent, url: String, value: Value) -> Result<Value> {
 
 pub const DEFAULT_COMFY_PROMPT: &str = "In <image1>, remove only the subject shown in white in the mask <image2>. Fill the removed area naturally from the surrounding context. Preserve the rest of the scene, lighting, texture, and perspective.";
 const INPUT_EDGE: u32 = 1024;
+const SOLID_MARGIN_MODEL_PX: f32 = 8.0;
+const OUTER_MARGIN_MODEL_PX: f32 = 18.0;
+const FEATHER_SIGMA_MODEL_PX: f32 = 4.0;
 const MAX_WORKFLOW_BYTES: usize = 512 * 1024;
 const MAX_OUTPUT_BYTES: usize = 32 * 1024 * 1024;
 
@@ -220,7 +223,12 @@ fn match_comfy_context_colors(
             }
             let before = source.get_pixel(x, y);
             let after = generated.get_pixel(x, y);
-            if after.0.iter().all(|value| value.is_finite()) {
+            // Qwen may alter nearby unmasked objects. Their pixels are not a
+            // color reference for the replacement background.
+            if after.0.iter().all(|value| value.is_finite())
+                && (0..3)
+                    .all(|channel| (before[channel] as f32 / 255.0 - after[channel]).abs() < 0.20)
+            {
                 samples.push((before.0.map(|value| value as f32 / 255.0), after.0));
             }
         }
@@ -292,6 +300,12 @@ fn match_comfy_context_colors(
                     continue;
                 }
                 let outside = source.get_pixel(nx, ny);
+                let generated_outside = matched.get_pixel(nx, ny);
+                if (0..3).any(|channel| {
+                    (outside[channel] as f32 / 255.0 - generated_outside[channel]).abs() > 0.10
+                }) {
+                    continue;
+                }
                 for channel in 0..3 {
                     boundary[channel].push(outside[channel] as f32 / 255.0 - inside[channel]);
                 }
@@ -443,7 +457,20 @@ pub(super) fn run_comfy_remove(
         Rgb(s.map(|v| (v.clamp(0.0, 1.0) * 255.0).round() as u8))
     });
     let image = image::imageops::resize(&rgb, INPUT_EDGE, INPUT_EDGE, FilterType::Lanczos3);
-    let source_mask = crop_binary_mask(crop, &mask);
+    // The painted area must be fully replaced. Extend it enough to catch
+    // wispy edges, then reserve a separate outer ring for the fade. The crop
+    // is planned from the original mask so both margins stay in the context.
+    let model_scale = crop.width.max(crop.height) as f32 / INPUT_EDGE as f32;
+    let padded_mask = |model_px: f32| -> Result<GrayImage> {
+        let mut padded_brush = brush.clone();
+        let extra = (model_px * model_scale).round().max(1.0) as u32;
+        padded_brush.dilation_radius = padded_brush.dilation_radius.saturating_add(extra);
+        let padded = rasterize_remove_brush(request.raw.width, request.raw.height, &padded_brush)
+            .context("ComfyUI padded brush produced no mask")?;
+        Ok(crop_binary_mask(crop, &padded))
+    };
+    let solid_mask = padded_mask(SOLID_MARGIN_MODEL_PX)?;
+    let source_mask = padded_mask(OUTER_MARGIN_MODEL_PX)?;
     let mask_image =
         image::imageops::resize(&source_mask, INPUT_EDGE, INPUT_EDGE, FilterType::Nearest);
     anyhow::ensure!(
@@ -573,7 +600,10 @@ pub(super) fn run_comfy_remove(
             &output,
             &source_mask,
             INPUT_EDGE,
-            Some(10.0),
+            PatchFeather::OutsideSolid {
+                solid_mask: &solid_mask,
+                sigma_model_px: FEATHER_SIGMA_MODEL_PX,
+            },
         )?;
         let _ = events.send(RemoveEvent::Processing {
             completed: 1,
@@ -665,6 +695,35 @@ mod tests {
             assert!((matched.get_pixel(48, 48)[channel] - expected).abs() < 0.01);
         }
         assert_eq!(matched.get_pixel(12, 12), generated.get_pixel(12, 12));
+    }
+
+    #[test]
+    fn context_color_match_ignores_restructured_unmasked_subject() {
+        let source = RgbImage::from_fn(128, 128, |x, _| {
+            if x < 56 {
+                Rgb([35, 30, 28])
+            } else {
+                Rgb([178, 174, 170])
+            }
+        });
+        let mask = GrayImage::from_fn(128, 128, |x, y| {
+            image::Luma([u8::from((56..76).contains(&x) && (16..112).contains(&y)) * 255])
+        });
+        let generated = Rgb32FImage::from_fn(128, 128, |x, y| {
+            if x < 56 {
+                Rgb([0.70, 0.68, 0.67])
+            } else if mask.get_pixel(x, y)[0] != 0 {
+                Rgb([0.62, 0.60, 0.58])
+            } else {
+                Rgb([0.72, 0.70, 0.68])
+            }
+        });
+        let matched = match_comfy_context_colors(&source, &generated, &mask);
+        let pixel = matched.get_pixel(65, 64);
+        for channel in 0..3 {
+            let expected = source.get_pixel(90, 64)[channel] as f32 / 255.0;
+            assert!((pixel[channel] - expected).abs() < 0.025);
+        }
     }
     #[test]
     fn default_workflow_has_required_inputs() {

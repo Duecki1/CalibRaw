@@ -997,7 +997,7 @@ fn infer_crop(
         &model_output,
         &source_mask,
         BIG_LAMA_INPUT_EDGE,
-        None,
+        PatchFeather::Legacy,
     )
 }
 
@@ -1015,6 +1015,15 @@ pub(super) fn crop_binary_mask(crop: NativeRect, mask: &RemoveMask) -> GrayImage
     out
 }
 
+pub(super) enum PatchFeather<'a> {
+    Legacy,
+    /// Qwen replaces the whole solid area; only the extra mask margin fades.
+    OutsideSolid {
+        solid_mask: &'a GrayImage,
+        sigma_model_px: f32,
+    },
+}
+
 pub(super) fn build_cached_patch(
     crop: NativeRect,
     raw: &LoadedRaw,
@@ -1024,42 +1033,45 @@ pub(super) fn build_cached_patch(
     model_output: &Rgb32FImage,
     binary_mask: &GrayImage,
     input_edge: u32,
-    inner_feather_model_px: Option<f32>,
+    feather: PatchFeather<'_>,
 ) -> Result<RemovePatch> {
+    anyhow::ensure!(
+        binary_mask.dimensions() == (crop.width, crop.height),
+        "remove compositing mask does not match crop"
+    );
     let scale = crop.width.max(crop.height) as f32 / input_edge as f32;
-    let sigma = if let Some(model_px) = inner_feather_model_px {
-        // Keep the fade broad in model space, but preserve a solid center on
-        // small brush strokes. The mask is still a hard compositing boundary.
-        let mut left = crop.width;
-        let mut top = crop.height;
-        let mut right = 0;
-        let mut bottom = 0;
-        for (x, y, pixel) in binary_mask.enumerate_pixels() {
-            if pixel[0] != 0 {
-                left = left.min(x);
-                top = top.min(y);
-                right = right.max(x + 1);
-                bottom = bottom.max(y + 1);
-            }
+    let (blurred, solid_mask) = match feather {
+        PatchFeather::Legacy => (
+            image::imageops::blur(binary_mask, (1.25 * scale).clamp(1.25, 5.0)),
+            None,
+        ),
+        PatchFeather::OutsideSolid {
+            solid_mask,
+            sigma_model_px,
+        } => {
+            anyhow::ensure!(
+                solid_mask.dimensions() == binary_mask.dimensions(),
+                "remove solid mask does not match crop"
+            );
+            (
+                image::imageops::blur(solid_mask, (sigma_model_px * scale).max(0.8)),
+                Some(solid_mask),
+            )
         }
-        let narrow_side = right.saturating_sub(left).min(bottom.saturating_sub(top));
-        (model_px * scale).min(narrow_side as f32 / 6.0).max(0.8)
-    } else {
-        (1.25 * scale).clamp(1.25, 5.0)
     };
-    let blurred = image::imageops::blur(binary_mask, sigma);
     let coverage_at = |x: u32, y: u32| -> u8 {
         if binary_mask.get_pixel(x, y)[0] == 0 {
             return 0;
         }
-        let soft = blurred.get_pixel(x, y)[0];
-        if inner_feather_model_px.is_some() {
-            // A Gaussian blur is about half opaque at the original boundary.
-            // Remap that midpoint to zero, so the patch fades inward rather
-            // than making a visible jump from half opacity to untouched pixels.
-            soft.saturating_sub(128).saturating_mul(2)
+        if let Some(solid) = solid_mask {
+            if solid.get_pixel(x, y)[0] != 0 {
+                return 255;
+            }
+            // The Gaussian is half opaque at the solid mask boundary. Map
+            // that midpoint back to full opacity and fade *outside* it.
+            blurred.get_pixel(x, y)[0].saturating_mul(2)
         } else {
-            soft
+            blurred.get_pixel(x, y)[0]
         }
     };
     let mut left = crop.width;
@@ -1112,7 +1124,7 @@ pub(super) fn build_cached_patch(
             let coverage = coverage_at(x, y);
             let mix = coverage as f32 / 255.0;
             for channel in 0..3 {
-                let value = if inner_feather_model_px.is_some() {
+                let value = if solid_mask.is_some() {
                     // The core compositor applies patch alpha. Qwen's model
                     // pixels must not be preblended with the source as well.
                     generated[channel]
@@ -1266,7 +1278,7 @@ mod tests {
             &restored,
             &binary,
             BIG_LAMA_INPUT_EDGE,
-            None,
+            PatchFeather::Legacy,
         )
         .unwrap();
         assert_eq!(patch.bounds.x, crop.x + 18);
@@ -1277,15 +1289,22 @@ mod tests {
     }
 
     #[test]
-    fn comfy_patch_fades_inward_and_applies_alpha_once() {
+    fn comfy_patch_replaces_painted_area_and_fades_outside_it_once() {
         let crop = NativeRect {
             x: 0,
             y: 0,
             width: 128,
             height: 128,
         };
-        let binary = GrayImage::from_fn(128, 128, |x, y| {
+        let solid = GrayImage::from_fn(128, 128, |x, y| {
             Luma([if (24..104).contains(&x) && (24..104).contains(&y) {
+                255
+            } else {
+                0
+            }])
+        });
+        let binary = GrayImage::from_fn(128, 128, |x, y| {
+            Luma([if (12..116).contains(&x) && (12..116).contains(&y) {
                 255
             } else {
                 0
@@ -1303,7 +1322,10 @@ mod tests {
             &restored,
             &binary,
             128,
-            Some(10.0),
+            PatchFeather::OutsideSolid {
+                solid_mask: &solid,
+                sigma_model_px: 4.0,
+            },
         )
         .unwrap();
         let at = |x: u32, y: u32| {
@@ -1313,20 +1335,21 @@ mod tests {
                 &patch.rgb_scene16f[index * 3..index * 3 + 3],
             )
         };
-        let edge = at(24, 64);
-        let near = at(30, 64);
+        let edge = at(16, 64);
+        let near = at(21, 64);
+        let painted_edge = at(24, 64);
         let center = at(64, 64);
-        assert!(edge.0 < near.0 && near.0 < center.0);
-        assert!(edge.0 < 100, "mask boundary must be nearly transparent");
-        assert!(
-            center.0 >= 250,
-            "center of mask should retain the generated fill"
+        assert!(edge.0 < near.0 && near.0 < painted_edge.0);
+        assert_eq!(painted_edge.0, 255, "painted edge must remove the subject");
+        assert_eq!(
+            center.0, 255,
+            "painted center must retain the generated fill"
         );
         assert_eq!(edge.1, center.1, "generated RGB must not be preblended");
         let mut composed = vec![0.18; 128 * 128 * 3];
         crate::pipeline::composite_patch_into_linear_region(&patch, crop, &mut composed);
         assert_eq!(
-            &composed[(64 * 128 + 23) * 3..(64 * 128 + 23) * 3 + 3],
+            &composed[(64 * 128 + 11) * 3..(64 * 128 + 11) * 3 + 3],
             &[0.18; 3]
         );
     }
