@@ -351,7 +351,11 @@ impl CalibRawApp {
         self.ai.mask_update_active
             || matches!(
                 self.foreground_operation_kind(),
-                Some(ForegroundOperationKind::SubjectMask | ForegroundOperationKind::ObjectMask)
+                Some(
+                    ForegroundOperationKind::SubjectMask
+                        | ForegroundOperationKind::SkyMask
+                        | ForegroundOperationKind::ObjectMask
+                )
             )
             || self.ai.consent.is_mask_consent()
     }
@@ -378,8 +382,11 @@ impl CalibRawApp {
             })
             .count();
         let current_object = usize::from(
-            self.foreground_operation_is(ForegroundOperationKind::ObjectMask)
-                || self.ai.object_pending_target.is_some(),
+            matches!(
+                self.foreground_operation_kind(),
+                Some(ForegroundOperationKind::ObjectMask | ForegroundOperationKind::SkyMask)
+            ) || self.ai.object_pending_target.is_some()
+                || matches!(self.ai.consent, AiConsentState::Sky { .. }),
         );
         let subject_remaining = usize::from(self.ai.mask_update_subject_pending) * subject_targets;
         subject_remaining + self.ai.mask_update_object_queue.len() + current_object
@@ -387,12 +394,17 @@ impl CalibRawApp {
 
     pub(in crate::app) fn generated_ai_mask_targets(&self) -> GeneratedAiMaskTargets {
         let mut subject = false;
+        let mut sky = false;
         let mut objects = VecDeque::new();
         for (mask_index, local_mask) in self.masks.stack.masks.iter().enumerate() {
             for (component_index, component) in local_mask.components.iter().enumerate() {
                 match (component.kind, &component.geometry) {
                     (MaskKind::Subject | MaskKind::Background, MaskGeometry::Ai { .. }) => {
                         subject = true
+                    }
+                    (MaskKind::Sky, MaskGeometry::Ai { .. }) if !sky => {
+                        sky = true;
+                        objects.push_back((mask_index, component_index));
                     }
                     (MaskKind::Object, MaskGeometry::Object { strokes, .. })
                         if strokes
@@ -425,7 +437,11 @@ impl CalibRawApp {
         self.ai.object_cache = None;
         if matches!(
             self.foreground_operation_kind(),
-            Some(ForegroundOperationKind::SubjectMask | ForegroundOperationKind::ObjectMask)
+            Some(
+                ForegroundOperationKind::SubjectMask
+                    | ForegroundOperationKind::SkyMask
+                    | ForegroundOperationKind::ObjectMask
+            )
         ) {
             self.cancel_foreground_operation();
         }
@@ -572,7 +588,11 @@ impl CalibRawApp {
             || self.ai.mask_update_subject_pending
             || matches!(
                 self.foreground_operation_kind(),
-                Some(ForegroundOperationKind::SubjectMask | ForegroundOperationKind::ObjectMask)
+                Some(
+                    ForegroundOperationKind::SubjectMask
+                        | ForegroundOperationKind::SkyMask
+                        | ForegroundOperationKind::ObjectMask
+                )
             )
             || self.ai.consent.is_mask_consent()
         {
@@ -588,15 +608,31 @@ impl CalibRawApp {
                 .get(mask_index)
                 .and_then(|mask| mask.components.get(component_index))
                 .is_some_and(|component| {
-                    matches!(
-                        &component.geometry,
-                        MaskGeometry::Object { strokes, .. } if strokes
-                            .iter()
-                            .any(|stroke| stroke.positive && !stroke.points.is_empty())
-                    )
+                    component.kind == MaskKind::Sky
+                        || matches!(
+                            &component.geometry,
+                            MaskGeometry::Object { strokes, .. } if strokes
+                                .iter()
+                                .any(|stroke| stroke.positive && !stroke.points.is_empty())
+                        )
                 });
             if !valid {
                 continue;
+            }
+
+            if self.masks.stack.masks[mask_index].components[component_index].kind == MaskKind::Sky
+            {
+                let path = self.skywater_model_path();
+                let runtime_download_needed = self.automatic_onnx_runtime_download_needed();
+                if crate::ai_masks::skywater_model_is_verified(&path) && !runtime_download_needed {
+                    self.start_sky_worker(path, false);
+                } else {
+                    self.ai.consent = AiConsentState::Sky {
+                        runtime_download_needed,
+                    };
+                    self.egui_ctx.request_repaint();
+                }
+                return;
             }
 
             let (encoder, decoder) = self.sam21_model_paths();

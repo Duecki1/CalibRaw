@@ -44,6 +44,19 @@ pub const BIREFNET_HIGH_MODEL_BYTES: u64 = 1_098_928_953;
 pub const BIREFNET_HIGH_MODEL_URL: &str = "https://huggingface.co/Duecki/CalibRaw-Artifacts/resolve/91085ce0ec322a4a7cbd20059688690218e52f9a/models/briefnet/birefnet-highQ.onnx";
 pub const BIREFNET_HIGH_MODEL_SHA256_HEX: &str =
     "db0217e99b25e0c4f6f4dca2892ff1f7ea7aba38fb6ad84f93122a4024be536a";
+pub const SKYWATER_MODEL_FILENAME: &str = "skywater-segformer-b2-fp32.onnx";
+pub const SKYWATER_MODEL_BYTES: u64 = 99_310_780;
+const SKYWATER_MODEL_INSTALL: ModelInstallSpec = ModelInstallSpec {
+    artifact: ModelArtifact {
+        name: "SkyWater SegFormer-B2",
+        url: Some("https://huggingface.co/Realcat/skywater_seg/resolve/ec20751e8551a7d3cc3652dd7fa7e7f89ca9fc95/skywater_segformer_b2_fp32.onnx"),
+        sha256: "e4e9a6927c2d910c3243f86e392b18da715b41c03e6e6f41672f8f6b8eaa71b5",
+        size: ArtifactSize::Exact(SKYWATER_MODEL_BYTES),
+        progress_total: SKYWATER_MODEL_BYTES,
+    },
+    download: BIREFNET_DOWNLOAD,
+    progress_label: "SkyWater SegFormer-B2",
+};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -203,12 +216,17 @@ pub fn birefnet_model_is_verified(quality: BiRefNetQuality, path: &Path) -> bool
     quality.model().install().is_installed(path)
 }
 
+pub fn skywater_model_is_verified(path: &Path) -> bool {
+    SKYWATER_MODEL_INSTALL.is_installed(path)
+}
+
 pub fn object_models_are_verified(encoder: &Path, decoder: &Path) -> bool {
     object::SAM21_ENCODER_INSTALL.is_installed(encoder)
         && object::SAM21_DECODER_INSTALL.is_installed(decoder)
 }
 
 pub struct SubjectMaskWorkerRequest {
+    pub sky: bool,
     pub quality: BiRefNetQuality,
     pub crop_refinement: bool,
     pub model_path: PathBuf,
@@ -232,13 +250,25 @@ pub fn spawn_subject_mask(
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 (|| {
                     ensure_ai_not_cancelled(&cancellation)?;
-                    ensure_model(
-                        request.quality,
-                        &request.model_path,
-                        request.allow_download,
-                        &worker_sender,
-                        &cancellation,
-                    )?;
+                    if request.sky {
+                        SKYWATER_MODEL_INSTALL.ensure_installed(
+                            &request.model_path,
+                            request.allow_download,
+                            |progress| {
+                                let _ = worker_sender
+                                    .send(SubjectMaskEvent::DownloadProgress(progress));
+                            },
+                            || ensure_ai_not_cancelled(&cancellation),
+                        )?;
+                    } else {
+                        ensure_model(
+                            request.quality,
+                            &request.model_path,
+                            request.allow_download,
+                            &worker_sender,
+                            &cancellation,
+                        )?;
+                    }
                     ensure_ai_not_cancelled(&cancellation)?;
                     let _ = worker_sender.send(SubjectMaskEvent::Inferencing);
                     infer_subject(request)
@@ -465,6 +495,7 @@ fn cache_object_ai_sessions() -> bool {
 
 fn infer_subject(request: SubjectMaskWorkerRequest) -> Result<SubjectMaskResult> {
     let SubjectMaskWorkerRequest {
+        sky,
         quality,
         crop_refinement,
         model_path,
@@ -495,7 +526,11 @@ fn infer_subject(request: SubjectMaskWorkerRequest) -> Result<SubjectMaskResult>
     initialize_runtime(runtime_path.as_deref(), runtime_sha256.as_deref())?;
     let image = ImageBuffer::<Rgba<u8>, _>::from_raw(width, height, rgba)
         .context("invalid preview image for BiRefNet")?;
-    let mask = subject_mask(&model_path, quality, &image, crop_refinement)?;
+    let mask = if sky {
+        sky::sky_mask(&model_path, &image)?
+    } else {
+        subject_mask(&model_path, quality, &image, crop_refinement)?
+    };
     Ok(SubjectMaskResult {
         width,
         height,
@@ -859,6 +894,7 @@ mod tests {
 
 mod mask_refine;
 mod object;
+mod sky;
 
 pub use object::{
     spawn_object_mask, ObjectCropRect, ObjectInferenceCache, ObjectMaskEvent, ObjectMaskRequest,
