@@ -1,0 +1,62 @@
+name: Bug report
+description: Report a reproducible problem in CalibRaw
+title: "[Bug]: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a bug.
+
+  - type: input
+    id: version
+    attributes:
+      label: CalibRaw version
+      placeholder: e.g. 1.1.0
+    validations:
+      required: true
+
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      options:
+        - Windows
+        - macOS
+        - Linux
+        - Android
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What happened?
+      description: Describe the bug and what you expected to happen.
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open ...
+        2. Click ...
+        3. See ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: details
+    attributes:
+      label: Logs or additional details
+      description: Add logs, screenshots, sample files, or anything else that may help.
+
+  - type: checkboxes
+    id: human
+    attributes:
+      label: Confirmation
+      options:
+        - label: I'm not a bot.
+          required: true
