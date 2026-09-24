@@ -215,6 +215,8 @@ impl Library {
                 "Use the folder sidebar to browse your Library, or tap + to import RAW files.",
                 None,
             );
+        } else if app.library.scanning && !app.library.catalog_ready {
+            show_library_loading_state(ui);
         } else if app.library.catalog_ready && app.library.entries.is_empty() {
             #[cfg(not(target_os = "android"))]
             show_library_empty_state(
@@ -504,6 +506,16 @@ fn selected_library_folder_name(app: &CalibRawApp) -> Option<String> {
     } else {
         folder.rsplit('/').next().unwrap_or(folder).to_owned()
     })
+}
+
+fn show_library_loading_state(ui: &mut Ui) {
+    ui.centered_and_justified(|ui| {
+        ui.vertical_centered(|ui| {
+            ui.add(egui::Spinner::new().size(28.0));
+            ui.add_space(crate::ui::theme::SPACE_SM);
+            ui.label("Loading photos…");
+        });
+    });
 }
 
 fn show_library_empty_state(
