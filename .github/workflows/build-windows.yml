@@ -2,8 +2,11 @@ name: Build Windows
 
 on:
   push:
+    branches:
+      - "**"
   pull_request:
   workflow_dispatch:
+  workflow_call:
 
 permissions:
   contents: read
@@ -221,6 +224,10 @@ jobs:
           (cd "$package_dir" && sha256sum calibraw.exe *.dll 2>/dev/null | sort -k2 > SHA256SUMS.txt || true)
           test -s "$package_dir/SHA256SUMS.txt"
 
+          # Produce the actual portable ZIP that is published on GitHub Releases.
+          (cd dist && zip -qr "$package_name.zip" "$package_name")
+          test -s "dist/$package_name.zip"
+
       - name: Build Inno Setup installer
         shell: pwsh
         run: |
@@ -263,7 +270,7 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: CalibRaw-windows-${{ matrix.artifact_arch }}
-          path: dist/CalibRaw-windows-${{ matrix.artifact_arch }}/
+          path: dist/CalibRaw-windows-${{ matrix.artifact_arch }}.zip
           if-no-files-found: error
 
       - name: Upload Windows installer
