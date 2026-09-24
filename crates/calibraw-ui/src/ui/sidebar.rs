@@ -230,6 +230,9 @@ mod tests {
         assert_eq!(settings.bit_depth, ExportBitDepth::Sixteen);
         super::enforce_export_bit_depth(ExportFormat::Jpeg, &mut settings);
         assert_eq!(settings.bit_depth, ExportBitDepth::Eight);
+        settings.bit_depth = ExportBitDepth::Float32Linear;
+        super::enforce_export_bit_depth(ExportFormat::JpegXl, &mut settings);
+        assert_eq!(settings.bit_depth, ExportBitDepth::Sixteen);
     }
 
     #[test]

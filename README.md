@@ -34,6 +34,7 @@ CalibRaw runs natively on **Linux**, **Android**, **Windows**, and **macOS** wit
 - **Native Android App:** A real ARM64 NDK build with 16 KB memory page support, touch layouts, and MediaStore exporting.
 - **Non-Destructive Edits:** All sliders, curves, and masks are saved to lightweight `.calibraw` JSON sidecar files.
 - **Tiled Export & CLI:** Exports large RAW files in tiles to avoid GPU memory limits, plus a command-line tool for batch rendering.
+- **JPEG XL Export:** Exports lossless `.jxl` images at 8-bit or 16-bit precision, including EXIF metadata when enabled.
 
 ---
 
@@ -94,7 +95,7 @@ CalibRaw/
 Batch rendering can be run directly from the terminal:
 
 ```sh
-calibraw-develop-export --input photo.ARW --output photo.jpg
+calibraw-develop-export --input photo.ARW --output photo.jxl
 ```
 
 ---

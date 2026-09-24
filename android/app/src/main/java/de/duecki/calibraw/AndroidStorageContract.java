@@ -164,13 +164,20 @@ final class AndroidStorageContract {
     }
 
     static String normalizeExportMimeType(String mimeType) {
-        return "image/jpeg".equalsIgnoreCase(mimeType) ? "image/jpeg" : "image/png";
+        if ("image/jpeg".equalsIgnoreCase(mimeType)) {
+            return "image/jpeg";
+        }
+        if ("image/jxl".equalsIgnoreCase(mimeType)) {
+            return "image/jxl";
+        }
+        return "image/png";
     }
 
     static String safeImageName(String requestedName, String mimeType) {
         boolean jpeg = "image/jpeg".equalsIgnoreCase(mimeType);
-        String extension = jpeg ? ".jpg" : ".png";
-        String fallback = jpeg ? "CalibRaw-export.jpg" : "CalibRaw-export.png";
+        boolean jxl = "image/jxl".equalsIgnoreCase(mimeType);
+        String extension = jpeg ? ".jpg" : jxl ? ".jxl" : ".png";
+        String fallback = "CalibRaw-export" + extension;
         String name = requestedName == null ? fallback : requestedName;
         name = name.replaceAll("[^A-Za-z0-9._-]", "_");
         if (name.isEmpty()) {

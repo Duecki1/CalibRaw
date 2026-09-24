@@ -151,6 +151,8 @@ Vogelbacher, Pedro Côrte-Real, and contributors, and is licensed under
 JPEG-XL DNG support uses the pure-Rust `jxl-oxide` decoder and does not add a
 native JPEG-XL runtime dependency. The complete resolved notices for Rawler and
 its dependencies are included in `THIRD_PARTY_LICENSES.md`.
+JPEG XL export uses the pure-Rust `zune-jpegxl` encoder, licensed under
+MIT OR Apache-2.0 OR Zlib, without a native codec runtime.
 
 Resolved Rust crate names, versions, and checksums are recorded in
 `Cargo.lock`. Each crate retains the license declared by its package and source

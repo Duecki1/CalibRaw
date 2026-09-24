@@ -16,7 +16,7 @@ fn show_export_action_panel<R>(
 fn enforce_export_bit_depth(format: ExportFormat, settings: &mut crate::pipeline::ExportSettings) {
     match format {
         ExportFormat::Jpeg => settings.bit_depth = ExportBitDepth::Eight,
-        ExportFormat::Png if settings.bit_depth.is_float() => {
+        ExportFormat::Png | ExportFormat::JpegXl if settings.bit_depth.is_float() => {
             settings.bit_depth = ExportBitDepth::Sixteen
         }
         _ => {}
@@ -32,11 +32,12 @@ pub(crate) fn export_settings_controls(
     let previous_format = *format;
     ui.horizontal(|ui| {
         let spacing = ui.spacing().item_spacing.x;
-        let format_width = ((ui.available_width() - spacing * 2.0) / 3.0).max(1.0);
+        let format_width = ((ui.available_width() - spacing * 3.0) / 4.0).max(1.0);
         for (export_format, label) in [
             (ExportFormat::Jpeg, "JPEG"),
             (ExportFormat::Png, "PNG"),
             (ExportFormat::Tiff, "TIFF"),
+            (ExportFormat::JpegXl, "JXL"),
         ] {
             if crate::ui::theme::segmented_button(ui, label, *format == export_format, format_width)
                 .clicked()
@@ -159,6 +160,7 @@ pub(crate) fn export_settings_controls(
                             ExportFormat::Jpeg => depth == ExportBitDepth::Eight,
                             ExportFormat::Png => !depth.is_float(),
                             ExportFormat::Tiff => true,
+                            ExportFormat::JpegXl => !depth.is_float(),
                         };
                         if supported {
                             ui.selectable_value(&mut settings.bit_depth, depth, depth.label());
@@ -197,6 +199,7 @@ impl Sidebar {
                 ExportFormat::Jpeg => app.export_jpeg(frame),
                 ExportFormat::Png => app.export_png(frame),
                 ExportFormat::Tiff => app.export_tiff(frame),
+                ExportFormat::JpegXl => app.export_jxl(frame),
             }
         }
     }
