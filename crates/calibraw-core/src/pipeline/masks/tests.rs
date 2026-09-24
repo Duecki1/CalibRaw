@@ -20,6 +20,7 @@ fn common_mask_properties_mutate_through_shared_model_api() {
         MaskKind::Linear,
         MaskKind::Path,
         MaskKind::Subject,
+        MaskKind::Sky,
         MaskKind::Object,
         MaskKind::LuminanceRange,
         MaskKind::ColorRange,
@@ -913,6 +914,45 @@ fn strong_subject_feather_keeps_a_small_subject_core_and_background_complement()
         .iter()
         .zip(background)
         .all(|(subject, background)| *subject as u16 + background as u16 == 255));
+}
+
+#[test]
+fn sky_mask_grow_and_feather_shape_the_generated_probability() {
+    let mut pixels = vec![0u8; 64 * 64];
+    for y in 20..44 {
+        for x in 20..44 {
+            pixels[y * 64 + x] = 255;
+        }
+    }
+    let mut stack = MaskStack::default();
+    stack.add_mask(MaskKind::Sky);
+    let geometry = &mut stack.selected_component_mut().unwrap().geometry;
+    let MaskGeometry::Ai { mask, .. } = geometry else {
+        panic!("sky must use AI geometry")
+    };
+    *mask = MaskImage::new(64, 64, pixels);
+    let original = stack.rasterize_layer(0, 64, 64, 64, 64);
+    if let MaskGeometry::Ai { grow, .. } = &mut stack.selected_component_mut().unwrap().geometry {
+        *grow = 0.4;
+    }
+    let expanded = stack.rasterize_layer(0, 64, 64, 64, 64);
+    assert!(
+        expanded.iter().filter(|&&value| value > 127).count()
+            > original.iter().filter(|&&value| value > 127).count()
+    );
+    if let MaskGeometry::Ai { grow, feather, .. } =
+        &mut stack.selected_component_mut().unwrap().geometry
+    {
+        *grow = 0.0;
+        *feather = 0.6;
+    }
+    let softened = stack.rasterize_layer(0, 64, 64, 64, 64);
+    assert!(softened.iter().any(|&value| value > 0 && value < 255));
+    crate::sidecar::preflight_mask_change(&stack).unwrap();
+    let restored: MaskStack =
+        serde_json::from_str(&serde_json::to_string(&stack).unwrap()).unwrap();
+    assert_eq!(restored.masks[0].components[0].kind, MaskKind::Sky);
+    assert_eq!(restored.rasterize_layer(0, 64, 64, 64, 64), softened);
 }
 
 #[test]

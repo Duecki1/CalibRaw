@@ -242,7 +242,7 @@ fn show_copy_paste(ui: &mut egui::Ui, app: &mut CalibRawApp) {
         ui,
         &mut settings.ai_masks,
         "Content-aware masks",
-        "Subject, background, object, luminance-range, and color-range components. They are regenerated for the destination image when needed.",
+        "Subject, background, sky, object, luminance-range, and color-range components. They are regenerated for the destination image when needed.",
     )
     .changed();
     changed |= crate::ui::theme::checkbox_with_help(

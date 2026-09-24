@@ -624,7 +624,13 @@ impl CalibRawApp {
                 .find_map(|component| match &component.geometry {
                     MaskGeometry::Ai {
                         mask: Some(mask), ..
-                    } => Some(mask.clone()),
+                    } if matches!(
+                        component.kind,
+                        crate::pipeline::MaskKind::Subject | crate::pipeline::MaskKind::Background
+                    ) =>
+                    {
+                        Some(mask.clone())
+                    }
                     _ => None,
                 })
         });

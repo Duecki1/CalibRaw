@@ -890,6 +890,7 @@ type GeneratedAiMaskTargets = (bool, VecDeque<(usize, usize)>);
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ForegroundOperationKind {
     SubjectMask,
+    SkyMask,
     ObjectMask,
     AiDenoise,
     LensCorrection,
@@ -1166,6 +1167,9 @@ pub(crate) enum AiConsentState {
     Subject {
         runtime_download_needed: bool,
     },
+    Sky {
+        runtime_download_needed: bool,
+    },
     Object {
         runtime_download_needed: bool,
     },
@@ -1183,7 +1187,10 @@ impl AiConsentState {
     }
 
     pub(crate) const fn is_mask_consent(self) -> bool {
-        matches!(self, Self::Subject { .. } | Self::Object { .. })
+        matches!(
+            self,
+            Self::Subject { .. } | Self::Sky { .. } | Self::Object { .. }
+        )
     }
 }
 
@@ -1395,7 +1402,11 @@ impl CalibRawApp {
             && self.ai.library_mask_refresh.is_none()
             && matches!(
                 self.foreground_operation_kind(),
-                Some(ForegroundOperationKind::SubjectMask | ForegroundOperationKind::ObjectMask)
+                Some(
+                    ForegroundOperationKind::SubjectMask
+                        | ForegroundOperationKind::SkyMask
+                        | ForegroundOperationKind::ObjectMask
+                )
             )
         {
             self.cancel_foreground_operation();
