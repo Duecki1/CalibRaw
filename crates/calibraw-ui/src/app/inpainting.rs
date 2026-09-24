@@ -14,7 +14,7 @@ impl InpaintState {
         self.pending_brush = None;
         self.pending_retouch = None;
         self.receiver = None;
-        self.processing_label = None;
+        self.processing_progress = None;
         self.hovered_stroke = None;
         self.selected_stroke = None;
         self.stroke_opacity_edit_pending = false;
@@ -50,7 +50,7 @@ impl CalibRawApp {
         self.inpaint.active_points.clear();
         self.inpaint.source_pick_active = false;
         self.inpaint.last_brush_uv = None;
-        self.inpaint.processing_label = None;
+        self.inpaint.processing_progress = None;
         self.inpaint.edits = edits;
         self.inpaint.hovered_stroke = None;
         self.inpaint.selected_stroke = None;
@@ -67,7 +67,7 @@ impl CalibRawApp {
         if matches!(self.ai.consent, AiConsentState::Remove { .. }) {
             self.ai.consent = AiConsentState::None;
         }
-        self.inpaint.processing_label = None;
+        self.inpaint.processing_progress = None;
         self.inpaint.active_points.clear();
         self.inpaint.source_pick_active = false;
         self.inpaint.last_brush_uv = None;
@@ -179,7 +179,9 @@ impl CalibRawApp {
         };
         self.inpaint.pending_brush = Some(brush);
         self.inpaint.pending_retouch = None;
-        self.inpaint.processing_label = Some("Preparing local context…".to_owned());
+        self.inpaint.processing_progress = Some(ForegroundProgress::indeterminate(
+            "Preparing local context…",
+        ));
         self.inpaint.cancellation = Some(cancellation);
         self.inpaint.receiver = Some(spawn_remove(request));
         self.egui_ctx
@@ -246,7 +248,10 @@ impl CalibRawApp {
         };
         self.inpaint.pending_brush = Some(brush);
         self.inpaint.pending_retouch = Some(retouch);
-        self.inpaint.processing_label = Some(format!("Applying {} locally…", retouch.tool.label()));
+        self.inpaint.processing_progress = Some(ForegroundProgress::indeterminate(format!(
+            "Applying {} locally…",
+            retouch.tool.label()
+        )));
         self.inpaint.cancellation = Some(cancellation);
         self.inpaint.receiver = Some(spawn_retouch(request));
         self.egui_ctx
@@ -268,71 +273,92 @@ impl CalibRawApp {
             (false, true) => "Download ONNX Runtime?",
             (false, false) => "Prepare Remove?",
         };
-        crate::ui::theme::dialog_window(
-            egui::Window::new(title),
+        let runtime_ready = self.ai_runtime_ready();
+        let mut action = crate::ui::theme::DialogAction::None;
+        crate::ui::theme::dialog_window(title, ctx, crate::ui::theme::DIALOG_WIDTH_LARGE)
+            .show_with_footer(
+                ctx,
+                |ui| {
+                    Self::show_ai_download_summary(
+                        ui,
+                        &format!(
+                            "Big-LaMa (~{:.0} MB)",
+                            crate::remove::BIG_LAMA_MODEL_BYTES as f64 / 1_000_000.0
+                        ),
+                        "remove unwanted content",
+                        model_download_needed,
+                        runtime_download_needed,
+                    );
+                    self.show_ai_download_details(
+                        ui,
+                        "remove-download-details",
+                        model_download_needed,
+                        runtime_download_needed,
+                        &[(
+                            "Big-LaMa ONNX model card",
+                            "https://huggingface.co/Carve/LaMa-ONNX",
+                        )],
+                        |ui| {
+                            ui.label(format!(
+                                "Big-LaMa Places2 ONNX repairs a local context crop. License: {}.",
+                                crate::remove::BIG_LAMA_MODEL_LICENSE
+                            ));
+                            ui.label(format!(
+                                "Source: {}. CalibRaw verifies its pinned size and SHA-256 ({}).",
+                                crate::remove::BIG_LAMA_MODEL_PROVENANCE,
+                                &crate::remove::BIG_LAMA_MODEL_SHA256_HEX[..12]
+                            ));
+                        },
+                    );
+                    self.show_manual_runtime_warning(ui);
+                },
+                |ui| {
+                    action = Self::show_ai_consent_buttons(
+                        ui,
+                        if model_download_needed || runtime_download_needed {
+                            "Accept & download"
+                        } else {
+                            "Continue"
+                        },
+                        runtime_ready,
+                    );
+                },
+            );
+        match action {
+            crate::ui::theme::DialogAction::Confirm => {
+                self.ai.consent = AiConsentState::None;
+                if let Some(brush) = self.inpaint.pending_brush.take() {
+                    let existing = self.inpaint.edits.as_ref().clone();
+                    let _ =
+                        self.start_remove_request(frame, existing, brush, model_download_needed);
+                }
+            }
+            crate::ui::theme::DialogAction::Cancel => {
+                self.ai.consent = AiConsentState::None;
+                self.inpaint.pending_brush = None;
+                self.inpaint.pending_retouch = None;
+                self.inpaint.last_brush_uv = None;
+            }
+            crate::ui::theme::DialogAction::None => {}
+        }
+    }
+
+    pub(crate) fn show_remove_progress_dialog(&mut self, ctx: &egui::Context) {
+        if self.inpaint.receiver.is_none() || self.inpaint.pending_retouch.is_some() {
+            return;
+        }
+        let Some(progress) = self.inpaint.processing_progress.as_ref() else {
+            return;
+        };
+        if super::foreground::show_processing_dialog(
             ctx,
-            crate::ui::theme::DIALOG_WIDTH_LARGE,
-        )
-        .show(ctx, |ui| {
-            ui.label("Remove uses the Big-LaMa Places2 ONNX inpainting model for local context repair.");
-            if model_download_needed {
-                ui.strong("Remove model");
-                ui.label(format!(
-                    "Big-LaMa Places2 ONNX: about {:.0} MB download. Model license: {}.",
-                    crate::remove::BIG_LAMA_MODEL_BYTES as f64 / 1_000_000.0,
-                    crate::remove::BIG_LAMA_MODEL_LICENSE
-                ));
-                ui.label(format!(
-                    "Provenance: {}.",
-                    crate::remove::BIG_LAMA_MODEL_PROVENANCE
-                ));
-                ui.label(format!(
-                    "CalibRaw accepts only the pinned model after exact size and SHA-256 verification ({}).",
-                    &crate::remove::BIG_LAMA_MODEL_SHA256_HEX[..12]
-                ));
-            }
-            self.show_ai_consent_runtime_details(
-                ui,
-                model_download_needed,
-                runtime_download_needed,
-            );
-            ui.label("Inference is local. No photograph or Remove stroke is uploaded.");
-            Self::show_hugging_face_privacy(
-                ui,
-                model_download_needed,
-                &[(
-                    "Big-LaMa ONNX model card",
-                    "https://huggingface.co/Carve/LaMa-ONNX",
-                )],
-            );
-            self.show_manual_runtime_warning(ui);
-            let runtime_ready = self.ai_runtime_ready();
-            match Self::show_ai_consent_buttons(
-                ui,
-                "Consent, download and continue",
-                runtime_ready,
-            ) {
-                crate::ui::theme::DialogAction::Confirm => {
-                    self.ai.consent = AiConsentState::None;
-                    if let Some(brush) = self.inpaint.pending_brush.take() {
-                        let existing = self.inpaint.edits.as_ref().clone();
-                        let _ = self.start_remove_request(
-                            frame,
-                            existing,
-                            brush,
-                            model_download_needed,
-                        );
-                    }
-                }
-                crate::ui::theme::DialogAction::Cancel => {
-                    self.ai.consent = AiConsentState::None;
-                    self.inpaint.pending_brush = None;
-                    self.inpaint.pending_retouch = None;
-                    self.inpaint.last_brush_uv = None;
-                }
-                crate::ui::theme::DialogAction::None => {}
-            }
-        });
+            "remove-operation-progress",
+            "Applying Remove",
+            progress,
+            false,
+        ) {
+            self.cancel_remove_processing();
+        }
     }
 
     pub(crate) fn advance_remove_worker(&mut self, _frame: &eframe::Frame) {
@@ -352,26 +378,30 @@ impl CalibRawApp {
         for event in events {
             match event {
                 RemoveEvent::DownloadProgress(progress) => {
-                    let fraction = if progress.total == 0 {
-                        0.0
-                    } else {
-                        progress.downloaded as f64 / progress.total as f64
-                    };
-                    self.inpaint.processing_label = Some(format!(
-                        "Downloading {}… {:.0}%",
-                        progress.label,
-                        (fraction * 100.0).clamp(0.0, 100.0)
-                    ));
+                    self.inpaint.processing_progress = Some(
+                        ForegroundProgress::units(
+                            progress.downloaded,
+                            progress.total,
+                            Some("bytes".to_owned()),
+                            format!("Downloading {}", progress.label),
+                        )
+                        .with_detail(format!(
+                            "{:.1} / {:.1} MB",
+                            progress.downloaded as f64 / 1_000_000.0,
+                            progress.total as f64 / 1_000_000.0
+                        )),
+                    );
                 }
                 RemoveEvent::Processing { .. } => {
-                    self.inpaint.processing_label = Some("Applying Big-LaMa…".to_owned());
+                    self.inpaint.processing_progress =
+                        Some(ForegroundProgress::indeterminate("Applying Big-LaMa…"));
                 }
                 RemoveEvent::Finished(result) => {
                     self.inpaint.receiver = None;
                     self.inpaint.cancellation = None;
                     let pending_brush = self.inpaint.pending_brush.take();
                     let pending_retouch = self.inpaint.pending_retouch.take();
-                    self.inpaint.processing_label = None;
+                    self.inpaint.processing_progress = None;
                     match result {
                         Ok(stroke) => {
                             let applied_tool = stroke

@@ -1079,7 +1079,7 @@ impl CalibRawApp {
 
         let mut close = false;
         crate::ui::theme::dialog_window(
-            egui::Window::new("Unsupported RAW file"),
+            "Unsupported RAW file",
             ctx,
             crate::ui::theme::DIALOG_WIDTH_WIDE,
         )

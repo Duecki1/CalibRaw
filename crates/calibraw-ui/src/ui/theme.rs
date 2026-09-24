@@ -1015,9 +1015,9 @@ mod tests {
     fn dialog_buttons_share_height_and_cancel_precedes_confirm() {
         eframe::egui::__run_test_ui(|ui| {
             let (cancel, confirm, destructive) = super::dialog_button_row(ui, |ui| {
-                let cancel = super::secondary_button(ui, "Cancel").rect;
-                let confirm = super::primary_action_button(ui, "Save").rect;
                 let destructive = super::destructive_button(ui, "Delete").rect;
+                let confirm = super::primary_action_button(ui, "Save").rect;
+                let cancel = super::secondary_button(ui, "Cancel").rect;
                 (cancel, confirm, destructive)
             })
             .inner;

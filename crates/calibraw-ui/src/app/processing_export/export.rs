@@ -558,63 +558,59 @@ impl CalibRawApp {
         } else {
             "Exporting"
         };
-        crate::ui::theme::dialog_window(
-            egui::Window::new(window_title),
-            ctx,
-            crate::ui::theme::DIALOG_WIDTH_DEFAULT,
-        )
-        .id(egui::Id::new("active-export-progress"))
-        .show(ctx, |ui| {
-            if replay {
-                ui.label(egui::RichText::new("Creating edit replay").strong());
-            } else if total > 1 {
-                ui.label(
-                    egui::RichText::new(format!(
-                        "{} / {} images complete",
-                        completed.min(total),
-                        total
-                    ))
-                    .strong(),
-                );
-            } else {
-                ui.label(egui::RichText::new("Exporting image").strong());
-            }
-            ui.label(&phase);
-            ui.add_space(6.0);
-            ui.add(
-                egui::ProgressBar::new(progress)
-                    .show_percentage()
-                    .animate(!cancelling),
-            );
-            if cancelling {
-                ui.label(
-                    egui::RichText::new("Stopping at the next safe point…")
-                        .small()
-                        .color(ui.visuals().weak_text_color()),
-                );
-            }
-            crate::ui::theme::dialog_button_row(ui, |ui| {
-                if crate::ui::theme::secondary_button(ui, "Minimize").clicked() {
-                    minimize = true;
+        crate::ui::theme::dialog_window(window_title, ctx, crate::ui::theme::DIALOG_WIDTH_DEFAULT)
+            .id(egui::Id::new("active-export-progress"))
+            .show(ctx, |ui| {
+                if replay {
+                    ui.label(egui::RichText::new("Creating edit replay").strong());
+                } else if total > 1 {
+                    ui.label(
+                        egui::RichText::new(format!(
+                            "{} / {} images complete",
+                            completed.min(total),
+                            total
+                        ))
+                        .strong(),
+                    );
+                } else {
+                    ui.label(egui::RichText::new("Exporting image").strong());
                 }
-                cancel |= ui
-                    .add_enabled_ui(!cancelling, |ui| {
-                        crate::ui::theme::secondary_button(ui, "Cancel")
-                    })
-                    .inner
-                    .clicked();
+                ui.label(&phase);
+                ui.add_space(6.0);
+                ui.add(
+                    egui::ProgressBar::new(progress)
+                        .show_percentage()
+                        .animate(!cancelling),
+                );
+                if cancelling {
+                    ui.label(
+                        egui::RichText::new("Stopping at the next safe point…")
+                            .small()
+                            .color(ui.visuals().weak_text_color()),
+                    );
+                }
+                crate::ui::theme::dialog_button_row(ui, |ui| {
+                    cancel |= ui
+                        .add_enabled_ui(!cancelling, |ui| {
+                            crate::ui::theme::secondary_button(ui, "Cancel")
+                        })
+                        .inner
+                        .clicked();
+                    if crate::ui::theme::secondary_button(ui, "Minimize").clicked() {
+                        minimize = true;
+                    }
+                });
+                if !cancel
+                    && !cancelling
+                    && crate::ui::theme::dialog_keyboard_action(
+                        ui,
+                        crate::ui::theme::DialogKeyboard::CLOSE_ONLY,
+                        false,
+                    ) == crate::ui::theme::DialogAction::Cancel
+                {
+                    cancel = true;
+                }
             });
-            if !cancel
-                && !cancelling
-                && crate::ui::theme::dialog_keyboard_action(
-                    ui,
-                    crate::ui::theme::DialogKeyboard::CLOSE_ONLY,
-                    false,
-                ) == crate::ui::theme::DialogAction::Cancel
-            {
-                cancel = true;
-            }
-        });
         if minimize {
             self.minimize_export_task();
         }

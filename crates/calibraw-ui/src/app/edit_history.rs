@@ -522,7 +522,7 @@ impl CalibRawApp {
                 self.ai.consent = AiConsentState::None;
             }
             self.inpaint.receiver = None;
-            self.inpaint.processing_label = None;
+            self.inpaint.processing_progress = None;
         }
         snapshot.lens.apply_to(&mut self.develop.lens_correction);
         self.rehydrate_restored_mask_state();

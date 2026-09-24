@@ -436,7 +436,7 @@ impl eframe::App for CalibRawApp {
         if self.ui.gpu_memory_error_dialog {
             let mut close = false;
             crate::ui::theme::dialog_window(
-                egui::Window::new("GPU memory exhausted"),
+                "GPU memory exhausted",
                 ui.ctx(),
                 crate::ui::theme::DIALOG_WIDTH_WIDE,
             )
@@ -453,6 +453,7 @@ impl eframe::App for CalibRawApp {
             }
         }
         self.show_foreground_operation_dialog(ui.ctx());
+        self.show_remove_progress_dialog(ui.ctx());
         self.show_export_task_dialog(ui.ctx());
         let edit_interaction_active = sidecar_interaction_active(ui.ctx());
         self.observe_edit_history(ui.ctx());
