@@ -152,9 +152,11 @@ public final class AndroidStorageContractTest {
                 AndroidStorageContract.exportLocation("Pictures", "edit.png"));
         assertEquals("image/jpeg", AndroidStorageContract.normalizeExportMimeType("IMAGE/JPEG"));
         assertEquals("image/png", AndroidStorageContract.normalizeExportMimeType("image/webp"));
+        assertEquals("image/jxl", AndroidStorageContract.normalizeExportMimeType("IMAGE/JXL"));
         assertEquals(
                 "summer_edit.png",
                 AndroidStorageContract.safeImageName("summer edit", "image/png"));
+        assertEquals("summer_edit.jxl", AndroidStorageContract.safeImageName("summer edit", "image/jxl"));
     }
 
     @Test

@@ -68,10 +68,76 @@ fn export_format_extensions_preserve_existing_names_and_aliases() {
     assert_eq!(ExportFormat::Png.extension(), "png");
     assert_eq!(ExportFormat::Jpeg.extension(), "jpg");
     assert_eq!(ExportFormat::Tiff.extension(), "tif");
+    assert_eq!(ExportFormat::JpegXl.extension(), "jxl");
     assert!(ExportFormat::Png.matches_extension("PNG"));
     assert!(ExportFormat::Jpeg.matches_extension("jpeg"));
     assert!(ExportFormat::Tiff.matches_extension("TIFF"));
+    assert!(ExportFormat::JpegXl.matches_extension("JXL"));
     assert!(!ExportFormat::Png.matches_extension("jpg"));
+}
+
+#[test]
+fn jpeg_xl_lossless_pixels_and_exif_container_decode() {
+    for depth in [
+        zune_core::bit_depth::BitDepth::Eight,
+        zune_core::bit_depth::BitDepth::Sixteen,
+    ] {
+        let samples: Vec<u16> = (0..4 * 3 * 3)
+            .map(|index| ((index * 1739) % 65536) as u16)
+            .collect();
+        let pixels: Vec<u8> = if depth == zune_core::bit_depth::BitDepth::Eight {
+            samples.iter().map(|value| (*value >> 8) as u8).collect()
+        } else {
+            samples
+                .iter()
+                .flat_map(|value| value.to_le_bytes())
+                .collect()
+        };
+        let options = zune_core::options::EncoderOptions::new(
+            4,
+            3,
+            zune_core::colorspace::ColorSpace::RGB,
+            depth,
+        );
+        let encoder = zune_jpegxl::JxlSimpleEncoder::new(&pixels, options);
+        let mut codestream = Vec::new();
+        encoder.encode(&mut codestream).unwrap();
+        let mut container = Vec::new();
+        let metadata = ExportMetadata::default();
+        let exif = build_exif_payload(&metadata, 4, 3);
+        super::write_jxl_container(
+            &mut container,
+            &mut codestream.as_slice(),
+            codestream.len() as u64,
+            &exif,
+        )
+        .unwrap();
+        assert!(container.windows(exif.len()).any(|window| window == exif));
+        let image = jxl_oxide::JxlImage::builder()
+            .read(std::io::Cursor::new(container))
+            .unwrap();
+        match image.aux_boxes().first_exif().unwrap() {
+            jxl_oxide::AuxBoxData::Data(found) => {
+                assert_eq!(found.tiff_header_offset(), 0);
+                assert_eq!(found.payload(), exif);
+            }
+            _ => panic!("JPEG XL EXIF box was not decoded"),
+        }
+        assert_eq!(image.width(), 4);
+        assert_eq!(image.height(), 3);
+        let render = image.render_frame(0).unwrap();
+        let mut decoded = vec![0u16; samples.len()];
+        assert_eq!(
+            render.stream_no_alpha().write_to_buffer(&mut decoded),
+            samples.len()
+        );
+        let expected: Vec<u16> = if depth == zune_core::bit_depth::BitDepth::Eight {
+            pixels.iter().map(|value| u16::from(*value) * 257).collect()
+        } else {
+            samples
+        };
+        assert_eq!(decoded, expected);
+    }
 }
 
 #[test]

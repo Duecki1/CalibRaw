@@ -29,6 +29,7 @@ pub enum ExportFormat {
     #[default]
     Jpeg,
     Tiff,
+    JpegXl,
 }
 
 /// `width` and `height` describe `pixels`; the pixels still cover the complete
@@ -262,6 +263,7 @@ impl ExportFormat {
             Self::Png => "PNG",
             Self::Jpeg => "JPEG",
             Self::Tiff => "TIFF",
+            Self::JpegXl => "JPEG XL",
         }
     }
 
@@ -270,6 +272,7 @@ impl ExportFormat {
             Self::Png => "png",
             Self::Jpeg => "jpg",
             Self::Tiff => "tif",
+            Self::JpegXl => "jxl",
         }
     }
 
@@ -278,6 +281,7 @@ impl ExportFormat {
             Self::Png => &["png"],
             Self::Jpeg => &["jpg", "jpeg"],
             Self::Tiff => &["tif", "tiff"],
+            Self::JpegXl => &["jxl"],
         }
     }
 
@@ -292,6 +296,7 @@ impl ExportFormat {
             Self::Png => "image/png",
             Self::Jpeg => "image/jpeg",
             Self::Tiff => "image/tiff",
+            Self::JpegXl => "image/jxl",
         }
     }
 }
@@ -664,6 +669,7 @@ impl ExportFormat {
             Self::Png => "calibraw-tiled-export",
             Self::Jpeg => "calibraw-tiled-jpeg-export",
             Self::Tiff => "calibraw-tiled-tiff-export",
+            Self::JpegXl => "calibraw-tiled-jxl-export",
         }
     }
 
@@ -672,6 +678,7 @@ impl ExportFormat {
             Self::Png => "could not start export worker",
             Self::Jpeg => "could not start JPEG export worker",
             Self::Tiff => "could not start TIFF export worker",
+            Self::JpegXl => "could not start JPEG XL export worker",
         }
     }
 }
@@ -732,7 +739,7 @@ fn record_export_worker_started(format: ExportFormat, job: &TiledExportJob) {
             job.tile_spec.core_edge,
             job.tile_spec.halo,
         )),
-        ExportFormat::Tiff => {}
+        ExportFormat::Tiff | ExportFormat::JpegXl => {}
     }
 }
 
@@ -740,7 +747,7 @@ fn record_export_worker_finished(format: ExportFormat, started: Instant, result:
     let format_name = match format {
         ExportFormat::Png => "PNG",
         ExportFormat::Jpeg => "JPEG",
-        ExportFormat::Tiff => return,
+        ExportFormat::Tiff | ExportFormat::JpegXl => return,
     };
     match result {
         Ok(()) => crate::diagnostics::record(format!(
@@ -778,7 +785,9 @@ fn run_export_worker(
             settings.bit_depth = ExportBitDepth::Eight;
             Cow::Owned(settings)
         }
-        ExportFormat::Png | ExportFormat::Tiff => Cow::Borrowed(&job.settings),
+        ExportFormat::Png | ExportFormat::Tiff | ExportFormat::JpegXl => {
+            Cow::Borrowed(&job.settings)
+        }
     };
     let color = resolve_export_color(color_settings.as_ref())?;
     let bit_depth = if format == ExportFormat::Jpeg {
@@ -814,6 +823,7 @@ fn run_export_worker(
             ExportFormat::Png => export_tiled_png(context, request),
             ExportFormat::Jpeg => export_tiled_jpeg(context, request, job.settings.jpeg_quality),
             ExportFormat::Tiff => export_tiled_tiff(context, request),
+            ExportFormat::JpegXl => export_tiled_jxl(context, request),
         }
     })
 }
@@ -2178,6 +2188,145 @@ fn export_tiled_jpeg(
         drop(rgb_file);
         Ok(())
     })
+}
+
+fn export_tiled_jxl(context: ExportContext<'_>, request: ExportRequest<'_>) -> Result<()> {
+    anyhow::ensure!(
+        !request.bit_depth.is_float(),
+        "JPEG XL export supports 8-bit or 16-bit integer output"
+    );
+    anyhow::ensure!(
+        request.output_width > 1 && request.output_height > 1,
+        "JPEG XL encoder requires width and height greater than one pixel"
+    );
+    let row_format = match request.bit_depth {
+        ExportBitDepth::Eight => ExportRowFormat::Rgb8,
+        ExportBitDepth::Sixteen => ExportRowFormat::Rgb16Le,
+        ExportBitDepth::Float32Linear => unreachable!(),
+    };
+    with_temporary_export_path(request.path, |staged_rgb| {
+        {
+            let file = OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(staged_rgb)
+                .with_context(|| format!("create staged RGB raster {}", staged_rgb.display()))?;
+            let mut writer = BufWriter::new(file);
+            render_export_output(context, request, &mut writer, row_format)?;
+            writer.flush().context("flush staged JPEG XL RGB raster")?;
+        }
+        let file = fs::File::open(staged_rgb)
+            .with_context(|| format!("open staged RGB raster {}", staged_rgb.display()))?;
+        let mapped = unsafe { memmap2::MmapOptions::new().map(&file) }
+            .with_context(|| format!("map staged RGB raster {}", staged_rgb.display()))?;
+        let bytes_per_sample = if request.bit_depth == ExportBitDepth::Eight {
+            1
+        } else {
+            2
+        };
+        let expected = checked_rgb_len(request.output_width, request.output_height)?
+            .checked_mul(bytes_per_sample)
+            .context("JPEG XL raster length overflow")?;
+        anyhow::ensure!(
+            mapped.len() == expected,
+            "JPEG XL RGB raster has unexpected size"
+        );
+        let depth = if bytes_per_sample == 1 {
+            zune_core::bit_depth::BitDepth::Eight
+        } else {
+            zune_core::bit_depth::BitDepth::Sixteen
+        };
+        let options = zune_core::options::EncoderOptions::new(
+            request.output_width as usize,
+            request.output_height as usize,
+            zune_core::colorspace::ColorSpace::RGB,
+            depth,
+        );
+        let encoder = zune_jpegxl::JxlSimpleEncoder::new(&mapped, options);
+        if request.keep_metadata {
+            with_temporary_export_path(request.path, |staged_jxl| {
+                let encoded_file = OpenOptions::new()
+                    .write(true)
+                    .create_new(true)
+                    .open(staged_jxl)
+                    .context("create staged JPEG XL codestream")?;
+                let mut encoded_writer = BufWriter::new(encoded_file);
+                encoder
+                    .encode(&mut encoded_writer)
+                    .map_err(|error| anyhow::anyhow!("encode JPEG XL: {error}"))?;
+                encoded_writer.flush().context("flush JPEG XL codestream")?;
+                drop(encoded_writer);
+                let mut encoded_file =
+                    fs::File::open(staged_jxl).context("open staged JPEG XL codestream")?;
+                let codestream_len = encoded_file.metadata()?.len();
+                let output_file = open_export_destination(request.path)
+                    .with_context(|| format!("create JPEG XL {}", request.path.display()))?;
+                let mut writer = BufWriter::new(output_file);
+                write_jxl_container(
+                    &mut writer,
+                    &mut encoded_file,
+                    codestream_len,
+                    &build_exif_payload(
+                        request.metadata,
+                        request.output_width,
+                        request.output_height,
+                    ),
+                )?;
+                writer.flush().context("flush JPEG XL container")
+            })?;
+        } else {
+            let output_file = open_export_destination(request.path)
+                .with_context(|| format!("create JPEG XL {}", request.path.display()))?;
+            let mut writer = BufWriter::new(output_file);
+            encoder
+                .encode(&mut writer)
+                .map_err(|error| anyhow::anyhow!("encode JPEG XL: {error}"))?;
+            writer.flush().context("flush JPEG XL export")?;
+        }
+        Ok(())
+    })
+}
+
+fn write_jxl_container<W: Write>(
+    output: &mut W,
+    codestream: &mut impl std::io::Read,
+    codestream_len: u64,
+    exif: &[u8],
+) -> Result<()> {
+    // JPEG XL container signature and file type boxes.
+    output.write_all(&[0, 0, 0, 12, b'J', b'X', b'L', b' ', 13, 10, 0x87, 10])?;
+    output.write_all(&[
+        0, 0, 0, 20, b'f', b't', b'y', b'p', b'j', b'x', b'l', b' ', 0, 0, 0, 0, b'j', b'x', b'l',
+        b' ',
+    ])?;
+    let exif_box_size = u32::try_from(
+        exif.len()
+            .checked_add(12)
+            .context("JPEG XL EXIF size overflow")?,
+    )
+    .context("JPEG XL EXIF box too large")?;
+    output.write_all(&exif_box_size.to_be_bytes())?;
+    output.write_all(b"Exif")?;
+    output.write_all(&0u32.to_be_bytes())?; // TIFF header starts at byte zero.
+    output.write_all(exif)?;
+    let box_size = codestream_len
+        .checked_add(8)
+        .context("JPEG XL codestream size overflow")?;
+    if box_size <= u32::MAX as u64 {
+        output.write_all(&(box_size as u32).to_be_bytes())?;
+        output.write_all(b"jxlc")?;
+    } else {
+        output.write_all(&1u32.to_be_bytes())?;
+        output.write_all(b"jxlc")?;
+        output.write_all(
+            &codestream_len
+                .checked_add(16)
+                .context("JPEG XL box size overflow")?
+                .to_be_bytes(),
+        )?;
+    }
+    std::io::copy(codestream, output).context("write JPEG XL codestream")?;
+    Ok(())
 }
 
 struct JpegEncodeRequest<'a> {

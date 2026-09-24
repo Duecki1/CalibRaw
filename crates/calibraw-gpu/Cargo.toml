@@ -27,10 +27,13 @@ pollster.workspace = true
 rayon.workspace = true
 wgpu = { workspace = true, features = ["naga-ir"] }
 naga_oil.workspace = true
+zune-core.workspace = true
+zune-jpegxl.workspace = true
 
 [target.'cfg(target_os = "android")'.dependencies]
 calibraw-ffi.workspace = true
 
 [dev-dependencies]
 exif.workspace = true
+jxl-oxide = "0.12.6"
 naga.workspace = true

@@ -166,8 +166,9 @@ impl ExportHarness<'_> {
         output: &Path,
     ) -> Result<()> {
         let source_dimensions = (self.metadata.source_width, self.metadata.source_height);
+        let format = output_format(output)?;
         let receiver = spawn_tiled_export(
-            ExportFormat::Png,
+            format,
             TiledExportJob {
                 device: self.device.clone(),
                 queue: self.queue.clone(),
@@ -200,10 +201,11 @@ impl ExportHarness<'_> {
         }
         let output = finished.context("export worker exited without a completion event")?;
         println!(
-            "wrote {} ({}x{}, sRGB PNG, {:?})",
+            "wrote {} ({}x{}, sRGB {}, {:?})",
             output.display(),
             source_dimensions.0,
             source_dimensions.1,
+            format.label(),
             self.backend,
         );
         Ok(())
@@ -350,13 +352,7 @@ fn parse_args() -> Result<Args> {
         }
     }
     if let Some(output) = &output {
-        if !output
-            .extension()
-            .and_then(|value| value.to_str())
-            .is_some_and(|value| value.eq_ignore_ascii_case("png"))
-        {
-            bail!("--output must use the .png extension");
-        }
+        output_format(output)?;
     }
     Ok(Args {
         input: input.ok_or_else(|| anyhow!("--input is required"))?,
@@ -369,6 +365,33 @@ fn parse_args() -> Result<Args> {
         report_detail_defaults,
         adjustments,
     })
+}
+
+fn output_format(path: &Path) -> Result<ExportFormat> {
+    let extension = path
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or("");
+    for format in [ExportFormat::Png, ExportFormat::JpegXl] {
+        if format.matches_extension(extension) {
+            return Ok(format);
+        }
+    }
+    bail!("--output must use the .png or .jxl extension")
+}
+
+#[cfg(test)]
+#[test]
+fn output_extension_selects_encoder() {
+    assert_eq!(
+        output_format(Path::new("photo.png")).unwrap(),
+        ExportFormat::Png
+    );
+    assert_eq!(
+        output_format(Path::new("photo.JXL")).unwrap(),
+        ExportFormat::JpegXl
+    );
+    assert!(output_format(Path::new("photo.jpg")).is_err());
 }
 
 fn parse_crop(value: &str) -> Result<[u32; 4]> {
@@ -398,7 +421,7 @@ fn print_help() {
     println!(concat!(
         "Headless CalibRaw Develop export\n\n",
         "Usage:\n",
-        "  calibraw-develop-export --input FILE --output FILE.png [--dcp PROFILE.dcp]\n",
+        "  calibraw-develop-export --input FILE --output FILE.png|FILE.jxl [--dcp PROFILE.dcp]\n",
         "    [--crop X,Y,WIDTH,HEIGHT] [--report-detail-defaults]\n",
         "    [--adjust NAME=VALUE]...\n\n",
         "  calibraw-develop-export --input FILE --suite-output DIRECTORY [--dcp PROFILE.dcp]\n",

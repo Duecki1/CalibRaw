@@ -121,6 +121,7 @@ mod export_format_serde {
             ExportFormat::Jpeg => "jpeg",
             ExportFormat::Png => "png",
             ExportFormat::Tiff => "tiff",
+            ExportFormat::JpegXl => "jxl",
         })
     }
 
@@ -132,13 +133,28 @@ mod export_format_serde {
             "jpeg" => Ok(ExportFormat::Jpeg),
             "png" => Ok(ExportFormat::Png),
             "tiff" => Ok(ExportFormat::Tiff),
+            "jxl" => Ok(ExportFormat::JpegXl),
             value => Err(serde::de::Error::unknown_variant(
                 value,
-                &["jpeg", "png", "tiff"],
+                &["jpeg", "png", "tiff", "jxl"],
             )),
         }
     }
 }
+
+#[cfg(test)]
+#[test]
+fn jpeg_xl_export_format_setting_round_trips() {
+    let encoded = serde_json::to_string(&ExportFormatSetting(ExportFormat::JpegXl)).unwrap();
+    assert_eq!(encoded, "\"jxl\"");
+    let decoded: ExportFormatSetting = serde_json::from_str(&encoded).unwrap();
+    assert_eq!(decoded.0, ExportFormat::JpegXl);
+}
+
+#[cfg(test)]
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(transparent)]
+struct ExportFormatSetting(#[serde(with = "export_format_serde")] ExportFormat);
 
 const fn default_camera_profile_auto_detect() -> bool {
     !cfg!(target_os = "android")

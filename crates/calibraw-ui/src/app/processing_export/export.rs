@@ -221,6 +221,11 @@ impl CalibRawApp {
         self.export_desktop(frame, ExportFormat::Tiff);
     }
 
+    #[cfg(not(target_os = "android"))]
+    pub(crate) fn export_jxl(&mut self, frame: &eframe::Frame) {
+        self.export_desktop(frame, ExportFormat::JpegXl);
+    }
+
     #[cfg(target_os = "android")]
     pub(crate) fn export_png(&mut self, frame: &eframe::Frame) {
         self.export_android(frame, ExportFormat::Png);
@@ -234,6 +239,11 @@ impl CalibRawApp {
     #[cfg(target_os = "android")]
     pub(crate) fn export_tiff(&mut self, frame: &eframe::Frame) {
         self.export_android(frame, ExportFormat::Tiff);
+    }
+
+    #[cfg(target_os = "android")]
+    pub(crate) fn export_jxl(&mut self, frame: &eframe::Frame) {
+        self.export_android(frame, ExportFormat::JpegXl);
     }
 
     #[cfg(target_os = "android")]
