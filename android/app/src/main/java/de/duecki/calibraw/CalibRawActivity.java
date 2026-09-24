@@ -1,10 +1,12 @@
 package de.duecki.calibraw;
 
 import android.app.NativeActivity;
+import android.content.pm.ActivityInfo;
 import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.Context;
 import android.content.Intent;
+import android.content.res.Configuration;
 import android.os.Build;
 import android.os.Bundle;
 import android.graphics.Insets;
@@ -24,6 +26,7 @@ import java.util.concurrent.Executors;
 
 public final class CalibRawActivity extends NativeActivity {
     private static final String LOG_TAG = "CalibRaw";
+    private static final int TABLET_SMALLEST_WIDTH_DP = 600;
     private static final int OPEN_RAW_DOCUMENT = 1001;
     private static final int OPEN_CAMERA_PROFILE_FOLDER = 1003;
 
@@ -41,6 +44,7 @@ public final class CalibRawActivity extends NativeActivity {
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
+        updateRequestedOrientation(getResources().getConfiguration());
         super.onCreate(savedInstanceState);
         // NativeActivity may start Rust during creation, so install this bridge first.
         taskNotificationController = new TaskNotificationController(this);
@@ -91,6 +95,21 @@ public final class CalibRawActivity extends NativeActivity {
                             finish();
                         }
                     });
+        }
+    }
+
+    @Override
+    public void onConfigurationChanged(Configuration newConfig) {
+        super.onConfigurationChanged(newConfig);
+        updateRequestedOrientation(newConfig);
+    }
+
+    private void updateRequestedOrientation(Configuration configuration) {
+        int orientation = configuration.smallestScreenWidthDp >= TABLET_SMALLEST_WIDTH_DP
+                ? ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+                : ActivityInfo.SCREEN_ORIENTATION_PORTRAIT;
+        if (getRequestedOrientation() != orientation) {
+            setRequestedOrientation(orientation);
         }
     }
 
