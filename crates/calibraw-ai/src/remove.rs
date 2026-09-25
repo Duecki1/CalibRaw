@@ -168,6 +168,7 @@ fn run_remove(request: RemoveRequest, events: &mpsc::Sender<RemoveEvent>) -> Res
     if brush.dilation_radius == 0 {
         brush.dilation_radius = adaptive_remove_dilation(&brush.points);
     }
+    let stroke_seed = remove_stroke_seed(&brush);
     let mask = rasterize_remove_brush(request.raw.width, request.raw.height, &brush)
         .context("Remove brush produced no native image mask")?;
     let crop = plan_remove_context_crop(request.raw.width, request.raw.height, &mask)
@@ -202,6 +203,7 @@ fn run_remove(request: RemoveRequest, events: &mpsc::Sender<RemoveEvent>) -> Res
         &request.exposure,
         &scene,
         &mask,
+        stroke_seed,
         &request.cancellation,
     )?;
     let _ = events.send(RemoveEvent::Processing {
@@ -840,6 +842,7 @@ fn infer_crop(
     exposure: &ExposureParams,
     scene: &ResizedRemoveSceneCrop,
     mask: &RemoveMask,
+    stroke_seed: u32,
     cancellation: &AtomicBool,
 ) -> Result<RemovePatch> {
     anyhow::ensure!(
@@ -976,6 +979,7 @@ fn infer_crop(
         view_gain,
         &model_output,
         &source_mask,
+        stroke_seed,
         cancellation,
     )
 }
@@ -1002,6 +1006,7 @@ fn build_cached_patch(
     view_gain: f32,
     model_output: &Rgb32FImage,
     binary_mask: &GrayImage,
+    stroke_seed: u32,
     cancellation: &AtomicBool,
 ) -> Result<RemovePatch> {
     let scale = crop.width.max(crop.height) as f32 / BIG_LAMA_INPUT_EDGE as f32;
@@ -1086,6 +1091,7 @@ fn build_cached_patch(
     // diffuse that correction through the higher-coverage part of the mask.
     const BOUNDARY_COVERAGE: u8 = 48;
     let mut mask = vec![false; pixels];
+    let mut boundary_ring = vec![false; pixels];
     let mut difference = vec![0.0f32; pixels * 3];
     for index in 0..pixels {
         mask[index] = coverage_values[index] > BOUNDARY_COVERAGE;
@@ -1103,6 +1109,7 @@ fn build_cached_patch(
             if !touches_interior {
                 continue;
             }
+            boundary_ring[index] = true;
             for channel in 0..3 {
                 difference[index * 3 + channel] =
                     source_perceptual[index][channel] - generated_perceptual[index][channel];
@@ -1110,15 +1117,22 @@ fn build_cached_patch(
         }
     }
     gimp_heal_laplace_loop(&mut difference, width, height, &mask, cancellation)?;
+    let noise_sigma = boundary_noise_sigma(&source_perceptual, width, height, &boundary_ring);
 
     let mut rgb16f = Vec::with_capacity(pixels * 3);
     let mut alpha = Vec::with_capacity(pixels);
     for index in 0..pixels {
         let coverage = coverage_values[index];
         let mix = coverage as f32 / 255.0;
+        let global_x = bounds.x + (index % width) as u32;
+        let global_y = bounds.y + (index / width) as u32;
         let corrected_generated: [f32; 3] = std::array::from_fn(|channel| {
             perceptual_decode_signed(
-                generated_perceptual[index][channel] + difference[index * 3 + channel],
+                generated_perceptual[index][channel]
+                    + difference[index * 3 + channel]
+                    + pixel_noise(global_x, global_y, channel as u32, stroke_seed)
+                        * noise_sigma[channel]
+                        * mix,
             )
         });
         for channel in 0..3 {
@@ -1181,6 +1195,77 @@ fn distance_transform_inside(mask: &GrayImage) -> Vec<f32> {
         }
     }
     distance
+}
+
+fn remove_stroke_seed(brush: &RemoveBrushStroke) -> u32 {
+    let mut seed = 0xA511_E9B3u32 ^ brush.dilation_radius;
+    for point in &brush.points {
+        for value in [point.x.to_bits(), point.y.to_bits(), point.radius.to_bits()] {
+            seed ^= value;
+            seed = seed.rotate_left(13).wrapping_mul(0x9E37_79B1);
+        }
+    }
+    seed
+}
+
+fn pixel_noise(x: u32, y: u32, channel: u32, seed: u32) -> f32 {
+    let mut hash = x.wrapping_mul(0x9E37_79B1)
+        ^ y.wrapping_mul(0x85EB_CA77)
+        ^ channel.wrapping_mul(0xC2B2_AE3D)
+        ^ seed;
+    hash ^= hash >> 15;
+    hash = hash.wrapping_mul(0x2C1B_3C6D);
+    hash ^= hash >> 12;
+    hash = hash.wrapping_mul(0x297A_2D39);
+    hash ^= hash >> 15;
+    let u1 = ((hash & 0xFFFF) as f32 + 0.5) / 65_536.0;
+    let u2 = (((hash >> 16) & 0xFFFF) as f32 + 0.5) / 65_536.0;
+    (-2.0 * u1.ln()).sqrt() * (std::f32::consts::TAU * u2).cos()
+}
+
+fn boundary_noise_sigma(
+    source: &[[f32; 3]],
+    width: usize,
+    height: usize,
+    boundary_ring: &[bool],
+) -> [f32; 3] {
+    let mut sum = [0.0f64; 3];
+    let mut sum_squared = [0.0f64; 3];
+    let mut count = 0u64;
+    for y in 0..height {
+        for x in 0..width {
+            let index = y * width + x;
+            if !boundary_ring[index] {
+                continue;
+            }
+            let x0 = x.saturating_sub(1);
+            let y0 = y.saturating_sub(1);
+            let x1 = (x + 1).min(width - 1);
+            let y1 = (y + 1).min(height - 1);
+            let sample_count = ((x1 - x0 + 1) * (y1 - y0 + 1)) as f32;
+            for channel in 0..3 {
+                let mut low_pass = 0.0f32;
+                for sample_y in y0..=y1 {
+                    for sample_x in x0..=x1 {
+                        low_pass += source[sample_y * width + sample_x][channel];
+                    }
+                }
+                let residual = source[index][channel] - low_pass / sample_count;
+                sum[channel] += residual as f64;
+                sum_squared[channel] += (residual as f64).powi(2);
+            }
+            count += 1;
+        }
+    }
+    if count == 0 {
+        return [0.0; 3];
+    }
+    std::array::from_fn(|channel| {
+        let mean = sum[channel] / count as f64;
+        (sum_squared[channel] / count as f64 - mean * mean)
+            .max(0.0)
+            .sqrt() as f32
+    })
 }
 
 #[cfg(test)]
@@ -1316,6 +1401,7 @@ mod tests {
             1.0,
             &restored,
             &binary,
+            0,
             &AtomicBool::new(false),
         )
         .unwrap();
