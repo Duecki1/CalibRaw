@@ -30,6 +30,9 @@ use std::{
     time::Duration,
 };
 
+mod quality;
+use quality::{feather_mask, fit_dimensions, mask_distance, reflect, resize_mask, sample_cubic};
+
 pub const BIG_LAMA_MODEL_FILENAME: &str = "big-lama-places2-fp32-512.onnx";
 pub const BIG_LAMA_MODEL_URL: &str =
     "https://huggingface.co/Duecki/CalibRaw-Artifacts/resolve/91085ce0ec322a4a7cbd20059688690218e52f9a/models/lama/lama_fp32.onnx";
@@ -181,11 +184,16 @@ fn run_remove(request: RemoveRequest, events: &mpsc::Sender<RemoveEvent>) -> Res
             geometry: request.geometry,
             exposure: request.exposure,
             masks: request.masks.clone(),
-            remove: request.existing,
+            remove: request.existing.clone(),
             crop,
             program_prewarm: request.program_prewarm.clone(),
         },
-        BIG_LAMA_INPUT_EDGE,
+        if cfg!(target_os = "android") {
+            1024
+        } else {
+            1536
+        },
+        &request.cancellation,
     )
     .with_context(|| {
         format!(
@@ -202,6 +210,7 @@ fn run_remove(request: RemoveRequest, events: &mpsc::Sender<RemoveEvent>) -> Res
         &request.exposure,
         &scene,
         &mask,
+        &request.cancellation,
     )?;
     let _ = events.send(RemoveEvent::Processing {
         completed: 1,
@@ -777,15 +786,25 @@ fn gimp_heal_laplace_loop(
     mask: &[bool],
     cancellation: &AtomicBool,
 ) -> Result<()> {
+    relax_harmonic_field(pixels, width, height, mask, cancellation, 500)
+}
+
+fn relax_harmonic_field(
+    pixels: &mut [f32],
+    width: usize,
+    height: usize,
+    mask: &[bool],
+    cancellation: &AtomicBool,
+    iterations: usize,
+) -> Result<()> {
     const EPSILON: f32 = 0.1 / 255.0;
-    const MAX_ITERATIONS: usize = 500;
     let nmask = mask.iter().filter(|value| **value).count();
     if nmask == 0 {
         return Ok(());
     }
     let relaxation = 2.0 - 1.0 / (0.1575 * (nmask as f32).sqrt() + 0.8);
     let w = relaxation * 0.25;
-    for iteration in 0..MAX_ITERATIONS {
+    for iteration in 0..iterations {
         if iteration % 8 == 0 {
             ensure_not_cancelled(cancellation)?;
         }
@@ -839,13 +858,11 @@ fn infer_crop(
     exposure: &ExposureParams,
     scene: &ResizedRemoveSceneCrop,
     mask: &RemoveMask,
+    cancellation: &AtomicBool,
 ) -> Result<RemovePatch> {
     anyhow::ensure!(
-        scene.width <= BIG_LAMA_INPUT_EDGE && scene.height <= BIG_LAMA_INPUT_EDGE,
-        "Big-LaMa working scene {}x{} exceeds {}px",
-        scene.width,
-        scene.height,
-        BIG_LAMA_INPUT_EDGE,
+        scene.width > 0 && scene.height > 0,
+        "Remove reference is empty"
     );
     let expected = scene.width as usize * scene.height as usize * 3;
     anyhow::ensure!(
@@ -861,19 +878,24 @@ fn infer_crop(
     }
     let source: Rgb32FImage = ImageBuffer::from_raw(scene.width, scene.height, srgb)
         .context("construct developed Remove crop")?;
-    let resized = image::imageops::resize(
-        &source,
-        BIG_LAMA_INPUT_EDGE,
-        BIG_LAMA_INPUT_EDGE,
-        FilterType::Lanczos3,
-    );
+    let (model_width, model_height) =
+        fit_dimensions(scene.width, scene.height, BIG_LAMA_INPUT_EDGE);
+    let resized_source =
+        image::imageops::resize(&source, model_width, model_height, FilterType::Lanczos3);
     let source_mask = crop_binary_mask(crop, mask);
-    let resized_mask = image::imageops::resize(
-        &source_mask,
-        BIG_LAMA_INPUT_EDGE,
-        BIG_LAMA_INPUT_EDGE,
-        FilterType::Nearest,
-    );
+    let initial_mask = resize_mask(&source_mask, model_width, model_height);
+    let guard = model_mask_guard_radius(&initial_mask);
+    let native_guard = (guard as f64 * crop.width as f64 / model_width as f64).ceil() as u32;
+    let repair_mask = dilate_model_mask(&source_mask, native_guard);
+    let model_mask = resize_mask(&repair_mask, model_width, model_height);
+    // Reflect-pad both image and mask. Stretching a non-square crop changes
+    // structures; treating reflected subject pixels as known causes ghosts.
+    let resized = Rgb32FImage::from_fn(BIG_LAMA_INPUT_EDGE, BIG_LAMA_INPUT_EDGE, |x, y| {
+        *resized_source.get_pixel(reflect(x, model_width), reflect(y, model_height))
+    });
+    let resized_mask = GrayImage::from_fn(BIG_LAMA_INPUT_EDGE, BIG_LAMA_INPUT_EDGE, |x, y| {
+        *model_mask.get_pixel(reflect(x, model_width), reflect(y, model_height))
+    });
 
     let plane = (BIG_LAMA_INPUT_EDGE * BIG_LAMA_INPUT_EDGE) as usize;
     let mut image_values = vec![0.0f32; plane * 3];
@@ -959,22 +981,175 @@ fn infer_crop(
         output_interleaved[index * 3 + 2] =
             (output_values[plane * 2 + index] / 255.0).clamp(0.0, 1.0);
     }
-    let model_output: Rgb32FImage =
+    let padded: Rgb32FImage =
         ImageBuffer::from_raw(BIG_LAMA_INPUT_EDGE, BIG_LAMA_INPUT_EDGE, output_interleaved)
             .context("construct Big-LaMa output image")?;
-    let source_scene: Rgb32FImage =
-        ImageBuffer::from_raw(scene.width, scene.height, scene.pixels.clone())
-            .context("construct bounded Big-LaMa source scene")?;
+    let unpadded = image::imageops::crop_imm(&padded, 0, 0, model_width, model_height).to_image();
+    let mut model_output =
+        image::imageops::resize(&unpadded, scene.width, scene.height, FilterType::CatmullRom);
+    let reference_mask = resize_mask(&repair_mask, scene.width, scene.height);
+    harmonize_model_fill(&source, &reference_mask, &mut model_output, cancellation)?;
+    ensure_not_cancelled(cancellation)?;
+    build_cached_patch(crop, raw, exposure, view_gain, &model_output, &repair_mask)
+}
 
-    build_cached_patch(
-        crop,
-        raw,
-        exposure,
-        &source_scene,
-        view_gain,
-        &model_output,
-        &source_mask,
-    )
+/// Match the fill to the clean context at the mask edge. The offset is solved
+/// smoothly inward, so local structure made by LaMa is kept while broad sky
+/// or water colour differences do not form a visible patch.
+fn harmonize_model_fill(
+    source: &Rgb32FImage,
+    mask: &GrayImage,
+    output: &mut Rgb32FImage,
+    cancellation: &AtomicBool,
+) -> Result<()> {
+    let width = mask.width() as usize;
+    let height = mask.height() as usize;
+    anyhow::ensure!(
+        source.dimensions() == mask.dimensions() && output.dimensions() == mask.dimensions(),
+        "Big-LaMa seam inputs have different dimensions"
+    );
+    let mut correction = vec![0.0f32; width * height * 3];
+    let mut interior = vec![false; width * height];
+    let mut has_boundary = false;
+    for y in 0..height {
+        for x in 0..width {
+            let index = y * width + x;
+            if mask.get_pixel(x as u32, y as u32)[0] == 0 {
+                continue;
+            }
+            let boundary = [
+                (x.wrapping_sub(1), y),
+                (x + 1, y),
+                (x, y.wrapping_sub(1)),
+                (x, y + 1),
+            ]
+            .into_iter()
+            .any(|(nx, ny)| {
+                nx < width && ny < height && mask.get_pixel(nx as u32, ny as u32)[0] == 0
+            });
+            if boundary {
+                has_boundary = true;
+                // The native guard band puts this boundary in clean context.
+                // Compare at the SAME location: averaging outside neighbors
+                // biases gradients and pulls horizon edges into the repair.
+                let target = source.get_pixel(x as u32, y as u32);
+                let generated = output.get_pixel(x as u32, y as u32);
+                for channel in 0..3 {
+                    correction[index * 3 + channel] = target[channel] - generated[channel];
+                }
+            } else {
+                interior[index] = true;
+            }
+        }
+    }
+    if !has_boundary {
+        return Ok(());
+    }
+    harmonize_field_pyramid(&mut correction, width, height, &interior, cancellation)?;
+    for (index, pixel) in output.pixels_mut().enumerate() {
+        if mask.as_raw()[index] != 0 {
+            for channel in 0..3 {
+                pixel[channel] = (pixel[channel] + correction[index * 3 + channel]).clamp(0.0, 1.0);
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Solve broad color shifts on a coarse grid first, then refine the boundary.
+/// A zero-initialized, fixed-iteration solve at large sizes leaves the center
+/// uncorrected. Restriction only uses fixed samples for coarse boundary values.
+fn harmonize_field_pyramid(
+    field: &mut [f32],
+    width: usize,
+    height: usize,
+    interior: &[bool],
+    cancellation: &AtomicBool,
+) -> Result<()> {
+    ensure_not_cancelled(cancellation)?;
+    if width.max(height) <= 32 {
+        return gimp_heal_laplace_loop(field, width, height, interior, cancellation);
+    }
+    let cw = width.div_ceil(2);
+    let ch = height.div_ceil(2);
+    let mut coarse = vec![0.0; cw * ch * 3];
+    let mut coarse_interior = vec![true; cw * ch];
+    for y in 0..ch {
+        for x in 0..cw {
+            let ci = y * cw + x;
+            let mut count = 0;
+            for fy in y * 2..(y * 2 + 2).min(height) {
+                for fx in x * 2..(x * 2 + 2).min(width) {
+                    let fi = fy * width + fx;
+                    if !interior[fi] {
+                        count += 1;
+                        for c in 0..3 {
+                            coarse[ci * 3 + c] += field[fi * 3 + c];
+                        }
+                    }
+                }
+            }
+            if count > 0 {
+                coarse_interior[ci] = false;
+                for c in 0..3 {
+                    coarse[ci * 3 + c] /= count as f32;
+                }
+            }
+        }
+    }
+    harmonize_field_pyramid(&mut coarse, cw, ch, &coarse_interior, cancellation)?;
+    let coarse = Rgb32FImage::from_raw(cw as u32, ch as u32, coarse).unwrap();
+    for y in 0..height {
+        for x in 0..width {
+            let i = y * width + x;
+            if interior[i] {
+                // Pixel coordinates are tied to the 2x2 restriction cells,
+                // including odd dimensions. Corrections are signed floats.
+                let pixel = image::imageops::interpolate_bilinear(
+                    &coarse,
+                    ((x as f32 - 0.5) * 0.5).clamp(0.0, (cw - 1) as f32),
+                    ((y as f32 - 0.5) * 0.5).clamp(0.0, (ch - 1) as f32),
+                )
+                .unwrap();
+                field[i * 3..i * 3 + 3].copy_from_slice(&pixel.0);
+            }
+        }
+    }
+    relax_harmonic_field(field, width, height, interior, cancellation, 100)
+}
+
+fn dilate_model_mask(mask: &GrayImage, radius: u32) -> GrayImage {
+    let distance = mask_distance(mask, true);
+    GrayImage::from_fn(mask.width(), mask.height(), |x, y| {
+        Luma([
+            if distance[(y * mask.width() + x) as usize] <= radius as f32 {
+                255
+            } else {
+                0
+            },
+        ])
+    })
+}
+
+fn model_mask_guard_radius(mask: &GrayImage) -> u32 {
+    let mut left = mask.width();
+    let mut top = mask.height();
+    let mut right = 0;
+    let mut bottom = 0;
+    for (x, y, pixel) in mask.enumerate_pixels() {
+        if pixel[0] != 0 {
+            left = left.min(x);
+            top = top.min(y);
+            right = right.max(x + 1);
+            bottom = bottom.max(y + 1);
+        }
+    }
+    if right <= left || bottom <= top {
+        return 4;
+    }
+    ((right - left).max(bottom - top) as f32 * 0.10)
+        .round()
+        .clamp(4.0, 24.0) as u32
 }
 
 fn crop_binary_mask(crop: NativeRect, mask: &RemoveMask) -> GrayImage {
@@ -995,24 +1170,20 @@ fn build_cached_patch(
     crop: NativeRect,
     raw: &LoadedRaw,
     exposure: &ExposureParams,
-    source_scene: &Rgb32FImage,
     view_gain: f32,
     model_output: &Rgb32FImage,
     binary_mask: &GrayImage,
 ) -> Result<RemovePatch> {
     let scale = crop.width.max(crop.height) as f32 / BIG_LAMA_INPUT_EDGE as f32;
-    let sigma = (1.25 * scale).clamp(1.25, 5.0);
-    let blurred = image::imageops::blur(binary_mask, sigma);
+    let coverage = feather_mask(binary_mask, (3.0 * scale).max(2.0));
     let mut left = crop.width;
     let mut top = crop.height;
     let mut right = 0u32;
     let mut bottom = 0u32;
     for y in 0..crop.height {
         for x in 0..crop.width {
-            let binary = binary_mask.get_pixel(x, y)[0];
-            let soft = blurred.get_pixel(x, y)[0];
-            let alpha = if binary != 0 { soft } else { 0 };
-            if alpha >= 2 {
+            let alpha = coverage[(y * crop.width + x) as usize];
+            if alpha > 0 {
                 left = left.min(x);
                 top = top.min(y);
                 right = right.max(x + 1);
@@ -1037,31 +1208,19 @@ fn build_cached_patch(
         for x in left..right {
             let u = (x as f32 + 0.5) / crop.width.max(1) as f32;
             let v = (y as f32 + 0.5) / crop.height.max(1) as f32;
-            let pixel: Rgb<f32> = image::imageops::sample_bilinear(model_output, u, v)
-                .context("sample upscaled Big-LaMa output")?;
+            let pixel = sample_cubic(model_output, u, v);
             let generated = remove_model_srgb_to_canonical_scene(
                 raw,
                 exposure,
                 [pixel[0], pixel[1], pixel[2]],
                 view_gain,
             );
-            let source_pixel: Rgb<f32> = image::imageops::sample_bilinear(source_scene, u, v)
-                .context("sample bounded Big-LaMa source scene")?;
-            let source = pipeline_scene_to_canonical_remove_scene(
-                raw,
-                exposure,
-                [source_pixel[0], source_pixel[1], source_pixel[2]],
-            );
-            let binary = binary_mask.get_pixel(x, y)[0];
-            let soft = blurred.get_pixel(x, y)[0];
-            let coverage = if binary != 0 { soft } else { 0 };
-            let mix = coverage as f32 / 255.0;
+            let coverage = coverage[(y * crop.width + x) as usize];
             for channel in 0..3 {
-                let value = source[channel] * (1.0 - mix) + generated[channel] * mix;
-                let finite = if value.is_finite() {
-                    value
+                let finite = if generated[channel].is_finite() {
+                    generated[channel]
                 } else {
-                    source[channel]
+                    0.0
                 };
                 rgb16f.push(half::f16::from_f32(finite.clamp(-65_504.0, 65_504.0)).to_bits());
             }
@@ -1195,22 +1354,245 @@ mod tests {
         let restored = Rgb32FImage::from_pixel(16, 16, Rgb([0.4, 0.5, 0.6]));
         let raw = LoadedRaw::from_scene_linear_rec2020(1, 1, vec![0.18, 0.18, 0.18]).unwrap();
         let exposure = ExposureParams::default();
-        let source_scene = Rgb32FImage::from_pixel(8, 8, Rgb([0.18, 0.18, 0.18]));
-        let patch = build_cached_patch(
-            crop,
-            &raw,
-            &exposure,
-            &source_scene,
-            1.0,
-            &restored,
-            &binary,
-        )
-        .unwrap();
+        let patch = build_cached_patch(crop, &raw, &exposure, 1.0, &restored, &binary).unwrap();
         assert_eq!(patch.bounds.x, crop.x + 18);
         assert_eq!(patch.bounds.y, crop.y + 20);
         assert_eq!(patch.bounds.right(), crop.x + 46);
         assert_eq!(patch.bounds.bottom(), crop.y + 44);
         assert!(patch.alpha.iter().all(|alpha| *alpha > 0));
+    }
+
+    #[test]
+    fn remove_patch_stores_unblended_generated_color() {
+        let raw = LoadedRaw::from_scene_linear_rec2020(1, 1, vec![0.18; 3]).unwrap();
+        let exposure = ExposureParams::default();
+        let target = [0.30, 0.25, 0.20];
+        let model_rgb = remove_scene_to_model_srgb(&raw, target, 1.0);
+        let output = Rgb32FImage::from_pixel(8, 8, Rgb(model_rgb));
+        let mut mask = GrayImage::new(8, 8);
+        for y in 2..6 {
+            for x in 2..6 {
+                mask.put_pixel(x, y, Luma([255]));
+            }
+        }
+        let patch = build_cached_patch(
+            NativeRect {
+                x: 0,
+                y: 0,
+                width: 8,
+                height: 8,
+            },
+            &raw,
+            &exposure,
+            1.0,
+            &output,
+            &mask,
+        )
+        .unwrap();
+        assert!(!patch.coverage_baked);
+        assert!(patch.alpha.iter().any(|value| *value < 255));
+        for rgb in patch.rgb_scene16f.chunks_exact(3) {
+            for (bits, expected) in rgb.iter().zip(target) {
+                assert!((half::f16::from_bits(*bits).to_f32() - expected).abs() < 0.002);
+            }
+        }
+    }
+
+    #[test]
+    fn model_mask_guard_band_covers_resampling_fringe() {
+        let mut mask = GrayImage::new(32, 32);
+        mask.put_pixel(16, 16, Luma([255]));
+        let expanded = dilate_model_mask(&mask, model_mask_guard_radius(&mask));
+        assert_eq!(expanded.get_pixel(12, 16)[0], 255);
+        assert_eq!(expanded.get_pixel(16, 12)[0], 255);
+        assert_eq!(expanded.get_pixel(11, 16)[0], 0);
+    }
+
+    #[test]
+    fn model_mask_guard_grows_with_subject_size() {
+        let mut mask = GrayImage::new(512, 512);
+        for y in 150..350 {
+            for x in 200..300 {
+                mask.put_pixel(x, y, Luma([255]));
+            }
+        }
+        assert_eq!(model_mask_guard_radius(&mask), 20);
+        let expanded = dilate_model_mask(&mask, 20);
+        assert_eq!(expanded.get_pixel(180, 250)[0], 255);
+        assert_eq!(expanded.get_pixel(179, 250)[0], 0);
+    }
+
+    #[test]
+    fn model_fill_matches_two_different_background_tones() {
+        let mut source = Rgb32FImage::new(48, 48);
+        let mut output = Rgb32FImage::new(48, 48);
+        let mut mask = GrayImage::new(48, 48);
+        for y in 0..48 {
+            let background = if y < 24 { 0.60 } else { 0.28 };
+            for x in 0..48 {
+                source.put_pixel(x, y, Rgb([background; 3]));
+                output.put_pixel(x, y, Rgb([background + 0.07; 3]));
+                if (10..38).contains(&x) && (8..40).contains(&y) {
+                    mask.put_pixel(x, y, Luma([255]));
+                }
+            }
+        }
+        harmonize_model_fill(&source, &mask, &mut output, &AtomicBool::new(false)).unwrap();
+        for (x, y, expected) in [(24, 16, 0.60), (24, 32, 0.28)] {
+            let actual = output.get_pixel(x, y)[0];
+            assert!((actual - expected).abs() < 0.01, "{x},{y}: {actual}");
+        }
+        // Pixels beyond the mask remain exactly as returned by the model.
+        assert_eq!(output.get_pixel(0, 0)[0], 0.67);
+    }
+
+    #[test]
+    fn large_fill_color_correction_reaches_center_without_flattening_texture() {
+        let (width, height) = (769, 513);
+        let clean = Rgb32FImage::from_fn(width, height, |x, y| {
+            let ramp = 0.2 + 0.2 * x as f32 / width as f32 + 0.1 * y as f32 / height as f32;
+            Rgb([ramp, ramp + 0.02, ramp + 0.04])
+        });
+        let mask = GrayImage::from_fn(width, height, |x, y| {
+            Luma([if (40..730).contains(&x) && (30..480).contains(&y) {
+                255
+            } else {
+                0
+            }])
+        });
+        let mut source = clean.clone();
+        let mut output = clean.clone();
+        for (x, y, pixel) in output.enumerate_pixels_mut() {
+            let drift = 0.20 + 0.08 * x as f32 / width as f32;
+            for c in 0..3 {
+                pixel[c] += drift;
+            }
+            if (100..650).contains(&x) && (100..410).contains(&y) {
+                source.put_pixel(x, y, Rgb([0.9, 0.05, 0.1])); // original subject must never leak back
+            }
+        }
+        harmonize_model_fill(&source, &mask, &mut output, &AtomicBool::new(false)).unwrap();
+        let mut max_error = 0.0f32;
+        for (x, y, pixel) in output.enumerate_pixels() {
+            if mask.get_pixel(x, y)[0] != 0 {
+                for c in 0..3 {
+                    max_error = max_error.max((pixel[c] - clean.get_pixel(x, y)[c]).abs());
+                }
+            }
+        }
+        assert!(max_error < 0.003, "remaining color mismatch: {max_error}");
+    }
+
+    #[test]
+    fn color_correction_is_cancellable() {
+        let source = Rgb32FImage::from_pixel(64, 64, Rgb([0.4; 3]));
+        let mut output = Rgb32FImage::from_pixel(64, 64, Rgb([0.5; 3]));
+        let mask = GrayImage::from_fn(64, 64, |x, y| {
+            Luma([if (10..54).contains(&x) && (10..54).contains(&y) {
+                255
+            } else {
+                0
+            }])
+        });
+        assert!(harmonize_model_fill(&source, &mask, &mut output, &AtomicBool::new(true)).is_err());
+    }
+
+    /// Run explicitly with CALIBRAW_TEST_LAMA_MODEL and CALIBRAW_TEST_ORT_LIBRARY
+    /// pointing to installed artifacts. No model download occurs in this test.
+    #[test]
+    #[ignore = "requires installed Big-LaMa and ONNX Runtime artifacts"]
+    fn installed_lama_removes_subject_from_smooth_gradient() {
+        let model = PathBuf::from(std::env::var("CALIBRAW_TEST_LAMA_MODEL").unwrap());
+        let runtime = PathBuf::from(std::env::var("CALIBRAW_TEST_ORT_LIBRARY").unwrap());
+        assert!(big_lama_model_is_verified(&model));
+        let runtime_bytes = std::fs::read(&runtime).unwrap();
+        let hash = hex::encode(ring::digest::digest(&ring::digest::SHA256, &runtime_bytes));
+        crate::ai_masks::initialize_runtime(Some(&runtime), Some(&hash)).unwrap();
+        let width = 768;
+        let height = 512;
+        let crop = NativeRect {
+            x: 0,
+            y: 0,
+            width,
+            height,
+        };
+        let clean = Rgb32FImage::from_fn(width, height, |x, y| {
+            let value = 0.15 + x as f32 * 0.00008 + y as f32 * 0.00005;
+            Rgb([value, value * 1.05, value * 1.12])
+        });
+        let mut source = clean.clone();
+        for y in 160..352 {
+            for x in 320..448 {
+                source.put_pixel(x, y, Rgb([0.7, 0.15, 0.03]));
+            }
+        }
+        let raw =
+            LoadedRaw::from_scene_linear_rec2020(width, height, source.clone().into_raw()).unwrap();
+        let brush = RemoveBrushStroke {
+            points: vec![RemoveBrushPoint {
+                x: 384.0,
+                y: 256.0,
+                radius: 130.0,
+            }],
+            dilation_radius: 0,
+        };
+        let mask = rasterize_remove_brush(width, height, &brush).unwrap();
+        let scene = ResizedRemoveSceneCrop {
+            width,
+            height,
+            pixels: source.into_raw(),
+        };
+        let patch = infer_crop(
+            &model,
+            crop,
+            &raw,
+            &ExposureParams::default(),
+            &scene,
+            &mask,
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+        let mut repaired = scene.pixels.clone();
+        crate::pipeline::composite_patch_into_linear_region(&patch, crop, &mut repaired);
+        let mut error = 0.0f32;
+        let mut count = 0;
+        for y in 160..352 {
+            for x in 320..448 {
+                let i = (y * width + x) as usize * 3;
+                for c in 0..3 {
+                    error += (repaired[i + c] - clean.get_pixel(x, y)[c]).abs();
+                    count += 1;
+                }
+            }
+        }
+        let mean_error = error / count as f32;
+        eprintln!("LaMa smooth-gradient mean absolute linear RGB error: {mean_error}");
+        assert!(
+            mean_error < 0.025,
+            "visible residual subject or color shift: {mean_error}"
+        );
+        assert_eq!(&repaired[..3], &scene.pixels[..3]);
+        if let Ok(directory) = std::env::var("CALIBRAW_TEST_REMOVE_OUTPUT") {
+            let directory = PathBuf::from(directory);
+            std::fs::create_dir_all(&directory).unwrap();
+            let gain = remove_model_view_gain(&raw, &scene.pixels);
+            for (name, pixels) in [
+                ("input", &scene.pixels),
+                ("repaired", &repaired),
+                ("reference", clean.as_raw()),
+            ] {
+                let display = image::RgbImage::from_fn(width, height, |x, y| {
+                    let i = (y * width + x) as usize * 3;
+                    Rgb(remove_scene_to_model_srgb(
+                        &raw,
+                        [pixels[i], pixels[i + 1], pixels[i + 2]],
+                        gain,
+                    )
+                    .map(|v| (v.clamp(0.0, 1.0) * 255.0).round() as u8))
+                });
+                display.save(directory.join(format!("{name}.png"))).unwrap();
+            }
+        }
     }
 
     #[test]

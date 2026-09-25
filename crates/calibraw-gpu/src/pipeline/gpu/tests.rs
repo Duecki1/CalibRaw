@@ -1311,3 +1311,23 @@ fn specialized_bayer_modes_match_the_dynamic_shader_when_switching_modes() -> an
     }
     Ok(())
 }
+
+#[test]
+fn remove_coverage_interpolates_without_clamping_outside_the_patch() {
+    let patch = crate::pipeline::RemovePatch::new_scene(
+        NativeRect {
+            x: 0,
+            y: 0,
+            width: 2,
+            height: 2,
+        },
+        vec![half::f16::from_f32(0.5).to_bits(); 12],
+        vec![0, 255, 0, 255],
+    )
+    .unwrap();
+    assert_eq!(super::remove_patch_coverage(&patch, 0.5, 0.5), 0.5);
+    assert_eq!(super::remove_patch_coverage(&patch, 0.25, 0.5), 0.25);
+    assert_eq!(super::remove_patch_coverage(&patch, 1.5, 0.5), 0.5);
+    assert_eq!(super::remove_patch_coverage(&patch, 2.0, 0.5), 0.0);
+    assert_eq!(super::remove_patch_coverage(&patch, 1.0, -1.0), 0.0);
+}

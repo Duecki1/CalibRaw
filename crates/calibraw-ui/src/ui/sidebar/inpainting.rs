@@ -1,7 +1,7 @@
 fn inpaint_tool_help(tool: InpaintTool) -> &'static str {
     match tool {
         InpaintTool::Remove => {
-            "Paint unwanted content. Big-LaMa repairs a native-resolution local context crop after release."
+            "Paint over the whole subject, including its blurred edges and shadow. Remove matches the repair to the surrounding colors and blends its edges."
         }
         InpaintTool::Clone => {
             "Copy pixels from a source. Ctrl-click (Command-click on macOS) or right-click the image to choose it."

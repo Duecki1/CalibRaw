@@ -91,17 +91,25 @@ impl<'a> RemoveSceneContext<'a> {
     }
 }
 
-fn remove_patch_coverage(patch: &RemovePatch, x: f32, y: f32) -> u8 {
-    if patch.alpha.is_empty() || patch.bounds.width == 0 || patch.bounds.height == 0 {
-        return 0;
+fn remove_patch_coverage(patch: &RemovePatch, x: f32, y: f32) -> f32 {
+    let width = patch.bounds.width as i32;
+    let height = patch.bounds.height as i32;
+    if patch.alpha.is_empty() || width == 0 || height == 0 {
+        return 0.0;
     }
-    let px = x
-        .round()
-        .clamp(0.0, patch.bounds.width.saturating_sub(1) as f32) as usize;
-    let py = y
-        .round()
-        .clamp(0.0, patch.bounds.height.saturating_sub(1) as f32) as usize;
-    patch.alpha[py * patch.bounds.width as usize + px]
+    let x0 = x.floor() as i32;
+    let y0 = y.floor() as i32;
+    let tx = x - x.floor();
+    let ty = y - y.floor();
+    let sample = |x: i32, y: i32| {
+        if x < 0 || y < 0 || x >= width || y >= height {
+            return 0.0;
+        }
+        patch.alpha[(y * width + x) as usize] as f32 / 255.0
+    };
+    let top = sample(x0, y0) * (1.0 - tx) + sample(x0 + 1, y0) * tx;
+    let bottom = sample(x0, y0 + 1) * (1.0 - tx) + sample(x0 + 1, y0 + 1) * tx;
+    top * (1.0 - ty) + bottom * ty
 }
 
 fn sample_remove_patch_scene(patch: &RemovePatch, x: f32, y: f32) -> [f32; 3] {
@@ -3082,7 +3090,8 @@ impl RawGpuPipeline {
                     let local_y = native_y - patch.bounds.y as f32 - 0.5;
                     let native_x = source_origin[0] + (x as f32 + 0.5) / scale_x;
                     let local_x = native_x - patch.bounds.x as f32 - 0.5;
-                    if remove_patch_coverage(patch, local_x, local_y) == 0 {
+                    let coverage = remove_patch_coverage(patch, local_x, local_y);
+                    if coverage <= 0.0 {
                         return [0.0; 4];
                     }
                     let canonical = sample_remove_patch_scene(patch, local_x, local_y);
@@ -3093,7 +3102,12 @@ impl RawGpuPipeline {
                     } else {
                         source_scene
                     };
-                    [scene[0], scene[1], scene[2], opacity]
+                    let alpha = if stroke.retouch.is_some() || patch.coverage_baked {
+                        opacity
+                    } else {
+                        opacity * coverage
+                    };
+                    [scene[0], scene[1], scene[2], alpha]
                 };
                 let upload_origin = wgpu::Origin3d {
                     x: left,

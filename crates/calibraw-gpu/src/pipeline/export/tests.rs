@@ -840,3 +840,52 @@ fn assert_exif_ascii(value: &exif::Value, expected: &str) {
     };
     assert_eq!(values, &[expected.as_bytes().to_vec()]);
 }
+
+#[test]
+fn remove_scene_reduction_is_identical_across_native_tile_boundaries() {
+    use super::{accumulate_remove_scene_tile, ResizedRemoveSceneCrop};
+    let source_width = 37;
+    let source_height = 29;
+    let make_output = || ResizedRemoveSceneCrop {
+        width: 11,
+        height: 9,
+        pixels: vec![0.0; 11 * 9 * 3],
+    };
+    let pixel = |x: u32, y: u32| [x as f32 / 37.0, y as f32 / 29.0, 0.42];
+    let mut whole = make_output();
+    let all: Vec<f32> = (0..source_height)
+        .flat_map(|y| (0..source_width).flat_map(move |x| pixel(x, y)))
+        .collect();
+    accumulate_remove_scene_tile(
+        &mut whole,
+        [source_width, source_height],
+        NativeRect {
+            x: 0,
+            y: 0,
+            width: source_width,
+            height: source_height,
+        },
+        &all,
+    );
+    let mut tiled = make_output();
+    for y in (0..source_height).step_by(7) {
+        for x in (0..source_width).step_by(7) {
+            let tile = NativeRect {
+                x,
+                y,
+                width: (source_width - x).min(7),
+                height: (source_height - y).min(7),
+            };
+            let values: Vec<f32> = (y..tile.bottom())
+                .flat_map(|y| (x..tile.right()).flat_map(move |x| pixel(x, y)))
+                .collect();
+            accumulate_remove_scene_tile(&mut tiled, [source_width, source_height], tile, &values);
+        }
+    }
+    for (a, b) in tiled.pixels.iter().zip(&whole.pixels) {
+        assert!((a - b).abs() < 1e-6, "{a} != {b}");
+    }
+    for pixel in tiled.pixels.chunks_exact(3) {
+        assert!((pixel[2] - 0.42).abs() < 1e-6);
+    }
+}

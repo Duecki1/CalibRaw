@@ -117,6 +117,12 @@ pub(crate) struct RemovePatchSidecarCache {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct RemovePatch {
     pub bounds: NativeRect,
+    // Older sidecars stored pixels with coverage already baked into RGB.
+    #[serde(
+        default = "default_coverage_baked",
+        skip_serializing_if = "is_coverage_baked"
+    )]
+    pub coverage_baked: bool,
     #[serde(
         default,
         with = "arc_u16_le_base64",
@@ -141,9 +147,18 @@ fn arc_u8_is_empty(values: &Arc<[u8]>) -> bool {
     values.is_empty()
 }
 
+const fn default_coverage_baked() -> bool {
+    true
+}
+
+fn is_coverage_baked(value: &bool) -> bool {
+    *value
+}
+
 impl PartialEq for RemovePatch {
     fn eq(&self, other: &Self) -> bool {
         self.bounds == other.bounds
+            && self.coverage_baked == other.coverage_baked
             && self.rgb_scene16f == other.rgb_scene16f
             && self.alpha == other.alpha
     }
@@ -169,6 +184,7 @@ impl RemovePatch {
         }
         Ok(Self {
             bounds,
+            coverage_baked: false,
             rgb_scene16f: Arc::from(rgb_scene16f),
             alpha: Arc::from(alpha),
             sidecar_cache: Arc::default(),
@@ -608,7 +624,7 @@ fn composite_patch_into_linear_region_with_opacity(
             let region_x = (x - region.x) as usize;
             let patch_index = patch_y * patch.bounds.width as usize + patch_x;
             let coverage = patch.alpha[patch_index] as f32 / 255.0;
-            let alpha = if retouch_coverage {
+            let alpha = if retouch_coverage || patch.coverage_baked {
                 if coverage > 0.0 {
                     opacity
                 } else {
@@ -857,6 +873,64 @@ mod tests {
             }
         }
         assert_ne!(&rgb[12..15], &before[12..15]);
+    }
+
+    #[test]
+    fn older_patches_keep_their_baked_coverage_when_loaded() {
+        let patch = RemovePatch::new_scene(
+            NativeRect {
+                x: 0,
+                y: 0,
+                width: 1,
+                height: 1,
+            },
+            vec![half::f16::from_f32(0.5).to_bits(); 3],
+            vec![128],
+        )
+        .unwrap();
+        let mut old_value = serde_json::to_value(&patch).unwrap();
+        old_value.as_object_mut().unwrap().remove("coverage_baked");
+        let restored: RemovePatch = serde_json::from_value(old_value).unwrap();
+        assert!(restored.coverage_baked);
+        let mut pixels = vec![0.0; 3];
+        composite_patch_into_linear_region(&restored, restored.bounds, &mut pixels);
+        assert_eq!(
+            pixels,
+            vec![0.5; 3],
+            "legacy coverage must not be applied twice"
+        );
+
+        let new_value = serde_json::to_value(&patch).unwrap();
+        assert_eq!(new_value["coverage_baked"], false);
+    }
+
+    #[test]
+    fn remove_feather_blends_generated_color_once() {
+        let patch = RemovePatch::new_scene(
+            NativeRect {
+                x: 0,
+                y: 0,
+                width: 1,
+                height: 1,
+            },
+            vec![half::f16::from_f32(1.0).to_bits(); 3],
+            vec![128],
+        )
+        .unwrap();
+        let mut base = vec![0.0; 3];
+        composite_patch_into_linear_region(
+            &patch,
+            NativeRect {
+                x: 0,
+                y: 0,
+                width: 1,
+                height: 1,
+            },
+            &mut base,
+        );
+        for channel in base {
+            assert!((channel - 128.0 / 255.0).abs() < 1e-6);
+        }
     }
 
     #[test]

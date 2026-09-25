@@ -1,12 +1,11 @@
 use super::geometry::GeometryInverseMap;
 use super::{
-    build_region_proxy, export_mask_atlas_edge, extract_padded_tile, extract_padded_tile_into,
-    mask_atlas_edge, mask_region_texture_extent, mask_source_region_uv, required_export_tile_halo,
-    CfaKind, ExposureParams, GeometryTransform, GpuParams, GpuProgramPrewarm, LensGeometryMap,
-    LoadedRaw, MaskStack, NativeRect, ProcessingQuality, ProcessingStage, ProxySpec,
-    RawGpuPipeline, RawGpuProgramTemplate, RemoveEditState, RemoveSceneContext, SrgbOutputLut,
-    TilePlan, TileSpec, EXPORT_TILE_HALO, MAX_LOCAL_MASKS, MIN_EXPORT_TILE_HALO,
-    TONE_GUIDE_CELL_SIZE,
+    export_mask_atlas_edge, extract_padded_tile, extract_padded_tile_into, mask_atlas_edge,
+    mask_region_texture_extent, mask_source_region_uv, required_export_tile_halo, CfaKind,
+    ExposureParams, GeometryTransform, GpuParams, GpuProgramPrewarm, LensGeometryMap, LoadedRaw,
+    MaskStack, NativeRect, ProcessingQuality, ProcessingStage, RawGpuPipeline,
+    RawGpuProgramTemplate, RemoveEditState, RemoveSceneContext, SrgbOutputLut, TilePlan, TileSpec,
+    EXPORT_TILE_HALO, MAX_LOCAL_MASKS, MIN_EXPORT_TILE_HALO, TONE_GUIDE_CELL_SIZE,
 };
 use crate::file_ops::{replace_file, sync_parent_directory};
 use anyhow::{Context, Result};
@@ -40,10 +39,14 @@ pub struct ResizedRemoveSceneCrop {
     pub pixels: Vec<f32>,
 }
 
-/// Renders a complete native Remove crop through one bounded GPU pipeline.
+/// Develop at native resolution before reducing. Resizing the RAW mosaic first
+/// changes demosaicing and highlight reconstruction, making repairs a different
+/// color from the preview/export. Only one padded native tile is resident on the
+/// GPU; the CPU reference stays bounded by `maximum_edge`.
 pub fn render_remove_scene_crop_resized(
     job: DevelopedCropJob,
     maximum_edge: u32,
+    cancellation: &AtomicBool,
 ) -> Result<ResizedRemoveSceneCrop> {
     anyhow::ensure!(maximum_edge > 0, "Remove working edge is zero");
     anyhow::ensure!(
@@ -54,110 +57,88 @@ pub fn render_remove_scene_crop_resized(
         job.crop.right() <= job.raw.width && job.crop.bottom() <= job.raw.height,
         "Remove crop lies outside the native source image"
     );
-
-    if job.raw.uses_opposed_chroma(&job.exposure) {
-        job.raw.inpaint_opposed_chroma_for_exposure(&job.exposure);
-    }
-    let working_raw = build_region_proxy(
-        &job.raw,
-        job.crop.x,
-        job.crop.y,
-        job.crop.width,
-        job.crop.height,
-        ProxySpec {
-            max_edge: maximum_edge,
-        },
-    );
-    anyhow::ensure!(
-        working_raw.width <= maximum_edge && working_raw.height <= maximum_edge,
-        "Remove working scene {}x{} exceeds the {}px edge limit",
-        working_raw.width,
-        working_raw.height,
-        maximum_edge
-    );
-
-    // Express image-global shader coordinates in the same reduced coordinate
-    // system as the working RAW. Existing Remove patches are uploaded below
-    // using their native crop mapping, so their placement remains exact.
-    let scale_x = f64::from(working_raw.width) / f64::from(job.crop.width);
-    let scale_y = f64::from(working_raw.height) / f64::from(job.crop.height);
-    let full_width = (f64::from(job.raw.width) * scale_x)
-        .round()
-        .clamp(f64::from(working_raw.width), f64::from(u32::MAX)) as u32;
-    let full_height = (f64::from(job.raw.height) * scale_y)
-        .round()
-        .clamp(f64::from(working_raw.height), f64::from(u32::MAX)) as u32;
-    let origin_x = (f64::from(job.crop.x) * scale_x)
-        .round()
-        .clamp(0.0, f64::from(i32::MAX)) as i32;
-    let origin_y = (f64::from(job.crop.y) * scale_y)
-        .round()
-        .clamp(0.0, f64::from(i32::MAX)) as i32;
-
-    let empty_masks = MaskStack::default();
-    let mask_edge = mask_atlas_edge();
-    let params = GpuParams::new_for_tile(
-        &job.exposure,
-        &empty_masks,
-        &working_raw,
-        origin_x,
-        origin_y,
-        full_width,
-        full_height,
-    );
-    let template = job
-        .program_prewarm
-        .as_deref()
-        .and_then(|prewarm| prewarm.wait().ok());
-    let pipeline = if let Some(template) = template.as_deref() {
-        RawGpuPipeline::new_headless_reusing_program_template_with_mask_edge(
-            &job.device,
-            &job.queue,
-            &working_raw,
-            &params,
-            ProcessingQuality::High,
-            template,
-            mask_edge,
-        )
-        .or_else(|_| {
-            RawGpuPipeline::new_headless_with_quality_and_mask_edge(
-                &job.device,
-                &job.queue,
-                &working_raw,
-                &params,
-                ProcessingQuality::High,
-                mask_edge,
-            )
-        })?
-    } else {
-        RawGpuPipeline::new_headless_with_quality_and_mask_edge(
-            &job.device,
-            &job.queue,
-            &working_raw,
-            &params,
-            ProcessingQuality::High,
-            mask_edge,
-        )?
+    let scale = (maximum_edge as f64 / job.crop.width.max(job.crop.height) as f64).min(1.0);
+    let width = (job.crop.width as f64 * scale).round().max(1.0) as u32;
+    let height = (job.crop.height as f64 * scale).round().max(1.0) as u32;
+    let mut result = ResizedRemoveSceneCrop {
+        width,
+        height,
+        pixels: vec![0.0; width as usize * height as usize * 3],
     };
+    let tile_edge = if cfg!(target_os = "android") {
+        512
+    } else {
+        1024
+    };
+    for y in (0..job.crop.height).step_by(tile_edge) {
+        for x in (0..job.crop.width).step_by(tile_edge) {
+            anyhow::ensure!(!cancellation.load(Ordering::Relaxed), "Remove cancelled");
+            let tile = NativeRect {
+                x,
+                y,
+                width: (job.crop.width - x).min(tile_edge as u32),
+                height: (job.crop.height - y).min(tile_edge as u32),
+            };
+            let pixels = render_remove_scene_crop(DevelopedCropJob {
+                device: job.device.clone(),
+                queue: job.queue.clone(),
+                raw: Arc::clone(&job.raw),
+                geometry: job.geometry,
+                exposure: job.exposure,
+                masks: job.masks.clone(),
+                remove: job.remove.clone(),
+                crop: NativeRect {
+                    x: job.crop.x + x,
+                    y: job.crop.y + y,
+                    ..tile
+                },
+                program_prewarm: job.program_prewarm.clone(),
+            })?;
+            accumulate_remove_scene_tile(
+                &mut result,
+                [job.crop.width, job.crop.height],
+                tile,
+                &pixels,
+            );
+        }
+    }
+    Ok(result)
+}
 
-    pipeline.dispatch_stage(&job.queue, &job.device, &params, ProcessingStage::Raw);
-    pipeline.upload_remove_scene_patches(
-        &job.queue,
-        &job.device,
-        RemoveSceneContext::new(
-            &job.remove,
-            &job.raw,
-            &job.exposure,
-            [job.crop.x as f32, job.crop.y as f32],
-            [job.crop.width as f32, job.crop.height as f32],
-        ),
-    )?;
-    let pixels = pipeline.read_scene_texture_blocking(&job.device, &job.queue)?;
-    Ok(ResizedRemoveSceneCrop {
-        width: working_raw.width,
-        height: working_raw.height,
-        pixels,
-    })
+/// Area integration uses global pixel footprints so tile boundaries cannot
+/// produce seams, including when the reduction ratio is not an integer.
+fn accumulate_remove_scene_tile(
+    output: &mut ResizedRemoveSceneCrop,
+    source_size: [u32; 2],
+    tile: NativeRect,
+    pixels: &[f32],
+) {
+    let sx = source_size[0] as f64 / output.width as f64;
+    let sy = source_size[1] as f64 / output.height as f64;
+    let left = (tile.x as f64 / sx).floor() as u32;
+    let top = (tile.y as f64 / sy).floor() as u32;
+    let right = ((tile.right() as f64 / sx).ceil() as u32).min(output.width);
+    let bottom = ((tile.bottom() as f64 / sy).ceil() as u32).min(output.height);
+    for y in top..bottom {
+        let y0 = (y as f64 * sy).max(tile.y as f64);
+        let y1 = ((y + 1) as f64 * sy).min(tile.bottom() as f64);
+        for x in left..right {
+            let x0 = (x as f64 * sx).max(tile.x as f64);
+            let x1 = ((x + 1) as f64 * sx).min(tile.right() as f64);
+            let destination = (y as usize * output.width as usize + x as usize) * 3;
+            for iy in y0.floor() as u32..y1.ceil() as u32 {
+                let wy = (y1.min((iy + 1) as f64) - y0.max(iy as f64)) / sy;
+                for ix in x0.floor() as u32..x1.ceil() as u32 {
+                    let weight = (wy * (x1.min((ix + 1) as f64) - x0.max(ix as f64)) / sx) as f32;
+                    let source =
+                        ((iy - tile.y) as usize * tile.width as usize + (ix - tile.x) as usize) * 3;
+                    for channel in 0..3 {
+                        output.pixels[destination + channel] += pixels[source + channel] * weight;
+                    }
+                }
+            }
+        }
+    }
 }
 
 pub fn render_remove_scene_crop(job: DevelopedCropJob) -> Result<Vec<f32>> {
