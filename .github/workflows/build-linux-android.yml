@@ -319,12 +319,18 @@ jobs:
             output_name="CalibRaw-release-arm64-v8a.apk"
             artifact_name="calibraw-android-release-arm64-v8a"
             signing_args=(-PcalibrawRequireReleaseSigning=true)
+            # The release workflow has its own run-number sequence. Use the
+            # checked-out commit so a tag and its main-branch build share a
+            # versionCode, while newer commits can update older installations.
+            # The offset also puts these codes above the old run-number codes.
+            version_code=$((1000000 + $(git rev-list --count HEAD)))
           else
             gradle_task=assembleDebug
             apk_path="android/app/build/outputs/apk/debug/app-debug.apk"
             output_name="CalibRaw-debug-arm64-v8a.apk"
             artifact_name="calibraw-android-debug-arm64-v8a"
             signing_args=()
+            version_code="$GITHUB_RUN_NUMBER"
           fi
 
           ./gradlew \
@@ -333,7 +339,7 @@ jobs:
             -p android \
             "$gradle_task" \
             -PcalibrawAbis=arm64-v8a \
-            -PcalibrawVersionCode="$GITHUB_RUN_NUMBER" \
+            -PcalibrawVersionCode="$version_code" \
             "${signing_args[@]}"
 
           APK="$apk_path"

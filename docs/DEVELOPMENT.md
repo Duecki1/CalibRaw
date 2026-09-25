@@ -162,9 +162,13 @@ cargo xtask verify-android-16kb android/app/build/outputs/apk/debug/app-debug.ap
 
 ### GitHub release signing
 
-Only direct pushes to `main` in the **Build Linux and Android** workflow build a
-signed release APK. Pull requests, pushes to other branches, and manual runs
-build a debug APK and do not access the release-signing secrets.
+Direct pushes to `main` and `v*` tags published through the **Release** workflow
+build the same signed release APK. Pull requests, pushes to other branches, and
+manual runs build a debug APK and do not access the release-signing secrets.
+Signed APKs use `1000000 + git rev-list --count HEAD` as their Android version
+code, so a release tag on a main-branch commit has the same code as that commit's
+main build. This also keeps new signed APKs above the older run-number-based
+builds, allowing Android to install them as updates when the signing key matches.
 
 Create the upload keystore once and keep it backed up securely. Losing it means
 future APK updates cannot be signed with the same identity.
