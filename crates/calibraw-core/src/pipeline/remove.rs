@@ -347,7 +347,7 @@ pub fn plan_remove_context_crop(
     }
     let shortest = image_width.min(image_height).max(1);
     let mask_edge = mask.bounds.width.max(mask.bounds.height).max(1);
-    let desired = mask_edge.saturating_mul(3).max(384).min(shortest);
+    let desired = mask_edge.saturating_mul(6).max(768).min(shortest);
     if mask_edge <= shortest {
         return Some(square_inside_image(
             image_width,
