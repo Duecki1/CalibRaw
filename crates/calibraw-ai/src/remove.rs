@@ -202,6 +202,7 @@ fn run_remove(request: RemoveRequest, events: &mpsc::Sender<RemoveEvent>) -> Res
         &request.exposure,
         &scene,
         &mask,
+        &request.cancellation,
     )?;
     let _ = events.send(RemoveEvent::Processing {
         completed: 1,
@@ -839,6 +840,7 @@ fn infer_crop(
     exposure: &ExposureParams,
     scene: &ResizedRemoveSceneCrop,
     mask: &RemoveMask,
+    cancellation: &AtomicBool,
 ) -> Result<RemovePatch> {
     anyhow::ensure!(
         scene.width <= BIG_LAMA_INPUT_EDGE && scene.height <= BIG_LAMA_INPUT_EDGE,
@@ -974,6 +976,7 @@ fn infer_crop(
         view_gain,
         &model_output,
         &source_mask,
+        cancellation,
     )
 }
 
@@ -999,10 +1002,12 @@ fn build_cached_patch(
     view_gain: f32,
     model_output: &Rgb32FImage,
     binary_mask: &GrayImage,
+    cancellation: &AtomicBool,
 ) -> Result<RemovePatch> {
     let scale = crop.width.max(crop.height) as f32 / BIG_LAMA_INPUT_EDGE as f32;
     let sigma = (1.25 * scale).clamp(1.25, 5.0);
-    let blurred = image::imageops::blur(binary_mask, sigma);
+    let distance = distance_transform_inside(binary_mask);
+    let feather_width = (sigma * 2.0).max(1.0);
     let mut left = crop.width;
     let mut top = crop.height;
     let mut right = 0u32;
@@ -1010,8 +1015,13 @@ fn build_cached_patch(
     for y in 0..crop.height {
         for x in 0..crop.width {
             let binary = binary_mask.get_pixel(x, y)[0];
-            let soft = blurred.get_pixel(x, y)[0];
-            let alpha = if binary != 0 { soft } else { 0 };
+            let index = y as usize * crop.width as usize + x as usize;
+            let coverage = if binary != 0 {
+                ((distance[index] / feather_width).clamp(0.0, 1.0) * 255.0).round() as u8
+            } else {
+                0
+            };
+            let alpha = coverage;
             if alpha >= 2 {
                 left = left.min(x);
                 top = top.min(y);
@@ -1031,10 +1041,16 @@ fn build_cached_patch(
         height: bottom - top,
     };
     let pixels = bounds.width as usize * bounds.height as usize;
-    let mut rgb16f = Vec::with_capacity(pixels * 3);
-    let mut alpha = Vec::with_capacity(pixels);
+    let width = bounds.width as usize;
+    let height = bounds.height as usize;
+    let mut generated_perceptual = vec![[0.0f32; 3]; pixels];
+    let mut source_perceptual = vec![[0.0f32; 3]; pixels];
+    let mut source_linear = vec![[0.0f32; 3]; pixels];
+    let mut coverage_values = vec![0u8; pixels];
     for y in top..bottom {
         for x in left..right {
+            ensure_not_cancelled(cancellation)?;
+            let local_index = (y - top) as usize * width + (x - left) as usize;
             let u = (x as f32 + 0.5) / crop.width.max(1) as f32;
             let v = (y as f32 + 0.5) / crop.height.max(1) as f32;
             let pixel: Rgb<f32> = image::imageops::sample_bilinear(model_output, u, v)
@@ -1053,22 +1069,118 @@ fn build_cached_patch(
                 [source_pixel[0], source_pixel[1], source_pixel[2]],
             );
             let binary = binary_mask.get_pixel(x, y)[0];
-            let soft = blurred.get_pixel(x, y)[0];
-            let coverage = if binary != 0 { soft } else { 0 };
-            let mix = coverage as f32 / 255.0;
-            for channel in 0..3 {
-                let value = source[channel] * (1.0 - mix) + generated[channel] * mix;
-                let finite = if value.is_finite() {
-                    value
-                } else {
-                    source[channel]
-                };
-                rgb16f.push(half::f16::from_f32(finite.clamp(-65_504.0, 65_504.0)).to_bits());
-            }
-            alpha.push(coverage);
+            let crop_index = y as usize * crop.width as usize + x as usize;
+            let coverage = if binary != 0 {
+                ((distance[crop_index] / feather_width).clamp(0.0, 1.0) * 255.0).round() as u8
+            } else {
+                0
+            };
+            generated_perceptual[local_index] = generated.map(perceptual_encode_signed);
+            source_perceptual[local_index] = source.map(perceptual_encode_signed);
+            source_linear[local_index] = source;
+            coverage_values[local_index] = coverage;
         }
     }
+
+    // Keep the feather edge fixed to the source/generated difference, then
+    // diffuse that correction through the higher-coverage part of the mask.
+    const BOUNDARY_COVERAGE: u8 = 48;
+    let mut mask = vec![false; pixels];
+    let mut difference = vec![0.0f32; pixels * 3];
+    for index in 0..pixels {
+        mask[index] = coverage_values[index] > BOUNDARY_COVERAGE;
+    }
+    for y in 0..height {
+        for x in 0..width {
+            let index = y * width + x;
+            if mask[index] || coverage_values[index] == 0 {
+                continue;
+            }
+            let touches_interior = (x > 0 && mask[index - 1])
+                || (x + 1 < width && mask[index + 1])
+                || (y > 0 && mask[index - width])
+                || (y + 1 < height && mask[index + width]);
+            if !touches_interior {
+                continue;
+            }
+            for channel in 0..3 {
+                difference[index * 3 + channel] =
+                    source_perceptual[index][channel] - generated_perceptual[index][channel];
+            }
+        }
+    }
+    gimp_heal_laplace_loop(&mut difference, width, height, &mask, cancellation)?;
+
+    let mut rgb16f = Vec::with_capacity(pixels * 3);
+    let mut alpha = Vec::with_capacity(pixels);
+    for index in 0..pixels {
+        let coverage = coverage_values[index];
+        let mix = coverage as f32 / 255.0;
+        let corrected_generated: [f32; 3] = std::array::from_fn(|channel| {
+            perceptual_decode_signed(
+                generated_perceptual[index][channel] + difference[index * 3 + channel],
+            )
+        });
+        for channel in 0..3 {
+            let source = source_linear[index][channel];
+            let value = source * (1.0 - mix) + corrected_generated[channel] * mix;
+            let finite = if value.is_finite() { value } else { source };
+            rgb16f.push(half::f16::from_f32(finite.clamp(-65_504.0, 65_504.0)).to_bits());
+        }
+        alpha.push(coverage);
+    }
     RemovePatch::new_scene(bounds, rgb16f, alpha).map_err(anyhow::Error::msg)
+}
+
+fn distance_transform_inside(mask: &GrayImage) -> Vec<f32> {
+    let (width, height) = (mask.width() as usize, mask.height() as usize);
+    const INF: f32 = 1.0e6;
+    const DIAGONAL: f32 = std::f32::consts::SQRT_2;
+    let mut distance = vec![INF; width * height];
+    for y in 0..height {
+        for x in 0..width {
+            if mask.get_pixel(x as u32, y as u32)[0] == 0 {
+                distance[y * width + x] = 0.0;
+            }
+        }
+    }
+
+    for y in 0..height {
+        for x in 0..width {
+            let index = y * width + x;
+            if x > 0 {
+                distance[index] = distance[index].min(distance[index - 1] + 1.0);
+            }
+            if y > 0 {
+                distance[index] = distance[index].min(distance[index - width] + 1.0);
+            }
+            if x > 0 && y > 0 {
+                distance[index] = distance[index].min(distance[index - width - 1] + DIAGONAL);
+            }
+            if x + 1 < width && y > 0 {
+                distance[index] = distance[index].min(distance[index - width + 1] + DIAGONAL);
+            }
+        }
+    }
+
+    for y in (0..height).rev() {
+        for x in (0..width).rev() {
+            let index = y * width + x;
+            if x + 1 < width {
+                distance[index] = distance[index].min(distance[index + 1] + 1.0);
+            }
+            if y + 1 < height {
+                distance[index] = distance[index].min(distance[index + width] + 1.0);
+            }
+            if x + 1 < width && y + 1 < height {
+                distance[index] = distance[index].min(distance[index + width + 1] + DIAGONAL);
+            }
+            if x > 0 && y + 1 < height {
+                distance[index] = distance[index].min(distance[index + width - 1] + DIAGONAL);
+            }
+        }
+    }
+    distance
 }
 
 #[cfg(test)]
@@ -1204,6 +1316,7 @@ mod tests {
             1.0,
             &restored,
             &binary,
+            &AtomicBool::new(false),
         )
         .unwrap();
         assert_eq!(patch.bounds.x, crop.x + 18);
