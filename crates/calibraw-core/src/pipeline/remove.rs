@@ -573,7 +573,6 @@ pub fn composite_remove_edits_into_linear_region(
                 region,
                 rgb,
                 stroke.composite_opacity(),
-                stroke.retouch.is_some(),
             );
         }
     }
@@ -584,7 +583,7 @@ pub fn composite_patch_into_linear_region(
     region: NativeRect,
     rgb: &mut [f32],
 ) {
-    composite_patch_into_linear_region_with_opacity(patch, region, rgb, 1.0, false);
+    composite_patch_into_linear_region_with_opacity(patch, region, rgb, 1.0);
 }
 
 fn composite_patch_into_linear_region_with_opacity(
@@ -592,7 +591,6 @@ fn composite_patch_into_linear_region_with_opacity(
     region: NativeRect,
     rgb: &mut [f32],
     opacity: f32,
-    retouch_coverage: bool,
 ) {
     if !patch.has_scene_pixels() {
         return;
@@ -608,15 +606,9 @@ fn composite_patch_into_linear_region_with_opacity(
             let region_x = (x - region.x) as usize;
             let patch_index = patch_y * patch.bounds.width as usize + patch_x;
             let coverage = patch.alpha[patch_index] as f32 / 255.0;
-            let alpha = if retouch_coverage {
-                if coverage > 0.0 {
-                    opacity
-                } else {
-                    0.0
-                }
-            } else {
-                coverage * opacity
-            };
+            // Remove patches already contain the feather blend in their RGB.
+            // Retouch patches likewise carry their brush coverage in RGB.
+            let alpha = if coverage > 0.0 { opacity } else { 0.0 };
             if alpha <= 0.0 {
                 continue;
             }
@@ -857,6 +849,24 @@ mod tests {
             }
         }
         assert_ne!(&rgb[12..15], &before[12..15]);
+    }
+
+    #[test]
+    fn baked_remove_feather_is_not_applied_twice() {
+        let patch = RemovePatch::new_scene(
+            NativeRect {
+                x: 0,
+                y: 0,
+                width: 1,
+                height: 1,
+            },
+            vec![half::f16::from_f32(0.5).to_bits(); 3],
+            vec![128],
+        )
+        .unwrap();
+        let mut rgb = vec![0.2; 3];
+        composite_patch_into_linear_region(&patch, patch.bounds, &mut rgb);
+        assert!(rgb.iter().all(|value| (*value - 0.5).abs() < 0.001));
     }
 
     #[test]

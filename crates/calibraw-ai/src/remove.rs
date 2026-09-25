@@ -182,7 +182,7 @@ fn run_remove(request: RemoveRequest, events: &mpsc::Sender<RemoveEvent>) -> Res
             geometry: request.geometry,
             exposure: request.exposure,
             masks: request.masks.clone(),
-            remove: request.existing,
+            remove: request.existing.clone(),
             crop,
             program_prewarm: request.program_prewarm.clone(),
         },
@@ -196,6 +196,33 @@ fn run_remove(request: RemoveRequest, events: &mpsc::Sender<RemoveEvent>) -> Res
     })?;
     ensure_not_cancelled(&request.cancellation)?;
 
+    // The model sees a 512px proxy. Render the area around the actual repair
+    // at native resolution so its boundary and grain match the final image.
+    let native_bounds =
+        padded_remove_bounds(mask.bounds, request.raw.width, request.raw.height, 12);
+    let native_scene = if native_bounds.width <= 2_048 && native_bounds.height <= 2_048 {
+        let pixels = render_remove_scene_crop(DevelopedCropJob {
+            device: request.device.clone(),
+            queue: request.queue.clone(),
+            raw: Arc::clone(&request.raw),
+            geometry: request.geometry,
+            exposure: request.exposure,
+            masks: request.masks.clone(),
+            remove: request.existing,
+            crop: native_bounds,
+            program_prewarm: request.program_prewarm.clone(),
+        })
+        .context("render native Remove boundary")?;
+        Some((
+            native_bounds,
+            ImageBuffer::from_raw(native_bounds.width, native_bounds.height, pixels)
+                .context("construct native Remove boundary scene")?,
+        ))
+    } else {
+        None
+    };
+    ensure_not_cancelled(&request.cancellation)?;
+
     let patch = infer_crop(
         &request.model_path,
         crop,
@@ -203,6 +230,7 @@ fn run_remove(request: RemoveRequest, events: &mpsc::Sender<RemoveEvent>) -> Res
         &request.exposure,
         &scene,
         &mask,
+        native_scene.as_ref(),
         stroke_seed,
         &request.cancellation,
     )?;
@@ -217,6 +245,17 @@ fn run_remove(request: RemoveRequest, events: &mpsc::Sender<RemoveEvent>) -> Res
         retouch: None,
         opacity: request.opacity,
     })
+}
+
+fn padded_remove_bounds(bounds: NativeRect, width: u32, height: u32, padding: u32) -> NativeRect {
+    let x = bounds.x.saturating_sub(padding);
+    let y = bounds.y.saturating_sub(padding);
+    NativeRect {
+        x,
+        y,
+        width: bounds.right().saturating_add(padding).min(width) - x,
+        height: bounds.bottom().saturating_add(padding).min(height) - y,
+    }
 }
 
 fn run_retouch(request: RetouchRequest) -> Result<RemoveStroke> {
@@ -842,6 +881,7 @@ fn infer_crop(
     exposure: &ExposureParams,
     scene: &ResizedRemoveSceneCrop,
     mask: &RemoveMask,
+    native_scene: Option<&(NativeRect, Rgb32FImage)>,
     stroke_seed: u32,
     cancellation: &AtomicBool,
 ) -> Result<RemovePatch> {
@@ -979,6 +1019,7 @@ fn infer_crop(
         view_gain,
         &model_output,
         &source_mask,
+        native_scene,
         stroke_seed,
         cancellation,
     )
@@ -1006,6 +1047,7 @@ fn build_cached_patch(
     view_gain: f32,
     model_output: &Rgb32FImage,
     binary_mask: &GrayImage,
+    native_scene: Option<&(NativeRect, Rgb32FImage)>,
     stroke_seed: u32,
     cancellation: &AtomicBool,
 ) -> Result<RemovePatch> {
@@ -1045,17 +1087,21 @@ fn build_cached_patch(
         width: right - left,
         height: bottom - top,
     };
-    let pixels = bounds.width as usize * bounds.height as usize;
-    let width = bounds.width as usize;
-    let height = bounds.height as usize;
+    let work_left = left.saturating_sub(12);
+    let work_top = top.saturating_sub(12);
+    let work_right = (right + 12).min(crop.width);
+    let work_bottom = (bottom + 12).min(crop.height);
+    let width = (work_right - work_left) as usize;
+    let height = (work_bottom - work_top) as usize;
+    let pixels = width * height;
     let mut generated_perceptual = vec![[0.0f32; 3]; pixels];
     let mut source_perceptual = vec![[0.0f32; 3]; pixels];
     let mut source_linear = vec![[0.0f32; 3]; pixels];
     let mut coverage_values = vec![0u8; pixels];
-    for y in top..bottom {
-        for x in left..right {
-            ensure_not_cancelled(cancellation)?;
-            let local_index = (y - top) as usize * width + (x - left) as usize;
+    for y in work_top..work_bottom {
+        ensure_not_cancelled(cancellation)?;
+        for x in work_left..work_right {
+            let local_index = (y - work_top) as usize * width + (x - work_left) as usize;
             let u = (x as f32 + 0.5) / crop.width.max(1) as f32;
             let v = (y as f32 + 0.5) / crop.height.max(1) as f32;
             let pixel: Rgb<f32> = image::imageops::sample_bilinear(model_output, u, v)
@@ -1066,8 +1112,23 @@ fn build_cached_patch(
                 [pixel[0], pixel[1], pixel[2]],
                 view_gain,
             );
-            let source_pixel: Rgb<f32> = image::imageops::sample_bilinear(source_scene, u, v)
-                .context("sample bounded Big-LaMa source scene")?;
+            let source_pixel = if let Some((native_bounds, native_pixels)) = native_scene {
+                let global_x = crop.x + x;
+                let global_y = crop.y + y;
+                if global_x >= native_bounds.x
+                    && global_x < native_bounds.right()
+                    && global_y >= native_bounds.y
+                    && global_y < native_bounds.bottom()
+                {
+                    *native_pixels.get_pixel(global_x - native_bounds.x, global_y - native_bounds.y)
+                } else {
+                    image::imageops::sample_bilinear(source_scene, u, v)
+                        .context("sample bounded Big-LaMa source scene")?
+                }
+            } else {
+                image::imageops::sample_bilinear(source_scene, u, v)
+                    .context("sample bounded Big-LaMa source scene")?
+            };
             let source = pipeline_scene_to_canonical_remove_scene(
                 raw,
                 exposure,
@@ -1087,19 +1148,20 @@ fn build_cached_patch(
         }
     }
 
-    // Keep the feather edge fixed to the source/generated difference, then
-    // diffuse that correction through the higher-coverage part of the mask.
-    const BOUNDARY_COVERAGE: u8 = 48;
+    // Anchor the color correction in clean pixels outside the painted mask.
+    // Sampling inside the mask can carry the object being removed into LaMa's
+    // otherwise plausible output.
     let mut mask = vec![false; pixels];
-    let mut boundary_ring = vec![false; pixels];
     let mut difference = vec![0.0f32; pixels * 3];
     for index in 0..pixels {
-        mask[index] = coverage_values[index] > BOUNDARY_COVERAGE;
+        let x = index % width;
+        let y = index / width;
+        mask[index] = binary_mask.get_pixel(work_left + x as u32, work_top + y as u32)[0] != 0;
     }
     for y in 0..height {
         for x in 0..width {
             let index = y * width + x;
-            if mask[index] || coverage_values[index] == 0 {
+            if mask[index] {
                 continue;
             }
             let touches_interior = (x > 0 && mask[index - 1])
@@ -1109,7 +1171,6 @@ fn build_cached_patch(
             if !touches_interior {
                 continue;
             }
-            boundary_ring[index] = true;
             for channel in 0..3 {
                 difference[index * 3 + channel] =
                     source_perceptual[index][channel] - generated_perceptual[index][channel];
@@ -1117,31 +1178,37 @@ fn build_cached_patch(
         }
     }
     gimp_heal_laplace_loop(&mut difference, width, height, &mask, cancellation)?;
-    let noise_sigma = boundary_noise_sigma(&source_perceptual, width, height, &boundary_ring);
+    let noise_sigma = if native_scene.is_some() {
+        boundary_noise_sigma(&source_perceptual, width, height, &mask)
+    } else {
+        [0.0; 3]
+    };
 
-    let mut rgb16f = Vec::with_capacity(pixels * 3);
-    let mut alpha = Vec::with_capacity(pixels);
-    for index in 0..pixels {
-        let coverage = coverage_values[index];
-        let mix = coverage as f32 / 255.0;
-        let global_x = bounds.x + (index % width) as u32;
-        let global_y = bounds.y + (index / width) as u32;
-        let corrected_generated: [f32; 3] = std::array::from_fn(|channel| {
-            perceptual_decode_signed(
-                generated_perceptual[index][channel]
-                    + difference[index * 3 + channel]
-                    + pixel_noise(global_x, global_y, channel as u32, stroke_seed)
-                        * noise_sigma[channel]
-                        * mix,
-            )
-        });
-        for channel in 0..3 {
-            let source = source_linear[index][channel];
-            let value = source * (1.0 - mix) + corrected_generated[channel] * mix;
-            let finite = if value.is_finite() { value } else { source };
-            rgb16f.push(half::f16::from_f32(finite.clamp(-65_504.0, 65_504.0)).to_bits());
+    let patch_pixels = bounds.width as usize * bounds.height as usize;
+    let mut rgb16f = Vec::with_capacity(patch_pixels * 3);
+    let mut alpha = Vec::with_capacity(patch_pixels);
+    for y in top..bottom {
+        for x in left..right {
+            let index = (y - work_top) as usize * width + (x - work_left) as usize;
+            let coverage = coverage_values[index];
+            let mix = coverage as f32 / 255.0;
+            let global_x = crop.x + x;
+            let global_y = crop.y + y;
+            let corrected_generated: [f32; 3] = std::array::from_fn(|channel| {
+                perceptual_decode_signed(
+                    generated_perceptual[index][channel]
+                        + difference[index * 3 + channel]
+                        + pixel_noise(global_x, global_y, 0, stroke_seed) * noise_sigma[channel],
+                )
+            });
+            for channel in 0..3 {
+                let source = source_linear[index][channel];
+                let value = source * (1.0 - mix) + corrected_generated[channel] * mix;
+                let finite = if value.is_finite() { value } else { source };
+                rgb16f.push(half::f16::from_f32(finite.clamp(-65_504.0, 65_504.0)).to_bits());
+            }
+            alpha.push(coverage);
         }
-        alpha.push(coverage);
     }
     RemovePatch::new_scene(bounds, rgb16f, alpha).map_err(anyhow::Error::msg)
 }
@@ -1227,30 +1294,35 @@ fn boundary_noise_sigma(
     source: &[[f32; 3]],
     width: usize,
     height: usize,
-    boundary_ring: &[bool],
+    mask: &[bool],
 ) -> [f32; 3] {
+    let mut clean = GrayImage::new(width as u32, height as u32);
+    for (index, masked) in mask.iter().enumerate() {
+        clean.as_mut()[index] = if *masked { 0 } else { 255 };
+    }
+    let outside_distance = distance_transform_inside(&clean);
     let mut sum = [0.0f64; 3];
     let mut sum_squared = [0.0f64; 3];
     let mut count = 0u64;
     for y in 0..height {
         for x in 0..width {
             let index = y * width + x;
-            if !boundary_ring[index] {
+            if !(3.0..=12.0).contains(&outside_distance[index])
+                || x == 0
+                || y == 0
+                || x + 1 == width
+                || y + 1 == height
+            {
                 continue;
             }
-            let x0 = x.saturating_sub(1);
-            let y0 = y.saturating_sub(1);
-            let x1 = (x + 1).min(width - 1);
-            let y1 = (y + 1).min(height - 1);
-            let sample_count = ((x1 - x0 + 1) * (y1 - y0 + 1)) as f32;
             for channel in 0..3 {
                 let mut low_pass = 0.0f32;
-                for sample_y in y0..=y1 {
-                    for sample_x in x0..=x1 {
+                for sample_y in (y - 1)..=(y + 1) {
+                    for sample_x in (x - 1)..=(x + 1) {
                         low_pass += source[sample_y * width + sample_x][channel];
                     }
                 }
-                let residual = source[index][channel] - low_pass / sample_count;
+                let residual = source[index][channel] - low_pass / 9.0;
                 sum[channel] += residual as f64;
                 sum_squared[channel] += (residual as f64).powi(2);
             }
@@ -1262,9 +1334,11 @@ fn boundary_noise_sigma(
     }
     std::array::from_fn(|channel| {
         let mean = sum[channel] / count as f64;
-        (sum_squared[channel] / count as f64 - mean * mean)
+        ((sum_squared[channel] / count as f64 - mean * mean)
             .max(0.0)
             .sqrt() as f32
+            * 1.06)
+            .min(0.03)
     })
 }
 
@@ -1401,6 +1475,7 @@ mod tests {
             1.0,
             &restored,
             &binary,
+            None,
             0,
             &AtomicBool::new(false),
         )
@@ -1410,6 +1485,74 @@ mod tests {
         assert_eq!(patch.bounds.right(), crop.x + 46);
         assert_eq!(patch.bounds.bottom(), crop.y + 44);
         assert!(patch.alpha.iter().all(|alpha| *alpha > 0));
+    }
+
+    #[test]
+    fn remove_correction_does_not_pull_masked_object_color_into_interior() {
+        let crop = NativeRect {
+            x: 0,
+            y: 0,
+            width: 64,
+            height: 64,
+        };
+        let mut binary = GrayImage::new(64, 64);
+        let mut object_scene = Rgb32FImage::from_pixel(64, 64, Rgb([0.2; 3]));
+        let clean_scene = Rgb32FImage::from_pixel(64, 64, Rgb([0.2; 3]));
+        for y in 16..48 {
+            for x in 16..48 {
+                binary.put_pixel(x, y, Luma([255]));
+                object_scene.put_pixel(x, y, Rgb([0.9; 3]));
+            }
+        }
+        let raw = LoadedRaw::from_scene_linear_rec2020(1, 1, vec![0.2; 3]).unwrap();
+        let model = Rgb32FImage::from_pixel(64, 64, Rgb([0.5; 3]));
+        let render = |scene: &Rgb32FImage| {
+            build_cached_patch(
+                crop,
+                &raw,
+                &ExposureParams::default(),
+                scene,
+                1.0,
+                &model,
+                &binary,
+                Some(&(crop, scene.clone())),
+                1,
+                &AtomicBool::new(false),
+            )
+            .unwrap()
+        };
+        let clean = render(&clean_scene);
+        let object = render(&object_scene);
+        let interior = ((32 - 16) * 32 + (19 - 16)) * 3;
+        assert_eq!(
+            &clean.rgb_scene16f[interior..interior + 3],
+            &object.rgb_scene16f[interior..interior + 3]
+        );
+    }
+
+    #[test]
+    fn grain_estimate_uses_clean_pixels_outside_mask() {
+        let width = 32;
+        let height = 32;
+        let mut mask = vec![false; width * height];
+        let mut scene = vec![[0.5; 3]; width * height];
+        for y in 12..20 {
+            for x in 12..20 {
+                let index = y * width + x;
+                mask[index] = true;
+                scene[index] = [0.95; 3];
+            }
+        }
+        assert_eq!(boundary_noise_sigma(&scene, width, height, &mask), [0.0; 3]);
+        for y in 0..height {
+            for x in 0..width {
+                if !mask[y * width + x] {
+                    scene[y * width + x] = [0.5 + pixel_noise(x as u32, y as u32, 0, 7) * 0.01; 3];
+                }
+            }
+        }
+        let sigma = boundary_noise_sigma(&scene, width, height, &mask);
+        assert!(sigma.iter().all(|value| *value > 0.005 && *value < 0.02));
     }
 
     #[test]
