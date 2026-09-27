@@ -7,7 +7,7 @@ use crate::pipeline::{
     GeometryTransform, HighlightReconstructionMethod, LoadedRaw, LocalMask, MaskEffect, MaskStack,
     PointColor, PointCurve, ProcessingStage, RawThumbnail, RemoveEditState, RemovePatch,
     SigmoidParams, SrgbOutputLut, GLOBAL_TEMPERATURE_LIMIT, GLOBAL_TINT_OFFSET_LIMIT,
-    MAX_EFFECT_COMPONENTS, MAX_LOCAL_MASKS, MAX_POINT_COLORS,
+    MAX_EFFECT_COMPONENTS, MAX_LOCAL_MASKS, MAX_POINT_COLORS, MAX_POINT_CURVE_POINTS,
 };
 use anyhow::{anyhow, Context, Result};
 use bytemuck::{Pod, Zeroable};
@@ -40,7 +40,7 @@ mod point_color_tests;
 #[cfg(test)]
 mod tests;
 
-const GPU_PARAMS_ABI_VERSION: u32 = 8;
+const GPU_PARAMS_ABI_VERSION: u32 = 9;
 const MASK_EFFECT_ID_SHIFT: u32 = 8;
 pub(super) const LIGHT_RAYS_MASK_ATLAS_EDGE: u32 = if cfg!(target_os = "android") {
     256
@@ -49,11 +49,11 @@ pub(super) const LIGHT_RAYS_MASK_ATLAS_EDGE: u32 = if cfg!(target_os = "android"
 };
 const GPU_PARAMS_ABI_SIZE_BYTES: u32 = 1_072;
 const CAMERA_UNIFORMS_SIZE_BYTES: u32 = 368;
-const SCENE_TONE_UNIFORMS_SIZE_BYTES: u32 = 1_424;
+const SCENE_TONE_UNIFORMS_SIZE_BYTES: u32 = 1_680;
 const EFFECTS_UNIFORMS_SIZE_BYTES: u32 = 224;
 const GPU_STAGE_UNIFORM_SIZE_BYTES: u32 =
     CAMERA_UNIFORMS_SIZE_BYTES + SCENE_TONE_UNIFORMS_SIZE_BYTES + EFFECTS_UNIFORMS_SIZE_BYTES;
-const GPU_STAGE_UNIFORM_ALLOCATION_BYTES: u64 = 512 + 1_424 + 256;
+const GPU_STAGE_UNIFORM_ALLOCATION_BYTES: u64 = 512 + SCENE_TONE_UNIFORMS_SIZE_BYTES as u64 + 256;
 const MAX_RENDER_MASK_SLOTS: usize =
     MAX_LOCAL_MASKS * (MAX_EFFECT_COMPONENTS + 1) + MAX_EFFECT_COMPONENTS;
 const MASK_DATA_SIZE_BYTES: u64 = (std::mem::size_of::<MaskData>() * MAX_RENDER_MASK_SLOTS) as u64;
@@ -324,21 +324,37 @@ struct SceneToneUniforms {
     tone_curve_1: [f32; 4],
     tone_curve_2: [f32; 4],
     tone_curve_3: [f32; 4],
+    tone_curve_4: [f32; 4],
+    tone_curve_5: [f32; 4],
+    tone_curve_6: [f32; 4],
+    tone_curve_7: [f32; 4],
     tone_curve_meta: [f32; 4],
     tone_curve_red_0: [f32; 4],
     tone_curve_red_1: [f32; 4],
     tone_curve_red_2: [f32; 4],
     tone_curve_red_3: [f32; 4],
+    tone_curve_red_4: [f32; 4],
+    tone_curve_red_5: [f32; 4],
+    tone_curve_red_6: [f32; 4],
+    tone_curve_red_7: [f32; 4],
     tone_curve_red_meta: [f32; 4],
     tone_curve_green_0: [f32; 4],
     tone_curve_green_1: [f32; 4],
     tone_curve_green_2: [f32; 4],
     tone_curve_green_3: [f32; 4],
+    tone_curve_green_4: [f32; 4],
+    tone_curve_green_5: [f32; 4],
+    tone_curve_green_6: [f32; 4],
+    tone_curve_green_7: [f32; 4],
     tone_curve_green_meta: [f32; 4],
     tone_curve_blue_0: [f32; 4],
     tone_curve_blue_1: [f32; 4],
     tone_curve_blue_2: [f32; 4],
     tone_curve_blue_3: [f32; 4],
+    tone_curve_blue_4: [f32; 4],
+    tone_curve_blue_5: [f32; 4],
+    tone_curve_blue_6: [f32; 4],
+    tone_curve_blue_7: [f32; 4],
     tone_curve_blue_meta: [f32; 4],
     hsl_hue_0: [f32; 4],
     hsl_hue_1: [f32; 4],
@@ -385,7 +401,7 @@ struct EffectsUniforms {
 
 const _: () =
     assert!(std::mem::size_of::<EffectsUniforms>() == EFFECTS_UNIFORMS_SIZE_BYTES as usize);
-const _: () = assert!(GPU_STAGE_UNIFORM_SIZE_BYTES == 2_016);
+const _: () = assert!(GPU_STAGE_UNIFORM_SIZE_BYTES == 2_272);
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
@@ -396,15 +412,15 @@ struct MaskData {
     adjust_2: [f32; 4],
     // Local halation amount; remaining lanes reserved (grain is global only).
     film_effects: [f32; 4],
-    curves: [[f32; 4]; 8],
+    curves: [[f32; 4]; LOCAL_POINT_CURVE_BLOCKS],
     grade_shadows: [f32; 4],
     grade_midtones: [f32; 4],
     grade_highlights: [f32; 4],
     grade_global: [f32; 4],
     grade_options: [f32; 4],
-    curves_red: [[f32; 4]; 8],
-    curves_green: [[f32; 4]; 8],
-    curves_blue: [[f32; 4]; 8],
+    curves_red: [[f32; 4]; LOCAL_POINT_CURVE_BLOCKS],
+    curves_green: [[f32; 4]; LOCAL_POINT_CURVE_BLOCKS],
+    curves_blue: [[f32; 4]; LOCAL_POINT_CURVE_BLOCKS],
     hsl_hue_0: [f32; 4],
     hsl_hue_1: [f32; 4],
     hsl_saturation_0: [f32; 4],
@@ -415,7 +431,7 @@ struct MaskData {
     point_color_meta: [u32; 4],
 }
 
-const _: () = assert!(std::mem::size_of::<MaskData>() == 1_424);
+const _: () = assert!(std::mem::size_of::<MaskData>() == 1_488);
 
 #[derive(Clone, Debug)]
 pub struct GpuParams {
@@ -472,9 +488,12 @@ fn pack_point_color(point: PointColor) -> PackedPointColor {
     }
 }
 
+const POINT_CURVE_PAIRS: usize = MAX_POINT_CURVE_POINTS / 2;
+const LOCAL_POINT_CURVE_BLOCKS: usize = POINT_CURVE_PAIRS + 1;
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct PackedPointCurve {
-    pairs: [[f32; 4]; 4],
+    pairs: [[f32; 4]; POINT_CURVE_PAIRS],
     meta: [f32; 4],
 }
 
@@ -490,7 +509,7 @@ fn pack_point_curve(curve: &PointCurve) -> PackedPointCurve {
     PackedPointCurve {
         pairs,
         meta: [
-            curve.len.clamp(2, 8) as f32,
+            curve.len.clamp(2, MAX_POINT_CURVE_POINTS as u32) as f32,
             if curve.is_identity() { 1.0 } else { 0.0 },
             0.0,
             0.0,
@@ -498,11 +517,11 @@ fn pack_point_curve(curve: &PointCurve) -> PackedPointCurve {
     }
 }
 
-fn pack_local_point_curve(curve: &PointCurve) -> [[f32; 4]; 8] {
+fn pack_local_point_curve(curve: &PointCurve) -> [[f32; 4]; LOCAL_POINT_CURVE_BLOCKS] {
     let curve = pack_point_curve(curve);
-    let mut packed = [[0.0; 4]; 8];
-    packed[..4].copy_from_slice(&curve.pairs);
-    packed[4] = curve.meta;
+    let mut packed = [[0.0; 4]; LOCAL_POINT_CURVE_BLOCKS];
+    packed[..POINT_CURVE_PAIRS].copy_from_slice(&curve.pairs);
+    packed[POINT_CURVE_PAIRS] = curve.meta;
     packed
 }
 
@@ -1174,21 +1193,37 @@ fn pack_scene_tone_params(ctx: &GpuParamContext<'_>) -> SceneToneUniforms {
         tone_curve_1: tone_curve.pairs[1],
         tone_curve_2: tone_curve.pairs[2],
         tone_curve_3: tone_curve.pairs[3],
+        tone_curve_4: tone_curve.pairs[4],
+        tone_curve_5: tone_curve.pairs[5],
+        tone_curve_6: tone_curve.pairs[6],
+        tone_curve_7: tone_curve.pairs[7],
         tone_curve_meta: tone_curve.meta,
         tone_curve_red_0: tone_curve_red.pairs[0],
         tone_curve_red_1: tone_curve_red.pairs[1],
         tone_curve_red_2: tone_curve_red.pairs[2],
         tone_curve_red_3: tone_curve_red.pairs[3],
+        tone_curve_red_4: tone_curve_red.pairs[4],
+        tone_curve_red_5: tone_curve_red.pairs[5],
+        tone_curve_red_6: tone_curve_red.pairs[6],
+        tone_curve_red_7: tone_curve_red.pairs[7],
         tone_curve_red_meta: tone_curve_red.meta,
         tone_curve_green_0: tone_curve_green.pairs[0],
         tone_curve_green_1: tone_curve_green.pairs[1],
         tone_curve_green_2: tone_curve_green.pairs[2],
         tone_curve_green_3: tone_curve_green.pairs[3],
+        tone_curve_green_4: tone_curve_green.pairs[4],
+        tone_curve_green_5: tone_curve_green.pairs[5],
+        tone_curve_green_6: tone_curve_green.pairs[6],
+        tone_curve_green_7: tone_curve_green.pairs[7],
         tone_curve_green_meta: tone_curve_green.meta,
         tone_curve_blue_0: tone_curve_blue.pairs[0],
         tone_curve_blue_1: tone_curve_blue.pairs[1],
         tone_curve_blue_2: tone_curve_blue.pairs[2],
         tone_curve_blue_3: tone_curve_blue.pairs[3],
+        tone_curve_blue_4: tone_curve_blue.pairs[4],
+        tone_curve_blue_5: tone_curve_blue.pairs[5],
+        tone_curve_blue_6: tone_curve_blue.pairs[6],
+        tone_curve_blue_7: tone_curve_blue.pairs[7],
         tone_curve_blue_meta: tone_curve_blue.meta,
         hsl_hue_0,
         hsl_hue_1,

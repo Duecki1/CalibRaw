@@ -73,61 +73,12 @@ pub(crate) fn icon_button(ui: &mut Ui, icon: UiIcon, size: Vec2, tooltip: &str) 
     .on_hover_text(tooltip)
 }
 
-pub(crate) fn phosphor_icon_button(
-    ui: &mut Ui,
-    glyph: &str,
-    size: Vec2,
-    tooltip: &str,
-) -> Response {
-    // Reserve the themed minimum height so button overflow cannot shift the row.
-    let button_size = egui::vec2(size.x, size.y.max(ui.spacing().interact_size.y));
-    ui.add_sized(
-        button_size,
-        egui::Button::new(RichText::new(glyph).size(size.y * 0.55)).frame(true),
-    )
-    .on_hover_text(tooltip)
-}
-
-pub(crate) fn phosphor_icon_toggle_button(
-    ui: &mut Ui,
-    glyph: &str,
-    selected: bool,
-    size: Vec2,
-    tooltip: &str,
-) -> Response {
-    let button_size = egui::vec2(size.x, size.y.max(ui.spacing().interact_size.y));
-    ui.add_sized(
-        button_size,
-        egui::Button::new(RichText::new(glyph).size(size.y * 0.55)).selected(selected),
-    )
-    .on_hover_text(tooltip)
-}
-
 #[cfg(not(target_os = "android"))]
-pub(crate) fn phosphor_icon_toggle_button_enabled(
-    ui: &mut Ui,
-    enabled: bool,
-    glyph: &str,
-    selected: bool,
-    size: Vec2,
-    tooltip: &str,
-) -> Response {
-    ui.add_enabled_ui(enabled, |ui| {
-        phosphor_icon_toggle_button(ui, glyph, selected, size, tooltip)
-    })
-    .inner
-}
-
-pub(crate) fn phosphor_icon_button_enabled(
-    ui: &mut Ui,
-    enabled: bool,
-    glyph: &str,
-    size: Vec2,
-    tooltip: &str,
-) -> Response {
-    ui.add_enabled_ui(enabled, |ui| phosphor_icon_button(ui, glyph, size, tooltip))
-        .inner
-}
+pub(crate) use moduwu_design::icon_toggle_button_enabled as phosphor_icon_toggle_button_enabled;
+pub(crate) use moduwu_design::{
+    icon_button as phosphor_icon_button, icon_button_enabled as phosphor_icon_button_enabled,
+    icon_toggle_button as phosphor_icon_toggle_button,
+};
 
 pub(crate) fn folder_disclosure_size() -> Vec2 {
     egui::vec2(

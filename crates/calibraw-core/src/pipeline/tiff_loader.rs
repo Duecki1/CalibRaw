@@ -111,6 +111,15 @@ pub(super) fn is_tiff_path(path: &Path) -> bool {
         })
 }
 
+pub(super) fn has_dng_version(path: &Path) -> Result<bool> {
+    Ok(walk_tiff_fields(path, |_file, tag, field| {
+        // DNGVersion is a four-byte version tuple. Reuse the bounded TIFF
+        // walker so extensionless Android descriptor paths can be identified.
+        Ok((tag == 50706 && field.field_type == 1 && field.count == 4).then_some(true))
+    })?
+    .unwrap_or(false))
+}
+
 pub(super) fn inspect_tiff_container(path: &Path) -> Result<TiffContainerKind> {
     Ok(walk_tiff_fields(path, |file, tag, field| {
         if matches!(tag, 33421 | 33422) {
