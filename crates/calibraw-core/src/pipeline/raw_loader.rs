@@ -1133,10 +1133,10 @@ impl LoadedRaw {
         tint_offset: f32,
     ) -> Option<(f32, f32)> {
         let (base_temperature, base_tint) = self.as_shot_white_balance()?;
-        Some((
+        self.clamp_white_balance_temperature_tint(
             temperature_kelvin_from_offset(base_temperature, temperature_offset),
             white_balance_tint_from_offset(base_tint, tint_offset),
-        ))
+        )
     }
 
     pub fn white_balance_offsets_from_temperature_tint(
@@ -1145,10 +1145,68 @@ impl LoadedRaw {
         tint: f32,
     ) -> Option<(f32, f32)> {
         let (base_temperature, base_tint) = self.as_shot_white_balance()?;
+        let (temperature, tint) = self.clamp_white_balance_temperature_tint(temperature, tint)?;
         Some((
             temperature_offset_from_kelvin(base_temperature, temperature),
             white_balance_tint_offset(base_tint, tint),
         ))
+    }
+
+    fn clamp_white_balance_temperature_tint(
+        &self,
+        temperature: f32,
+        tint: f32,
+    ) -> Option<(f32, f32)> {
+        #[cfg(libraw_available)]
+        {
+            libraw_loader::clamp_white_balance_temperature_tint(
+                self.white_balance_model.as_ref()?,
+                temperature,
+                tint,
+            )
+        }
+        #[cfg(not(libraw_available))]
+        {
+            let _ = (temperature, tint);
+            None
+        }
+    }
+
+    /// Temperatures reachable at this tint without crossing invalid camera responses.
+    pub fn white_balance_temperature_range(
+        &self,
+        temperature: f32,
+        tint: f32,
+    ) -> Option<std::ops::RangeInclusive<f32>> {
+        #[cfg(libraw_available)]
+        {
+            libraw_loader::white_balance_temperature_range(
+                self.white_balance_model.as_ref()?,
+                temperature,
+                tint,
+            )
+        }
+        #[cfg(not(libraw_available))]
+        {
+            let _ = (temperature, tint);
+            None
+        }
+    }
+
+    /// Camera-supported tint limits at the selected temperature.
+    pub fn white_balance_tint_range(
+        &self,
+        temperature: f32,
+    ) -> Option<std::ops::RangeInclusive<f32>> {
+        #[cfg(libraw_available)]
+        {
+            libraw_loader::white_balance_tint_range(self.white_balance_model.as_ref()?, temperature)
+        }
+        #[cfg(not(libraw_available))]
+        {
+            let _ = temperature;
+            None
+        }
     }
 
     pub fn camera_white_balance_presets(&self) -> Vec<WhiteBalancePreset> {
@@ -1998,6 +2056,50 @@ mod tests {
             raw.adjusted_white_balance_and_camera_transform(GLOBAL_TEMPERATURE_LIMIT + 50.0, 0.0,)
                 .0
         );
+    }
+
+    #[test]
+    fn white_balance_display_presets_and_renderer_share_camera_limits() {
+        let mut raw = raw_with_white_balance_model();
+        let model = raw.white_balance_model.as_mut().unwrap();
+        model.color = CameraColorModel::Matrix {
+            xyz_to_camera: [
+                [0.65, -0.2, -0.1],
+                [-0.2, 1.1, 0.1],
+                [0.05, -0.3, 0.9],
+                [0.0; 3],
+            ],
+        };
+        model.base_wb =
+            super::libraw_loader::temperature_tint_to_coefficients(model, 5_000.0, 1.0).unwrap();
+        raw.wb_coeffs = model.base_wb;
+        let (base_temperature, base_tint) = raw.as_shot_white_balance().unwrap();
+        let temperature_offset = temperature_offset_from_kelvin(base_temperature, 5_000.0);
+        let legacy_tint_offset = crate::pipeline::white_balance_tint_offset(base_tint, 0.135);
+        let displayed = raw
+            .white_balance_temperature_tint(temperature_offset, legacy_tint_offset)
+            .unwrap();
+        assert!(displayed.1 > 0.135);
+        let saved = raw
+            .white_balance_offsets_from_temperature_tint(5_000.0, 0.135)
+            .unwrap();
+        let from_legacy =
+            raw.adjusted_white_balance_and_camera_transform(temperature_offset, legacy_tint_offset);
+        let from_saved = raw.adjusted_white_balance_and_camera_transform(saved.0, saved.1);
+        assert_eq!(from_legacy, from_saved);
+        assert_ne!(from_legacy.0, raw.wb_coeffs);
+        assert_eq!(from_legacy.1, raw.cam_to_srgb);
+        assert_eq!(
+            raw.adjusted_white_balance_and_camera_transform(0.0, 0.0).0,
+            raw.wb_coeffs
+        );
+        let expected = super::libraw_loader::temperature_tint_to_coefficients(
+            raw.white_balance_model.as_ref().unwrap(),
+            displayed.0,
+            displayed.1,
+        )
+        .unwrap();
+        assert_eq!(from_legacy.0, expected);
     }
 
     #[test]

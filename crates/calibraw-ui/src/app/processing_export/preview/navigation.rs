@@ -129,6 +129,7 @@ impl CalibRawApp {
             .iter()
             .any(|dirty| *dirty)
         {
+            let dirty_layers = self.masks.navigation_dirty_layers;
             let edge = preview.pipeline.mask_atlas_edge();
             for layer in 0..MAX_LOCAL_MASKS {
                 if !self.masks.navigation_dirty_layers[layer] {
@@ -154,11 +155,12 @@ impl CalibRawApp {
                 }
                 self.masks.navigation_dirty_layers[layer] = false;
             }
-            if let Err(error) = preview.pipeline.update_light_rays_mask_layers(
+            if let Err(error) = preview.pipeline.update_dirty_light_rays_mask_layers(
                 &render_state.queue,
                 &preview_masks,
                 preview.raw.width,
                 preview.raw.height,
+                Some(&dirty_layers),
             ) {
                 self.ui.notice = Some(format!(
                     "Could not update the navigation Light Rays mask: {error:#}"

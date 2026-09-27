@@ -42,8 +42,50 @@ fn measure(label: &str, width: u32, height: u32, dabs: &[BrushDab]) {
 }
 
 fn main() {
+    let mut args = std::env::args().skip(1);
+    while let Some(arg) = args.next() {
+        if arg == "--sidecar" {
+            let path = args.next().expect("--sidecar requires a path");
+            measure_sidecar(&path);
+            return;
+        }
+    }
     let positive = dabs(256, 1.0);
     let mixed = dabs(256, -1.0);
     measure("positive brush", 512, 512, &positive);
     measure("erase brush", 512, 512, &mixed);
+}
+
+// Read only the edit sidecar; never load the source photograph or display masks.
+fn measure_sidecar(path: &str) {
+    let bytes = std::fs::read(path).expect("read sidecar");
+    let sidecar = calibraw_core::sidecar::decode(&bytes).expect("decode sidecar");
+    let masks = &sidecar.edits.masks;
+    let (image_width, image_height) = masks
+        .masks
+        .iter()
+        .flat_map(|mask| &mask.components)
+        .find_map(|component| match &component.geometry {
+            calibraw_core::pipeline::MaskGeometry::Ai {
+                mask: Some(mask), ..
+            }
+            | calibraw_core::pipeline::MaskGeometry::Object {
+                mask: Some(mask), ..
+            } => Some((mask.width, mask.height)),
+            _ => None,
+        })
+        .unwrap_or((6000, 4000));
+    for edge in [64, 512, 2048] {
+        for layer in 0..masks.masks.len() {
+            let started = Instant::now();
+            for _ in 0..3 {
+                black_box(masks.rasterize_layer_f16(layer, edge, edge, image_width, image_height));
+            }
+            println!(
+                "mask {} at {edge}x{edge}: {:.1} ms/raster",
+                layer + 1,
+                started.elapsed().as_secs_f64() * 1000.0 / 3.0
+            );
+        }
+    }
 }

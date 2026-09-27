@@ -535,6 +535,35 @@ fn off_frame_light_rays_match_fullscreen_mask() -> anyhow::Result<()> {
         masked, unmasked,
         "off-frame source changed emission at the image edge"
     );
+
+    // A brush edit in another layer must reuse the uploaded emission mask.
+    // Change only the rasterization input, keeping rendering parameters fixed,
+    // so any accidental upload is observable in the rendered pixels.
+    let mut edited = local.clone();
+    edited.masks[0].opacity = 0.0;
+    let mut dirty = [false; crate::pipeline::MAX_LOCAL_MASKS];
+    dirty[1] = true;
+    pipeline.update_dirty_light_rays_mask_layers(&queue, &edited, EDGE, EDGE, Some(&dirty))?;
+    assert_eq!(
+        render(&local)?,
+        masked,
+        "unchanged emission mask was rebuilt"
+    );
+
+    dirty[0] = true;
+    pipeline.update_dirty_light_rays_mask_layers(&queue, &edited, EDGE, EDGE, Some(&dirty))?;
+    assert_ne!(
+        render(&local)?,
+        masked,
+        "dirty emission mask was not refreshed"
+    );
+
+    pipeline.update_light_rays_mask_layers(&queue, &local, EDGE, EDGE)?;
+    assert_eq!(
+        render(&local)?,
+        masked,
+        "full upload did not restore emission"
+    );
     Ok(())
 }
 

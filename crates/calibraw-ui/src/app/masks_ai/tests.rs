@@ -39,3 +39,45 @@ fn resetting_masks_clears_transient_ui_state_and_remains_undoable() {
     app.undo_edit();
     assert_eq!(app.masks.stack.masks.len(), 2);
 }
+
+#[test]
+fn mask_thumbnails_refresh_after_drag_release() {
+    let context = egui::Context::default();
+    crate::ui::theme::install(&context);
+    let mut app = CalibRawApp::empty(&context);
+    app.masks.stack.add_mask(MaskKind::Brush);
+    let frame = eframe::Frame::_new_kittest();
+    let draw = |app: &mut CalibRawApp, events| {
+        let _ = context.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(1000.0, 600.0),
+                )),
+                events,
+                ..Default::default()
+            },
+            |ui| crate::ui::sidebar::Sidebar::show_horizontal_mask_strip(ui, app, &frame),
+        );
+    };
+    draw(&mut app, vec![]);
+    assert_eq!(app.masks.thumbnail_group_textures.len(), 1);
+    assert_eq!(app.masks.thumbnail_component_textures.len(), 1);
+    let cached_revision = app.masks.thumbnail_revision;
+
+    app.note_mask_geometry_interaction(0);
+    assert_ne!(app.masks.overlay_revision, cached_revision);
+    let pointer_event = |pressed| egui::Event::PointerButton {
+        pos: egui::pos2(900.0, 500.0),
+        button: egui::PointerButton::Primary,
+        pressed,
+        modifiers: egui::Modifiers::NONE,
+    };
+    draw(&mut app, vec![pointer_event(true)]);
+    assert_eq!(app.masks.thumbnail_revision, cached_revision);
+
+    // The sidebar can run before the preview finishes the interaction. Releasing
+    // the pointer must refresh the cards even while the interaction is recorded.
+    draw(&mut app, vec![pointer_event(false)]);
+    assert_eq!(app.masks.thumbnail_revision, app.masks.overlay_revision);
+}

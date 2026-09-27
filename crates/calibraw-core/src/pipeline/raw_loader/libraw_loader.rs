@@ -10,7 +10,10 @@ use super::{
     CameraProfileMode, CameraWhiteBalanceModel, CfaKind, CompactPixelMap, DngColorEndpoint,
     LoadedRaw, RawThumbnail, MAX_RAW_FILE_BYTES, MAX_SENSOR_EDGE, MAX_SENSOR_PIXELS,
 };
-use crate::pipeline::basicadj::{temperature_kelvin_from_offset, white_balance_tint_from_offset};
+use crate::pipeline::basicadj::{
+    temperature_kelvin_from_offset, white_balance_tint_from_offset, MAX_TEMPERATURE_KELVIN,
+    MAX_WHITE_BALANCE_TINT, MIN_TEMPERATURE_KELVIN, MIN_WHITE_BALANCE_TINT,
+};
 use crate::pipeline::color_profile::{DcpMatrixSet, DcpProfile};
 use anyhow::{anyhow, Context, Result};
 use rayon::prelude::*;
@@ -20,6 +23,7 @@ use std::ffi::CStr;
 use std::ffi::CString;
 use std::fs;
 use std::io::Cursor;
+use std::ops::RangeInclusive;
 use std::os::raw::c_char;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
@@ -2051,8 +2055,11 @@ pub(super) fn adjusted_white_balance_coefficients(
 ) -> Option<[f32; 4]> {
     let (base_cct, base_tint) =
         temperature_tint_from_coefficients(model, model.base_wb).unwrap_or((model.base_cct, 1.0));
-    let target_cct = temperature_kelvin_from_offset(base_cct, temperature);
-    let target_tint = white_balance_tint_from_offset(base_tint, tint);
+    let (target_cct, target_tint) = clamp_white_balance_temperature_tint(
+        model,
+        temperature_kelvin_from_offset(base_cct, temperature),
+        white_balance_tint_from_offset(base_tint, tint),
+    )?;
     let target_wb = temperature_tint_to_coefficients(model, target_cct, target_tint)?;
     Some(canonicalize_f32x4(
         target_wb,
@@ -2077,7 +2084,7 @@ fn white_balance_xyz_to_camera(model: &CameraWhiteBalanceModel) -> [[f32; 3]; 4]
 }
 
 fn darktable_temperature_xyz(temperature: f32) -> Option<[f32; 3]> {
-    let t = temperature.clamp(1_901.0, 25_000.0);
+    let t = temperature.clamp(MIN_TEMPERATURE_KELVIN, MAX_TEMPERATURE_KELVIN);
     let [x, y] = if t < 4_000.0 {
         planckian_xy(t)?
     } else {
@@ -2094,8 +2101,122 @@ fn darktable_temperature_xyz(temperature: f32) -> Option<[f32; 3]> {
 
 fn darktable_temperature_tint_xyz(temperature: f32, tint: f32) -> Option<[f32; 3]> {
     let mut xyz = darktable_temperature_xyz(temperature)?;
-    xyz[1] /= tint.clamp(0.135, 2.326);
+    xyz[1] /= tint.clamp(MIN_WHITE_BALANCE_TINT, MAX_WHITE_BALANCE_TINT);
     Some(xyz)
+}
+
+// Keep the UI endpoints strictly inside the positive camera-response domain.
+// Rounding inward to the displayed precision also prevents a drag/typed value
+// from rounding onto a zero response, where reciprocal WB gains are undefined.
+const MIN_WB_CAMERA_RESPONSE: f32 = 1e-8;
+const TINT_PRECISION: f64 = 1_000.0;
+
+fn missing_second_green(model: &CameraWhiteBalanceModel, index: usize, row: [f32; 3]) -> bool {
+    index == 3 && matches!(model.cdesc[index] as char, 'G' | 'g') && row == [0.0; 3]
+}
+
+pub(super) fn white_balance_tint_range(
+    model: &CameraWhiteBalanceModel,
+    temperature: f32,
+) -> Option<RangeInclusive<f32>> {
+    let xyz = darktable_temperature_xyz(temperature)?;
+    let matrix = white_balance_xyz_to_camera(model);
+    let mut low = f64::from(MIN_WHITE_BALANCE_TINT);
+    let mut high = f64::from(MAX_WHITE_BALANCE_TINT);
+    for (index, row) in matrix.into_iter().enumerate() {
+        if logical_rgb_channel(model.cdesc, index).is_none()
+            || missing_second_green(model, index, row)
+        {
+            continue;
+        }
+        // CAM = X*mX + mY/tint + Z*mZ. For positive tint,
+        // CAM > epsilon is the linear inequality a*tint + b > 0.
+        let a = f64::from(row[0]) * f64::from(xyz[0]) + f64::from(row[2]) * f64::from(xyz[2])
+            - f64::from(MIN_WB_CAMERA_RESPONSE);
+        let b = f64::from(row[1]);
+        if !a.is_finite() || !b.is_finite() {
+            return None;
+        }
+        if a > 0.0 {
+            low = low.max(-b / a);
+        } else if a < 0.0 {
+            high = high.min(-b / a);
+        } else if b <= 0.0 {
+            return None;
+        }
+    }
+    // The tolerance avoids losing a tick to the f32 representation of 0.135.
+    let mut low = ((low * TINT_PRECISION - 1e-4).ceil() / TINT_PRECISION) as f32;
+    let mut high = ((high * TINT_PRECISION + 1e-4).floor() / TINT_PRECISION) as f32;
+    if low > high {
+        return None;
+    }
+    if temperature_tint_to_coefficients(model, temperature, low).is_none() {
+        low += 0.001;
+    }
+    if temperature_tint_to_coefficients(model, temperature, high).is_none() {
+        high -= 0.001;
+    }
+    (low <= high
+        && temperature_tint_to_coefficients(model, temperature, low).is_some()
+        && temperature_tint_to_coefficients(model, temperature, high).is_some())
+    .then_some(low..=high)
+}
+
+pub(super) fn clamp_white_balance_temperature_tint(
+    model: &CameraWhiteBalanceModel,
+    temperature: f32,
+    tint: f32,
+) -> Option<(f32, f32)> {
+    let mut temperature = temperature.clamp(MIN_TEMPERATURE_KELVIN, MAX_TEMPERATURE_KELVIN);
+    let range = if let Some(range) = white_balance_tint_range(model, temperature) {
+        range
+    } else {
+        // Some profiles cannot describe any positive neutral at an extreme
+        // temperature. Stay in the connected range around their as-shot white.
+        let (base_temperature, base_tint) =
+            temperature_tint_from_coefficients(model, model.base_wb)?;
+        let range = white_balance_temperature_range(model, base_temperature, base_tint)?;
+        temperature = temperature.clamp(*range.start(), *range.end());
+        white_balance_tint_range(model, temperature)?
+    };
+    Some((temperature, tint.clamp(*range.start(), *range.end())))
+}
+
+pub(super) fn white_balance_temperature_range(
+    model: &CameraWhiteBalanceModel,
+    temperature: f32,
+    tint: f32,
+) -> Option<RangeInclusive<f32>> {
+    temperature_tint_to_coefficients(model, temperature, tint)?;
+    let matrix = white_balance_xyz_to_camera(model);
+    let valid = |kelvin| {
+        let Some(xyz) = darktable_temperature_tint_xyz(kelvin, tint) else {
+            return false;
+        };
+        let camera = multiply_4x3_vector(matrix, xyz);
+        (0..4).all(|index| {
+            logical_rgb_channel(model.cdesc, index).is_none()
+                || missing_second_green(model, index, matrix[index])
+                || (camera[index].is_finite() && camera[index] > MIN_WB_CAMERA_RESPONSE)
+        })
+    };
+    // Check the connected interval at the slider's one-Kelvin precision.
+    // Checking only the two extremes misses holes at the blackbody/daylight
+    // transition near 4000 K and would let the slider cross an invalid region.
+    let mut low = temperature;
+    let mut next = temperature.ceil() - 1.0;
+    while next >= MIN_TEMPERATURE_KELVIN && valid(next) {
+        low = next;
+        next -= 1.0;
+    }
+    let mut high = temperature;
+    next = temperature.floor() + 1.0;
+    while next <= MAX_TEMPERATURE_KELVIN && valid(next) {
+        high = next;
+        next += 1.0;
+    }
+    Some(low..=high)
 }
 
 pub(super) fn temperature_tint_to_coefficients(
@@ -2103,17 +2224,15 @@ pub(super) fn temperature_tint_to_coefficients(
     temperature: f32,
     tint: f32,
 ) -> Option<[f32; 4]> {
-    let camera = multiply_4x3_vector(
-        white_balance_xyz_to_camera(model),
-        darktable_temperature_tint_xyz(temperature, tint)?,
-    );
+    let matrix = white_balance_xyz_to_camera(model);
+    let camera = multiply_4x3_vector(matrix, darktable_temperature_tint_xyz(temperature, tint)?);
     let mut coefficients = [1.0; 4];
     for index in 0..4 {
         if logical_rgb_channel(model.cdesc, index).is_none() {
             coefficients[index] = model.base_wb[index];
-        } else if camera[index].is_finite() && camera[index] > 1e-8 {
+        } else if camera[index].is_finite() && camera[index] > MIN_WB_CAMERA_RESPONSE {
             coefficients[index] = 1.0 / camera[index];
-        } else if index == 3 && matches!(model.cdesc[index] as char, 'G' | 'g') {
+        } else if missing_second_green(model, index, matrix[index]) {
             coefficients[index] = coefficients[1];
         } else {
             return None;
@@ -2142,8 +2261,8 @@ pub(super) fn temperature_tint_from_coefficients(
     }
 
     let target_ratio = xyz[2] / xyz[0];
-    let mut low = 1_901.0f32;
-    let mut high = 25_000.0f32;
+    let mut low = MIN_TEMPERATURE_KELVIN;
+    let mut high = MAX_TEMPERATURE_KELVIN;
     while high - low > 0.25 {
         let midpoint = 0.5 * (low + high);
         let reference = darktable_temperature_xyz(midpoint)?;
@@ -2159,7 +2278,8 @@ pub(super) fn temperature_tint_from_coefficients(
     if xyz_y_over_x.abs() <= 1e-10 {
         return None;
     }
-    let tint = ((reference[1] / reference[0]) / xyz_y_over_x).clamp(0.135, 2.326);
+    let tint = ((reference[1] / reference[0]) / xyz_y_over_x)
+        .clamp(MIN_WHITE_BALANCE_TINT, MAX_WHITE_BALANCE_TINT);
     Some((temperature, tint))
 }
 
@@ -3039,6 +3159,195 @@ mod tests {
     }
 
     const RGBG: [u8; 4] = *b"RGBG";
+
+    fn white_balance_test_model() -> CameraWhiteBalanceModel {
+        // Off-diagonal terms are essential: an identity matrix never exposes
+        // the negative camera responses responsible for the magenta-end reset.
+        let mut model = CameraWhiteBalanceModel {
+            base_wb: [1.0; 4],
+            cdesc: RGBG,
+            base_cct: 5_000.0,
+            color: CameraColorModel::Matrix {
+                xyz_to_camera: [
+                    [0.65, -0.2, -0.1],
+                    [-0.2, 1.1, 0.1],
+                    [0.05, -0.3, 0.9],
+                    [0.0; 3],
+                ],
+            },
+        };
+        model.base_wb = super::temperature_tint_to_coefficients(&model, 5_000.0, 1.0).unwrap();
+        model
+    }
+
+    #[test]
+    fn white_balance_magenta_endpoint_stays_valid_instead_of_resetting() {
+        let model = white_balance_test_model();
+        assert!(super::temperature_tint_to_coefficients(
+            &model,
+            5_000.0,
+            super::MIN_WHITE_BALANCE_TINT,
+        )
+        .is_none());
+        let range = super::white_balance_tint_range(&model, 5_000.0).unwrap();
+        assert!(*range.start() > super::MIN_WHITE_BALANCE_TINT);
+        let magenta =
+            super::temperature_tint_to_coefficients(&model, 5_000.0, *range.start()).unwrap();
+        let neutral = super::temperature_tint_to_coefficients(&model, 5_000.0, 1.0).unwrap();
+        let green = super::temperature_tint_to_coefficients(&model, 5_000.0, *range.end()).unwrap();
+        for channel in [0, 2] {
+            assert!(magenta[channel] > neutral[channel]);
+            assert!(green[channel] < neutral[channel]);
+        }
+        let (base_temperature, base_tint) =
+            super::temperature_tint_from_coefficients(&model, model.base_wb).unwrap();
+        let actual = adjusted_white_balance_coefficients(
+            &model,
+            crate::pipeline::temperature_offset_from_kelvin(base_temperature, 5_000.0),
+            crate::pipeline::white_balance_tint_offset(base_tint, super::MIN_WHITE_BALANCE_TINT),
+        )
+        .expect("old out-of-range edits must clamp instead of losing WB");
+        for channel in 0..4 {
+            assert!((actual[channel] - magenta[channel]).abs() < 0.01);
+        }
+    }
+
+    #[test]
+    fn white_balance_tint_ranges_are_valid_and_monotonic_throughout() {
+        let model = white_balance_test_model();
+        for temperature in [
+            1_901.0, 2_222.0, 3_999.0, 4_000.0, 5_000.0, 7_000.0, 25_000.0,
+        ] {
+            let range = super::white_balance_tint_range(&model, temperature).unwrap();
+            let mut previous = [f32::INFINITY; 4];
+            for tick in ((*range.start() * 1_000.0).round() as i32)
+                ..=((*range.end() * 1_000.0).round() as i32)
+            {
+                let tint = tick as f32 / 1_000.0;
+                let wb = super::temperature_tint_to_coefficients(&model, temperature, tint)
+                    .unwrap_or_else(|| panic!("invalid {temperature} K / {tint}"));
+                assert!(wb.iter().all(|gain| gain.is_finite() && *gain > 0.0));
+                for channel in [0, 2] {
+                    assert!(
+                        wb[channel] < previous[channel],
+                        "dead/reversed tint at {temperature} / {tint}"
+                    );
+                }
+                previous = wb;
+            }
+        }
+    }
+
+    #[test]
+    fn white_balance_temperature_ranges_stop_before_invalid_responses() {
+        let model = white_balance_test_model();
+        for tint in [0.4, 0.8, 1.0, 2.326] {
+            let range = super::white_balance_temperature_range(&model, 5_000.0, tint).unwrap();
+            if tint == 0.4 {
+                assert!(*range.start() > super::MIN_TEMPERATURE_KELVIN);
+                assert!(*range.end() < super::MAX_TEMPERATURE_KELVIN);
+            }
+            let mut previous = None;
+            for kelvin in (*range.start() as u32)..=(*range.end() as u32) {
+                let wb = super::temperature_tint_to_coefficients(&model, kelvin as f32, tint)
+                    .unwrap_or_else(|| panic!("invalid {kelvin} K / {tint}"));
+                assert!(wb.iter().all(|gain| gain.is_finite() && *gain > 0.0));
+                assert_ne!(Some(wb), previous, "dead temperature step at {kelvin} K");
+                previous = Some(wb);
+            }
+            for outside in [range.start() - 1.0, range.end() + 1.0] {
+                if (super::MIN_TEMPERATURE_KELVIN..=super::MAX_TEMPERATURE_KELVIN)
+                    .contains(&outside)
+                {
+                    assert!(
+                        super::temperature_tint_to_coefficients(&model, outside, tint).is_none()
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn white_balance_limits_also_apply_to_dng_matrices() {
+        let mut model = white_balance_test_model();
+        let CameraColorModel::Matrix { xyz_to_camera } = model.color else {
+            unreachable!();
+        };
+        let matrix_range = super::white_balance_tint_range(&model, 5_000.0).unwrap();
+        let endpoint = DngColorEndpoint {
+            cct: Some(6_504.0),
+            color_matrix: xyz_to_camera,
+            calibration: identity_4x4(),
+            forward_matrix: None,
+        };
+        model.color = CameraColorModel::Dng {
+            endpoints: Box::new([endpoint; 2]),
+            analog_balance: identity_4x4(),
+        };
+        assert_eq!(
+            super::white_balance_tint_range(&model, 5_000.0).unwrap(),
+            matrix_range
+        );
+    }
+
+    #[test]
+    fn white_balance_green_endpoint_is_limited_when_its_response_goes_negative() {
+        let mut model = white_balance_test_model();
+        let CameraColorModel::Matrix { xyz_to_camera } = &mut model.color else {
+            unreachable!();
+        };
+        xyz_to_camera[1] = [-0.4, 1.0, -0.4];
+        assert!(super::temperature_tint_to_coefficients(&model, 5_000.0, 2.326).is_none());
+        let range = super::white_balance_tint_range(&model, 5_000.0).unwrap();
+        assert!(*range.end() < super::MAX_WHITE_BALANCE_TINT);
+        let clamped = super::clamp_white_balance_temperature_tint(&model, 5_000.0, 2.326).unwrap();
+        assert_eq!(clamped.1, *range.end());
+        assert!(super::temperature_tint_to_coefficients(&model, clamped.0, clamped.1).is_some());
+    }
+
+    #[test]
+    fn white_balance_limits_keep_the_full_supported_range_for_positive_matrices() {
+        let mut model = white_balance_test_model();
+        model.color = CameraColorModel::Matrix {
+            xyz_to_camera: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0], [0.0; 3]],
+        };
+        for temperature in [
+            super::MIN_TEMPERATURE_KELVIN,
+            5_000.0,
+            super::MAX_TEMPERATURE_KELVIN,
+        ] {
+            assert_eq!(
+                super::white_balance_tint_range(&model, temperature).unwrap(),
+                super::MIN_WHITE_BALANCE_TINT..=super::MAX_WHITE_BALANCE_TINT,
+            );
+        }
+        for tint in [
+            super::MIN_WHITE_BALANCE_TINT,
+            1.0,
+            super::MAX_WHITE_BALANCE_TINT,
+        ] {
+            assert_eq!(
+                super::white_balance_temperature_range(&model, 5_000.0, tint).unwrap(),
+                super::MIN_TEMPERATURE_KELVIN..=super::MAX_TEMPERATURE_KELVIN,
+            );
+        }
+    }
+
+    #[test]
+    fn white_balance_invalid_second_green_is_not_treated_as_missing() {
+        let mut model = white_balance_test_model();
+        let CameraColorModel::Matrix { xyz_to_camera } = &mut model.color else {
+            unreachable!();
+        };
+        xyz_to_camera[3] = [1.0, -0.5, 0.0];
+        assert!(super::temperature_tint_to_coefficients(&model, 5_000.0, 0.45).is_none());
+        assert!(
+            *super::white_balance_tint_range(&model, 5_000.0)
+                .unwrap()
+                .start()
+                > 0.5
+        );
+    }
 
     #[test]
     fn libraw_opens_paths_with_spaces_and_unicode() {
