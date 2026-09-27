@@ -45,29 +45,39 @@ impl HighlightReconstructionMethod {
     }
 }
 
-pub const MAX_POINT_CURVE_POINTS: usize = 8;
+pub const MAX_POINT_CURVE_POINTS: usize = 16;
 
 #[derive(Clone, Copy, Debug, PartialEq, serde::Deserialize, serde::Serialize)]
 pub struct PointCurve {
+    #[serde(deserialize_with = "deserialize_point_curve_points")]
     pub points: [[f32; 2]; MAX_POINT_CURVE_POINTS],
     pub len: u32,
 }
 
+// Older sidecars store eight slots, including unused points. Pad those slots
+// when loading while keeping the fixed-size representation used by the pipeline.
+fn deserialize_point_curve_points<'de, D>(
+    deserializer: D,
+) -> Result<[[f32; 2]; MAX_POINT_CURVE_POINTS], D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let stored = <Vec<[f32; 2]> as serde::Deserialize>::deserialize(deserializer)?;
+    if stored.len() != 8 && stored.len() != MAX_POINT_CURVE_POINTS {
+        return Err(serde::de::Error::custom(
+            "expected 8 or 16 tone curve point slots",
+        ));
+    }
+    let mut points = [[1.0, 1.0]; MAX_POINT_CURVE_POINTS];
+    points[..stored.len()].copy_from_slice(&stored);
+    Ok(points)
+}
+
 impl PointCurve {
     pub const fn linear() -> Self {
-        Self {
-            points: [
-                [0.0, 0.0],
-                [1.0, 1.0],
-                [1.0, 1.0],
-                [1.0, 1.0],
-                [1.0, 1.0],
-                [1.0, 1.0],
-                [1.0, 1.0],
-                [1.0, 1.0],
-            ],
-            len: 2,
-        }
+        let mut points = [[1.0, 1.0]; MAX_POINT_CURVE_POINTS];
+        points[0] = [0.0, 0.0];
+        Self { points, len: 2 }
     }
 
     pub fn reset(&mut self) {
@@ -447,6 +457,45 @@ mod tests {
             rendition.highlight_method,
             HighlightReconstructionMethod::InpaintOpposed
         );
+    }
+
+    #[test]
+    fn point_curve_loads_legacy_eight_slot_storage() {
+        let points: Vec<[f32; 2]> = (0..8)
+            .map(|index| {
+                let x = index as f32 / 7.0;
+                [x, x * x]
+            })
+            .collect();
+        let stored = serde_json::json!({ "points": points, "len": 8 });
+        let curve: PointCurve = serde_json::from_value(stored).unwrap();
+        assert_eq!(curve.len, 8);
+        assert_eq!(&curve.points[..8], points.as_slice());
+        assert_eq!(&curve.points[8..], &[[1.0, 1.0]; 8]);
+    }
+
+    #[test]
+    fn point_curve_sixteen_points_survive_sanitizing_and_serialization() {
+        let mut curve = PointCurve::linear();
+        curve.len = 16;
+        curve.points = std::array::from_fn(|index| {
+            let x = index as f32 / 15.0;
+            [x, x * x]
+        });
+        let expected = curve;
+        curve.sanitize();
+        assert_eq!(curve, expected);
+        let stored = serde_json::to_string(&curve).unwrap();
+        assert_eq!(
+            serde_json::from_str::<PointCurve>(&stored).unwrap(),
+            expected
+        );
+    }
+
+    #[test]
+    fn point_curve_rejects_oversized_storage() {
+        let stored = serde_json::json!({ "points": vec![[0.0, 0.0]; 17], "len": 17 });
+        assert!(serde_json::from_value::<PointCurve>(stored).is_err());
     }
 
     #[test]

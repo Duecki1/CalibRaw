@@ -246,7 +246,15 @@ fn tone_curve_point(curve: u32, index: u32) -> vec2<f32> {
             case 4u: { return Common::scene_tone_uniforms.tone_curve_red_2_field.xy; }
             case 5u: { return Common::scene_tone_uniforms.tone_curve_red_2_field.zw; }
             case 6u: { return Common::scene_tone_uniforms.tone_curve_red_3_field.xy; }
-            default: { return Common::scene_tone_uniforms.tone_curve_red_3_field.zw; }
+            case 7u: { return Common::scene_tone_uniforms.tone_curve_red_3_field.zw; }
+            case 8u: { return Common::scene_tone_uniforms.tone_curve_red_4_field.xy; }
+            case 9u: { return Common::scene_tone_uniforms.tone_curve_red_4_field.zw; }
+            case 10u: { return Common::scene_tone_uniforms.tone_curve_red_5_field.xy; }
+            case 11u: { return Common::scene_tone_uniforms.tone_curve_red_5_field.zw; }
+            case 12u: { return Common::scene_tone_uniforms.tone_curve_red_6_field.xy; }
+            case 13u: { return Common::scene_tone_uniforms.tone_curve_red_6_field.zw; }
+            case 14u: { return Common::scene_tone_uniforms.tone_curve_red_7_field.xy; }
+            default: { return Common::scene_tone_uniforms.tone_curve_red_7_field.zw; }
         }
     }
     if curve == 2u {
@@ -258,7 +266,15 @@ fn tone_curve_point(curve: u32, index: u32) -> vec2<f32> {
             case 4u: { return Common::scene_tone_uniforms.tone_curve_green_2_field.xy; }
             case 5u: { return Common::scene_tone_uniforms.tone_curve_green_2_field.zw; }
             case 6u: { return Common::scene_tone_uniforms.tone_curve_green_3_field.xy; }
-            default: { return Common::scene_tone_uniforms.tone_curve_green_3_field.zw; }
+            case 7u: { return Common::scene_tone_uniforms.tone_curve_green_3_field.zw; }
+            case 8u: { return Common::scene_tone_uniforms.tone_curve_green_4_field.xy; }
+            case 9u: { return Common::scene_tone_uniforms.tone_curve_green_4_field.zw; }
+            case 10u: { return Common::scene_tone_uniforms.tone_curve_green_5_field.xy; }
+            case 11u: { return Common::scene_tone_uniforms.tone_curve_green_5_field.zw; }
+            case 12u: { return Common::scene_tone_uniforms.tone_curve_green_6_field.xy; }
+            case 13u: { return Common::scene_tone_uniforms.tone_curve_green_6_field.zw; }
+            case 14u: { return Common::scene_tone_uniforms.tone_curve_green_7_field.xy; }
+            default: { return Common::scene_tone_uniforms.tone_curve_green_7_field.zw; }
         }
     }
     if curve == 3u {
@@ -270,7 +286,15 @@ fn tone_curve_point(curve: u32, index: u32) -> vec2<f32> {
             case 4u: { return Common::scene_tone_uniforms.tone_curve_blue_2_field.xy; }
             case 5u: { return Common::scene_tone_uniforms.tone_curve_blue_2_field.zw; }
             case 6u: { return Common::scene_tone_uniforms.tone_curve_blue_3_field.xy; }
-            default: { return Common::scene_tone_uniforms.tone_curve_blue_3_field.zw; }
+            case 7u: { return Common::scene_tone_uniforms.tone_curve_blue_3_field.zw; }
+            case 8u: { return Common::scene_tone_uniforms.tone_curve_blue_4_field.xy; }
+            case 9u: { return Common::scene_tone_uniforms.tone_curve_blue_4_field.zw; }
+            case 10u: { return Common::scene_tone_uniforms.tone_curve_blue_5_field.xy; }
+            case 11u: { return Common::scene_tone_uniforms.tone_curve_blue_5_field.zw; }
+            case 12u: { return Common::scene_tone_uniforms.tone_curve_blue_6_field.xy; }
+            case 13u: { return Common::scene_tone_uniforms.tone_curve_blue_6_field.zw; }
+            case 14u: { return Common::scene_tone_uniforms.tone_curve_blue_7_field.xy; }
+            default: { return Common::scene_tone_uniforms.tone_curve_blue_7_field.zw; }
         }
     }
     switch index {
@@ -281,15 +305,23 @@ fn tone_curve_point(curve: u32, index: u32) -> vec2<f32> {
         case 4u: { return Common::scene_tone_uniforms.tone_curve_2_field.xy; }
         case 5u: { return Common::scene_tone_uniforms.tone_curve_2_field.zw; }
         case 6u: { return Common::scene_tone_uniforms.tone_curve_3_field.xy; }
-        default: { return Common::scene_tone_uniforms.tone_curve_3_field.zw; }
+        case 7u: { return Common::scene_tone_uniforms.tone_curve_3_field.zw; }
+        case 8u: { return Common::scene_tone_uniforms.tone_curve_4_field.xy; }
+        case 9u: { return Common::scene_tone_uniforms.tone_curve_4_field.zw; }
+        case 10u: { return Common::scene_tone_uniforms.tone_curve_5_field.xy; }
+        case 11u: { return Common::scene_tone_uniforms.tone_curve_5_field.zw; }
+        case 12u: { return Common::scene_tone_uniforms.tone_curve_6_field.xy; }
+        case 13u: { return Common::scene_tone_uniforms.tone_curve_6_field.zw; }
+        case 14u: { return Common::scene_tone_uniforms.tone_curve_7_field.xy; }
+        default: { return Common::scene_tone_uniforms.tone_curve_7_field.zw; }
     }
 }
 
 fn tone_curve_count(curve: u32) -> u32 {
-    if curve == 1u { return u32(clamp(Common::scene_tone_uniforms.tone_curve_red_meta.x, 2.0, 8.0)); }
-    if curve == 2u { return u32(clamp(Common::scene_tone_uniforms.tone_curve_green_meta.x, 2.0, 8.0)); }
-    if curve == 3u { return u32(clamp(Common::scene_tone_uniforms.tone_curve_blue_meta.x, 2.0, 8.0)); }
-    return u32(clamp(Common::scene_tone_uniforms.tone_curve_meta.x, 2.0, 8.0));
+    if curve == 1u { return u32(clamp(Common::scene_tone_uniforms.tone_curve_red_meta.x, 2.0, 16.0)); }
+    if curve == 2u { return u32(clamp(Common::scene_tone_uniforms.tone_curve_green_meta.x, 2.0, 16.0)); }
+    if curve == 3u { return u32(clamp(Common::scene_tone_uniforms.tone_curve_blue_meta.x, 2.0, 16.0)); }
+    return u32(clamp(Common::scene_tone_uniforms.tone_curve_meta.x, 2.0, 16.0));
 }
 
 fn tone_curve_is_identity(curve: u32) -> bool {

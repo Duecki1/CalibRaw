@@ -359,6 +359,63 @@ fn sidecar_round_trip_preserves_edit_state() {
 }
 
 #[test]
+fn sidecar_round_trip_preserves_sixteen_point_curves() {
+    let mut edits = sample_edits();
+    let mut curve = crate::pipeline::PointCurve::linear();
+    curve.len = 16;
+    curve.points = std::array::from_fn(|index| {
+        let x = index as f32 / 15.0;
+        [x, x * x]
+    });
+    edits.exposure.tone_curve = curve;
+    edits.exposure.tone_curve_red = curve;
+    edits.exposure.tone_curve_green = curve;
+    edits.exposure.tone_curve_blue = curve;
+    let adjustments = &mut Arc::make_mut(&mut edits.masks).masks[0].adjustments;
+    adjustments.tone_curve = curve;
+    adjustments.tone_curve_red = curve;
+    adjustments.tone_curve_green = curve;
+    adjustments.tone_curve_blue = curve;
+    let encoded = encode(edits.clone()).unwrap();
+    assert_eq!(decode(&encoded).unwrap().edits, edits);
+}
+
+#[test]
+fn sidecar_loads_legacy_eight_slot_curves() {
+    fn truncate_curve_slots(value: &mut serde_json::Value) {
+        match value {
+            serde_json::Value::Object(fields) => {
+                if fields.contains_key("len") {
+                    if let Some(serde_json::Value::Array(points)) = fields.get_mut("points") {
+                        points.truncate(8);
+                    }
+                }
+                for child in fields.values_mut() {
+                    truncate_curve_slots(child);
+                }
+            }
+            serde_json::Value::Array(values) => {
+                for child in values {
+                    truncate_curve_slots(child);
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut edits = sample_edits();
+    edits.exposure.tone_curve.points[1] = [1.0, 0.8];
+    Arc::make_mut(&mut edits.masks).masks[0]
+        .adjustments
+        .tone_curve_red
+        .points[1] = [1.0, 0.7];
+    let encoded = encode(edits.clone()).unwrap();
+    let mut document: serde_json::Value = serde_json::from_slice(&encoded).unwrap();
+    truncate_curve_slots(&mut document);
+    let legacy = serde_json::to_vec(&document).unwrap();
+    assert_eq!(decode(&legacy).unwrap().edits, edits);
+}
+
+#[test]
 fn retouch_patches_are_deduplicated_and_png_compressed() {
     let width = 128;
     let height = 96;
