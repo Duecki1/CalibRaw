@@ -131,6 +131,13 @@ jobs:
           pkg-config --modversion lensfun
           test -f ${{ matrix.msys_prefix }}/bin/libclang.dll
 
+      - name: Test LibRaw Unicode paths
+        run: |
+          export PKG_CONFIG_PATH="$(cygpath -w ${{ matrix.msys_prefix }}/lib/pkgconfig);$(cygpath -w ${{ matrix.msys_prefix }}/share/pkgconfig)"
+          export LIBCLANG_PATH="$(cygpath -w ${{ matrix.msys_prefix }}/bin)"
+
+          cargo test --locked --package calibraw-core --target "${{ matrix.target }}" --lib pipeline::raw_loader::libraw_loader::tests
+
       - name: Build release binaries
         env:
           CALIBRAW_DISCORD_APPLICATION_ID: ${{ secrets.CALIBRAW_DISCORD_APPLICATION_ID }}
