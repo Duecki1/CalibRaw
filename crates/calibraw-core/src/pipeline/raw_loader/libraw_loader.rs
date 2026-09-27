@@ -2105,6 +2105,24 @@ fn darktable_temperature_tint_xyz(temperature: f32, tint: f32) -> Option<[f32; 3
     Some(xyz)
 }
 
+// Temperature slider limits are evaluated at whole-Kelvin ticks.  Their
+// daylight/blackbody coordinates depend only on that tick, not on the camera
+// or current edit, so avoid repeating the comparatively expensive polynomial
+// evaluation for every tick of every UI frame.
+static WHITE_BALANCE_TEMPERATURE_XYZ: OnceLock<Box<[[f32; 3]]>> = OnceLock::new();
+
+fn white_balance_temperature_xyz_ticks() -> &'static [[f32; 3]] {
+    WHITE_BALANCE_TEMPERATURE_XYZ.get_or_init(|| {
+        ((MIN_TEMPERATURE_KELVIN as u32)..=(MAX_TEMPERATURE_KELVIN as u32))
+            .map(|kelvin| {
+                darktable_temperature_xyz(kelvin as f32)
+                    .expect("the supported whole-Kelvin range must have valid coordinates")
+            })
+            .collect::<Vec<_>>()
+            .into_boxed_slice()
+    })
+}
+
 // Keep the UI endpoints strictly inside the positive camera-response domain.
 // Rounding inward to the displayed precision also prevents a drag/typed value
 // from rounding onto a zero response, where reciprocal WB gains are undefined.
@@ -2190,10 +2208,15 @@ pub(super) fn white_balance_temperature_range(
 ) -> Option<RangeInclusive<f32>> {
     temperature_tint_to_coefficients(model, temperature, tint)?;
     let matrix = white_balance_xyz_to_camera(model);
-    let valid = |kelvin| {
-        let Some(xyz) = darktable_temperature_tint_xyz(kelvin, tint) else {
+    let xyz_ticks = white_balance_temperature_xyz_ticks();
+    let tint = tint.clamp(MIN_WHITE_BALANCE_TINT, MAX_WHITE_BALANCE_TINT);
+    let valid = |kelvin: f32| {
+        debug_assert_eq!(kelvin, kelvin.round());
+        let index = (kelvin as u32).saturating_sub(MIN_TEMPERATURE_KELVIN as u32) as usize;
+        let Some(mut xyz) = xyz_ticks.get(index).copied() else {
             return false;
         };
+        xyz[1] /= tint;
         let camera = multiply_4x3_vector(matrix, xyz);
         (0..4).all(|index| {
             logical_rgb_channel(model.cdesc, index).is_none()

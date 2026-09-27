@@ -89,6 +89,8 @@ impl CalibRawApp {
                 #[cfg(target_os = "android")]
                 original_hold: None,
                 pending_stage: None,
+                white_balance_refresh_pending: false,
+                interactive_render_ready: Arc::new(AtomicBool::new(true)),
                 #[cfg(target_os = "android")]
                 lens_original_cache: None,
                 #[cfg(target_os = "android")]
@@ -397,6 +399,8 @@ impl CalibRawApp {
                 #[cfg(target_os = "android")]
                 original_hold: None,
                 pending_stage: None,
+                white_balance_refresh_pending: false,
+                interactive_render_ready: Arc::new(AtomicBool::new(true)),
                 lens_original_cache: None,
                 lens_corrected_cache: None,
             },

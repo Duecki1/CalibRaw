@@ -4,14 +4,19 @@ impl CalibRawApp {
     pub(crate) fn mark_pipeline_dirty(&mut self) {
         let preview_source = self.preview_source_raw();
         self.note_edit_changed();
+        let next_exposure = self.preview_exposure();
         if self.preview.gpu_pipeline.is_none() {
-            self.develop.target_exposure = self.preview_exposure();
+            self.develop.target_exposure = next_exposure;
             return;
         }
 
-        if let Some(stage) = affected_stage(&self.develop.target_exposure, &self.preview_exposure())
-        {
-            self.develop.target_exposure = self.preview_exposure();
+        if let Some(stage) = affected_stage(&self.develop.target_exposure, &next_exposure) {
+            if self.develop.target_exposure.temperature != next_exposure.temperature
+                || self.develop.target_exposure.tint != next_exposure.tint
+            {
+                self.preview.white_balance_refresh_pending = true;
+            }
+            self.develop.target_exposure = next_exposure;
             if matches!(stage, ProcessingStage::Raw) {
                 if let Some(full_raw) = preview_source.as_ref() {
                     if detail_uses_opposed_chroma(full_raw, &self.develop.target_exposure) {
@@ -215,13 +220,90 @@ impl CalibRawApp {
     }
 
     pub(in crate::app) fn advance_processing(&mut self, frame: &eframe::Frame) {
+        let exact_white_balance_refresh = self.preview.white_balance_refresh_pending;
+        if exact_white_balance_refresh
+            && !self
+                .preview
+                .interactive_render_ready
+                .load(std::sync::atomic::Ordering::Acquire)
+        {
+            // Edits continue to update target_exposure while the GPU is busy.
+            // The completion callback requests another frame for the newest
+            // value, avoiding an unbounded queue of obsolete scrub renders.
+            return;
+        }
+        if exact_white_balance_refresh {
+            self.preview
+                .interactive_render_ready
+                .store(false, std::sync::atomic::Ordering::Release);
+        }
+
+        let drain_detail = |app: &mut Self| {
+            for _ in 0..3 {
+                let before = app.preview.detail_pending_stage;
+                if before.is_none() {
+                    break;
+                }
+                app.advance_zoomed_processing(frame);
+                if app.preview.detail_pending_stage == before {
+                    break;
+                }
+            }
+        };
+
         let preview_masks = self.preview_mask_stack();
         let preview_source = self.preview_source_raw();
         if self.preview.zoom > DETAIL_ZOOM_START {
-            self.advance_zoomed_processing(frame);
+            if exact_white_balance_refresh {
+                drain_detail(self);
+            } else {
+                self.advance_zoomed_processing(frame);
+            }
             // Refresh the fitted fallback too: panning can expose any part of it.
         }
 
+        if exact_white_balance_refresh {
+            for _ in 0..3 {
+                let before = self.preview.pending_stage;
+                if before.is_none() {
+                    break;
+                }
+                self.advance_main_processing_stage(frame, &preview_masks, &preview_source);
+                if self.preview.pending_stage == before {
+                    break;
+                }
+            }
+            // Full-frame tone statistics supersede the temporary statistics
+            // used by a zoomed crop, so finish that small downstream refresh too.
+            if self.preview.zoom > DETAIL_ZOOM_START {
+                drain_detail(self);
+            }
+            self.preview.white_balance_refresh_pending = false;
+
+            if let Some(render_state) = frame.wgpu_render_state() {
+                let ready = Arc::clone(&self.preview.interactive_render_ready);
+                let repaint = self.egui_ctx.clone();
+                render_state.queue.on_submitted_work_done(move || {
+                    ready.store(true, std::sync::atomic::Ordering::Release);
+                    repaint.request_repaint();
+                });
+            } else {
+                self.preview
+                    .interactive_render_ready
+                    .store(true, std::sync::atomic::Ordering::Release);
+            }
+            return;
+        }
+
+        self.advance_main_processing_stage(frame, &preview_masks, &preview_source);
+    }
+
+    fn advance_main_processing_stage(
+        &mut self,
+        frame: &eframe::Frame,
+        preview_masks: &MaskStack,
+        preview_source: &Option<Arc<LoadedRaw>>,
+    ) {
         let Some(stage) = self.preview.pending_stage else {
             return;
         };
@@ -257,7 +339,7 @@ impl CalibRawApp {
             }
             if let Err(error) = pipeline.update_dirty_light_rays_mask_layers(
                 &render_state.queue,
-                &preview_masks,
+                preview_masks,
                 raw.width,
                 raw.height,
                 Some(&dirty_layers),
@@ -268,7 +350,7 @@ impl CalibRawApp {
             }
         }
 
-        let params = GpuParams::new(&self.develop.target_exposure, &preview_masks, raw)
+        let params = GpuParams::new(&self.develop.target_exposure, preview_masks, raw)
             .with_vignette_geometry(self.develop.geometry);
         let Some(full_raw) = preview_source.as_ref() else {
             self.preview.pending_stage = None;
