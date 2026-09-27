@@ -173,6 +173,34 @@ fn jpeg_xl_dng_decodes_through_public_dng_route() {
 }
 
 #[test]
+#[cfg(any(target_os = "linux", target_os = "android"))]
+fn jpeg_xl_dng_decodes_through_android_descriptor_path() {
+    use std::os::fd::AsRawFd;
+
+    let file = fixture(true, false, true, |root| {
+        root.add_tag(DngTag::OpcodeList2, Value::Byte(vec![0u8; 4]));
+    });
+    let path = std::path::PathBuf::from(format!("/proc/self/fd/{}", file.as_raw_fd()));
+    assert!(path.extension().is_none());
+    assert!(super::super::path_is_dng(&path));
+
+    let expected = super::super::load_raw_file(file.path()).unwrap();
+    let actual = super::super::load_raw_file(&path).unwrap();
+    assert!(actual.is_camera_linear_raster());
+    assert_eq!(actual.scene_linear_raster(), expected.scene_linear_raster());
+    assert_eq!(
+        super::super::load_raw_display_dimensions(&path).unwrap(),
+        [16, 16]
+    );
+    let thumbnail = super::super::load_raw_thumbnail(&path, 8).unwrap();
+    assert!(thumbnail.width <= 8 && thumbnail.height <= 8);
+    // This fixture has no preview: Rawler's diagnostic must survive the
+    // LibRaw fallback, proving embedded-thumbnail requests route through it too.
+    let error = super::super::load_raw_embedded_thumbnail(&path, 8).unwrap_err();
+    assert!(format!("{error:#}").contains("Rawler embedded thumbnail decode failed first"));
+}
+
+#[test]
 fn rejects_oversized_headers_and_tiles_before_pixel_decode() {
     for tiled in [false, true] {
         let file = fixture(true, false, true, |root| {

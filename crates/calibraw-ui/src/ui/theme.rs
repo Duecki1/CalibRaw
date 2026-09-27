@@ -118,6 +118,11 @@ impl UiDesign {
         self.design().description()
     }
 
+    #[cfg(target_os = "android")]
+    pub(crate) const fn is_dark(self) -> bool {
+        self.design().is_dark()
+    }
+
     #[cfg(test)]
     const fn palette(self) -> moduwu_design::Palette {
         self.design().palette()
