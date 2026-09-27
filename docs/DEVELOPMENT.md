@@ -19,12 +19,39 @@ of the test suite): `cargo bench -p calibraw-core --bench mask_rasterization`.
 It reports throughput for positive and erase dabs on a fixed 512x512 raster;
 the benchmark does not alter production rasterization or numerical behavior.
 
+## Design library setup
+
+[Moduwu Design](https://github.com/Duecki1/Moduwu) is an independent Rust
+library. CalibRaw imports it from GitHub through the root `Cargo.toml`, pinned
+to a full commit hash. Cargo fetches it automatically for local builds and CI;
+no sibling folder or separate clone is required. `Cargo.lock` records the same
+Git source. `deny.toml` permits this repository while rejecting unknown Git
+sources.
+
+To update the library, set `rev` to a published commit in `Cargo.toml`, run
+`cargo check -p calibraw-ui`, and commit both `Cargo.toml` and `Cargo.lock`.
+
+For library development and its independent checks, optionally clone it:
+
+```sh
+git clone https://github.com/Duecki1/Moduwu.git ../moduwu-design
+cd ../moduwu-design
+cargo fmt --all -- --check
+cargo test --locked
+cargo clippy --locked --all-targets -- -D warnings
+```
+
+This optional checkout is not used by CalibRaw's normal builds. Test changes
+in the library, publish the commit, and update CalibRaw's pinned dependency.
+
 ## UI conventions
 
-`crates/calibraw-ui/src/ui/theme.rs` is the shared entry point for UI styling.
-Use its control heights, spacing, cards, toolbar rows, and widget helpers before
-adding screen-specific styling. Keep specialized image canvases, mask cards,
-and color controls in their existing components.
+`moduwu-design` owns reusable UI styling: the four built-in presets,
+palette-driven egui themes, control/layout metrics, cards, toolbar rows, form controls, buttons,
+menus, and responsive helpers. `crates/calibraw-ui/src/ui/theme.rs` remains the
+CalibRaw-facing entry point for app theme selection and photo/editor-specific
+colors while re-exporting those shared primitives. Keep specialized image
+canvases, mask cards, and color controls in their existing components.
 
 - Use secondary/primary action buttons for forms and settings, `menu_item` for
   regular menu actions, and `context_menu_item` for selectable navigation menus.
@@ -43,7 +70,8 @@ and color controls in their existing components.
   documented exceptions: interactive tab activation can cancel their AI work.
 - Keep serialized preference names stable when changing UI labels or helpers.
 
-Run `cargo test -p calibraw-ui --lib --locked` for headless UI regressions.
+Run the independent library checks above for reusable design-system regressions
+and `cargo test -p calibraw-ui --lib --locked` for headless UI integration regressions.
 The ignored `portrait_gpu_layout_and_input` test additionally checks rendered
 preview geometry and pointer/touch behavior; it needs a GPU adapter and an
 isolated `XDG_CONFIG_HOME`. `CALIBRAW_PREVIEW_TEST_SCREENSHOT` optionally captures
