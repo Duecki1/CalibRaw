@@ -283,7 +283,7 @@ fn local_curve_tangent(mask_index: u32, curve: u32, index: u32, count: u32) -> f
 }
 
 fn local_curve_value(mask_index: u32, curve: u32, input: f32) -> f32 {
-    let count = u32(clamp(local_curve_block(mask_index, curve, 4u).x, 2.0, 8.0));
+    let count = u32(clamp(local_curve_block(mask_index, curve, 8u).x, 2.0, 16.0));
     let x = clamp(input, 0.0, 1.0);
     var segment = count - 2u;
     for (var index = 0u; index + 1u < count; index = index + 1u) {
@@ -309,7 +309,7 @@ fn local_curve_value(mask_index: u32, curve: u32, input: f32) -> f32 {
 }
 
 fn local_scene_curve_zero_slope(mask_index: u32, curve: u32) -> f32 {
-    let count = u32(clamp(local_curve_block(mask_index, curve, 4u).x, 2.0, 8.0));
+    let count = u32(clamp(local_curve_block(mask_index, curve, 8u).x, 2.0, 16.0));
     let encoded_black = local_curve_value(mask_index, curve, 0.0);
     let encoded_slope = local_curve_tangent(mask_index, curve, 0u, count);
     return Tonemap::decoded_scene_curve_zero_slope(encoded_black, encoded_slope);

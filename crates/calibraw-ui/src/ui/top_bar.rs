@@ -82,8 +82,7 @@ fn develop_toolbar_dock_geometry(
         let viewport_size = ctx.content_rect().size();
         let mut dock_width = crate::ui::sidebar::Sidebar::DESKTOP_TOOL_RAIL_WIDTH;
         if app.develop_ui.sidebar_open {
-            let panel_max =
-                crate::ui::layout::ScreenLayout::develop_sidebar_max_width(viewport_size);
+            let panel_max = crate::ui::layout::develop_sidebar_max_width(viewport_size);
             let default_width = crate::ui::layout::ScreenLayout::Horizontal
                 .sidebar_default_size(viewport_size)
                 .min(panel_max);

@@ -1416,10 +1416,13 @@ pub fn load_raw_file_with_profile_selection(
     load_raw_file(path)
 }
 
-fn extension_is_dng(path: &Path) -> bool {
-    path.extension()
-        .and_then(|extension| extension.to_str())
-        .is_some_and(|extension| extension.eq_ignore_ascii_case("dng"))
+fn path_is_dng(path: &Path) -> bool {
+    match path.extension() {
+        Some(extension) => extension.eq_ignore_ascii_case("dng"),
+        // Android opens documents as /proc/self/fd/<number>. Those paths lose
+        // the display name, so identify DNGs from their container metadata.
+        None => super::tiff_loader::has_dng_version(path).unwrap_or(false),
+    }
 }
 
 #[cfg(libraw_available)]
@@ -1472,7 +1475,7 @@ pub fn load_raw_file_with_profile_selection(
 ) -> Result<LoadedRaw> {
     if tiff_routes_to_raster(path)? {
         super::tiff_loader::load_raster_tiff(path)
-    } else if extension_is_dng(path) {
+    } else if path_is_dng(path) {
         try_rawler_then_libraw(
             path,
             "RAW decode",
@@ -1507,7 +1510,7 @@ pub fn load_raw_file_with_profile_selection(
 pub fn load_raw_file_with_dcp(path: &Path, profile_path: &Path) -> Result<LoadedRaw> {
     if tiff_routes_to_raster(path)? {
         super::tiff_loader::load_raster_tiff(path)
-    } else if extension_is_dng(path) {
+    } else if path_is_dng(path) {
         try_rawler_then_libraw(
             path,
             "DCP-backed RAW decode",
@@ -1523,7 +1526,7 @@ pub fn load_raw_file_with_dcp(path: &Path, profile_path: &Path) -> Result<Loaded
 pub fn load_raw_embedded_thumbnail(path: &Path, maximum_edge: u32) -> Result<RawThumbnail> {
     if tiff_routes_to_raster(path)? {
         super::tiff_loader::load_raster_tiff_thumbnail(path, maximum_edge)
-    } else if extension_is_dng(path) {
+    } else if path_is_dng(path) {
         try_rawler_then_libraw(
             path,
             "embedded thumbnail decode",
@@ -1539,7 +1542,7 @@ pub fn load_raw_embedded_thumbnail(path: &Path, maximum_edge: u32) -> Result<Raw
 pub fn load_raw_thumbnail(path: &Path, maximum_edge: u32) -> Result<RawThumbnail> {
     if tiff_routes_to_raster(path)? {
         super::tiff_loader::load_raster_tiff_thumbnail(path, maximum_edge)
-    } else if extension_is_dng(path) {
+    } else if path_is_dng(path) {
         try_rawler_then_libraw(
             path,
             "thumbnail decode",
@@ -1563,7 +1566,7 @@ pub fn load_raw_display_metadata(path: &Path) -> Result<RawDisplayMetadata> {
             dimensions: super::tiff_loader::load_raster_tiff_dimensions(path)?,
             ..Default::default()
         })
-    } else if extension_is_dng(path) {
+    } else if path_is_dng(path) {
         try_rawler_then_libraw(
             path,
             "display metadata decode",
@@ -1598,15 +1601,27 @@ mod rawler_loader;
 
 #[cfg(test)]
 mod routing_tests {
-    use super::{extension_is_dng, is_unsupported_raw_error, UnsupportedRawFormat};
+    use super::{is_unsupported_raw_error, path_is_dng, UnsupportedRawFormat};
     use std::path::Path;
 
     #[test]
     fn dng_extension_routes_case_insensitively() {
-        assert!(extension_is_dng(Path::new("phone.dng")));
-        assert!(extension_is_dng(Path::new("phone.DNG")));
-        assert!(!extension_is_dng(Path::new("camera.cr3")));
-        assert!(!extension_is_dng(Path::new("camera.nef")));
+        assert!(path_is_dng(Path::new("phone.dng")));
+        assert!(path_is_dng(Path::new("phone.DNG")));
+        assert!(!path_is_dng(Path::new("camera.cr3")));
+        assert!(!path_is_dng(Path::new("camera.nef")));
+    }
+
+    #[test]
+    fn extensionless_non_dng_inputs_keep_libraw_routing() {
+        let file = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(file.path(), b"not a TIFF or DNG").unwrap();
+        assert!(!path_is_dng(file.path()));
+        // Valid TIFF container with no DNGVersion tag.
+        let mut bytes = b"II\x2a\x00\x08\x00\x00\x00".to_vec();
+        bytes.extend_from_slice(&[0u8; 6]);
+        std::fs::write(file.path(), bytes).unwrap();
+        assert!(!path_is_dng(file.path()));
     }
 
     #[test]

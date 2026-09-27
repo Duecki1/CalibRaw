@@ -246,19 +246,15 @@ fn high_quality_shaders_validate() {
 
 #[test]
 fn point_curve_packing_is_shared_between_global_and_local_uniforms() {
-    let curve = PointCurve {
-        points: [
-            [0.0, 0.0],
-            [0.2, 0.1],
-            [0.4, 0.5],
-            [0.7, 0.8],
-            [1.0, 1.0],
-            [1.0, 1.0],
-            [1.0, 1.0],
-            [1.0, 1.0],
-        ],
-        len: 5,
-    };
+    let mut curve = PointCurve::linear();
+    curve.points[..5].copy_from_slice(&[
+        [0.0, 0.0],
+        [0.2, 0.1],
+        [0.4, 0.5],
+        [0.7, 0.8],
+        [1.0, 1.0],
+    ]);
+    curve.len = 5;
 
     let packed = pack_point_curve(&curve);
     assert_eq!(packed.pairs[0], [0.0, 0.0, 0.2, 0.1]);
@@ -267,9 +263,28 @@ fn point_curve_packing_is_shared_between_global_and_local_uniforms() {
     assert_eq!(packed.meta, [5.0, 0.0, 0.0, 0.0]);
 
     let local = pack_local_point_curve(&curve);
-    assert_eq!(&local[..4], &packed.pairs);
-    assert_eq!(local[4], packed.meta);
-    assert_eq!(&local[5..], &[[0.0; 4]; 3]);
+    assert_eq!(&local[..8], &packed.pairs);
+    assert_eq!(local[8], packed.meta);
+}
+
+#[test]
+fn point_curve_packing_preserves_all_sixteen_points() {
+    let mut curve = PointCurve::linear();
+    curve.len = 16;
+    curve.points = std::array::from_fn(|index| {
+        let x = index as f32 / 15.0;
+        [x, x * x]
+    });
+    let packed = pack_point_curve(&curve);
+    let local = pack_local_point_curve(&curve);
+    assert_eq!(packed.meta, [16.0, 0.0, 0.0, 0.0]);
+    assert_eq!(local[8], packed.meta);
+    for index in 0..16 {
+        let pair = packed.pairs[index / 2];
+        let offset = (index % 2) * 2;
+        assert_eq!(&pair[offset..offset + 2], &curve.points[index]);
+        assert_eq!(local[index / 2], pair);
+    }
 }
 
 #[test]
