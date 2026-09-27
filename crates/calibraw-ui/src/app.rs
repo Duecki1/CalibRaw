@@ -1031,6 +1031,10 @@ pub(crate) struct PreviewState {
     #[cfg(target_os = "android")]
     pub(crate) original_hold: Option<AndroidOriginalHold>,
     pub(crate) pending_stage: Option<ProcessingStage>,
+    // White balance is an early-pipeline edit. Keep each scrub update exact,
+    // but coalesce updates while the preceding GPU render is still running.
+    pub(crate) white_balance_refresh_pending: bool,
+    pub(crate) interactive_render_ready: Arc<AtomicBool>,
     #[cfg(target_os = "android")]
     pub(crate) lens_original_cache: Option<(PreviewQuality, Arc<LoadedRaw>)>,
     #[cfg(target_os = "android")]

@@ -7,6 +7,14 @@ impl CalibRawApp {
         if self.foreground_operation_is(ForegroundOperationKind::AiDenoise) {
             return;
         }
+        if self.preview.white_balance_refresh_pending
+            && !self
+                .preview
+                .interactive_render_ready
+                .load(std::sync::atomic::Ordering::Acquire)
+        {
+            return;
+        }
         let zoomed = self.preview.zoom > DETAIL_ZOOM_START;
         let should_update = self.preview.navigation_pending_stage.is_some();
         let should_exist = zoomed && (self.preview.navigation.is_some() || should_update);
