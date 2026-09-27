@@ -15,7 +15,9 @@ use crate::pipeline::color_profile::{DcpMatrixSet, DcpProfile};
 use anyhow::{anyhow, Context, Result};
 use rayon::prelude::*;
 use std::collections::HashMap;
-use std::ffi::{CStr, CString};
+use std::ffi::CStr;
+#[cfg(not(windows))]
+use std::ffi::CString;
 use std::fs;
 use std::io::Cursor;
 use std::os::raw::c_char;
@@ -25,6 +27,8 @@ use std::time::{Instant, SystemTime};
 
 #[cfg(unix)]
 use std::os::unix::ffi::OsStrExt;
+#[cfg(windows)]
+use std::os::windows::ffi::OsStrExt;
 
 const MAX_DCP_FILE_BYTES: u64 = 64 * 1024 * 1024;
 const MAX_DCP_SCAN_FILES: usize = 10_000;
@@ -156,13 +160,9 @@ pub(super) fn load_raw_file_with_profile_selection(
     validate_input_file(path, MAX_RAW_FILE_BYTES, "RAW input")?;
     let source_metadata = read_exif_capture_metadata_or_default(path);
 
-    let c_path = path_to_libraw_cstring(path)?;
     let ctx = LibRawContext::new()?;
     let identify_started = Instant::now();
-    check_libraw(
-        unsafe { ffi::libraw_open_file(ctx.raw, c_path.as_ptr()) },
-        "open RAW file",
-    )?;
+    open_libraw_file(&ctx, path, "open RAW file")?;
     crate::diagnostics::record(format!(
         "LibRaw identify/open_file finished in {:.3}s",
         identify_started.elapsed().as_secs_f64()
@@ -281,12 +281,8 @@ pub(super) fn load_raw_thumbnail(path: &Path, maximum_edge: u32) -> Result<RawTh
 }
 
 fn open_libraw(path: &Path) -> Result<LibRawContext> {
-    let c_path = path_to_libraw_cstring(path)?;
     let ctx = LibRawContext::new()?;
-    check_libraw(
-        unsafe { ffi::libraw_open_file(ctx.raw, c_path.as_ptr()) },
-        "open RAW thumbnail",
-    )?;
+    open_libraw_file(&ctx, path, "open RAW thumbnail")?;
     unsafe { validate_opened_thumbnail_geometry(&ctx) }?;
     Ok(ctx)
 }
@@ -931,13 +927,9 @@ fn load_raw_file_with_selected_profile(
     validate_input_file(path, MAX_RAW_FILE_BYTES, "RAW input")?;
     let source_metadata = read_exif_capture_metadata_or_default(path);
 
-    let c_path = path_to_libraw_cstring(path)?;
     let ctx = LibRawContext::new()?;
 
-    check_libraw(
-        unsafe { ffi::libraw_open_file(ctx.raw, c_path.as_ptr()) },
-        "open RAW file",
-    )?;
+    open_libraw_file(&ctx, path, "open RAW file")?;
     unsafe { validate_opened_raw_geometry(&ctx) }?;
     check_libraw(unsafe { ffi::libraw_unpack(ctx.raw) }, "unpack RAW file")?;
 
@@ -1014,13 +1006,42 @@ pub(super) fn read_exif_capture_metadata_or_default(path: &Path) -> super::Captu
     })
 }
 
+fn open_libraw_file(ctx: &LibRawContext, path: &Path, action: &str) -> Result<()> {
+    // Windows' narrow API uses the current code page, not UTF-8. Pass the
+    // native UTF-16 path so every LibRaw caller can open Unicode filenames.
+    #[cfg(windows)]
+    let result = {
+        let wide_path = path_to_libraw_wide(path)?;
+        unsafe { ffi::libraw_open_wfile(ctx.raw, wide_path.as_ptr()) }
+    };
+    #[cfg(not(windows))]
+    let result = {
+        let c_path = path_to_libraw_cstring(path)?;
+        unsafe { ffi::libraw_open_file(ctx.raw, c_path.as_ptr()) }
+    };
+    check_libraw(result, action)
+}
+
+#[cfg(windows)]
+fn path_to_libraw_wide(path: &Path) -> Result<Vec<u16>> {
+    let mut wide_path: Vec<u16> = path.as_os_str().encode_wide().collect();
+    if wide_path.contains(&0) {
+        return Err(anyhow!(
+            "RAW path contains an interior NUL code unit: {}",
+            path.display()
+        ));
+    }
+    wide_path.push(0);
+    Ok(wide_path)
+}
+
 #[cfg(unix)]
 fn path_to_libraw_cstring(path: &Path) -> Result<CString> {
     CString::new(path.as_os_str().as_bytes())
         .with_context(|| format!("RAW path contains an interior NUL byte: {}", path.display()))
 }
 
-#[cfg(not(unix))]
+#[cfg(not(any(unix, windows)))]
 fn path_to_libraw_cstring(path: &Path) -> Result<CString> {
     let utf8 = path.to_str().with_context(|| {
         format!(
@@ -3018,6 +3039,59 @@ mod tests {
     }
 
     const RGBG: [u8; 4] = *b"RGBG";
+
+    #[test]
+    fn libraw_opens_paths_with_spaces_and_unicode() {
+        let root = tempfile::tempdir().unwrap();
+        let directory = root.path().join("Thorge Claußen ä ü ö 日本語 📷");
+        std::fs::create_dir(&directory).unwrap();
+        for name in ["IMG 5501.CR2", "Straße ÄÖÜ é 中文 🌄.CR2"] {
+            let path = directory.join(name);
+            // An existing non-RAW file must reach format identification rather
+            // than fail to open. This exercises native file I/O without a large
+            // camera fixture and catches code-page conversion on Windows.
+            std::fs::write(&path, [0u8; 4096]).unwrap();
+            let ctx = super::LibRawContext::new().unwrap();
+            let error = super::open_libraw_file(&ctx, &path, "open RAW file").unwrap_err();
+            assert!(
+                error.is::<super::super::UnsupportedRawFormat>(),
+                "{}: {error:#}",
+                path.display()
+            );
+            drop(ctx);
+            std::fs::remove_file(&path).unwrap();
+            let missing_ctx = super::LibRawContext::new().unwrap();
+            let missing_error =
+                super::open_libraw_file(&missing_ctx, &path, "open RAW file").unwrap_err();
+            assert!(!missing_error.is::<super::super::UnsupportedRawFormat>());
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn libraw_wide_paths_preserve_native_code_units_and_reject_nul() {
+        use std::ffi::OsString;
+        use std::os::windows::ffi::{OsStrExt, OsStringExt};
+        use std::path::Path;
+
+        let path = Path::new(r"C:\Users\Thorge Claußen\ä ü ö 日本語 📷.CR2");
+        let expected: Vec<u16> = path
+            .as_os_str()
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect();
+        assert_eq!(super::path_to_libraw_wide(path).unwrap(), expected);
+
+        // Windows paths can contain unpaired surrogates; don't round-trip
+        // through a Rust UTF-8 string and lose these native code units.
+        let native_path = OsString::from_wide(&[0x61, 0xd800, 0x62]);
+        assert_eq!(
+            super::path_to_libraw_wide(Path::new(&native_path)).unwrap(),
+            [0x61, 0xd800, 0x62, 0]
+        );
+        let invalid_path = OsString::from_wide(&[0x61, 0, 0x62]);
+        assert!(super::path_to_libraw_wide(Path::new(&invalid_path)).is_err());
+    }
 
     #[test]
     fn default_render_exposure_prefers_dng_baseline_and_combines_profile_offset_once() {
