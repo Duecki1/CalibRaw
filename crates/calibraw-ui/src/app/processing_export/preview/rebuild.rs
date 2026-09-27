@@ -163,7 +163,13 @@ impl CalibRawApp {
                 .map_err(|error| format!("Could not update zoomed local mask: {error:#}"))?;
         }
         pipeline
-            .update_light_rays_mask_layers(queue, masks, full_raw.width, full_raw.height)
+            .update_dirty_light_rays_mask_layers(
+                queue,
+                masks,
+                full_raw.width,
+                full_raw.height,
+                dirty_layers,
+            )
             .map_err(|error| format!("Could not update zoomed Light Rays mask: {error:#}"))?;
         Ok(())
     }

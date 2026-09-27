@@ -2641,6 +2641,19 @@ impl RawGpuPipeline {
         image_width: u32,
         image_height: u32,
     ) -> Result<()> {
+        self.update_dirty_light_rays_mask_layers(queue, masks, image_width, image_height, None)
+    }
+
+    /// Refresh emission masks only for changed layers. Full uploads (including
+    /// newly built pipelines and exports) pass `None` to initialize every layer.
+    pub fn update_dirty_light_rays_mask_layers(
+        &self,
+        queue: &wgpu::Queue,
+        masks: &MaskStack,
+        image_width: u32,
+        image_height: u32,
+        dirty_layers: Option<&[bool; MAX_LOCAL_MASKS]>,
+    ) -> Result<()> {
         let edge = LIGHT_RAYS_MASK_ATLAS_EDGE;
         for (layer, mask) in masks
             .masks
@@ -2648,7 +2661,7 @@ impl RawGpuPipeline {
             .take(self.mask_layer_capacity)
             .enumerate()
         {
-            if !mask.has_light_rays_effect() {
+            if dirty_layers.is_some_and(|dirty| !dirty[layer]) || !mask.has_light_rays_effect() {
                 continue;
             }
             let values = masks.rasterize_layer_f16(layer, edge, edge, image_width, image_height);

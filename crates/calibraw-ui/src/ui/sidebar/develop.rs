@@ -267,7 +267,10 @@ impl Sidebar {
     ) -> bool {
         let mut changed = false;
         let action = Self::adjustment_card(ui, "Color", false, foldable, true, |ui| {
-            if let Some(raw) = raw.filter(|raw| raw.as_shot_white_balance().is_some()) {
+            if let Some(raw) = raw.filter(|raw| {
+                raw.white_balance_temperature_tint(exposure.temperature, exposure.tint)
+                    .is_some()
+            }) {
                 let presets = raw.camera_white_balance_presets();
                 let matches_current = |candidate: (f32, f32)| {
                     (candidate.0 - exposure.temperature).abs() < 0.01
@@ -405,31 +408,28 @@ impl Sidebar {
                     .white_balance_temperature_tint(exposure.temperature, exposure.tint)
                     .expect("white-balance model was checked above");
                 let base_kelvin = raw.as_shot_temperature_kelvin().unwrap_or(kelvin);
+                let temperature_range = raw
+                    .white_balance_temperature_range(kelvin, tint)
+                    .unwrap_or(kelvin..=kelvin);
                 let kelvin_changed = ui
                     .push_id(base_kelvin.to_bits(), |ui| {
                         gradient_adjustment_slider_with_reset(
                             ui,
                             "Temperature (K)",
                             &mut kelvin,
-                            crate::pipeline::MIN_TEMPERATURE_KELVIN
-                                ..=crate::pipeline::MAX_TEMPERATURE_KELVIN,
+                            temperature_range,
                             0,
                             10.0,
-                            Some("Scene illuminant color temperature in Kelvin; the as-shot camera white balance is the reset value."),
+                            Some("Scene illuminant color temperature in Kelvin. The range follows the camera's valid white balance at the current tint; double-click to reset toward the as-shot temperature."),
                             SliderGradient::Temperature,
                             base_kelvin,
                         )
                     })
                     .inner;
-                if kelvin_changed {
-                    exposure.temperature =
-                        crate::pipeline::temperature_offset_from_kelvin(base_kelvin, kelvin);
-                    *white_balance_picker_active = false;
-                    changed = true;
-                }
                 let base_tint = raw.as_shot_white_balance().map_or(tint, |value| value.1);
-                let tint_neutral_fraction = ((1.0 - MIN_WHITE_BALANCE_TINT)
-                    / (MAX_WHITE_BALANCE_TINT - MIN_WHITE_BALANCE_TINT))
+                let tint_range = raw.white_balance_tint_range(kelvin).unwrap_or(tint..=tint);
+                let tint_neutral_fraction = ((1.0 - tint_range.start())
+                    / (tint_range.end() - tint_range.start()).max(f32::EPSILON))
                     .clamp(0.0, 1.0);
                 let tint_changed = ui
                     .push_id(base_tint.to_bits(), |ui| {
@@ -437,10 +437,10 @@ impl Sidebar {
                             ui,
                             "Tint",
                             &mut tint,
-                            MIN_WHITE_BALANCE_TINT..=MAX_WHITE_BALANCE_TINT,
+                            tint_range,
                             3,
                             0.005,
-                            Some("darktable-compatible absolute camera tint: values below 1 are magenta, values above 1 are green; the as-shot value is the reset value."),
+                            Some("Camera tint: lower values add magenta, higher values add green. The range follows the camera's valid white balance at the current temperature; double-click to reset toward the as-shot tint."),
                             SliderGradient::CameraTint {
                                 neutral_fraction: tint_neutral_fraction,
                             },
@@ -448,10 +448,15 @@ impl Sidebar {
                         )
                     })
                     .inner;
-                if tint_changed {
-                    exposure.tint = crate::pipeline::white_balance_tint_offset(base_tint, tint);
-                    *white_balance_picker_active = false;
-                    changed = true;
+                if kelvin_changed || tint_changed {
+                    if let Some((temperature, tint)) =
+                        raw.white_balance_offsets_from_temperature_tint(kelvin, tint)
+                    {
+                        exposure.temperature = temperature;
+                        exposure.tint = tint;
+                        *white_balance_picker_active = false;
+                        changed = true;
+                    }
                 }
             } else {
                 *white_balance_picker_active = false;

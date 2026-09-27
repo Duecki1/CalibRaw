@@ -15,6 +15,18 @@ impl Sidebar {
             return;
         }
 
+        // Tiny thumbnails can still scan full-resolution AI masks for feathering.
+        // Keep the existing cards while drawing/dragging; the revision remains
+        // stale so they refresh as soon as the pointer is released.
+        if app.masks.interaction_dirty_layer.is_some()
+            && ui.input(|input| input.pointer.any_down())
+            && app.masks.thumbnail_group_textures.len() == app.masks.stack.masks.len()
+            && app.masks.thumbnail_component_mask == selected_mask
+            && app.masks.thumbnail_component_textures.len() == component_len
+        {
+            return;
+        }
+
         let (image_width, image_height) = app
             .develop
             .preview_raw
