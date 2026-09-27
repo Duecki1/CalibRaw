@@ -23,6 +23,7 @@ path = "src/main.rs"
 calibraw-ai.workspace = true
 calibraw-core.workspace = true
 calibraw-gpu.workspace = true
+moduwu-design.workspace = true
 anyhow.workspace = true
 egui-phosphor.workspace = true
 image.workspace = true

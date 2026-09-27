@@ -91,6 +91,10 @@ CalibRaw/
 └── android/            # Android Gradle packaging
 ```
 
+The reusable UI design library, [Moduwu Design](https://github.com/Duecki1/Moduwu),
+is fetched automatically by Cargo from a pinned GitHub commit. See
+[Development](docs/DEVELOPMENT.md#design-library-setup) for design-library development.
+
 ### Headless CLI Export
 Batch rendering can be run directly from the terminal:
 
@@ -107,6 +111,10 @@ calibraw-develop-export --input photo.ARW --output photo.jxl
 - **System Dependencies:** `libclang`, `cmake`, `pkg-config`, and standard C/C++ build tools (for LibRaw and Lensfun)
 
 ### Desktop (Linux / macOS / Windows)
+
+Cargo automatically downloads Moduwu Design from GitHub; no separate checkout
+is required.
+
 ```sh
 git clone https://github.com/Duecki1/CalibRaw.git
 cd CalibRaw

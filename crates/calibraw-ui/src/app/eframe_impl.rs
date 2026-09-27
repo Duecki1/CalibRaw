@@ -230,7 +230,8 @@ impl eframe::App for CalibRawApp {
 
                         if self.develop_ui.sidebar_open {
                             let panel_id = egui::Id::new(crate::ui::layout::DEVELOP_SIDEBAR_ID);
-                            let panel_max = ScreenLayout::develop_sidebar_max_width(viewport_size);
+                            let panel_max =
+                                crate::ui::layout::develop_sidebar_max_width(viewport_size);
                             let panel_width = crate::ui::layout::develop_sidebar_user_width(
                                 ui.ctx(),
                                 panel_id,
