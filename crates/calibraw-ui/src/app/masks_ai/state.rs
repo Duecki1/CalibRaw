@@ -354,6 +354,7 @@ impl CalibRawApp {
                 Some(
                     ForegroundOperationKind::SubjectMask
                         | ForegroundOperationKind::SkyMask
+                        | ForegroundOperationKind::DepthMask
                         | ForegroundOperationKind::ObjectMask
                 )
             )
@@ -384,9 +385,16 @@ impl CalibRawApp {
         let current_object = usize::from(
             matches!(
                 self.foreground_operation_kind(),
-                Some(ForegroundOperationKind::ObjectMask | ForegroundOperationKind::SkyMask)
+                Some(
+                    ForegroundOperationKind::ObjectMask
+                        | ForegroundOperationKind::SkyMask
+                        | ForegroundOperationKind::DepthMask
+                )
             ) || self.ai.object_pending_target.is_some()
-                || matches!(self.ai.consent, AiConsentState::Sky { .. }),
+                || matches!(
+                    self.ai.consent,
+                    AiConsentState::Sky { .. } | AiConsentState::Depth { .. }
+                ),
         );
         let subject_remaining = usize::from(self.ai.mask_update_subject_pending) * subject_targets;
         subject_remaining + self.ai.mask_update_object_queue.len() + current_object
@@ -395,6 +403,7 @@ impl CalibRawApp {
     pub(in crate::app) fn generated_ai_mask_targets(&self) -> GeneratedAiMaskTargets {
         let mut subject = false;
         let mut sky = false;
+        let mut depth = false;
         let mut objects = VecDeque::new();
         for (mask_index, local_mask) in self.masks.stack.masks.iter().enumerate() {
             for (component_index, component) in local_mask.components.iter().enumerate() {
@@ -404,6 +413,10 @@ impl CalibRawApp {
                     }
                     (MaskKind::Sky, MaskGeometry::Ai { .. }) if !sky => {
                         sky = true;
+                        objects.push_back((mask_index, component_index));
+                    }
+                    (MaskKind::DepthRange, MaskGeometry::DepthRange { .. }) if !depth => {
+                        depth = true;
                         objects.push_back((mask_index, component_index));
                     }
                     (MaskKind::Object, MaskGeometry::Object { strokes, .. })
@@ -440,6 +453,7 @@ impl CalibRawApp {
             Some(
                 ForegroundOperationKind::SubjectMask
                     | ForegroundOperationKind::SkyMask
+                    | ForegroundOperationKind::DepthMask
                     | ForegroundOperationKind::ObjectMask
             )
         ) {
@@ -591,6 +605,7 @@ impl CalibRawApp {
                 Some(
                     ForegroundOperationKind::SubjectMask
                         | ForegroundOperationKind::SkyMask
+                        | ForegroundOperationKind::DepthMask
                         | ForegroundOperationKind::ObjectMask
                 )
             )
@@ -609,6 +624,7 @@ impl CalibRawApp {
                 .and_then(|mask| mask.components.get(component_index))
                 .is_some_and(|component| {
                     component.kind == MaskKind::Sky
+                        || component.kind == MaskKind::DepthRange
                         || matches!(
                             &component.geometry,
                             MaskGeometry::Object { strokes, .. } if strokes
@@ -629,6 +645,24 @@ impl CalibRawApp {
                 } else {
                     self.ai.consent = AiConsentState::Sky {
                         runtime_download_needed,
+                    };
+                    self.egui_ctx.request_repaint();
+                }
+                return;
+            }
+
+            if self.masks.stack.masks[mask_index].components[component_index].kind
+                == MaskKind::DepthRange
+            {
+                let path = self.da3_model_path();
+                let runtime_download_needed = self.automatic_onnx_runtime_download_needed();
+                let model_download_needed = !crate::ai_masks::da3_model_is_verified(&path);
+                if !model_download_needed && !runtime_download_needed {
+                    self.start_depth_worker(path, false);
+                } else {
+                    self.ai.consent = AiConsentState::Depth {
+                        runtime_download_needed,
+                        model_download_needed,
                     };
                     self.egui_ctx.request_repaint();
                 }

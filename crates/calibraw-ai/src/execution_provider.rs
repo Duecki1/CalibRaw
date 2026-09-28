@@ -147,6 +147,50 @@ pub enum CpuFallbackProfile {
     #[default]
     Default,
     WindowsSamEncoder,
+    DepthAnything3,
+}
+
+#[cfg(not(target_os = "android"))]
+static RUNTIME_VERSION: OnceLock<String> = OnceLock::new();
+
+/// Inspect the same library that ort has just loaded, rather than inferring its
+/// version from a filename (manual runtime libraries can be renamed).
+#[cfg(not(target_os = "android"))]
+pub(crate) fn record_runtime_version(path: &Path) -> Result<()> {
+    // SAFETY: ort::init_from has already loaded this verified runtime. The
+    // signature is ONNX Runtime's public entry point; the library stays alive
+    // while its version string is copied, and ort retains its own handle.
+    let version = unsafe {
+        let library = libloading::Library::new(path).context("inspect ONNX Runtime version")?;
+        let get_api: libloading::Symbol<
+            unsafe extern "system" fn() -> *const ort::sys::OrtApiBase,
+        > = library.get(b"OrtGetApiBase")?;
+        let api = get_api()
+            .as_ref()
+            .context("ONNX Runtime returned no API base")?;
+        let version = (api.GetVersionString)();
+        anyhow::ensure!(!version.is_null(), "ONNX Runtime returned no version");
+        std::ffi::CStr::from_ptr(version).to_str()?.to_owned()
+    };
+    calibraw_core::diagnostics::record(format!("ONNX Runtime version: {version}"));
+    let _ = RUNTIME_VERSION.set(version);
+    Ok(())
+}
+
+#[cfg(any(not(target_os = "android"), test))]
+fn validate_depth_cpu_runtime(version: &str, x86: bool) -> Result<()> {
+    let mut parts = version.split('.');
+    let affected = x86
+        && parts.next() == Some("1")
+        && parts.next() == Some("29")
+        && parts
+            .next()
+            .is_some_and(|patch| patch.split(['-', '+']).next() == Some("0"));
+    anyhow::ensure!(
+        !affected,
+        "ONNX Runtime {version} has a CPU FP16 performance regression that prevents practical depth inference. Use Automatic ONNX Runtime in Settings, or select ONNX Runtime 1.30 or newer, then restart CalibRaw. GPU depth inference is unaffected."
+    );
+    Ok(())
 }
 
 #[derive(Clone, Debug)]
@@ -378,6 +422,15 @@ fn commit_model(builder: &mut SessionBuilder, source: &ModelSource) -> Result<Se
 }
 
 fn create_cpu_session_inner(source: &ModelSource, options: &SessionOptions) -> Result<Session> {
+    #[cfg(not(target_os = "android"))]
+    if options.cpu_fallback_profile == CpuFallbackProfile::DepthAnything3 {
+        if let Some(version) = RUNTIME_VERSION.get() {
+            validate_depth_cpu_runtime(
+                version,
+                cfg!(any(target_arch = "x86", target_arch = "x86_64")),
+            )?;
+        }
+    }
     let builder = Session::builder().context("create CPU ONNX Runtime session")?;
     let builder = configure_common_builder(builder)?;
     let mut builder = configure_cpu_builder(builder, options)?
@@ -440,7 +493,7 @@ impl FallbackSession {
                     self.options.model_name
                 );
                 calibraw_core::diagnostics::record(format!(
-                    "AI {}: {failed_provider} inference failed; switching to CPU fallback",
+                    "AI {}: {failed_provider} inference failed; switching to CPU fallback: {accelerated_error:#}",
                     self.options.model_name
                 ));
                 self.degraded = true;
@@ -580,7 +633,40 @@ pub fn create_session_with_fallback(
 
 #[cfg(test)]
 mod tests {
-    use super::{is_gpu_memory_failure, FallbackSession};
+    use super::*;
+
+    #[test]
+    fn depth_cpu_rejects_the_fp16_regression_on_x86_only() {
+        for version in ["1.29.0", "1.29.0+custom", "1.29.0-dev"] {
+            let error = validate_depth_cpu_runtime(version, true).unwrap_err();
+            assert!(error.to_string().contains("1.30 or newer"));
+            assert!(validate_depth_cpu_runtime(version, false).is_ok());
+        }
+        for version in ["1.28.0", "1.29.1", "1.30.0", "1.30.1", "2.0.0"] {
+            assert!(validate_depth_cpu_runtime(version, true).is_ok());
+        }
+    }
+
+    #[test]
+    #[cfg(all(
+        not(target_os = "android"),
+        any(target_arch = "x86", target_arch = "x86_64")
+    ))]
+    #[ignore = "requires ONNX Runtime 1.29.0 via ORT_DYLIB_PATH"]
+    fn affected_depth_cpu_runtime_is_rejected_before_loading_the_model() {
+        let path = std::env::var_os("ORT_DYLIB_PATH").expect("ORT_DYLIB_PATH");
+        ort::init_from(Path::new(&path)).unwrap().commit();
+        record_runtime_version(Path::new(&path)).unwrap();
+        let options = SessionOptions::new("Depth Anything 3 Mono Large")
+            .cpu_only()
+            .with_cpu_fallback_profile(CpuFallbackProfile::DepthAnything3);
+        let result =
+            create_cpu_session_inner(&ModelSource::Path("missing-model.onnx".into()), &options);
+        let error = result.err().expect("affected runtime must be rejected");
+        assert!(error
+            .to_string()
+            .contains("CPU FP16 performance regression"));
+    }
 
     #[test]
     fn fallback_session_preserves_thread_traits() {

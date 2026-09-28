@@ -34,6 +34,31 @@ fn sample_edits() -> EditState {
 }
 
 #[test]
+fn depth_mask_geometry_survives_sidecar_validation_and_serialization() {
+    let mut masks = MaskStack::default();
+    masks.add_mask(MaskKind::DepthRange).unwrap();
+    if let MaskGeometry::DepthRange {
+        depth,
+        near,
+        far,
+        feather,
+    } = &mut masks.masks[0].components[0].geometry
+    {
+        *depth = crate::pipeline::MaskImage::new(2, 1, vec![0, 255]);
+        *near = 0.2;
+        *far = 0.8;
+        *feather = 0.1;
+    }
+    preflight_mask_change(&masks).unwrap();
+    let serialized = serde_json::to_vec(&masks).unwrap();
+    let restored: MaskStack = serde_json::from_slice(&serialized).unwrap();
+    assert_eq!(
+        restored.masks[0].components[0].geometry,
+        masks.masks[0].components[0].geometry
+    );
+}
+
+#[test]
 fn copied_adjustments_respect_category_settings_and_mark_ai_masks_stale() {
     let mut source = sample_edits();
     source.exposure.dehaze = 61.0;
