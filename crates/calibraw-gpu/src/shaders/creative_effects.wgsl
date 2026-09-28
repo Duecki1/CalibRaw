@@ -6,6 +6,11 @@
 #import calibraw::tone_common as ToneCommon
 #import calibraw::tonemap as Tonemap
 
+// The CPU updates this value between ordered effect dispatches. u32::MAX
+// selects CalibRaw's built-in global glow/halation pass.
+@group(0) @binding(35) var<uniform> effect_stack_index: u32;
+const GLOBAL_CREATIVE_PASS: u32 = 0xffffffffu;
+
 struct HazeNeighborhood {
     dark_ratio: f32,
     airlight: vec3<f32>,
@@ -166,7 +171,12 @@ fn glow_stage_step(stage: u32) -> i32 {
 }
 
 fn glow_stage_mix(stage: u32) -> f32 {
-    let radius = clamp(Common::effects_uniforms.creative_effects.y / 100.0, 0.0, 1.0);
+    var radius_value = Common::effects_uniforms.creative_effects.y;
+    if effect_stack_index != GLOBAL_CREATIVE_PASS
+        && effect_stack_index < Common::MAX_RENDER_MASK_SLOTS {
+        radius_value = Common::mask_data[effect_stack_index].adjust_0_field.y;
+    }
+    let radius = clamp(radius_value / 100.0, 0.0, 1.0);
     switch stage {
         case 0u: { return 1.0; }
         case 1u: { return smoothstep(0.0, 0.20, radius); }
@@ -255,7 +265,7 @@ fn apply_halation(pos: vec2<i32>, rgb: vec3<f32>) -> vec3<f32> {
 
 fn apply_glow(pos: vec2<i32>, rgb: vec3<f32>) -> vec3<f32> {
     let global_amount = clamp(Common::effects_uniforms.creative_effects.x / 100.0, 0.0, 1.0);
-    if global_amount < 1e-6 && !mask_glow_active() {
+    if global_amount < 1e-6 {
         return rgb;
     }
 
@@ -475,6 +485,53 @@ fn apply_local_creative_mask_effect_nodes(pos: vec2<i32>, input_rgb: vec3<f32>) 
     return rgb;
 }
 
+fn apply_selected_stack_effect(pos: vec2<i32>, input_rgb: vec3<f32>) -> vec3<f32> {
+    let index = effect_stack_index;
+    if index >= Common::MAX_RENDER_MASK_SLOTS {
+        return input_rgb;
+    }
+    let state = Common::mask_data[index].metadata;
+    if state.x == 0u || state.y == 0u {
+        return input_rgb;
+    }
+    let effect_id = Common::mask_effect_id(state);
+    let primary = Common::mask_data[index].adjust_0_field;
+    let secondary = Common::mask_data[index].adjust_1_field;
+    if effect_id == MASK_EFFECT_LIGHT_RAYS_ID {
+        // The mask is the emission source, not an output clip. The effect may
+        // therefore extend beyond the selected region.
+        return apply_light_rays_for_index(pos, input_rgb, index);
+    }
+    let weight = SceneAdjustments::local_mask_weight(pos, index);
+    if weight <= 1e-5 {
+        return input_rgb;
+    }
+
+    var adjusted = input_rgb;
+    if effect_id == MASK_EFFECT_NEON_ID {
+        adjusted = apply_neon(pos, input_rgb, primary, secondary);
+    } else if effect_id == MASK_EFFECT_EDGE_GLOW_ID {
+        adjusted = apply_edge_glow(pos, input_rgb, primary, secondary);
+    } else if effect_id == MASK_EFFECT_PIXELATE_ID {
+        adjusted = apply_pixelate(pos, input_rgb, primary);
+    } else if effect_id == MASK_EFFECT_LENS_BLUR_ID {
+        adjusted = mask_lens_blur_at(pos, primary, secondary);
+    } else if effect_id == MASK_EFFECT_MOTION_BLUR_ID {
+        adjusted = mask_motion_blur_at(pos, primary);
+    } else if effect_id == MASK_EFFECT_RADIAL_BLUR_ID {
+        adjusted = mask_radial_blur_at(pos, primary, secondary);
+    } else if effect_id == MASK_EFFECT_TILT_SHIFT_ID {
+        let tilt_weight = mask_tilt_shift_weight(pos, primary, secondary);
+        adjusted = mask_tilt_shift_at(pos, primary);
+        return mix(input_rgb, adjusted, weight * tilt_weight);
+    } else if effect_id == MASK_EFFECT_FOG_ID {
+        adjusted = apply_fog(pos, input_rgb, primary, secondary, Common::mask_data[index].adjust_2_field);
+    } else if effect_id == MASK_EFFECT_SMOKE_ID {
+        adjusted = apply_smoke(pos, input_rgb, primary, secondary, Common::mask_data[index].adjust_2_field);
+    }
+    return mix(input_rgb, adjusted, weight);
+}
+
 @compute @workgroup_size(8, 8, 1)
 fn apply_scene_effects_node(@builtin(global_invocation_id) gid: vec3<u32>) {
     if gid.x >= Common::camera_uniforms.width || gid.y >= Common::camera_uniforms.height { return; }
@@ -484,8 +541,15 @@ fn apply_scene_effects_node(@builtin(global_invocation_id) gid: vec3<u32>) {
     rgb = apply_dehaze_value(pos, rgb, Common::effects_uniforms.presence.z);
     rgb = BasicAdjustments::apply_saturation_vibrance(rgb);
     rgb = apply_local_scene_effect_nodes(pos, rgb);
-    rgb = apply_local_mask_effect_nodes(pos, rgb);
     textureStore(SceneAdjustments::local_effects_out, pos, vec4<f32>(rgb, 1.0));
+}
+
+@compute @workgroup_size(8, 8, 1)
+fn apply_effect_stack_entry(@builtin(global_invocation_id) gid: vec3<u32>) {
+    if gid.x >= Common::camera_uniforms.width || gid.y >= Common::camera_uniforms.height { return; }
+    let pos = vec2<i32>(i32(gid.x), i32(gid.y));
+    let rgb = apply_selected_stack_effect(pos, SceneAdjustments::local_effects_at(pos));
+    textureStore(SceneAdjustments::creative_effects_out, pos, vec4<f32>(rgb, 1.0));
 }
 
 @compute @workgroup_size(8, 8, 1)
@@ -499,11 +563,15 @@ fn copy_scene_effects_node(@builtin(global_invocation_id) gid: vec3<u32>) {
 fn prepare_glow_source(@builtin(global_invocation_id) gid: vec3<u32>) {
     if gid.x >= Common::camera_uniforms.width || gid.y >= Common::camera_uniforms.height { return; }
     let pos = vec2<i32>(i32(gid.x), i32(gid.y));
-    let global_amount = clamp(Common::effects_uniforms.creative_effects.x / 100.0, 0.0, 1.0);
-    let emission = glow_emission(SceneAdjustments::local_effects_at(pos), glow_cutoff())
-        * global_amount
-        + mask_glow_source_at(pos);
-    textureStore(SceneAdjustments::glow_work_out, pos, vec4<f32>(emission, halation_emission(SceneAdjustments::local_effects_at(pos))));
+    let source = SceneAdjustments::local_effects_at(pos);
+    if effect_stack_index == GLOBAL_CREATIVE_PASS {
+        let global_amount = clamp(Common::effects_uniforms.creative_effects.x / 100.0, 0.0, 1.0);
+        let emission = glow_emission(source, glow_cutoff()) * global_amount;
+        textureStore(SceneAdjustments::glow_work_out, pos, vec4<f32>(emission, halation_emission(source)));
+    } else {
+        let emission = selected_mask_glow_source_at(pos, effect_stack_index);
+        textureStore(SceneAdjustments::glow_work_out, pos, vec4<f32>(emission, 0.0));
+    }
 }
 
 fn store_glow_stage(gid: vec3<u32>, stage: u32) {
@@ -542,11 +610,16 @@ fn apply_creative_effects(@builtin(global_invocation_id) gid: vec3<u32>) {
     if gid.x >= Common::camera_uniforms.width || gid.y >= Common::camera_uniforms.height { return; }
     let pos = vec2<i32>(i32(gid.x), i32(gid.y));
     var rgb = SceneAdjustments::local_effects_at(pos);
-    rgb = apply_local_creative_mask_effect_nodes(pos, rgb);
-    rgb = apply_halation(pos, rgb);
-    rgb = apply_glow(pos, rgb);
-    rgb = apply_mask_glow_cores(pos, rgb);
-    rgb = apply_light_rays(pos, rgb);
+    if effect_stack_index == GLOBAL_CREATIVE_PASS {
+        rgb = apply_halation(pos, rgb);
+        rgb = apply_glow(pos, rgb);
+    } else {
+        let bloom = glow_work_at(pos);
+        let current_luma = Common::safe_luma(rgb);
+        let core_protection = 1.0 - 0.72 * smoothstep(1.0, 3.2, current_luma);
+        rgb = rgb + bloom * 2.8 * core_protection;
+        rgb = apply_selected_mask_glow_core(pos, rgb, effect_stack_index);
+    }
     textureStore(SceneAdjustments::creative_effects_out, pos, vec4<f32>(rgb, 1.0));
 }
 

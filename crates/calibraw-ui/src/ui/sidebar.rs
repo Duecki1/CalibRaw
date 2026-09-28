@@ -125,7 +125,7 @@ mod tests {
         ];
         let mut selection = None;
         let render = |components: &mut Vec<EffectComponent>,
-                      selection: &mut Option<MaskEffect>,
+                      selection: &mut Option<usize>,
                       events: Vec<egui::Event>| {
             ctx.run_ui(
                 egui::RawInput {
@@ -165,7 +165,7 @@ mod tests {
         };
         render(&mut components, &mut selection, click(true));
         render(&mut components, &mut selection, click(false));
-        assert_eq!(selection, Some(MaskEffect::Glow));
+        assert_eq!(selection, Some(1));
 
         components.push(EffectComponent::new(MaskEffect::Fog));
         let shapes = render(&mut components, &mut selection, Vec::new());

@@ -28,6 +28,41 @@ fn mask_glow_source_at(pos: vec2<i32>) -> vec3<f32> {
     return emission;
 }
 
+fn selected_mask_glow_source_at(pos: vec2<i32>, index: u32) -> vec3<f32> {
+    let state = Common::mask_data[index].metadata;
+    if state.x == 0u || state.y == 0u
+        || Common::mask_effect_id(state) != MASK_EFFECT_GLOW_ID {
+        return vec3<f32>(0.0);
+    }
+    let weight = SceneAdjustments::local_mask_weight(pos, index);
+    let amount = clamp(Common::mask_data[index].adjust_0_field.x / 100.0, 0.0, 1.0);
+    let color = mask_effect_picker_color_to_working(
+        Common::mask_data[index].adjust_1_field.xyz,
+    );
+    return color * weight * amount * 0.8;
+}
+
+fn apply_selected_mask_glow_core(
+    pos: vec2<i32>,
+    input_rgb: vec3<f32>,
+    index: u32,
+) -> vec3<f32> {
+    let state = Common::mask_data[index].metadata;
+    if state.x == 0u || state.y == 0u
+        || Common::mask_effect_id(state) != MASK_EFFECT_GLOW_ID {
+        return input_rgb;
+    }
+    let weight = SceneAdjustments::local_mask_weight(pos, index);
+    let primary = Common::mask_data[index].adjust_0_field;
+    let amount = clamp(primary.x / 100.0, 0.0, 1.0);
+    let core = clamp(primary.z / 100.0, 0.0, 1.0);
+    let color = mask_effect_picker_color_to_working(
+        Common::mask_data[index].adjust_1_field.xyz,
+    );
+    let hot_color = mix(color, vec3<f32>(1.0), smoothstep(0.15, 1.0, core));
+    return input_rgb + hot_color * weight * amount * core * 2.1;
+}
+
 fn apply_mask_glow_cores(pos: vec2<i32>, input_rgb: vec3<f32>) -> vec3<f32> {
     var rgb = input_rgb;
     let count = min(Common::scene_tone_uniforms.mask_counts.x, Common::MAX_RENDER_MASK_SLOTS);

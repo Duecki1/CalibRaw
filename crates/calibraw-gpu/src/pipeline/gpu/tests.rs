@@ -355,6 +355,98 @@ fn effect_components_share_mask_layer_and_global_effects_cover_image() {
 }
 
 #[test]
+fn duplicate_glows_keep_independent_packed_parameters_and_stack_order() {
+    let mut mask = LocalMask::new(MaskKind::Fullscreen, 1);
+    let mut first = crate::pipeline::EffectComponent::new(MaskEffect::Glow);
+    first.settings.glow.amount = 20.0;
+    first.settings.glow.radius = 15.0;
+    let mut blur = crate::pipeline::EffectComponent::new(MaskEffect::Blur);
+    blur.settings.blur.amount = 45.0;
+    let mut second = crate::pipeline::EffectComponent::new(MaskEffect::Glow);
+    second.settings.glow.amount = 80.0;
+    second.settings.glow.radius = 90.0;
+    mask.effect_components = vec![first, blur, second];
+    let masks = MaskStack {
+        masks: vec![mask],
+        ..Default::default()
+    };
+
+    let packed = super::pack_mask_params(&masks);
+    let effect_ids = packed[1..4]
+        .iter()
+        .map(|data| data.metadata[3] >> super::MASK_EFFECT_ID_SHIFT)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        effect_ids,
+        vec![
+            MaskEffect::Glow.shader_id(),
+            MaskEffect::Blur.shader_id(),
+            MaskEffect::Glow.shader_id(),
+        ]
+    );
+    assert_eq!(packed[1].adjust_0[0..2], [20.0, 15.0]);
+    assert_eq!(packed[3].adjust_0[0..2], [80.0, 90.0]);
+}
+
+#[test]
+fn effect_stack_reordering_changes_render_order() -> anyhow::Result<()> {
+    let Some((device, queue)) = request_test_device() else {
+        return Ok(());
+    };
+    const EDGE: u32 = 32;
+    const MASK_EDGE: usize = 64;
+    let pixels = (0..EDGE * EDGE)
+        .flat_map(|index| {
+            let x = index % EDGE;
+            let value = if x < EDGE / 2 { 0.08 } else { 0.8 };
+            [value; 3]
+        })
+        .collect();
+    let source = LoadedRaw::from_scene_linear_rec2020(EDGE, EDGE, pixels)?;
+    let exposure = ExposureParams {
+        sharpen_amount: 0.0,
+        ..Default::default()
+    };
+    let mut glow = crate::pipeline::EffectComponent::new(MaskEffect::Glow);
+    glow.settings.glow.amount = 90.0;
+    glow.settings.glow.radius = 70.0;
+    glow.settings.glow.core = 80.0;
+    let mut blur = crate::pipeline::EffectComponent::new(MaskEffect::Blur);
+    blur.settings.blur.amount = 100.0;
+    blur.settings.blur.radius = 16.0;
+    let mut mask = LocalMask::new(MaskKind::Fullscreen, 1);
+    mask.effect_components = vec![glow, blur];
+    let first_order = MaskStack {
+        masks: vec![mask],
+        ..Default::default()
+    };
+    let mut second_order = first_order.clone();
+    crate::pipeline::move_effect_component(&mut second_order.masks[0].effect_components, 0, 1);
+    let pipeline = RawGpuPipeline::new_headless_with_quality_and_mask_edge(
+        &device,
+        &queue,
+        &source,
+        &GpuParams::new(&exposure, &first_order, &source),
+        ProcessingQuality::High,
+        MASK_EDGE as u32,
+    )?;
+    let atlas = (0..MASK_EDGE * MASK_EDGE)
+        .map(|index| {
+            let x = index % MASK_EDGE;
+            half::f16::from_f32(if x < MASK_EDGE / 2 { 1.0 } else { 0.0 }).to_bits()
+        })
+        .collect::<Vec<_>>();
+    pipeline.update_mask_layer(&queue, 0, &atlas)?;
+    let render = |masks: &MaskStack| -> anyhow::Result<Vec<f32>> {
+        pipeline.recompute(&queue, &device, &GpuParams::new(&exposure, masks, &source));
+        pipeline.read_display_linear_region_blocking(&device, &queue, 0, 0, EDGE, EDGE)
+    };
+
+    assert_ne!(render(&first_order)?, render(&second_order)?);
+    Ok(())
+}
+
+#[test]
 fn half_mask_exposure_matches_half_the_ev_for_both_signs() -> anyhow::Result<()> {
     let Some((device, queue)) = request_test_device() else {
         return Ok(());
@@ -1252,8 +1344,18 @@ fn inactive_programs_stay_deferred_across_template_reuse_and_activate_on_edit() 
         &params,
         ProcessingQuality::Preview,
     )?;
-    let creative = pipeline.adjustment_creative_pass_index;
-    assert!(pipeline.passes[creative].pipeline.compiled.get().is_none());
+    let scene_effects = pipeline.adjustment_effects_pass_index;
+    let glow_composite = pipeline.adjustment_creative_pass_index;
+    assert!(pipeline.passes[scene_effects]
+        .pipeline
+        .compiled
+        .get()
+        .is_none());
+    assert!(pipeline.passes[glow_composite]
+        .pipeline
+        .compiled
+        .get()
+        .is_none());
     let template = pipeline.program_template();
     let reused = RawGpuPipeline::new_headless_reusing_program_template(
         &device,
@@ -1263,10 +1365,14 @@ fn inactive_programs_stay_deferred_across_template_reuse_and_activate_on_edit() 
         ProcessingQuality::Preview,
         &template,
     )?;
-    assert!(reused.passes[creative].pipeline.compiled.get().is_none());
+    assert!(reused.passes[scene_effects]
+        .pipeline
+        .compiled
+        .get()
+        .is_none());
     assert!(std::sync::Arc::ptr_eq(
-        &pipeline.passes[creative].pipeline,
-        &reused.passes[creative].pipeline
+        &pipeline.passes[scene_effects].pipeline,
+        &reused.passes[scene_effects].pipeline
     ));
     reused.recompute(&queue, &device, &params);
     let neutral =
@@ -1276,7 +1382,16 @@ fn inactive_programs_stay_deferred_across_template_reuse_and_activate_on_edit() 
     reused.recompute(&queue, &device, &edited);
     let colored =
         reused.read_output_region_blocking(&device, &queue, 0, 0, raw.width, raw.height)?;
-    assert!(pipeline.passes[creative].pipeline.compiled.get().is_some());
+    assert!(pipeline.passes[scene_effects]
+        .pipeline
+        .compiled
+        .get()
+        .is_some());
+    assert!(pipeline.passes[glow_composite]
+        .pipeline
+        .compiled
+        .get()
+        .is_none());
     assert_ne!(neutral, colored);
     // Eagerly compiling all remaining programs must not alter the rendered result.
     for pass in &reused.passes {

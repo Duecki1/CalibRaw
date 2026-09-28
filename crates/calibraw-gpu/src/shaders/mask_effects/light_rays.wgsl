@@ -109,14 +109,15 @@ fn light_ray_path_energy(
     return energy / f32(tap_count);
 }
 
-fn apply_light_rays(pos: vec2<i32>, input_rgb: vec3<f32>) -> vec3<f32> {
-    var rgb = input_rgb;
-    let count = min(Common::scene_tone_uniforms.mask_counts.x, Common::MAX_RENDER_MASK_SLOTS);
-    for (var index = 0u; index < count; index = index + 1u) {
+fn apply_light_rays_for_index(
+    pos: vec2<i32>,
+    input_rgb: vec3<f32>,
+    index: u32,
+) -> vec3<f32> {
         let state = Common::mask_data[index].metadata;
         if state.x == 0u || state.y == 0u
             || Common::mask_effect_id(state) != MASK_EFFECT_LIGHT_RAYS_ID {
-            continue;
+            return input_rgb;
         }
 
         let primary = Common::mask_data[index].adjust_0_field;
@@ -125,7 +126,7 @@ fn apply_light_rays(pos: vec2<i32>, input_rgb: vec3<f32>) -> vec3<f32> {
         let amount = clamp(primary.x / 100.0, 0.0, 1.0);
         let maximum_length = clamp(primary.y / 100.0, 0.0, 2.0);
         if amount <= 1e-6 || maximum_length <= 1e-6 {
-            continue;
+            return input_rgb;
         }
 
         let output_uv = full_image_uv(pos);
@@ -141,7 +142,7 @@ fn apply_light_rays(pos: vec2<i32>, input_rgb: vec3<f32>) -> vec3<f32> {
         let short_edge = max(min(full_size.x, full_size.y), 1.0);
         let radial_distance = length(radial_pixels) / short_edge;
         if radial_distance >= maximum_length {
-            continue;
+            return input_rgb;
         }
 
         let fade = clamp(secondary.w / 100.0, 0.0, 1.0);
@@ -165,7 +166,14 @@ fn apply_light_rays(pos: vec2<i32>, input_rgb: vec3<f32>) -> vec3<f32> {
         let shaft = (1.0 - exp(-gathered * 7.0))
             * distance_falloff * angular_pattern;
         let color = mask_effect_picker_color_to_working(secondary.xyz);
-        rgb = rgb + color * shaft * amount * 1.8;
+        return input_rgb + color * shaft * amount * 1.8;
+}
+
+fn apply_light_rays(pos: vec2<i32>, input_rgb: vec3<f32>) -> vec3<f32> {
+    var rgb = input_rgb;
+    let count = min(Common::scene_tone_uniforms.mask_counts.x, Common::MAX_RENDER_MASK_SLOTS);
+    for (var index = 0u; index < count; index = index + 1u) {
+        rgb = apply_light_rays_for_index(pos, rgb, index);
     }
     return rgb;
 }

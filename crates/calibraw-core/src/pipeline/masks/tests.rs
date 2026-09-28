@@ -1654,3 +1654,23 @@ fn light_rays_mask_source_tracks_component_enablement() {
     mask.effect_components[0].enabled = false;
     assert!(!mask.has_light_rays_effect());
 }
+
+#[test]
+fn duplicate_effects_reorder_without_sharing_or_resetting_settings() {
+    let mut first = EffectComponent::new(MaskEffect::Glow);
+    first.settings.glow.amount = 20.0;
+    first.settings.glow.radius = 15.0;
+    first.enabled = false;
+    let mut blur = EffectComponent::new(MaskEffect::Blur);
+    blur.settings.blur.amount = 45.0;
+    let mut second = EffectComponent::new(MaskEffect::Glow);
+    second.settings.glow.amount = 80.0;
+    second.settings.glow.radius = 90.0;
+    let mut effects = vec![first.clone(), blur.clone(), second.clone()];
+
+    assert!(move_effect_component(&mut effects, 2, 1));
+    assert_eq!(effects, vec![first, second, blur]);
+    assert!(!effects[0].enabled);
+    assert_eq!(effects[0].settings.glow.radius, 15.0);
+    assert_eq!(effects[1].settings.glow.radius, 90.0);
+}

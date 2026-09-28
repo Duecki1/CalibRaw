@@ -286,6 +286,8 @@ pub(super) struct PipelineBuffers {
     pub(super) mask_data_buffer: wgpu::Buffer,
     pub(super) tone_histogram_buffer: wgpu::Buffer,
     pub(super) tone_stats_buffer: wgpu::Buffer,
+    pub(super) effect_stack_index_buffer: wgpu::Buffer,
+    pub(super) effect_stack_indices_buffer: wgpu::Buffer,
 }
 
 pub(super) fn create_pipeline_buffers(
@@ -337,6 +339,20 @@ pub(super) fn create_pipeline_buffers(
         TONE_STATS_SIZE_BYTES,
         wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST,
     );
+    let effect_stack_index_buffer = create_initialized_buffer(
+        device,
+        "calibraw current effect-stack index",
+        bytemuck::bytes_of(&[u32::MAX, 0, 0, 0]),
+        wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+    );
+    let mut effect_stack_indices = (0..MAX_RENDER_MASK_SLOTS as u32).collect::<Vec<_>>();
+    effect_stack_indices.push(u32::MAX);
+    let effect_stack_indices_buffer = create_initialized_buffer(
+        device,
+        "calibraw effect-stack index table",
+        bytemuck::cast_slice(&effect_stack_indices),
+        wgpu::BufferUsages::COPY_SRC,
+    );
 
     PipelineBuffers {
         profile_buffer,
@@ -346,6 +362,8 @@ pub(super) fn create_pipeline_buffers(
         mask_data_buffer,
         tone_histogram_buffer,
         tone_stats_buffer,
+        effect_stack_index_buffer,
+        effect_stack_indices_buffer,
     }
 }
 
@@ -733,6 +751,7 @@ pub(super) fn create_bind_group_layouts(
                 texture_array_entry(27, wgpu::TextureSampleType::Float { filterable: true }),
                 sampler_entry(28),
                 storage_buffer_entry(33, true),
+                buffer_entry(35),
             ],
         )
     });
@@ -749,6 +768,7 @@ pub(super) fn create_bind_group_layouts(
                     texture_array_entry(27, wgpu::TextureSampleType::Float { filterable: true }),
                     sampler_entry(28),
                     storage_buffer_entry(33, true),
+                    buffer_entry(35),
                 ],
             )
         });
@@ -761,6 +781,8 @@ pub(super) fn create_bind_group_layouts(
                 buffer_entry(0),
                 texture_entry(30, wgpu::TextureSampleType::Float { filterable: false }),
                 storage_texture_entry(31, work_format, wgpu::StorageTextureAccess::WriteOnly),
+                storage_buffer_entry(33, true),
+                buffer_entry(35),
             ],
         )
     });
@@ -772,6 +794,7 @@ pub(super) fn create_bind_group_layouts(
                 "bgl creative glow",
                 &[
                     buffer_entry(0),
+                    texture_entry(22, wgpu::TextureSampleType::Float { filterable: false }),
                     texture_entry(24, wgpu::TextureSampleType::Float { filterable: false }),
                     storage_texture_entry(25, work_format, wgpu::StorageTextureAccess::WriteOnly),
                     texture_entry(30, wgpu::TextureSampleType::Float { filterable: false }),
@@ -779,6 +802,7 @@ pub(super) fn create_bind_group_layouts(
                     sampler_entry(28),
                     storage_buffer_entry(33, true),
                     texture_array_entry(34, wgpu::TextureSampleType::Float { filterable: true }),
+                    buffer_entry(35),
                 ],
             )
         });
@@ -863,6 +887,11 @@ pub(super) struct BindGroups {
     pub(super) bg_mask_blur_2: wgpu::BindGroup,
     pub(super) bg_mask_blur_3: wgpu::BindGroup,
     pub(super) bg_mask_blur_4: wgpu::BindGroup,
+    pub(super) bg_mask_blur_reverse_0: wgpu::BindGroup,
+    pub(super) bg_mask_blur_reverse_1: wgpu::BindGroup,
+    pub(super) bg_mask_blur_reverse_2: wgpu::BindGroup,
+    pub(super) bg_mask_blur_reverse_3: wgpu::BindGroup,
+    pub(super) bg_mask_blur_reverse_4: wgpu::BindGroup,
     pub(super) bg_glow_prepare: wgpu::BindGroup,
     pub(super) bg_glow_blur_0: wgpu::BindGroup,
     pub(super) bg_glow_blur_1: wgpu::BindGroup,
@@ -923,6 +952,7 @@ pub(super) fn create_bind_groups(
         tone_histogram_buffer,
         tone_stats_buffer,
         profile_buffer,
+        effect_stack_index_buffer,
         ..
     } = buffers;
     let PipelineSurfaces {
@@ -1279,6 +1309,7 @@ pub(super) fn create_bind_groups(
                     texture_binding(27, mask_view),
                     sampler_binding(28, mask_sampler),
                     buffer_binding(33, mask_data_buffer),
+                    buffer_binding(35, effect_stack_index_buffer),
                 ],
             )
         };
@@ -1292,6 +1323,28 @@ pub(super) fn create_bind_groups(
         make_mask_blur_bind_group("bg mask Blur diffusion 3", tex2_view, display_linear_view);
     let bg_mask_blur_4 =
         make_mask_blur_bind_group("bg mask Blur diffusion 4", display_linear_view, tex2_view);
+    let bg_mask_blur_reverse_0 =
+        make_mask_blur_bind_group("bg reverse mask Blur diffusion 0", tex2_view, tex1_view);
+    let bg_mask_blur_reverse_1 = make_mask_blur_bind_group(
+        "bg reverse mask Blur diffusion 1",
+        tex1_view,
+        display_linear_view,
+    );
+    let bg_mask_blur_reverse_2 = make_mask_blur_bind_group(
+        "bg reverse mask Blur diffusion 2",
+        display_linear_view,
+        tex1_view,
+    );
+    let bg_mask_blur_reverse_3 = make_mask_blur_bind_group(
+        "bg reverse mask Blur diffusion 3",
+        tex1_view,
+        display_linear_view,
+    );
+    let bg_mask_blur_reverse_4 = make_mask_blur_bind_group(
+        "bg reverse mask Blur diffusion 4",
+        display_linear_view,
+        tex1_view,
+    );
 
     let make_glow_prepare_bind_group =
         |label: &str, source: &wgpu::TextureView, extracted: &wgpu::TextureView| {
@@ -1306,6 +1359,7 @@ pub(super) fn create_bind_groups(
                     texture_binding(27, mask_view),
                     sampler_binding(28, mask_sampler),
                     buffer_binding(33, mask_data_buffer),
+                    buffer_binding(35, effect_stack_index_buffer),
                 ],
             )
         };
@@ -1322,6 +1376,8 @@ pub(super) fn create_bind_groups(
                     buffer_binding(0, camera_uniforms_buffer),
                     texture_binding(30, read_view),
                     texture_binding(31, write_view),
+                    buffer_binding(33, mask_data_buffer),
+                    buffer_binding(35, effect_stack_index_buffer),
                 ],
             )
         };
@@ -1375,6 +1431,7 @@ pub(super) fn create_bind_groups(
                 bgl_adjust_creative,
                 &[
                     buffer_binding(0, camera_uniforms_buffer),
+                    texture_binding(22, input),
                     texture_binding(24, input),
                     texture_binding(25, output),
                     texture_binding(30, display_linear_view),
@@ -1382,6 +1439,7 @@ pub(super) fn create_bind_groups(
                     sampler_binding(28, mask_sampler),
                     buffer_binding(33, mask_data_buffer),
                     texture_binding(34, light_rays_mask_view),
+                    buffer_binding(35, effect_stack_index_buffer),
                 ],
             )
         };
@@ -1445,6 +1503,11 @@ pub(super) fn create_bind_groups(
         bg_mask_blur_2,
         bg_mask_blur_3,
         bg_mask_blur_4,
+        bg_mask_blur_reverse_0,
+        bg_mask_blur_reverse_1,
+        bg_mask_blur_reverse_2,
+        bg_mask_blur_reverse_3,
+        bg_mask_blur_reverse_4,
         bg_glow_prepare,
         bg_glow_blur_0,
         bg_glow_blur_1,
@@ -1629,7 +1692,6 @@ pub(super) struct StageIndices {
     pub(super) adjustment_tone_pass_index: usize,
     pub(super) adjustment_effects_pass_index: usize,
     pub(super) mask_blur_start_index: usize,
-    pub(super) mask_blur_end_index: usize,
     pub(super) glow_prepare_pass_index: usize,
     pub(super) glow_blur_start_index: usize,
     pub(super) glow_blur_end_index: usize,
@@ -1639,6 +1701,8 @@ pub(super) struct StageIndices {
 
 pub(super) struct AssembledPasses {
     pub(super) passes: Vec<Pass>,
+    pub(super) reverse_mask_blur_passes: Vec<Pass>,
+    pub(super) stack_effect_passes: Vec<Pass>,
     pub(super) post_blur_glow_passes: Vec<Pass>,
     pub(super) post_blur_creative_pass: Pass,
     pub(super) post_blur_render_pass: Pass,
@@ -1757,6 +1821,11 @@ pub(super) fn assemble_passes(
         bg_mask_blur_2,
         bg_mask_blur_3,
         bg_mask_blur_4,
+        bg_mask_blur_reverse_0,
+        bg_mask_blur_reverse_1,
+        bg_mask_blur_reverse_2,
+        bg_mask_blur_reverse_3,
+        bg_mask_blur_reverse_4,
         bg_glow_prepare,
         bg_glow_blur_0,
         bg_glow_blur_1,
@@ -2115,6 +2184,44 @@ pub(super) fn assemble_passes(
         ),
     ]);
 
+    let stack_effect_pass_index = passes.len();
+    passes.push(assembler.make_pass(
+        creative_effects_module.as_ref(),
+        "apply_effect_stack_entry",
+        bgl_adjust_creative,
+        bg_adjust_creative.clone(),
+        image_workgroups,
+    ));
+
+    let reverse_mask_blur_groups = [
+        bg_mask_blur_reverse_0,
+        bg_mask_blur_reverse_1,
+        bg_mask_blur_reverse_2,
+        bg_mask_blur_reverse_3,
+        bg_mask_blur_reverse_4,
+    ];
+    let reverse_mask_blur_passes = reverse_mask_blur_groups
+        .iter()
+        .enumerate()
+        .map(|(offset, bind_group)| Pass {
+            pipeline: passes[mask_blur_start_index + offset].pipeline.clone(),
+            bind_group: (*bind_group).clone(),
+            workgroups: image_workgroups,
+        })
+        .collect();
+    let stack_effect_passes = vec![
+        Pass {
+            pipeline: passes[stack_effect_pass_index].pipeline.clone(),
+            bind_group: bg_adjust_creative.clone(),
+            workgroups: image_workgroups,
+        },
+        Pass {
+            pipeline: passes[stack_effect_pass_index].pipeline.clone(),
+            bind_group: bg_adjust_creative_after_blur.clone(),
+            workgroups: image_workgroups,
+        },
+    ];
+
     let post_blur_glow_passes = vec![
         Pass {
             pipeline: passes[glow_prepare_pass_index].pipeline.clone(),
@@ -2171,6 +2278,8 @@ pub(super) fn assemble_passes(
 
     Ok(AssembledPasses {
         passes,
+        reverse_mask_blur_passes,
+        stack_effect_passes,
         post_blur_glow_passes,
         post_blur_creative_pass,
         post_blur_render_pass,
@@ -2188,7 +2297,6 @@ pub(super) fn assemble_passes(
             adjustment_tone_pass_index,
             adjustment_effects_pass_index,
             mask_blur_start_index,
-            mask_blur_end_index,
             glow_prepare_pass_index,
             glow_blur_start_index,
             glow_blur_end_index,

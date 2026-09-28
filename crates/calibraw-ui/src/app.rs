@@ -1061,8 +1061,10 @@ pub(crate) struct DevelopUiState {
     pub(crate) white_balance_picker_drag: Option<[[f32; 2]; 2]>,
     pub(crate) adjustment_section: AdjustmentSection,
     pub(crate) mask_section: MaskSection,
-    pub(crate) effect_component: Option<crate::pipeline::MaskEffect>,
-    pub(crate) mask_effect_component: Option<crate::pipeline::MaskEffect>,
+    /// Selected effect-stack entry. An index, rather than an effect kind, is
+    /// required because a stack may contain the same effect more than once.
+    pub(crate) effect_component: Option<usize>,
+    pub(crate) mask_effect_component: Option<usize>,
     pub(crate) mask_effect_mask: Option<usize>,
     pub(crate) tone_curve_tab: ToneCurveTab,
     pub(crate) color_grade_tab: ColorGradeTab,

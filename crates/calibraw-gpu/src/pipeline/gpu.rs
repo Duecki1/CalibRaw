@@ -184,7 +184,7 @@ fn expected_pass_count(cfa_kind: CfaKind) -> usize {
         CfaKind::Bayer => 6,
         CfaKind::XTrans => 10,
     };
-    1 + demosaic_passes + COLOR_DENOISE_ENTRY_POINTS.len() + 4 + 18
+    1 + demosaic_passes + COLOR_DENOISE_ENTRY_POINTS.len() + 4 + 19
 }
 
 const SHADER_BAYER_RCD_P1: &str = include_str!("../shaders/pass1.wgsl");
@@ -1281,14 +1281,6 @@ fn pack_effect_params(ctx: &GpuParamContext<'_>, mask_data: &[MaskData]) -> Effe
         full_height,
         ..
     } = ctx.tile;
-    let local_glow_radius = mask_data
-        .iter()
-        .filter(|mask| {
-            mask.metadata[0] != 0
-                && mask.metadata[3] >> MASK_EFFECT_ID_SHIFT == MaskEffect::Glow.shader_id()
-        })
-        .map(|mask| mask.adjust_0[1])
-        .fold(0.0_f32, f32::max);
     let global_glow_radius = if exposure.glow_amount.abs() > 1e-6 {
         exposure.glow_radius.clamp(0.0, 100.0)
     } else {
@@ -1298,7 +1290,7 @@ fn pack_effect_params(ctx: &GpuParamContext<'_>, mask_data: &[MaskData]) -> Effe
         presence: [exposure.texture, exposure.clarity, exposure.dehaze, 0.0],
         creative_effects: [
             exposure.glow_amount.clamp(0.0, 100.0),
-            global_glow_radius.max(local_glow_radius),
+            global_glow_radius,
             exposure.glow_threshold.clamp(0.0, 100.0),
             exposure.sharpen_amount.clamp(0.0, 150.0),
         ],
@@ -1539,36 +1531,31 @@ impl GpuParams {
             return true;
         }
         let local_count = (self.scene_tone.mask_counts[0] as usize).min(MAX_RENDER_MASK_SLOTS);
-        self.mask_data[..local_count].iter().any(|mask| {
-            mask.metadata[0] != 0
-                && (mask.metadata[3] >> MASK_EFFECT_ID_SHIFT == MaskEffect::Glow.shader_id()
-                    || mask.film_effects[0] > 1e-6)
-        })
+        self.mask_data[..local_count]
+            .iter()
+            .any(|mask| mask.metadata[0] != 0 && mask.film_effects[0] > 1e-6)
     }
 
-    fn needs_blur_passes(&self) -> bool {
-        let local_count = (self.scene_tone.mask_counts[0] as usize).min(MAX_RENDER_MASK_SLOTS);
-        self.mask_data[..local_count].iter().any(|mask| {
-            if mask.metadata[0] == 0 {
-                return false;
-            }
-            matches!(
-                mask.metadata[3] >> MASK_EFFECT_ID_SHIFT,
-                id if id == MaskEffect::Blur.shader_id()
-                    || id == MaskEffect::LensBlur.shader_id()
-                    || id == MaskEffect::MotionBlur.shader_id()
-                    || id == MaskEffect::RadialBlur.shader_id()
-                    || id == MaskEffect::TiltShift.shader_id()
-            )
-        })
+    fn active_effect_stack_slots(&self) -> Vec<(usize, u32)> {
+        let count = (self.scene_tone.mask_counts[0] as usize).min(MAX_RENDER_MASK_SLOTS);
+        self.mask_data[..count]
+            .iter()
+            .enumerate()
+            .filter_map(|(index, mask)| {
+                let effect_id = mask.metadata[3] >> MASK_EFFECT_ID_SHIFT;
+                (mask.metadata[0] != 0 && mask.metadata[1] != 0 && effect_id != 0)
+                    .then_some((index, effect_id))
+            })
+            .collect()
     }
 
-    fn needs_progressive_blur_passes(&self) -> bool {
-        let local_count = (self.scene_tone.mask_counts[0] as usize).min(MAX_RENDER_MASK_SLOTS);
-        self.mask_data[..local_count].iter().any(|mask| {
-            mask.metadata[0] != 0
-                && mask.metadata[3] >> MASK_EFFECT_ID_SHIFT == MaskEffect::Blur.shader_id()
-        })
+    fn final_effect_source_is_tex1(&self) -> bool {
+        if !self.needs_intermediate_adjustment_passes() {
+            return false;
+        }
+        let pass_count =
+            self.active_effect_stack_slots().len() + usize::from(self.needs_glow_passes());
+        pass_count.is_multiple_of(2)
     }
 }
 
@@ -1748,6 +1735,8 @@ pub struct RawGpuPipeline {
     remove_composite_params_buffer: wgpu::Buffer,
     uploaded_stage_uniforms: Mutex<UploadedStageUniforms>,
     mask_data_buffer: wgpu::Buffer,
+    effect_stack_index_buffer: wgpu::Buffer,
+    effect_stack_indices_buffer: wgpu::Buffer,
     tone_histogram_buffer: wgpu::Buffer,
     tone_stats_buffer: wgpu::Buffer,
     tone_prepare_pass_index: usize,
@@ -1763,13 +1752,14 @@ pub struct RawGpuPipeline {
     adjustment_tone_pass_index: usize,
     adjustment_effects_pass_index: usize,
     mask_blur_start_index: usize,
-    mask_blur_end_index: usize,
     glow_prepare_pass_index: usize,
     glow_blur_start_index: usize,
     glow_blur_end_index: usize,
     adjustment_creative_pass_index: usize,
     adjustment_render_pass_index: usize,
     post_blur_glow_passes: Vec<Pass>,
+    reverse_mask_blur_passes: Vec<Pass>,
+    stack_effect_passes: Vec<Pass>,
     post_blur_creative_pass: Pass,
     post_blur_render_pass: Pass,
     passes: Vec<Pass>,
@@ -2361,6 +2351,8 @@ impl RawGpuPipeline {
         )?;
         let AssembledPasses {
             passes,
+            reverse_mask_blur_passes,
+            stack_effect_passes,
             post_blur_glow_passes,
             post_blur_creative_pass,
             post_blur_render_pass,
@@ -2404,6 +2396,8 @@ impl RawGpuPipeline {
                 effects: params.effects,
             }),
             mask_data_buffer: buffers.mask_data_buffer,
+            effect_stack_index_buffer: buffers.effect_stack_index_buffer,
+            effect_stack_indices_buffer: buffers.effect_stack_indices_buffer,
             tone_histogram_buffer: buffers.tone_histogram_buffer,
             tone_stats_buffer: buffers.tone_stats_buffer,
             tone_prepare_pass_index: indices.tone_prepare_pass_index,
@@ -2419,13 +2413,14 @@ impl RawGpuPipeline {
             adjustment_tone_pass_index: indices.adjustment_tone_pass_index,
             adjustment_effects_pass_index: indices.adjustment_effects_pass_index,
             mask_blur_start_index: indices.mask_blur_start_index,
-            mask_blur_end_index: indices.mask_blur_end_index,
             glow_prepare_pass_index: indices.glow_prepare_pass_index,
             glow_blur_start_index: indices.glow_blur_start_index,
             glow_blur_end_index: indices.glow_blur_end_index,
             adjustment_creative_pass_index: indices.adjustment_creative_pass_index,
             adjustment_render_pass_index: indices.adjustment_render_pass_index,
             post_blur_glow_passes,
+            reverse_mask_blur_passes,
+            stack_effect_passes,
             post_blur_creative_pass,
             post_blur_render_pass,
             passes,
@@ -3004,7 +2999,7 @@ impl RawGpuPipeline {
         let render = |label| {
             let mut encoder = device
                 .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some(label) });
-            if params.needs_blur_passes() {
+            if params.final_effect_source_is_tex1() {
                 self.encode_bound_pass(&mut encoder, &self.post_blur_render_pass, label);
             } else {
                 self.encode_pass(&mut encoder, self.adjustment_render_pass_index);
@@ -3347,58 +3342,126 @@ impl RawGpuPipeline {
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         self.encode_pass(encoder, self.adjustment_prepare_pass_index);
         self.encode_pass(encoder, self.adjustment_tone_pass_index);
-        let blur_active = params.needs_blur_passes();
+        let stack = params.active_effect_stack_slots();
         if params.needs_intermediate_adjustment_passes() {
             self.encode_pass(encoder, self.adjustment_effects_pass_index - 1);
             self.encode_pass(encoder, self.adjustment_effects_pass_index);
             self.encode_pass(encoder, self.adjustment_effects_pass_index + 1);
-            if blur_active {
-                if params.needs_progressive_blur_passes() {
-                    self.encode_pass_range(
-                        encoder,
-                        self.mask_blur_start_index,
-                        self.mask_blur_end_index,
-                    );
+            // The copy above leaves the adjusted image in tex1. Every stack
+            // entry writes the opposite texture, so this flag is also the
+            // authoritative final-source selection for the render pass.
+            let mut source_is_tex1 = true;
+            for (slot, effect_id) in stack {
+                self.select_effect_stack_slot(encoder, slot);
+                if effect_id == MaskEffect::Glow.shader_id() {
+                    self.encode_selected_glow(encoder, source_is_tex1);
+                } else if effect_id == MaskEffect::Blur.shader_id() {
+                    self.encode_selected_blur(encoder, source_is_tex1, true);
+                } else if effect_id == MaskEffect::LensBlur.shader_id()
+                    || effect_id == MaskEffect::MotionBlur.shader_id()
+                    || effect_id == MaskEffect::RadialBlur.shader_id()
+                    || effect_id == MaskEffect::TiltShift.shader_id()
+                {
+                    self.encode_selected_blur(encoder, source_is_tex1, false);
                 } else {
-                    self.encode_pass(encoder, self.mask_blur_start_index);
+                    let pass = usize::from(!source_is_tex1);
+                    self.encode_bound_pass(
+                        encoder,
+                        &self.stack_effect_passes[pass],
+                        "ordered effect-stack entry",
+                    );
                 }
+                source_is_tex1 = !source_is_tex1;
             }
+
             if params.needs_glow_passes() {
-                if blur_active {
-                    for (index, pass) in self.post_blur_glow_passes.iter().enumerate() {
-                        self.encode_bound_pass(
-                            encoder,
-                            pass,
-                            &format!("post-Blur Glow pass {}", index + 1),
-                        );
-                    }
-                } else {
-                    self.encode_pass(encoder, self.glow_prepare_pass_index);
-                    self.encode_pass_range(
-                        encoder,
-                        self.glow_blur_start_index,
-                        self.glow_blur_end_index,
-                    );
-                }
+                self.select_global_creative_pass(encoder);
+                self.encode_selected_glow(encoder, source_is_tex1);
+                source_is_tex1 = !source_is_tex1;
             }
-            if blur_active {
+
+            if source_is_tex1 {
                 self.encode_bound_pass(
                     encoder,
-                    &self.post_blur_creative_pass,
-                    "post-Blur creative pass",
+                    &self.post_blur_render_pass,
+                    "effect-stack render pass from tex1",
                 );
             } else {
-                self.encode_pass(encoder, self.adjustment_creative_pass_index);
+                self.encode_pass(encoder, self.adjustment_render_pass_index);
             }
+        } else {
+            // With no intermediate work, the tone stage leaves its result in tex2.
+            self.encode_pass(encoder, self.adjustment_render_pass_index);
         }
-        if blur_active {
-            self.encode_bound_pass(
+    }
+
+    fn select_effect_stack_slot(&self, encoder: &mut wgpu::CommandEncoder, slot: usize) {
+        debug_assert!(slot < MAX_RENDER_MASK_SLOTS);
+        encoder.copy_buffer_to_buffer(
+            &self.effect_stack_indices_buffer,
+            (slot * std::mem::size_of::<u32>()) as u64,
+            &self.effect_stack_index_buffer,
+            0,
+            std::mem::size_of::<u32>() as u64,
+        );
+    }
+
+    fn select_global_creative_pass(&self, encoder: &mut wgpu::CommandEncoder) {
+        encoder.copy_buffer_to_buffer(
+            &self.effect_stack_indices_buffer,
+            (MAX_RENDER_MASK_SLOTS * std::mem::size_of::<u32>()) as u64,
+            &self.effect_stack_index_buffer,
+            0,
+            std::mem::size_of::<u32>() as u64,
+        );
+    }
+
+    fn encode_selected_blur(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        source_is_tex1: bool,
+        progressive: bool,
+    ) {
+        let count = if progressive { 5 } else { 1 };
+        if source_is_tex1 {
+            self.encode_pass_range(
                 encoder,
-                &self.post_blur_render_pass,
-                "post-Blur render pass",
+                self.mask_blur_start_index,
+                self.mask_blur_start_index + count,
             );
         } else {
-            self.encode_pass(encoder, self.adjustment_render_pass_index);
+            for (index, pass) in self.reverse_mask_blur_passes[..count].iter().enumerate() {
+                self.encode_bound_pass(
+                    encoder,
+                    pass,
+                    &format!("reverse ordered Blur pass {}", index + 1),
+                );
+            }
+        }
+    }
+
+    fn encode_selected_glow(&self, encoder: &mut wgpu::CommandEncoder, source_is_tex1: bool) {
+        if source_is_tex1 {
+            self.encode_pass(encoder, self.glow_prepare_pass_index);
+            self.encode_pass_range(
+                encoder,
+                self.glow_blur_start_index,
+                self.glow_blur_end_index,
+            );
+            self.encode_pass(encoder, self.adjustment_creative_pass_index);
+        } else {
+            for (index, pass) in self.post_blur_glow_passes.iter().enumerate() {
+                self.encode_bound_pass(
+                    encoder,
+                    pass,
+                    &format!("reverse ordered Glow pass {}", index + 1),
+                );
+            }
+            self.encode_bound_pass(
+                encoder,
+                &self.post_blur_creative_pass,
+                "reverse ordered Glow composite",
+            );
         }
     }
 

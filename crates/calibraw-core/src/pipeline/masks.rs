@@ -872,6 +872,16 @@ impl EffectComponent {
     }
 }
 
+/// Moves a complete effect entry, including its enabled state and private
+/// settings. Stack order is render order.
+pub fn move_effect_component(components: &mut [EffectComponent], from: usize, to: usize) -> bool {
+    if from == to || from >= components.len() || to >= components.len() {
+        return false;
+    }
+    components.swap(from, to);
+    true
+}
+
 #[derive(Clone, Debug, Default, PartialEq, serde::Deserialize, serde::Serialize)]
 pub struct MaskStack {
     pub masks: Vec<LocalMask>,

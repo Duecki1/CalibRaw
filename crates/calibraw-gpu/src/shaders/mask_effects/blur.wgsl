@@ -53,57 +53,52 @@ fn apply_mask_blur_stage(
     source_rgb: vec3<f32>,
     stage: u32,
 ) -> vec3<f32> {
-    var retained_source = 1.0;
-    let count = min(Common::scene_tone_uniforms.mask_counts.x, Common::MAX_RENDER_MASK_SLOTS);
-    for (var index = 0u; index < count; index = index + 1u) {
-        let state = Common::mask_data[index].metadata;
-        if state.x == 0u || state.y == 0u
-            || Common::mask_effect_id(state) != MASK_EFFECT_BLUR_ID {
-            continue;
-        }
-
-        let primary = Common::mask_data[index].adjust_0_field;
-        let stage_mix = mask_blur_stage_mix(primary.y, stage);
-        if stage_mix <= 1e-6 { continue; }
-        let coverage = SceneAdjustments::local_mask_weight(pos, index);
-        let amount = clamp(primary.x / 100.0, 0.0, 1.0) * coverage;
-        if amount <= 1e-6 { continue; }
-
-        let mix_sum = mask_blur_stage_mix_sum(primary.y);
-        let stage_share = stage_mix / max(mix_sum, 1e-6);
-        let distributed_amount = min(amount, 0.995);
-        let stage_amount = 1.0 - pow(1.0 - distributed_amount, stage_share);
-        retained_source = retained_source * (1.0 - stage_amount);
+    let index = effect_stack_index;
+    if index >= Common::MAX_RENDER_MASK_SLOTS {
+        return source_rgb;
     }
-    let combined_amount = 1.0 - retained_source;
     var rgb = source_rgb;
-    if combined_amount > 1e-6 {
-        rgb = mix(source_rgb, mask_blur_diffused_at(pos, stage), combined_amount);
+    {
+        let state = Common::mask_data[index].metadata;
+        if state.x != 0u && state.y != 0u
+            && Common::mask_effect_id(state) == MASK_EFFECT_BLUR_ID {
+            let primary = Common::mask_data[index].adjust_0_field;
+            let stage_mix = mask_blur_stage_mix(primary.y, stage);
+            let coverage = SceneAdjustments::local_mask_weight(pos, index);
+            let amount = clamp(primary.x / 100.0, 0.0, 1.0) * coverage;
+            if stage_mix > 1e-6 && amount > 1e-6 {
+                let mix_sum = mask_blur_stage_mix_sum(primary.y);
+                let stage_share = stage_mix / max(mix_sum, 1e-6);
+                let distributed_amount = min(amount, 0.995);
+                let stage_amount = 1.0 - pow(1.0 - distributed_amount, stage_share);
+                rgb = mix(source_rgb, mask_blur_diffused_at(pos, stage), stage_amount);
+            }
+        }
     }
 
     if stage != 0u {
         return rgb;
     }
-    for (var index = 0u; index < count; index = index + 1u) {
+    {
         let state = Common::mask_data[index].metadata;
-        if state.x == 0u || state.y == 0u { continue; }
+        if state.x == 0u || state.y == 0u { return rgb; }
         let effect_id = Common::mask_effect_id(state);
         if effect_id != MASK_EFFECT_LENS_BLUR_ID
             && effect_id != MASK_EFFECT_MOTION_BLUR_ID
             && effect_id != MASK_EFFECT_RADIAL_BLUR_ID
             && effect_id != MASK_EFFECT_TILT_SHIFT_ID {
-            continue;
+            return rgb;
         }
 
         let primary = Common::mask_data[index].adjust_0_field;
         let secondary = Common::mask_data[index].adjust_1_field;
-        if primary.y <= 1e-6 { continue; }
+        if primary.y <= 1e-6 { return rgb; }
         var amount = clamp(primary.x / 100.0, 0.0, 1.0)
             * SceneAdjustments::local_mask_weight(pos, index);
         if effect_id == MASK_EFFECT_TILT_SHIFT_ID {
             amount = amount * mask_tilt_shift_weight(pos, primary, secondary);
         }
-        if amount <= 1e-6 { continue; }
+        if amount <= 1e-6 { return rgb; }
 
         var adjusted = source_rgb;
         if effect_id == MASK_EFFECT_LENS_BLUR_ID {

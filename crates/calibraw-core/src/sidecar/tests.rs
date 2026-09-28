@@ -547,12 +547,19 @@ fn effect_components_round_trip_through_the_sidecar() {
     let mut glow = crate::pipeline::EffectComponent::new(crate::pipeline::MaskEffect::Glow);
     glow.settings.glow.amount = 30.0;
     glow.enabled = false;
-    masks.masks[0].effect_components = vec![blur.clone(), glow.clone()];
+    let mut second_glow = crate::pipeline::EffectComponent::new(crate::pipeline::MaskEffect::Glow);
+    second_glow.settings.glow.amount = 85.0;
+    second_glow.settings.glow.radius = 92.0;
+    masks.masks[0].effect_components = vec![glow.clone(), blur.clone(), second_glow.clone()];
     masks.global_effects.push(blur);
 
     let loaded = decode(&encode(edits.clone()).unwrap()).unwrap();
     assert_eq!(loaded.edits, edits);
-    assert_eq!(loaded.edits.masks.masks[0].effect_components[1], glow);
+    assert_eq!(loaded.edits.masks.masks[0].effect_components[0], glow);
+    assert_eq!(
+        loaded.edits.masks.masks[0].effect_components[2],
+        second_glow
+    );
 }
 
 #[test]

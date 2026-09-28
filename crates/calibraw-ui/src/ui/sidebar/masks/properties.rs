@@ -3,26 +3,19 @@ use super::*;
 impl Sidebar {
     pub(crate) fn effect_creation_menu(
         ui: &mut Ui,
-        components: &[crate::pipeline::EffectComponent],
+        _components: &[crate::pipeline::EffectComponent],
     ) -> Option<MaskEffect> {
         let mut selected = None;
         for category in MaskEffectCategory::ALL {
-            if !MaskEffect::ALL.iter().any(|effect| {
-                effect.category() == Some(category)
-                    && !components
-                        .iter()
-                        .any(|component| component.effect == *effect)
-            }) {
+            if !MaskEffect::ALL
+                .iter()
+                .any(|effect| effect.category() == Some(category))
+            {
                 continue;
             }
             ui.menu_button(category.label(), |ui| {
                 for effect in MaskEffect::ALL {
-                    if effect.category() == Some(category)
-                        && !components
-                            .iter()
-                            .any(|component| component.effect == effect)
-                        && ui.button(effect.label()).clicked()
-                    {
+                    if effect.category() == Some(category) && ui.button(effect.label()).clicked() {
                         selected = Some(effect);
                         ui.close();
                     }
@@ -162,9 +155,42 @@ impl Sidebar {
         is_fullscreen_mask: bool,
     ) -> bool {
         let mut changed = false;
-        let mut remove = None;
+        let mut action = None;
+        let component_count = components.len();
         for (index, component) in components.iter_mut().enumerate() {
             ui.push_id(index, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label(format!("{} of {}", index + 1, component_count))
+                        .on_hover_text("Effects render from top to bottom");
+                    if ui
+                        .add_enabled_ui(index > 0, |ui| {
+                            crate::ui::icons::phosphor_icon_button(
+                                ui,
+                                egui_phosphor::regular::CARET_UP,
+                                egui::vec2(24.0, 24.0),
+                                "Move effect up",
+                            )
+                        })
+                        .inner
+                        .clicked()
+                    {
+                        action = Some((index, index - 1));
+                    }
+                    if ui
+                        .add_enabled_ui(index + 1 < component_count, |ui| {
+                            crate::ui::icons::phosphor_icon_button(
+                                ui,
+                                egui_phosphor::regular::CARET_DOWN,
+                                egui::vec2(24.0, 24.0),
+                                "Move effect down",
+                            )
+                        })
+                        .inner
+                        .clicked()
+                    {
+                        action = Some((index, index + 1));
+                    }
+                });
                 let mut remove_component = false;
                 changed |= Self::show_effect_component_settings(
                     ui,
@@ -173,12 +199,16 @@ impl Sidebar {
                     is_fullscreen_mask,
                 );
                 if remove_component {
-                    remove = Some(index);
+                    action = Some((index, usize::MAX));
                 }
             });
         }
-        if let Some(index) = remove {
-            components.remove(index);
+        if let Some((from, to)) = action {
+            if to == usize::MAX {
+                components.remove(from);
+            } else {
+                crate::pipeline::move_effect_component(components, from, to);
+            }
             changed = true;
         }
         if components.len() < crate::pipeline::MAX_EFFECT_COMPONENTS {
@@ -195,19 +225,54 @@ impl Sidebar {
     pub(crate) fn show_selected_effect_component(
         ui: &mut Ui,
         components: &mut Vec<crate::pipeline::EffectComponent>,
-        selection: &mut Option<MaskEffect>,
+        selection: &mut Option<usize>,
         is_fullscreen_mask: bool,
     ) -> bool {
-        let Some(effect) = *selection else {
+        let Some(index) = *selection else {
             return false;
         };
-        let Some(index) = components
-            .iter()
-            .position(|component| component.effect == effect)
-        else {
+        if index >= components.len() {
             *selection = None;
             return false;
-        };
+        }
+        let mut move_to = None;
+        ui.horizontal(|ui| {
+            ui.label(format!("Effect {} of {}", index + 1, components.len()))
+                .on_hover_text("Effects render from left to right");
+            if ui
+                .add_enabled_ui(index > 0, |ui| {
+                    crate::ui::icons::phosphor_icon_button(
+                        ui,
+                        egui_phosphor::regular::CARET_UP,
+                        egui::vec2(26.0, 26.0),
+                        "Move effect earlier",
+                    )
+                })
+                .inner
+                .clicked()
+            {
+                move_to = Some(index - 1);
+            }
+            if ui
+                .add_enabled_ui(index + 1 < components.len(), |ui| {
+                    crate::ui::icons::phosphor_icon_button(
+                        ui,
+                        egui_phosphor::regular::CARET_DOWN,
+                        egui::vec2(26.0, 26.0),
+                        "Move effect later",
+                    )
+                })
+                .inner
+                .clicked()
+            {
+                move_to = Some(index + 1);
+            }
+        });
+        if let Some(to) = move_to {
+            crate::pipeline::move_effect_component(components, index, to);
+            *selection = Some(to);
+            return true;
+        }
         let mut remove = false;
         let changed = ui
             .push_id(index, |ui| {
