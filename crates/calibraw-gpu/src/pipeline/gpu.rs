@@ -3337,6 +3337,7 @@ impl RawGpuPipeline {
         }
     }
 
+    // Order: masked effects in mask/stack order, global components, built-in global effects.
     fn encode_output_stage(&self, encoder: &mut wgpu::CommandEncoder, params: &GpuParams) {
         self.output_revision
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);

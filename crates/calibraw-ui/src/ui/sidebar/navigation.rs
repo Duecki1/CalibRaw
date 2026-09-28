@@ -438,7 +438,7 @@ impl Sidebar {
     fn show_mobile_effect_tabs(
         ui: &mut Ui,
         components: &mut Vec<crate::pipeline::EffectComponent>,
-        selection: &mut Option<usize>,
+        selection: &mut Option<u64>,
         tab_height: f32,
         show_labels: bool,
     ) -> bool {
@@ -448,13 +448,13 @@ impl Sidebar {
         for (index, component) in components.iter().enumerate() {
             let effect = component.effect;
             let clicked = ui
-                .push_id(("effect-component-tab", index), |ui| {
+                .push_id(("effect-component-tab", component.id), |ui| {
                     Self::mobile_icon_tab(
                         ui,
                         regular::SPARKLE,
                         effect.label(),
                         show_labels,
-                        *selection == Some(index),
+                        *selection == Some(component.id),
                         egui::vec2(Self::CONTEXT_TAB_WIDTH, tab_height),
                         effect.label(),
                     )
@@ -466,7 +466,7 @@ impl Sidebar {
             }
         }
         if let Some(index) = selected_tab {
-            *selection = Some(index);
+            *selection = Some(components[index].id);
         }
 
         if components.len() >= crate::pipeline::MAX_EFFECT_COMPONENTS {
@@ -491,7 +491,7 @@ impl Sidebar {
         });
         if let Some(effect) = added {
             components.push(crate::pipeline::EffectComponent::new(effect));
-            *selection = Some(components.len() - 1);
+            *selection = components.last().map(|component| component.id);
             return true;
         }
         false

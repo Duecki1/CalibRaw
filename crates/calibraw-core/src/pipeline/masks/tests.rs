@@ -197,6 +197,10 @@ fn duplicate_delete_and_selection_use_shared_stack_rules() {
     stack.add_mask(MaskKind::Radial);
     stack.masks[0].common.rename("Source");
     stack.masks[0].adjustments.exposure = 1.25;
+    stack.masks[0]
+        .effect_components
+        .push(EffectComponent::new(MaskEffect::Glow));
+    let source_effect_id = stack.masks[0].effect_components[0].id;
     assert!(stack.duplicate_mask(0, true));
     assert_eq!(stack.selected_mask, Some(1));
     assert_eq!(stack.selected_component, Some(0));
@@ -204,6 +208,7 @@ fn duplicate_delete_and_selection_use_shared_stack_rules() {
     assert!(stack.masks[1].invert);
     assert_eq!(stack.masks[1].adjustments, LocalAdjustments::default());
     assert_eq!(stack.masks[1].components, stack.masks[0].components);
+    assert_ne!(stack.masks[1].effect_components[0].id, source_effect_id);
 
     stack.select_mask(0);
     stack.add_component(MaskKind::Linear, MaskCombineMode::Subtract);
@@ -1668,9 +1673,10 @@ fn duplicate_effects_reorder_without_sharing_or_resetting_settings() {
     second.settings.glow.radius = 90.0;
     let mut effects = vec![first.clone(), blur.clone(), second.clone()];
 
-    assert!(move_effect_component(&mut effects, 2, 1));
-    assert_eq!(effects, vec![first, second, blur]);
-    assert!(!effects[0].enabled);
-    assert_eq!(effects[0].settings.glow.radius, 15.0);
+    assert!(move_effect_component(&mut effects, 0, 2));
+    assert_eq!(effects, vec![blur, second, first]);
+    assert_eq!(effects[0].settings.blur.amount, 45.0);
     assert_eq!(effects[1].settings.glow.radius, 90.0);
+    assert!(!effects[2].enabled);
+    assert_eq!(effects[2].settings.glow.radius, 15.0);
 }

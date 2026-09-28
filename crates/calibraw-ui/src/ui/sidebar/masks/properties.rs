@@ -158,17 +158,17 @@ impl Sidebar {
         let mut action = None;
         let component_count = components.len();
         for (index, component) in components.iter_mut().enumerate() {
-            ui.push_id(index, |ui| {
+            ui.push_id(component.id, |ui| {
                 ui.horizontal(|ui| {
                     ui.label(format!("{} of {}", index + 1, component_count))
-                        .on_hover_text("Effects render from top to bottom");
+                        .on_hover_text("Effects are processed in stack order.");
                     if ui
                         .add_enabled_ui(index > 0, |ui| {
                             crate::ui::icons::phosphor_icon_button(
                                 ui,
                                 egui_phosphor::regular::CARET_UP,
                                 egui::vec2(24.0, 24.0),
-                                "Move effect up",
+                                "Move effect earlier",
                             )
                         })
                         .inner
@@ -182,7 +182,7 @@ impl Sidebar {
                                 ui,
                                 egui_phosphor::regular::CARET_DOWN,
                                 egui::vec2(24.0, 24.0),
-                                "Move effect down",
+                                "Move effect later",
                             )
                         })
                         .inner
@@ -225,20 +225,20 @@ impl Sidebar {
     pub(crate) fn show_selected_effect_component(
         ui: &mut Ui,
         components: &mut Vec<crate::pipeline::EffectComponent>,
-        selection: &mut Option<usize>,
+        selection: &mut Option<u64>,
         is_fullscreen_mask: bool,
     ) -> bool {
-        let Some(index) = *selection else {
+        let Some(selected_id) = *selection else {
             return false;
         };
-        if index >= components.len() {
+        let Some(index) = components.iter().position(|component| component.id == selected_id) else {
             *selection = None;
             return false;
-        }
+        };
         let mut move_to = None;
         ui.horizontal(|ui| {
             ui.label(format!("Effect {} of {}", index + 1, components.len()))
-                .on_hover_text("Effects render from left to right");
+                .on_hover_text("Effects are processed in stack order.");
             if ui
                 .add_enabled_ui(index > 0, |ui| {
                     crate::ui::icons::phosphor_icon_button(
@@ -270,12 +270,12 @@ impl Sidebar {
         });
         if let Some(to) = move_to {
             crate::pipeline::move_effect_component(components, index, to);
-            *selection = Some(to);
             return true;
         }
         let mut remove = false;
+        let component_id = components[index].id;
         let changed = ui
-            .push_id(index, |ui| {
+            .push_id(component_id, |ui| {
                 Self::show_effect_component_settings(
                     ui,
                     &mut components[index],

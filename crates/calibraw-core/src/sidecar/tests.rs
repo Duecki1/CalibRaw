@@ -563,6 +563,46 @@ fn effect_components_round_trip_through_the_sidecar() {
 }
 
 #[test]
+fn legacy_effect_components_without_ids_load_with_unique_ids() {
+    let mut edits = sample_edits();
+    let masks = Arc::make_mut(&mut edits.masks);
+    masks.add_mask(MaskKind::Fullscreen).unwrap();
+    masks.masks[0]
+        .effect_components
+        .push(crate::pipeline::EffectComponent::new(crate::pipeline::MaskEffect::Glow));
+    masks.masks[0]
+        .effect_components
+        .push(crate::pipeline::EffectComponent::new(crate::pipeline::MaskEffect::Blur));
+    masks
+        .global_effects
+        .push(crate::pipeline::EffectComponent::new(crate::pipeline::MaskEffect::Fog));
+
+    let mut document: serde_json::Value = serde_json::from_slice(&encode(edits).unwrap()).unwrap();
+    for component in document["edits"]["masks"]["masks"][0]["effect_components"]
+        .as_array_mut()
+        .unwrap()
+    {
+        component.as_object_mut().unwrap().remove("id");
+    }
+    for component in document["edits"]["masks"]["global_effects"]
+        .as_array_mut()
+        .unwrap()
+    {
+        component.as_object_mut().unwrap().remove("id");
+    }
+
+    let loaded = decode(&serde_json::to_vec(&document).unwrap()).unwrap();
+    let local = &loaded.edits.masks.masks[0].effect_components;
+    let global = &loaded.edits.masks.global_effects;
+    assert_ne!(local[0].id, 0);
+    assert_ne!(local[1].id, 0);
+    assert_ne!(global[0].id, 0);
+    assert_ne!(local[0].id, local[1].id);
+    assert_ne!(local[0].id, global[0].id);
+    assert_ne!(local[1].id, global[0].id);
+}
+
+#[test]
 fn glow_mask_settings_round_trip_through_the_sidecar() {
     let mut edits = sample_edits();
     let masks = Arc::make_mut(&mut edits.masks);

@@ -2,6 +2,7 @@ use half::f16;
 use rayon::prelude::*;
 use std::f32::consts::TAU;
 use std::ops::{Deref, DerefMut};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 mod effects;
@@ -17,6 +18,8 @@ pub use effects::{
 pub const MAX_LOCAL_MASKS: usize = 32;
 pub const MAX_EFFECT_COMPONENTS: usize = 12;
 pub const MAX_MASK_COMPONENTS: usize = 64;
+
+static NEXT_EFFECT_COMPONENT_ID: AtomicU64 = AtomicU64::new(1);
 pub const MAX_PATH_POINTS: usize = 256;
 pub const MASK_ATLAS_EDGE_DESKTOP: u32 = 2048;
 pub const MASK_ATLAS_EDGE_ANDROID: u32 = 1024;
@@ -790,11 +793,9 @@ impl LocalMask {
             if self.effect_components.len() >= MAX_EFFECT_COMPONENTS {
                 return;
             }
-            self.effect_components.push(EffectComponent {
-                effect: self.effect,
-                enabled: true,
-                settings: std::mem::take(&mut self.effect_settings),
-            });
+            let mut component = EffectComponent::new(self.effect);
+            component.settings = std::mem::take(&mut self.effect_settings);
+            self.effect_components.push(component);
             if !self.adjustments.is_neutral() {
                 self.adjustments_enabled = false;
             }
@@ -811,12 +812,7 @@ impl LocalMask {
                 .iter()
                 .any(EffectComponent::is_active)
             || (self.effect != MaskEffect::Adjustment
-                && EffectComponent {
-                    effect: self.effect,
-                    enabled: true,
-                    settings: self.effect_settings,
-                }
-                .is_active())
+                && EffectComponent::effect_is_active(self.effect, &self.effect_settings))
     }
 
     pub fn has_light_rays_effect(&self) -> bool {
@@ -830,6 +826,11 @@ impl LocalMask {
 
 #[derive(Clone, Debug, PartialEq, serde::Deserialize, serde::Serialize)]
 pub struct EffectComponent {
+    #[serde(
+        default = "new_effect_component_id",
+        deserialize_with = "deserialize_effect_component_id"
+    )]
+    pub id: u64,
     pub effect: MaskEffect,
     #[serde(default = "default_enabled")]
     pub enabled: bool,
@@ -841,9 +842,23 @@ const fn default_enabled() -> bool {
     true
 }
 
+fn new_effect_component_id() -> u64 {
+    NEXT_EFFECT_COMPONENT_ID.fetch_add(1, Ordering::Relaxed)
+}
+
+fn deserialize_effect_component_id<'de, D>(deserializer: D) -> Result<u64, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let id = <u64 as serde::Deserialize>::deserialize(deserializer)?;
+    NEXT_EFFECT_COMPONENT_ID.fetch_max(id.saturating_add(1), Ordering::Relaxed);
+    Ok(id)
+}
+
 impl EffectComponent {
     pub fn new(effect: MaskEffect) -> Self {
         Self {
+            id: new_effect_component_id(),
             effect,
             enabled: true,
             settings: MaskEffectSettings::default(),
@@ -851,34 +866,36 @@ impl EffectComponent {
     }
 
     pub fn is_active(&self) -> bool {
-        if !self.enabled {
-            return false;
-        }
-        match self.effect {
+        self.enabled && Self::effect_is_active(self.effect, &self.settings)
+    }
+
+    fn effect_is_active(effect: MaskEffect, settings: &MaskEffectSettings) -> bool {
+        match effect {
             MaskEffect::Adjustment => false,
-            MaskEffect::Blur => self.settings.blur.is_active(),
-            MaskEffect::LensBlur => self.settings.lens_blur.is_active(),
-            MaskEffect::MotionBlur => self.settings.motion_blur.is_active(),
-            MaskEffect::RadialBlur => self.settings.radial_blur.is_active(),
-            MaskEffect::TiltShift => self.settings.tilt_shift.is_active(),
-            MaskEffect::Glow => self.settings.glow.is_active(),
-            MaskEffect::LightRays => self.settings.light_rays.is_active(),
-            MaskEffect::Neon => self.settings.neon.is_active(),
-            MaskEffect::EdgeGlow => self.settings.edge_glow.is_active(),
-            MaskEffect::Pixelate => self.settings.pixelate.is_active(),
-            MaskEffect::Fog => self.settings.fog.is_active(),
-            MaskEffect::Smoke => self.settings.smoke.is_active(),
+            MaskEffect::Blur => settings.blur.is_active(),
+            MaskEffect::LensBlur => settings.lens_blur.is_active(),
+            MaskEffect::MotionBlur => settings.motion_blur.is_active(),
+            MaskEffect::RadialBlur => settings.radial_blur.is_active(),
+            MaskEffect::TiltShift => settings.tilt_shift.is_active(),
+            MaskEffect::Glow => settings.glow.is_active(),
+            MaskEffect::LightRays => settings.light_rays.is_active(),
+            MaskEffect::Neon => settings.neon.is_active(),
+            MaskEffect::EdgeGlow => settings.edge_glow.is_active(),
+            MaskEffect::Pixelate => settings.pixelate.is_active(),
+            MaskEffect::Fog => settings.fog.is_active(),
+            MaskEffect::Smoke => settings.smoke.is_active(),
         }
     }
 }
 
 /// Moves a complete effect entry, including its enabled state and private
 /// settings. Stack order is render order.
-pub fn move_effect_component(components: &mut [EffectComponent], from: usize, to: usize) -> bool {
+pub fn move_effect_component(components: &mut Vec<EffectComponent>, from: usize, to: usize) -> bool {
     if from == to || from >= components.len() || to >= components.len() {
         return false;
     }
-    components.swap(from, to);
+    let component = components.remove(from);
+    components.insert(to, component);
     true
 }
 
@@ -1230,6 +1247,9 @@ impl MaskStack {
         mask.name = copied_name(&mask.name, |candidate| {
             self.masks.iter().any(|mask| mask.name == candidate)
         });
+        for component in &mut mask.effect_components {
+            component.id = new_effect_component_id();
+        }
         if invert {
             mask.common.toggle_invert();
             mask.adjustments.reset();
