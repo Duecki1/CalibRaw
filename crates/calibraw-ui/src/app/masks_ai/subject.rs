@@ -34,69 +34,128 @@ impl CalibRawApp {
 
     pub(crate) fn request_subject_mask(&mut self, frame: &eframe::Frame) {
         self.ai.object_error_dialog = None;
+        self.request_generated_mask(AiMaskModel::Subject, frame);
+    }
+
+    pub(crate) fn request_sky_mask(&mut self, frame: &eframe::Frame) {
+        self.request_generated_mask(AiMaskModel::Sky, frame);
+    }
+
+    pub(crate) fn request_depth_mask(&mut self, frame: &eframe::Frame) {
+        self.request_generated_mask(AiMaskModel::Depth, frame);
+    }
+
+    fn request_generated_mask(&mut self, model: AiMaskModel, frame: &eframe::Frame) {
         if self.foreground_operation_active() {
             self.ui.notice =
                 Some("Finish or cancel the current editing operation first.".to_owned());
             return;
         }
-        if let Some(mask) = self.masks.subject_cache.clone() {
-            self.apply_subject_mask(mask);
+        if let Some(mask) = self.masks.generated_cache_mut(model).clone() {
+            self.apply_generated_mask(model, mask);
             return;
         }
-        #[cfg(not(target_os = "android"))]
-        if !self.validate_onnx_runtime_for_ai() {
+        if !self.ai_runtime_ready() {
             return;
         }
         if let Err(error) = self.capture_mask_source(frame) {
             self.report_ai_mask_error(error);
             return;
         }
-        let path = self.birefnet_model_path();
-        let runtime_download_needed = self.automatic_onnx_runtime_download_needed();
-        if crate::ai_masks::birefnet_model_is_verified(self.ai.birefnet_quality, &path)
-            && !runtime_download_needed
-        {
-            if matches!(self.ai.consent, AiConsentState::Subject { .. }) {
-                self.ai.consent = AiConsentState::None;
-            }
-            self.start_subject_worker(path, false);
-        } else {
-            self.ai.consent = AiConsentState::Subject {
-                runtime_download_needed,
-            };
+        self.prepare_generated_mask(model);
+    }
+
+    fn generated_model_path(&self, model: AiMaskModel) -> PathBuf {
+        match model {
+            AiMaskModel::Subject => self.birefnet_model_path(),
+            AiMaskModel::Sky => self.skyseg_model_path(),
+            AiMaskModel::Depth => self.da3_model_path(),
         }
     }
 
-    pub(in crate::app) fn start_subject_worker(
-        &mut self,
-        model_path: PathBuf,
-        allow_download: bool,
-    ) {
+    pub(super) fn generated_model_is_verified(
+        &self,
+        model: AiMaskModel,
+        path: &std::path::Path,
+    ) -> bool {
+        match model {
+            AiMaskModel::Subject => {
+                crate::ai_masks::birefnet_model_is_verified(self.ai.birefnet_quality, path)
+            }
+            AiMaskModel::Sky => crate::ai_masks::skyseg_model_is_verified(path),
+            AiMaskModel::Depth => crate::ai_masks::da3_model_is_verified(path),
+        }
+    }
+
+    // Shared by new selections and explicit refreshes. Refreshes deliberately
+    // bypass the result cache after capturing the current image source.
+    pub(super) fn prepare_generated_mask(&mut self, model: AiMaskModel) {
+        let path = self.generated_model_path(model);
+        let runtime_download_needed = self.automatic_onnx_runtime_download_needed();
+        let model_download_needed = !self.generated_model_is_verified(model, &path);
+        if !model_download_needed && !runtime_download_needed {
+            self.ai.consent = AiConsentState::None;
+            self.start_generated_mask_worker(model, false);
+        } else {
+            self.ai.consent = match model {
+                AiMaskModel::Subject => AiConsentState::Subject {
+                    runtime_download_needed,
+                },
+                AiMaskModel::Sky => AiConsentState::Sky {
+                    runtime_download_needed,
+                },
+                AiMaskModel::Depth => AiConsentState::Depth {
+                    runtime_download_needed,
+                    model_download_needed,
+                },
+            };
+            self.egui_ctx.request_repaint();
+        }
+    }
+
+    fn generated_mask_progress(&self, model: AiMaskModel, inferencing: bool) -> String {
+        match (model, inferencing) {
+            (AiMaskModel::Subject, true) => format!(
+                "Running {} quality locally with {}…",
+                self.ai.birefnet_quality.label(),
+                self.ai.birefnet_quality.model().checkpoint
+            ),
+            (AiMaskModel::Subject, false) => format!(
+                "Preparing {} download…",
+                self.ai.birefnet_quality.model().download_label
+            ),
+            (AiMaskModel::Sky, true) => "Running SkySeg U2Net locally…".to_owned(),
+            (AiMaskModel::Sky, false) => "Preparing SkySeg U2Net download…".to_owned(),
+            (AiMaskModel::Depth, true) => "Running Depth Anything 3 locally…".to_owned(),
+            (AiMaskModel::Depth, false) => "Preparing Depth Anything 3 download…".to_owned(),
+        }
+    }
+
+    pub(super) fn start_generated_mask_worker(&mut self, model: AiMaskModel, allow_download: bool) {
         if self.foreground_operation_active() {
             return;
         }
         let Some(source) = self.masks.source_cache.clone() else {
-            self.ui.notice =
-                Some("The preview could not be prepared for subject selection.".to_owned());
+            self.ui.notice = Some(format!(
+                "The preview could not be prepared for {} selection.",
+                model.noun()
+            ));
             return;
         };
+        let model_path = self.generated_model_path(model);
+        let model_present = self.generated_model_is_verified(model, &model_path);
         #[cfg(not(target_os = "android"))]
         let (runtime_path, runtime_sha256) = self.onnx_runtime_for_ai();
         #[cfg(target_os = "android")]
-        let runtime_path = None;
-        #[cfg(target_os = "android")]
-        let runtime_sha256 = None;
-
-        let model_present =
-            crate::ai_masks::birefnet_model_is_verified(self.ai.birefnet_quality, &model_path);
+        let (runtime_path, runtime_sha256) = (None, None);
         #[cfg(not(target_os = "android"))]
-        let crop_refinement = self.ai.subject_crop_refinement;
+        let crop_refinement = model == AiMaskModel::Subject && self.ai.subject_crop_refinement;
         #[cfg(target_os = "android")]
         let crop_refinement = false;
         let cancellation = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let receiver = spawn_ai_mask(
             AiMaskWorkerRequest {
-                model: crate::ai_masks::AiMaskModel::Subject,
+                model,
                 quality: self.ai.birefnet_quality,
                 crop_refinement,
                 model_path,
@@ -109,220 +168,39 @@ impl CalibRawApp {
             },
             Arc::clone(&cancellation),
         );
-        let progress = ForegroundProgress::indeterminate(if model_present {
-            format!(
-                "Running {} quality locally with {}…",
-                self.ai.birefnet_quality.label(),
-                self.ai.birefnet_quality.model().checkpoint
-            )
-        } else {
-            format!(
-                "Preparing {} download…",
-                self.ai.birefnet_quality.model().download_label
-            )
-        });
         self.begin_foreground_operation(ForegroundOperation {
-            kind: ForegroundOperationKind::SubjectMask,
-            document_id: self.persistence.sidecar_generation,
-            cancellation,
-            progress,
-            cancelling: false,
-            receiver: ForegroundOperationReceiver::AiMask(receiver),
-            context: ForegroundOperationContext::AiMask,
-        });
-    }
-
-    pub(in crate::app) fn apply_subject_mask(&mut self, mask: MaskImage) {
-        self.masks.subject_cache = Some(mask.clone());
-        for local_mask in &mut self.masks.stack.masks {
-            for component in &mut local_mask.components {
-                if matches!(component.kind, MaskKind::Subject | MaskKind::Background) {
-                    if let crate::pipeline::MaskGeometry::Ai { mask: target, .. } =
-                        &mut component.geometry
-                    {
-                        *target = Some(mask.clone());
-                    }
-                }
-            }
-        }
-        self.mark_all_mask_layers_dirty();
-        self.blink_selected_mask();
-    }
-
-    pub(crate) fn request_sky_mask(&mut self, frame: &eframe::Frame) {
-        if self.foreground_operation_active() {
-            self.ui.notice =
-                Some("Finish or cancel the current editing operation first.".to_owned());
-            return;
-        }
-        if let Some(mask) = self.masks.sky_cache.clone() {
-            self.apply_sky_mask(mask);
-            return;
-        }
-        #[cfg(not(target_os = "android"))]
-        if !self.validate_onnx_runtime_for_ai() {
-            return;
-        }
-        if let Err(error) = self.capture_mask_source(frame) {
-            self.report_ai_mask_error(error);
-            return;
-        }
-        let path = self.skyseg_model_path();
-        let runtime_download_needed = self.automatic_onnx_runtime_download_needed();
-        if crate::ai_masks::skyseg_model_is_verified(&path) && !runtime_download_needed {
-            self.start_sky_worker(path, false);
-        } else {
-            self.ai.consent = AiConsentState::Sky {
-                runtime_download_needed,
-            };
-        }
-    }
-
-    pub(in crate::app) fn start_sky_worker(&mut self, model_path: PathBuf, allow_download: bool) {
-        if self.foreground_operation_active() {
-            return;
-        }
-        let Some(source) = self.masks.source_cache.clone() else {
-            self.ui.notice =
-                Some("The preview could not be prepared for sky selection.".to_owned());
-            return;
-        };
-        #[cfg(not(target_os = "android"))]
-        let (runtime_path, runtime_sha256) = self.onnx_runtime_for_ai();
-        #[cfg(target_os = "android")]
-        let (runtime_path, runtime_sha256) = (None, None);
-        let model_present = crate::ai_masks::skyseg_model_is_verified(&model_path);
-        let cancellation = Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let receiver = spawn_ai_mask(
-            AiMaskWorkerRequest {
-                model: crate::ai_masks::AiMaskModel::Sky,
-                quality: self.ai.birefnet_quality,
-                crop_refinement: false,
-                model_path,
-                allow_download,
-                runtime_path,
-                runtime_sha256,
-                width: source.width,
-                height: source.height,
-                rgba: source.rgba.to_vec(),
+            kind: match model {
+                AiMaskModel::Subject => ForegroundOperationKind::SubjectMask,
+                AiMaskModel::Sky => ForegroundOperationKind::SkyMask,
+                AiMaskModel::Depth => ForegroundOperationKind::DepthMask,
             },
-            Arc::clone(&cancellation),
-        );
-        self.begin_foreground_operation(ForegroundOperation {
-            kind: ForegroundOperationKind::SkyMask,
             document_id: self.persistence.sidecar_generation,
             cancellation,
-            progress: ForegroundProgress::indeterminate(if model_present {
-                "Running SkySeg U2Net locally…"
-            } else {
-                "Preparing SkySeg U2Net download…"
-            }),
+            progress: ForegroundProgress::indeterminate(
+                self.generated_mask_progress(model, model_present),
+            ),
             cancelling: false,
             receiver: ForegroundOperationReceiver::AiMask(receiver),
             context: ForegroundOperationContext::AiMask,
         });
     }
 
-    pub(in crate::app) fn apply_sky_mask(&mut self, mask: MaskImage) {
-        self.masks.sky_cache = Some(mask.clone());
-        for local_mask in &mut self.masks.stack.masks {
-            for component in &mut local_mask.components {
-                if component.kind == MaskKind::Sky {
-                    if let MaskGeometry::Ai { mask: target, .. } = &mut component.geometry {
-                        *target = Some(mask.clone());
+    pub(super) fn apply_generated_mask(&mut self, model: AiMaskModel, mask: MaskImage) {
+        *self.masks.generated_cache_mut(model) = Some(mask.clone());
+        for component in self
+            .masks
+            .stack
+            .masks
+            .iter_mut()
+            .flat_map(|mask| &mut mask.components)
+        {
+            if generated_mask_model(component.kind) == Some(model) {
+                match &mut component.geometry {
+                    MaskGeometry::Ai { mask: target, .. }
+                    | MaskGeometry::DepthRange { depth: target, .. } => {
+                        *target = Some(mask.clone())
                     }
-                }
-            }
-        }
-        self.mark_all_mask_layers_dirty();
-        self.blink_selected_mask();
-    }
-
-    pub(crate) fn request_depth_mask(&mut self, frame: &eframe::Frame) {
-        if self.foreground_operation_active() {
-            self.ui.notice =
-                Some("Finish or cancel the current editing operation first.".to_owned());
-            return;
-        }
-        if let Some(depth) = self.masks.depth_cache.clone() {
-            self.apply_depth_mask(depth);
-            return;
-        }
-        #[cfg(not(target_os = "android"))]
-        if !self.validate_onnx_runtime_for_ai() {
-            return;
-        }
-        if let Err(error) = self.capture_mask_source(frame) {
-            self.report_ai_mask_error(error);
-            return;
-        }
-        let path = self.da3_model_path();
-        let runtime_download_needed = self.automatic_onnx_runtime_download_needed();
-        let model_download_needed = !crate::ai_masks::da3_model_is_verified(&path);
-        if !model_download_needed && !runtime_download_needed {
-            self.start_depth_worker(path, false);
-        } else {
-            self.ai.consent = AiConsentState::Depth {
-                runtime_download_needed,
-                model_download_needed,
-            };
-        }
-    }
-
-    pub(in crate::app) fn start_depth_worker(&mut self, model_path: PathBuf, allow_download: bool) {
-        if self.foreground_operation_active() {
-            return;
-        }
-        let Some(source) = self.masks.source_cache.clone() else {
-            self.ui.notice =
-                Some("The preview could not be prepared for depth selection.".to_owned());
-            return;
-        };
-        #[cfg(not(target_os = "android"))]
-        let (runtime_path, runtime_sha256) = self.onnx_runtime_for_ai();
-        #[cfg(target_os = "android")]
-        let (runtime_path, runtime_sha256) = (None, None);
-        let model_present = crate::ai_masks::da3_model_is_verified(&model_path);
-        let cancellation = Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let receiver = spawn_ai_mask(
-            AiMaskWorkerRequest {
-                model: crate::ai_masks::AiMaskModel::Depth,
-                quality: self.ai.birefnet_quality,
-                crop_refinement: false,
-                model_path,
-                allow_download,
-                runtime_path,
-                runtime_sha256,
-                width: source.width,
-                height: source.height,
-                rgba: source.rgba.to_vec(),
-            },
-            Arc::clone(&cancellation),
-        );
-        self.begin_foreground_operation(ForegroundOperation {
-            kind: ForegroundOperationKind::DepthMask,
-            document_id: self.persistence.sidecar_generation,
-            cancellation,
-            progress: ForegroundProgress::indeterminate(if model_present {
-                "Running Depth Anything 3 locally…"
-            } else {
-                "Preparing Depth Anything 3 download…"
-            }),
-            cancelling: false,
-            receiver: ForegroundOperationReceiver::AiMask(receiver),
-            context: ForegroundOperationContext::AiMask,
-        });
-    }
-
-    pub(in crate::app) fn apply_depth_mask(&mut self, depth: MaskImage) {
-        self.masks.depth_cache = Some(depth.clone());
-        for local_mask in &mut self.masks.stack.masks {
-            for component in &mut local_mask.components {
-                if component.kind == MaskKind::DepthRange {
-                    if let MaskGeometry::DepthRange { depth: target, .. } = &mut component.geometry
-                    {
-                        *target = Some(depth.clone());
-                    }
+                    _ => {}
                 }
             }
         }
@@ -345,9 +223,9 @@ impl CalibRawApp {
             return;
         };
         let model = match operation.kind {
-            ForegroundOperationKind::SubjectMask => crate::ai_masks::AiMaskModel::Subject,
-            ForegroundOperationKind::SkyMask => crate::ai_masks::AiMaskModel::Sky,
-            ForegroundOperationKind::DepthMask => crate::ai_masks::AiMaskModel::Depth,
+            ForegroundOperationKind::SubjectMask => AiMaskModel::Subject,
+            ForegroundOperationKind::SkyMask => AiMaskModel::Sky,
+            ForegroundOperationKind::DepthMask => AiMaskModel::Depth,
             _ => {
                 self.foreground_operation = Some(operation);
                 return;
@@ -378,20 +256,9 @@ impl CalibRawApp {
                     ));
                 }
                 AiMaskEvent::Inferencing => {
-                    let message = match model {
-                        crate::ai_masks::AiMaskModel::Subject => format!(
-                            "Running {} quality locally with {}…",
-                            self.ai.birefnet_quality.label(),
-                            self.ai.birefnet_quality.model().checkpoint
-                        ),
-                        crate::ai_masks::AiMaskModel::Sky => {
-                            "Running SkySeg U2Net locally…".to_owned()
-                        }
-                        crate::ai_masks::AiMaskModel::Depth => {
-                            "Running Depth Anything 3 locally…".to_owned()
-                        }
-                    };
-                    operation.progress = ForegroundProgress::indeterminate(message);
+                    operation.progress = ForegroundProgress::indeterminate(
+                        self.generated_mask_progress(model, true),
+                    );
                 }
                 AiMaskEvent::Finished(result) => finished = Some(result),
             }
@@ -408,8 +275,7 @@ impl CalibRawApp {
         };
 
         let updating_all = self.ai.mask_update_active
-            && (model != crate::ai_masks::AiMaskModel::Subject
-                || self.ai.mask_update_subject_pending);
+            && (model != AiMaskModel::Subject || self.ai.mask_update_subject_pending);
         let cancelled = operation.is_cancelled();
         let stale = operation.document_id != self.persistence.sidecar_generation;
 
@@ -419,11 +285,7 @@ impl CalibRawApp {
             match result {
                 Ok(result) => {
                     if let Some(mask) = result.into_probability_mask() {
-                        match model {
-                            crate::ai_masks::AiMaskModel::Subject => self.apply_subject_mask(mask),
-                            crate::ai_masks::AiMaskModel::Sky => self.apply_sky_mask(mask),
-                            crate::ai_masks::AiMaskModel::Depth => self.apply_depth_mask(mask),
-                        }
+                        self.apply_generated_mask(model, mask);
                         succeeded = true;
                     } else {
                         error_message = Some(format!(
@@ -442,7 +304,7 @@ impl CalibRawApp {
             if cancelled || stale {
                 self.cancel_ai_mask_update();
             } else {
-                if model == crate::ai_masks::AiMaskModel::Subject {
+                if model == AiMaskModel::Subject {
                     self.ai.mask_update_subject_pending = false;
                 }
                 self.ai.mask_update_failed |= !succeeded;
@@ -465,5 +327,79 @@ impl CalibRawApp {
             self.ui.notice = Some(message);
         }
         self.egui_ctx.request_repaint();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn generated_worker_results_route_by_model_and_reject_cancelled_or_stale_jobs() {
+        for (model, kind) in [
+            (AiMaskModel::Subject, ForegroundOperationKind::SubjectMask),
+            (AiMaskModel::Sky, ForegroundOperationKind::SkyMask),
+            (AiMaskModel::Depth, ForegroundOperationKind::DepthMask),
+        ] {
+            for (cancelled, stale) in [(false, false), (true, false), (false, true)] {
+                let mut app = CalibRawApp::empty(&egui::Context::default());
+                for mask_kind in [
+                    MaskKind::Subject,
+                    MaskKind::Background,
+                    MaskKind::Sky,
+                    MaskKind::DepthRange,
+                ] {
+                    app.masks.stack.add_mask(mask_kind).unwrap();
+                }
+                let pixels = vec![0, 85, 170, 255];
+                let (sender, receiver) = std::sync::mpsc::channel();
+                sender.send(AiMaskEvent::Inferencing).unwrap();
+                sender
+                    .send(AiMaskEvent::Finished(Ok(crate::ai_masks::AiMaskResult {
+                        width: 2,
+                        height: 2,
+                        mask: pixels.clone(),
+                    })))
+                    .unwrap();
+                assert!(app.begin_foreground_operation(ForegroundOperation {
+                    kind,
+                    document_id: app
+                        .persistence
+                        .sidecar_generation
+                        .wrapping_add(u64::from(stale)),
+                    cancellation: Arc::new(std::sync::atomic::AtomicBool::new(cancelled)),
+                    progress: ForegroundProgress::indeterminate("Testing mask result"),
+                    cancelling: false,
+                    receiver: ForegroundOperationReceiver::AiMask(receiver),
+                    context: ForegroundOperationContext::AiMask,
+                }));
+                app.poll_ai_mask_worker();
+                assert!(!app.foreground_operation_active());
+                let accepted = !cancelled && !stale;
+                assert_eq!(
+                    app.masks.generated_cache_mut(model).as_ref(),
+                    accepted
+                        .then(|| MaskImage::new(2, 2, pixels.clone()).unwrap())
+                        .as_ref()
+                );
+                for component in app
+                    .masks
+                    .stack
+                    .masks
+                    .iter()
+                    .flat_map(|mask| &mask.components)
+                {
+                    assert_eq!(
+                        component.geometry.is_initialized(),
+                        accepted && generated_mask_model(component.kind) == Some(model)
+                    );
+                }
+                for other_model in [AiMaskModel::Subject, AiMaskModel::Sky, AiMaskModel::Depth] {
+                    if other_model != model {
+                        assert!(app.masks.generated_cache_mut(other_model).is_none());
+                    }
+                }
+            }
+        }
     }
 }

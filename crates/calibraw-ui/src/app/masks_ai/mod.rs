@@ -1,4 +1,14 @@
 use super::*;
+use crate::ai_masks::AiMaskModel;
+
+fn generated_mask_model(kind: MaskKind) -> Option<AiMaskModel> {
+    match kind {
+        MaskKind::Subject | MaskKind::Background => Some(AiMaskModel::Subject),
+        MaskKind::Sky => Some(AiMaskModel::Sky),
+        MaskKind::DepthRange => Some(AiMaskModel::Depth),
+        _ => None,
+    }
+}
 
 #[cfg(not(target_os = "android"))]
 const AI_MASK_SOURCE_MAX_EDGE: u32 = 4096;

@@ -1,6 +1,14 @@
 use super::*;
 
 impl MaskState {
+    pub(super) fn generated_cache_mut(&mut self, model: AiMaskModel) -> &mut Option<MaskImage> {
+        match model {
+            AiMaskModel::Subject => &mut self.subject_cache,
+            AiMaskModel::Sky => &mut self.sky_cache,
+            AiMaskModel::Depth => &mut self.depth_cache,
+        }
+    }
+
     pub(in crate::app) fn clear_generated_caches(&mut self) {
         self.subject_cache = None;
         self.sky_cache = None;
@@ -8,35 +16,19 @@ impl MaskState {
     }
 
     pub(in crate::app) fn restore_generated_caches(&mut self) {
-        self.clear_generated_caches();
-        for component in self.stack.masks.iter().flat_map(|mask| &mask.components) {
-            match (component.kind, &component.geometry) {
-                (
-                    MaskKind::Subject | MaskKind::Background,
-                    MaskGeometry::Ai {
-                        mask: Some(mask), ..
-                    },
-                ) => {
-                    self.subject_cache.get_or_insert_with(|| mask.clone());
-                }
-                (
-                    MaskKind::Sky,
-                    MaskGeometry::Ai {
-                        mask: Some(mask), ..
-                    },
-                ) => {
-                    self.sky_cache.get_or_insert_with(|| mask.clone());
-                }
-                (
-                    MaskKind::DepthRange,
-                    MaskGeometry::DepthRange {
-                        depth: Some(depth), ..
-                    },
-                ) => {
-                    self.depth_cache.get_or_insert_with(|| depth.clone());
-                }
-                _ => {}
-            }
+        for model in [AiMaskModel::Subject, AiMaskModel::Sky, AiMaskModel::Depth] {
+            let cached = self
+                .stack
+                .masks
+                .iter()
+                .flat_map(|mask| &mask.components)
+                .filter(|component| generated_mask_model(component.kind) == Some(model))
+                .find_map(|component| match &component.geometry {
+                    MaskGeometry::Ai { mask, .. }
+                    | MaskGeometry::DepthRange { depth: mask, .. } => mask.clone(),
+                    _ => None,
+                });
+            *self.generated_cache_mut(model) = cached;
         }
     }
 
@@ -616,21 +608,7 @@ impl CalibRawApp {
         self.ai.mask_update_failed = false;
 
         if update_subject {
-            let path = self.birefnet_model_path();
-            let runtime_download_needed = self.automatic_onnx_runtime_download_needed();
-            if crate::ai_masks::birefnet_model_is_verified(self.ai.birefnet_quality, &path)
-                && !runtime_download_needed
-            {
-                if matches!(self.ai.consent, AiConsentState::Subject { .. }) {
-                    self.ai.consent = AiConsentState::None;
-                }
-                self.start_subject_worker(path, false);
-            } else {
-                self.ai.consent = AiConsentState::Subject {
-                    runtime_download_needed,
-                };
-                self.egui_ctx.request_repaint();
-            }
+            self.prepare_generated_mask(AiMaskModel::Subject);
         } else {
             self.continue_ai_mask_update();
         }
@@ -675,36 +653,10 @@ impl CalibRawApp {
                 continue;
             }
 
-            if self.masks.stack.masks[mask_index].components[component_index].kind == MaskKind::Sky
-            {
-                let path = self.skyseg_model_path();
-                let runtime_download_needed = self.automatic_onnx_runtime_download_needed();
-                if crate::ai_masks::skyseg_model_is_verified(&path) && !runtime_download_needed {
-                    self.start_sky_worker(path, false);
-                } else {
-                    self.ai.consent = AiConsentState::Sky {
-                        runtime_download_needed,
-                    };
-                    self.egui_ctx.request_repaint();
-                }
-                return;
-            }
-
-            if self.masks.stack.masks[mask_index].components[component_index].kind
-                == MaskKind::DepthRange
-            {
-                let path = self.da3_model_path();
-                let runtime_download_needed = self.automatic_onnx_runtime_download_needed();
-                let model_download_needed = !crate::ai_masks::da3_model_is_verified(&path);
-                if !model_download_needed && !runtime_download_needed {
-                    self.start_depth_worker(path, false);
-                } else {
-                    self.ai.consent = AiConsentState::Depth {
-                        runtime_download_needed,
-                        model_download_needed,
-                    };
-                    self.egui_ctx.request_repaint();
-                }
+            if let Some(model) = generated_mask_model(
+                self.masks.stack.masks[mask_index].components[component_index].kind,
+            ) {
+                self.prepare_generated_mask(model);
                 return;
             }
 
@@ -820,9 +772,9 @@ mod tests {
         let subject = MaskImage::new(2, 2, vec![0, 255, 255, 0]).unwrap();
         let sky = MaskImage::new(2, 2, vec![255, 255, 0, 0]).unwrap();
         let depth = MaskImage::new(2, 2, vec![0, 85, 170, 255]).unwrap();
-        app.apply_subject_mask(subject.clone());
-        app.apply_sky_mask(sky.clone());
-        app.apply_depth_mask(depth.clone());
+        app.apply_generated_mask(AiMaskModel::Subject, subject.clone());
+        app.apply_generated_mask(AiMaskModel::Sky, sky.clone());
+        app.apply_generated_mask(AiMaskModel::Depth, depth.clone());
         assert_eq!(app.masks.subject_cache.as_ref(), Some(&subject));
         assert_eq!(app.masks.sky_cache.as_ref(), Some(&sky));
         assert_eq!(app.masks.depth_cache.as_ref(), Some(&depth));
