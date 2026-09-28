@@ -1,181 +1,120 @@
 use super::*;
 
 impl CalibRawApp {
-    pub(in crate::app) fn show_subject_dialogs(&mut self, ctx: &egui::Context) {
-        if let AiConsentState::Depth {
-            runtime_download_needed,
-            model_download_needed,
-        } = self.ai.consent
-        {
-            let runtime_ready = self.ai_runtime_ready();
-            let mut action = crate::ui::theme::DialogAction::None;
-            let title = match (model_download_needed, runtime_download_needed) {
-                (true, true) => "Download depth model and ONNX Runtime?",
-                (true, false) => "Download depth-selection model?",
-                (false, true) => "Download ONNX Runtime?",
-                (false, false) => "Prepare depth selection?",
-            };
-            crate::ui::theme::dialog_window(
-                title, ctx, crate::ui::theme::DIALOG_WIDTH_LARGE,
-            ).show_with_footer(
+    fn show_generated_mask_dialog(&mut self, ctx: &egui::Context) {
+        let (model, runtime_download_needed, model_download_needed) = match self.ai.consent {
+            AiConsentState::Subject {
+                runtime_download_needed,
+            } => (
+                AiMaskModel::Subject,
+                runtime_download_needed,
+                !self
+                    .generated_model_is_verified(AiMaskModel::Subject, &self.birefnet_model_path()),
+            ),
+            AiConsentState::Sky {
+                runtime_download_needed,
+            } => (
+                AiMaskModel::Sky,
+                runtime_download_needed,
+                !self.generated_model_is_verified(AiMaskModel::Sky, &self.skyseg_model_path()),
+            ),
+            AiConsentState::Depth {
+                runtime_download_needed,
+                model_download_needed,
+            } => (
+                AiMaskModel::Depth,
+                runtime_download_needed,
+                model_download_needed,
+            ),
+            _ => return,
+        };
+        let title = match (model_download_needed, runtime_download_needed) {
+            (true, true) => format!("Download {} model and ONNX Runtime?", model.noun()),
+            (true, false) => format!("Download {}-selection model?", model.noun()),
+            (false, true) => "Download ONNX Runtime?".to_owned(),
+            (false, false) => format!("Prepare {} selection?", model.noun()),
+        };
+        let (summary, purpose, artifact, details) = match model {
+            AiMaskModel::Subject => {
+                let checkpoint = self.ai.birefnet_quality.model();
+                (
+                    format!("BiRefNet (~{:.0} MB)", checkpoint.bytes as f64 / 1_000_000.0),
+                    "create subject and background masks",
+                    ("Subject model artifacts", "https://huggingface.co/Duecki/CalibRaw-Artifacts/tree/main/models/briefnet"),
+                    format!("{} quality uses {} with a {} × {} input. License: MIT.",
+                        self.ai.birefnet_quality.label(), checkpoint.checkpoint,
+                        checkpoint.input_height, checkpoint.input_width),
+                )
+            }
+            AiMaskModel::Sky => (
+                "SkySeg U2Net (~176 MB)".to_owned(), "create sky masks",
+                ("Sky model artifact", "https://huggingface.co/Duecki/CalibRaw-Artifacts/tree/main/models/skyseg"),
+                "SkySeg U2Net runs locally on a 320 × 320 image and produces a sky probability mask. License: MIT.".to_owned(),
+            ),
+            AiMaskModel::Depth => (
+                "Depth Anything 3 Mono Large (~731 MB)".to_owned(), "create depth masks",
+                ("Depth model artifact", "https://huggingface.co/Duecki/CalibRaw-Artifacts/tree/main/models/da3"),
+                "Depth Anything 3 Mono Large runs locally on a 700 × 700 letterboxed image and produces relative depth. License: Apache-2.0.".to_owned(),
+            ),
+        };
+        let runtime_ready = self.ai_runtime_ready();
+        let mut action = crate::ui::theme::DialogAction::None;
+        crate::ui::theme::dialog_window(title, ctx, crate::ui::theme::DIALOG_WIDTH_LARGE)
+            .show_with_footer(
                 ctx,
                 |ui| {
                     Self::show_ai_download_summary(
-                        ui, "Depth Anything 3 Mono Large (~731 MB)", "create depth masks",
-                        model_download_needed, runtime_download_needed,
+                        ui,
+                        &summary,
+                        purpose,
+                        model_download_needed,
+                        runtime_download_needed,
                     );
                     self.show_ai_download_details(
-                        ui, "depth-download-details", model_download_needed,
+                        ui,
+                        match model {
+                            AiMaskModel::Subject => "subject-download-details",
+                            AiMaskModel::Sky => "sky-download-details",
+                            AiMaskModel::Depth => "depth-download-details",
+                        },
+                        model_download_needed,
                         runtime_download_needed,
-                        &[("Depth model artifact", "https://huggingface.co/Duecki/CalibRaw-Artifacts/tree/main/models/da3")],
-                        |ui| { ui.label("Depth Anything 3 Mono Large runs locally on a 700 × 700 letterboxed image and produces relative depth. License: Apache-2.0."); },
+                        &[artifact],
+                        |ui| {
+                            ui.label(&details);
+                        },
                     );
                     self.show_manual_runtime_warning(ui);
                 },
                 |ui| {
                     action = Self::show_ai_consent_buttons(
                         ui,
-                        if model_download_needed || runtime_download_needed { "Accept & download" } else { "Continue" },
+                        if model_download_needed || runtime_download_needed {
+                            "Accept & download"
+                        } else {
+                            "Continue"
+                        },
                         runtime_ready,
                     );
                 },
             );
-            match action {
-                crate::ui::theme::DialogAction::Confirm => {
-                    self.ai.consent = AiConsentState::None;
-                    self.start_depth_worker(self.da3_model_path(), model_download_needed);
-                }
-                crate::ui::theme::DialogAction::Cancel => {
-                    self.ai.consent = AiConsentState::None;
-                    if self.ai.mask_update_active {
-                        self.cancel_ai_mask_update();
-                    }
-                }
-                crate::ui::theme::DialogAction::None => {}
+        match action {
+            crate::ui::theme::DialogAction::Confirm => {
+                self.ai.consent = AiConsentState::None;
+                self.start_generated_mask_worker(model, model_download_needed);
             }
-        }
-        if let AiConsentState::Sky {
-            runtime_download_needed,
-        } = self.ai.consent
-        {
-            let model_download_needed =
-                !crate::ai_masks::skyseg_model_is_verified(&self.skyseg_model_path());
-            let runtime_ready = self.ai_runtime_ready();
-            let mut action = crate::ui::theme::DialogAction::None;
-            crate::ui::theme::dialog_window(
-                "Download sky-selection model?", ctx, crate::ui::theme::DIALOG_WIDTH_LARGE,
-            ).show_with_footer(
-                ctx,
-                |ui| {
-                    Self::show_ai_download_summary(
-                        ui,
-                        "SkySeg U2Net (~176 MB)",
-                        "create sky masks",
-                        model_download_needed,
-                        runtime_download_needed,
-                    );
-                    self.show_ai_download_details(
-                        ui,
-                        "sky-download-details",
-                        model_download_needed,
-                        runtime_download_needed,
-                        &[("Sky model artifact", "https://huggingface.co/Duecki/CalibRaw-Artifacts/tree/main/models/skyseg")],
-                        |ui| { ui.label("SkySeg U2Net runs locally on a 320 × 320 image and produces a sky probability mask. License: MIT."); },
-                    );
-                    self.show_manual_runtime_warning(ui);
-                },
-                |ui| {
-                    action = Self::show_ai_consent_buttons(ui,
-                        if model_download_needed || runtime_download_needed { "Accept & download" } else { "Continue" },
-                        runtime_ready);
-                },
-            );
-            match action {
-                crate::ui::theme::DialogAction::Confirm => {
-                    self.ai.consent = AiConsentState::None;
-                    self.start_sky_worker(self.skyseg_model_path(), model_download_needed);
+            crate::ui::theme::DialogAction::Cancel => {
+                self.ai.consent = AiConsentState::None;
+                if self.ai.mask_update_active {
+                    self.cancel_ai_mask_update();
                 }
-                crate::ui::theme::DialogAction::Cancel => {
-                    self.ai.consent = AiConsentState::None;
-                    if self.ai.mask_update_active {
-                        self.cancel_ai_mask_update();
-                    }
-                }
-                crate::ui::theme::DialogAction::None => {}
             }
+            crate::ui::theme::DialogAction::None => {}
         }
-        if let AiConsentState::Subject {
-            runtime_download_needed,
-        } = self.ai.consent
-        {
-            let model = self.ai.birefnet_quality.model();
-            let model_download_needed = !crate::ai_masks::birefnet_model_is_verified(
-                self.ai.birefnet_quality,
-                &self.birefnet_model_path(),
-            );
-            let title = match (model_download_needed, runtime_download_needed) {
-                (true, true) => "Download subject model and ONNX Runtime?",
-                (true, false) => "Download subject-selection model?",
-                (false, true) => "Download ONNX Runtime?",
-                (false, false) => "Prepare subject selection?",
-            };
-            let runtime_ready = self.ai_runtime_ready();
-            let mut action = crate::ui::theme::DialogAction::None;
-            crate::ui::theme::dialog_window(title, ctx, crate::ui::theme::DIALOG_WIDTH_LARGE)
-                .show_with_footer(
-                    ctx,
-                    |ui| {
-                        Self::show_ai_download_summary(
-                            ui,
-                            &format!("BiRefNet (~{:.0} MB)", model.bytes as f64 / 1_000_000.0),
-                            "create subject and background masks",
-                            model_download_needed,
-                            runtime_download_needed,
-                        );
-                        self.show_ai_download_details(
-                            ui,
-                            "subject-download-details",
-                            model_download_needed,
-                            runtime_download_needed,
-                            &[("Subject model artifacts", "https://huggingface.co/Duecki/CalibRaw-Artifacts/tree/main/models/briefnet")],
-                            |ui| {
-                                ui.label(format!(
-                                    "{} quality uses {} with a {} × {} input. License: MIT.",
-                                    self.ai.birefnet_quality.label(),
-                                    model.checkpoint,
-                                    model.input_height,
-                                    model.input_width,
-                                ));
-                            },
-                        );
-                        self.show_manual_runtime_warning(ui);
-                    },
-                    |ui| {
-                        action = Self::show_ai_consent_buttons(
-                            ui,
-                            if model_download_needed || runtime_download_needed {
-                                "Accept & download"
-                            } else {
-                                "Continue"
-                            },
-                            runtime_ready,
-                        );
-                    },
-                );
-            match action {
-                crate::ui::theme::DialogAction::Confirm => {
-                    self.ai.consent = AiConsentState::None;
-                    self.start_subject_worker(self.birefnet_model_path(), model_download_needed);
-                }
-                crate::ui::theme::DialogAction::Cancel => {
-                    self.ai.consent = AiConsentState::None;
-                    if self.ai.mask_update_active {
-                        self.cancel_ai_mask_update();
-                    }
-                }
-                crate::ui::theme::DialogAction::None => {}
-            }
-        }
+    }
+
+    pub(in crate::app) fn show_subject_dialogs(&mut self, ctx: &egui::Context) {
+        self.show_generated_mask_dialog(ctx);
 
         if let AiConsentState::Object {
             runtime_download_needed,
