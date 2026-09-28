@@ -438,6 +438,7 @@ mod base64_arc_bytes {
 fn generated_mask(geometry: &MaskGeometry) -> Option<&Option<MaskImage>> {
     match geometry {
         MaskGeometry::Ai { mask, .. } | MaskGeometry::Object { mask, .. } => Some(mask),
+        MaskGeometry::DepthRange { depth, .. } => Some(depth),
         _ => None,
     }
 }
@@ -445,6 +446,7 @@ fn generated_mask(geometry: &MaskGeometry) -> Option<&Option<MaskImage>> {
 fn generated_mask_mut(geometry: &mut MaskGeometry) -> Option<&mut Option<MaskImage>> {
     match geometry {
         MaskGeometry::Ai { mask, .. } | MaskGeometry::Object { mask, .. } => Some(mask),
+        MaskGeometry::DepthRange { depth, .. } => Some(depth),
         _ => None,
     }
 }
@@ -597,15 +599,28 @@ fn restore_mask_assets(
         return invalid("sidecar contains too many generated mask assets");
     }
 
+    let mut decoded_bytes = 0u64;
     for mask in &edits.masks.masks {
         for component in &mask.components {
-            if generated_mask(&component.geometry).is_some_and(Option::is_some) {
+            if let MaskGeometry::DepthRange {
+                depth: Some(image), ..
+            } = &component.geometry
+            {
+                // Early depth sidecars stored inline pixels. Read them losslessly;
+                // the next save moves them into the shared PNG asset table.
+                validate_image(image.width, image.height, image.pixels.len(), 1)?;
+                decoded_bytes = decoded_bytes
+                    .checked_add(image.pixels.len() as u64)
+                    .ok_or(SidecarError::TooLarge(u64::MAX))?;
+                if decoded_bytes > MAX_DECODED_MASK_ASSET_BYTES {
+                    return invalid("generated masks exceed the decoded memory safety limit");
+                }
+            } else if generated_mask(&component.geometry).is_some_and(Option::is_some) {
                 return invalid("sidecar schema contains an inline generated mask");
             }
         }
     }
 
-    let mut decoded_bytes = 0u64;
     for asset in assets {
         let pixels = u64::from(asset.width)
             .checked_mul(u64::from(asset.height))
@@ -636,6 +651,9 @@ fn restore_mask_assets(
         };
         if generated_mask(&component.geometry).is_none() {
             return invalid("generated mask reference targets an incompatible component");
+        }
+        if generated_mask(&component.geometry).is_some_and(Option::is_some) {
+            return invalid("generated mask has both inline pixels and an asset reference");
         }
         if !locations.insert((reference.mask_index, reference.component_index)) {
             return invalid("sidecar contains duplicate references for a generated mask");
@@ -1633,6 +1651,9 @@ fn estimate_sidecar_bytes(masks: &MaskStack) -> Result<u64, SidecarError> {
                 }
                 MaskGeometry::Ai {
                     mask: Some(image), ..
+                }
+                | MaskGeometry::DepthRange {
+                    depth: Some(image), ..
                 } => add_unique_mask_asset_bound(
                     &mut estimated,
                     image,
@@ -1699,6 +1720,9 @@ fn measure_sidecar_dynamic_bytes(masks: &MaskStack) -> Result<u64, SidecarError>
                 }
                 MaskGeometry::Ai {
                     mask: Some(image), ..
+                }
+                | MaskGeometry::DepthRange {
+                    depth: Some(image), ..
                 } => add_unique_mask_asset_measured(
                     &mut measured,
                     image,

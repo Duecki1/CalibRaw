@@ -427,7 +427,12 @@ pub enum MaskGeometry {
         depth: Option<MaskImage>,
         near: f32,
         far: f32,
+        // Keep the original serialized feather as depth-range softness.
         feather: f32,
+        #[serde(default)]
+        grow: f32,
+        #[serde(default)]
+        edge_feather: f32,
     },
     Placeholder,
 }
@@ -524,6 +529,8 @@ impl MaskGeometry {
                 near: 0.0,
                 far: 0.5,
                 feather: 0.1,
+                grow: 0.0,
+                edge_feather: 0.0,
             },
         }
     }
@@ -562,7 +569,7 @@ impl MaskGeometry {
             | Self::Object { feather, .. }
             | Self::LuminanceRange { feather, .. }
             | Self::ColorRange { feather, .. } => feather,
-            Self::DepthRange { feather, .. } => feather,
+            Self::DepthRange { edge_feather, .. } => edge_feather,
             Self::Fullscreen | Self::Brush { .. } | Self::Placeholder => return false,
         };
         set_if_changed(feather, value)
@@ -1004,10 +1011,17 @@ impl MaskStack {
                         *grow *= image_scale;
                     }
                     MaskGeometry::Placeholder => {}
-                    MaskGeometry::DepthRange { depth, .. } => {
+                    MaskGeometry::DepthRange {
+                        depth,
+                        grow,
+                        edge_feather,
+                        ..
+                    } => {
                         *depth = depth
                             .as_ref()
                             .map(|image| crop_mask_image(image, u0, v0, du, dv));
+                        *grow *= image_scale;
+                        *edge_feather *= image_scale.powf(1.0 / 1.30);
                     }
                 }
             }
@@ -1679,11 +1693,34 @@ fn rasterize_component(
             near,
             far,
             feather,
+            grow,
+            edge_feather,
         } => {
             let mut coverage = rasterize_mask_image(width, height, depth);
             coverage.par_iter_mut().for_each(|value| {
                 *value = depth_range_weight(*value, *near, *far, *feather);
             });
+            if grow.abs() > 1e-5 || *edge_feather > 1e-5 {
+                // Estimate the solid core from the selected range, not raw depth:
+                // a high depth value means far away, not selected.
+                let mut selection = depth.clone();
+                selection.pixels = depth
+                    .pixels
+                    .iter()
+                    .map(|value| {
+                        (depth_range_weight(*value as f32 / 255.0, *near, *far, *feather) * 255.0)
+                            .round() as u8
+                    })
+                    .collect();
+                shape_probability_mask_from_source(
+                    &mut coverage,
+                    width,
+                    height,
+                    *grow,
+                    *edge_feather,
+                    &selection,
+                );
+            }
             coverage
         }
         _ => vec![0.0; width as usize * height as usize],
@@ -1761,6 +1798,9 @@ fn component_shape_margin_pixels(component: &MaskComponent, image_edge: f32) -> 
             shape_margin(*grow, 0.0)
         }
         MaskGeometry::Path { grow, feather, .. } => shape_margin(*grow, *feather),
+        MaskGeometry::DepthRange {
+            grow, edge_feather, ..
+        } => shape_margin(*grow, *edge_feather),
         _ => 2.0,
     }
 }

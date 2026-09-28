@@ -24,7 +24,11 @@ impl CalibRawApp {
     pub(crate) fn birefnet_quality_change_enabled(&self) -> bool {
         !matches!(
             self.foreground_operation_kind(),
-            Some(ForegroundOperationKind::SubjectMask | ForegroundOperationKind::SkyMask)
+            Some(
+                ForegroundOperationKind::SubjectMask
+                    | ForegroundOperationKind::SkyMask
+                    | ForegroundOperationKind::DepthMask
+            )
         )
     }
 
@@ -151,6 +155,10 @@ impl CalibRawApp {
                 Some("Finish or cancel the current editing operation first.".to_owned());
             return;
         }
+        if let Some(mask) = self.masks.sky_cache.clone() {
+            self.apply_sky_mask(mask);
+            return;
+        }
         #[cfg(not(target_os = "android"))]
         if !self.validate_onnx_runtime_for_ai() {
             return;
@@ -216,6 +224,7 @@ impl CalibRawApp {
     }
 
     pub(in crate::app) fn apply_sky_mask(&mut self, mask: MaskImage) {
+        self.masks.sky_cache = Some(mask.clone());
         for local_mask in &mut self.masks.stack.masks {
             for component in &mut local_mask.components {
                 if component.kind == MaskKind::Sky {
@@ -233,6 +242,10 @@ impl CalibRawApp {
         if self.foreground_operation_active() {
             self.ui.notice =
                 Some("Finish or cancel the current editing operation first.".to_owned());
+            return;
+        }
+        if let Some(depth) = self.masks.depth_cache.clone() {
+            self.apply_depth_mask(depth);
             return;
         }
         #[cfg(not(target_os = "android"))]
@@ -302,6 +315,7 @@ impl CalibRawApp {
     }
 
     pub(in crate::app) fn apply_depth_mask(&mut self, depth: MaskImage) {
+        self.masks.depth_cache = Some(depth.clone());
         for local_mask in &mut self.masks.stack.masks {
             for component in &mut local_mask.components {
                 if component.kind == MaskKind::DepthRange {
@@ -406,9 +420,7 @@ impl CalibRawApp {
                 Ok(result) => {
                     if let Some(mask) = result.into_probability_mask() {
                         match model {
-                            crate::ai_masks::AiMaskModel::Subject => {
-                                self.apply_subject_mask(mask)
-                            }
+                            crate::ai_masks::AiMaskModel::Subject => self.apply_subject_mask(mask),
                             crate::ai_masks::AiMaskModel::Sky => self.apply_sky_mask(mask),
                             crate::ai_masks::AiMaskModel::Depth => self.apply_depth_mask(mask),
                         }

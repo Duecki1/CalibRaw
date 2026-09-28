@@ -1,6 +1,45 @@
 use super::*;
 
 impl MaskState {
+    pub(in crate::app) fn clear_generated_caches(&mut self) {
+        self.subject_cache = None;
+        self.sky_cache = None;
+        self.depth_cache = None;
+    }
+
+    pub(in crate::app) fn restore_generated_caches(&mut self) {
+        self.clear_generated_caches();
+        for component in self.stack.masks.iter().flat_map(|mask| &mask.components) {
+            match (component.kind, &component.geometry) {
+                (
+                    MaskKind::Subject | MaskKind::Background,
+                    MaskGeometry::Ai {
+                        mask: Some(mask), ..
+                    },
+                ) => {
+                    self.subject_cache.get_or_insert_with(|| mask.clone());
+                }
+                (
+                    MaskKind::Sky,
+                    MaskGeometry::Ai {
+                        mask: Some(mask), ..
+                    },
+                ) => {
+                    self.sky_cache.get_or_insert_with(|| mask.clone());
+                }
+                (
+                    MaskKind::DepthRange,
+                    MaskGeometry::DepthRange {
+                        depth: Some(depth), ..
+                    },
+                ) => {
+                    self.depth_cache.get_or_insert_with(|| depth.clone());
+                }
+                _ => {}
+            }
+        }
+    }
+
     /// Clear mask interaction state and derived caches without changing the stack.
     pub(in crate::app) fn reset_transient_state(&mut self) {
         self.active_tool = None;
@@ -21,7 +60,7 @@ impl MaskState {
         self.thumbnail_component_textures.clear();
         self.thumbnail_revision = self.overlay_revision;
         self.source_cache = None;
-        self.subject_cache = None;
+        self.clear_generated_caches();
         self.dirty_layers.fill(false);
         self.detail_dirty_layers.fill(false);
         self.navigation_dirty_layers.fill(false);
@@ -446,7 +485,7 @@ impl CalibRawApp {
 
     pub(in crate::app) fn invalidate_generated_mask_sources(&mut self) {
         self.masks.source_cache = None;
-        self.masks.subject_cache = None;
+        self.masks.clear_generated_caches();
         self.ai.object_cache = None;
         if matches!(
             self.foreground_operation_kind(),
@@ -531,7 +570,7 @@ impl CalibRawApp {
 
         if update_subject || !object_targets.is_empty() || update_ranges {
             self.masks.source_cache = None;
-            self.masks.subject_cache = None;
+            self.masks.clear_generated_caches();
             self.ai.object_cache = None;
             if let Err(error) = self.capture_mask_source(frame) {
                 self.ui.notice = Some(error);
@@ -758,10 +797,94 @@ mod tests {
             thumbnail_component_textures: Vec::new(),
             source_cache: None,
             subject_cache: None,
+            sky_cache: None,
+            depth_cache: None,
             dirty_layers: [false; MAX_LOCAL_MASKS],
             detail_dirty_layers: [false; MAX_LOCAL_MASKS],
             navigation_dirty_layers: [false; MAX_LOCAL_MASKS],
         }
+    }
+
+    #[test]
+    fn generated_caches_follow_sidecar_restore_source_changes_and_reset() {
+        let ctx = egui::Context::default();
+        let mut app = CalibRawApp::empty(&ctx);
+        for kind in [
+            MaskKind::Subject,
+            MaskKind::Background,
+            MaskKind::Sky,
+            MaskKind::DepthRange,
+        ] {
+            app.masks.stack.add_mask(kind).unwrap();
+        }
+        let subject = MaskImage::new(2, 2, vec![0, 255, 255, 0]).unwrap();
+        let sky = MaskImage::new(2, 2, vec![255, 255, 0, 0]).unwrap();
+        let depth = MaskImage::new(2, 2, vec![0, 85, 170, 255]).unwrap();
+        app.apply_subject_mask(subject.clone());
+        app.apply_sky_mask(sky.clone());
+        app.apply_depth_mask(depth.clone());
+        assert_eq!(app.masks.subject_cache.as_ref(), Some(&subject));
+        assert_eq!(app.masks.sky_cache.as_ref(), Some(&sky));
+        assert_eq!(app.masks.depth_cache.as_ref(), Some(&depth));
+
+        let edits = crate::sidecar::EditState {
+            masks: Arc::new(app.masks.stack.clone()),
+            ..crate::sidecar::default_edit_state()
+        };
+        let loaded = crate::sidecar::decode(&crate::sidecar::encode(edits).unwrap()).unwrap();
+        app.masks.reset_transient_state();
+        assert!(app.masks.subject_cache.is_none());
+        assert!(app.masks.sky_cache.is_none());
+        assert!(app.masks.depth_cache.is_none());
+        app.masks.stack = (*loaded.edits.masks).clone();
+        app.rehydrate_restored_mask_state();
+        assert_eq!(app.masks.subject_cache.as_ref(), Some(&subject));
+        assert_eq!(app.masks.sky_cache.as_ref(), Some(&sky));
+        assert_eq!(app.masks.depth_cache.as_ref(), Some(&depth));
+        if let MaskGeometry::DepthRange {
+            depth: Some(restored),
+            ..
+        } = &app.masks.stack.masks[3].components[0].geometry
+        {
+            assert!(Arc::ptr_eq(
+                &restored.pixels,
+                &app.masks.depth_cache.as_ref().unwrap().pixels
+            ));
+        } else {
+            panic!("depth was not restored");
+        }
+
+        // Cached selections must work without a preview, model, or runtime.
+        let frame = eframe::Frame::_new_kittest();
+        for kind in [MaskKind::Subject, MaskKind::Sky, MaskKind::DepthRange] {
+            app.masks.stack.add_mask(kind).unwrap();
+            match kind {
+                MaskKind::Subject => app.request_subject_mask(&frame),
+                MaskKind::Sky => app.request_sky_mask(&frame),
+                MaskKind::DepthRange => app.request_depth_mask(&frame),
+                _ => unreachable!(),
+            }
+            assert!(app
+                .masks
+                .stack
+                .selected_component()
+                .unwrap()
+                .geometry
+                .is_initialized());
+            assert!(!app.foreground_operation_active());
+            assert!(!app.ai.consent.is_open());
+            assert!(app.masks.source_cache.is_none());
+        }
+
+        app.note_mask_source_changed();
+        assert!(app.ai.masks_need_update);
+        assert!(app.masks.subject_cache.is_none());
+        assert!(app.masks.sky_cache.is_none());
+        assert!(app.masks.depth_cache.is_none());
+        app.rehydrate_restored_mask_state();
+        assert!(app.masks.subject_cache.is_none());
+        assert!(app.masks.sky_cache.is_none());
+        assert!(app.masks.depth_cache.is_none());
     }
 
     #[test]

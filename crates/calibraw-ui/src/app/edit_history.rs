@@ -618,22 +618,11 @@ impl CalibRawApp {
         if restored_source.is_some() || !needs_canonical_mask_source(&self.masks.stack) {
             self.masks.source_cache = restored_source;
         }
-        self.masks.subject_cache = self.masks.stack.masks.iter().find_map(|mask| {
-            mask.components
-                .iter()
-                .find_map(|component| match &component.geometry {
-                    MaskGeometry::Ai {
-                        mask: Some(mask), ..
-                    } if matches!(
-                        component.kind,
-                        crate::pipeline::MaskKind::Subject | crate::pipeline::MaskKind::Background
-                    ) =>
-                    {
-                        Some(mask.clone())
-                    }
-                    _ => None,
-                })
-        });
+        if self.ai.masks_need_update {
+            self.masks.clear_generated_caches();
+        } else {
+            self.masks.restore_generated_caches();
+        }
         self.ai.mask_update_active = false;
         self.ai.mask_update_subject_pending = false;
         self.ai.mask_update_object_queue.clear();

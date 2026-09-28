@@ -1,6 +1,6 @@
 use crate::ai_masks::{
-    spawn_object_mask, spawn_ai_mask, BiRefNetQuality, ObjectInferenceCache, ObjectMaskEvent,
-    ObjectMaskRequest, ObjectMaskWorkerRequest, AiMaskEvent, AiMaskWorkerRequest,
+    spawn_ai_mask, spawn_object_mask, AiMaskEvent, AiMaskWorkerRequest, BiRefNetQuality,
+    ObjectInferenceCache, ObjectMaskEvent, ObjectMaskRequest, ObjectMaskWorkerRequest,
     SAM21_MODEL_BYTES_ESTIMATE,
 };
 #[cfg(not(target_os = "android"))]
@@ -1151,6 +1151,8 @@ pub(crate) struct MaskState {
     pub(crate) thumbnail_component_textures: Vec<egui::TextureHandle>,
     pub(crate) source_cache: Option<MaskRgbImage>,
     pub(crate) subject_cache: Option<MaskImage>,
+    pub(crate) sky_cache: Option<MaskImage>,
+    pub(crate) depth_cache: Option<MaskImage>,
     pub(crate) dirty_layers: [bool; MAX_LOCAL_MASKS],
     pub(crate) detail_dirty_layers: [bool; MAX_LOCAL_MASKS],
     pub(crate) navigation_dirty_layers: [bool; MAX_LOCAL_MASKS],
