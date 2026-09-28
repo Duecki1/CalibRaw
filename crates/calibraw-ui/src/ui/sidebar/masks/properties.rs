@@ -116,6 +116,12 @@ impl Sidebar {
                             *mask = saved
                         }
                         (
+                            MaskGeometry::DepthRange { depth, .. },
+                            MaskGeometry::DepthRange { depth: saved, .. },
+                        ) => {
+                            *depth = saved;
+                        }
+                        (
                             MaskGeometry::Object { mask, strokes, .. },
                             MaskGeometry::Object {
                                 mask: saved,
@@ -874,6 +880,29 @@ impl Sidebar {
                         0.0..=1.0,
                         "Softens the color-distance cutoff.",
                         0.12,
+                    );
+                }
+                MaskGeometry::DepthRange { depth, near, far, feather } => {
+                    ui.label(if depth.is_some() {
+                        "Select a range of relative depth, from near (0) to far (1)."
+                    } else {
+                        "Generate a depth map to select by distance."
+                    });
+                    if ui.button(if depth.is_some() { "Regenerate depth map" } else { "Generate depth map" }).clicked() {
+                        *request_subject = true;
+                    }
+                    geometry_changed |= adjustment_slider_with_reset(
+                        ui, "Near", near, 0.0..=1.0, 2, 0.01,
+                        Some("Nearest included relative depth."), 0.0,
+                    );
+                    geometry_changed |= adjustment_slider_with_reset(
+                        ui, "Far", far, 0.0..=1.0, 2, 0.01,
+                        Some("Farthest included relative depth."), 0.5,
+                    );
+                    if *near > *far { *far = *near; geometry_changed = true; }
+                    geometry_changed |= Self::mask_feather_slider(
+                        ui, "Range softness", feather, 0.0..=1.0,
+                        "Softens the near and far depth boundaries.", 0.1,
                     );
                 }
                 MaskGeometry::Placeholder => {

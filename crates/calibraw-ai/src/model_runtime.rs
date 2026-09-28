@@ -17,6 +17,7 @@ pub(crate) enum AiModel {
     BiRefNetMedium,
     BiRefNetHigh,
     SkySeg,
+    DepthAnything3,
     SamEncoder,
     SamDecoder,
     BigLama,

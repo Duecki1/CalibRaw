@@ -368,6 +368,23 @@ pub(super) fn validate_edit_state(edits: &EditState) -> Result<(), SidecarError>
                         validate_image(image.width, image.height, image.rgba.len(), 4)?;
                     }
                 }
+                MaskGeometry::DepthRange {
+                    depth,
+                    near,
+                    far,
+                    feather,
+                } => {
+                    finite("depth range mask", &[*near, *far, *feather])?;
+                    bounded("depth near", *near, 0.0, 1.0)?;
+                    bounded("depth far", *far, 0.0, 1.0)?;
+                    bounded("depth feather", *feather, 0.0, 1.0)?;
+                    if near > far {
+                        return invalid("depth near must not exceed depth far");
+                    }
+                    if let Some(image) = depth {
+                        validate_image(image.width, image.height, image.pixels.len(), 1)?;
+                    }
+                }
                 _ => {}
             }
         }
@@ -396,6 +413,7 @@ fn geometry_matches_kind(kind: MaskKind, geometry: &MaskGeometry) -> bool {
                 MaskGeometry::LuminanceRange { .. }
             )
             | (MaskKind::ColorRange, MaskGeometry::ColorRange { .. })
+            | (MaskKind::DepthRange, MaskGeometry::DepthRange { .. })
             | (MaskKind::DepthRange, MaskGeometry::Placeholder)
     )
 }

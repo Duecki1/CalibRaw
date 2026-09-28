@@ -33,11 +33,13 @@ fn runtime_package() -> Result<RuntimePackage> {
     let package = match (std::env::consts::OS, std::env::consts::ARCH) {
         ("linux", "x86_64") => RuntimePackage {
             platform: "linux-x86_64",
-            version: "1.29.0",
-            archive_name: "onnxruntime-linux-x64-1.29.0.tgz",
-            url: "https://huggingface.co/Duecki/CalibRaw-Artifacts/resolve/91085ce0ec322a4a7cbd20059688690218e52f9a/onnxruntime/linux-x86_64/onnxruntime-linux-x64-1.29.0.tgz",
-            bytes: 11_082_880,
-            sha256: "c3fddc4f139a045b0c4902c57410f0694f1c2fdf9b6939fbe38b1aeae7cd14ba",
+            // 1.29 registers unaccelerated CPU FP16 Gemm/MatMul kernels on x64.
+            // 1.30 restores fast FP32 promotion (onnxruntime#32301).
+            version: "1.30.0",
+            archive_name: "onnxruntime-linux-x64-1.30.0.tgz",
+            url: "https://github.com/microsoft/onnxruntime/releases/download/v1.30.0/onnxruntime-linux-x64-1.30.0.tgz",
+            bytes: 11_306_877,
+            sha256: "a5ed5a3cac51fbb2e90da632ae43d19212faaa20e76484e62bcb7c23ddb3b3fd",
             format: ArchiveFormat::TarGz,
         },
         ("linux", "aarch64") => RuntimePackage {
@@ -69,11 +71,13 @@ fn runtime_package() -> Result<RuntimePackage> {
         },
         ("windows", "x86_64") => RuntimePackage {
             platform: "windows-x86_64",
-            version: "1.29.0",
-            archive_name: "onnxruntime-win-x64-1.29.0.zip",
-            url: "https://huggingface.co/Duecki/CalibRaw-Artifacts/resolve/91085ce0ec322a4a7cbd20059688690218e52f9a/onnxruntime/windows-x86_64/onnxruntime-win-x64-1.29.0.zip",
-            bytes: 79_645_520,
-            sha256: "c9b4b7086b529ad814f428c1bad028e20a25d7dc0699836775faace4ab5b78b2",
+            // 1.29 registers unaccelerated CPU FP16 Gemm/MatMul kernels on x64.
+            // 1.30 restores fast FP32 promotion (onnxruntime#32301).
+            version: "1.30.0",
+            archive_name: "onnxruntime-win-x64-1.30.0.zip",
+            url: "https://github.com/microsoft/onnxruntime/releases/download/v1.30.0/onnxruntime-win-x64-1.30.0.zip",
+            bytes: 82_645_522,
+            sha256: "c6ba983baf5681af108599675d2a89c2d145512d02de28aed0bff177cd0ba949",
             format: ArchiveFormat::Zip,
         },
         ("windows", "aarch64") => RuntimePackage {
@@ -321,14 +325,22 @@ mod tests {
     use super::*;
 
     #[test]
-    fn supported_package_is_pinned_to_calibraw_artifacts() {
+    fn supported_package_has_a_pinned_release_and_checksum() {
         let package = runtime_package().unwrap();
-        assert!(package
-            .url
-            .starts_with("https://huggingface.co/Duecki/CalibRaw-Artifacts/resolve/"));
-        assert!(package
-            .url
-            .contains("/91085ce0ec322a4a7cbd20059688690218e52f9a/onnxruntime/"));
+        if cfg!(all(
+            target_arch = "x86_64",
+            any(target_os = "linux", target_os = "windows")
+        )) {
+            assert_eq!(package.version, "1.30.0");
+            assert!(package.url.starts_with(
+                "https://github.com/microsoft/onnxruntime/releases/download/v1.30.0/"
+            ));
+            assert!(package.url.ends_with(package.archive_name));
+        } else {
+            assert!(package.url.starts_with(
+                "https://huggingface.co/Duecki/CalibRaw-Artifacts/resolve/91085ce0ec322a4a7cbd20059688690218e52f9a/onnxruntime/"
+            ));
+        }
         assert_eq!(package.sha256.len(), 64);
         assert!(package.bytes > 1_000_000);
     }
@@ -338,6 +350,27 @@ mod tests {
         let options = runtime_download_options();
         assert!(options.attempts > 1);
         assert!(options.resume);
+    }
+
+    #[test]
+    fn runtime_upgrade_invalidates_the_previous_install() {
+        let directory = tempfile::tempdir().unwrap();
+        let library = directory.path().join("runtime-library");
+        fs::write(&library, b"old runtime").unwrap();
+        let hash = sha256_file_hex(&library).unwrap();
+        fs::write(
+            directory.path().join(INSTALL_MANIFEST),
+            format!("archive_sha256=old-release\nsha256={hash}\npath=runtime-library\n"),
+        )
+        .unwrap();
+        assert!(load_verified_install(directory.path(), "old-release")
+            .unwrap()
+            .is_some());
+        assert!(
+            load_verified_install(directory.path(), runtime_package().unwrap().sha256)
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[test]

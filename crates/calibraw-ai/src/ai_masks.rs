@@ -32,6 +32,8 @@ fn ensure_ai_not_cancelled(cancellation: &AtomicBool) -> Result<()> {
 
 pub use crate::model_artifact::sha256_file_hex;
 
+mod depth;
+
 pub const BIREFNET_LOW_MODEL_BYTES: u64 = 224_005_088;
 pub const BIREFNET_LOW_MODEL_URL: &str = "https://huggingface.co/Duecki/CalibRaw-Artifacts/resolve/91085ce0ec322a4a7cbd20059688690218e52f9a/models/briefnet/birefnet-lowQ.onnx";
 pub const BIREFNET_LOW_MODEL_SHA256_HEX: &str =
@@ -45,6 +47,19 @@ pub const BIREFNET_HIGH_MODEL_URL: &str = "https://huggingface.co/Duecki/CalibRa
 pub const BIREFNET_HIGH_MODEL_SHA256_HEX: &str =
     "db0217e99b25e0c4f6f4dca2892ff1f7ea7aba38fb6ad84f93122a4024be536a";
 pub const SKYSEG_MODEL_FILENAME: &str = "skyseg-u2net-fp32.onnx";
+pub const DA3_MODEL_FILENAME: &str = "da3mono_large_700x700.onnx";
+pub const DA3_MODEL_BYTES: u64 = 731_358_963;
+const DA3_MODEL_INSTALL: ModelInstallSpec = ModelInstallSpec {
+    artifact: ModelArtifact {
+        name: "Depth Anything 3 Mono Large",
+        url: Some("https://huggingface.co/Duecki/CalibRaw-Artifacts/resolve/4b82010fd8654fc3a1c33311ff305d793ec2f511/models/da3/da3mono_large_700x700.onnx"),
+        sha256: "71079fb3c7d3b04e9df9d157e0b3ee0e6614cb5198f0729e7b490512c4f8d667",
+        size: ArtifactSize::Exact(DA3_MODEL_BYTES),
+        progress_total: DA3_MODEL_BYTES,
+    },
+    download: BIREFNET_DOWNLOAD,
+    progress_label: "Depth Anything 3 Mono Large",
+};
 pub const SKYSEG_MODEL_BYTES: u64 = 175_997_079;
 const SKYSEG_MODEL_INSTALL: ModelInstallSpec = ModelInstallSpec {
     artifact: ModelArtifact {
@@ -220,13 +235,17 @@ pub fn skyseg_model_is_verified(path: &Path) -> bool {
     SKYSEG_MODEL_INSTALL.is_installed(path)
 }
 
+pub fn da3_model_is_verified(path: &Path) -> bool {
+    DA3_MODEL_INSTALL.is_installed(path)
+}
+
 pub fn object_models_are_verified(encoder: &Path, decoder: &Path) -> bool {
     object::SAM21_ENCODER_INSTALL.is_installed(encoder)
         && object::SAM21_DECODER_INSTALL.is_installed(decoder)
 }
 
 pub struct SubjectMaskWorkerRequest {
-    pub sky: bool,
+    pub model: SubjectMaskModel,
     pub quality: BiRefNetQuality,
     pub crop_refinement: bool,
     pub model_path: PathBuf,
@@ -236,6 +255,13 @@ pub struct SubjectMaskWorkerRequest {
     pub width: u32,
     pub height: u32,
     pub rgba: Vec<u8>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SubjectMaskModel {
+    Subject,
+    Sky,
+    Depth,
 }
 
 pub fn spawn_subject_mask(
@@ -250,7 +276,17 @@ pub fn spawn_subject_mask(
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 (|| {
                     ensure_ai_not_cancelled(&cancellation)?;
-                    if request.sky {
+                    if request.model == SubjectMaskModel::Depth {
+                        DA3_MODEL_INSTALL.ensure_installed(
+                            &request.model_path,
+                            request.allow_download,
+                            |progress| {
+                                let _ = worker_sender
+                                    .send(SubjectMaskEvent::DownloadProgress(progress));
+                            },
+                            || ensure_ai_not_cancelled(&cancellation),
+                        )?;
+                    } else if request.model == SubjectMaskModel::Sky {
                         SKYSEG_MODEL_INSTALL.ensure_installed(
                             &request.model_path,
                             request.allow_download,
@@ -417,6 +453,7 @@ pub fn initialize_runtime(
                 runtime_path.display()
             )
         })?;
+        crate::execution_provider::record_runtime_version(&runtime_load_path)?;
         anyhow::ensure!(
             builder.with_name("CalibRaw").commit(),
             "ONNX Runtime was already initialized before the selected pinned library could be committed"
@@ -495,7 +532,7 @@ fn cache_object_ai_sessions() -> bool {
 
 fn infer_subject(request: SubjectMaskWorkerRequest) -> Result<SubjectMaskResult> {
     let SubjectMaskWorkerRequest {
-        sky,
+        model,
         quality,
         crop_refinement,
         model_path,
@@ -526,10 +563,10 @@ fn infer_subject(request: SubjectMaskWorkerRequest) -> Result<SubjectMaskResult>
     initialize_runtime(runtime_path.as_deref(), runtime_sha256.as_deref())?;
     let image = ImageBuffer::<Rgba<u8>, _>::from_raw(width, height, rgba)
         .context("invalid preview image for BiRefNet")?;
-    let mask = if sky {
-        sky::sky_mask(&model_path, &image)?
-    } else {
-        subject_mask(&model_path, quality, &image, crop_refinement)?
+    let mask = match model {
+        SubjectMaskModel::Depth => depth::depth_mask(&model_path, &image)?,
+        SubjectMaskModel::Sky => sky::sky_mask(&model_path, &image)?,
+        SubjectMaskModel::Subject => subject_mask(&model_path, quality, &image, crop_refinement)?,
     };
     Ok(SubjectMaskResult {
         width,

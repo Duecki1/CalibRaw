@@ -208,6 +208,11 @@ impl CalibRawApp {
             .join(crate::ai_masks::SKYSEG_MODEL_FILENAME)
     }
 
+    pub(in crate::app) fn da3_model_path(&self) -> PathBuf {
+        self.ai_model_root()
+            .join(crate::ai_masks::DA3_MODEL_FILENAME)
+    }
+
     pub(in crate::app) fn big_lama_model_path(&self) -> PathBuf {
         self.ai_model_root()
             .join(crate::remove::BIG_LAMA_MODEL_FILENAME)

@@ -24,6 +24,7 @@ fn common_mask_properties_mutate_through_shared_model_api() {
         MaskKind::Object,
         MaskKind::LuminanceRange,
         MaskKind::ColorRange,
+        MaskKind::DepthRange,
     ] {
         stack.clear();
         stack.add_mask(kind);
@@ -46,6 +47,7 @@ fn common_mask_properties_mutate_through_shared_model_api() {
             | MaskGeometry::Object { feather, .. }
             | MaskGeometry::LuminanceRange { feather, .. }
             | MaskGeometry::ColorRange { feather, .. } => *feather,
+            MaskGeometry::DepthRange { feather, .. } => *feather,
             _ => unreachable!("tested mask kind must expose feather"),
         };
         assert_eq!(feather, 0.37);
@@ -1413,6 +1415,32 @@ fn subtract_component_removes_coverage() {
     }
     let layer = stack.rasterize_layer(0, 64, 64, 100, 100);
     assert!(layer[32 * 64 + 32] < 32);
+}
+
+#[test]
+fn depth_range_selects_near_values_and_combines_with_other_components() {
+    let mut stack = MaskStack::default();
+    stack.add_mask(MaskKind::DepthRange);
+    if let MaskGeometry::DepthRange {
+        depth,
+        near,
+        far,
+        feather,
+    } = &mut stack.selected_component_mut().unwrap().geometry
+    {
+        *depth = MaskImage::new(4, 1, vec![0, 85, 170, 255]);
+        *near = 0.0;
+        *far = 0.5;
+        *feather = 0.0;
+    }
+    assert_eq!(stack.rasterize_layer(0, 4, 1, 4, 1), vec![255, 255, 0, 0]);
+    stack.masks[0].invert = true;
+    assert_eq!(stack.rasterize_layer(0, 4, 1, 4, 1), vec![0, 0, 255, 255]);
+    stack.masks[0].invert = false;
+    stack.add_component(MaskKind::Fullscreen, MaskCombineMode::Subtract);
+    assert_eq!(stack.rasterize_layer(0, 4, 1, 4, 1), vec![0; 4]);
+    assert!((depth_range_weight(0.5, 0.25, 0.75, 0.2) - 1.0).abs() < 1e-6);
+    assert!(depth_range_weight(0.25, 0.25, 0.75, 0.2) > 0.0);
 }
 
 #[test]

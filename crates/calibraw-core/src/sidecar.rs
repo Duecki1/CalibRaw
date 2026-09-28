@@ -224,6 +224,7 @@ fn masks_contain_content_aware_components(masks: &MaskStack) -> bool {
                     .any(|stroke| stroke.positive && !stroke.points.is_empty()),
                 (MaskKind::LuminanceRange, MaskGeometry::LuminanceRange { .. }) => true,
                 (MaskKind::ColorRange, MaskGeometry::ColorRange { sampled: true, .. }) => true,
+                (MaskKind::DepthRange, MaskGeometry::DepthRange { .. }) => true,
                 _ => false,
             })
     })
