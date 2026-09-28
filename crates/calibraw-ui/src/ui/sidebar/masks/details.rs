@@ -501,7 +501,16 @@ impl Sidebar {
         if request_subject {
             match app.masks.stack.masks[mask_index].components[component_index].kind {
                 MaskKind::Sky => app.request_sky_mask(frame),
-                MaskKind::DepthRange => app.request_depth_mask(frame),
+                MaskKind::DepthRange => {
+                    // The properties button explicitly regenerates an existing map.
+                    if app.masks.stack.masks[mask_index].components[component_index]
+                        .geometry
+                        .is_initialized()
+                    {
+                        app.masks.depth_cache = None;
+                    }
+                    app.request_depth_mask(frame);
+                }
                 _ => app.request_subject_mask(frame),
             }
         }

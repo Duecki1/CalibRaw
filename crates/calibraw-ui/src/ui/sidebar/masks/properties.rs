@@ -882,7 +882,7 @@ impl Sidebar {
                         0.12,
                     );
                 }
-                MaskGeometry::DepthRange { depth, near, far, feather } => {
+                MaskGeometry::DepthRange { depth, near, far, feather, grow, edge_feather } => {
                     ui.label(if depth.is_some() {
                         "Select a range of relative depth, from near (0) to far (1)."
                     } else {
@@ -903,6 +903,11 @@ impl Sidebar {
                     geometry_changed |= Self::mask_feather_slider(
                         ui, "Range softness", feather, 0.0..=1.0,
                         "Softens the near and far depth boundaries.", 0.1,
+                    );
+                    geometry_changed |= Self::mask_grow_slider(ui, grow);
+                    geometry_changed |= Self::mask_feather_slider(
+                        ui, "Feather", edge_feather, 0.0..=1.0,
+                        "Softens the selection edge while keeping the selected interior solid.", 0.0,
                     );
                 }
                 MaskGeometry::Placeholder => {
