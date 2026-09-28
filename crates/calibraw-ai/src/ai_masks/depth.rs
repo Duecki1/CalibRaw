@@ -2,6 +2,20 @@ use super::*;
 
 const EDGE: u32 = 700;
 
+pub(super) const MODEL_FILENAME: &str = "da3mono_large_700x700.onnx";
+const MODEL_BYTES: u64 = 731_358_963;
+pub(super) const MODEL_INSTALL: ModelInstallSpec = ModelInstallSpec {
+    artifact: ModelArtifact {
+        name: "Depth Anything 3 Mono Large",
+        url: Some("https://huggingface.co/Duecki/CalibRaw-Artifacts/resolve/4b82010fd8654fc3a1c33311ff305d793ec2f511/models/da3/da3mono_large_700x700.onnx"),
+        sha256: "71079fb3c7d3b04e9df9d157e0b3ee0e6614cb5198f0729e7b490512c4f8d667",
+        size: ArtifactSize::Exact(MODEL_BYTES),
+        progress_total: MODEL_BYTES,
+    },
+    download: MASK_MODEL_DOWNLOAD,
+    progress_label: "Depth Anything 3 Mono Large",
+};
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct Letterbox {
     width: u32,
@@ -70,8 +84,7 @@ pub(super) fn depth_mask(
     let (shape, raw) = with_model_session(
         AiModel::DepthAnything3,
         model_path,
-        SessionOptions::new("Depth Anything 3 Mono Large")
-            .with_cpu_fallback_profile(CpuFallbackProfile::DepthAnything3),
+        SessionOptions::new("Depth Anything 3 Mono Large"),
         mask_model_retention(true),
         |session| {
             session.run_with_fallback("DA3 depth ONNX inference", |ort_session, _| {
@@ -194,8 +207,6 @@ mod tests {
         let path = std::env::var_os("CALIBRAW_DA3_MODEL").expect("CALIBRAW_DA3_MODEL");
         let runtime = std::env::var_os("ORT_DYLIB_PATH").expect("ORT_DYLIB_PATH");
         ort::init_from(Path::new(&runtime)).unwrap().commit();
-        #[cfg(not(target_os = "android"))]
-        crate::execution_provider::record_runtime_version(Path::new(&runtime)).unwrap();
         if std::env::var("CALIBRAW_TEST_DEPTH_PROVIDER").as_deref() == Ok("CPU") {
             crate::set_ai_acceleration_enabled(false);
         }

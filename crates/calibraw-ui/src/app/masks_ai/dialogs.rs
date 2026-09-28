@@ -27,7 +27,7 @@ impl CalibRawApp {
                     self.show_ai_download_details(
                         ui, "depth-download-details", model_download_needed,
                         runtime_download_needed,
-                        &[("Apache-2.0 model license", "https://github.com/ByteDance-Seed/Depth-Anything-3/blob/main/LICENSE")],
+                        &[("Depth model artifact", "https://huggingface.co/Duecki/CalibRaw-Artifacts/tree/main/models/da3")],
                         |ui| { ui.label("Depth Anything 3 Mono Large runs locally on a 700 × 700 letterboxed image and produces relative depth. License: Apache-2.0."); },
                     );
                     self.show_manual_runtime_warning(ui);
@@ -79,7 +79,7 @@ impl CalibRawApp {
                         "sky-download-details",
                         model_download_needed,
                         runtime_download_needed,
-                        &[("MIT model license", "https://github.com/xiongzhu666/Sky-Segmentation-and-Post-processing/blob/main/LICENSE")],
+                        &[("Sky model artifact", "https://huggingface.co/Duecki/CalibRaw-Artifacts/tree/main/models/skyseg")],
                         |ui| { ui.label("SkySeg U2Net runs locally on a 320 × 320 image and produces a sky probability mask. License: MIT."); },
                     );
                     self.show_manual_runtime_warning(ui);
@@ -137,10 +137,7 @@ impl CalibRawApp {
                             "subject-download-details",
                             model_download_needed,
                             runtime_download_needed,
-                            &[(
-                                "MIT model license",
-                                "https://github.com/ZhengPeng7/BiRefNet/blob/main/LICENSE",
-                            )],
+                            &[("Subject model artifacts", "https://huggingface.co/Duecki/CalibRaw-Artifacts/tree/main/models/briefnet")],
                             |ui| {
                                 ui.label(format!(
                                     "{} quality uses {} with a {} × {} input. License: MIT.",
@@ -214,10 +211,7 @@ impl CalibRawApp {
                             "object-download-details",
                             model_download_needed,
                             runtime_download_needed,
-                            &[(
-                                "Apache-2.0 model license",
-                                "https://github.com/facebookresearch/sam2/blob/main/LICENSE",
-                            )],
+                            &[("Object model artifacts", "https://huggingface.co/Duecki/CalibRaw-Artifacts/tree/main/models/sam2")],
                             |ui| {
                                 ui.label("SAM 2.1 Hiera Tiny uses an encoder and decoder with local edge-aware cleanup. License: Apache-2.0.");
                             },

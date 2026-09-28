@@ -90,9 +90,9 @@ impl CalibRawApp {
         #[cfg(target_os = "android")]
         let crop_refinement = false;
         let cancellation = Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let receiver = spawn_subject_mask(
-            SubjectMaskWorkerRequest {
-                model: crate::ai_masks::SubjectMaskModel::Subject,
+        let receiver = spawn_ai_mask(
+            AiMaskWorkerRequest {
+                model: crate::ai_masks::AiMaskModel::Subject,
                 quality: self.ai.birefnet_quality,
                 crop_refinement,
                 model_path,
@@ -123,8 +123,8 @@ impl CalibRawApp {
             cancellation,
             progress,
             cancelling: false,
-            receiver: ForegroundOperationReceiver::Subject(receiver),
-            context: ForegroundOperationContext::Subject,
+            receiver: ForegroundOperationReceiver::AiMask(receiver),
+            context: ForegroundOperationContext::AiMask,
         });
     }
 
@@ -185,9 +185,9 @@ impl CalibRawApp {
         let (runtime_path, runtime_sha256) = (None, None);
         let model_present = crate::ai_masks::skyseg_model_is_verified(&model_path);
         let cancellation = Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let receiver = spawn_subject_mask(
-            SubjectMaskWorkerRequest {
-                model: crate::ai_masks::SubjectMaskModel::Sky,
+        let receiver = spawn_ai_mask(
+            AiMaskWorkerRequest {
+                model: crate::ai_masks::AiMaskModel::Sky,
                 quality: self.ai.birefnet_quality,
                 crop_refinement: false,
                 model_path,
@@ -210,8 +210,8 @@ impl CalibRawApp {
                 "Preparing SkySeg U2Net download…"
             }),
             cancelling: false,
-            receiver: ForegroundOperationReceiver::Subject(receiver),
-            context: ForegroundOperationContext::Subject,
+            receiver: ForegroundOperationReceiver::AiMask(receiver),
+            context: ForegroundOperationContext::AiMask,
         });
     }
 
@@ -271,9 +271,9 @@ impl CalibRawApp {
         let (runtime_path, runtime_sha256) = (None, None);
         let model_present = crate::ai_masks::da3_model_is_verified(&model_path);
         let cancellation = Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let receiver = spawn_subject_mask(
-            SubjectMaskWorkerRequest {
-                model: crate::ai_masks::SubjectMaskModel::Depth,
+        let receiver = spawn_ai_mask(
+            AiMaskWorkerRequest {
+                model: crate::ai_masks::AiMaskModel::Depth,
                 quality: self.ai.birefnet_quality,
                 crop_refinement: false,
                 model_path,
@@ -296,8 +296,8 @@ impl CalibRawApp {
                 "Preparing Depth Anything 3 download…"
             }),
             cancelling: false,
-            receiver: ForegroundOperationReceiver::Subject(receiver),
-            context: ForegroundOperationContext::Subject,
+            receiver: ForegroundOperationReceiver::AiMask(receiver),
+            context: ForegroundOperationContext::AiMask,
         });
     }
 
@@ -316,7 +316,7 @@ impl CalibRawApp {
         self.blink_selected_mask();
     }
 
-    pub(in crate::app) fn poll_subject_worker(&mut self) {
+    pub(in crate::app) fn poll_ai_mask_worker(&mut self) {
         if !matches!(
             self.foreground_operation_kind(),
             Some(
@@ -330,20 +330,27 @@ impl CalibRawApp {
         let Some(mut operation) = self.foreground_operation.take() else {
             return;
         };
-        let sky = operation.kind == ForegroundOperationKind::SkyMask;
-        let depth = operation.kind == ForegroundOperationKind::DepthMask;
-        let ForegroundOperationReceiver::Subject(receiver) = &operation.receiver else {
+        let model = match operation.kind {
+            ForegroundOperationKind::SubjectMask => crate::ai_masks::AiMaskModel::Subject,
+            ForegroundOperationKind::SkyMask => crate::ai_masks::AiMaskModel::Sky,
+            ForegroundOperationKind::DepthMask => crate::ai_masks::AiMaskModel::Depth,
+            _ => {
+                self.foreground_operation = Some(operation);
+                return;
+            }
+        };
+        let ForegroundOperationReceiver::AiMask(receiver) = &operation.receiver else {
             self.foreground_operation = Some(operation);
             return;
         };
         let (events, disconnected) = drain_worker_events(Some(receiver), |event| {
-            matches!(event, SubjectMaskEvent::Finished(_))
+            matches!(event, AiMaskEvent::Finished(_))
         });
 
         let mut finished = None;
         for event in events {
             match event {
-                SubjectMaskEvent::DownloadProgress(progress) => {
+                AiMaskEvent::DownloadProgress(progress) => {
                     operation.progress = ForegroundProgress::units(
                         progress.downloaded,
                         progress.total,
@@ -356,32 +363,29 @@ impl CalibRawApp {
                         progress.total as f64 / 1_000_000.0
                     ));
                 }
-                SubjectMaskEvent::Inferencing => {
-                    operation.progress = ForegroundProgress::indeterminate(if depth {
-                        "Running Depth Anything 3 locally…".to_owned()
-                    } else if sky {
-                        "Running SkySeg U2Net locally…".to_owned()
-                    } else {
-                        format!(
+                AiMaskEvent::Inferencing => {
+                    let message = match model {
+                        crate::ai_masks::AiMaskModel::Subject => format!(
                             "Running {} quality locally with {}…",
                             self.ai.birefnet_quality.label(),
                             self.ai.birefnet_quality.model().checkpoint
-                        )
-                    });
+                        ),
+                        crate::ai_masks::AiMaskModel::Sky => {
+                            "Running SkySeg U2Net locally…".to_owned()
+                        }
+                        crate::ai_masks::AiMaskModel::Depth => {
+                            "Running Depth Anything 3 locally…".to_owned()
+                        }
+                    };
+                    operation.progress = ForegroundProgress::indeterminate(message);
                 }
-                SubjectMaskEvent::Finished(result) => finished = Some(result),
+                AiMaskEvent::Finished(result) => finished = Some(result),
             }
         }
         if finished.is_none() && disconnected {
             finished = Some(Err(format!(
                 "The {}-mask worker stopped unexpectedly.",
-                if depth {
-                    "depth"
-                } else if sky {
-                    "sky"
-                } else {
-                    "subject"
-                }
+                model.noun()
             )));
         }
         let Some(result) = finished else {
@@ -389,8 +393,9 @@ impl CalibRawApp {
             return;
         };
 
-        let updating_all =
-            self.ai.mask_update_active && (sky || depth || self.ai.mask_update_subject_pending);
+        let updating_all = self.ai.mask_update_active
+            && (model != crate::ai_masks::AiMaskModel::Subject
+                || self.ai.mask_update_subject_pending);
         let cancelled = operation.is_cancelled();
         let stale = operation.document_id != self.persistence.sidecar_generation;
 
@@ -400,38 +405,23 @@ impl CalibRawApp {
             match result {
                 Ok(result) => {
                     if let Some(mask) = result.into_probability_mask() {
-                        if depth {
-                            self.apply_depth_mask(mask);
-                        } else if sky {
-                            self.apply_sky_mask(mask);
-                        } else {
-                            self.apply_subject_mask(mask);
+                        match model {
+                            crate::ai_masks::AiMaskModel::Subject => {
+                                self.apply_subject_mask(mask)
+                            }
+                            crate::ai_masks::AiMaskModel::Sky => self.apply_sky_mask(mask),
+                            crate::ai_masks::AiMaskModel::Depth => self.apply_depth_mask(mask),
                         }
                         succeeded = true;
                     } else {
                         error_message = Some(format!(
                             "{} selection returned an invalid mask image.",
-                            if depth {
-                                "Depth"
-                            } else if sky {
-                                "Sky"
-                            } else {
-                                "Subject"
-                            }
+                            model.label()
                         ));
                     }
                 }
                 Err(error) => {
-                    error_message = Some(format!(
-                        "{} selection failed: {error}",
-                        if depth {
-                            "Depth"
-                        } else if sky {
-                            "Sky"
-                        } else {
-                            "Subject"
-                        }
-                    ))
+                    error_message = Some(format!("{} selection failed: {error}", model.label()))
                 }
             }
         }
@@ -440,7 +430,7 @@ impl CalibRawApp {
             if cancelled || stale {
                 self.cancel_ai_mask_update();
             } else {
-                if !sky && !depth {
+                if model == crate::ai_masks::AiMaskModel::Subject {
                     self.ai.mask_update_subject_pending = false;
                 }
                 self.ai.mask_update_failed |= !succeeded;
@@ -454,25 +444,10 @@ impl CalibRawApp {
                 if stale {
                     format!(
                         "{} selection became stale before inference completed.",
-                        if depth {
-                            "Depth"
-                        } else if sky {
-                            "Sky"
-                        } else {
-                            "Subject"
-                        }
+                        model.label()
                     )
                 } else {
-                    format!(
-                        "{} selection did not produce a mask.",
-                        if depth {
-                            "Depth"
-                        } else if sky {
-                            "Sky"
-                        } else {
-                            "Subject"
-                        }
-                    )
+                    format!("{} selection did not produce a mask.", model.label())
                 }
             });
             self.ui.notice = Some(message);

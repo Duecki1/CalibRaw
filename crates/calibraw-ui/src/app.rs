@@ -1,6 +1,6 @@
 use crate::ai_masks::{
-    spawn_object_mask, spawn_subject_mask, BiRefNetQuality, ObjectInferenceCache, ObjectMaskEvent,
-    ObjectMaskRequest, ObjectMaskWorkerRequest, SubjectMaskEvent, SubjectMaskWorkerRequest,
+    spawn_object_mask, spawn_ai_mask, BiRefNetQuality, ObjectInferenceCache, ObjectMaskEvent,
+    ObjectMaskRequest, ObjectMaskWorkerRequest, AiMaskEvent, AiMaskWorkerRequest,
     SAM21_MODEL_BYTES_ESTIMATE,
 };
 #[cfg(not(target_os = "android"))]
@@ -947,14 +947,14 @@ impl ForegroundProgress {
 }
 
 enum ForegroundOperationReceiver {
-    Subject(mpsc::Receiver<SubjectMaskEvent>),
+    AiMask(mpsc::Receiver<AiMaskEvent>),
     Object(mpsc::Receiver<ObjectMaskEvent>),
     AiDenoise(mpsc::Receiver<crate::ai_denoise::AiDenoiseEvent>),
     LensCorrection(mpsc::Receiver<LensCorrectionEvent>),
 }
 
 enum ForegroundOperationContext {
-    Subject,
+    AiMask,
     Object {
         target: AiMaskTarget,
         inference_started: bool,

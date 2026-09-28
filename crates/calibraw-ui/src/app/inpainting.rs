@@ -295,8 +295,8 @@ impl CalibRawApp {
                         model_download_needed,
                         runtime_download_needed,
                         &[(
-                            "Big-LaMa ONNX model card",
-                            "https://huggingface.co/Carve/LaMa-ONNX",
+                            "Big-LaMa model artifact",
+                            "https://huggingface.co/Duecki/CalibRaw-Artifacts/tree/main/models/lama",
                         )],
                         |ui| {
                             ui.label(format!(

@@ -220,7 +220,7 @@ impl CalibRawApp {
                 ForegroundOperationKind::SubjectMask
                 | ForegroundOperationKind::SkyMask
                 | ForegroundOperationKind::DepthMask,
-            ) => self.poll_subject_worker(),
+            ) => self.poll_ai_mask_worker(),
             Some(ForegroundOperationKind::ObjectMask) => self.poll_object_worker(),
             Some(ForegroundOperationKind::AiDenoise) => self.poll_ai_denoise_worker(),
             Some(ForegroundOperationKind::LensCorrection) => {
@@ -245,15 +245,15 @@ mod tests {
     use super::*;
 
     fn test_operation(document_id: u64) -> ForegroundOperation {
-        let (_sender, receiver) = mpsc::channel::<SubjectMaskEvent>();
+        let (_sender, receiver) = mpsc::channel::<AiMaskEvent>();
         ForegroundOperation {
             kind: ForegroundOperationKind::SubjectMask,
             document_id,
             cancellation: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             progress: ForegroundProgress::indeterminate("Testing…"),
             cancelling: false,
-            receiver: ForegroundOperationReceiver::Subject(receiver),
-            context: ForegroundOperationContext::Subject,
+            receiver: ForegroundOperationReceiver::AiMask(receiver),
+            context: ForegroundOperationContext::AiMask,
         }
     }
 
