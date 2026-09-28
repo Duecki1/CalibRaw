@@ -483,16 +483,10 @@ impl CalibRawApp {
                             "denoise-download-details",
                             model_download_needed,
                             runtime_download_needed,
-                            &[
-                                (
-                                    "RawNIND model card",
-                                    "https://github.com/darktable-org/darktable-ai/tree/release-5.6.0/models/rawdenoise-nind",
-                                ),
-                                (
-                                    "GPL-3.0 license",
-                                    "https://github.com/darktable-org/darktable-ai/blob/release-5.6.0/LICENSE",
-                                ),
-                            ],
+                            &[(
+                                "RawNIND model artifact",
+                                "https://huggingface.co/Duecki/CalibRaw-Artifacts/tree/main/models/rawnind",
+                            )],
                             |ui| {
                                 ui.label("RawNIND handles Bayer denoise/demosaic and X-Trans images. The verified models are cached locally under GPL-3.0.");
                             },

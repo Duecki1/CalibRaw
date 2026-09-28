@@ -382,7 +382,7 @@ impl CalibRawApp {
                 )
             })
             .count();
-        let current_object = usize::from(
+        let current_non_subject = usize::from(
             matches!(
                 self.foreground_operation_kind(),
                 Some(
@@ -397,7 +397,7 @@ impl CalibRawApp {
                 ),
         );
         let subject_remaining = usize::from(self.ai.mask_update_subject_pending) * subject_targets;
-        subject_remaining + self.ai.mask_update_object_queue.len() + current_object
+        subject_remaining + self.ai.mask_update_object_queue.len() + current_non_subject
     }
 
     pub(in crate::app) fn generated_ai_mask_targets(&self) -> GeneratedAiMaskTargets {
