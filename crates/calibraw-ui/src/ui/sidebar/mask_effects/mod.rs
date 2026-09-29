@@ -149,7 +149,7 @@ pub(super) fn effect_description(effect: MaskEffect) -> Option<&'static str> {
             "Uses an aperture-shaped scene-linear blur for natural bokeh.",
         ),
         MaskEffect::LightRays => Some(
-            "The mask is the light source. Rays converge on the source point and travel beyond the mask.",
+            "Position the source with Source X and Source Y. The mask shapes soft atmospheric light shafts emitted beyond it.",
         ),
         MaskEffect::Fog => Some(
             "Fog builds with distance using shared scene depth. The tint is scattered light, blended through the editable mask.",

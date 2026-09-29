@@ -38,6 +38,8 @@ mod blacks_pipeline_tests;
 #[cfg(test)]
 mod film_effects_tests;
 #[cfg(test)]
+mod light_rays_tests;
+#[cfg(test)]
 mod point_color_tests;
 #[cfg(test)]
 mod tests;
