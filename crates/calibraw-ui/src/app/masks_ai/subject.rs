@@ -187,6 +187,9 @@ impl CalibRawApp {
 
     pub(super) fn apply_generated_mask(&mut self, model: AiMaskModel, mask: MaskImage) {
         *self.masks.generated_cache_mut(model) = Some(mask.clone());
+        if model == AiMaskModel::Depth {
+            self.masks.stack.scene_depth = Some(mask.clone());
+        }
         for component in self
             .masks
             .stack
@@ -376,6 +379,12 @@ mod tests {
                 app.poll_ai_mask_worker();
                 assert!(!app.foreground_operation_active());
                 let accepted = !cancelled && !stale;
+                assert_eq!(
+                    app.masks.stack.scene_depth.as_ref(),
+                    (accepted && model == AiMaskModel::Depth)
+                        .then(|| MaskImage::new(2, 2, pixels.clone()).unwrap())
+                        .as_ref()
+                );
                 assert_eq!(
                     app.masks.generated_cache_mut(model).as_ref(),
                     accepted

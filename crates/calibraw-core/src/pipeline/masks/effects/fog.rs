@@ -9,6 +9,8 @@ pub struct FogEffectSettings {
     pub softness: f32,
     pub variation: f32,
     pub seed: f32,
+    pub start: f32,
+    pub depth_influence: f32,
     pub color: [f32; 3],
 }
 
@@ -21,6 +23,8 @@ impl Default for FogEffectSettings {
             softness: SOFTNESS.default,
             variation: VARIATION.default,
             seed: SEED.default,
+            start: START.default,
+            depth_influence: DEPTH_INFLUENCE.default,
             color: COLOR.default,
         }
     }

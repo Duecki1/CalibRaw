@@ -297,6 +297,7 @@ impl Sidebar {
         );
         let birefnet_quality = app.ai.birefnet_quality;
         let birefnet_quality_change_enabled = app.birefnet_quality_change_enabled();
+        let mut scene_depth = mask_effects::fog::SceneDepthControls::new(app);
 
         {
             let mask = &mut app.masks.stack.masks[mask_index];
@@ -414,6 +415,7 @@ impl Sidebar {
                                 &mut mask.effect_components,
                                 &mut app.develop_ui.mask_effect_component,
                                 fullscreen,
+                                &mut scene_depth,
                             );
                         }
                         section => {
@@ -442,11 +444,16 @@ impl Sidebar {
             }
             if orientation == MaskStripOrientation::Horizontal {
                 let fullscreen = Self::is_plain_fullscreen_mask(mask);
-                adjustments_changed |=
-                    Self::show_effect_components(ui, &mut mask.effect_components, fullscreen);
+                adjustments_changed |= Self::show_effect_components(
+                    ui,
+                    &mut mask.effect_components,
+                    fullscreen,
+                    &mut scene_depth,
+                );
             }
             light_rays_changed = light_rays_before != mask.has_light_rays_effect();
         }
+        scene_depth.apply_request(app, frame);
 
         if crate::ui::theme::is_compact_portrait(ui)
             && vertical_section.is_some_and(|section| section != MaskSection::Properties)

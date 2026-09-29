@@ -268,6 +268,7 @@ impl EditHistory {
         } else if mask_change_pending {
             self.current.masks.masks == masks.masks
                 && self.current.masks.global_effects == masks.global_effects
+                && self.current.masks.scene_depth == masks.scene_depth
         } else {
             true
         };
@@ -651,6 +652,24 @@ mod tests {
             MaskStack::default(),
             LensCorrectionState::default(),
         )
+    }
+
+    #[test]
+    fn scene_depth_changes_round_trip_through_history() {
+        let (exposure, mut masks, lens) = state();
+        let mut history = EditHistory::new(&exposure, &masks, &lens);
+        masks.scene_depth =
+            Some(crate::pipeline::MaskImage::new(2, 2, vec![0, 85, 170, 255]).unwrap());
+        history.note_mask_change();
+        history.observe(&exposure, &masks, &lens, false);
+        let (undone, masks_changed, _) = history.undo(&exposure, &masks, &lens).unwrap();
+        assert!(masks_changed);
+        assert!(undone.materialize_masks().scene_depth.is_none());
+        let (redone, masks_changed, _) = history
+            .redo(&exposure, &undone.materialize_masks(), &lens)
+            .unwrap();
+        assert!(masks_changed);
+        assert_eq!(redone.materialize_masks().scene_depth, masks.scene_depth);
     }
 
     #[test]

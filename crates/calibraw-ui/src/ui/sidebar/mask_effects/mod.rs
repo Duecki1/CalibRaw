@@ -152,7 +152,7 @@ pub(super) fn effect_description(effect: MaskEffect) -> Option<&'static str> {
             "The mask is the light source. Rays converge on the source point and travel beyond the mask.",
         ),
         MaskEffect::Fog => Some(
-            "Fog is generated in full-image coordinates and blended through the editable mask.",
+            "Fog builds with distance using shared scene depth. The tint is scattered light, blended through the editable mask.",
         ),
         MaskEffect::Smoke => Some(
             "Smoke is generated in full-image coordinates and blended through the editable mask.",

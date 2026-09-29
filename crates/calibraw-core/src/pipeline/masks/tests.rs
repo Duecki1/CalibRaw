@@ -1,6 +1,131 @@
 use super::*;
 
 #[test]
+fn scene_depth_is_optional_and_round_trips_in_mask_stack() {
+    let empty = MaskStack::default();
+    let json = serde_json::to_value(&empty).unwrap();
+    assert!(json.get("scene_depth").is_none());
+    assert_eq!(serde_json::from_value::<MaskStack>(json).unwrap(), empty);
+
+    let stack = MaskStack {
+        scene_depth: MaskImage::new(2, 2, vec![0, 85, 170, 255]),
+        ..Default::default()
+    };
+    let json = serde_json::to_vec(&stack).unwrap();
+    assert_eq!(serde_json::from_slice::<MaskStack>(&json).unwrap(), stack);
+}
+
+#[test]
+fn scene_depth_prefers_explicit_data_then_first_cached_depth_even_when_disabled() {
+    let mut stack = MaskStack::default();
+    assert!(stack.scene_depth_image().is_none());
+    stack.add_mask(MaskKind::Subject).unwrap();
+    if let MaskGeometry::Ai { mask, .. } = &mut stack.masks[0].components[0].geometry {
+        *mask = MaskImage::new(1, 1, vec![123]);
+    }
+    stack.add_mask(MaskKind::DepthRange).unwrap();
+    assert!(stack.scene_depth_image().is_none());
+    stack
+        .add_component(MaskKind::DepthRange, MaskCombineMode::Add)
+        .unwrap();
+    let first = MaskImage::new(2, 1, vec![0, 255]).unwrap();
+    if let MaskGeometry::DepthRange { depth, .. } = &mut stack.masks[1].components[1].geometry {
+        *depth = Some(first.clone());
+    }
+    stack.masks[1].enabled = false;
+    stack.masks[1].components[1].enabled = false;
+    stack.add_mask(MaskKind::DepthRange).unwrap();
+    if let MaskGeometry::DepthRange { depth, .. } = &mut stack.masks[2].components[0].geometry {
+        *depth = MaskImage::new(1, 1, vec![64]);
+    }
+    assert_eq!(stack.scene_depth_image(), Some(&first));
+
+    let explicit = MaskImage::new(1, 2, vec![50, 150]).unwrap();
+    stack.scene_depth = Some(explicit.clone());
+    assert_eq!(stack.scene_depth_image(), Some(&explicit));
+}
+
+#[test]
+fn cropped_scene_depth_keeps_full_image_coordinates_and_backing_pixels() {
+    let depth = MaskImage::new(4, 4, (0..16).map(|i| i * 16).collect()).unwrap();
+    let stack = MaskStack {
+        scene_depth: Some(depth.clone()),
+        ..Default::default()
+    };
+    let cropped = stack.cropped_for_region(25, 50, 50, 25, 100, 100);
+    let cropped = cropped.cropped_for_region(10, 5, 20, 10, 50, 25);
+    let image = cropped.scene_depth_image().unwrap();
+    assert_eq!(image, &depth);
+    assert!(Arc::ptr_eq(&image.pixels, &depth.pixels));
+}
+
+#[test]
+fn cropped_depth_fallback_exposes_original_pixels_despite_sampling_rectangle() {
+    let mut stack = MaskStack::default();
+    stack.add_mask(MaskKind::DepthRange).unwrap();
+    let original = MaskImage::new(4, 4, (0..16).map(|i| i * 16).collect()).unwrap();
+    if let MaskGeometry::DepthRange { depth, .. } = &mut stack.masks[0].components[0].geometry {
+        *depth = Some(original.clone());
+    }
+    let cropped = stack.cropped_for_region(25, 50, 50, 25, 100, 100);
+    let image = cropped.scene_depth_image().unwrap();
+    assert_eq!((image.width, image.height), (4, 4));
+    assert_eq!(image.sampling_rect, [0.25, 0.5, 0.75, 0.75]);
+    assert!(Arc::ptr_eq(&image.pixels, &original.pixels));
+    assert_eq!(stack.scene_depth_image().unwrap(), &original);
+    assert!(cropped.scene_depth.is_none());
+}
+
+#[test]
+fn fog_detection_checks_global_local_and_legacy_activity() {
+    let mut fog = EffectComponent::new(MaskEffect::Fog);
+    fog.settings.fog.amount = 50.0;
+    fog.settings.fog.density = 50.0;
+    assert!(fog.is_active());
+    let mut stack = MaskStack::default();
+    assert!(!stack.has_fog_effect());
+    stack.global_effects.push(fog.clone());
+    assert!(stack.has_fog_effect());
+    stack.global_effects[0].enabled = false;
+    assert!(!stack.has_fog_effect());
+    stack.global_effects[0].enabled = true;
+    stack.global_effects[0].settings.fog.amount = 0.0;
+    assert!(!stack.has_fog_effect());
+    stack.global_effects[0] = fog.clone();
+    stack.global_effects[0].settings.fog.density = 0.0;
+    assert!(!stack.has_fog_effect());
+    stack.global_effects.clear();
+
+    stack.add_mask(MaskKind::Fullscreen).unwrap();
+    stack.masks[0].effect_components.push(fog.clone());
+    assert!(stack.has_fog_effect());
+    stack.masks[0].enabled = false;
+    assert!(!stack.has_fog_effect());
+    stack.masks[0].enabled = true;
+    stack.masks[0].opacity = 0.0;
+    assert!(!stack.has_fog_effect());
+    stack.masks[0].opacity = 1.0;
+    stack.masks[0].effect_components[0].enabled = false;
+    assert!(!stack.has_fog_effect());
+    stack.masks[0].effect_components[0].enabled = true;
+    stack.masks[0].effect_components[0].settings.fog.amount = 0.0;
+    assert!(!stack.has_fog_effect());
+    stack.masks[0].effect_components.clear();
+
+    stack.masks[0].effect = MaskEffect::Fog;
+    stack.masks[0].effect_settings = fog.settings;
+    stack.masks[0].adjustments_enabled = false;
+    assert!(stack.has_fog_effect());
+    stack.masks[0].enabled = false;
+    assert!(!stack.has_fog_effect());
+    stack.masks[0].enabled = true;
+    stack.masks[0].effect_settings.fog.density = 0.0;
+    assert!(!stack.has_fog_effect());
+    stack.masks[0].effect = MaskEffect::Smoke;
+    assert!(!stack.has_fog_effect());
+}
+
+#[test]
 fn common_mask_properties_mutate_through_shared_model_api() {
     let mut stack = MaskStack::default();
     stack.add_mask(MaskKind::Brush);

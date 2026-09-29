@@ -17,6 +17,10 @@ impl MaskState {
 
     pub(in crate::app) fn restore_generated_caches(&mut self) {
         for model in [AiMaskModel::Subject, AiMaskModel::Sky, AiMaskModel::Depth] {
+            if model == AiMaskModel::Depth {
+                self.depth_cache = self.stack.scene_depth_image().cloned();
+                continue;
+            }
             let cached = self
                 .stack
                 .masks
@@ -158,8 +162,9 @@ impl MaskState {
 
 impl CalibRawApp {
     pub(crate) fn reset_masks(&mut self) {
-        let masks_changed =
-            !self.masks.stack.masks.is_empty() || !self.masks.stack.subject_refinement.is_empty();
+        let masks_changed = !self.masks.stack.masks.is_empty()
+            || !self.masks.stack.subject_refinement.is_empty()
+            || self.masks.stack.scene_depth.is_some();
 
         self.finish_mask_geometry_interaction();
         self.masks.stack.clear();
@@ -755,6 +760,101 @@ mod tests {
             detail_dirty_layers: [false; MAX_LOCAL_MASKS],
             navigation_dirty_layers: [false; MAX_LOCAL_MASKS],
         }
+    }
+
+    #[test]
+    fn scene_depth_without_selection_is_dirty_persisted_and_reused() {
+        let mut app = CalibRawApp::empty(&egui::Context::default());
+        app.masks
+            .stack
+            .global_effects
+            .push(crate::pipeline::EffectComponent::new(
+                crate::pipeline::MaskEffect::Fog,
+            ));
+        app.reset_edit_history();
+        app.masks.dirty_layers.fill(false);
+        app.masks.detail_dirty_layers.fill(false);
+        app.masks.navigation_dirty_layers.fill(false);
+        let revision = app.masks.overlay_revision;
+        let depth = MaskImage::new(2, 2, vec![0, 85, 170, 255]).unwrap();
+
+        app.apply_generated_mask(AiMaskModel::Depth, depth.clone());
+        assert!(app.masks.stack.masks.is_empty());
+        assert_eq!(app.masks.stack.scene_depth.as_ref(), Some(&depth));
+        assert_eq!(app.masks.overlay_revision, revision.wrapping_add(1));
+        assert!(app.masks.dirty_layers.iter().all(|dirty| *dirty));
+        assert!(app.masks.detail_dirty_layers.iter().all(|dirty| *dirty));
+        assert!(app.masks.navigation_dirty_layers.iter().all(|dirty| *dirty));
+        app.commit_edit_history_now();
+        let committed = app.committed_mask_state_for_persistence();
+        assert_eq!(committed.scene_depth.as_ref(), Some(&depth));
+
+        let edits = crate::sidecar::EditState {
+            masks: committed,
+            ..crate::sidecar::default_edit_state()
+        };
+        let restored = crate::sidecar::decode(&crate::sidecar::encode(edits).unwrap()).unwrap();
+        app.masks.reset_transient_state();
+        app.masks.stack = (*restored.edits.masks).clone();
+        app.rehydrate_restored_mask_state();
+        assert_eq!(app.masks.depth_cache.as_ref(), Some(&depth));
+        assert!(app.masks.stack.masks.is_empty());
+
+        // A later depth selection reuses fog's persisted map without inference.
+        app.masks.stack.add_mask(MaskKind::DepthRange).unwrap();
+        app.request_depth_mask(&eframe::Frame::_new_kittest());
+        assert!(app
+            .masks
+            .stack
+            .selected_component()
+            .unwrap()
+            .geometry
+            .is_initialized());
+        assert!(!app.foreground_operation_active());
+        assert!(!app.ai.consent.is_open());
+        assert!(app.masks.source_cache.is_none());
+    }
+
+    #[test]
+    fn scene_depth_reset_is_persisted_without_selections() {
+        let mut app = CalibRawApp::empty(&egui::Context::default());
+        app.masks.stack.scene_depth = Some(MaskImage::new(2, 2, vec![0, 85, 170, 255]).unwrap());
+        app.reset_edit_history();
+        assert!(app
+            .committed_mask_state_for_persistence()
+            .scene_depth
+            .is_some());
+
+        app.reset_masks();
+        app.commit_edit_history_now();
+        assert!(app
+            .committed_mask_state_for_persistence()
+            .scene_depth
+            .is_none());
+        assert!(app.masks.depth_cache.is_none());
+    }
+
+    #[test]
+    fn scene_depth_cache_prefers_shared_map_and_reuses_legacy_depth() {
+        let mut state = mask_state();
+        let legacy = MaskImage::new(2, 2, vec![0, 85, 170, 255]).unwrap();
+        state.stack.add_mask(MaskKind::DepthRange).unwrap();
+        if let MaskGeometry::DepthRange { depth, .. } =
+            &mut state.stack.selected_component_mut().unwrap().geometry
+        {
+            *depth = Some(legacy.clone());
+        }
+        state.restore_generated_caches();
+        assert_eq!(state.depth_cache.as_ref(), Some(&legacy));
+
+        let scene = MaskImage::new(2, 2, vec![255, 170, 85, 0]).unwrap();
+        state.stack.scene_depth = Some(scene.clone());
+        state.restore_generated_caches();
+        assert_eq!(state.depth_cache.as_ref(), Some(&scene));
+        assert!(Arc::ptr_eq(
+            &state.depth_cache.as_ref().unwrap().pixels,
+            &state.stack.scene_depth.as_ref().unwrap().pixels,
+        ));
     }
 
     #[test]
