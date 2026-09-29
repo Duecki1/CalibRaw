@@ -449,10 +449,10 @@ pub mod light_rays {
         "Amount",
         0.0,
         100.0,
-        50.0,
+        35.0,
         0.5,
         0,
-        Some("Controls the strength of the emitted light shafts."),
+        Some("Controls the brightness of soft atmospheric light shafts emitted beyond the source mask."),
     );
     float_param!(
         LENGTH,
@@ -462,35 +462,35 @@ pub mod light_rays {
         100.0,
         1.0,
         0,
-        Some("Ray reach as a percentage of the image's shorter edge."),
+        Some("Controls how far light shafts reach beyond their sources, as a percentage of the image's shorter edge."),
     );
     float_param!(
         SOURCE_X, "Source X", -50.0, 150.0, 50.0, 1.0, 0,
-        Some("Horizontal source position in the full image; values outside 0–100 place it beyond the frame."),
+        Some("Places the source horizontally, as a percentage of the full image width. Values outside 0–100 place it beyond the frame."),
     );
     float_param!(
         SOURCE_Y, "Source Y", -50.0, 150.0, 35.0, 1.0, 0,
-        Some("Vertical source position in the full image; values outside 0–100 place it beyond the frame."),
+        Some("Places the source vertically, as a percentage of the full image height. Values outside 0–100 place it beyond the frame."),
     );
     float_param!(
         SPREAD,
         "Spread",
         0.0,
         45.0,
-        10.0,
+        8.0,
         0.25,
         1,
-        Some("Widens the cone sampled around each radial shaft."),
+        Some("Widens the light shafts around each source direction for broader atmospheric scattering."),
     );
     float_param!(
         FADE,
         "Fade",
         0.0,
         100.0,
-        45.0,
+        60.0,
         0.5,
         0,
-        Some("Controls how quickly ray intensity falls off with distance."),
+        Some("Controls how quickly light shafts fade with distance from their sources. Higher values shorten the bright reach."),
     );
     float_param!(
         RAY_COUNT,
@@ -500,27 +500,27 @@ pub mod light_rays {
         32.0,
         1.0,
         0,
-        Some("Controls the approximate number of broad shafts around the source."),
+        Some("Controls the approximate number of light shafts around the source. Higher values create finer rays."),
     );
     float_param!(
         VARIATION,
         "Variation",
         0.0,
         100.0,
-        55.0,
+        65.0,
         0.5,
         0,
-        Some("Breaks uniform emission into stronger and weaker god rays."),
+        Some("Varies shaft brightness for irregular atmospheric rays. Lower values make emission more uniform."),
     );
     float_param!(
         SOFTNESS,
         "Softness",
         0.0,
         100.0,
-        40.0,
+        60.0,
         0.5,
         0,
-        Some("Softens shaft edges and blends neighbouring source directions."),
+        Some("Softens shaft edges and blends nearby source directions into a gentle atmospheric haze."),
     );
     color_param!(
         COLOR,
