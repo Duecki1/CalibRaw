@@ -368,24 +368,16 @@ pub(super) fn validate_edit_state(edits: &EditState) -> Result<(), SidecarError>
                         validate_image(image.width, image.height, image.rgba.len(), 4)?;
                     }
                 }
-                MaskGeometry::DepthRange {
-                    depth,
-                    near,
-                    far,
-                    feather,
-                    grow,
-                    edge_feather,
-                } => {
+                MaskGeometry::DepthRange { depth, range } => {
                     finite(
                         "depth range mask",
-                        &[*near, *far, *feather, *grow, *edge_feather],
+                        &[range.near, range.far, range.near_feather, range.far_feather],
                     )?;
-                    bounded("depth near", *near, 0.0, 1.0)?;
-                    bounded("depth far", *far, 0.0, 1.0)?;
-                    bounded("depth feather", *feather, 0.0, 1.0)?;
-                    bounded("depth grow", *grow, -1.0, 1.0)?;
-                    bounded("depth edge feather", *edge_feather, 0.0, 1.0)?;
-                    if near > far {
+                    bounded("depth near", range.near, 0.0, 1.0)?;
+                    bounded("depth far", range.far, 0.0, 1.0)?;
+                    bounded("depth near feather", range.near_feather, 0.0, 1.0)?;
+                    bounded("depth far feather", range.far_feather, 0.0, 1.0)?;
+                    if range.near > range.far {
                         return invalid("depth near must not exceed depth far");
                     }
                     if let Some(image) = depth {

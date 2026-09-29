@@ -425,16 +425,84 @@ pub enum MaskGeometry {
     },
     DepthRange {
         depth: Option<MaskImage>,
-        near: f32,
-        far: f32,
-        // Keep the original serialized feather as depth-range softness.
-        feather: f32,
-        #[serde(default)]
-        grow: f32,
-        #[serde(default)]
-        edge_feather: f32,
+        #[serde(flatten)]
+        range: DepthRangeSettings,
     },
     Placeholder,
+}
+
+/// Relative-depth selection with independently softened near and far cutoffs.
+#[derive(Clone, Copy, Debug, PartialEq, serde::Deserialize, serde::Serialize)]
+#[serde(from = "DepthRangeSettingsInput")]
+pub struct DepthRangeSettings {
+    pub near: f32,
+    pub far: f32,
+    // Retain the schema's existing range-feather key for the near end.
+    // The added far_feather overrides it for the far end on newer readers.
+    #[serde(rename = "feather")]
+    pub near_feather: f32,
+    pub far_feather: f32,
+}
+
+impl Default for DepthRangeSettings {
+    fn default() -> Self {
+        Self {
+            near: 0.0,
+            far: 0.5,
+            near_feather: 0.1,
+            far_feather: 0.1,
+        }
+    }
+}
+
+#[derive(serde::Deserialize)]
+struct DepthRangeSettingsInput {
+    near: f32,
+    far: f32,
+    #[serde(default)]
+    near_feather: Option<f32>,
+    #[serde(default)]
+    far_feather: Option<f32>,
+    // Sidecars written before independent end feathering used one value.
+    #[serde(default)]
+    feather: Option<f32>,
+}
+
+impl From<DepthRangeSettingsInput> for DepthRangeSettings {
+    fn from(input: DepthRangeSettingsInput) -> Self {
+        let legacy = input.feather.unwrap_or(0.1);
+        Self {
+            near: input.near,
+            far: input.far,
+            near_feather: input.near_feather.unwrap_or(legacy),
+            far_feather: input.far_feather.unwrap_or(legacy),
+        }
+    }
+}
+
+impl DepthRangeSettings {
+    /// The UI curve and mask rasterizer use the same depth response.
+    pub fn weight(&self, depth: f32) -> f32 {
+        let near = self.near.clamp(0.0, 1.0);
+        let far = self.far.clamp(near, 1.0);
+        let smooth = |value: f32| {
+            let value = value.clamp(0.0, 1.0);
+            value * value * (3.0 - 2.0 * value)
+        };
+        let near_width = self.near_feather.clamp(0.0, 1.0);
+        let far_width = self.far_feather.clamp(0.0, 1.0);
+        let lower = if near_width > 0.0 && near > 0.0 {
+            smooth((depth - near) / near_width + 0.5)
+        } else {
+            f32::from(depth >= near)
+        };
+        let upper = if far_width > 0.0 && far < 1.0 {
+            1.0 - smooth((depth - far) / far_width + 0.5)
+        } else {
+            f32::from(depth <= far)
+        };
+        lower * upper
+    }
 }
 
 fn default_object_brush_size() -> f32 {
@@ -526,11 +594,7 @@ impl MaskGeometry {
             },
             MaskKind::DepthRange => Self::DepthRange {
                 depth: None,
-                near: 0.0,
-                far: 0.5,
-                feather: 0.1,
-                grow: 0.0,
-                edge_feather: 0.0,
+                range: DepthRangeSettings::default(),
             },
         }
     }
@@ -569,8 +633,9 @@ impl MaskGeometry {
             | Self::Object { feather, .. }
             | Self::LuminanceRange { feather, .. }
             | Self::ColorRange { feather, .. } => feather,
-            Self::DepthRange { edge_feather, .. } => edge_feather,
-            Self::Fullscreen | Self::Brush { .. } | Self::Placeholder => return false,
+            Self::Fullscreen | Self::Brush { .. } | Self::DepthRange { .. } | Self::Placeholder => {
+                return false
+            }
         };
         set_if_changed(feather, value)
     }
@@ -1011,17 +1076,10 @@ impl MaskStack {
                         *grow *= image_scale;
                     }
                     MaskGeometry::Placeholder => {}
-                    MaskGeometry::DepthRange {
-                        depth,
-                        grow,
-                        edge_feather,
-                        ..
-                    } => {
+                    MaskGeometry::DepthRange { depth, .. } => {
                         *depth = depth
                             .as_ref()
                             .map(|image| crop_mask_image(image, u0, v0, du, dv));
-                        *grow *= image_scale;
-                        *edge_feather *= image_scale.powf(1.0 / 1.30);
                     }
                 }
             }
@@ -1690,62 +1748,16 @@ fn rasterize_component(
         }
         MaskGeometry::DepthRange {
             depth: Some(depth),
-            near,
-            far,
-            feather,
-            grow,
-            edge_feather,
+            range,
         } => {
             let mut coverage = rasterize_mask_image(width, height, depth);
-            coverage.par_iter_mut().for_each(|value| {
-                *value = depth_range_weight(*value, *near, *far, *feather);
-            });
-            if grow.abs() > 1e-5 || *edge_feather > 1e-5 {
-                // Estimate the solid core from the selected range, not raw depth:
-                // a high depth value means far away, not selected.
-                let mut selection = depth.clone();
-                selection.pixels = depth
-                    .pixels
-                    .iter()
-                    .map(|value| {
-                        (depth_range_weight(*value as f32 / 255.0, *near, *far, *feather) * 255.0)
-                            .round() as u8
-                    })
-                    .collect();
-                shape_probability_mask_from_source(
-                    &mut coverage,
-                    width,
-                    height,
-                    *grow,
-                    *edge_feather,
-                    &selection,
-                );
-            }
+            coverage
+                .par_iter_mut()
+                .for_each(|value| *value = range.weight(*value));
             coverage
         }
         _ => vec![0.0; width as usize * height as usize],
     }
-}
-
-fn depth_range_weight(depth: f32, near: f32, far: f32, feather: f32) -> f32 {
-    let near = near.clamp(0.0, 1.0);
-    let far = far.clamp(near, 1.0);
-    let softness = feather.clamp(0.0, 1.0) * 0.5;
-    let smooth = |value: f32| {
-        let value = value.clamp(0.0, 1.0);
-        value * value * (3.0 - 2.0 * value)
-    };
-    let lower = if softness > 0.0 && near > 0.0 {
-        smooth((depth - near + softness) / (2.0 * softness))
-    } else {
-        f32::from(depth >= near)
-    };
-    let upper = if softness > 0.0 && far < 1.0 {
-        1.0 - smooth((depth - far + softness) / (2.0 * softness))
-    } else {
-        f32::from(depth <= far)
-    };
-    lower * upper
 }
 
 fn rasterize_mask_image(width: u32, height: u32, mask: &MaskImage) -> Vec<f32> {
@@ -1798,9 +1810,6 @@ fn component_shape_margin_pixels(component: &MaskComponent, image_edge: f32) -> 
             shape_margin(*grow, 0.0)
         }
         MaskGeometry::Path { grow, feather, .. } => shape_margin(*grow, *feather),
-        MaskGeometry::DepthRange {
-            grow, edge_feather, ..
-        } => shape_margin(*grow, *edge_feather),
         _ => 2.0,
     }
 }
