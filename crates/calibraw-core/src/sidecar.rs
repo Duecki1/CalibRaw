@@ -37,6 +37,7 @@ const MAX_OBJECT_STROKES: usize = 4096;
 const MAX_OBJECT_STROKE_POINTS: usize = 1_000_000;
 const MAX_MASK_IMAGE_EDGE: u32 = 8192;
 const MAX_MASK_ASSET_REFS: usize = MAX_LOCAL_MASKS * MAX_MASK_COMPONENTS;
+const MAX_MASK_ASSETS: usize = MAX_MASK_ASSET_REFS + 1;
 const MAX_REMOVE_ASSET_REFS: usize = REMOVE_MAX_STROKES * REMOVE_MAX_PATCHES_PER_STROKE;
 const MAX_DECODED_MASK_ASSET_BYTES: u64 = if cfg!(target_os = "android") {
     256 * 1024 * 1024
@@ -157,7 +158,9 @@ fn is_manual_mask_kind(kind: MaskKind) -> bool {
 
 fn filtered_mask_stack(masks: &MaskStack, include_manual: bool, include_ai: bool) -> MaskStack {
     if include_manual && include_ai {
-        return masks.clone();
+        let mut selected = masks.clone();
+        selected.scene_depth = None;
+        return selected;
     }
 
     MaskStack {
@@ -196,18 +199,35 @@ fn replace_selected_mask_categories(
     include_manual: bool,
     include_ai: bool,
 ) {
+    // Depth is tied to the destination image, not to the transferred adjustments.
+    let scene_depth = destination.scene_depth.clone();
     if include_manual && include_ai {
         *destination = source.clone();
+        destination.scene_depth = scene_depth;
+        clear_copied_depth_images(destination);
         return;
     }
 
     let mut merged = filtered_mask_stack(destination, !include_manual, !include_ai);
-    let copied = filtered_mask_stack(source, include_manual, include_ai);
+    let mut copied = filtered_mask_stack(source, include_manual, include_ai);
+    clear_copied_depth_images(&mut copied);
+    if include_manual {
+        merged.global_effects = copied.global_effects;
+    }
     if include_ai {
         merged.subject_refinement = copied.subject_refinement.clone();
     }
     merged.masks.extend(copied.masks);
+    merged.scene_depth = scene_depth;
     *destination = merged;
+}
+
+fn clear_copied_depth_images(masks: &mut MaskStack) {
+    for component in masks.masks.iter_mut().flat_map(|mask| &mut mask.components) {
+        if let MaskGeometry::DepthRange { depth, .. } = &mut component.geometry {
+            *depth = None;
+        }
+    }
 }
 
 fn masks_contain_content_aware_components(masks: &MaskStack) -> bool {
@@ -257,8 +277,10 @@ pub fn apply_copied_adjustments_with_mode(
 ) {
     if mode == AdjustmentPasteMode::Replace {
         let remove = Arc::clone(&destination.remove);
+        let scene_depth = destination.masks.scene_depth.clone();
         *destination = default_edit_state();
         destination.remove = remove;
+        Arc::make_mut(&mut destination.masks).scene_depth = scene_depth;
     }
     if settings.adjustments {
         destination.exposure = source.exposure;
@@ -353,6 +375,8 @@ struct SidecarDocument {
     mask_assets: Vec<SidecarMaskAsset>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     mask_asset_refs: Vec<SidecarMaskAssetRef>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    scene_depth_asset: Option<usize>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     remove_assets: Vec<SidecarRemoveAsset>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -478,7 +502,14 @@ fn encode_mask_png(image: &MaskImage) -> Result<Arc<[u8]>, SidecarError> {
 
 fn extract_mask_assets(
     edits: &mut EditState,
-) -> Result<(Vec<SidecarMaskAsset>, Vec<SidecarMaskAssetRef>), SidecarError> {
+) -> Result<
+    (
+        Vec<SidecarMaskAsset>,
+        Vec<SidecarMaskAssetRef>,
+        Option<usize>,
+    ),
+    SidecarError,
+> {
     let mut assets = Vec::<SidecarMaskAsset>::new();
     let mut unique_images = Vec::<MaskImage>::new();
     let mut buckets = HashMap::<u64, Vec<usize>>::new();
@@ -486,47 +517,48 @@ fn extract_mask_assets(
     let mut decoded_asset_bytes = 0u64;
     let mut encoded_asset_bytes = 0u64;
 
-    for (mask_index, mask) in Arc::make_mut(&mut edits.masks).masks.iter_mut().enumerate() {
+    let mut add_image = |image: MaskImage| -> Result<usize, SidecarError> {
+        let fingerprint = mask_image_fingerprint(&image);
+        if let Some(index) = buckets.get(&fingerprint).and_then(|candidates| {
+            candidates
+                .iter()
+                .copied()
+                .find(|index| unique_images[*index] == image)
+        }) {
+            return Ok(index);
+        }
+        let pixels =
+            u64::try_from(image.pixels.len()).map_err(|_| SidecarError::TooLarge(u64::MAX))?;
+        checked_add(&mut decoded_asset_bytes, pixels)?;
+        if decoded_asset_bytes > MAX_DECODED_MASK_ASSET_BYTES {
+            return invalid("generated masks exceed the decoded asset memory safety limit");
+        }
+        let png = encode_mask_png(&image)?;
+        checked_add(
+            &mut encoded_asset_bytes,
+            base64_json_string_bytes(png.len())?,
+        )?;
+        enforce_size_limit(encoded_asset_bytes, MAX_SIDECAR_BYTES)?;
+        let index = assets.len();
+        assets.push(SidecarMaskAsset {
+            width: image.width,
+            height: image.height,
+            png,
+        });
+        unique_images.push(image);
+        buckets.entry(fingerprint).or_default().push(index);
+        Ok(index)
+    };
+
+    let masks = Arc::make_mut(&mut edits.masks);
+    let scene_depth_asset = masks.scene_depth.take().map(&mut add_image).transpose()?;
+    for (mask_index, mask) in masks.masks.iter_mut().enumerate() {
         for (component_index, component) in mask.components.iter_mut().enumerate() {
             let Some(image) = generated_mask_mut(&mut component.geometry).and_then(Option::take)
             else {
                 continue;
             };
-            let fingerprint = mask_image_fingerprint(&image);
-            let existing = buckets.get(&fingerprint).and_then(|candidates| {
-                candidates
-                    .iter()
-                    .copied()
-                    .find(|index| unique_images[*index] == image)
-            });
-            let asset_index = if let Some(index) = existing {
-                index
-            } else {
-                let pixels = u64::try_from(image.pixels.len())
-                    .map_err(|_| SidecarError::TooLarge(u64::MAX))?;
-                decoded_asset_bytes = decoded_asset_bytes
-                    .checked_add(pixels)
-                    .ok_or(SidecarError::TooLarge(u64::MAX))?;
-                if decoded_asset_bytes > MAX_DECODED_MASK_ASSET_BYTES {
-                    return invalid("generated masks exceed the decoded asset memory safety limit");
-                }
-                let png = encode_mask_png(&image)?;
-                encoded_asset_bytes = encoded_asset_bytes
-                    .checked_add(base64_json_string_bytes(png.len())?)
-                    .ok_or(SidecarError::TooLarge(u64::MAX))?;
-                if encoded_asset_bytes > MAX_SIDECAR_BYTES {
-                    return Err(SidecarError::TooLarge(encoded_asset_bytes));
-                }
-                let index = assets.len();
-                assets.push(SidecarMaskAsset {
-                    width: image.width,
-                    height: image.height,
-                    png,
-                });
-                unique_images.push(image);
-                buckets.entry(fingerprint).or_default().push(index);
-                index
-            };
+            let asset_index = add_image(image)?;
             references.push(SidecarMaskAssetRef {
                 mask_index,
                 component_index,
@@ -538,7 +570,7 @@ fn extract_mask_assets(
         }
     }
 
-    Ok((assets, references))
+    Ok((assets, references, scene_depth_asset))
 }
 
 fn decode_mask_png(asset: &SidecarMaskAsset) -> Result<MaskImage, SidecarError> {
@@ -594,12 +626,17 @@ fn restore_mask_assets(
     edits: &mut EditState,
     assets: &[SidecarMaskAsset],
     references: &[SidecarMaskAssetRef],
+    scene_depth_asset: Option<usize>,
 ) -> Result<(), SidecarError> {
-    if assets.len() > MAX_MASK_ASSET_REFS || references.len() > MAX_MASK_ASSET_REFS {
+    if assets.len() > MAX_MASK_ASSETS || references.len() > MAX_MASK_ASSET_REFS {
         return invalid("sidecar contains too many generated mask assets");
     }
 
     let mut decoded_bytes = 0u64;
+    if let Some(image) = &edits.masks.scene_depth {
+        validate_image(image.width, image.height, image.pixels.len(), 1)?;
+        checked_add(&mut decoded_bytes, image.pixels.len() as u64)?;
+    }
     for mask in &edits.masks.masks {
         for component in &mask.components {
             if let MaskGeometry::DepthRange {
@@ -637,6 +674,15 @@ fn restore_mask_assets(
 
     let mut locations = HashSet::new();
     let mut referenced_assets = vec![false; assets.len()];
+    if let Some(index) = scene_depth_asset {
+        if edits.masks.scene_depth.is_some() {
+            return invalid("scene depth has both inline pixels and an asset reference");
+        }
+        let Some(referenced) = referenced_assets.get_mut(index) else {
+            return invalid("scene depth reference uses an invalid asset index");
+        };
+        *referenced = true;
+    }
     for reference in references {
         let Some(asset_referenced) = referenced_assets.get_mut(reference.asset_index) else {
             return invalid("generated mask reference uses an invalid asset index");
@@ -668,7 +714,11 @@ fn restore_mask_assets(
         .iter()
         .map(decode_mask_png)
         .collect::<Result<Vec<_>, _>>()?;
-    let masks = &mut Arc::make_mut(&mut edits.masks).masks;
+    let stack = Arc::make_mut(&mut edits.masks);
+    if let Some(index) = scene_depth_asset {
+        stack.scene_depth = Some(decoded[index].clone());
+    }
+    let masks = &mut stack.masks;
     for reference in references {
         let component = &mut masks[reference.mask_index].components[reference.component_index];
         let slot = generated_mask_mut(&mut component.geometry)
@@ -1131,7 +1181,7 @@ pub fn encode_with_review_and_editing_time(
     }
     synchronize_subject_refinement(&mut edits);
     validate_edit_state(&edits)?;
-    let (mask_assets, mask_asset_refs) = extract_mask_assets(&mut edits)?;
+    let (mask_assets, mask_asset_refs, scene_depth_asset) = extract_mask_assets(&mut edits)?;
     let (remove_assets, remove_asset_refs) = extract_remove_assets(&mut edits)?;
     let document = SidecarDocument {
         format: SIDECAR_FORMAT.to_owned(),
@@ -1141,6 +1191,7 @@ pub fn encode_with_review_and_editing_time(
         editing_time_ms,
         mask_assets,
         mask_asset_refs,
+        scene_depth_asset,
         remove_assets,
         remove_asset_refs,
     };
@@ -1191,6 +1242,7 @@ pub fn decode(bytes: &[u8]) -> Result<LoadedSidecar, SidecarError> {
         &mut document.edits,
         &document.mask_assets,
         &document.mask_asset_refs,
+        document.scene_depth_asset,
     )?;
     restore_remove_assets(
         &mut document.edits,
@@ -1560,7 +1612,19 @@ fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), SidecarError> {
 }
 
 mod validation;
-use validation::{invalid, validate_edit_state, validate_image};
+use validation::{invalid, validate_image};
+
+fn validate_scene_depth(masks: &MaskStack) -> Result<(), SidecarError> {
+    if let Some(image) = &masks.scene_depth {
+        validate_image(image.width, image.height, image.pixels.len(), 1)?;
+    }
+    Ok(())
+}
+
+fn validate_edit_state(edits: &EditState) -> Result<(), SidecarError> {
+    validate_scene_depth(&edits.masks)?;
+    validation::validate_edit_state(edits)
+}
 
 struct CappedVec {
     bytes: Vec<u8>,
@@ -1602,6 +1666,7 @@ fn preflight_sidecar_dynamic_data_with_limit(
     masks: &MaskStack,
     limit: u64,
 ) -> Result<(), SidecarError> {
+    validate_scene_depth(masks)?;
     let conservative = estimate_sidecar_bytes(masks)?;
     if conservative <= limit {
         return Ok(());
@@ -1636,6 +1701,15 @@ fn estimate_sidecar_bytes(masks: &MaskStack) -> Result<u64, SidecarError> {
     )?;
     let mut unique_images = Vec::<&MaskImage>::new();
     let mut image_buckets = HashMap::<u64, Vec<usize>>::new();
+    if let Some(image) = &masks.scene_depth {
+        add_unique_mask_asset_bound(
+            &mut estimated,
+            image,
+            &mut unique_images,
+            &mut image_buckets,
+            MASK_PNG_FIXED_HEADROOM,
+        )?;
+    }
     for mask in &masks.masks {
         checked_add(&mut estimated, MASK_HEADROOM)?;
         checked_add(&mut estimated, escaped_json_string_bound(&mask.name)?)?;
@@ -1705,6 +1779,14 @@ fn measure_sidecar_dynamic_bytes(masks: &MaskStack) -> Result<u64, SidecarError>
     )?;
     let mut unique_images = Vec::<&MaskImage>::new();
     let mut image_buckets = HashMap::<u64, Vec<usize>>::new();
+    if let Some(image) = &masks.scene_depth {
+        add_unique_mask_asset_measured(
+            &mut measured,
+            image,
+            &mut unique_images,
+            &mut image_buckets,
+        )?;
+    }
     for mask in &masks.masks {
         checked_add(&mut measured, MASK_HEADROOM)?;
         checked_add(&mut measured, escaped_json_string_bound(&mask.name)?)?;

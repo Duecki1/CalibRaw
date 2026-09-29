@@ -622,6 +622,27 @@ pub mod fog {
     use super::*;
 
     float_param!(
+        START,
+        "Fog start",
+        0.0,
+        95.0,
+        8.0,
+        0.5,
+        0,
+        Some("Keeps the nearest part of the scene clear. Distance is relative to the depth map, not meters."),
+    );
+    float_param!(
+        DEPTH_INFLUENCE,
+        "Depth influence",
+        0.0,
+        100.0,
+        100.0,
+        0.5,
+        0,
+        Some("Makes fog accumulate with scene distance. Generate scene depth for natural foreground separation."),
+    );
+
+    float_param!(
         AMOUNT,
         "Amount",
         0.0,
@@ -639,7 +660,7 @@ pub mod fog {
         55.0,
         0.5,
         0,
-        Some("Controls how opaque the fog becomes."),
+        Some("Controls how quickly light is scattered as it travels through the fog."),
     );
     float_param!(
         SCALE,
@@ -659,17 +680,17 @@ pub mod fog {
         70.0,
         0.5,
         0,
-        Some("Softens transitions between clear and foggy areas."),
+        Some("Softens the fog onset and the shape of the mist banks."),
     );
     float_param!(
         VARIATION,
         "Variation",
         0.0,
         100.0,
-        45.0,
+        30.0,
         0.5,
         0,
-        Some("Varies the fog density across the image."),
+        Some("Varies density inside the fog volume. Zero creates uniform atmospheric haze."),
     );
     float_param!(
         SEED,

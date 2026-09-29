@@ -963,6 +963,9 @@ pub struct MaskStack {
     pub masks: Vec<LocalMask>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub global_effects: Vec<EffectComponent>,
+    /// Scene depth in full-image coordinates, including when this stack is cropped.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scene_depth: Option<MaskImage>,
     pub selected_mask: Option<usize>,
     pub selected_component: Option<usize>,
     #[serde(skip, default)]
@@ -974,6 +977,39 @@ impl MaskStack {
         *self = Self::default();
     }
 
+    /// Returns full-image depth, falling back to the first cached depth-range image.
+    /// Disabled masks/components still provide useful scene data. Consumers sampling
+    /// full-image UVs must use width, height and pixels directly: a cropped depth-range
+    /// image shares its original pixels but has a region-specific sampling rectangle.
+    pub fn scene_depth_image(&self) -> Option<&MaskImage> {
+        self.scene_depth.as_ref().or_else(|| {
+            self.masks
+                .iter()
+                .flat_map(|mask| &mask.components)
+                .find_map(|component| match &component.geometry {
+                    MaskGeometry::DepthRange { depth, .. } => depth.as_ref(),
+                    _ => None,
+                })
+        })
+    }
+
+    pub fn has_fog_effect(&self) -> bool {
+        let active_fog = |component: &EffectComponent| {
+            component.effect == MaskEffect::Fog && component.is_active()
+        };
+        self.global_effects.iter().any(active_fog)
+            || self.masks.iter().any(|mask| {
+                mask.enabled
+                    && mask.opacity > 0.0
+                    && (mask.effect_components.iter().any(active_fog)
+                        || active_fog(&EffectComponent {
+                            effect: mask.effect,
+                            enabled: true,
+                            settings: mask.effect_settings,
+                        }))
+            })
+    }
+
     pub fn cropped_for_region(
         &self,
         x: u32,
@@ -983,6 +1019,7 @@ impl MaskStack {
         full_width: u32,
         full_height: u32,
     ) -> Self {
+        // Scene depth stays in full-image coordinates for GPU full-image UV sampling.
         let mut cropped = self.clone();
         let full_width = full_width.max(1);
         let full_height = full_height.max(1);

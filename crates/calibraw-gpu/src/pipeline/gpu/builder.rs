@@ -81,6 +81,7 @@ pub(super) struct PipelineSurfaces {
     pub(super) tone_guide_b: wgpu::Texture,
     pub(super) mask_texture: wgpu::Texture,
     pub(super) light_rays_mask_texture: wgpu::Texture,
+    pub(super) scene_depth_texture: wgpu::Texture,
     pub(super) out_view: wgpu::TextureView,
     pub(super) display_linear_view: wgpu::TextureView,
     pub(super) reconstructed_raw_view: wgpu::TextureView,
@@ -96,6 +97,7 @@ pub(super) struct PipelineSurfaces {
     pub(super) black_view: wgpu::TextureView,
     pub(super) mask_view: wgpu::TextureView,
     pub(super) light_rays_mask_view: wgpu::TextureView,
+    pub(super) scene_depth_view: wgpu::TextureView,
     pub(super) mask_sampler: wgpu::Sampler,
 }
 
@@ -206,6 +208,15 @@ pub(super) fn create_pipeline_surfaces(
         "calibraw full-image Light Rays emission atlas",
     );
 
+    let scene_depth_texture = create_processing_texture(
+        device,
+        texture_size(SCENE_DEPTH_EDGE, SCENE_DEPTH_EDGE),
+        wgpu::TextureFormat::R16Float,
+        wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        "calibraw full-image scene depth",
+    );
+    let scene_depth_view = default_texture_view(&scene_depth_texture);
+
     let out_view = default_texture_view(&out_texture);
     let display_linear_view = default_texture_view(&display_linear_texture);
     let reconstructed_raw_view = default_texture_view(&reconstructed_raw_texture);
@@ -257,6 +268,7 @@ pub(super) fn create_pipeline_surfaces(
             tone_guide_b,
             mask_texture,
             light_rays_mask_texture,
+            scene_depth_texture,
             out_view,
             display_linear_view,
             reconstructed_raw_view,
@@ -272,6 +284,7 @@ pub(super) fn create_pipeline_surfaces(
             black_view,
             mask_view,
             light_rays_mask_view,
+            scene_depth_view,
             mask_sampler,
         },
         has_ai_scene,
@@ -779,6 +792,8 @@ pub(super) fn create_bind_group_layouts(
                     sampler_entry(28),
                     storage_buffer_entry(33, true),
                     texture_array_entry(34, wgpu::TextureSampleType::Float { filterable: true }),
+                    texture_entry(35, wgpu::TextureSampleType::Float { filterable: false }),
+                    storage_buffer_entry(16, true),
                 ],
             )
         });
@@ -941,6 +956,7 @@ pub(super) fn create_bind_groups(
         black_view,
         mask_view,
         light_rays_mask_view,
+        scene_depth_view,
         mask_sampler,
         ..
     } = surfaces;
@@ -1382,6 +1398,8 @@ pub(super) fn create_bind_groups(
                     sampler_binding(28, mask_sampler),
                     buffer_binding(33, mask_data_buffer),
                     texture_binding(34, light_rays_mask_view),
+                    texture_binding(35, scene_depth_view),
+                    buffer_binding(16, tone_stats_buffer),
                 ],
             )
         };

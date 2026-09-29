@@ -911,6 +911,7 @@ impl Sidebar {
             lens_changed |= Self::show_optics(ui, app, true);
         }
 
+        let mut scene_depth = mask_effects::fog::SceneDepthControls::new(app);
         if layout == ScreenLayout::Vertical {
             if app.develop_ui.adjustment_section == AdjustmentSection::Effects
                 && Self::show_selected_effect_component(
@@ -918,13 +919,20 @@ impl Sidebar {
                     &mut app.masks.stack.global_effects,
                     &mut app.develop_ui.effect_component,
                     true,
+                    &mut scene_depth,
                 )
             {
                 app.mark_mask_adjustments_dirty();
             }
-        } else if Self::show_effect_components(ui, &mut app.masks.stack.global_effects, true) {
+        } else if Self::show_effect_components(
+            ui,
+            &mut app.masks.stack.global_effects,
+            true,
+            &mut scene_depth,
+        ) {
             app.mark_mask_adjustments_dirty();
         }
+        scene_depth.apply_request(app, frame);
 
         if !white_balance_was_active && app.develop_ui.white_balance_picker_active {
             app.develop_ui.point_color.picker_active = false;

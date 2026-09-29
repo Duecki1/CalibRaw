@@ -5,6 +5,8 @@ use std::cell::RefCell;
 use std::sync::atomic::{AtomicU64, Ordering};
 use wgpu::util::DeviceExt;
 
+pub(super) const SCENE_DEPTH_EDGE: u32 = 1024;
+
 const MAX_UPLOAD_SCRATCH_BYTES: usize = 8 * 1024 * 1024;
 
 std::thread_local! {
@@ -269,6 +271,12 @@ pub(super) fn build_gpu_resource_plan(input: GpuResourcePlanInput) -> Result<Gpu
         tone_bytes,
     );
 
+    push_entry(
+        &mut entries,
+        "scene depth texture",
+        GpuResourceResidency::Persistent,
+        texture_allocation_bytes(SCENE_DEPTH_EDGE, SCENE_DEPTH_EDGE, 1, 1, wgpu::TextureFormat::R16Float)?,
+    );
     let mask_bytes = texture_allocation_bytes(
         input.mask_atlas_edge,
         input.mask_atlas_edge,

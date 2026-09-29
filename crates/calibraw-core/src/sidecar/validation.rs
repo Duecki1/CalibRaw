@@ -761,6 +761,8 @@ fn validate_fog_effect(fog: &crate::pipeline::FogEffectSettings) -> Result<(), S
             (fog::SOFTNESS, fog.softness),
             (fog::VARIATION, fog.variation),
             (fog::SEED, fog.seed),
+            (fog::START, fog.start),
+            (fog::DEPTH_INFLUENCE, fog.depth_influence),
         ],
         &fog.color,
     )?;

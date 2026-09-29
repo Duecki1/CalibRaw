@@ -166,6 +166,7 @@ impl Sidebar {
         ui: &mut Ui,
         components: &mut Vec<crate::pipeline::EffectComponent>,
         is_fullscreen_mask: bool,
+        scene_depth: &mut mask_effects::fog::SceneDepthControls,
     ) -> bool {
         let mut changed = false;
         let mut remove = None;
@@ -177,6 +178,7 @@ impl Sidebar {
                     component,
                     &mut remove_component,
                     is_fullscreen_mask,
+                    scene_depth,
                 );
                 if remove_component {
                     remove = Some(index);
@@ -203,6 +205,7 @@ impl Sidebar {
         components: &mut Vec<crate::pipeline::EffectComponent>,
         selection: &mut Option<MaskEffect>,
         is_fullscreen_mask: bool,
+        scene_depth: &mut mask_effects::fog::SceneDepthControls,
     ) -> bool {
         let Some(effect) = *selection else {
             return false;
@@ -222,6 +225,7 @@ impl Sidebar {
                     &mut components[index],
                     &mut remove,
                     is_fullscreen_mask,
+                    scene_depth,
                 )
             })
             .inner;
@@ -237,6 +241,7 @@ impl Sidebar {
         component: &mut crate::pipeline::EffectComponent,
         remove: &mut bool,
         is_fullscreen_mask: bool,
+        scene_depth: &mut mask_effects::fog::SceneDepthControls,
     ) -> bool {
         match component.effect {
             MaskEffect::Blur => mask_effects::blur::show(
@@ -305,6 +310,7 @@ impl Sidebar {
                 &mut component.settings.fog,
                 &mut component.enabled,
                 remove,
+                scene_depth,
             ),
             MaskEffect::Smoke => mask_effects::smoke::show(
                 ui,
