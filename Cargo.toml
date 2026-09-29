@@ -78,7 +78,7 @@ zune-jpegxl = "0.5.2"
 
 eframe = { version = "0.35", default-features = false }
 egui = "0.35"
-egui-phosphor = "0.13"
+egui-phosphor = "0.14"
 egui-wgpu = "0.35"
 wgpu = "29"
 naga = { version = "29", features = ["wgsl-in"] }
