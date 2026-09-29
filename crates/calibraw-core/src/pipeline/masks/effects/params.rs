@@ -639,7 +639,7 @@ pub mod fog {
         100.0,
         0.5,
         0,
-        Some("Makes fog accumulate with scene distance. Generate scene depth for natural foreground separation."),
+        Some("Makes fog accumulate with scene distance. Scene depth is generated automatically when needed."),
     );
 
     float_param!(

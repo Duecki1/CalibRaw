@@ -379,6 +379,7 @@ impl eframe::App for CalibRawApp {
             }
         });
         self.sync_ai_model_runtime_context();
+        self.ensure_fog_scene_depth(frame);
         #[cfg(not(target_os = "android"))]
         self.sync_discord_presence();
 

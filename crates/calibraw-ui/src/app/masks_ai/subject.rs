@@ -34,35 +34,57 @@ impl CalibRawApp {
 
     pub(crate) fn request_subject_mask(&mut self, frame: &eframe::Frame) {
         self.ai.object_error_dialog = None;
-        self.request_generated_mask(AiMaskModel::Subject, frame);
+        let _ = self.request_generated_mask(AiMaskModel::Subject, frame);
     }
 
     pub(crate) fn request_sky_mask(&mut self, frame: &eframe::Frame) {
-        self.request_generated_mask(AiMaskModel::Sky, frame);
+        let _ = self.request_generated_mask(AiMaskModel::Sky, frame);
     }
 
     pub(crate) fn request_depth_mask(&mut self, frame: &eframe::Frame) {
-        self.request_generated_mask(AiMaskModel::Depth, frame);
+        let _ = self.request_generated_mask(AiMaskModel::Depth, frame);
     }
 
-    fn request_generated_mask(&mut self, model: AiMaskModel, frame: &eframe::Frame) {
+    /// Ensures active fog has shared scene depth without exposing a separate fog UI action.
+    /// A cancelled consent prompt is latched until fog is removed/disabled or depth becomes
+    /// available, so the dialog is not reopened every frame.
+    pub(in crate::app) fn ensure_fog_scene_depth(&mut self, frame: &eframe::Frame) {
+        let needs_depth = self.masks.stack.has_fog_effect()
+            && self.masks.stack.scene_depth_image().is_none();
+        if !needs_depth {
+            self.masks.fog_depth_auto_requested = false;
+            return;
+        }
+        if self.masks.fog_depth_auto_requested
+            || self.foreground_operation_active()
+            || self.ai.consent.is_open()
+        {
+            return;
+        }
+
+        self.masks.fog_depth_auto_requested =
+            self.request_generated_mask(AiMaskModel::Depth, frame);
+    }
+
+    fn request_generated_mask(&mut self, model: AiMaskModel, frame: &eframe::Frame) -> bool {
         if self.foreground_operation_active() {
             self.ui.notice =
                 Some("Finish or cancel the current editing operation first.".to_owned());
-            return;
+            return false;
         }
         if let Some(mask) = self.masks.generated_cache_mut(model).clone() {
             self.apply_generated_mask(model, mask);
-            return;
+            return true;
         }
         if !self.ai_runtime_ready() {
-            return;
+            return false;
         }
         if let Err(error) = self.capture_mask_source(frame) {
             self.report_ai_mask_error(error);
-            return;
+            return false;
         }
         self.prepare_generated_mask(model);
+        true
     }
 
     fn generated_model_path(&self, model: AiMaskModel) -> PathBuf {
@@ -336,6 +358,32 @@ impl CalibRawApp {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn fog_automatically_reuses_cached_depth_without_a_depth_mask() {
+        let mut app = CalibRawApp::empty(&egui::Context::default());
+        app.masks
+            .stack
+            .global_effects
+            .push(crate::pipeline::EffectComponent::new(
+                crate::pipeline::MaskEffect::Fog,
+            ));
+        let depth = MaskImage::new(2, 2, vec![0, 85, 170, 255]).unwrap();
+        app.masks.depth_cache = Some(depth.clone());
+        let frame = eframe::Frame::_new_kittest();
+
+        app.ensure_fog_scene_depth(&frame);
+
+        assert_eq!(app.masks.stack.scene_depth.as_ref(), Some(&depth));
+        assert!(app.masks.stack.masks.is_empty());
+        assert!(!app.foreground_operation_active());
+        assert!(!app.ai.consent.is_open());
+
+        // Once depth is available the one-shot latch is re-armed for a future
+        // fog/depth invalidation instead of staying permanently suppressed.
+        app.ensure_fog_scene_depth(&frame);
+        assert!(!app.masks.fog_depth_auto_requested);
+    }
 
     #[test]
     fn generated_worker_results_route_by_model_and_reject_cancelled_or_stale_jobs() {
