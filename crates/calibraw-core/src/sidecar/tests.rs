@@ -37,26 +37,27 @@ fn sample_edits() -> EditState {
 fn depth_mask_geometry_survives_sidecar_validation_and_serialization() {
     let mut masks = MaskStack::default();
     masks.add_mask(MaskKind::DepthRange).unwrap();
-    if let MaskGeometry::DepthRange {
-        depth,
-        near,
-        far,
-        feather,
-        grow,
-        edge_feather,
-    } = &mut masks.masks[0].components[0].geometry
-    {
-        *depth = crate::pipeline::MaskImage::new(2, 1, vec![0, 255]);
-        *near = 0.2;
-        *far = 0.8;
-        *feather = 0.1;
-        *grow = -0.2;
-        *edge_feather = 0.4;
+    if let MaskGeometry::DepthRange { depth, range } = &mut masks.masks[0].components[0].geometry {
+        *depth = MaskImage::new(2, 1, vec![0, 255]);
+        *range = crate::pipeline::DepthRangeSettings {
+            near: 0.2,
+            far: 0.8,
+            near_feather: 0.1,
+            far_feather: 0.4,
+        };
     }
     preflight_mask_change(&masks).unwrap();
     let mut edits = sample_edits();
     edits.masks = Arc::new(masks);
     let serialized = encode(edits.clone()).unwrap();
+    let document: serde_json::Value = serde_json::from_slice(&serialized).unwrap();
+    let geometry =
+        &document["edits"]["masks"]["masks"][0]["components"][0]["geometry"]["DepthRange"];
+    assert!(geometry.get("feather").is_some());
+    assert!(geometry.get("far_feather").is_some());
+    for removed in ["grow", "edge_feather"] {
+        assert!(geometry.get(removed).is_none());
+    }
     assert_eq!(decode(&serialized).unwrap().edits, edits);
 }
 
@@ -119,8 +120,11 @@ fn legacy_inline_depth_loads_and_is_compressed_on_next_save() {
         .unwrap()
         .as_object_mut()
         .unwrap();
-    geometry.remove("grow");
-    geometry.remove("edge_feather");
+    geometry.remove("near_feather");
+    geometry.remove("far_feather");
+    geometry.insert("feather".into(), 0.1.into());
+    geometry.insert("grow".into(), 0.4.into());
+    geometry.insert("edge_feather".into(), 0.8.into());
 
     let loaded = decode(&serde_json::to_vec(&document).unwrap())
         .unwrap()
@@ -141,7 +145,7 @@ fn legacy_inline_depth_loads_and_is_compressed_on_next_save() {
 }
 
 #[test]
-fn depth_assets_count_towards_sidecar_size_and_validate_edge_controls() {
+fn depth_assets_count_towards_sidecar_size_and_validate_range_controls() {
     let mut masks = MaskStack::default();
     masks.add_mask(MaskKind::DepthRange).unwrap();
     let empty_estimate = estimate_sidecar_bytes(&masks).unwrap();
@@ -151,13 +155,10 @@ fn depth_assets_count_towards_sidecar_size_and_validate_edge_controls() {
     assert!(estimate_sidecar_bytes(&masks).unwrap() > empty_estimate);
     assert!(measure_sidecar_dynamic_bytes(&masks).unwrap() > empty_measured);
     assert!(preflight_sidecar_dynamic_data_with_limit(&masks, empty_measured).is_err());
-    for (grow_value, feather_value) in [(1.1, 0.0), (0.0, -0.1), (0.0, f32::NAN)] {
-        if let MaskGeometry::DepthRange {
-            grow, edge_feather, ..
-        } = &mut masks.masks[0].components[0].geometry
-        {
-            *grow = grow_value;
-            *edge_feather = feather_value;
+    for (near_feather, far_feather) in [(1.1, 0.0), (0.0, -0.1), (0.0, f32::NAN)] {
+        if let MaskGeometry::DepthRange { range, .. } = &mut masks.masks[0].components[0].geometry {
+            range.near_feather = near_feather;
+            range.far_feather = far_feather;
         }
         assert!(encode(EditState {
             masks: Arc::new(masks.clone()),

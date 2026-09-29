@@ -882,7 +882,7 @@ impl Sidebar {
                         0.12,
                     );
                 }
-                MaskGeometry::DepthRange { depth, near, far, feather, grow, edge_feather } => {
+                MaskGeometry::DepthRange { depth, range } => {
                     ui.label(if depth.is_some() {
                         "Select a range of relative depth, from near (0) to far (1)."
                     } else {
@@ -891,24 +891,8 @@ impl Sidebar {
                     if ui.button(if depth.is_some() { "Regenerate depth map" } else { "Generate depth map" }).clicked() {
                         *request_subject = true;
                     }
-                    geometry_changed |= adjustment_slider_with_reset(
-                        ui, "Near", near, 0.0..=1.0, 2, 0.01,
-                        Some("Nearest included relative depth."), 0.0,
-                    );
-                    geometry_changed |= adjustment_slider_with_reset(
-                        ui, "Far", far, 0.0..=1.0, 2, 0.01,
-                        Some("Farthest included relative depth."), 0.5,
-                    );
-                    if *near > *far { *far = *near; geometry_changed = true; }
-                    geometry_changed |= Self::mask_feather_slider(
-                        ui, "Range softness", feather, 0.0..=1.0,
-                        "Softens the near and far depth boundaries.", 0.1,
-                    );
-                    geometry_changed |= Self::mask_grow_slider(ui, grow);
-                    geometry_changed |= Self::mask_feather_slider(
-                        ui, "Feather", edge_feather, 0.0..=1.0,
-                        "Softens the selection edge while keeping the selected interior solid.", 0.0,
-                    );
+                    geometry_changed |= crate::ui::components::depth_range_slider::depth_range_slider(ui, range);
+
                 }
                 MaskGeometry::Placeholder => {
                     ui.label("This mask type is not implemented yet.");

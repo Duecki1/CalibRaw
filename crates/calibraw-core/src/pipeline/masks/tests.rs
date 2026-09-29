@@ -24,7 +24,6 @@ fn common_mask_properties_mutate_through_shared_model_api() {
         MaskKind::Object,
         MaskKind::LuminanceRange,
         MaskKind::ColorRange,
-        MaskKind::DepthRange,
     ] {
         stack.clear();
         stack.add_mask(kind);
@@ -47,7 +46,6 @@ fn common_mask_properties_mutate_through_shared_model_api() {
             | MaskGeometry::Object { feather, .. }
             | MaskGeometry::LuminanceRange { feather, .. }
             | MaskGeometry::ColorRange { feather, .. } => *feather,
-            MaskGeometry::DepthRange { edge_feather, .. } => *edge_feather,
             _ => unreachable!("tested mask kind must expose feather"),
         };
         assert_eq!(feather, 0.37);
@@ -1421,18 +1419,16 @@ fn subtract_component_removes_coverage() {
 fn depth_range_selects_near_values_and_combines_with_other_components() {
     let mut stack = MaskStack::default();
     stack.add_mask(MaskKind::DepthRange);
-    if let MaskGeometry::DepthRange {
-        depth,
-        near,
-        far,
-        feather,
-        ..
-    } = &mut stack.selected_component_mut().unwrap().geometry
+    if let MaskGeometry::DepthRange { depth, range } =
+        &mut stack.selected_component_mut().unwrap().geometry
     {
         *depth = MaskImage::new(4, 1, vec![0, 85, 170, 255]);
-        *near = 0.0;
-        *far = 0.5;
-        *feather = 0.0;
+        *range = DepthRangeSettings {
+            near: 0.0,
+            far: 0.5,
+            near_feather: 0.0,
+            far_feather: 0.0,
+        };
     }
     assert_eq!(stack.rasterize_layer(0, 4, 1, 4, 1), vec![255, 255, 0, 0]);
     stack.masks[0].invert = true;
@@ -1440,117 +1436,71 @@ fn depth_range_selects_near_values_and_combines_with_other_components() {
     stack.masks[0].invert = false;
     stack.add_component(MaskKind::Fullscreen, MaskCombineMode::Subtract);
     assert_eq!(stack.rasterize_layer(0, 4, 1, 4, 1), vec![0; 4]);
-    assert!((depth_range_weight(0.5, 0.25, 0.75, 0.2) - 1.0).abs() < 1e-6);
-    assert!(depth_range_weight(0.25, 0.25, 0.75, 0.2) > 0.0);
 }
 
 #[test]
-fn depth_edge_controls_match_subject_shaping_without_changing_the_range() {
-    let mut depth_stack = MaskStack::default();
-    depth_stack.add_mask(MaskKind::DepthRange);
-    let mut subject_stack = MaskStack::default();
-    subject_stack.add_mask(MaskKind::Subject);
-    let pixels: Vec<u8> = (0..128 * 128)
-        .map(|i| {
-            if (40..88).contains(&(i % 128)) && (40..88).contains(&(i / 128)) {
-                0
-            } else {
-                255
+fn depth_end_feathers_are_independent_and_keep_full_range_selected() {
+    let range = DepthRangeSettings {
+        near: 0.25,
+        far: 0.75,
+        near_feather: 0.0,
+        far_feather: 0.4,
+    };
+    assert_eq!(range.weight(0.24), 0.0);
+    assert_eq!(range.weight(0.25), 1.0);
+    assert!(range.weight(0.85) > 0.0);
+    let opposite = DepthRangeSettings {
+        near_feather: 0.4,
+        far_feather: 0.0,
+        ..range
+    };
+    assert!(opposite.weight(0.15) > 0.0);
+    assert_eq!(opposite.weight(0.76), 0.0);
+    for i in 0..=100 {
+        let d = i as f32 / 100.0;
+        assert!((range.weight(d) - opposite.weight(1.0 - d)).abs() < 1e-5);
+        assert_eq!(
+            DepthRangeSettings {
+                near: 0.0,
+                far: 1.0,
+                ..range
             }
-        })
-        .collect();
-    if let MaskGeometry::DepthRange { depth, feather, .. } =
-        &mut depth_stack.masks[0].components[0].geometry
-    {
-        *depth = MaskImage::new(128, 128, pixels.clone());
-        *feather = 0.0;
+            .weight(d),
+            1.0
+        );
     }
-    if let MaskGeometry::Ai { mask, .. } = &mut subject_stack.masks[0].components[0].geometry {
-        *mask = MaskImage::new(128, 128, pixels.iter().map(|v| 255 - v).collect());
-    }
-    let base = depth_stack.rasterize_layer(0, 128, 128, 128, 128);
-    let count = |mask: &[u8]| mask.iter().filter(|&&v| v >= 128).count();
-    for (grow_value, feather_value) in [(0.5, 0.0), (-0.5, 0.0), (0.0, 0.7), (0.4, 0.6)] {
-        if let MaskGeometry::DepthRange {
-            grow, edge_feather, ..
-        } = &mut depth_stack.masks[0].components[0].geometry
-        {
-            *grow = grow_value;
-            *edge_feather = feather_value;
-        }
-        if let MaskGeometry::Ai { grow, feather, .. } =
-            &mut subject_stack.masks[0].components[0].geometry
-        {
-            *grow = grow_value;
-            *feather = feather_value;
-        }
-        let shaped = depth_stack.rasterize_layer(0, 128, 128, 128, 128);
-        assert_eq!(shaped, subject_stack.rasterize_layer(0, 128, 128, 128, 128));
-        if grow_value > 0.0 {
-            assert!(count(&shaped) > count(&base));
-        }
-        if grow_value < 0.0 {
-            assert!(count(&shaped) < count(&base));
-        }
-        if feather_value > 0.0 {
-            assert!(shaped.iter().any(|&v| v > 0 && v < 255));
-        }
-        assert_eq!(shaped[64 * 128 + 64], 255);
-    }
-    assert!(depth_stack.masks[0].components[0].set_feather(0.3));
-    assert!(matches!(
-        depth_stack.masks[0].components[0].geometry,
-        MaskGeometry::DepthRange {
-            near: 0.0,
-            far: 0.5,
-            feather: 0.0,
-            edge_feather: 0.3,
-            ..
-        }
-    ));
+    assert!(!MaskGeometry::for_kind(MaskKind::DepthRange).set_feather(0.4));
 }
 
 #[test]
-fn cropped_depth_edge_controls_keep_full_frame_alignment_and_padding() {
+fn cropped_depth_preserves_independent_range_feathers() {
     let mut stack = MaskStack::default();
     stack.add_mask(MaskKind::DepthRange);
-    let pixels = (0..128 * 128)
-        .map(|i| {
-            if (60..68).contains(&(i % 128)) && (60..68).contains(&(i / 128)) {
-                0
-            } else {
-                255
-            }
-        })
-        .collect();
-    if let MaskGeometry::DepthRange {
-        depth,
-        grow,
-        edge_feather,
-        ..
-    } = &mut stack.masks[0].components[0].geometry
-    {
-        *depth = MaskImage::new(128, 128, pixels);
-        *grow = 0.2;
-        *edge_feather = 1.0;
+    let settings = DepthRangeSettings {
+        near: 0.25,
+        far: 0.7,
+        near_feather: 0.1,
+        far_feather: 0.4,
+    };
+    if let MaskGeometry::DepthRange { depth, range } = &mut stack.masks[0].components[0].geometry {
+        *depth = MaskImage::new(
+            128,
+            128,
+            (0..128 * 128).map(|i| ((i % 128) * 2) as u8).collect(),
+        );
+        *range = settings;
     }
-    assert!(component_shape_margin_pixels(&stack.masks[0].components[0], 128.0) > 8.0);
     let full = stack.rasterize_layer(0, 128, 128, 128, 128);
-    let cropped = stack.cropped_for_region(52, 52, 52, 52, 128, 128);
-    assert!(matches!(
-        cropped.masks[0].components[0].geometry,
-        MaskGeometry::DepthRange {
-            near: 0.0,
-            far: 0.5,
-            feather: 0.1,
-            ..
-        }
-    ));
-    let tile = cropped.rasterize_layer(0, 52, 52, 52, 52);
-    for y in 0..32 {
+    let cropped = stack.cropped_for_region(32, 32, 64, 64, 128, 128);
+    let MaskGeometry::DepthRange { range, .. } = &cropped.masks[0].components[0].geometry else {
+        panic!()
+    };
+    assert_eq!(*range, settings);
+    let tile = cropped.rasterize_layer(0, 64, 64, 64, 64);
+    for y in 0..64 {
         assert_eq!(
-            &tile[(y + 10) * 52 + 10..(y + 10) * 52 + 42],
-            &full[(y + 62) * 128 + 62..(y + 62) * 128 + 94]
+            &tile[y * 64..(y + 1) * 64],
+            &full[(y + 32) * 128 + 32..(y + 32) * 128 + 96]
         );
     }
 }
