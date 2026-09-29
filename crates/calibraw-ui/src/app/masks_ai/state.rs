@@ -57,6 +57,7 @@ impl MaskState {
         self.thumbnail_revision = self.overlay_revision;
         self.source_cache = None;
         self.clear_generated_caches();
+        self.fog_depth_auto_requested = false;
         self.dirty_layers.fill(false);
         self.detail_dirty_layers.fill(false);
         self.navigation_dirty_layers.fill(false);
@@ -756,6 +757,7 @@ mod tests {
             subject_cache: None,
             sky_cache: None,
             depth_cache: None,
+            fog_depth_auto_requested: false,
             dirty_layers: [false; MAX_LOCAL_MASKS],
             detail_dirty_layers: [false; MAX_LOCAL_MASKS],
             navigation_dirty_layers: [false; MAX_LOCAL_MASKS],
