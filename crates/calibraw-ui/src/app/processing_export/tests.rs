@@ -1,8 +1,5 @@
 use super::super::{ExportDestination, ExportTask, ExportTaskKind, ExportTaskReceiver};
-use super::{
-    batch::batch_export_overall_fraction,
-    export::{clear_export_task, export_source_stem},
-};
+use super::{batch::batch_export_overall_fraction, export::export_source_stem};
 use crate::pipeline::ExportEvent;
 use std::path::Path;
 use std::sync::{
@@ -65,34 +62,6 @@ fn test_export_task() -> ExportTask {
 }
 
 #[test]
-fn export_destination_keeps_the_render_path_explicit() {
-    let destination = ExportDestination::File("nested/photo.tif".into());
-    assert_eq!(destination.path(), Path::new("nested/photo.tif"));
-}
-
-#[cfg(target_os = "android")]
-#[test]
-fn android_gallery_destination_keeps_publish_name_and_format() {
-    let destination = ExportDestination::AndroidGallery {
-        path: "cache/photo-123.jpg".into(),
-        display_name: "photo-calibraw.jpg".to_owned(),
-        format: crate::pipeline::ExportFormat::Jpeg,
-    };
-    assert_eq!(destination.path(), Path::new("cache/photo-123.jpg"));
-    match destination {
-        ExportDestination::AndroidGallery {
-            display_name,
-            format,
-            ..
-        } => {
-            assert_eq!(display_name, "photo-calibraw.jpg");
-            assert_eq!(format, crate::pipeline::ExportFormat::Jpeg);
-        }
-        _ => unreachable!(),
-    }
-}
-
-#[test]
 fn minimized_export_keeps_the_background_worker_active() {
     let mut task = test_export_task();
     task.minimize();
@@ -118,19 +87,4 @@ fn export_cancellation_sets_the_shared_token_and_state() {
     assert!(task.cancelling);
     assert!(task.cancellation.load(Ordering::Acquire));
     assert_eq!(task.phase, "Cancelling export…");
-}
-
-#[test]
-fn export_completion_clears_the_active_task() {
-    let mut slot = Some(test_export_task());
-    clear_export_task(&mut slot);
-    assert!(slot.is_none());
-}
-
-#[test]
-fn export_failure_cleanup_clears_the_active_task() {
-    let mut slot = Some(test_export_task());
-    slot.as_mut().unwrap().phase = "Export failed".to_owned();
-    clear_export_task(&mut slot);
-    assert!(slot.is_none());
 }

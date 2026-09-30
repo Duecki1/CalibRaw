@@ -383,7 +383,11 @@ fn set_library_clipboard(
     assets: Vec<LibraryAsset>,
 ) {
     let count = assets.len();
-    app.library.image_clipboard = Some(ImageClipboard { mode, assets });
+    app.library.image_clipboard = Some(ImageClipboard {
+        #[cfg(not(target_os = "android"))]
+        mode,
+        assets,
+    });
     #[cfg(not(target_os = "android"))]
     {
         app.library.folder_clipboard = None;

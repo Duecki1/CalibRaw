@@ -324,10 +324,7 @@ pub fn clear_camera_profile_folder_picker_location(app: &AndroidApp) -> Result<(
 }
 
 pub fn open_raw_document(app: &AndroidApp) -> Result<(), String> {
-    let vm = unsafe { JavaVM::from_raw(app.vm_as_ptr().cast()) };
-    vm.attach_current_thread(|env| -> jni::errors::Result<()> {
-        let raw_activity = app.activity_as_ptr() as jni::sys::jobject;
-        let activity = unsafe { env.as_cast_raw::<Global<JObject>>(&raw_activity)? };
+    with_activity(app, |env, activity| {
         env.call_method(
             activity,
             jni::jni_str!("openRawDocument"),
@@ -356,11 +353,9 @@ pub fn device_diagnostics(app: &AndroidApp) -> Result<String, String> {
 }
 
 pub fn copy_text_to_clipboard(app: &AndroidApp, label: &str, text: &str) -> Result<(), String> {
-    let label = label.to_owned();
-    let text = text.to_owned();
     with_activity(app, |env, activity| {
-        let label = env.new_string(&label)?;
-        let text = env.new_string(&text)?;
+        let label = env.new_string(label)?;
+        let text = env.new_string(text)?;
         env.call_method(
             activity,
             jni::jni_str!("copyTextToClipboard"),
@@ -526,9 +521,8 @@ pub fn list_library_folders(app: &AndroidApp) -> Result<Vec<LibraryFolder>, Stri
 }
 
 pub fn select_library_folder(app: &AndroidApp, relative_path: &str) -> Result<(), String> {
-    let relative_path = relative_path.to_owned();
     with_storage_manager(app, |env, storage_manager| {
-        let relative_path = env.new_string(&relative_path)?;
+        let relative_path = env.new_string(relative_path)?;
         env.call_method(
             storage_manager,
             jni::jni_str!("selectRawLibraryFolder"),
@@ -545,11 +539,9 @@ pub fn create_library_folder(
     parent_path: &str,
     name: &str,
 ) -> Result<String, String> {
-    let parent_path = parent_path.to_owned();
-    let name = name.to_owned();
     with_storage_manager(app, |env, storage_manager| {
-        let parent_path = env.new_string(&parent_path)?;
-        let name = env.new_string(&name)?;
+        let parent_path = env.new_string(parent_path)?;
+        let name = env.new_string(name)?;
         let object = env
             .call_method(
                 storage_manager,
@@ -609,11 +601,9 @@ pub fn copy_library_developed_thumbnail_cache(
     source_uri: &str,
     destination_uri: &str,
 ) -> Result<(), String> {
-    let source_uri = source_uri.to_owned();
-    let destination_uri = destination_uri.to_owned();
     with_storage_manager(app, |env, storage_manager| {
-        let source_uri = env.new_string(&source_uri)?;
-        let destination_uri = env.new_string(&destination_uri)?;
+        let source_uri = env.new_string(source_uri)?;
+        let destination_uri = env.new_string(destination_uri)?;
         env.call_method(
             storage_manager,
             jni::jni_str!("copyRawLibraryDevelopedThumbnail"),
@@ -689,9 +679,8 @@ fn open_library_descriptor(
     app: &AndroidApp,
     uri: &str,
 ) -> Result<TransferredFileDescriptor, String> {
-    let uri_string = uri.to_owned();
     let raw_fd = with_storage_manager(app, |env, storage_manager| {
-        let uri = env.new_string(&uri_string)?;
+        let uri = env.new_string(uri)?;
         env.call_method(
             storage_manager,
             jni::jni_str!("openRawLibraryFd"),
@@ -711,9 +700,8 @@ fn raw_thumbnail_cache_path(
     modified_seconds: u64,
     maximum_edge: u32,
 ) -> Result<PathBuf, String> {
-    let uri = uri.to_owned();
     let path = with_storage_manager(app, |env, storage_manager| {
-        let uri = env.new_string(&uri)?;
+        let uri = env.new_string(uri)?;
         let object = env
             .call_method(
                 storage_manager,
@@ -739,9 +727,8 @@ fn raw_thumbnail_cache_path(
 }
 
 fn developed_thumbnail_cache_path(app: &AndroidApp, uri: &str) -> Result<PathBuf, String> {
-    let uri = uri.to_owned();
     let path = with_storage_manager(app, |env, storage_manager| {
-        let uri = env.new_string(&uri)?;
+        let uri = env.new_string(uri)?;
         let object = env
             .call_method(
                 storage_manager,
@@ -921,11 +908,9 @@ pub fn open_library_document(
     uri: &str,
     display_name: &str,
 ) -> Result<(), String> {
-    let uri = uri.to_owned();
-    let display_name = display_name.to_owned();
     with_storage_manager(app, |env, storage_manager| {
-        let uri = env.new_string(&uri)?;
-        let display_name = env.new_string(&display_name)?;
+        let uri = env.new_string(uri)?;
+        let display_name = env.new_string(display_name)?;
         env.call_method(
             storage_manager,
             jni::jni_str!("openRawLibraryDocument"),
@@ -950,12 +935,10 @@ pub fn import_local_library_document(
 ) -> Result<ImportedLibraryDocument, String> {
     let raw_path = raw_path
         .to_str()
-        .ok_or_else(|| "Local library staging path is not valid UTF-8".to_owned())?
-        .to_owned();
-    let display_name = display_name.to_owned();
+        .ok_or_else(|| "Local library staging path is not valid UTF-8".to_owned())?;
     let identity = with_storage_manager(app, |env, storage_manager| {
-        let raw_path = env.new_string(&raw_path)?;
-        let display_name = env.new_string(&display_name)?;
+        let raw_path = env.new_string(raw_path)?;
+        let display_name = env.new_string(display_name)?;
         let object = env
             .call_method(
                 storage_manager,
@@ -988,11 +971,9 @@ pub fn delete_imported_library_document(
     raw_uri: &str,
     display_name: &str,
 ) -> Result<(), String> {
-    let raw_uri = raw_uri.to_owned();
-    let display_name = display_name.to_owned();
     with_storage_manager(app, |env, storage_manager| {
-        let raw_uri = env.new_string(&raw_uri)?;
-        let display_name = env.new_string(&display_name)?;
+        let raw_uri = env.new_string(raw_uri)?;
+        let display_name = env.new_string(display_name)?;
         env.call_method(
             storage_manager,
             jni::jni_str!("deleteImportedRawLibraryDocument"),
@@ -1010,13 +991,10 @@ pub fn rename_library_document(
     display_name: &str,
     requested_name: &str,
 ) -> Result<String, String> {
-    let raw_uri = raw_uri.to_owned();
-    let display_name = display_name.to_owned();
-    let requested_name = requested_name.to_owned();
     with_storage_manager(app, |env, storage_manager| {
-        let raw_uri = env.new_string(&raw_uri)?;
-        let display_name = env.new_string(&display_name)?;
-        let requested_name = env.new_string(&requested_name)?;
+        let raw_uri = env.new_string(raw_uri)?;
+        let display_name = env.new_string(display_name)?;
+        let requested_name = env.new_string(requested_name)?;
         let object = env
             .call_method(
                 storage_manager,
@@ -1040,11 +1018,9 @@ pub fn delete_library_document(
     raw_uri: &str,
     display_name: &str,
 ) -> Result<(), String> {
-    let raw_uri_owned = raw_uri.to_owned();
-    let display_name_owned = display_name.to_owned();
     with_storage_manager(app, |env, storage_manager| {
-        let raw_uri = env.new_string(&raw_uri_owned)?;
-        let display_name = env.new_string(&display_name_owned)?;
+        let raw_uri = env.new_string(raw_uri)?;
+        let display_name = env.new_string(display_name)?;
         env.call_method(
             storage_manager,
             jni::jni_str!("deleteRawLibraryDocument"),
@@ -1063,11 +1039,9 @@ pub fn remove_raw_sidecar(
     raw_uri: &str,
     display_name: &str,
 ) -> Result<(), String> {
-    let raw_uri_owned = raw_uri.to_owned();
-    let display_name_owned = display_name.to_owned();
     with_storage_manager(app, |env, storage_manager| {
-        let raw_uri = env.new_string(&raw_uri_owned)?;
-        let display_name = env.new_string(&display_name_owned)?;
+        let raw_uri = env.new_string(raw_uri)?;
+        let display_name = env.new_string(display_name)?;
         env.call_method(
             storage_manager,
             jni::jni_str!("removeRawSidecar"),
@@ -1139,11 +1113,9 @@ pub fn materialize_raw_sidecar(
     raw_uri: &str,
     display_name: &str,
 ) -> Result<Option<PathBuf>, String> {
-    let raw_uri = raw_uri.to_owned();
-    let display_name = display_name.to_owned();
     let path = with_storage_manager(app, |env, storage_manager| {
-        let raw_uri = env.new_string(&raw_uri)?;
-        let display_name = env.new_string(&display_name)?;
+        let raw_uri = env.new_string(raw_uri)?;
+        let display_name = env.new_string(display_name)?;
         let object = env
             .call_method(
                 storage_manager,
@@ -1188,14 +1160,11 @@ pub fn publish_raw_sidecar(
 ) -> Result<String, String> {
     let cached_path = cached_path
         .to_str()
-        .ok_or_else(|| "Android sidecar cache path is not valid UTF-8".to_owned())?
-        .to_owned();
-    let raw_uri = raw_uri.to_owned();
-    let display_name = display_name.to_owned();
+        .ok_or_else(|| "Android sidecar cache path is not valid UTF-8".to_owned())?;
     with_storage_manager(app, |env, storage_manager| {
-        let cached_path = env.new_string(&cached_path)?;
-        let raw_uri = env.new_string(&raw_uri)?;
-        let display_name = env.new_string(&display_name)?;
+        let cached_path = env.new_string(cached_path)?;
+        let raw_uri = env.new_string(raw_uri)?;
+        let display_name = env.new_string(display_name)?;
         let object = env
             .call_method(
                 storage_manager,

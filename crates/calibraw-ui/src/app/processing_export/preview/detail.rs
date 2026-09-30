@@ -223,7 +223,7 @@ impl CalibRawApp {
             interactive,
         );
         let mask_extent = detail_mask_texture_extent(mask_region, detail_mask_edge(), interactive);
-        if detail_uses_opposed_chroma(&full_raw, &self.develop.target_exposure) {
+        if full_raw.uses_opposed_chroma(&self.develop.target_exposure) {
             full_raw.inpaint_opposed_chroma_for_exposure(&self.develop.target_exposure);
         }
         let params = GpuParams::new_for_tile(
@@ -523,7 +523,7 @@ fn prepare_preview_detail(request: PreviewDetailRequest) -> anyhow::Result<Prepa
         ],
     };
     let requested_edge = plan.edge;
-    if detail_uses_opposed_chroma(&source_raw, &exposure) {
+    if source_raw.uses_opposed_chroma(&exposure) {
         source_raw.inpaint_opposed_chroma_for_exposure(&exposure);
     }
     let raw = Arc::new(

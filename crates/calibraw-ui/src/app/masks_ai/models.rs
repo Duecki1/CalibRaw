@@ -68,6 +68,8 @@ impl CalibRawApp {
         ui: &mut egui::Ui,
         runtime_download_needed: bool,
     ) {
+        #[cfg(target_os = "android")]
+        let _ = (ui, runtime_download_needed);
         #[cfg(not(target_os = "android"))]
         if runtime_download_needed {
             Self::show_automatic_onnx_runtime_download_details(ui);
@@ -130,6 +132,8 @@ impl CalibRawApp {
     /// Warning shown when Manual runtime mode has no trusted library. Every local-AI consent
     /// dialog has to say the same thing here.
     pub(in crate::app) fn show_manual_runtime_warning(&self, ui: &mut egui::Ui) {
+        #[cfg(target_os = "android")]
+        let _ = ui;
         #[cfg(not(target_os = "android"))]
         if self.ai.runtime_mode == OnnxRuntimeMode::Manual && self.ai.runtime_path.is_none() {
             ui.colored_label(

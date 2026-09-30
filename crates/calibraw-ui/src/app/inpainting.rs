@@ -2,22 +2,26 @@ use super::*;
 
 impl InpaintState {
     pub(crate) fn reset_for_document(&mut self) {
+        self.cancel_processing();
+        self.edits = Arc::new(RemoveEditState::default());
+        self.source_point = None;
+        self.aligned_offset = None;
+        self.hovered_stroke = None;
+        self.selected_stroke = None;
+        self.stroke_opacity_edit_pending = false;
+    }
+
+    fn cancel_processing(&mut self) {
         if let Some(cancellation) = self.cancellation.take() {
             cancellation.store(true, std::sync::atomic::Ordering::Release);
         }
-        self.edits = Arc::new(RemoveEditState::default());
-        self.source_point = None;
         self.source_pick_active = false;
-        self.aligned_offset = None;
         self.active_points.clear();
         self.last_brush_uv = None;
         self.pending_brush = None;
         self.pending_retouch = None;
         self.receiver = None;
         self.processing_progress = None;
-        self.hovered_stroke = None;
-        self.selected_stroke = None;
-        self.stroke_opacity_edit_pending = false;
     }
 
     pub(crate) fn worker_active(&self) -> bool {
@@ -38,19 +42,7 @@ impl CalibRawApp {
     }
 
     pub(crate) fn install_remove_edits(&mut self, edits: Arc<RemoveEditState>) {
-        if let Some(cancellation) = self.inpaint.cancellation.take() {
-            cancellation.store(true, std::sync::atomic::Ordering::Release);
-        }
-        self.inpaint.receiver = None;
-        self.inpaint.pending_brush = None;
-        self.inpaint.pending_retouch = None;
-        if matches!(self.ai.consent, AiConsentState::Remove { .. }) {
-            self.ai.consent = AiConsentState::None;
-        }
-        self.inpaint.active_points.clear();
-        self.inpaint.source_pick_active = false;
-        self.inpaint.last_brush_uv = None;
-        self.inpaint.processing_progress = None;
+        self.cancel_remove_processing();
         self.inpaint.edits = edits;
         self.inpaint.hovered_stroke = None;
         self.inpaint.selected_stroke = None;
@@ -58,19 +50,10 @@ impl CalibRawApp {
     }
 
     pub(crate) fn cancel_remove_processing(&mut self) {
-        if let Some(cancellation) = self.inpaint.cancellation.take() {
-            cancellation.store(true, std::sync::atomic::Ordering::Release);
-        }
-        self.inpaint.receiver = None;
-        self.inpaint.pending_brush = None;
-        self.inpaint.pending_retouch = None;
+        self.inpaint.cancel_processing();
         if matches!(self.ai.consent, AiConsentState::Remove { .. }) {
             self.ai.consent = AiConsentState::None;
         }
-        self.inpaint.processing_progress = None;
-        self.inpaint.active_points.clear();
-        self.inpaint.source_pick_active = false;
-        self.inpaint.last_brush_uv = None;
     }
 
     pub(crate) fn clear_inpainting_tool(&mut self) {
@@ -440,5 +423,78 @@ impl CalibRawApp {
             }
         }
         self.egui_ctx.request_repaint();
+    }
+}
+
+#[cfg(all(test, not(target_os = "android")))]
+mod tests {
+    use super::*;
+    use std::sync::atomic::Ordering;
+
+    #[test]
+    fn cancellation_reset_and_restore_reject_late_strokes_and_preserve_their_edit_state() {
+        for transition in ["cancel", "reset", "restore"] {
+            let mut app = CalibRawApp::empty(&egui::Context::default());
+            let cancellation = Arc::new(AtomicBool::new(false));
+            let (sender, receiver) = mpsc::channel();
+            let edits = Arc::new(RemoveEditState {
+                strokes: vec![crate::pipeline::RemoveStroke::default()],
+            });
+            let restored = Arc::new(RemoveEditState::default());
+            app.inpaint.edits = Arc::clone(&edits);
+            app.inpaint.receiver = Some(receiver);
+            app.inpaint.cancellation = Some(Arc::clone(&cancellation));
+            app.inpaint.pending_brush = Some(RemoveBrushStroke::default());
+            app.inpaint.active_points.push(RemoveBrushPoint::default());
+            app.inpaint.processing_progress = Some(ForegroundProgress::indeterminate("Testing"));
+            app.inpaint.last_brush_uv = Some([0.3, 0.4]);
+            app.inpaint.source_point = Some([0.1, 0.2]);
+            app.inpaint.aligned_offset = Some([0.2, 0.2]);
+            app.inpaint.source_pick_active = true;
+            app.inpaint.selected_stroke = Some(0);
+            app.ai.consent = AiConsentState::Remove {
+                runtime_download_needed: false,
+            };
+
+            match transition {
+                "cancel" => app.cancel_remove_processing(),
+                "reset" => app.reset_inpainting_state(),
+                "restore" => app.install_remove_edits(Arc::clone(&restored)),
+                _ => unreachable!(),
+            }
+
+            assert!(cancellation.load(Ordering::Acquire));
+            assert!(sender
+                .send(RemoveEvent::Finished(Ok(
+                    crate::pipeline::RemoveStroke::default()
+                )))
+                .is_err());
+            assert!(!app.inpaint_processing());
+            assert!(app.inpaint.pending_brush.is_none());
+            assert!(app.inpaint.active_points.is_empty());
+            assert!(app.inpaint.processing_progress.is_none());
+            assert!(app.inpaint.last_brush_uv.is_none());
+            assert!(!app.inpaint.source_pick_active);
+            if transition == "reset" {
+                assert!(app.inpaint.edits.strokes.is_empty());
+                assert!(app.inpaint.source_point.is_none());
+                assert!(app.inpaint.aligned_offset.is_none());
+            } else {
+                assert!(Arc::ptr_eq(
+                    &app.inpaint.edits,
+                    if transition == "cancel" {
+                        &edits
+                    } else {
+                        &restored
+                    },
+                ));
+                assert_eq!(app.inpaint.source_point, Some([0.1, 0.2]));
+                assert_eq!(app.inpaint.aligned_offset, Some([0.2, 0.2]));
+            }
+            assert_eq!(
+                app.inpaint.selected_stroke,
+                (transition == "cancel").then_some(0)
+            );
+        }
     }
 }

@@ -38,7 +38,7 @@ impl CalibRawApp {
             self.develop.target_exposure = next_exposure;
             if matches!(stage, ProcessingStage::Raw) {
                 if let Some(full_raw) = preview_source.as_ref() {
-                    if detail_uses_opposed_chroma(full_raw, &self.develop.target_exposure) {
+                    if full_raw.uses_opposed_chroma(&self.develop.target_exposure) {
                         full_raw.inpaint_opposed_chroma_for_exposure(&self.develop.target_exposure);
                     }
                 }
@@ -106,7 +106,7 @@ impl CalibRawApp {
         let virtual_full_size = detail.virtual_full_size;
         if stage == ProcessingStage::Raw
             && !detail_raw.is_pre_demosaiced_raster()
-            && detail_uses_opposed_chroma(full_raw, &self.develop.target_exposure)
+            && full_raw.uses_opposed_chroma(&self.develop.target_exposure)
         {
             // Crops and proxies share the full sensor cache. Populate the exact
             // WB/black/clip/AI key before GpuParams reads it from the derived RAW.

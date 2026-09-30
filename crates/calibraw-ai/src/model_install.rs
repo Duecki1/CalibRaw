@@ -60,15 +60,13 @@ impl ModelInstallSpec {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model_artifact::ArtifactSize;
     use std::fs;
 
     const TEST_ARTIFACT: ModelArtifact = ModelArtifact {
         name: "test installed model",
         url: None,
         sha256: "7702832f291b1ad6d8269d712184a9ddc87c9bac3833fa10b3f2140830fb4c47",
-        size: ArtifactSize::Exact(17),
-        progress_total: 17,
+        bytes: 17,
     };
     const TEST_INSTALL: ModelInstallSpec = ModelInstallSpec {
         artifact: TEST_ARTIFACT,

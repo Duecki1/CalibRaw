@@ -194,13 +194,6 @@ pub(in crate::app) fn detail_mask_edge() -> u32 {
     }
 }
 
-pub(in crate::app) fn detail_uses_opposed_chroma(
-    raw: &LoadedRaw,
-    exposure: &ExposureParams,
-) -> bool {
-    raw.uses_opposed_chroma(exposure)
-}
-
 pub(in crate::app) fn detail_mask_source_region(
     masks: &MaskStack,
     source_origin: [u32; 2],

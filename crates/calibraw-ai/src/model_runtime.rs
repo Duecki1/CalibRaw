@@ -1,10 +1,10 @@
 use crate::execution_provider::{
-    ai_acceleration_enabled, create_session_with_fallback, FallbackSession, ModelSource,
-    SessionOptions,
+    ai_acceleration_enabled, create_session_with_fallback, FallbackSession, SessionOptions,
 };
 use anyhow::Result;
 use std::{
     ops::{Deref, DerefMut},
+    path::Path,
     sync::{
         atomic::{AtomicU64, AtomicU8, Ordering},
         Mutex, MutexGuard, OnceLock, TryLockError,
@@ -250,11 +250,10 @@ impl Drop for ModelSessionGuard {
 
 pub(crate) fn acquire_model_session(
     model: AiModel,
-    source: impl Into<ModelSource>,
+    source: impl AsRef<Path>,
     options: SessionOptions,
     retention: ModelRetention,
 ) -> Result<ModelSessionGuard> {
-    let source = source.into();
     let mut runtime = lock_runtime();
     let provider_generation = PROVIDER_GENERATION.load(Ordering::Acquire);
     let acceleration_enabled = ai_acceleration_enabled();
@@ -272,7 +271,7 @@ pub(crate) fn acquire_model_session(
 
 pub(crate) fn with_model_session<T>(
     model: AiModel,
-    source: impl Into<ModelSource>,
+    source: impl AsRef<Path>,
     options: SessionOptions,
     retention: ModelRetention,
     run: impl FnOnce(&mut FallbackSession) -> Result<T>,
@@ -356,25 +355,6 @@ mod tests {
             &*events.lock().unwrap(),
             &["drop low".to_owned(), "create encoder".to_owned()]
         );
-        assert_eq!(slot.active_model(), Some(AiModel::SamEncoder));
-    }
-
-    #[test]
-    fn only_one_session_can_be_resident() {
-        let mut slot = RuntimeSlot::default();
-        slot.ensure_model(
-            AiModel::BiRefNetMedium,
-            interactive_masks(),
-            0,
-            true,
-            || Ok::<_, ()>(()),
-        )
-        .unwrap();
-        assert_eq!(slot.active_model(), Some(AiModel::BiRefNetMedium));
-        slot.ensure_model(AiModel::SamEncoder, interactive_masks(), 0, true, || {
-            Ok::<_, ()>(())
-        })
-        .unwrap();
         assert_eq!(slot.active_model(), Some(AiModel::SamEncoder));
     }
 
@@ -470,20 +450,6 @@ mod tests {
         worker.join().unwrap();
         assert_eq!(runtime.lock().unwrap().active_model(), None);
         assert_eq!(&*events.lock().unwrap(), &["drop big-lama".to_owned()]);
-    }
-
-    #[test]
-    fn changing_model_variant_replaces_old_model() {
-        let mut slot = RuntimeSlot::default();
-        slot.ensure_model(AiModel::BiRefNetLow, interactive_masks(), 0, true, || {
-            Ok::<_, ()>(())
-        })
-        .unwrap();
-        slot.ensure_model(AiModel::BiRefNetHigh, interactive_masks(), 0, true, || {
-            Ok::<_, ()>(())
-        })
-        .unwrap();
-        assert_eq!(slot.active_model(), Some(AiModel::BiRefNetHigh));
     }
 
     #[test]

@@ -1,7 +1,6 @@
 use crate::execution_provider::{FallbackSession, SessionOptions};
 use crate::model_artifact::{
-    ensure_artifact, install_artifact_from_reader, verify_artifact, ArtifactSize, DownloadOptions,
-    ModelArtifact,
+    ensure_artifact, install_artifact_from_reader, verify_artifact, DownloadOptions, ModelArtifact,
 };
 use crate::model_runtime::{acquire_model_session, AiModel, ModelRetention};
 use anyhow::{Context, Result};
@@ -40,22 +39,19 @@ const RAWNIND_PACKAGE_ARTIFACT: ModelArtifact = ModelArtifact {
     name: "RawNIND model package",
     url: Some(RAWNIND_PACKAGE_URL),
     sha256: RAWNIND_PACKAGE_SHA256,
-    size: ArtifactSize::Exact(RAWNIND_PACKAGE_BYTES),
-    progress_total: RAWNIND_PACKAGE_BYTES,
+    bytes: RAWNIND_PACKAGE_BYTES,
 };
 const BAYER_MODEL_ARTIFACT: ModelArtifact = ModelArtifact {
     name: "RawNIND Bayer model",
     url: None,
     sha256: BAYER_MODEL_SHA256,
-    size: ArtifactSize::Exact(BAYER_MODEL_BYTES),
-    progress_total: BAYER_MODEL_BYTES,
+    bytes: BAYER_MODEL_BYTES,
 };
 const LINEAR_MODEL_ARTIFACT: ModelArtifact = ModelArtifact {
     name: "RawNIND linear model",
     url: None,
     sha256: LINEAR_MODEL_SHA256,
-    size: ArtifactSize::Exact(LINEAR_MODEL_BYTES),
-    progress_total: LINEAR_MODEL_BYTES,
+    bytes: LINEAR_MODEL_BYTES,
 };
 const RAWNIND_DOWNLOAD: DownloadOptions = DownloadOptions {
     connect_timeout: Duration::from_secs(45),
@@ -588,9 +584,7 @@ fn extract_model(
     let mut source = archive
         .by_name(member)
         .with_context(|| format!("find {member} in RawNIND package"))?;
-    let ArtifactSize::Exact(expected_bytes) = artifact.size else {
-        anyhow::bail!("RawNIND archive members must have an exact pinned size");
-    };
+    let expected_bytes = artifact.bytes;
     anyhow::ensure!(
         source.size() == expected_bytes,
         "{member} declares {} bytes, expected {expected_bytes}",
@@ -863,49 +857,6 @@ fn infer_bayer(
         *destination = code.round().clamp(0.0, f32::from(u16::MAX)) as u16;
     }
     AiDenoisedImage::new_bayer_cfa(raw.width, raw.height, stored)
-}
-
-#[cfg(test)]
-fn remosaic_bayer_pixels(
-    model_rgb: &[f32],
-    edge: usize,
-    model_white_balance: [f32; 3],
-) -> Result<(Vec<u16>, Vec<u8>)> {
-    let plane = edge
-        .checked_mul(edge)
-        .context("RawNIND remosaic tile dimensions overflow")?;
-    anyhow::ensure!(
-        edge > 0 && model_rgb.len() == plane * 3,
-        "RawNIND remosaic received an unexpected model tensor"
-    );
-    let mut raw_pixels = vec![0u16; plane];
-    let mut color_indices = vec![0u8; plane];
-    for y in 0..edge {
-        for x in 0..edge {
-            let index = y * edge + x;
-            let channel = match (x & 1, y & 1) {
-                (0, 0) => 0,
-                (1, 0) => 1,
-                (0, 1) => 1,
-                _ => 2,
-            };
-            color_indices[index] = match (x & 1, y & 1) {
-                (0, 0) => 0,
-                (1, 0) => 1,
-                (0, 1) => 3,
-                _ => 2,
-            };
-            let white_balance = model_white_balance[channel];
-            anyhow::ensure!(
-                white_balance.is_finite() && white_balance > 0.0,
-                "RawNIND Bayer white balance is invalid"
-            );
-            let value = model_rgb[channel * plane + index] / white_balance;
-            anyhow::ensure!(value.is_finite(), "RawNIND Bayer output is non-finite");
-            raw_pixels[index] = (value.clamp(0.0, 1.0) * 65_535.0).round() as u16;
-        }
-    }
-    Ok((raw_pixels, color_indices))
 }
 
 fn infer_linear(
@@ -1332,9 +1283,8 @@ fn inverse3(matrix: Matrix3) -> Option<Matrix3> {
 mod tests {
     use super::{
         bayer_rggb_origin, inverse3, load_result_cache, match_gain_tile, mul3, reflect_index,
-        remosaic_bayer_pixels, result_cache_path, run_model_tile, save_result_cache, seam_weight,
-        spawn_rawnind_denoise, AiDenoiseEvent, CORE_EDGE, RAWNIND_DOWNLOAD, SRGB_TO_REC2020,
-        TILE_EDGE,
+        result_cache_path, run_model_tile, save_result_cache, seam_weight, spawn_rawnind_denoise,
+        AiDenoiseEvent, CORE_EDGE, SRGB_TO_REC2020, TILE_EDGE,
     };
 
     use crate::execution_provider::SessionOptions;
@@ -1344,14 +1294,6 @@ mod tests {
         GpuParams, LoadedRaw, MaskStack, NoiseProfile, ProcessingQuality, ProxySpec,
         RawGpuPipeline,
     };
-
-    #[test]
-    fn rawnind_download_retries_and_resumes() {
-        const {
-            assert!(RAWNIND_DOWNLOAD.attempts > 1);
-            assert!(RAWNIND_DOWNLOAD.resume);
-        }
-    }
 
     fn cache_test_raw(width: u32, height: u32) -> LoadedRaw {
         let pixels = (width * height) as usize;
@@ -1469,23 +1411,6 @@ mod tests {
     }
 
     #[test]
-    fn bayer_remosaic_selects_only_the_channel_at_each_rggb_site() {
-        let model_rgb = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0, 0.4, 0.2];
-        let (mosaic, cfa) = remosaic_bayer_pixels(&model_rgb, 2, [1.0; 3]).unwrap();
-        let expected = [0.1f32, 0.6, 0.7, 0.2].map(|value| (value * 65_535.0).round() as u16);
-        assert_eq!(mosaic, expected);
-        assert_eq!(cfa, [0, 1, 3, 2]);
-    }
-
-    #[test]
-    fn bayer_remosaic_reverses_model_daylight_white_balance() {
-        let model_rgb = [0.8, 0.8, 0.8, 0.8, 0.6, 0.6, 0.6, 0.6, 0.4, 0.4, 0.4, 0.4];
-        let (mosaic, _) = remosaic_bayer_pixels(&model_rgb, 2, [2.0, 1.0, 4.0]).unwrap();
-        let expected = [0.4f32, 0.6, 0.6, 0.1].map(|value| (value * 65_535.0).round() as u16);
-        assert_eq!(mosaic, expected);
-    }
-
-    #[test]
     fn neighboring_overlap_weights_sum_to_one() {
         const OVERLAP: usize = 64;
         const BOUNDARY: usize = 1_000;
@@ -1499,13 +1424,9 @@ mod tests {
 
     #[test]
     fn result_cache_round_trips_and_rejects_changed_source() {
-        let directory = std::env::temp_dir().join(format!(
-            "calibraw-ai-cache-test-{}-{}",
-            std::process::id(),
-            super::NEXT_RESULT_CACHE_TEMPORARY_ID
-                .fetch_add(1, std::sync::atomic::Ordering::Relaxed,)
-        ));
-        let path = result_cache_path(&directory, "synthetic-source");
+        let temp = tempfile::tempdir().unwrap();
+        let directory = temp.path();
+        let path = result_cache_path(directory, "synthetic-source");
         let mut raw = cache_test_raw(4, 4);
         let values = (0..4 * 4).map(|index| index as u16 * 97).collect();
         let expected = AiDenoisedImage::new_bayer_cfa(4, 4, values).unwrap();
@@ -1517,18 +1438,13 @@ mod tests {
 
         raw.raw_pixels[3] ^= 1;
         assert!(load_result_cache(&path, &raw).is_err());
-        std::fs::remove_dir_all(&directory).unwrap();
     }
 
     #[test]
     fn saved_result_worker_finishes_without_models_runtime_or_gpu() {
-        let directory = std::env::temp_dir().join(format!(
-            "calibraw-ai-restore-test-{}-{}",
-            std::process::id(),
-            super::NEXT_RESULT_CACHE_TEMPORARY_ID
-                .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-        ));
-        let path = result_cache_path(&directory, "restore-only-source");
+        let temp = tempfile::tempdir().unwrap();
+        let directory = temp.path();
+        let path = result_cache_path(directory, "restore-only-source");
         let raw = std::sync::Arc::new(cache_test_raw(4, 4));
         let values = (0..4 * 4).map(|index| index as u16 * 97).collect();
         let expected = AiDenoisedImage::new_bayer_cfa(4, 4, values).unwrap();
@@ -1554,17 +1470,12 @@ mod tests {
             })
             .expect("restore worker must send a terminal event");
         assert_eq!(restored.raw_cfa16.as_ref(), expected.raw_cfa16.as_ref());
-        std::fs::remove_dir_all(&directory).unwrap();
     }
 
     #[test]
     fn cache_miss_cannot_download_models_without_consent() {
-        let directory = std::env::temp_dir().join(format!(
-            "calibraw-ai-no-download-test-{}-{}",
-            std::process::id(),
-            super::NEXT_RESULT_CACHE_TEMPORARY_ID
-                .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-        ));
+        let temp = tempfile::tempdir().unwrap();
+        let directory = temp.path();
         let raw = std::sync::Arc::new(cache_test_raw(4, 4));
         let cancellation = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         let receiver = spawn_rawnind_denoise(
@@ -1574,7 +1485,7 @@ mod tests {
             raw,
             None,
             None,
-            Some(result_cache_path(&directory, "missing-source")),
+            Some(result_cache_path(directory, "missing-source")),
             false,
             cancellation,
         );

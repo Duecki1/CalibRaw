@@ -1061,15 +1061,11 @@ fn verify_elf_alignment(objdump: &Path, library: &Path) -> Result<()> {
 fn parse_alignment_power(line: &str) -> Option<u32> {
     let marker = "align 2**";
     let start = line.find(marker)? + marker.len();
-    let digits: String = line[start..]
-        .chars()
-        .take_while(|character| character.is_ascii_digit())
-        .collect();
-    if digits.is_empty() {
-        None
-    } else {
-        digits.parse().ok()
-    }
+    line[start..]
+        .split(|character: char| !character.is_ascii_digit())
+        .next()?
+        .parse()
+        .ok()
 }
 
 fn temporary_directory(prefix: &str) -> Result<tempfile::TempDir> {

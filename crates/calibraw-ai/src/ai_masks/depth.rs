@@ -9,8 +9,7 @@ pub(super) const MODEL_INSTALL: ModelInstallSpec = ModelInstallSpec {
         name: "Depth Anything 3 Mono Large",
         url: Some("https://huggingface.co/Duecki/CalibRaw-Artifacts/resolve/4b82010fd8654fc3a1c33311ff305d793ec2f511/models/da3/da3mono_large_700x700.onnx"),
         sha256: "71079fb3c7d3b04e9df9d157e0b3ee0e6614cb5198f0729e7b490512c4f8d667",
-        size: ArtifactSize::Exact(MODEL_BYTES),
-        progress_total: MODEL_BYTES,
+        bytes: MODEL_BYTES,
     },
     download: MASK_MODEL_DOWNLOAD,
     progress_label: "Depth Anything 3 Mono Large",
@@ -77,7 +76,7 @@ pub(super) fn depth_mask(
     // Its interface is float32 (the internal weights use mixed precision).
     let input = Tensor::from_array((
         [1usize, 1, 3, EDGE as usize, EDGE as usize],
-        normalized_canvas(&canvas),
+        normalized_rgb_input(&canvas)?,
     ))
     .context("create DA3 input tensor")?;
     let started = std::time::Instant::now();
@@ -156,18 +155,6 @@ fn normalize_depth(pixels: &[f32]) -> Result<Vec<f32>> {
         .iter()
         .map(|&depth| ((depth as f64 - min as f64) / span).clamp(0.0, 1.0) as f32)
         .collect())
-}
-
-fn normalized_canvas(canvas: &ImageBuffer<Rgba<u8>, Vec<u8>>) -> Vec<f32> {
-    let plane = (EDGE * EDGE) as usize;
-    let mut normalized = vec![0.0f32; plane * 3];
-    for (index, pixel) in canvas.pixels().enumerate() {
-        for channel in 0..3 {
-            normalized[channel * plane + index] =
-                (pixel[channel] as f32 / 255.0 - IMAGENET_MEAN[channel]) / IMAGENET_STD[channel];
-        }
-    }
-    normalized
 }
 
 fn restore_depth(

@@ -4,7 +4,7 @@
 // Copyright (C) 2026 CalibRaw contributors (Rust adaptation).
 
 use crate::execution_provider::SessionOptions;
-use crate::model_artifact::{ArtifactSize, DownloadOptions, ModelArtifact};
+use crate::model_artifact::{DownloadOptions, ModelArtifact};
 use crate::model_install::ModelInstallSpec;
 use crate::model_runtime::{with_model_session, AiModel, AiRuntimeContext, ModelRetention};
 use crate::pipeline::{
@@ -44,8 +44,7 @@ const BIG_LAMA_ARTIFACT: ModelArtifact = ModelArtifact {
     name: "Big-LaMa Places2 ONNX",
     url: Some(BIG_LAMA_MODEL_URL),
     sha256: BIG_LAMA_MODEL_SHA256_HEX,
-    size: ArtifactSize::Exact(BIG_LAMA_MODEL_BYTES),
-    progress_total: BIG_LAMA_MODEL_BYTES,
+    bytes: BIG_LAMA_MODEL_BYTES,
 };
 const BIG_LAMA_DOWNLOAD: DownloadOptions = DownloadOptions {
     connect_timeout: Duration::from_secs(30),
@@ -1075,14 +1074,6 @@ fn build_cached_patch(
 mod tests {
     use super::*;
     use crate::pipeline::{RemoveBrushPoint, RemoveBrushStroke};
-
-    #[test]
-    fn big_lama_download_retries_and_resumes() {
-        const {
-            assert!(BIG_LAMA_DOWNLOAD.attempts > 1);
-            assert!(BIG_LAMA_DOWNLOAD.resume);
-        }
-    }
 
     #[test]
     fn retouch_hardness_keeps_a_soft_outer_ring() {

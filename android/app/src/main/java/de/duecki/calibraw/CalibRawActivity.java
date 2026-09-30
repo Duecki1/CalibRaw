@@ -48,8 +48,7 @@ public final class CalibRawActivity extends NativeActivity {
         super.onCreate(savedInstanceState);
         // NativeActivity may start Rust during creation, so install this bridge first.
         taskNotificationController = new TaskNotificationController(this);
-        AndroidStorageAccess storageAccess = new ActivityStorageAccess(this);
-        storageManager = new StorageManager(storageAccess, new StorageManager.Callbacks() {
+        storageManager = new StorageManager(this, new StorageManager.Callbacks() {
             @Override
             public void onFilePicked(
                     String cachedPath,
@@ -71,7 +70,7 @@ public final class CalibRawActivity extends NativeActivity {
             }
 
         });
-        profileImporter = new ProfileImporter(storageAccess, new ProfileImporter.Callbacks() {
+        profileImporter = new ProfileImporter(this, new ProfileImporter.Callbacks() {
             @Override
             public void onImportStarted(String displayName) {
                 nativeOnCameraProfileFolderImportStarted(displayName);

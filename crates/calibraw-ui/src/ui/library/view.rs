@@ -465,11 +465,11 @@ impl Library {
 
         #[cfg(target_os = "android")]
         if !app.library.has_selection() {
-            let rect = library_import_fab_rect(ui.max_rect());
+            let rect = crate::ui::theme::floating_action_rect(ui.max_rect());
             let response = crate::ui::theme::floating_action_button(
                 ui,
                 rect,
-                library_import_icon(),
+                egui_phosphor::regular::PLUS,
                 "Import RAW files",
             );
             if response.clicked() {

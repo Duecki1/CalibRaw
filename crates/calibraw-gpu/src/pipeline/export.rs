@@ -105,40 +105,7 @@ pub fn render_remove_scene_crop_resized(
         full_width,
         full_height,
     );
-    let template = job
-        .program_prewarm
-        .as_deref()
-        .and_then(|prewarm| prewarm.wait().ok());
-    let pipeline = if let Some(template) = template.as_deref() {
-        RawGpuPipeline::new_headless_reusing_program_template_with_mask_edge(
-            &job.device,
-            &job.queue,
-            &working_raw,
-            &params,
-            ProcessingQuality::High,
-            template,
-            mask_edge,
-        )
-        .or_else(|_| {
-            RawGpuPipeline::new_headless_with_quality_and_mask_edge(
-                &job.device,
-                &job.queue,
-                &working_raw,
-                &params,
-                ProcessingQuality::High,
-                mask_edge,
-            )
-        })?
-    } else {
-        RawGpuPipeline::new_headless_with_quality_and_mask_edge(
-            &job.device,
-            &job.queue,
-            &working_raw,
-            &params,
-            ProcessingQuality::High,
-            mask_edge,
-        )?
-    };
+    let pipeline = create_crop_pipeline(&job, &working_raw, &params, mask_edge)?;
 
     pipeline.dispatch_stage(&job.queue, &job.device, &params, ProcessingStage::Raw);
     pipeline.upload_remove_scene_patches(
@@ -197,40 +164,7 @@ pub fn render_remove_scene_crop(job: DevelopedCropJob) -> Result<Vec<f32>> {
         job.raw.width,
         job.raw.height,
     );
-    let template = job
-        .program_prewarm
-        .as_deref()
-        .and_then(|prewarm| prewarm.wait().ok());
-    let pipeline = if let Some(template) = template.as_deref() {
-        RawGpuPipeline::new_headless_reusing_program_template_with_mask_edge(
-            &job.device,
-            &job.queue,
-            &tile_raw,
-            &params,
-            ProcessingQuality::High,
-            template,
-            mask_edge,
-        )
-        .or_else(|_| {
-            RawGpuPipeline::new_headless_with_quality_and_mask_edge(
-                &job.device,
-                &job.queue,
-                &tile_raw,
-                &params,
-                ProcessingQuality::High,
-                mask_edge,
-            )
-        })?
-    } else {
-        RawGpuPipeline::new_headless_with_quality_and_mask_edge(
-            &job.device,
-            &job.queue,
-            &tile_raw,
-            &params,
-            ProcessingQuality::High,
-            mask_edge,
-        )?
-    };
+    let pipeline = create_crop_pipeline(&job, &tile_raw, &params, mask_edge)?;
 
     pipeline.dispatch_stage(&job.queue, &job.device, &params, ProcessingStage::Raw);
     pipeline.upload_remove_scene_patches(
@@ -556,6 +490,41 @@ pub struct DevelopedCropJob {
     pub program_prewarm: Option<Arc<GpuProgramPrewarm>>,
 }
 
+fn create_crop_pipeline(
+    job: &DevelopedCropJob,
+    raw: &LoadedRaw,
+    params: &GpuParams,
+    mask_edge: u32,
+) -> Result<RawGpuPipeline> {
+    let build = || {
+        RawGpuPipeline::new_headless_with_quality_and_mask_edge(
+            &job.device,
+            &job.queue,
+            raw,
+            params,
+            ProcessingQuality::High,
+            mask_edge,
+        )
+    };
+    let template = job
+        .program_prewarm
+        .as_deref()
+        .and_then(|prewarm| prewarm.wait().ok());
+    match template.as_deref() {
+        Some(template) => RawGpuPipeline::new_headless_reusing_program_template_with_mask_edge(
+            &job.device,
+            &job.queue,
+            raw,
+            params,
+            ProcessingQuality::High,
+            template,
+            mask_edge,
+        )
+        .or_else(|_| build()),
+        None => build(),
+    }
+}
+
 pub fn render_developed_linear_crop(job: DevelopedCropJob) -> Result<Vec<f32>> {
     anyhow::ensure!(
         job.crop.width > 0 && job.crop.height > 0,
@@ -600,40 +569,7 @@ pub fn render_developed_linear_crop(job: DevelopedCropJob) -> Result<Vec<f32>> {
         mask_source_region_uv(mask_region, job.raw.width, job.raw.height),
         mask_extent,
     );
-    let template = job
-        .program_prewarm
-        .as_deref()
-        .and_then(|prewarm| prewarm.wait().ok());
-    let pipeline = if let Some(template) = template.as_deref() {
-        RawGpuPipeline::new_headless_reusing_program_template_with_mask_edge(
-            &job.device,
-            &job.queue,
-            &tile_raw,
-            &params,
-            ProcessingQuality::High,
-            template,
-            mask_edge,
-        )
-        .or_else(|_| {
-            RawGpuPipeline::new_headless_with_quality_and_mask_edge(
-                &job.device,
-                &job.queue,
-                &tile_raw,
-                &params,
-                ProcessingQuality::High,
-                mask_edge,
-            )
-        })?
-    } else {
-        RawGpuPipeline::new_headless_with_quality_and_mask_edge(
-            &job.device,
-            &job.queue,
-            &tile_raw,
-            &params,
-            ProcessingQuality::High,
-            mask_edge,
-        )?
-    };
+    let pipeline = create_crop_pipeline(&job, &tile_raw, &params, mask_edge)?;
     upload_mask_atlas(
         &pipeline,
         &job.queue,

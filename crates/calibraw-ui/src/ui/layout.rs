@@ -5,6 +5,7 @@ use eframe::egui::Vec2;
 
 pub(crate) use moduwu_design::{ResponsiveWidth, ScreenLayout};
 
+#[cfg(not(target_os = "android"))]
 pub(crate) const DEVELOP_TOOL_RAIL_ID: &str = "develop_tool_rail";
 pub(crate) const DEVELOP_SIDEBAR_ID: &str = "develop_sidebar_right";
 pub(crate) const DEVELOP_MASK_STRIP_ID: &str = "develop_horizontal_mask_strip";

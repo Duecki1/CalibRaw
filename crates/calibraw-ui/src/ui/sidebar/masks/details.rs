@@ -442,11 +442,8 @@ impl Sidebar {
             }
             if orientation == MaskStripOrientation::Horizontal {
                 let fullscreen = Self::is_plain_fullscreen_mask(mask);
-                adjustments_changed |= Self::show_effect_components(
-                    ui,
-                    &mut mask.effect_components,
-                    fullscreen,
-                );
+                adjustments_changed |=
+                    Self::show_effect_components(ui, &mut mask.effect_components, fullscreen);
             }
             light_rays_changed = light_rays_before != mask.has_light_rays_effect();
         }

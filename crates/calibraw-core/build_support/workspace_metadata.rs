@@ -25,18 +25,32 @@ impl WorkspaceMetadata {
         let manifest_path = find_workspace_manifest(&manifest_dir)?;
         let source = fs::read_to_string(&manifest_path)
             .map_err(|error| format!("cannot read {}: {error}", manifest_path.display()))?;
-        let values = parse_workspace_metadata(&manifest_path, &source)?;
+        let document = source.parse::<DocumentMut>().map_err(|error| {
+            format!("cannot parse {} as TOML: {error}", manifest_path.display())
+        })?;
+        let values = document
+            .get("workspace")
+            .and_then(Item::as_table)
+            .and_then(|workspace| workspace.get("metadata"))
+            .and_then(Item::as_table)
+            .filter(|metadata| !metadata.is_empty())
+            .ok_or_else(|| {
+                format!(
+                    "{} is missing a populated [workspace.metadata] table",
+                    manifest_path.display()
+                )
+            })?;
 
         let metadata = Self {
             manifest_path,
-            android_ndk_version: required_string(&values, "android_ndk_version")?,
-            android_build_tools_version: required_string(&values, "android_build_tools_version")?,
-            android_compile_sdk: required_u32(&values, "android_compile_sdk")?,
-            android_min_sdk: required_u32(&values, "android_min_sdk")?,
-            android_target_sdk: required_u32(&values, "android_target_sdk")?,
-            libraw_revision: required_string(&values, "libraw_revision")?,
-            lensfun_revision: required_string(&values, "lensfun_revision")?,
-            android_use_legacy_packaging: required_bool(&values, "android_use_legacy_packaging")?,
+            android_ndk_version: required_string(values, "android_ndk_version")?,
+            android_build_tools_version: required_string(values, "android_build_tools_version")?,
+            android_compile_sdk: required_u32(values, "android_compile_sdk")?,
+            android_min_sdk: required_u32(values, "android_min_sdk")?,
+            android_target_sdk: required_u32(values, "android_target_sdk")?,
+            libraw_revision: required_string(values, "libraw_revision")?,
+            lensfun_revision: required_string(values, "lensfun_revision")?,
+            android_use_legacy_packaging: required_bool(values, "android_use_legacy_packaging")?,
         };
         if metadata.android_min_sdk > metadata.android_target_sdk {
             return Err(
@@ -101,30 +115,6 @@ fn find_workspace_manifest(manifest_dir: &Path) -> Result<PathBuf, String> {
         "cannot find a workspace Cargo.toml above CARGO_MANIFEST_DIR={}",
         manifest_dir.display()
     ))
-}
-
-fn parse_workspace_metadata(path: &Path, source: &str) -> Result<Table, String> {
-    let document = source
-        .parse::<DocumentMut>()
-        .map_err(|error| format!("cannot parse {} as TOML: {error}", path.display()))?;
-    let metadata = document
-        .get("workspace")
-        .and_then(Item::as_table)
-        .and_then(|workspace| workspace.get("metadata"))
-        .and_then(Item::as_table)
-        .ok_or_else(|| {
-            format!(
-                "{} is missing a populated [workspace.metadata] table",
-                path.display()
-            )
-        })?;
-    if metadata.is_empty() {
-        return Err(format!(
-            "{} is missing a populated [workspace.metadata] table",
-            path.display()
-        ));
-    }
-    Ok(metadata.clone())
 }
 
 fn required_string(values: &Table, key: &str) -> Result<String, String> {

@@ -74,10 +74,6 @@ pub(super) fn selected_picker_directory(path: &std::path::Path) -> Option<std::p
     }
 }
 
-pub(super) fn gpu_preview_prewarm_cfa_kind() -> crate::pipeline::CfaKind {
-    crate::pipeline::CfaKind::Bayer
-}
-
 pub(super) fn spawn_gpu_preview_prewarm(
     cc: &eframe::CreationContext<'_>,
     cache_root: Option<std::path::PathBuf>,
@@ -147,7 +143,7 @@ pub(super) fn spawn_gpu_preview_prewarm(
             let result = RawGpuPipeline::prewarm_preview_template_with_cache(
                 &device,
                 &queue,
-                gpu_preview_prewarm_cfa_kind(),
+                crate::pipeline::CfaKind::Bayer,
                 persistent_cache.clone(),
             )
             .map_err(|error| format!("GPU preview prewarm failed: {error:#}"));
@@ -166,7 +162,7 @@ pub(super) fn spawn_gpu_preview_prewarm(
             let export_result = RawGpuPipeline::prewarm_export_program_template_with_cache(
                 &device,
                 &queue,
-                gpu_preview_prewarm_cfa_kind(),
+                crate::pipeline::CfaKind::Bayer,
                 persistent_cache,
             )
             .map_err(|error| format!("GPU export program prewarm failed: {error:#}"));
@@ -264,6 +260,3 @@ mod pickers;
 mod profiles;
 mod settings;
 mod startup;
-
-#[cfg(test)]
-mod tests;

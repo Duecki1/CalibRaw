@@ -273,16 +273,6 @@ impl LibraryAsset {
     }
 }
 
-#[cfg(any(target_os = "android", test))]
-fn library_import_fab_rect(bounds: egui::Rect) -> egui::Rect {
-    crate::ui::theme::floating_action_rect(bounds)
-}
-
-#[cfg(any(target_os = "android", test))]
-fn library_import_icon() -> &'static str {
-    egui_phosphor::regular::PLUS
-}
-
 pub(crate) struct LibraryEntry {
     review: crate::sidecar::PhotoReview,
     asset: LibraryAsset,
@@ -470,17 +460,15 @@ enum ImageClipboardMode {
 
 #[derive(Clone, Debug)]
 struct ImageClipboard {
+    #[cfg(not(target_os = "android"))]
     mode: ImageClipboardMode,
     assets: Vec<LibraryAsset>,
 }
 
+#[cfg(not(target_os = "android"))]
 impl ImageClipboard {
-    fn count(&self) -> usize {
-        self.assets.len()
-    }
-
     fn paste_label(&self) -> String {
-        let count = self.count();
+        let count = self.assets.len();
         format!("Paste {count} RAW{}", if count == 1 { "" } else { "s" })
     }
 }
@@ -490,7 +478,7 @@ enum LibraryTransferDestination {
     #[cfg(not(target_os = "android"))]
     LocalFolder(PathBuf),
     #[cfg(target_os = "android")]
-    LocalLibrary { path: String },
+    LocalLibrary,
 }
 
 struct AssetTransferCompletion {
@@ -512,15 +500,6 @@ struct ThumbnailWorker {
     repaint: egui::Context,
 }
 
-#[cfg(not(target_os = "android"))]
-#[derive(Clone)]
-struct LibraryExportDialog {
-    assets: Vec<LibraryAsset>,
-    settings: ExportSettings,
-    format: ExportFormat,
-}
-
-#[cfg(target_os = "android")]
 #[derive(Clone)]
 struct LibraryExportDialog {
     assets: Vec<LibraryAsset>,

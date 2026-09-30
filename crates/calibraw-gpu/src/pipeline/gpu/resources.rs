@@ -275,7 +275,13 @@ pub(super) fn build_gpu_resource_plan(input: GpuResourcePlanInput) -> Result<Gpu
         &mut entries,
         "scene depth texture",
         GpuResourceResidency::Persistent,
-        texture_allocation_bytes(SCENE_DEPTH_EDGE, SCENE_DEPTH_EDGE, 1, 1, wgpu::TextureFormat::R16Float)?,
+        texture_allocation_bytes(
+            SCENE_DEPTH_EDGE,
+            SCENE_DEPTH_EDGE,
+            1,
+            1,
+            wgpu::TextureFormat::R16Float,
+        )?,
     );
     let mask_bytes = texture_allocation_bytes(
         input.mask_atlas_edge,
