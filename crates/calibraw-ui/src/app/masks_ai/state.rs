@@ -503,6 +503,10 @@ impl CalibRawApp {
     pub(in crate::app) fn invalidate_generated_mask_sources(&mut self) {
         self.masks.source_cache = None;
         self.masks.clear_generated_caches();
+        self.masks.fog_depth_auto_requested = false;
+        if self.masks.stack.scene_depth.take().is_some() {
+            self.mark_mask_adjustments_dirty();
+        }
         self.ai.object_cache = None;
         if matches!(
             self.foreground_operation_kind(),

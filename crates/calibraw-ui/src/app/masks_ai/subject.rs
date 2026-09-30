@@ -46,11 +46,14 @@ impl CalibRawApp {
     }
 
     /// Ensures active fog has shared scene depth without exposing a separate fog UI action.
-    /// A cancelled consent prompt is latched until fog is removed/disabled or depth becomes
-    /// available, so the dialog is not reopened every frame.
+    /// A cancelled consent prompt is latched until fog is removed/disabled, depth becomes
+    /// available, or the source changes, so the dialog is not reopened every frame.
     pub(in crate::app) fn ensure_fog_scene_depth(&mut self, frame: &eframe::Frame) {
+        // A DepthRange fallback can still contain the previous source's depth.
+        // Fresh inference fills the cache even if other masks still need updating.
+        let depth_is_stale = self.ai.masks_need_update && self.masks.depth_cache.is_none();
         let needs_depth = self.masks.stack.has_fog_effect()
-            && self.masks.stack.scene_depth_image().is_none();
+            && (self.masks.stack.scene_depth_image().is_none() || depth_is_stale);
         if !needs_depth {
             self.masks.fog_depth_auto_requested = false;
             return;
@@ -358,6 +361,90 @@ impl CalibRawApp {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn fog_only_depth_is_invalidated_after_remove_changes() {
+        assert_fog_depth_regenerates_after_source_change(false);
+    }
+
+    #[test]
+    fn fog_depth_range_fallback_is_refreshed_after_lens_changes() {
+        assert_fog_depth_regenerates_after_source_change(true);
+    }
+
+    fn assert_fog_depth_regenerates_after_source_change(depth_range_fallback: bool) {
+        let mut app = CalibRawApp::empty(&egui::Context::default());
+        #[cfg(not(target_os = "android"))]
+        {
+            app.ai.runtime_mode = OnnxRuntimeMode::Automatic;
+        }
+        app.masks
+            .stack
+            .global_effects
+            .push(crate::pipeline::EffectComponent::new(
+                crate::pipeline::MaskEffect::Fog,
+            ));
+        if depth_range_fallback {
+            app.masks.stack.add_mask(MaskKind::DepthRange).unwrap();
+        }
+        let old_depth = MaskImage::new(2, 2, vec![0, 85, 170, 255]).unwrap();
+        app.apply_generated_mask(AiMaskModel::Depth, old_depth.clone());
+        if depth_range_fallback {
+            app.masks.stack.scene_depth = None;
+        }
+        app.reset_edit_history();
+        // A prior request (including cancelled consent) must not block a new source.
+        app.masks.fog_depth_auto_requested = true;
+
+        if depth_range_fallback {
+            app.note_lens_correction_changed_for_masks();
+        } else {
+            app.note_remove_edit_changed();
+        }
+        assert!(app.masks.stack.scene_depth.is_none());
+        assert!(app.masks.depth_cache.is_none());
+        assert!(!app.masks.fog_depth_auto_requested);
+        assert_eq!(app.ai.masks_need_update, depth_range_fallback);
+        app.commit_edit_history_now();
+        assert!(app
+            .committed_mask_state_for_persistence()
+            .scene_depth
+            .is_none());
+        // Keep the selection usable until regeneration finishes, but do not treat
+        // its old depth as current scene data.
+        assert_eq!(
+            app.masks.stack.scene_depth_image(),
+            depth_range_fallback.then_some(&old_depth),
+        );
+
+        let frame = eframe::Frame::_new_kittest();
+        app.ensure_fog_scene_depth(&frame);
+        // A headless frame cannot capture the source. This error proves fog tried
+        // to regenerate instead of silently accepting persisted/fallback depth.
+        assert_eq!(
+            app.ui.notice.as_deref(),
+            Some("The GPU preview is not available.")
+        );
+        assert!(!app.masks.fog_depth_auto_requested);
+
+        let fresh_depth = MaskImage::new(2, 2, vec![255, 170, 85, 0]).unwrap();
+        app.apply_generated_mask(AiMaskModel::Depth, fresh_depth.clone());
+        app.ui.notice = None;
+        app.ensure_fog_scene_depth(&frame);
+        assert!(app.ui.notice.is_none());
+        assert!(!app.masks.fog_depth_auto_requested);
+        assert_eq!(app.masks.stack.scene_depth_image(), Some(&fresh_depth));
+        assert_eq!(app.masks.depth_cache.as_ref(), Some(&fresh_depth));
+        assert_eq!(app.ai.masks_need_update, depth_range_fallback);
+        if depth_range_fallback {
+            assert!(matches!(
+                &app.masks.stack.selected_component().unwrap().geometry,
+                MaskGeometry::DepthRange { depth: Some(depth), .. } if depth == &fresh_depth
+            ));
+        } else {
+            assert!(app.masks.stack.masks.is_empty());
+        }
+    }
 
     #[test]
     fn fog_automatically_reuses_cached_depth_without_a_depth_mask() {
