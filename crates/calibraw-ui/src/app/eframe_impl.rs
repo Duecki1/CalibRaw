@@ -404,7 +404,7 @@ impl eframe::App for CalibRawApp {
         self.update_preview_histogram(frame);
         self.refresh_preview_clipping(frame);
 
-        if self.preview.processing_pending() {
+        if self.preview.processing_pending() && !self.defer_background_mask_processing() {
             ui.ctx().request_repaint();
         }
         if self.foreground_operation_active()

@@ -198,6 +198,7 @@ impl CalibRawApp {
         masks: &MaskStack,
         full_raw: &LoadedRaw,
         region: [u32; 4],
+        extent: [u32; 2],
         dirty_layers: Option<&[bool; MAX_LOCAL_MASKS]>,
     ) -> Result<(), String> {
         let cropped = masks.cropped_for_region(
@@ -208,9 +209,7 @@ impl CalibRawApp {
             full_raw.width,
             full_raw.height,
         );
-        let edge = pipeline.mask_atlas_edge();
-        let extent = mask_region_texture_extent(region, edge);
-        for layer in 0..masks.masks.len().min(MAX_LOCAL_MASKS) {
+        for layer in 0..masks.masks.len().min(pipeline.mask_layer_capacity()) {
             if dirty_layers.is_some_and(|dirty| !dirty[layer]) {
                 continue;
             }

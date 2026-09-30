@@ -247,6 +247,7 @@ fn portrait_gpu_layout_and_input() {
         source_size: [600, 900],
         full_source_size: [600, 900],
         mask_source_region: [0, 0, 600, 900],
+        mask_texture_extent: crate::pipeline::mask_region_texture_extent([0, 0, 600, 900], 2048),
         virtual_origin: [0, 0],
         virtual_full_size: [600, 900],
     });

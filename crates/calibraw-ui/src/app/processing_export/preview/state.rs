@@ -202,16 +202,13 @@ impl CalibRawApp {
             )
             .with_vignette_geometry(self.develop.geometry);
             if let Some(full_raw) = preview_source.as_ref() {
-                let mask_region = detail_mask_source_region(
-                    masks,
-                    detail.source_origin,
-                    detail.source_size,
-                    full_raw.width,
-                    full_raw.height,
-                );
                 params = params.with_mask_uv_rect_and_extent(
-                    mask_source_region_uv(mask_region, full_raw.width, full_raw.height),
-                    mask_region_texture_extent(mask_region, detail.pipeline.mask_atlas_edge()),
+                    mask_source_region_uv(
+                        detail.mask_source_region,
+                        full_raw.width,
+                        full_raw.height,
+                    ),
+                    detail.mask_texture_extent,
                 );
             }
             if self.preview.original_requested {

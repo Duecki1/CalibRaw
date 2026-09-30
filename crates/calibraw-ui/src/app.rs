@@ -295,6 +295,7 @@ pub(crate) struct PreviewDetail {
     source_origin: [u32; 2],
     source_size: [u32; 2],
     mask_source_region: [u32; 4],
+    mask_texture_extent: [u32; 2],
     virtual_origin: [i32; 2],
     virtual_full_size: [u32; 2],
     full_source_size: [u32; 2],
@@ -1032,8 +1033,8 @@ pub(crate) struct PreviewState {
     #[cfg(target_os = "android")]
     pub(crate) original_hold: Option<AndroidOriginalHold>,
     pub(crate) pending_stage: Option<ProcessingStage>,
-    // White balance is an early-pipeline edit. Keep each scrub update exact,
-    // but coalesce updates while the preceding GPU render is still running.
+    // Keep white-balance updates exact and coalesce zoomed mask scrubs while
+    // the preceding GPU render is still running.
     pub(crate) white_balance_refresh_pending: bool,
     pub(crate) interactive_render_ready: Arc<AtomicBool>,
     #[cfg(target_os = "android")]

@@ -231,11 +231,16 @@ impl CalibRawApp {
             return;
         };
         let now = Instant::now();
+        let interval = if self.defer_background_mask_processing() {
+            Duration::from_millis(16)
+        } else {
+            INTERACTIVE_MASK_INTERVAL
+        };
         let remaining = self
             .masks
             .interaction_last_upload
             .map_or(Duration::ZERO, |last| {
-                INTERACTIVE_MASK_INTERVAL.saturating_sub(now.saturating_duration_since(last))
+                interval.saturating_sub(now.saturating_duration_since(last))
             });
         if !remaining.is_zero() {
             self.egui_ctx.request_repaint_after(remaining);
@@ -252,7 +257,14 @@ impl CalibRawApp {
 
     pub(crate) fn finish_mask_geometry_interaction(&mut self) {
         let layer = self.masks.interaction_dirty_layer.take();
-        let should_commit = self.masks.interaction_has_uncommitted_change;
+        let should_refine = self.preview.detail.as_ref().is_some_and(|detail| {
+            detail.mask_texture_extent
+                != crate::pipeline::mask_region_texture_extent(
+                    detail.mask_source_region,
+                    detail.pipeline.mask_atlas_edge(),
+                )
+        });
+        let should_commit = self.masks.interaction_has_uncommitted_change || should_refine;
         self.masks.interaction_last_upload = None;
         self.masks.interaction_has_uncommitted_change = false;
         if should_commit {
