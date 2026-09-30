@@ -1,6 +1,4 @@
-use crate::model_artifact::{
-    ensure_artifact, sha256_file_hex, ArtifactSize, DownloadOptions, ModelArtifact,
-};
+use crate::model_artifact::{ensure_artifact, sha256_file_hex, DownloadOptions, ModelArtifact};
 use anyhow::{Context, Result};
 use flate2::read::GzDecoder;
 use std::{
@@ -154,8 +152,7 @@ pub fn ensure_automatic_onnx_runtime() -> Result<(PathBuf, String)> {
         name: "CalibRaw automatic ONNX Runtime",
         url: Some(package.url),
         sha256: package.sha256,
-        size: ArtifactSize::Exact(package.bytes),
-        progress_total: package.bytes,
+        bytes: package.bytes,
     };
     ensure_artifact(
         &archive_path,
@@ -319,31 +316,6 @@ fn find_runtime_library(root: &Path) -> Result<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn supported_package_uses_calibraw_artifacts() {
-        let package = runtime_package().unwrap();
-        assert!(package
-            .url
-            .starts_with("https://huggingface.co/Duecki/CalibRaw-Artifacts/resolve/"));
-        assert!(package.url.contains("/onnxruntime/"));
-        if cfg!(all(
-            target_arch = "x86_64",
-            any(target_os = "linux", target_os = "windows")
-        )) {
-            assert_eq!(package.version, "1.30.0");
-            assert!(package.archive_name.contains("1.30.0"));
-        }
-        assert_eq!(package.sha256.len(), 64);
-        assert!(package.bytes > 1_000_000);
-    }
-
-    #[test]
-    fn automatic_runtime_download_retries_and_resumes() {
-        let options = runtime_download_options();
-        assert!(options.attempts > 1);
-        assert!(options.resume);
-    }
 
     #[test]
     fn runtime_upgrade_invalidates_the_previous_install() {

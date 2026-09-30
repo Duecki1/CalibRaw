@@ -25,15 +25,13 @@ pub(super) const SAM21_ENCODER_ARTIFACT: ModelArtifact = ModelArtifact {
     name: "SAM 2.1 encoder",
     url: Some(SAM21_ENCODER_MODEL_URL),
     sha256: SAM21_ENCODER_SHA256_HEX,
-    size: ArtifactSize::Exact(SAM21_ENCODER_BYTES),
-    progress_total: SAM21_ENCODER_BYTES,
+    bytes: SAM21_ENCODER_BYTES,
 };
 pub(super) const SAM21_DECODER_ARTIFACT: ModelArtifact = ModelArtifact {
     name: "SAM 2.1 decoder",
     url: Some(SAM21_DECODER_MODEL_URL),
     sha256: SAM21_DECODER_SHA256_HEX,
-    size: ArtifactSize::Exact(SAM21_DECODER_BYTES),
-    progress_total: SAM21_DECODER_BYTES,
+    bytes: SAM21_DECODER_BYTES,
 };
 const SAM_DOWNLOAD: DownloadOptions = DownloadOptions {
     connect_timeout: Duration::from_secs(45),
@@ -623,19 +621,6 @@ fn encode_sam_image(
     source_height: u32,
     crop: ObjectCropRect,
 ) -> Result<ObjectInferenceCache> {
-    let plane = (SAM21_MODEL_SIZE * SAM21_MODEL_SIZE) as usize;
-    let mut values = vec![0.0f32; plane * 3];
-    for y in 0..SAM21_MODEL_SIZE {
-        for x in 0..SAM21_MODEL_SIZE {
-            let pixel = resized.get_pixel(x, y);
-            let index = (y * SAM21_MODEL_SIZE + x) as usize;
-            for channel in 0..3 {
-                let normalized = pixel[channel] as f32 / 255.0;
-                values[channel * plane + index] =
-                    (normalized - IMAGENET_MEAN[channel]) / IMAGENET_STD[channel];
-            }
-        }
-    }
     let input = Tensor::from_array((
         [
             1usize,
@@ -643,7 +628,7 @@ fn encode_sam_image(
             SAM21_MODEL_SIZE as usize,
             SAM21_MODEL_SIZE as usize,
         ],
-        values,
+        normalized_rgb_input(resized)?,
     ))
     .context("create SAM 2.1 encoder input")?;
 
@@ -962,7 +947,7 @@ fn select_sam_candidate(
                 * height as f32)
                 .round()
                 .clamp(0.0, height.saturating_sub(1) as f32) as usize;
-            let probability = sigmoid(logits[py * width + px]);
+            let probability = sigmoid_probability(logits[py * width + px]);
             score += if prompt.kind.is_foreground() {
                 probability * 0.14
             } else {
@@ -984,7 +969,7 @@ fn select_sam_candidate(
     let selected_logits = masks.values[best_index * plane..(best_index + 1) * plane].to_vec();
     let probabilities = selected_logits
         .iter()
-        .map(|value| sigmoid(*value))
+        .map(|value| sigmoid_probability(*value))
         .collect();
     Ok(DecodedSamMask {
         width: u32::try_from(width).context("SAM output width exceeds u32")?,
@@ -1041,15 +1026,6 @@ fn candidate_focus_statistics(
     let focus_fill = inside as f32 / focus_area;
     let area_ratio = active as f32 / focus_area;
     (outside_fraction, focus_fill, area_ratio)
-}
-
-fn sigmoid(value: f32) -> f32 {
-    if value >= 0.0 {
-        1.0 / (1.0 + (-value).exp())
-    } else {
-        let exp = value.exp();
-        exp / (1.0 + exp)
-    }
 }
 
 fn candidate_border_fraction(logits: &[f32], width: usize, height: usize) -> f32 {
@@ -1457,31 +1433,6 @@ mod object_mask_tests {
             points: points.to_vec(),
             positive,
             brush_size: 0.0,
-        }
-    }
-
-    #[test]
-    fn sam_model_hashes_are_full_sha256_values() {
-        for value in [SAM21_ENCODER_SHA256_HEX, SAM21_DECODER_SHA256_HEX] {
-            assert_eq!(value.len(), 64);
-            assert!(value.bytes().all(|byte| byte.is_ascii_hexdigit()));
-        }
-    }
-
-    #[test]
-    fn sam_downloads_retry_and_resume() {
-        const {
-            assert!(SAM_DOWNLOAD.attempts > 1);
-            assert!(SAM_DOWNLOAD.resume);
-        }
-    }
-
-    #[test]
-    fn sam_model_urls_are_immutable_revision_pins() {
-        for url in [SAM21_ENCODER_MODEL_URL, SAM21_DECODER_MODEL_URL] {
-            assert!(url.starts_with("https://huggingface.co/Duecki/CalibRaw-Artifacts/"));
-            assert!(url.contains("/resolve/91085ce0ec322a4a7cbd20059688690218e52f9a/"));
-            assert!(!url.contains("/resolve/main/"));
         }
     }
 

@@ -1,14 +1,15 @@
 package de.duecki.calibraw;
 
+import android.app.Activity;
 import android.content.ContentResolver;
 import android.net.Uri;
 
 final class PickerLocationStore {
     private static final String PREFERENCES = "calibraw-picker-locations";
 
-    private final AndroidStorageAccess storage;
+    private final Activity storage;
 
-    PickerLocationStore(AndroidStorageAccess storage) {
+    PickerLocationStore(Activity storage) {
         this.storage = storage;
     }
 

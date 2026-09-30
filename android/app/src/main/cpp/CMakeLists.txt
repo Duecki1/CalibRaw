@@ -425,22 +425,6 @@ add_custom_target(calibraw_verify_lensfun
     VERBATIM
 )
 
-# Targets available to a future C++ JNI target in this project. The existing
-# Rust cdylib consumes the same staged archives through calibraw-core/build.rs.
-add_library(calibraw_lensfun_static STATIC IMPORTED GLOBAL)
-set_target_properties(calibraw_lensfun_static PROPERTIES
-    IMPORTED_LOCATION "${CALIBRAW_LENSFUN_STAGE}/lib/liblensfun.a"
-    INTERFACE_INCLUDE_DIRECTORIES "${CALIBRAW_LENSFUN_STAGE}/include"
-)
-add_dependencies(calibraw_lensfun_static calibraw_verify_lensfun)
-add_library(calibraw::lensfun ALIAS calibraw_lensfun_static)
-add_library(calibraw::libraw ALIAS raw)
-
-add_library(calibraw_native_static INTERFACE)
-target_link_libraries(calibraw_native_static INTERFACE raw calibraw_lensfun_static)
-add_dependencies(calibraw_native_static calibraw_stage_libraw calibraw_verify_lensfun)
-add_library(calibraw::native_static ALIAS calibraw_native_static)
-
 # AGP builds this explicit target for every ABI in ndk.abiFilters.
 add_custom_target(calibraw_native_deps ALL)
 add_dependencies(calibraw_native_deps calibraw_stage_libraw calibraw_verify_lensfun)

@@ -366,7 +366,7 @@ impl CalibRawApp {
                 return;
             }
             let mut renderer = render_state.renderer.write();
-            self.take_preview_pipeline_and_release_textures(&mut renderer);
+            self.take_preview_pipeline_and_release_textures();
             pipeline.register_egui_texture(&render_state.device, &mut renderer);
             drop(renderer);
             self.preview.gpu_pipeline = Some(pipeline);

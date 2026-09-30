@@ -364,15 +364,7 @@ impl CalibRawApp {
     }
 
     pub(crate) fn activate_mask_tool(&mut self, kind: MaskKind) {
-        self.finish_mask_geometry_interaction();
-        self.masks.active_tool =
-            (kind.is_available() && kind != MaskKind::Fullscreen).then_some(kind);
-        self.masks.drag = None;
-        self.masks.last_brush_point = None;
-        self.masks.touch_gesture_backup = None;
-        if !matches!(kind, MaskKind::Subject | MaskKind::Background) {
-            self.masks.subject_refinement_active = false;
-        }
+        self.select_mask_tool(kind);
         if matches!(kind, MaskKind::Brush | MaskKind::Object) {
             self.masks.brush_mode = BrushMode::Paint;
         }

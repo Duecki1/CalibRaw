@@ -9,11 +9,9 @@ fn portrait_gpu_layout_and_input() {
     let mut instance_descriptor = wgpu::InstanceDescriptor::new_without_display_handle();
     instance_descriptor.memory_budget_thresholds = crate::memory_budget_thresholds();
     let instance = wgpu::Instance::new(instance_descriptor);
-    let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-        force_fallback_adapter: true,
-        ..Default::default()
-    }))
-    .unwrap();
+    let adapter =
+        pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default()))
+            .unwrap();
     let (device, queue) =
         pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default())).unwrap();
     let context = egui::Context::default();

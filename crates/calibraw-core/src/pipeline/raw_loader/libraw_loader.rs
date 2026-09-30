@@ -1735,19 +1735,7 @@ fn white_levels(maximum: u32, linear_max: [u32; 4], black_levels: [f32; 4]) -> [
 }
 
 fn cam_to_working(xyz_to_cam: [[f32; 3]; 4], cdesc: [u8; 4]) -> [[f32; 4]; 3] {
-    let physical = camera_to_working_physical(xyz_to_cam);
-
-    let mut out = [[0.0; 4]; 3];
-    for (physical_col, _) in cdesc.iter().enumerate() {
-        let Some(rgb_col) = logical_rgb_channel(cdesc, physical_col) else {
-            continue;
-        };
-        for row in 0..3 {
-            out[row][rgb_col] += physical[row][physical_col];
-        }
-    }
-
-    out
+    fold_physical_camera_planes(camera_to_working_physical(xyz_to_cam), cdesc)
 }
 
 fn camera_to_working_physical(xyz_to_cam: [[f32; 3]; 4]) -> [[f32; 4]; 3] {

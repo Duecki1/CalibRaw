@@ -93,8 +93,10 @@ fn zoom_drag_mapping_refines_all_layers_and_release_keeps_the_last_edit() {
         LoadedRaw::from_scene_linear_rec2020(1200, 900, vec![0.2; 1200 * 900 * 3]).unwrap(),
     );
     let exposure = ExposureParams::default();
-    let mut masks = MaskStack::default();
-    masks.scene_depth = MaskImage::new(2, 2, vec![0, 85, 170, 255]);
+    let mut masks = MaskStack {
+        scene_depth: MaskImage::new(2, 2, vec![0, 85, 170, 255]),
+        ..Default::default()
+    };
     for layer in 0..2 {
         masks.add_mask(MaskKind::Subject);
         masks.masks[layer].adjustments.exposure = if layer == 0 { 0.8 } else { -0.5 };

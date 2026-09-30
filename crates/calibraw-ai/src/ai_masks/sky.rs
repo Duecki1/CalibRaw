@@ -7,17 +7,9 @@ pub(super) fn sky_mask(
     image: &ImageBuffer<Rgba<u8>, Vec<u8>>,
 ) -> Result<Vec<u8>> {
     let resized = image::imageops::resize(image, INPUT_EDGE, INPUT_EDGE, FilterType::Lanczos3);
-    let area = (INPUT_EDGE * INPUT_EDGE) as usize;
-    let mut normalized = vec![0.0f32; area * 3];
-    for (index, pixel) in resized.pixels().enumerate() {
-        for channel in 0..3 {
-            normalized[channel * area + index] =
-                (pixel[channel] as f32 / 255.0 - IMAGENET_MEAN[channel]) / IMAGENET_STD[channel];
-        }
-    }
     let input = Tensor::from_array((
         [1usize, 3, INPUT_EDGE as usize, INPUT_EDGE as usize],
-        normalized,
+        normalized_rgb_input(&resized)?,
     ))
     .context("create sky segmentation input tensor")?;
     let (output_width, output_height, sky_probabilities) = with_model_session(

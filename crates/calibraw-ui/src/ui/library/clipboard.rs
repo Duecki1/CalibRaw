@@ -1,5 +1,6 @@
 use super::*;
 
+#[cfg(any(not(target_os = "android"), test))]
 pub(super) fn image_paste_summary(
     mode: ImageClipboardMode,
     total: usize,
@@ -60,10 +61,10 @@ fn copy_asset_to_destination(
     result
 }
 
+#[cfg(not(target_os = "android"))]
 pub(super) fn run_image_paste(
     clipboard: ImageClipboard,
     destination: LibraryTransferDestination,
-    #[cfg(target_os = "android")] android_app: &calibraw_ffi::AndroidApp,
 ) -> AssetTransferCompletion {
     let mode = clipboard.mode;
     let total = clipboard.assets.len();
@@ -77,26 +78,12 @@ pub(super) fn run_image_paste(
             remaining.retain(|candidate| candidate.id != asset.id);
             continue;
         }
-        let result = copy_asset_to_destination(
-            &asset,
-            &destination,
-            #[cfg(target_os = "android")]
-            android_app,
-        )
-        .and_then(|imported| {
+        let result = copy_asset_to_destination(&asset, &destination).and_then(|imported| {
             if mode != ImageClipboardMode::Cut {
                 return Ok(());
             }
-            if let Err(error) = remove_library_asset(
-                &asset,
-                #[cfg(target_os = "android")]
-                android_app,
-            ) {
-                rollback_imported_library_asset(
-                    imported,
-                    #[cfg(target_os = "android")]
-                    android_app,
-                );
+            if let Err(error) = remove_library_asset(&asset) {
+                rollback_imported_library_asset(imported);
                 Err(error)
             } else {
                 Ok(())
@@ -112,14 +99,8 @@ pub(super) fn run_image_paste(
         }
     }
 
-    #[cfg(not(target_os = "android"))]
     let destination_label = match &destination {
         LibraryTransferDestination::LocalFolder(folder) => folder.display().to_string(),
-    };
-    #[cfg(target_os = "android")]
-    let destination_label = match &destination {
-        LibraryTransferDestination::LocalLibrary { path } if !path.is_empty() => path.clone(),
-        LibraryTransferDestination::LocalLibrary { .. } => "the Library".to_owned(),
     };
 
     let result = image_paste_summary(mode, total, completed, &destination_label, errors);
@@ -217,6 +198,7 @@ pub(super) fn start_duplicate_assets(
     }
 }
 
+#[cfg(not(target_os = "android"))]
 pub(super) fn start_image_clipboard_paste(
     app: &mut CalibRawApp,
     destination: LibraryTransferDestination,
@@ -234,17 +216,10 @@ pub(super) fn start_image_clipboard_paste(
     app.library.asset_transfer_receiver = Some(receiver);
     app.library.status = format!("Pasting {}…", clipboard.paste_label());
     let repaint = context.clone();
-    #[cfg(target_os = "android")]
-    let android_app = app.library.platform.app.clone();
     let spawn = std::thread::Builder::new()
         .name("calibraw-library-paste".to_owned())
         .spawn(move || {
-            let completion = run_image_paste(
-                clipboard,
-                destination,
-                #[cfg(target_os = "android")]
-                &android_app,
-            );
+            let completion = run_image_paste(clipboard, destination);
             let _ = sender.send(completion);
             repaint.request_repaint();
         });

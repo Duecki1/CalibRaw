@@ -22,8 +22,10 @@ mod mask_upload_tests {
         let raw = LoadedRaw::from_scene_linear_rec2020(16, 16, vec![0.2; 16 * 16 * 3]).unwrap();
         let exposure = ExposureParams::default();
         for mask_count in [0, 2] {
-            let mut masks = MaskStack::default();
-            masks.scene_depth = Some(MaskImage::new(2, 2, vec![0, 85, 170, 255]).unwrap());
+            let mut masks = MaskStack {
+                scene_depth: Some(MaskImage::new(2, 2, vec![0, 85, 170, 255]).unwrap()),
+                ..Default::default()
+            };
             for _ in 0..mask_count {
                 masks.add_mask(MaskKind::Fullscreen);
             }
@@ -352,10 +354,7 @@ impl CalibRawApp {
             crate::diagnostics::record(
                 "DPI preview replacement exceeded coexistence budget; released old graph and reused its compiled programs",
             );
-            let previous = {
-                let mut renderer = render_state.renderer.write();
-                self.take_preview_pipeline_and_release_textures(&mut renderer)
-            };
+            let previous = self.take_preview_pipeline_and_release_textures();
             drop(previous);
             pipeline_result = build_pipeline();
         }
@@ -405,7 +404,7 @@ impl CalibRawApp {
         }
         let previous = {
             let mut renderer = render_state.renderer.write();
-            let previous = self.take_preview_pipeline_and_release_textures(&mut renderer);
+            let previous = self.take_preview_pipeline_and_release_textures();
             pipeline.register_egui_texture(&render_state.device, &mut renderer);
             previous
         };
@@ -525,21 +524,7 @@ impl CalibRawApp {
             source_raw.inpaint_opposed_chroma_for_exposure(&self.develop.target_exposure);
         }
 
-        for texture_id in [
-            self.preview
-                .detail
-                .take()
-                .and_then(|preview| preview.pipeline.egui_texture_id),
-            self.preview
-                .navigation
-                .take()
-                .and_then(|preview| preview.pipeline.egui_texture_id),
-        ]
-        .into_iter()
-        .flatten()
-        {
-            self.retire_egui_texture(texture_id);
-        }
+        self.discard_auxiliary_previews();
         let (sender, receiver) = std::sync::mpsc::channel();
         let context = self.egui_ctx.clone();
         let worker_source = Arc::clone(&source_raw);

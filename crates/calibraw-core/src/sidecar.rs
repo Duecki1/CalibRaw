@@ -408,6 +408,12 @@ struct SidecarMaskAssetRef {
     asset_index: usize,
 }
 
+struct MaskAssets {
+    assets: Vec<SidecarMaskAsset>,
+    references: Vec<SidecarMaskAssetRef>,
+    scene_depth_asset: Option<usize>,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 enum SidecarRemoveEncoding {
@@ -500,16 +506,7 @@ fn encode_mask_png(image: &MaskImage) -> Result<Arc<[u8]>, SidecarError> {
     Ok(encoded.into())
 }
 
-fn extract_mask_assets(
-    edits: &mut EditState,
-) -> Result<
-    (
-        Vec<SidecarMaskAsset>,
-        Vec<SidecarMaskAssetRef>,
-        Option<usize>,
-    ),
-    SidecarError,
-> {
+fn extract_mask_assets(edits: &mut EditState) -> Result<MaskAssets, SidecarError> {
     let mut assets = Vec::<SidecarMaskAsset>::new();
     let mut unique_images = Vec::<MaskImage>::new();
     let mut buckets = HashMap::<u64, Vec<usize>>::new();
@@ -570,7 +567,11 @@ fn extract_mask_assets(
         }
     }
 
-    Ok((assets, references, scene_depth_asset))
+    Ok(MaskAssets {
+        assets,
+        references,
+        scene_depth_asset,
+    })
 }
 
 fn decode_mask_png(asset: &SidecarMaskAsset) -> Result<MaskImage, SidecarError> {
@@ -1181,7 +1182,7 @@ pub fn encode_with_review_and_editing_time(
     }
     synchronize_subject_refinement(&mut edits);
     validate_edit_state(&edits)?;
-    let (mask_assets, mask_asset_refs, scene_depth_asset) = extract_mask_assets(&mut edits)?;
+    let mask_assets = extract_mask_assets(&mut edits)?;
     let (remove_assets, remove_asset_refs) = extract_remove_assets(&mut edits)?;
     let document = SidecarDocument {
         format: SIDECAR_FORMAT.to_owned(),
@@ -1189,9 +1190,9 @@ pub fn encode_with_review_and_editing_time(
         edits,
         review,
         editing_time_ms,
-        mask_assets,
-        mask_asset_refs,
-        scene_depth_asset,
+        mask_assets: mask_assets.assets,
+        mask_asset_refs: mask_assets.references,
+        scene_depth_asset: mask_assets.scene_depth_asset,
         remove_assets,
         remove_asset_refs,
     };

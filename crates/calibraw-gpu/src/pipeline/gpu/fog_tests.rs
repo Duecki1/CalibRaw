@@ -724,7 +724,7 @@ fn fog_gpu_replacing_and_clearing_depth_does_not_reuse_stale_samples() -> anyhow
         "restoring the same far Arc must re-upload it",
     );
     assert_close(
-        &scene.render(&far.clone())?,
+        &scene.render(&far)?,
         &far_rgb,
         RGB_TOLERANCE,
         "cloned depth must render identically",

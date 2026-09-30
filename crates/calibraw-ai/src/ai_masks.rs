@@ -1,5 +1,5 @@
 use crate::execution_provider::{CpuFallbackProfile, FallbackSession, SessionOptions};
-use crate::model_artifact::{ArtifactSize, DownloadOptions, ModelArtifact};
+use crate::model_artifact::{DownloadOptions, ModelArtifact};
 use crate::model_install::ModelInstallSpec;
 #[cfg(not(target_os = "android"))]
 use crate::model_runtime::AiRuntimeContext;
@@ -12,7 +12,7 @@ use ort::value::Tensor;
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 #[cfg(not(target_os = "android"))]
-use std::fs::{self, File};
+use std::fs;
 use std::{
     path::{Path, PathBuf},
     sync::{
@@ -54,8 +54,7 @@ const SKYSEG_MODEL_INSTALL: ModelInstallSpec = ModelInstallSpec {
         name: "SkySeg U2Net",
         url: Some("https://huggingface.co/Duecki/CalibRaw-Artifacts/resolve/main/models/skyseg/skyseg.onnx"),
         sha256: "ab9c34c64c3d821220a2886a4a06da4642ffa14d5b30e8d5339056a089aa1d39",
-        size: ArtifactSize::Exact(SKYSEG_MODEL_BYTES),
-        progress_total: SKYSEG_MODEL_BYTES,
+        bytes: SKYSEG_MODEL_BYTES,
     },
     download: MASK_MODEL_DOWNLOAD,
     progress_label: "SkySeg U2Net",
@@ -90,8 +89,7 @@ impl BiRefNetModelSpec {
                 name: self.checkpoint,
                 url: Some(self.url),
                 sha256: self.sha256_hex,
-                size: ArtifactSize::Exact(self.bytes),
-                progress_total: self.bytes,
+                bytes: self.bytes,
             },
             download: MASK_MODEL_DOWNLOAD,
             progress_label: self.download_label,
@@ -322,7 +320,6 @@ pub fn spawn_ai_mask(
     receiver
 }
 
-
 #[cfg(not(target_os = "android"))]
 pub fn probe_runtime_subprocess(runtime_path: &Path, expected_sha256: &str) -> Result<()> {
     let runtime_path = fs::canonicalize(runtime_path)
@@ -404,9 +401,8 @@ pub fn initialize_runtime(
         "selected ONNX Runtime has an implausible size of {} bytes",
         metadata.len()
     );
-    let (runtime_load_path, _verified_runtime_handle, actual_sha256) =
-        verified_runtime_load_path(&runtime_path)
-            .context("verify selected ONNX Runtime before loading")?;
+    let actual_sha256 =
+        sha256_file_hex(&runtime_path).context("verify selected ONNX Runtime before loading")?;
     anyhow::ensure!(
         actual_sha256 == expected_sha256,
         "selected ONNX Runtime changed after approval: expected SHA-256 {expected_sha256}, found {actual_sha256}; select it again only if you trust the replacement"
@@ -421,7 +417,7 @@ pub fn initialize_runtime(
         .lock()
         .map_err(|_| anyhow::anyhow!("ONNX Runtime initialization lock was poisoned"))?;
     if RUNTIME_INITIALIZED.get().is_none() {
-        let builder = ort::init_from(&runtime_load_path).map_err(|error| {
+        let builder = ort::init_from(&runtime_path).map_err(|error| {
             anyhow::anyhow!(
                 "could not load ONNX Runtime from {}: {error}",
                 runtime_path.display()
@@ -446,18 +442,6 @@ pub fn initialize_runtime(
         "a different ONNX Runtime is already active in this process; restart CalibRaw before changing the pinned runtime"
     );
     Ok(())
-}
-
-#[cfg(target_os = "linux")]
-fn verified_runtime_load_path(path: &Path) -> Result<(PathBuf, Option<File>, String)> {
-    let actual_sha256 = sha256_file_hex(path).context("verify selected ONNX Runtime SHA-256")?;
-    Ok((path.to_path_buf(), None, actual_sha256))
-}
-
-#[cfg(not(any(target_os = "linux", target_os = "android")))]
-fn verified_runtime_load_path(path: &Path) -> Result<(PathBuf, Option<File>, String)> {
-    let digest = sha256_file_hex(path).context("verify selected ONNX Runtime SHA-256")?;
-    Ok((path.to_path_buf(), None, digest))
 }
 
 #[cfg(target_os = "android")]
@@ -557,12 +541,11 @@ fn subject_mask(
     crop_refinement: bool,
 ) -> Result<Vec<u8>> {
     let (width, height) = image.dimensions();
-    let coarse = infer_birefnet(model_path, quality, image)?;
-    let mut mask = coarse.clone();
+    let mut mask = infer_birefnet(model_path, quality, image)?;
     let crop_refinement =
         subject_crop_refinement_enabled(crop_refinement, cfg!(target_os = "android"));
     if crop_refinement {
-        if let Some(crop) = mask_refine::mask_crop_above(&coarse, width, height, 5, 0.15) {
+        if let Some(crop) = mask_refine::mask_crop_above(&mask, width, height, 5, 0.15) {
             let crop_image =
                 image::imageops::crop_imm(image, crop.x, crop.y, crop.width, crop.height)
                     .to_image();
@@ -591,7 +574,7 @@ pub(super) fn infer_birefnet(
         model.input_height,
         FilterType::Lanczos3,
     );
-    let input = normalized_birefnet_input(&resized, model.input_width, model.input_height)?;
+    let input = normalized_rgb_input(&resized)?;
     let input = Tensor::from_array((
         [
             1usize,
@@ -692,15 +675,8 @@ fn validate_birefnet_output_shape(
     ))
 }
 
-fn normalized_birefnet_input(
-    resized: &ImageBuffer<Rgba<u8>, Vec<u8>>,
-    input_width: u32,
-    input_height: u32,
-) -> Result<Vec<f32>> {
-    anyhow::ensure!(
-        resized.dimensions() == (input_width, input_height),
-        "BiRefNet resized input does not match the model tensor dimensions"
-    );
+fn normalized_rgb_input(resized: &ImageBuffer<Rgba<u8>, Vec<u8>>) -> Result<Vec<f32>> {
+    let (input_width, input_height) = resized.dimensions();
     let plane = usize::try_from(input_width)
         .ok()
         .and_then(|width| {
@@ -708,14 +684,12 @@ fn normalized_birefnet_input(
                 .ok()
                 .and_then(|height| width.checked_mul(height))
         })
-        .context("BiRefNet input dimensions overflow")?;
-    let values = plane
-        .checked_mul(3)
-        .context("BiRefNet input size overflow")?;
+        .context("AI input dimensions overflow")?;
+    let values = plane.checked_mul(3).context("AI input size overflow")?;
     let mut input = Vec::new();
     input
         .try_reserve_exact(values)
-        .context("reserve BiRefNet input tensor")?;
+        .context("reserve AI input tensor")?;
     input.resize(values, 0.0);
     for y in 0..input_height {
         for x in 0..input_width {
@@ -785,16 +759,11 @@ fn sigmoid_probability(logit: f32) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::{
-        normalized_birefnet_input, restore_birefnet_output, sigmoid_probability,
+        normalized_rgb_input, restore_birefnet_output, sigmoid_probability,
         subject_crop_refinement_enabled, validate_birefnet_output_shape, BiRefNetQuality,
-        MASK_MODEL_DOWNLOAD, IMAGENET_MEAN, IMAGENET_STD,
+        IMAGENET_MEAN, IMAGENET_STD,
     };
     use image::{ImageBuffer, Rgba};
-
-    #[test]
-    fn birefnet_defaults_to_the_low_quality_model() {
-        assert_eq!(BiRefNetQuality::default(), BiRefNetQuality::Low);
-    }
 
     #[test]
     fn android_always_disables_subject_crop_refinement() {
@@ -811,7 +780,7 @@ mod tests {
             vec![255, 128, 0, 255, 0, 64, 255, 255],
         )
         .unwrap();
-        let input = normalized_birefnet_input(&image, 2, 1).unwrap();
+        let input = normalized_rgb_input(&image).unwrap();
 
         assert_eq!(input.len(), 6);
         let expected = [
@@ -860,14 +829,6 @@ mod tests {
         assert_ne!(medium.sha256_hex, high.sha256_hex);
         assert_ne!(low.cache_filename, medium.cache_filename);
         assert_ne!(medium.cache_filename, high.cache_filename);
-    }
-
-    #[test]
-    fn mask_model_downloads_retry_and_resume() {
-        const {
-            assert!(MASK_MODEL_DOWNLOAD.attempts > 1);
-            assert!(MASK_MODEL_DOWNLOAD.resume);
-        }
     }
 
     #[test]

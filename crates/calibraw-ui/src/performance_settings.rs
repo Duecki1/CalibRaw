@@ -7,106 +7,60 @@ const SETTINGS_VERSION: u32 = 1;
 const MAX_SETTINGS_BYTES: u64 = 64 * 1024;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(default)]
 pub(crate) struct PerformanceSettings {
-    #[serde(default)]
     pub develop_histogram_open: bool,
-    #[serde(default)]
     pub app_usage_ms: u64,
-    #[serde(default = "settings_version")]
     pub version: u32,
-    #[serde(default = "default_raw_cache_files")]
     pub raw_cache_files: usize,
-    #[serde(default = "default_thumbnail_workers")]
     pub thumbnail_workers: usize,
-    #[serde(default)]
     pub render_edited_thumbnails_during_indexing: bool,
-    #[serde(default)]
     pub library_thumbnail_size: crate::ui::library::LibraryThumbnailSize,
-    #[serde(default)]
     pub library_sort_order: crate::ui::library::LibrarySortOrder,
-    #[serde(default)]
     pub preview_quality: crate::app::PreviewQuality,
-    #[serde(default)]
     pub image_relative_brush_size: bool,
-    #[serde(default)]
     pub show_develop_navigation_labels: bool,
-    #[serde(default = "default_export_name_template")]
     pub export_name_template: String,
-    #[serde(default = "default_export_format", with = "export_format_serde")]
+    #[serde(with = "export_format_serde")]
     pub export_format: ExportFormat,
-    #[serde(default)]
     pub ui_design: crate::ui::theme::UiDesign,
-    #[serde(default)]
     pub preview_backdrop: crate::ui::theme::PreviewBackdrop,
-    #[serde(default)]
     pub onboarding_completed: bool,
-    #[serde(default = "default_true")]
     pub auto_check_updates: bool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub github_update_check_allowed: Option<bool>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub ignored_update_version: Option<String>,
-    #[serde(default)]
     pub birefnet_quality: crate::ai_masks::BiRefNetQuality,
     #[cfg(not(target_os = "android"))]
-    #[serde(default = "default_true")]
     pub subject_crop_refinement: bool,
     #[cfg(not(target_os = "android"))]
-    #[serde(default = "default_true")]
     pub ai_gpu_acceleration: bool,
     #[cfg(not(target_os = "android"))]
-    #[serde(default)]
     pub onnx_runtime_mode: crate::app::OnnxRuntimeMode,
     #[cfg(not(target_os = "android"))]
-    #[serde(default)]
     pub discord_rich_presence: bool,
-    #[serde(default)]
     pub camera_profile_mode: CameraProfileMode,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub camera_profile_folder: Option<PathBuf>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub camera_profile_folder_label: Option<String>,
-    #[serde(default = "default_camera_profile_auto_detect")]
     pub camera_profile_auto_detect: bool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub last_camera_profile: Option<PathBuf>,
-    #[serde(default)]
     pub adjustment_copy_settings: crate::sidecar::AdjustmentCopySettings,
     #[cfg(target_os = "android")]
-    #[serde(default)]
     pub(crate) last_android_library_folder: String,
     #[cfg(not(target_os = "android"))]
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub last_library_folder: Option<PathBuf>,
     #[cfg(not(target_os = "android"))]
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub last_library_selected_folder: Option<PathBuf>,
     #[cfg(not(target_os = "android"))]
-    #[serde(default = "default_true")]
     pub library_folder_sidebar_open: bool,
     #[cfg(not(target_os = "android"))]
-    #[serde(default = "default_true")]
     pub develop_filmstrip_open: bool,
-}
-
-const fn settings_version() -> u32 {
-    SETTINGS_VERSION
-}
-
-fn default_raw_cache_files() -> usize {
-    crate::app::default_raw_cache_limit()
-}
-
-fn default_thumbnail_workers() -> usize {
-    crate::ui::library::default_thumbnail_worker_count()
-}
-
-fn default_export_name_template() -> String {
-    crate::export_naming::DEFAULT_EXPORT_NAME_TEMPLATE.to_owned()
-}
-
-const fn default_export_format() -> ExportFormat {
-    ExportFormat::Jpeg
 }
 
 mod export_format_serde {
@@ -156,10 +110,6 @@ fn jpeg_xl_export_format_setting_round_trips() {
 #[serde(transparent)]
 struct ExportFormatSetting(#[serde(with = "export_format_serde")] ExportFormat);
 
-const fn default_camera_profile_auto_detect() -> bool {
-    !cfg!(target_os = "android")
-}
-
 const fn subject_quality_for_platform(
     configured: crate::ai_masks::BiRefNetQuality,
     android: bool,
@@ -171,26 +121,22 @@ const fn subject_quality_for_platform(
     }
 }
 
-const fn default_true() -> bool {
-    true
-}
-
 impl Default for PerformanceSettings {
     fn default() -> Self {
         Self {
             develop_histogram_open: false,
             app_usage_ms: 0,
             version: SETTINGS_VERSION,
-            raw_cache_files: default_raw_cache_files(),
-            thumbnail_workers: default_thumbnail_workers(),
+            raw_cache_files: crate::app::default_raw_cache_limit(),
+            thumbnail_workers: crate::ui::library::default_thumbnail_worker_count(),
             render_edited_thumbnails_during_indexing: false,
             library_thumbnail_size: crate::ui::library::LibraryThumbnailSize::default(),
             library_sort_order: crate::ui::library::LibrarySortOrder::default(),
             preview_quality: crate::app::PreviewQuality::default(),
             image_relative_brush_size: false,
             show_develop_navigation_labels: false,
-            export_name_template: default_export_name_template(),
-            export_format: default_export_format(),
+            export_name_template: crate::export_naming::DEFAULT_EXPORT_NAME_TEMPLATE.to_owned(),
+            export_format: ExportFormat::Jpeg,
             ui_design: crate::ui::theme::UiDesign::default(),
             preview_backdrop: crate::ui::theme::PreviewBackdrop::default(),
             onboarding_completed: false,
@@ -209,7 +155,7 @@ impl Default for PerformanceSettings {
             camera_profile_mode: CameraProfileMode::default(),
             camera_profile_folder: None,
             camera_profile_folder_label: None,
-            camera_profile_auto_detect: default_camera_profile_auto_detect(),
+            camera_profile_auto_detect: !cfg!(target_os = "android"),
             last_camera_profile: None,
             adjustment_copy_settings: crate::sidecar::AdjustmentCopySettings::default(),
             #[cfg(target_os = "android")]
@@ -390,117 +336,28 @@ mod tests {
 
     #[test]
     fn invalid_values_are_clamped() {
-        let settings = PerformanceSettings {
-            develop_histogram_open: true,
-            app_usage_ms: 123_456,
-            version: 99,
-            raw_cache_files: usize::MAX,
-            thumbnail_workers: 0,
-            render_edited_thumbnails_during_indexing: true,
-            library_thumbnail_size: crate::ui::library::LibraryThumbnailSize::Large,
-            library_sort_order: crate::ui::library::LibrarySortOrder::NameAscending,
-            preview_quality: crate::app::PreviewQuality::High,
-            image_relative_brush_size: true,
-            show_develop_navigation_labels: true,
-            export_name_template: "{OriginalName}-{ISO}".to_owned(),
-            export_format: ExportFormat::Tiff,
-            ui_design: crate::ui::theme::UiDesign::DaylightBlue,
-            preview_backdrop: crate::ui::theme::PreviewBackdrop::White,
-            onboarding_completed: true,
-            auto_check_updates: false,
-            github_update_check_allowed: Some(false),
-            ignored_update_version: Some("v98.0.0".to_owned()),
-            birefnet_quality: crate::ai_masks::BiRefNetQuality::High,
-            #[cfg(not(target_os = "android"))]
-            subject_crop_refinement: false,
-            #[cfg(not(target_os = "android"))]
-            ai_gpu_acceleration: false,
-            #[cfg(not(target_os = "android"))]
-            onnx_runtime_mode: crate::app::OnnxRuntimeMode::Manual,
-            #[cfg(not(target_os = "android"))]
-            discord_rich_presence: true,
-            camera_profile_mode: CameraProfileMode::DcpProfiles,
-            camera_profile_folder: Some(PathBuf::from("profiles")),
-            camera_profile_folder_label: Some("CameraProfiles".to_owned()),
-            camera_profile_auto_detect: false,
-            last_camera_profile: Some(PathBuf::from("Sony/Camera ST.dcp")),
-            adjustment_copy_settings: crate::sidecar::AdjustmentCopySettings {
-                adjustments: true,
-                geometry: true,
-                camera_profile: false,
-                masks: false,
-                ai_masks: true,
-                lens_correction: false,
-            },
-            #[cfg(not(target_os = "android"))]
-            last_library_folder: None,
-            #[cfg(not(target_os = "android"))]
-            last_library_selected_folder: None,
-            #[cfg(not(target_os = "android"))]
-            library_folder_sidebar_open: false,
-            #[cfg(not(target_os = "android"))]
-            develop_filmstrip_open: false,
+        for (thumbnail_workers, expected_workers) in [
+            (0, 1),
+            (
+                usize::MAX,
+                crate::ui::library::maximum_thumbnail_worker_count(),
+            ),
+        ] {
+            let settings = PerformanceSettings {
+                version: 99,
+                raw_cache_files: usize::MAX,
+                thumbnail_workers,
+                ..Default::default()
+            }
+            .sanitized();
+
+            assert_eq!(settings.version, SETTINGS_VERSION);
+            assert_eq!(
+                settings.raw_cache_files,
+                crate::app::maximum_raw_cache_limit()
+            );
+            assert_eq!(settings.thumbnail_workers, expected_workers);
         }
-        .sanitized();
-        assert_eq!(settings.version, SETTINGS_VERSION);
-        assert_eq!(settings.app_usage_ms, 123_456);
-        assert_eq!(
-            settings.raw_cache_files,
-            crate::app::maximum_raw_cache_limit()
-        );
-        assert_eq!(settings.thumbnail_workers, 1);
-        assert!(settings.render_edited_thumbnails_during_indexing);
-        assert_eq!(
-            settings.library_thumbnail_size,
-            crate::ui::library::LibraryThumbnailSize::Large
-        );
-        assert_eq!(
-            settings.library_sort_order,
-            crate::ui::library::LibrarySortOrder::NameAscending
-        );
-        assert_eq!(settings.preview_quality, crate::app::PreviewQuality::High);
-        assert!(settings.image_relative_brush_size);
-        assert!(settings.show_develop_navigation_labels);
-        assert_eq!(settings.export_name_template, "{OriginalName}-{ISO}");
-        assert_eq!(settings.export_format, ExportFormat::Tiff);
-        assert_eq!(settings.ui_design, crate::ui::theme::UiDesign::DaylightBlue);
-        assert_eq!(
-            settings.preview_backdrop,
-            crate::ui::theme::PreviewBackdrop::White
-        );
-        assert!(settings.onboarding_completed);
-        assert!(!settings.auto_check_updates);
-        assert_eq!(settings.github_update_check_allowed, Some(false));
-        assert_eq!(settings.ignored_update_version.as_deref(), Some("v98.0.0"));
-        assert_eq!(
-            settings.birefnet_quality,
-            crate::ai_masks::BiRefNetQuality::High
-        );
-        #[cfg(not(target_os = "android"))]
-        {
-            assert!(!settings.subject_crop_refinement);
-            assert!(!settings.ai_gpu_acceleration);
-            assert!(settings.discord_rich_presence);
-        }
-        assert_eq!(settings.camera_profile_mode, CameraProfileMode::DcpProfiles);
-        assert_eq!(
-            settings.camera_profile_folder,
-            Some(PathBuf::from("profiles"))
-        );
-        assert_eq!(
-            settings.camera_profile_folder_label.as_deref(),
-            Some("CameraProfiles")
-        );
-        assert!(!settings.camera_profile_auto_detect);
-        assert_eq!(
-            settings.last_camera_profile,
-            Some(PathBuf::from("Sony/Camera ST.dcp"))
-        );
-        assert!(settings.adjustment_copy_settings.geometry);
-        assert!(!settings.adjustment_copy_settings.camera_profile);
-        assert!(!settings.adjustment_copy_settings.masks);
-        assert!(settings.adjustment_copy_settings.ai_masks);
-        assert!(!settings.adjustment_copy_settings.lens_correction);
     }
 
     #[test]
@@ -550,6 +407,12 @@ mod tests {
 
     #[test]
     fn omitted_settings_fields_use_current_defaults() {
+        let empty: PerformanceSettings = serde_json::from_str("{}").unwrap();
+        assert_eq!(
+            serde_json::to_value(&empty).unwrap(),
+            serde_json::to_value(PerformanceSettings::default()).unwrap()
+        );
+
         let settings: PerformanceSettings =
             serde_json::from_str(r#"{"version":1,"raw_cache_files":1,"thumbnail_workers":1}"#)
                 .expect("baseline settings should remain readable");

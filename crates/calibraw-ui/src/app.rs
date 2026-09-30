@@ -104,14 +104,10 @@ impl Default for DevelopReferenceState {
 #[cfg(not(target_os = "android"))]
 impl DevelopReferenceState {
     pub(crate) fn clear(&mut self) {
-        self.path = None;
-        self.label = None;
-        self.texture = None;
-        self.texture_size = None;
-        self.high_quality = false;
-        self.loading_path = None;
-        self.preview_receiver = None;
-        self.error = None;
+        *self = Self {
+            split_ratio: self.split_ratio,
+            ..Self::default()
+        };
     }
 }
 
@@ -132,17 +128,7 @@ pub(crate) struct DevelopLoadingThumbnailState {
 
 impl DevelopLoadingThumbnailState {
     pub(crate) fn clear(&mut self) {
-        #[cfg(not(target_os = "android"))]
-        {
-            self.path = None;
-            self.receiver = None;
-        }
-        #[cfg(target_os = "android")]
-        {
-            self.source_uri = None;
-        }
-        self.texture = None;
-        self.texture_size = None;
+        *self = Self::default();
     }
 }
 
@@ -443,7 +429,7 @@ pub(crate) struct LensCorrectionState {
 
 impl LensCorrectionState {
     pub(crate) fn from_catalog(catalog: LensfunCatalog) -> Self {
-        let selected = catalog.auto_match.clone();
+        let selected = catalog.auto_match.as_ref();
         Self {
             enabled: catalog.available && selected.is_some(),
             applied: false,
@@ -1324,26 +1310,6 @@ pub struct CalibRawApp {
     pub(crate) android: AndroidState,
 }
 
-#[cfg(test)]
-fn collect_pipeline_update_results(
-    operation: &'static str,
-    updates: Vec<(&'static str, anyhow::Result<()>)>,
-) -> anyhow::Result<()> {
-    let failures = updates
-        .into_iter()
-        .filter_map(|(pipeline, result)| {
-            result
-                .err()
-                .map(|error| format!("{pipeline}: {operation}: {error:#}"))
-        })
-        .collect::<Vec<_>>();
-    if failures.is_empty() {
-        Ok(())
-    } else {
-        Err(anyhow::anyhow!(failures.join("; ")))
-    }
-}
-
 impl CalibRawApp {
     pub(crate) fn app_usage_duration(&self) -> Duration {
         self.usage
@@ -1499,10 +1465,7 @@ impl CalibRawApp {
         }
     }
 
-    fn take_preview_pipeline_and_release_textures(
-        &mut self,
-        _renderer: &mut eframe::egui_wgpu::Renderer,
-    ) -> Option<RawGpuPipeline> {
+    fn take_preview_pipeline_and_release_textures(&mut self) -> Option<RawGpuPipeline> {
         let pipeline = self.preview.gpu_pipeline.take();
         if let Some(pipeline) = pipeline.as_ref() {
             self.preview.program_template = Some(pipeline.program_template());
@@ -1513,6 +1476,11 @@ impl CalibRawApp {
         {
             self.retire_egui_texture(texture_id);
         }
+        self.discard_auxiliary_previews();
+        pipeline
+    }
+
+    fn discard_auxiliary_previews(&mut self) {
         for texture_id in [
             self.preview
                 .detail
@@ -1528,7 +1496,6 @@ impl CalibRawApp {
         {
             self.retire_egui_texture(texture_id);
         }
-        pipeline
     }
 
     #[cfg(target_os = "android")]
@@ -1577,11 +1544,8 @@ pub(crate) use lifecycle::{install_missing_range_sources, masks_have_missing_ran
 use sidecar_persistence::sidecar_interaction_active;
 
 #[cfg(test)]
-mod transactional_pipeline_tests {
-    use super::{
-        collect_pipeline_update_results, AiMaskTarget, MaskGeometry, MaskKind, MaskStack,
-        MaskState, PreviewQuality,
-    };
+mod tests {
+    use super::{AiMaskTarget, MaskGeometry, MaskKind, MaskStack, MaskState, PreviewQuality};
     use crate::pipeline::GeometryTransform;
 
     #[test]
@@ -1628,66 +1592,6 @@ mod transactional_pipeline_tests {
             PreviewQuality::Max.proxy_edge_for_fitted_source([720, 1_500], 7_028, 4_688, cropped,)
                 > edge
         );
-    }
-
-    #[test]
-    fn each_present_pipeline_failure_has_operation_context() {
-        for failed in ["main", "detail", "navigation"] {
-            let result = collect_pipeline_update_results(
-                "install mask atlas",
-                ["main", "detail", "navigation"]
-                    .into_iter()
-                    .map(|name| {
-                        let result = if name == failed {
-                            Err(anyhow::anyhow!("injected failure"))
-                        } else {
-                            Ok(())
-                        };
-                        (name, result)
-                    })
-                    .collect(),
-            );
-            let message = format!("{:#}", result.unwrap_err());
-            assert!(message.contains(failed));
-            assert!(message.contains("install mask atlas"));
-        }
-    }
-
-    #[test]
-    fn absent_optional_pipelines_need_no_placeholder_update() {
-        assert!(collect_pipeline_update_results(
-            "install output transform",
-            vec![("main", Ok(()))],
-        )
-        .is_ok());
-    }
-
-    #[test]
-    fn a_later_retry_can_succeed_after_partial_failure_without_advancing_revision() {
-        let mut rendered_revision = Some(41_u64);
-        let requested_revision = 42_u64;
-        let first = collect_pipeline_update_results(
-            "install output transform",
-            vec![
-                ("main", Ok(())),
-                ("detail", Err(anyhow::anyhow!("injected failure"))),
-            ],
-        );
-        if first.is_ok() {
-            rendered_revision = Some(requested_revision);
-        }
-        assert!(first.is_err());
-        assert_eq!(rendered_revision, Some(41));
-
-        let retry = collect_pipeline_update_results(
-            "install output transform",
-            vec![("main", Ok(())), ("detail", Ok(()))],
-        );
-        if retry.is_ok() {
-            rendered_revision = Some(requested_revision);
-        }
-        assert!(retry.is_ok());
-        assert_eq!(rendered_revision, Some(requested_revision));
     }
 
     #[test]

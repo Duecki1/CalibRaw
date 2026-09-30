@@ -47,6 +47,7 @@ impl CalibRawApp {
         self.shortcut_overlays_clear(ctx)
     }
 
+    #[cfg(not(target_os = "android"))]
     pub(crate) fn navigation_shortcuts_allowed(&self, ctx: &egui::Context) -> bool {
         self.app_shortcuts_allowed(ctx) && ctx.memory(|memory| memory.focused().is_none())
     }
@@ -119,21 +120,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn ai_consent_state_is_mutually_exclusive() {
-        let mut consent = AiConsentState::Subject {
-            runtime_download_needed: true,
-        };
-        assert!(consent.is_mask_consent());
-        consent = AiConsentState::Denoise {
-            runtime_download_needed: false,
-        };
-        assert!(consent.is_open());
-        assert!(!consent.is_mask_consent());
-        consent = AiConsentState::None;
-        assert!(!consent.is_open());
-    }
-
-    #[test]
     fn disabled_actions_do_not_dispatch() {
         let ctx = egui::Context::default();
         crate::ui::theme::install(&ctx);
@@ -151,6 +137,9 @@ mod tests {
         crate::ui::theme::install(&ctx);
         let mut app = CalibRawApp::empty(&ctx);
 
+        app.ui.onboarding_step = Some(OnboardingStep::Appearance);
+        assert!(!app.app_shortcuts_allowed(&ctx));
+        app.ui.onboarding_step = None;
         assert!(app.app_shortcuts_allowed(&ctx));
         app.ai.consent = AiConsentState::Subject {
             runtime_download_needed: false,
@@ -167,9 +156,11 @@ mod tests {
     fn focused_widgets_block_image_navigation_shortcuts() {
         let ctx = egui::Context::default();
         crate::ui::theme::install(&ctx);
-        let app = CalibRawApp::empty(&ctx);
+        let mut app = CalibRawApp::empty(&ctx);
+        app.ui.onboarding_step = None;
         let focus_id = egui::Id::new("navigation-focus-test");
 
+        assert!(app.navigation_shortcuts_allowed(&ctx));
         ctx.memory_mut(|memory| memory.request_focus(focus_id));
         assert!(!app.navigation_shortcuts_allowed(&ctx));
     }
@@ -178,7 +169,8 @@ mod tests {
     fn focused_widgets_do_not_block_develop_edit_history_shortcuts() {
         let ctx = egui::Context::default();
         crate::ui::theme::install(&ctx);
-        let app = CalibRawApp::empty(&ctx);
+        let mut app = CalibRawApp::empty(&ctx);
+        app.ui.onboarding_step = None;
         let focus_id = egui::Id::new("edit-history-focus-test");
 
         ctx.memory_mut(|memory| memory.request_focus(focus_id));

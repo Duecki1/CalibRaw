@@ -151,17 +151,12 @@ fn build_raster_region_proxy(
         .expect("raster source flag requires RGB pixels");
     let source_width = raw.width as usize;
     let mut rgb = vec![0.0f32; output_width as usize * output_height as usize * 3];
-    let partition = |index: u32, source_count: u32, output_count: u32| {
-        let start = (u64::from(index) * u64::from(source_count) / u64::from(output_count)) as u32;
-        let end = (u64::from(index + 1) * u64::from(source_count) / u64::from(output_count)) as u32;
-        (start, end.max(start + 1).min(source_count))
-    };
     rgb.par_chunks_mut(output_width as usize * 3)
         .enumerate()
         .for_each(|(output_y, row)| {
-            let (sy0, sy1) = partition(output_y as u32, region_height, output_height);
+            let (sy0, sy1) = proportional_partition(output_y as u32, region_height, output_height);
             for output_x in 0..output_width {
-                let (sx0, sx1) = partition(output_x, region_width, output_width);
+                let (sx0, sx1) = proportional_partition(output_x, region_width, output_width);
                 let mut sum = [0.0f64; 3];
                 let mut count = 0u32;
                 for sy in sy0..sy1 {
@@ -342,14 +337,6 @@ pub fn build_region_proxy(
     let mut raw_pixels = vec![0u16; len];
     let mut color_indices = vec![0u8; len];
     let mut black_levels_per_pixel = vec![0.0f32; len];
-    let proportional_partition = |output_index: u32, source_count: u32, output_count: u32| {
-        let start =
-            (u64::from(output_index) * u64::from(source_count) / u64::from(output_count)) as u32;
-        let end = (u64::from(output_index + 1) * u64::from(source_count) / u64::from(output_count))
-            as u32;
-        (start, end.max(start + 1).min(source_count))
-    };
-
     raw_pixels
         .par_chunks_mut(row_stride)
         .zip(color_indices.par_chunks_mut(row_stride))
@@ -526,6 +513,12 @@ fn crop_ai_denoised(
     super::AiDenoisedImage::new(width, height, rgb16f).ok()
 }
 
+fn proportional_partition(index: u32, source_count: u32, output_count: u32) -> (u32, u32) {
+    let start = (u64::from(index) * u64::from(source_count) / u64::from(output_count)) as u32;
+    let end = (u64::from(index + 1) * u64::from(source_count) / u64::from(output_count)) as u32;
+    (start, end.max(start + 1).min(source_count))
+}
+
 fn proxy_ai_denoised(
     raw: &LoadedRaw,
     x: u32,
@@ -541,25 +534,20 @@ fn proxy_ai_denoised(
             .checked_mul(u64::from(output_height))
             .and_then(|count| usize::try_from(count).ok())?;
         let mut raw_cfa16 = vec![0u16; elements];
-        let partition = |output_index: u32, source_count: u32, output_count: u32| {
-            let start = (u64::from(output_index) * u64::from(source_count)
-                / u64::from(output_count)) as u32;
-            let end = (u64::from(output_index + 1) * u64::from(source_count)
-                / u64::from(output_count)) as u32;
-            (start, end.max(start + 1).min(source_count))
-        };
         raw_cfa16
             .par_chunks_mut(output_width as usize)
             .enumerate()
             .for_each(|(output_y, row)| {
                 let output_y = output_y as u32;
                 let phase_y = output_y % 2;
-                let (source_y0, source_y1) = partition(output_y, region_height, output_height);
+                let (source_y0, source_y1) =
+                    proportional_partition(output_y, region_height, output_height);
                 let footprint_y0 = y + source_y0;
                 let footprint_y1 = (y + source_y1).min(y + region_height);
                 for output_x in 0..output_width {
                     let phase_x = output_x % 2;
-                    let (source_x0, source_x1) = partition(output_x, region_width, output_width);
+                    let (source_x0, source_x1) =
+                        proportional_partition(output_x, region_width, output_width);
                     let footprint_x0 = x + source_x0;
                     let footprint_x1 = (x + source_x1).min(x + region_width);
                     let phase_index = (((y + phase_y).min(raw.height - 1) * raw.width)

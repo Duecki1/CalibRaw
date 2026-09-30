@@ -37,19 +37,7 @@ fn dragged_develop_sidebar_width(
 
 impl CalibRawApp {
     fn release_optional_gpu_memory(&mut self) {
-        let retired = [
-            self.preview
-                .detail
-                .take()
-                .and_then(|preview| preview.pipeline.egui_texture_id),
-            self.preview
-                .navigation
-                .take()
-                .and_then(|preview| preview.pipeline.egui_texture_id),
-        ];
-        for texture_id in retired.into_iter().flatten() {
-            self.retire_egui_texture(texture_id);
-        }
+        self.discard_auxiliary_previews();
         self.preview.detail_rebuild_receiver = None;
         self.preview.detail_pending_stage = None;
         self.preview.navigation_pending_stage = None;

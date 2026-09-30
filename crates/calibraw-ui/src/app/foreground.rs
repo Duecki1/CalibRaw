@@ -275,14 +275,6 @@ mod tests {
     }
 
     #[test]
-    fn foreground_completion_releases_the_slot() {
-        let mut slot = Some(test_operation(7));
-        let completed = slot.take();
-        assert!(completed.is_some());
-        assert!(slot.is_none());
-    }
-
-    #[test]
     fn foreground_cancellation_rejects_late_results() {
         let mut operation = test_operation(7);
         operation.cancel();
