@@ -11,7 +11,9 @@ pub(crate) enum LibraryAction {
     HdrMerge(Vec<LibraryAsset>),
     CopyAdjustments(LibraryAsset),
     PasteAdjustments(Vec<LibraryAsset>),
+    #[cfg(not(target_os = "android"))]
     Copy(Vec<LibraryAsset>),
+    #[cfg(not(target_os = "android"))]
     Cut(Vec<LibraryAsset>),
     #[cfg(not(target_os = "android"))]
     PasteIntoAssetFolder(LibraryAsset),
@@ -252,9 +254,11 @@ pub(crate) fn apply_library_action(
                 );
             }
         }
+        #[cfg(not(target_os = "android"))]
         LibraryAction::Copy(assets) => {
             set_library_clipboard(app, ImageClipboardMode::Copy, assets);
         }
+        #[cfg(not(target_os = "android"))]
         LibraryAction::Cut(assets) => {
             set_library_clipboard(app, ImageClipboardMode::Cut, assets);
         }
@@ -377,24 +381,16 @@ fn delete_confirmed_library_assets(ui: &Ui, app: &mut CalibRawApp, assets: Vec<L
     };
 }
 
+#[cfg(not(target_os = "android"))]
 fn set_library_clipboard(
     app: &mut CalibRawApp,
     mode: ImageClipboardMode,
     assets: Vec<LibraryAsset>,
 ) {
     let count = assets.len();
-    app.library.image_clipboard = Some(ImageClipboard {
-        #[cfg(not(target_os = "android"))]
-        mode,
-        assets,
-    });
-    #[cfg(not(target_os = "android"))]
-    {
-        app.library.folder_clipboard = None;
-    }
+    app.library.image_clipboard = Some(ImageClipboard { mode, assets });
+    app.library.folder_clipboard = None;
     app.library.clear_selection();
-    #[cfg(target_os = "android")]
-    crate::android::set_back_navigation_active(false);
     app.library.status = format!(
         "{} {count} RAW{}. Choose Paste in a Library folder.",
         if mode == ImageClipboardMode::Copy {
@@ -454,7 +450,9 @@ pub(super) enum SelectionBarCommand {
     HdrMerge,
     CopyAdjustments,
     PasteAdjustments,
+    #[cfg(not(target_os = "android"))]
     Copy,
+    #[cfg(not(target_os = "android"))]
     Cut,
     Duplicate,
     Rename,
@@ -518,6 +516,7 @@ pub(super) fn selection_bar_actions(
     {
         action = Some(SelectionBarCommand::PasteAdjustments);
     }
+    #[cfg(not(target_os = "android"))]
     if selection_bar_action_button(
         ui,
         action_enabled,
@@ -530,6 +529,7 @@ pub(super) fn selection_bar_actions(
         action = Some(SelectionBarCommand::Copy);
     }
     selection_bar_more_menu(ui, action_enabled, compact, |ui| {
+        #[cfg(not(target_os = "android"))]
         if crate::ui::theme::menu_item(ui, true, "Cut").clicked() {
             action = Some(SelectionBarCommand::Cut);
             ui.close();
@@ -604,7 +604,9 @@ pub(super) fn library_selection_action(
         SelectionBarCommand::PasteAdjustments => {
             Some(LibraryAction::PasteAdjustments(assets.to_vec()))
         }
+        #[cfg(not(target_os = "android"))]
         SelectionBarCommand::Copy => Some(LibraryAction::Copy(assets.to_vec())),
+        #[cfg(not(target_os = "android"))]
         SelectionBarCommand::Cut => Some(LibraryAction::Cut(assets.to_vec())),
         SelectionBarCommand::Duplicate => Some(LibraryAction::Duplicate(assets.to_vec())),
         SelectionBarCommand::Rename if assets.len() == 1 => {

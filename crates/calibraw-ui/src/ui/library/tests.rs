@@ -135,9 +135,19 @@ fn selection_actions_are_shared_and_single_item_actions_stay_guarded() {
         Some(LibraryAction::Rename(_))
     ));
     assert!(library_selection_action(SelectionBarCommand::Rename, &two).is_none());
+    #[cfg(not(target_os = "android"))]
     assert!(matches!(
         library_selection_action(SelectionBarCommand::Copy, &two),
         Some(LibraryAction::Copy(assets)) if assets.len() == 2
+    ));
+    #[cfg(not(target_os = "android"))]
+    assert!(matches!(
+        library_selection_action(SelectionBarCommand::Cut, &two),
+        Some(LibraryAction::Cut(assets)) if assets.len() == 2
+    ));
+    assert!(matches!(
+        library_selection_action(SelectionBarCommand::Duplicate, &two),
+        Some(LibraryAction::Duplicate(assets)) if assets.len() == 2
     ));
     assert!(matches!(
         library_selection_action(SelectionBarCommand::Delete, &two),
@@ -376,8 +386,9 @@ fn cover_uv_crops_without_leaving_unit_square() {
     assert_eq!(uv.bottom(), 1.0);
 }
 
+#[cfg(not(target_os = "android"))]
 #[test]
-fn image_paste_summary_is_platform_neutral() {
+fn image_paste_summary_reports_success_and_partial_failure() {
     assert_eq!(
         image_paste_summary(ImageClipboardMode::Copy, 2, 2, "destination", Vec::new()).unwrap(),
         "Copied 2 RAWs to destination."
