@@ -47,7 +47,17 @@ pub const BIREFNET_HIGH_MODEL_URL: &str = "https://huggingface.co/Duecki/CalibRa
 pub const BIREFNET_HIGH_MODEL_SHA256_HEX: &str =
     "db0217e99b25e0c4f6f4dca2892ff1f7ea7aba38fb6ad84f93122a4024be536a";
 pub const SKYSEG_MODEL_FILENAME: &str = "skyseg-u2net-fp32.onnx";
-pub const DA3_MODEL_FILENAME: &str = depth::MODEL_FILENAME;
+/// Metadata for the depth artifact selected on this platform.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DepthModelSpec {
+    pub name: &'static str,
+    pub download_bytes: u64,
+    pub cache_filename: &'static str,
+    pub input_edge: u32,
+    pub artifact_url: &'static str,
+}
+
+pub const DEPTH_MODEL: DepthModelSpec = depth::MODEL_SPEC;
 pub const SKYSEG_MODEL_BYTES: u64 = 175_997_079;
 const SKYSEG_MODEL_INSTALL: ModelInstallSpec = ModelInstallSpec {
     artifact: ModelArtifact {
@@ -221,7 +231,7 @@ pub fn skyseg_model_is_verified(path: &Path) -> bool {
     SKYSEG_MODEL_INSTALL.is_installed(path)
 }
 
-pub fn da3_model_is_verified(path: &Path) -> bool {
+pub fn depth_model_is_verified(path: &Path) -> bool {
     depth::MODEL_INSTALL.is_installed(path)
 }
 

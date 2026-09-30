@@ -94,7 +94,7 @@ impl CalibRawApp {
         match model {
             AiMaskModel::Subject => self.birefnet_model_path(),
             AiMaskModel::Sky => self.skyseg_model_path(),
-            AiMaskModel::Depth => self.da3_model_path(),
+            AiMaskModel::Depth => self.depth_model_path(),
         }
     }
 
@@ -108,7 +108,7 @@ impl CalibRawApp {
                 crate::ai_masks::birefnet_model_is_verified(self.ai.birefnet_quality, path)
             }
             AiMaskModel::Sky => crate::ai_masks::skyseg_model_is_verified(path),
-            AiMaskModel::Depth => crate::ai_masks::da3_model_is_verified(path),
+            AiMaskModel::Depth => crate::ai_masks::depth_model_is_verified(path),
         }
     }
 
@@ -151,8 +151,12 @@ impl CalibRawApp {
             ),
             (AiMaskModel::Sky, true) => "Running SkySeg U2Net locally…".to_owned(),
             (AiMaskModel::Sky, false) => "Preparing SkySeg U2Net download…".to_owned(),
-            (AiMaskModel::Depth, true) => "Running Depth Anything 3 locally…".to_owned(),
-            (AiMaskModel::Depth, false) => "Preparing Depth Anything 3 download…".to_owned(),
+            (AiMaskModel::Depth, true) => {
+                format!("Running {} locally…", crate::ai_masks::DEPTH_MODEL.name)
+            }
+            (AiMaskModel::Depth, false) => {
+                format!("Preparing {} download…", crate::ai_masks::DEPTH_MODEL.name)
+            }
         }
     }
 

@@ -107,8 +107,11 @@ from CalibRaw's GPL license; users must comply with the model terms for their us
 | Subject selection | [BiRefNet ONNX checkpoints](https://huggingface.co/Duecki/CalibRaw-Artifacts/tree/main/models/briefnet) | MIT |
 | Sky selection | [SkySeg U2Net FP32 ONNX](https://huggingface.co/Duecki/CalibRaw-Artifacts/tree/main/models/skyseg) | MIT; training image provenance is not published |
 | Object selection | [SAM 2.1 Hiera Tiny ONNX encoder and decoder](https://huggingface.co/Duecki/CalibRaw-Artifacts/tree/main/models/sam2) | Apache-2.0 |
-| Depth selection | [Depth Anything 3 Mono Large ONNX](https://huggingface.co/Duecki/CalibRaw-Artifacts/tree/main/models/da3) | Apache-2.0 |
+| Depth masks and fog (desktop) | [Depth Anything 3 Mono Large ONNX](https://huggingface.co/Duecki/CalibRaw-Artifacts/tree/main/models/da3) | Apache-2.0 |
+| Depth masks and fog (Android) | [Depth Anything V2 Small FP32 ONNX](https://huggingface.co/Duecki/CalibRaw-Artifacts/tree/main/models/da2) | Apache-2.0 |
 | RAW denoise | [RawNIND package](https://huggingface.co/Duecki/CalibRaw-Artifacts/tree/main/models/rawnind) | GPL-3.0 |
+
+The Android depth model originates from the [ONNX Community FP32 ONNX export](https://huggingface.co/onnx-community/depth-anything-v2-small/tree/4472b7362082ad9968fee890ca0f1e5aca36b93d/onnx).
 
 The SkySeg model's upstream MIT notice is reproduced here:
 

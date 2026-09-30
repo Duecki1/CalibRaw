@@ -96,6 +96,7 @@ pub enum CpuFallbackProfile {
     #[default]
     Default,
     WindowsSamEncoder,
+    MobileDepth,
 }
 
 #[derive(Clone, Debug)]
@@ -288,6 +289,19 @@ fn configure_cpu_builder(
     mut builder: SessionBuilder,
     options: &SessionOptions,
 ) -> Result<SessionBuilder> {
+    if options.cpu_fallback_profile == CpuFallbackProfile::MobileDepth {
+        // Depth runs alongside Android's RAW preview. Bound the thread pool and
+        // avoid retaining a second, packed copy of the model's weights.
+        builder = builder
+            .with_parallel_execution(false)
+            .map_err(|error| anyhow::anyhow!("force sequential mobile depth execution: {error}"))?
+            .with_intra_threads(2)
+            .map_err(|error| anyhow::anyhow!("limit mobile depth inference threads: {error}"))?
+            .with_intra_op_spinning(false)
+            .map_err(|error| anyhow::anyhow!("disable mobile depth thread spinning: {error}"))?
+            .with_prepacking(false)
+            .map_err(|error| anyhow::anyhow!("disable mobile depth weight prepacking: {error}"))?;
+    }
     if options.cpu_fallback_profile == CpuFallbackProfile::WindowsSamEncoder
         && cfg!(target_os = "windows")
     {
@@ -308,6 +322,7 @@ fn configure_cpu_builder(
 
 fn cpu_provider(options: &SessionOptions) -> ExecutionProviderDispatch {
     let disable_arena = cfg!(target_os = "android")
+        || options.cpu_fallback_profile == CpuFallbackProfile::MobileDepth
         || (cfg!(target_os = "windows")
             && options.cpu_fallback_profile == CpuFallbackProfile::WindowsSamEncoder);
     ort::ep::CPU::default()
