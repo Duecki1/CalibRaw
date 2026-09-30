@@ -51,11 +51,16 @@ impl CalibRawApp {
                 ("Sky model artifact", "https://huggingface.co/Duecki/CalibRaw-Artifacts/tree/main/models/skyseg"),
                 "SkySeg U2Net runs locally on a 320 × 320 image and produces a sky probability mask. License: MIT.".to_owned(),
             ),
-            AiMaskModel::Depth => (
-                "Depth Anything 3 Mono Large (~731 MB)".to_owned(), "create depth masks",
-                ("Depth model artifact", "https://huggingface.co/Duecki/CalibRaw-Artifacts/tree/main/models/da3"),
-                "Depth Anything 3 Mono Large runs locally on a 700 × 700 letterboxed image and produces relative depth. License: Apache-2.0.".to_owned(),
-            ),
+            AiMaskModel::Depth => {
+                let depth_model = crate::ai_masks::DEPTH_MODEL;
+                (
+                    format!("{} (~{:.0} MB)", depth_model.name, depth_model.download_bytes as f64 / 1_000_000.0),
+                    "create depth masks and fog",
+                    ("Depth model artifact", depth_model.artifact_url),
+                    format!("{} runs locally on a {} × {} letterboxed image and produces relative depth. License: Apache-2.0.",
+                        depth_model.name, depth_model.input_edge, depth_model.input_edge),
+                )
+            }
         };
         let runtime_ready = self.ai_runtime_ready();
         let mut action = crate::ui::theme::DialogAction::None;

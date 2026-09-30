@@ -57,7 +57,7 @@ fn atmosphere_image_point(pos: vec2<i32>) -> vec2<f32> {
 }
 
 // Full-image depth is shared by all fog components; mask coverage remains a
-// separate final blend. DA3 is relative distance (near=0, far=1), not disparity.
+// separate final blend. Scene depth is normalized relative distance (near=0, far=1).
 @group(0) @binding(35) var scene_depth_tex: texture_2d<f32>;
 
 fn fog_depth_at(pos: vec2<i32>) -> f32 {
