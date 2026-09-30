@@ -1,6 +1,6 @@
 use super::*;
 
-#[cfg(any(not(target_os = "android"), test))]
+#[cfg(not(target_os = "android"))]
 pub(super) fn image_paste_summary(
     mode: ImageClipboardMode,
     total: usize,
@@ -152,7 +152,9 @@ pub(super) fn run_duplicate_assets(
     };
     AssetTransferCompletion {
         result,
+        #[cfg(not(target_os = "android"))]
         clear_clipboard: false,
+        #[cfg(not(target_os = "android"))]
         remaining_clipboard: None,
     }
 }

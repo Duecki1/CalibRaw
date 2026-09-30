@@ -452,15 +452,16 @@ enum ScanEvent {
     },
 }
 
+#[cfg(not(target_os = "android"))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum ImageClipboardMode {
     Copy,
     Cut,
 }
 
+#[cfg(not(target_os = "android"))]
 #[derive(Clone, Debug)]
 struct ImageClipboard {
-    #[cfg(not(target_os = "android"))]
     mode: ImageClipboardMode,
     assets: Vec<LibraryAsset>,
 }
@@ -483,7 +484,9 @@ enum LibraryTransferDestination {
 
 struct AssetTransferCompletion {
     result: Result<String, String>,
+    #[cfg(not(target_os = "android"))]
     clear_clipboard: bool,
+    #[cfg(not(target_os = "android"))]
     remaining_clipboard: Option<ImageClipboard>,
 }
 
@@ -722,6 +725,7 @@ pub(crate) struct LibraryState {
     selected_assets: HashSet<LibraryAssetId>,
     selection_mode: bool,
     selection_anchor: Option<LibraryAssetId>,
+    #[cfg(not(target_os = "android"))]
     image_clipboard: Option<ImageClipboard>,
     pub(crate) adjustment_clipboard: Option<LibraryAdjustmentClipboard>,
     asset_transfer_receiver: Option<mpsc::Receiver<AssetTransferCompletion>>,
