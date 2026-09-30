@@ -288,6 +288,12 @@ impl Sidebar {
                 &mut component.enabled,
                 remove,
             ),
+            MaskEffect::LightBeams => mask_effects::light_beams::show(
+                ui,
+                &mut component.settings.light_beams,
+                &mut component.enabled,
+                remove,
+            ),
             MaskEffect::Neon => mask_effects::neon::show(
                 ui,
                 &mut component.settings.neon,

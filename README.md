@@ -57,8 +57,9 @@ CalibRaw runs natively on **Linux**, **Android**, **Windows**, and **macOS** wit
 ### Masking & AI
 - **Masks:** Brush, Linear Gradient, Radial Gradient, and Shape masks with independent curves and adjustments.
 - **Local AI Tools:** High quality subject, sky, and object masks, AI Denoise, and AI Remove.
-- **GPU Creative Effects:** Stackable effect cards for masks or the full image, including Light Rays, Lens Blur (bokeh), Motion Blur, Radial Blur, Fog, Smoke, Glow, and Neon.
+- **GPU Creative Effects:** Stackable effect cards for masks or the full image, including Light Rays, Light Beams, Lens Blur (bokeh), Motion Blur, Radial Blur, Fog, Smoke, Glow, and Neon.
 - **Light Rays:** Position the source manually, including beyond the frame, and use masks to shape soft atmospheric shafts with irregular brightness and natural falloff.
+- **Light Beams:** Add the effect to the full image or a local mask, choose Headlight, Flashlight, Spotlight, or Streetlamp, and place the light with Source X/Y, Source Depth, and Direction. Changing presets preserves the source position and depth. Pair it with Fog to illuminate the Fog's density, noise, and depth; standalone beams use restrained haze. Use Scattering to control the Streetlamp's broad light pool. Scene depth is generated automatically for active Fog or Light Beams, with a download prompt if the depth model is needed.
 
 ---
 

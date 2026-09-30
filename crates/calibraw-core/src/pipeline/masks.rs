@@ -9,10 +9,10 @@ mod raster_cache;
 
 pub use effects::{
     params as effect_params, BlurEffectSettings, EdgeGlowEffectSettings, FogEffectSettings,
-    GlowEffectSettings, LensBlurEffectSettings, LightRaysEffectSettings, MaskEffect,
-    MaskEffectCategory, MaskEffectSettings, MotionBlurEffectSettings, NeonEffectSettings,
-    PixelateEffectSettings, RadialBlurEffectSettings, RadialBlurMode, SmokeEffectSettings,
-    TiltShiftEffectSettings,
+    GlowEffectSettings, LensBlurEffectSettings, LightBeamPreset, LightBeamsEffectSettings,
+    LightRaysEffectSettings, MaskEffect, MaskEffectCategory, MaskEffectSettings,
+    MotionBlurEffectSettings, NeonEffectSettings, PixelateEffectSettings, RadialBlurEffectSettings,
+    RadialBlurMode, SmokeEffectSettings, TiltShiftEffectSettings,
 };
 
 pub const MAX_LOCAL_MASKS: usize = 32;
@@ -950,6 +950,7 @@ impl EffectComponent {
             MaskEffect::TiltShift => self.settings.tilt_shift.is_active(),
             MaskEffect::Glow => self.settings.glow.is_active(),
             MaskEffect::LightRays => self.settings.light_rays.is_active(),
+            MaskEffect::LightBeams => self.settings.light_beams.is_active(),
             MaskEffect::Neon => self.settings.neon.is_active(),
             MaskEffect::EdgeGlow => self.settings.edge_glow.is_active(),
             MaskEffect::Pixelate => self.settings.pixelate.is_active(),
@@ -995,15 +996,23 @@ impl MaskStack {
     }
 
     pub fn has_fog_effect(&self) -> bool {
-        let active_fog = |component: &EffectComponent| {
-            component.effect == MaskEffect::Fog && component.is_active()
-        };
-        self.global_effects.iter().any(active_fog)
+        self.has_active_effect(|effect| effect == MaskEffect::Fog)
+    }
+
+    /// Whether an active effect needs scene depth for volumetric lighting.
+    pub fn has_volumetric_effect(&self) -> bool {
+        self.has_active_effect(|effect| matches!(effect, MaskEffect::Fog | MaskEffect::LightBeams))
+    }
+
+    fn has_active_effect(&self, matches_effect: impl Fn(MaskEffect) -> bool) -> bool {
+        let active_effect =
+            |component: &EffectComponent| matches_effect(component.effect) && component.is_active();
+        self.global_effects.iter().any(active_effect)
             || self.masks.iter().any(|mask| {
                 mask.enabled
                     && mask.opacity > 0.0
-                    && (mask.effect_components.iter().any(active_fog)
-                        || active_fog(&EffectComponent {
+                    && (mask.effect_components.iter().any(active_effect)
+                        || active_effect(&EffectComponent {
                             effect: mask.effect,
                             enabled: true,
                             settings: mask.effect_settings,

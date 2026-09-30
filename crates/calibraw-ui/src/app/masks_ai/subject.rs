@@ -45,14 +45,14 @@ impl CalibRawApp {
         let _ = self.request_generated_mask(AiMaskModel::Depth, frame);
     }
 
-    /// Ensures active fog has shared scene depth without exposing a separate fog UI action.
-    /// A cancelled consent prompt is latched until fog is removed/disabled, depth becomes
-    /// available, or the source changes, so the dialog is not reopened every frame.
+    /// Ensures active volumetric effects (Fog or Light Beams) have shared scene depth.
+    /// A cancelled consent prompt is latched until these effects are removed/disabled,
+    /// depth becomes available, or the source changes, so it is not reopened every frame.
     pub(in crate::app) fn ensure_fog_scene_depth(&mut self, frame: &eframe::Frame) {
         // A DepthRange fallback can still contain the previous source's depth.
         // Fresh inference fills the cache even if other masks still need updating.
         let depth_is_stale = self.ai.masks_need_update && self.masks.depth_cache.is_none();
-        let needs_depth = self.masks.stack.has_fog_effect()
+        let needs_depth = self.masks.stack.has_volumetric_effect()
             && (self.masks.stack.scene_depth_image().is_none() || depth_is_stale);
         if !needs_depth {
             self.masks.fog_depth_auto_requested = false;

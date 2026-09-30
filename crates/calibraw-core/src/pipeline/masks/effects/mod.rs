@@ -3,6 +3,7 @@ mod edge_glow;
 mod fog;
 mod glow;
 mod lens_blur;
+mod light_beams;
 mod light_rays;
 mod motion_blur;
 mod neon;
@@ -17,6 +18,7 @@ pub use edge_glow::EdgeGlowEffectSettings;
 pub use fog::FogEffectSettings;
 pub use glow::GlowEffectSettings;
 pub use lens_blur::LensBlurEffectSettings;
+pub use light_beams::{LightBeamPreset, LightBeamsEffectSettings};
 pub use light_rays::LightRaysEffectSettings;
 pub use motion_blur::MotionBlurEffectSettings;
 pub use neon::NeonEffectSettings;
@@ -45,10 +47,11 @@ pub enum MaskEffect {
     Pixelate,
     Fog,
     Smoke,
+    LightBeams,
 }
 
 impl MaskEffect {
-    pub const ALL: [Self; 13] = [
+    pub const ALL: [Self; 14] = [
         Self::Adjustment,
         Self::Blur,
         Self::LensBlur,
@@ -56,6 +59,7 @@ impl MaskEffect {
         Self::RadialBlur,
         Self::TiltShift,
         Self::Glow,
+        Self::LightBeams,
         Self::LightRays,
         Self::Neon,
         Self::EdgeGlow,
@@ -73,6 +77,7 @@ impl MaskEffect {
             Self::RadialBlur => "Radial Blur",
             Self::TiltShift => "Tilt-Shift",
             Self::Glow => "Glow",
+            Self::LightBeams => "Light Beams",
             Self::LightRays => "Light Rays",
             Self::Neon => "Neon",
             Self::EdgeGlow => "Edge Glow",
@@ -88,7 +93,9 @@ impl MaskEffect {
             Self::Blur | Self::LensBlur | Self::MotionBlur | Self::RadialBlur | Self::TiltShift => {
                 Some(MaskEffectCategory::BlurAndFocus)
             }
-            Self::Glow | Self::LightRays | Self::Neon => Some(MaskEffectCategory::GlowAndLight),
+            Self::Glow | Self::LightBeams | Self::LightRays | Self::Neon => {
+                Some(MaskEffectCategory::GlowAndLight)
+            }
             Self::EdgeGlow | Self::Pixelate => Some(MaskEffectCategory::Stylize),
             Self::Fog | Self::Smoke => Some(MaskEffectCategory::Texture),
         }
@@ -113,6 +120,7 @@ impl MaskEffect {
             Self::TiltShift => 10,
             Self::Fog => 11,
             Self::Smoke => 12,
+            Self::LightBeams => 13,
         }
     }
 }
@@ -161,6 +169,8 @@ pub struct MaskEffectSettings {
     pub glow: GlowEffectSettings,
     #[serde(default, skip_serializing_if = "is_default")]
     pub light_rays: LightRaysEffectSettings,
+    #[serde(default, skip_serializing_if = "is_default")]
+    pub light_beams: LightBeamsEffectSettings,
     #[serde(default, skip_serializing_if = "is_default")]
     pub neon: NeonEffectSettings,
     #[serde(default, skip_serializing_if = "is_default")]

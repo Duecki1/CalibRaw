@@ -531,6 +531,96 @@ pub mod light_rays {
     );
 }
 
+pub mod light_beams {
+    use super::*;
+
+    float_param!(
+        AMOUNT,
+        "Amount",
+        0.0,
+        100.0,
+        60.0,
+        0.5,
+        0,
+        Some("Controls the brightness of the volumetric light beam."),
+    );
+    float_param!(
+        LENGTH,
+        "Length",
+        0.0,
+        200.0,
+        100.0,
+        1.0,
+        0,
+        Some("Beam reach as a percentage of the full image height."),
+    );
+    float_param!(
+        SOURCE_X, "Source X", -50.0, 150.0, 50.0, 1.0, 0,
+        Some("Horizontal source position as a percentage of the full image width; values may extend beyond the frame."),
+    );
+    float_param!(
+        SOURCE_Y, "Source Y", -50.0, 150.0, 35.0, 1.0, 0,
+        Some("Vertical source position as a percentage of the full image height; values may extend beyond the frame."),
+    );
+    float_param!(
+        DIRECTION,
+        "Direction",
+        -180.0,
+        180.0,
+        0.0,
+        1.0,
+        0,
+        Some("Beam direction in degrees: 0 points right and 90 points down."),
+    );
+    float_param!(
+        SPREAD,
+        "Spread",
+        1.0,
+        170.0,
+        28.0,
+        1.0,
+        0,
+        Some("Full cone angle in degrees."),
+    );
+    float_param!(
+        SOFTNESS,
+        "Softness",
+        0.0,
+        100.0,
+        65.0,
+        0.5,
+        0,
+        Some("Softens the edges of the light cone."),
+    );
+    float_param!(
+        SOURCE_DEPTH,
+        "Source Depth",
+        0.0,
+        100.0,
+        35.0,
+        0.5,
+        0,
+        Some("Relative scene distance of the source: 0 is near and 100 is far."),
+    );
+    float_param!(
+        SCATTERING,
+        "Scattering",
+        0.0,
+        100.0,
+        0.0,
+        0.5,
+        0,
+        Some("Adds a broad isotropic light pool around the source."),
+    );
+    color_param!(
+        COLOR,
+        "Color",
+        "Light Beams color",
+        [1.0, 0.9, 0.75],
+        "Choose the color emitted by the Light Beams effect.",
+    );
+}
+
 pub mod neon {
     use super::*;
 

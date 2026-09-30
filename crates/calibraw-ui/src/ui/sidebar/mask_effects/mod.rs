@@ -3,6 +3,7 @@ pub(super) mod edge_glow;
 pub(super) mod fog;
 pub(super) mod glow;
 pub(super) mod lens_blur;
+pub(super) mod light_beams;
 pub(super) mod light_rays;
 pub(super) mod motion_blur;
 pub(super) mod neon;
@@ -151,8 +152,11 @@ pub(super) fn effect_description(effect: MaskEffect) -> Option<&'static str> {
         MaskEffect::LightRays => Some(
             "Position the source with Source X and Source Y. The mask shapes soft atmospheric light shafts emitted beyond it.",
         ),
+        MaskEffect::LightBeams => Some(
+            "Choose Headlight, Flashlight, Spotlight, or Streetlamp, then place the source and set its depth and direction. Beams illuminate Fog using its density, noise, and depth; alone they use subtle haze. Scattering controls the Streetlamp's broad light pool. Changing presets keeps the source position and depth.",
+        ),
         MaskEffect::Fog => Some(
-            "Fog builds with distance using shared scene depth. The tint is scattered light, blended through the editable mask.",
+            "Fog builds with distance using shared scene depth. Light Beams illuminate it using the Fog density, noise, and depth settings. The tint is scattered light, blended through the editable mask.",
         ),
         MaskEffect::Smoke => Some(
             "Smoke is generated in full-image coordinates and blended through the editable mask.",
@@ -446,6 +450,7 @@ mod tests {
         check!(edge_glow);
         check!(glow);
         check!(light_rays);
+        check!(light_beams);
         check!(neon);
         check!(pixelate);
         check!(fog);

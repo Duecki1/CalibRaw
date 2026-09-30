@@ -974,6 +974,130 @@ fn light_rays_mask_settings_round_trip_through_the_sidecar() {
 }
 
 #[test]
+fn light_beams_presets_round_trip_through_all_sidecar_effect_locations() {
+    use crate::pipeline::{EffectComponent, LightBeamPreset, LightBeamsEffectSettings, MaskEffect};
+    for preset in LightBeamPreset::ALL {
+        let settings = LightBeamsEffectSettings::from_preset(preset);
+        let mut component = EffectComponent::new(MaskEffect::LightBeams);
+        component.settings.light_beams = settings;
+        let mut edits = sample_edits();
+        let masks = Arc::make_mut(&mut edits.masks);
+        masks.global_effects.push(component.clone());
+        masks.masks[0].effect_components.push(component);
+        masks.masks[0].effect = MaskEffect::LightBeams;
+        masks.masks[0].effect_settings.light_beams = settings;
+        let loaded = decode(&encode(edits.clone()).unwrap()).unwrap();
+        assert_eq!(loaded.edits, edits);
+        assert!(loaded.edits.masks.has_volumetric_effect());
+        assert!(!loaded.edits.masks.has_fog_effect());
+    }
+}
+
+#[test]
+fn old_sidecar_effect_settings_default_light_beams_without_enabling_it() {
+    use crate::pipeline::{LightBeamsEffectSettings, MaskEffect};
+    let mut edits = sample_edits();
+    let masks = Arc::make_mut(&mut edits.masks);
+    masks.masks[0].effect = MaskEffect::LightRays;
+    masks.masks[0].effect_settings.light_rays.amount = 76.0;
+    let encoded = encode(edits.clone()).unwrap();
+    let document: serde_json::Value = serde_json::from_slice(&encoded).unwrap();
+    assert!(document
+        .pointer("/edits/masks/masks/0/effect_settings/light_beams")
+        .is_none());
+    let loaded = decode(&encoded).unwrap();
+    assert_eq!(loaded.edits, edits);
+    assert_eq!(
+        loaded.edits.masks.masks[0].effect_settings.light_beams,
+        LightBeamsEffectSettings::default()
+    );
+    assert!(!loaded.edits.masks.has_volumetric_effect());
+}
+
+#[test]
+fn light_beams_sidecar_validation_checks_all_twelve_floats() {
+    use crate::pipeline::{EffectComponent, LightBeamsEffectSettings, MaskEffect};
+    type ParameterCase = (
+        &'static str,
+        f32,
+        f32,
+        fn(&mut LightBeamsEffectSettings, f32),
+    );
+    let cases: [ParameterCase; 12] = [
+        ("Amount", 0.0, 100.0, |s, v| s.amount = v),
+        ("Length", 0.0, 200.0, |s, v| s.length = v),
+        ("Source X", -50.0, 150.0, |s, v| s.source[0] = v),
+        ("Source Y", -50.0, 150.0, |s, v| s.source[1] = v),
+        ("Direction", -180.0, 180.0, |s, v| s.direction = v),
+        ("Spread", 1.0, 170.0, |s, v| s.spread = v),
+        ("Softness", 0.0, 100.0, |s, v| s.softness = v),
+        ("Source Depth", 0.0, 100.0, |s, v| s.source_depth = v),
+        ("Scattering", 0.0, 100.0, |s, v| s.scattering = v),
+        ("Color", 0.0, 1.0, |s, v| s.color[0] = v),
+        ("Color", 0.0, 1.0, |s, v| s.color[1] = v),
+        ("Color", 0.0, 1.0, |s, v| s.color[2] = v),
+    ];
+    for (label, min, max, set_value) in cases {
+        for value in [min, max] {
+            let mut edits = sample_edits();
+            let mut component = EffectComponent::new(MaskEffect::LightBeams);
+            set_value(&mut component.settings.light_beams, value);
+            Arc::make_mut(&mut edits.masks)
+                .global_effects
+                .push(component);
+            let encoded = encode(edits).unwrap_or_else(|error| {
+                panic!("valid Light Beams {label} = {value} rejected: {error}")
+            });
+            assert!(decode(&encoded).is_ok());
+        }
+        for value in [
+            min - 0.5,
+            max + 0.5,
+            f32::NAN,
+            f32::INFINITY,
+            f32::NEG_INFINITY,
+        ] {
+            let mut edits = sample_edits();
+            let mut component = EffectComponent::new(MaskEffect::LightBeams);
+            set_value(&mut component.settings.light_beams, value);
+            Arc::make_mut(&mut edits.masks)
+                .global_effects
+                .push(component);
+            assert!(
+                matches!(encode(edits), Err(SidecarError::Invalid(message))
+                    if message.contains("Light Beams")
+                        && message.contains(if value.is_finite() { label } else { "non-finite" })),
+                "invalid Light Beams {label} = {value} was not rejected"
+            );
+        }
+    }
+}
+
+#[test]
+fn light_beams_sidecar_decode_rejects_invalid_local_and_legacy_values() {
+    use crate::pipeline::{EffectComponent, MaskEffect};
+    let mut edits = sample_edits();
+    let masks = Arc::make_mut(&mut edits.masks);
+    let mut component = EffectComponent::new(MaskEffect::LightBeams);
+    component.settings.light_beams.amount = 42.0;
+    masks.masks[0].effect_components.push(component.clone());
+    masks.masks[0].effect = MaskEffect::LightBeams;
+    masks.masks[0].effect_settings = component.settings;
+    let encoded = encode(edits).unwrap();
+    for pointer in [
+        "/edits/masks/masks/0/effect_settings/light_beams/spread",
+        "/edits/masks/masks/0/effect_components/0/settings/light_beams/spread",
+    ] {
+        let mut document: serde_json::Value = serde_json::from_slice(&encoded).unwrap();
+        *document.pointer_mut(pointer).unwrap() = 0.0.into();
+        assert!(matches!(
+            decode(&serde_json::to_vec(&document).unwrap()),
+            Err(SidecarError::Invalid(message)) if message.contains("Light Beams Spread")
+        ));
+    }
+}
+
+#[test]
 fn blur_edge_glow_and_pixelate_settings_round_trip_through_the_sidecar() {
     let mut edits = sample_edits();
     let masks = Arc::make_mut(&mut edits.masks);

@@ -447,7 +447,170 @@ fn mask_effect_picker_catalog_is_grouped_and_alphabetized() {
         );
         assert!(labels.iter().all(|label| !label.is_empty()));
     }
-    assert_eq!(MaskEffect::ALL.len(), 13);
+    assert_eq!(MaskEffect::ALL.len(), 14);
+}
+
+#[test]
+fn light_beams_defaults_and_catalog_match_the_shader_contract() {
+    let settings = LightBeamsEffectSettings::default();
+    assert_eq!(settings.preset, LightBeamPreset::Headlight);
+    // All twelve numeric settings feed the shader; preset is editor metadata.
+    let values: [f32; 12] = [
+        settings.amount,
+        settings.length,
+        settings.source[0],
+        settings.source[1],
+        settings.direction,
+        settings.spread,
+        settings.softness,
+        settings.source_depth,
+        settings.scattering,
+        settings.color[0],
+        settings.color[1],
+        settings.color[2],
+    ];
+    assert_eq!(
+        values,
+        [60.0, 100.0, 50.0, 35.0, 0.0, 28.0, 65.0, 35.0, 0.0, 1.0, 0.9, 0.75]
+    );
+    assert_eq!(MaskEffect::LightBeams.shader_id(), 13);
+    assert_eq!(MaskEffect::Fog.shader_id(), 11);
+    assert_eq!(MaskEffect::Smoke.shader_id(), 12);
+    assert_eq!(MaskEffect::LightBeams.label(), "Light Beams");
+    assert_eq!(
+        MaskEffect::LightBeams.category(),
+        Some(MaskEffectCategory::GlowAndLight)
+    );
+    let mut shader_ids: Vec<_> = MaskEffect::ALL
+        .iter()
+        .map(|effect| effect.shader_id())
+        .collect();
+    shader_ids.sort_unstable();
+    shader_ids.dedup();
+    assert_eq!(shader_ids.len(), MaskEffect::ALL.len());
+}
+
+#[test]
+fn light_beams_presets_serde_round_trip_preserves_custom_settings() {
+    for preset in LightBeamPreset::ALL {
+        let mut settings = LightBeamsEffectSettings::from_preset(preset);
+        assert_eq!(settings.preset, preset);
+        assert!(settings.is_active());
+        assert_eq!(serde_json::to_value(preset).unwrap(), preset.label());
+        settings.amount = 42.0;
+        settings.source = [-12.0, 125.0];
+        let decoded: LightBeamsEffectSettings =
+            serde_json::from_str(&serde_json::to_string(&settings).unwrap()).unwrap();
+        assert_eq!(decoded, settings);
+    }
+    let headlight = LightBeamsEffectSettings::from_preset(LightBeamPreset::Headlight);
+    let flashlight = LightBeamsEffectSettings::from_preset(LightBeamPreset::Flashlight);
+    let spotlight = LightBeamsEffectSettings::from_preset(LightBeamPreset::Spotlight);
+    let streetlamp = LightBeamsEffectSettings::from_preset(LightBeamPreset::Streetlamp);
+    assert_eq!(headlight, LightBeamsEffectSettings::default());
+    assert_eq!(headlight.direction, 0.0);
+    assert!(flashlight.spread < headlight.spread);
+    assert!(spotlight.spread < headlight.spread);
+    assert!(spotlight.softness < headlight.softness);
+    assert_eq!(streetlamp.direction, 90.0);
+    assert_eq!(streetlamp.spread, 120.0);
+    assert_eq!(streetlamp.scattering, 80.0);
+    assert_eq!(streetlamp.length, 65.0);
+    assert!(streetlamp.color[0] > streetlamp.color[1]);
+    assert!(streetlamp.color[1] > streetlamp.color[2]);
+}
+
+#[test]
+fn light_beams_old_and_partial_settings_use_defaults() {
+    let old: MaskEffectSettings =
+        serde_json::from_str(r#"{"fog":{"amount":67},"light_rays":{"length":165}}"#).unwrap();
+    assert_eq!(old.fog.amount, 67.0);
+    assert_eq!(old.light_rays.length, 165.0);
+    assert_eq!(old.light_beams, LightBeamsEffectSettings::default());
+    assert!(serde_json::to_value(old)
+        .unwrap()
+        .get("light_beams")
+        .is_none());
+    assert_eq!(
+        serde_json::from_str::<MaskEffectSettings>("{}").unwrap(),
+        MaskEffectSettings::default()
+    );
+    let partial: LightBeamsEffectSettings =
+        serde_json::from_str(r#"{"direction":90,"color":[1,0.8,0.4]}"#).unwrap();
+    assert_eq!(
+        partial,
+        LightBeamsEffectSettings {
+            direction: 90.0,
+            color: [1.0, 0.8, 0.4],
+            ..LightBeamsEffectSettings::default()
+        }
+    );
+}
+
+#[test]
+fn volumetric_detection_checks_fog_and_light_beams_activity_in_all_locations() {
+    for effect in [MaskEffect::Fog, MaskEffect::LightBeams] {
+        let component = EffectComponent::new(effect);
+        let mut stack = MaskStack::default();
+        assert!(!stack.has_volumetric_effect());
+        stack.global_effects.push(component.clone());
+        assert!(stack.has_volumetric_effect());
+        assert_eq!(stack.has_fog_effect(), effect == MaskEffect::Fog);
+        stack.global_effects[0].enabled = false;
+        assert!(!stack.has_volumetric_effect());
+        stack.global_effects[0] = component.clone();
+        stack.global_effects[0].settings.fog.amount = 0.0;
+        stack.global_effects[0].settings.light_beams.amount = 0.0;
+        assert!(!stack.has_volumetric_effect());
+        stack.global_effects[0] = component.clone();
+        stack.global_effects[0].settings.fog.density = 0.0;
+        stack.global_effects[0].settings.light_beams.length = 0.0;
+        assert!(!stack.has_volumetric_effect());
+        stack.global_effects.clear();
+
+        stack.add_mask(MaskKind::Fullscreen).unwrap();
+        stack.masks[0].effect_components.push(component.clone());
+        assert!(stack.has_volumetric_effect());
+        assert_eq!(stack.has_fog_effect(), effect == MaskEffect::Fog);
+        stack.masks[0].enabled = false;
+        assert!(!stack.has_volumetric_effect());
+        stack.masks[0].enabled = true;
+        stack.masks[0].opacity = 0.0;
+        assert!(!stack.has_volumetric_effect());
+        stack.masks[0].opacity = 1.0;
+        stack.masks[0].effect_components[0].enabled = false;
+        assert!(!stack.has_volumetric_effect());
+        stack.masks[0].effect_components[0] = component.clone();
+        stack.masks[0].effect_components[0].settings.fog.amount = 0.0;
+        stack.masks[0].effect_components[0]
+            .settings
+            .light_beams
+            .amount = 0.0;
+        assert!(!stack.has_volumetric_effect());
+        stack.masks[0].effect_components.clear();
+
+        stack.masks[0].effect = effect;
+        stack.masks[0].effect_settings = component.settings;
+        stack.masks[0].adjustments_enabled = false;
+        assert!(stack.has_volumetric_effect());
+        assert_eq!(stack.has_fog_effect(), effect == MaskEffect::Fog);
+        stack.masks[0].enabled = false;
+        assert!(!stack.has_volumetric_effect());
+        stack.masks[0].enabled = true;
+        stack.masks[0].opacity = 0.0;
+        assert!(!stack.has_volumetric_effect());
+        stack.masks[0].opacity = 1.0;
+        stack.masks[0].effect_settings.fog.density = 0.0;
+        stack.masks[0].effect_settings.light_beams.length = 0.0;
+        assert!(!stack.has_volumetric_effect());
+    }
+    for effect in MaskEffect::ALL {
+        if !matches!(effect, MaskEffect::Fog | MaskEffect::LightBeams) {
+            let mut stack = MaskStack::default();
+            stack.global_effects.push(EffectComponent::new(effect));
+            assert!(!stack.has_volumetric_effect(), "{}", effect.label());
+        }
+    }
 }
 
 #[test]

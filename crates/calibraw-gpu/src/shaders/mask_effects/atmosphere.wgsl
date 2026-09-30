@@ -157,8 +157,11 @@ fn apply_fog(
     let ray = vec3<f32>(image_point * 1.25, 1.0);
     let step = 1.0 / 12.0;
     let onset_width = mix(0.025, 0.18, softness);
+    let extinction = 6.0 * density * density * amount;
+    let has_lights = light_beams_present(pos);
+    var direct_scattering = vec3<f32>(0.0);
     var optical_length = fog_onset_integral(distance, start, onset_width);
-    if variation > 1e-6 {
+    if variation > 1e-6 || has_lights {
         optical_length = 0.0;
         for (var i = 0u; i < 12u; i = i + 1u) {
             let lo = max(f32(i) * step, start);
@@ -168,27 +171,49 @@ fn apply_fog(
             // A partial last interval uses the same density as the full interval,
             // so increasing surface distance can never remove accumulated fog.
             let t = 0.5 * (lo + cell_end);
-            let point = ray * t * frequency + offset;
-            let broad = fog_noise3(point);
-            let detail = fog_noise3(point * 2.03 + vec3<f32>(7.1, -3.4, 13.8));
-            let field = mix(broad, detail, mix(0.28, 0.08, softness));
-            let bank_density = exp2((field - 0.5) * variation * mix(5.0, 2.5, softness));
+            var bank_density = 1.0;
+            if variation > 1e-6 {
+                let point = ray * t * frequency + offset;
+                let broad = fog_noise3(point);
+                let detail = fog_noise3(point * 2.03 + vec3<f32>(7.1, -3.4, 13.8));
+                let field = mix(broad, detail, mix(0.28, 0.08, softness));
+                bank_density = exp2((field - 0.5) * variation * mix(5.0, 2.5, softness));
+            }
             let segment = fog_onset_integral(hi, start, onset_width)
                 - fog_onset_integral(lo, start, onset_width);
+            if has_lights {
+                // Resolve narrow cones inside each density interval while
+                // preserving Fog's existing field and shared ray prefixes.
+                for (var sample = 0u; sample < 6u; sample += 1u) {
+                    let sub_lo = max(f32(i) * step + f32(sample) * step / 6.0, lo);
+                    let sub_end = f32(i) * step + f32(sample + 1u) * step / 6.0;
+                    let sub_hi = min(sub_end, hi);
+                    if sub_hi <= sub_lo { continue; }
+                    let prefix = optical_length + bank_density * (
+                        fog_onset_integral(sub_lo, start, onset_width) - fog_onset_integral(lo, start, onset_width));
+                    let sub_length = bank_density * (fog_onset_integral(sub_hi, start, onset_width)
+                        - fog_onset_integral(sub_lo, start, onset_width));
+                    let camera_transmission = exp(-extinction * prefix * length(ray));
+                    let scattered = 1.0 - exp(-extinction * sub_length * length(ray));
+                    let sample_t = 0.5 * (sub_lo + sub_hi);
+                    direct_scattering += light_beams_incident(pos, ray * sample_t, extinction * bank_density)
+                        * camera_transmission * scattered;
+                }
+            }
             optical_length += segment * bank_density;
         }
     }
     // Beer-Lambert extinction and constant-environment single scattering in
     // scene-linear Rec.2020. Amount changes concentration, not a screen overlay.
     // https://pbr-book.org/4ed/Volume_Scattering/Transmittance
-    let optical_depth = 6.0 * density * density * amount * optical_length * length(ray);
+    let optical_depth = extinction * optical_length * length(ray);
     let transmission = exp(-optical_depth);
     // Global tone statistics are shared by export tiles. Match airlight to
     // scene illumination, avoiding white self-luminous fog in dark photographs.
     let ambient_ev = Tonemap::tone_stats.percentiles_0_field.w + Common::scene_tone_uniforms.exposure;
     let ambient = ToneCommon::SCENE_MIDDLE_GREY * exp2(clamp(ambient_ev, -12.0, 6.0)) * 1.15;
     let airlight = mask_effect_picker_color_to_working(secondary.xyz) * ambient;
-    return input_rgb * transmission + airlight * (1.0 - transmission);
+    return input_rgb * transmission + airlight * (1.0 - transmission) + direct_scattering;
 }
 
 fn apply_smoke(

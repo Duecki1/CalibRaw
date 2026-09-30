@@ -40,6 +40,8 @@ mod film_effects_tests;
 #[cfg(test)]
 mod fog_tests;
 #[cfg(test)]
+mod light_beams_tests;
+#[cfg(test)]
 mod light_rays_tests;
 #[cfg(test)]
 mod point_color_tests;
@@ -206,6 +208,7 @@ const SHADER_TONE_ANALYSIS: &str = include_str!("../shaders/tone_analysis.wgsl")
 const SHADER_SCENE_ADJUSTMENTS: &str = include_str!("../shaders/scene_adjustments.wgsl");
 const SHADER_MASK_EFFECTS_SHARED: &str = include_str!("../shaders/mask_effects/shared.wgsl");
 const SHADER_MASK_ATMOSPHERE: &str = include_str!("../shaders/mask_effects/atmosphere.wgsl");
+const SHADER_MASK_LIGHT_BEAMS: &str = include_str!("../shaders/mask_effects/light_beams.wgsl");
 const SHADER_MASK_BLUR: &str = include_str!("../shaders/mask_effects/blur.wgsl");
 const SHADER_MASK_EDGE_GLOW: &str = include_str!("../shaders/mask_effects/edge_glow.wgsl");
 const SHADER_MASK_GLOW: &str = include_str!("../shaders/mask_effects/glow.wgsl");
@@ -807,6 +810,33 @@ fn pack_effect_mask(
                     effect_params::light_rays::RAY_COUNT.clamp(config.ray_count),
                     effect_params::light_rays::VARIATION.clamp(config.variation),
                     effect_params::light_rays::SOFTNESS.clamp(config.softness),
+                ],
+            )
+        }
+        MaskEffect::LightBeams => {
+            let config = settings.light_beams;
+            use effect_params::light_beams as p;
+            let color = p::COLOR.clamp(config.color);
+            effect_mask_data(
+                effect,
+                enabled && config.is_active(),
+                [
+                    p::AMOUNT.clamp(config.amount),
+                    p::LENGTH.clamp(config.length),
+                    p::SOURCE_X.clamp(config.source[0]),
+                    p::SOURCE_Y.clamp(config.source[1]),
+                ],
+                [
+                    color[0],
+                    color[1],
+                    color[2],
+                    p::DIRECTION.clamp(config.direction),
+                ],
+                [
+                    p::SPREAD.clamp(config.spread),
+                    p::SOFTNESS.clamp(config.softness),
+                    p::SOURCE_DEPTH.clamp(config.source_depth),
+                    p::SCATTERING.clamp(config.scattering),
                 ],
             )
         }
@@ -1521,6 +1551,7 @@ impl GpuParams {
             if effect_id == MaskEffect::Neon.shader_id()
                 || effect_id == MaskEffect::Glow.shader_id()
                 || effect_id == MaskEffect::LightRays.shader_id()
+                || effect_id == MaskEffect::LightBeams.shader_id()
                 || effect_id == MaskEffect::Blur.shader_id()
                 || effect_id == MaskEffect::LensBlur.shader_id()
                 || effect_id == MaskEffect::MotionBlur.shader_id()

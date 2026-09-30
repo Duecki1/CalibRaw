@@ -194,16 +194,20 @@ fn fog_params_depth_presence_preserves_rust_and_wgsl_uniform_layout() {
     }
 }
 
-struct FogScene {
-    device: wgpu::Device,
-    queue: wgpu::Queue,
-    source: LoadedRaw,
-    exposure: ExposureParams,
-    pipeline: RawGpuPipeline,
+pub(super) struct FogScene {
+    pub(super) device: wgpu::Device,
+    pub(super) queue: wgpu::Queue,
+    pub(super) source: LoadedRaw,
+    pub(super) exposure: ExposureParams,
+    pub(super) pipeline: RawGpuPipeline,
 }
 
 impl FogScene {
-    fn new(width: u32, height: u32, quality: ProcessingQuality) -> anyhow::Result<Option<Self>> {
+    pub(super) fn new(
+        width: u32,
+        height: u32,
+        quality: ProcessingQuality,
+    ) -> anyhow::Result<Option<Self>> {
         let Some((device, queue)) = request_test_device() else {
             eprintln!("fog GPU regression skipped: no headless wgpu adapter");
             return Ok(None);
@@ -232,7 +236,7 @@ impl FogScene {
         }))
     }
 
-    fn render(&self, masks: &MaskStack) -> anyhow::Result<Vec<f32>> {
+    pub(super) fn render(&self, masks: &MaskStack) -> anyhow::Result<Vec<f32>> {
         self.render_params(&GpuParams::new(&self.exposure, masks, &self.source))
     }
 
@@ -880,6 +884,86 @@ fn fog_gpu_variation_and_seed_are_deterministic() -> anyhow::Result<()> {
         &banks,
         RGB_TOLERANCE,
         "returning to a seed must reproduce the volume",
+    );
+    Ok(())
+}
+
+#[test]
+fn fog_gpu_light_beams_share_fog_density_banks_and_start() -> anyhow::Result<()> {
+    let Some(scene) = FogScene::new(WIDTH, HEIGHT, ProcessingQuality::High)? else {
+        return Ok(());
+    };
+    let mut beam = EffectComponent::new(MaskEffect::LightBeams);
+    beam.settings.light_beams = crate::pipeline::LightBeamsEffectSettings {
+        amount: 100.0,
+        source: [35.0, 45.0],
+        source_depth: 35.0,
+        length: 120.0,
+        direction: 0.0,
+        spread: 40.0,
+        color: [1.0; 3],
+        ..Default::default()
+    };
+    // Subtract fog-only output so changes to the ambient veil cannot masquerade
+    // as lights inheriting Fog's medium. Every comparison uses the same depth.
+    let light_contribution = |settings| -> anyhow::Result<Vec<f32>> {
+        let mut masks = global_fog(settings, Some(constant_depth(255)));
+        let ambient = scene.render(&masks)?;
+        masks.global_effects.push(beam.clone());
+        Ok(scene
+            .render(&masks)?
+            .iter()
+            .zip(ambient)
+            .map(|(lit, base)| lit - base)
+            .collect())
+    };
+    let settings = FogEffectSettings {
+        start: 0.0,
+        ..uniform_fog()
+    };
+    let uniform = light_contribution(settings)?;
+    assert!(uniform.iter().copied().fold(0.0_f32, f32::max) > 0.001);
+    let thin = light_contribution(FogEffectSettings {
+        density: 20.0,
+        ..settings
+    })?;
+    assert!(
+        mean_difference(&uniform, &thin) > 1e-4,
+        "lights must inherit fog concentration"
+    );
+    let banks_settings = FogEffectSettings {
+        variation: 85.0,
+        seed: 137.0,
+        ..settings
+    };
+    let banks = light_contribution(banks_settings)?;
+    assert!(
+        mean_difference(&uniform, &banks) > 1e-4,
+        "lights must illuminate the fog banks"
+    );
+    let reseeded = light_contribution(FogEffectSettings {
+        seed: 421.0,
+        ..banks_settings
+    })?;
+    assert!(
+        mean_difference(&banks, &reseeded) > 1e-4,
+        "lights must share the fog seed"
+    );
+    assert_close(
+        &light_contribution(banks_settings)?,
+        &banks,
+        RGB_TOLERANCE,
+        "shared fog lighting must be deterministic",
+    );
+    let behind = light_contribution(FogEffectSettings {
+        start: 75.0,
+        ..settings
+    })?;
+    assert_close(
+        &behind,
+        &vec![0.0; behind.len()],
+        RGB_TOLERANCE,
+        "a beam in front of the fog onset must not illuminate empty air",
     );
     Ok(())
 }

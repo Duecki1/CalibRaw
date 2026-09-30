@@ -632,6 +632,7 @@ fn validate_effect_settings(
     validate_edge_glow_effect(&settings.edge_glow)?;
     validate_glow_effect(&settings.glow)?;
     validate_light_rays_effect(&settings.light_rays)?;
+    validate_light_beams_effect(&settings.light_beams)?;
     validate_neon_effect(&settings.neon)?;
     validate_pixelate_effect(&settings.pixelate)?;
     validate_fog_effect(&settings.fog)?;
@@ -828,6 +829,32 @@ fn validate_light_rays_effect(
         crate::pipeline::MaskEffect::LightRays,
         light_rays::COLOR,
         light_rays.color,
+    )
+}
+
+fn validate_light_beams_effect(
+    beams: &crate::pipeline::LightBeamsEffectSettings,
+) -> Result<(), SidecarError> {
+    use crate::pipeline::effect_params::light_beams;
+    validate_effect_params(
+        crate::pipeline::MaskEffect::LightBeams,
+        &[
+            (light_beams::AMOUNT, beams.amount),
+            (light_beams::LENGTH, beams.length),
+            (light_beams::SOURCE_X, beams.source[0]),
+            (light_beams::SOURCE_Y, beams.source[1]),
+            (light_beams::DIRECTION, beams.direction),
+            (light_beams::SPREAD, beams.spread),
+            (light_beams::SOFTNESS, beams.softness),
+            (light_beams::SOURCE_DEPTH, beams.source_depth),
+            (light_beams::SCATTERING, beams.scattering),
+        ],
+        &beams.color,
+    )?;
+    validate_effect_color(
+        crate::pipeline::MaskEffect::LightBeams,
+        light_beams::COLOR,
+        beams.color,
     )
 }
 

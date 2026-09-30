@@ -1154,7 +1154,7 @@ pub(crate) struct MaskState {
     pub(crate) subject_cache: Option<MaskImage>,
     pub(crate) sky_cache: Option<MaskImage>,
     pub(crate) depth_cache: Option<MaskImage>,
-    /// Prevents automatic fog depth generation from re-prompting every frame after cancellation.
+    /// Prevents volumetric scene-depth generation from re-prompting after cancellation.
     pub(crate) fog_depth_auto_requested: bool,
     pub(crate) dirty_layers: [bool; MAX_LOCAL_MASKS],
     pub(crate) detail_dirty_layers: [bool; MAX_LOCAL_MASKS],
@@ -1392,11 +1392,11 @@ impl CalibRawApp {
     }
 
     pub(crate) fn sync_ai_model_runtime_context(&mut self) {
-        // Fog can request scene depth while its controls live outside the Masks sidebar.
+        // Fog and Light Beams can request scene depth outside the Masks sidebar.
         // Keep the mask runtime context alive from the initial automatic request through
         // consent/download/inference; otherwise the next frame cancels the DepthMask
         // foreground operation just because the user is still in Adjustments.
-        let fog_depth_request_active = self.masks.stack.has_fog_effect()
+        let fog_depth_request_active = self.masks.stack.has_volumetric_effect()
             && self.masks.stack.scene_depth_image().is_none()
             && (!self.masks.fog_depth_auto_requested
                 || matches!(self.ai.consent, AiConsentState::Depth { .. })
