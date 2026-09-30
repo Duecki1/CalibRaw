@@ -5,6 +5,7 @@ use std::ops::{Deref, DerefMut};
 use std::sync::Arc;
 
 mod effects;
+mod raster_cache;
 
 pub use effects::{
     params as effect_params, BlurEffectSettings, EdgeGlowEffectSettings, FogEffectSettings,
@@ -1679,6 +1680,90 @@ fn rasterize_component(
     image_height: u32,
     subject_refinement: &SubjectRefinement,
 ) -> Vec<f32> {
+    // Square preview atlases and aspect-preserving detail rasters must measure
+    // grow/feather in the same image space. Shape on an image-aspect grid, then
+    // map coverage to the requested atlas. Keep that grid even at zero sliders
+    // so starting a drag does not change the generated matte or path sampling.
+    let needs_isotropic_grid = match &component.geometry {
+        MaskGeometry::Ai { mask: Some(_), .. } | MaskGeometry::Object { mask: Some(_), .. } => true,
+        MaskGeometry::Path { points, .. } => points.len() >= 3,
+        MaskGeometry::LuminanceRange {
+            source: Some(_), ..
+        }
+        | MaskGeometry::ColorRange {
+            source: Some(_),
+            sampled: true,
+            ..
+        } => true,
+        _ => false,
+    };
+    if needs_isotropic_grid {
+        let space = MaskRasterSpace::new(width, height, image_width, image_height);
+        if let Some([internal_width, internal_height]) = space.isotropic_extent() {
+            let coverage = rasterize_component_internal(
+                component,
+                internal_width,
+                internal_height,
+                image_width,
+                image_height,
+                subject_refinement,
+            );
+            return resample_coverage(&coverage, internal_width, internal_height, width, height);
+        }
+    }
+    rasterize_component_internal(
+        component,
+        width,
+        height,
+        image_width,
+        image_height,
+        subject_refinement,
+    )
+}
+
+fn resample_coverage(
+    source: &[f32],
+    source_width: u32,
+    source_height: u32,
+    width: u32,
+    height: u32,
+) -> Vec<f32> {
+    let sample_axis = |index: u32, target_extent: u32, source_extent: u32| {
+        // Match raster sampling at pixel centers and extend the edge pixels.
+        let position = ((index as f64 + 0.5) * source_extent as f64 / target_extent as f64 - 0.5)
+            .clamp(0.0, (source_extent - 1) as f64);
+        let lower = position.floor() as usize;
+        let upper = (lower + 1).min(source_extent as usize - 1);
+        (lower, upper, (position - lower as f64) as f32)
+    };
+    let columns: Vec<_> = (0..width)
+        .map(|x| sample_axis(x, width, source_width))
+        .collect();
+    let mut output = vec![0.0; width as usize * height as usize];
+    output
+        .par_chunks_mut(width as usize)
+        .enumerate()
+        .for_each(|(y, row)| {
+            let (y0, y1, wy) = sample_axis(y as u32, height, source_height);
+            let row0 = &source[y0 * source_width as usize..][..source_width as usize];
+            let row1 = &source[y1 * source_width as usize..][..source_width as usize];
+            for (value, &(x0, x1, wx)) in row.iter_mut().zip(&columns) {
+                let top = row0[x0] + (row0[x1] - row0[x0]) * wx;
+                let bottom = row1[x0] + (row1[x1] - row1[x0]) * wx;
+                *value = (top + (bottom - top) * wy).clamp(0.0, 1.0);
+            }
+        });
+    output
+}
+
+fn rasterize_component_internal(
+    component: &MaskComponent,
+    width: u32,
+    height: u32,
+    image_width: u32,
+    image_height: u32,
+    subject_refinement: &SubjectRefinement,
+) -> Vec<f32> {
     let space = MaskRasterSpace::new(width, height, image_width, image_height);
     match &component.geometry {
         MaskGeometry::Fullscreen => vec![1.0; width as usize * height as usize],
@@ -1928,8 +2013,6 @@ fn source_mask_core_radius(source: &MaskImage, width: u32, height: u32) -> Optio
     if source.width == 0 || source.height == 0 {
         return None;
     }
-    let source_width = source.width as usize;
-    let source_height = source.height as usize;
     let sample_width = (source.sampling_rect[2] - source.sampling_rect[0])
         .abs()
         .max(1e-6);
@@ -1938,38 +2021,7 @@ fn source_mask_core_radius(source: &MaskImage, width: u32, height: u32) -> Optio
         .max(1e-6);
     let scale_x = width as f32 / source.width as f32 / sample_width;
     let scale_y = height as f32 / source.height as f32 / sample_height;
-    let mut horizontal_runs = vec![0u32; source.pixels.len()];
-    for y in 0..source_height {
-        let mut x = 0;
-        while x < source_width {
-            let start = x;
-            while x < source_width && source.pixels[y * source_width + x] >= 128 {
-                x += 1;
-            }
-            let length = (x - start) as u32;
-            for column in start..x {
-                horizontal_runs[y * source_width + column] = length;
-            }
-            x += usize::from(length == 0);
-        }
-    }
-    let mut thickest = 0.0f32;
-    for x in 0..source_width {
-        let mut y = 0;
-        while y < source_height {
-            let start = y;
-            while y < source_height && source.pixels[y * source_width + x] >= 128 {
-                y += 1;
-            }
-            let vertical = (y - start) as f32 * scale_y;
-            for row in start..y {
-                let horizontal = horizontal_runs[row * source_width + x] as f32 * scale_x;
-                thickest = thickest.max(horizontal.min(vertical));
-            }
-            y += usize::from(vertical == 0.0);
-        }
-    }
-    (thickest > 0.0).then_some(thickest * 0.45)
+    raster_cache::source_frontier(source).core_radius(scale_x, scale_y)
 }
 
 fn shape_probability_mask_with_radius(
@@ -2046,29 +2098,19 @@ fn shape_distance_mask(
         .iter()
         .map(|value| u8::from(*value >= 0.5))
         .collect::<Vec<_>>();
-    if binary.iter().all(|value| *value == binary[0]) {
+    let Some(contour) = raster_cache::prepared_contour(binary, width, height) else {
         return;
-    }
-    let distance_to_inside = chamfer_distance(&binary, width, height, 1);
-    let distance_to_outside = chamfer_distance(&binary, width, height, 0);
+    };
     let edge = width.min(height) as f32;
     let grow_radius = grow * edge * 0.05;
     let mut feather_radius = mask_feather_radius(edge, feather);
     if feather_radius > 0.0 {
-        let deepest_inside = distance_to_outside
-            .iter()
-            .zip(&binary)
-            .filter(|(_, inside)| **inside == 1)
-            .map(|(distance, _)| *distance)
-            .fold(0.0f32, f32::max);
-        feather_radius = feather_radius.min(core_radius.unwrap_or(deepest_inside * 0.8));
+        feather_radius = feather_radius.min(core_radius.unwrap_or(contour.deepest_inside * 0.8));
     }
 
     mask.par_iter_mut().enumerate().for_each(|(index, value)| {
         let confidence_offset = (*value - 0.5) * 0.5;
-        let signed_distance = distance_to_outside[index] - distance_to_inside[index]
-            + confidence_offset
-            + grow_radius;
+        let signed_distance = contour.signed_distance[index] + confidence_offset + grow_radius;
         *value = if feather_radius <= 1e-5 {
             smoothstep(-0.75, 0.75, signed_distance)
         } else if feather_inside {
@@ -2298,6 +2340,25 @@ impl MaskRasterSpace {
             raster: [width, height],
             image: [image_width, image_height],
         }
+    }
+
+    fn isotropic_extent(self) -> Option<[u32; 2]> {
+        let [width, height] = self.raster;
+        let [image_width, image_height] = self.image;
+        if width == 0 || height == 0 || image_width == 0 || image_height == 0 {
+            return None;
+        }
+        // Fit the image aspect into the requested bounds, rounding once.
+        let extent = if width as u64 * image_height as u64 <= height as u64 * image_width as u64 {
+            let fitted_height =
+                (width as u64 * image_height as u64 + image_width as u64 / 2) / image_width as u64;
+            [width, fitted_height.clamp(1, height as u64) as u32]
+        } else {
+            let fitted_width = (height as u64 * image_width as u64 + image_height as u64 / 2)
+                / image_height as u64;
+            [fitted_width.clamp(1, width as u64) as u32, height]
+        };
+        (extent != self.raster).then_some(extent)
     }
 }
 
@@ -2828,3 +2889,6 @@ pub fn ellipse_outline_points(
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod zoom_tests;

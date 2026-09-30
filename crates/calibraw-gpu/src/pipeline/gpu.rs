@@ -4,8 +4,8 @@ use super::sigmoid::coefficients as sigmoid_coefficients;
 use crate::pipeline::{
     canonical_remove_scene_to_pipeline_scene, effect_params, export_mask_atlas_edge_limit,
     mask_atlas_edge, pipeline_scene_to_working_rec2020, AiDenoisedImage, CfaKind, ExposureParams,
-    GeometryTransform, HighlightReconstructionMethod, LoadedRaw, LocalMask, MaskEffect, MaskImage, MaskStack,
-    PointColor, PointCurve, ProcessingStage, RawThumbnail, RemoveEditState, RemovePatch,
+    GeometryTransform, HighlightReconstructionMethod, LoadedRaw, LocalMask, MaskEffect, MaskImage,
+    MaskStack, PointColor, PointCurve, ProcessingStage, RawThumbnail, RemoveEditState, RemovePatch,
     SigmoidParams, SrgbOutputLut, GLOBAL_TEMPERATURE_LIMIT, GLOBAL_TINT_OFFSET_LIMIT,
     MAX_EFFECT_COMPONENTS, MAX_LOCAL_MASKS, MAX_POINT_COLORS, MAX_POINT_CURVE_POINTS,
 };
@@ -24,8 +24,8 @@ mod resources;
 mod shader_manager;
 
 use builder::*;
-use fog::valid_scene_depth;
 pub use clipping::PreviewClippingGpu;
+use fog::valid_scene_depth;
 pub use histogram::{PreviewHistogram, PreviewHistogramGpu};
 use readback::*;
 use resources::*;
@@ -37,6 +37,8 @@ mod black_tone_tests;
 mod blacks_pipeline_tests;
 #[cfg(test)]
 mod film_effects_tests;
+#[cfg(test)]
+mod fog_tests;
 #[cfg(test)]
 mod light_rays_tests;
 #[cfg(test)]
@@ -320,7 +322,8 @@ struct SceneToneUniforms {
     exposure: f32,
     saturation: f32,
     vibrance: f32,
-    _pad_0: f32,
+    // Depth availability must not share the packed mask crop bounds below.
+    scene_depth_present: u32,
     basic_tone: [f32; 4],
     sigmoid_curve: [f32; 4],
     sigmoid_power: [f32; 4],
@@ -1180,7 +1183,7 @@ fn pack_scene_tone_params(ctx: &GpuParamContext<'_>) -> SceneToneUniforms {
         exposure: exposure.exposure,
         saturation: exposure.saturation,
         vibrance: exposure.vibrance,
-        _pad_0: 0.0,
+        scene_depth_present: u32::from(masks.scene_depth_image().is_some_and(valid_scene_depth)),
         basic_tone: [
             exposure.highlights,
             exposure.shadows,
@@ -1243,7 +1246,7 @@ fn pack_scene_tone_params(ctx: &GpuParamContext<'_>) -> SceneToneUniforms {
         hsl_luminance_1,
         mask_counts: [
             render_mask_slot_count(masks).min(MAX_RENDER_MASK_SLOTS) as u32,
-            u32::from(masks.scene_depth_image().is_some_and(valid_scene_depth)),
+            0,
             0,
             0,
         ],

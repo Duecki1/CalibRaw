@@ -1,5 +1,63 @@
 use super::*;
 
+#[cfg(all(test, not(target_os = "android")))]
+mod mask_upload_tests {
+    use super::*;
+    use crate::pipeline::{MaskImage, MaskKind};
+
+    #[test]
+    fn shared_depth_refresh_uploads_compact_atlases_and_clears_unused_dirty_slots() {
+        let instance = wgpu::Instance::default();
+        let Ok(adapter) =
+            pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+                force_fallback_adapter: true,
+                ..Default::default()
+            }))
+        else {
+            eprintln!("compact preview mask upload test skipped: no headless GPU adapter");
+            return;
+        };
+        let (device, queue) =
+            pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default())).unwrap();
+        let raw = LoadedRaw::from_scene_linear_rec2020(16, 16, vec![0.2; 16 * 16 * 3]).unwrap();
+        let exposure = ExposureParams::default();
+        for mask_count in [0, 2] {
+            let mut masks = MaskStack::default();
+            masks.scene_depth = Some(MaskImage::new(2, 2, vec![0, 85, 170, 255]).unwrap());
+            for _ in 0..mask_count {
+                masks.add_mask(MaskKind::Fullscreen);
+            }
+            let params = GpuParams::new(&exposure, &masks, &raw);
+            let pipeline = RawGpuPipeline::new_headless_with_quality_and_mask_edge(
+                &device,
+                &queue,
+                &raw,
+                &params,
+                ProcessingQuality::Preview,
+                16,
+            )
+            .unwrap();
+            assert!(pipeline.mask_layer_capacity() < MAX_LOCAL_MASKS);
+            let mut dirty_layers = [true; MAX_LOCAL_MASKS];
+            CalibRawApp::upload_dirty_preview_masks(
+                &pipeline,
+                &queue,
+                &masks,
+                &raw,
+                &mut dirty_layers,
+            )
+            .unwrap();
+            assert!(dirty_layers.iter().all(|dirty| !dirty));
+            pipeline.recompute(&queue, &device, &params);
+            let pixels = pipeline
+                .read_output_region_blocking(&device, &queue, 0, 0, raw.width, raw.height)
+                .unwrap();
+            assert_eq!(pixels.len(), 16 * 16 * 4);
+            assert!(pixels.iter().any(|value| *value > 0));
+        }
+    }
+}
+
 impl CalibRawApp {
     pub(crate) fn preview_base_pipeline(&self) -> Option<&RawGpuPipeline> {
         self.preview.gpu_pipeline.as_ref()
@@ -171,6 +229,39 @@ impl CalibRawApp {
                 dirty_layers,
             )
             .map_err(|error| format!("Could not update zoomed Light Rays mask: {error:#}"))?;
+        Ok(())
+    }
+
+    pub(in crate::app) fn upload_dirty_preview_masks(
+        pipeline: &RawGpuPipeline,
+        queue: &wgpu::Queue,
+        masks: &MaskStack,
+        raw: &LoadedRaw,
+        dirty_layers: &mut [bool; MAX_LOCAL_MASKS],
+    ) -> Result<(), String> {
+        let edge = pipeline.mask_atlas_edge();
+        let layer_count = masks.masks.len().min(pipeline.mask_layer_capacity());
+        for (layer, dirty) in dirty_layers.iter().take(layer_count).enumerate() {
+            if !dirty {
+                continue;
+            }
+            let bytes = masks.rasterize_layer_f16(layer, edge, edge, raw.width, raw.height);
+            pipeline
+                .update_mask_layer(queue, layer, &bytes)
+                .map_err(|error| format!("Could not update preview mask: {error:#}"))?;
+        }
+        pipeline
+            .update_dirty_light_rays_mask_layers(
+                queue,
+                masks,
+                raw.width,
+                raw.height,
+                Some(dirty_layers),
+            )
+            .map_err(|error| format!("Could not update Light Rays mask: {error:#}"))?;
+        // A shared-depth refresh marks every possible layer dirty. Slots outside
+        // this graph's capacity are unused and must not prevent Output dispatch.
+        dirty_layers.fill(false);
         Ok(())
     }
 

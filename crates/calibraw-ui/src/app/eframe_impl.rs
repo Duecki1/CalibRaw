@@ -346,6 +346,7 @@ impl eframe::App for CalibRawApp {
                 .show(ui, |ui| Library::show_folder_sidebar(ui, self));
         }
 
+        self.flush_mask_geometry_interaction();
         let central_panel = if self.ui.active_tab == AppTab::Develop {
             egui::CentralPanel::default().frame(
                 egui::Frame::new()

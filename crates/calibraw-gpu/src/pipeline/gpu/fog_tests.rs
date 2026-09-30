@@ -1,7 +1,7 @@
-use super::{GpuParams, ProcessingQuality, RawGpuPipeline, tests::request_test_device};
+use super::{tests::request_test_device, GpuParams, ProcessingQuality, RawGpuPipeline};
 use crate::pipeline::{
-    EffectComponent, ExportTile, ExposureParams, FogEffectSettings, LoadedRaw, LocalMask,
-    MaskEffect, MaskImage, MaskKind, MaskStack, ProcessingStage, extract_padded_tile,
+    extract_padded_tile, EffectComponent, ExportTile, ExposureParams, FogEffectSettings, LoadedRaw,
+    LocalMask, MaskEffect, MaskImage, MaskKind, MaskStack, ProcessingStage,
 };
 
 const WIDTH: u32 = 96;
@@ -75,6 +75,125 @@ fn global_fog(settings: FogEffectSettings, scene_depth: Option<MaskImage>) -> Ma
     }
 }
 
+#[test]
+fn fog_params_depth_presence_validates_depth_without_populating_mask_origin() -> anyhow::Result<()>
+{
+    let source = checkerboard(WIDTH, HEIGHT)?;
+    let exposure = neutral_exposure();
+    let mut zero_width = constant_depth(255);
+    zero_width.width = 0;
+    let mut zero_height = constant_depth(255);
+    zero_height.height = 0;
+    let mut wrong_length = constant_depth(255);
+    wrong_length.width = 9;
+    for (depth, present) in [
+        (None, 0),
+        (Some(constant_depth(0)), 1),
+        (Some(constant_depth(255)), 1),
+        (Some(zero_width), 0),
+        (Some(zero_height), 0),
+        (Some(wrong_length), 0),
+    ] {
+        let masks = global_fog(uniform_fog(), depth);
+        for params in [
+            GpuParams::new(&exposure, &masks, &source),
+            GpuParams::new_for_tile(&exposure, &masks, &source, 8, 4, 192, 128),
+        ] {
+            assert_eq!(params.scene_tone.scene_depth_present, present);
+            assert_eq!(params.scene_tone.mask_counts, [1, 0, 0, 0]);
+            assert_eq!(
+                &params.scene_tone_bytes()[12..16],
+                &present.to_ne_bytes(),
+                "depth presence must be a u32 in the former padding slot",
+            );
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn fog_params_mask_rect_builders_preserve_depth_presence_and_geometry() -> anyhow::Result<()> {
+    let source = checkerboard(WIDTH, HEIGHT)?;
+    let exposure = neutral_exposure();
+    for depth in [None, Some(constant_depth(0)), Some(constant_depth(255))] {
+        let present = u32::from(depth.is_some());
+        let masks = global_fog(uniform_fog(), depth);
+        let mut params = GpuParams::new(&exposure, &masks, &source);
+        // Pin the packed crop bounds, including reversal, clamping, and origins
+        // with only one nonzero axis. Repeated builders must only change geometry.
+        for (rect, packed_min, packed_max) in [
+            ([0.0, 0.0, 1.0, 1.0], 0, u32::MAX),
+            ([0.25, 0.125, 0.75, 0.875], 0x2000_4000, 0xdfff_bfff),
+            ([0.75, 0.875, 0.25, 0.125], 0x2000_4000, 0xdfff_bfff),
+            ([0.25, 0.0, 0.75, 1.0], 0x0000_4000, 0xffff_bfff),
+            ([0.0, 0.125, 1.0, 0.875], 0x2000_0000, 0xdfff_ffff),
+            ([-0.5, 1.5, 0.5, 0.5], 0x8000_0000, 0xffff_8000),
+        ] {
+            params = params.with_mask_uv_rect(rect);
+            assert_eq!(params.scene_tone.scene_depth_present, present);
+            assert_eq!(
+                params.scene_tone.mask_counts,
+                [1, packed_min, packed_max, u32::MAX],
+            );
+            params = params.with_mask_uv_rect_and_extent(rect, [32, 24]);
+            assert_eq!(params.scene_tone.scene_depth_present, present);
+            assert_eq!(
+                params.scene_tone.mask_counts,
+                [1, packed_min, packed_max, 32 | (24 << 16)],
+            );
+        }
+        params = params.with_mask_uv_rect_and_extent([0.0, 0.0, 1.0, 1.0], [0, u32::MAX]);
+        assert_eq!(params.scene_tone.scene_depth_present, present);
+        assert_eq!(params.scene_tone.mask_counts, [1, 0, u32::MAX, 0xffff_0001]);
+    }
+    Ok(())
+}
+
+#[test]
+fn fog_params_depth_presence_preserves_rust_and_wgsl_uniform_layout() {
+    use super::SceneToneUniforms;
+    use std::mem::{offset_of, size_of};
+
+    assert_eq!(size_of::<SceneToneUniforms>(), 1_680);
+    assert_eq!(offset_of!(SceneToneUniforms, scene_depth_present), 12);
+    assert_eq!(offset_of!(SceneToneUniforms, basic_tone), 16);
+    assert_eq!(offset_of!(SceneToneUniforms, mask_counts), 736);
+
+    let module = naga::front::wgsl::parse_str(super::SHADER_COMMON).unwrap();
+    let (_, scene_tone) = module
+        .types
+        .iter()
+        .find(|(_, ty)| ty.name.as_deref() == Some("SceneToneUniforms"))
+        .expect("WGSL scene-tone uniforms must exist");
+    let naga::TypeInner::Struct { members, span } = &scene_tone.inner else {
+        panic!("WGSL scene-tone uniforms must be a struct");
+    };
+    assert_eq!(*span as usize, size_of::<SceneToneUniforms>());
+    for (name, offset) in [
+        (
+            "scene_depth_present",
+            offset_of!(SceneToneUniforms, scene_depth_present),
+        ),
+        ("basic_tone", offset_of!(SceneToneUniforms, basic_tone)),
+        ("mask_counts", offset_of!(SceneToneUniforms, mask_counts)),
+    ] {
+        let member = members
+            .iter()
+            .find(|member| member.name.as_deref() == Some(name))
+            .unwrap_or_else(|| panic!("WGSL uniform member {name} is missing"));
+        assert_eq!(member.offset as usize, offset, "WGSL member {name}");
+        if name == "scene_depth_present" {
+            assert!(matches!(
+                &module.types[member.ty].inner,
+                naga::TypeInner::Scalar(naga::Scalar {
+                    kind: naga::ScalarKind::Uint,
+                    width: 4,
+                }),
+            ));
+        }
+    }
+}
+
 struct FogScene {
     device: wgpu::Device,
     queue: wgpu::Queue,
@@ -114,20 +233,23 @@ impl FogScene {
     }
 
     fn render(&self, masks: &MaskStack) -> anyhow::Result<Vec<f32>> {
+        self.render_params(&GpuParams::new(&self.exposure, masks, &self.source))
+    }
+
+    fn render_params(&self, params: &GpuParams) -> anyhow::Result<Vec<f32>> {
         // Exercise the public upload path, including Arc-backed depth cache invalidation.
-        self.pipeline.recompute(
-            &self.queue,
-            &self.device,
-            &GpuParams::new(&self.exposure, masks, &self.source),
-        );
-        let rgb = self.pipeline.read_display_linear_region_blocking(
-            &self.device,
-            &self.queue,
-            0,
-            0,
-            self.source.width,
-            self.source.height,
-        )?;
+        self.pipeline.recompute(&self.queue, &self.device, params);
+        let rgb = match self.pipeline.processing_quality {
+            ProcessingQuality::Preview => self.read_preview_rgb()?,
+            ProcessingQuality::High => self.pipeline.read_display_linear_region_blocking(
+                &self.device,
+                &self.queue,
+                0,
+                0,
+                self.source.width,
+                self.source.height,
+            )?,
+        };
         assert_eq!(
             rgb.len(),
             (self.source.width * self.source.height * 3) as usize
@@ -136,6 +258,81 @@ impl FogScene {
             rgb.iter().all(|v| v.is_finite()),
             "fog produced non-finite RGB"
         );
+        Ok(rgb)
+    }
+
+    fn read_preview_rgb(&self) -> anyhow::Result<Vec<f32>> {
+        use std::time::{Duration, Instant};
+
+        // Preserve linear float precision on Preview's RGBA16F display surface.
+        let texture = &self.pipeline.display_linear_texture;
+        assert_eq!(texture.format(), wgpu::TextureFormat::Rgba16Float);
+        let width = self.source.width;
+        let height = self.source.height;
+        let row_bytes = width * 8;
+        let alignment = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
+        let padded_row_bytes = row_bytes.div_ceil(alignment) * alignment;
+        let label = "fog preview linear readback";
+        let readback = self.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some(label),
+            size: u64::from(padded_row_bytes) * u64::from(height),
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some(label) });
+        encoder.copy_texture_to_buffer(
+            wgpu::TexelCopyTextureInfo {
+                texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            wgpu::TexelCopyBufferInfo {
+                buffer: &readback,
+                layout: wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(padded_row_bytes),
+                    rows_per_image: Some(height),
+                },
+            },
+            wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+        );
+        let submission = self.queue.submit(Some(encoder.finish()));
+        let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+        readback.map_async(wgpu::MapMode::Read, .., move |result| {
+            let _ = sender.send(result);
+        });
+        let timeout = Duration::from_secs(30);
+        let deadline = Instant::now() + timeout;
+        self.device
+            .poll(wgpu::PollType::Wait {
+                submission_index: Some(submission),
+                timeout: Some(timeout),
+            })
+            .map_err(|error| anyhow::anyhow!("fog preview readback poll failed: {error}"))?;
+        receiver
+            .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+            .map_err(|error| anyhow::anyhow!("fog preview readback callback failed: {error}"))?
+            .map_err(|error| anyhow::anyhow!("fog preview readback mapping failed: {error}"))?;
+
+        let mapped = readback.get_mapped_range(..);
+        let mut rgb = Vec::with_capacity((width * height * 3) as usize);
+        for row in mapped.chunks_exact(padded_row_bytes as usize) {
+            for pixel in row[..row_bytes as usize].chunks_exact(8) {
+                for channel in pixel[..6].chunks_exact(2) {
+                    let bits = u16::from_le_bytes([channel[0], channel[1]]);
+                    rgb.push(half::f16::from_bits(bits).to_f32());
+                }
+            }
+        }
+        drop(mapped);
+        readback.unmap();
         Ok(rgb)
     }
 }
@@ -189,6 +386,161 @@ fn checker_levels(rgb: &[f32], width: u32) -> (f32, f32) {
 fn contrast(rgb: &[f32], width: u32) -> f32 {
     let (dark, light) = checker_levels(rgb, width);
     light - dark
+}
+
+fn with_mask_mapping(params: GpuParams, rect: [f32; 4], with_extent: bool) -> GpuParams {
+    if with_extent {
+        params.with_mask_uv_rect_and_extent(rect, [32, 24])
+    } else {
+        params.with_mask_uv_rect(rect)
+    }
+}
+
+#[test]
+fn fog_gpu_mask_origins_preserve_depth_and_missing_depth_fallback() -> anyhow::Result<()> {
+    for quality in [ProcessingQuality::Preview, ProcessingQuality::High] {
+        let Some(scene) = FogScene::new(WIDTH, HEIGHT, quality)? else {
+            return Ok(());
+        };
+        let baseline = scene.render(&MaskStack::default())?;
+        let settings = uniform_fog();
+        let stacks = [
+            global_fog(settings, None),
+            global_fog(settings, Some(constant_depth(0))),
+            global_fog(settings, Some(constant_depth(255))),
+            global_fog(settings, Some(depth_ramp(19, 11))),
+        ];
+        let references = stacks
+            .iter()
+            .map(|masks| scene.render(masks))
+            .collect::<anyhow::Result<Vec<_>>>()?;
+        assert_close(
+            &references[1],
+            &baseline,
+            RGB_TOLERANCE,
+            "near depth is clear",
+        );
+        assert!(mean_difference(&references[0], &baseline) > 0.001);
+        assert!(contrast(&references[2], WIDTH) < contrast(&references[0], WIDTH));
+
+        for with_extent in [false, true] {
+            for rect in [
+                [0.0, 0.0, 1.0, 1.0],
+                [0.25, 0.125, 0.875, 0.875],
+                [0.25, 0.0, 0.875, 1.0],
+                [0.0, 0.125, 1.0, 0.875],
+            ] {
+                // Keep the same pipeline while toggling presence and replacing
+                // depth uploads. Missing depth follows real samples to catch stale data.
+                for index in [2, 1, 0, 3, 0] {
+                    let params = with_mask_mapping(
+                        GpuParams::new(&scene.exposure, &stacks[index], &scene.source),
+                        rect,
+                        with_extent,
+                    );
+                    assert_close(
+                        &scene.render_params(&params)?,
+                        &references[index],
+                        RGB_TOLERANCE,
+                        &format!("rect={rect:?}, extent={with_extent}, depth case={index}"),
+                    );
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn fog_gpu_reused_pipeline_switches_mask_origins_and_depth_presence() -> anyhow::Result<()> {
+    let Some(scene) = FogScene::new(WIDTH, HEIGHT, ProcessingQuality::High)? else {
+        return Ok(());
+    };
+    let baseline = scene.render(&MaskStack::default())?;
+    let settings = uniform_fog();
+    let depths = [None, Some(constant_depth(0)), Some(constant_depth(255))];
+    let references = depths
+        .iter()
+        .map(|depth| scene.render(&global_fog(settings, depth.clone())))
+        .collect::<anyhow::Result<Vec<_>>>()?;
+    assert!(mean_difference(&references[0], &baseline) > 0.001);
+    assert!(contrast(&references[2], WIDTH) < contrast(&references[0], WIDTH));
+    let mut mask = LocalMask::new(MaskKind::Fullscreen, 1);
+    mask.effect_components.push(fog_component(settings));
+    let mut local = MaskStack {
+        masks: vec![mask],
+        ..Default::default()
+    };
+    scene.pipeline.update_mask_layer(
+        &scene.queue,
+        0,
+        &vec![half::f16::ONE.to_bits(); (MASK_EDGE * MASK_EDGE) as usize],
+    )?;
+    let rects = [[0.0, 0.0, 0.75, 0.75], [0.25, 0.125, 1.0, 0.875]];
+    for with_extent in [false, true] {
+        // Change origins while retaining depth, then change presence without
+        // changing the origin. Local coverage must still use the crop bounds.
+        for (origin, depth) in [
+            (0, 2),
+            (1, 2),
+            (0, 1),
+            (1, 1),
+            (0, 0),
+            (1, 0),
+            (1, 2),
+            (1, 0),
+            (0, 2),
+            (0, 0),
+        ] {
+            let rect = rects[origin];
+            local.scene_depth = depths[depth].clone();
+            let params = with_mask_mapping(
+                GpuParams::new(&scene.exposure, &local, &scene.source),
+                rect,
+                with_extent,
+            );
+            let actual = scene.render_params(&params)?;
+            let context = format!("local rect={rect:?}, extent={with_extent}, depth case={depth}");
+            let bounds = [
+                rect[0] * WIDTH as f32,
+                rect[1] * HEIGHT as f32,
+                rect[2] * WIDTH as f32,
+                rect[3] * HEIGHT as f32,
+            ];
+            let mut checked = [0; 2];
+            for y in 0..HEIGHT {
+                for x in 0..WIDTH {
+                    let px = x as f32 + 0.5;
+                    let py = y as f32 + 0.5;
+                    // Ignore the quantized crop edge and bilinear mask transition.
+                    if (px - bounds[0]).abs() < 2.0
+                        || (px - bounds[2]).abs() < 2.0
+                        || (py - bounds[1]).abs() < 2.0
+                        || (py - bounds[3]).abs() < 2.0
+                    {
+                        continue;
+                    }
+                    let inside =
+                        px > bounds[0] && px < bounds[2] && py > bounds[1] && py < bounds[3];
+                    checked[usize::from(inside)] += 1;
+                    let expected = if inside {
+                        &references[depth]
+                    } else {
+                        &baseline
+                    };
+                    let channel = ((y * WIDTH + x) * 3) as usize;
+                    assert_close(
+                        &actual[channel..channel + 3],
+                        &expected[channel..channel + 3],
+                        RGB_TOLERANCE,
+                        &context,
+                    );
+                }
+            }
+            assert!(checked.iter().all(|&count| count > 0), "{context}");
+        }
+    }
+    Ok(())
 }
 
 #[test]
