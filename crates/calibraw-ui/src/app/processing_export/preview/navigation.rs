@@ -7,8 +7,8 @@ impl CalibRawApp {
         if self.foreground_operation_is(ForegroundOperationKind::AiDenoise) {
             return;
         }
-        if self.preview.white_balance_refresh_pending
-            && !self
+        if self.defer_background_mask_processing()
+            || !self
                 .preview
                 .interactive_render_ready
                 .load(std::sync::atomic::Ordering::Acquire)
