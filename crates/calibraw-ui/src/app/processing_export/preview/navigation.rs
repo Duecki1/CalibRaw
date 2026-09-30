@@ -137,42 +137,14 @@ impl CalibRawApp {
             .iter()
             .any(|dirty| *dirty)
         {
-            let dirty_layers = self.masks.navigation_dirty_layers;
-            let edge = preview.pipeline.mask_atlas_edge();
-            for layer in 0..MAX_LOCAL_MASKS {
-                if !self.masks.navigation_dirty_layers[layer] {
-                    continue;
-                }
-                let bytes = preview_masks.rasterize_layer_f16(
-                    layer,
-                    edge,
-                    edge,
-                    preview.raw.width,
-                    preview.raw.height,
-                );
-                if let Err(error) =
-                    preview
-                        .pipeline
-                        .update_mask_layer(&render_state.queue, layer, &bytes)
-                {
-                    self.ui.notice = Some(format!(
-                        "Could not update the navigation local mask: {error:#}"
-                    ));
-                    self.preview.navigation_pending_stage = None;
-                    return;
-                }
-                self.masks.navigation_dirty_layers[layer] = false;
-            }
-            if let Err(error) = preview.pipeline.update_dirty_light_rays_mask_layers(
+            if let Err(error) = Self::upload_dirty_preview_masks(
+                &preview.pipeline,
                 &render_state.queue,
                 &preview_masks,
-                preview.raw.width,
-                preview.raw.height,
-                Some(&dirty_layers),
+                &preview.raw,
+                &mut self.masks.navigation_dirty_layers,
             ) {
-                self.ui.notice = Some(format!(
-                    "Could not update the navigation Light Rays mask: {error:#}"
-                ));
+                self.ui.notice = Some(error);
                 self.preview.navigation_pending_stage = None;
                 return;
             }

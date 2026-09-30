@@ -317,34 +317,14 @@ impl CalibRawApp {
         };
 
         if stage == ProcessingStage::Output && self.masks.dirty_layers.iter().any(|dirty| *dirty) {
-            let dirty_layers = self.masks.dirty_layers;
-            let edge = pipeline.mask_atlas_edge();
-            let mut upload_error = None;
-            for layer in 0..MAX_LOCAL_MASKS {
-                if !self.masks.dirty_layers[layer] {
-                    continue;
-                }
-                let bytes =
-                    preview_masks.rasterize_layer_f16(layer, edge, edge, raw.width, raw.height);
-                if let Err(error) = pipeline.update_mask_layer(&render_state.queue, layer, &bytes) {
-                    upload_error = Some(format!("Could not update local mask: {error:#}"));
-                    break;
-                }
-                self.masks.dirty_layers[layer] = false;
-            }
-            if let Some(error) = upload_error {
-                self.ui.notice = Some(error);
-                self.preview.pending_stage = None;
-                return;
-            }
-            if let Err(error) = pipeline.update_dirty_light_rays_mask_layers(
+            if let Err(error) = Self::upload_dirty_preview_masks(
+                pipeline,
                 &render_state.queue,
                 preview_masks,
-                raw.width,
-                raw.height,
-                Some(&dirty_layers),
+                raw,
+                &mut self.masks.dirty_layers,
             ) {
-                self.ui.notice = Some(format!("Could not update Light Rays mask: {error:#}"));
+                self.ui.notice = Some(error);
                 self.preview.pending_stage = None;
                 return;
             }

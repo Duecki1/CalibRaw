@@ -1,5 +1,8 @@
 use super::*;
 
+const INTERACTIVE_MASK_INTERVAL: Duration = Duration::from_millis(45);
+const SHARED_REFINEMENT_LAYER: usize = MAX_LOCAL_MASKS;
+
 impl MaskState {
     pub(super) fn generated_cache_mut(&mut self, model: AiMaskModel) -> &mut Option<MaskImage> {
         match model {
@@ -199,8 +202,6 @@ impl CalibRawApp {
     }
 
     pub(crate) fn note_mask_geometry_interaction(&mut self, layer: usize) {
-        const INTERACTIVE_MASK_INTERVAL: Duration = Duration::from_millis(45);
-
         if self.masks.interaction_dirty_layer != Some(layer) {
             self.finish_mask_geometry_interaction();
             self.masks.interaction_dirty_layer = Some(layer);
@@ -208,22 +209,10 @@ impl CalibRawApp {
         }
 
         self.masks.interaction_has_uncommitted_change = true;
-        let now = Instant::now();
-        let upload_due = self
-            .masks
-            .interaction_last_upload
-            .is_none_or(|last| now.duration_since(last) >= INTERACTIVE_MASK_INTERVAL);
-        if upload_due {
-            self.mark_mask_geometry_dirty(layer);
-            self.masks.interaction_last_upload = Some(now);
-            self.masks.interaction_has_uncommitted_change = false;
-        }
+        self.flush_mask_geometry_interaction();
     }
 
     pub(crate) fn note_subject_refinement_interaction(&mut self) {
-        const INTERACTIVE_MASK_INTERVAL: Duration = Duration::from_millis(45);
-        const SHARED_REFINEMENT_LAYER: usize = MAX_LOCAL_MASKS;
-
         if self.masks.interaction_dirty_layer != Some(SHARED_REFINEMENT_LAYER) {
             self.finish_mask_geometry_interaction();
             self.masks.interaction_dirty_layer = Some(SHARED_REFINEMENT_LAYER);
@@ -231,16 +220,34 @@ impl CalibRawApp {
         }
 
         self.masks.interaction_has_uncommitted_change = true;
+        self.flush_mask_geometry_interaction();
+    }
+
+    pub(crate) fn flush_mask_geometry_interaction(&mut self) {
+        if !self.masks.interaction_has_uncommitted_change {
+            return;
+        }
+        let Some(layer) = self.masks.interaction_dirty_layer else {
+            return;
+        };
         let now = Instant::now();
-        let upload_due = self
+        let remaining = self
             .masks
             .interaction_last_upload
-            .is_none_or(|last| now.duration_since(last) >= INTERACTIVE_MASK_INTERVAL);
-        if upload_due {
-            self.mark_all_mask_layers_dirty();
-            self.masks.interaction_last_upload = Some(now);
-            self.masks.interaction_has_uncommitted_change = false;
+            .map_or(Duration::ZERO, |last| {
+                INTERACTIVE_MASK_INTERVAL.saturating_sub(now.saturating_duration_since(last))
+            });
+        if !remaining.is_zero() {
+            self.egui_ctx.request_repaint_after(remaining);
+            return;
         }
+        if layer == SHARED_REFINEMENT_LAYER {
+            self.mark_all_mask_layers_dirty();
+        } else {
+            self.mark_mask_geometry_dirty(layer);
+        }
+        self.masks.interaction_last_upload = Some(now);
+        self.masks.interaction_has_uncommitted_change = false;
     }
 
     pub(crate) fn finish_mask_geometry_interaction(&mut self) {

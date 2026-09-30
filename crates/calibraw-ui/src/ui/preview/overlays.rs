@@ -50,6 +50,47 @@ pub(super) fn overlay_raster_region(
     }
 }
 
+pub(super) fn mask_overlay_raster_region(
+    mut region: OverlayRasterKey,
+    interaction_dirty_layer: Option<usize>,
+    primary_down: bool,
+) -> OverlayRasterKey {
+    if interaction_dirty_layer.is_none() || !primary_down {
+        return region;
+    }
+
+    let edge_limit = if cfg!(target_os = "android") {
+        384
+    } else {
+        512
+    };
+    let longest_edge = region.texture_width.max(region.texture_height);
+    if longest_edge > edge_limit {
+        region.texture_width =
+            ((region.texture_width as u64 * edge_limit as u64) / longest_edge as u64).max(1) as u32;
+        region.texture_height = ((region.texture_height as u64 * edge_limit as u64)
+            / longest_edge as u64)
+            .max(1) as u32;
+    }
+    region
+}
+
+pub(super) fn cached_mask_overlay_region(
+    cached_key: Option<(usize, Option<usize>, u64, OverlayRasterKey)>,
+    has_cached_texture: bool,
+    mask_index: usize,
+    component_index: Option<usize>,
+    interaction_has_uncommitted_change: bool,
+    primary_down: bool,
+) -> Option<OverlayRasterKey> {
+    if !interaction_has_uncommitted_change || !primary_down || !has_cached_texture {
+        return None;
+    }
+    cached_key
+        .filter(|key| key.0 == mask_index && key.1 == component_index)
+        .map(|key| key.3)
+}
+
 pub(super) fn overlay_source_uv(
     region: OverlayRasterKey,
     source_width: u32,

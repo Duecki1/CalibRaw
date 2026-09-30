@@ -137,7 +137,7 @@ fn apply_fog(
     // Until depth is generated, use a restrained constant-distance preview.
     // No screen-height or luminance heuristic pretends to know scene geometry.
     var distance = 0.35;
-    if Common::scene_tone_uniforms.mask_counts.y != 0u && influence > 1e-6 {
+    if Common::scene_tone_uniforms.scene_depth_present != 0u && influence > 1e-6 {
         distance = fog_depth_at(pos);
     }
     distance = mix(1.0, distance, influence);

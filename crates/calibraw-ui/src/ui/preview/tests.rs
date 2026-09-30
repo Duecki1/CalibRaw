@@ -141,6 +141,175 @@ mod preview_overlay_tests {
     }
 
     #[test]
+    fn mask_drag_overlay_caps_raster_without_changing_aspect_or_source_coordinates() {
+        let edge = if cfg!(target_os = "android") {
+            384
+        } else {
+            512
+        };
+        for (width, height, preview_size, source_region, texture_size) in [
+            (
+                6000,
+                4000,
+                egui::vec2(1200.0, 800.0),
+                (1400, 900, 3200, 2200),
+                (edge, edge * 11 / 16),
+            ),
+            (
+                4000,
+                6000,
+                egui::vec2(800.0, 1200.0),
+                (900, 1400, 2200, 3200),
+                (edge * 11 / 16, edge),
+            ),
+        ] {
+            let full = overlay_raster_region(
+                crate::app::PreviewUvRect {
+                    min: [0.25, 0.25],
+                    max: [0.75, 0.75],
+                },
+                width,
+                height,
+                Rect::from_min_size(Pos2::ZERO, preview_size),
+                1.0,
+                100,
+            );
+            let drag = mask_overlay_raster_region(full, Some(0), true);
+
+            assert_eq!((drag.texture_width, drag.texture_height), texture_size);
+            assert_eq!(
+                (
+                    drag.source_x,
+                    drag.source_y,
+                    drag.source_width,
+                    drag.source_height,
+                ),
+                source_region,
+            );
+            assert_eq!(
+                drag.texture_width * full.texture_height,
+                drag.texture_height * full.texture_width,
+            );
+            assert_eq!(
+                overlay_source_uv(drag, width, height),
+                overlay_source_uv(full, width, height),
+            );
+        }
+    }
+
+    #[test]
+    fn mask_drag_overlay_restores_uncapped_key_on_release_and_keeps_small_rasters() {
+        let full = OverlayRasterKey {
+            source_x: 30,
+            source_y: 40,
+            source_width: 3200,
+            source_height: 2400,
+            texture_width: 1600,
+            texture_height: 1200,
+        };
+        let drag = mask_overlay_raster_region(full, Some(0), true);
+        // Dimensions alone invalidate the texture even if the revision is unchanged.
+        assert_ne!((0, None::<usize>, 7, drag), (0, None::<usize>, 7, full));
+        assert_eq!(mask_overlay_raster_region(full, Some(0), false), full);
+        assert_eq!(mask_overlay_raster_region(full, None, true), full);
+
+        let small = OverlayRasterKey {
+            texture_width: 200,
+            texture_height: 100,
+            ..full
+        };
+        assert_eq!(mask_overlay_raster_region(small, Some(0), true), small);
+        let thin = mask_overlay_raster_region(
+            OverlayRasterKey {
+                texture_width: 1,
+                texture_height: 4096,
+                ..full
+            },
+            Some(0),
+            true,
+        );
+        assert_eq!(thin.texture_width, 1);
+        assert_eq!(
+            thin.texture_height,
+            if cfg!(target_os = "android") {
+                384
+            } else {
+                512
+            },
+        );
+    }
+
+    #[test]
+    fn pending_mask_overlay_reuses_cached_source_region_until_interaction_commit() {
+        let visible = crate::app::PreviewUvRect {
+            min: [0.25, 0.25],
+            max: [0.75, 0.75],
+        };
+        let preview = Rect::from_min_size(Pos2::ZERO, egui::vec2(1200.0, 800.0));
+        let cached = overlay_raster_region(visible, 6000, 4000, preview, 1.0, 2);
+        let expanded = overlay_raster_region(visible, 6000, 4000, preview, 1.0, 200);
+        let key = Some((2, Some(3), 7, cached));
+        assert_ne!(
+            overlay_source_uv(cached, 6000, 4000),
+            overlay_source_uv(expanded, 6000, 4000),
+        );
+        assert_eq!(
+            cached_mask_overlay_region(key, true, 2, Some(3), true, true),
+            Some(cached),
+        );
+
+        let zoomed = overlay_raster_region(
+            crate::app::PreviewUvRect {
+                min: [0.40, 0.40],
+                max: [0.60, 0.60],
+            },
+            6000,
+            4000,
+            preview,
+            1.0,
+            200,
+        );
+        assert_ne!(zoomed, cached);
+        // The next committed interval lets changed zoom/margins compute a new region.
+        assert_eq!(
+            cached_mask_overlay_region(key, true, 2, Some(3), false, true).unwrap_or(zoomed),
+            zoomed,
+        );
+    }
+
+    #[test]
+    fn cached_mask_overlay_region_requires_pending_pointer_and_matching_texture_target() {
+        let region = OverlayRasterKey {
+            source_x: 20,
+            source_y: 30,
+            source_width: 800,
+            source_height: 600,
+            texture_width: 400,
+            texture_height: 300,
+        };
+        let key = Some((2, Some(3), 7, region));
+        for (cached_key, has_texture, mask, component, pending, down) in [
+            (key, true, 2, Some(3), false, true),
+            (key, true, 2, Some(3), true, false),
+            (key, false, 2, Some(3), true, true),
+            (None, true, 2, Some(3), true, true),
+            (key, true, 1, Some(3), true, true),
+            (key, true, 2, Some(4), true, true),
+            (key, true, 2, None, true, true),
+            (Some((2, None, 7, region)), true, 2, Some(3), true, true),
+        ] {
+            assert_eq!(
+                cached_mask_overlay_region(cached_key, has_texture, mask, component, pending, down),
+                None,
+            );
+        }
+        assert_eq!(
+            cached_mask_overlay_region(Some((2, None, 7, region)), true, 2, None, true, true),
+            Some(region),
+        );
+    }
+
+    #[test]
     fn screen_relative_brush_compensates_for_zoom() {
         assert!((zoom_scaled_brush_size(0.08, 4.0, false) - 0.02).abs() < 1e-6);
     }
