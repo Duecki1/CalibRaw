@@ -130,7 +130,6 @@ impl LibraryState {
             selected_assets: HashSet::new(),
             selection_mode: false,
             selection_anchor: None,
-            image_clipboard: None,
             adjustment_clipboard: None,
             asset_transfer_receiver: None,
             delete_originals_confirmation: None,
@@ -673,6 +672,7 @@ impl LibraryState {
         match pasted {
             Some(Ok(completion)) => {
                 self.asset_transfer_receiver = None;
+                #[cfg(not(target_os = "android"))]
                 if completion.clear_clipboard {
                     self.image_clipboard = None;
                 } else if let Some(remaining) = completion.remaining_clipboard {

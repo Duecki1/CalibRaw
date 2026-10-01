@@ -56,6 +56,71 @@ fn atmosphere_image_point(pos: vec2<i32>) -> vec2<f32> {
     return point;
 }
 
+// Full-image depth is shared by all fog components; mask coverage remains a
+// separate final blend. Scene depth is normalized relative distance (near=0, far=1).
+@group(0) @binding(35) var scene_depth_tex: texture_2d<f32>;
+
+fn fog_depth_at(pos: vec2<i32>) -> f32 {
+    let size = vec2<i32>(textureDimensions(scene_depth_tex));
+    let p = full_image_uv(pos) * vec2<f32>(size) - vec2<f32>(0.5);
+    let base = vec2<i32>(floor(p));
+    let f = fract(p);
+    let full_size = vec2<f32>(
+        f32(Common::camera_uniforms.full_width),
+        f32(Common::camera_uniforms.full_height),
+    );
+    let center = sqrt(max(SceneAdjustments::local_effects_at(pos), vec3<f32>(0.0)));
+    var total = 0.0;
+    var weights = 0.0;
+    // Joint upsampling rejects samples across image edges instead of blurring
+    // background depth into foreground silhouettes. No depth-range mask curve
+    // is applied here: a selection is not a measurement of distance.
+    for (var y = 0; y < 2; y = y + 1) {
+        for (var x = 0; x < 2; x = x + 1) {
+            let cell = clamp(base + vec2<i32>(x, y), vec2<i32>(0), size - vec2<i32>(1));
+            let uv = (vec2<f32>(cell) + vec2<f32>(0.5)) / vec2<f32>(size);
+            let guide_pos = uv * full_size - vec2<f32>(0.5) - vec2<f32>(Common::tile_origin());
+            let guide = sqrt(max(mask_effect_source_linear_at(guide_pos), vec3<f32>(0.0)));
+            let delta = (guide - center) / max(length(center), 0.15);
+            let spatial = select(1.0 - f.x, f.x, x == 1) * select(1.0 - f.y, f.y, y == 1);
+            let weight = spatial * max(exp(-dot(delta, delta) * 24.0), 0.0001);
+            total += textureLoad(scene_depth_tex, cell, 0).x * weight;
+            weights += weight;
+        }
+    }
+    return clamp(total / max(weights, 1e-6), 0.0, 1.0);
+}
+
+fn fog_hash3(cell: vec3<i32>) -> f32 {
+    let p = bitcast<vec3<u32>>(cell);
+    var h = p.x * 1597334677u ^ p.y * 3812015801u ^ p.z * 2798796415u;
+    h = (h ^ (h >> 16u)) * 2246822519u;
+    h = (h ^ (h >> 13u)) * 3266489917u;
+    h = h ^ (h >> 16u);
+    return f32(h & 0x00ffffffu) / 16777215.0;
+}
+
+fn fog_noise3(point: vec3<f32>) -> f32 {
+    let cell = vec3<i32>(floor(point));
+    let f = fract(point);
+    let u = f * f * f * (f * (f * 6.0 - vec3<f32>(15.0)) + vec3<f32>(10.0));
+    let a = mix(
+        mix(fog_hash3(cell), fog_hash3(cell + vec3<i32>(1, 0, 0)), u.x),
+        mix(fog_hash3(cell + vec3<i32>(0, 1, 0)), fog_hash3(cell + vec3<i32>(1, 1, 0)), u.x), u.y,
+    );
+    let b = mix(
+        mix(fog_hash3(cell + vec3<i32>(0, 0, 1)), fog_hash3(cell + vec3<i32>(1, 0, 1)), u.x),
+        mix(fog_hash3(cell + vec3<i32>(0, 1, 1)), fog_hash3(cell + vec3<i32>(1, 1, 1)), u.x), u.y,
+    );
+    return mix(a, b, u.z);
+}
+
+fn fog_onset_integral(distance: f32, start: f32, width: f32) -> f32 {
+    let travel = max(distance - start, 0.0);
+    let u = clamp(travel / width, 0.0, 1.0);
+    return width * (u * u * u - 0.5 * u * u * u * u) + max(travel - width, 0.0);
+}
+
 fn apply_fog(
     pos: vec2<i32>,
     input_rgb: vec3<f32>,
@@ -68,23 +133,62 @@ fn apply_fog(
     if amount <= 1e-6 || density <= 1e-6 {
         return input_rgb;
     }
+    let influence = clamp(tertiary.z / 100.0, 0.0, 1.0);
+    // Until depth is generated, use a restrained constant-distance preview.
+    // No screen-height or luminance heuristic pretends to know scene geometry.
+    var distance = 0.35;
+    if Common::scene_tone_uniforms.scene_depth_present != 0u && influence > 1e-6 {
+        distance = fog_depth_at(pos);
+    }
+    distance = mix(1.0, distance, influence);
+    let start = clamp(tertiary.y / 100.0, 0.0, 0.95);
+    if distance <= start { return input_rgb; }
 
     let scale = clamp(primary.z / 100.0, 0.01, 1.0);
-    let frequency = mix(10.0, 2.0, scale);
     let softness = clamp(primary.w / 100.0, 0.0, 1.0);
     let variation = clamp(secondary.w / 100.0, 0.0, 1.0);
     let seed = clamp(tertiary.x, 0.0, 1000.0);
-    let offset = vec2<f32>(seed * 0.071 + 19.3, seed * -0.113 + 47.1);
-    let point = atmosphere_image_point(pos) * frequency + offset;
-    let broad = atmosphere_fbm(point);
-    let fine = atmosphere_noise(point * 2.1 + vec2<f32>(7.4, -3.8));
-    let field = broad * 0.84 + fine * 0.16;
-    let transition = mix(0.035, 0.24, softness);
-    let banks = smoothstep(0.52 - transition, 0.52 + transition, field);
-    let density_field = mix(0.72, 0.28 + 1.05 * banks, variation);
-    let opacity = clamp(amount * density * density_field * 1.22, 0.0, 0.92);
-    let color = mask_effect_picker_color_to_working(secondary.xyz);
-    return mix(input_rgb, color, opacity);
+    let offset = vec3<f32>(seed * 0.071 + 19.3, seed * -0.113 + 47.1, seed * 0.053 + 11.7);
+    let frequency = mix(7.0, 1.6, scale);
+    let image_point = atmosphere_image_point(pos);
+    // A perspective volume in relative scene units. Integrate only to the
+    // visible surface; foreground objects truncate the same volume as the
+    // background. Fixed world-space intervals preserve shared ray prefixes.
+    let ray = vec3<f32>(image_point * 1.25, 1.0);
+    let step = 1.0 / 12.0;
+    let onset_width = mix(0.025, 0.18, softness);
+    var optical_length = fog_onset_integral(distance, start, onset_width);
+    if variation > 1e-6 {
+        optical_length = 0.0;
+        for (var i = 0u; i < 12u; i = i + 1u) {
+            let lo = max(f32(i) * step, start);
+            let cell_end = f32(i + 1u) * step;
+            let hi = min(cell_end, distance);
+            if hi <= lo { continue; }
+            // A partial last interval uses the same density as the full interval,
+            // so increasing surface distance can never remove accumulated fog.
+            let t = 0.5 * (lo + cell_end);
+            let point = ray * t * frequency + offset;
+            let broad = fog_noise3(point);
+            let detail = fog_noise3(point * 2.03 + vec3<f32>(7.1, -3.4, 13.8));
+            let field = mix(broad, detail, mix(0.28, 0.08, softness));
+            let bank_density = exp2((field - 0.5) * variation * mix(5.0, 2.5, softness));
+            let segment = fog_onset_integral(hi, start, onset_width)
+                - fog_onset_integral(lo, start, onset_width);
+            optical_length += segment * bank_density;
+        }
+    }
+    // Beer-Lambert extinction and constant-environment single scattering in
+    // scene-linear Rec.2020. Amount changes concentration, not a screen overlay.
+    // https://pbr-book.org/4ed/Volume_Scattering/Transmittance
+    let optical_depth = 6.0 * density * density * amount * optical_length * length(ray);
+    let transmission = exp(-optical_depth);
+    // Global tone statistics are shared by export tiles. Match airlight to
+    // scene illumination, avoiding white self-luminous fog in dark photographs.
+    let ambient_ev = Tonemap::tone_stats.percentiles_0_field.w + Common::scene_tone_uniforms.exposure;
+    let ambient = ToneCommon::SCENE_MIDDLE_GREY * exp2(clamp(ambient_ev, -12.0, 6.0)) * 1.15;
+    let airlight = mask_effect_picker_color_to_working(secondary.xyz) * ambient;
+    return input_rgb * transmission + airlight * (1.0 - transmission);
 }
 
 fn apply_smoke(

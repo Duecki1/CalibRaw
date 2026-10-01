@@ -130,7 +130,7 @@ fn run() -> Result<()> {
                 println!("skipped existing {}", output.display());
                 continue;
             }
-            let mut exposure = default_exposure_for_raw(&raw);
+            let mut exposure = adaptive_exposure;
             if let Some((name, value)) = adjustment {
                 set_adjustment(&mut exposure, name, *value)?;
             }
@@ -139,7 +139,7 @@ fn run() -> Result<()> {
         return Ok(());
     }
 
-    let mut exposure = default_exposure_for_raw(&raw);
+    let mut exposure = adaptive_exposure;
     for (name, value) in &args.adjustments {
         set_adjustment(&mut exposure, name, *value)?;
     }

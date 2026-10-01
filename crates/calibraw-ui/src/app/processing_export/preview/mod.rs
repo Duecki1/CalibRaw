@@ -194,13 +194,6 @@ pub(in crate::app) fn detail_mask_edge() -> u32 {
     }
 }
 
-pub(in crate::app) fn detail_uses_opposed_chroma(
-    raw: &LoadedRaw,
-    exposure: &ExposureParams,
-) -> bool {
-    raw.uses_opposed_chroma(exposure)
-}
-
 pub(in crate::app) fn detail_mask_source_region(
     masks: &MaskStack,
     source_origin: [u32; 2],
@@ -208,9 +201,23 @@ pub(in crate::app) fn detail_mask_source_region(
     full_width: u32,
     full_height: u32,
 ) -> [u32; 4] {
+    mask_region_with_margin(
+        source_origin,
+        source_size,
+        [full_width, full_height],
+        masks.raster_margin_pixels(full_width, full_height),
+    )
+}
+
+fn mask_region_with_margin(
+    source_origin: [u32; 2],
+    source_size: [u32; 2],
+    full_size: [u32; 2],
+    margin: u32,
+) -> [u32; 4] {
+    let [full_width, full_height] = full_size;
     let full_width = full_width.max(1);
     let full_height = full_height.max(1);
-    let margin = masks.raster_margin_pixels(full_width, full_height);
     let x0 = source_origin[0].min(full_width - 1).saturating_sub(margin);
     let y0 = source_origin[1].min(full_height - 1).saturating_sub(margin);
     let x1 = source_origin[0]
@@ -222,6 +229,55 @@ pub(in crate::app) fn detail_mask_source_region(
         .saturating_add(margin)
         .clamp(y0 + 1, full_height);
     [x0, y0, x1 - x0, y1 - y0]
+}
+
+fn detail_mask_update_region(
+    masks: &MaskStack,
+    source_origin: [u32; 2],
+    source_size: [u32; 2],
+    full_size: [u32; 2],
+    cached_region: Option<[u32; 4]>,
+    interactive: bool,
+) -> [u32; 4] {
+    let required = if interactive {
+        // Reserve the entire grow/feather slider range once. Changing the crop
+        // every tick invalidates distance caches and reuploads every mask layer.
+        let slider_margin = (full_size[0].min(full_size[1]) as f32 * 0.095 + 2.0).ceil() as u32;
+        let margin = masks
+            .raster_margin_pixels(full_size[0], full_size[1])
+            .max(slider_margin);
+        mask_region_with_margin(source_origin, source_size, full_size, margin)
+    } else {
+        detail_mask_source_region(
+            masks,
+            source_origin,
+            source_size,
+            full_size[0],
+            full_size[1],
+        )
+    };
+    cached_region
+        .filter(|cached| {
+            (0..2).all(|axis| {
+                cached[axis] <= required[axis]
+                    && cached[axis].saturating_add(cached[axis + 2])
+                        >= required[axis].saturating_add(required[axis + 2])
+            })
+        })
+        .unwrap_or(required)
+}
+
+fn detail_mask_texture_extent(region: [u32; 4], atlas_edge: u32, interactive: bool) -> [u32; 2] {
+    let edge = if interactive {
+        atlas_edge.min(if cfg!(target_os = "android") {
+            512
+        } else {
+            768
+        })
+    } else {
+        atlas_edge
+    };
+    mask_region_texture_extent(region, edge)
 }
 
 pub(super) const DETAIL_ZOOM_START: f32 = 1.0005;
@@ -239,6 +295,9 @@ mod navigation;
 mod processing;
 mod rebuild;
 mod state;
+
+#[cfg(test)]
+mod mask_interaction_tests;
 
 // Compare samples per source pixel, not the fraction of the cached texture
 // currently on screen. Using that fraction to lower the budget lets a capped

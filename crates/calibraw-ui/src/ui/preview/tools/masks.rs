@@ -1040,20 +1040,37 @@ impl Preview {
         if app.preview.gpu_pipeline.is_none() {
             return;
         }
-        let margin = app.masks.stack.raster_margin_pixels_for_layer(
+        let primary_down = ui.input(|input| input.pointer.primary_down());
+        // Pending edits have not reached the interaction upload interval yet.
+        // Reuse the texture's source region too: feather/grow can change margins.
+        let cached_region = cached_mask_overlay_region(
+            app.masks.overlay_texture_key,
+            app.masks.overlay_texture.is_some(),
             mask_index,
             component_index,
-            source_width,
-            source_height,
+            app.masks.interaction_has_uncommitted_change,
+            primary_down,
         );
-        let region = overlay_raster_region(
-            app.preview.visible_uv,
-            source_width,
-            source_height,
-            preview_rect,
-            physical_pixels_per_point(ui.ctx()),
-            margin,
-        );
+        let region = cached_region.unwrap_or_else(|| {
+            let margin = app.masks.stack.raster_margin_pixels_for_layer(
+                mask_index,
+                component_index,
+                source_width,
+                source_height,
+            );
+            mask_overlay_raster_region(
+                overlay_raster_region(
+                    app.preview.visible_uv,
+                    source_width,
+                    source_height,
+                    preview_rect,
+                    physical_pixels_per_point(ui.ctx()),
+                    margin,
+                ),
+                app.masks.interaction_dirty_layer,
+                primary_down,
+            )
+        });
         let key = (
             mask_index,
             component_index,
@@ -1061,7 +1078,9 @@ impl Preview {
             region,
         );
 
-        if app.masks.overlay_texture_key != Some(key) {
+        if cached_region.is_none()
+            && (app.masks.overlay_texture_key != Some(key) || app.masks.overlay_texture.is_none())
+        {
             let cropped_masks = app.masks.stack.cropped_for_region(
                 region.source_x,
                 region.source_y,

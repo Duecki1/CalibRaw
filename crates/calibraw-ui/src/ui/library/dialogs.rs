@@ -532,6 +532,9 @@ pub(super) fn show_library_raw_name_dialog(
 
     match rename_asset(app, &asset, &name) {
         Ok(renamed_asset) => {
+            #[cfg(target_os = "android")]
+            let _ = renamed_asset;
+            #[cfg(not(target_os = "android"))]
             if let Some(clipboard) = app.library.image_clipboard.as_mut() {
                 for clipboard_asset in &mut clipboard.assets {
                     if clipboard_asset.id == asset.id {

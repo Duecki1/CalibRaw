@@ -35,5 +35,5 @@ pub use execution_provider::set_ai_acceleration_enabled;
 pub use execution_provider::{
     active_execution_providers, ai_acceleration_enabled, create_session_with_fallback,
     take_ai_gpu_memory_failure, CpuFallbackProfile, ExecutionProviderStatus, FallbackSession,
-    ModelSource, SessionOptions,
+    SessionOptions,
 };

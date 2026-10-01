@@ -1,5 +1,6 @@
 package de.duecki.calibraw;
 
+import android.app.Activity;
 import android.util.Log;
 
 import java.io.File;
@@ -16,9 +17,9 @@ final class ThumbnailCache {
     private static final long MAX_BYTES = 128L * 1024L * 1024L;
     private static final int DELETE_ATTEMPTS = 3;
 
-    private final AndroidStorageAccess storage;
+    private final Activity storage;
 
-    ThumbnailCache(AndroidStorageAccess storage) {
+    ThumbnailCache(Activity storage) {
         this.storage = storage;
     }
 

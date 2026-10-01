@@ -5,6 +5,7 @@ use std::ops::{Deref, DerefMut};
 use std::sync::Arc;
 
 mod effects;
+mod raster_cache;
 
 pub use effects::{
     params as effect_params, BlurEffectSettings, EdgeGlowEffectSettings, FogEffectSettings,
@@ -95,6 +96,7 @@ impl MaskKind {
                 | Self::Object
                 | Self::LuminanceRange
                 | Self::ColorRange
+                | Self::DepthRange
         )
     }
 }
@@ -422,7 +424,86 @@ pub enum MaskGeometry {
         feather: f32,
         sampled: bool,
     },
+    DepthRange {
+        depth: Option<MaskImage>,
+        #[serde(flatten)]
+        range: DepthRangeSettings,
+    },
     Placeholder,
+}
+
+/// Relative-depth selection with independently softened near and far cutoffs.
+#[derive(Clone, Copy, Debug, PartialEq, serde::Deserialize, serde::Serialize)]
+#[serde(from = "DepthRangeSettingsInput")]
+pub struct DepthRangeSettings {
+    pub near: f32,
+    pub far: f32,
+    // Retain the schema's existing range-feather key for the near end.
+    // The added far_feather overrides it for the far end on newer readers.
+    #[serde(rename = "feather")]
+    pub near_feather: f32,
+    pub far_feather: f32,
+}
+
+impl Default for DepthRangeSettings {
+    fn default() -> Self {
+        Self {
+            near: 0.0,
+            far: 0.5,
+            near_feather: 0.1,
+            far_feather: 0.1,
+        }
+    }
+}
+
+#[derive(serde::Deserialize)]
+struct DepthRangeSettingsInput {
+    near: f32,
+    far: f32,
+    #[serde(default)]
+    near_feather: Option<f32>,
+    #[serde(default)]
+    far_feather: Option<f32>,
+    // Sidecars written before independent end feathering used one value.
+    #[serde(default)]
+    feather: Option<f32>,
+}
+
+impl From<DepthRangeSettingsInput> for DepthRangeSettings {
+    fn from(input: DepthRangeSettingsInput) -> Self {
+        let legacy = input.feather.unwrap_or(0.1);
+        Self {
+            near: input.near,
+            far: input.far,
+            near_feather: input.near_feather.unwrap_or(legacy),
+            far_feather: input.far_feather.unwrap_or(legacy),
+        }
+    }
+}
+
+impl DepthRangeSettings {
+    /// The UI curve and mask rasterizer use the same depth response.
+    pub fn weight(&self, depth: f32) -> f32 {
+        let near = self.near.clamp(0.0, 1.0);
+        let far = self.far.clamp(near, 1.0);
+        let smooth = |value: f32| {
+            let value = value.clamp(0.0, 1.0);
+            value * value * (3.0 - 2.0 * value)
+        };
+        let near_width = self.near_feather.clamp(0.0, 1.0);
+        let far_width = self.far_feather.clamp(0.0, 1.0);
+        let lower = if near_width > 0.0 && near > 0.0 {
+            smooth((depth - near) / near_width + 0.5)
+        } else {
+            f32::from(depth >= near)
+        };
+        let upper = if far_width > 0.0 && far < 1.0 {
+            1.0 - smooth((depth - far) / far_width + 0.5)
+        } else {
+            f32::from(depth <= far)
+        };
+        lower * upper
+    }
 }
 
 fn default_object_brush_size() -> f32 {
@@ -512,7 +593,10 @@ impl MaskGeometry {
                 feather: 0.12,
                 sampled: false,
             },
-            _ => Self::Placeholder,
+            MaskKind::DepthRange => Self::DepthRange {
+                depth: None,
+                range: DepthRangeSettings::default(),
+            },
         }
     }
 
@@ -523,6 +607,7 @@ impl MaskGeometry {
             Self::Radial { initialized, .. } | Self::Linear { initialized, .. } => *initialized,
             Self::Path { points, .. } => points.len() >= 3,
             Self::Ai { mask, .. } | Self::Object { mask, .. } => mask.is_some(),
+            Self::DepthRange { depth, .. } => depth.is_some(),
             Self::LuminanceRange { source, .. } => source.is_some(),
             Self::ColorRange {
                 source, sampled, ..
@@ -549,7 +634,9 @@ impl MaskGeometry {
             | Self::Object { feather, .. }
             | Self::LuminanceRange { feather, .. }
             | Self::ColorRange { feather, .. } => feather,
-            Self::Fullscreen | Self::Brush { .. } | Self::Placeholder => return false,
+            Self::Fullscreen | Self::Brush { .. } | Self::DepthRange { .. } | Self::Placeholder => {
+                return false
+            }
         };
         set_if_changed(feather, value)
     }
@@ -877,6 +964,9 @@ pub struct MaskStack {
     pub masks: Vec<LocalMask>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub global_effects: Vec<EffectComponent>,
+    /// Scene depth in full-image coordinates, including when this stack is cropped.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scene_depth: Option<MaskImage>,
     pub selected_mask: Option<usize>,
     pub selected_component: Option<usize>,
     #[serde(skip, default)]
@@ -888,6 +978,39 @@ impl MaskStack {
         *self = Self::default();
     }
 
+    /// Returns full-image depth, falling back to the first cached depth-range image.
+    /// Disabled masks/components still provide useful scene data. Consumers sampling
+    /// full-image UVs must use width, height and pixels directly: a cropped depth-range
+    /// image shares its original pixels but has a region-specific sampling rectangle.
+    pub fn scene_depth_image(&self) -> Option<&MaskImage> {
+        self.scene_depth.as_ref().or_else(|| {
+            self.masks
+                .iter()
+                .flat_map(|mask| &mask.components)
+                .find_map(|component| match &component.geometry {
+                    MaskGeometry::DepthRange { depth, .. } => depth.as_ref(),
+                    _ => None,
+                })
+        })
+    }
+
+    pub fn has_fog_effect(&self) -> bool {
+        let active_fog = |component: &EffectComponent| {
+            component.effect == MaskEffect::Fog && component.is_active()
+        };
+        self.global_effects.iter().any(active_fog)
+            || self.masks.iter().any(|mask| {
+                mask.enabled
+                    && mask.opacity > 0.0
+                    && (mask.effect_components.iter().any(active_fog)
+                        || active_fog(&EffectComponent {
+                            effect: mask.effect,
+                            enabled: true,
+                            settings: mask.effect_settings,
+                        }))
+            })
+    }
+
     pub fn cropped_for_region(
         &self,
         x: u32,
@@ -897,6 +1020,7 @@ impl MaskStack {
         full_width: u32,
         full_height: u32,
     ) -> Self {
+        // Scene depth stays in full-image coordinates for GPU full-image UV sampling.
         let mut cropped = self.clone();
         let full_width = full_width.max(1);
         let full_height = full_height.max(1);
@@ -990,6 +1114,11 @@ impl MaskStack {
                         *grow *= image_scale;
                     }
                     MaskGeometry::Placeholder => {}
+                    MaskGeometry::DepthRange { depth, .. } => {
+                        *depth = depth
+                            .as_ref()
+                            .map(|image| crop_mask_image(image, u0, v0, du, dv));
+                    }
                 }
             }
         }
@@ -1551,6 +1680,90 @@ fn rasterize_component(
     image_height: u32,
     subject_refinement: &SubjectRefinement,
 ) -> Vec<f32> {
+    // Square preview atlases and aspect-preserving detail rasters must measure
+    // grow/feather in the same image space. Shape on an image-aspect grid, then
+    // map coverage to the requested atlas. Keep that grid even at zero sliders
+    // so starting a drag does not change the generated matte or path sampling.
+    let needs_isotropic_grid = match &component.geometry {
+        MaskGeometry::Ai { mask: Some(_), .. } | MaskGeometry::Object { mask: Some(_), .. } => true,
+        MaskGeometry::Path { points, .. } => points.len() >= 3,
+        MaskGeometry::LuminanceRange {
+            source: Some(_), ..
+        }
+        | MaskGeometry::ColorRange {
+            source: Some(_),
+            sampled: true,
+            ..
+        } => true,
+        _ => false,
+    };
+    if needs_isotropic_grid {
+        let space = MaskRasterSpace::new(width, height, image_width, image_height);
+        if let Some([internal_width, internal_height]) = space.isotropic_extent() {
+            let coverage = rasterize_component_internal(
+                component,
+                internal_width,
+                internal_height,
+                image_width,
+                image_height,
+                subject_refinement,
+            );
+            return resample_coverage(&coverage, internal_width, internal_height, width, height);
+        }
+    }
+    rasterize_component_internal(
+        component,
+        width,
+        height,
+        image_width,
+        image_height,
+        subject_refinement,
+    )
+}
+
+fn resample_coverage(
+    source: &[f32],
+    source_width: u32,
+    source_height: u32,
+    width: u32,
+    height: u32,
+) -> Vec<f32> {
+    let sample_axis = |index: u32, target_extent: u32, source_extent: u32| {
+        // Match raster sampling at pixel centers and extend the edge pixels.
+        let position = ((index as f64 + 0.5) * source_extent as f64 / target_extent as f64 - 0.5)
+            .clamp(0.0, (source_extent - 1) as f64);
+        let lower = position.floor() as usize;
+        let upper = (lower + 1).min(source_extent as usize - 1);
+        (lower, upper, (position - lower as f64) as f32)
+    };
+    let columns: Vec<_> = (0..width)
+        .map(|x| sample_axis(x, width, source_width))
+        .collect();
+    let mut output = vec![0.0; width as usize * height as usize];
+    output
+        .par_chunks_mut(width as usize)
+        .enumerate()
+        .for_each(|(y, row)| {
+            let (y0, y1, wy) = sample_axis(y as u32, height, source_height);
+            let row0 = &source[y0 * source_width as usize..][..source_width as usize];
+            let row1 = &source[y1 * source_width as usize..][..source_width as usize];
+            for (value, &(x0, x1, wx)) in row.iter_mut().zip(&columns) {
+                let top = row0[x0] + (row0[x1] - row0[x0]) * wx;
+                let bottom = row1[x0] + (row1[x1] - row1[x0]) * wx;
+                *value = (top + (bottom - top) * wy).clamp(0.0, 1.0);
+            }
+        });
+    output
+}
+
+fn rasterize_component_internal(
+    component: &MaskComponent,
+    width: u32,
+    height: u32,
+    image_width: u32,
+    image_height: u32,
+    subject_refinement: &SubjectRefinement,
+) -> Vec<f32> {
     let space = MaskRasterSpace::new(width, height, image_width, image_height);
     match &component.geometry {
         MaskGeometry::Fullscreen => vec![1.0; width as usize * height as usize],
@@ -1653,6 +1866,16 @@ fn rasterize_component(
             if grow.abs() > 1e-5 {
                 shape_probability_mask(&mut coverage, width, height, *grow, 0.0);
             }
+            coverage
+        }
+        MaskGeometry::DepthRange {
+            depth: Some(depth),
+            range,
+        } => {
+            let mut coverage = rasterize_mask_image(width, height, depth);
+            coverage
+                .par_iter_mut()
+                .for_each(|value| *value = range.weight(*value));
             coverage
         }
         _ => vec![0.0; width as usize * height as usize],
@@ -1790,8 +2013,6 @@ fn source_mask_core_radius(source: &MaskImage, width: u32, height: u32) -> Optio
     if source.width == 0 || source.height == 0 {
         return None;
     }
-    let source_width = source.width as usize;
-    let source_height = source.height as usize;
     let sample_width = (source.sampling_rect[2] - source.sampling_rect[0])
         .abs()
         .max(1e-6);
@@ -1800,38 +2021,7 @@ fn source_mask_core_radius(source: &MaskImage, width: u32, height: u32) -> Optio
         .max(1e-6);
     let scale_x = width as f32 / source.width as f32 / sample_width;
     let scale_y = height as f32 / source.height as f32 / sample_height;
-    let mut horizontal_runs = vec![0u32; source.pixels.len()];
-    for y in 0..source_height {
-        let mut x = 0;
-        while x < source_width {
-            let start = x;
-            while x < source_width && source.pixels[y * source_width + x] >= 128 {
-                x += 1;
-            }
-            let length = (x - start) as u32;
-            for column in start..x {
-                horizontal_runs[y * source_width + column] = length;
-            }
-            x += usize::from(length == 0);
-        }
-    }
-    let mut thickest = 0.0f32;
-    for x in 0..source_width {
-        let mut y = 0;
-        while y < source_height {
-            let start = y;
-            while y < source_height && source.pixels[y * source_width + x] >= 128 {
-                y += 1;
-            }
-            let vertical = (y - start) as f32 * scale_y;
-            for row in start..y {
-                let horizontal = horizontal_runs[row * source_width + x] as f32 * scale_x;
-                thickest = thickest.max(horizontal.min(vertical));
-            }
-            y += usize::from(vertical == 0.0);
-        }
-    }
-    (thickest > 0.0).then_some(thickest * 0.45)
+    raster_cache::source_frontier(source).core_radius(scale_x, scale_y)
 }
 
 fn shape_probability_mask_with_radius(
@@ -1908,29 +2098,19 @@ fn shape_distance_mask(
         .iter()
         .map(|value| u8::from(*value >= 0.5))
         .collect::<Vec<_>>();
-    if binary.iter().all(|value| *value == binary[0]) {
+    let Some(contour) = raster_cache::prepared_contour(binary, width, height) else {
         return;
-    }
-    let distance_to_inside = chamfer_distance(&binary, width, height, 1);
-    let distance_to_outside = chamfer_distance(&binary, width, height, 0);
+    };
     let edge = width.min(height) as f32;
     let grow_radius = grow * edge * 0.05;
     let mut feather_radius = mask_feather_radius(edge, feather);
     if feather_radius > 0.0 {
-        let deepest_inside = distance_to_outside
-            .iter()
-            .zip(&binary)
-            .filter(|(_, inside)| **inside == 1)
-            .map(|(distance, _)| *distance)
-            .fold(0.0f32, f32::max);
-        feather_radius = feather_radius.min(core_radius.unwrap_or(deepest_inside * 0.8));
+        feather_radius = feather_radius.min(core_radius.unwrap_or(contour.deepest_inside * 0.8));
     }
 
     mask.par_iter_mut().enumerate().for_each(|(index, value)| {
         let confidence_offset = (*value - 0.5) * 0.5;
-        let signed_distance = distance_to_outside[index] - distance_to_inside[index]
-            + confidence_offset
-            + grow_radius;
+        let signed_distance = contour.signed_distance[index] + confidence_offset + grow_radius;
         *value = if feather_radius <= 1e-5 {
             smoothstep(-0.75, 0.75, signed_distance)
         } else if feather_inside {
@@ -2160,6 +2340,25 @@ impl MaskRasterSpace {
             raster: [width, height],
             image: [image_width, image_height],
         }
+    }
+
+    fn isotropic_extent(self) -> Option<[u32; 2]> {
+        let [width, height] = self.raster;
+        let [image_width, image_height] = self.image;
+        if width == 0 || height == 0 || image_width == 0 || image_height == 0 {
+            return None;
+        }
+        // Fit the image aspect into the requested bounds, rounding once.
+        let extent = if width as u64 * image_height as u64 <= height as u64 * image_width as u64 {
+            let fitted_height =
+                (width as u64 * image_height as u64 + image_width as u64 / 2) / image_width as u64;
+            [width, fitted_height.clamp(1, height as u64) as u32]
+        } else {
+            let fitted_width = (height as u64 * image_width as u64 + image_height as u64 / 2)
+                / image_height as u64;
+            [fitted_width.clamp(1, width as u64) as u32, height]
+        };
+        (extent != self.raster).then_some(extent)
     }
 }
 
@@ -2690,3 +2889,6 @@ pub fn ellipse_outline_points(
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod zoom_tests;

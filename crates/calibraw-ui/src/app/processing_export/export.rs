@@ -65,10 +65,6 @@ impl ExportTask {
     }
 }
 
-pub(super) fn clear_export_task(slot: &mut Option<ExportTask>) {
-    *slot = None;
-}
-
 pub(in crate::app) fn export_source_stem(
     current_path: Option<&std::path::Path>,
     current_label: Option<&str>,
@@ -710,7 +706,7 @@ impl CalibRawApp {
                             {
                                 if !is_batch {
                                     self.ui.notice = Some(format!("Exported {}", path.display()));
-                                    clear_export_task(&mut self.export.task);
+                                    self.export.task = None;
                                 }
                             }
 
@@ -736,14 +732,14 @@ impl CalibRawApp {
                                                 } else {
                                                     self.ui.notice =
                                                         Some(format!("Exported to {location}"));
-                                                    clear_export_task(&mut self.export.task);
+                                                    self.export.task = None;
                                                 }
                                             }
                                             Err(error) => {
                                                 if is_batch {
                                                     android_batch_result = Some(Err(error.clone()));
                                                 } else {
-                                                    clear_export_task(&mut self.export.task);
+                                                    self.export.task = None;
                                                 }
                                                 self.ui.notice =
                                                     Some(format!("Export failed: {error}"));
@@ -780,7 +776,7 @@ impl CalibRawApp {
                                                 if is_batch {
                                                     android_batch_result = Some(Err(error.clone()));
                                                 } else {
-                                                    clear_export_task(&mut self.export.task);
+                                                    self.export.task = None;
                                                 }
                                                 self.ui.notice =
                                                     Some(format!("Export failed: {error}"));
@@ -792,7 +788,7 @@ impl CalibRawApp {
                                         if is_batch {
                                             android_batch_result = Some(Err(error.clone()));
                                         } else {
-                                            clear_export_task(&mut self.export.task);
+                                            self.export.task = None;
                                         }
                                         self.ui.notice = Some(format!("Export failed: {error}"));
                                         log::error!("Android export finalization failed: {error}");
@@ -809,12 +805,12 @@ impl CalibRawApp {
                                 if is_batch {
                                     android_batch_result = Some(Err(error.clone()));
                                 } else {
-                                    clear_export_task(&mut self.export.task);
+                                    self.export.task = None;
                                 }
                             }
                             #[cfg(not(target_os = "android"))]
                             if !is_batch {
-                                clear_export_task(&mut self.export.task);
+                                self.export.task = None;
                             }
                             if was_cancelled {
                                 self.ui.notice = Some("Export cancelled.".to_owned());
@@ -841,12 +837,12 @@ impl CalibRawApp {
                     android_batch_result =
                         Some(Err("export worker stopped unexpectedly".to_owned()));
                 } else {
-                    clear_export_task(&mut self.export.task);
+                    self.export.task = None;
                 }
             }
             #[cfg(not(target_os = "android"))]
             if self.export.batch.is_none() {
-                clear_export_task(&mut self.export.task);
+                self.export.task = None;
             }
         }
 

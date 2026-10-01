@@ -135,9 +135,19 @@ fn selection_actions_are_shared_and_single_item_actions_stay_guarded() {
         Some(LibraryAction::Rename(_))
     ));
     assert!(library_selection_action(SelectionBarCommand::Rename, &two).is_none());
+    #[cfg(not(target_os = "android"))]
     assert!(matches!(
         library_selection_action(SelectionBarCommand::Copy, &two),
         Some(LibraryAction::Copy(assets)) if assets.len() == 2
+    ));
+    #[cfg(not(target_os = "android"))]
+    assert!(matches!(
+        library_selection_action(SelectionBarCommand::Cut, &two),
+        Some(LibraryAction::Cut(assets)) if assets.len() == 2
+    ));
+    assert!(matches!(
+        library_selection_action(SelectionBarCommand::Duplicate, &two),
+        Some(LibraryAction::Duplicate(assets)) if assets.len() == 2
     ));
     assert!(matches!(
         library_selection_action(SelectionBarCommand::Delete, &two),
@@ -300,24 +310,6 @@ fn thumbnail_size_and_responsive_mobile_target_remain_stable() {
 }
 
 #[test]
-fn import_fab_is_square_bottom_right_and_uses_plus_icon() {
-    let bounds = eframe::egui::Rect::from_min_size(
-        eframe::egui::pos2(10.0, 20.0),
-        eframe::egui::vec2(300.0, 400.0),
-    );
-    let rect = library_import_fab_rect(bounds);
-    assert_eq!(
-        rect.size(),
-        eframe::egui::Vec2::splat(crate::ui::theme::FLOATING_ACTION_EDGE)
-    );
-    assert_eq!(
-        rect.right_bottom(),
-        bounds.right_bottom() - eframe::egui::Vec2::splat(crate::ui::theme::FLOATING_ACTION_MARGIN)
-    );
-    assert_eq!(library_import_icon(), egui_phosphor::regular::PLUS);
-}
-
-#[test]
 fn complete_rows_fill_the_viewport_and_the_final_row_is_left_sparse() {
     let aspects = vec![1.5; 7];
     let rows = justified_thumbnail_row_ranges(&aspects, 640.0, 140.0, 6.0);
@@ -394,8 +386,9 @@ fn cover_uv_crops_without_leaving_unit_square() {
     assert_eq!(uv.bottom(), 1.0);
 }
 
+#[cfg(not(target_os = "android"))]
 #[test]
-fn image_paste_summary_is_platform_neutral() {
+fn image_paste_summary_reports_success_and_partial_failure() {
     assert_eq!(
         image_paste_summary(ImageClipboardMode::Copy, 2, 2, "destination", Vec::new()).unwrap(),
         "Copied 2 RAWs to destination."

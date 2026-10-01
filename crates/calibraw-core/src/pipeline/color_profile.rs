@@ -144,12 +144,12 @@ impl ToneCurve {
 
     pub fn sampled_lut(&self, size: usize) -> Vec<f32> {
         let size = size.max(2);
-        let points = normalized_curve_points(&self.points);
-        let second_derivatives = natural_cubic_second_derivatives(&points);
+        let points = &self.points;
+        let second_derivatives = natural_cubic_second_derivatives(points);
         (0..size)
             .map(|index| {
                 let x = index as f32 / (size - 1) as f32;
-                sample_natural_cubic(&points, &second_derivatives, x)
+                sample_natural_cubic(points, &second_derivatives, x)
             })
             .collect()
     }
@@ -184,19 +184,9 @@ pub struct DcpProfile {
 
 impl DcpProfile {
     pub fn identity_from_path(path: &Path) -> Result<Option<DcpProfileIdentity>> {
-        let mut file = File::open(path).with_context(|| format!("open {}", path.display()))?;
-        let mut signature = [0u8; 4];
-        if file.read_exact(&mut signature).is_err() {
+        let Some(mut tiff) = open_profile_tiff(path)? else {
             return Ok(None);
-        }
-        let classic_tiff = signature == *b"II*\0" || signature == *b"MM\0*";
-        let big_tiff = signature == *b"II+\0" || signature == *b"MM\0+";
-        let standalone_dcp = signature == *b"IIRC" || signature == *b"MMCR";
-        if !classic_tiff && !big_tiff && !standalone_dcp {
-            return Ok(None);
-        }
-        file.seek(SeekFrom::Start(0))?;
-        let mut tiff = TiffReader::new(file)?;
+        };
         let tags = tiff.read_primary_ifd()?;
         let Some((name, camera_model)) = profile_identity_from_tags(&mut tiff, &tags)? else {
             return Ok(None);
@@ -205,24 +195,11 @@ impl DcpProfile {
     }
 
     pub fn from_path(path: &Path) -> Result<Option<Self>> {
-        let mut file = File::open(path).with_context(|| format!("open {}", path.display()))?;
-        let mut signature = [0u8; 4];
-        if file.read_exact(&mut signature).is_err() {
-            return Ok(None);
-        }
-        let classic_tiff = signature == *b"II*\0" || signature == *b"MM\0*";
-        let big_tiff = signature == *b"II+\0" || signature == *b"MM\0+";
-        let standalone_dcp = signature == *b"IIRC" || signature == *b"MMCR";
-        if !classic_tiff && !big_tiff && !standalone_dcp {
-            return Ok(None);
-        }
-        file.seek(SeekFrom::Start(0))?;
-        let mut tiff = TiffReader::new(file)?;
-        let tags = tiff.read_primary_ifd()?;
-        let Some(profile) = profile_from_tags(&mut tiff, &tags)? else {
+        let Some(mut tiff) = open_profile_tiff(path)? else {
             return Ok(None);
         };
-        Ok(Some(profile))
+        let tags = tiff.read_primary_ifd()?;
+        profile_from_tags(&mut tiff, &tags)
     }
 
     pub fn calibration_is_compatible(&self) -> bool {
@@ -240,6 +217,22 @@ impl DcpProfile {
             (None, None) => None,
         }
     }
+}
+
+fn open_profile_tiff(path: &Path) -> Result<Option<TiffReader>> {
+    let mut file = File::open(path).with_context(|| format!("open {}", path.display()))?;
+    let mut signature = [0u8; 4];
+    if file.read_exact(&mut signature).is_err() {
+        return Ok(None);
+    }
+    if !matches!(
+        &signature,
+        b"II*\0" | b"MM\0*" | b"II+\0" | b"MM\0+" | b"IIRC" | b"MMCR"
+    ) {
+        return Ok(None);
+    }
+    file.seek(SeekFrom::Start(0))?;
+    TiffReader::new(file).map(Some)
 }
 
 #[derive(Clone, Debug, Default)]
@@ -610,10 +603,6 @@ fn checked_map_len(divisions: [u32; 3]) -> Result<usize> {
     Ok(entries)
 }
 
-fn normalized_curve_points(points: &[[f32; 2]]) -> Vec<[f32; 2]> {
-    points.to_vec()
-}
-
 fn natural_cubic_second_derivatives(points: &[[f32; 2]]) -> Vec<f64> {
     let count = points.len();
     let mut second = vec![0.0f64; count];
@@ -778,14 +767,6 @@ fn map_output_lut_input_rec2020(rgb: [f32; 3]) -> [f32; 3] {
         return rec2020_from_oklab([lightness, 0.0, 0.0]);
     }
     let hue = [lab[1] / chroma, lab[2] / chroma];
-    let knee_probe = rec2020_from_oklab([
-        lightness,
-        hue[0] * (chroma / 0.90),
-        hue[1] * (chroma / 0.90),
-    ]);
-    if (lightness - lab[0]).abs() <= 1e-7 && rgb_is_unit(rgb) && rgb_is_unit(knee_probe) {
-        return rgb;
-    }
     let boundary = rec2020_unit_boundary(lightness, hue, chroma);
     let compressed = perceptual_soft_chroma(chroma, boundary);
     rec2020_from_oklab([lightness, hue[0] * compressed, hue[1] * compressed])

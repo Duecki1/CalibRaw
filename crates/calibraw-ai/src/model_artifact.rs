@@ -12,28 +12,12 @@ use std::{
 const IO_BUFFER_BYTES: usize = 256 * 1024;
 static NEXT_PARTIAL_ARTIFACT_ID: AtomicU64 = AtomicU64::new(0);
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum ArtifactSize {
-    Exact(u64),
-    #[allow(dead_code)]
-    Max(u64),
-}
-
-impl ArtifactSize {
-    fn limit(self) -> u64 {
-        match self {
-            Self::Exact(bytes) | Self::Max(bytes) => bytes,
-        }
-    }
-}
-
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct ModelArtifact {
     pub name: &'static str,
     pub url: Option<&'static str>,
     pub sha256: &'static str,
-    pub size: ArtifactSize,
-    pub progress_total: u64,
+    pub bytes: u64,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -96,22 +80,19 @@ where
         reader,
         &mut file,
         0,
-        artifact.size.limit(),
-        artifact.progress_total,
-        artifact.name,
+        artifact,
         &mut |_, _| {},
         &mut cancellation,
     )
     .map_err(TransferError::into_anyhow)?;
     file.sync_all()
         .with_context(|| format!("flush {}", artifact.name))?;
-    if let ArtifactSize::Exact(expected) = artifact.size {
-        anyhow::ensure!(
-            downloaded == expected,
-            "{} size mismatch: received {downloaded}, expected {expected}",
-            artifact.name
-        );
-    }
+    anyhow::ensure!(
+        downloaded == artifact.bytes,
+        "{} size mismatch: received {downloaded}, expected {}",
+        artifact.name,
+        artifact.bytes
+    );
     verify_artifact(partial.path(), artifact)?;
     cancellation()?;
     partial
@@ -127,20 +108,13 @@ pub(crate) fn verify_artifact(path: &Path, artifact: ModelArtifact) -> Result<()
         "{} cache is not a regular file",
         artifact.name
     );
-    match artifact.size {
-        ArtifactSize::Exact(expected) => anyhow::ensure!(
-            metadata.len() == expected,
-            "{} size mismatch: found {}, expected {expected}",
-            artifact.name,
-            metadata.len()
-        ),
-        ArtifactSize::Max(maximum) => anyhow::ensure!(
-            metadata.len() > 0 && metadata.len() <= maximum,
-            "{} size {} is outside the allowed range 1..={maximum}",
-            artifact.name,
-            metadata.len()
-        ),
-    }
+    anyhow::ensure!(
+        metadata.len() == artifact.bytes,
+        "{} size mismatch: found {}, expected {}",
+        artifact.name,
+        metadata.len(),
+        artifact.bytes
+    );
     let actual = sha256_file_hex(path)?;
     anyhow::ensure!(
         actual == artifact.sha256,
@@ -215,7 +189,7 @@ where
         } else {
             0
         };
-        if downloaded > artifact.size.limit() {
+        if downloaded > artifact.bytes {
             partial
                 .remove()
                 .with_context(|| format!("remove oversized partial {} download", artifact.name))?;
@@ -229,7 +203,7 @@ where
                 })?;
                 return Ok(());
             }
-            if matches!(artifact.size, ArtifactSize::Exact(expected) if downloaded == expected) {
+            if downloaded == artifact.bytes {
                 partial.remove().with_context(|| {
                     format!("remove corrupt complete partial {} download", artifact.name)
                 })?;
@@ -237,7 +211,7 @@ where
             }
         }
         if downloaded > 0 {
-            progress(downloaded, artifact.progress_total.max(downloaded));
+            progress(downloaded, artifact.bytes);
         }
 
         let response_result = if options.resume && downloaded > 0 {
@@ -276,21 +250,14 @@ where
             Some(length) => Some(length),
             None => None,
         };
-        match (artifact.size, declared_total) {
-            (ArtifactSize::Exact(expected), Some(total)) => anyhow::ensure!(
-                total == expected,
-                "{} server declared {total} total bytes, expected {expected}",
-                artifact.name
-            ),
-            (ArtifactSize::Max(maximum), Some(total)) => anyhow::ensure!(
-                total <= maximum,
-                "{} response declares {total} bytes, above the {maximum}-byte limit",
-                artifact.name
-            ),
-            _ => {}
+        if let Some(total) = declared_total {
+            anyhow::ensure!(
+                total == artifact.bytes,
+                "{} server declared {total} total bytes, expected {}",
+                artifact.name,
+                artifact.bytes
+            );
         }
-        let total = declared_total.unwrap_or_else(|| artifact.progress_total.max(downloaded));
-
         let partial_exists = partial.path().exists();
         let mut open = OpenOptions::new();
         open.write(true);
@@ -313,9 +280,7 @@ where
             &mut reader,
             &mut file,
             downloaded,
-            artifact.size.limit(),
-            total,
-            artifact.name,
+            artifact,
             &mut progress,
             &mut cancellation,
         );
@@ -339,18 +304,17 @@ where
 
         file.sync_all()
             .with_context(|| format!("flush {}", artifact.name))?;
-        if let ArtifactSize::Exact(expected) = artifact.size {
-            if downloaded < expected {
-                last_error = Some(anyhow::anyhow!(
-                    "{} download ended early at {downloaded} / {expected} bytes",
-                    artifact.name
-                ));
-                if attempt + 1 < attempts {
-                    retry_backoff(attempt, &mut cancellation)?;
-                    continue;
-                }
-                break;
+        if downloaded < artifact.bytes {
+            last_error = Some(anyhow::anyhow!(
+                "{} download ended early at {downloaded} / {} bytes",
+                artifact.name,
+                artifact.bytes
+            ));
+            if attempt + 1 < attempts {
+                retry_backoff(attempt, &mut cancellation)?;
+                continue;
             }
+            break;
         }
 
         match verify_artifact(partial.path(), artifact) {
@@ -363,11 +327,9 @@ where
             }
             Err(error) => {
                 last_error = Some(error);
-                if matches!(artifact.size, ArtifactSize::Exact(_)) {
-                    partial.remove().with_context(|| {
-                        format!("remove corrupt partial {} download", artifact.name)
-                    })?;
-                }
+                partial.remove().with_context(|| {
+                    format!("remove corrupt partial {} download", artifact.name)
+                })?;
                 if attempt + 1 < attempts {
                     retry_backoff(attempt, &mut cancellation)?;
                 }
@@ -391,14 +353,11 @@ impl TransferError {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 fn copy_download<R, W, F, C>(
     reader: &mut R,
     writer: &mut W,
     mut downloaded: u64,
-    max_bytes: u64,
-    total: u64,
-    name: &str,
+    artifact: ModelArtifact,
     progress: &mut F,
     cancellation: &mut C,
 ) -> std::result::Result<u64, TransferError>
@@ -421,16 +380,18 @@ where
             .checked_add(read as u64)
             .context("model download byte count overflow")
             .map_err(TransferError::Fatal)?;
-        if downloaded > max_bytes {
+        if downloaded > artifact.bytes {
             return Err(TransferError::Fatal(anyhow::anyhow!(
-                "{name} download exceeded the {max_bytes}-byte limit"
+                "{} download exceeded the {}-byte limit",
+                artifact.name,
+                artifact.bytes
             )));
         }
         writer
             .write_all(&buffer[..read])
-            .with_context(|| format!("write {name}"))
+            .with_context(|| format!("write {}", artifact.name))
             .map_err(TransferError::Fatal)?;
-        progress(downloaded, total.max(downloaded));
+        progress(downloaded, artifact.bytes);
     }
 }
 
@@ -505,8 +466,7 @@ mod tests {
         name: "test model",
         url: None,
         sha256: "7702832f291b1ad6d8269d712184a9ddc87c9bac3833fa10b3f2140830fb4c47",
-        size: ArtifactSize::Exact(17),
-        progress_total: 17,
+        bytes: 17,
     };
 
     fn write_temp(bytes: &[u8]) -> (tempfile::TempDir, PathBuf) {

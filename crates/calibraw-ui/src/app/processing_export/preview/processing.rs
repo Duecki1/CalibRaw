@@ -1,6 +1,25 @@
 use super::*;
 
 impl CalibRawApp {
+    pub(in crate::app) fn interactive_detail_mask_edit(&self) -> bool {
+        self.preview.zoom > DETAIL_ZOOM_START
+            && self.masks.interaction_dirty_layer.is_some()
+            && self.egui_ctx.input(|input| input.pointer.primary_down())
+    }
+
+    pub(in crate::app) fn defer_background_mask_processing(&self) -> bool {
+        self.interactive_detail_mask_edit()
+            && !self.preview.white_balance_refresh_pending
+            && [
+                self.preview.pending_stage,
+                self.preview.navigation_pending_stage,
+                self.preview.detail_pending_stage,
+            ]
+            .iter()
+            .all(|stage| stage.is_none_or(|stage| stage == ProcessingStage::Output))
+            && self.preview_detail_is_current()
+    }
+
     pub(crate) fn mark_pipeline_dirty(&mut self) {
         let preview_source = self.preview_source_raw();
         self.note_edit_changed();
@@ -19,7 +38,7 @@ impl CalibRawApp {
             self.develop.target_exposure = next_exposure;
             if matches!(stage, ProcessingStage::Raw) {
                 if let Some(full_raw) = preview_source.as_ref() {
-                    if detail_uses_opposed_chroma(full_raw, &self.develop.target_exposure) {
+                    if full_raw.uses_opposed_chroma(&self.develop.target_exposure) {
                         full_raw.inpaint_opposed_chroma_for_exposure(&self.develop.target_exposure);
                     }
                 }
@@ -87,19 +106,25 @@ impl CalibRawApp {
         let virtual_full_size = detail.virtual_full_size;
         if stage == ProcessingStage::Raw
             && !detail_raw.is_pre_demosaiced_raster()
-            && detail_uses_opposed_chroma(full_raw, &self.develop.target_exposure)
+            && full_raw.uses_opposed_chroma(&self.develop.target_exposure)
         {
             // Crops and proxies share the full sensor cache. Populate the exact
             // WB/black/clip/AI key before GpuParams reads it from the derived RAW.
             full_raw.inpaint_opposed_chroma_for_exposure(&self.develop.target_exposure);
         }
-        let mask_region = detail_mask_source_region(
+        let interactive = self.interactive_detail_mask_edit();
+        let mask_region = detail_mask_update_region(
             &preview_masks,
             detail.source_origin,
             detail.source_size,
-            full_raw.width,
-            full_raw.height,
+            [full_raw.width, full_raw.height],
+            Some(detail.mask_source_region),
+            interactive,
         );
+        let mask_extent =
+            detail_mask_texture_extent(mask_region, detail.pipeline.mask_atlas_edge(), interactive);
+        let mapping_changed =
+            detail.mask_source_region != mask_region || detail.mask_texture_extent != mask_extent;
         let params = GpuParams::new_for_tile(
             &self.develop.target_exposure,
             &preview_masks,
@@ -112,7 +137,7 @@ impl CalibRawApp {
         .with_vignette_geometry(self.develop.geometry)
         .with_mask_uv_rect_and_extent(
             mask_source_region_uv(mask_region, full_raw.width, full_raw.height),
-            mask_region_texture_extent(mask_region, detail.pipeline.mask_atlas_edge()),
+            mask_extent,
         );
 
         let normal_tone_is_current = !matches!(
@@ -136,23 +161,25 @@ impl CalibRawApp {
         let Some(detail) = self.preview.detail.as_mut() else {
             return;
         };
-        if stage == ProcessingStage::Output
-            && self.masks.detail_dirty_layers.iter().any(|dirty| *dirty)
+        if mapping_changed
+            || (stage == ProcessingStage::Output
+                && self.masks.detail_dirty_layers.iter().any(|dirty| *dirty))
         {
-            let region_changed = detail.mask_source_region != mask_region;
             if let Err(error) = Self::upload_detail_masks(
                 &detail.pipeline,
                 &render_state.queue,
                 &preview_masks,
                 full_raw,
                 mask_region,
-                (!region_changed).then_some(&self.masks.detail_dirty_layers),
+                mask_extent,
+                (!mapping_changed).then_some(&self.masks.detail_dirty_layers),
             ) {
                 self.ui.notice = Some(error);
                 self.preview.detail_pending_stage = None;
                 return;
             }
             detail.mask_source_region = mask_region;
+            detail.mask_texture_extent = mask_extent;
             self.masks.detail_dirty_layers.fill(false);
         }
 
@@ -221,15 +248,26 @@ impl CalibRawApp {
 
     pub(in crate::app) fn advance_processing(&mut self, frame: &eframe::Frame) {
         let exact_white_balance_refresh = self.preview.white_balance_refresh_pending;
-        if exact_white_balance_refresh
-            && !self
-                .preview
-                .interactive_render_ready
-                .load(std::sync::atomic::Ordering::Acquire)
+        if !self
+            .preview
+            .interactive_render_ready
+            .load(std::sync::atomic::Ordering::Acquire)
         {
             // Edits continue to update target_exposure while the GPU is busy.
             // The completion callback requests another frame for the newest
             // value, avoiding an unbounded queue of obsolete scrub renders.
+            return;
+        }
+        if self.defer_background_mask_processing() {
+            // The sharp crop covers this view. Coalesce GPU work and postpone
+            // the fitted/navigation fallbacks until the slider is released.
+            if self.preview.detail_pending_stage.is_some() {
+                self.preview
+                    .interactive_render_ready
+                    .store(false, std::sync::atomic::Ordering::Release);
+                self.advance_zoomed_processing(frame);
+                self.finish_interactive_preview_render(frame);
+            }
             return;
         }
         if exact_white_balance_refresh {
@@ -280,22 +318,26 @@ impl CalibRawApp {
             }
             self.preview.white_balance_refresh_pending = false;
 
-            if let Some(render_state) = frame.wgpu_render_state() {
-                let ready = Arc::clone(&self.preview.interactive_render_ready);
-                let repaint = self.egui_ctx.clone();
-                render_state.queue.on_submitted_work_done(move || {
-                    ready.store(true, std::sync::atomic::Ordering::Release);
-                    repaint.request_repaint();
-                });
-            } else {
-                self.preview
-                    .interactive_render_ready
-                    .store(true, std::sync::atomic::Ordering::Release);
-            }
+            self.finish_interactive_preview_render(frame);
             return;
         }
 
         self.advance_main_processing_stage(frame, &preview_masks, &preview_source);
+    }
+
+    fn finish_interactive_preview_render(&self, frame: &eframe::Frame) {
+        if let Some(render_state) = frame.wgpu_render_state() {
+            let ready = Arc::clone(&self.preview.interactive_render_ready);
+            let repaint = self.egui_ctx.clone();
+            render_state.queue.on_submitted_work_done(move || {
+                ready.store(true, std::sync::atomic::Ordering::Release);
+                repaint.request_repaint();
+            });
+        } else {
+            self.preview
+                .interactive_render_ready
+                .store(true, std::sync::atomic::Ordering::Release);
+        }
     }
 
     fn advance_main_processing_stage(
@@ -317,34 +359,14 @@ impl CalibRawApp {
         };
 
         if stage == ProcessingStage::Output && self.masks.dirty_layers.iter().any(|dirty| *dirty) {
-            let dirty_layers = self.masks.dirty_layers;
-            let edge = pipeline.mask_atlas_edge();
-            let mut upload_error = None;
-            for layer in 0..MAX_LOCAL_MASKS {
-                if !self.masks.dirty_layers[layer] {
-                    continue;
-                }
-                let bytes =
-                    preview_masks.rasterize_layer_f16(layer, edge, edge, raw.width, raw.height);
-                if let Err(error) = pipeline.update_mask_layer(&render_state.queue, layer, &bytes) {
-                    upload_error = Some(format!("Could not update local mask: {error:#}"));
-                    break;
-                }
-                self.masks.dirty_layers[layer] = false;
-            }
-            if let Some(error) = upload_error {
-                self.ui.notice = Some(error);
-                self.preview.pending_stage = None;
-                return;
-            }
-            if let Err(error) = pipeline.update_dirty_light_rays_mask_layers(
+            if let Err(error) = Self::upload_dirty_preview_masks(
+                pipeline,
                 &render_state.queue,
                 preview_masks,
-                raw.width,
-                raw.height,
-                Some(&dirty_layers),
+                raw,
+                &mut self.masks.dirty_layers,
             ) {
-                self.ui.notice = Some(format!("Could not update Light Rays mask: {error:#}"));
+                self.ui.notice = Some(error);
                 self.preview.pending_stage = None;
                 return;
             }

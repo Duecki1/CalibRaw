@@ -217,10 +217,7 @@ impl CalibRawApp {
         .then(|| self.raw_editing_time_ms());
         let sidecar_generation = self.begin_sidecar_open();
         crate::app::preview_visibility::PreviewVisibility::clear(&self.egui_ctx);
-        let reusable_preview_pipeline = {
-            let mut renderer = render_state.renderer.write();
-            self.take_preview_pipeline_and_release_textures(&mut renderer)
-        };
+        let reusable_preview_pipeline = self.take_preview_pipeline_and_release_textures();
         let retained_preview_program_template = self.preview.program_template.clone();
         #[cfg(target_os = "android")]
         let export_active_while_opening = self.export.task.is_some();
@@ -922,7 +919,7 @@ impl CalibRawApp {
                 };
                 let previous_pipeline = {
                     let mut renderer = render_state.renderer.write();
-                    let previous = self.take_preview_pipeline_and_release_textures(&mut renderer);
+                    let previous = self.take_preview_pipeline_and_release_textures();
                     loaded
                         .pipeline
                         .register_egui_texture(&render_state.device, &mut renderer);

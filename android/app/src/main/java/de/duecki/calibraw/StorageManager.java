@@ -1,5 +1,6 @@
 package de.duecki.calibraw;
 
+import android.app.Activity;
 import android.content.ClipData;
 import android.content.ContentResolver;
 import android.content.Intent;
@@ -20,7 +21,6 @@ import java.util.Comparator;
 import java.util.HashSet;
 import java.util.Locale;
 import java.util.PriorityQueue;
-import java.util.Set;
 
 final class StorageManager {
     private static final String LOG_TAG = "CalibRaw";
@@ -46,13 +46,13 @@ final class StorageManager {
 
     }
 
-    private final AndroidStorageAccess storage;
+    private final Activity storage;
     private final Callbacks callbacks;
     private final ThumbnailCache thumbnailCache;
     private final PickerLocationStore pickerLocations;
     private volatile String selectedRawLibraryFolder = "";
 
-    StorageManager(AndroidStorageAccess storage, Callbacks callbacks) {
+    StorageManager(Activity storage, Callbacks callbacks) {
         this.storage = storage;
         this.callbacks = callbacks;
         this.thumbnailCache = new ThumbnailCache(storage);
@@ -261,7 +261,7 @@ final class StorageManager {
 
     String listRawLibrary() {
         try {
-            return listCombinedRawLibrary();
+            return encodeRawLibrary();
         } catch (Exception error) {
             throw new IllegalStateException("Could not list the RAW library", error);
         }
@@ -623,21 +623,12 @@ final class StorageManager {
         return storage.getContentResolver().openInputStream(uri);
     }
 
-    private String listCombinedRawLibrary() {
-        ArrayList<RawLibraryRecord> records = new ArrayList<>();
-        records.addAll(listFileRawLibrary(selectedRawLibraryDirectory()));
+    private String encodeRawLibrary() {
+        ArrayList<RawLibraryRecord> records = listFileRawLibrary(selectedRawLibraryDirectory());
         records.sort(RAW_LIBRARY_OUTPUT_ORDER);
 
         StringBuilder result = new StringBuilder();
-        Set<String> seenUris = new HashSet<>();
-        int added = 0;
         for (RawLibraryRecord record : records) {
-            if (!seenUris.add(record.uri)) {
-                continue;
-            }
-            if (added > MAX_RAW_LIBRARY_FILES) {
-                break;
-            }
             appendLibraryRecord(
                     result,
                     record.uri,
@@ -645,7 +636,6 @@ final class StorageManager {
                     record.displayPath,
                     record.bytes,
                     record.modifiedSeconds);
-            added++;
         }
         return result.toString();
     }

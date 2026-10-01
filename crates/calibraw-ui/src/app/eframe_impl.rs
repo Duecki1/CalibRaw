@@ -37,19 +37,7 @@ fn dragged_develop_sidebar_width(
 
 impl CalibRawApp {
     fn release_optional_gpu_memory(&mut self) {
-        let retired = [
-            self.preview
-                .detail
-                .take()
-                .and_then(|preview| preview.pipeline.egui_texture_id),
-            self.preview
-                .navigation
-                .take()
-                .and_then(|preview| preview.pipeline.egui_texture_id),
-        ];
-        for texture_id in retired.into_iter().flatten() {
-            self.retire_egui_texture(texture_id);
-        }
+        self.discard_auxiliary_previews();
         self.preview.detail_rebuild_receiver = None;
         self.preview.detail_pending_stage = None;
         self.preview.navigation_pending_stage = None;
@@ -346,6 +334,7 @@ impl eframe::App for CalibRawApp {
                 .show(ui, |ui| Library::show_folder_sidebar(ui, self));
         }
 
+        self.flush_mask_geometry_interaction();
         let central_panel = if self.ui.active_tab == AppTab::Develop {
             egui::CentralPanel::default().frame(
                 egui::Frame::new()
@@ -379,6 +368,7 @@ impl eframe::App for CalibRawApp {
             }
         });
         self.sync_ai_model_runtime_context();
+        self.ensure_fog_scene_depth(frame);
         #[cfg(not(target_os = "android"))]
         self.sync_discord_presence();
 
@@ -402,7 +392,7 @@ impl eframe::App for CalibRawApp {
         self.update_preview_histogram(frame);
         self.refresh_preview_clipping(frame);
 
-        if self.preview.processing_pending() {
+        if self.preview.processing_pending() && !self.defer_background_mask_processing() {
             ui.ctx().request_repaint();
         }
         if self.foreground_operation_active()

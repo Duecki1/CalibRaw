@@ -415,6 +415,10 @@ pub(super) fn ai_mask_refresh_target_count(masks: &crate::pipeline::MaskStack) -
             | (
                 crate::pipeline::MaskKind::ColorRange,
                 crate::pipeline::MaskGeometry::ColorRange { .. },
+            )
+            | (
+                crate::pipeline::MaskKind::DepthRange,
+                crate::pipeline::MaskGeometry::DepthRange { .. },
             ) => true,
             _ => false,
         })
@@ -747,6 +751,7 @@ impl CalibRawApp {
             Some(
                 ForegroundOperationKind::SubjectMask
                     | ForegroundOperationKind::SkyMask
+                    | ForegroundOperationKind::DepthMask
                     | ForegroundOperationKind::ObjectMask
             )
         ) {

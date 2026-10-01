@@ -499,10 +499,19 @@ impl Sidebar {
             app.note_mask_edit_changed();
         }
         if request_subject {
-            if app.masks.stack.masks[mask_index].components[component_index].kind == MaskKind::Sky {
-                app.request_sky_mask(frame);
-            } else {
-                app.request_subject_mask(frame);
+            match app.masks.stack.masks[mask_index].components[component_index].kind {
+                MaskKind::Sky => app.request_sky_mask(frame),
+                MaskKind::DepthRange => {
+                    // The properties button explicitly regenerates an existing map.
+                    if app.masks.stack.masks[mask_index].components[component_index]
+                        .geometry
+                        .is_initialized()
+                    {
+                        app.masks.depth_cache = None;
+                    }
+                    app.request_depth_mask(frame);
+                }
+                _ => app.request_subject_mask(frame),
             }
         }
         if request_object {

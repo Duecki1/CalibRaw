@@ -669,7 +669,7 @@ impl CalibRawApp {
             ));
         }
         self.ui.notice = Some(message);
-        super::export::clear_export_task(&mut self.export.task);
+        self.export.task = None;
         self.egui_ctx.request_repaint();
     }
 
@@ -768,7 +768,7 @@ impl CalibRawApp {
                     log::error!("Android export publish failed: {error}");
                 }
             }
-            super::export::clear_export_task(&mut self.export.task);
+            self.export.task = None;
         }
     }
 

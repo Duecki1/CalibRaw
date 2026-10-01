@@ -213,14 +213,17 @@ impl CalibRawApp {
             (x0 as f64 / full_raw.width.max(1) as f64 * virtual_full_width as f64).round() as i32;
         let virtual_origin_y =
             (y0 as f64 / full_raw.height.max(1) as f64 * virtual_full_height as f64).round() as i32;
-        let mask_region = detail_mask_source_region(
+        let interactive = self.interactive_detail_mask_edit();
+        let mask_region = detail_mask_update_region(
             &preview_masks,
             source_origin,
             source_size,
-            full_raw.width,
-            full_raw.height,
+            [full_raw.width, full_raw.height],
+            None,
+            interactive,
         );
-        if detail_uses_opposed_chroma(&full_raw, &self.develop.target_exposure) {
+        let mask_extent = detail_mask_texture_extent(mask_region, detail_mask_edge(), interactive);
+        if full_raw.uses_opposed_chroma(&self.develop.target_exposure) {
             full_raw.inpaint_opposed_chroma_for_exposure(&self.develop.target_exposure);
         }
         let params = GpuParams::new_for_tile(
@@ -235,7 +238,7 @@ impl CalibRawApp {
         .with_vignette_geometry(self.develop.geometry)
         .with_mask_uv_rect_and_extent(
             mask_source_region_uv(mask_region, full_raw.width, full_raw.height),
-            mask_region_texture_extent(mask_region, detail_mask_edge()),
+            mask_extent,
         );
         let normal_tone_is_current = !matches!(
             self.preview.pending_stage,
@@ -279,6 +282,7 @@ impl CalibRawApp {
                 &preview_masks,
                 &full_raw,
                 mask_region,
+                mask_extent,
                 None,
             ) {
                 self.ui.notice = Some(error);
@@ -334,6 +338,7 @@ impl CalibRawApp {
             detail.processing_halo = processing_halo;
             detail.full_source_size = [full_raw.width, full_raw.height];
             detail.mask_source_region = mask_region;
+            detail.mask_texture_extent = mask_extent;
             detail.virtual_origin = [virtual_origin_x, virtual_origin_y];
             detail.virtual_full_size = [virtual_full_width, virtual_full_height];
             self.masks.detail_dirty_layers.fill(false);
@@ -374,6 +379,7 @@ impl CalibRawApp {
             &preview_masks,
             &full_raw,
             mask_region,
+            mask_extent,
             None,
         ) {
             self.ui.notice = Some(error);
@@ -439,6 +445,7 @@ impl CalibRawApp {
             source_size,
             full_source_size: [full_raw.width, full_raw.height],
             mask_source_region: mask_region,
+            mask_texture_extent: mask_extent,
             virtual_origin: [virtual_origin_x, virtual_origin_y],
             virtual_full_size: [virtual_full_width, virtual_full_height],
         });
@@ -516,7 +523,7 @@ fn prepare_preview_detail(request: PreviewDetailRequest) -> anyhow::Result<Prepa
         ],
     };
     let requested_edge = plan.edge;
-    if detail_uses_opposed_chroma(&source_raw, &exposure) {
+    if source_raw.uses_opposed_chroma(&exposure) {
         source_raw.inpaint_opposed_chroma_for_exposure(&exposure);
     }
     let raw = Arc::new(

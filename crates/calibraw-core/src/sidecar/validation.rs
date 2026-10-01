@@ -368,6 +368,22 @@ pub(super) fn validate_edit_state(edits: &EditState) -> Result<(), SidecarError>
                         validate_image(image.width, image.height, image.rgba.len(), 4)?;
                     }
                 }
+                MaskGeometry::DepthRange { depth, range } => {
+                    finite(
+                        "depth range mask",
+                        &[range.near, range.far, range.near_feather, range.far_feather],
+                    )?;
+                    bounded("depth near", range.near, 0.0, 1.0)?;
+                    bounded("depth far", range.far, 0.0, 1.0)?;
+                    bounded("depth near feather", range.near_feather, 0.0, 1.0)?;
+                    bounded("depth far feather", range.far_feather, 0.0, 1.0)?;
+                    if range.near > range.far {
+                        return invalid("depth near must not exceed depth far");
+                    }
+                    if let Some(image) = depth {
+                        validate_image(image.width, image.height, image.pixels.len(), 1)?;
+                    }
+                }
                 _ => {}
             }
         }
@@ -396,6 +412,7 @@ fn geometry_matches_kind(kind: MaskKind, geometry: &MaskGeometry) -> bool {
                 MaskGeometry::LuminanceRange { .. }
             )
             | (MaskKind::ColorRange, MaskGeometry::ColorRange { .. })
+            | (MaskKind::DepthRange, MaskGeometry::DepthRange { .. })
             | (MaskKind::DepthRange, MaskGeometry::Placeholder)
     )
 }
@@ -744,6 +761,8 @@ fn validate_fog_effect(fog: &crate::pipeline::FogEffectSettings) -> Result<(), S
             (fog::SOFTNESS, fog.softness),
             (fog::VARIATION, fog.variation),
             (fog::SEED, fog.seed),
+            (fog::START, fog.start),
+            (fog::DEPTH_INFLUENCE, fog.depth_influence),
         ],
         &fog.color,
     )?;

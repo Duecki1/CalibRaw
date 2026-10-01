@@ -57,6 +57,7 @@ CalibRaw runs natively on **Linux**, **Android**, **Windows**, and **macOS** wit
 - **Masks:** Brush, Linear Gradient, Radial Gradient, and Shape masks with independent curves and adjustments.
 - **Local AI Tools:** High quality subject, sky, and object masks, AI Denoise, and AI Remove.
 - **GPU Creative Effects:** Stackable effect cards for masks or the full image, including Light Rays, Lens Blur (bokeh), Motion Blur, Radial Blur, Fog, Smoke, Glow, and Neon.
+- **Light Rays:** Position the source manually, including beyond the frame, and use masks to shape soft atmospheric shafts with irregular brightness and natural falloff.
 
 ---
 

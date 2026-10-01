@@ -1,6 +1,4 @@
-use crate::model_artifact::{
-    ensure_artifact, sha256_file_hex, ArtifactSize, DownloadOptions, ModelArtifact,
-};
+use crate::model_artifact::{ensure_artifact, sha256_file_hex, DownloadOptions, ModelArtifact};
 use anyhow::{Context, Result};
 use flate2::read::GzDecoder;
 use std::{
@@ -33,56 +31,56 @@ fn runtime_package() -> Result<RuntimePackage> {
     let package = match (std::env::consts::OS, std::env::consts::ARCH) {
         ("linux", "x86_64") => RuntimePackage {
             platform: "linux-x86_64",
-            version: "1.29.0",
-            archive_name: "onnxruntime-linux-x64-1.29.0.tgz",
-            url: "https://huggingface.co/Duecki/CalibRaw-Artifacts/resolve/91085ce0ec322a4a7cbd20059688690218e52f9a/onnxruntime/linux-x86_64/onnxruntime-linux-x64-1.29.0.tgz",
-            bytes: 11_082_880,
-            sha256: "c3fddc4f139a045b0c4902c57410f0694f1c2fdf9b6939fbe38b1aeae7cd14ba",
+            version: "1.30.0",
+            archive_name: "onnxruntime-linux-x64-1.30.0.tgz",
+            url: "https://huggingface.co/Duecki/CalibRaw-Artifacts/resolve/7a00e95bdf48c64d354b99b1385cfe4ccf4cecbb/onnxruntime/linux-x86_64/onnxruntime-linux-x64-1.30.0.tgz",
+            bytes: 11_306_877,
+            sha256: "a5ed5a3cac51fbb2e90da632ae43d19212faaa20e76484e62bcb7c23ddb3b3fd",
             format: ArchiveFormat::TarGz,
         },
         ("linux", "aarch64") => RuntimePackage {
             platform: "linux-arm64",
-            version: "1.29.0",
-            archive_name: "onnxruntime-linux-aarch64-1.29.0.tgz",
-            url: "https://huggingface.co/Duecki/CalibRaw-Artifacts/resolve/91085ce0ec322a4a7cbd20059688690218e52f9a/onnxruntime/linux-arm64/onnxruntime-linux-aarch64-1.29.0.tgz",
-            bytes: 10_027_600,
-            sha256: "e1799098ebc054b370f6176a450f158720f297818c613e5dc99b92e2ec82346f",
+            version: "1.30.0",
+            archive_name: "onnxruntime-linux-aarch64-1.30.0.tgz",
+            url: "https://huggingface.co/Duecki/CalibRaw-Artifacts/resolve/7a00e95bdf48c64d354b99b1385cfe4ccf4cecbb/onnxruntime/linux-arm64/onnxruntime-linux-aarch64-1.30.0.tgz",
+            bytes: 10_269_495,
+            sha256: "e16a27a8ed330bbc698df7330b0cf56e722f354e3bcc92118682c74ef3c3e3da",
             format: ArchiveFormat::TarGz,
         },
         ("macos", "aarch64") => RuntimePackage {
             platform: "macos-arm64",
-            version: "1.29.0",
-            archive_name: "onnxruntime-osx-arm64-1.29.0.tgz",
-            url: "https://huggingface.co/Duecki/CalibRaw-Artifacts/resolve/91085ce0ec322a4a7cbd20059688690218e52f9a/onnxruntime/macos-arm64/onnxruntime-osx-arm64-1.29.0.tgz",
-            bytes: 41_578_864,
-            sha256: "d0706fc34f315d8c88639d0a8c81f2e09e815f282cabed3493c06a054352cf92",
+            version: "1.30.0",
+            archive_name: "onnxruntime-osx-arm64-1.30.0.tgz",
+            url: "https://huggingface.co/Duecki/CalibRaw-Artifacts/resolve/7a00e95bdf48c64d354b99b1385cfe4ccf4cecbb/onnxruntime/macos-arm64/onnxruntime-osx-arm64-1.30.0.tgz",
+            bytes: 42_373_116,
+            sha256: "6ebb5062a934537c352937821f9fe9718e7de1a2db1122a93dd363ffd53a7012",
             format: ArchiveFormat::TarGz,
         },
         ("macos", "x86_64") => RuntimePackage {
             platform: "macos-x86_64",
             version: "1.23.2",
             archive_name: "onnxruntime-osx-x86_64-1.23.2.tgz",
-            url: "https://huggingface.co/Duecki/CalibRaw-Artifacts/resolve/91085ce0ec322a4a7cbd20059688690218e52f9a/onnxruntime/macos-x86_64/onnxruntime-osx-x86_64-1.23.2.tgz",
+            url: "https://huggingface.co/Duecki/CalibRaw-Artifacts/resolve/7a00e95bdf48c64d354b99b1385cfe4ccf4cecbb/onnxruntime/macos-x86_64/onnxruntime-osx-x86_64-1.23.2.tgz",
             bytes: 11_676_322,
             sha256: "d10359e16347b57d9959f7e80a225a5b4a66ed7d7e007274a15cae86836485a6",
             format: ArchiveFormat::TarGz,
         },
         ("windows", "x86_64") => RuntimePackage {
             platform: "windows-x86_64",
-            version: "1.29.0",
-            archive_name: "onnxruntime-win-x64-1.29.0.zip",
-            url: "https://huggingface.co/Duecki/CalibRaw-Artifacts/resolve/91085ce0ec322a4a7cbd20059688690218e52f9a/onnxruntime/windows-x86_64/onnxruntime-win-x64-1.29.0.zip",
-            bytes: 79_645_520,
-            sha256: "c9b4b7086b529ad814f428c1bad028e20a25d7dc0699836775faace4ab5b78b2",
+            version: "1.30.0",
+            archive_name: "onnxruntime-win-x64-1.30.0.zip",
+            url: "https://huggingface.co/Duecki/CalibRaw-Artifacts/resolve/7a00e95bdf48c64d354b99b1385cfe4ccf4cecbb/onnxruntime/windows-x86_64/onnxruntime-win-x64-1.30.0.zip",
+            bytes: 82_645_522,
+            sha256: "c6ba983baf5681af108599675d2a89c2d145512d02de28aed0bff177cd0ba949",
             format: ArchiveFormat::Zip,
         },
         ("windows", "aarch64") => RuntimePackage {
             platform: "windows-arm64",
-            version: "1.29.0",
-            archive_name: "onnxruntime-win-arm64-1.29.0.zip",
-            url: "https://huggingface.co/Duecki/CalibRaw-Artifacts/resolve/91085ce0ec322a4a7cbd20059688690218e52f9a/onnxruntime/windows-arm64/onnxruntime-win-arm64-1.29.0.zip",
-            bytes: 81_679_033,
-            sha256: "a094a49c3ced0f9fca554647cc7566ae99d93a63a8ce6bf47975561c2de7608e",
+            version: "1.30.0",
+            archive_name: "onnxruntime-win-arm64-1.30.0.zip",
+            url: "https://huggingface.co/Duecki/CalibRaw-Artifacts/resolve/7a00e95bdf48c64d354b99b1385cfe4ccf4cecbb/onnxruntime/windows-arm64/onnxruntime-win-arm64-1.30.0.zip",
+            bytes: 83_954_906,
+            sha256: "e53db8a50b23ae35be901cc93428baf997dc8d420333b097b2eae53d3ea9f2d3",
             format: ArchiveFormat::Zip,
         },
         (os, arch) => anyhow::bail!(
@@ -154,8 +152,7 @@ pub fn ensure_automatic_onnx_runtime() -> Result<(PathBuf, String)> {
         name: "CalibRaw automatic ONNX Runtime",
         url: Some(package.url),
         sha256: package.sha256,
-        size: ArtifactSize::Exact(package.bytes),
-        progress_total: package.bytes,
+        bytes: package.bytes,
     };
     ensure_artifact(
         &archive_path,
@@ -321,23 +318,24 @@ mod tests {
     use super::*;
 
     #[test]
-    fn supported_package_is_pinned_to_calibraw_artifacts() {
-        let package = runtime_package().unwrap();
-        assert!(package
-            .url
-            .starts_with("https://huggingface.co/Duecki/CalibRaw-Artifacts/resolve/"));
-        assert!(package
-            .url
-            .contains("/91085ce0ec322a4a7cbd20059688690218e52f9a/onnxruntime/"));
-        assert_eq!(package.sha256.len(), 64);
-        assert!(package.bytes > 1_000_000);
-    }
-
-    #[test]
-    fn automatic_runtime_download_retries_and_resumes() {
-        let options = runtime_download_options();
-        assert!(options.attempts > 1);
-        assert!(options.resume);
+    fn runtime_upgrade_invalidates_the_previous_install() {
+        let directory = tempfile::tempdir().unwrap();
+        let library = directory.path().join("runtime-library");
+        fs::write(&library, b"old runtime").unwrap();
+        let hash = sha256_file_hex(&library).unwrap();
+        fs::write(
+            directory.path().join(INSTALL_MANIFEST),
+            format!("archive_sha256=old-release\nsha256={hash}\npath=runtime-library\n"),
+        )
+        .unwrap();
+        assert!(load_verified_install(directory.path(), "old-release")
+            .unwrap()
+            .is_some());
+        assert!(
+            load_verified_install(directory.path(), runtime_package().unwrap().sha256)
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[test]

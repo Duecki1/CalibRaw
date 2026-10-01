@@ -182,6 +182,12 @@ Gradle builds pinned LibRaw and Lensfun dependencies and packages the APK at
 `android/app/build/outputs/apk/debug/app-debug.apk`. To build one ABI through
 the compatibility helper, use `cargo xtask build-android arm64-v8a release`.
 
+Android depth masks and fog share a pinned Depth Anything V2 Small FP32 model
+(~99 MB), run at 518 × 518 on CPU with two inference threads and weight
+prepacking disabled. Its inverse-depth predictions are converted to the shared
+near=0, far=255 convention. Desktop uses Depth Anything 3 Mono Large; its
+731 MB artifact has a much larger download and inference memory footprint.
+
 The app supports 16 KB pages. Verify a built APK with:
 
 ```sh
