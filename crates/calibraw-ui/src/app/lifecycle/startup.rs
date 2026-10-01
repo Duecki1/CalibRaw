@@ -2,7 +2,7 @@ use super::*;
 
 impl CalibRawApp {
     #[cfg(not(target_os = "android"))]
-    pub(in crate::app) fn empty(ctx: &egui::Context) -> Self {
+    pub(crate) fn empty(ctx: &egui::Context) -> Self {
         let performance_settings_path = crate::performance_settings::desktop_path();
         let performance = crate::performance_settings::load(performance_settings_path.as_deref());
         Self::from_performance_settings(ctx, performance_settings_path, performance)

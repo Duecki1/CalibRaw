@@ -94,6 +94,9 @@ use transform::*;
 #[cfg(test)]
 mod tests;
 
+#[cfg(test)]
+mod mask_regression_tests;
+
 pub(crate) struct Preview;
 
 impl Preview {

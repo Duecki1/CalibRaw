@@ -75,22 +75,6 @@ pub(super) fn mask_overlay_raster_region(
     region
 }
 
-pub(super) fn cached_mask_overlay_region(
-    cached_key: Option<(usize, Option<usize>, u64, OverlayRasterKey)>,
-    has_cached_texture: bool,
-    mask_index: usize,
-    component_index: Option<usize>,
-    interaction_has_uncommitted_change: bool,
-    primary_down: bool,
-) -> Option<OverlayRasterKey> {
-    if !interaction_has_uncommitted_change || !primary_down || !has_cached_texture {
-        return None;
-    }
-    cached_key
-        .filter(|key| key.0 == mask_index && key.1 == component_index)
-        .map(|key| key.3)
-}
-
 pub(super) fn overlay_source_uv(
     region: OverlayRasterKey,
     source_width: u32,
@@ -122,13 +106,13 @@ pub(super) fn coverage_rgba(coverage: Vec<u8>, color: Color32) -> Vec<u8> {
 pub(super) fn group_coverage_rgba(
     masks: &crate::pipeline::MaskStack,
     mask_index: usize,
-    width: u32,
-    height: u32,
-    image_width: u32,
-    image_height: u32,
+    extent: [u32; 2],
+    region: [u32; 4],
+    full_size: [u32; 2],
+    lens_geometry: Option<&LensGeometryMap>,
 ) -> Vec<u8> {
     let final_coverage =
-        masks.rasterize_layer(mask_index, width, height, image_width, image_height);
+        masks.rasterize_layer_region(mask_index, extent, region, full_size, lens_geometry);
     let component_count = masks
         .masks
         .get(mask_index)
@@ -156,13 +140,13 @@ pub(super) fn group_coverage_rgba(
             continue;
         }
 
-        let coverage = masks.rasterize_component_layer(
+        let coverage = masks.rasterize_component_region(
             mask_index,
             component_index,
-            width,
-            height,
-            image_width,
-            image_height,
+            extent,
+            region,
+            full_size,
+            lens_geometry,
         );
         let color = mask_component_color(component_index);
         let rgb = [color.r() as f32, color.g() as f32, color.b() as f32];

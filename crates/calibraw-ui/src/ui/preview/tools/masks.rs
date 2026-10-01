@@ -38,6 +38,10 @@ impl Preview {
             app.masks.active_tool = None;
             return;
         };
+        // Parametric shapes live in the corrected image; image-derived masks
+        // and brush strokes retain native coordinates so they follow the photo.
+        let lens_geometry =
+            lens_geometry.filter(|_| !matches!(kind, MaskKind::Radial | MaskKind::Linear));
         if !kind.is_available() {
             return;
         }
@@ -665,7 +669,7 @@ impl Preview {
                     let outer = radial_outline_geometry_screen_points(
                         image_rect,
                         app.develop.geometry,
-                        lens_geometry.as_deref(),
+                        None,
                         source_width,
                         source_height,
                         *center,
@@ -678,7 +682,7 @@ impl Preview {
                     let inner = radial_outline_geometry_screen_points(
                         image_rect,
                         app.develop.geometry,
-                        lens_geometry.as_deref(),
+                        None,
                         source_width,
                         source_height,
                         *center,
@@ -693,7 +697,7 @@ impl Preview {
                     let center_screen = final_geometry_native_source_to_screen(
                         image_rect,
                         app.develop.geometry,
-                        lens_geometry.as_deref(),
+                        None,
                         source_width,
                         source_height,
                         *center,
@@ -702,7 +706,7 @@ impl Preview {
                     for handle in radial_handles_geometry_screen(
                         image_rect,
                         app.develop.geometry,
-                        lens_geometry.as_deref(),
+                        None,
                         source_width,
                         source_height,
                         *center,
@@ -714,7 +718,7 @@ impl Preview {
                     let major_handle = radial_handles_geometry_screen(
                         image_rect,
                         app.develop.geometry,
-                        lens_geometry.as_deref(),
+                        None,
                         source_width,
                         source_height,
                         *center,
@@ -724,7 +728,7 @@ impl Preview {
                     let rotation_handle = radial_rotation_handle_geometry(
                         image_rect,
                         app.develop.geometry,
-                        lens_geometry.as_deref(),
+                        None,
                         source_width,
                         source_height,
                         *center,
@@ -746,7 +750,7 @@ impl Preview {
                     let axis = linear_axis_geometry_screen_points(
                         image_rect,
                         app.develop.geometry,
-                        lens_geometry.as_deref(),
+                        None,
                         source_width,
                         source_height,
                         *start,
@@ -760,7 +764,7 @@ impl Preview {
                     let a = final_geometry_native_source_to_screen(
                         image_rect,
                         app.develop.geometry,
-                        lens_geometry.as_deref(),
+                        None,
                         source_width,
                         source_height,
                         *start,
@@ -768,7 +772,7 @@ impl Preview {
                     let b = final_geometry_native_source_to_screen(
                         image_rect,
                         app.develop.geometry,
-                        lens_geometry.as_deref(),
+                        None,
                         source_width,
                         source_height,
                         *end,
@@ -778,7 +782,7 @@ impl Preview {
                     let (middle, rotation_handle) = linear_rotation_handle_geometry(
                         image_rect,
                         app.develop.geometry,
-                        lens_geometry.as_deref(),
+                        None,
                         source_width,
                         source_height,
                         *start,
@@ -794,7 +798,7 @@ impl Preview {
                     let center_line = linear_isot_geometry_screen_points(
                         image_rect,
                         app.develop.geometry,
-                        lens_geometry.as_deref(),
+                        None,
                         source_width,
                         source_height,
                         *start,
@@ -807,7 +811,7 @@ impl Preview {
                         let boundary = linear_isot_geometry_screen_points(
                             image_rect,
                             app.develop.geometry,
-                            lens_geometry.as_deref(),
+                            None,
                             source_width,
                             source_height,
                             *start,
@@ -1037,40 +1041,61 @@ impl Preview {
         source_width: u32,
         source_height: u32,
     ) {
-        if app.preview.gpu_pipeline.is_none() {
-            return;
-        }
-        let primary_down = ui.input(|input| input.pointer.primary_down());
-        // Pending edits have not reached the interaction upload interval yet.
-        // Reuse the texture's source region too: feather/grow can change margins.
-        let cached_region = cached_mask_overlay_region(
-            app.masks.overlay_texture_key,
-            app.masks.overlay_texture.is_some(),
-            mask_index,
-            component_index,
-            app.masks.interaction_has_uncommitted_change,
-            primary_down,
-        );
-        let region = cached_region.unwrap_or_else(|| {
-            let margin = app.masks.stack.raster_margin_pixels_for_layer(
-                mask_index,
-                component_index,
-                source_width,
-                source_height,
-            );
-            mask_overlay_raster_region(
-                overlay_raster_region(
-                    app.preview.visible_uv,
-                    source_width,
-                    source_height,
-                    preview_rect,
-                    physical_pixels_per_point(ui.ctx()),
-                    margin,
-                ),
-                app.masks.interaction_dirty_layer,
-                primary_down,
+        // Draw parametric-only overlays directly in corrected image space. This
+        // preserves exact straight guides and avoids lens inversion on every drag.
+        let corrected_space = app.masks.stack.masks.get(mask_index).is_some_and(|mask| {
+            let is_parametric = |component: &crate::pipeline::MaskComponent| {
+                matches!(
+                    component.geometry,
+                    MaskGeometry::Radial { .. }
+                        | MaskGeometry::Linear { .. }
+                        | MaskGeometry::Fullscreen
+                )
+            };
+            component_index.map_or_else(
+                || {
+                    mask.components
+                        .iter()
+                        .filter(|component| component.enabled)
+                        .all(is_parametric)
+                },
+                |index| mask.components.get(index).is_some_and(is_parametric),
             )
         });
+        let lens_geometry = loaded_lens_geometry(app)
+            .cloned()
+            .filter(|_| !corrected_space);
+        let visible_uv = if corrected_space {
+            final_geometry_visible_source_uv(
+                image_rect,
+                preview_rect,
+                app.develop.geometry,
+                None,
+                source_width,
+                source_height,
+            )
+        } else {
+            app.preview.visible_uv
+        };
+        let primary_down = ui.input(|input| input.pointer.primary_down());
+        let margin = app.masks.stack.raster_margin_pixels_for_layer(
+            mask_index,
+            component_index,
+            source_width,
+            source_height,
+        );
+        let region = mask_overlay_raster_region(
+            overlay_raster_region(
+                visible_uv,
+                source_width,
+                source_height,
+                preview_rect,
+                physical_pixels_per_point(ui.ctx()),
+                margin,
+            ),
+            app.masks.interaction_dirty_layer,
+            primary_down,
+        );
         let key = (
             mask_index,
             component_index,
@@ -1078,35 +1103,33 @@ impl Preview {
             region,
         );
 
-        if cached_region.is_none()
-            && (app.masks.overlay_texture_key != Some(key) || app.masks.overlay_texture.is_none())
-        {
-            let cropped_masks = app.masks.stack.cropped_for_region(
+        if app.masks.overlay_texture_key != Some(key) || app.masks.overlay_texture.is_none() {
+            let extent = [region.texture_width, region.texture_height];
+            let source_region = [
                 region.source_x,
                 region.source_y,
                 region.source_width,
                 region.source_height,
-                source_width,
-                source_height,
-            );
+            ];
+            let full_size = [source_width, source_height];
             let rgba = if let Some(component_index) = component_index {
-                let coverage = cropped_masks.rasterize_component_layer(
+                let coverage = app.masks.stack.rasterize_component_region(
                     mask_index,
                     component_index,
-                    region.texture_width,
-                    region.texture_height,
-                    region.source_width,
-                    region.source_height,
+                    extent,
+                    source_region,
+                    full_size,
+                    lens_geometry.as_deref(),
                 );
                 coverage_rgba(coverage, mask_component_color(component_index))
             } else {
                 group_coverage_rgba(
-                    &cropped_masks,
+                    &app.masks.stack,
                     mask_index,
-                    region.texture_width,
-                    region.texture_height,
-                    region.source_width,
-                    region.source_height,
+                    extent,
+                    source_region,
+                    full_size,
+                    lens_geometry.as_deref(),
                 )
             };
             let image = egui::ColorImage::from_rgba_unmultiplied(
@@ -1134,10 +1157,7 @@ impl Preview {
                 texture.id(),
                 image_rect,
                 app.develop.geometry,
-                app.develop
-                    .loaded_raw
-                    .as_ref()
-                    .and_then(|raw| raw.lens_geometry.as_deref()),
+                lens_geometry.as_deref(),
                 source_width,
                 source_height,
                 Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)),

@@ -100,7 +100,7 @@ fn stationary_mask_drag_flushes_latest_value_at_the_throttle_deadline() {
     }
     app.note_mask_geometry_interaction(0);
     assert!(app.masks.interaction_has_uncommitted_change);
-    assert_eq!(app.masks.overlay_revision, revision);
+    assert_eq!(app.masks.overlay_revision, revision.wrapping_add(1));
     assert!(std::sync::Arc::ptr_eq(&app.preview_mask_stack(), &previous));
 
     app.masks.interaction_last_upload = Some(Instant::now() - Duration::from_millis(46));
@@ -137,4 +137,111 @@ fn stationary_subject_refinement_drag_refreshes_all_shared_layers() {
     assert!(app.masks.dirty_layers.iter().all(|dirty| *dirty));
     assert!(app.masks.detail_dirty_layers.iter().all(|dirty| *dirty));
     assert!(app.masks.navigation_dirty_layers.iter().all(|dirty| *dirty));
+}
+
+fn assert_mask_uploads_clean(app: &CalibRawApp) {
+    assert!(app.masks.dirty_layers.iter().all(|dirty| !*dirty));
+    assert!(app.masks.detail_dirty_layers.iter().all(|dirty| !*dirty));
+    assert!(app
+        .masks
+        .navigation_dirty_layers
+        .iter()
+        .all(|dirty| !*dirty));
+}
+
+#[test]
+fn pending_mask_geometry_changes_refresh_overlay_and_commit_on_release() {
+    use crate::pipeline::MaskGeometry;
+    use std::time::{Duration, Instant};
+
+    let context = egui::Context::default();
+    let mut app = CalibRawApp::empty(&context);
+    app.masks.stack.add_mask(MaskKind::Path);
+    app.note_mask_geometry_interaction(0);
+    let previous = app.preview_mask_stack();
+    app.masks.dirty_layers.fill(false);
+    app.masks.detail_dirty_layers.fill(false);
+    app.masks.navigation_dirty_layers.fill(false);
+    // Keep the throttle closed regardless of test scheduling delays.
+    let last_upload = Instant::now() + Duration::from_secs(60);
+    app.masks.interaction_last_upload = Some(last_upload);
+
+    for grow in [0.2, 0.4] {
+        let MaskGeometry::Path { grow: value, .. } =
+            &mut app.masks.stack.masks[0].components[0].geometry
+        else {
+            panic!("expected path geometry");
+        };
+        *value = grow;
+        let revision = app.masks.overlay_revision;
+        app.note_mask_geometry_interaction(0);
+        assert_eq!(app.masks.overlay_revision, revision.wrapping_add(1));
+        assert!(app.masks.interaction_has_uncommitted_change);
+        assert_eq!(app.masks.interaction_last_upload, Some(last_upload));
+        assert_mask_uploads_clean(&app);
+        assert!(std::sync::Arc::ptr_eq(&app.preview_mask_stack(), &previous));
+    }
+
+    app.finish_mask_geometry_interaction();
+    assert!(!app.masks.interaction_has_uncommitted_change);
+    assert!(app.masks.interaction_dirty_layer.is_none());
+    assert!(app.masks.interaction_last_upload.is_none());
+    assert!(app.masks.dirty_layers[0]);
+    assert!(app.masks.detail_dirty_layers[0]);
+    assert!(app.masks.navigation_dirty_layers[0]);
+    assert!(app.masks.dirty_layers[1..].iter().all(|dirty| !*dirty));
+    assert!(matches!(
+        app.preview_mask_stack().masks[0].components[0].geometry,
+        MaskGeometry::Path { grow: 0.4, .. }
+    ));
+}
+
+#[test]
+fn pending_subject_refinement_changes_refresh_overlay_and_commit_on_release() {
+    use crate::pipeline::BrushDab;
+    use std::time::{Duration, Instant};
+
+    let context = egui::Context::default();
+    let mut app = CalibRawApp::empty(&context);
+    app.masks.stack.add_mask(MaskKind::Subject);
+    app.masks.stack.add_mask(MaskKind::Background);
+    app.note_subject_refinement_interaction();
+    let previous = app.preview_mask_stack();
+    app.masks.dirty_layers.fill(false);
+    app.masks.detail_dirty_layers.fill(false);
+    app.masks.navigation_dirty_layers.fill(false);
+    let last_upload = Instant::now() + Duration::from_secs(60);
+    app.masks.interaction_last_upload = Some(last_upload);
+
+    for center in [[0.3, 0.5], [0.6, 0.5]] {
+        app.masks.stack.subject_refinement.dabs.push(BrushDab {
+            center,
+            opacity: 0.5,
+            size: 0.25,
+            feather: 0.5,
+        });
+        let revision = app.masks.overlay_revision;
+        app.note_subject_refinement_interaction();
+        assert_eq!(app.masks.overlay_revision, revision.wrapping_add(1));
+        assert!(app.masks.interaction_has_uncommitted_change);
+        assert_eq!(app.masks.interaction_last_upload, Some(last_upload));
+        assert_mask_uploads_clean(&app);
+        assert!(std::sync::Arc::ptr_eq(&app.preview_mask_stack(), &previous));
+    }
+
+    app.finish_mask_geometry_interaction();
+    assert!(!app.masks.interaction_has_uncommitted_change);
+    assert!(app.masks.interaction_dirty_layer.is_none());
+    assert!(app.masks.interaction_last_upload.is_none());
+    assert!(app.masks.dirty_layers.iter().all(|dirty| *dirty));
+    assert!(app.masks.detail_dirty_layers.iter().all(|dirty| *dirty));
+    assert!(app.masks.navigation_dirty_layers.iter().all(|dirty| *dirty));
+    assert_eq!(
+        app.preview_mask_stack().subject_refinement,
+        app.masks.stack.subject_refinement
+    );
+    assert!(!std::sync::Arc::ptr_eq(
+        &app.preview_mask_stack(),
+        &previous
+    ));
 }

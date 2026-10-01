@@ -47,6 +47,14 @@ impl LensGeometryMap {
         self.height
     }
 
+    pub(crate) fn shares_mapping(&self, other: &Self) -> bool {
+        self.width == other.width
+            && self.height == other.height
+            && self.grid_width == other.grid_width
+            && self.grid_height == other.grid_height
+            && Arc::ptr_eq(&self.coordinates, &other.coordinates)
+    }
+
     pub fn source_position_for_raster(
         &self,
         corrected_x: f32,
@@ -814,6 +822,25 @@ fn sample_thumbnail_rgba_bilinear(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn lens_mapping_identity_requires_shared_coordinates_and_dimensions() {
+        let coordinates = vec![[0.0, 0.0], [3.0, 0.0], [0.0, 2.0], [3.0, 2.0]];
+        let lens = LensGeometryMap::new(4, 3, 2, 2, coordinates.clone()).unwrap();
+        assert!(lens.shares_mapping(&lens));
+        assert!(lens.shares_mapping(&lens.clone()));
+        assert!(!lens.shares_mapping(&LensGeometryMap::new(4, 3, 2, 2, coordinates).unwrap()));
+        for dimension in 0..4 {
+            let mut changed = lens.clone();
+            match dimension {
+                0 => changed.width += 1,
+                1 => changed.height += 1,
+                2 => changed.grid_width += 1,
+                _ => changed.grid_height += 1,
+            }
+            assert!(!lens.shares_mapping(&changed));
+        }
+    }
 
     #[test]
     fn geometry_defaults_to_identity() {

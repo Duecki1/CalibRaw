@@ -4,10 +4,11 @@ use super::sigmoid::coefficients as sigmoid_coefficients;
 use crate::pipeline::{
     canonical_remove_scene_to_pipeline_scene, effect_params, export_mask_atlas_edge_limit,
     mask_atlas_edge, pipeline_scene_to_working_rec2020, AiDenoisedImage, CfaKind, ExposureParams,
-    GeometryTransform, HighlightReconstructionMethod, LoadedRaw, LocalMask, MaskEffect, MaskImage,
-    MaskStack, PointColor, PointCurve, ProcessingStage, RawThumbnail, RemoveEditState, RemovePatch,
-    SigmoidParams, SrgbOutputLut, GLOBAL_TEMPERATURE_LIMIT, GLOBAL_TINT_OFFSET_LIMIT,
-    MAX_EFFECT_COMPONENTS, MAX_LOCAL_MASKS, MAX_POINT_COLORS, MAX_POINT_CURVE_POINTS,
+    GeometryTransform, HighlightReconstructionMethod, LensGeometryMap, LoadedRaw, LocalMask,
+    MaskEffect, MaskImage, MaskStack, PointColor, PointCurve, ProcessingStage, RawThumbnail,
+    RemoveEditState, RemovePatch, SigmoidParams, SrgbOutputLut, GLOBAL_TEMPERATURE_LIMIT,
+    GLOBAL_TINT_OFFSET_LIMIT, MAX_EFFECT_COMPONENTS, MAX_LOCAL_MASKS, MAX_POINT_COLORS,
+    MAX_POINT_CURVE_POINTS,
 };
 use anyhow::{anyhow, Context, Result};
 use bytemuck::{Pod, Zeroable};
@@ -2667,8 +2668,16 @@ impl RawGpuPipeline {
         masks: &MaskStack,
         image_width: u32,
         image_height: u32,
+        lens_geometry: Option<&LensGeometryMap>,
     ) -> Result<()> {
-        self.update_dirty_light_rays_mask_layers(queue, masks, image_width, image_height, None)
+        self.update_dirty_light_rays_mask_layers(
+            queue,
+            masks,
+            image_width,
+            image_height,
+            lens_geometry,
+            None,
+        )
     }
 
     /// Refresh emission masks only for changed layers. Full uploads (including
@@ -2679,6 +2688,7 @@ impl RawGpuPipeline {
         masks: &MaskStack,
         image_width: u32,
         image_height: u32,
+        lens_geometry: Option<&LensGeometryMap>,
         dirty_layers: Option<&[bool; MAX_LOCAL_MASKS]>,
     ) -> Result<()> {
         let edge = LIGHT_RAYS_MASK_ATLAS_EDGE;
@@ -2691,7 +2701,13 @@ impl RawGpuPipeline {
             if dirty_layers.is_some_and(|dirty| !dirty[layer]) || !mask.has_light_rays_effect() {
                 continue;
             }
-            let values = masks.rasterize_layer_f16(layer, edge, edge, image_width, image_height);
+            let values = masks.rasterize_layer_region_f16(
+                layer,
+                [edge, edge],
+                [0, 0, image_width, image_height],
+                [image_width, image_height],
+                lens_geometry,
+            );
             self.update_light_rays_mask_layer(queue, layer, &values)?;
         }
         Ok(())
