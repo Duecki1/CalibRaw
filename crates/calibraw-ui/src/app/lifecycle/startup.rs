@@ -8,7 +8,7 @@ impl CalibRawApp {
         Self::from_performance_settings(ctx, performance_settings_path, performance)
     }
 
-    fn from_performance_settings(
+    pub(in crate::app) fn from_performance_settings(
         ctx: &egui::Context,
         performance_settings_path: Option<PathBuf>,
         performance: crate::performance_settings::PerformanceSettings,
@@ -356,9 +356,6 @@ impl CalibRawApp {
         crate::ui::theme::apply(&cc.egui_ctx, app.preferences.ui_design);
         app.preview.gpu_prewarm_receiver = gpu_preview_prewarm_receiver;
         app.export.gpu_prewarm = Some(gpu_export_prewarm);
-        if app.preferences.auto_check_updates {
-            app.check_for_updates(false);
-        }
         app
     }
 
@@ -420,9 +417,6 @@ impl CalibRawApp {
             !app.preferences.ui_design.is_dark(),
         ) {
             log::warn!("{error}");
-        }
-        if app.preferences.auto_check_updates {
-            app.check_for_updates(false);
         }
         app
     }
