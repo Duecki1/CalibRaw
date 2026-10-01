@@ -14,12 +14,11 @@ CalibRaw runs natively on **Linux**, **Android**, **Windows**, and **macOS** wit
 ---
 
 ## Showcase
-
-<img width="100%" alt="CalibRaw Main Interface" src="https://github.com/user-attachments/assets/69d52204-05e4-4c40-8a74-f9200ec01e5b" />
+<img width="100%" alt="Develop-Edit" src="https://github.com/user-attachments/assets/b4afad3f-8577-411c-a310-995e71a79cb4" />
 
 <p>
-  <img width="49.5%" alt="CalibRaw Masking and Color Tools" src="https://github.com/user-attachments/assets/aa0e8a4d-5772-47ee-8938-c782b1597a0d" />
-  <img width="49.5%" alt="CalibRaw Darkroom View" src="https://github.com/user-attachments/assets/789540d1-f6b6-4466-8db4-48340c3f2ed7" />
+  <img width="49.5%" alt="Library" src="https://github.com/user-attachments/assets/c64bbc1e-d2c1-4498-8d64-7ba6ee552af6" />
+  <img width="49.5%" alt="Android (Library/Edit/AI Subject)" src="https://github.com/user-attachments/assets/0f6ffbb4-233a-4a58-9386-fbd44393225b" />
 </p>
 
 ---
