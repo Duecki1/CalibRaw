@@ -45,14 +45,14 @@ impl CalibRawApp {
         let _ = self.request_generated_mask(AiMaskModel::Depth, frame);
     }
 
-    /// Ensures active fog has shared scene depth without exposing a separate fog UI action.
+    /// Ensures active fog with depth enabled has shared scene depth.
     /// A cancelled consent prompt is latched until fog is removed/disabled, depth becomes
     /// available, or the source changes, so the dialog is not reopened every frame.
     pub(in crate::app) fn ensure_fog_scene_depth(&mut self, frame: &eframe::Frame) {
         // A DepthRange fallback can still contain the previous source's depth.
         // Fresh inference fills the cache even if other masks still need updating.
         let depth_is_stale = self.ai.masks_need_update && self.masks.depth_cache.is_none();
-        let needs_depth = self.masks.stack.has_fog_effect()
+        let needs_depth = self.masks.stack.has_depth_fog_effect()
             && (self.masks.stack.scene_depth_image().is_none() || depth_is_stale);
         if !needs_depth {
             self.masks.fog_depth_auto_requested = false;
@@ -67,6 +67,44 @@ impl CalibRawApp {
 
         self.masks.fog_depth_auto_requested =
             self.request_generated_mask(AiMaskModel::Depth, frame);
+        if !self.masks.fog_depth_auto_requested {
+            self.disable_fog_depth();
+        }
+    }
+
+    fn disable_fog_depth(&mut self) {
+        let mut changed = false;
+        let mut disable = |component: &mut crate::pipeline::EffectComponent| {
+            if component.effect == crate::pipeline::MaskEffect::Fog
+                && component.is_active()
+                && component.settings.fog.depth_enabled
+            {
+                component.settings.fog.depth_enabled = false;
+                changed = true;
+            }
+        };
+        for component in &mut self.masks.stack.global_effects {
+            disable(component);
+        }
+        for mask in &mut self.masks.stack.masks {
+            if !mask.enabled || mask.opacity <= 0.0 {
+                continue;
+            }
+            for component in &mut mask.effect_components {
+                disable(component);
+            }
+            let mut legacy = crate::pipeline::EffectComponent {
+                effect: mask.effect,
+                enabled: true,
+                settings: mask.effect_settings,
+            };
+            disable(&mut legacy);
+            mask.effect_settings = legacy.settings;
+        }
+        self.masks.fog_depth_auto_requested = false;
+        if changed {
+            self.mark_all_mask_layers_dirty();
+        }
     }
 
     fn request_generated_mask(&mut self, model: AiMaskModel, frame: &eframe::Frame) -> bool {
@@ -332,6 +370,15 @@ impl CalibRawApp {
             }
         }
 
+        if model == AiMaskModel::Depth
+            && self.masks.stack.has_depth_fog_effect()
+            && !cancelled
+            && !stale
+            && !succeeded
+        {
+            self.disable_fog_depth();
+        }
+
         if updating_all {
             if cancelled || stale {
                 self.cancel_ai_mask_update();
@@ -365,6 +412,93 @@ impl CalibRawApp {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn fog_without_depth_does_not_start_inference() {
+        let mut app = CalibRawApp::empty(&egui::Context::default());
+        let mut fog = crate::pipeline::EffectComponent::new(crate::pipeline::MaskEffect::Fog);
+        fog.settings.fog.depth_enabled = false;
+        app.masks.stack.global_effects.push(fog);
+        app.ensure_fog_scene_depth(&eframe::Frame::_new_kittest());
+        assert!(app.ui.notice.is_none());
+        assert!(!app.ai.consent.is_open());
+        assert!(!app.foreground_operation_active());
+    }
+
+    #[test]
+    fn fog_depth_failure_disables_depth_except_for_cancelled_or_stale_jobs() {
+        for (cancelled, stale) in [(false, false), (true, false), (false, true)] {
+            for failure in 0..3 {
+                let mut app = CalibRawApp::empty(&egui::Context::default());
+                let fog = crate::pipeline::EffectComponent::new(crate::pipeline::MaskEffect::Fog);
+                app.masks.stack.global_effects.push(fog.clone());
+                app.masks.stack.add_mask(MaskKind::Fullscreen).unwrap();
+                app.masks.stack.masks[0].effect_components.push(fog.clone());
+                app.masks.stack.masks[0].effect = crate::pipeline::MaskEffect::Fog;
+                app.masks.stack.masks[0].effect_settings = fog.settings;
+                app.reset_edit_history();
+                // Fog may also be added while a manually requested depth job is running.
+                app.masks.fog_depth_auto_requested = failure != 0;
+                let (sender, receiver) = std::sync::mpsc::channel();
+                match failure {
+                    0 => sender
+                        .send(AiMaskEvent::Finished(Err("Inference failed".to_owned())))
+                        .unwrap(),
+                    1 => sender
+                        .send(AiMaskEvent::Finished(Ok(crate::ai_masks::AiMaskResult {
+                            width: 2,
+                            height: 2,
+                            mask: vec![],
+                        })))
+                        .unwrap(),
+                    _ => {}
+                }
+                drop(sender);
+                assert!(app.begin_foreground_operation(ForegroundOperation {
+                    kind: ForegroundOperationKind::DepthMask,
+                    document_id: app
+                        .persistence
+                        .sidecar_generation
+                        .wrapping_add(u64::from(stale)),
+                    cancellation: Arc::new(std::sync::atomic::AtomicBool::new(cancelled)),
+                    progress: ForegroundProgress::indeterminate("Testing depth failure"),
+                    cancelling: false,
+                    receiver: ForegroundOperationReceiver::AiMask(receiver),
+                    context: ForegroundOperationContext::AiMask,
+                }));
+                app.poll_ai_mask_worker();
+                let depth_enabled = cancelled || stale;
+                assert_eq!(
+                    app.masks.stack.global_effects[0].settings.fog.depth_enabled,
+                    depth_enabled
+                );
+                assert_eq!(
+                    app.masks.stack.masks[0].effect_components[0]
+                        .settings
+                        .fog
+                        .depth_enabled,
+                    depth_enabled
+                );
+                assert_eq!(
+                    app.masks.stack.masks[0].effect_settings.fog.depth_enabled,
+                    depth_enabled
+                );
+                assert!(app.masks.stack.has_fog_effect());
+                if !depth_enabled {
+                    app.commit_edit_history_now();
+                    assert!(
+                        !app.committed_mask_state_for_persistence().global_effects[0]
+                            .settings
+                            .fog
+                            .depth_enabled
+                    );
+                    app.ui.notice = None;
+                    app.ensure_fog_scene_depth(&eframe::Frame::_new_kittest());
+                    assert!(app.ui.notice.is_none());
+                }
+            }
+        }
+    }
 
     #[test]
     fn fog_only_depth_is_invalidated_after_remove_changes() {
@@ -431,6 +565,8 @@ mod tests {
         );
         assert!(!app.masks.fog_depth_auto_requested);
 
+        assert!(!app.masks.stack.global_effects[0].settings.fog.depth_enabled);
+        app.masks.stack.global_effects[0].settings.fog.depth_enabled = true;
         let fresh_depth = MaskImage::new(2, 2, vec![255, 170, 85, 0]).unwrap();
         app.apply_generated_mask(AiMaskModel::Depth, fresh_depth.clone());
         app.ui.notice = None;

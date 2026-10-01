@@ -845,8 +845,16 @@ fn pack_effect_mask(
                 ],
                 [
                     effect_params::fog::SEED.clamp(config.seed),
-                    effect_params::fog::START.clamp(config.start),
-                    effect_params::fog::DEPTH_INFLUENCE.clamp(config.depth_influence),
+                    if config.depth_enabled {
+                        effect_params::fog::START.clamp(config.start)
+                    } else {
+                        0.0
+                    },
+                    if config.depth_enabled {
+                        effect_params::fog::DEPTH_INFLUENCE.clamp(config.depth_influence)
+                    } else {
+                        0.0
+                    },
                     0.0,
                 ],
             )

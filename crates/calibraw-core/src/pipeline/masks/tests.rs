@@ -1,6 +1,40 @@
 use super::*;
 
 #[test]
+fn fog_depth_defaults_on_and_disabled_setting_round_trips() {
+    let legacy: FogEffectSettings = serde_json::from_str(r#"{"amount":75.0}"#).unwrap();
+    assert!(legacy.depth_enabled);
+    let mut fog = legacy;
+    fog.depth_enabled = false;
+    assert_eq!(
+        serde_json::from_value::<FogEffectSettings>(serde_json::to_value(fog).unwrap()).unwrap(),
+        fog,
+    );
+}
+
+#[test]
+fn fog_without_depth_stays_active_but_does_not_request_depth() {
+    let mut fog = EffectComponent::new(MaskEffect::Fog);
+    fog.settings.fog.depth_enabled = false;
+    let mut stack = MaskStack::default();
+    stack.global_effects.push(fog.clone());
+    assert!(stack.has_fog_effect());
+    assert!(!stack.has_depth_fog_effect());
+    stack.global_effects.clear();
+    stack.add_mask(MaskKind::Fullscreen).unwrap();
+    stack.masks[0].effect_components.push(fog.clone());
+    assert!(stack.has_fog_effect());
+    assert!(!stack.has_depth_fog_effect());
+    stack.masks[0].effect_components.clear();
+    stack.masks[0].effect = MaskEffect::Fog;
+    stack.masks[0].effect_settings = fog.settings;
+    assert!(stack.has_fog_effect());
+    assert!(!stack.has_depth_fog_effect());
+    stack.masks[0].effect_settings.fog.depth_enabled = true;
+    assert!(stack.has_depth_fog_effect());
+}
+
+#[test]
 fn scene_depth_is_optional_and_round_trips_in_mask_stack() {
     let empty = MaskStack::default();
     let json = serde_json::to_value(&empty).unwrap();
