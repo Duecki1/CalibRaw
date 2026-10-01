@@ -176,7 +176,13 @@ impl CalibRawApp {
         let edge = pipeline.mask_atlas_edge();
         for layer in 0..masks.masks.len().min(MAX_LOCAL_MASKS) {
             let layer_started = std::time::Instant::now();
-            let bytes = masks.rasterize_layer_f16(layer, edge, edge, raw.width, raw.height);
+            let bytes = masks.rasterize_layer_region_f16(
+                layer,
+                [edge, edge],
+                [0, 0, raw.width, raw.height],
+                [raw.width, raw.height],
+                raw.lens_geometry.as_deref(),
+            );
             let raster_elapsed = layer_started.elapsed();
             pipeline
                 .update_mask_layer(queue, layer, &bytes)
@@ -189,7 +195,13 @@ impl CalibRawApp {
             ));
         }
         pipeline
-            .update_light_rays_mask_layers(queue, masks, raw.width, raw.height)
+            .update_light_rays_mask_layers(
+                queue,
+                masks,
+                raw.width,
+                raw.height,
+                raw.lens_geometry.as_deref(),
+            )
             .map_err(|error| format!("Could not update Light Rays mask: {error:#}"))?;
         Ok(())
     }
@@ -203,20 +215,17 @@ impl CalibRawApp {
         extent: [u32; 2],
         dirty_layers: Option<&[bool; MAX_LOCAL_MASKS]>,
     ) -> Result<(), String> {
-        let cropped = masks.cropped_for_region(
-            region[0],
-            region[1],
-            region[2],
-            region[3],
-            full_raw.width,
-            full_raw.height,
-        );
         for layer in 0..masks.masks.len().min(pipeline.mask_layer_capacity()) {
             if dirty_layers.is_some_and(|dirty| !dirty[layer]) {
                 continue;
             }
-            let bytes =
-                cropped.rasterize_layer_f16(layer, extent[0], extent[1], region[2], region[3]);
+            let bytes = masks.rasterize_layer_region_f16(
+                layer,
+                extent,
+                region,
+                [full_raw.width, full_raw.height],
+                full_raw.lens_geometry.as_deref(),
+            );
             pipeline
                 .update_mask_layer_region(queue, layer, extent[0], extent[1], &bytes)
                 .map_err(|error| format!("Could not update zoomed local mask: {error:#}"))?;
@@ -227,6 +236,7 @@ impl CalibRawApp {
                 masks,
                 full_raw.width,
                 full_raw.height,
+                full_raw.lens_geometry.as_deref(),
                 dirty_layers,
             )
             .map_err(|error| format!("Could not update zoomed Light Rays mask: {error:#}"))?;
@@ -246,7 +256,13 @@ impl CalibRawApp {
             if !dirty {
                 continue;
             }
-            let bytes = masks.rasterize_layer_f16(layer, edge, edge, raw.width, raw.height);
+            let bytes = masks.rasterize_layer_region_f16(
+                layer,
+                [edge, edge],
+                [0, 0, raw.width, raw.height],
+                [raw.width, raw.height],
+                raw.lens_geometry.as_deref(),
+            );
             pipeline
                 .update_mask_layer(queue, layer, &bytes)
                 .map_err(|error| format!("Could not update preview mask: {error:#}"))?;
@@ -257,6 +273,7 @@ impl CalibRawApp {
                 masks,
                 raw.width,
                 raw.height,
+                raw.lens_geometry.as_deref(),
                 Some(dirty_layers),
             )
             .map_err(|error| format!("Could not update Light Rays mask: {error:#}"))?;

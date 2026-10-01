@@ -4,6 +4,8 @@ use std::f32::consts::TAU;
 use std::ops::{Deref, DerefMut};
 use std::sync::Arc;
 
+use super::LensGeometryMap;
+
 mod effects;
 mod raster_cache;
 
@@ -1484,6 +1486,25 @@ impl MaskStack {
         image_width: u32,
         image_height: u32,
     ) -> Vec<f32> {
+        self.rasterize_layer_coverage_with_sampling(
+            layer,
+            atlas_width,
+            atlas_height,
+            image_width,
+            image_height,
+            None,
+        )
+    }
+
+    fn rasterize_layer_coverage_with_sampling(
+        &self,
+        layer: usize,
+        atlas_width: u32,
+        atlas_height: u32,
+        image_width: u32,
+        image_height: u32,
+        corrected_uv: Option<&[[f32; 2]]>,
+    ) -> Vec<f32> {
         let len = atlas_width as usize * atlas_height as usize;
         let Some(mask) = self.masks.get(layer) else {
             return vec![0.0; len];
@@ -1510,6 +1531,7 @@ impl MaskStack {
                 image_width,
                 image_height,
                 &self.subject_refinement,
+                corrected_uv,
             );
             if component.invert {
                 coverage
@@ -1588,6 +1610,128 @@ impl MaskStack {
             .collect()
     }
 
+    /// Rasterize a native region `[x, y, width, height]` into `extent` pixels.
+    /// Radial and linear shapes use corrected full-image UVs when a lens is supplied;
+    /// all other geometries retain native coordinates. Composition, inversion and
+    /// mask opacity match `rasterize_layer`.
+    pub fn rasterize_layer_region(
+        &self,
+        layer: usize,
+        extent: [u32; 2],
+        region: [u32; 4],
+        full_size: [u32; 2],
+        lens: Option<&LensGeometryMap>,
+    ) -> Vec<u8> {
+        self.rasterize_layer_region_coverage(layer, extent, region, full_size, lens)
+            .into_par_iter()
+            .map(|value| (value * 255.0 + 0.5) as u8)
+            .collect()
+    }
+
+    /// Like `rasterize_layer_region`, returning IEEE binary16 coverage bits.
+    pub fn rasterize_layer_region_f16(
+        &self,
+        layer: usize,
+        extent: [u32; 2],
+        region: [u32; 4],
+        full_size: [u32; 2],
+        lens: Option<&LensGeometryMap>,
+    ) -> Vec<u16> {
+        self.rasterize_layer_region_coverage(layer, extent, region, full_size, lens)
+            .into_par_iter()
+            .map(|value| f16::from_f32(value).to_bits())
+            .collect()
+    }
+
+    fn rasterize_layer_region_coverage(
+        &self,
+        layer: usize,
+        extent: [u32; 2],
+        region: [u32; 4],
+        full_size: [u32; 2],
+        lens: Option<&LensGeometryMap>,
+    ) -> Vec<f32> {
+        if extent.contains(&0) {
+            return Vec::new();
+        }
+        let cropped = if region == [0, 0, full_size[0], full_size[1]] {
+            std::borrow::Cow::Borrowed(self)
+        } else {
+            std::borrow::Cow::Owned(self.cropped_for_region(
+                region[0],
+                region[1],
+                region[2],
+                region[3],
+                full_size[0],
+                full_size[1],
+            ))
+        };
+        let needs_corrected_uv = cropped.masks.get(layer).is_some_and(|mask| {
+            mask.components
+                .iter()
+                .any(|component| component.enabled && uses_corrected_uv(&component.geometry))
+        });
+        let corrected_uv = lens.filter(|_| needs_corrected_uv).map(|lens| {
+            raster_cache::corrected_uv(extent, region, full_size, lens, || {
+                corrected_region_uv(extent, region, full_size, lens)
+            })
+        });
+        cropped.rasterize_layer_coverage_with_sampling(
+            layer,
+            extent[0],
+            extent[1],
+            region[2].max(1),
+            region[3].max(1),
+            corrected_uv.as_deref().map(Vec::as_slice),
+        )
+    }
+
+    /// Rasterize one component of a native region, including component inversion.
+    /// Like `rasterize_component_layer`, this excludes mask opacity and composition.
+    /// Only radial and linear shapes sample corrected full-image coordinates.
+    pub fn rasterize_component_region(
+        &self,
+        mask_index: usize,
+        component_index: usize,
+        extent: [u32; 2],
+        region: [u32; 4],
+        full_size: [u32; 2],
+        lens: Option<&LensGeometryMap>,
+    ) -> Vec<u8> {
+        if extent.contains(&0) {
+            return Vec::new();
+        }
+        let cropped = if region == [0, 0, full_size[0], full_size[1]] {
+            std::borrow::Cow::Borrowed(self)
+        } else {
+            std::borrow::Cow::Owned(self.cropped_for_region(
+                region[0],
+                region[1],
+                region[2],
+                region[3],
+                full_size[0],
+                full_size[1],
+            ))
+        };
+        let needs_corrected_uv = cropped
+            .masks
+            .get(mask_index)
+            .and_then(|mask| mask.components.get(component_index))
+            .is_some_and(|component| uses_corrected_uv(&component.geometry));
+        let corrected_uv = lens.filter(|_| needs_corrected_uv).map(|lens| {
+            raster_cache::corrected_uv(extent, region, full_size, lens, || {
+                corrected_region_uv(extent, region, full_size, lens)
+            })
+        });
+        cropped.rasterize_component_layer_with_sampling(
+            mask_index,
+            component_index,
+            extent,
+            [region[2].max(1), region[3].max(1)],
+            corrected_uv.as_deref().map(Vec::as_slice),
+        )
+    }
+
     pub fn rasterize_component_layer(
         &self,
         mask_index: usize,
@@ -1597,6 +1741,25 @@ impl MaskStack {
         image_width: u32,
         image_height: u32,
     ) -> Vec<u8> {
+        self.rasterize_component_layer_with_sampling(
+            mask_index,
+            component_index,
+            [width, height],
+            [image_width, image_height],
+            None,
+        )
+    }
+
+    fn rasterize_component_layer_with_sampling(
+        &self,
+        mask_index: usize,
+        component_index: usize,
+        extent: [u32; 2],
+        image_size: [u32; 2],
+        corrected_uv: Option<&[[f32; 2]]>,
+    ) -> Vec<u8> {
+        let [width, height] = extent;
+        let [image_width, image_height] = image_size;
         let Some(component) = self
             .masks
             .get(mask_index)
@@ -1611,6 +1774,7 @@ impl MaskStack {
             image_width,
             image_height,
             &self.subject_refinement,
+            corrected_uv,
         );
         if component.invert {
             for value in &mut coverage {
@@ -1622,6 +1786,68 @@ impl MaskStack {
             .map(|value| (value.clamp(0.0, 1.0) * 255.0 + 0.5) as u8)
             .collect()
     }
+}
+
+fn uses_corrected_uv(geometry: &MaskGeometry) -> bool {
+    matches!(
+        geometry,
+        MaskGeometry::Radial {
+            initialized: true,
+            ..
+        } | MaskGeometry::Linear {
+            initialized: true,
+            ..
+        }
+    )
+}
+
+/// Share the lens inverse across every analytic shape in a layer. UVs may lie
+/// outside the crop: corrected geometry must not be clipped to native crop bounds.
+fn corrected_region_uv(
+    extent: [u32; 2],
+    region: [u32; 4],
+    full_size: [u32; 2],
+    lens: &LensGeometryMap,
+) -> Vec<[f32; 2]> {
+    let full = full_size.map(|value| value.max(1));
+    let origin = [
+        region[0] as f32 / full[0] as f32,
+        region[1] as f32 / full[1] as f32,
+    ];
+    let scale = [
+        region[2].max(1) as f32 / full[0] as f32,
+        region[3].max(1) as f32 / full[1] as f32,
+    ];
+    let last = full.map(|value| value.saturating_sub(1) as f32);
+    (0..extent[0] as usize * extent[1] as usize)
+        .into_par_iter()
+        .map(|index| {
+            let x = index % extent[0] as usize;
+            let y = index / extent[0] as usize;
+            let native_uv = [
+                (region[0] as f32 + (x as f32 + 0.5) * region[2].max(1) as f32 / extent[0] as f32)
+                    / full[0] as f32,
+                (region[1] as f32 + (y as f32 + 0.5) * region[3].max(1) as f32 / extent[1] as f32)
+                    / full[1] as f32,
+            ];
+            // Match the UI's UV-to-lens convention, which uses the last pixel
+            // coordinate rather than full extent or a half-pixel offset.
+            let corrected = lens.corrected_position_for_raster(
+                native_uv[0] * last[0],
+                native_uv[1] * last[1],
+                full[0],
+                full[1],
+            );
+            std::array::from_fn(|axis| {
+                let uv = if last[axis] > 0.0 {
+                    corrected[axis] / last[axis]
+                } else {
+                    native_uv[axis]
+                };
+                (uv - origin[axis]) / scale[axis].max(f32::EPSILON)
+            })
+        })
+        .collect()
 }
 
 fn crop_mask_image(source: &MaskImage, u0: f32, v0: f32, du: f32, dv: f32) -> MaskImage {
@@ -1689,6 +1915,7 @@ fn rasterize_component(
     image_width: u32,
     image_height: u32,
     subject_refinement: &SubjectRefinement,
+    corrected_uv: Option<&[[f32; 2]]>,
 ) -> Vec<f32> {
     // Square preview atlases and aspect-preserving detail rasters must measure
     // grow/feather in the same image space. Shape on an image-aspect grid, then
@@ -1717,6 +1944,7 @@ fn rasterize_component(
                 image_width,
                 image_height,
                 subject_refinement,
+                None,
             );
             return resample_coverage(&coverage, internal_width, internal_height, width, height);
         }
@@ -1728,6 +1956,7 @@ fn rasterize_component(
         image_width,
         image_height,
         subject_refinement,
+        corrected_uv,
     )
 }
 
@@ -1773,8 +2002,10 @@ fn rasterize_component_internal(
     image_width: u32,
     image_height: u32,
     subject_refinement: &SubjectRefinement,
+    corrected_uv: Option<&[[f32; 2]]>,
 ) -> Vec<f32> {
-    let space = MaskRasterSpace::new(width, height, image_width, image_height);
+    let mut space = MaskRasterSpace::new(width, height, image_width, image_height);
+    space.corrected_uv = corrected_uv;
     match &component.geometry {
         MaskGeometry::Fullscreen => vec![1.0; width as usize * height as usize],
         MaskGeometry::Brush {
@@ -2339,17 +2570,31 @@ fn object_prompt_dabs(strokes: &[ObjectStroke], size: f32) -> Vec<BrushDab> {
 }
 
 #[derive(Clone, Copy)]
-struct MaskRasterSpace {
+struct MaskRasterSpace<'a> {
     raster: [u32; 2],
     image: [u32; 2],
+    corrected_uv: Option<&'a [[f32; 2]]>,
 }
 
-impl MaskRasterSpace {
+impl MaskRasterSpace<'_> {
     const fn new(width: u32, height: u32, image_width: u32, image_height: u32) -> Self {
         Self {
             raster: [width, height],
             image: [image_width, image_height],
+            corrected_uv: None,
         }
+    }
+
+    fn shape_uv(self, x: usize, y: usize) -> [f32; 2] {
+        self.corrected_uv.map_or_else(
+            || {
+                [
+                    (x as f32 + 0.5) / self.raster[0] as f32,
+                    (y as f32 + 0.5) / self.raster[1] as f32,
+                ]
+            },
+            |uv| uv[y * self.raster[0] as usize + x],
+        )
     }
 
     fn isotropic_extent(self) -> Option<[u32; 2]> {
@@ -2726,10 +2971,9 @@ fn rasterize_radial(
     out.par_chunks_mut(row_stride)
         .enumerate()
         .for_each(|(y, row)| {
-            let v = (y as f32 + 0.5) / height as f32;
-            let dy = (v - center[1]) * image_height.max(1) as f32;
             for (x, value) in row.iter_mut().enumerate() {
-                let u = (x as f32 + 0.5) / width as f32;
+                let [u, v] = space.shape_uv(x, y);
+                let dy = (v - center[1]) * image_height.max(1) as f32;
                 let dx = (u - center[0]) * image_width.max(1) as f32;
                 let local_x = cos_r * dx + sin_r * dy;
                 let local_y = -sin_r * dx + cos_r * dy;
@@ -2858,9 +3102,10 @@ fn rasterize_linear(
     out.par_chunks_mut(row_stride)
         .enumerate()
         .for_each(|(y, row)| {
-            let py = (y as f32 + 0.5) / height as f32 * image_height.max(1) as f32;
             for (x, value) in row.iter_mut().enumerate() {
-                let px = (x as f32 + 0.5) / width as f32 * image_width.max(1) as f32;
+                let [u, v] = space.shape_uv(x, y);
+                let px = u * image_width.max(1) as f32;
+                let py = v * image_height.max(1) as f32;
                 let t = ((px - sx) * dx + (py - sy) * dy) / length_sq;
                 *value = 1.0 - smoothstep(edge0, edge1, t);
             }
@@ -2902,3 +3147,6 @@ mod tests;
 
 #[cfg(test)]
 mod zoom_tests;
+
+#[cfg(test)]
+mod lens_tests;

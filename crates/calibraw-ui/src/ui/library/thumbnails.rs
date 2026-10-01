@@ -623,14 +623,25 @@ pub(super) fn render_uncached_developed_thumbnail(
 
     for layer in 0..masks.masks.len().min(MAX_LOCAL_MASKS) {
         let edge = pipeline.mask_atlas_edge();
-        let values =
-            masks.rasterize_layer_f16(layer, edge, edge, preview_raw.width, preview_raw.height);
+        let values = masks.rasterize_layer_region_f16(
+            layer,
+            [edge, edge],
+            [0, 0, preview_raw.width, preview_raw.height],
+            [preview_raw.width, preview_raw.height],
+            preview_raw.lens_geometry.as_deref(),
+        );
         pipeline
             .update_mask_layer(&gpu.queue, layer, &values)
             .map_err(|error| format!("could not apply thumbnail local mask: {error:#}"))?;
     }
     pipeline
-        .update_light_rays_mask_layers(&gpu.queue, &masks, preview_raw.width, preview_raw.height)
+        .update_light_rays_mask_layers(
+            &gpu.queue,
+            &masks,
+            preview_raw.width,
+            preview_raw.height,
+            preview_raw.lens_geometry.as_deref(),
+        )
         .map_err(|error| format!("could not apply thumbnail Light Rays mask: {error:#}"))?;
     let params =
         GpuParams::new(&edits.exposure, &masks, &preview_raw).with_vignette_geometry(geometry);

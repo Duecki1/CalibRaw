@@ -4,6 +4,178 @@ use super::super::{
 };
 use super::*;
 
+fn sample_lens() -> LensGeometryMap {
+    LensGeometryMap::new(
+        4,
+        3,
+        2,
+        2,
+        vec![[0.0, 0.0], [3.0, 0.0], [0.0, 2.0], [3.0, 2.0]],
+    )
+    .unwrap()
+}
+
+#[test]
+fn corrected_uv_reuses_same_and_cloned_lens_without_preparing_on_hits() {
+    let lens = sample_lens();
+    let expected = vec![[0.25, 0.5]; 12];
+    let first = corrected_uv([4, 3], [0, 0, 4, 3], [4, 3], &lens, || expected.clone());
+    for same_mapping in [&lens, &lens.clone()] {
+        let hit = corrected_uv([4, 3], [0, 0, 4, 3], [4, 3], same_mapping, || {
+            panic!("cache hit must not prepare")
+        });
+        assert!(Arc::ptr_eq(&first, &hit));
+        assert_eq!(*hit, expected);
+    }
+}
+
+#[test]
+fn corrected_uv_invalidates_each_sampling_parameter_and_new_mapping() {
+    let cache = CorrectedUvCache(BoundedCache::new(CONTOUR_BYTES, MAX_ENTRIES));
+    let lens = sample_lens();
+    let extent = [4, 3];
+    let region = [1, 2, 4, 3];
+    let full_size = [8, 6];
+    let first = cache.get(extent, region, full_size, &lens, || vec![[0.0, 0.0]]);
+    for parameter in 0..8 {
+        let mut changed_extent = extent;
+        let mut changed_region = region;
+        let mut changed_full_size = full_size;
+        match parameter {
+            0..=1 => changed_extent[parameter] += 1,
+            2..=5 => changed_region[parameter - 2] += 1,
+            _ => changed_full_size[parameter - 6] += 1,
+        }
+        let changed = cache.get(
+            changed_extent,
+            changed_region,
+            changed_full_size,
+            &lens,
+            || vec![[parameter as f32, 1.0]],
+        );
+        assert!(!Arc::ptr_eq(&first, &changed));
+        assert_eq!(*changed, vec![[parameter as f32, 1.0]]);
+        let hit = cache.get(
+            changed_extent,
+            changed_region,
+            changed_full_size,
+            &lens,
+            || panic!("changed key should now be cached"),
+        );
+        assert!(Arc::ptr_eq(&changed, &hit));
+    }
+    // Even identical coordinate values in a new allocation are a new mapping.
+    let new_lens = sample_lens();
+    let changed = cache.get(extent, region, full_size, &new_lens, || vec![[1.0, 1.0]]);
+    assert!(!Arc::ptr_eq(&first, &changed));
+    assert_eq!(*changed, vec![[1.0, 1.0]]);
+    assert!(Arc::ptr_eq(
+        &first,
+        &cache.get(extent, region, full_size, &lens, || panic!(
+            "original mapping remains cached"
+        ))
+    ));
+    drop(lens);
+    let state = cache.0.state.lock().unwrap();
+    assert!(state.entries[0]
+        .data
+        .lens
+        .shares_mapping(&state.entries[1].data.lens));
+    assert!(!state.entries[0].data.lens.shares_mapping(&new_lens));
+}
+
+#[test]
+fn corrected_uv_obeys_eight_entry_cap_and_lru_and_preserves_active_vectors() {
+    let cache = CorrectedUvCache(BoundedCache::new(CONTOUR_BYTES, CORRECTED_UV_MAX_ENTRIES));
+    let lens = sample_lens();
+    let get = |index| {
+        cache.get([4, 3], [index, 0, 4, 3], [16, 3], &lens, || {
+            vec![[index as f32, 0.0]]
+        })
+    };
+    let first = get(0);
+    let second = get(1);
+    for index in 2..8 {
+        get(index);
+    }
+    assert!(Arc::ptr_eq(&first, &get(0)));
+    get(8);
+    assert_eq!(cache.0.state.lock().unwrap().entries.len(), 8);
+    assert!(Arc::ptr_eq(&first, &get(0)));
+    assert!(!Arc::ptr_eq(&second, &get(1)));
+    assert_eq!(*second, vec![[1.0, 0.0]]);
+}
+
+#[test]
+fn corrected_uv_obeys_byte_budget_and_does_not_cache_oversized_vectors() {
+    let lens = sample_lens();
+    let entry_bytes = CorrectedUvEntry {
+        extent: [4, 3],
+        region: [0, 0, 4, 3],
+        full_size: [4, 3],
+        lens: lens.clone(),
+        uv: Arc::new(vec![[0.0, 0.0]; 12]),
+    }
+    .byte_len();
+    let cache = CorrectedUvCache(BoundedCache::new(entry_bytes * 2, CORRECTED_UV_MAX_ENTRIES));
+    let get = |index, length| {
+        cache.get([4, 3], [index, 0, 4, 3], [16, 3], &lens, || {
+            vec![[index as f32, 0.0]; length]
+        })
+    };
+    for index in 0..10 {
+        get(index, 12);
+        let state = cache.0.state.lock().unwrap();
+        assert_eq!(state.entries.len(), 2.min(index as usize + 1));
+        assert!(state.bytes <= entry_bytes * 2);
+        assert_eq!(
+            state.bytes,
+            state.entries.iter().map(|entry| entry.bytes).sum::<usize>()
+        );
+    }
+    let retained = get(9, 12);
+    let oversized = get(10, entry_bytes);
+    assert!(!Arc::ptr_eq(&oversized, &get(10, entry_bytes)));
+    assert!(Arc::ptr_eq(&retained, &get(9, 12)));
+    assert_eq!(cache.0.state.lock().unwrap().entries.len(), 2);
+}
+
+#[test]
+fn corrected_uv_prepares_outside_mutex() {
+    let cache = CorrectedUvCache(BoundedCache::new(CONTOUR_BYTES, CORRECTED_UV_MAX_ENTRIES));
+    cache.get([4, 3], [0, 0, 4, 3], [4, 3], &sample_lens(), || {
+        assert!(cache.0.state.try_lock().is_ok());
+        vec![[0.25, 0.5]; 12]
+    });
+}
+
+#[test]
+fn concurrent_corrected_uv_preparations_reuse_one_entry() {
+    let cache = CorrectedUvCache(BoundedCache::new(CONTOUR_BYTES, CORRECTED_UV_MAX_ENTRIES));
+    let lens = sample_lens();
+    let barrier = std::sync::Barrier::new(4);
+    let vectors = std::thread::scope(|scope| {
+        let handles = (0..4)
+            .map(|_| {
+                scope.spawn(|| {
+                    cache.get([4, 3], [0, 0, 4, 3], [4, 3], &lens, || {
+                        barrier.wait();
+                        vec![[0.25, 0.5]; 12]
+                    })
+                })
+            })
+            .collect::<Vec<_>>();
+        handles
+            .into_iter()
+            .map(|handle| handle.join().unwrap())
+            .collect::<Vec<_>>()
+    });
+    for vector in &vectors[1..] {
+        assert!(Arc::ptr_eq(&vectors[0], vector));
+    }
+    assert_eq!(cache.0.state.lock().unwrap().entries.len(), 1);
+}
+
 fn assert_same_pixels(actual: &[f32], expected: &[f32]) {
     assert_eq!(actual.len(), expected.len());
     for (index, (actual, expected)) in actual.iter().zip(expected).enumerate() {

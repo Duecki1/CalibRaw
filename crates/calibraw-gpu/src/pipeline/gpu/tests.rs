@@ -543,7 +543,14 @@ fn off_frame_light_rays_match_fullscreen_mask() -> anyhow::Result<()> {
     edited.masks[0].opacity = 0.0;
     let mut dirty = [false; crate::pipeline::MAX_LOCAL_MASKS];
     dirty[1] = true;
-    pipeline.update_dirty_light_rays_mask_layers(&queue, &edited, EDGE, EDGE, Some(&dirty))?;
+    pipeline.update_dirty_light_rays_mask_layers(
+        &queue,
+        &edited,
+        EDGE,
+        EDGE,
+        None,
+        Some(&dirty),
+    )?;
     assert_eq!(
         render(&local)?,
         masked,
@@ -551,14 +558,21 @@ fn off_frame_light_rays_match_fullscreen_mask() -> anyhow::Result<()> {
     );
 
     dirty[0] = true;
-    pipeline.update_dirty_light_rays_mask_layers(&queue, &edited, EDGE, EDGE, Some(&dirty))?;
+    pipeline.update_dirty_light_rays_mask_layers(
+        &queue,
+        &edited,
+        EDGE,
+        EDGE,
+        None,
+        Some(&dirty),
+    )?;
     assert_ne!(
         render(&local)?,
         masked,
         "dirty emission mask was not refreshed"
     );
 
-    pipeline.update_light_rays_mask_layers(&queue, &local, EDGE, EDGE)?;
+    pipeline.update_light_rays_mask_layers(&queue, &local, EDGE, EDGE, None)?;
     assert_eq!(
         render(&local)?,
         masked,

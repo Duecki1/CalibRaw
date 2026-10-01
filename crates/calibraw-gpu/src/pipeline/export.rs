@@ -577,12 +577,14 @@ pub fn render_developed_linear_crop(job: DevelopedCropJob) -> Result<Vec<f32>> {
         job.raw.width,
         job.raw.height,
         mask_region,
+        job.raw.lens_geometry.as_deref(),
     )?;
     pipeline.update_light_rays_mask_layers(
         &job.queue,
         &job.masks,
         job.raw.width,
         job.raw.height,
+        job.raw.lens_geometry.as_deref(),
     )?;
     pipeline.dispatch_stage(&job.queue, &job.device, &params, ProcessingStage::Raw);
     pipeline.dispatch_stage(&job.queue, &job.device, &params, ProcessingStage::Tone);
@@ -1163,7 +1165,13 @@ where
         export_mask_edge
     ));
     tile_pipeline
-        .update_light_rays_mask_layers(queue, masks, raw.width, raw.height)
+        .update_light_rays_mask_layers(
+            queue,
+            masks,
+            raw.width,
+            raw.height,
+            raw.lens_geometry.as_deref(),
+        )
         .context("upload full-image Light Rays emission masks")?;
 
     let tone_analysis_started = Instant::now();
@@ -1264,6 +1272,7 @@ where
                 raw.width,
                 raw.height,
                 mask_region,
+                raw.lens_geometry.as_deref(),
             )?;
 
             let params = GpuParams::new_for_tile(
@@ -3186,19 +3195,18 @@ fn upload_mask_atlas(
     image_width: u32,
     image_height: u32,
     region: [u32; 4],
+    lens_geometry: Option<&LensGeometryMap>,
 ) -> Result<()> {
-    let cropped = masks.cropped_for_region(
-        region[0],
-        region[1],
-        region[2],
-        region[3],
-        image_width,
-        image_height,
-    );
     let edge = pipeline.mask_atlas_edge();
     let extent = mask_region_texture_extent(region, edge);
     for layer in 0..masks.masks.len().min(MAX_LOCAL_MASKS) {
-        let bytes = cropped.rasterize_layer_f16(layer, extent[0], extent[1], region[2], region[3]);
+        let bytes = masks.rasterize_layer_region_f16(
+            layer,
+            extent,
+            region,
+            [image_width, image_height],
+            lens_geometry,
+        );
         pipeline
             .update_mask_layer_region(queue, layer, extent[0], extent[1], &bytes)
             .with_context(|| format!("upload local-mask layer {}", layer + 1))?;

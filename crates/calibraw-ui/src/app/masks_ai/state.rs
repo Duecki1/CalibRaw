@@ -208,6 +208,8 @@ impl CalibRawApp {
             self.masks.interaction_last_upload = None;
         }
 
+        // Live coverage follows every edit, independently of throttled uploads.
+        self.masks.overlay_revision = self.masks.overlay_revision.wrapping_add(1);
         self.masks.interaction_has_uncommitted_change = true;
         self.flush_mask_geometry_interaction();
     }
@@ -219,6 +221,8 @@ impl CalibRawApp {
             self.masks.interaction_last_upload = None;
         }
 
+        // Shared refinement coverage must also update between upload commits.
+        self.masks.overlay_revision = self.masks.overlay_revision.wrapping_add(1);
         self.masks.interaction_has_uncommitted_change = true;
         self.flush_mask_geometry_interaction();
     }
@@ -527,6 +531,7 @@ impl CalibRawApp {
 
     pub(crate) fn note_lens_correction_changed_for_masks(&mut self) {
         self.note_mask_source_changed();
+        self.masks.overlay_revision = self.masks.overlay_revision.wrapping_add(1);
     }
 
     #[cfg(not(target_os = "android"))]

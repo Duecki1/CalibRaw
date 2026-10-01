@@ -1,13 +1,15 @@
-//! Reusable grow/feather preparation. No pixel scans or distance transforms run
+//! Reusable mask sampling and grow/feather preparation. No lens inversions,
+//! pixel scans or distance transforms run
 //! with a cache mutex held, and callers retain prepared data through eviction.
 
-use super::{chamfer_distance, MaskImage};
+use super::{chamfer_distance, LensGeometryMap, MaskImage};
 use std::collections::{hash_map::DefaultHasher, VecDeque};
 use std::hash::{Hash, Hasher};
 use std::mem::size_of;
 use std::sync::{Arc, Mutex, OnceLock, Weak};
 
 const MAX_ENTRIES: usize = 32;
+const CORRECTED_UV_MAX_ENTRIES: usize = 8;
 const CONTOUR_BYTES: usize = if cfg!(target_os = "android") {
     24 * 1024 * 1024
 } else {
@@ -143,6 +145,71 @@ impl<T> BoundedCache<T> {
         drop(state);
         drop(removed);
     }
+}
+
+struct CorrectedUvEntry {
+    extent: [u32; 2],
+    region: [u32; 4],
+    full_size: [u32; 2],
+    // Retain the mapping allocation so its address cannot be reused for a new
+    // lens while this entry remains cached.
+    lens: LensGeometryMap,
+    uv: Arc<Vec<[f32; 2]>>,
+}
+
+impl CorrectedUvEntry {
+    fn byte_len(&self) -> usize {
+        size_of::<Self>() + size_of::<Vec<[f32; 2]>>() + self.uv.capacity() * size_of::<[f32; 2]>()
+    }
+}
+
+struct CorrectedUvCache(BoundedCache<CorrectedUvEntry>);
+
+impl CorrectedUvCache {
+    fn get(
+        &self,
+        extent: [u32; 2],
+        region: [u32; 4],
+        full_size: [u32; 2],
+        lens: &LensGeometryMap,
+        prepare: impl FnOnce() -> Vec<[f32; 2]>,
+    ) -> Arc<Vec<[f32; 2]>> {
+        let matches_key = |entry: &CorrectedUvEntry| {
+            entry.extent == extent
+                && entry.region == region
+                && entry.full_size == full_size
+                && entry.lens.shares_mapping(lens)
+        };
+        if let Some(found) = self.0.find(matches_key, |_| true) {
+            return Arc::clone(&found.uv);
+        }
+        // Inversion can be expensive; prepare only after the lookup releases
+        // the mutex, then let insertion reuse a concurrent preparation.
+        let prepared = Arc::new(CorrectedUvEntry {
+            extent,
+            region,
+            full_size,
+            lens: lens.clone(),
+            uv: Arc::new(prepare()),
+        });
+        let bytes = prepared.byte_len();
+        Arc::clone(&self.0.insert(prepared, bytes, matches_key, |_| true).uv)
+    }
+}
+
+pub(super) fn corrected_uv(
+    extent: [u32; 2],
+    region: [u32; 4],
+    full_size: [u32; 2],
+    lens: &LensGeometryMap,
+    prepare: impl FnOnce() -> Vec<[f32; 2]>,
+) -> Arc<Vec<[f32; 2]>> {
+    static CACHE: OnceLock<CorrectedUvCache> = OnceLock::new();
+    CACHE
+        .get_or_init(|| {
+            CorrectedUvCache(BoundedCache::new(CONTOUR_BYTES, CORRECTED_UV_MAX_ENTRIES))
+        })
+        .get(extent, region, full_size, lens, prepare)
 }
 
 pub(super) struct SourceFrontier {
