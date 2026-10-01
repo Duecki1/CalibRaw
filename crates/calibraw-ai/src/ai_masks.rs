@@ -1,5 +1,5 @@
 use crate::execution_provider::{CpuFallbackProfile, FallbackSession, SessionOptions};
-use crate::model_artifact::{ArtifactSize, DownloadOptions, ModelArtifact};
+use crate::model_artifact::{DownloadOptions, ModelArtifact};
 use crate::model_install::ModelInstallSpec;
 #[cfg(not(target_os = "android"))]
 use crate::model_runtime::AiRuntimeContext;
@@ -12,7 +12,7 @@ use ort::value::Tensor;
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 #[cfg(not(target_os = "android"))]
-use std::fs::{self, File};
+use std::fs;
 use std::{
     path::{Path, PathBuf},
     sync::{
@@ -32,6 +32,8 @@ fn ensure_ai_not_cancelled(cancellation: &AtomicBool) -> Result<()> {
 
 pub use crate::model_artifact::sha256_file_hex;
 
+mod depth;
+
 pub const BIREFNET_LOW_MODEL_BYTES: u64 = 224_005_088;
 pub const BIREFNET_LOW_MODEL_URL: &str = "https://huggingface.co/Duecki/CalibRaw-Artifacts/resolve/91085ce0ec322a4a7cbd20059688690218e52f9a/models/briefnet/birefnet-lowQ.onnx";
 pub const BIREFNET_LOW_MODEL_SHA256_HEX: &str =
@@ -45,16 +47,26 @@ pub const BIREFNET_HIGH_MODEL_URL: &str = "https://huggingface.co/Duecki/CalibRa
 pub const BIREFNET_HIGH_MODEL_SHA256_HEX: &str =
     "db0217e99b25e0c4f6f4dca2892ff1f7ea7aba38fb6ad84f93122a4024be536a";
 pub const SKYSEG_MODEL_FILENAME: &str = "skyseg-u2net-fp32.onnx";
+/// Metadata for the depth artifact selected on this platform.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DepthModelSpec {
+    pub name: &'static str,
+    pub download_bytes: u64,
+    pub cache_filename: &'static str,
+    pub input_edge: u32,
+    pub artifact_url: &'static str,
+}
+
+pub const DEPTH_MODEL: DepthModelSpec = depth::MODEL_SPEC;
 pub const SKYSEG_MODEL_BYTES: u64 = 175_997_079;
 const SKYSEG_MODEL_INSTALL: ModelInstallSpec = ModelInstallSpec {
     artifact: ModelArtifact {
         name: "SkySeg U2Net",
-        url: Some("https://huggingface.co/JianyuanWang/skyseg/resolve/3ba8c6df1d9ba9ff26f637c7ba9568ac11a9aa7f/skyseg.onnx"),
+        url: Some("https://huggingface.co/Duecki/CalibRaw-Artifacts/resolve/main/models/skyseg/skyseg.onnx"),
         sha256: "ab9c34c64c3d821220a2886a4a06da4642ffa14d5b30e8d5339056a089aa1d39",
-        size: ArtifactSize::Exact(SKYSEG_MODEL_BYTES),
-        progress_total: SKYSEG_MODEL_BYTES,
+        bytes: SKYSEG_MODEL_BYTES,
     },
-    download: BIREFNET_DOWNLOAD,
+    download: MASK_MODEL_DOWNLOAD,
     progress_label: "SkySeg U2Net",
 };
 
@@ -87,10 +99,9 @@ impl BiRefNetModelSpec {
                 name: self.checkpoint,
                 url: Some(self.url),
                 sha256: self.sha256_hex,
-                size: ArtifactSize::Exact(self.bytes),
-                progress_total: self.bytes,
+                bytes: self.bytes,
             },
-            download: BIREFNET_DOWNLOAD,
+            download: MASK_MODEL_DOWNLOAD,
             progress_label: self.download_label,
         }
     }
@@ -149,7 +160,7 @@ impl BiRefNetQuality {
         }
     }
 }
-const BIREFNET_DOWNLOAD: DownloadOptions = DownloadOptions {
+const MASK_MODEL_DOWNLOAD: DownloadOptions = DownloadOptions {
     connect_timeout: Duration::from_secs(45),
     response_timeout: Duration::from_secs(60),
     body_timeout: Duration::from_secs(60 * 60),
@@ -193,20 +204,20 @@ fn mask_model_retention(cache_supported: bool) -> ModelRetention {
 }
 
 #[derive(Debug)]
-pub enum SubjectMaskEvent {
+pub enum AiMaskEvent {
     DownloadProgress(ModelDownloadProgress),
     Inferencing,
-    Finished(Result<SubjectMaskResult, String>),
+    Finished(Result<AiMaskResult, String>),
 }
 
 #[derive(Debug)]
-pub struct SubjectMaskResult {
+pub struct AiMaskResult {
     pub width: u32,
     pub height: u32,
     pub mask: Vec<u8>,
 }
 
-impl SubjectMaskResult {
+impl AiMaskResult {
     pub fn into_probability_mask(self) -> Option<MaskImage> {
         MaskImage::new(self.width, self.height, self.mask)
     }
@@ -220,13 +231,17 @@ pub fn skyseg_model_is_verified(path: &Path) -> bool {
     SKYSEG_MODEL_INSTALL.is_installed(path)
 }
 
+pub fn depth_model_is_verified(path: &Path) -> bool {
+    depth::MODEL_INSTALL.is_installed(path)
+}
+
 pub fn object_models_are_verified(encoder: &Path, decoder: &Path) -> bool {
     object::SAM21_ENCODER_INSTALL.is_installed(encoder)
         && object::SAM21_DECODER_INSTALL.is_installed(decoder)
 }
 
-pub struct SubjectMaskWorkerRequest {
-    pub sky: bool,
+pub struct AiMaskWorkerRequest {
+    pub model: AiMaskModel,
     pub quality: BiRefNetQuality,
     pub crop_refinement: bool,
     pub model_path: PathBuf,
@@ -238,40 +253,59 @@ pub struct SubjectMaskWorkerRequest {
     pub rgba: Vec<u8>,
 }
 
-pub fn spawn_subject_mask(
-    request: SubjectMaskWorkerRequest,
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AiMaskModel {
+    Subject,
+    Sky,
+    Depth,
+}
+
+impl AiMaskModel {
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Subject => "Subject",
+            Self::Sky => "Sky",
+            Self::Depth => "Depth",
+        }
+    }
+
+    pub const fn noun(self) -> &'static str {
+        match self {
+            Self::Subject => "subject",
+            Self::Sky => "sky",
+            Self::Depth => "depth",
+        }
+    }
+}
+
+pub fn spawn_ai_mask(
+    request: AiMaskWorkerRequest,
     cancellation: Arc<AtomicBool>,
-) -> mpsc::Receiver<SubjectMaskEvent> {
+) -> mpsc::Receiver<AiMaskEvent> {
     let (sender, receiver) = mpsc::channel();
     let worker_sender = sender.clone();
     let spawn = std::thread::Builder::new()
-        .name("calibraw-onnx-subject".to_owned())
+        .name("calibraw-onnx-mask".to_owned())
         .spawn(move || {
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 (|| {
                     ensure_ai_not_cancelled(&cancellation)?;
-                    if request.sky {
-                        SKYSEG_MODEL_INSTALL.ensure_installed(
-                            &request.model_path,
-                            request.allow_download,
-                            |progress| {
-                                let _ = worker_sender
-                                    .send(SubjectMaskEvent::DownloadProgress(progress));
-                            },
-                            || ensure_ai_not_cancelled(&cancellation),
-                        )?;
-                    } else {
-                        ensure_model(
-                            request.quality,
-                            &request.model_path,
-                            request.allow_download,
-                            &worker_sender,
-                            &cancellation,
-                        )?;
-                    }
+                    let install = match request.model {
+                        AiMaskModel::Subject => request.quality.model().install(),
+                        AiMaskModel::Sky => SKYSEG_MODEL_INSTALL,
+                        AiMaskModel::Depth => depth::MODEL_INSTALL,
+                    };
+                    install.ensure_installed(
+                        &request.model_path,
+                        request.allow_download,
+                        |progress| {
+                            let _ = worker_sender.send(AiMaskEvent::DownloadProgress(progress));
+                        },
+                        || ensure_ai_not_cancelled(&cancellation),
+                    )?;
                     ensure_ai_not_cancelled(&cancellation)?;
-                    let _ = worker_sender.send(SubjectMaskEvent::Inferencing);
-                    infer_subject(request)
+                    let _ = worker_sender.send(AiMaskEvent::Inferencing);
+                    infer_ai_mask(request)
                 })()
             }))
             .unwrap_or_else(|panic| {
@@ -284,33 +318,16 @@ pub fn spawn_subject_mask(
                     "ONNX Runtime terminated inference: {message}"
                 ))
             });
-            let _ = worker_sender.send(SubjectMaskEvent::Finished(
+            let _ = worker_sender.send(AiMaskEvent::Finished(
                 result.map_err(|error| format!("{error:#}")),
             ));
         });
     if let Err(error) = spawn {
-        let _ = sender.send(SubjectMaskEvent::Finished(Err(format!(
-            "could not start BiRefNet worker: {error}"
+        let _ = sender.send(AiMaskEvent::Finished(Err(format!(
+            "could not start AI mask worker: {error}"
         ))));
     }
     receiver
-}
-
-fn ensure_model(
-    quality: BiRefNetQuality,
-    path: &Path,
-    allow_download: bool,
-    events: &mpsc::Sender<SubjectMaskEvent>,
-    cancellation: &AtomicBool,
-) -> Result<()> {
-    quality.model().install().ensure_installed(
-        path,
-        allow_download,
-        |progress| {
-            let _ = events.send(SubjectMaskEvent::DownloadProgress(progress));
-        },
-        || ensure_ai_not_cancelled(cancellation),
-    )
 }
 
 #[cfg(not(target_os = "android"))]
@@ -394,9 +411,8 @@ pub fn initialize_runtime(
         "selected ONNX Runtime has an implausible size of {} bytes",
         metadata.len()
     );
-    let (runtime_load_path, _verified_runtime_handle, actual_sha256) =
-        verified_runtime_load_path(&runtime_path)
-            .context("verify selected ONNX Runtime before loading")?;
+    let actual_sha256 =
+        sha256_file_hex(&runtime_path).context("verify selected ONNX Runtime before loading")?;
     anyhow::ensure!(
         actual_sha256 == expected_sha256,
         "selected ONNX Runtime changed after approval: expected SHA-256 {expected_sha256}, found {actual_sha256}; select it again only if you trust the replacement"
@@ -411,7 +427,7 @@ pub fn initialize_runtime(
         .lock()
         .map_err(|_| anyhow::anyhow!("ONNX Runtime initialization lock was poisoned"))?;
     if RUNTIME_INITIALIZED.get().is_none() {
-        let builder = ort::init_from(&runtime_load_path).map_err(|error| {
+        let builder = ort::init_from(&runtime_path).map_err(|error| {
             anyhow::anyhow!(
                 "could not load ONNX Runtime from {}: {error}",
                 runtime_path.display()
@@ -436,18 +452,6 @@ pub fn initialize_runtime(
         "a different ONNX Runtime is already active in this process; restart CalibRaw before changing the pinned runtime"
     );
     Ok(())
-}
-
-#[cfg(target_os = "linux")]
-fn verified_runtime_load_path(path: &Path) -> Result<(PathBuf, Option<File>, String)> {
-    let actual_sha256 = sha256_file_hex(path).context("verify selected ONNX Runtime SHA-256")?;
-    Ok((path.to_path_buf(), None, actual_sha256))
-}
-
-#[cfg(not(any(target_os = "linux", target_os = "android")))]
-fn verified_runtime_load_path(path: &Path) -> Result<(PathBuf, Option<File>, String)> {
-    let digest = sha256_file_hex(path).context("verify selected ONNX Runtime SHA-256")?;
-    Ok((path.to_path_buf(), None, digest))
 }
 
 #[cfg(target_os = "android")]
@@ -493,9 +497,9 @@ fn cache_object_ai_sessions() -> bool {
     }
 }
 
-fn infer_subject(request: SubjectMaskWorkerRequest) -> Result<SubjectMaskResult> {
-    let SubjectMaskWorkerRequest {
-        sky,
+fn infer_ai_mask(request: AiMaskWorkerRequest) -> Result<AiMaskResult> {
+    let AiMaskWorkerRequest {
+        model,
         quality,
         crop_refinement,
         model_path,
@@ -506,32 +510,32 @@ fn infer_subject(request: SubjectMaskWorkerRequest) -> Result<SubjectMaskResult>
         height,
         rgba,
     } = request;
-    const MAX_SUBJECT_MASK_PIXELS: u64 = 17_000_000;
+    const MAX_AI_MASK_PIXELS: u64 = 17_000_000;
     let pixels = u64::from(width)
         .checked_mul(u64::from(height))
-        .context("subject-mask input dimensions overflow")?;
+        .context("AI-mask input dimensions overflow")?;
     anyhow::ensure!(
-        pixels > 0 && pixels <= MAX_SUBJECT_MASK_PIXELS,
-        "subject-mask input {width}x{height} exceeds the {MAX_SUBJECT_MASK_PIXELS}-pixel limit"
+        pixels > 0 && pixels <= MAX_AI_MASK_PIXELS,
+        "AI-mask input {width}x{height} exceeds the {MAX_AI_MASK_PIXELS}-pixel limit"
     );
     let expected_bytes = pixels
         .checked_mul(4)
         .and_then(|value| usize::try_from(value).ok())
-        .context("subject-mask input byte count overflow")?;
+        .context("AI-mask input byte count overflow")?;
     anyhow::ensure!(
         rgba.len() == expected_bytes,
-        "subject-mask RGBA buffer has {} bytes, expected {expected_bytes}",
+        "AI-mask RGBA buffer has {} bytes, expected {expected_bytes}",
         rgba.len()
     );
     initialize_runtime(runtime_path.as_deref(), runtime_sha256.as_deref())?;
     let image = ImageBuffer::<Rgba<u8>, _>::from_raw(width, height, rgba)
-        .context("invalid preview image for BiRefNet")?;
-    let mask = if sky {
-        sky::sky_mask(&model_path, &image)?
-    } else {
-        subject_mask(&model_path, quality, &image, crop_refinement)?
+        .context("invalid preview image for AI mask")?;
+    let mask = match model {
+        AiMaskModel::Depth => depth::depth_mask(&model_path, &image)?,
+        AiMaskModel::Sky => sky::sky_mask(&model_path, &image)?,
+        AiMaskModel::Subject => subject_mask(&model_path, quality, &image, crop_refinement)?,
     };
-    Ok(SubjectMaskResult {
+    Ok(AiMaskResult {
         width,
         height,
         mask,
@@ -547,12 +551,11 @@ fn subject_mask(
     crop_refinement: bool,
 ) -> Result<Vec<u8>> {
     let (width, height) = image.dimensions();
-    let coarse = infer_birefnet(model_path, quality, image)?;
-    let mut mask = coarse.clone();
+    let mut mask = infer_birefnet(model_path, quality, image)?;
     let crop_refinement =
         subject_crop_refinement_enabled(crop_refinement, cfg!(target_os = "android"));
     if crop_refinement {
-        if let Some(crop) = mask_refine::mask_crop_above(&coarse, width, height, 5, 0.15) {
+        if let Some(crop) = mask_refine::mask_crop_above(&mask, width, height, 5, 0.15) {
             let crop_image =
                 image::imageops::crop_imm(image, crop.x, crop.y, crop.width, crop.height)
                     .to_image();
@@ -581,7 +584,7 @@ pub(super) fn infer_birefnet(
         model.input_height,
         FilterType::Lanczos3,
     );
-    let input = normalized_birefnet_input(&resized, model.input_width, model.input_height)?;
+    let input = normalized_rgb_input(&resized)?;
     let input = Tensor::from_array((
         [
             1usize,
@@ -682,15 +685,8 @@ fn validate_birefnet_output_shape(
     ))
 }
 
-fn normalized_birefnet_input(
-    resized: &ImageBuffer<Rgba<u8>, Vec<u8>>,
-    input_width: u32,
-    input_height: u32,
-) -> Result<Vec<f32>> {
-    anyhow::ensure!(
-        resized.dimensions() == (input_width, input_height),
-        "BiRefNet resized input does not match the model tensor dimensions"
-    );
+fn normalized_rgb_input(resized: &ImageBuffer<Rgba<u8>, Vec<u8>>) -> Result<Vec<f32>> {
+    let (input_width, input_height) = resized.dimensions();
     let plane = usize::try_from(input_width)
         .ok()
         .and_then(|width| {
@@ -698,14 +694,12 @@ fn normalized_birefnet_input(
                 .ok()
                 .and_then(|height| width.checked_mul(height))
         })
-        .context("BiRefNet input dimensions overflow")?;
-    let values = plane
-        .checked_mul(3)
-        .context("BiRefNet input size overflow")?;
+        .context("AI input dimensions overflow")?;
+    let values = plane.checked_mul(3).context("AI input size overflow")?;
     let mut input = Vec::new();
     input
         .try_reserve_exact(values)
-        .context("reserve BiRefNet input tensor")?;
+        .context("reserve AI input tensor")?;
     input.resize(values, 0.0);
     for y in 0..input_height {
         for x in 0..input_width {
@@ -775,16 +769,11 @@ fn sigmoid_probability(logit: f32) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::{
-        normalized_birefnet_input, restore_birefnet_output, sigmoid_probability,
+        normalized_rgb_input, restore_birefnet_output, sigmoid_probability,
         subject_crop_refinement_enabled, validate_birefnet_output_shape, BiRefNetQuality,
-        BIREFNET_DOWNLOAD, IMAGENET_MEAN, IMAGENET_STD,
+        IMAGENET_MEAN, IMAGENET_STD,
     };
     use image::{ImageBuffer, Rgba};
-
-    #[test]
-    fn birefnet_defaults_to_the_low_quality_model() {
-        assert_eq!(BiRefNetQuality::default(), BiRefNetQuality::Low);
-    }
 
     #[test]
     fn android_always_disables_subject_crop_refinement() {
@@ -801,7 +790,7 @@ mod tests {
             vec![255, 128, 0, 255, 0, 64, 255, 255],
         )
         .unwrap();
-        let input = normalized_birefnet_input(&image, 2, 1).unwrap();
+        let input = normalized_rgb_input(&image).unwrap();
 
         assert_eq!(input.len(), 6);
         let expected = [
@@ -850,14 +839,6 @@ mod tests {
         assert_ne!(medium.sha256_hex, high.sha256_hex);
         assert_ne!(low.cache_filename, medium.cache_filename);
         assert_ne!(medium.cache_filename, high.cache_filename);
-    }
-
-    #[test]
-    fn birefnet_downloads_retry_and_resume() {
-        const {
-            assert!(BIREFNET_DOWNLOAD.attempts > 1);
-            assert!(BIREFNET_DOWNLOAD.resume);
-        }
     }
 
     #[test]

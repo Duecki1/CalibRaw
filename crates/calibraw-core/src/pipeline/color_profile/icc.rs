@@ -87,10 +87,6 @@ pub(super) struct MatrixShaperProfile {
 
 impl MatrixShaperProfile {
     fn parse_input(bytes: &[u8]) -> Result<Self> {
-        Self::parse_impl(bytes)
-    }
-
-    fn parse_impl(bytes: &[u8]) -> Result<Self> {
         if bytes.len() < 132 || &bytes[36..40] != b"acsp" {
             bail!("invalid ICC profile header");
         }
@@ -191,21 +187,15 @@ pub(super) fn convert_input_rgb_to_rec2020(bytes: &[u8], rgb: &mut [f32]) -> Res
 }
 
 fn find_icc_tag<'a>(tags: &'a [([u8; 4], &'a [u8])], signature: &[u8; 4]) -> Result<&'a [u8]> {
-    find_icc_tag_optional(tags, signature).ok_or_else(|| {
-        anyhow!(
-            "ICC profile is missing tag {}",
-            String::from_utf8_lossy(signature)
-        )
-    })
-}
-
-fn find_icc_tag_optional<'a>(
-    tags: &'a [([u8; 4], &'a [u8])],
-    signature: &[u8; 4],
-) -> Option<&'a [u8]> {
     tags.iter()
         .find(|(candidate, _)| candidate == signature)
         .map(|(_, data)| *data)
+        .ok_or_else(|| {
+            anyhow!(
+                "ICC profile is missing tag {}",
+                String::from_utf8_lossy(signature)
+            )
+        })
 }
 
 fn parse_icc_xyz(data: &[u8]) -> Result<[f32; 3]> {

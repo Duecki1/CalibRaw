@@ -18,6 +18,8 @@ pub(crate) fn show(
             let mut changed = false;
             changed |= effect_slider(ui, &mut settings.amount, fog::AMOUNT);
             changed |= effect_slider(ui, &mut settings.density, fog::DENSITY);
+            changed |= effect_slider(ui, &mut settings.start, fog::START);
+            changed |= effect_slider(ui, &mut settings.depth_influence, fog::DEPTH_INFLUENCE);
             changed |= effect_slider(ui, &mut settings.scale, fog::SCALE);
             changed |= effect_slider(ui, &mut settings.softness, fog::SOFTNESS);
             changed |= effect_slider(ui, &mut settings.variation, fog::VARIATION);

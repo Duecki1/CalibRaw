@@ -44,6 +44,7 @@ enum VersionCheckStatus {
 }
 
 pub(in crate::app) struct VersionCheckState {
+    startup_check_pending: bool,
     receiver: Option<mpsc::Receiver<Result<Option<AvailableUpdate>, String>>>,
     requested_manually: bool,
     consent_dialog: Option<VersionCheckConsentRequest>,
@@ -54,6 +55,7 @@ pub(in crate::app) struct VersionCheckState {
 impl Default for VersionCheckState {
     fn default() -> Self {
         Self {
+            startup_check_pending: true,
             receiver: None,
             requested_manually: false,
             consent_dialog: None,
@@ -87,7 +89,11 @@ const fn github_version_check_permitted(permission: Option<bool>) -> bool {
     matches!(permission, Some(true))
 }
 
-fn fetch_latest_release() -> Result<Option<AvailableUpdate>, String> {
+fn fetch_latest_release(permission: Option<bool>) -> Result<Option<AvailableUpdate>, String> {
+    if !github_version_check_permitted(permission) {
+        return Err("GitHub version-check permission has not been granted.".to_owned());
+    }
+
     let config = ureq::Agent::config_builder()
         .https_only(true)
         .timeout_global(Some(Duration::from_secs(12)))
@@ -140,10 +146,10 @@ fn github_consent_body_height(available_height: f32, width: f32) -> f32 {
 
 impl CalibRawApp {
     fn start_version_check(&mut self, requested_manually: bool) {
-        // This is the final gate before any GitHub network request. Keep it here even
-        // though callers also check permission, so future call sites cannot bypass a
-        // saved denial accidentally.
-        if !github_version_check_permitted(self.preferences.github_update_check_allowed) {
+        // Reject unapproved checks before spawning a worker as well as at the HTTP
+        // boundary, so new callers cannot bypass an unanswered or denied request.
+        let permission = self.preferences.github_update_check_allowed;
+        if !github_version_check_permitted(permission) || self.ui.onboarding_step.is_some() {
             return;
         }
         if self.ui.version_check.receiver.is_some() {
@@ -155,7 +161,7 @@ impl CalibRawApp {
         match std::thread::Builder::new()
             .name("calibraw-version-check".to_owned())
             .spawn(move || {
-                let result = fetch_latest_release();
+                let result = fetch_latest_release(permission);
                 let _ = sender.send(result);
                 repaint.request_repaint();
             }) {
@@ -291,6 +297,15 @@ impl CalibRawApp {
     }
 
     pub(in crate::app) fn poll_version_check(&mut self) {
+        // Wait until onboarding has finished and the UI can present consent before
+        // processing the startup check. Constructors must not start network work.
+        if self.ui.version_check.startup_check_pending && self.ui.onboarding_step.is_none() {
+            self.ui.version_check.startup_check_pending = false;
+            if self.preferences.auto_check_updates {
+                self.check_for_updates(false);
+            }
+        }
+
         let update = self
             .ui
             .version_check
@@ -571,6 +586,149 @@ impl CalibRawApp {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(not(target_os = "android"))]
+    fn headless_app(auto_check: bool, permission: Option<bool>) -> CalibRawApp {
+        CalibRawApp::from_performance_settings(
+            &egui::Context::default(),
+            None,
+            crate::performance_settings::PerformanceSettings {
+                camera_profile_auto_detect: false,
+                auto_check_updates: auto_check,
+                github_update_check_allowed: permission,
+                onboarding_completed: false,
+                ..Default::default()
+            },
+        )
+    }
+
+    #[test]
+    fn fetch_refuses_unknown_and_denied_permission() {
+        for permission in [None, Some(false)] {
+            assert_eq!(
+                fetch_latest_release(permission).unwrap_err(),
+                "GitHub version-check permission has not been granted."
+            );
+        }
+    }
+
+    #[cfg(not(target_os = "android"))]
+    #[test]
+    fn startup_waits_for_onboarding_and_requests_consent_only_once() {
+        let mut app = headless_app(true, None);
+        assert!(app.ui.onboarding_step.is_some());
+        assert!(app.ui.version_check.startup_check_pending);
+        app.poll_version_check();
+        assert!(app.ui.version_check.startup_check_pending);
+        assert_eq!(app.ui.version_check.consent_dialog, None);
+        assert!(app.ui.version_check.receiver.is_none());
+
+        app.ui.onboarding_step = None;
+        app.poll_version_check();
+        assert!(!app.ui.version_check.startup_check_pending);
+        assert_eq!(
+            app.ui.version_check.consent_dialog,
+            Some(VersionCheckConsentRequest::Startup)
+        );
+        assert!(app.ui.version_check.receiver.is_none());
+        app.ui.version_check.consent_dialog = None;
+        app.poll_version_check();
+        assert_eq!(app.ui.version_check.consent_dialog, None);
+        assert_eq!(app.preferences.github_update_check_allowed, None);
+        assert!(app.ui.version_check.receiver.is_none());
+    }
+
+    #[cfg(not(target_os = "android"))]
+    #[test]
+    fn disabled_automatic_checks_skip_startup_consent() {
+        let mut app = headless_app(false, None);
+        app.ui.onboarding_step = None;
+        app.poll_version_check();
+        app.poll_version_check();
+        assert!(!app.ui.version_check.startup_check_pending);
+        assert_eq!(app.ui.version_check.consent_dialog, None);
+        assert!(app.ui.version_check.receiver.is_none());
+        assert!(matches!(
+            app.ui.version_check.status,
+            VersionCheckStatus::NotChecked
+        ));
+    }
+
+    #[cfg(not(target_os = "android"))]
+    #[test]
+    fn saved_denial_blocks_startup_manual_and_enabling_automatic_checks() {
+        let mut app = headless_app(true, Some(false));
+        app.ui.onboarding_step = None;
+        app.poll_version_check();
+        assert!(!app.ui.version_check.startup_check_pending);
+        assert_eq!(app.ui.version_check.consent_dialog, None);
+        assert!(app.ui.version_check.receiver.is_none());
+        assert_eq!(app.preferences.github_update_check_allowed, Some(false));
+
+        app.check_for_updates(true);
+        assert_eq!(app.ui.version_check.consent_dialog, None);
+        assert!(app.ui.version_check.receiver.is_none());
+        assert_eq!(app.preferences.github_update_check_allowed, Some(false));
+
+        app.set_auto_check_updates(true);
+        assert!(!app.preferences.auto_check_updates);
+        assert_eq!(app.preferences.github_update_check_allowed, Some(false));
+        assert_eq!(app.ui.version_check.consent_dialog, None);
+        assert!(app.ui.version_check.receiver.is_none());
+        assert!(matches!(
+            app.ui.version_check.status,
+            VersionCheckStatus::NotChecked
+        ));
+    }
+
+    #[cfg(not(target_os = "android"))]
+    #[test]
+    fn manual_unknown_permission_requests_consent_with_automatic_checks_disabled() {
+        let mut app = headless_app(false, None);
+        app.ui.onboarding_step = None;
+        app.check_for_updates(true);
+        assert_eq!(
+            app.ui.version_check.consent_dialog,
+            Some(VersionCheckConsentRequest::Manual)
+        );
+        assert!(!app.preferences.auto_check_updates);
+        assert_eq!(app.preferences.github_update_check_allowed, None);
+        assert!(app.ui.version_check.receiver.is_none());
+    }
+
+    #[cfg(not(target_os = "android"))]
+    #[test]
+    fn enabling_automatic_checks_waits_for_unknown_permission() {
+        let mut app = headless_app(false, None);
+        app.ui.onboarding_step = None;
+        app.set_auto_check_updates(true);
+        assert_eq!(
+            app.ui.version_check.consent_dialog,
+            Some(VersionCheckConsentRequest::EnableAutomatic)
+        );
+        assert!(!app.preferences.auto_check_updates);
+        assert_eq!(app.preferences.github_update_check_allowed, None);
+        assert!(app.ui.version_check.receiver.is_none());
+    }
+
+    #[cfg(not(target_os = "android"))]
+    #[test]
+    fn granted_permission_cannot_start_checks_during_onboarding() {
+        let mut app = headless_app(true, Some(true));
+        assert!(app.ui.onboarding_step.is_some());
+        app.poll_version_check();
+        assert!(app.ui.version_check.startup_check_pending);
+        assert!(app.ui.version_check.receiver.is_none());
+        for requested_manually in [false, true] {
+            app.start_version_check(requested_manually);
+            assert!(app.ui.version_check.receiver.is_none());
+            assert!(!app.ui.version_check.requested_manually);
+            assert!(matches!(
+                app.ui.version_check.status,
+                VersionCheckStatus::NotChecked
+            ));
+        }
+    }
 
     #[test]
     fn github_style_tags_are_normalized() {

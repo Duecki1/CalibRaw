@@ -98,7 +98,10 @@ fn watch_git_revision(manifest_dir: &Path) {
             "--git-path",
             git_path,
         ])) {
-            println!("cargo:rerun-if-changed={path}");
+            println!(
+                "cargo:rerun-if-changed={}",
+                manifest_dir.join(path).display()
+            );
         }
     }
 
@@ -112,7 +115,10 @@ fn watch_git_revision(manifest_dir: &Path) {
             "--git-path",
             &reference,
         ])) {
-            println!("cargo:rerun-if-changed={path}");
+            println!(
+                "cargo:rerun-if-changed={}",
+                manifest_dir.join(path).display()
+            );
         }
     }
 }
@@ -194,14 +200,7 @@ fn configure_android_lensfun(build_metadata: &workspace_metadata::WorkspaceMetad
         println!("cargo:rustc-link-lib=static={library}");
     }
 
-    let header_source = std::fs::read_to_string(&header)
-        .unwrap_or_else(|error| panic!("could not read {}: {error}", header.display()));
-    let version = lensfun_version::parse_lensfun_header_version(&header_source)
-        .and_then(|version| {
-            lensfun_version::validate_supported_lensfun_version(&version.to_string())?;
-            Ok(version)
-        })
-        .unwrap_or_else(|error| panic!("{}: {error}", header.display()));
+    let version = supported_lensfun_header_version(&header);
     assert_eq!(
         version.to_string(),
         build_metadata.lensfun_revision.as_str(),
@@ -247,14 +246,7 @@ fn configure_desktop_lensfun() {
             lensfun.version, lensfun.include_paths
         )
     });
-    let header_source = std::fs::read_to_string(&header)
-        .unwrap_or_else(|error| panic!("could not read {}: {error}", header.display()));
-    let header_version = lensfun_version::parse_lensfun_header_version(&header_source)
-        .and_then(|header_version| {
-            lensfun_version::validate_supported_lensfun_version(&header_version.to_string())?;
-            Ok(header_version)
-        })
-        .unwrap_or_else(|error| panic!("{}: {error}", header.display()));
+    let header_version = supported_lensfun_header_version(&header);
     if header_version != version {
         panic!(
             "Lensfun pkg-config reports {version}, but {} declares {header_version}; refusing to generate bindings from a mismatched ABI",
@@ -264,6 +256,16 @@ fn configure_desktop_lensfun() {
     generate_lensfun_bindings(&header, &lensfun.include_paths);
     println!("cargo:rustc-env=CALIBRAW_LENSFUN_BUILD_VERSION={version}");
     println!("cargo:rustc-cfg=lensfun_available");
+}
+
+fn supported_lensfun_header_version(header: &Path) -> lensfun_version::LensfunVersion {
+    let source = std::fs::read_to_string(header)
+        .unwrap_or_else(|error| panic!("could not read {}: {error}", header.display()));
+    lensfun_version::parse_lensfun_header_version(&source)
+        .and_then(|version| {
+            lensfun_version::validate_supported_lensfun_version(&version.to_string())
+        })
+        .unwrap_or_else(|error| panic!("{}: {error}", header.display()))
 }
 
 fn find_lensfun_header(include_paths: &[PathBuf]) -> Option<PathBuf> {
@@ -391,25 +393,9 @@ fn write_bindings(bindings: bindgen::Bindings, file_name: &str, library_name: &s
     let output_dir = std::env::var("OUT_DIR")
         .unwrap_or_else(|error| panic!("Cargo did not set OUT_DIR: {error}"));
     let output = PathBuf::from(output_dir).join(file_name);
-    bindings.write_to_file(&output).unwrap_or_else(|error| {
-        panic!(
-            "could not write {library_name} bindings to {}: {error}",
-            output.display()
-        )
-    });
-    normalize_generated_bindings(&output);
-}
-
-fn normalize_generated_bindings(path: &Path) {
-    let source = std::fs::read_to_string(path).unwrap_or_else(|error| {
-        panic!(
-            "could not read generated bindings {}: {error}",
-            path.display()
-        )
-    });
+    let source = bindings.to_string();
     let mut normalized = String::with_capacity(source.len());
     for line in source.lines() {
-        let line = line.strip_suffix('\r').unwrap_or(line);
         let indentation = &line[..line.len() - line.trim_start().len()];
         let content = line.trim_start();
         normalized.push_str(indentation);
@@ -421,10 +407,10 @@ fn normalize_generated_bindings(path: &Path) {
         }
         normalized.push('\n');
     }
-    std::fs::write(path, normalized).unwrap_or_else(|error| {
+    std::fs::write(&output, normalized).unwrap_or_else(|error| {
         panic!(
-            "could not normalize generated bindings {}: {error}",
-            path.display()
+            "could not write {library_name} bindings to {}: {error}",
+            output.display()
         )
     });
 }

@@ -84,7 +84,7 @@ struct SceneToneUniforms {
     exposure: f32,
     saturation: f32,
     vibrance: f32,
-    _pad_0_field: f32,
+    scene_depth_present: u32,
     basic_tone: vec4<f32>,
     sigmoid_curve: vec4<f32>,
     sigmoid_power: vec4<f32>,

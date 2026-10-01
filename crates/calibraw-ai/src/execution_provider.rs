@@ -11,7 +11,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::{
     collections::BTreeMap,
     path::{Path, PathBuf},
-    sync::{Arc, Mutex, OnceLock},
+    sync::{Mutex, OnceLock},
 };
 
 #[cfg(not(target_os = "android"))]
@@ -91,62 +91,12 @@ fn is_gpu_memory_failure(error: &anyhow::Error) -> bool {
             || message.contains("bfc_arena"))
 }
 
-#[derive(Clone)]
-pub enum ModelSource {
-    Path(PathBuf),
-    Bytes(Arc<[u8]>),
-}
-
-impl From<&Path> for ModelSource {
-    fn from(value: &Path) -> Self {
-        Self::Path(value.to_path_buf())
-    }
-}
-
-impl From<&PathBuf> for ModelSource {
-    fn from(value: &PathBuf) -> Self {
-        Self::Path(value.clone())
-    }
-}
-
-impl From<PathBuf> for ModelSource {
-    fn from(value: PathBuf) -> Self {
-        Self::Path(value)
-    }
-}
-
-impl From<&[u8]> for ModelSource {
-    fn from(value: &[u8]) -> Self {
-        Self::Bytes(Arc::from(value))
-    }
-}
-
-impl From<Vec<u8>> for ModelSource {
-    fn from(value: Vec<u8>) -> Self {
-        Self::Bytes(value.into())
-    }
-}
-
-impl From<Arc<[u8]>> for ModelSource {
-    fn from(value: Arc<[u8]>) -> Self {
-        Self::Bytes(value)
-    }
-}
-
-impl ModelSource {
-    fn description(&self) -> String {
-        match self {
-            Self::Path(path) => path.display().to_string(),
-            Self::Bytes(bytes) => format!("in-memory ONNX model ({} bytes)", bytes.len()),
-        }
-    }
-}
-
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum CpuFallbackProfile {
     #[default]
     Default,
     WindowsSamEncoder,
+    MobileDepth,
 }
 
 #[derive(Clone, Debug)]
@@ -339,6 +289,19 @@ fn configure_cpu_builder(
     mut builder: SessionBuilder,
     options: &SessionOptions,
 ) -> Result<SessionBuilder> {
+    if options.cpu_fallback_profile == CpuFallbackProfile::MobileDepth {
+        // Depth runs alongside Android's RAW preview. Bound the thread pool and
+        // avoid retaining a second, packed copy of the model's weights.
+        builder = builder
+            .with_parallel_execution(false)
+            .map_err(|error| anyhow::anyhow!("force sequential mobile depth execution: {error}"))?
+            .with_intra_threads(2)
+            .map_err(|error| anyhow::anyhow!("limit mobile depth inference threads: {error}"))?
+            .with_intra_op_spinning(false)
+            .map_err(|error| anyhow::anyhow!("disable mobile depth thread spinning: {error}"))?
+            .with_prepacking(false)
+            .map_err(|error| anyhow::anyhow!("disable mobile depth weight prepacking: {error}"))?;
+    }
     if options.cpu_fallback_profile == CpuFallbackProfile::WindowsSamEncoder
         && cfg!(target_os = "windows")
     {
@@ -359,6 +322,7 @@ fn configure_cpu_builder(
 
 fn cpu_provider(options: &SessionOptions) -> ExecutionProviderDispatch {
     let disable_arena = cfg!(target_os = "android")
+        || options.cpu_fallback_profile == CpuFallbackProfile::MobileDepth
         || (cfg!(target_os = "windows")
             && options.cpu_fallback_profile == CpuFallbackProfile::WindowsSamEncoder);
     ort::ep::CPU::default()
@@ -366,18 +330,13 @@ fn cpu_provider(options: &SessionOptions) -> ExecutionProviderDispatch {
         .build()
 }
 
-fn commit_model(builder: &mut SessionBuilder, source: &ModelSource) -> Result<Session> {
-    match source {
-        ModelSource::Path(path) => builder
-            .commit_from_file(path)
-            .with_context(|| format!("load ONNX model from {}", path.display())),
-        ModelSource::Bytes(bytes) => builder
-            .commit_from_memory(bytes.as_ref())
-            .context("load ONNX model from memory"),
-    }
+fn commit_model(builder: &mut SessionBuilder, source: &Path) -> Result<Session> {
+    builder
+        .commit_from_file(source)
+        .with_context(|| format!("load ONNX model from {}", source.display()))
 }
 
-fn create_cpu_session_inner(source: &ModelSource, options: &SessionOptions) -> Result<Session> {
+fn create_cpu_session_inner(source: &Path, options: &SessionOptions) -> Result<Session> {
     let builder = Session::builder().context("create CPU ONNX Runtime session")?;
     let builder = configure_common_builder(builder)?;
     let mut builder = configure_cpu_builder(builder, options)?
@@ -387,7 +346,7 @@ fn create_cpu_session_inner(source: &ModelSource, options: &SessionOptions) -> R
 }
 
 fn create_accelerated_session(
-    source: &ModelSource,
+    source: &Path,
     options: &SessionOptions,
     candidate: ProviderCandidate,
 ) -> Result<Session> {
@@ -409,11 +368,10 @@ fn create_accelerated_session(
 
 pub struct FallbackSession {
     session: Session,
-    source: ModelSource,
+    source: PathBuf,
     options: SessionOptions,
     active_provider: &'static str,
     accelerated: bool,
-    degraded: bool,
 }
 
 impl FallbackSession {
@@ -443,7 +401,6 @@ impl FallbackSession {
                     "AI {}: {failed_provider} inference failed; switching to CPU fallback",
                     self.options.model_name
                 ));
-                self.degraded = true;
                 publish_status(self.options.model_name, failed_provider, true);
 
                 let cpu_session = create_cpu_session_inner(&self.source, &self.options)
@@ -456,7 +413,6 @@ impl FallbackSession {
                 self.session = cpu_session;
                 self.active_provider = "CPU (fallback)";
                 self.accelerated = false;
-                self.degraded = true;
                 publish_status(self.options.model_name, self.active_provider, true);
 
                 log::info!(
@@ -475,11 +431,11 @@ impl FallbackSession {
 }
 
 pub fn create_session_with_fallback(
-    model: impl Into<ModelSource>,
+    model: impl AsRef<Path>,
     options: SessionOptions,
 ) -> Result<FallbackSession> {
-    let source = model.into();
-    let source_description = source.description();
+    let source = model.as_ref().to_path_buf();
+    let source_description = source.display().to_string();
     let mut attempted_acceleration = false;
     let mut setup_failures = Vec::new();
 
@@ -508,7 +464,6 @@ pub fn create_session_with_fallback(
                         options,
                         active_provider: provider_name,
                         accelerated: true,
-                        degraded: false,
                     });
                 }
                 Err(error) => {
@@ -574,19 +529,12 @@ pub fn create_session_with_fallback(
         options,
         active_provider,
         accelerated: false,
-        degraded,
     })
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{is_gpu_memory_failure, FallbackSession};
-
-    #[test]
-    fn fallback_session_preserves_thread_traits() {
-        fn assert_send_sync<T: Send + Sync>() {}
-        assert_send_sync::<FallbackSession>();
-    }
+    use super::is_gpu_memory_failure;
 
     #[test]
     fn gpu_allocation_failures_are_quarantined_instead_of_retried() {

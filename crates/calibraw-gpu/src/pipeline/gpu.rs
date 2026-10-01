@@ -4,8 +4,8 @@ use super::sigmoid::coefficients as sigmoid_coefficients;
 use crate::pipeline::{
     canonical_remove_scene_to_pipeline_scene, effect_params, export_mask_atlas_edge_limit,
     mask_atlas_edge, pipeline_scene_to_working_rec2020, AiDenoisedImage, CfaKind, ExposureParams,
-    GeometryTransform, HighlightReconstructionMethod, LoadedRaw, LocalMask, MaskEffect, MaskStack,
-    PointColor, PointCurve, ProcessingStage, RawThumbnail, RemoveEditState, RemovePatch,
+    GeometryTransform, HighlightReconstructionMethod, LoadedRaw, LocalMask, MaskEffect, MaskImage,
+    MaskStack, PointColor, PointCurve, ProcessingStage, RawThumbnail, RemoveEditState, RemovePatch,
     SigmoidParams, SrgbOutputLut, GLOBAL_TEMPERATURE_LIMIT, GLOBAL_TINT_OFFSET_LIMIT,
     MAX_EFFECT_COMPONENTS, MAX_LOCAL_MASKS, MAX_POINT_COLORS, MAX_POINT_CURVE_POINTS,
 };
@@ -17,6 +17,7 @@ use crate::gpu_errors::GpuErrorScopes;
 
 mod builder;
 mod clipping;
+mod fog;
 mod histogram;
 mod readback;
 mod resources;
@@ -24,6 +25,7 @@ mod shader_manager;
 
 use builder::*;
 pub use clipping::PreviewClippingGpu;
+use fog::valid_scene_depth;
 pub use histogram::{PreviewHistogram, PreviewHistogramGpu};
 use readback::*;
 use resources::*;
@@ -35,6 +37,10 @@ mod black_tone_tests;
 mod blacks_pipeline_tests;
 #[cfg(test)]
 mod film_effects_tests;
+#[cfg(test)]
+mod fog_tests;
+#[cfg(test)]
+mod light_rays_tests;
 #[cfg(test)]
 mod point_color_tests;
 #[cfg(test)]
@@ -316,7 +322,8 @@ struct SceneToneUniforms {
     exposure: f32,
     saturation: f32,
     vibrance: f32,
-    _pad_0: f32,
+    // Depth availability must not share the packed mask crop bounds below.
+    scene_depth_present: u32,
     basic_tone: [f32; 4],
     sigmoid_curve: [f32; 4],
     sigmoid_power: [f32; 4],
@@ -439,6 +446,7 @@ pub struct GpuParams {
     scene_tone: SceneToneUniforms,
     effects: EffectsUniforms,
     mask_data: Box<[MaskData]>,
+    scene_depth: Option<MaskImage>,
 }
 
 impl GpuParams {
@@ -835,7 +843,12 @@ fn pack_effect_mask(
                     color[2],
                     effect_params::fog::VARIATION.clamp(config.variation),
                 ],
-                [effect_params::fog::SEED.clamp(config.seed), 0.0, 0.0, 0.0],
+                [
+                    effect_params::fog::SEED.clamp(config.seed),
+                    effect_params::fog::START.clamp(config.start),
+                    effect_params::fog::DEPTH_INFLUENCE.clamp(config.depth_influence),
+                    0.0,
+                ],
             )
         }
         MaskEffect::Smoke => {
@@ -1170,7 +1183,7 @@ fn pack_scene_tone_params(ctx: &GpuParamContext<'_>) -> SceneToneUniforms {
         exposure: exposure.exposure,
         saturation: exposure.saturation,
         vibrance: exposure.vibrance,
-        _pad_0: 0.0,
+        scene_depth_present: u32::from(masks.scene_depth_image().is_some_and(valid_scene_depth)),
         basic_tone: [
             exposure.highlights,
             exposure.shadows,
@@ -1376,6 +1389,7 @@ impl GpuParams {
             scene_tone: pack_scene_tone_params(&context),
             effects: pack_effect_params(&context, &mask_data),
             mask_data,
+            scene_depth: masks.scene_depth_image().cloned(),
         }
     }
 
@@ -1791,6 +1805,8 @@ pub struct RawGpuPipeline {
     _tone_guide_b: wgpu::Texture,
     mask_texture: wgpu::Texture,
     light_rays_mask_texture: wgpu::Texture,
+    scene_depth_texture: wgpu::Texture,
+    uploaded_scene_depth: Mutex<Option<MaskImage>>,
     mask_layer_capacity: usize,
     mask_atlas_edge: u32,
     out_texture: wgpu::Texture,
@@ -1914,6 +1930,7 @@ struct RawGpuPipelineBuild<'a> {
 
 impl RawGpuPipeline {
     fn upload_params(&self, queue: &wgpu::Queue, params: &GpuParams) {
+        self.upload_scene_depth(queue, params.scene_depth.as_ref());
         match self.uploaded_stage_uniforms.lock() {
             Ok(mut uploaded) => {
                 if bytemuck::bytes_of(&uploaded.camera) != params.camera_bytes() {
@@ -2447,6 +2464,8 @@ impl RawGpuPipeline {
             _tone_guide_b: surfaces.tone_guide_b,
             mask_texture: surfaces.mask_texture,
             light_rays_mask_texture: surfaces.light_rays_mask_texture,
+            scene_depth_texture: surfaces.scene_depth_texture,
+            uploaded_scene_depth: Mutex::new(None),
             mask_layer_capacity: geometry.mask_layer_capacity,
             mask_atlas_edge: geometry.mask_atlas_edge,
             out_texture: surfaces.out_texture,

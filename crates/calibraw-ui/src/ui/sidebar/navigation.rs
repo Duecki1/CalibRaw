@@ -922,7 +922,11 @@ impl Sidebar {
             {
                 app.mark_mask_adjustments_dirty();
             }
-        } else if Self::show_effect_components(ui, &mut app.masks.stack.global_effects, true) {
+        } else if Self::show_effect_components(
+            ui,
+            &mut app.masks.stack.global_effects,
+            true,
+        ) {
             app.mark_mask_adjustments_dirty();
         }
 

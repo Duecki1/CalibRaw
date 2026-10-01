@@ -122,16 +122,7 @@ fn native_options() -> eframe::NativeOptions {
                 eframe::wgpu::Limits::default()
             };
             required_limits.max_texture_dimension_2d = adapter_limits.max_texture_dimension_2d;
-            let required_features = {
-                let mut features = eframe::wgpu::Features::empty();
-                if adapter
-                    .features()
-                    .contains(eframe::wgpu::Features::PIPELINE_CACHE)
-                {
-                    features |= eframe::wgpu::Features::PIPELINE_CACHE;
-                }
-                features
-            };
+            let required_features = adapter.features() & eframe::wgpu::Features::PIPELINE_CACHE;
             eframe::wgpu::DeviceDescriptor {
                 label: Some("CalibRaw wgpu device"),
                 required_features,

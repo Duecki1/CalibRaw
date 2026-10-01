@@ -273,16 +273,6 @@ impl LibraryAsset {
     }
 }
 
-#[cfg(any(target_os = "android", test))]
-fn library_import_fab_rect(bounds: egui::Rect) -> egui::Rect {
-    crate::ui::theme::floating_action_rect(bounds)
-}
-
-#[cfg(any(target_os = "android", test))]
-fn library_import_icon() -> &'static str {
-    egui_phosphor::regular::PLUS
-}
-
 pub(crate) struct LibraryEntry {
     review: crate::sidecar::PhotoReview,
     asset: LibraryAsset,
@@ -462,25 +452,24 @@ enum ScanEvent {
     },
 }
 
+#[cfg(not(target_os = "android"))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum ImageClipboardMode {
     Copy,
     Cut,
 }
 
+#[cfg(not(target_os = "android"))]
 #[derive(Clone, Debug)]
 struct ImageClipboard {
     mode: ImageClipboardMode,
     assets: Vec<LibraryAsset>,
 }
 
+#[cfg(not(target_os = "android"))]
 impl ImageClipboard {
-    fn count(&self) -> usize {
-        self.assets.len()
-    }
-
     fn paste_label(&self) -> String {
-        let count = self.count();
+        let count = self.assets.len();
         format!("Paste {count} RAW{}", if count == 1 { "" } else { "s" })
     }
 }
@@ -490,12 +479,14 @@ enum LibraryTransferDestination {
     #[cfg(not(target_os = "android"))]
     LocalFolder(PathBuf),
     #[cfg(target_os = "android")]
-    LocalLibrary { path: String },
+    LocalLibrary,
 }
 
 struct AssetTransferCompletion {
     result: Result<String, String>,
+    #[cfg(not(target_os = "android"))]
     clear_clipboard: bool,
+    #[cfg(not(target_os = "android"))]
     remaining_clipboard: Option<ImageClipboard>,
 }
 
@@ -512,15 +503,6 @@ struct ThumbnailWorker {
     repaint: egui::Context,
 }
 
-#[cfg(not(target_os = "android"))]
-#[derive(Clone)]
-struct LibraryExportDialog {
-    assets: Vec<LibraryAsset>,
-    settings: ExportSettings,
-    format: ExportFormat,
-}
-
-#[cfg(target_os = "android")]
 #[derive(Clone)]
 struct LibraryExportDialog {
     assets: Vec<LibraryAsset>,
@@ -743,6 +725,7 @@ pub(crate) struct LibraryState {
     selected_assets: HashSet<LibraryAssetId>,
     selection_mode: bool,
     selection_anchor: Option<LibraryAssetId>,
+    #[cfg(not(target_os = "android"))]
     image_clipboard: Option<ImageClipboard>,
     pub(crate) adjustment_clipboard: Option<LibraryAdjustmentClipboard>,
     asset_transfer_receiver: Option<mpsc::Receiver<AssetTransferCompletion>>,

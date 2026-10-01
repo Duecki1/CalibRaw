@@ -1,6 +1,44 @@
 use super::*;
 
+const INTERACTIVE_MASK_INTERVAL: Duration = Duration::from_millis(45);
+const SHARED_REFINEMENT_LAYER: usize = MAX_LOCAL_MASKS;
+
 impl MaskState {
+    pub(super) fn generated_cache_mut(&mut self, model: AiMaskModel) -> &mut Option<MaskImage> {
+        match model {
+            AiMaskModel::Subject => &mut self.subject_cache,
+            AiMaskModel::Sky => &mut self.sky_cache,
+            AiMaskModel::Depth => &mut self.depth_cache,
+        }
+    }
+
+    pub(in crate::app) fn clear_generated_caches(&mut self) {
+        self.subject_cache = None;
+        self.sky_cache = None;
+        self.depth_cache = None;
+    }
+
+    pub(in crate::app) fn restore_generated_caches(&mut self) {
+        for model in [AiMaskModel::Subject, AiMaskModel::Sky, AiMaskModel::Depth] {
+            if model == AiMaskModel::Depth {
+                self.depth_cache = self.stack.scene_depth_image().cloned();
+                continue;
+            }
+            let cached = self
+                .stack
+                .masks
+                .iter()
+                .flat_map(|mask| &mask.components)
+                .filter(|component| generated_mask_model(component.kind) == Some(model))
+                .find_map(|component| match &component.geometry {
+                    MaskGeometry::Ai { mask, .. }
+                    | MaskGeometry::DepthRange { depth: mask, .. } => mask.clone(),
+                    _ => None,
+                });
+            *self.generated_cache_mut(model) = cached;
+        }
+    }
+
     /// Clear mask interaction state and derived caches without changing the stack.
     pub(in crate::app) fn reset_transient_state(&mut self) {
         self.active_tool = None;
@@ -21,7 +59,8 @@ impl MaskState {
         self.thumbnail_component_textures.clear();
         self.thumbnail_revision = self.overlay_revision;
         self.source_cache = None;
-        self.subject_cache = None;
+        self.clear_generated_caches();
+        self.fog_depth_auto_requested = false;
         self.dirty_layers.fill(false);
         self.detail_dirty_layers.fill(false);
         self.navigation_dirty_layers.fill(false);
@@ -127,8 +166,9 @@ impl MaskState {
 
 impl CalibRawApp {
     pub(crate) fn reset_masks(&mut self) {
-        let masks_changed =
-            !self.masks.stack.masks.is_empty() || !self.masks.stack.subject_refinement.is_empty();
+        let masks_changed = !self.masks.stack.masks.is_empty()
+            || !self.masks.stack.subject_refinement.is_empty()
+            || self.masks.stack.scene_depth.is_some();
 
         self.finish_mask_geometry_interaction();
         self.masks.stack.clear();
@@ -162,8 +202,6 @@ impl CalibRawApp {
     }
 
     pub(crate) fn note_mask_geometry_interaction(&mut self, layer: usize) {
-        const INTERACTIVE_MASK_INTERVAL: Duration = Duration::from_millis(45);
-
         if self.masks.interaction_dirty_layer != Some(layer) {
             self.finish_mask_geometry_interaction();
             self.masks.interaction_dirty_layer = Some(layer);
@@ -171,22 +209,10 @@ impl CalibRawApp {
         }
 
         self.masks.interaction_has_uncommitted_change = true;
-        let now = Instant::now();
-        let upload_due = self
-            .masks
-            .interaction_last_upload
-            .is_none_or(|last| now.duration_since(last) >= INTERACTIVE_MASK_INTERVAL);
-        if upload_due {
-            self.mark_mask_geometry_dirty(layer);
-            self.masks.interaction_last_upload = Some(now);
-            self.masks.interaction_has_uncommitted_change = false;
-        }
+        self.flush_mask_geometry_interaction();
     }
 
     pub(crate) fn note_subject_refinement_interaction(&mut self) {
-        const INTERACTIVE_MASK_INTERVAL: Duration = Duration::from_millis(45);
-        const SHARED_REFINEMENT_LAYER: usize = MAX_LOCAL_MASKS;
-
         if self.masks.interaction_dirty_layer != Some(SHARED_REFINEMENT_LAYER) {
             self.finish_mask_geometry_interaction();
             self.masks.interaction_dirty_layer = Some(SHARED_REFINEMENT_LAYER);
@@ -194,21 +220,51 @@ impl CalibRawApp {
         }
 
         self.masks.interaction_has_uncommitted_change = true;
+        self.flush_mask_geometry_interaction();
+    }
+
+    pub(crate) fn flush_mask_geometry_interaction(&mut self) {
+        if !self.masks.interaction_has_uncommitted_change {
+            return;
+        }
+        let Some(layer) = self.masks.interaction_dirty_layer else {
+            return;
+        };
         let now = Instant::now();
-        let upload_due = self
+        let interval = if self.defer_background_mask_processing() {
+            Duration::from_millis(16)
+        } else {
+            INTERACTIVE_MASK_INTERVAL
+        };
+        let remaining = self
             .masks
             .interaction_last_upload
-            .is_none_or(|last| now.duration_since(last) >= INTERACTIVE_MASK_INTERVAL);
-        if upload_due {
-            self.mark_all_mask_layers_dirty();
-            self.masks.interaction_last_upload = Some(now);
-            self.masks.interaction_has_uncommitted_change = false;
+            .map_or(Duration::ZERO, |last| {
+                interval.saturating_sub(now.saturating_duration_since(last))
+            });
+        if !remaining.is_zero() {
+            self.egui_ctx.request_repaint_after(remaining);
+            return;
         }
+        if layer == SHARED_REFINEMENT_LAYER {
+            self.mark_all_mask_layers_dirty();
+        } else {
+            self.mark_mask_geometry_dirty(layer);
+        }
+        self.masks.interaction_last_upload = Some(now);
+        self.masks.interaction_has_uncommitted_change = false;
     }
 
     pub(crate) fn finish_mask_geometry_interaction(&mut self) {
         let layer = self.masks.interaction_dirty_layer.take();
-        let should_commit = self.masks.interaction_has_uncommitted_change;
+        let should_refine = self.preview.detail.as_ref().is_some_and(|detail| {
+            detail.mask_texture_extent
+                != crate::pipeline::mask_region_texture_extent(
+                    detail.mask_source_region,
+                    detail.pipeline.mask_atlas_edge(),
+                )
+        });
+        let should_commit = self.masks.interaction_has_uncommitted_change || should_refine;
         self.masks.interaction_last_upload = None;
         self.masks.interaction_has_uncommitted_change = false;
         if should_commit {
@@ -308,15 +364,7 @@ impl CalibRawApp {
     }
 
     pub(crate) fn activate_mask_tool(&mut self, kind: MaskKind) {
-        self.finish_mask_geometry_interaction();
-        self.masks.active_tool =
-            (kind.is_available() && kind != MaskKind::Fullscreen).then_some(kind);
-        self.masks.drag = None;
-        self.masks.last_brush_point = None;
-        self.masks.touch_gesture_backup = None;
-        if !matches!(kind, MaskKind::Subject | MaskKind::Background) {
-            self.masks.subject_refinement_active = false;
-        }
+        self.select_mask_tool(kind);
         if matches!(kind, MaskKind::Brush | MaskKind::Object) {
             self.masks.brush_mode = BrushMode::Paint;
         }
@@ -354,6 +402,7 @@ impl CalibRawApp {
                 Some(
                     ForegroundOperationKind::SubjectMask
                         | ForegroundOperationKind::SkyMask
+                        | ForegroundOperationKind::DepthMask
                         | ForegroundOperationKind::ObjectMask
                 )
             )
@@ -381,20 +430,28 @@ impl CalibRawApp {
                 )
             })
             .count();
-        let current_object = usize::from(
+        let current_non_subject = usize::from(
             matches!(
                 self.foreground_operation_kind(),
-                Some(ForegroundOperationKind::ObjectMask | ForegroundOperationKind::SkyMask)
+                Some(
+                    ForegroundOperationKind::ObjectMask
+                        | ForegroundOperationKind::SkyMask
+                        | ForegroundOperationKind::DepthMask
+                )
             ) || self.ai.object_pending_target.is_some()
-                || matches!(self.ai.consent, AiConsentState::Sky { .. }),
+                || matches!(
+                    self.ai.consent,
+                    AiConsentState::Sky { .. } | AiConsentState::Depth { .. }
+                ),
         );
         let subject_remaining = usize::from(self.ai.mask_update_subject_pending) * subject_targets;
-        subject_remaining + self.ai.mask_update_object_queue.len() + current_object
+        subject_remaining + self.ai.mask_update_object_queue.len() + current_non_subject
     }
 
     pub(in crate::app) fn generated_ai_mask_targets(&self) -> GeneratedAiMaskTargets {
         let mut subject = false;
         let mut sky = false;
+        let mut depth = false;
         let mut objects = VecDeque::new();
         for (mask_index, local_mask) in self.masks.stack.masks.iter().enumerate() {
             for (component_index, component) in local_mask.components.iter().enumerate() {
@@ -404,6 +461,10 @@ impl CalibRawApp {
                     }
                     (MaskKind::Sky, MaskGeometry::Ai { .. }) if !sky => {
                         sky = true;
+                        objects.push_back((mask_index, component_index));
+                    }
+                    (MaskKind::DepthRange, MaskGeometry::DepthRange { .. }) if !depth => {
+                        depth = true;
                         objects.push_back((mask_index, component_index));
                     }
                     (MaskKind::Object, MaskGeometry::Object { strokes, .. })
@@ -433,13 +494,18 @@ impl CalibRawApp {
 
     pub(in crate::app) fn invalidate_generated_mask_sources(&mut self) {
         self.masks.source_cache = None;
-        self.masks.subject_cache = None;
+        self.masks.clear_generated_caches();
+        self.masks.fog_depth_auto_requested = false;
+        if self.masks.stack.scene_depth.take().is_some() {
+            self.mark_mask_adjustments_dirty();
+        }
         self.ai.object_cache = None;
         if matches!(
             self.foreground_operation_kind(),
             Some(
                 ForegroundOperationKind::SubjectMask
                     | ForegroundOperationKind::SkyMask
+                    | ForegroundOperationKind::DepthMask
                     | ForegroundOperationKind::ObjectMask
             )
         ) {
@@ -517,7 +583,7 @@ impl CalibRawApp {
 
         if update_subject || !object_targets.is_empty() || update_ranges {
             self.masks.source_cache = None;
-            self.masks.subject_cache = None;
+            self.masks.clear_generated_caches();
             self.ai.object_cache = None;
             if let Err(error) = self.capture_mask_source(frame) {
                 self.ui.notice = Some(error);
@@ -563,21 +629,7 @@ impl CalibRawApp {
         self.ai.mask_update_failed = false;
 
         if update_subject {
-            let path = self.birefnet_model_path();
-            let runtime_download_needed = self.automatic_onnx_runtime_download_needed();
-            if crate::ai_masks::birefnet_model_is_verified(self.ai.birefnet_quality, &path)
-                && !runtime_download_needed
-            {
-                if matches!(self.ai.consent, AiConsentState::Subject { .. }) {
-                    self.ai.consent = AiConsentState::None;
-                }
-                self.start_subject_worker(path, false);
-            } else {
-                self.ai.consent = AiConsentState::Subject {
-                    runtime_download_needed,
-                };
-                self.egui_ctx.request_repaint();
-            }
+            self.prepare_generated_mask(AiMaskModel::Subject);
         } else {
             self.continue_ai_mask_update();
         }
@@ -591,6 +643,7 @@ impl CalibRawApp {
                 Some(
                     ForegroundOperationKind::SubjectMask
                         | ForegroundOperationKind::SkyMask
+                        | ForegroundOperationKind::DepthMask
                         | ForegroundOperationKind::ObjectMask
                 )
             )
@@ -609,6 +662,7 @@ impl CalibRawApp {
                 .and_then(|mask| mask.components.get(component_index))
                 .is_some_and(|component| {
                     component.kind == MaskKind::Sky
+                        || component.kind == MaskKind::DepthRange
                         || matches!(
                             &component.geometry,
                             MaskGeometry::Object { strokes, .. } if strokes
@@ -620,18 +674,10 @@ impl CalibRawApp {
                 continue;
             }
 
-            if self.masks.stack.masks[mask_index].components[component_index].kind == MaskKind::Sky
-            {
-                let path = self.skyseg_model_path();
-                let runtime_download_needed = self.automatic_onnx_runtime_download_needed();
-                if crate::ai_masks::skyseg_model_is_verified(&path) && !runtime_download_needed {
-                    self.start_sky_worker(path, false);
-                } else {
-                    self.ai.consent = AiConsentState::Sky {
-                        runtime_download_needed,
-                    };
-                    self.egui_ctx.request_repaint();
-                }
+            if let Some(model) = generated_mask_model(
+                self.masks.stack.masks[mask_index].components[component_index].kind,
+            ) {
+                self.prepare_generated_mask(model);
                 return;
             }
 
@@ -724,10 +770,190 @@ mod tests {
             thumbnail_component_textures: Vec::new(),
             source_cache: None,
             subject_cache: None,
+            sky_cache: None,
+            depth_cache: None,
+            fog_depth_auto_requested: false,
             dirty_layers: [false; MAX_LOCAL_MASKS],
             detail_dirty_layers: [false; MAX_LOCAL_MASKS],
             navigation_dirty_layers: [false; MAX_LOCAL_MASKS],
         }
+    }
+
+    #[test]
+    fn scene_depth_without_selection_is_dirty_persisted_and_reused() {
+        let mut app = CalibRawApp::empty(&egui::Context::default());
+        app.masks
+            .stack
+            .global_effects
+            .push(crate::pipeline::EffectComponent::new(
+                crate::pipeline::MaskEffect::Fog,
+            ));
+        app.reset_edit_history();
+        app.masks.dirty_layers.fill(false);
+        app.masks.detail_dirty_layers.fill(false);
+        app.masks.navigation_dirty_layers.fill(false);
+        let revision = app.masks.overlay_revision;
+        let depth = MaskImage::new(2, 2, vec![0, 85, 170, 255]).unwrap();
+
+        app.apply_generated_mask(AiMaskModel::Depth, depth.clone());
+        assert!(app.masks.stack.masks.is_empty());
+        assert_eq!(app.masks.stack.scene_depth.as_ref(), Some(&depth));
+        assert_eq!(app.masks.overlay_revision, revision.wrapping_add(1));
+        assert!(app.masks.dirty_layers.iter().all(|dirty| *dirty));
+        assert!(app.masks.detail_dirty_layers.iter().all(|dirty| *dirty));
+        assert!(app.masks.navigation_dirty_layers.iter().all(|dirty| *dirty));
+        app.commit_edit_history_now();
+        let committed = app.committed_mask_state_for_persistence();
+        assert_eq!(committed.scene_depth.as_ref(), Some(&depth));
+
+        let edits = crate::sidecar::EditState {
+            masks: committed,
+            ..crate::sidecar::default_edit_state()
+        };
+        let restored = crate::sidecar::decode(&crate::sidecar::encode(edits).unwrap()).unwrap();
+        app.masks.reset_transient_state();
+        app.masks.stack = (*restored.edits.masks).clone();
+        app.rehydrate_restored_mask_state();
+        assert_eq!(app.masks.depth_cache.as_ref(), Some(&depth));
+        assert!(app.masks.stack.masks.is_empty());
+
+        // A later depth selection reuses fog's persisted map without inference.
+        app.masks.stack.add_mask(MaskKind::DepthRange).unwrap();
+        app.request_depth_mask(&eframe::Frame::_new_kittest());
+        assert!(app
+            .masks
+            .stack
+            .selected_component()
+            .unwrap()
+            .geometry
+            .is_initialized());
+        assert!(!app.foreground_operation_active());
+        assert!(!app.ai.consent.is_open());
+        assert!(app.masks.source_cache.is_none());
+    }
+
+    #[test]
+    fn scene_depth_reset_is_persisted_without_selections() {
+        let mut app = CalibRawApp::empty(&egui::Context::default());
+        app.masks.stack.scene_depth = Some(MaskImage::new(2, 2, vec![0, 85, 170, 255]).unwrap());
+        app.reset_edit_history();
+        assert!(app
+            .committed_mask_state_for_persistence()
+            .scene_depth
+            .is_some());
+
+        app.reset_masks();
+        app.commit_edit_history_now();
+        assert!(app
+            .committed_mask_state_for_persistence()
+            .scene_depth
+            .is_none());
+        assert!(app.masks.depth_cache.is_none());
+    }
+
+    #[test]
+    fn scene_depth_cache_prefers_shared_map_and_reuses_legacy_depth() {
+        let mut state = mask_state();
+        let legacy = MaskImage::new(2, 2, vec![0, 85, 170, 255]).unwrap();
+        state.stack.add_mask(MaskKind::DepthRange).unwrap();
+        if let MaskGeometry::DepthRange { depth, .. } =
+            &mut state.stack.selected_component_mut().unwrap().geometry
+        {
+            *depth = Some(legacy.clone());
+        }
+        state.restore_generated_caches();
+        assert_eq!(state.depth_cache.as_ref(), Some(&legacy));
+
+        let scene = MaskImage::new(2, 2, vec![255, 170, 85, 0]).unwrap();
+        state.stack.scene_depth = Some(scene.clone());
+        state.restore_generated_caches();
+        assert_eq!(state.depth_cache.as_ref(), Some(&scene));
+        assert!(Arc::ptr_eq(
+            &state.depth_cache.as_ref().unwrap().pixels,
+            &state.stack.scene_depth.as_ref().unwrap().pixels,
+        ));
+    }
+
+    #[test]
+    fn generated_caches_follow_sidecar_restore_source_changes_and_reset() {
+        let ctx = egui::Context::default();
+        let mut app = CalibRawApp::empty(&ctx);
+        for kind in [
+            MaskKind::Subject,
+            MaskKind::Background,
+            MaskKind::Sky,
+            MaskKind::DepthRange,
+        ] {
+            app.masks.stack.add_mask(kind).unwrap();
+        }
+        let subject = MaskImage::new(2, 2, vec![0, 255, 255, 0]).unwrap();
+        let sky = MaskImage::new(2, 2, vec![255, 255, 0, 0]).unwrap();
+        let depth = MaskImage::new(2, 2, vec![0, 85, 170, 255]).unwrap();
+        app.apply_generated_mask(AiMaskModel::Subject, subject.clone());
+        app.apply_generated_mask(AiMaskModel::Sky, sky.clone());
+        app.apply_generated_mask(AiMaskModel::Depth, depth.clone());
+        assert_eq!(app.masks.subject_cache.as_ref(), Some(&subject));
+        assert_eq!(app.masks.sky_cache.as_ref(), Some(&sky));
+        assert_eq!(app.masks.depth_cache.as_ref(), Some(&depth));
+
+        let edits = crate::sidecar::EditState {
+            masks: Arc::new(app.masks.stack.clone()),
+            ..crate::sidecar::default_edit_state()
+        };
+        let loaded = crate::sidecar::decode(&crate::sidecar::encode(edits).unwrap()).unwrap();
+        app.masks.reset_transient_state();
+        assert!(app.masks.subject_cache.is_none());
+        assert!(app.masks.sky_cache.is_none());
+        assert!(app.masks.depth_cache.is_none());
+        app.masks.stack = (*loaded.edits.masks).clone();
+        app.rehydrate_restored_mask_state();
+        assert_eq!(app.masks.subject_cache.as_ref(), Some(&subject));
+        assert_eq!(app.masks.sky_cache.as_ref(), Some(&sky));
+        assert_eq!(app.masks.depth_cache.as_ref(), Some(&depth));
+        if let MaskGeometry::DepthRange {
+            depth: Some(restored),
+            ..
+        } = &app.masks.stack.masks[3].components[0].geometry
+        {
+            assert!(Arc::ptr_eq(
+                &restored.pixels,
+                &app.masks.depth_cache.as_ref().unwrap().pixels
+            ));
+        } else {
+            panic!("depth was not restored");
+        }
+
+        // Cached selections must work without a preview, model, or runtime.
+        let frame = eframe::Frame::_new_kittest();
+        for kind in [MaskKind::Subject, MaskKind::Sky, MaskKind::DepthRange] {
+            app.masks.stack.add_mask(kind).unwrap();
+            match kind {
+                MaskKind::Subject => app.request_subject_mask(&frame),
+                MaskKind::Sky => app.request_sky_mask(&frame),
+                MaskKind::DepthRange => app.request_depth_mask(&frame),
+                _ => unreachable!(),
+            }
+            assert!(app
+                .masks
+                .stack
+                .selected_component()
+                .unwrap()
+                .geometry
+                .is_initialized());
+            assert!(!app.foreground_operation_active());
+            assert!(!app.ai.consent.is_open());
+            assert!(app.masks.source_cache.is_none());
+        }
+
+        app.note_mask_source_changed();
+        assert!(app.ai.masks_need_update);
+        assert!(app.masks.subject_cache.is_none());
+        assert!(app.masks.sky_cache.is_none());
+        assert!(app.masks.depth_cache.is_none());
+        app.rehydrate_restored_mask_state();
+        assert!(app.masks.subject_cache.is_none());
+        assert!(app.masks.sky_cache.is_none());
+        assert!(app.masks.depth_cache.is_none());
     }
 
     #[test]

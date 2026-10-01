@@ -7,24 +7,6 @@ use std::{
 };
 
 impl CalibRawApp {
-    fn discard_ai_preview_caches(&mut self) {
-        for texture_id in [
-            self.preview
-                .detail
-                .take()
-                .and_then(|preview| preview.pipeline.egui_texture_id),
-            self.preview
-                .navigation
-                .take()
-                .and_then(|preview| preview.pipeline.egui_texture_id),
-        ]
-        .into_iter()
-        .flatten()
-        {
-            self.retire_egui_texture(texture_id);
-        }
-    }
-
     fn rawnind_model_dir(&self) -> PathBuf {
         #[cfg(target_os = "android")]
         {
@@ -94,7 +76,7 @@ impl CalibRawApp {
             self.develop.exposure.ai_denoise_enabled = false;
             self.develop.target_exposure.ai_denoise_enabled = false;
             self.preview.quality_dirty = true;
-            self.discard_ai_preview_caches();
+            self.discard_auxiliary_previews();
             self.preview.pending_stage = None;
             self.preview.detail_pending_stage = None;
             self.preview.navigation_pending_stage = None;
@@ -140,7 +122,7 @@ impl CalibRawApp {
             self.develop.exposure.ai_denoise_enabled = true;
             self.note_edit_changed();
             self.preview.quality_dirty = true;
-            self.discard_ai_preview_caches();
+            self.discard_auxiliary_previews();
             return;
         }
         let saved_result_exists = self
@@ -211,28 +193,11 @@ impl CalibRawApp {
         raw.clear_ai_denoised_image();
         #[cfg(target_os = "android")]
         {
-            let previous_pipeline = {
-                let mut renderer = render_state.renderer.write();
-                self.take_preview_pipeline_and_release_textures(&mut renderer)
-            };
+            let previous_pipeline = self.take_preview_pipeline_and_release_textures();
             drop(previous_pipeline);
         }
         #[cfg(not(target_os = "android"))]
-        for texture_id in [
-            self.preview
-                .detail
-                .take()
-                .and_then(|preview| preview.pipeline.egui_texture_id),
-            self.preview
-                .navigation
-                .take()
-                .and_then(|preview| preview.pipeline.egui_texture_id),
-        ]
-        .into_iter()
-        .flatten()
-        {
-            self.retire_egui_texture(texture_id);
-        }
+        self.discard_auxiliary_previews();
         self.preview.pending_stage = None;
         self.preview.detail_pending_stage = None;
         self.preview.navigation_pending_stage = None;
@@ -365,7 +330,7 @@ impl CalibRawApp {
             return;
         }
         self.preview.quality_dirty = true;
-        self.discard_ai_preview_caches();
+        self.discard_auxiliary_previews();
         self.preview.pending_stage = None;
         self.preview.detail_pending_stage = None;
         self.preview.navigation_pending_stage = None;
@@ -483,16 +448,10 @@ impl CalibRawApp {
                             "denoise-download-details",
                             model_download_needed,
                             runtime_download_needed,
-                            &[
-                                (
-                                    "RawNIND model card",
-                                    "https://github.com/darktable-org/darktable-ai/tree/release-5.6.0/models/rawdenoise-nind",
-                                ),
-                                (
-                                    "GPL-3.0 license",
-                                    "https://github.com/darktable-org/darktable-ai/blob/release-5.6.0/LICENSE",
-                                ),
-                            ],
+                            &[(
+                                "RawNIND model artifact",
+                                "https://huggingface.co/Duecki/CalibRaw-Artifacts/tree/main/models/rawnind",
+                            )],
                             |ui| {
                                 ui.label("RawNIND handles Bayer denoise/demosaic and X-Trans images. The verified models are cached locally under GPL-3.0.");
                             },

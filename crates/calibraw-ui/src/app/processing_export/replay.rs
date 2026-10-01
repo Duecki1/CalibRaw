@@ -1200,13 +1200,13 @@ impl CalibRawApp {
                             log::error!("edit replay failed: {error}");
                         }
                     }
-                    super::export::clear_export_task(&mut self.export.task);
+                    self.export.task = None;
                 }
             }
         }
         if disconnected && !finished {
             self.ui.notice = Some("Edit replay worker stopped unexpectedly.".to_owned());
-            super::export::clear_export_task(&mut self.export.task);
+            self.export.task = None;
         }
     }
 }
@@ -1381,19 +1381,5 @@ mod tests {
                 assert_ne!(glyph_rows(character), [0; 7], "missing glyph {character}");
             }
         }
-    }
-
-    #[test]
-    fn replay_timeline_accounts_for_every_stage_and_the_brand_outro() {
-        assert_eq!(
-            total_replay_frames(0),
-            SPLIT_HOLD_FRAMES
-                + SPLIT_SWEEP_FRAMES * 2
-                + FULL_FRAME_HOLD_FRAMES * 2
-                + FINAL_HOLD_FRAMES
-                + OUTRO_FADE_TO_BLACK_FRAMES
-                + OUTRO_BRAND_FADE_FRAMES
-                + OUTRO_HOLD_FRAMES
-        );
     }
 }

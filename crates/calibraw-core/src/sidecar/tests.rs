@@ -34,6 +34,365 @@ fn sample_edits() -> EditState {
 }
 
 #[test]
+fn scene_depth_round_trips_losslessly_with_optional_shared_png_asset() {
+    let empty = encode(default_edit_state()).unwrap();
+    let document: serde_json::Value = serde_json::from_slice(&empty).unwrap();
+    assert!(document.get("scene_depth_asset").is_none());
+    assert!(document["edits"]["masks"].get("scene_depth").is_none());
+    assert!(decode(&empty).unwrap().edits.masks.scene_depth.is_none());
+
+    for shared in [false, true] {
+        let mut edits = default_edit_state();
+        let masks = Arc::make_mut(&mut edits.masks);
+        let depth = MaskImage::new(256, 256, (0..256 * 256).map(|i| (i % 256) as u8).collect());
+        masks.scene_depth = depth.clone();
+        if shared {
+            masks.add_mask(MaskKind::DepthRange).unwrap();
+            *generated_mask_mut(&mut masks.masks[0].components[0].geometry).unwrap() = depth;
+        }
+        let encoded = encode(edits.clone()).unwrap();
+        let document: SidecarDocument = serde_json::from_slice(&encoded).unwrap();
+        assert_eq!(document.mask_assets.len(), 1);
+        assert_eq!(document.scene_depth_asset, Some(0));
+        assert_eq!(document.mask_asset_refs.len(), usize::from(shared));
+        assert!(document.edits.masks.scene_depth.is_none());
+        assert!(document.mask_assets[0].png.len() < 4096);
+        let loaded = decode(&encoded).unwrap().edits;
+        assert_eq!(loaded, edits);
+        if shared {
+            let range_depth = generated_mask(&loaded.masks.masks[0].components[0].geometry)
+                .unwrap()
+                .as_ref()
+                .unwrap();
+            assert!(Arc::ptr_eq(
+                &loaded.masks.scene_depth.as_ref().unwrap().pixels,
+                &range_depth.pixels,
+            ));
+        }
+    }
+}
+
+#[test]
+fn distinct_scene_and_range_depth_assets_remain_distinct() {
+    let mut edits = default_edit_state();
+    let masks = Arc::make_mut(&mut edits.masks);
+    masks.scene_depth = MaskImage::new(2, 1, vec![0, 255]);
+    masks.add_mask(MaskKind::DepthRange).unwrap();
+    *generated_mask_mut(&mut masks.masks[0].components[0].geometry).unwrap() =
+        MaskImage::new(1, 2, vec![64, 128]);
+    let encoded = encode(edits.clone()).unwrap();
+    let document: SidecarDocument = serde_json::from_slice(&encoded).unwrap();
+    assert_eq!(document.mask_assets.len(), 2);
+    assert_ne!(
+        document.scene_depth_asset,
+        Some(document.mask_asset_refs[0].asset_index)
+    );
+    assert_eq!(decode(&encoded).unwrap().edits, edits);
+}
+
+#[test]
+fn scene_depth_assets_are_counted_once_in_both_size_estimates() {
+    let mut masks = MaskStack::default();
+    masks.add_mask(MaskKind::DepthRange).unwrap();
+    let empty_estimate = estimate_sidecar_bytes(&masks).unwrap();
+    let empty_measured = measure_sidecar_dynamic_bytes(&masks).unwrap();
+    masks.scene_depth = MaskImage::new(64, 64, (0..64 * 64).map(|i| (i % 256) as u8).collect());
+    let estimate = estimate_sidecar_bytes(&masks).unwrap();
+    let measured = measure_sidecar_dynamic_bytes(&masks).unwrap();
+    assert!(estimate > empty_estimate);
+    assert!(measured > empty_measured);
+    assert!(matches!(
+        preflight_sidecar_dynamic_data_with_limit(&masks, empty_measured),
+        Err(SidecarError::TooLarge(_))
+    ));
+    preflight_sidecar_dynamic_data_with_limit(&masks, measured).unwrap();
+    *generated_mask_mut(&mut masks.masks[0].components[0].geometry).unwrap() =
+        masks.scene_depth.clone();
+    assert_eq!(estimate_sidecar_bytes(&masks).unwrap(), estimate);
+    assert_eq!(measure_sidecar_dynamic_bytes(&masks).unwrap(), measured);
+}
+
+#[test]
+fn invalid_scene_depth_dimensions_and_pixels_are_rejected() {
+    for (width, height, pixels) in [(0, 1, 0), (1, 0, 0), (8193, 1, 8193), (2, 2, 3)] {
+        let mut image = MaskImage::new(1, 1, vec![0]).unwrap();
+        image.width = width;
+        image.height = height;
+        image.pixels = vec![0; pixels].into();
+        let edits = EditState {
+            masks: Arc::new(MaskStack {
+                scene_depth: Some(image),
+                ..Default::default()
+            }),
+            ..default_edit_state()
+        };
+        assert!(matches!(
+            preflight_mask_change(&edits.masks),
+            Err(SidecarError::Invalid(_))
+        ));
+        assert!(matches!(
+            encode(edits.clone()),
+            Err(SidecarError::Invalid(_))
+        ));
+        let mut document: SidecarDocument =
+            serde_json::from_slice(&encode(default_edit_state()).unwrap()).unwrap();
+        document.edits = edits;
+        assert!(matches!(
+            decode(&serde_json::to_vec(&document).unwrap()),
+            Err(SidecarError::Invalid(_))
+        ));
+    }
+}
+
+#[test]
+fn inline_scene_depth_is_migrated_and_conflicting_or_invalid_asset_refs_are_rejected() {
+    let mut edits = default_edit_state();
+    Arc::make_mut(&mut edits.masks).scene_depth = MaskImage::new(2, 1, vec![0, 255]);
+    let encoded = encode(edits.clone()).unwrap();
+    let original: SidecarDocument = serde_json::from_slice(&encoded).unwrap();
+
+    let mut inline = original.clone();
+    inline.edits = edits.clone();
+    inline.scene_depth_asset = None;
+    inline.mask_assets.clear();
+    let loaded = decode(&serde_json::to_vec(&inline).unwrap()).unwrap().edits;
+    assert_eq!(loaded, edits);
+    let saved: SidecarDocument = serde_json::from_slice(&encode(loaded).unwrap()).unwrap();
+    assert_eq!(saved.scene_depth_asset, Some(0));
+    assert!(saved.edits.masks.scene_depth.is_none());
+
+    let mut conflicting = original.clone();
+    conflicting.edits = edits;
+    assert!(matches!(decode(&serde_json::to_vec(&conflicting).unwrap()),
+        Err(SidecarError::Invalid(message)) if message.contains("both inline pixels")));
+    let mut invalid_ref = original.clone();
+    invalid_ref.scene_depth_asset = Some(1);
+    assert!(matches!(decode(&serde_json::to_vec(&invalid_ref).unwrap()),
+        Err(SidecarError::Invalid(message)) if message.contains("invalid asset index")));
+    let mut unreferenced = original.clone();
+    unreferenced.scene_depth_asset = None;
+    assert!(
+        matches!(decode(&serde_json::to_vec(&unreferenced).unwrap()),
+        Err(SidecarError::Invalid(message)) if message.contains("unreferenced"))
+    );
+    let mut wrong_metadata = original.clone();
+    wrong_metadata.mask_assets[0].width = 3;
+    assert!(
+        matches!(decode(&serde_json::to_vec(&wrong_metadata).unwrap()),
+        Err(SidecarError::Invalid(message)) if message.contains("metadata"))
+    );
+    let mut corrupt = original;
+    corrupt.mask_assets[0].png = vec![0, 1, 2].into();
+    assert!(matches!(
+        decode(&serde_json::to_vec(&corrupt).unwrap()),
+        Err(SidecarError::Invalid(_))
+    ));
+}
+
+#[test]
+fn scene_depth_shares_the_decoded_memory_limit_with_mask_assets() {
+    let mut edits = default_edit_state();
+    Arc::make_mut(&mut edits.masks).scene_depth = MaskImage::new(1, 1, vec![0]);
+    // Asset headers alone reach the budget, so one additional inline depth byte
+    // must be rejected before any of these deliberately empty PNGs are decoded.
+    let asset = SidecarMaskAsset {
+        width: MAX_MASK_IMAGE_EDGE,
+        height: MAX_MASK_IMAGE_EDGE,
+        png: Arc::from([]),
+    };
+    let count = MAX_DECODED_MASK_ASSET_BYTES
+        / (u64::from(MAX_MASK_IMAGE_EDGE) * u64::from(MAX_MASK_IMAGE_EDGE));
+    assert!(
+        matches!(restore_mask_assets(&mut edits, &vec![asset; count as usize], &[], None),
+        Err(SidecarError::Invalid(message)) if message.contains("memory safety limit"))
+    );
+}
+
+#[test]
+fn copied_fog_uses_only_destination_scene_depth_in_merge_and_replace_modes() {
+    let mut source = default_edit_state();
+    let masks = Arc::make_mut(&mut source.masks);
+    masks.scene_depth = MaskImage::new(2, 1, vec![0, 255]);
+    masks.add_mask(MaskKind::DepthRange).unwrap();
+    *generated_mask_mut(&mut masks.masks[0].components[0].geometry).unwrap() =
+        masks.scene_depth.clone();
+    let mut fog = crate::pipeline::EffectComponent::new(crate::pipeline::MaskEffect::Fog);
+    fog.settings.fog.amount = 50.0;
+    fog.settings.fog.density = 50.0;
+    masks.global_effects.push(fog.clone());
+    let original_source = source.clone();
+
+    for mode in [AdjustmentPasteMode::Merge, AdjustmentPasteMode::Replace] {
+        for (manual, ai) in [(true, true), (true, false), (false, true), (false, false)] {
+            for cached in [false, true] {
+                let mut destination = default_edit_state();
+                let own_depth = cached.then(|| MaskImage::new(1, 2, vec![32, 160]).unwrap());
+                Arc::make_mut(&mut destination.masks).scene_depth = own_depth.clone();
+                apply_copied_adjustments_with_mode(
+                    &mut destination,
+                    &source,
+                    AdjustmentCopySettings {
+                        masks: manual,
+                        ai_masks: ai,
+                        ..Default::default()
+                    },
+                    mode,
+                );
+                assert_eq!(destination.masks.scene_depth_image(), own_depth.as_ref());
+                assert_eq!(destination.masks.has_fog_effect(), manual);
+                if manual {
+                    assert_eq!(destination.masks.global_effects, vec![fog.clone()]);
+                }
+                if ai {
+                    assert!(destination.ai_masks_need_update);
+                    assert!(
+                        generated_mask(&destination.masks.masks[0].components[0].geometry)
+                            .unwrap()
+                            .is_none()
+                    );
+                }
+            }
+        }
+    }
+    assert_eq!(source, original_source);
+}
+
+#[test]
+fn depth_mask_geometry_survives_sidecar_validation_and_serialization() {
+    let mut masks = MaskStack::default();
+    masks.add_mask(MaskKind::DepthRange).unwrap();
+    if let MaskGeometry::DepthRange { depth, range } = &mut masks.masks[0].components[0].geometry {
+        *depth = MaskImage::new(2, 1, vec![0, 255]);
+        *range = crate::pipeline::DepthRangeSettings {
+            near: 0.2,
+            far: 0.8,
+            near_feather: 0.1,
+            far_feather: 0.4,
+        };
+    }
+    preflight_mask_change(&masks).unwrap();
+    let mut edits = sample_edits();
+    edits.masks = Arc::new(masks);
+    let serialized = encode(edits.clone()).unwrap();
+    let document: serde_json::Value = serde_json::from_slice(&serialized).unwrap();
+    let geometry =
+        &document["edits"]["masks"]["masks"][0]["components"][0]["geometry"]["DepthRange"];
+    assert!(geometry.get("feather").is_some());
+    assert!(geometry.get("far_feather").is_some());
+    for removed in ["grow", "edge_feather"] {
+        assert!(geometry.get(removed).is_none());
+    }
+    assert_eq!(decode(&serialized).unwrap().edits, edits);
+}
+
+#[test]
+fn subject_sky_and_depth_share_compact_lossless_sidecar_assets() {
+    for kind in [MaskKind::Subject, MaskKind::Sky, MaskKind::DepthRange] {
+        let mut edits = sample_edits();
+        let mut masks = MaskStack::default();
+        masks.add_mask(kind).unwrap();
+        let pixels = (0..256 * 256).map(|i| (i % 256) as u8).collect();
+        *generated_mask_mut(&mut masks.masks[0].components[0].geometry).unwrap() =
+            MaskImage::new(256, 256, pixels);
+        masks.duplicate_mask(0, true);
+        edits.masks = Arc::new(masks);
+
+        let encoded = encode(edits.clone()).unwrap();
+        let document: SidecarDocument = serde_json::from_slice(&encoded).unwrap();
+        assert_eq!(document.mask_assets.len(), 1, "{kind:?}");
+        assert_eq!(document.mask_asset_refs.len(), 2);
+        assert!(document.mask_assets[0].png.len() < 4096);
+        assert!(
+            encoded.len() < 32 * 1024,
+            "{kind:?}: {} bytes",
+            encoded.len()
+        );
+        assert!(
+            generated_mask(&document.edits.masks.masks[0].components[0].geometry)
+                .unwrap()
+                .is_none()
+        );
+        let loaded = decode(&encoded).unwrap().edits;
+        assert_eq!(loaded, edits);
+        let first = generated_mask(&loaded.masks.masks[0].components[0].geometry)
+            .unwrap()
+            .as_ref()
+            .unwrap();
+        let second = generated_mask(&loaded.masks.masks[1].components[0].geometry)
+            .unwrap()
+            .as_ref()
+            .unwrap();
+        assert!(Arc::ptr_eq(&first.pixels, &second.pixels));
+    }
+}
+
+#[test]
+fn legacy_inline_depth_loads_and_is_compressed_on_next_save() {
+    let mut edits = sample_edits();
+    let masks = Arc::make_mut(&mut edits.masks);
+    masks.clear();
+    masks.add_mask(MaskKind::DepthRange).unwrap();
+    *generated_mask_mut(&mut masks.masks[0].components[0].geometry).unwrap() =
+        MaskImage::new(2, 2, vec![0, 85, 170, 255]);
+    let mut document: serde_json::Value =
+        serde_json::from_slice(&encode(edits.clone()).unwrap()).unwrap();
+    document["edits"] = serde_json::to_value(&edits).unwrap();
+    document.as_object_mut().unwrap().remove("mask_assets");
+    document.as_object_mut().unwrap().remove("mask_asset_refs");
+    let geometry = document
+        .pointer_mut("/edits/masks/masks/0/components/0/geometry/DepthRange")
+        .unwrap()
+        .as_object_mut()
+        .unwrap();
+    geometry.remove("near_feather");
+    geometry.remove("far_feather");
+    geometry.insert("feather".into(), 0.1.into());
+    geometry.insert("grow".into(), 0.4.into());
+    geometry.insert("edge_feather".into(), 0.8.into());
+
+    let loaded = decode(&serde_json::to_vec(&document).unwrap())
+        .unwrap()
+        .edits;
+    assert_eq!(loaded, edits);
+    let saved: SidecarDocument = serde_json::from_slice(&encode(loaded).unwrap()).unwrap();
+    assert_eq!(saved.mask_assets.len(), 1);
+    assert!(
+        generated_mask(&saved.edits.masks.masks[0].components[0].geometry)
+            .unwrap()
+            .is_none()
+    );
+
+    document["mask_assets"] = serde_json::to_value(&saved.mask_assets).unwrap();
+    document["mask_asset_refs"] = serde_json::to_value(&saved.mask_asset_refs).unwrap();
+    assert!(matches!(decode(&serde_json::to_vec(&document).unwrap()),
+        Err(SidecarError::Invalid(message)) if message.contains("both inline pixels")));
+}
+
+#[test]
+fn depth_assets_count_towards_sidecar_size_and_validate_range_controls() {
+    let mut masks = MaskStack::default();
+    masks.add_mask(MaskKind::DepthRange).unwrap();
+    let empty_estimate = estimate_sidecar_bytes(&masks).unwrap();
+    let empty_measured = measure_sidecar_dynamic_bytes(&masks).unwrap();
+    *generated_mask_mut(&mut masks.masks[0].components[0].geometry).unwrap() =
+        MaskImage::new(64, 64, (0..64 * 64).map(|i| (i % 256) as u8).collect());
+    assert!(estimate_sidecar_bytes(&masks).unwrap() > empty_estimate);
+    assert!(measure_sidecar_dynamic_bytes(&masks).unwrap() > empty_measured);
+    assert!(preflight_sidecar_dynamic_data_with_limit(&masks, empty_measured).is_err());
+    for (near_feather, far_feather) in [(1.1, 0.0), (0.0, -0.1), (0.0, f32::NAN)] {
+        if let MaskGeometry::DepthRange { range, .. } = &mut masks.masks[0].components[0].geometry {
+            range.near_feather = near_feather;
+            range.far_feather = far_feather;
+        }
+        assert!(encode(EditState {
+            masks: Arc::new(masks.clone()),
+            ..default_edit_state()
+        })
+        .is_err());
+    }
+}
+
+#[test]
 fn copied_adjustments_respect_category_settings_and_mark_ai_masks_stale() {
     let mut source = sample_edits();
     source.exposure.dehaze = 61.0;
@@ -901,6 +1260,7 @@ fn corrupt_and_future_sidecars_are_rejected() {
         edits,
         mask_assets: Vec::new(),
         mask_asset_refs: Vec::new(),
+        scene_depth_asset: None,
         remove_assets: Vec::new(),
         remove_asset_refs: Vec::new(),
     };

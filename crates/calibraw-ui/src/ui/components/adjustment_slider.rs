@@ -102,7 +102,7 @@ fn slider_scroll_lock_owner(ctx: &egui::Context) -> Option<egui::Id> {
     None
 }
 
-fn lock_slider_scroll(ctx: &egui::Context, slider_id: egui::Id) {
+pub(super) fn lock_slider_scroll(ctx: &egui::Context, slider_id: egui::Id) {
     ctx.data_mut(|data| data.insert_temp(slider_scroll_lock_id(), slider_id));
     ctx.set_dragged_id(slider_id);
 }
@@ -285,6 +285,7 @@ where
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct AdjustmentSliderInteraction {
     pub(crate) changed: bool,
+    #[cfg(any(not(target_os = "android"), test))]
     pub(crate) reset_requested: bool,
 }
 
@@ -329,6 +330,7 @@ pub(crate) fn gradient_float_param_slider(
     )
 }
 
+#[cfg(any(not(target_os = "android"), test))]
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn inline_adjustment_slider_with_reset<Num>(
     ui: &mut Ui,
@@ -860,6 +862,7 @@ where
 
     AdjustmentSliderInteraction {
         changed,
+        #[cfg(any(not(target_os = "android"), test))]
         reset_requested,
     }
 }

@@ -116,6 +116,12 @@ impl Sidebar {
                             *mask = saved
                         }
                         (
+                            MaskGeometry::DepthRange { depth, .. },
+                            MaskGeometry::DepthRange { depth: saved, .. },
+                        ) => {
+                            *depth = saved;
+                        }
+                        (
                             MaskGeometry::Object { mask, strokes, .. },
                             MaskGeometry::Object {
                                 mask: saved,
@@ -875,6 +881,18 @@ impl Sidebar {
                         "Softens the color-distance cutoff.",
                         0.12,
                     );
+                }
+                MaskGeometry::DepthRange { depth, range } => {
+                    ui.label(if depth.is_some() {
+                        "Select a range of relative depth, from near (0) to far (1)."
+                    } else {
+                        "Generate a depth map to select by distance."
+                    });
+                    if ui.button(if depth.is_some() { "Regenerate depth map" } else { "Generate depth map" }).clicked() {
+                        *request_subject = true;
+                    }
+                    geometry_changed |= crate::ui::components::depth_range_slider::depth_range_slider(ui, range);
+
                 }
                 MaskGeometry::Placeholder => {
                     ui.label("This mask type is not implemented yet.");

@@ -143,13 +143,22 @@ pub struct PendingRgba32Readback {
 
 impl PendingRgba32Readback {
     pub fn finish(self, device: &wgpu::Device) -> Result<Vec<f32>> {
-        wait_for_mapping(
+        self.finish_with_context(
             device,
-            self.submission,
-            self.receiver,
             "pipelined export",
             "export",
-        )?;
+            "display-linear export readback",
+        )
+    }
+
+    fn finish_with_context(
+        self,
+        device: &wgpu::Device,
+        operation: &str,
+        label: &str,
+        output_label: &str,
+    ) -> Result<Vec<f32>> {
+        wait_for_mapping(device, self.submission, self.receiver, operation, label)?;
 
         let mapped = self.readback.get_mapped_range(..);
         let capacity = usize::try_from(
@@ -190,9 +199,7 @@ impl PendingRgba32Readback {
         drop(mapped);
         self.readback.unmap();
         if rgb.iter().any(|value| !value.is_finite()) {
-            return Err(anyhow!(
-                "display-linear export readback contains NaN or infinity"
-            ));
+            return Err(anyhow!("{output_label} contains NaN or infinity"));
         }
         Ok(rgb)
     }
@@ -278,9 +285,7 @@ pub(super) fn read_rgba32_texture_region_rgb_blocking(
     region: TextureReadbackRegion,
 ) -> Result<Vec<f32>> {
     region.validate("RGBA32F")?;
-    let [x, y] = region.origin;
     let [width, height] = region.extent;
-    let label = region.label;
 
     let rows_per_chunk = rgba32_readback_rows_per_chunk(width)?;
     let capacity = usize::try_from(width)
@@ -293,43 +298,21 @@ pub(super) fn read_rgba32_texture_region_rgb_blocking(
 
     while row_offset < height {
         let chunk_height = rows_per_chunk.min(height - row_offset);
-        let (readback, padded_bytes_per_row) =
-            create_rgba32_readback_buffer(device, width, chunk_height, label)?;
-        let mut encoder =
-            device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some(label) });
-        encoder.copy_texture_to_buffer(
-            wgpu::TexelCopyTextureInfo {
-                texture,
-                mip_level: 0,
-                origin: wgpu::Origin3d {
-                    x,
-                    y: y + row_offset,
-                    z: 0,
-                },
-                aspect: wgpu::TextureAspect::All,
-            },
-            wgpu::TexelCopyBufferInfo {
-                buffer: &readback,
-                layout: wgpu::TexelCopyBufferLayout {
-                    offset: 0,
-                    bytes_per_row: Some(padded_bytes_per_row),
-                    rows_per_image: Some(chunk_height),
-                },
-            },
-            wgpu::Extent3d {
-                width,
-                height: chunk_height,
-                depth_or_array_layers: 1,
-            },
-        );
-        let submission = queue.submit(Some(encoder.finish()));
-        rgb.extend(map_rgba32_readback_rgb(
+        let pending = begin_rgba32_texture_region_rgb_readback(
             device,
-            &readback,
-            submission,
-            width,
-            chunk_height,
-            padded_bytes_per_row,
+            queue,
+            texture,
+            TextureReadbackRegion {
+                origin: [region.origin[0], region.origin[1] + row_offset],
+                extent: [width, chunk_height],
+                ..region
+            },
+        )?;
+        rgb.extend(pending.finish_with_context(
+            device,
+            "scene",
+            "scene",
+            "scene texture readback",
         )?);
         row_offset += chunk_height;
     }
@@ -467,52 +450,6 @@ pub(super) fn create_rgba32_readback_buffer(
         mapped_at_creation: false,
     });
     Ok((buffer, padded_bytes_per_row))
-}
-
-pub(super) fn map_rgba32_readback_rgb(
-    device: &wgpu::Device,
-    readback: &wgpu::Buffer,
-    submission: wgpu::SubmissionIndex,
-    width: u32,
-    height: u32,
-    padded_bytes_per_row: u32,
-) -> Result<Vec<f32>> {
-    let (sender, receiver) = std::sync::mpsc::sync_channel(1);
-    readback.map_async(wgpu::MapMode::Read, .., move |result| {
-        let _ = sender.send(result);
-    });
-    wait_for_mapping(device, submission, receiver, "scene", "scene")?;
-
-    let mapped = readback.get_mapped_range(..);
-    let capacity = usize::try_from(
-        u64::from(width)
-            .checked_mul(u64::from(height))
-            .and_then(|value| value.checked_mul(3))
-            .ok_or_else(|| anyhow!("GPU RGBA32F output size overflows"))?,
-    )
-    .map_err(|_| anyhow!("GPU RGBA32F output size does not fit in usize"))?;
-    let mut rgb = Vec::with_capacity(capacity);
-    for row in 0..height as usize {
-        let row_start = row * padded_bytes_per_row as usize;
-        for column in 0..width as usize {
-            let pixel_start = row_start + column * 16;
-            for channel in 0..3 {
-                let offset = pixel_start + channel * 4;
-                let bytes = mapped
-                    .get(offset..offset + 4)
-                    .ok_or_else(|| anyhow!("GPU RGBA32F readback buffer is truncated"))?;
-                let bytes = <[u8; 4]>::try_from(bytes)
-                    .map_err(|_| anyhow!("GPU RGBA32F readback channel has an invalid width"))?;
-                rgb.push(f32::from_le_bytes(bytes));
-            }
-        }
-    }
-    drop(mapped);
-    readback.unmap();
-    if rgb.iter().any(|value| !value.is_finite()) {
-        return Err(anyhow!("scene texture readback contains NaN or infinity"));
-    }
-    Ok(rgb)
 }
 
 fn wait_for_mapping(

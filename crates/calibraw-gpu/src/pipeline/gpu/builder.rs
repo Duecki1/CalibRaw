@@ -1,4 +1,5 @@
 use anyhow::{anyhow, Context, Result};
+use std::borrow::Cow;
 use std::sync::Arc;
 
 use super::*;
@@ -81,6 +82,7 @@ pub(super) struct PipelineSurfaces {
     pub(super) tone_guide_b: wgpu::Texture,
     pub(super) mask_texture: wgpu::Texture,
     pub(super) light_rays_mask_texture: wgpu::Texture,
+    pub(super) scene_depth_texture: wgpu::Texture,
     pub(super) out_view: wgpu::TextureView,
     pub(super) display_linear_view: wgpu::TextureView,
     pub(super) reconstructed_raw_view: wgpu::TextureView,
@@ -96,6 +98,7 @@ pub(super) struct PipelineSurfaces {
     pub(super) black_view: wgpu::TextureView,
     pub(super) mask_view: wgpu::TextureView,
     pub(super) light_rays_mask_view: wgpu::TextureView,
+    pub(super) scene_depth_view: wgpu::TextureView,
     pub(super) mask_sampler: wgpu::Sampler,
 }
 
@@ -206,6 +209,15 @@ pub(super) fn create_pipeline_surfaces(
         "calibraw full-image Light Rays emission atlas",
     );
 
+    let scene_depth_texture = create_processing_texture(
+        device,
+        texture_size(SCENE_DEPTH_EDGE, SCENE_DEPTH_EDGE),
+        wgpu::TextureFormat::R16Float,
+        wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        "calibraw full-image scene depth",
+    );
+    let scene_depth_view = default_texture_view(&scene_depth_texture);
+
     let out_view = default_texture_view(&out_texture);
     let display_linear_view = default_texture_view(&display_linear_texture);
     let reconstructed_raw_view = default_texture_view(&reconstructed_raw_texture);
@@ -257,6 +269,7 @@ pub(super) fn create_pipeline_surfaces(
             tone_guide_b,
             mask_texture,
             light_rays_mask_texture,
+            scene_depth_texture,
             out_view,
             display_linear_view,
             reconstructed_raw_view,
@@ -272,6 +285,7 @@ pub(super) fn create_pipeline_surfaces(
             black_view,
             mask_view,
             light_rays_mask_view,
+            scene_depth_view,
             mask_sampler,
         },
         has_ai_scene,
@@ -779,6 +793,8 @@ pub(super) fn create_bind_group_layouts(
                     sampler_entry(28),
                     storage_buffer_entry(33, true),
                     texture_array_entry(34, wgpu::TextureSampleType::Float { filterable: true }),
+                    texture_entry(35, wgpu::TextureSampleType::Float { filterable: false }),
+                    storage_buffer_entry(16, true),
                 ],
             )
         });
@@ -941,6 +957,7 @@ pub(super) fn create_bind_groups(
         black_view,
         mask_view,
         light_rays_mask_view,
+        scene_depth_view,
         mask_sampler,
         ..
     } = surfaces;
@@ -1382,6 +1399,8 @@ pub(super) fn create_bind_groups(
                     sampler_binding(28, mask_sampler),
                     buffer_binding(33, mask_data_buffer),
                     texture_binding(34, light_rays_mask_view),
+                    texture_binding(35, scene_depth_view),
+                    buffer_binding(16, tone_stats_buffer),
                 ],
             )
         };
@@ -1464,6 +1483,7 @@ pub(super) fn create_bind_groups(
     }
 }
 
+#[derive(Default)]
 pub(super) struct ShaderSet {
     pub(super) highlight_module: Option<wgpu::ShaderModule>,
     pub(super) bayer_rcd_p1_module: Option<wgpu::ShaderModule>,
@@ -1487,37 +1507,15 @@ pub(super) fn load_shader_set(
     demosaic_format: wgpu::TextureFormat,
     work_format: wgpu::TextureFormat,
 ) -> Result<ShaderSet> {
-    let bayer_rcd_p1 = work_shader_source(SHADER_BAYER_RCD_P1, demosaic_format)
-        .context("specialize Bayer RCD pass 1 work format")?;
-    let bayer_rcd_p2 = work_shader_source(SHADER_BAYER_RCD_P2, demosaic_format)
-        .context("specialize Bayer RCD pass 2 work format")?;
-    let bayer_rcd_p3 = work_shader_source(SHADER_BAYER_RCD_P3, demosaic_format)
-        .context("specialize Bayer RCD pass 3 work format")?;
-    let bayer_rcd_p4 = work_shader_source(SHADER_BAYER_RCD_P4, demosaic_format)
-        .context("specialize Bayer RCD pass 4 work format")?;
-    let dual_demosaic = work_shader_source(SHADER_DUAL_DEMOSAIC, demosaic_format)
-        .context("specialize dual-demosaic work format")?;
-    let xtrans_demosaic = work_shader_source(SHADER_XTRANS_DEMOSAIC, demosaic_format)
-        .context("specialize grouped X-Trans demosaic work format")?;
-    let xtrans_finish = work_shader_source(SHADER_XTRANS_FINISH, demosaic_format)
-        .context("specialize X-Trans finish work format")?;
-    let color_denoise_shader = work_shader_source(SHADER_COLOR_DENOISE, demosaic_format)
-        .context("specialize multiscale color denoise work format")?;
-    let scene_adjustments_shader = work_shader_source(SHADER_SCENE_ADJUSTMENTS, work_format)
-        .context("specialize scene-adjustments shader work format")?;
-
-    let mut shader_manager = (!has_program_template)
-        .then(|| ShaderManager::new(work_format, cfa_kind))
-        .transpose()
-        .context("initialize WGSL shader composer")?;
-    let mut create_shader =
-        |label: &'static str, source: &str, file_name: &str| -> Result<wgpu::ShaderModule> {
-            shader_manager
-                .as_mut()
-                .expect("shader manager exists without a program template")
-                .create_shader_module(device, label, source, file_name)
-        };
-    let mut load_shader = |label: &'static str, source: &str, file_name: &str| {
+    if has_program_template {
+        return Ok(ShaderSet::default());
+    }
+    let mut shader_manager =
+        ShaderManager::new(work_format, cfa_kind).context("initialize WGSL shader composer")?;
+    let mut load_shader = |label: &'static str,
+                           source: &str,
+                           file_name: &str,
+                           format: Option<wgpu::TextureFormat>| {
         let other_sensor = match cfa_kind {
             CfaKind::Bayer => matches!(file_name, "xtrans_demosaic.wgsl" | "xtrans_finish.wgsl"),
             CfaKind::XTrans => matches!(
@@ -1525,76 +1523,95 @@ pub(super) fn load_shader_set(
                 "pass1.wgsl" | "pass2.wgsl" | "pass3.wgsl" | "pass4.wgsl"
             ),
         };
-        if has_program_template || other_sensor {
-            Ok(None)
-        } else {
-            create_shader(label, source, file_name).map(Some)
+        if other_sensor {
+            return Ok(None);
         }
+        let source = match format {
+            Some(format) => work_shader_source(source, format)
+                .with_context(|| format!("specialize {label} work format"))?,
+            None => Cow::Borrowed(source),
+        };
+        shader_manager
+            .create_shader_module(device, label, source.as_ref(), file_name)
+            .map(Some)
     };
     let highlight_module = load_shader(
         "calibraw highlight module",
         SHADER_HIGHLIGHTS,
         "highlights.wgsl",
+        None,
     )?;
     let bayer_rcd_p1_module = load_shader(
         "calibraw Bayer RCD pass 1",
-        bayer_rcd_p1.as_ref(),
+        SHADER_BAYER_RCD_P1,
         "pass1.wgsl",
+        Some(demosaic_format),
     )?;
     let bayer_rcd_p2_module = load_shader(
         "calibraw Bayer RCD pass 2",
-        bayer_rcd_p2.as_ref(),
+        SHADER_BAYER_RCD_P2,
         "pass2.wgsl",
+        Some(demosaic_format),
     )?;
     let bayer_rcd_p3_module = load_shader(
         "calibraw Bayer RCD pass 3",
-        bayer_rcd_p3.as_ref(),
+        SHADER_BAYER_RCD_P3,
         "pass3.wgsl",
+        Some(demosaic_format),
     )?;
     let bayer_rcd_p4_module = load_shader(
         "calibraw Bayer RCD pass 4",
-        bayer_rcd_p4.as_ref(),
+        SHADER_BAYER_RCD_P4,
         "pass4.wgsl",
+        Some(demosaic_format),
     )?;
     let dual_demosaic_module = load_shader(
         "calibraw robust dual demosaic",
-        dual_demosaic.as_ref(),
+        SHADER_DUAL_DEMOSAIC,
         "dual_demosaic.wgsl",
+        Some(demosaic_format),
     )?;
     let xtrans_demosaic_module = load_shader(
         "calibraw grouped X-Trans demosaic",
-        xtrans_demosaic.as_ref(),
+        SHADER_XTRANS_DEMOSAIC,
         "xtrans_demosaic.wgsl",
+        Some(demosaic_format),
     )?;
     let xtrans_finish_module = load_shader(
         "calibraw X-Trans finish",
-        xtrans_finish.as_ref(),
+        SHADER_XTRANS_FINISH,
         "xtrans_finish.wgsl",
+        Some(demosaic_format),
     )?;
     let color_denoise_module = load_shader(
         "calibraw multiscale color denoise",
-        color_denoise_shader.as_ref(),
+        SHADER_COLOR_DENOISE,
         "color_denoise.wgsl",
+        Some(demosaic_format),
     )?;
     let tone_analysis_module = load_shader(
         "calibraw tone analysis",
         SHADER_TONE_ANALYSIS,
         "tone_analysis.wgsl",
+        None,
     )?;
     let scene_adjustments_module = load_shader(
         "calibraw scene adjustments",
-        scene_adjustments_shader.as_ref(),
+        SHADER_SCENE_ADJUSTMENTS,
         "scene_adjustments.wgsl",
+        Some(work_format),
     )?;
     let creative_effects_module = load_shader(
         "calibraw creative effects",
         SHADER_CREATIVE_EFFECTS,
         "creative_effects.wgsl",
+        None,
     )?;
     let view_transform_module = load_shader(
         "calibraw view transform",
         SHADER_VIEW_TRANSFORM,
         "view_transform.wgsl",
+        None,
     )?;
 
     Ok(ShaderSet {

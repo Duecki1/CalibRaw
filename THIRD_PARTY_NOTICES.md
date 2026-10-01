@@ -101,13 +101,17 @@ after user consent, stores them in its model cache, and verifies their size and
 SHA-256 digest before use. Model copyright and license terms remain separate
 from CalibRaw's GPL license; users must comply with the model terms for their use.
 
-| Feature | Model and immutable source | License |
+| Feature | Packaged model artifact | License |
 | --- | --- | --- |
-| Remove | [Carve/LaMa-ONNX Big-LaMa](https://huggingface.co/Carve/LaMa-ONNX/tree/a3ee2fca54baebec351b8fa7786154ffa7555aa6), an ONNX port of the original LaMa model | Apache-2.0 |
-| Subject selection | [BiRefNet v1 ONNX checkpoints](https://github.com/ZhengPeng7/BiRefNet/releases/tag/v1) | MIT |
-| Sky selection | [SkySeg U2Net FP32 ONNX mirror](https://huggingface.co/JianyuanWang/skyseg/tree/3ba8c6df1d9ba9ff26f637c7ba9568ac11a9aa7f), [original model by xiongzhu666](https://github.com/xiongzhu666/Sky-Segmentation-and-Post-processing) | [MIT](https://github.com/xiongzhu666/Sky-Segmentation-and-Post-processing/blob/main/LICENSE); training image provenance is not published |
-| Object selection | [SAM 2.1 Hiera Tiny ONNX encoder and decoder](https://huggingface.co/akiyamanx/sam2.1-hiera-tiny-onnx/tree/aa11669045f8d82c74e46f8f77c9b56792c90ebb), based on Meta SAM 2 | Apache-2.0 |
-| RAW denoise | [darktable-ai RawNIND release 5.6.0](https://github.com/darktable-org/darktable-ai/tree/release-5.6.0/models/rawdenoise-nind) | GPL-3.0 |
+| Remove | [Big-LaMa ONNX](https://huggingface.co/Duecki/CalibRaw-Artifacts/tree/main/models/lama) | Apache-2.0 |
+| Subject selection | [BiRefNet ONNX checkpoints](https://huggingface.co/Duecki/CalibRaw-Artifacts/tree/main/models/briefnet) | MIT |
+| Sky selection | [SkySeg U2Net FP32 ONNX](https://huggingface.co/Duecki/CalibRaw-Artifacts/tree/main/models/skyseg) | MIT; training image provenance is not published |
+| Object selection | [SAM 2.1 Hiera Tiny ONNX encoder and decoder](https://huggingface.co/Duecki/CalibRaw-Artifacts/tree/main/models/sam2) | Apache-2.0 |
+| Depth masks and fog (desktop) | [Depth Anything 3 Mono Large ONNX](https://huggingface.co/Duecki/CalibRaw-Artifacts/tree/main/models/da3) | Apache-2.0 |
+| Depth masks and fog (Android) | [Depth Anything V2 Small FP32 ONNX](https://huggingface.co/Duecki/CalibRaw-Artifacts/tree/main/models/da2) | Apache-2.0 |
+| RAW denoise | [RawNIND package](https://huggingface.co/Duecki/CalibRaw-Artifacts/tree/main/models/rawnind) | GPL-3.0 |
+
+The Android depth model originates from the [ONNX Community FP32 ONNX export](https://huggingface.co/onnx-community/depth-anything-v2-small/tree/4472b7362082ad9968fee890ca0f1e5aca36b93d/onnx).
 
 The SkySeg model's upstream MIT notice is reproduced here:
 

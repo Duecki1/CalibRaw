@@ -44,20 +44,10 @@ final class ExportPublisher {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
             return "";
         }
-        String normalizedMime = normalizeExportMimeType(mimeType);
-        String displayName = safeImageName(requestedName, normalizedMime);
+        String normalizedMime = AndroidStorageContract.normalizeExportMimeType(mimeType);
+        String displayName = AndroidStorageContract.safeImageName(requestedName, normalizedMime);
         ContentResolver resolver = activity.getContentResolver();
-        ContentValues values = new ContentValues();
-        values.put(MediaStore.Images.Media.DISPLAY_NAME, displayName);
-        values.put(MediaStore.Images.Media.MIME_TYPE, normalizedMime);
-        values.put(
-                MediaStore.Images.Media.RELATIVE_PATH,
-                EXPORT_RELATIVE_PATH);
-        values.put(MediaStore.Images.Media.IS_PENDING, 1);
-        Uri uri = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values);
-        if (uri == null) {
-            throw new IllegalStateException("Android MediaStore could not create the image");
-        }
+        Uri uri = createPendingImage(displayName, normalizedMime);
         boolean transferred = false;
         try {
             ParcelFileDescriptor descriptor = resolver.openFileDescriptor(uri, "w");
@@ -98,7 +88,7 @@ final class ExportPublisher {
     }
 
     private void beginPublishImage(String cachedPath, String displayName, String mimeType) {
-        String normalizedMime = normalizeExportMimeType(mimeType);
+        String normalizedMime = AndroidStorageContract.normalizeExportMimeType(mimeType);
         if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.P
                 && activity.checkSelfPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE)
                 != PackageManager.PERMISSION_GRANTED) {
@@ -129,8 +119,8 @@ final class ExportPublisher {
             String requestedName,
             String mimeType) {
         File cachedFile = new File(cachedPath);
-        String normalizedMime = normalizeExportMimeType(mimeType);
-        String displayName = safeImageName(requestedName, normalizedMime);
+        String normalizedMime = AndroidStorageContract.normalizeExportMimeType(mimeType);
+        String displayName = AndroidStorageContract.safeImageName(requestedName, normalizedMime);
         try {
             String location;
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
@@ -146,11 +136,7 @@ final class ExportPublisher {
         }
     }
 
-    private String publishImageScoped(
-            File cachedFile,
-            String displayName,
-            String mimeType) throws Exception {
-        ContentResolver resolver = activity.getContentResolver();
+    private Uri createPendingImage(String displayName, String mimeType) {
         ContentValues values = new ContentValues();
         values.put(MediaStore.Images.Media.DISPLAY_NAME, displayName);
         values.put(MediaStore.Images.Media.MIME_TYPE, mimeType);
@@ -159,10 +145,20 @@ final class ExportPublisher {
                 EXPORT_RELATIVE_PATH);
         values.put(MediaStore.Images.Media.IS_PENDING, 1);
 
-        Uri uri = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values);
+        Uri uri = activity.getContentResolver().insert(
+                MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values);
         if (uri == null) {
             throw new IllegalStateException("Android MediaStore could not create the image");
         }
+        return uri;
+    }
+
+    private String publishImageScoped(
+            File cachedFile,
+            String displayName,
+            String mimeType) throws Exception {
+        ContentResolver resolver = activity.getContentResolver();
+        Uri uri = createPendingImage(displayName, mimeType);
         boolean published = false;
         try {
             try (InputStream input = new FileInputStream(cachedFile);
@@ -172,7 +168,7 @@ final class ExportPublisher {
                 }
                 BoundedStreams.copy(input, output, Long.MAX_VALUE, "Export is too large");
             }
-            values.clear();
+            ContentValues values = new ContentValues();
             values.put(MediaStore.Images.Media.IS_PENDING, 0);
             if (resolver.update(uri, values, null, null) <= 0) {
                 throw new IllegalStateException("Android MediaStore could not publish the image");
@@ -212,14 +208,6 @@ final class ExportPublisher {
         return destination.getAbsolutePath();
     }
 
-    private static String normalizeExportMimeType(String mimeType) {
-        return AndroidStorageContract.normalizeExportMimeType(mimeType);
-    }
-
-    private static String safeImageName(String requestedName, String mimeType) {
-        return AndroidStorageContract.safeImageName(requestedName, mimeType);
-    }
-
     boolean onRequestPermissionsResult(
             int requestCode,
             String[] permissions,
@@ -234,7 +222,7 @@ final class ExportPublisher {
             startPublishThread(
                     pending.cachedPath,
                     pending.displayName,
-                    normalizeExportMimeType(pending.mimeType));
+                    pending.mimeType);
         } else {
             if (pending != null) {
                 deleteCachedExport(pending.cachedPath);

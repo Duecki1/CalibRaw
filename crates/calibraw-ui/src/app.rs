@@ -1,6 +1,6 @@
 use crate::ai_masks::{
-    spawn_object_mask, spawn_subject_mask, BiRefNetQuality, ObjectInferenceCache, ObjectMaskEvent,
-    ObjectMaskRequest, ObjectMaskWorkerRequest, SubjectMaskEvent, SubjectMaskWorkerRequest,
+    spawn_ai_mask, spawn_object_mask, AiMaskEvent, AiMaskWorkerRequest, BiRefNetQuality,
+    ObjectInferenceCache, ObjectMaskEvent, ObjectMaskRequest, ObjectMaskWorkerRequest,
     SAM21_MODEL_BYTES_ESTIMATE,
 };
 #[cfg(not(target_os = "android"))]
@@ -104,14 +104,10 @@ impl Default for DevelopReferenceState {
 #[cfg(not(target_os = "android"))]
 impl DevelopReferenceState {
     pub(crate) fn clear(&mut self) {
-        self.path = None;
-        self.label = None;
-        self.texture = None;
-        self.texture_size = None;
-        self.high_quality = false;
-        self.loading_path = None;
-        self.preview_receiver = None;
-        self.error = None;
+        *self = Self {
+            split_ratio: self.split_ratio,
+            ..Self::default()
+        };
     }
 }
 
@@ -132,17 +128,7 @@ pub(crate) struct DevelopLoadingThumbnailState {
 
 impl DevelopLoadingThumbnailState {
     pub(crate) fn clear(&mut self) {
-        #[cfg(not(target_os = "android"))]
-        {
-            self.path = None;
-            self.receiver = None;
-        }
-        #[cfg(target_os = "android")]
-        {
-            self.source_uri = None;
-        }
-        self.texture = None;
-        self.texture_size = None;
+        *self = Self::default();
     }
 }
 
@@ -295,6 +281,7 @@ pub(crate) struct PreviewDetail {
     source_origin: [u32; 2],
     source_size: [u32; 2],
     mask_source_region: [u32; 4],
+    mask_texture_extent: [u32; 2],
     virtual_origin: [i32; 2],
     virtual_full_size: [u32; 2],
     full_source_size: [u32; 2],
@@ -442,7 +429,7 @@ pub(crate) struct LensCorrectionState {
 
 impl LensCorrectionState {
     pub(crate) fn from_catalog(catalog: LensfunCatalog) -> Self {
-        let selected = catalog.auto_match.clone();
+        let selected = catalog.auto_match.as_ref();
         Self {
             enabled: catalog.available && selected.is_some(),
             applied: false,
@@ -891,6 +878,7 @@ type GeneratedAiMaskTargets = (bool, VecDeque<(usize, usize)>);
 pub(crate) enum ForegroundOperationKind {
     SubjectMask,
     SkyMask,
+    DepthMask,
     ObjectMask,
     AiDenoise,
     LensCorrection,
@@ -946,14 +934,14 @@ impl ForegroundProgress {
 }
 
 enum ForegroundOperationReceiver {
-    Subject(mpsc::Receiver<SubjectMaskEvent>),
+    AiMask(mpsc::Receiver<AiMaskEvent>),
     Object(mpsc::Receiver<ObjectMaskEvent>),
     AiDenoise(mpsc::Receiver<crate::ai_denoise::AiDenoiseEvent>),
     LensCorrection(mpsc::Receiver<LensCorrectionEvent>),
 }
 
 enum ForegroundOperationContext {
-    Subject,
+    AiMask,
     Object {
         target: AiMaskTarget,
         inference_started: bool,
@@ -1031,8 +1019,8 @@ pub(crate) struct PreviewState {
     #[cfg(target_os = "android")]
     pub(crate) original_hold: Option<AndroidOriginalHold>,
     pub(crate) pending_stage: Option<ProcessingStage>,
-    // White balance is an early-pipeline edit. Keep each scrub update exact,
-    // but coalesce updates while the preceding GPU render is still running.
+    // Keep white-balance updates exact and coalesce zoomed mask scrubs while
+    // the preceding GPU render is still running.
     pub(crate) white_balance_refresh_pending: bool,
     pub(crate) interactive_render_ready: Arc<AtomicBool>,
     #[cfg(target_os = "android")]
@@ -1150,6 +1138,10 @@ pub(crate) struct MaskState {
     pub(crate) thumbnail_component_textures: Vec<egui::TextureHandle>,
     pub(crate) source_cache: Option<MaskRgbImage>,
     pub(crate) subject_cache: Option<MaskImage>,
+    pub(crate) sky_cache: Option<MaskImage>,
+    pub(crate) depth_cache: Option<MaskImage>,
+    /// Prevents automatic fog depth generation from re-prompting every frame after cancellation.
+    pub(crate) fog_depth_auto_requested: bool,
     pub(crate) dirty_layers: [bool; MAX_LOCAL_MASKS],
     pub(crate) detail_dirty_layers: [bool; MAX_LOCAL_MASKS],
     pub(crate) navigation_dirty_layers: [bool; MAX_LOCAL_MASKS],
@@ -1174,6 +1166,10 @@ pub(crate) enum AiConsentState {
     Sky {
         runtime_download_needed: bool,
     },
+    Depth {
+        runtime_download_needed: bool,
+        model_download_needed: bool,
+    },
     Object {
         runtime_download_needed: bool,
     },
@@ -1193,7 +1189,7 @@ impl AiConsentState {
     pub(crate) const fn is_mask_consent(self) -> bool {
         matches!(
             self,
-            Self::Subject { .. } | Self::Sky { .. } | Self::Object { .. }
+            Self::Subject { .. } | Self::Sky { .. } | Self::Depth { .. } | Self::Object { .. }
         )
     }
 }
@@ -1314,26 +1310,6 @@ pub struct CalibRawApp {
     pub(crate) android: AndroidState,
 }
 
-#[cfg(test)]
-fn collect_pipeline_update_results(
-    operation: &'static str,
-    updates: Vec<(&'static str, anyhow::Result<()>)>,
-) -> anyhow::Result<()> {
-    let failures = updates
-        .into_iter()
-        .filter_map(|(pipeline, result)| {
-            result
-                .err()
-                .map(|error| format!("{pipeline}: {operation}: {error:#}"))
-        })
-        .collect::<Vec<_>>();
-    if failures.is_empty() {
-        Ok(())
-    } else {
-        Err(anyhow::anyhow!(failures.join("; ")))
-    }
-}
-
 impl CalibRawApp {
     pub(crate) fn app_usage_duration(&self) -> Duration {
         self.usage
@@ -1382,6 +1358,15 @@ impl CalibRawApp {
     }
 
     pub(crate) fn sync_ai_model_runtime_context(&mut self) {
+        // Fog can request scene depth while its controls live outside the Masks sidebar.
+        // Keep the mask runtime context alive from the initial automatic request through
+        // consent/download/inference; otherwise the next frame cancels the DepthMask
+        // foreground operation just because the user is still in Adjustments.
+        let fog_depth_request_active = self.masks.stack.has_fog_effect()
+            && self.masks.stack.scene_depth_image().is_none()
+            && (!self.masks.fog_depth_auto_requested
+                || matches!(self.ai.consent, AiConsentState::Depth { .. })
+                || self.foreground_operation_is(ForegroundOperationKind::DepthMask));
         let context = if self.ui.active_tab == AppTab::Develop {
             match self.ui.sidebar_tab {
                 SidebarTab::Masks => Some(calibraw_ai::AiRuntimeContext::Masks),
@@ -1389,7 +1374,13 @@ impl CalibRawApp {
                 SidebarTab::Adjustments
                 | SidebarTab::Crop
                 | SidebarTab::Export
-                | SidebarTab::Info => None,
+                | SidebarTab::Info => {
+                    if fog_depth_request_active {
+                        Some(calibraw_ai::AiRuntimeContext::Masks)
+                    } else {
+                        None
+                    }
+                }
             }
         } else {
             None
@@ -1409,6 +1400,7 @@ impl CalibRawApp {
                 Some(
                     ForegroundOperationKind::SubjectMask
                         | ForegroundOperationKind::SkyMask
+                        | ForegroundOperationKind::DepthMask
                         | ForegroundOperationKind::ObjectMask
                 )
             )
@@ -1473,10 +1465,7 @@ impl CalibRawApp {
         }
     }
 
-    fn take_preview_pipeline_and_release_textures(
-        &mut self,
-        _renderer: &mut eframe::egui_wgpu::Renderer,
-    ) -> Option<RawGpuPipeline> {
+    fn take_preview_pipeline_and_release_textures(&mut self) -> Option<RawGpuPipeline> {
         let pipeline = self.preview.gpu_pipeline.take();
         if let Some(pipeline) = pipeline.as_ref() {
             self.preview.program_template = Some(pipeline.program_template());
@@ -1487,6 +1476,11 @@ impl CalibRawApp {
         {
             self.retire_egui_texture(texture_id);
         }
+        self.discard_auxiliary_previews();
+        pipeline
+    }
+
+    fn discard_auxiliary_previews(&mut self) {
         for texture_id in [
             self.preview
                 .detail
@@ -1502,7 +1496,6 @@ impl CalibRawApp {
         {
             self.retire_egui_texture(texture_id);
         }
-        pipeline
     }
 
     #[cfg(target_os = "android")]
@@ -1551,11 +1544,8 @@ pub(crate) use lifecycle::{install_missing_range_sources, masks_have_missing_ran
 use sidecar_persistence::sidecar_interaction_active;
 
 #[cfg(test)]
-mod transactional_pipeline_tests {
-    use super::{
-        collect_pipeline_update_results, AiMaskTarget, MaskGeometry, MaskKind, MaskStack,
-        MaskState, PreviewQuality,
-    };
+mod tests {
+    use super::{AiMaskTarget, MaskGeometry, MaskKind, MaskStack, MaskState, PreviewQuality};
     use crate::pipeline::GeometryTransform;
 
     #[test]
@@ -1602,66 +1592,6 @@ mod transactional_pipeline_tests {
             PreviewQuality::Max.proxy_edge_for_fitted_source([720, 1_500], 7_028, 4_688, cropped,)
                 > edge
         );
-    }
-
-    #[test]
-    fn each_present_pipeline_failure_has_operation_context() {
-        for failed in ["main", "detail", "navigation"] {
-            let result = collect_pipeline_update_results(
-                "install mask atlas",
-                ["main", "detail", "navigation"]
-                    .into_iter()
-                    .map(|name| {
-                        let result = if name == failed {
-                            Err(anyhow::anyhow!("injected failure"))
-                        } else {
-                            Ok(())
-                        };
-                        (name, result)
-                    })
-                    .collect(),
-            );
-            let message = format!("{:#}", result.unwrap_err());
-            assert!(message.contains(failed));
-            assert!(message.contains("install mask atlas"));
-        }
-    }
-
-    #[test]
-    fn absent_optional_pipelines_need_no_placeholder_update() {
-        assert!(collect_pipeline_update_results(
-            "install output transform",
-            vec![("main", Ok(()))],
-        )
-        .is_ok());
-    }
-
-    #[test]
-    fn a_later_retry_can_succeed_after_partial_failure_without_advancing_revision() {
-        let mut rendered_revision = Some(41_u64);
-        let requested_revision = 42_u64;
-        let first = collect_pipeline_update_results(
-            "install output transform",
-            vec![
-                ("main", Ok(())),
-                ("detail", Err(anyhow::anyhow!("injected failure"))),
-            ],
-        );
-        if first.is_ok() {
-            rendered_revision = Some(requested_revision);
-        }
-        assert!(first.is_err());
-        assert_eq!(rendered_revision, Some(41));
-
-        let retry = collect_pipeline_update_results(
-            "install output transform",
-            vec![("main", Ok(())), ("detail", Ok(()))],
-        );
-        if retry.is_ok() {
-            rendered_revision = Some(requested_revision);
-        }
-        assert!(retry.is_ok());
-        assert_eq!(rendered_revision, Some(requested_revision));
     }
 
     #[test]

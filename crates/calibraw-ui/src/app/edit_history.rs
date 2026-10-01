@@ -268,6 +268,7 @@ impl EditHistory {
         } else if mask_change_pending {
             self.current.masks.masks == masks.masks
                 && self.current.masks.global_effects == masks.global_effects
+                && self.current.masks.scene_depth == masks.scene_depth
         } else {
             true
         };
@@ -618,22 +619,11 @@ impl CalibRawApp {
         if restored_source.is_some() || !needs_canonical_mask_source(&self.masks.stack) {
             self.masks.source_cache = restored_source;
         }
-        self.masks.subject_cache = self.masks.stack.masks.iter().find_map(|mask| {
-            mask.components
-                .iter()
-                .find_map(|component| match &component.geometry {
-                    MaskGeometry::Ai {
-                        mask: Some(mask), ..
-                    } if matches!(
-                        component.kind,
-                        crate::pipeline::MaskKind::Subject | crate::pipeline::MaskKind::Background
-                    ) =>
-                    {
-                        Some(mask.clone())
-                    }
-                    _ => None,
-                })
-        });
+        if self.ai.masks_need_update {
+            self.masks.clear_generated_caches();
+        } else {
+            self.masks.restore_generated_caches();
+        }
         self.ai.mask_update_active = false;
         self.ai.mask_update_subject_pending = false;
         self.ai.mask_update_object_queue.clear();
@@ -662,6 +652,24 @@ mod tests {
             MaskStack::default(),
             LensCorrectionState::default(),
         )
+    }
+
+    #[test]
+    fn scene_depth_changes_round_trip_through_history() {
+        let (exposure, mut masks, lens) = state();
+        let mut history = EditHistory::new(&exposure, &masks, &lens);
+        masks.scene_depth =
+            Some(crate::pipeline::MaskImage::new(2, 2, vec![0, 85, 170, 255]).unwrap());
+        history.note_mask_change();
+        history.observe(&exposure, &masks, &lens, false);
+        let (undone, masks_changed, _) = history.undo(&exposure, &masks, &lens).unwrap();
+        assert!(masks_changed);
+        assert!(undone.materialize_masks().scene_depth.is_none());
+        let (redone, masks_changed, _) = history
+            .redo(&exposure, &undone.materialize_masks(), &lens)
+            .unwrap();
+        assert!(masks_changed);
+        assert_eq!(redone.materialize_masks().scene_depth, masks.scene_depth);
     }
 
     #[test]

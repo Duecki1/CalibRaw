@@ -213,25 +213,16 @@ pub(super) fn materialize_library_asset(
     }
 }
 
+#[cfg(not(target_os = "android"))]
 pub(super) fn asset_is_at_destination(
     asset: &LibraryAsset,
     destination: &LibraryTransferDestination,
 ) -> bool {
-    #[cfg(not(target_os = "android"))]
-    {
-        let LibraryTransferDestination::LocalFolder(folder) = destination;
-        asset
-            .desktop_path()
-            .and_then(Path::parent)
-            .is_some_and(|parent| parent == folder.as_path())
-    }
-    #[cfg(target_os = "android")]
-    {
-        let LibraryTransferDestination::LocalLibrary { path } = destination;
-        Path::new(&asset.display_path)
-            .parent()
-            .is_some_and(|parent| parent == Path::new(path))
-    }
+    let LibraryTransferDestination::LocalFolder(folder) = destination;
+    asset
+        .desktop_path()
+        .and_then(Path::parent)
+        .is_some_and(|parent| parent == folder.as_path())
 }
 
 pub(super) fn duplicate_destination(
@@ -247,11 +238,8 @@ pub(super) fn duplicate_destination(
     }
     #[cfg(target_os = "android")]
     {
-        let path = Path::new(&asset.display_path)
-            .parent()
-            .map(|parent| parent.display().to_string())
-            .unwrap_or_default();
-        Ok(LibraryTransferDestination::LocalLibrary { path })
+        let _ = asset;
+        Ok(LibraryTransferDestination::LocalLibrary)
     }
 }
 
@@ -280,7 +268,7 @@ pub(super) fn import_materialized_library_asset(
     }
     #[cfg(target_os = "android")]
     {
-        let LibraryTransferDestination::LocalLibrary { .. } = destination;
+        let LibraryTransferDestination::LocalLibrary = destination;
         crate::android::import_local_library_document(
             app,
             &materialized.raw_path,
@@ -310,24 +298,12 @@ pub(super) fn preserve_imported_thumbnail(
     }
 }
 
-pub(super) fn remove_library_asset(
-    asset: &LibraryAsset,
-    #[cfg(target_os = "android")] app: &calibraw_ffi::AndroidApp,
-) -> Result<(), String> {
-    #[cfg(not(target_os = "android"))]
-    {
-        let path = asset
-            .desktop_path()
-            .ok_or_else(|| "Library asset is not available from desktop storage".to_owned())?;
-        remove_local_raw_bundle(path)
-    }
-    #[cfg(target_os = "android")]
-    {
-        let uri = asset
-            .android_uri()
-            .ok_or_else(|| "Library asset is not available from Android storage".to_owned())?;
-        crate::android::delete_library_document(app, uri, &asset.display_name)
-    }
+#[cfg(not(target_os = "android"))]
+pub(super) fn remove_library_asset(asset: &LibraryAsset) -> Result<(), String> {
+    let path = asset
+        .desktop_path()
+        .ok_or_else(|| "Library asset is not available from desktop storage".to_owned())?;
+    remove_local_raw_bundle(path)
 }
 
 pub(super) fn rollback_imported_library_asset(

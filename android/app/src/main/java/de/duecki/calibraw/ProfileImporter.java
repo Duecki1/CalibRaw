@@ -1,5 +1,6 @@
 package de.duecki.calibraw;
 
+import android.app.Activity;
 import android.content.Intent;
 import android.database.Cursor;
 import android.net.Uri;
@@ -34,11 +35,11 @@ final class ProfileImporter {
         void onFolderPicked(String cachedPath, String displayName, int profileCount, String error);
     }
 
-    private final AndroidStorageAccess storage;
+    private final Activity storage;
     private final Callbacks callbacks;
     private final PickerLocationStore pickerLocations;
 
-    ProfileImporter(AndroidStorageAccess storage, Callbacks callbacks) {
+    ProfileImporter(Activity storage, Callbacks callbacks) {
         this.storage = storage;
         this.callbacks = callbacks;
         this.pickerLocations = new PickerLocationStore(storage);
