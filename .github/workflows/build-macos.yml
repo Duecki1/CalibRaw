@@ -118,7 +118,7 @@ jobs:
           chmod +x "$executable"
           cp COPYING THIRD_PARTY_NOTICES.md THIRD_PARTY_LICENSES.md README.md "$contents/Resources/"
 
-          icon_source="packaging/icons/calibraw-1024.png"
+          icon_source="packaging/icons/calibraw-macos-1024.png"
           iconset="$contents/Resources/CalibRaw.iconset"
           mkdir -p "$iconset"
           for icon_size in 16 32 128 256 512; do

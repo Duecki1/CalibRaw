@@ -544,6 +544,35 @@ fn fog_gpu_reused_pipeline_switches_mask_origins_and_depth_presence() -> anyhow:
 }
 
 #[test]
+fn fog_gpu_disabled_depth_ignores_depth_map_and_hidden_start() -> anyhow::Result<()> {
+    let Some(scene) = FogScene::new(WIDTH, HEIGHT, ProcessingQuality::High)? else {
+        return Ok(());
+    };
+    let mut fog = uniform_fog();
+    fog.depth_enabled = false;
+    fog.start = 95.0;
+    let without_depth = scene.render(&global_fog(fog, None))?;
+    for depth in [constant_depth(0), constant_depth(255), depth_ramp(19, 11)] {
+        let with_depth = scene.render(&global_fog(fog, Some(depth)))?;
+        assert_close(&with_depth, &without_depth, RGB_TOLERANCE, "disabled depth");
+    }
+    fog.start = 0.0;
+    let without_start = scene.render(&global_fog(fog, None))?;
+    assert_close(
+        &without_start,
+        &without_depth,
+        RGB_TOLERANCE,
+        "hidden fog start",
+    );
+    let baseline = scene.render(&MaskStack::default())?;
+    assert!(without_depth
+        .iter()
+        .zip(&baseline)
+        .any(|(a, b)| (a - b).abs() > RGB_TOLERANCE));
+    Ok(())
+}
+
+#[test]
 fn fog_gpu_near_surface_is_clear_and_far_surface_loses_contrast() -> anyhow::Result<()> {
     let Some(scene) = FogScene::new(WIDTH, HEIGHT, ProcessingQuality::High)? else {
         return Ok(());

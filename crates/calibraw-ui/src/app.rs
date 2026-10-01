@@ -1362,7 +1362,7 @@ impl CalibRawApp {
         // Keep the mask runtime context alive from the initial automatic request through
         // consent/download/inference; otherwise the next frame cancels the DepthMask
         // foreground operation just because the user is still in Adjustments.
-        let fog_depth_request_active = self.masks.stack.has_fog_effect()
+        let fog_depth_request_active = self.masks.stack.has_depth_fog_effect()
             && self.masks.stack.scene_depth_image().is_none()
             && (!self.masks.fog_depth_auto_requested
                 || matches!(self.ai.consent, AiConsentState::Depth { .. })
