@@ -3,6 +3,12 @@ use super::*;
 impl CalibRawApp {
     #[cfg(not(target_os = "android"))]
     pub fn open_file_dialog(&mut self, _frame: &eframe::Frame) {
+        if crate::desktop_portal::is_flatpak() {
+            // A single-file grant does not authorize persistent adjacent edit
+            // sidecars. Authorize the folder, then choose the RAW in Library.
+            self.open_library_folder_dialog();
+            return;
+        }
         if self.ui.desktop_picker_receiver.is_some() {
             return;
         }
@@ -33,6 +39,10 @@ impl CalibRawApp {
             return;
         }
         let mut dialog = rfd::AsyncFileDialog::new();
+        if crate::desktop_portal::is_flatpak() {
+            dialog =
+                dialog.set_title("Choose a photo folder to save edits; select a RAW in Library");
+        }
         if let Some(folder) = self.library.folder() {
             dialog = dialog.set_directory(folder);
         }

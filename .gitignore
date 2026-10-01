@@ -38,3 +38,7 @@ __pycache__/
 *.py[cod]
 STATIC_CHECKS_CAMERA_PROFILE.txt
 STATIC_CHECKS.txt
+
+# Local Flatpak source snapshots, SDK tooling, build cache, and OSTree repository
+/.flatpak/
+/.flatpak-builder/

@@ -121,6 +121,9 @@ cd CalibRaw
 cargo run -p calibraw-ui --bin calibraw --release
 ```
 
+For Linux sandbox builds, see the [local Flatpak workflow](docs/FLATPAK.md)
+for setup, debugging, installation, validation, and unpublished release staging.
+
 ### Android (APK)
 ```sh
 rustup target add aarch64-linux-android
