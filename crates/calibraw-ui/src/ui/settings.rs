@@ -645,7 +645,17 @@ impl Settings {
                 });
 
                 crate::ui::theme::section_separator(ui);
-                let runtime_help = "Automatic downloads the verified ONNX Runtime package matching this operating system and CPU architecture when an AI tool first needs it. Manual uses a local shared-library override.";
+                let bundled_runtime = calibraw_ai::bundled_onnx_runtime_path();
+                let automatic_help = if bundled_runtime.is_some() {
+                    "Recommended. Use the ONNX Runtime included with CalibRaw, with CPU AI fallback and no runtime download."
+                } else {
+                    "Recommended. Download and use CalibRaw's verified runtime for this platform when AI is first used."
+                };
+                let runtime_help = if bundled_runtime.is_some() {
+                    "Automatic uses the ONNX Runtime included with CalibRaw. AI tools can fall back to CPU inference. Manual uses a local shared-library override."
+                } else {
+                    "Automatic downloads the verified ONNX Runtime package matching this operating system and CPU architecture when an AI tool first needs it. Manual uses a local shared-library override."
+                };
                 crate::ui::theme::strong_with_help(ui, "ONNX Runtime", runtime_help);
                 let previous_mode = app.ai.runtime_mode;
                 let mut runtime_mode = previous_mode;
@@ -655,7 +665,7 @@ impl Settings {
                         OnnxRuntimeMode::Automatic,
                         "Automatic",
                     )
-                    .on_hover_text("Recommended. Download and use CalibRaw's verified runtime for this platform when AI is first used.");
+                    .on_hover_text(automatic_help);
                     ui.selectable_value(
                         &mut runtime_mode,
                         OnnxRuntimeMode::Manual,
@@ -669,16 +679,35 @@ impl Settings {
 
                 match app.ai.runtime_mode {
                     OnnxRuntimeMode::Automatic => {
-                        ui.label(format!(
-                            "CalibRaw will select the {} / {} runtime and download it from CalibRaw Artifacts when an AI tool first needs it.",
-                            std::env::consts::OS,
-                            std::env::consts::ARCH
-                        ));
-                        ui.small("The archive and extracted runtime are cached locally and verified with pinned SHA-256 values.");
-                        ui.hyperlink_to(
-                            "View CalibRaw runtime artifacts",
-                            "https://huggingface.co/Duecki/CalibRaw-Artifacts/tree/main/onnxruntime",
-                        );
+                        if let Some(path) = bundled_runtime {
+                            if let Some(runtime) = calibraw_ai::automatic_onnx_runtime_info() {
+                                ui.label(format!(
+                                    "ONNX Runtime {} is included with CalibRaw. No runtime download is needed.",
+                                    runtime.version
+                                ));
+                            }
+                            ui.small("AI tools can fall back to CPU inference. AI models are downloaded separately when needed.");
+                            if !calibraw_ai::automatic_onnx_runtime_is_installed() {
+                                ui.colored_label(
+                                    ui.visuals().error_fg_color,
+                                    format!(
+                                        "The included runtime is missing: {}. Repair the CalibRaw installation or select a trusted manual runtime.",
+                                        path.display()
+                                    ),
+                                );
+                            }
+                        } else {
+                            ui.label(format!(
+                                "CalibRaw will select the {} / {} runtime and download it from CalibRaw Artifacts when an AI tool first needs it.",
+                                std::env::consts::OS,
+                                std::env::consts::ARCH
+                            ));
+                            ui.small("The archive and extracted runtime are cached locally and verified with pinned SHA-256 values.");
+                            ui.hyperlink_to(
+                                "View CalibRaw runtime artifacts",
+                                "https://huggingface.co/Duecki/CalibRaw-Artifacts/tree/main/onnxruntime",
+                            );
+                        }
                     }
                     OnnxRuntimeMode::Manual => {
                         let manual_help = if cfg!(target_os = "windows") {

@@ -14,6 +14,9 @@ cargo deny check
 cargo run -p calibraw-ui --bin calibraw --release
 ```
 
+For Linux sandbox development and packaging, see the [Flatpak workflow](FLATPAK.md),
+including local snapshots, debug builds, validation, and unpublished release staging.
+
 The CPU brush-raster baseline is a harness-free benchmark (kept independent
 of the test suite): `cargo bench -p calibraw-core --bench mask_rasterization`.
 It reports throughput for positive and erase dabs on a fixed 512x512 raster;

@@ -126,8 +126,17 @@ pub(super) fn delete_library_asset(
 }
 
 #[cfg(not(target_os = "android"))]
+fn recycle_local_file(path: &Path) -> Result<(), String> {
+    #[cfg(target_os = "linux")]
+    if crate::desktop_portal::is_flatpak() {
+        return crate::desktop_portal::trash_file(path).map_err(|error| format!("{error:#}"));
+    }
+    trash::delete(path).map_err(|error| error.to_string())
+}
+
+#[cfg(not(target_os = "android"))]
 fn recycle_local_raw_bundle(raw_path: &Path) -> Result<(), String> {
-    trash::delete(raw_path).map_err(|error| {
+    recycle_local_file(raw_path).map_err(|error| {
         format!(
             "Could not move {} to the system {}: {error}",
             raw_path.display(),
@@ -137,7 +146,7 @@ fn recycle_local_raw_bundle(raw_path: &Path) -> Result<(), String> {
 
     let sidecar = crate::sidecar::sidecar_path_for_raw(raw_path);
     if sidecar.is_file() {
-        if let Err(error) = trash::delete(&sidecar) {
+        if let Err(error) = recycle_local_file(&sidecar) {
             log::warn!(
                 "moved RAW {} to the system {} but could not move its sidecar {}: {error}",
                 raw_path.display(),

@@ -12,8 +12,8 @@ pub(crate) mod sidebar;
 pub(crate) mod theme;
 pub(crate) mod top_bar;
 
-/// Desktop-only “save as” picker. The returned path always carries `extensions[0]`, so the
-/// encoder downstream of it never sees a file it cannot open.
+/// Desktop-only “save as” picker. Flatpak filenames must match the exact portal
+/// grant; the export format is passed separately to the encoder.
 #[cfg(not(target_os = "android"))]
 pub(crate) fn choose_save_path(
     filter: String,
@@ -27,8 +27,25 @@ pub(crate) fn choose_save_path(
     if let Some(directory) = initial_directory.filter(|path| !path.as_os_str().is_empty()) {
         dialog = dialog.set_directory(directory);
     }
+    extensions.first()?;
+    save_path_with_extension(
+        dialog.save_file()?,
+        extensions,
+        crate::desktop_portal::is_flatpak(),
+    )
+}
+
+/// Apply native extension defaults without changing Flatpak document grants.
+#[cfg(not(target_os = "android"))]
+fn save_path_with_extension(
+    mut path: std::path::PathBuf,
+    extensions: &[&str],
+    is_flatpak: bool,
+) -> Option<std::path::PathBuf> {
     let fallback_extension = extensions.first()?;
-    let mut path = dialog.save_file()?;
+    if is_flatpak {
+        return Some(path);
+    }
     let valid_extension = path
         .extension()
         .and_then(|extension| extension.to_str())
@@ -75,6 +92,70 @@ pub(crate) fn choose_edit_replay_file_path(
 /// Extension list for [`choose_edit_replay_file_path`]; also the container FFmpeg is asked for.
 #[cfg(not(target_os = "android"))]
 const MP4_EXTENSIONS: &[&str] = &["mp4"];
+
+#[cfg(all(test, not(target_os = "android")))]
+mod save_path_tests {
+    use super::save_path_with_extension;
+    use std::path::PathBuf;
+
+    #[test]
+    fn flatpak_preserves_exact_granted_filename_for_every_extension() {
+        for name in [
+            "export",
+            "export.png",
+            "export.JPEG",
+            "export.",
+            "my.photo.txt",
+        ] {
+            let granted = PathBuf::from("/run/user/1000/doc/grant").join(name);
+            assert_eq!(
+                save_path_with_extension(granted.clone(), &["jpg", "jpeg"], true),
+                Some(granted)
+            );
+        }
+        let granted = PathBuf::from("/run/user/1000/doc/grant/replay.wrong");
+        assert_eq!(
+            save_path_with_extension(granted.clone(), super::MP4_EXTENSIONS, true),
+            Some(granted)
+        );
+    }
+
+    #[test]
+    fn native_corrects_missing_or_wrong_extensions_and_preserves_valid_aliases() {
+        for (name, expected) in [
+            ("export", "export.jpg"),
+            ("export.png", "export.jpg"),
+            ("export.", "export.jpg"),
+            ("my.photo.txt", "my.photo.jpg"),
+            ("export.jpg", "export.jpg"),
+            ("export.JPEG", "export.JPEG"),
+        ] {
+            assert_eq!(
+                save_path_with_extension(PathBuf::from(name), &["jpg", "jpeg"], false),
+                Some(PathBuf::from(expected))
+            );
+        }
+        assert_eq!(
+            save_path_with_extension(PathBuf::from("replay.wrong"), super::MP4_EXTENSIONS, false),
+            Some(PathBuf::from("replay.mp4"))
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn flatpak_preserves_non_utf8_filenames_while_native_replaces_invalid_extension() {
+        use std::os::unix::ffi::OsStringExt;
+        let granted = PathBuf::from(std::ffi::OsString::from_vec(b"export.\xff".to_vec()));
+        assert_eq!(
+            save_path_with_extension(granted.clone(), &["jpg"], true),
+            Some(granted.clone())
+        );
+        assert_eq!(
+            save_path_with_extension(granted, &["jpg"], false),
+            Some(PathBuf::from("export.jpg"))
+        );
+    }
+}
 
 #[cfg(target_os = "android")]
 pub(crate) fn android_overflow_menu<R>(

@@ -29,6 +29,7 @@ impl CalibRawApp {
         #[cfg(not(target_os = "android"))]
         {
             self.ai.runtime_mode == OnnxRuntimeMode::Automatic
+                && calibraw_ai::bundled_onnx_runtime_path().is_none()
                 && !calibraw_ai::automatic_onnx_runtime_is_installed()
         }
         #[cfg(target_os = "android")]
