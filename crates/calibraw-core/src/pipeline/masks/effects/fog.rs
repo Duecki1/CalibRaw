@@ -3,6 +3,7 @@ use super::params::fog::*;
 #[derive(Clone, Copy, Debug, PartialEq, serde::Deserialize, serde::Serialize)]
 #[serde(default)]
 pub struct FogEffectSettings {
+    pub depth_enabled: bool,
     pub amount: f32,
     pub density: f32,
     pub scale: f32,
@@ -17,6 +18,7 @@ pub struct FogEffectSettings {
 impl Default for FogEffectSettings {
     fn default() -> Self {
         Self {
+            depth_enabled: true,
             amount: AMOUNT.default,
             density: DENSITY.default,
             scale: SCALE.default,

@@ -995,8 +995,18 @@ impl MaskStack {
     }
 
     pub fn has_fog_effect(&self) -> bool {
+        self.has_fog_effect_matching(|_| true)
+    }
+
+    pub fn has_depth_fog_effect(&self) -> bool {
+        self.has_fog_effect_matching(|settings| settings.depth_enabled)
+    }
+
+    fn has_fog_effect_matching(&self, matches: impl Fn(&FogEffectSettings) -> bool) -> bool {
         let active_fog = |component: &EffectComponent| {
-            component.effect == MaskEffect::Fog && component.is_active()
+            component.effect == MaskEffect::Fog
+                && component.is_active()
+                && matches(&component.settings.fog)
         };
         self.global_effects.iter().any(active_fog)
             || self.masks.iter().any(|mask| {
