@@ -50,12 +50,8 @@ fn build_matrix_shaper_icc(_name: &str, matrix: [[f32; 3]; 3], transfer: IccTran
                 data.extend_from_slice(&SAMPLES.to_be_bytes());
                 for index in 0..SAMPLES {
                     let encoded = index as f32 / (SAMPLES - 1) as f32;
-                    let linear = if encoded <= 0.04045 {
-                        encoded / 12.92
-                    } else {
-                        ((encoded + 0.055) / 1.055).powf(2.4)
-                    };
-                    let sample = (linear.clamp(0.0, 1.0) * 65_535.0).round() as u16;
+                    let linear = calibraw_core::color_math::srgb_decode(encoded);
+                    let sample = (linear * 65_535.0).round() as u16;
                     data.extend_from_slice(&sample.to_be_bytes());
                 }
             }

@@ -4,6 +4,8 @@ use crate::model_artifact::{
 };
 use crate::model_runtime::{acquire_model_session, AiModel, ModelRetention};
 use anyhow::{Context, Result};
+use calibraw_core::color_math::LINEAR_SRGB_TO_REC2020;
+use calibraw_core::matrix::{self, Matrix3};
 use calibraw_gpu::wgpu;
 use ort::value::Tensor;
 use ring::digest::{Context as Sha256Context, SHA256};
@@ -893,9 +895,9 @@ fn infer_linear(
         raw.inpaint_opposed_chroma_for_exposure(&neutral);
     }
     let mut pipeline: Option<RawGpuPipeline> = None;
-    let cam_to_rec2020 = multiply3(SRGB_TO_REC2020, rows3(raw.cam_to_srgb));
+    let cam_to_rec2020 = matrix::multiply(LINEAR_SRGB_TO_REC2020, rows3(raw.cam_to_srgb));
     let rec2020_to_cam =
-        inverse3(cam_to_rec2020).context("camera-to-Rec.2020 matrix is singular")?;
+        matrix::invert(cam_to_rec2020).context("camera-to-Rec.2020 matrix is singular")?;
     for tile_y in 0..tiles_y {
         for tile_x in 0..tiles_x {
             ensure_not_cancelled(cancellation)?;
@@ -926,7 +928,7 @@ fn infer_linear(
                 .render_camera_scene_blocking(device, queue, &params)?;
             let mut input = vec![0.0f32; 3 * TILE_EDGE * TILE_EDGE];
             for pixel_index in 0..TILE_EDGE * TILE_EDGE {
-                let rgb = mul3(
+                let rgb = matrix::transform(
                     cam_to_rec2020,
                     [
                         camera[pixel_index * 3],
@@ -1011,7 +1013,7 @@ fn infer_linear(
             half::f16::from_bits(pixel[1]).to_f32(),
             half::f16::from_bits(pixel[2]).to_f32(),
         ];
-        let camera = mul3(rec2020_to_cam, rec2020);
+        let camera = matrix::transform(rec2020_to_cam, rec2020);
         for channel in 0..3 {
             anyhow::ensure!(
                 camera[channel].is_finite() && camera[channel].abs() <= half::f16::MAX.to_f32(),
@@ -1226,65 +1228,16 @@ fn reflected_raw_tile(raw: &LoadedRaw, origin_x: i32, origin_y: i32) -> Result<L
     })
 }
 
-type Matrix3 = [[f32; 3]; 3];
-
-const SRGB_TO_REC2020: Matrix3 = [
-    [0.627_403_9, 0.329_283, 0.043_313_1],
-    [0.069_097_3, 0.919_540_4, 0.011_362_3],
-    [0.016_391_4, 0.088_013_3, 0.895_595_3],
-];
-
 fn rows3(rows: [[f32; 4]; 3]) -> Matrix3 {
     rows.map(|row| [row[0], row[1], row[2]])
-}
-
-fn mul3(matrix: Matrix3, value: [f32; 3]) -> [f32; 3] {
-    matrix.map(|row| row[0] * value[0] + row[1] * value[1] + row[2] * value[2])
-}
-
-fn multiply3(left: Matrix3, right: Matrix3) -> Matrix3 {
-    std::array::from_fn(|row| {
-        std::array::from_fn(|column| {
-            (0..3)
-                .map(|index| left[row][index] * right[index][column])
-                .sum()
-        })
-    })
-}
-
-fn inverse3(matrix: Matrix3) -> Option<Matrix3> {
-    let determinant = matrix[0][0] * (matrix[1][1] * matrix[2][2] - matrix[1][2] * matrix[2][1])
-        - matrix[0][1] * (matrix[1][0] * matrix[2][2] - matrix[1][2] * matrix[2][0])
-        + matrix[0][2] * (matrix[1][0] * matrix[2][1] - matrix[1][1] * matrix[2][0]);
-    if !determinant.is_finite() || determinant.abs() < 1e-12 {
-        return None;
-    }
-    let inverse = 1.0 / determinant;
-    Some([
-        [
-            (matrix[1][1] * matrix[2][2] - matrix[1][2] * matrix[2][1]) * inverse,
-            (matrix[0][2] * matrix[2][1] - matrix[0][1] * matrix[2][2]) * inverse,
-            (matrix[0][1] * matrix[1][2] - matrix[0][2] * matrix[1][1]) * inverse,
-        ],
-        [
-            (matrix[1][2] * matrix[2][0] - matrix[1][0] * matrix[2][2]) * inverse,
-            (matrix[0][0] * matrix[2][2] - matrix[0][2] * matrix[2][0]) * inverse,
-            (matrix[0][2] * matrix[1][0] - matrix[0][0] * matrix[1][2]) * inverse,
-        ],
-        [
-            (matrix[1][0] * matrix[2][1] - matrix[1][1] * matrix[2][0]) * inverse,
-            (matrix[0][1] * matrix[2][0] - matrix[0][0] * matrix[2][1]) * inverse,
-            (matrix[0][0] * matrix[1][1] - matrix[0][1] * matrix[1][0]) * inverse,
-        ],
-    ])
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        bayer_rggb_origin, inverse3, load_result_cache, match_gain_tile, mul3, reflect_index,
-        result_cache_path, run_model_tile, save_result_cache, seam_weight, spawn_rawnind_denoise,
-        AiDenoiseEvent, CORE_EDGE, SRGB_TO_REC2020, TILE_EDGE,
+        bayer_rggb_origin, load_result_cache, match_gain_tile, reflect_index, result_cache_path,
+        run_model_tile, save_result_cache, seam_weight, spawn_rawnind_denoise, AiDenoiseEvent,
+        CORE_EDGE, TILE_EDGE,
     };
 
     use crate::execution_provider::SessionOptions;
@@ -1398,16 +1351,6 @@ mod tests {
             .map(|index| reflect_index(index, 4))
             .collect::<Vec<_>>();
         assert_eq!(values, [1, 2, 3, 2, 1, 0, 1, 2, 3, 2, 1, 0, 1, 2]);
-    }
-
-    #[test]
-    fn rec2020_matrix_inverse_round_trips() {
-        let inverse = inverse3(SRGB_TO_REC2020).unwrap();
-        let sample = [0.13, 0.42, 0.91];
-        let round_trip = mul3(inverse, mul3(SRGB_TO_REC2020, sample));
-        for channel in 0..3 {
-            assert!((round_trip[channel] - sample[channel]).abs() < 1e-5);
-        }
     }
 
     #[test]

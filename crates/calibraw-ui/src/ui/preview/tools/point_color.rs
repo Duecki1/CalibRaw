@@ -123,9 +123,8 @@ impl Preview {
             }
         };
         // The preview attachment is linear Rec.2020; point colors store encoded sRGB.
-        let srgb_linear = calibraw_core::color_math::rec2020_to_linear_srgb(rgb)
-            .map(|value| value.clamp(0.0, 1.0));
-        let srgb = srgb_linear.map(linear_to_srgb);
+        let srgb = calibraw_core::color_math::rec2020_to_linear_srgb(rgb)
+            .map(calibraw_core::color_math::srgb_encode);
         let point = crate::pipeline::PointColor::from_srgb(srgb);
         if let Some(index) = mask_index {
             if let Some(mask) = app.masks.stack.masks.get_mut(index) {
@@ -187,26 +186,5 @@ impl Preview {
                 Stroke::new(1.0, Color32::WHITE),
             );
         }
-    }
-}
-
-fn linear_to_srgb(value: f32) -> f32 {
-    let value = value.clamp(0.0, 1.0);
-    if value <= 0.0031308 {
-        value * 12.92
-    } else {
-        1.055 * value.powf(1.0 / 2.4) - 0.055
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::linear_to_srgb;
-
-    #[test]
-    fn converts_linear_black_white_and_mid_gray() {
-        assert_eq!(linear_to_srgb(0.0), 0.0);
-        assert!((linear_to_srgb(1.0) - 1.0).abs() < 1e-6);
-        assert!((linear_to_srgb(0.18) - 0.461).abs() < 0.002);
     }
 }

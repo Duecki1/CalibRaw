@@ -12,6 +12,7 @@ use crate::pipeline::{
 };
 use anyhow::{anyhow, Context, Result};
 use bytemuck::{Pod, Zeroable};
+use calibraw_core::color_math::{linear_srgb_to_oklab, srgb_decode};
 use std::sync::{Arc, Condvar, Mutex, OnceLock};
 
 use crate::gpu_errors::GpuErrorScopes;
@@ -561,22 +562,7 @@ fn color_grade_hue_turns(hue_degrees: f32) -> f32 {
         4 => (value * fraction, 0.0, value),
         _ => (value, 0.0, value * (1.0 - fraction)),
     };
-    let decode = |encoded: f32| {
-        if encoded <= 0.04045 {
-            encoded / 12.92
-        } else {
-            ((encoded + 0.055) / 1.055).powf(2.4)
-        }
-    };
-    let rgb = [decode(r), decode(g), decode(b)];
-    let l = 0.412_221_46 * rgb[0] + 0.536_332_55 * rgb[1] + 0.051_445_995 * rgb[2];
-    let m = 0.211_903_5 * rgb[0] + 0.680_699_5 * rgb[1] + 0.107_396_96 * rgb[2];
-    let s = 0.088_302_46 * rgb[0] + 0.281_718_85 * rgb[1] + 0.629_978_7 * rgb[2];
-    let l = l.cbrt();
-    let m = m.cbrt();
-    let s = s.cbrt();
-    let a = 1.977_998_5 * l - 2.428_592_2 * m + 0.450_593_7 * s;
-    let b = 0.025_904_037 * l + 0.782_771_77 * m - 0.808_675_77 * s;
+    let [_, a, b] = linear_srgb_to_oklab([r, g, b].map(srgb_decode));
     b.atan2(a).rem_euclid(std::f32::consts::TAU) / std::f32::consts::TAU
 }
 
