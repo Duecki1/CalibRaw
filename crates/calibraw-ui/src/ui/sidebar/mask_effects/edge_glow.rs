@@ -1,4 +1,4 @@
-use super::{effect_card, effect_color, effect_details, effect_slider};
+use super::{effect_card, effect_color, effect_details, float_param_slider};
 use crate::pipeline::{effect_params::edge_glow, EdgeGlowEffectSettings, MaskEffect};
 use eframe::egui::Ui;
 
@@ -15,8 +15,8 @@ pub(crate) fn show(
         enabled,
         remove,
         |ui, settings| {
-            let mut changed = effect_slider(ui, &mut settings.amount, edge_glow::AMOUNT);
-            changed |= effect_slider(ui, &mut settings.edge_width, edge_glow::EDGE_WIDTH);
+            let mut changed = float_param_slider(ui, &mut settings.amount, edge_glow::AMOUNT);
+            changed |= float_param_slider(ui, &mut settings.edge_width, edge_glow::EDGE_WIDTH);
             changed |= effect_color(
                 ui,
                 "edge-glow-color-picker",
@@ -24,8 +24,8 @@ pub(crate) fn show(
                 edge_glow::COLOR,
             );
             changed |= effect_details(ui, "Edge details", |ui| {
-                effect_slider(ui, &mut settings.detail, edge_glow::DETAIL)
-                    | effect_slider(ui, &mut settings.glow, edge_glow::GLOW)
+                float_param_slider(ui, &mut settings.detail, edge_glow::DETAIL)
+                    | float_param_slider(ui, &mut settings.glow, edge_glow::GLOW)
             });
             changed
         },

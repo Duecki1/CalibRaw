@@ -157,16 +157,12 @@ pub(crate) fn export_settings_controls(
     crate::ui::theme::card_gap(ui);
     if *format == ExportFormat::Jpeg {
         crate::ui::theme::section_card(ui, "JPEG", |ui| {
-            adjustment_slider_with_reset(
-                ui,
-                "Quality",
-                &mut settings.jpeg_quality,
-                1..=100,
-                0,
-                1.0,
-                Some("Higher quality keeps more detail and produces a larger JPEG file."),
-                crate::pipeline::ExportSettings::default().jpeg_quality,
-            );
+            AdjustmentSlider::new("Quality", &mut settings.jpeg_quality, 1..=100)
+                .decimals(0)
+                .step(1.0)
+                .hover_text("Higher quality keeps more detail and produces a larger JPEG file.")
+                .reset_to(crate::pipeline::ExportSettings::default().jpeg_quality)
+                .show(ui);
         });
     } else {
         crate::ui::theme::section_card_with_help(

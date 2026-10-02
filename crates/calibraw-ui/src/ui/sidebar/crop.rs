@@ -76,15 +76,15 @@ impl Sidebar {
                     app.develop.geometry.rotate_quarter_turn(true);
                 }
             });
-            adjustment_slider(
-                ui,
-                "Straighten",
-                &mut app.develop.geometry.rotation_degrees,
-                -45.0..=45.0,
-                1,
-                0.1,
-                Some("Fine rotation for leveling the image."),
-            );
+            AdjustmentSlider::new(
+                    "Straighten",
+                    &mut app.develop.geometry.rotation_degrees,
+                    -45.0..=45.0,
+                )
+                .decimals(1)
+                .step(0.1)
+                .hover_text("Fine rotation for leveling the image.")
+                .show(ui);
             let straighten_label = if app.develop_ui.straighten_tool_active {
                 "Drawing straighten line…"
             } else {
@@ -126,24 +126,24 @@ impl Sidebar {
                     app.develop.geometry.flip_vertical = !app.develop.geometry.flip_vertical;
                 }
             });
-            adjustment_slider(
-                ui,
-                "Horizontal",
-                &mut app.develop.geometry.horizontal_transform,
-                -30.0..=30.0,
-                1,
-                0.1,
-                Some("Correct horizontal perspective."),
-            );
-            adjustment_slider(
-                ui,
-                "Vertical",
-                &mut app.develop.geometry.vertical_transform,
-                -30.0..=30.0,
-                1,
-                0.1,
-                Some("Correct vertical perspective."),
-            );
+            AdjustmentSlider::new(
+                    "Horizontal",
+                    &mut app.develop.geometry.horizontal_transform,
+                    -30.0..=30.0,
+                )
+                .decimals(1)
+                .step(0.1)
+                .hover_text("Correct horizontal perspective.")
+                .show(ui);
+            AdjustmentSlider::new(
+                    "Vertical",
+                    &mut app.develop.geometry.vertical_transform,
+                    -30.0..=30.0,
+                )
+                .decimals(1)
+                .step(0.1)
+                .hover_text("Correct vertical perspective.")
+                .show(ui);
         });
 
         app.develop.geometry = app.develop.geometry.sanitized();

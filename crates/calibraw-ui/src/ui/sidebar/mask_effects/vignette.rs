@@ -1,4 +1,4 @@
-use super::{effect_card, effect_details, effect_position, effect_slider};
+use super::{effect_card, effect_details, effect_position, float_param_slider};
 use crate::pipeline::{effect_params::vignette, MaskEffect, VignetteEffectSettings};
 use eframe::egui::Ui;
 
@@ -15,13 +15,15 @@ pub(crate) fn show(
         enabled,
         remove,
         |ui, settings| {
-            let mut changed = effect_slider(ui, &mut settings.amount, vignette::AMOUNT);
-            changed |= effect_slider(ui, &mut settings.midpoint, vignette::MIDPOINT);
-            changed |= effect_slider(ui, &mut settings.feather, vignette::FEATHER);
+            let mut changed = float_param_slider(ui, &mut settings.amount, vignette::AMOUNT);
+            changed |= float_param_slider(ui, &mut settings.midpoint, vignette::MIDPOINT);
+            changed |= float_param_slider(ui, &mut settings.feather, vignette::FEATHER);
             changed |= effect_details(ui, "Shape details", |ui| {
-                let mut changed = effect_slider(ui, &mut settings.roundness, vignette::ROUNDNESS);
+                let mut changed =
+                    float_param_slider(ui, &mut settings.roundness, vignette::ROUNDNESS);
                 if settings.amount < 0.0 {
-                    changed |= effect_slider(ui, &mut settings.highlights, vignette::HIGHLIGHTS);
+                    changed |=
+                        float_param_slider(ui, &mut settings.highlights, vignette::HIGHLIGHTS);
                 }
                 changed |= effect_position(
                     ui,

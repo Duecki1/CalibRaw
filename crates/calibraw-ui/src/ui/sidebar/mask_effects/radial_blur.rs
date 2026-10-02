@@ -1,4 +1,4 @@
-use super::{effect_card, effect_position, effect_slider};
+use super::{effect_card, effect_position, float_param_slider};
 use crate::pipeline::{
     effect_params::radial_blur, MaskEffect, RadialBlurEffectSettings, RadialBlurMode,
 };
@@ -18,8 +18,8 @@ pub(crate) fn show(
         remove,
         |ui, settings| {
             let mut changed = mode_selector(ui, &mut settings.mode);
-            changed |= effect_slider(ui, &mut settings.amount, radial_blur::AMOUNT);
-            changed |= effect_slider(ui, &mut settings.strength, radial_blur::STRENGTH);
+            changed |= float_param_slider(ui, &mut settings.amount, radial_blur::AMOUNT);
+            changed |= float_param_slider(ui, &mut settings.strength, radial_blur::STRENGTH);
             changed |= effect_position(
                 ui,
                 "Blur center",

@@ -2,7 +2,7 @@
 use crate::app::OnnxRuntimeMode;
 use crate::app::{maximum_raw_cache_limit, CalibRawApp, PreviewQuality};
 use crate::pipeline::CameraProfileMode;
-use crate::ui::components::adjustment_slider::adjustment_slider_with_reset;
+use crate::ui::components::adjustment_slider::AdjustmentSlider;
 use crate::ui::layout::ScreenLayout;
 use crate::ui::library::maximum_thumbnail_worker_count;
 use eframe::egui::{self, Ui};
@@ -329,32 +329,31 @@ impl Settings {
                     if raw_cache_files == 1 { "file" } else { "files" }
                 )
             };
-            if adjustment_slider_with_reset(
-                ui,
+            if AdjustmentSlider::new(
                 "Decoded RAW cache",
                 &mut raw_cache_files,
                 0..=maximum_raw_cache_limit(),
-                0,
-                1.0,
-                Some(&raw_cache_help),
-                crate::app::default_raw_cache_limit(),
-            ) {
+            )
+            .decimals(0)
+            .step(1.0)
+            .hover_text(raw_cache_help.as_str())
+            .reset_to(crate::app::default_raw_cache_limit())
+            .show(ui)
+            {
                 app.set_raw_cache_limit(raw_cache_files);
             }
 
             let mut thumbnail_workers = app.thumbnail_worker_count();
-            if adjustment_slider_with_reset(
-                ui,
-                "Thumbnail workers",
-                &mut thumbnail_workers,
-                1..=maximum_thumbnail_worker_count(),
-                0,
-                1.0,
-                Some(
-                    "Concurrent thumbnail jobs. Higher values fill the library faster but preview-less and edited jobs may unpack a full sensor and use substantial memory. Changing this restarts the queue.",
-                ),
-                crate::ui::library::default_thumbnail_worker_count(),
-            ) {
+            if AdjustmentSlider::new(
+                    "Thumbnail workers",
+                    &mut thumbnail_workers,
+                    1..=maximum_thumbnail_worker_count(),
+                )
+                .decimals(0)
+                .step(1.0)
+                .hover_text("Concurrent thumbnail jobs. Higher values fill the library faster but preview-less and edited jobs may unpack a full sensor and use substantial memory. Changing this restarts the queue." )
+                .reset_to(crate::ui::library::default_thumbnail_worker_count())
+                .show(ui) {
                 app.set_thumbnail_worker_count(thumbnail_workers);
             }
 

@@ -1,7 +1,6 @@
 use crate::pipeline::{PointColor, PointColorRange, PointColors, MAX_POINT_COLORS};
 use crate::ui::components::adjustment_slider::{
-    accented_gradient_adjustment_slider, adjustment_slider_with_reset, step_focused_numeric_field,
-    SliderGradient,
+    step_focused_numeric_field, AdjustmentSlider, SliderGradient,
 };
 use crate::ui::components::color_picker::sidebar_color_picker;
 use crate::ui::{icons, theme};
@@ -157,21 +156,41 @@ pub(crate) fn point_color(
         }
         let accent = rgb_color(point.sample_rgb());
         let hue = point.sample_hsl[0] * 360.0;
-        accented_gradient_adjustment_slider(ui, "Hue Shift", &mut point.hue_shift, -100.0..=100.0,
-            0, 1.0, Some("Shift the selected colors around the hue wheel."), accent,
-            SliderGradient::HueDegrees { start: hue - 180.0, end: hue + 180.0 });
-        accented_gradient_adjustment_slider(ui, "Saturation Shift", &mut point.saturation_shift, -100.0..=100.0,
-            0, 1.0, Some("Increase or reduce the intensity of the selected colors."), accent,
-            SliderGradient::Saturation(accent));
-        accented_gradient_adjustment_slider(ui, "Luminance Shift", &mut point.luminance_shift, -100.0..=100.0,
-            0, 1.0, Some("Brighten or darken the selected colors."), accent,
-            SliderGradient::Luminance(accent));
+        AdjustmentSlider::new("Hue Shift", &mut point.hue_shift, -100.0..=100.0)
+            .decimals(0)
+            .step(1.0)
+            .hover_text("Shift the selected colors around the hue wheel.")
+            .accent(accent)
+            .gradient(SliderGradient::HueDegrees { start: hue - 180.0, end: hue + 180.0 })
+            .show(ui);
+        AdjustmentSlider::new("Saturation Shift", &mut point.saturation_shift, -100.0..=100.0)
+            .decimals(0)
+            .step(1.0)
+            .hover_text("Increase or reduce the intensity of the selected colors.")
+            .accent(accent)
+            .gradient(SliderGradient::Saturation(accent))
+            .show(ui);
+        AdjustmentSlider::new("Luminance Shift", &mut point.luminance_shift, -100.0..=100.0)
+            .decimals(0)
+            .step(1.0)
+            .hover_text("Brighten or darken the selected colors.")
+            .accent(accent)
+            .gradient(SliderGradient::Luminance(accent))
+            .show(ui);
         adjusted_color_readout(ui, point);
-        adjustment_slider_with_reset(ui, "Range", &mut point.range, 0.0..=100.0, 0, 1.0,
-            Some("Widen or narrow all three selection ranges together."), 50.0);
+        AdjustmentSlider::new("Range", &mut point.range, 0.0..=100.0)
+            .decimals(0)
+            .step(1.0)
+            .hover_text("Widen or narrow all three selection ranges together.")
+            .reset_to(50.0)
+            .show(ui);
         let mut feather = point_color_feather(point);
-        if adjustment_slider_with_reset(ui, "Feather", &mut feather, 0.0..=100.0, 0, 1.0,
-            Some("Control how far the selection softly extends beyond the full-strength range. Increasing Feather only adds a wider soft falloff; it never shrinks the fully selected core."), 50.0) {
+        if AdjustmentSlider::new("Feather", &mut feather, 0.0..=100.0)
+            .decimals(0)
+            .step(1.0)
+            .hover_text("Control how far the selection softly extends beyond the full-strength range. Increasing Feather only adds a wider soft falloff; it never shrinks the fully selected core.")
+            .reset_to(50.0)
+            .show(ui) {
             set_point_color_feather(point, feather);
         }
         egui::CollapsingHeader::new("Refine range").show(ui, |ui| {
