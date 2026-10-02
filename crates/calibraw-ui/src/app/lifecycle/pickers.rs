@@ -190,28 +190,16 @@ impl CalibRawApp {
                         raw_uri: document.library_uri,
                         display_name: document.display_name.clone(),
                     };
-                    if let Some((selection, edit_override)) =
-                        self.android.pending_android_profile_reload.take()
-                    {
-                        self.open_path_labeled_with_options(
-                            document.path,
-                            document.display_name,
-                            document.delete_after_decode,
-                            sidecar_target,
-                            frame,
-                            Some(selection),
-                            Some(edit_override),
-                            document.raw_fd_guard,
-                        );
-                    } else {
-                        self.open_path_labeled(
-                            document.path,
-                            document.display_name,
-                            document.delete_after_decode,
-                            sidecar_target,
-                            frame,
-                            document.raw_fd_guard,
-                        );
+                    let source = DocumentSource {
+                        path: document.path,
+                        label: document.display_name,
+                        sidecar_target,
+                        delete_after_decode: document.delete_after_decode,
+                        raw_fd_guard: document.raw_fd_guard,
+                    };
+                    match self.android.pending_android_profile_reload.take() {
+                        Some(reload) => self.reopen_with_camera_profile(source, reload, frame),
+                        None => self.open_document(source, frame),
                     }
 
                     if self.develop.load_receiver.is_none() {

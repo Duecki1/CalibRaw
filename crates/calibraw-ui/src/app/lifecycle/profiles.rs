@@ -190,24 +190,11 @@ impl CalibRawApp {
         #[cfg(not(target_os = "android"))]
         {
             let crate::sidecar::SidecarTarget::Desktop { raw_path } = sidecar_target;
-            let label = self
-                .develop
-                .current_label
-                .clone()
-                .unwrap_or_else(|| raw_path.display().to_string());
-            let sidecar_target = crate::sidecar::SidecarTarget::Desktop {
-                raw_path: raw_path.clone(),
+            let reload = ProfileReload {
+                camera_profile: selection,
+                edits: edit_override,
             };
-            self.open_path_labeled_with_options(
-                raw_path,
-                label,
-                false,
-                sidecar_target,
-                frame,
-                Some(selection),
-                Some(edit_override),
-                None,
-            );
+            self.reopen_desktop_with_camera_profile(raw_path, reload, frame);
         }
 
         #[cfg(target_os = "android")]
@@ -231,7 +218,10 @@ impl CalibRawApp {
                 &display_name,
             ) {
                 Ok(()) => {
-                    self.android.pending_android_profile_reload = Some((selection, edit_override));
+                    self.android.pending_android_profile_reload = Some(ProfileReload {
+                        camera_profile: selection,
+                        edits: edit_override,
+                    });
                     self.android.picker_pending = true;
                     self.ui.notice = None;
                     self.ui.status = format!("Applying camera profile to {display_name}…");

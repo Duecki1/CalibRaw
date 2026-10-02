@@ -1296,7 +1296,7 @@ pub(crate) struct AndroidState {
     pub(crate) picker_pending: bool,
     pub(crate) pending_android_library_reset_reload: bool,
     pub(crate) camera_profile_folder_importing_label: Option<String>,
-    pub(crate) pending_android_profile_reload: Option<(Option<PathBuf>, SidecarEditState)>,
+    pub(crate) pending_android_profile_reload: Option<ProfileReload>,
 }
 
 pub struct CalibRawApp {
@@ -1551,8 +1551,11 @@ mod processing_export;
 mod sidecar_persistence;
 
 use lifecycle::needs_canonical_mask_source;
+pub(crate) use lifecycle::ProfileReload;
 #[cfg(not(target_os = "android"))]
-pub(crate) use lifecycle::{install_missing_range_sources, masks_have_missing_range_sources};
+pub(crate) use lifecycle::{
+    install_missing_range_sources, masks_have_missing_range_sources, DocumentSource,
+};
 use sidecar_persistence::sidecar_interaction_active;
 
 #[cfg(test)]

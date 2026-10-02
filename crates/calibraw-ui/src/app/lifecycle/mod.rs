@@ -1,4 +1,8 @@
 use super::*;
+use document_load::{
+    run_document_load, CameraProfileSettings, DocumentLoadJob, PreviewProgramSources,
+};
+pub(crate) use document_load::{DocumentSource, ProfileReload};
 
 pub(super) fn remove_temporary_raw(path: &std::path::Path) {
     if let Err(error) = std::fs::remove_file(path) {
@@ -255,6 +259,7 @@ pub(crate) fn install_missing_range_sources(masks: &mut MaskStack, source: &Mask
 }
 
 mod cache;
+mod document_load;
 mod documents;
 mod pickers;
 mod profiles;

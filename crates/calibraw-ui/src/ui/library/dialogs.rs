@@ -552,15 +552,9 @@ pub(super) fn show_library_raw_name_dialog(
             #[cfg(not(target_os = "android"))]
             if current_path.is_some() {
                 if let Some(destination) = renamed_asset.desktop_path().map(Path::to_path_buf) {
-                    app.open_path_labeled(
-                        destination.clone(),
-                        name,
-                        false,
-                        crate::sidecar::SidecarTarget::Desktop {
-                            raw_path: destination,
-                        },
+                    app.open_document(
+                        crate::app::DocumentSource::desktop(destination, name),
                         frame,
-                        None,
                     );
                 }
             }
@@ -576,14 +570,7 @@ pub(super) fn show_library_raw_name_dialog(
                     .and_then(|name| name.to_str())
                     .unwrap_or("local RAW")
                     .to_owned();
-                app.open_path_labeled(
-                    source.clone(),
-                    label,
-                    false,
-                    crate::sidecar::SidecarTarget::Desktop { raw_path: source },
-                    frame,
-                    None,
-                );
+                app.open_document(crate::app::DocumentSource::desktop(source, label), frame);
             }
         }
     }
