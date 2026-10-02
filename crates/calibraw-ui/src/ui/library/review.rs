@@ -36,7 +36,7 @@ pub(super) fn thumbnail_hover_overlay(
         return None;
     }
 
-    // Restore the original full-photo scrim and centered, gently sliding text.
+    // Full-photo scrim with centered, gently sliding text.
     let mut painter = ui.painter_at(rect);
     painter.set_opacity(progress);
     painter.rect_filled(rect, theme::CARD_RADIUS, Color32::from_black_alpha(156));

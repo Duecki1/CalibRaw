@@ -182,8 +182,8 @@ fn glow_diffuse_at(pos: vec2<i32>, stage: u32) -> vec4<f32> {
     let center = textureLoad(SceneAdjustments::glow_work_tex, Common::clamp_pos(pos), 0);
     let glow_mix = glow_stage_mix(stage);
     var halation_mix = 1.0;
-    // Halation needs a visibly broader shoulder than the old three-stage kernel.
-    // Keep it tighter than glow, but retain some energy in the two widest stages
+    // Halation needs a visibly broader shoulder than three stages give. Keep it
+    // tighter than glow, but retain some energy in the two widest stages
     // so the fringe survives normal preview scaling and display tone mapping.
     if stage == 3u { halation_mix = 0.90; }
     if stage == 4u { halation_mix = 0.45; }

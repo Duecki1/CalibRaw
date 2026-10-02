@@ -16,7 +16,7 @@
 
 const RCD_MARGIN: i32 = 9;
 // Specialize the selected algorithm before driver compilation. The dynamic
-// fallback remains available for validation against the original unified shader.
+// fallback keeps every algorithm in one shader for validation.
 override BAYER_DEMOSAIC_MODE: u32 = 3u;
 override BAYER_SENSOR_DENOISE: bool = true;
 override BAYER_CA: bool = true;

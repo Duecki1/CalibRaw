@@ -70,8 +70,8 @@ fn apply_mask_blur_stage(
         if amount <= 1e-6 { continue; }
 
         let mix_sum = mask_blur_stage_mix_sum(primary.y);
-        // Retain the first stage's radius ramp. Normalizing by a tiny sum
-        // used to turn any positive radius into a full one-pixel diffusion.
+        // Keep the first stage's radius ramp: normalizing by a tiny sum would
+        // turn any positive radius into a full one-pixel diffusion.
         let stage_share = stage_mix / max(mix_sum, 1.0);
         let distributed_amount = min(amount, 0.995);
         let stage_amount = 1.0 - pow(1.0 - distributed_amount, stage_share);

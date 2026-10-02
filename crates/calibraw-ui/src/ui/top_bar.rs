@@ -408,9 +408,8 @@ impl TopBar {
         let compact = toolbar_width < TOOLBAR_COMPACT_WIDTH;
         let compact_review = toolbar_width < TOOLBAR_COMPACT_REVIEW_WIDTH;
         let center_brand = Self::toolbar_brand_can_be_centered(app.ui.active_tab, toolbar_width);
-        // The three navigation tabs consume the space previously used by the
-        // square app icon and its separator, keeping the Library sidebar alignment
-        // essentially unchanged while giving each tab a wider hit target.
+        // Tab widths keep the Library sidebar edge aligned with the toolbar while
+        // giving each tab a wide hit target.
         let tab_width = if compact { 88.0 } else { 98.0 };
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             if app.ui.active_tab == AppTab::Develop {
