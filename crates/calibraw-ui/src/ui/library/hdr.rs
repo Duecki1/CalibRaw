@@ -229,7 +229,7 @@ mod tests {
         let raw = crate::pipeline::load_raw_file(&output).unwrap();
         let loaded = raw.scene_linear_raster().unwrap();
         for (pixel, expected) in loaded.chunks_exact(3).zip(master.rgb.chunks_exact(3)) {
-            // The existing ICC path adapts through D50 and uses fixed-point matrix tags.
+            // The ICC round trip adapts through D50 and uses fixed-point matrix tags.
             let tolerance =
                 expected.iter().copied().map(f32::abs).fold(0.0, f32::max) * 0.0005 + 1e-8;
             for (actual, expected) in pixel.iter().zip(expected) {

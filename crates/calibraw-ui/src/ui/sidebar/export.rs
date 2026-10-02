@@ -1,4 +1,6 @@
-fn show_export_action_panel<R>(
+use super::*;
+
+pub(super) fn show_export_action_panel<R>(
     ui: &mut Ui,
     contents: impl FnOnce(&mut Ui) -> R,
 ) -> egui::InnerResponse<R> {
@@ -13,7 +15,10 @@ fn show_export_action_panel<R>(
         .show(ui, contents)
 }
 
-fn enforce_export_bit_depth(format: ExportFormat, settings: &mut crate::pipeline::ExportSettings) {
+pub(super) fn enforce_export_bit_depth(
+    format: ExportFormat,
+    settings: &mut crate::pipeline::ExportSettings,
+) {
     match format {
         ExportFormat::Jpeg => settings.bit_depth = ExportBitDepth::Eight,
         ExportFormat::Png | ExportFormat::JpegXl if settings.bit_depth.is_float() => {
@@ -157,16 +162,12 @@ pub(crate) fn export_settings_controls(
     crate::ui::theme::card_gap(ui);
     if *format == ExportFormat::Jpeg {
         crate::ui::theme::section_card(ui, "JPEG", |ui| {
-            adjustment_slider_with_reset(
-                ui,
-                "Quality",
-                &mut settings.jpeg_quality,
-                1..=100,
-                0,
-                1.0,
-                Some("Higher quality keeps more detail and produces a larger JPEG file."),
-                crate::pipeline::ExportSettings::default().jpeg_quality,
-            );
+            AdjustmentSlider::new("Quality", &mut settings.jpeg_quality, 1..=100)
+                .decimals(0)
+                .step(1.0)
+                .hover_text("Higher quality keeps more detail and produces a larger JPEG file.")
+                .reset_to(crate::pipeline::ExportSettings::default().jpeg_quality)
+                .show(ui);
         });
     } else {
         crate::ui::theme::section_card_with_help(
@@ -205,7 +206,7 @@ pub(crate) fn export_settings_controls(
 }
 
 impl Sidebar {
-    fn show_export_action(ui: &mut Ui, app: &mut CalibRawApp, frame: &eframe::Frame) {
+    pub(super) fn show_export_action(ui: &mut Ui, app: &mut CalibRawApp, frame: &eframe::Frame) {
         let dimensions_valid = app.develop.loaded_raw.as_ref().is_some_and(|raw| {
             let (width, height) = app
                 .develop
@@ -233,7 +234,7 @@ impl Sidebar {
         }
     }
 
-    fn show_export(ui: &mut Ui, app: &mut CalibRawApp, _frame: &eframe::Frame) {
+    pub(super) fn show_export(ui: &mut Ui, app: &mut CalibRawApp, _frame: &eframe::Frame) {
         let content_width = ui.available_width().max(1.0);
         let column_width = content_width;
 
@@ -263,7 +264,6 @@ impl Sidebar {
                     app.persist_performance_settings();
                 }
 
-                #[cfg(not(target_os = "android"))]
                 if let Some((fraction, phase)) = app.edit_replay_progress_state() {
                     ui.add_space(crate::ui::theme::SPACE_SM);
                     ui.add_sized(
@@ -298,9 +298,7 @@ impl Sidebar {
                 }
 
                 ui.add_space(crate::ui::theme::SPACE_SM);
-                #[cfg(not(target_os = "android"))]
                 let export_enabled = app.can_export();
-                #[cfg(not(target_os = "android"))]
                 {
                     crate::ui::theme::section_separator(ui);
                     let replay_response = ui

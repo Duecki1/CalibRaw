@@ -2,12 +2,16 @@ use super::*;
 
 use crate::pipeline::{ExportBitDepth, ExportResizeMode};
 use image::{imageops::FilterType, RgbImage};
-use std::ffi::OsString;
-use std::io::Write as _;
-#[cfg(windows)]
-use std::os::windows::process::CommandExt;
-use std::process::{Command, Stdio};
 use std::sync::atomic::Ordering;
+
+#[cfg(not(target_os = "android"))]
+mod desktop;
+#[cfg(not(target_os = "android"))]
+use desktop::{ensure_ffmpeg_available, ReplayFrameWriter};
+#[cfg(any(target_os = "android", test))]
+mod android;
+#[cfg(target_os = "android")]
+use android::ReplayFrameWriter;
 
 const REPLAY_FPS: u32 = 30;
 const REPLAY_LONG_EDGE: u32 = 1920;
@@ -40,6 +44,7 @@ enum ReplayStageKind {
     Rotate,
     Transform,
     Masks,
+    Effects,
     Remove,
 }
 
@@ -51,6 +56,7 @@ impl ReplayStageKind {
             Self::Rotate => "Rotate",
             Self::Transform => "Transform",
             Self::Masks => "Masks",
+            Self::Effects => "Effects",
             Self::Remove => "Remove",
         }
     }
@@ -90,140 +96,14 @@ struct EditReplaySnapshot {
     final_masks: MaskStack,
     final_remove: RemoveEditState,
     gpu_export_prewarm: Option<Arc<GpuProgramPrewarm>>,
+    #[cfg(target_os = "android")]
+    android_app: calibraw_ffi::AndroidApp,
 }
 
 struct RenderedStill {
     width: u32,
     height: u32,
     rgb: Vec<u8>,
-}
-
-struct ReplayFrameWriter {
-    child: std::process::Child,
-    stdin: Option<std::process::ChildStdin>,
-}
-
-impl ReplayFrameWriter {
-    fn start(path: &Path, width: u32, height: u32) -> Result<Self, String> {
-        let ffmpeg = ffmpeg_program();
-        let size = format!("{width}x{height}");
-        let fps = REPLAY_FPS.to_string();
-        let mut command = Command::new(&ffmpeg);
-        command
-            .arg("-hide_banner")
-            .arg("-loglevel")
-            .arg("error")
-            .arg("-y")
-            .arg("-f")
-            .arg("rawvideo")
-            .arg("-pix_fmt")
-            .arg("rgb24")
-            .arg("-s")
-            .arg(size)
-            .arg("-r")
-            .arg(&fps)
-            .arg("-i")
-            .arg("pipe:0")
-            .arg("-an")
-            .arg("-c:v")
-            .arg("libx264")
-            .arg("-preset")
-            .arg("medium")
-            .arg("-crf")
-            .arg("23")
-            .arg("-pix_fmt")
-            .arg("yuv420p")
-            .arg("-movflags")
-            .arg("+faststart")
-            .arg("-f")
-            .arg("mp4")
-            .arg(path)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::null())
-            .stderr(Stdio::piped());
-        #[cfg(windows)]
-        command.creation_flags(0x08000000);
-
-        let mut child = command.spawn().map_err(|error| {
-            format!(
-                "Could not start FFmpeg ({:?}). Install FFmpeg with H.264/libx264 support or set CALIBRAW_FFMPEG: {error}",
-                ffmpeg
-            )
-        })?;
-        let stdin = child
-            .stdin
-            .take()
-            .ok_or_else(|| "FFmpeg did not provide a video input pipe".to_owned())?;
-        Ok(Self {
-            child,
-            stdin: Some(stdin),
-        })
-    }
-
-    fn write_frame(&mut self, rgb: &[u8]) -> Result<(), String> {
-        self.stdin
-            .as_mut()
-            .ok_or_else(|| "FFmpeg video input pipe is closed".to_owned())?
-            .write_all(rgb)
-            .map_err(|error| format!("Could not send replay frame to FFmpeg: {error}"))
-    }
-
-    fn finish(mut self) -> Result<(), String> {
-        drop(self.stdin.take());
-        let output = self
-            .child
-            .wait_with_output()
-            .map_err(|error| format!("Could not finish FFmpeg replay encoding: {error}"))?;
-        if output.status.success() {
-            return Ok(());
-        }
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        let detail = stderr.trim();
-        if detail.is_empty() {
-            Err(format!("FFmpeg exited with {}", output.status))
-        } else {
-            Err(format!("FFmpeg failed: {detail}"))
-        }
-    }
-
-    fn cancel(&mut self) {
-        self.stdin.take();
-        let _ = self.child.kill();
-        let _ = self.child.wait();
-    }
-}
-
-fn ffmpeg_program() -> OsString {
-    std::env::var_os("CALIBRAW_FFMPEG")
-        .filter(|value| !value.is_empty())
-        .unwrap_or_else(|| OsString::from("ffmpeg"))
-}
-
-fn ensure_ffmpeg_available() -> Result<(), String> {
-    let ffmpeg = ffmpeg_program();
-    let output = Command::new(&ffmpeg)
-        .arg("-hide_banner")
-        .arg("-encoders")
-        .output()
-        .map_err(|error| {
-            format!(
-                "Could not start FFmpeg ({:?}). Install FFmpeg with H.264/libx264 support or set CALIBRAW_FFMPEG: {error}",
-                ffmpeg
-            )
-        })?;
-    if !output.status.success() {
-        return Err(format!(
-            "FFmpeg encoder probe exited with {}",
-            output.status
-        ));
-    }
-    let encoders = String::from_utf8_lossy(&output.stdout);
-    if !encoders.contains("libx264") {
-        return Err(
-            "FFmpeg is available but does not provide the libx264 H.264 encoder".to_owned(),
-        );
-    }
-    Ok(())
 }
 
 fn replay_stage_plan(
@@ -237,8 +117,10 @@ fn replay_stage_plan(
     let mut current = ReplayRenderState::original(original_exposure);
     let mut stages = Vec::new();
 
-    if final_exposure != original_exposure {
-        current.exposure = final_exposure;
+    let mut edit_exposure = final_exposure;
+    copy_legacy_effects(&mut edit_exposure, original_exposure);
+    if edit_exposure != original_exposure {
+        current.exposure = edit_exposure;
         stages.push(ReplayStage {
             kind: ReplayStageKind::Edit,
             state: current.clone(),
@@ -274,10 +156,20 @@ fn replay_stage_plan(
         });
     }
 
-    if masks_used(final_masks) {
-        current.masks = final_masks.clone();
+    let adjustment_masks = masks_without_effects(final_masks);
+    if masks_used(&adjustment_masks) {
+        current.masks = adjustment_masks;
         stages.push(ReplayStage {
             kind: ReplayStageKind::Masks,
+            state: current.clone(),
+        });
+    }
+
+    if effects_used(final_masks) || legacy_effects_changed(original_exposure, final_exposure) {
+        current.exposure = final_exposure;
+        current.masks = final_masks.clone();
+        stages.push(ReplayStage {
+            kind: ReplayStageKind::Effects,
             state: current.clone(),
         });
     }
@@ -291,6 +183,87 @@ fn replay_stage_plan(
     }
 
     stages
+}
+
+// Legacy photographic controls live in ExposureParams, but belong to Effects.
+fn copy_legacy_effects(target: &mut ExposureParams, source: ExposureParams) {
+    target.halation_amount = source.halation_amount;
+    target.grain_amount = source.grain_amount;
+    target.glow_amount = source.glow_amount;
+    target.glow_radius = source.glow_radius;
+    target.glow_threshold = source.glow_threshold;
+    target.vignette_amount = source.vignette_amount;
+    target.vignette_midpoint = source.vignette_midpoint;
+    target.vignette_roundness = source.vignette_roundness;
+    target.vignette_feather = source.vignette_feather;
+    target.vignette_highlights = source.vignette_highlights;
+}
+
+fn legacy_effects_changed(original: ExposureParams, final_edit: ExposureParams) -> bool {
+    let mut effects = original;
+    copy_legacy_effects(&mut effects, final_edit);
+    if original.vignette_amount.abs() <= 1e-6 && final_edit.vignette_amount.abs() <= 1e-6 {
+        effects.vignette_midpoint = original.vignette_midpoint;
+        effects.vignette_roundness = original.vignette_roundness;
+        effects.vignette_feather = original.vignette_feather;
+        effects.vignette_highlights = original.vignette_highlights;
+    }
+    if original.glow_amount.abs() <= 1e-6 && final_edit.glow_amount.abs() <= 1e-6 {
+        effects.glow_radius = original.glow_radius;
+        effects.glow_threshold = original.glow_threshold;
+    }
+    effects != original
+}
+
+fn masks_without_effects(masks: &MaskStack) -> MaskStack {
+    let mut adjustments = masks.clone();
+    adjustments.global_effects.clear();
+    for mask in &mut adjustments.masks {
+        mask.effect_components.clear();
+        // Legacy effect masks do not apply their stored adjustments.
+        if mask.effect != crate::pipeline::MaskEffect::Adjustment {
+            mask.adjustments_enabled = false;
+        }
+        mask.effect = crate::pipeline::MaskEffect::Adjustment;
+        mask.effect_settings = Default::default();
+        mask.adjustments.halation_amount = 0.0;
+    }
+    adjustments
+}
+
+fn mask_is_visible(mask: &crate::pipeline::LocalMask) -> bool {
+    mask.enabled
+        && mask.opacity > 1e-6
+        && mask
+            .components
+            .iter()
+            .any(|component| component.enabled && component.geometry.is_initialized())
+}
+
+fn effects_used(masks: &MaskStack) -> bool {
+    masks
+        .global_effects
+        .iter()
+        .any(crate::pipeline::EffectComponent::is_active)
+        || masks
+            .masks
+            .iter()
+            .filter(|mask| mask_is_visible(mask))
+            .any(|mask| {
+                mask.effect_components
+                    .iter()
+                    .any(crate::pipeline::EffectComponent::is_active)
+                    || (mask.effect != crate::pipeline::MaskEffect::Adjustment
+                        && crate::pipeline::EffectComponent {
+                            effect: mask.effect,
+                            enabled: true,
+                            settings: mask.effect_settings,
+                        }
+                        .is_active())
+                    || (mask.effect == crate::pipeline::MaskEffect::Adjustment
+                        && mask.adjustments_enabled
+                        && mask.adjustments.halation_amount.abs() > 1e-6)
+            })
 }
 
 fn crop_used(geometry: GeometryTransform) -> bool {
@@ -814,6 +787,7 @@ fn run_edit_replay_worker(
     sender: mpsc::Sender<ReplayExportEvent>,
     repaint: egui::Context,
 ) -> Result<PathBuf, String> {
+    #[cfg(not(target_os = "android"))]
     ensure_ffmpeg_available()?;
     let stages = replay_stage_plan(
         snapshot.original_exposure,
@@ -825,7 +799,7 @@ fn run_edit_replay_worker(
     let render_count = stages.len() + 2;
     let render_dir = tempfile::Builder::new()
         .prefix("calibraw-edit-replay-")
-        .tempdir()
+        .tempdir_in(destination.parent().unwrap_or_else(|| Path::new(".")))
         .map_err(|error| format!("Could not create replay render cache: {error}"))?;
 
     let original_state = ReplayRenderState::original(snapshot.original_exposure);
@@ -881,6 +855,9 @@ fn run_edit_replay_worker(
         .map(|still| fit_to_canvas(still, canvas_width, canvas_height))
         .collect::<Vec<_>>();
     let final_canvas = fit_to_canvas(&final_still, canvas_width, canvas_height);
+    // Release rendered endpoints before allocating and encoding video frames on mobile.
+    drop(rendered);
+    drop(final_still);
     let brand_canvas = brand_outro_frame(canvas_width, canvas_height)?;
     let black_canvas = vec![0u8; final_canvas.len()];
 
@@ -894,7 +871,15 @@ fn run_edit_replay_worker(
         .tempfile_in(parent)
         .map_err(|error| format!("Could not create temporary replay output: {error}"))?
         .into_temp_path();
+    #[cfg(not(target_os = "android"))]
     let mut writer = ReplayFrameWriter::start(temporary.as_ref(), canvas_width, canvas_height)?;
+    #[cfg(target_os = "android")]
+    let mut writer = ReplayFrameWriter::start(
+        &snapshot.android_app,
+        temporary.as_ref(),
+        canvas_width,
+        canvas_height,
+    )?;
     let total_frames = total_replay_frames(stages.len()) as usize;
     let mut completed_frames = 0usize;
     let mut scratch = vec![0u8; canvas_width as usize * canvas_height as usize * 3];
@@ -1052,7 +1037,7 @@ fn run_edit_replay_worker(
     if cancellation.load(Ordering::Acquire) {
         return Err("edit replay cancelled".to_owned());
     }
-    crate::file_ops::replace_file(temporary.as_ref(), &destination).map_err(|error| {
+    calibraw_core::file_ops::replace_file(temporary.as_ref(), &destination).map_err(|error| {
         format!(
             "Could not publish replay {}: {error}",
             destination.display()
@@ -1062,7 +1047,7 @@ fn run_edit_replay_worker(
         .parent()
         .filter(|path| !path.as_os_str().is_empty())
     {
-        let _ = crate::file_ops::sync_parent_directory(parent);
+        let _ = calibraw_core::file_ops::sync_parent_directory(parent);
     }
     let _ = temporary.keep();
     Ok(destination)
@@ -1084,15 +1069,30 @@ impl CalibRawApp {
             return;
         };
         let default_name = format!("{stem}-edit-replay.mp4");
+        #[cfg(not(target_os = "android"))]
         let initial_directory = self
             .develop
             .current_path
             .as_deref()
             .and_then(|path| path.parent());
+        #[cfg(not(target_os = "android"))]
         let Some(destination) =
             crate::ui::choose_edit_replay_file_path(&default_name, initial_directory)
         else {
             return;
+        };
+        #[cfg(target_os = "android")]
+        let destination = {
+            let Some(data_dir) = self.android.android_app.internal_data_path() else {
+                self.ui.notice = Some("Android did not provide an app data directory.".to_owned());
+                return;
+            };
+            let export_dir = data_dir.join("cache").join("exports");
+            if let Err(error) = std::fs::create_dir_all(&export_dir) {
+                self.ui.notice = Some(format!("Could not prepare replay cache: {error}"));
+                return;
+            }
+            export_dir.join(default_name)
         };
         let Some(render_state) = frame.wgpu_render_state() else {
             self.ui.notice = Some("eframe is not running with the wgpu backend.".to_owned());
@@ -1111,6 +1111,8 @@ impl CalibRawApp {
             final_masks: self.masks.stack.clone(),
             final_remove: self.inpaint.edits.as_ref().clone(),
             gpu_export_prewarm: self.export.gpu_prewarm.as_ref().map(Arc::clone),
+            #[cfg(target_os = "android")]
+            android_app: self.android.android_app.clone(),
         };
         let cancellation = Arc::new(AtomicBool::new(false));
         let (sender, receiver) = mpsc::channel();
@@ -1189,8 +1191,32 @@ impl CalibRawApp {
                         .is_some_and(|task| task.cancelling);
                     match result {
                         Ok(path) => {
-                            self.ui.notice =
-                                Some(format!("Created edit replay {}", path.display()));
+                            #[cfg(not(target_os = "android"))]
+                            {
+                                self.ui.notice =
+                                    Some(format!("Created edit replay {}", path.display()));
+                            }
+                            #[cfg(target_os = "android")]
+                            {
+                                let name = path.file_name().unwrap_or_default().to_string_lossy();
+                                match calibraw_ffi::publish_image(
+                                    &self.android.android_app,
+                                    &path,
+                                    &name,
+                                    "video/mp4",
+                                ) {
+                                    Ok(()) => {
+                                        self.export.publish_pending = true;
+                                        self.ui.notice =
+                                            Some("Saving edit replay to gallery…".to_owned());
+                                    }
+                                    Err(error) => {
+                                        let _ = std::fs::remove_file(&path);
+                                        self.ui.notice =
+                                            Some(format!("Could not save edit replay: {error}"));
+                                    }
+                                }
+                            }
                         }
                         Err(error) if was_cancelled || error.contains("cancelled") => {
                             self.ui.notice = Some("Edit replay cancelled.".to_owned());
@@ -1214,6 +1240,139 @@ impl CalibRawApp {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn effects_are_applied_after_edit_and_mask_adjustments() {
+        use crate::pipeline::{EffectComponent, LocalMask, MaskEffect};
+        let original = ExposureParams::scene_referred_default();
+        let mut exposure = original;
+        exposure.exposure = 1.0;
+        exposure.grain_amount = 0.5;
+        exposure.glow_amount = 0.3;
+        let mut masks = MaskStack::default();
+        let mut mask = LocalMask::new(MaskKind::Fullscreen, 1);
+        mask.adjustments.exposure = 0.25;
+        mask.adjustments.halation_amount = 0.4;
+        mask.effect_components
+            .push(EffectComponent::new(MaskEffect::Blur));
+        masks.masks.push(mask);
+        masks
+            .global_effects
+            .push(EffectComponent::new(MaskEffect::Glow));
+        let stages = replay_stage_plan(
+            original,
+            exposure,
+            GeometryTransform::default(),
+            &masks,
+            &RemoveEditState::default(),
+        );
+        assert_eq!(
+            stages.iter().map(|stage| stage.kind).collect::<Vec<_>>(),
+            [
+                ReplayStageKind::Edit,
+                ReplayStageKind::Masks,
+                ReplayStageKind::Effects
+            ]
+        );
+        assert_eq!(stages[0].state.exposure.grain_amount, original.grain_amount);
+        assert_eq!(stages[0].state.exposure.glow_amount, original.glow_amount);
+        let adjustments = &stages[1].state.masks;
+        assert!(adjustments.global_effects.is_empty());
+        assert!(adjustments.masks[0].effect_components.is_empty());
+        assert_eq!(adjustments.masks[0].adjustments.halation_amount, 0.0);
+        assert_eq!(adjustments.masks[0].adjustments.exposure, 0.25);
+        assert_eq!(stages[2].state.masks, masks);
+        assert_eq!(stages[2].state.exposure, exposure);
+    }
+
+    #[test]
+    fn effects_only_skip_edit_and_masks_including_legacy_masks() {
+        use crate::pipeline::{EffectComponent, LocalMask, MaskEffect};
+        let original = ExposureParams::scene_referred_default();
+        let mut exposure = original;
+        exposure.halation_amount = 0.4;
+        let mut local = LocalMask::new(MaskKind::Fullscreen, 1);
+        local
+            .effect_components
+            .push(EffectComponent::new(MaskEffect::Blur));
+        local.effect_components[0].settings.blur.amount = 0.6;
+        let mut legacy = LocalMask::new(MaskKind::Fullscreen, 2);
+        legacy.effect = MaskEffect::Blur;
+        legacy.effect_settings.blur.amount = 0.6;
+        legacy.adjustments.exposure = 2.0;
+        let mut global = EffectComponent::new(MaskEffect::Glow);
+        global.settings.glow.amount = 0.6;
+        for (final_exposure, masks) in [
+            (exposure, MaskStack::default()),
+            (
+                original,
+                MaskStack {
+                    masks: vec![local],
+                    ..Default::default()
+                },
+            ),
+            (
+                original,
+                MaskStack {
+                    masks: vec![legacy],
+                    ..Default::default()
+                },
+            ),
+            (
+                original,
+                MaskStack {
+                    global_effects: vec![global],
+                    ..Default::default()
+                },
+            ),
+        ] {
+            let stages = replay_stage_plan(
+                original,
+                final_exposure,
+                GeometryTransform::default(),
+                &masks,
+                &RemoveEditState::default(),
+            );
+            assert_eq!(stages.len(), 1);
+            assert_eq!(stages[0].kind, ReplayStageKind::Effects);
+            assert_eq!(stages[0].state.masks, masks);
+        }
+    }
+
+    #[test]
+    fn invisible_effects_and_inactive_effect_settings_do_not_add_stages() {
+        use crate::pipeline::{EffectComponent, LocalMask, MaskEffect};
+        let original = ExposureParams::scene_referred_default();
+        let mut exposure = original;
+        exposure.vignette_midpoint = 0.7;
+        exposure.glow_radius = 0.7;
+        let mut mask = LocalMask::new(MaskKind::Fullscreen, 1);
+        let mut effect = EffectComponent::new(MaskEffect::Blur);
+        effect.settings.blur.amount = 0.5;
+        mask.effect_components.push(effect.clone());
+        for kind in 0..3 {
+            let mut hidden = mask.clone();
+            match kind {
+                0 => hidden.enabled = false,
+                1 => hidden.opacity = 0.0,
+                _ => hidden.components[0].enabled = false,
+            }
+            effect.enabled = false;
+            let masks = MaskStack {
+                masks: vec![hidden],
+                global_effects: vec![effect.clone()],
+                ..Default::default()
+            };
+            let stages = replay_stage_plan(
+                original,
+                exposure,
+                GeometryTransform::default(),
+                &masks,
+                &RemoveEditState::default(),
+            );
+            assert!(stages.is_empty());
+        }
+    }
 
     #[test]
     fn stage_usage_helpers_split_geometry_categories() {
@@ -1367,7 +1526,15 @@ mod tests {
 
     #[test]
     fn bitmap_font_covers_every_stage_title() {
-        for title in ["EDIT", "CROP", "ROTATE", "TRANSFORM", "MASKS", "REMOVE"] {
+        for title in [
+            "EDIT",
+            "CROP",
+            "ROTATE",
+            "TRANSFORM",
+            "MASKS",
+            "EFFECTS",
+            "REMOVE",
+        ] {
             for character in title.chars() {
                 assert_ne!(glyph_rows(character), [0; 7], "missing glyph {character}");
             }

@@ -34,7 +34,7 @@ impl CalibRawApp {
                 camera_profile_folder =
                     crate::performance_settings::detected_camera_profile_folder();
                 if let Some(folder) = &camera_profile_folder {
-                    crate::diagnostics::record(format!(
+                    calibraw_core::diagnostics::record(format!(
                         "DCP profiles: auto-detected folder {}",
                         folder.display()
                     ));
@@ -345,11 +345,11 @@ impl CalibRawApp {
             calibraw_gpu::install_uncaptured_gpu_error_handler(&render_state.device);
         }
         crate::ui::theme::install(&cc.egui_ctx);
-        crate::diagnostics::record("CalibRaw desktop UI initialized");
+        calibraw_core::diagnostics::record("CalibRaw desktop UI initialized");
         let gpu_export_prewarm = Arc::new(crate::pipeline::GpuProgramPrewarm::new());
         let gpu_preview_prewarm_receiver = spawn_gpu_preview_prewarm(
             cc,
-            Some(crate::thumbnail_cache::desktop_app_cache_root()),
+            Some(calibraw_core::thumbnail_cache::desktop_app_cache_root()),
             Arc::clone(&gpu_export_prewarm),
         );
         let mut app = Self::empty(&cc.egui_ctx);
@@ -367,24 +367,24 @@ impl CalibRawApp {
         if let Some(render_state) = cc.wgpu_render_state.as_ref() {
             calibraw_gpu::install_uncaptured_gpu_error_handler(&render_state.device);
         }
-        crate::android::install_context(&cc.egui_ctx);
+        calibraw_ffi::install_context(&cc.egui_ctx);
         crate::ui::theme::install(&cc.egui_ctx);
-        match crate::android::device_diagnostics(&android_app) {
-            Ok(info) => crate::diagnostics::set_device_info(info),
-            Err(error) => crate::diagnostics::record(error),
+        match calibraw_ffi::device_diagnostics(&android_app) {
+            Ok(info) => calibraw_core::diagnostics::set_device_info(info),
+            Err(error) => calibraw_core::diagnostics::record(error),
         }
-        crate::diagnostics::record("CalibRaw Android UI initialized");
-        let performance_settings_path = crate::android::performance_settings_path(&android_app)
+        calibraw_core::diagnostics::record("CalibRaw Android UI initialized");
+        let performance_settings_path = calibraw_ffi::performance_settings_path(&android_app)
             .map_err(|error| log::warn!("{error}"))
             .ok();
-        let gpu_pipeline_cache_root = crate::android::gpu_pipeline_cache_dir(&android_app)
+        let gpu_pipeline_cache_root = calibraw_ffi::gpu_pipeline_cache_dir(&android_app)
             .map_err(|error| log::warn!("{error}"))
             .ok();
         if std::env::var_os("CALIBRAW_LENSFUN_DB").is_none() {
-            match crate::android::lensfun_database_dir(&android_app) {
+            match calibraw_ffi::lensfun_database_dir(&android_app) {
                 Ok(path) => {
                     std::env::set_var("CALIBRAW_LENSFUN_DB", &path);
-                    crate::diagnostics::record(format!(
+                    calibraw_core::diagnostics::record(format!(
                         "bundled Lensfun database materialized at {}",
                         path.display()
                     ));
@@ -393,7 +393,7 @@ impl CalibRawApp {
             }
         }
         let performance = crate::performance_settings::load(performance_settings_path.as_deref());
-        if let Err(error) = crate::android::scavenge_camera_profile_mirrors(
+        if let Err(error) = calibraw_ffi::scavenge_camera_profile_mirrors(
             &android_app,
             performance.camera_profile_folder.as_deref(),
         ) {
@@ -412,7 +412,7 @@ impl CalibRawApp {
         app.preview.gpu_prewarm_receiver = gpu_preview_prewarm_receiver;
         app.export.gpu_prewarm = Some(gpu_export_prewarm);
         crate::ui::theme::apply(&cc.egui_ctx, app.preferences.ui_design);
-        if let Err(error) = crate::android::set_light_system_bars(
+        if let Err(error) = calibraw_ffi::set_light_system_bars(
             &app.android.android_app,
             !app.preferences.ui_design.is_dark(),
         ) {

@@ -228,7 +228,7 @@ fn uncached_source_radius(source: &MaskImage, width: u32, height: u32) -> Option
     (thickest > 0.0).then_some(thickest * 0.45)
 }
 
-// The original grow/feather calculation, including its floating-point order.
+// Reference grow/feather without the cache, with the same floating-point order.
 fn uncached_shape_distance(
     mask: &mut [f32],
     width: u32,

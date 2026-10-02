@@ -366,7 +366,7 @@ impl Library {
                             if checkbox_clicked {
                                 let back_navigation_active =
                                     app.library.toggle_thumbnail_selection(&asset.id);
-                                crate::android::set_back_navigation_active(back_navigation_active);
+                                calibraw_ffi::set_back_navigation_active(back_navigation_active);
                             } else if response.clicked() && !response.secondary_clicked() {
                                 open_asset = Some(asset);
                             }
@@ -492,7 +492,7 @@ impl Library {
             #[cfg(target_os = "android")]
             if let Some(uri) = asset.android_uri() {
                 app.library.clear_selection();
-                crate::android::set_back_navigation_active(false);
+                calibraw_ffi::set_back_navigation_active(false);
                 app.open_android_library_document(uri, &asset.display_name);
             }
         }

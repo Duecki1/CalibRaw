@@ -1,4 +1,4 @@
-use super::{effect_card, effect_color, effect_slider};
+use super::{effect_card, effect_color, effect_details, float_param_slider};
 use crate::pipeline::{effect_params::glow, GlowEffectSettings, MaskEffect};
 use eframe::egui::Ui;
 
@@ -15,11 +15,12 @@ pub(crate) fn show(
         enabled,
         remove,
         |ui, settings| {
-            let mut changed = false;
-            changed |= effect_slider(ui, &mut settings.amount, glow::AMOUNT);
-            changed |= effect_slider(ui, &mut settings.radius, glow::RADIUS);
-            changed |= effect_slider(ui, &mut settings.core, glow::CORE);
+            let mut changed = float_param_slider(ui, &mut settings.amount, glow::AMOUNT);
+            changed |= float_param_slider(ui, &mut settings.radius, glow::RADIUS);
             changed |= effect_color(ui, "glow-color-picker", &mut settings.color, glow::COLOR);
+            changed |= effect_details(ui, "Light details", |ui| {
+                float_param_slider(ui, &mut settings.core, glow::CORE)
+            });
             changed
         },
     )

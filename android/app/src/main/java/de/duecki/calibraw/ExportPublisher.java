@@ -24,8 +24,10 @@ final class ExportPublisher {
     private static final String LOG_TAG = "CalibRaw";
     private static final int DELETE_ATTEMPTS = 3;
     private static final long STALE_EXPORT_CACHE_AGE_MS = 24L * 60L * 60L * 1000L;
-    private static final String EXPORT_RELATIVE_PATH =
-            AndroidStorageContract.exportRelativePath(Environment.DIRECTORY_PICTURES);
+    private static String exportDirectory(String mimeType) {
+        return "video/mp4".equals(mimeType)
+                ? Environment.DIRECTORY_MOVIES : Environment.DIRECTORY_PICTURES;
+    }
 
     interface Callbacks {
         void onExportPublished(String location, String error);
@@ -55,7 +57,7 @@ final class ExportPublisher {
                     descriptor, "Android MediaStore returned no file descriptor");
             transferred = true;
             String location = AndroidStorageContract.exportLocation(
-                    Environment.DIRECTORY_PICTURES, displayName);
+                    exportDirectory(normalizedMime), displayName);
             return fd + "\t" + uri + "\t" + location;
         } finally {
             if (!transferred) {
@@ -79,7 +81,7 @@ final class ExportPublisher {
         values.put(MediaStore.Images.Media.IS_PENDING, 0);
         if (resolver.update(uri, values, null, null) <= 0) {
             resolver.delete(uri, null, null);
-            throw new IllegalStateException("Android MediaStore could not publish the image");
+            throw new IllegalStateException("Android MediaStore could not publish the export");
         }
     }
 
@@ -142,13 +144,15 @@ final class ExportPublisher {
         values.put(MediaStore.Images.Media.MIME_TYPE, mimeType);
         values.put(
                 MediaStore.Images.Media.RELATIVE_PATH,
-                EXPORT_RELATIVE_PATH);
+                AndroidStorageContract.exportRelativePath(exportDirectory(mimeType)));
         values.put(MediaStore.Images.Media.IS_PENDING, 1);
 
         Uri uri = activity.getContentResolver().insert(
-                MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values);
+                "video/mp4".equals(mimeType)
+                        ? MediaStore.Video.Media.EXTERNAL_CONTENT_URI
+                        : MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values);
         if (uri == null) {
-            throw new IllegalStateException("Android MediaStore could not create the image");
+            throw new IllegalStateException("Android MediaStore could not create the export");
         }
         return uri;
     }
@@ -171,11 +175,11 @@ final class ExportPublisher {
             ContentValues values = new ContentValues();
             values.put(MediaStore.Images.Media.IS_PENDING, 0);
             if (resolver.update(uri, values, null, null) <= 0) {
-                throw new IllegalStateException("Android MediaStore could not publish the image");
+                throw new IllegalStateException("Android MediaStore could not publish the export");
             }
             published = true;
             return AndroidStorageContract.exportLocation(
-                    Environment.DIRECTORY_PICTURES, displayName);
+                    exportDirectory(mimeType), displayName);
         } finally {
             if (!published) {
                 resolver.delete(uri, null, null);
@@ -189,7 +193,7 @@ final class ExportPublisher {
             String displayName,
             String mimeType) throws Exception {
         File pictures = Environment.getExternalStoragePublicDirectory(
-                Environment.DIRECTORY_PICTURES);
+                exportDirectory(mimeType));
         File directory = new File(pictures, "CalibRaw");
         if (!directory.isDirectory() && !directory.mkdirs()) {
             throw new IllegalStateException("Could not create " + directory);

@@ -1,4 +1,4 @@
-use super::{effect_card, effect_slider};
+use super::{effect_card, float_param_slider};
 use crate::pipeline::{effect_params::blur, BlurEffectSettings, MaskEffect};
 use eframe::egui::Ui;
 
@@ -16,8 +16,8 @@ pub(crate) fn show(
         remove,
         |ui, settings| {
             let mut changed = false;
-            changed |= effect_slider(ui, &mut settings.amount, blur::AMOUNT);
-            changed |= effect_slider(ui, &mut settings.radius, blur::RADIUS);
+            changed |= float_param_slider(ui, &mut settings.amount, blur::AMOUNT);
+            changed |= float_param_slider(ui, &mut settings.radius, blur::RADIUS);
             changed
         },
     )

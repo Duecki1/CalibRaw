@@ -1,17 +1,5 @@
-pub mod diagnostics {
-    pub use calibraw_core::diagnostics::*;
-}
-
-pub mod file_ops {
-    pub use calibraw_core::file_ops::*;
-}
-
 pub(crate) mod export_naming;
 pub(crate) mod performance_settings;
-
-pub mod thumbnail_cache {
-    pub use calibraw_core::thumbnail_cache::*;
-}
 
 pub mod pipeline {
     pub use calibraw_gpu::pipeline::*;
@@ -24,23 +12,6 @@ pub mod sidecar {
         load_android, load_android_review, save_android, save_android_with_review,
         save_android_with_review_and_editing_time,
     };
-}
-
-pub mod ai_denoise {
-    pub use calibraw_ai::ai_denoise::*;
-}
-
-pub mod ai_masks {
-    pub use calibraw_ai::ai_masks::*;
-}
-
-pub mod remove {
-    pub use calibraw_ai::remove::*;
-}
-
-#[cfg(target_os = "android")]
-pub mod android {
-    pub use calibraw_ffi::*;
 }
 
 mod app;
@@ -104,7 +75,7 @@ fn native_options() -> eframe::NativeOptions {
         setup.device_descriptor = std::sync::Arc::new(|adapter| {
             let info = adapter.get_info();
             let adapter_limits = adapter.limits();
-            crate::diagnostics::set_gpu_info(format!(
+            calibraw_core::diagnostics::set_gpu_info(format!(
                 "name={}\nbackend={:?}\ndevice_type={:?}\nvendor=0x{:04x}\ndevice=0x{:04x}\ndriver={}\ndriver_info={}\nmax_texture_dimension_2d={}\nfeatures={:?}",
                 info.name,
                 info.backend,

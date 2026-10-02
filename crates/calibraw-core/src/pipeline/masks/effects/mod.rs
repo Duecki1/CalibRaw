@@ -2,6 +2,8 @@ mod blur;
 mod edge_glow;
 mod fog;
 mod glow;
+mod grain;
+mod halation;
 mod lens_blur;
 mod light_rays;
 mod motion_blur;
@@ -11,11 +13,17 @@ mod pixelate;
 mod radial_blur;
 mod smoke;
 mod tilt_shift;
+mod vignette;
+
+#[cfg(test)]
+mod tests;
 
 pub use blur::BlurEffectSettings;
 pub use edge_glow::EdgeGlowEffectSettings;
 pub use fog::FogEffectSettings;
 pub use glow::GlowEffectSettings;
+pub use grain::GrainEffectSettings;
+pub use halation::HalationEffectSettings;
 pub use lens_blur::LensBlurEffectSettings;
 pub use light_rays::LightRaysEffectSettings;
 pub use motion_blur::MotionBlurEffectSettings;
@@ -24,6 +32,7 @@ pub use pixelate::PixelateEffectSettings;
 pub use radial_blur::{RadialBlurEffectSettings, RadialBlurMode};
 pub use smoke::SmokeEffectSettings;
 pub use tilt_shift::TiltShiftEffectSettings;
+pub use vignette::VignetteEffectSettings;
 
 fn is_default<T: Default + PartialEq>(value: &T) -> bool {
     *value == T::default()
@@ -45,10 +54,13 @@ pub enum MaskEffect {
     Pixelate,
     Fog,
     Smoke,
+    Grain,
+    Halation,
+    Vignette,
 }
 
 impl MaskEffect {
-    pub const ALL: [Self; 13] = [
+    pub const ALL: [Self; 16] = [
         Self::Adjustment,
         Self::Blur,
         Self::LensBlur,
@@ -62,6 +74,9 @@ impl MaskEffect {
         Self::Pixelate,
         Self::Fog,
         Self::Smoke,
+        Self::Grain,
+        Self::Halation,
+        Self::Vignette,
     ];
 
     pub const fn label(self) -> &'static str {
@@ -79,6 +94,9 @@ impl MaskEffect {
             Self::Pixelate => "Pixelate",
             Self::Fog => "Fog",
             Self::Smoke => "Smoke",
+            Self::Grain => "Grain",
+            Self::Halation => "Halation",
+            Self::Vignette => "Vignette",
         }
     }
 
@@ -91,6 +109,9 @@ impl MaskEffect {
             Self::Glow | Self::LightRays | Self::Neon => Some(MaskEffectCategory::GlowAndLight),
             Self::EdgeGlow | Self::Pixelate => Some(MaskEffectCategory::Stylize),
             Self::Fog | Self::Smoke => Some(MaskEffectCategory::Texture),
+            Self::Grain | Self::Halation | Self::Vignette => {
+                Some(MaskEffectCategory::FilmAndFinish)
+            }
         }
     }
 
@@ -113,6 +134,9 @@ impl MaskEffect {
             Self::TiltShift => 10,
             Self::Fog => 11,
             Self::Smoke => 12,
+            Self::Grain => 13,
+            Self::Halation => 14,
+            Self::Vignette => 15,
         }
     }
 }
@@ -123,14 +147,16 @@ pub enum MaskEffectCategory {
     GlowAndLight,
     Stylize,
     Texture,
+    FilmAndFinish,
 }
 
 impl MaskEffectCategory {
-    pub const ALL: [Self; 4] = [
+    pub const ALL: [Self; 5] = [
         Self::BlurAndFocus,
         Self::GlowAndLight,
         Self::Stylize,
         Self::Texture,
+        Self::FilmAndFinish,
     ];
 
     pub const fn label(self) -> &'static str {
@@ -138,7 +164,8 @@ impl MaskEffectCategory {
             Self::BlurAndFocus => "Blur & Focus",
             Self::GlowAndLight => "Glow & Light",
             Self::Stylize => "Stylize",
-            Self::Texture => "Texture",
+            Self::Texture => "Atmosphere",
+            Self::FilmAndFinish => "Film & Finish",
         }
     }
 }
@@ -169,6 +196,12 @@ pub struct MaskEffectSettings {
     pub fog: FogEffectSettings,
     #[serde(default, skip_serializing_if = "is_default")]
     pub smoke: SmokeEffectSettings,
+    #[serde(default, skip_serializing_if = "is_default")]
+    pub grain: GrainEffectSettings,
+    #[serde(default, skip_serializing_if = "is_default")]
+    pub halation: HalationEffectSettings,
+    #[serde(default, skip_serializing_if = "is_default")]
+    pub vignette: VignetteEffectSettings,
 }
 
 impl MaskEffectSettings {

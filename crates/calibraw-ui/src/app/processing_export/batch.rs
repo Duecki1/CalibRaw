@@ -311,7 +311,6 @@ fn prepare_desktop_library_export_item(
 impl CalibRawApp {
     pub(crate) fn export_progress_state(&self) -> Option<(usize, usize)> {
         self.export.task.as_ref().and_then(|task| {
-            #[cfg(not(target_os = "android"))]
             if task.kind == ExportTaskKind::Replay {
                 return None;
             }
@@ -426,7 +425,7 @@ impl CalibRawApp {
                 task.total_tiles = 0;
             }
             let display_name = job.target.display_name().to_owned();
-            match crate::android::open_library_document(
+            match calibraw_ffi::open_library_document(
                 &self.android.android_app,
                 &job.target.uri,
                 &display_name,
@@ -745,14 +744,14 @@ impl CalibRawApp {
 
     #[cfg(target_os = "android")]
     pub(in crate::app) fn poll_android_export_publish(&mut self) {
-        while let Some(result) = crate::android::take_export_publish_result() {
+        while let Some(result) = calibraw_ffi::take_export_publish_result() {
             self.export.publish_pending = false;
             if self.export.batch.is_some() {
                 match result {
-                    crate::android::ExportPublishResult::Published(_) => {
+                    calibraw_ffi::ExportPublishResult::Published(_) => {
                         self.complete_android_library_batch_export_item(Ok(()));
                     }
-                    crate::android::ExportPublishResult::Failed(error) => {
+                    calibraw_ffi::ExportPublishResult::Failed(error) => {
                         log::error!("Android batch export publish failed: {error}");
                         self.complete_android_library_batch_export_item(Err(error));
                     }
@@ -760,10 +759,10 @@ impl CalibRawApp {
                 continue;
             }
             match result {
-                crate::android::ExportPublishResult::Published(location) => {
+                calibraw_ffi::ExportPublishResult::Published(location) => {
                     self.ui.notice = Some(format!("Exported to {location}"));
                 }
-                crate::android::ExportPublishResult::Failed(error) => {
+                calibraw_ffi::ExportPublishResult::Failed(error) => {
                     self.ui.notice = Some(format!("Export failed: {error}"));
                     log::error!("Android export publish failed: {error}");
                 }

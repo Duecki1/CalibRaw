@@ -70,7 +70,9 @@ fn apply_mask_blur_stage(
         if amount <= 1e-6 { continue; }
 
         let mix_sum = mask_blur_stage_mix_sum(primary.y);
-        let stage_share = stage_mix / max(mix_sum, 1e-6);
+        // Keep the first stage's radius ramp: normalizing by a tiny sum would
+        // turn any positive radius into a full one-pixel diffusion.
+        let stage_share = stage_mix / max(mix_sum, 1.0);
         let distributed_amount = min(amount, 0.995);
         let stage_amount = 1.0 - pow(1.0 - distributed_amount, stage_share);
         retained_source = retained_source * (1.0 - stage_amount);
@@ -100,9 +102,6 @@ fn apply_mask_blur_stage(
         if primary.y <= 1e-6 { continue; }
         var amount = clamp(primary.x / 100.0, 0.0, 1.0)
             * SceneAdjustments::local_mask_weight(pos, index);
-        if effect_id == MASK_EFFECT_TILT_SHIFT_ID {
-            amount = amount * mask_tilt_shift_weight(pos, primary, secondary);
-        }
         if amount <= 1e-6 { continue; }
 
         var adjusted = source_rgb;
@@ -113,7 +112,11 @@ fn apply_mask_blur_stage(
         } else if effect_id == MASK_EFFECT_RADIAL_BLUR_ID {
             adjusted = mask_radial_blur_at(pos, primary, secondary);
         } else if effect_id == MASK_EFFECT_TILT_SHIFT_ID {
-            adjusted = mask_tilt_shift_at(pos, primary);
+            let defocus = mask_tilt_shift_weight(pos, primary, secondary);
+            if defocus <= 1e-6 { continue; }
+            adjusted = mask_tilt_shift_at(pos, vec4<f32>(
+                primary.x, primary.y * defocus, primary.zw,
+            ));
         }
         rgb = mix(rgb, adjusted, amount);
     }

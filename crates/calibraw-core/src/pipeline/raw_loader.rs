@@ -767,7 +767,9 @@ impl LoadedRaw {
             return Vec::new();
         }
 
-        // Scatter from sparse clipped cells, retaining the original border rules.
+        // Mark cells near clipping by scattering a corner-less 7x7 footprint from
+        // each clipped cell. Destinations within 3 cells of the left/top or 4 cells
+        // of the right/bottom border are never marked.
         let mut nearby_mask = clipped_mask.clone();
         for source_row in 0..mask_height {
             for source_col in 0..mask_width {
@@ -868,7 +870,8 @@ impl LoadedRaw {
         // Dilate from clipped cells instead of probing a ~7x7 neighbourhood around every mask
         // cell. Clipped highlights are normally sparse, so this turns the dominant preparation
         // cost from O(mask_area * kernel_area) into O(mask_area + clipped_cells * kernel_area).
-        // The original edge behavior is retained: unsafe border destinations are not dilated.
+        // As above, destinations within 3 cells of the left/top or 4 cells of the
+        // right/bottom border are never marked.
         let mut nearby_mask = clipped_mask.clone();
         for color in 0..3 {
             let plane = color * mask_size;

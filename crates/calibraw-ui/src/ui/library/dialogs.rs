@@ -299,7 +299,7 @@ pub(super) fn show_android_library_folder_dialog(ui: &mut Ui, app: &mut CalibRaw
         app.library.platform.folder_name_dialog = None;
     }
     if let Some((parent, name)) = create {
-        match crate::android::create_library_folder(&app.library.platform.app, &parent, &name) {
+        match calibraw_ffi::create_library_folder(&app.library.platform.app, &parent, &name) {
             Ok(folder) => {
                 app.library.platform.folder_name_dialog = None;
                 app.library.platform.expanded_folders.insert(parent);
@@ -545,22 +545,16 @@ pub(super) fn show_library_raw_name_dialog(
             app.library.raw_name_dialog = None;
             app.library.clear_selection();
             #[cfg(target_os = "android")]
-            crate::android::set_back_navigation_active(false);
+            calibraw_ffi::set_back_navigation_active(false);
             app.library.refresh(ui.ctx());
             app.library.status = format!("Renamed RAW to {name}.");
 
             #[cfg(not(target_os = "android"))]
             if current_path.is_some() {
                 if let Some(destination) = renamed_asset.desktop_path().map(Path::to_path_buf) {
-                    app.open_path_labeled(
-                        destination.clone(),
-                        name,
-                        false,
-                        crate::sidecar::SidecarTarget::Desktop {
-                            raw_path: destination,
-                        },
+                    app.open_document(
+                        crate::app::DocumentSource::desktop(destination, name),
                         frame,
-                        None,
                     );
                 }
             }
@@ -576,14 +570,7 @@ pub(super) fn show_library_raw_name_dialog(
                     .and_then(|name| name.to_str())
                     .unwrap_or("local RAW")
                     .to_owned();
-                app.open_path_labeled(
-                    source.clone(),
-                    label,
-                    false,
-                    crate::sidecar::SidecarTarget::Desktop { raw_path: source },
-                    frame,
-                    None,
-                );
+                app.open_document(crate::app::DocumentSource::desktop(source, label), frame);
             }
         }
     }

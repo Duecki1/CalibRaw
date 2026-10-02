@@ -331,7 +331,8 @@ pub(super) struct PreparedContour {
 
 impl PreparedContour {
     fn prepare(binary: Vec<u8>, width: usize, height: usize, fingerprint: u64) -> Self {
-        // Preserve the existing two-pass transforms and subtraction order.
+        // Cached contours must match an uncached grow/feather bit-for-bit, so keep
+        // the same two distance passes and subtraction order.
         let distance_to_inside = chamfer_distance(&binary, width, height, 1);
         let mut signed_distance = chamfer_distance(&binary, width, height, 0);
         let deepest_inside = signed_distance

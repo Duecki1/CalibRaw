@@ -62,7 +62,7 @@ impl CalibRawApp {
 
         let (encoder, decoder) = self.sam21_model_paths();
         let runtime_download_needed = self.automatic_onnx_runtime_download_needed();
-        if crate::ai_masks::object_models_are_verified(&encoder, &decoder)
+        if calibraw_ai::ai_masks::object_models_are_verified(&encoder, &decoder)
             && !runtime_download_needed
         {
             if matches!(self.ai.consent, AiConsentState::Object { .. }) {
@@ -159,7 +159,7 @@ impl CalibRawApp {
         let runtime_sha256 = None;
 
         let needs_download =
-            !crate::ai_masks::object_models_are_verified(&encoder_path, &decoder_path);
+            !calibraw_ai::ai_masks::object_models_are_verified(&encoder_path, &decoder_path);
         let cancellation = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let receiver = spawn_object_mask(ObjectMaskWorkerRequest {
             encoder_path,
@@ -262,7 +262,7 @@ impl CalibRawApp {
         if !cancelled && !stale {
             match (target, result) {
                 (Some(target), Ok(result)) => {
-                    let crate::ai_masks::ObjectMaskResult {
+                    let calibraw_ai::ai_masks::ObjectMaskResult {
                         width,
                         height,
                         mask: pixels,

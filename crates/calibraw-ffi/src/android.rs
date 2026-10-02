@@ -1,3 +1,6 @@
+mod replay;
+pub use replay::ReplayVideoEncoder;
+
 use android_activity::AndroidApp;
 use jni::{
     errors::LogContextErrorAndDefault,
@@ -562,9 +565,9 @@ pub fn load_library_thumbnail(
     bytes: u64,
     modified_seconds: u64,
     maximum_edge: u32,
-) -> Result<crate::pipeline::RawThumbnail, String> {
+) -> Result<calibraw_core::pipeline::RawThumbnail, String> {
     let cache_path = raw_thumbnail_cache_path(app, uri, bytes, modified_seconds, maximum_edge)?;
-    match crate::thumbnail_cache::load_jpeg(&cache_path, maximum_edge) {
+    match calibraw_core::thumbnail_cache::load_jpeg(&cache_path, maximum_edge) {
         Ok(Some(thumbnail)) => return Ok(thumbnail),
         Ok(None) => {}
         Err(error) => log::warn!("discarding Android RAW thumbnail cache: {error}"),
@@ -578,7 +581,7 @@ pub fn load_library_thumbnail(
                 "direct Android RAW thumbnail extraction failed; retrying from private cache: {direct_error}"
             );
             let temporary = materialize_library_thumbnail(app, uri, display_name)?;
-            let result = crate::pipeline::load_raw_thumbnail(&temporary, maximum_edge)
+            let result = calibraw_core::pipeline::load_raw_thumbnail(&temporary, maximum_edge)
                 .map_err(|error| format!("{error:#}"));
             if let Err(error) = fs::remove_file(&temporary) {
                 log::warn!(
@@ -589,7 +592,7 @@ pub fn load_library_thumbnail(
             result?
         }
     };
-    match crate::thumbnail_cache::save_jpeg(&cache_path, &thumbnail) {
+    match calibraw_core::thumbnail_cache::save_jpeg(&cache_path, &thumbnail) {
         Ok(()) => maintain_thumbnail_cache(app),
         Err(error) => log::warn!("could not persist Android RAW thumbnail: {error}"),
     }
@@ -661,7 +664,7 @@ fn maintain_thumbnail_cache(app: &AndroidApp) {
 
 pub fn load_library_display_dimensions(app: &AndroidApp, uri: &str) -> Result<[u32; 2], String> {
     let descriptor = open_library_descriptor(app, uri)?;
-    crate::pipeline::load_raw_display_dimensions(&descriptor.proc_path())
+    calibraw_core::pipeline::load_raw_display_dimensions(&descriptor.proc_path())
         .map_err(|error| format!("{error:#}"))
 }
 
@@ -669,9 +672,9 @@ fn load_library_thumbnail_from_fd(
     app: &AndroidApp,
     uri: &str,
     maximum_edge: u32,
-) -> Result<crate::pipeline::RawThumbnail, String> {
+) -> Result<calibraw_core::pipeline::RawThumbnail, String> {
     let descriptor = open_library_descriptor(app, uri)?;
-    crate::pipeline::load_raw_thumbnail(&descriptor.proc_path(), maximum_edge)
+    calibraw_core::pipeline::load_raw_thumbnail(&descriptor.proc_path(), maximum_edge)
         .map_err(|error| format!("{error:#}"))
 }
 
@@ -759,7 +762,7 @@ pub fn load_developed_thumbnail_cache(
     raw_uri: &str,
     display_name: &str,
     maximum_edge: u32,
-) -> Result<Option<crate::pipeline::RawThumbnail>, String> {
+) -> Result<Option<calibraw_core::pipeline::RawThumbnail>, String> {
     let cache_path = developed_thumbnail_cache_path(app, raw_uri)?;
     let fingerprint_path = developed_thumbnail_fingerprint_path(&cache_path);
     if !cache_path.is_file() || !fingerprint_path.is_file() {
@@ -770,9 +773,9 @@ pub fn load_developed_thumbnail_cache(
         let _ = fs::remove_file(&fingerprint_path);
         return Ok(None);
     };
-    let fingerprint = crate::sidecar::read_bounded(&sidecar_path)
+    let fingerprint = calibraw_core::sidecar::read_bounded(&sidecar_path)
         .map_err(|error| error.to_string())
-        .and_then(|bytes| crate::sidecar::render_fingerprint(&bytes));
+        .and_then(|bytes| calibraw_core::sidecar::render_fingerprint(&bytes));
     let _ = fs::remove_file(&sidecar_path);
     let fingerprint = fingerprint?;
     let cached = fs::read_to_string(&fingerprint_path).map_err(|error| {
@@ -784,38 +787,38 @@ pub fn load_developed_thumbnail_cache(
     if cached.trim()
         != format!(
             "{:016x}",
-            fingerprint ^ crate::sidecar::DEVELOPED_THUMBNAIL_CACHE_VERSION_SALT
+            fingerprint ^ calibraw_core::sidecar::DEVELOPED_THUMBNAIL_CACHE_VERSION_SALT
         )
     {
         let _ = fs::remove_file(&cache_path);
         let _ = fs::remove_file(&fingerprint_path);
         return Ok(None);
     }
-    crate::thumbnail_cache::load_jpeg(&cache_path, maximum_edge)
+    calibraw_core::thumbnail_cache::load_jpeg(&cache_path, maximum_edge)
 }
 
 pub fn save_developed_thumbnail_cache(
     app: &AndroidApp,
     raw_uri: &str,
     display_name: &str,
-    thumbnail: &crate::pipeline::RawThumbnail,
+    thumbnail: &calibraw_core::pipeline::RawThumbnail,
 ) -> Result<(), String> {
     let Some(sidecar_path) = materialize_raw_sidecar(app, raw_uri, display_name)? else {
         return Err("edit sidecar disappeared before thumbnail capture".to_owned());
     };
-    let fingerprint = crate::sidecar::read_bounded(&sidecar_path)
+    let fingerprint = calibraw_core::sidecar::read_bounded(&sidecar_path)
         .map_err(|error| error.to_string())
-        .and_then(|bytes| crate::sidecar::render_fingerprint(&bytes));
+        .and_then(|bytes| calibraw_core::sidecar::render_fingerprint(&bytes));
     let _ = fs::remove_file(&sidecar_path);
     let fingerprint = fingerprint?;
     let cache_path = developed_thumbnail_cache_path(app, raw_uri)?;
     let fingerprint_path = developed_thumbnail_fingerprint_path(&cache_path);
-    crate::thumbnail_cache::save_jpeg(&cache_path, thumbnail)?;
-    crate::thumbnail_cache::write_bytes_atomic(
+    calibraw_core::thumbnail_cache::save_jpeg(&cache_path, thumbnail)?;
+    calibraw_core::file_ops::write_bytes_atomically(
         &fingerprint_path,
         format!(
             "{:016x}\n",
-            fingerprint ^ crate::sidecar::DEVELOPED_THUMBNAIL_CACHE_VERSION_SALT
+            fingerprint ^ calibraw_core::sidecar::DEVELOPED_THUMBNAIL_CACHE_VERSION_SALT
         )
         .as_bytes(),
     )
@@ -831,9 +834,9 @@ pub fn save_developed_thumbnail_cache(
         let _ = fs::remove_file(&fingerprint_path);
         return Err("edit sidecar changed while its thumbnail was being cached".to_owned());
     };
-    let latest = crate::sidecar::read_bounded(&sidecar_path)
+    let latest = calibraw_core::sidecar::read_bounded(&sidecar_path)
         .map_err(|error| error.to_string())
-        .and_then(|bytes| crate::sidecar::render_fingerprint(&bytes));
+        .and_then(|bytes| calibraw_core::sidecar::render_fingerprint(&bytes));
     let _ = fs::remove_file(&sidecar_path);
     if latest? != fingerprint {
         let _ = fs::remove_file(&cache_path);
@@ -1084,14 +1087,14 @@ fn reset_android_adjustments_impl(
         .unwrap_or_default();
     let review = metadata.review;
     let editing_time_ms = editing_time_override_ms.unwrap_or(metadata.editing_time_ms);
-    if review == crate::sidecar::PhotoReview::default() && editing_time_ms == 0 {
+    if review == calibraw_core::sidecar::PhotoReview::default() && editing_time_ms == 0 {
         return remove_raw_sidecar(app, raw_uri, display_name);
     }
     save_android_with_review_and_editing_time(
         app,
         raw_uri,
         display_name,
-        crate::sidecar::default_edit_state(),
+        calibraw_core::sidecar::default_edit_state(),
         review,
         editing_time_ms,
     )
@@ -1764,14 +1767,14 @@ pub fn load_android(
     app: &AndroidApp,
     raw_uri: &str,
     display_name: &str,
-) -> Result<Option<crate::sidecar::LoadedSidecar>, crate::sidecar::SidecarError> {
+) -> Result<Option<calibraw_core::sidecar::LoadedSidecar>, calibraw_core::sidecar::SidecarError> {
     let Some(path) = materialize_raw_sidecar(app, raw_uri, display_name)
-        .map_err(crate::sidecar::SidecarError::Platform)?
+        .map_err(calibraw_core::sidecar::SidecarError::Platform)?
     else {
         return Ok(None);
     };
-    let result =
-        crate::sidecar::read_bounded(&path).and_then(|bytes| crate::sidecar::decode(&bytes));
+    let result = calibraw_core::sidecar::read_bounded(&path)
+        .and_then(|bytes| calibraw_core::sidecar::decode(&bytes));
     if let Err(error) = fs::remove_file(&path) {
         log::warn!(
             "could not remove Android sidecar cache {}: {error}",
@@ -1785,14 +1788,14 @@ fn load_android_sidecar_metadata(
     app: &AndroidApp,
     raw_uri: &str,
     display_name: &str,
-) -> Result<Option<crate::sidecar::SidecarMetadata>, crate::sidecar::SidecarError> {
+) -> Result<Option<calibraw_core::sidecar::SidecarMetadata>, calibraw_core::sidecar::SidecarError> {
     let Some(path) = materialize_raw_sidecar(app, raw_uri, display_name)
-        .map_err(crate::sidecar::SidecarError::Platform)?
+        .map_err(calibraw_core::sidecar::SidecarError::Platform)?
     else {
         return Ok(None);
     };
-    let result = crate::sidecar::read_bounded(&path)
-        .and_then(|bytes| crate::sidecar::decode_sidecar_metadata(&bytes));
+    let result = calibraw_core::sidecar::read_bounded(&path)
+        .and_then(|bytes| calibraw_core::sidecar::decode_sidecar_metadata(&bytes));
     if let Err(error) = fs::remove_file(&path) {
         log::warn!(
             "could not remove Android sidecar cache {}: {error}",
@@ -1806,7 +1809,7 @@ pub fn load_android_review(
     app: &AndroidApp,
     raw_uri: &str,
     display_name: &str,
-) -> Result<Option<crate::sidecar::PhotoReview>, crate::sidecar::SidecarError> {
+) -> Result<Option<calibraw_core::sidecar::PhotoReview>, calibraw_core::sidecar::SidecarError> {
     load_android_sidecar_metadata(app, raw_uri, display_name)
         .map(|metadata| metadata.map(|metadata| metadata.review))
 }
@@ -1815,8 +1818,8 @@ pub fn save_android(
     app: &AndroidApp,
     raw_uri: &str,
     display_name: &str,
-    edits: crate::sidecar::EditState,
-) -> Result<String, crate::sidecar::SidecarError> {
+    edits: calibraw_core::sidecar::EditState,
+) -> Result<String, calibraw_core::sidecar::SidecarError> {
     let metadata = load_android_sidecar_metadata(app, raw_uri, display_name)?.unwrap_or_default();
     let review = metadata.review;
     let editing_time_ms = metadata.editing_time_ms;
@@ -1834,9 +1837,9 @@ pub fn save_android_with_review(
     app: &AndroidApp,
     raw_uri: &str,
     display_name: &str,
-    edits: crate::sidecar::EditState,
-    review: crate::sidecar::PhotoReview,
-) -> Result<String, crate::sidecar::SidecarError> {
+    edits: calibraw_core::sidecar::EditState,
+    review: calibraw_core::sidecar::PhotoReview,
+) -> Result<String, calibraw_core::sidecar::SidecarError> {
     let editing_time_ms = load_android_sidecar_metadata(app, raw_uri, display_name)?
         .map(|metadata| metadata.editing_time_ms)
         .unwrap_or(0);
@@ -1854,16 +1857,20 @@ pub fn save_android_with_review_and_editing_time(
     app: &AndroidApp,
     raw_uri: &str,
     display_name: &str,
-    edits: crate::sidecar::EditState,
-    review: crate::sidecar::PhotoReview,
+    edits: calibraw_core::sidecar::EditState,
+    review: calibraw_core::sidecar::PhotoReview,
     editing_time_ms: u64,
-) -> Result<String, crate::sidecar::SidecarError> {
-    let bytes =
-        crate::sidecar::encode_with_review_and_editing_time(edits, review, editing_time_ms)?;
-    let path = create_raw_sidecar_cache(app).map_err(crate::sidecar::SidecarError::Platform)?;
-    let result = crate::sidecar::write_synced(&path, &bytes).and_then(|()| {
+) -> Result<String, calibraw_core::sidecar::SidecarError> {
+    let bytes = calibraw_core::sidecar::encode_with_review_and_editing_time(
+        edits,
+        review,
+        editing_time_ms,
+    )?;
+    let path =
+        create_raw_sidecar_cache(app).map_err(calibraw_core::sidecar::SidecarError::Platform)?;
+    let result = calibraw_core::sidecar::write_synced(&path, &bytes).and_then(|()| {
         publish_raw_sidecar(app, &path, raw_uri, display_name)
-            .map_err(crate::sidecar::SidecarError::Platform)
+            .map_err(calibraw_core::sidecar::SidecarError::Platform)
     });
     if let Err(error) = fs::remove_file(&path) {
         log::warn!(

@@ -1,5 +1,3 @@
-#![allow(clippy::too_many_arguments)]
-
 use crate::app::{
     CalibRawApp, CropDragState, CropHandle, MaskDragState, MaskOverlayBlink, OverlayRasterKey,
     SidebarTab, StraightenDragState,
@@ -98,6 +96,35 @@ mod tests;
 mod mask_regression_tests;
 
 pub(crate) struct Preview;
+
+/// Where the image sits on screen this frame, shared by the preview tools.
+#[derive(Clone, Copy)]
+pub(super) struct PreviewLayout {
+    /// The whole image at the current zoom; it may extend past the viewport.
+    image_rect: Rect,
+    /// The part of the image inside the viewport.
+    visible_rect: Rect,
+    /// The whole preview viewport, including space around the image.
+    viewport_rect: Rect,
+    source_width: u32,
+    source_height: u32,
+}
+
+impl PreviewLayout {
+    fn projection<'a>(
+        self,
+        geometry: GeometryTransform,
+        lens: Option<&'a LensGeometryMap>,
+    ) -> SourceProjection<'a> {
+        SourceProjection::new(
+            self.image_rect,
+            geometry,
+            lens,
+            self.source_width,
+            self.source_height,
+        )
+    }
+}
 
 impl Preview {
     pub(crate) fn show(ui: &mut Ui, app: &mut CalibRawApp, frame: &eframe::Frame) {
@@ -386,6 +413,14 @@ impl Preview {
         // The fitted image continues behind tools; spend the detail budget on
         // the exposed image, not the pixels hidden by the overlay surfaces.
         let visible_screen = outer_rect.intersect(image_rect);
+        let layout = PreviewLayout {
+            image_rect,
+            visible_rect: visible_screen,
+            viewport_rect: outer_rect,
+            source_width: source_dimensions.0,
+            source_height: source_dimensions.1,
+        };
+        let projection = layout.projection(app.develop.geometry, lens_geometry.as_deref());
         let pixels_per_point = physical_pixels_per_point(ui.ctx());
         let viewport_pixels = [
             (visible_screen.width() * pixels_per_point).round().max(1.0) as u32,
@@ -404,14 +439,7 @@ impl Preview {
                 source_dimensions.1,
             )
         } else if final_geometry_preview {
-            final_geometry_visible_source_uv(
-                image_rect,
-                visible_screen,
-                app.develop.geometry,
-                lens_geometry.as_deref(),
-                source_dimensions.0,
-                source_dimensions.1,
-            )
+            projection.visible_source_uv(visible_screen)
         } else {
             crate::app::PreviewUvRect {
                 min: [
@@ -441,11 +469,7 @@ impl Preview {
             paint_crop_workspace_texture(
                 ui,
                 texture_id,
-                image_rect,
-                app.develop.geometry,
-                lens_geometry.as_deref(),
-                source_dimensions.0,
-                source_dimensions.1,
+                projection,
                 Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)),
                 [0.0, 0.0, 1.0, 1.0],
             );
@@ -453,11 +477,7 @@ impl Preview {
             paint_final_geometry_texture(
                 ui,
                 texture_id,
-                image_rect,
-                app.develop.geometry,
-                lens_geometry.as_deref(),
-                source_dimensions.0,
-                source_dimensions.1,
+                projection,
                 Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)),
                 [0.0, 0.0, 1.0, 1.0],
             );
@@ -492,11 +512,7 @@ impl Preview {
                     paint_crop_workspace_texture(
                         ui,
                         detail_texture_id,
-                        image_rect,
-                        app.develop.geometry,
-                        lens_geometry.as_deref(),
-                        source_dimensions.0,
-                        source_dimensions.1,
+                        projection,
                         detail_texture_uv,
                         detail_source_uv,
                     );
@@ -504,11 +520,7 @@ impl Preview {
                     paint_final_geometry_texture(
                         ui,
                         detail_texture_id,
-                        image_rect,
-                        app.develop.geometry,
-                        lens_geometry.as_deref(),
-                        source_dimensions.0,
-                        source_dimensions.1,
+                        projection,
                         detail_texture_uv,
                         detail_source_uv,
                     );
@@ -529,24 +541,9 @@ impl Preview {
 
         if crop_preview {
             if !touch_navigation && !fit_gesture {
-                Self::handle_crop_interaction(
-                    ui,
-                    app,
-                    image_rect,
-                    outer_rect,
-                    source_dimensions.0,
-                    source_dimensions.1,
-                );
+                Self::handle_crop_interaction(ui, app, layout);
             }
-            Self::paint_crop_overlay(
-                ui,
-                app,
-                image_rect,
-                visible_screen,
-                outer_rect,
-                source_dimensions.0,
-                source_dimensions.1,
-            );
+            Self::paint_crop_overlay(ui, app, layout);
         }
 
         if app.preview.original_visible() {
@@ -561,86 +558,29 @@ impl Preview {
 
         if !app.preview.original_visible() {
             if app.ui.sidebar_tab == SidebarTab::Inpainting && !touch_navigation && !fit_gesture {
-                Self::handle_inpaint_interaction(
-                    ui,
-                    app,
-                    frame,
-                    image_rect,
-                    visible_screen,
-                    source_dimensions.0,
-                    source_dimensions.1,
-                    &response,
-                );
+                Self::handle_inpaint_interaction(ui, app, frame, layout, &response);
             }
-            Self::paint_inpaint_overlay(
-                ui,
-                app,
-                image_rect,
-                visible_screen,
-                source_dimensions.0,
-                source_dimensions.1,
-            );
+            Self::paint_inpaint_overlay(ui, app, layout);
 
             if white_balance_canvas {
                 if !touch_navigation {
-                    Self::handle_white_balance_picker(
-                        ui,
-                        app,
-                        image_rect,
-                        visible_screen,
-                        source_dimensions.0,
-                        source_dimensions.1,
-                        &response,
-                    );
+                    Self::handle_white_balance_picker(ui, app, layout, &response);
                 }
-                Self::paint_white_balance_picker(
-                    ui,
-                    app,
-                    image_rect,
-                    visible_screen,
-                    source_dimensions.0,
-                    source_dimensions.1,
-                );
+                Self::paint_white_balance_picker(ui, app, layout);
             }
 
             if point_color_canvas {
                 if !touch_navigation {
-                    Self::handle_point_color_picker(
-                        ui,
-                        app,
-                        frame,
-                        image_rect,
-                        visible_screen,
-                        source_dimensions.0,
-                        source_dimensions.1,
-                        &response,
-                    );
+                    Self::handle_point_color_picker(ui, app, frame, layout, &response);
                 }
                 Self::paint_point_color_picker(ui, app, visible_screen, &response);
             }
 
             if app.ui.sidebar_tab == SidebarTab::Masks {
                 if !touch_navigation && !fit_gesture && !point_color_canvas {
-                    Self::handle_mask_interaction(
-                        ui,
-                        app,
-                        image_rect,
-                        visible_screen,
-                        outer_rect,
-                        source_dimensions.0,
-                        source_dimensions.1,
-                        &response,
-                    );
+                    Self::handle_mask_interaction(ui, app, layout, &response);
                 }
-                Self::paint_mask_overlay(
-                    ui,
-                    app,
-                    image_rect,
-                    visible_screen,
-                    outer_rect,
-                    source_dimensions.0,
-                    source_dimensions.1,
-                );
+                Self::paint_mask_overlay(ui, app, layout);
                 Self::paint_tool_hint(ui, app, visible_screen);
             }
         }

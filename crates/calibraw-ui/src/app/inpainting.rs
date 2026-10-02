@@ -182,7 +182,8 @@ impl CalibRawApp {
         }
         let model_path = self.big_lama_model_path();
         let runtime_download_needed = self.automatic_onnx_runtime_download_needed();
-        if crate::remove::big_lama_model_is_verified(&model_path) && !runtime_download_needed {
+        if calibraw_ai::remove::big_lama_model_is_verified(&model_path) && !runtime_download_needed
+        {
             if matches!(self.ai.consent, AiConsentState::Remove { .. }) {
                 self.ai.consent = AiConsentState::None;
             }
@@ -249,7 +250,7 @@ impl CalibRawApp {
             return;
         };
         let model_download_needed =
-            !crate::remove::big_lama_model_is_verified(&self.big_lama_model_path());
+            !calibraw_ai::remove::big_lama_model_is_verified(&self.big_lama_model_path());
         let title = match (model_download_needed, runtime_download_needed) {
             (true, true) => "Download Remove model and ONNX Runtime?",
             (true, false) => "Download Remove model?",
@@ -266,7 +267,7 @@ impl CalibRawApp {
                         ui,
                         &format!(
                             "Big-LaMa (~{:.0} MB)",
-                            crate::remove::BIG_LAMA_MODEL_BYTES as f64 / 1_000_000.0
+                            calibraw_ai::remove::BIG_LAMA_MODEL_BYTES as f64 / 1_000_000.0
                         ),
                         "remove unwanted content",
                         model_download_needed,
@@ -284,12 +285,12 @@ impl CalibRawApp {
                         |ui| {
                             ui.label(format!(
                                 "Big-LaMa Places2 ONNX repairs a local context crop. License: {}.",
-                                crate::remove::BIG_LAMA_MODEL_LICENSE
+                                calibraw_ai::remove::BIG_LAMA_MODEL_LICENSE
                             ));
                             ui.label(format!(
                                 "Source: {}. CalibRaw verifies its pinned size and SHA-256 ({}).",
-                                crate::remove::BIG_LAMA_MODEL_PROVENANCE,
-                                &crate::remove::BIG_LAMA_MODEL_SHA256_HEX[..12]
+                                calibraw_ai::remove::BIG_LAMA_MODEL_PROVENANCE,
+                                &calibraw_ai::remove::BIG_LAMA_MODEL_SHA256_HEX[..12]
                             ));
                         },
                     );
@@ -414,7 +415,9 @@ impl CalibRawApp {
                                     .map(|retouch| retouch.tool.label())
                                     .unwrap_or("Remove");
                                 self.ui.notice = Some(format!("{tool} failed: {error}"));
-                                crate::diagnostics::record(format!("{tool} failed: {error}"));
+                                calibraw_core::diagnostics::record(format!(
+                                    "{tool} failed: {error}"
+                                ));
                                 log::error!("{tool} failed: {error}");
                             }
                         }

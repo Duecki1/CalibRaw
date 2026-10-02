@@ -7,6 +7,7 @@ use crate::pipeline::{
     MaskKind, NativeRect, RemoveBrushPoint, RemoveBrushStroke, RemovePatch, RemoveStroke,
     RetouchAlignment, RetouchStroke, RetouchTool,
 };
+use std::fs;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 fn sample_edits() -> EditState {
@@ -915,6 +916,167 @@ fn effect_components_round_trip_through_the_sidecar() {
 }
 
 #[test]
+fn photographic_components_round_trip_with_legacy_film_adjustments() {
+    use crate::pipeline::{EffectComponent, MaskEffect, MaskEffectSettings};
+
+    let settings: MaskEffectSettings = serde_json::from_value(serde_json::json!({
+        "grain":{"amount":33.0,"size":2.2,"roughness":67.0,"color":19.0,"seed":613.0},
+        "halation":{"amount":42.0,"radius":14.0,"threshold":78.0,"warmth":88.0},
+        "vignette":{"amount":-38.0,"midpoint":63.0,"roundness":-21.0,"feather":84.0,
+            "highlights":57.0,"center":[38.0,62.0]},
+    }))
+    .unwrap();
+    let mut edits = sample_edits();
+    let masks = Arc::make_mut(&mut edits.masks);
+    for effect in [
+        MaskEffect::Grain,
+        MaskEffect::Halation,
+        MaskEffect::Vignette,
+    ] {
+        let component = EffectComponent {
+            settings,
+            ..EffectComponent::new(effect)
+        };
+        masks.global_effects.push(component.clone());
+        masks.masks[0].effect_components.push(component);
+        masks.add_mask(MaskKind::Fullscreen).unwrap();
+        let legacy_mask = masks.masks.last_mut().unwrap();
+        legacy_mask.effect = effect;
+        legacy_mask.effect_settings = settings;
+    }
+    assert_eq!(
+        decode(&encode(edits.clone()).unwrap()).unwrap().edits,
+        edits
+    );
+}
+
+#[test]
+fn sidecar_accepts_photographic_components_with_omitted_settings() {
+    use crate::pipeline::{EffectComponent, MaskEffect};
+
+    let encoded = encode(sample_edits()).unwrap();
+    let mut document: serde_json::Value = serde_json::from_slice(&encoded).unwrap();
+    document["edits"]["masks"]["global_effects"] = serde_json::json!([
+        {"effect":"Grain"}, {"effect":"Halation"}, {"effect":"Vignette"},
+    ]);
+    let loaded = decode(&serde_json::to_vec(&document).unwrap()).unwrap();
+    assert_eq!(
+        loaded.edits.masks.global_effects,
+        vec![
+            EffectComponent::new(MaskEffect::Grain),
+            EffectComponent::new(MaskEffect::Halation),
+            EffectComponent::new(MaskEffect::Vignette),
+        ]
+    );
+}
+
+#[test]
+fn photographic_sidecar_params_validate_every_boundary_and_non_finite_value() {
+    use crate::pipeline::effect_params::{grain, halation, vignette, FloatParamSpec};
+    use crate::pipeline::{EffectComponent, MaskEffect, MaskEffectSettings};
+
+    type ParamCase = (
+        MaskEffect,
+        FloatParamSpec,
+        fn(&mut MaskEffectSettings) -> &mut f32,
+    );
+    let cases: [ParamCase; 16] = [
+        (MaskEffect::Grain, grain::AMOUNT, |s| &mut s.grain.amount),
+        (MaskEffect::Grain, grain::SIZE, |s| &mut s.grain.size),
+        (MaskEffect::Grain, grain::ROUGHNESS, |s| {
+            &mut s.grain.roughness
+        }),
+        (MaskEffect::Grain, grain::COLOR, |s| &mut s.grain.color),
+        (MaskEffect::Grain, grain::SEED, |s| &mut s.grain.seed),
+        (MaskEffect::Halation, halation::AMOUNT, |s| {
+            &mut s.halation.amount
+        }),
+        (MaskEffect::Halation, halation::RADIUS, |s| {
+            &mut s.halation.radius
+        }),
+        (MaskEffect::Halation, halation::THRESHOLD, |s| {
+            &mut s.halation.threshold
+        }),
+        (MaskEffect::Halation, halation::WARMTH, |s| {
+            &mut s.halation.warmth
+        }),
+        (MaskEffect::Vignette, vignette::AMOUNT, |s| {
+            &mut s.vignette.amount
+        }),
+        (MaskEffect::Vignette, vignette::MIDPOINT, |s| {
+            &mut s.vignette.midpoint
+        }),
+        (MaskEffect::Vignette, vignette::ROUNDNESS, |s| {
+            &mut s.vignette.roundness
+        }),
+        (MaskEffect::Vignette, vignette::FEATHER, |s| {
+            &mut s.vignette.feather
+        }),
+        (MaskEffect::Vignette, vignette::HIGHLIGHTS, |s| {
+            &mut s.vignette.highlights
+        }),
+        (MaskEffect::Vignette, vignette::CENTER_X, |s| {
+            &mut s.vignette.center[0]
+        }),
+        (MaskEffect::Vignette, vignette::CENTER_Y, |s| {
+            &mut s.vignette.center[1]
+        }),
+    ];
+    for (effect, spec, field) in cases {
+        for (value, valid) in [
+            (spec.min, true),
+            (spec.max, true),
+            (spec.min - 0.01, false),
+            (spec.max + 0.01, false),
+            (f32::NAN, false),
+            (f32::INFINITY, false),
+            (f32::NEG_INFINITY, false),
+        ] {
+            for placement in ["legacy", "masked", "global"] {
+                let mut edits = sample_edits();
+                let masks = Arc::make_mut(&mut edits.masks);
+                let mut component = EffectComponent::new(effect);
+                *field(&mut component.settings) = value;
+                // Disabled data is still validated so it cannot become unsafe
+                // when an effect is enabled after loading.
+                component.enabled = false;
+                match placement {
+                    "legacy" => {
+                        masks.masks[0].effect = effect;
+                        masks.masks[0].effect_settings = component.settings;
+                    }
+                    "masked" => masks.masks[0].effect_components.push(component),
+                    "global" => masks.global_effects.push(component),
+                    _ => unreachable!(),
+                }
+                let encoded = encode(edits.clone());
+                assert_eq!(
+                    encoded.is_ok(),
+                    valid,
+                    "{effect:?} {}={value} ({placement})",
+                    spec.label
+                );
+                if valid {
+                    assert_eq!(decode(&encoded.unwrap()).unwrap().edits, edits);
+                } else {
+                    assert!(matches!(encoded, Err(SidecarError::Invalid(_))));
+                    if value.is_finite() {
+                        // Bypass encode's validation to verify the read path too.
+                        let mut document: serde_json::Value =
+                            serde_json::from_slice(&encode(sample_edits()).unwrap()).unwrap();
+                        document["edits"] = serde_json::to_value(edits).unwrap();
+                        assert!(matches!(
+                            decode(&serde_json::to_vec(&document).unwrap()),
+                            Err(SidecarError::Invalid(_)),
+                        ));
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
 fn glow_mask_settings_round_trip_through_the_sidecar() {
     let mut edits = sample_edits();
     let masks = Arc::make_mut(&mut edits.masks);
@@ -1493,6 +1655,7 @@ fn developed_thumbnail_cache_round_trips_and_tracks_sidecar_content() {
 #[cfg(unix)]
 #[test]
 fn non_utf8_raw_paths_keep_their_exact_bytes() {
+    use std::ffi::OsString;
     use std::os::unix::ffi::{OsStrExt, OsStringExt};
 
     let raw = PathBuf::from(OsString::from_vec(b"photo-\xff.NEF".to_vec()));

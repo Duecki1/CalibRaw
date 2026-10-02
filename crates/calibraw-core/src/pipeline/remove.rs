@@ -1,8 +1,6 @@
-use super::{
-    color_profile::{perceptual_gamut_compress, srgb_decode, srgb_encode},
-    ExposureParams, LoadedRaw,
-};
-use crate::color_math::rec2020_to_linear_srgb;
+use super::{color_profile::display_linear_rec2020_to_srgb, ExposureParams, LoadedRaw};
+use crate::color_math::{linear_srgb_to_rec2020, srgb_decode};
+use crate::matrix;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::sync::{Arc, OnceLock};
 
@@ -444,53 +442,23 @@ pub fn pipeline_scene_to_working_rec2020(raw: &LoadedRaw, rgb: [f32; 3]) -> [f32
 
 // Sensor pipeline scenes have WB applied already; camera rasters do not.
 fn remove_camera_transform(raw: &LoadedRaw) -> [[f32; 4]; 3] {
-    let mut matrix = raw.cam_to_srgb;
+    let mut transform = raw.cam_to_srgb;
     if raw.is_camera_linear_raster() {
-        for row in &mut matrix {
+        for row in &mut transform {
             for (value, gain) in row.iter_mut().zip(raw.wb_coeffs) {
                 *value *= gain;
             }
         }
     }
-    matrix
+    transform
 }
 
 fn invert_remove_camera_matrix(raw: &LoadedRaw) -> Option<[[f32; 3]; 3]> {
     if raw.is_pre_demosaiced_raster() && !raw.is_camera_linear_raster() {
-        return Some([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]);
+        return Some(matrix::IDENTITY3);
     }
-    let m = remove_camera_transform(raw);
-    let a = m[0][0];
-    let b = m[0][1];
-    let c = m[0][2];
-    let d = m[1][0];
-    let e = m[1][1];
-    let f = m[1][2];
-    let g = m[2][0];
-    let h = m[2][1];
-    let i = m[2][2];
-    let det = a * (e * i - f * h) - b * (d * i - f * g) + c * (d * h - e * g);
-    if !det.is_finite() || det.abs() <= 1e-10 {
-        return None;
-    }
-    let inv = 1.0 / det;
-    Some([
-        [
-            (e * i - f * h) * inv,
-            (c * h - b * i) * inv,
-            (b * f - c * e) * inv,
-        ],
-        [
-            (f * g - d * i) * inv,
-            (a * i - c * g) * inv,
-            (c * d - a * f) * inv,
-        ],
-        [
-            (d * h - e * g) * inv,
-            (b * g - a * h) * inv,
-            (a * e - b * d) * inv,
-        ],
-    ])
+    let rgb_columns = remove_camera_transform(raw).map(|row| [row[0], row[1], row[2]]);
+    matrix::invert(rgb_columns)
 }
 
 pub fn working_rec2020_to_canonical_remove_scene(
@@ -636,16 +604,11 @@ fn composite_patch_into_linear_region_with_opacity(
 }
 
 pub fn display_linear_rec2020_to_model_srgb(rgb: [f32; 3]) -> [f32; 3] {
-    perceptual_gamut_compress(rec2020_to_linear_srgb(rgb)).map(srgb_encode)
+    display_linear_rec2020_to_srgb(rgb)
 }
 
 pub fn model_srgb_to_display_linear_rec2020(rgb: [f32; 3]) -> [f32; 3] {
-    let linear = rgb.map(srgb_decode);
-    [
-        0.627_403_9 * linear[0] + 0.329_283 * linear[1] + 0.043_313_1 * linear[2],
-        0.069_097_3 * linear[0] + 0.919_540_4 * linear[1] + 0.011_362_3 * linear[2],
-        0.016_391_4 * linear[0] + 0.088_013_3 * linear[1] + 0.895_595_3 * linear[2],
-    ]
+    linear_srgb_to_rec2020(rgb.map(srgb_decode))
 }
 
 mod arc_u8_base64 {
