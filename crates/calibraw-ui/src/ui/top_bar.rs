@@ -1,4 +1,6 @@
 use crate::app::{AppAction, AppTab, CalibRawApp};
+#[cfg(not(target_os = "android"))]
+use crate::ui::components::adjustment_slider::AdjustmentSlider;
 use crate::ui::theme;
 use eframe::egui::{self, Ui};
 
@@ -332,17 +334,12 @@ impl TopBar {
             }
 
             let slider_interaction =
-                crate::ui::components::adjustment_slider::inline_adjustment_slider_with_reset(
-                    ui,
-                    "develop-preview-zoom",
-                    &mut slider_position,
-                    0.0..=1.0,
-                    slider_width,
-                    5,
-                    0.01,
-                    Some("Preview zoom"),
-                    reset_position,
-                );
+                AdjustmentSlider::new("develop-preview-zoom", &mut slider_position, 0.0..=1.0)
+                    .decimals(5)
+                    .step(0.01)
+                    .hover_text("Preview zoom")
+                    .reset_to(reset_position)
+                    .show_inline(ui, slider_width);
             if slider_interaction.changed {
                 requested_zoom = Some(develop_slider_to_zoom(slider_position));
             }

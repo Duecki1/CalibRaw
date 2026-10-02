@@ -1,4 +1,4 @@
-use super::{effect_card, effect_details, effect_slider};
+use super::{effect_card, effect_details, float_param_slider};
 use crate::pipeline::{effect_params::halation, HalationEffectSettings, MaskEffect};
 use eframe::egui::Ui;
 
@@ -15,11 +15,11 @@ pub(crate) fn show(
         enabled,
         remove,
         |ui, settings| {
-            let mut changed = effect_slider(ui, &mut settings.amount, halation::AMOUNT);
-            changed |= effect_slider(ui, &mut settings.radius, halation::RADIUS);
-            changed |= effect_slider(ui, &mut settings.threshold, halation::THRESHOLD);
+            let mut changed = float_param_slider(ui, &mut settings.amount, halation::AMOUNT);
+            changed |= float_param_slider(ui, &mut settings.radius, halation::RADIUS);
+            changed |= float_param_slider(ui, &mut settings.threshold, halation::THRESHOLD);
             changed |= effect_details(ui, "Color details", |ui| {
-                effect_slider(ui, &mut settings.warmth, halation::WARMTH)
+                float_param_slider(ui, &mut settings.warmth, halation::WARMTH)
             });
             changed
         },

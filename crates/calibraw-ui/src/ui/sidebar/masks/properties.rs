@@ -362,15 +362,11 @@ impl Sidebar {
     }
 
     fn mask_grow_slider(ui: &mut Ui, grow: &mut f32) -> bool {
-        adjustment_slider(
-            ui,
-            "Grow",
-            grow,
-            -1.0..=1.0,
-            2,
-            0.01,
-            Some("Positive values expand the mask; negative values shrink it inward."),
-        )
+        AdjustmentSlider::new("Grow", grow, -1.0..=1.0)
+            .decimals(2)
+            .step(0.01)
+            .hover_text("Positive values expand the mask; negative values shrink it inward.")
+            .show(ui)
     }
 
     fn mask_feather_slider(
@@ -381,7 +377,12 @@ impl Sidebar {
         help: &str,
         reset: f32,
     ) -> bool {
-        adjustment_slider_with_reset(ui, label, feather, range, 2, 0.01, Some(help), reset)
+        AdjustmentSlider::new(label, feather, range)
+            .decimals(2)
+            .step(0.01)
+            .hover_text(help)
+            .reset_to(reset)
+            .show(ui)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -403,16 +404,14 @@ impl Sidebar {
             clear_refinement,
         ) = refinement_controls;
         let mut opacity = mask.opacity;
-        let mut geometry_changed = adjustment_slider_with_reset(
-            ui,
-            "Mask opacity",
-            &mut opacity,
-            0.0..=1.0,
-            2,
-            0.01,
-            Some("Controls the strength of the entire mask before its selected type is applied."),
-            1.0,
-        );
+        let mut geometry_changed = AdjustmentSlider::new("Mask opacity", &mut opacity, 0.0..=1.0)
+            .decimals(2)
+            .step(0.01)
+            .hover_text(
+                "Controls the strength of the entire mask before its selected type is applied.",
+            )
+            .reset_to(1.0)
+            .show(ui);
         if geometry_changed {
             mask.set_opacity(opacity);
         }
@@ -487,16 +486,12 @@ impl Sidebar {
                             *brush_mode = BrushMode::Erase;
                         }
                     });
-                    geometry_changed |= adjustment_slider_with_reset(
-                        ui,
-                        "Size",
-                        size,
-                        0.0025..=0.25,
-                        3,
-                        0.0025,
-                        Some("Brush stays the same size on screen; zoom in for finer image-space detail."),
-                        0.055,
-                    );
+                    geometry_changed |= AdjustmentSlider::new("Size", size, 0.0025..=0.25)
+                        .decimals(3)
+                        .step(0.0025)
+                        .hover_text("Brush stays the same size on screen; zoom in for finer image-space detail.")
+                        .reset_to(0.055)
+                        .show(ui);
                     let feather_changed = Self::mask_feather_slider(
                         ui,
                         "Feather",
@@ -534,19 +529,17 @@ impl Sidebar {
                         }
                     });
                     ui.add_enabled_ui(*opacity_enabled, |ui| {
-                        geometry_changed |= adjustment_slider_with_reset(
-                            ui,
-                            "Stroke opacity",
-                            opacity,
-                            0.0..=1.0,
-                            2,
-                            0.01,
-                            Some(
-                                "Controls only newly drawn brush and eraser strokes. Existing \
-                                 strokes and the whole-mask opacity are unchanged.",
-                            ),
-                            1.0,
-                        );
+                        geometry_changed |= AdjustmentSlider::new(
+                                "Stroke opacity",
+                                opacity,
+                                0.0..=1.0,
+                            )
+                            .decimals(2)
+                            .step(0.01)
+                            .hover_text("Controls only newly drawn brush and eraser strokes. Existing \
+                                 strokes and the whole-mask opacity are unchanged." )
+                            .reset_to(1.0)
+                            .show(ui);
                     });
                     if crate::ui::icons::phosphor_icon_button(
                         ui,
@@ -672,18 +665,12 @@ impl Sidebar {
                                     *brush_mode = BrushMode::Erase;
                                 }
                             });
-                            adjustment_slider_with_reset(
-                                ui,
-                                "Size",
-                                refinement_size,
-                                0.0025..=0.25,
-                                3,
-                                0.0025,
-                                Some(
-                                    "Brush stays the same size on screen; zoom in for finer image-space detail.",
-                                ),
-                                0.035,
-                            );
+                            AdjustmentSlider::new("Size", refinement_size, 0.0025..=0.25)
+                                .decimals(3)
+                                .step(0.0025)
+                                .hover_text("Brush stays the same size on screen; zoom in for finer image-space detail." )
+                                .reset_to(0.035)
+                                .show(ui);
                             Self::mask_feather_slider(
                                 ui,
                                 "Feather",
@@ -692,16 +679,12 @@ impl Sidebar {
                                 "Softness of newly painted refinement strokes.",
                                 0.55,
                             );
-                            adjustment_slider_with_reset(
-                                ui,
-                                "Flow / opacity",
-                                refinement_flow,
-                                0.01..=1.0,
-                                2,
-                                0.01,
-                                Some("Strength captured by newly painted add/subtract strokes."),
-                                1.0,
-                            );
+                            AdjustmentSlider::new("Flow / opacity", refinement_flow, 0.01..=1.0)
+                                .decimals(2)
+                                .step(0.01)
+                                .hover_text("Strength captured by newly painted add/subtract strokes.")
+                                .reset_to(1.0)
+                                .show(ui);
                             if crate::ui::icons::phosphor_icon_button(
                                 ui,
                                 egui_phosphor::regular::ERASER,
@@ -771,16 +754,12 @@ impl Sidebar {
                         "Paint through the middle of the object part you want to select."
                     });
                     ui.strong("Selection brush");
-                    geometry_changed |= adjustment_slider_with_reset(
-                        ui,
-                        "Size",
-                        brush_size,
-                        0.0025..=0.25,
-                        3,
-                        0.0025,
-                        Some("Controls the hard-edged selection brush. Its on-screen size stays constant while zooming for finer detail."),
-                        0.055,
-                    );
+                    geometry_changed |= AdjustmentSlider::new("Size", brush_size, 0.0025..=0.25)
+                        .decimals(3)
+                        .step(0.0025)
+                        .hover_text("Controls the hard-edged selection brush. Its on-screen size stays constant while zooming for finer detail.")
+                        .reset_to(0.055)
+                        .show(ui);
                     ui.add_space(crate::ui::theme::SPACE_XS);
                     geometry_changed |= Self::mask_grow_slider(ui, grow);
                     geometry_changed |= Self::mask_feather_slider(
@@ -791,16 +770,16 @@ impl Sidebar {
                         "Softens the final object mask after SAM selection.",
                         0.0,
                     );
-                    let refine_changed = adjustment_slider_with_reset(
-                        ui,
-                        "Edge refine",
-                        edge_refine,
-                        0.0..=1.0,
-                        2,
-                        0.01,
-                        Some("Aligns uncertain SAM boundaries to local image edges."),
-                        0.55,
-                    );
+                    let refine_changed = AdjustmentSlider::new(
+                            "Edge refine",
+                            edge_refine,
+                            0.0..=1.0,
+                        )
+                        .decimals(2)
+                        .step(0.01)
+                        .hover_text("Aligns uncertain SAM boundaries to local image edges.")
+                        .reset_to(0.55)
+                        .show(ui);
                     geometry_changed |= refine_changed;
                     if refine_changed && !strokes.is_empty() {
                         *request_object = true;
@@ -838,26 +817,18 @@ impl Sidebar {
                     feather,
                     ..
                 } => {
-                    geometry_changed |= adjustment_slider_with_reset(
-                        ui,
-                        "Range low",
-                        low,
-                        0.0..=1.0,
-                        2,
-                        0.01,
-                        Some("Lowest included scene luminance."),
-                        0.2,
-                    );
-                    geometry_changed |= adjustment_slider_with_reset(
-                        ui,
-                        "Range high",
-                        high,
-                        0.0..=1.0,
-                        2,
-                        0.01,
-                        Some("Highest included scene luminance."),
-                        0.8,
-                    );
+                    geometry_changed |= AdjustmentSlider::new("Range low", low, 0.0..=1.0)
+                        .decimals(2)
+                        .step(0.01)
+                        .hover_text("Lowest included scene luminance.")
+                        .reset_to(0.2)
+                        .show(ui);
+                    geometry_changed |= AdjustmentSlider::new("Range high", high, 0.0..=1.0)
+                        .decimals(2)
+                        .step(0.01)
+                        .hover_text("Highest included scene luminance.")
+                        .reset_to(0.8)
+                        .show(ui);
                     geometry_changed |= Self::mask_grow_slider(ui, grow);
                     geometry_changed |= Self::mask_feather_slider(
                         ui,
@@ -880,16 +851,12 @@ impl Sidebar {
                     } else {
                         "Drag on the image to sample a color."
                     });
-                    geometry_changed |= adjustment_slider_with_reset(
-                        ui,
-                        "Tolerance",
-                        tolerance,
-                        0.005..=1.0,
-                        3,
-                        0.005,
-                        Some("Expands the selected color region in perceptual OkLab space."),
-                        0.18,
-                    );
+                    geometry_changed |= AdjustmentSlider::new("Tolerance", tolerance, 0.005..=1.0)
+                        .decimals(3)
+                        .step(0.005)
+                        .hover_text("Expands the selected color region in perceptual OkLab space.")
+                        .reset_to(0.18)
+                        .show(ui);
                     geometry_changed |= Self::mask_grow_slider(ui, grow);
                     geometry_changed |= Self::mask_feather_slider(
                         ui,

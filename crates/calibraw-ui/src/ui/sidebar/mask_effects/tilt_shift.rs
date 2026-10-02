@@ -1,4 +1,4 @@
-use super::{effect_card, effect_details, effect_position, effect_slider};
+use super::{effect_card, effect_details, effect_position, float_param_slider};
 use crate::pipeline::{effect_params::tilt_shift, MaskEffect, TiltShiftEffectSettings};
 use eframe::egui::Ui;
 
@@ -21,9 +21,9 @@ pub(crate) fn show(
                     "This mask also limits the blur. Feather its edge for a smooth transition."
                 ).small()).wrap());
             }
-            let mut changed = effect_slider(ui, &mut settings.amount, tilt_shift::AMOUNT);
-            changed |= effect_slider(ui, &mut settings.radius, tilt_shift::RADIUS);
-            changed |= effect_slider(ui, &mut settings.focus_width, tilt_shift::FOCUS_WIDTH);
+            let mut changed = float_param_slider(ui, &mut settings.amount, tilt_shift::AMOUNT);
+            changed |= float_param_slider(ui, &mut settings.radius, tilt_shift::RADIUS);
+            changed |= float_param_slider(ui, &mut settings.focus_width, tilt_shift::FOCUS_WIDTH);
             changed |= effect_details(ui, "Focus band details", |ui| {
                 let mut changed = effect_position(
                     ui,
@@ -31,8 +31,8 @@ pub(crate) fn show(
                     &mut settings.center,
                     [tilt_shift::CENTER_X, tilt_shift::CENTER_Y],
                 );
-                changed |= effect_slider(ui, &mut settings.angle, tilt_shift::ANGLE);
-                changed |= effect_slider(ui, &mut settings.feather, tilt_shift::FEATHER);
+                changed |= float_param_slider(ui, &mut settings.angle, tilt_shift::ANGLE);
+                changed |= float_param_slider(ui, &mut settings.feather, tilt_shift::FEATHER);
                 changed
             });
             changed

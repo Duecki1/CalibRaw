@@ -1,8 +1,6 @@
 use crate::app::HslMixerColor;
 use crate::pipeline::HSL_HUE_LIMIT;
-use crate::ui::components::adjustment_slider::{
-    accented_gradient_adjustment_slider, SliderGradient,
-};
+use crate::ui::components::adjustment_slider::{AdjustmentSlider, SliderGradient};
 use eframe::egui::{self, Align, Color32, Layout, RichText, Sense, Stroke, StrokeKind, Ui};
 
 use crate::ui::theme::HSL_CHANNELS as CHANNELS;
@@ -61,43 +59,31 @@ pub(crate) fn hsl_mixer(
     }
 
     ui.push_id(("hsl-color", index), |ui| {
-        changed |= accented_gradient_adjustment_slider(
-            ui,
-            "Hue",
-            &mut hue[index],
-            -HSL_HUE_LIMIT..=HSL_HUE_LIMIT,
-            0,
-            1.0,
-            Some("Shift this color range toward neighboring hues."),
-            accent,
-            SliderGradient::ChannelHue {
+        changed |= AdjustmentSlider::new("Hue", &mut hue[index], -HSL_HUE_LIMIT..=HSL_HUE_LIMIT)
+            .decimals(0)
+            .step(1.0)
+            .hover_text("Shift this color range toward neighboring hues.")
+            .accent(accent)
+            .gradient(SliderGradient::ChannelHue {
                 left: CHANNELS[(index + CHANNELS.len() - 2) % CHANNELS.len()].1,
                 center: accent,
                 right: CHANNELS[(index + 2) % CHANNELS.len()].1,
-            },
-        );
-        changed |= accented_gradient_adjustment_slider(
-            ui,
-            "Saturation",
-            &mut saturation[index],
-            -100.0..=100.0,
-            0,
-            1.0,
-            Some("Increase or reduce this color range's intensity."),
-            accent,
-            SliderGradient::Saturation(accent),
-        );
-        changed |= accented_gradient_adjustment_slider(
-            ui,
-            "Luminance",
-            &mut luminance[index],
-            -100.0..=100.0,
-            0,
-            1.0,
-            Some("Brighten or darken this color range."),
-            accent,
-            SliderGradient::Luminance(accent),
-        );
+            })
+            .show(ui);
+        changed |= AdjustmentSlider::new("Saturation", &mut saturation[index], -100.0..=100.0)
+            .decimals(0)
+            .step(1.0)
+            .hover_text("Increase or reduce this color range's intensity.")
+            .accent(accent)
+            .gradient(SliderGradient::Saturation(accent))
+            .show(ui);
+        changed |= AdjustmentSlider::new("Luminance", &mut luminance[index], -100.0..=100.0)
+            .decimals(0)
+            .step(1.0)
+            .hover_text("Brighten or darken this color range.")
+            .accent(accent)
+            .gradient(SliderGradient::Luminance(accent))
+            .show(ui);
     });
 
     changed

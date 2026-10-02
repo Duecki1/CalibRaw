@@ -1,4 +1,4 @@
-use super::{effect_card, effect_color, effect_details, effect_position, effect_slider};
+use super::{effect_card, effect_color, effect_details, effect_position, float_param_slider};
 use crate::pipeline::{effect_params::light_rays, LightRaysEffectSettings, MaskEffect};
 use eframe::egui::Ui;
 
@@ -15,8 +15,8 @@ pub(crate) fn show(
         enabled,
         remove,
         |ui, settings| {
-            let mut changed = effect_slider(ui, &mut settings.amount, light_rays::AMOUNT);
-            changed |= effect_slider(ui, &mut settings.length, light_rays::LENGTH);
+            let mut changed = float_param_slider(ui, &mut settings.amount, light_rays::AMOUNT);
+            changed |= float_param_slider(ui, &mut settings.length, light_rays::LENGTH);
             changed |= effect_position(
                 ui,
                 "Source position",
@@ -30,12 +30,13 @@ pub(crate) fn show(
                 light_rays::COLOR,
             );
             changed |= effect_details(ui, "Ray details", |ui| {
-                let mut changed = effect_slider(ui, &mut settings.spread, light_rays::SPREAD);
-                changed |= effect_slider(ui, &mut settings.fade, light_rays::FADE);
-                changed |= effect_slider(ui, &mut settings.softness, light_rays::SOFTNESS);
-                changed |= effect_slider(ui, &mut settings.variation, light_rays::VARIATION);
+                let mut changed = float_param_slider(ui, &mut settings.spread, light_rays::SPREAD);
+                changed |= float_param_slider(ui, &mut settings.fade, light_rays::FADE);
+                changed |= float_param_slider(ui, &mut settings.softness, light_rays::SOFTNESS);
+                changed |= float_param_slider(ui, &mut settings.variation, light_rays::VARIATION);
                 if settings.variation > 0.0 {
-                    changed |= effect_slider(ui, &mut settings.ray_count, light_rays::RAY_COUNT);
+                    changed |=
+                        float_param_slider(ui, &mut settings.ray_count, light_rays::RAY_COUNT);
                 }
                 changed
             });

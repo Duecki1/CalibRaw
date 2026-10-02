@@ -66,7 +66,7 @@ pub(crate) enum SliderGradient {
 #[derive(Clone, Copy)]
 struct SliderOptions<'a> {
     decimals: usize,
-    speed: f64,
+    step: f64,
     hover_text: Option<&'a str>,
     explicit_reset_value: Option<f64>,
     accent: Option<egui::Color32>,
@@ -107,124 +107,98 @@ pub(super) fn lock_slider_scroll(ctx: &egui::Context, slider_id: egui::Id) {
     ctx.set_dragged_id(slider_id);
 }
 
-pub(crate) fn adjustment_slider<Num>(
-    ui: &mut Ui,
-    label: &str,
-    value: &mut Num,
+/// A labelled numeric slider with an editable value field.
+///
+/// Double-clicking the label or track resets to [`Self::reset_to`] (zero by
+/// default), never to the value the widget was first shown with.
+#[must_use = "call `show` to render the slider"]
+pub(crate) struct AdjustmentSlider<'a, Num> {
+    label: &'a str,
+    value: &'a mut Num,
     range: RangeInclusive<Num>,
-    decimals: usize,
-    speed: f64,
-    hover_text: Option<&str>,
-) -> bool
-where
-    Num: egui::emath::Numeric + Copy,
-{
-    adjustment_slider_impl(
-        ui,
-        label,
-        value,
-        range,
-        SliderOptions {
-            decimals,
-            speed,
-            hover_text,
-            explicit_reset_value: None,
-            accent: None,
-            gradient: None,
-        },
-    )
+    options: SliderOptions<'a>,
 }
 
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn gradient_adjustment_slider<Num>(
-    ui: &mut Ui,
-    label: &str,
-    value: &mut Num,
-    range: RangeInclusive<Num>,
-    decimals: usize,
-    speed: f64,
-    hover_text: Option<&str>,
-    gradient: SliderGradient,
-) -> bool
+impl<'a, Num> AdjustmentSlider<'a, Num>
 where
     Num: egui::emath::Numeric + Copy,
 {
-    adjustment_slider_impl(
-        ui,
-        label,
-        value,
-        range,
-        SliderOptions {
-            decimals,
-            speed,
-            hover_text,
-            explicit_reset_value: None,
-            accent: None,
-            gradient: Some(gradient),
-        },
-    )
+    pub(crate) fn new(label: &'a str, value: &'a mut Num, range: RangeInclusive<Num>) -> Self {
+        Self {
+            label,
+            value,
+            range,
+            options: SliderOptions {
+                decimals: 0,
+                step: 1.0,
+                hover_text: None,
+                explicit_reset_value: None,
+                accent: None,
+                gradient: None,
+            },
+        }
+    }
+
+    /// Decimal places shown and stored.
+    pub(crate) fn decimals(mut self, decimals: usize) -> Self {
+        self.options.decimals = decimals;
+        self
+    }
+
+    /// Value change per arrow-key press or dragged point in the value field.
+    pub(crate) fn step(mut self, step: f64) -> Self {
+        self.options.step = step;
+        self
+    }
+
+    pub(crate) fn hover_text(mut self, hover_text: impl Into<Option<&'a str>>) -> Self {
+        self.options.hover_text = hover_text.into();
+        self
+    }
+
+    pub(crate) fn reset_to(mut self, reset_value: Num) -> Self {
+        self.options.explicit_reset_value = Some(reset_value.to_f64());
+        self
+    }
+
+    pub(crate) fn gradient(mut self, gradient: SliderGradient) -> Self {
+        self.options.gradient = Some(gradient);
+        self
+    }
+
+    pub(crate) fn accent(mut self, accent: egui::Color32) -> Self {
+        self.options.accent = Some(accent);
+        self
+    }
+
+    /// Renders the full labelled row and returns whether the value changed.
+    pub(crate) fn show(self, ui: &mut Ui) -> bool {
+        adjustment_slider_impl(ui, self.label, self.value, self.range, self.options)
+    }
+
+    /// Renders only the track at `width`, using the label as the widget id.
+    #[cfg(any(not(target_os = "android"), test))]
+    pub(crate) fn show_inline(self, ui: &mut Ui, width: f32) -> AdjustmentSliderInteraction {
+        let reset_value = self.options.explicit_reset_value.unwrap_or(0.0);
+        ui.push_id(self.label, |ui| {
+            guarded_slider(ui, self.value, self.range, width, reset_value, self.options)
+        })
+        .inner
+    }
 }
 
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn gradient_adjustment_slider_with_reset<Num>(
-    ui: &mut Ui,
-    label: &str,
-    value: &mut Num,
-    range: RangeInclusive<Num>,
-    decimals: usize,
-    speed: f64,
-    hover_text: Option<&str>,
-    gradient: SliderGradient,
-    reset_value: Num,
-) -> bool
-where
-    Num: egui::emath::Numeric + Copy,
-{
-    adjustment_slider_impl(
-        ui,
-        label,
-        value,
-        range,
-        SliderOptions {
-            decimals,
-            speed,
-            hover_text,
-            explicit_reset_value: Some(reset_value.to_f64()),
-            accent: None,
-            gradient: Some(gradient),
-        },
-    )
-}
-
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn accented_gradient_adjustment_slider<Num>(
-    ui: &mut Ui,
-    label: &str,
-    value: &mut Num,
-    range: RangeInclusive<Num>,
-    decimals: usize,
-    speed: f64,
-    hover_text: Option<&str>,
-    accent: egui::Color32,
-    gradient: SliderGradient,
-) -> bool
-where
-    Num: egui::emath::Numeric + Copy,
-{
-    adjustment_slider_impl(
-        ui,
-        label,
-        value,
-        range,
-        SliderOptions {
-            decimals,
-            speed,
-            hover_text,
-            explicit_reset_value: None,
-            accent: Some(accent),
-            gradient: Some(gradient),
-        },
-    )
+impl<'a> AdjustmentSlider<'a, f32> {
+    /// A resettable slider configured from a shared parameter specification.
+    pub(crate) fn from_spec(
+        value: &'a mut f32,
+        spec: crate::pipeline::effect_params::FloatParamSpec,
+    ) -> Self {
+        Self::new(spec.label, value, spec.range())
+            .decimals(spec.decimals)
+            .step(spec.step)
+            .hover_text(spec.tooltip)
+            .reset_to(spec.default)
+    }
 }
 
 pub(crate) fn hue_adjustment_slider(
@@ -233,53 +207,13 @@ pub(crate) fn hue_adjustment_slider(
     hover_text: Option<&str>,
 ) -> bool {
     let spec = crate::pipeline::effect_params::adjustment::HUE;
-    adjustment_slider_impl(
-        ui,
-        spec.label,
-        value,
-        spec.range(),
-        SliderOptions {
-            decimals: spec.decimals,
-            speed: spec.step,
-            hover_text,
-            explicit_reset_value: Some(f64::from(spec.default)),
-            accent: None,
-            gradient: Some(SliderGradient::HueDegrees {
-                start: spec.min,
-                end: spec.max,
-            }),
-        },
-    )
-}
-
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn adjustment_slider_with_reset<Num>(
-    ui: &mut Ui,
-    label: &str,
-    value: &mut Num,
-    range: RangeInclusive<Num>,
-    decimals: usize,
-    speed: f64,
-    hover_text: Option<&str>,
-    reset_value: Num,
-) -> bool
-where
-    Num: egui::emath::Numeric + Copy,
-{
-    adjustment_slider_impl(
-        ui,
-        label,
-        value,
-        range,
-        SliderOptions {
-            decimals,
-            speed,
-            hover_text,
-            explicit_reset_value: Some(reset_value.to_f64()),
-            accent: None,
-            gradient: None,
-        },
-    )
+    AdjustmentSlider::from_spec(value, spec)
+        .hover_text(hover_text)
+        .gradient(SliderGradient::HueDegrees {
+            start: spec.min,
+            end: spec.max,
+        })
+        .show(ui)
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -289,81 +223,23 @@ pub(crate) struct AdjustmentSliderInteraction {
     pub(crate) reset_requested: bool,
 }
 
-/// Render a resettable slider from a shared floating-point parameter
-/// specification. Keeping this mapping here avoids every caller repeating the
-/// spec-to-slider conversion.
 pub(crate) fn float_param_slider(
     ui: &mut Ui,
     value: &mut f32,
     spec: crate::pipeline::effect_params::FloatParamSpec,
 ) -> bool {
-    adjustment_slider_with_reset(
-        ui,
-        spec.label,
-        value,
-        spec.range(),
-        spec.decimals,
-        spec.step,
-        spec.tooltip,
-        spec.default,
-    )
+    AdjustmentSlider::from_spec(value, spec).show(ui)
 }
 
-/// Render a resettable floating-point parameter slider with a custom track
-/// gradient.
 pub(crate) fn gradient_float_param_slider(
     ui: &mut Ui,
     value: &mut f32,
     spec: crate::pipeline::effect_params::FloatParamSpec,
     gradient: SliderGradient,
 ) -> bool {
-    gradient_adjustment_slider_with_reset(
-        ui,
-        spec.label,
-        value,
-        spec.range(),
-        spec.decimals,
-        spec.step,
-        spec.tooltip,
-        gradient,
-        spec.default,
-    )
-}
-
-#[cfg(any(not(target_os = "android"), test))]
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn inline_adjustment_slider_with_reset<Num>(
-    ui: &mut Ui,
-    id_source: &str,
-    value: &mut Num,
-    range: RangeInclusive<Num>,
-    width: f32,
-    decimals: usize,
-    speed: f64,
-    hover_text: Option<&str>,
-    reset_value: Num,
-) -> AdjustmentSliderInteraction
-where
-    Num: egui::emath::Numeric + Copy,
-{
-    ui.push_id(id_source, |ui| {
-        guarded_slider(
-            ui,
-            value,
-            range,
-            width,
-            reset_value.to_f64(),
-            SliderOptions {
-                decimals,
-                speed,
-                hover_text,
-                explicit_reset_value: Some(reset_value.to_f64()),
-                accent: None,
-                gradient: None,
-            },
-        )
-    })
-    .inner
+    AdjustmentSlider::from_spec(value, spec)
+        .gradient(gradient)
+        .show(ui)
 }
 
 fn adjustment_slider_impl<Num>(
@@ -378,7 +254,7 @@ where
 {
     let SliderOptions {
         decimals,
-        speed,
+        step,
         hover_text,
         explicit_reset_value,
         accent,
@@ -425,7 +301,7 @@ where
                         .changed;
 
                         let (mut value_response, value_changed) =
-                            numeric_value_field(ui, value, range.clone(), decimals, speed);
+                            numeric_value_field(ui, value, range.clone(), decimals, step);
                         changed |= value_changed;
                         value_response = value_response.on_hover_text(reset_tooltip(hover_text));
                         if value_response.double_clicked() {
@@ -463,7 +339,7 @@ where
 
                         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                             let (mut value_response, value_changed) =
-                                numeric_value_field(ui, value, range.clone(), decimals, speed);
+                                numeric_value_field(ui, value, range.clone(), decimals, step);
                             changed |= value_changed;
                             value_response =
                                 value_response.on_hover_text(reset_tooltip(hover_text));
@@ -549,7 +425,7 @@ fn numeric_value_field<Num>(
     value: &mut Num,
     range: RangeInclusive<Num>,
     decimals: usize,
-    speed: f64,
+    step: f64,
 ) -> (egui::Response, bool)
 where
     Num: egui::emath::Numeric + Copy,
@@ -574,7 +450,7 @@ where
                 let response = ui.add(
                     DragValue::new(value)
                         .range(range)
-                        .speed(speed)
+                        .speed(step)
                         .fixed_decimals(display_decimals),
                 );
                 changed |= response.changed();
@@ -675,7 +551,7 @@ where
 {
     let SliderOptions {
         decimals,
-        speed: keyboard_step,
+        step: keyboard_step,
         hover_text,
         explicit_reset_value: _,
         accent,
@@ -1126,8 +1002,8 @@ where
 #[cfg(test)]
 mod tests {
     use super::{
-        adjustment_slider, compact_slider_widths, gradient_color_at, rgb_to_hsv,
-        slider_scroll_locked, SliderGradient, COMPACT_ROW_GAP, HEADER_HEIGHT, SLIDER_HEIGHT,
+        compact_slider_widths, gradient_color_at, rgb_to_hsv, slider_scroll_locked,
+        AdjustmentSlider, SliderGradient, COMPACT_ROW_GAP, HEADER_HEIGHT, SLIDER_HEIGHT,
         VALUE_FIELD_WIDTH,
     };
 
@@ -1169,7 +1045,10 @@ mod tests {
         let _ = ctx.run_ui(input, |ui| {
             ui.set_width(400.0);
             ui.add_enabled_ui(enabled, |ui| {
-                adjustment_slider(ui, "Quality", value, 1..=100, 0, 1.0, None);
+                AdjustmentSlider::new("Quality", value, 1..=100)
+                    .decimals(0)
+                    .step(1.0)
+                    .show(ui);
             });
             if cover_slider {
                 eframe::egui::Area::new(eframe::egui::Id::new("test-bottom-bar"))
@@ -1209,7 +1088,7 @@ mod tests {
                         let _ = ctx.run_ui(input, |ui| {
                             let options = super::SliderOptions {
                                 decimals: 0,
-                                speed: 1.0,
+                                step: 1.0,
                                 hover_text: None,
                                 explicit_reset_value: reset,
                                 accent: None,
@@ -1269,17 +1148,11 @@ mod tests {
             input.time = Some(time);
             time += 0.05;
             let _ = ctx.run_ui(input, |ui| {
-                let interaction = super::inline_adjustment_slider_with_reset(
-                    ui,
-                    "inline-reset-test",
-                    &mut value,
-                    0.0..=1.0,
-                    100.0,
-                    5,
-                    0.01,
-                    None,
-                    reset_value,
-                );
+                let interaction = AdjustmentSlider::new("inline-reset-test", &mut value, 0.0..=1.0)
+                    .decimals(5)
+                    .step(0.01)
+                    .reset_to(reset_value)
+                    .show_inline(ui, 100.0);
                 reset_seen |= interaction.reset_requested;
             });
         };

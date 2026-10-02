@@ -20,7 +20,7 @@ use controls::{effect_details, effect_position};
 use super::{egui, MaskEffect, Ui};
 use crate::pipeline::effect_params::ColorParamSpec;
 
-pub(super) use crate::ui::components::adjustment_slider::float_param_slider as effect_slider;
+pub(super) use crate::ui::components::adjustment_slider::float_param_slider;
 
 fn effect_card<Settings>(
     ui: &mut Ui,

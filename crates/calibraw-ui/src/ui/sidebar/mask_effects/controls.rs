@@ -1,4 +1,4 @@
-use super::{effect_slider, egui, Ui};
+use super::{egui, float_param_slider, Ui};
 use crate::pipeline::effect_params::FloatParamSpec;
 
 /// Keep the detail sliders full-width even in narrow portrait cards.
@@ -22,8 +22,8 @@ pub(super) fn effect_position(
         let (_, mut changed) = position_pad(ui, label, position, specs);
         changed |= effect_details(ui, "Precise position", |ui| {
             ui.small("Position in percent: left/top is 0, right/bottom is 100.");
-            effect_slider(ui, &mut position[0], specs[0])
-                | effect_slider(ui, &mut position[1], specs[1])
+            float_param_slider(ui, &mut position[0], specs[0])
+                | float_param_slider(ui, &mut position[1], specs[1])
         });
         changed
     })

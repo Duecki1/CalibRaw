@@ -9,9 +9,8 @@ use crate::pipeline::{
     MAX_MASK_COMPONENTS,
 };
 use crate::ui::components::adjustment_slider::{
-    adjustment_slider, adjustment_slider_with_reset, float_param_slider,
-    gradient_adjustment_slider, gradient_adjustment_slider_with_reset, gradient_float_param_slider,
-    hue_adjustment_slider, slider_scroll_locked, SliderGradient,
+    float_param_slider, gradient_float_param_slider, hue_adjustment_slider, slider_scroll_locked,
+    AdjustmentSlider, SliderGradient,
 };
 use crate::ui::components::color_grading::color_grading_editor;
 use crate::ui::components::hsl_mixer::hsl_mixer;

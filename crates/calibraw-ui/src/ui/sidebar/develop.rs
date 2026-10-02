@@ -169,66 +169,42 @@ impl Sidebar {
     fn show_basic(ui: &mut Ui, exposure: &mut ExposureParams, foldable: bool) -> bool {
         let mut changed = false;
         let action = Self::adjustment_card(ui, "Light", true, foldable, true, |ui| {
-            changed |= gradient_adjustment_slider(
-                ui,
-                "Exposure",
-                &mut exposure.exposure,
-                -5.0..=5.0,
-                2,
-                0.05,
-                Some("Overall scene-linear brightness in exposure stops."),
-                SliderGradient::Brightness,
-            );
-            changed |= gradient_adjustment_slider(
-                ui,
-                "Contrast",
-                &mut exposure.contrast,
-                -100.0..=100.0,
-                0,
-                1.0,
-                Some("Maps -100%..+100% to darktable's normal sigmoid contrast range, 0.7..3.0 around its 1.5 default."),
-                SliderGradient::Brightness,
-            );
-            changed |= gradient_adjustment_slider(
-                ui,
-                "Highlights",
-                &mut exposure.highlights,
-                -100.0..=100.0,
-                0,
-                1.0,
-                Some("Recovers or brightens the upper tonal range without hard clipping."),
-                SliderGradient::Brightness,
-            );
-            changed |= gradient_adjustment_slider(
-                ui,
-                "Shadows",
-                &mut exposure.shadows,
-                -100.0..=100.0,
-                0,
-                1.0,
-                Some("Opens or deepens the lower tonal range."),
-                SliderGradient::Brightness,
-            );
-            changed |= gradient_adjustment_slider(
-                ui,
-                "Whites",
-                &mut exposure.whites,
-                -100.0..=100.0,
-                0,
-                1.0,
-                Some("Moves the bright endpoint and specular range."),
-                SliderGradient::Brightness,
-            );
-            changed |= gradient_adjustment_slider(
-                ui,
-                "Blacks",
-                &mut exposure.blacks,
-                -100.0..=100.0,
-                0,
-                1.0,
-                Some("Moves the display black/toe endpoint while preserving sensor black calibration."),
-                SliderGradient::Brightness,
-            );
+            changed |= AdjustmentSlider::new("Exposure", &mut exposure.exposure, -5.0..=5.0)
+                .decimals(2)
+                .step(0.05)
+                .hover_text("Overall scene-linear brightness in exposure stops.")
+                .gradient(SliderGradient::Brightness)
+                .show(ui);
+            changed |= AdjustmentSlider::new("Contrast", &mut exposure.contrast, -100.0..=100.0)
+                .decimals(0)
+                .step(1.0)
+                .hover_text("Maps -100%..+100% to darktable's normal sigmoid contrast range, 0.7..3.0 around its 1.5 default.")
+                .gradient(SliderGradient::Brightness)
+                .show(ui);
+            changed |= AdjustmentSlider::new("Highlights", &mut exposure.highlights, -100.0..=100.0)
+                .decimals(0)
+                .step(1.0)
+                .hover_text("Recovers or brightens the upper tonal range without hard clipping.")
+                .gradient(SliderGradient::Brightness)
+                .show(ui);
+            changed |= AdjustmentSlider::new("Shadows", &mut exposure.shadows, -100.0..=100.0)
+                .decimals(0)
+                .step(1.0)
+                .hover_text("Opens or deepens the lower tonal range.")
+                .gradient(SliderGradient::Brightness)
+                .show(ui);
+            changed |= AdjustmentSlider::new("Whites", &mut exposure.whites, -100.0..=100.0)
+                .decimals(0)
+                .step(1.0)
+                .hover_text("Moves the bright endpoint and specular range.")
+                .gradient(SliderGradient::Brightness)
+                .show(ui);
+            changed |= AdjustmentSlider::new("Blacks", &mut exposure.blacks, -100.0..=100.0)
+                .decimals(0)
+                .step(1.0)
+                .hover_text("Moves the display black/toe endpoint while preserving sensor black calibration.")
+                .gradient(SliderGradient::Brightness)
+                .show(ui);
         });
         changed |= action.apply(exposure, AdjustmentGroup::Light);
         changed
@@ -413,17 +389,13 @@ impl Sidebar {
                     .unwrap_or(kelvin..=kelvin);
                 let kelvin_changed = ui
                     .push_id(base_kelvin.to_bits(), |ui| {
-                        gradient_adjustment_slider_with_reset(
-                            ui,
-                            "Temperature (K)",
-                            &mut kelvin,
-                            temperature_range,
-                            0,
-                            10.0,
-                            Some("Scene illuminant color temperature in Kelvin. The range follows the camera's valid white balance at the current tint; double-click to reset toward the as-shot temperature."),
-                            SliderGradient::Temperature,
-                            base_kelvin,
-                        )
+                        AdjustmentSlider::new("Temperature (K)", &mut kelvin, temperature_range)
+                            .decimals(0)
+                            .step(10.0)
+                            .hover_text("Scene illuminant color temperature in Kelvin. The range follows the camera's valid white balance at the current tint; double-click to reset toward the as-shot temperature.")
+                            .gradient(SliderGradient::Temperature)
+                            .reset_to(base_kelvin)
+                            .show(ui)
                     })
                     .inner;
                 let base_tint = raw.as_shot_white_balance().map_or(tint, |value| value.1);
@@ -433,19 +405,13 @@ impl Sidebar {
                     .clamp(0.0, 1.0);
                 let tint_changed = ui
                     .push_id(base_tint.to_bits(), |ui| {
-                        gradient_adjustment_slider_with_reset(
-                            ui,
-                            "Tint",
-                            &mut tint,
-                            tint_range,
-                            3,
-                            0.005,
-                            Some("Camera tint: lower values add magenta, higher values add green. The range follows the camera's valid white balance at the current temperature; double-click to reset toward the as-shot tint."),
-                            SliderGradient::CameraTint {
-                                neutral_fraction: tint_neutral_fraction,
-                            },
-                            base_tint,
-                        )
+                        AdjustmentSlider::new("Tint", &mut tint, tint_range)
+                            .decimals(3)
+                            .step(0.005)
+                            .hover_text("Camera tint: lower values add magenta, higher values add green. The range follows the camera's valid white balance at the current temperature; double-click to reset toward the as-shot tint.")
+                            .gradient(SliderGradient::CameraTint { neutral_fraction: tint_neutral_fraction })
+                            .reset_to(base_tint)
+                            .show(ui)
                     })
                     .inner;
                 if kelvin_changed || tint_changed {
@@ -474,26 +440,18 @@ impl Sidebar {
                 &mut exposure.hue,
                 Some("Rotates every color around the perceptual color wheel while preserving lightness and chroma."),
             );
-            changed |= gradient_adjustment_slider(
-                ui,
-                "Vibrance",
-                &mut exposure.vibrance,
-                -100.0..=100.0,
-                0,
-                1.0,
-                Some("Perceptual colorfulness with protection for saturated colors and skin hues."),
-                SliderGradient::Colorfulness,
-            );
-            changed |= gradient_adjustment_slider(
-                ui,
-                "Saturation",
-                &mut exposure.saturation,
-                -100.0..=100.0,
-                0,
-                1.0,
-                Some("Uniform perceptual chroma scaling."),
-                SliderGradient::Colorfulness,
-            );
+            changed |= AdjustmentSlider::new("Vibrance", &mut exposure.vibrance, -100.0..=100.0)
+                .decimals(0)
+                .step(1.0)
+                .hover_text("Perceptual colorfulness with protection for saturated colors and skin hues.")
+                .gradient(SliderGradient::Colorfulness)
+                .show(ui);
+            changed |= AdjustmentSlider::new("Saturation", &mut exposure.saturation, -100.0..=100.0)
+                .decimals(0)
+                .step(1.0)
+                .hover_text("Uniform perceptual chroma scaling.")
+                .gradient(SliderGradient::Colorfulness)
+                .show(ui);
         });
         changed |= action.apply(exposure, AdjustmentGroup::Color);
         if !crate::app::preview_visibility::PreviewVisibility::visible(ui.ctx(), "Color")
@@ -542,38 +500,34 @@ impl Sidebar {
                 "Sensor-profiled noise reduction uses the RAW's estimated a·signal+b sensor model. AI Denoise replaces these manual controls while enabled.",
             );
             ui.add_enabled_ui(!exposure.ai_denoise_enabled, |ui| {
-                changed |= adjustment_slider(
-                    ui,
-                    "Luminance",
-                    &mut exposure.luminance_denoise,
-                    0.0..=100.0,
-                    0,
-                    1.0,
-                    Some("Reduces shot/read noise using the RAW's estimated a·signal+b sensor model. Higher values can smooth fine texture."),
-                );
+                changed |= AdjustmentSlider::new(
+                        "Luminance",
+                        &mut exposure.luminance_denoise,
+                        0.0..=100.0,
+                    )
+                    .decimals(0)
+                    .step(1.0)
+                    .hover_text("Reduces shot/read noise using the RAW's estimated a·signal+b sensor model. Higher values can smooth fine texture.")
+                    .show(ui);
                 let mut color_percent = exposure.chroma_denoise.clamp(0.0, 1.0) * 100.0;
-                if adjustment_slider(
-                    ui,
-                    "Color",
-                    &mut color_percent,
-                    0.0..=100.0,
-                    0,
-                    1.0,
-                    Some("Reduces color speckling while keeping luminance structure comparatively intact."),
-                ) {
+                if AdjustmentSlider::new("Color", &mut color_percent, 0.0..=100.0)
+                    .decimals(0)
+                    .step(1.0)
+                    .hover_text("Reduces color speckling while keeping luminance structure comparatively intact.")
+                    .show(ui) {
                     exposure.chroma_denoise = color_percent / 100.0;
                     changed = true;
                 }
-                changed |= adjustment_slider_with_reset(
-                    ui,
-                    "Denoise Detail",
-                    &mut exposure.denoise_detail,
-                    0.0..=100.0,
-                    0,
-                    1.0,
-                    Some("Higher values protect edges and microtexture more strongly; lower values permit smoother denoising."),
-                    ExposureParams::default().denoise_detail,
-                );
+                changed |= AdjustmentSlider::new(
+                        "Denoise Detail",
+                        &mut exposure.denoise_detail,
+                        0.0..=100.0,
+                    )
+                    .decimals(0)
+                    .step(1.0)
+                    .hover_text("Higher values protect edges and microtexture more strongly; lower values permit smoother denoising.")
+                    .reset_to(ExposureParams::default().denoise_detail)
+                    .show(ui);
                 let previous_quality = exposure.denoise_quality;
                 crate::ui::theme::form_combo(
                     ui,
@@ -607,45 +561,29 @@ impl Sidebar {
                 "Capture sharpening",
                 "Edge-aware capture sharpening restores fine RAW detail while its radius, detail, and masking controls limit halos and noisy texture.",
             );
-            changed |= adjustment_slider_with_reset(
-                ui,
-                "Amount",
-                &mut exposure.sharpen_amount,
-                0.0..=150.0,
-                0,
-                1.0,
-                Some("Controls overall capture sharpening strength. Zero is an exact no-op."),
-                ExposureParams::default().sharpen_amount,
-            );
-            changed |= adjustment_slider_with_reset(
-                ui,
-                "Radius",
-                &mut exposure.sharpen_radius,
-                0.5..=3.0,
-                2,
-                0.05,
-                Some("Controls the edge width being sharpened. Smaller values favor fine detail; larger values strengthen broader edges."),
-                ExposureParams::default().sharpen_radius,
-            );
-            changed |= adjustment_slider_with_reset(
-                ui,
-                "Detail",
-                &mut exposure.sharpen_detail,
-                0.0..=100.0,
-                0,
-                1.0,
-                Some("Raises the contribution of the finest texture and lowers fine-detail suppression."),
-                ExposureParams::default().sharpen_detail,
-            );
-            changed |= adjustment_slider(
-                ui,
-                "Masking",
-                &mut exposure.sharpen_masking,
-                0.0..=100.0,
-                0,
-                1.0,
-                Some("Restricts sharpening to stronger luminance edges as the value increases, protecting flat areas and noise."),
-            );
+            changed |= AdjustmentSlider::new("Amount", &mut exposure.sharpen_amount, 0.0..=150.0)
+                .decimals(0)
+                .step(1.0)
+                .hover_text("Controls overall capture sharpening strength. Zero is an exact no-op.")
+                .reset_to(ExposureParams::default().sharpen_amount)
+                .show(ui);
+            changed |= AdjustmentSlider::new("Radius", &mut exposure.sharpen_radius, 0.5..=3.0)
+                .decimals(2)
+                .step(0.05)
+                .hover_text("Controls the edge width being sharpened. Smaller values favor fine detail; larger values strengthen broader edges.")
+                .reset_to(ExposureParams::default().sharpen_radius)
+                .show(ui);
+            changed |= AdjustmentSlider::new("Detail", &mut exposure.sharpen_detail, 0.0..=100.0)
+                .decimals(0)
+                .step(1.0)
+                .hover_text("Raises the contribution of the finest texture and lowers fine-detail suppression.")
+                .reset_to(ExposureParams::default().sharpen_detail)
+                .show(ui);
+            changed |= AdjustmentSlider::new("Masking", &mut exposure.sharpen_masking, 0.0..=100.0)
+                .decimals(0)
+                .step(1.0)
+                .hover_text("Restricts sharpening to stronger luminance edges as the value increases, protecting flat areas and noise.")
+                .show(ui);
         });
         changed |= action.apply(exposure, AdjustmentGroup::Detail);
         if exposure.ai_denoise_enabled != ai_before {
@@ -658,122 +596,96 @@ impl Sidebar {
     fn show_presence(ui: &mut Ui, exposure: &mut ExposureParams, foldable: bool) -> bool {
         let mut changed = false;
         let action = Self::adjustment_card(ui, "Effects", false, foldable, true, |ui| {
-            changed |= adjustment_slider(
-                ui,
-                "Texture",
-                &mut exposure.texture,
-                -100.0..=100.0,
-                0,
-                1.0,
-                Some("Enhances or softens fine surface detail without changing overall exposure."),
-            );
-            changed |= adjustment_slider(
-                ui,
-                "Clarity",
-                &mut exposure.clarity,
-                -100.0..=100.0,
-                0,
-                1.0,
-                Some("Changes edge-aware midtone local contrast while protecting highlights and deep shadows."),
-            );
-            changed |= adjustment_slider(
-                ui,
-                "Dehaze",
-                &mut exposure.dehaze,
-                -100.0..=100.0,
-                0,
-                1.0,
-                Some("Removes or adds atmospheric veil while preserving color relationships."),
-            );
+            changed |= AdjustmentSlider::new("Texture", &mut exposure.texture, -100.0..=100.0)
+                .decimals(0)
+                .step(1.0)
+                .hover_text("Enhances or softens fine surface detail without changing overall exposure.")
+                .show(ui);
+            changed |= AdjustmentSlider::new("Clarity", &mut exposure.clarity, -100.0..=100.0)
+                .decimals(0)
+                .step(1.0)
+                .hover_text("Changes edge-aware midtone local contrast while protecting highlights and deep shadows.")
+                .show(ui);
+            changed |= AdjustmentSlider::new("Dehaze", &mut exposure.dehaze, -100.0..=100.0)
+                .decimals(0)
+                .step(1.0)
+                .hover_text("Removes or adds atmospheric veil while preserving color relationships.")
+                .show(ui);
 
             crate::ui::theme::section_separator(ui);
             ui.push_id("glow", |ui| {
                 ui.strong("Glow");
-                changed |= adjustment_slider(
-                    ui,
-                    "Amount",
-                    &mut exposure.glow_amount,
-                    0.0..=100.0,
-                    0,
-                    1.0,
-                    Some(
-                        "Softens and blooms bright light sources without lifting the entire image.",
-                    ),
-                );
+                changed |= AdjustmentSlider::new("Amount", &mut exposure.glow_amount, 0.0..=100.0)
+                    .decimals(0)
+                    .step(1.0)
+                    .hover_text("Softens and blooms bright light sources without lifting the entire image." )
+                    .show(ui);
             });
 
             crate::ui::theme::section_separator(ui);
-            changed |= adjustment_slider(
-                ui,
-                "Halation",
-                &mut exposure.halation_amount,
-                0.0..=100.0,
-                0,
-                1.0,
-                Some("Adds a warm film halo around bright edges while preserving highlight cores."),
-            );
-            changed |= adjustment_slider(
-                ui,
-                "Grain",
-                &mut exposure.grain_amount,
-                0.0..=100.0,
-                0,
-                1.0,
-                Some("Adds fine monochrome film grain, strongest in midtones."),
-            );
+            changed |= AdjustmentSlider::new("Halation", &mut exposure.halation_amount, 0.0..=100.0)
+                .decimals(0)
+                .step(1.0)
+                .hover_text("Adds a warm film halo around bright edges while preserving highlight cores.")
+                .show(ui);
+            changed |= AdjustmentSlider::new("Grain", &mut exposure.grain_amount, 0.0..=100.0)
+                .decimals(0)
+                .step(1.0)
+                .hover_text("Adds fine monochrome film grain, strongest in midtones.")
+                .show(ui);
 
             crate::ui::theme::section_separator(ui);
             ui.push_id("vignette", |ui| {
                 ui.strong("Vignette");
-                changed |= gradient_adjustment_slider(
-                    ui,
-                    "Amount",
-                    &mut exposure.vignette_amount,
-                    -100.0..=100.0,
-                    0,
-                    1.0,
-                    Some("Darkens negative values or brightens positive values toward the image edges."),
-                    SliderGradient::Brightness,
-                );
-                changed |= adjustment_slider_with_reset(
-                    ui,
-                    "Midpoint",
-                    &mut exposure.vignette_midpoint,
-                    0.0..=100.0,
-                    0,
-                    1.0,
-                    Some("Moves the vignette transition inward or confines it to the outermost edge."),
-                    ExposureParams::default().vignette_midpoint,
-                );
-                changed |= adjustment_slider(
-                    ui,
-                    "Roundness",
-                    &mut exposure.vignette_roundness,
-                    -100.0..=100.0,
-                    0,
-                    1.0,
-                    Some("Changes the vignette shape from frame-like to circular."),
-                );
-                changed |= adjustment_slider_with_reset(
-                    ui,
-                    "Feather",
-                    &mut exposure.vignette_feather,
-                    0.0..=100.0,
-                    0,
-                    1.0,
-                    Some("Controls the softness of the vignette transition."),
-                    ExposureParams::default().vignette_feather,
-                );
-                changed |= gradient_adjustment_slider(
-                    ui,
-                    "Highlights",
-                    &mut exposure.vignette_highlights,
-                    0.0..=100.0,
-                    0,
-                    1.0,
-                    Some("Restores bright edge highlights when using a dark vignette."),
-                    SliderGradient::Brightness,
-                );
+                changed |= AdjustmentSlider::new(
+                        "Amount",
+                        &mut exposure.vignette_amount,
+                        -100.0..=100.0,
+                    )
+                    .decimals(0)
+                    .step(1.0)
+                    .hover_text("Darkens negative values or brightens positive values toward the image edges.")
+                    .gradient(SliderGradient::Brightness)
+                    .show(ui);
+                changed |= AdjustmentSlider::new(
+                        "Midpoint",
+                        &mut exposure.vignette_midpoint,
+                        0.0..=100.0,
+                    )
+                    .decimals(0)
+                    .step(1.0)
+                    .hover_text("Moves the vignette transition inward or confines it to the outermost edge.")
+                    .reset_to(ExposureParams::default().vignette_midpoint)
+                    .show(ui);
+                changed |= AdjustmentSlider::new(
+                        "Roundness",
+                        &mut exposure.vignette_roundness,
+                        -100.0..=100.0,
+                    )
+                    .decimals(0)
+                    .step(1.0)
+                    .hover_text("Changes the vignette shape from frame-like to circular.")
+                    .show(ui);
+                changed |= AdjustmentSlider::new(
+                        "Feather",
+                        &mut exposure.vignette_feather,
+                        0.0..=100.0,
+                    )
+                    .decimals(0)
+                    .step(1.0)
+                    .hover_text("Controls the softness of the vignette transition.")
+                    .reset_to(ExposureParams::default().vignette_feather)
+                    .show(ui);
+                changed |= AdjustmentSlider::new(
+                        "Highlights",
+                        &mut exposure.vignette_highlights,
+                        0.0..=100.0,
+                    )
+                    .decimals(0)
+                    .step(1.0)
+                    .hover_text("Restores bright edge highlights when using a dark vignette.")
+                    .gradient(SliderGradient::Brightness)
+                    .show(ui);
             });
         });
         changed |= action.apply(exposure, AdjustmentGroup::Effects);
