@@ -110,7 +110,7 @@ impl eframe::App for CalibRawApp {
         {
             self.poll_android_picker(frame);
             self.poll_android_export_publish();
-            if crate::android::take_back_request() {
+            if calibraw_ffi::take_back_request() {
                 if self.android_foreground_task_active() {
                     ui.ctx().request_repaint();
                 } else if self.ui.active_tab == AppTab::Library
@@ -119,14 +119,14 @@ impl eframe::App for CalibRawApp {
                     self.set_library_folder_sidebar_open(false);
                 } else if self.ui.active_tab == AppTab::Library && self.library.has_selection() {
                     self.library.clear_selection();
-                    crate::android::set_back_navigation_active(false);
+                    calibraw_ffi::set_back_navigation_active(false);
                 } else {
                     self.activate_tab(AppTab::Library);
                 }
             }
 
             let [left, top, right, bottom] =
-                crate::android::system_bar_insets_points(ui.ctx().pixels_per_point());
+                calibraw_ffi::system_bar_insets_points(ui.ctx().pixels_per_point());
             if top > 0.0 {
                 egui::Panel::top("android_status_bar_safe_area")
                     .resizable(false)
@@ -452,7 +452,7 @@ impl eframe::App for CalibRawApp {
         self.poll_sidecar_save();
         self.poll_developed_thumbnail(frame);
         #[cfg(target_os = "android")]
-        crate::android::set_back_navigation_active(
+        calibraw_ffi::set_back_navigation_active(
             self.ui.active_tab != AppTab::Library
                 || self.library.has_selection()
                 || self.library.folder_sidebar_open(),
@@ -466,11 +466,11 @@ impl eframe::App for CalibRawApp {
         #[cfg(target_os = "android")]
         {
             if let Err(error) =
-                crate::android::clear_background_task_notification(&self.android.android_app)
+                calibraw_ffi::clear_background_task_notification(&self.android.android_app)
             {
                 log::warn!("{error}");
             }
-            crate::android::uninstall_context();
+            calibraw_ffi::uninstall_context();
         }
         self.persist_performance_settings();
         self.flush_sidecar_on_exit();

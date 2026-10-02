@@ -31,7 +31,7 @@ pub(crate) struct PerformanceSettings {
     pub github_update_check_allowed: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ignored_update_version: Option<String>,
-    pub birefnet_quality: crate::ai_masks::BiRefNetQuality,
+    pub birefnet_quality: calibraw_ai::ai_masks::BiRefNetQuality,
     #[cfg(not(target_os = "android"))]
     pub subject_crop_refinement: bool,
     #[cfg(not(target_os = "android"))]
@@ -111,11 +111,11 @@ fn jpeg_xl_export_format_setting_round_trips() {
 struct ExportFormatSetting(#[serde(with = "export_format_serde")] ExportFormat);
 
 const fn subject_quality_for_platform(
-    configured: crate::ai_masks::BiRefNetQuality,
+    configured: calibraw_ai::ai_masks::BiRefNetQuality,
     android: bool,
-) -> crate::ai_masks::BiRefNetQuality {
+) -> calibraw_ai::ai_masks::BiRefNetQuality {
     if android {
-        crate::ai_masks::BiRefNetQuality::Low
+        calibraw_ai::ai_masks::BiRefNetQuality::Low
     } else {
         configured
     }
@@ -143,7 +143,7 @@ impl Default for PerformanceSettings {
             auto_check_updates: true,
             github_update_check_allowed: None,
             ignored_update_version: None,
-            birefnet_quality: crate::ai_masks::BiRefNetQuality::default(),
+            birefnet_quality: calibraw_ai::ai_masks::BiRefNetQuality::default(),
             #[cfg(not(target_os = "android"))]
             subject_crop_refinement: true,
             #[cfg(not(target_os = "android"))]
@@ -439,7 +439,7 @@ mod tests {
         assert!(settings.ignored_update_version.is_none());
         assert_eq!(
             settings.birefnet_quality,
-            crate::ai_masks::BiRefNetQuality::Low
+            calibraw_ai::ai_masks::BiRefNetQuality::Low
         );
         assert_eq!(
             settings.library_thumbnail_size,
@@ -474,7 +474,7 @@ mod tests {
             develop_histogram_open: true,
             library_thumbnail_size: crate::ui::library::LibraryThumbnailSize::Enormous,
             library_sort_order: crate::ui::library::LibrarySortOrder::SmallestFirst,
-            birefnet_quality: crate::ai_masks::BiRefNetQuality::High,
+            birefnet_quality: calibraw_ai::ai_masks::BiRefNetQuality::High,
             image_relative_brush_size: true,
             show_develop_navigation_labels: true,
             export_name_template: "{OriginalName}-{CurrentDate}".to_owned(),
@@ -509,7 +509,7 @@ mod tests {
         );
         assert_eq!(
             restored.birefnet_quality,
-            crate::ai_masks::BiRefNetQuality::High
+            calibraw_ai::ai_masks::BiRefNetQuality::High
         );
         assert!(restored.image_relative_brush_size);
         assert!(restored.show_develop_navigation_labels);
@@ -547,12 +547,12 @@ mod tests {
     #[test]
     fn android_always_sanitizes_subject_quality_to_low() {
         assert_eq!(
-            subject_quality_for_platform(crate::ai_masks::BiRefNetQuality::High, true),
-            crate::ai_masks::BiRefNetQuality::Low
+            subject_quality_for_platform(calibraw_ai::ai_masks::BiRefNetQuality::High, true),
+            calibraw_ai::ai_masks::BiRefNetQuality::Low
         );
         assert_eq!(
-            subject_quality_for_platform(crate::ai_masks::BiRefNetQuality::High, false),
-            crate::ai_masks::BiRefNetQuality::High
+            subject_quality_for_platform(calibraw_ai::ai_masks::BiRefNetQuality::High, false),
+            calibraw_ai::ai_masks::BiRefNetQuality::High
         );
     }
 }

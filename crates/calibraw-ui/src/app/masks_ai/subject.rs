@@ -143,10 +143,10 @@ impl CalibRawApp {
     ) -> bool {
         match model {
             AiMaskModel::Subject => {
-                crate::ai_masks::birefnet_model_is_verified(self.ai.birefnet_quality, path)
+                calibraw_ai::ai_masks::birefnet_model_is_verified(self.ai.birefnet_quality, path)
             }
-            AiMaskModel::Sky => crate::ai_masks::skyseg_model_is_verified(path),
-            AiMaskModel::Depth => crate::ai_masks::depth_model_is_verified(path),
+            AiMaskModel::Sky => calibraw_ai::ai_masks::skyseg_model_is_verified(path),
+            AiMaskModel::Depth => calibraw_ai::ai_masks::depth_model_is_verified(path),
         }
     }
 
@@ -190,10 +190,16 @@ impl CalibRawApp {
             (AiMaskModel::Sky, true) => "Running SkySeg U2Net locally…".to_owned(),
             (AiMaskModel::Sky, false) => "Preparing SkySeg U2Net download…".to_owned(),
             (AiMaskModel::Depth, true) => {
-                format!("Running {} locally…", crate::ai_masks::DEPTH_MODEL.name)
+                format!(
+                    "Running {} locally…",
+                    calibraw_ai::ai_masks::DEPTH_MODEL.name
+                )
             }
             (AiMaskModel::Depth, false) => {
-                format!("Preparing {} download…", crate::ai_masks::DEPTH_MODEL.name)
+                format!(
+                    "Preparing {} download…",
+                    calibraw_ai::ai_masks::DEPTH_MODEL.name
+                )
             }
         }
     }
@@ -445,11 +451,13 @@ mod tests {
                         .send(AiMaskEvent::Finished(Err("Inference failed".to_owned())))
                         .unwrap(),
                     1 => sender
-                        .send(AiMaskEvent::Finished(Ok(crate::ai_masks::AiMaskResult {
-                            width: 2,
-                            height: 2,
-                            mask: vec![],
-                        })))
+                        .send(AiMaskEvent::Finished(Ok(
+                            calibraw_ai::ai_masks::AiMaskResult {
+                                width: 2,
+                                height: 2,
+                                mask: vec![],
+                            },
+                        )))
                         .unwrap(),
                     _ => {}
                 }
@@ -633,11 +641,13 @@ mod tests {
                 let (sender, receiver) = std::sync::mpsc::channel();
                 sender.send(AiMaskEvent::Inferencing).unwrap();
                 sender
-                    .send(AiMaskEvent::Finished(Ok(crate::ai_masks::AiMaskResult {
-                        width: 2,
-                        height: 2,
-                        mask: pixels.clone(),
-                    })))
+                    .send(AiMaskEvent::Finished(Ok(
+                        calibraw_ai::ai_masks::AiMaskResult {
+                            width: 2,
+                            height: 2,
+                            mask: pixels.clone(),
+                        },
+                    )))
                     .unwrap();
                 assert!(app.begin_foreground_operation(ForegroundOperation {
                     kind,

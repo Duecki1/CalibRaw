@@ -1,5 +1,5 @@
 use super::*;
-use crate::ai_denoise::{AiDenoiseEvent, RAWNIND_PACKAGE_BYTES};
+use calibraw_ai::ai_denoise::{AiDenoiseEvent, RAWNIND_PACKAGE_BYTES};
 use eframe::egui;
 use std::{
     path::PathBuf,
@@ -18,7 +18,7 @@ impl CalibRawApp {
         }
         #[cfg(not(target_os = "android"))]
         {
-            crate::ai_denoise::model_cache_dir()
+            calibraw_ai::ai_denoise::model_cache_dir()
         }
     }
 
@@ -56,7 +56,7 @@ impl CalibRawApp {
                 format!("android:{raw_uri}")
             }
         };
-        crate::ai_denoise::result_cache_path(&self.rawnind_result_cache_dir(), &identity)
+        calibraw_ai::ai_denoise::result_cache_path(&self.rawnind_result_cache_dir(), &identity)
     }
 
     fn rawnind_result_cache_path(&self) -> Option<PathBuf> {
@@ -138,7 +138,8 @@ impl CalibRawApp {
         let runtime_download_needed =
             !saved_result_exists && self.automatic_onnx_runtime_download_needed();
         if saved_result_exists
-            || (crate::ai_denoise::models_are_verified(&model_dir) && !runtime_download_needed)
+            || (calibraw_ai::ai_denoise::models_are_verified(&model_dir)
+                && !runtime_download_needed)
         {
             if matches!(self.ai.consent, AiConsentState::Denoise { .. }) {
                 self.ai.consent = AiConsentState::None;
@@ -171,13 +172,13 @@ impl CalibRawApp {
         }
         #[cfg(target_os = "android")]
         if !saved_result_exists {
-            if let Err(error) = crate::ai_masks::initialize_runtime(None, None) {
+            if let Err(error) = calibraw_ai::ai_masks::initialize_runtime(None, None) {
                 self.develop.exposure.ai_denoise_enabled = false;
                 self.develop.target_exposure.ai_denoise_enabled = false;
                 self.ui.notice = Some(format!(
                     "Could not initialize Android AI denoise: {error:#}"
                 ));
-                crate::diagnostics::record(format!(
+                calibraw_core::diagnostics::record(format!(
                     "Android RawNIND runtime initialization failed before worker start: {error:#}"
                 ));
                 self.egui_ctx.request_repaint();
@@ -204,7 +205,7 @@ impl CalibRawApp {
         self.preview.detail_urgent = false;
         self.preview.quality_dirty = false;
         let cancellation = Arc::new(AtomicBool::new(false));
-        let receiver = crate::ai_denoise::spawn_rawnind_denoise(
+        let receiver = calibraw_ai::ai_denoise::spawn_rawnind_denoise(
             self.rawnind_model_dir(),
             {
                 #[cfg(not(target_os = "android"))]
@@ -257,7 +258,7 @@ impl CalibRawApp {
         if changed {
             self.note_edit_changed();
         }
-        crate::diagnostics::record(format!(
+        calibraw_core::diagnostics::record(format!(
             "RawNIND worker started for document {} on {}",
             self.persistence.sidecar_generation,
             if cfg!(target_os = "android") {
@@ -402,7 +403,7 @@ impl CalibRawApp {
             {
                 self.develop.target_exposure.ai_denoise_enabled =
                     self.preview_exposure().ai_denoise_enabled;
-                crate::diagnostics::record(
+                calibraw_core::diagnostics::record(
                     "Restored the persisted AI-denoise scene without rerunning RawNIND",
                 );
                 return;
@@ -423,7 +424,7 @@ impl CalibRawApp {
         } = self.ai.consent
         {
             let model_download_needed =
-                !crate::ai_denoise::models_are_verified(&self.rawnind_model_dir());
+                !calibraw_ai::ai_denoise::models_are_verified(&self.rawnind_model_dir());
             let title = match (model_download_needed, runtime_download_needed) {
                 (true, true) => "Download AI denoise models and ONNX Runtime?",
                 (true, false) => "Download RawNIND AI denoise models?",

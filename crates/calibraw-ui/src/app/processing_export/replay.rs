@@ -1037,7 +1037,7 @@ fn run_edit_replay_worker(
     if cancellation.load(Ordering::Acquire) {
         return Err("edit replay cancelled".to_owned());
     }
-    crate::file_ops::replace_file(temporary.as_ref(), &destination).map_err(|error| {
+    calibraw_core::file_ops::replace_file(temporary.as_ref(), &destination).map_err(|error| {
         format!(
             "Could not publish replay {}: {error}",
             destination.display()
@@ -1047,7 +1047,7 @@ fn run_edit_replay_worker(
         .parent()
         .filter(|path| !path.as_os_str().is_empty())
     {
-        let _ = crate::file_ops::sync_parent_directory(parent);
+        let _ = calibraw_core::file_ops::sync_parent_directory(parent);
     }
     let _ = temporary.keep();
     Ok(destination)
@@ -1199,7 +1199,7 @@ impl CalibRawApp {
                             #[cfg(target_os = "android")]
                             {
                                 let name = path.file_name().unwrap_or_default().to_string_lossy();
-                                match crate::android::publish_image(
+                                match calibraw_ffi::publish_image(
                                     &self.android.android_app,
                                     &path,
                                     &name,

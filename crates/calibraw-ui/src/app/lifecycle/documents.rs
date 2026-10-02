@@ -35,7 +35,7 @@ impl CalibRawApp {
         self.prepare_android_develop_loading_thumbnail(uri);
 
         self.export.android_batch_load_pending = false;
-        match crate::android::open_library_document(&self.android.android_app, uri, display_name) {
+        match calibraw_ffi::open_library_document(&self.android.android_app, uri, display_name) {
             Ok(()) => {
                 self.android.picker_pending = true;
                 self.ui.notice = None;
@@ -62,7 +62,7 @@ impl CalibRawApp {
         }
         self.export.android_batch_load_pending = false;
         self.android.pending_android_library_reset_reload = true;
-        match crate::android::open_library_document(&self.android.android_app, uri, display_name) {
+        match calibraw_ffi::open_library_document(&self.android.android_app, uri, display_name) {
             Ok(()) => {
                 self.android.picker_pending = true;
                 self.ui.notice = None;
@@ -204,7 +204,7 @@ impl CalibRawApp {
             .then(|| self.cached_raw_decode(&raw_cache_key))
             .flatten();
         let decode_was_cached = cached_original_raw.is_some();
-        crate::diagnostics::record(format!(
+        calibraw_core::diagnostics::record(format!(
             "RAW open requested: label=\"{label}\" cached={decode_was_cached} preview_quality={}",
             self.preview.quality.label()
         ));
@@ -301,7 +301,7 @@ impl CalibRawApp {
                 let open_started = Instant::now();
                 #[cfg(target_os = "android")]
                 let reusable_preview_pipeline = if export_active_while_opening {
-                    crate::diagnostics::record(
+                    calibraw_core::diagnostics::record(
                         "Released the previous Android preview before concurrent RAW open",
                     );
                     drop(reusable_preview_pipeline);
@@ -315,7 +315,7 @@ impl CalibRawApp {
                     #[cfg(target_os = "android")]
                     &sidecar_android_app,
                 );
-                crate::diagnostics::record(format!(
+                calibraw_core::diagnostics::record(format!(
                     "RAW sidecar lookup finished in {:.3}s",
                     sidecar_started.elapsed().as_secs_f64()
                 ));
@@ -387,13 +387,13 @@ impl CalibRawApp {
                     .is_some_and(is_unsupported_raw_error);
                 match &decoded {
                     Ok(raw) => {
-                        crate::diagnostics::record(format!(
+                        calibraw_core::diagnostics::record(format!(
                             "RAW decode finished in {:.3}s (cached={decode_was_cached})",
                             decode_started.elapsed().as_secs_f64()
                         ));
-                        crate::diagnostics::record_raw("Decoded RAW", raw);
+                        calibraw_core::diagnostics::record_raw("Decoded RAW", raw);
                     }
-                    Err(error) => crate::diagnostics::record(format!(
+                    Err(error) => calibraw_core::diagnostics::record(format!(
                         "RAW decode failed after {:.3}s: {error:#}",
                         decode_started.elapsed().as_secs_f64()
                     )),
@@ -482,7 +482,7 @@ impl CalibRawApp {
                     if use_adaptive_detail_defaults {
                         original_raw.apply_adaptive_detail_defaults(&mut rendered_exposure);
                     }
-                    crate::diagnostics::record(format!(
+                    calibraw_core::diagnostics::record(format!(
                         "Edit state: exposure={:.3} temperature={:.3} tint={:.3} saturation={:.3} vibrance={:.3} luminance_nr={:.1} color_nr={:.1} demosaic={:?} highlight={:?} masks={}",
                         rendered_exposure.exposure,
                         rendered_exposure.temperature,
@@ -520,7 +520,7 @@ impl CalibRawApp {
                     let lens_catalog_started = Instant::now();
                     let mut lens_correction =
                         LensCorrectionState::from_catalog(lensfun_catalog(&original_raw));
-                    crate::diagnostics::record(format!(
+                    calibraw_core::diagnostics::record(format!(
                         "Lensfun catalog lookup finished in {:.3}s",
                         lens_catalog_started.elapsed().as_secs_f64()
                     ));
@@ -540,7 +540,7 @@ impl CalibRawApp {
                             let lens_apply_started = Instant::now();
                             match apply_lensfun_correction(&original_raw, &selection) {
                                 Ok(corrected) => {
-                                    crate::diagnostics::record(format!(
+                                    calibraw_core::diagnostics::record(format!(
                                         "Lensfun full-resolution correction applied in {:.3}s",
                                         lens_apply_started.elapsed().as_secs_f64()
                                     ));
@@ -552,7 +552,7 @@ impl CalibRawApp {
                                     Arc::new(corrected)
                                 }
                                 Err(error) => {
-                                    crate::diagnostics::record(format!(
+                                    calibraw_core::diagnostics::record(format!(
                                         "Lensfun full-resolution correction failed after {:.3}s",
                                         lens_apply_started.elapsed().as_secs_f64()
                                     ));
@@ -576,14 +576,14 @@ impl CalibRawApp {
                     } else {
                         Arc::clone(&original_raw)
                     };
-                    crate::diagnostics::record(format!(
+                    calibraw_core::diagnostics::record(format!(
                         "Lensfun catalog/correction prepared in {:.3}s",
                         lens_started.elapsed().as_secs_f64()
                     ));
                     if rendered_exposure.ai_denoise_enabled {
                         if full_raw.ai_denoised_image().is_none() {
                             let cache_started = Instant::now();
-                            match crate::ai_denoise::load_result_cache(
+                            match calibraw_ai::ai_denoise::load_result_cache(
                                 &ai_denoise_cache_path,
                                 &full_raw,
                             ) {
@@ -593,13 +593,13 @@ impl CalibRawApp {
                                             "could not install saved AI-denoise result: {error:#}"
                                         )
                                     })?;
-                                    crate::diagnostics::record(format!(
+                                    calibraw_core::diagnostics::record(format!(
                                         "AI-denoise result cache restored in {:.3}s from {}",
                                         cache_started.elapsed().as_secs_f64(),
                                         ai_denoise_cache_path.display()
                                     ));
                                 }
-                                Ok(None) => crate::diagnostics::record(
+                                Ok(None) => calibraw_core::diagnostics::record(
                                     "AI-denoise result cache miss; RawNIND will run after open",
                                 ),
                                 Err(error) => {
@@ -607,7 +607,7 @@ impl CalibRawApp {
                                         "discarding invalid AI-denoise result cache {}: {error:#}",
                                         ai_denoise_cache_path.display()
                                     );
-                                    crate::diagnostics::record(format!(
+                                    calibraw_core::diagnostics::record(format!(
                                         "AI-denoise result cache rejected: {error:#}"
                                     ));
                                     if let Err(remove_error) =
@@ -629,7 +629,7 @@ impl CalibRawApp {
                     if full_raw.uses_opposed_chroma(&rendered_exposure) {
                         let highlight_started = Instant::now();
                         full_raw.inpaint_opposed_chroma_for_exposure(&rendered_exposure);
-                        crate::diagnostics::record(format!(
+                        calibraw_core::diagnostics::record(format!(
                             "Full-resolution highlight analysis finished in {:.3}s",
                             highlight_started.elapsed().as_secs_f64()
                         ));
@@ -649,7 +649,7 @@ impl CalibRawApp {
                         } else {
                             Arc::new(build_proxy(&full_raw, preview_spec))
                         };
-                    crate::diagnostics::record(format!(
+                    calibraw_core::diagnostics::record(format!(
                         "Preview proxy prepared in {:.3}s: {}x{} -> {}x{}",
                         proxy_started.elapsed().as_secs_f64(),
                         full_raw.width,
@@ -657,7 +657,7 @@ impl CalibRawApp {
                         preview_raw.width,
                         preview_raw.height
                     ));
-                    crate::diagnostics::record_raw("Preview proxy", &preview_raw);
+                    calibraw_core::diagnostics::record_raw("Preview proxy", &preview_raw);
                     let initial_params =
                         GpuParams::new(&rendered_exposure, &rendered_masks, &preview_raw)
                             .with_vignette_geometry(geometry);
@@ -670,14 +670,14 @@ impl CalibRawApp {
                             let wait_started = Instant::now();
                             match receiver.recv() {
                                 Ok(Ok(template)) => {
-                                    crate::diagnostics::record(format!(
+                                    calibraw_core::diagnostics::record(format!(
                                         "GPU preview startup prewarm available after {:.3}s wait",
                                         wait_started.elapsed().as_secs_f64()
                                     ));
                                     startup_gpu_prewarm_template = Some(template);
                                 }
-                                Ok(Err(error)) => crate::diagnostics::record(error),
-                                Err(error) => crate::diagnostics::record(format!(
+                                Ok(Err(error)) => calibraw_core::diagnostics::record(error),
+                                Err(error) => calibraw_core::diagnostics::record(format!(
                                     "GPU preview startup prewarm unavailable: {error}"
                                 )),
                             }
@@ -703,13 +703,13 @@ impl CalibRawApp {
                             template,
                         ) {
                             Ok(pipeline) => {
-                                crate::diagnostics::record(
+                                calibraw_core::diagnostics::record(
                                     "GPU preview reused precompiled programs",
                                 );
                                 pipeline
                             }
                             Err(reuse_error) => {
-                                crate::diagnostics::record(format!(
+                                calibraw_core::diagnostics::record(format!(
                                     "GPU preview program reuse unavailable ({reuse_error:#}); compiling programs"
                                 ));
                                 RawGpuPipeline::new_headless_with_quality(
@@ -734,7 +734,7 @@ impl CalibRawApp {
                         )
                         .map_err(|error| format!("GPU preview setup failed: {error:#}"))?
                     };
-                    crate::diagnostics::record(format!(
+                    calibraw_core::diagnostics::record(format!(
                         "GPU preview pipeline created in {:.3}s",
                         pipeline_started.elapsed().as_secs_f64()
                     ));
@@ -770,7 +770,7 @@ impl CalibRawApp {
                             })?;
                         install_missing_range_sources(&mut rendered_masks, &source);
                         mask_source = Some(source);
-                        crate::diagnostics::record(format!(
+                        calibraw_core::diagnostics::record(format!(
                             "Canonical mask source reconstructed with the preview pipeline in {:.3}s",
                             mask_source_started.elapsed().as_secs_f64()
                         ));
@@ -786,7 +786,7 @@ impl CalibRawApp {
                         &rendered_masks,
                         &preview_raw,
                     )?;
-                    crate::diagnostics::record(format!(
+                    calibraw_core::diagnostics::record(format!(
                         "Preview masks rasterized/uploaded in {:.3}s",
                         mask_upload_started.elapsed().as_secs_f64()
                     ));
@@ -807,12 +807,12 @@ impl CalibRawApp {
                         .map_err(|error| {
                             format!("initial Remove scene integration failed: {error:#}")
                         })?;
-                    crate::diagnostics::record(format!(
+                    calibraw_core::diagnostics::record(format!(
                         "Initial GPU preview dispatch submitted in {:.3}s",
                         first_render_started.elapsed().as_secs_f64()
                     ));
 
-                    crate::diagnostics::record(format!(
+                    calibraw_core::diagnostics::record(format!(
                         "RAW open worker finished in {:.3}s",
                         open_started.elapsed().as_secs_f64()
                     ));
@@ -843,7 +843,7 @@ impl CalibRawApp {
                 })();
 
                 if let Err(error) = &result {
-                    crate::diagnostics::record(format!(
+                    calibraw_core::diagnostics::record(format!(
                         "RAW open worker failed after {:.3}s: {error}",
                         open_started.elapsed().as_secs_f64()
                     ));

@@ -13,7 +13,7 @@ pub(super) fn show_android_library_folder_node(
     ui: &mut Ui,
     path: &str,
     name: &str,
-    children_by_parent: &HashMap<&str, Vec<&crate::android::LibraryFolder>>,
+    children_by_parent: &HashMap<&str, Vec<&calibraw_ffi::LibraryFolder>>,
     selected_folder: &str,
     action_in_progress: bool,
     expanded_folders: &mut HashSet<String>,
@@ -185,7 +185,7 @@ pub(in crate::ui::library) fn show_local_folder_tree(
         expanded_folders,
         ..
     } = &mut app.library.platform;
-    let mut children_by_parent = HashMap::<&str, Vec<&crate::android::LibraryFolder>>::new();
+    let mut children_by_parent = HashMap::<&str, Vec<&calibraw_ffi::LibraryFolder>>::new();
     for folder in folders.iter() {
         children_by_parent
             .entry(android_folder_parent(&folder.path))

@@ -1595,7 +1595,7 @@ fn raw_preview_cache_applies_saved_crop_without_full_edited_rendering() {
     let mut edits = crate::sidecar::default_edit_state();
     edits.geometry.crop = [0.0, 0.0, 0.5, 1.0];
     crate::sidecar::save_desktop(&path, edits).unwrap();
-    crate::thumbnail_cache::save_desktop_raw_thumbnail(
+    calibraw_core::thumbnail_cache::save_desktop_raw_thumbnail(
         &path,
         &RawThumbnail {
             width: 40,

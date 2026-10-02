@@ -41,7 +41,7 @@ impl CalibRawApp {
             self.ui.notice = Some("Finish the current Android file picker first.".to_owned());
             return;
         }
-        match crate::android::open_camera_profile_folder(&self.android.android_app) {
+        match calibraw_ffi::open_camera_profile_folder(&self.android.android_app) {
             Ok(()) => {
                 self.android.picker_pending = true;
                 self.android.camera_profile_folder_importing_label = None;
@@ -61,15 +61,15 @@ impl CalibRawApp {
             self.preferences.last_camera_profile = None;
             self.develop.raw_cache.clear();
             #[cfg(target_os = "android")]
-            if let Err(error) = crate::android::clear_camera_profile_folder_picker_location(
-                &self.android.android_app,
-            ) {
+            if let Err(error) =
+                calibraw_ffi::clear_camera_profile_folder_picker_location(&self.android.android_app)
+            {
                 log::warn!("{error}");
             }
             if self.persist_performance_settings() {
                 #[cfg(target_os = "android")]
                 if let Some(previous_folder) = previous_folder {
-                    if let Err(error) = crate::android::remove_camera_profile_mirror(
+                    if let Err(error) = calibraw_ffi::remove_camera_profile_mirror(
                         &self.android.android_app,
                         &previous_folder,
                     ) {
@@ -225,7 +225,7 @@ impl CalibRawApp {
                     return;
                 }
             };
-            match crate::android::open_library_document(
+            match calibraw_ffi::open_library_document(
                 &self.android.android_app,
                 &raw_uri,
                 &display_name,

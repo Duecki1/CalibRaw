@@ -3,7 +3,7 @@ use super::*;
 
 #[cfg(target_os = "android")]
 pub(super) struct ReplayFrameWriter {
-    encoder: Option<crate::android::ReplayVideoEncoder>,
+    encoder: Option<calibraw_ffi::ReplayVideoEncoder>,
     width: usize,
     height: usize,
     yuv: Vec<u8>,
@@ -18,7 +18,7 @@ impl ReplayFrameWriter {
         height: u32,
     ) -> Result<Self, String> {
         Ok(Self {
-            encoder: Some(crate::android::ReplayVideoEncoder::start(
+            encoder: Some(calibraw_ffi::ReplayVideoEncoder::start(
                 app, path, width, height, REPLAY_FPS,
             )?),
             width: width as usize,

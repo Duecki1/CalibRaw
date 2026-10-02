@@ -299,7 +299,7 @@ pub(super) fn show_android_library_folder_dialog(ui: &mut Ui, app: &mut CalibRaw
         app.library.platform.folder_name_dialog = None;
     }
     if let Some((parent, name)) = create {
-        match crate::android::create_library_folder(&app.library.platform.app, &parent, &name) {
+        match calibraw_ffi::create_library_folder(&app.library.platform.app, &parent, &name) {
             Ok(folder) => {
                 app.library.platform.folder_name_dialog = None;
                 app.library.platform.expanded_folders.insert(parent);
@@ -545,7 +545,7 @@ pub(super) fn show_library_raw_name_dialog(
             app.library.raw_name_dialog = None;
             app.library.clear_selection();
             #[cfg(target_os = "android")]
-            crate::android::set_back_navigation_active(false);
+            calibraw_ffi::set_back_navigation_active(false);
             app.library.refresh(ui.ctx());
             app.library.status = format!("Renamed RAW to {name}.");
 

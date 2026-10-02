@@ -235,7 +235,7 @@ impl LibraryAsset {
     }
 
     #[cfg(target_os = "android")]
-    pub(crate) fn from_android_document(document: crate::android::LibraryDocument) -> Self {
+    pub(crate) fn from_android_document(document: calibraw_ffi::LibraryDocument) -> Self {
         Self {
             id: LibraryAssetId::Android(document.uri.clone()),
             display_name: document.display_name,
@@ -437,7 +437,7 @@ enum ScanEvent {
     #[cfg(target_os = "android")]
     AndroidFolders {
         generation: u64,
-        folders: Vec<crate::android::LibraryFolder>,
+        folders: Vec<calibraw_ffi::LibraryFolder>,
     },
     Thumbnail {
         generation: u64,
@@ -648,7 +648,7 @@ struct PlatformLibraryState {
     app: calibraw_ffi::AndroidApp,
     root_location: String,
     folder: String,
-    folders: Vec<crate::android::LibraryFolder>,
+    folders: Vec<calibraw_ffi::LibraryFolder>,
     expanded_folders: HashSet<String>,
     folder_name_dialog: Option<AndroidLibraryFolderNameDialog>,
 }

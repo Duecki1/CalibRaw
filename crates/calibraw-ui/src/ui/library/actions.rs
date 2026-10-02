@@ -270,7 +270,7 @@ pub(crate) fn apply_library_action(
         LibraryAction::Duplicate(assets) => {
             app.library.clear_selection();
             #[cfg(target_os = "android")]
-            crate::android::set_back_navigation_active(false);
+            calibraw_ffi::set_back_navigation_active(false);
             start_duplicate_assets(app, &assets, ui.ctx());
         }
         LibraryAction::Rename(asset) => {
@@ -308,7 +308,7 @@ pub(crate) fn apply_library_action(
             }
             app.library.clear_selection();
             #[cfg(target_os = "android")]
-            crate::android::set_back_navigation_active(false);
+            calibraw_ffi::set_back_navigation_active(false);
             app.library.refresh(ui.ctx());
             app.library.status = if failures.is_empty() {
                 format!(
@@ -347,7 +347,7 @@ fn delete_confirmed_library_assets(ui: &Ui, app: &mut CalibRawApp, assets: Vec<L
     }
     app.library.clear_selection();
     #[cfg(target_os = "android")]
-    crate::android::set_back_navigation_active(false);
+    calibraw_ffi::set_back_navigation_active(false);
     app.library.refresh(ui.ctx());
     app.library.status = if failures.is_empty() {
         #[cfg(not(target_os = "android"))]
@@ -692,7 +692,7 @@ pub(super) fn show_library_selection_action_bar(
     if clear_selection {
         app.library.clear_selection();
         #[cfg(target_os = "android")]
-        crate::android::set_back_navigation_active(false);
+        calibraw_ffi::set_back_navigation_active(false);
     }
 }
 
@@ -878,7 +878,7 @@ pub(crate) fn show_library_action_overlays(
             ) {
                 app.library.clear_selection();
                 #[cfg(target_os = "android")]
-                crate::android::set_back_navigation_active(false);
+                calibraw_ffi::set_back_navigation_active(false);
                 app.library.export_dialog = None;
             }
         }

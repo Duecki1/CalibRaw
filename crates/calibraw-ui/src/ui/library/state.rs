@@ -21,7 +21,7 @@ impl LibraryState {
         render_edited_thumbnails_during_indexing: bool,
     ) -> Self {
         let thumbnail_workers = workers.clamp(1, maximum_thumbnail_worker_count());
-        crate::thumbnail_cache::set_rendered_thumbnail_worker_limit(thumbnail_workers);
+        calibraw_core::thumbnail_cache::set_rendered_thumbnail_worker_limit(thumbnail_workers);
         Self {
             location: None,
             folder: None,
@@ -78,18 +78,16 @@ impl LibraryState {
         selected_folder: String,
         render_edited_thumbnails_during_indexing: bool,
     ) -> Self {
-        let root_location =
-            crate::android::library_location(&android_app).unwrap_or_else(|error| {
-                log::warn!("{error}");
-                "Android/media/de.duecki.calibraw/.library".to_owned()
-            });
+        let root_location = calibraw_ffi::library_location(&android_app).unwrap_or_else(|error| {
+            log::warn!("{error}");
+            "Android/media/de.duecki.calibraw/.library".to_owned()
+        });
         let selected_folder =
-            match crate::android::select_library_folder(&android_app, &selected_folder) {
+            match calibraw_ffi::select_library_folder(&android_app, &selected_folder) {
                 Ok(()) => selected_folder,
                 Err(error) => {
                     log::warn!("{error}");
-                    if let Err(root_error) = crate::android::select_library_folder(&android_app, "")
-                    {
+                    if let Err(root_error) = calibraw_ffi::select_library_folder(&android_app, "") {
                         log::warn!("{root_error}");
                     }
                     String::new()
@@ -97,7 +95,7 @@ impl LibraryState {
             };
         let location = android_library_location_label(&root_location, &selected_folder);
         let thumbnail_workers = workers.clamp(1, maximum_thumbnail_worker_count());
-        crate::thumbnail_cache::set_rendered_thumbnail_worker_limit(thumbnail_workers);
+        calibraw_core::thumbnail_cache::set_rendered_thumbnail_worker_limit(thumbnail_workers);
         let mut state = Self {
             location: Some(location),
             folder_sidebar_open: false,
@@ -272,7 +270,7 @@ impl LibraryState {
         self.select_all_thumbnails();
 
         #[cfg(target_os = "android")]
-        crate::android::set_back_navigation_active(self.selection_mode);
+        calibraw_ffi::set_back_navigation_active(self.selection_mode);
 
         self.selected_assets.len()
     }
@@ -419,7 +417,7 @@ impl LibraryState {
             return;
         }
         self.thumbnail_workers = workers;
-        crate::thumbnail_cache::set_rendered_thumbnail_worker_limit(workers);
+        calibraw_core::thumbnail_cache::set_rendered_thumbnail_worker_limit(workers);
         if self.location.is_some() {
             self.refresh(context);
         }
@@ -570,7 +568,7 @@ impl LibraryState {
             std::thread::Builder::new()
                 .name("calibraw-library".to_owned())
                 .spawn(move || {
-                    let folders = match crate::android::list_library_folders(&android_app) {
+                    let folders = match calibraw_ffi::list_library_folders(&android_app) {
                         Ok(folders) => folders,
                         Err(error) => {
                             send_scan_failure(&event_sender, generation, error, &repaint);
@@ -586,7 +584,7 @@ impl LibraryState {
                     {
                         return;
                     }
-                    let documents = match crate::android::list_library_documents(&android_app) {
+                    let documents = match calibraw_ffi::list_library_documents(&android_app) {
                         Ok(documents) => documents,
                         Err(error) => {
                             send_scan_failure(&event_sender, generation, error, &repaint);
@@ -602,7 +600,7 @@ impl LibraryState {
                     for asset in &mut assets {
                         if let Some(uri) = asset.android_uri() {
                             asset.metadata.dimensions_hint =
-                                crate::android::load_library_display_dimensions(&android_app, uri)
+                                calibraw_ffi::load_library_display_dimensions(&android_app, uri)
                                     .ok();
                         }
                     }
@@ -680,7 +678,7 @@ impl LibraryState {
                 }
                 self.clear_selection();
                 #[cfg(target_os = "android")]
-                crate::android::set_back_navigation_active(false);
+                calibraw_ffi::set_back_navigation_active(false);
                 self.status = completion.result.unwrap_or_else(|error| error);
                 self.refresh(context);
             }
@@ -811,7 +809,7 @@ impl LibraryState {
                     }
                     if self.selected_assets.is_empty() && !self.selection_mode {
                         #[cfg(target_os = "android")]
-                        crate::android::set_back_navigation_active(false);
+                        calibraw_ffi::set_back_navigation_active(false);
                     }
                     self.scanning = false;
                     self.catalog_ready = true;

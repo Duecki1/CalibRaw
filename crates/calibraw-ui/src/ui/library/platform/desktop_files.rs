@@ -95,7 +95,7 @@ pub(in crate::ui::library) fn copy_raw_bundle_to_folder(
             );
             let _ = crate::sidecar::invalidate_developed_thumbnail_cache(&destination_raw);
         }
-        if let Err(error) = crate::file_ops::sync_parent_directory(destination_folder) {
+        if let Err(error) = calibraw_core::file_ops::sync_parent_directory(destination_folder) {
             log::warn!(
                 "could not sync image paste folder {} after copying {}: {error}",
                 destination_folder.display(),
@@ -205,7 +205,7 @@ pub(in crate::ui::library) fn rename_raw_bundle(
     if let Err(error) = crate::sidecar::invalidate_developed_thumbnail_cache(source_raw) {
         log::warn!("could not clear the old thumbnail after renaming a RAW: {error}");
     }
-    if let Err(error) = crate::file_ops::sync_parent_directory(parent) {
+    if let Err(error) = calibraw_core::file_ops::sync_parent_directory(parent) {
         log::warn!(
             "could not sync RAW folder {} after renaming {}: {error}",
             parent.display(),
@@ -242,7 +242,7 @@ pub(in crate::ui::library) fn import_raw_into_folder(
 
         match copy_file_create_new(source, &destination) {
             Ok(()) => {
-                if let Err(error) = crate::file_ops::sync_parent_directory(folder) {
+                if let Err(error) = calibraw_core::file_ops::sync_parent_directory(folder) {
                     log::warn!(
                         "could not sync RAW import folder {} after copying {}: {error}",
                         folder.display(),
@@ -403,7 +403,9 @@ pub(in crate::ui::library) fn copy_directory_create_new(
                     format!("Could not create {}: {error}", destination_path.display())
                 })?;
                 copy_contents(&source_path, &destination_path)?;
-                if let Err(error) = crate::file_ops::sync_parent_directory(&destination_path) {
+                if let Err(error) =
+                    calibraw_core::file_ops::sync_parent_directory(&destination_path)
+                {
                     log::warn!(
                         "could not sync copied folder {}: {error}",
                         destination_path.display()
@@ -434,7 +436,7 @@ pub(in crate::ui::library) fn copy_directory_create_new(
         }
         return Err(error);
     }
-    if let Err(error) = crate::file_ops::sync_parent_directory(destination_parent) {
+    if let Err(error) = calibraw_core::file_ops::sync_parent_directory(destination_parent) {
         log::warn!(
             "could not sync folder {} after copying {}: {error}",
             destination_parent.display(),
@@ -496,7 +498,7 @@ pub(in crate::ui::library) fn run_folder_operation(
                     format!("Could not create folder {}: {error}", destination.display())
                 }
             })?;
-            if let Err(error) = crate::file_ops::sync_parent_directory(&parent) {
+            if let Err(error) = calibraw_core::file_ops::sync_parent_directory(&parent) {
                 log::warn!("could not sync folder {}: {error}", parent.display());
             }
             Ok(LibraryFolderOperationResult::Created(destination))
@@ -557,11 +559,12 @@ pub(in crate::ui::library) fn run_folder_operation(
                 )
             })?;
             if let Some(parent) = source.parent() {
-                if let Err(error) = crate::file_ops::sync_parent_directory(parent) {
+                if let Err(error) = calibraw_core::file_ops::sync_parent_directory(parent) {
                     log::warn!("could not sync source folder {}: {error}", parent.display());
                 }
             }
-            if let Err(error) = crate::file_ops::sync_parent_directory(&destination_parent) {
+            if let Err(error) = calibraw_core::file_ops::sync_parent_directory(&destination_parent)
+            {
                 log::warn!(
                     "could not sync destination folder {}: {error}",
                     destination_parent.display()
@@ -578,7 +581,7 @@ pub(in crate::ui::library) fn run_folder_operation(
                 format!("Could not delete folder {}: {error}", target.display())
             })?;
             if let Some(parent) = target.parent() {
-                if let Err(error) = crate::file_ops::sync_parent_directory(parent) {
+                if let Err(error) = calibraw_core::file_ops::sync_parent_directory(parent) {
                     log::warn!(
                         "could not sync folder {} after deletion: {error}",
                         parent.display()
