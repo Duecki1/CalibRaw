@@ -235,7 +235,7 @@ pub(crate) fn save(path: Option<&Path>, settings: PerformanceSettings) -> Result
     let settings = settings.sanitized();
     let bytes = serde_json::to_vec_pretty(&settings)
         .map_err(|error| format!("could not encode performance settings: {error}"))?;
-    crate::thumbnail_cache::write_bytes_atomic(path, &bytes).map_err(|error| {
+    calibraw_core::file_ops::write_bytes_atomically(path, &bytes).map_err(|error| {
         format!(
             "could not save performance settings {}: {error}",
             path.display()

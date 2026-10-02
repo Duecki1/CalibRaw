@@ -7,6 +7,7 @@ use crate::pipeline::{
     MaskKind, NativeRect, RemoveBrushPoint, RemoveBrushStroke, RemovePatch, RemoveStroke,
     RetouchAlignment, RetouchStroke, RetouchTool,
 };
+use std::fs;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 fn sample_edits() -> EditState {
@@ -1654,6 +1655,7 @@ fn developed_thumbnail_cache_round_trips_and_tracks_sidecar_content() {
 #[cfg(unix)]
 #[test]
 fn non_utf8_raw_paths_keep_their_exact_bytes() {
+    use std::ffi::OsString;
     use std::os::unix::ffi::{OsStrExt, OsStringExt};
 
     let raw = PathBuf::from(OsString::from_vec(b"photo-\xff.NEF".to_vec()));
