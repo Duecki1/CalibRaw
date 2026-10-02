@@ -1,5 +1,12 @@
 use super::*;
 
+const SUBJECT_MODEL_ARTIFACTS_URL: &str =
+    "https://huggingface.co/Duecki/CalibRaw-Artifacts/tree/main/models/briefnet";
+const SKY_MODEL_ARTIFACTS_URL: &str =
+    "https://huggingface.co/Duecki/CalibRaw-Artifacts/tree/main/models/skyseg";
+const OBJECT_MODEL_ARTIFACTS_URL: &str =
+    "https://huggingface.co/Duecki/CalibRaw-Artifacts/tree/main/models/sam2";
+
 impl CalibRawApp {
     fn show_generated_mask_dialog(&mut self, ctx: &egui::Context) {
         let (model, runtime_download_needed, model_download_needed) = match self.ai.consent {
@@ -38,27 +45,45 @@ impl CalibRawApp {
             AiMaskModel::Subject => {
                 let checkpoint = self.ai.birefnet_quality.model();
                 (
-                    format!("BiRefNet (~{:.0} MB)", checkpoint.bytes as f64 / 1_000_000.0),
+                    format!(
+                        "BiRefNet (~{:.0} MB)",
+                        checkpoint.bytes as f64 / 1_000_000.0
+                    ),
                     "create subject and background masks",
-                    ("Subject model artifacts", "https://huggingface.co/Duecki/CalibRaw-Artifacts/tree/main/models/briefnet"),
-                    format!("{} quality uses {} with a {} × {} input. License: MIT.",
-                        self.ai.birefnet_quality.label(), checkpoint.checkpoint,
-                        checkpoint.input_height, checkpoint.input_width),
+                    ("Subject model artifacts", SUBJECT_MODEL_ARTIFACTS_URL),
+                    format!(
+                        "{} quality uses {} with a {} × {} input. License: MIT.",
+                        self.ai.birefnet_quality.label(),
+                        checkpoint.checkpoint,
+                        checkpoint.input_height,
+                        checkpoint.input_width
+                    ),
                 )
             }
             AiMaskModel::Sky => (
-                "SkySeg U2Net (~176 MB)".to_owned(), "create sky masks",
-                ("Sky model artifact", "https://huggingface.co/Duecki/CalibRaw-Artifacts/tree/main/models/skyseg"),
-                "SkySeg U2Net runs locally on a 320 × 320 image and produces a sky probability mask. License: MIT.".to_owned(),
+                "SkySeg U2Net (~176 MB)".to_owned(),
+                "create sky masks",
+                ("Sky model artifact", SKY_MODEL_ARTIFACTS_URL),
+                "SkySeg U2Net runs locally on a 320 × 320 image and produces a sky \
+                 probability mask. License: MIT."
+                    .to_owned(),
             ),
             AiMaskModel::Depth => {
                 let depth_model = calibraw_ai::ai_masks::DEPTH_MODEL;
                 (
-                    format!("{} (~{:.0} MB)", depth_model.name, depth_model.download_bytes as f64 / 1_000_000.0),
+                    format!(
+                        "{} (~{:.0} MB)",
+                        depth_model.name,
+                        depth_model.download_bytes as f64 / 1_000_000.0
+                    ),
                     "create depth masks and fog",
                     ("Depth model artifact", depth_model.artifact_url),
-                    format!("{} runs locally on a {} × {} letterboxed image and produces relative depth. License: Apache-2.0.",
-                        depth_model.name, depth_model.input_edge, depth_model.input_edge),
+                    format!(
+                        "{name} runs locally on a {edge} × {edge} letterboxed image and \
+                         produces relative depth. License: Apache-2.0.",
+                        name = depth_model.name,
+                        edge = depth_model.input_edge,
+                    ),
                 )
             }
         };
@@ -155,9 +180,12 @@ impl CalibRawApp {
                             "object-download-details",
                             model_download_needed,
                             runtime_download_needed,
-                            &[("Object model artifacts", "https://huggingface.co/Duecki/CalibRaw-Artifacts/tree/main/models/sam2")],
+                            &[("Object model artifacts", OBJECT_MODEL_ARTIFACTS_URL)],
                             |ui| {
-                                ui.label("SAM 2.1 Hiera Tiny uses an encoder and decoder with local edge-aware cleanup. License: Apache-2.0.");
+                                ui.label(
+                                    "SAM 2.1 Hiera Tiny uses an encoder and decoder with local \
+                                     edge-aware cleanup. License: Apache-2.0.",
+                                );
                             },
                         );
                         self.show_manual_runtime_warning(ui);
