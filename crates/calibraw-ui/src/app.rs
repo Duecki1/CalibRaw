@@ -1061,6 +1061,19 @@ pub(crate) struct DevelopUiState {
     pub(crate) mask_point_color_mask: Option<usize>,
 }
 
+impl DevelopUiState {
+    pub(crate) fn cancel_white_balance_picker(&mut self) {
+        self.white_balance_picker_active = false;
+        self.white_balance_picker_drag = None;
+    }
+
+    /// Stops picking global point colors and hides their range overlay.
+    pub(crate) fn cancel_point_color_preview(&mut self) {
+        self.point_color.picker_active = false;
+        self.point_color.visualize_range = false;
+    }
+}
+
 pub(crate) struct PreferencesState {
     pub(crate) image_relative_brush_size: bool,
     pub(crate) show_develop_navigation_labels: bool,

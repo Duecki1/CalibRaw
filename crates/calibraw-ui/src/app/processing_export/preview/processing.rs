@@ -52,8 +52,7 @@ impl CalibRawApp {
         let result = preview_source.as_ref().and_then(|raw| {
             raw.white_balance_offsets_from_area(area[0], area[1], self.develop.exposure.black_point)
         });
-        self.develop_ui.white_balance_picker_active = false;
-        self.develop_ui.white_balance_picker_drag = None;
+        self.develop_ui.cancel_white_balance_picker();
         let Some((temperature, tint)) = result else {
             self.ui.notice = Some(
                 "Could not estimate white balance there. Choose a brighter, unclipped neutral area."

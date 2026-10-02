@@ -334,57 +334,119 @@ fn range_editor(
     ui.push_id(label, |ui| {
         ui.label(label);
         let limit = if axis == 0 { 0.5 } else { 1.0 };
-        let (rect, response) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 42.0), Sense::click_and_drag());
+        let (rect, response) = ui.allocate_exact_size(
+            egui::vec2(ui.available_width(), 42.0),
+            Sense::click_and_drag(),
+        );
         let bar = rect.shrink2(egui::vec2(7.0, 10.0));
         let values = [range.min, range.inner_min, range.inner_max, range.max];
         let handle_pos = |value: f32| egui::lerp(bar.x_range(), (value / limit + 1.0) * 0.5);
         let drag_id = ui.id().with("active-range-handle");
         if response.drag_started() || response.clicked() {
             if let Some(pos) = response.interact_pointer_pos() {
-                let index = values.iter().enumerate().min_by(|(a, x), (b, y)| {
-                    let distance = |index: usize, value: f32| {
-                        let dy = if index == 0 || index == 3 { rect.bottom() } else { rect.top() };
-                        egui::pos2(handle_pos(value), dy).distance_sq(pos)
-                    };
-                    distance(*a, **x).total_cmp(&distance(*b, **y))
-                }).map(|(index, _)| index).unwrap_or(0);
+                let index = values
+                    .iter()
+                    .enumerate()
+                    .min_by(|(a, x), (b, y)| {
+                        let distance = |index: usize, value: f32| {
+                            let dy = if index == 0 || index == 3 {
+                                rect.bottom()
+                            } else {
+                                rect.top()
+                            };
+                            egui::pos2(handle_pos(value), dy).distance_sq(pos)
+                        };
+                        distance(*a, **x).total_cmp(&distance(*b, **y))
+                    })
+                    .map(|(index, _)| index)
+                    .unwrap_or(0);
                 ui.ctx().data_mut(|data| data.insert_temp(drag_id, index));
             }
         }
         if response.dragged() || response.clicked() {
             if let Some(pos) = response.interact_pointer_pos() {
-                let index = ui.ctx().data(|data| data.get_temp::<usize>(drag_id)).unwrap_or(0);
-                set_range_handle(range, index, ((pos.x - bar.left()) / bar.width() * 2.0 - 1.0) * limit, limit);
+                let index = ui
+                    .ctx()
+                    .data(|data| data.get_temp::<usize>(drag_id))
+                    .unwrap_or(0);
+                set_range_handle(
+                    range,
+                    index,
+                    ((pos.x - bar.left()) / bar.width() * 2.0 - 1.0) * limit,
+                    limit,
+                );
             }
         }
         gradient(ui, bar, 80, 1, |x, _| {
             let offset = (x * 2.0 - 1.0) * limit;
             let mut hsl = sample;
-            hsl[axis] = if axis == 0 { (sample[axis] + offset).rem_euclid(1.0) } else { (sample[axis] + offset).clamp(0.0, 1.0) };
+            hsl[axis] = if axis == 0 {
+                (sample[axis] + offset).rem_euclid(1.0)
+            } else {
+                (sample[axis] + offset).clamp(0.0, 1.0)
+            };
             let color = hsl_color(hsl);
             color.gamma_multiply(0.25 + 0.75 * range.weight(offset))
         });
-        ui.painter().rect_stroke(bar, 2.0, ui.visuals().widgets.noninteractive.bg_stroke, StrokeKind::Inside);
-        for (index, value) in [range.min, range.inner_min, range.inner_max, range.max].into_iter().enumerate() {
+        ui.painter().rect_stroke(
+            bar,
+            2.0,
+            ui.visuals().widgets.noninteractive.bg_stroke,
+            StrokeKind::Inside,
+        );
+        for (index, value) in [range.min, range.inner_min, range.inner_max, range.max]
+            .into_iter()
+            .enumerate()
+        {
             let x = handle_pos(value);
-            let y = if index == 0 || index == 3 { bar.bottom() + 4.0 } else { bar.top() - 4.0 };
-            ui.painter().line_segment([egui::pos2(x, bar.top()), egui::pos2(x, bar.bottom())], Stroke::new(1.0, Color32::WHITE));
-            ui.painter().circle_filled(egui::pos2(x, y), 4.0, ui.visuals().widgets.inactive.bg_fill);
-            ui.painter().circle_stroke(egui::pos2(x, y), 4.0, ui.visuals().selection.stroke);
+            let y = if index == 0 || index == 3 {
+                bar.bottom() + 4.0
+            } else {
+                bar.top() - 4.0
+            };
+            ui.painter().line_segment(
+                [egui::pos2(x, bar.top()), egui::pos2(x, bar.bottom())],
+                Stroke::new(1.0, Color32::WHITE),
+            );
+            ui.painter().circle_filled(
+                egui::pos2(x, y),
+                4.0,
+                ui.visuals().widgets.inactive.bg_fill,
+            );
+            ui.painter()
+                .circle_stroke(egui::pos2(x, y), 4.0, ui.visuals().selection.stroke);
         }
-        response.on_hover_text("Drag the lower outer handles for feathering and the upper inner handles for full strength.");
+        response.on_hover_text(
+            "Drag the lower outer handles for feathering and the upper inner handles for \
+             full strength.",
+        );
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 3.0;
-            for (index, name) in ["Fade in", "Full from", "Full to", "Fade out"].into_iter().enumerate() {
-                let mut value = [range.min, range.inner_min, range.inner_max, range.max][index] * 100.0;
+            for (index, name) in ["Fade in", "Full from", "Full to", "Fade out"]
+                .into_iter()
+                .enumerate()
+            {
+                let mut value =
+                    [range.min, range.inner_min, range.inner_max, range.max][index] * 100.0;
                 let field_id = ui.next_auto_id();
                 let field_range = -limit * 100.0..=limit * 100.0;
-                let stepped = step_focused_numeric_field(ui, field_id, &mut value, field_range.clone());
+                let stepped =
+                    step_focused_numeric_field(ui, field_id, &mut value, field_range.clone());
                 let display_decimals = if ui.memory(|memory| memory.has_focus(field_id))
                     || (value - value.round()).abs() > 0.0001
-                { 2 } else { 1 };
-                let response = ui.add(egui::DragValue::new(&mut value).range(field_range)
-                    .speed(0.5).fixed_decimals(display_decimals)).on_hover_text(format!("{name}: offset from sampled color"));
+                {
+                    2
+                } else {
+                    1
+                };
+                let response = ui
+                    .add(
+                        egui::DragValue::new(&mut value)
+                            .range(field_range)
+                            .speed(0.5)
+                            .fixed_decimals(display_decimals),
+                    )
+                    .on_hover_text(format!("{name}: offset from sampled color"));
                 if stepped || response.changed() {
                     set_range_handle(range, index, value / 100.0, limit);
                 }

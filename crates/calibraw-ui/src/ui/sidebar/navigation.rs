@@ -316,12 +316,10 @@ impl Sidebar {
                         app.develop_ui.adjustment_section = section;
                         app.develop_ui.effect_component = None;
                         if section != AdjustmentSection::ColorMixer {
-                            app.develop_ui.point_color.picker_active = false;
-                            app.develop_ui.point_color.visualize_range = false;
+                            app.develop_ui.cancel_point_color_preview();
                         }
                         if section != AdjustmentSection::Color {
-                            app.develop_ui.white_balance_picker_active = false;
-                            app.develop_ui.white_balance_picker_drag = None;
+                            app.develop_ui.cancel_white_balance_picker();
                         }
                     }
                 }
@@ -334,10 +332,8 @@ impl Sidebar {
                     show_labels,
                 );
                 if added || selected_before != app.develop_ui.effect_component {
-                    app.develop_ui.point_color.picker_active = false;
-                    app.develop_ui.point_color.visualize_range = false;
-                    app.develop_ui.white_balance_picker_active = false;
-                    app.develop_ui.white_balance_picker_drag = None;
+                    app.develop_ui.cancel_point_color_preview();
+                    app.develop_ui.cancel_white_balance_picker();
                 }
                 if added {
                     app.develop_ui.adjustment_section = AdjustmentSection::Effects;
@@ -385,13 +381,7 @@ impl Sidebar {
                         app.develop_ui.mask_section = section;
                         app.develop_ui.mask_effect_component = None;
                         if section != MaskSection::ColorMixer {
-                            let was_visualizing = app.develop_ui.mask_point_color.visualize_range;
-                            app.develop_ui.mask_point_color.picker_active = false;
-                            app.develop_ui.mask_point_color.visualize_range = false;
-                            if was_visualizing {
-                                crate::app::preview_visibility::PreviewVisibility::invalidate_mask_cache(ui.ctx());
-                                app.queue_preview_processing(crate::pipeline::ProcessingStage::Output);
-                            }
+                            app.cancel_mask_point_color_preview();
                         }
                     }
                 }
@@ -407,21 +397,12 @@ impl Sidebar {
                         show_labels,
                     );
                     if added || selected_before != app.develop_ui.mask_effect_component {
-                        let was_visualizing = app.develop_ui.mask_point_color.visualize_range;
-                        app.develop_ui.mask_point_color.picker_active = false;
-                        app.develop_ui.mask_point_color.visualize_range = false;
-                        if was_visualizing {
-                            crate::app::preview_visibility::PreviewVisibility::invalidate_mask_cache(
-                                ui.ctx(),
-                            );
-                            app.queue_preview_processing(
-                                crate::pipeline::ProcessingStage::Output,
-                            );
-                        }
+                        app.cancel_mask_point_color_preview();
                     }
                     if added {
                         app.develop_ui.mask_section = MaskSection::Effects;
-                        if light_rays_before != app.masks.stack.masks[mask_index].has_light_rays_effect() {
+                        let mask = &app.masks.stack.masks[mask_index];
+                        if light_rays_before != mask.has_light_rays_effect() {
                             app.mark_mask_geometry_dirty(mask_index);
                         } else {
                             app.mark_mask_adjustments_dirty();
@@ -934,8 +915,7 @@ impl Sidebar {
             app.develop_ui.point_color.picker_active = false;
         }
         if app.develop_ui.point_color.picker_active {
-            app.develop_ui.white_balance_picker_active = false;
-            app.develop_ui.white_balance_picker_drag = None;
+            app.develop_ui.cancel_white_balance_picker();
         }
         if changed {
             app.develop.exposure.sanitize_tone_curves();

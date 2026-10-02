@@ -83,21 +83,30 @@ impl CalibRawApp {
             self.develop_ui.straighten_drag = None;
         }
         if tab != SidebarTab::Adjustments {
-            self.develop_ui.point_color.picker_active = false;
-            self.develop_ui.point_color.visualize_range = false;
-            self.develop_ui.white_balance_picker_active = false;
-            self.develop_ui.white_balance_picker_drag = None;
+            self.develop_ui.cancel_point_color_preview();
+            self.develop_ui.cancel_white_balance_picker();
         }
         if tab != SidebarTab::Masks {
-            let was_visualizing = self.develop_ui.mask_point_color.visualize_range;
-            self.develop_ui.mask_point_color.picker_active = false;
-            self.develop_ui.mask_point_color.visualize_range = false;
-            if was_visualizing {
-                super::preview_visibility::PreviewVisibility::invalidate_mask_cache(&self.egui_ctx);
-                self.queue_preview_processing(crate::pipeline::ProcessingStage::Output);
-            }
+            self.cancel_mask_point_color_preview();
         }
         self.sync_ai_model_runtime_context();
+    }
+
+    /// Stops picking point colors for the selected mask and hides their range
+    /// overlay. The overlay is baked into the cached mask preview, so hiding it
+    /// requires a refresh.
+    pub(crate) fn cancel_mask_point_color_preview(&mut self) {
+        let was_visualizing = self.develop_ui.mask_point_color.visualize_range;
+        self.develop_ui.mask_point_color.picker_active = false;
+        self.develop_ui.mask_point_color.visualize_range = false;
+        if was_visualizing {
+            self.refresh_mask_overlay_preview();
+        }
+    }
+
+    pub(crate) fn refresh_mask_overlay_preview(&mut self) {
+        super::preview_visibility::PreviewVisibility::invalidate_mask_cache(&self.egui_ctx);
+        self.queue_preview_processing(crate::pipeline::ProcessingStage::Output);
     }
 
     fn select_inpaint_tool_action(&mut self, tool: InpaintTool) {
