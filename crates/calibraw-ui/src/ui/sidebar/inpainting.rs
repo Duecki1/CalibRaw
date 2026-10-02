@@ -1,3 +1,5 @@
+use super::*;
+
 fn inpaint_tool_help(tool: InpaintTool) -> &'static str {
     match tool {
         InpaintTool::Remove => {
