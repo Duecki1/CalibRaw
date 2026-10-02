@@ -5,16 +5,17 @@ use crate::model_artifact::{
 use crate::model_runtime::{acquire_model_session, AiModel, ModelRetention};
 use anyhow::{Context, Result};
 use calibraw_core::color_math::LINEAR_SRGB_TO_REC2020;
+use calibraw_core::file_ops::write_atomically;
 use calibraw_core::matrix::{self, Matrix3};
 use calibraw_gpu::wgpu;
 use ort::value::Tensor;
 use ring::digest::{Context as Sha256Context, SHA256};
 use std::{
-    fs::{self, File, OpenOptions},
+    fs::{self, File},
     io::{Read, Write},
     path::{Path, PathBuf},
     sync::{
-        atomic::{AtomicBool, AtomicU64, Ordering},
+        atomic::{AtomicBool, Ordering},
         mpsc, Arc, RwLock,
     },
     time::Duration,
@@ -72,7 +73,6 @@ const RESULT_CACHE_MANIFEST: &str = "manifest.bin";
 const RESULT_CACHE_PAYLOAD: &str = "denoised-pixels.bin";
 const RESULT_CACHE_HEADER_BYTES: usize = 96;
 const RESULT_CACHE_IO_CHUNK: usize = 1024 * 1024;
-static NEXT_RESULT_CACHE_TEMPORARY_ID: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug)]
 pub enum AiDenoiseEvent {
@@ -213,21 +213,7 @@ pub fn save_result_cache(
         .context("AI-denoise cache path has no parent directory")?;
     fs::create_dir_all(parent)
         .with_context(|| format!("create AI-denoise cache directory {}", parent.display()))?;
-    let file_name = path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or("result.calibraw-ai.zip");
-    let temporary_id = NEXT_RESULT_CACHE_TEMPORARY_ID.fetch_add(1, Ordering::Relaxed);
-    let temporary = parent.join(format!(
-        ".{file_name}.tmp-{}-{temporary_id}",
-        std::process::id()
-    ));
-    let result = (|| {
-        let file = OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&temporary)
-            .with_context(|| format!("create {}", temporary.display()))?;
+    write_atomically(path, |file| -> Result<()> {
         let mut archive = ZipWriter::new(file);
         let stored = FileOptions::default().compression_method(CompressionMethod::Stored);
         archive
@@ -248,19 +234,10 @@ pub fn save_result_cache(
                 .write_all(chunk)
                 .context("write AI-denoise cache scene payload")?;
         }
-        let file = archive.finish().context("finalize AI-denoise cache")?;
-        file.sync_all().context("flush AI-denoise cache")?;
-        ensure_not_cancelled(cancellation)?;
-        crate::file_ops::replace_file(&temporary, path)
-            .with_context(|| format!("publish AI-denoise cache to {}", path.display()))?;
-        crate::file_ops::sync_parent_directory(parent)
-            .context("flush AI-denoise cache directory")?;
-        Ok(())
-    })();
-    if result.is_err() {
-        let _ = fs::remove_file(&temporary);
-    }
-    result
+        archive.finish().context("finalize AI-denoise cache")?;
+        ensure_not_cancelled(cancellation)
+    })
+    .with_context(|| format!("write AI-denoise cache {}", path.display()))
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

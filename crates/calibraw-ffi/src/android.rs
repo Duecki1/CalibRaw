@@ -814,7 +814,7 @@ pub fn save_developed_thumbnail_cache(
     let cache_path = developed_thumbnail_cache_path(app, raw_uri)?;
     let fingerprint_path = developed_thumbnail_fingerprint_path(&cache_path);
     crate::thumbnail_cache::save_jpeg(&cache_path, thumbnail)?;
-    crate::thumbnail_cache::write_bytes_atomic(
+    calibraw_core::file_ops::write_bytes_atomically(
         &fingerprint_path,
         format!(
             "{:016x}\n",

@@ -1,4 +1,4 @@
-use crate::file_ops::{replace_file, sync_parent_directory};
+use crate::file_ops::write_atomically;
 use crate::pipeline::remove::RemovePatchSidecarCache;
 use crate::pipeline::{
     ExposureParams, GeometryTransform, MaskGeometry, MaskImage, MaskKind, MaskStack,
@@ -7,13 +7,11 @@ use crate::pipeline::{
 };
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
-use std::ffi::OsString;
 use std::fmt;
-use std::fs::{self, File, OpenOptions};
+use std::fs::{File, OpenOptions};
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::io::{Cursor, Read, Write};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 // First public schema for the "CalibRaw edit sidecar" format. Bump this for every incompatible
@@ -50,7 +48,6 @@ const MAX_DECODED_REMOVE_ASSET_BYTES: u64 = if cfg!(target_os = "android") {
     512 * 1024 * 1024
 };
 const MAX_EDIT_NAME_BYTES: usize = 4096;
-static NEXT_TEMPORARY_ID: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SidecarTarget {
@@ -1325,39 +1322,47 @@ pub fn backup_and_replace_desktop_sidecar(
     let path = sidecar_path_for_raw(raw_path);
     let bytes =
         encode_with_review_and_editing_time(edits, PhotoReview::default(), editing_time_ms)?;
-    let mut source = File::open(&path)?;
-    let backup = loop {
+    let backup = create_backup_copy(&path)?;
+    atomic_write(&path, &bytes)?;
+    Ok(backup)
+}
+
+/// Copies `path` to a new, uniquely named `<path>.backup-<pid>-<n>` file.
+#[cfg(not(target_os = "android"))]
+fn create_backup_copy(path: &Path) -> Result<PathBuf, SidecarError> {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static NEXT_BACKUP_ID: AtomicU64 = AtomicU64::new(0);
+
+    let mut source = File::open(path)?;
+    loop {
         let mut name = path.as_os_str().to_owned();
         name.push(format!(
             ".backup-{}-{}",
             std::process::id(),
-            NEXT_TEMPORARY_ID.fetch_add(1, Ordering::Relaxed)
+            NEXT_BACKUP_ID.fetch_add(1, Ordering::Relaxed)
         ));
-        let candidate = PathBuf::from(name);
-        match OpenOptions::new()
+        let backup = PathBuf::from(name);
+        let mut destination = match OpenOptions::new()
             .write(true)
             .create_new(true)
-            .open(&candidate)
+            .open(&backup)
         {
-            Ok(mut destination) => {
-                let copied = std::io::copy(&mut source, &mut destination)
-                    .and_then(|_| destination.sync_all());
-                if let Err(error) = copied {
-                    drop(destination);
-                    let _ = fs::remove_file(&candidate);
-                    return Err(SidecarError::Io(error));
-                }
-                break candidate;
-            }
+            Ok(destination) => destination,
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
             Err(error) => return Err(SidecarError::Io(error)),
+        };
+        let copied =
+            std::io::copy(&mut source, &mut destination).and_then(|_| destination.sync_all());
+        drop(destination);
+        if let Err(error) = copied {
+            let _ = std::fs::remove_file(&backup);
+            return Err(SidecarError::Io(error));
         }
-    };
-    if let Some(parent) = backup.parent() {
-        sync_parent_directory(parent)?;
+        if let Some(parent) = backup.parent() {
+            crate::file_ops::sync_parent_directory(parent)?;
+        }
+        return Ok(backup);
     }
-    atomic_write(&path, &bytes)?;
-    Ok(backup)
 }
 
 #[cfg(not(target_os = "android"))]
@@ -1578,38 +1583,7 @@ pub fn write_synced(path: &Path, bytes: &[u8]) -> Result<(), SidecarError> {
 }
 
 fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), SidecarError> {
-    let parent = path
-        .parent()
-        .filter(|parent| !parent.as_os_str().is_empty())
-        .unwrap_or_else(|| Path::new("."));
-    let file_name = path
-        .file_name()
-        .ok_or_else(|| SidecarError::Invalid("sidecar path has no file name".to_owned()))?;
-    let mut temporary_name = OsString::from(".");
-    temporary_name.push(file_name);
-    temporary_name.push(format!(
-        ".tmp-{}-{}",
-        std::process::id(),
-        NEXT_TEMPORARY_ID.fetch_add(1, Ordering::Relaxed)
-    ));
-    let temporary = parent.join(temporary_name);
-
-    let result = (|| {
-        let mut file = OpenOptions::new()
-            .create_new(true)
-            .write(true)
-            .open(&temporary)?;
-        file.write_all(bytes)?;
-        file.sync_all()?;
-        drop(file);
-        replace_file(&temporary, path)?;
-        sync_parent_directory(parent)?;
-        Ok::<(), std::io::Error>(())
-    })();
-    if result.is_err() {
-        let _ = fs::remove_file(&temporary);
-    }
-    result.map_err(SidecarError::Io)
+    write_atomically(path, |file| file.write_all(bytes)).map_err(SidecarError::Io)
 }
 
 mod validation;

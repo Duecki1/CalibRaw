@@ -1,14 +1,11 @@
-use crate::file_ops::{replace_file, sync_parent_directory};
+use crate::file_ops::write_bytes_atomically;
 use crate::pipeline::RawThumbnail;
 use image::codecs::jpeg::JpegEncoder;
 use image::ImageFormat;
-use std::ffi::OsString;
-use std::fs::{self, OpenOptions};
-use std::io::Write;
+use std::fs;
 use std::path::Path;
 #[cfg(not(target_os = "android"))]
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Condvar, Mutex, OnceLock};
 #[cfg(not(target_os = "android"))]
 use std::time::UNIX_EPOCH;
@@ -24,7 +21,6 @@ const MAX_CACHED_THUMBNAIL_EDGE: u32 = 8192;
 const MAX_CACHED_THUMBNAIL_BYTES: u64 = 128 * 1024 * 1024;
 const MAX_CACHED_THUMBNAIL_DECODE_BYTES: u64 = 256 * 1024 * 1024;
 const MAX_CACHED_THUMBNAIL_PIXELS: u64 = MAX_CACHED_THUMBNAIL_DECODE_BYTES / 4;
-static NEXT_TEMPORARY_ID: AtomicU64 = AtomicU64::new(0);
 
 struct RenderedThumbnailLimiter {
     state: Mutex<RenderedThumbnailLimiterState>,
@@ -269,15 +265,7 @@ pub fn save_jpeg(path: &Path, thumbnail: &RawThumbnail) -> Result<(), String> {
     if u64::try_from(encoded.len()).unwrap_or(u64::MAX) > MAX_CACHED_THUMBNAIL_BYTES {
         return Err("encoded thumbnail exceeds the cache size limit".to_owned());
     }
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(|error| {
-            format!(
-                "could not create thumbnail cache directory {}: {error}",
-                parent.display()
-            )
-        })?;
-    }
-    write_bytes_atomic(path, &encoded).map_err(|error| {
+    write_bytes_atomically(path, &encoded).map_err(|error| {
         format!(
             "could not write thumbnail cache {}: {error}",
             path.display()
@@ -344,12 +332,14 @@ pub fn save_desktop_raw_thumbnail(raw_path: &Path, thumbnail: &RawThumbnail) -> 
     let cache_path = desktop_raw_thumbnail_path(raw_path);
     let fingerprint_path = desktop_raw_thumbnail_fingerprint_path(raw_path);
     save_jpeg(&cache_path, thumbnail)?;
-    write_bytes_atomic(&fingerprint_path, format!("{expected}\n").as_bytes()).map_err(|error| {
-        format!(
-            "could not write RAW thumbnail fingerprint {}: {error}",
-            fingerprint_path.display()
-        )
-    })?;
+    write_bytes_atomically(&fingerprint_path, format!("{expected}\n").as_bytes()).map_err(
+        |error| {
+            format!(
+                "could not write RAW thumbnail fingerprint {}: {error}",
+                fingerprint_path.display()
+            )
+        },
+    )?;
     if desktop_raw_stamp(raw_path)? != expected {
         let _ = fs::remove_file(&cache_path);
         let _ = fs::remove_file(&fingerprint_path);
@@ -544,37 +534,6 @@ fn desktop_raw_stamp(raw_path: &Path) -> Result<String, String> {
     Ok(format!("v{generation}:{}:{modified}", metadata.len()))
 }
 
-pub fn write_bytes_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
-    let parent = path.parent().unwrap_or_else(|| Path::new("."));
-    fs::create_dir_all(parent)?;
-    let file_name = path
-        .file_name()
-        .map(OsString::from)
-        .unwrap_or_else(|| OsString::from("thumbnail"));
-    let temporary_id = NEXT_TEMPORARY_ID.fetch_add(1, Ordering::Relaxed);
-    let mut temporary_name = OsString::from(".");
-    temporary_name.push(file_name);
-    temporary_name.push(format!(".{}.{}.tmp", std::process::id(), temporary_id));
-    let temporary = parent.join(temporary_name);
-
-    let result = (|| {
-        let mut file = OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&temporary)?;
-        file.write_all(bytes)?;
-        file.sync_all()?;
-        drop(file);
-        replace_file(&temporary, path)?;
-        sync_parent_directory(parent)?;
-        Ok(())
-    })();
-    if result.is_err() {
-        let _ = fs::remove_file(&temporary);
-    }
-    result
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -585,7 +544,9 @@ mod tests {
     }
 
     fn temporary_test_path(label: &str) -> PathBuf {
-        let id = NEXT_TEMPORARY_ID.fetch_add(1, Ordering::Relaxed);
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static NEXT_TEST_ID: AtomicU64 = AtomicU64::new(0);
+        let id = NEXT_TEST_ID.fetch_add(1, Ordering::Relaxed);
         std::env::temp_dir().join(format!(
             "calibraw-thumbnail-cache-test-{}-{id}-{label}",
             std::process::id()
