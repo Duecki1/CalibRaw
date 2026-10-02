@@ -1,0 +1,29 @@
+CalibRaw is a free, open-source RAW photo editor with a native Android interface and GPU-accelerated processing. Browse your photo library, develop camera RAW files, and export your finished images from your phone.
+
+<b>Color and tone controls</b>
+<ul>
+<li>Adjust exposure, white balance, contrast, and saturation.</li>
+<li>Fine-tune colors with an eight-band color mixer and Point Color selections.</li>
+<li>Shape tones with luminance and RGB curves, color grading wheels, and sigmoid tone mapping.</li>
+</ul>
+
+<b>Local adjustments</b>
+<ul>
+<li>Create brush, linear gradient, radial gradient, and shape masks.</li>
+<li>Select subjects, skies, and objects with on-device AI masking.</li>
+<li>Apply independent adjustments and creative effects to masked areas.</li>
+</ul>
+
+<b>RAW development and export</b>
+<ul>
+<li>Support for RAW files from many camera manufacturers, including DNG and Fujifilm X-Trans.</li>
+<li>Advanced demosaicing, highlight recovery, and Lensfun lens corrections.</li>
+<li>Export finished photos to Android's media library, including JPEG and lossless JPEG XL.</li>
+</ul>
+
+<b>Non-Destructive</b>
+Edits are non-destructive and saved in lightweight .calibraw sidecar files, so you can revisit your adjustments without changing the original photo.
+
+Photo processing runs locally on your device. AI masking requires an initial model download; once installed, the models run locally. (AI models may not work on lower end devices)
+
+CalibRaw is licensed under the GNU General Public License v3.0 or later.
