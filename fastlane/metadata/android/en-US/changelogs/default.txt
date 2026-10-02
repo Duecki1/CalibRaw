@@ -1,0 +1,3 @@
+Improved mask overlay rendering.
+Added depth mask
+Added support for depth aware fog
