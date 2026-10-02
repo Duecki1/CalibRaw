@@ -14,11 +14,7 @@ pub(super) struct BrushStrokeSamples {
 }
 
 pub(super) fn sample_brush_stroke(
-    image_rect: Rect,
-    geometry: GeometryTransform,
-    lens_geometry: Option<&LensGeometryMap>,
-    source_width: u32,
-    source_height: u32,
+    projection: SourceProjection<'_>,
     pointer: Pos2,
     tool_size: f32,
     preview_zoom: f32,
@@ -26,14 +22,7 @@ pub(super) fn sample_brush_stroke(
     previous: &mut Option<[f32; 2]>,
     minimum_spacing_fraction: f32,
 ) -> Option<BrushStrokeSamples> {
-    let Some(uv) = editable_source_uv(final_geometry_screen_to_native_source(
-        image_rect,
-        geometry,
-        lens_geometry,
-        source_width,
-        source_height,
-        pointer,
-    )) else {
+    let Some(uv) = editable_source_uv(projection.to_source(pointer)) else {
         *previous = None;
         return None;
     };
@@ -49,24 +38,9 @@ pub(super) fn sample_brush_stroke(
     }
 
     let previous = (*previous).unwrap_or(uv);
-    let previous_screen = final_geometry_native_source_to_screen(
-        image_rect,
-        geometry,
-        lens_geometry,
-        source_width,
-        source_height,
-        previous,
-    );
+    let previous_screen = projection.to_screen(previous);
     let distance_px = pointer.distance(previous_screen);
-    let radius_px = geometry_brush_radius_screen(
-        image_rect,
-        geometry,
-        lens_geometry,
-        source_width,
-        source_height,
-        uv,
-        dab_size,
-    );
+    let radius_px = projection.brush_radius(uv, dab_size);
     let samples = interpolated_brush_samples(
         previous,
         uv,

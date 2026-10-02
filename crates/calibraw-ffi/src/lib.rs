@@ -12,21 +12,6 @@ pub extern "C" fn calibraw_version_packed() -> u32 {
 pub use android_activity::AndroidApp;
 
 #[cfg(target_os = "android")]
-pub mod pipeline {
-    pub use calibraw_core::pipeline::*;
-}
-
-#[cfg(target_os = "android")]
-pub mod sidecar {
-    pub use calibraw_core::sidecar::*;
-}
-
-#[cfg(target_os = "android")]
-pub mod thumbnail_cache {
-    pub use calibraw_core::thumbnail_cache::*;
-}
-
-#[cfg(target_os = "android")]
 mod android;
 #[cfg(target_os = "android")]
 pub use android::*;

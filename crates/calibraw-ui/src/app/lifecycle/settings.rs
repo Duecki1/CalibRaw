@@ -9,7 +9,7 @@ impl CalibRawApp {
         crate::ui::theme::apply(&self.egui_ctx, design);
         #[cfg(target_os = "android")]
         if let Err(error) =
-            crate::android::set_light_system_bars(&self.android.android_app, !design.is_dark())
+            calibraw_ffi::set_light_system_bars(&self.android.android_app, !design.is_dark())
         {
             log::warn!("{error}");
         }
@@ -152,9 +152,10 @@ impl CalibRawApp {
                 .name("calibraw-thumbnail-cache-size".to_owned())
                 .spawn(move || {
                     #[cfg(not(target_os = "android"))]
-                    let result = crate::thumbnail_cache::desktop_thumbnail_cache_size_bytes();
+                    let result =
+                        calibraw_core::thumbnail_cache::desktop_thumbnail_cache_size_bytes();
                     #[cfg(target_os = "android")]
-                    let result = crate::android::thumbnail_cache_size_bytes(&android_app);
+                    let result = calibraw_ffi::thumbnail_cache_size_bytes(&android_app);
                     let _ = sender.send(result);
                     repaint.request_repaint();
                 });
@@ -184,9 +185,9 @@ impl CalibRawApp {
         let result = match decode_gate.write() {
             Ok(_decode_guard) => {
                 #[cfg(not(target_os = "android"))]
-                let cleared = crate::thumbnail_cache::clear_desktop_thumbnail_cache();
+                let cleared = calibraw_core::thumbnail_cache::clear_desktop_thumbnail_cache();
                 #[cfg(target_os = "android")]
-                let cleared = crate::android::clear_thumbnail_cache(&self.android.android_app);
+                let cleared = calibraw_ffi::clear_thumbnail_cache(&self.android.android_app);
                 cleared
             }
             Err(_) => Err("thumbnail decode gate was poisoned".to_owned()),
@@ -239,7 +240,7 @@ impl CalibRawApp {
             #[cfg(not(target_os = "android"))]
             self.persist_performance_settings();
             #[cfg(target_os = "android")]
-            crate::android::set_back_navigation_active(
+            calibraw_ffi::set_back_navigation_active(
                 open || self.library.has_selection() || self.ui.active_tab != AppTab::Library,
             );
             self.egui_ctx.request_repaint();

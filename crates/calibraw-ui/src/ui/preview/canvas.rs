@@ -74,47 +74,53 @@ pub(super) fn paint_textured_geometry_quad(
     ui.painter_at(clip_rect).add(Shape::mesh(mesh));
 }
 
-pub(super) fn paint_textured_combined_geometry_mesh(
+/// Paints the `source_uv` region of a texture through `projection`, either in
+/// the final output view or, with `crop_workspace`, on the uncropped crop
+/// editing canvas. Lens correction is approximated with a dense mesh.
+fn paint_projected_texture(
     ui: &Ui,
     texture_id: egui::TextureId,
-    clip_rect: Rect,
-    geometry: GeometryTransform,
-    lens_geometry: Option<&LensGeometryMap>,
-    source_width: u32,
-    source_height: u32,
+    projection: SourceProjection<'_>,
     texture_uv: Rect,
     source_uv: [f32; 4],
     crop_workspace: bool,
 ) {
-    if lens_geometry.is_none() {
-        let positions = source_uv_corners(source_uv).map(|point| {
-            if crop_workspace {
-                crop_workspace_source_to_screen(
-                    clip_rect,
-                    geometry,
-                    source_width,
-                    source_height,
-                    point,
-                )
-            } else {
-                final_geometry_source_to_screen(
-                    clip_rect,
-                    geometry,
-                    source_width,
-                    source_height,
-                    point,
-                )
-            }
-        });
-        paint_textured_geometry_quad(ui, texture_id, clip_rect, positions, texture_uv);
+    let SourceProjection {
+        image_rect,
+        geometry,
+        lens,
+        source_width,
+        source_height,
+    } = projection;
+    let corrected_to_screen = |corrected_uv: [f32; 2]| {
+        if crop_workspace {
+            crop_workspace_source_to_screen(
+                image_rect,
+                geometry,
+                source_width,
+                source_height,
+                corrected_uv,
+            )
+        } else {
+            final_geometry_source_to_screen(
+                image_rect,
+                geometry,
+                source_width,
+                source_height,
+                corrected_uv,
+            )
+        }
+    };
+    let Some(lens) = lens else {
+        let positions = source_uv_corners(source_uv).map(corrected_to_screen);
+        paint_textured_geometry_quad(ui, texture_id, image_rect, positions, texture_uv);
         return;
-    }
+    };
 
     let span_u = (source_uv[2] - source_uv[0]).abs().max(1e-6);
     let span_v = (source_uv[3] - source_uv[1]).abs().max(1e-6);
     let grid_x = ((source_width.max(1) as f32 * span_u / 96.0).ceil() as usize).clamp(16, 96);
     let grid_y = ((source_height.max(1) as f32 * span_v / 96.0).ceil() as usize).clamp(16, 96);
-    let lens_geometry = lens_geometry.expect("lens geometry checked above");
     let mut mesh = Mesh::with_texture(texture_id);
     mesh.vertices.reserve((grid_x + 1) * (grid_y + 1));
     mesh.indices.reserve(grid_x * grid_y * 6);
@@ -126,31 +132,10 @@ pub(super) fn paint_textured_combined_geometry_mesh(
             let tx = gx as f32 / grid_x as f32;
             let raw_u = source_uv[0] + (source_uv[2] - source_uv[0]) * tx;
             let texture_u = texture_uv.left() + (texture_uv.right() - texture_uv.left()) * tx;
-            let corrected_uv = native_source_to_corrected_uv(
-                lens_geometry,
-                source_width,
-                source_height,
-                [raw_u, raw_v],
-            );
-            let pos = if crop_workspace {
-                crop_workspace_source_to_screen(
-                    clip_rect,
-                    geometry,
-                    source_width,
-                    source_height,
-                    corrected_uv,
-                )
-            } else {
-                final_geometry_source_to_screen(
-                    clip_rect,
-                    geometry,
-                    source_width,
-                    source_height,
-                    corrected_uv,
-                )
-            };
+            let corrected_uv =
+                native_source_to_corrected_uv(lens, source_width, source_height, [raw_u, raw_v]);
             mesh.vertices.push(egui::epaint::Vertex {
-                pos,
+                pos: corrected_to_screen(corrected_uv),
                 uv: Pos2::new(texture_u, texture_v),
                 color: Color32::WHITE,
             });
@@ -166,7 +151,7 @@ pub(super) fn paint_textured_combined_geometry_mesh(
             mesh.indices.extend_from_slice(&[a, b, d, a, d, c]);
         }
     }
-    ui.painter_at(clip_rect).add(Shape::mesh(mesh));
+    ui.painter_at(image_rect).add(Shape::mesh(mesh));
 }
 
 pub(super) fn source_uv_corners(source_uv: [f32; 4]) -> [[f32; 2]; 4] {
@@ -181,95 +166,47 @@ pub(super) fn source_uv_corners(source_uv: [f32; 4]) -> [[f32; 2]; 4] {
 pub(super) fn paint_final_geometry_texture(
     ui: &Ui,
     texture_id: egui::TextureId,
-    image_rect: Rect,
-    geometry: GeometryTransform,
-    lens_geometry: Option<&LensGeometryMap>,
-    source_width: u32,
-    source_height: u32,
+    projection: SourceProjection<'_>,
     texture_uv: Rect,
     source_uv: [f32; 4],
 ) {
     if source_uv == [0.0, 0.0, 1.0, 1.0] {
-        ui.painter_at(image_rect)
-            .rect_filled(image_rect, 0.0, Color32::BLACK);
+        ui.painter_at(projection.image_rect).rect_filled(
+            projection.image_rect,
+            0.0,
+            Color32::BLACK,
+        );
     }
-    paint_textured_combined_geometry_mesh(
-        ui,
-        texture_id,
-        image_rect,
-        geometry,
-        lens_geometry,
-        source_width,
-        source_height,
-        texture_uv,
-        source_uv,
-        false,
-    );
+    paint_projected_texture(ui, texture_id, projection, texture_uv, source_uv, false);
 }
 
+/// Like [`paint_final_geometry_texture`] without the opaque backdrop, for
+/// textures drawn over the image.
 pub(super) fn paint_final_geometry_overlay_texture(
     ui: &Ui,
     texture_id: egui::TextureId,
-    image_rect: Rect,
-    geometry: GeometryTransform,
-    lens_geometry: Option<&LensGeometryMap>,
-    source_width: u32,
-    source_height: u32,
+    projection: SourceProjection<'_>,
     texture_uv: Rect,
     source_uv: [f32; 4],
 ) {
-    if lens_geometry.is_none() {
-        let positions = source_uv_corners(source_uv).map(|point| {
-            final_geometry_source_to_screen(
-                image_rect,
-                geometry,
-                source_width,
-                source_height,
-                point,
-            )
-        });
-        paint_textured_geometry_quad(ui, texture_id, image_rect, positions, texture_uv);
-        return;
-    }
-    paint_textured_combined_geometry_mesh(
-        ui,
-        texture_id,
-        image_rect,
-        geometry,
-        lens_geometry,
-        source_width,
-        source_height,
-        texture_uv,
-        source_uv,
-        false,
-    );
+    paint_projected_texture(ui, texture_id, projection, texture_uv, source_uv, false);
 }
 
+/// Paints on the uncropped crop-editing canvas, using `projection`'s geometry
+/// for rotation and perspective but not its crop.
 pub(super) fn paint_crop_workspace_texture(
     ui: &Ui,
     texture_id: egui::TextureId,
-    image_rect: Rect,
-    geometry: GeometryTransform,
-    lens_geometry: Option<&LensGeometryMap>,
-    source_width: u32,
-    source_height: u32,
+    projection: SourceProjection<'_>,
     texture_uv: Rect,
     source_uv: [f32; 4],
 ) {
     if source_uv == [0.0, 0.0, 1.0, 1.0] {
-        ui.painter_at(image_rect)
-            .rect_filled(image_rect, 0.0, ui.visuals().panel_fill);
+        ui.painter_at(projection.image_rect).rect_filled(
+            projection.image_rect,
+            0.0,
+            ui.visuals().panel_fill,
+        );
     }
-    paint_textured_combined_geometry_mesh(
-        ui,
-        texture_id,
-        image_rect,
-        geometry,
-        lens_geometry,
-        source_width,
-        source_height,
-        texture_uv,
-        source_uv,
-        true,
-    );
+    paint_projected_texture(ui, texture_id, projection, texture_uv, source_uv, true);
 }

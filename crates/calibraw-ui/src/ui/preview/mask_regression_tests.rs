@@ -113,37 +113,18 @@ impl Harness {
             },
             |ui| {
                 let response = ui.allocate_rect(screen_rect(), Sense::drag());
-                Preview::handle_mask_interaction(
-                    ui,
-                    app,
-                    image_rect(),
-                    image_rect(),
-                    screen_rect(),
-                    WIDTH,
-                    HEIGHT,
-                    &response,
-                );
+                let layout = PreviewLayout {
+                    image_rect: image_rect(),
+                    visible_rect: image_rect(),
+                    viewport_rect: screen_rect(),
+                    source_width: WIDTH,
+                    source_height: HEIGHT,
+                };
+                Preview::handle_mask_interaction(ui, app, layout, &response);
                 match paint {
                     Paint::None => {}
-                    Paint::Guides => Preview::paint_mask_overlay(
-                        ui,
-                        app,
-                        image_rect(),
-                        image_rect(),
-                        screen_rect(),
-                        WIDTH,
-                        HEIGHT,
-                    ),
-                    Paint::Coverage => Preview::paint_coverage_texture(
-                        ui,
-                        app,
-                        image_rect(),
-                        image_rect(),
-                        0,
-                        Some(0),
-                        WIDTH,
-                        HEIGHT,
-                    ),
+                    Paint::Guides => Preview::paint_mask_overlay(ui, app, layout),
+                    Paint::Coverage => Preview::paint_coverage_texture(ui, app, layout, 0, Some(0)),
                 }
             },
         )
@@ -206,27 +187,14 @@ fn assert_uv(actual: [f32; 2], expected: [f32; 2]) {
 
 fn rotation_handle(kind: MaskKind) -> Pos2 {
     match kind {
-        MaskKind::Radial => radial_rotation_handle_geometry(
-            image_rect(),
-            display_geometry(),
-            None,
-            WIDTH,
-            HEIGHT,
-            CENTER,
-            RADIUS,
-            ROTATION,
-        ),
+        MaskKind::Radial => {
+            SourceProjection::new(image_rect(), display_geometry(), None, WIDTH, HEIGHT)
+                .radial_rotation_handle(CENTER, RADIUS, ROTATION)
+        }
         MaskKind::Linear => {
-            linear_rotation_handle_geometry(
-                image_rect(),
-                display_geometry(),
-                None,
-                WIDTH,
-                HEIGHT,
-                START,
-                END,
-            )
-            .1
+            SourceProjection::new(image_rect(), display_geometry(), None, WIDTH, HEIGHT)
+                .linear_rotation_handle(START, END)
+                .1
         }
         _ => unreachable!(),
     }
@@ -234,16 +202,8 @@ fn rotation_handle(kind: MaskKind) -> Pos2 {
 
 #[test]
 fn radial_handle_drags_use_corrected_coordinates_with_lens_rotation_and_crop() {
-    let handles = radial_handles_geometry_screen(
-        image_rect(),
-        display_geometry(),
-        None,
-        WIDTH,
-        HEIGHT,
-        CENTER,
-        RADIUS,
-        ROTATION,
-    );
+    let handles = SourceProjection::new(image_rect(), display_geometry(), None, WIDTH, HEIGHT)
+        .radial_handles(CENTER, RADIUS, ROTATION);
     let rotation = rotation_handle(MaskKind::Radial);
     let resized_radius = [RADIUS[0], 0.25];
     let resized_uv = radial_source_uv_at(
@@ -395,16 +355,14 @@ fn max_line_deviation(points: &[Pos2]) -> f32 {
 fn painted_linear_axis_and_feather_guides_stay_straight_under_lens_rotation_and_crop() {
     let mut h = Harness::new(MaskKind::Linear);
     // Ensure this synthetic lens would actually bend the old guide path.
-    let distorted = linear_axis_geometry_screen_points(
+    let distorted = SourceProjection::new(
         image_rect(),
         display_geometry(),
         loaded_lens_geometry(&h.app).map(Arc::as_ref),
         WIDTH,
         HEIGHT,
-        START,
-        END,
-        48,
-    );
+    )
+    .linear_axis(START, END, 48);
     assert!(max_line_deviation(&distorted) > 1.0);
     let output = h.frame(vec![], Paint::Guides);
     let guides = paths(&output);

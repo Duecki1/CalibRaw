@@ -221,25 +221,34 @@ fn apply_smoke(
     let seed = clamp(tertiary.y, 0.0, 1000.0);
     let offset = vec2<f32>(seed * 0.097 + 31.6, seed * -0.067 + 8.9);
 
-    let warp_point = point * frequency * 0.58 + offset;
-    let warp = vec2<f32>(
-        atmosphere_fbm(warp_point + vec2<f32>(0.0, 17.2)),
-        atmosphere_fbm(warp_point + vec2<f32>(23.4, 0.0)),
-    ) - vec2<f32>(0.5);
-    let warped = point * frequency + offset
-        + warp * mix(0.10, 2.35, turbulence);
-    let body = atmosphere_fbm(warped);
-    let ridge_noise = atmosphere_noise(warped * 2.15 + vec2<f32>(5.7, 12.9));
-    let ridges = 1.0 - abs(ridge_noise * 2.0 - 1.0);
-    let field = mix(body, body * 0.78 + ridges * 0.22, turbulence);
-    let threshold = mix(0.68, 0.39, density);
-    let transition = mix(0.025, 0.20, softness);
-    let plume = smoothstep(threshold - transition, threshold + transition, field);
-    let opacity = clamp(
-        amount * mix(0.35, 1.0, density) * plume * 1.08,
-        0.0,
-        0.94,
-    );
-    let color = mask_effect_picker_color_to_working(secondary.xyz);
-    return mix(input_rgb, color, opacity);
+    // Three translucent layers carry stretched, warped density sheets.
+    // Density controls optical thickness; it never lowers a threshold until
+    // every pixel becomes an opaque wash. Seed and scale live in image space.
+    var optical_depth = 0.0;
+    for (var layer = 0u; layer < 3u; layer += 1u) {
+        let layer_scale = 1.0 + f32(layer) * 0.47;
+        let layer_offset = offset + vec2<f32>(19.7, -13.1) * f32(layer);
+        let base = point * frequency * layer_scale;
+        let flow = vec2<f32>(
+            atmosphere_fbm(base * 0.42 + layer_offset),
+            atmosphere_fbm(base * 0.42 + layer_offset + vec2<f32>(17.2, 8.3)),
+        ) - vec2<f32>(0.5);
+        let warped = base + flow * mix(0.3, 3.5, turbulence);
+        let sheet = atmosphere_fbm(warped * vec2<f32>(1.0, 0.32) + layer_offset);
+        let filament = abs(sheet - 0.5);
+        let width = mix(0.035, 0.105, softness);
+        let wisps = exp(-filament * filament / (width * width));
+        let envelope = smoothstep(0.30, 0.72,
+            atmosphere_noise(base * 0.38 + layer_offset + vec2<f32>(4.3, 23.1)));
+        let erosion = atmosphere_noise(warped * 2.7 + layer_offset);
+        let detail = mix(1.0, smoothstep(0.12, 0.72, erosion), turbulence * (1.0 - softness) * 0.65);
+        optical_depth += wisps * envelope * detail / layer_scale;
+    }
+    let transmission = exp(-optical_depth * density * density * amount * 2.8);
+    // Match smoke illumination to scene ambience, just as fog does; bright
+    // picker colors therefore do not turn dark photographs into white paint.
+    let ambient_ev = Tonemap::tone_stats.percentiles_0_field.w + Common::scene_tone_uniforms.exposure;
+    let ambient = ToneCommon::SCENE_MIDDLE_GREY * exp2(clamp(ambient_ev, -12.0, 6.0));
+    let color = mask_effect_picker_color_to_working(secondary.xyz) * ambient;
+    return input_rgb * transmission + color * (1.0 - transmission);
 }

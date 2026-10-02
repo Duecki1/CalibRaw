@@ -77,7 +77,7 @@ impl PersistentGpuPipelineCache {
         let Some(data) = self.cache.get_data() else {
             return Ok(0);
         };
-        crate::thumbnail_cache::write_bytes_atomic(self.path.as_path(), &data).with_context(
+        calibraw_core::file_ops::write_bytes_atomically(self.path.as_path(), &data).with_context(
             || {
                 format!(
                     "could not publish GPU pipeline cache {}",

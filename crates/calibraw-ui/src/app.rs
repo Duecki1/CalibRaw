@@ -1,8 +1,3 @@
-use crate::ai_masks::{
-    spawn_ai_mask, spawn_object_mask, AiMaskEvent, AiMaskWorkerRequest, BiRefNetQuality,
-    ObjectInferenceCache, ObjectMaskEvent, ObjectMaskRequest, ObjectMaskWorkerRequest,
-    SAM21_MODEL_BYTES_ESTIMATE,
-};
 #[cfg(not(target_os = "android"))]
 use crate::pipeline::RawThumbnail;
 use crate::pipeline::{
@@ -16,7 +11,6 @@ use crate::pipeline::{
     RemoveSceneContext, RetouchAlignment, RetouchStroke, RetouchTool, SubjectRefinement, TileSpec,
     TiledExportJob, MAX_LOCAL_MASKS,
 };
-use crate::remove::{spawn_remove, spawn_retouch, RemoveEvent, RemoveRequest, RetouchRequest};
 use crate::sidecar::{
     AdjustmentCopySettings, AdjustmentPasteMode, EditState as SidecarEditState,
     LensEditState as SidecarLensEditState,
@@ -32,6 +26,14 @@ use crate::ui::settings::Settings;
 use crate::ui::sidebar::Sidebar;
 use crate::ui::theme::{PreviewBackdrop, UiDesign};
 use crate::ui::top_bar::TopBar;
+use calibraw_ai::ai_masks::{
+    spawn_ai_mask, spawn_object_mask, AiMaskEvent, AiMaskWorkerRequest, BiRefNetQuality,
+    ObjectInferenceCache, ObjectMaskEvent, ObjectMaskRequest, ObjectMaskWorkerRequest,
+    SAM21_MODEL_BYTES_ESTIMATE,
+};
+use calibraw_ai::remove::{
+    spawn_remove, spawn_retouch, RemoveEvent, RemoveRequest, RetouchRequest,
+};
 use eframe::{egui, wgpu};
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
@@ -781,7 +783,6 @@ enum LibraryBatchExportEvent {
 enum ExportTaskKind {
     Single,
     LibraryBatch,
-    #[cfg(not(target_os = "android"))]
     Replay,
 }
 
@@ -789,11 +790,9 @@ enum ExportTaskReceiver {
     Tiled(mpsc::Receiver<ExportEvent>),
     #[cfg(not(target_os = "android"))]
     LibraryBatch(mpsc::Receiver<LibraryBatchExportEvent>),
-    #[cfg(not(target_os = "android"))]
     Replay(mpsc::Receiver<ReplayExportEvent>),
 }
 
-#[cfg(not(target_os = "android"))]
 enum ReplayExportEvent {
     Progress {
         progress: f32,
@@ -936,7 +935,7 @@ impl ForegroundProgress {
 enum ForegroundOperationReceiver {
     AiMask(mpsc::Receiver<AiMaskEvent>),
     Object(mpsc::Receiver<ObjectMaskEvent>),
-    AiDenoise(mpsc::Receiver<crate::ai_denoise::AiDenoiseEvent>),
+    AiDenoise(mpsc::Receiver<calibraw_ai::ai_denoise::AiDenoiseEvent>),
     LensCorrection(mpsc::Receiver<LensCorrectionEvent>),
 }
 
@@ -1060,6 +1059,19 @@ pub(crate) struct DevelopUiState {
     pub(crate) mask_point_color: crate::ui::components::point_color::PointColorUiState,
     pub(crate) mask_point_color_tab: bool,
     pub(crate) mask_point_color_mask: Option<usize>,
+}
+
+impl DevelopUiState {
+    pub(crate) fn cancel_white_balance_picker(&mut self) {
+        self.white_balance_picker_active = false;
+        self.white_balance_picker_drag = None;
+    }
+
+    /// Stops picking global point colors and hides their range overlay.
+    pub(crate) fn cancel_point_color_preview(&mut self) {
+        self.point_color.picker_active = false;
+        self.point_color.visualize_range = false;
+    }
 }
 
 pub(crate) struct PreferencesState {
@@ -1284,7 +1296,7 @@ pub(crate) struct AndroidState {
     pub(crate) picker_pending: bool,
     pub(crate) pending_android_library_reset_reload: bool,
     pub(crate) camera_profile_folder_importing_label: Option<String>,
-    pub(crate) pending_android_profile_reload: Option<(Option<PathBuf>, SidecarEditState)>,
+    pub(crate) pending_android_profile_reload: Option<ProfileReload>,
 }
 
 pub struct CalibRawApp {
@@ -1433,7 +1445,7 @@ impl CalibRawApp {
         }
         self.sync_ai_model_runtime_context();
         #[cfg(target_os = "android")]
-        crate::android::set_back_navigation_active(tab != AppTab::Library);
+        calibraw_ffi::set_back_navigation_active(tab != AppTab::Library);
     }
 
     #[cfg(target_os = "android")]
@@ -1500,7 +1512,7 @@ impl CalibRawApp {
 
     #[cfg(target_os = "android")]
     pub(crate) fn copy_text_to_clipboard(&self, label: &str, text: &str) -> Result<(), String> {
-        crate::android::copy_text_to_clipboard(&self.android.android_app, label, text)
+        calibraw_ffi::copy_text_to_clipboard(&self.android.android_app, label, text)
     }
 }
 
@@ -1539,8 +1551,11 @@ mod processing_export;
 mod sidecar_persistence;
 
 use lifecycle::needs_canonical_mask_source;
+pub(crate) use lifecycle::ProfileReload;
 #[cfg(not(target_os = "android"))]
-pub(crate) use lifecycle::{install_missing_range_sources, masks_have_missing_range_sources};
+pub(crate) use lifecycle::{
+    install_missing_range_sources, masks_have_missing_range_sources, DocumentSource,
+};
 use sidecar_persistence::sidecar_interaction_active;
 
 #[cfg(test)]

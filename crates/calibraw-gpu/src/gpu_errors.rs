@@ -44,7 +44,7 @@ fn record_gpu_error(error: &wgpu::Error, context: &str) {
         }
     };
     log::error!("{message}");
-    crate::diagnostics::record(message);
+    calibraw_core::diagnostics::record(message);
 }
 
 pub(crate) struct GpuErrorScopes {

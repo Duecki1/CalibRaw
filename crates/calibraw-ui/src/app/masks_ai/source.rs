@@ -150,7 +150,7 @@ impl CalibRawApp {
             let reference_pipeline = match reference_pipeline_result {
                 Ok(pipeline) => pipeline,
                 Err(error) if error.to_string().contains("GPU pipelines already reserve") => {
-                    crate::diagnostics::record(format!(
+                    calibraw_core::diagnostics::record(format!(
                         "Dedicated AI mask-source graph exceeded the coexistence budget; using the active preview graph: {error:#}"
                     ));
                     let source = self.capture_mask_source_from_active_preview(frame)?;

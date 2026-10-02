@@ -13,7 +13,7 @@ impl LibraryState {
         if self.platform.folder == folder {
             return false;
         }
-        if let Err(error) = crate::android::select_library_folder(&self.platform.app, &folder) {
+        if let Err(error) = calibraw_ffi::select_library_folder(&self.platform.app, &folder) {
             self.status = error;
             return false;
         }

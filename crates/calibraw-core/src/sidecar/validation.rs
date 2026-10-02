@@ -636,7 +636,60 @@ fn validate_effect_settings(
     validate_pixelate_effect(&settings.pixelate)?;
     validate_fog_effect(&settings.fog)?;
     validate_smoke_effect(&settings.smoke)?;
+    validate_grain_effect(&settings.grain)?;
+    validate_halation_effect(&settings.halation)?;
+    validate_vignette_effect(&settings.vignette)?;
     Ok(())
+}
+
+fn validate_grain_effect(grain: &crate::pipeline::GrainEffectSettings) -> Result<(), SidecarError> {
+    use crate::pipeline::effect_params::grain;
+    validate_effect_params(
+        crate::pipeline::MaskEffect::Grain,
+        &[
+            (grain::AMOUNT, grain.amount),
+            (grain::SIZE, grain.size),
+            (grain::ROUGHNESS, grain.roughness),
+            (grain::COLOR, grain.color),
+            (grain::SEED, grain.seed),
+        ],
+        &[],
+    )
+}
+
+fn validate_halation_effect(
+    halation: &crate::pipeline::HalationEffectSettings,
+) -> Result<(), SidecarError> {
+    use crate::pipeline::effect_params::halation;
+    validate_effect_params(
+        crate::pipeline::MaskEffect::Halation,
+        &[
+            (halation::AMOUNT, halation.amount),
+            (halation::RADIUS, halation.radius),
+            (halation::THRESHOLD, halation.threshold),
+            (halation::WARMTH, halation.warmth),
+        ],
+        &[],
+    )
+}
+
+fn validate_vignette_effect(
+    vignette: &crate::pipeline::VignetteEffectSettings,
+) -> Result<(), SidecarError> {
+    use crate::pipeline::effect_params::vignette;
+    validate_effect_params(
+        crate::pipeline::MaskEffect::Vignette,
+        &[
+            (vignette::AMOUNT, vignette.amount),
+            (vignette::MIDPOINT, vignette.midpoint),
+            (vignette::ROUNDNESS, vignette.roundness),
+            (vignette::FEATHER, vignette.feather),
+            (vignette::HIGHLIGHTS, vignette.highlights),
+            (vignette::CENTER_X, vignette.center[0]),
+            (vignette::CENTER_Y, vignette.center[1]),
+        ],
+        &[],
+    )
 }
 
 fn validate_blur_effect(blur: &crate::pipeline::BlurEffectSettings) -> Result<(), SidecarError> {

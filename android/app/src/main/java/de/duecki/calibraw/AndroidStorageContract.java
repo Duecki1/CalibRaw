@@ -164,6 +164,9 @@ final class AndroidStorageContract {
     }
 
     static String normalizeExportMimeType(String mimeType) {
+        if ("video/mp4".equalsIgnoreCase(mimeType)) {
+            return "video/mp4";
+        }
         if ("image/jpeg".equalsIgnoreCase(mimeType)) {
             return "image/jpeg";
         }
@@ -176,7 +179,8 @@ final class AndroidStorageContract {
     static String safeImageName(String requestedName, String mimeType) {
         boolean jpeg = "image/jpeg".equalsIgnoreCase(mimeType);
         boolean jxl = "image/jxl".equalsIgnoreCase(mimeType);
-        String extension = jpeg ? ".jpg" : jxl ? ".jxl" : ".png";
+        String extension = "video/mp4".equalsIgnoreCase(mimeType)
+                ? ".mp4" : jpeg ? ".jpg" : jxl ? ".jxl" : ".png";
         String fallback = "CalibRaw-export" + extension;
         String name = requestedName == null ? fallback : requestedName;
         name = name.replaceAll("[^A-Za-z0-9._-]", "_");

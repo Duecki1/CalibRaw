@@ -6,19 +6,23 @@ impl Preview {
         ui: &Ui,
         app: &mut CalibRawApp,
         frame: &eframe::Frame,
-        image_rect: Rect,
-        preview_rect: Rect,
-        source_width: u32,
-        source_height: u32,
+        layout: PreviewLayout,
         response: &egui::Response,
     ) {
+        let PreviewLayout {
+            visible_rect,
+            source_width,
+            source_height,
+            ..
+        } = layout;
         if app.inpaint_processing() {
             return;
         }
         let lens_geometry = loaded_lens_geometry(app).cloned();
+        let projection = layout.projection(app.develop.geometry, lens_geometry.as_deref());
         let pointer = response
             .interact_pointer_pos()
-            .filter(|position| preview_rect.contains(*position));
+            .filter(|position| visible_rect.contains(*position));
         let (primary_is_down, primary_released, set_source_modifier, secondary_is_down) =
             ui.input(|input| {
                 (
@@ -38,14 +42,7 @@ impl Preview {
             let Some(pointer) = pointer else {
                 return;
             };
-            let source_uv = final_geometry_screen_to_native_source(
-                image_rect,
-                app.develop.geometry,
-                lens_geometry.as_deref(),
-                source_width,
-                source_height,
-                pointer,
-            );
+            let source_uv = projection.to_source(pointer);
             if let Some(uv) = editable_source_uv(source_uv) {
                 app.inpaint.source_point = Some([
                     (uv[0] * source_width as f32)
@@ -78,11 +75,7 @@ impl Preview {
                 return;
             };
             let Some(stroke) = sample_brush_stroke(
-                image_rect,
-                app.develop.geometry,
-                lens_geometry.as_deref(),
-                source_width,
-                source_height,
+                projection,
                 pointer,
                 app.inpaint.brush_size,
                 app.preview.zoom,
@@ -168,16 +161,22 @@ impl Preview {
     pub(in crate::ui::preview) fn paint_inpaint_overlay(
         ui: &Ui,
         app: &mut CalibRawApp,
-        image_rect: Rect,
-        preview_rect: Rect,
-        source_width: u32,
-        source_height: u32,
+        layout: PreviewLayout,
     ) {
+        let PreviewLayout {
+            visible_rect,
+            source_width,
+            source_height,
+            ..
+        } = layout;
         if app.ui.sidebar_tab != SidebarTab::Inpainting {
             return;
         }
-        let lens_geometry = loaded_lens_geometry(app).map(AsRef::as_ref);
-        let painter = ui.painter_at(preview_rect);
+        let projection = layout.projection(
+            app.develop.geometry,
+            loaded_lens_geometry(app).map(AsRef::as_ref),
+        );
+        let painter = ui.painter_at(visible_rect);
 
         let highlighted = if app.inpaint.stroke_opacity_edit_pending {
             None
@@ -190,11 +189,7 @@ impl Preview {
         if let Some(stroke) = highlighted {
             paint_remove_brush_geometry(
                 &painter,
-                image_rect,
-                app.develop.geometry,
-                lens_geometry,
-                source_width,
-                source_height,
+                projection,
                 &stroke.brush.points,
                 crate::ui::theme::inpaint_stroke_highlight(),
             );
@@ -202,11 +197,7 @@ impl Preview {
             if let Some(retouch) = highlighted_source {
                 paint_retouch_source_marker(
                     &painter,
-                    image_rect,
-                    app.develop.geometry,
-                    lens_geometry,
-                    source_width,
-                    source_height,
+                    projection,
                     retouch.source,
                     stroke
                         .brush
@@ -221,11 +212,7 @@ impl Preview {
         if let Some(stroke) = app.inpaint.pending_brush.as_ref() {
             paint_remove_brush_geometry(
                 &painter,
-                image_rect,
-                app.develop.geometry,
-                lens_geometry,
-                source_width,
-                source_height,
+                projection,
                 &stroke.points,
                 crate::ui::theme::inpaint_stroke_active(),
             );
@@ -233,11 +220,7 @@ impl Preview {
         if !app.inpaint.active_points.is_empty() {
             paint_remove_brush_geometry(
                 &painter,
-                image_rect,
-                app.develop.geometry,
-                lens_geometry,
-                source_width,
-                source_height,
+                projection,
                 &app.inpaint.active_points,
                 crate::ui::theme::inpaint_stroke_active(),
             );
@@ -246,18 +229,11 @@ impl Preview {
         let Some(pointer) = ui
             .ctx()
             .pointer_hover_pos()
-            .filter(|position| preview_rect.contains(*position))
+            .filter(|position| visible_rect.contains(*position))
         else {
             return;
         };
-        let source_uv = final_geometry_screen_to_native_source(
-            image_rect,
-            app.develop.geometry,
-            lens_geometry,
-            source_width,
-            source_height,
-            pointer,
-        );
+        let source_uv = projection.to_source(pointer);
         let Some(uv) = editable_source_uv(source_uv) else {
             return;
         };
@@ -266,16 +242,7 @@ impl Preview {
             app.preview.zoom,
             app.preferences.image_relative_brush_size,
         );
-        let outline = brush_outline_geometry_screen_points(
-            image_rect,
-            app.develop.geometry,
-            lens_geometry,
-            source_width,
-            source_height,
-            uv,
-            dab_size,
-            64,
-        );
+        let outline = projection.brush_outline(uv, dab_size, 64);
         let cursor_color = if app.inpaint_processing() {
             Color32::from_white_alpha(110)
         } else {
@@ -283,16 +250,7 @@ impl Preview {
         };
         painter.add(Shape::line(outline, Stroke::new(1.5, cursor_color)));
         if app.inpaint.tool.retouch().is_some() && app.inpaint.brush_hardness > 0.0 {
-            let inner = brush_outline_geometry_screen_points(
-                image_rect,
-                app.develop.geometry,
-                lens_geometry,
-                source_width,
-                source_height,
-                uv,
-                dab_size * app.inpaint.brush_hardness,
-                64,
-            );
+            let inner = projection.brush_outline(uv, dab_size * app.inpaint.brush_hardness, 64);
             painter.add(Shape::line(
                 inner,
                 Stroke::new(1.0, Color32::from_white_alpha(145)),
@@ -316,11 +274,7 @@ impl Preview {
             );
             paint_retouch_source_marker(
                 &painter,
-                image_rect,
-                app.develop.geometry,
-                lens_geometry,
-                source_width,
-                source_height,
+                projection,
                 marker,
                 dab_size * source_width.min(source_height).max(1) as f32,
                 Color32::from_rgb(255, 190, 55),
@@ -354,18 +308,14 @@ fn retouch_source_marker_position(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 fn paint_retouch_source_marker(
     painter: &egui::Painter,
-    image_rect: Rect,
-    geometry: GeometryTransform,
-    lens_geometry: Option<&LensGeometryMap>,
-    source_width: u32,
-    source_height: u32,
+    projection: SourceProjection<'_>,
     source: [f32; 2],
     radius_native: f32,
     color: Color32,
 ) {
+    let (source_width, source_height) = (projection.source_width, projection.source_height);
     if source[0] < 0.0
         || source[1] < 0.0
         || source[0] >= source_width as f32
@@ -378,25 +328,9 @@ fn paint_retouch_source_marker(
         source[1] / source_height.max(1) as f32,
     ];
     let size = radius_native / source_width.min(source_height).max(1) as f32;
-    let outline = brush_outline_geometry_screen_points(
-        image_rect,
-        geometry,
-        lens_geometry,
-        source_width,
-        source_height,
-        uv,
-        size,
-        64,
-    );
+    let outline = projection.brush_outline(uv, size, 64);
     painter.add(Shape::line(outline, Stroke::new(1.5, color)));
-    let center = final_geometry_native_source_to_screen(
-        image_rect,
-        geometry,
-        lens_geometry,
-        source_width,
-        source_height,
-        uv,
-    );
+    let center = projection.to_screen(uv);
     painter.line_segment(
         [center - egui::vec2(5.0, 0.0), center + egui::vec2(5.0, 0.0)],
         Stroke::new(1.5, color),
@@ -409,30 +343,18 @@ fn paint_retouch_source_marker(
 
 fn paint_remove_brush_geometry(
     painter: &egui::Painter,
-    image_rect: Rect,
-    geometry: GeometryTransform,
-    lens_geometry: Option<&LensGeometryMap>,
-    source_width: u32,
-    source_height: u32,
+    projection: SourceProjection<'_>,
     points: &[crate::pipeline::RemoveBrushPoint],
     fill: Color32,
 ) {
+    let (source_width, source_height) = (projection.source_width, projection.source_height);
     let shortest = source_width.min(source_height).max(1) as f32;
     let width = source_width.max(1) as f32;
     let height = source_height.max(1) as f32;
     for point in points {
         let uv = [point.x / width, point.y / height];
         let size = point.radius.max(0.0) / shortest;
-        let outline = brush_outline_geometry_screen_points(
-            image_rect,
-            geometry,
-            lens_geometry,
-            source_width,
-            source_height,
-            uv,
-            size,
-            24,
-        );
+        let outline = projection.brush_outline(uv, size, 24);
         if outline.len() >= 3 {
             painter.add(Shape::convex_polygon(outline, fill, Stroke::NONE));
         }

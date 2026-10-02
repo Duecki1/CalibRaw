@@ -1,3 +1,5 @@
+use super::*;
+
 fn inpaint_tool_help(tool: InpaintTool) -> &'static str {
     match tool {
         InpaintTool::Remove => {
@@ -110,41 +112,29 @@ impl Sidebar {
         crate::ui::theme::card_gap(ui);
         crate::ui::theme::section_card(ui, "Brush", |ui| {
             ui.add_enabled_ui(!app.inpaint_processing(), |ui| {
-                adjustment_slider_with_reset(
-                    ui,
-                    "Size",
-                    &mut app.inpaint.brush_size,
-                    0.0025..=0.25,
-                    3,
-                    0.0025,
-                    Some("Brush stays the same size on screen; zoom in for a smaller, more precise native-image footprint."),
-                    0.055,
-                );
+                AdjustmentSlider::new("Size", &mut app.inpaint.brush_size, 0.0025..=0.25)
+                    .decimals(3)
+                    .step(0.0025)
+                    .hover_text("Brush stays the same size on screen; zoom in for a smaller, more precise native-image footprint.")
+                    .reset_to(0.055)
+                    .show(ui);
                 if app.inpaint.tool.retouch().is_some() {
                     let mut feather = 1.0 - app.inpaint.brush_hardness;
-                    if adjustment_slider_with_reset(
-                        ui,
-                        "Feather",
-                        &mut feather,
-                        0.0..=1.0,
-                        2,
-                        0.01,
-                        Some("Width of the soft outer edge as a fraction of the brush radius."),
-                        0.5,
-                    ) {
+                    if AdjustmentSlider::new("Feather", &mut feather, 0.0..=1.0)
+                        .decimals(2)
+                        .step(0.01)
+                        .hover_text("Width of the soft outer edge as a fraction of the brush radius.")
+                        .reset_to(0.5)
+                        .show(ui) {
                         app.inpaint.brush_hardness = 1.0 - feather;
                     }
                 }
-                adjustment_slider_with_reset(
-                    ui,
-                    "Opacity",
-                    &mut app.inpaint.brush_opacity,
-                    0.01..=1.0,
-                    2,
-                    0.01,
-                    Some("Initial strength of each new Remove, Clone, or Heal stroke."),
-                    1.0,
-                );
+                AdjustmentSlider::new("Opacity", &mut app.inpaint.brush_opacity, 0.01..=1.0)
+                    .decimals(2)
+                    .step(0.01)
+                    .hover_text("Initial strength of each new Remove, Clone, or Heal stroke.")
+                    .reset_to(1.0)
+                    .show(ui);
             });
             if let Some(status) = app
                 .inpaint
@@ -268,16 +258,12 @@ impl Sidebar {
                 }
                 let changed = ui
                     .add_enabled_ui(!app.inpaint_processing(), |ui| {
-                        adjustment_slider_with_reset(
-                            ui,
-                            "Opacity",
-                            &mut opacity,
-                            0.0..=1.0,
-                            2,
-                            0.01,
-                            Some("Non-destructively changes this stored stroke without rerunning its model or heal solver."),
-                            1.0,
-                        )
+                        AdjustmentSlider::new("Opacity", &mut opacity, 0.0..=1.0)
+                            .decimals(2)
+                            .step(0.01)
+                            .hover_text("Non-destructively changes this stored stroke without rerunning its model or heal solver.")
+                            .reset_to(1.0)
+                            .show(ui)
                     })
                     .inner;
                 if changed {

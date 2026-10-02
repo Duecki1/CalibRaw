@@ -209,17 +209,17 @@ impl CalibRawApp {
 
     pub(in crate::app) fn skyseg_model_path(&self) -> PathBuf {
         self.ai_model_root()
-            .join(crate::ai_masks::SKYSEG_MODEL_FILENAME)
+            .join(calibraw_ai::ai_masks::SKYSEG_MODEL_FILENAME)
     }
 
     pub(in crate::app) fn depth_model_path(&self) -> PathBuf {
         self.ai_model_root()
-            .join(crate::ai_masks::DEPTH_MODEL.cache_filename)
+            .join(calibraw_ai::ai_masks::DEPTH_MODEL.cache_filename)
     }
 
     pub(in crate::app) fn big_lama_model_path(&self) -> PathBuf {
         self.ai_model_root()
-            .join(crate::remove::BIG_LAMA_MODEL_FILENAME)
+            .join(calibraw_ai::remove::BIG_LAMA_MODEL_FILENAME)
     }
 
     #[cfg(not(target_os = "android"))]
@@ -255,49 +255,22 @@ impl CalibRawApp {
     ) -> Result<(), String> {
         let config = Self::onnx_runtime_config_path();
         if let Some((path, sha256)) = selection {
-            let parent = config
-                .parent()
-                .ok_or_else(|| "invalid CalibRaw configuration path".to_owned())?;
             let path_text = path
                 .to_str()
                 .ok_or_else(|| "the ONNX Runtime path is not valid UTF-8".to_owned())?;
             if path_text.contains('\n') || path_text.contains('\r') {
                 return Err("the ONNX Runtime path contains a line break".to_owned());
             }
-            std::fs::create_dir_all(parent)
-                .map_err(|error| format!("could not create {}: {error}", parent.display()))?;
-            let temporary = config.with_extension(format!("tmp.{}", std::process::id()));
             let payload = format!("sha256={sha256}\npath={path_text}\n");
-            let result = (|| {
-                use std::io::Write as _;
-
-                let mut file = std::fs::OpenOptions::new()
-                    .create(true)
-                    .truncate(true)
-                    .write(true)
-                    .open(&temporary)
-                    .map_err(|error| format!("could not open {}: {error}", temporary.display()))?;
-                file.write_all(payload.as_bytes())
-                    .map_err(|error| format!("could not write {}: {error}", temporary.display()))?;
-                file.sync_all()
-                    .map_err(|error| format!("could not flush {}: {error}", temporary.display()))?;
-                drop(file);
-                crate::file_ops::replace_file(&temporary, &config)
-                    .map_err(|error| format!("could not publish {}: {error}", config.display()))?;
-                crate::file_ops::sync_parent_directory(parent)
-                    .map_err(|error| format!("could not flush {}: {error}", parent.display()))
-            })();
-            if result.is_err() {
-                let _ = std::fs::remove_file(&temporary);
-            }
-            result?;
+            calibraw_core::file_ops::write_bytes_atomically(&config, payload.as_bytes())
+                .map_err(|error| format!("could not save {}: {error}", config.display()))?;
         } else {
             match std::fs::remove_file(&config) {
                 Ok(()) => {
                     if let Some(parent) = config.parent() {
-                        crate::file_ops::sync_parent_directory(parent).map_err(|error| {
-                            format!("could not flush {}: {error}", parent.display())
-                        })?;
+                        calibraw_core::file_ops::sync_parent_directory(parent).map_err(
+                            |error| format!("could not flush {}: {error}", parent.display()),
+                        )?;
                     }
                 }
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
@@ -360,9 +333,9 @@ impl CalibRawApp {
                     .to_owned(),
             );
         }
-        let sha256 = crate::ai_masks::sha256_file_hex(&path)
+        let sha256 = calibraw_ai::ai_masks::sha256_file_hex(&path)
             .map_err(|error| format!("Could not hash selected ONNX Runtime: {error:#}"))?;
-        if let Err(error) = crate::ai_masks::probe_runtime_subprocess(&path, &sha256) {
+        if let Err(error) = calibraw_ai::ai_masks::probe_runtime_subprocess(&path, &sha256) {
             return Err(format!(
                 "This ONNX Runtime could not be loaded safely: {error:#}"
             ));

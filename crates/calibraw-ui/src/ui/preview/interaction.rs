@@ -80,13 +80,10 @@ pub(super) fn begin_mask_drag(
     geometry: &MaskGeometry,
     uv: [f32; 2],
     pointer: Pos2,
-    image_rect: Rect,
-    display_geometry: GeometryTransform,
-    lens_geometry: Option<&LensGeometryMap>,
-    source_width: u32,
-    source_height: u32,
+    projection: SourceProjection<'_>,
     path_curve_modifier: bool,
 ) -> Option<MaskDragState> {
+    let (source_width, source_height) = (projection.source_width, projection.source_height);
     match geometry {
         MaskGeometry::Radial {
             center,
@@ -98,34 +95,17 @@ pub(super) fn begin_mask_drag(
             if !initialized {
                 return Some(MaskDragState::Create(uv));
             }
-            let rotation_handle = radial_rotation_handle_geometry(
-                image_rect,
-                display_geometry,
-                lens_geometry,
-                source_width,
-                source_height,
-                *center,
-                *radius,
-                *rotation,
-            );
+            let rotation_handle = projection.radial_rotation_handle(*center, *radius, *rotation);
             if rotation_handle.distance(pointer) <= 24.0 {
                 return Some(MaskDragState::RotateRadial {
                     pointer_angle: source_angle_from(*center, uv, source_width, source_height),
                     rotation: *rotation,
                 });
             }
-            for (index, handle) in radial_handles_geometry_screen(
-                image_rect,
-                display_geometry,
-                lens_geometry,
-                source_width,
-                source_height,
-                *center,
-                *radius,
-                *rotation,
-            )
-            .into_iter()
-            .enumerate()
+            for (index, handle) in projection
+                .radial_handles(*center, *radius, *rotation)
+                .into_iter()
+                .enumerate()
             {
                 if handle.distance(pointer) <= 22.0 {
                     return Some(MaskDragState::ResizeRadial { axis: index / 2 });
@@ -158,31 +138,9 @@ pub(super) fn begin_mask_drag(
             if !initialized {
                 return Some(MaskDragState::Create(uv));
             }
-            let a = final_geometry_native_source_to_screen(
-                image_rect,
-                display_geometry,
-                lens_geometry,
-                source_width,
-                source_height,
-                *start,
-            );
-            let b = final_geometry_native_source_to_screen(
-                image_rect,
-                display_geometry,
-                lens_geometry,
-                source_width,
-                source_height,
-                *end,
-            );
-            let (_, rotation_handle) = linear_rotation_handle_geometry(
-                image_rect,
-                display_geometry,
-                lens_geometry,
-                source_width,
-                source_height,
-                *start,
-                *end,
-            );
+            let a = projection.to_screen(*start);
+            let b = projection.to_screen(*end);
+            let (_, rotation_handle) = projection.linear_rotation_handle(*start, *end);
             if rotation_handle.distance(pointer) <= 24.0 {
                 let midpoint = [(start[0] + end[0]) * 0.5, (start[1] + end[1]) * 0.5];
                 Some(MaskDragState::RotateLinear {
@@ -196,31 +154,9 @@ pub(super) fn begin_mask_drag(
                 Some(MaskDragState::LinearEnd)
             } else if distance_to_polyline(
                 pointer,
-                &linear_isot_geometry_screen_points(
-                    image_rect,
-                    display_geometry,
-                    lens_geometry,
-                    source_width,
-                    source_height,
-                    *start,
-                    *end,
-                    0.5,
-                    32,
-                ),
+                &projection.linear_isoline(*start, *end, 0.5, 32),
             ) <= 18.0
-                || distance_to_polyline(
-                    pointer,
-                    &linear_axis_geometry_screen_points(
-                        image_rect,
-                        display_geometry,
-                        lens_geometry,
-                        source_width,
-                        source_height,
-                        *start,
-                        *end,
-                        32,
-                    ),
-                ) <= 18.0
+                || distance_to_polyline(pointer, &projection.linear_axis(*start, *end, 32)) <= 18.0
             {
                 Some(MaskDragState::MoveLinear {
                     pointer: uv,
@@ -239,28 +175,14 @@ pub(super) fn begin_mask_drag(
                     if dx * dx + dy * dy <= 1e-10 {
                         continue;
                     }
-                    let screen = final_geometry_native_source_to_screen(
-                        image_rect,
-                        display_geometry,
-                        lens_geometry,
-                        source_width,
-                        source_height,
-                        handle,
-                    );
+                    let screen = projection.to_screen(handle);
                     if screen.distance(pointer) <= 18.0 {
                         return Some(MaskDragState::MovePathHandle { index, outgoing });
                     }
                 }
             }
             for (index, point) in points.iter().enumerate() {
-                let screen = final_geometry_native_source_to_screen(
-                    image_rect,
-                    display_geometry,
-                    lens_geometry,
-                    source_width,
-                    source_height,
-                    point.position,
-                );
+                let screen = projection.to_screen(point.position);
                 if screen.distance(pointer) <= 20.0 {
                     return Some(if path_curve_modifier {
                         MaskDragState::CreatePathHandles { index }

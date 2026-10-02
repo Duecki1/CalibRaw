@@ -8,8 +8,8 @@ use super::{
     TilePlan, TileSpec, EXPORT_TILE_HALO, MAX_LOCAL_MASKS, MIN_EXPORT_TILE_HALO,
     TONE_GUIDE_CELL_SIZE,
 };
-use crate::file_ops::{replace_file, sync_parent_directory};
 use anyhow::{Context, Result};
+use calibraw_core::file_ops::{replace_file, sync_parent_directory};
 use rayon::prelude::*;
 use std::borrow::Cow;
 use std::fs::{self, OpenOptions};
@@ -655,7 +655,7 @@ pub fn spawn_tiled_export(
 
 fn record_export_worker_started(format: ExportFormat, job: &TiledExportJob) {
     match format {
-        ExportFormat::Png => crate::diagnostics::record(format!(
+        ExportFormat::Png => calibraw_core::diagnostics::record(format!(
             "PNG export worker started: source={}x{} cfa={:?} requested_tile_core={} halo={} exposure={:.3} temperature={:.3} tint={:.3} demosaic={:?} highlight={:?}",
             job.raw.width,
             job.raw.height,
@@ -668,7 +668,7 @@ fn record_export_worker_started(format: ExportFormat, job: &TiledExportJob) {
             job.exposure.demosaic_mode,
             job.exposure.highlight_method,
         )),
-        ExportFormat::Jpeg => crate::diagnostics::record(format!(
+        ExportFormat::Jpeg => calibraw_core::diagnostics::record(format!(
             "JPEG export worker started: source={}x{} quality={} cfa={:?} requested_tile_core={} halo={}",
             job.raw.width,
             job.raw.height,
@@ -688,11 +688,11 @@ fn record_export_worker_finished(format: ExportFormat, started: Instant, result:
         ExportFormat::Tiff | ExportFormat::JpegXl => return,
     };
     match result {
-        Ok(()) => crate::diagnostics::record(format!(
+        Ok(()) => calibraw_core::diagnostics::record(format!(
             "{format_name} export worker finished successfully in {:.3}s",
             started.elapsed().as_secs_f64()
         )),
-        Err(error) => crate::diagnostics::record(format!(
+        Err(error) => calibraw_core::diagnostics::record(format!(
             "{format_name} export worker failed after {:.3}s: {error:#}",
             started.elapsed().as_secs_f64()
         )),
@@ -810,14 +810,14 @@ fn await_export_program_template(
     let wait_started = Instant::now();
     match prewarm.wait() {
         Ok(template) => {
-            crate::diagnostics::record(format!(
+            calibraw_core::diagnostics::record(format!(
                 "Full-quality export program prewarm available after {:.3}s wait",
                 wait_started.elapsed().as_secs_f64()
             ));
             Some(template)
         }
         Err(error) => {
-            crate::diagnostics::record(format!(
+            calibraw_core::diagnostics::record(format!(
                 "Full-quality export program prewarm unavailable: {error}"
             ));
             None
@@ -1011,7 +1011,7 @@ fn render_geometry_output<W: Write>(
             }
         }
         output_sharpen.finish(output_transform, row_format, output)?;
-        crate::diagnostics::record(format!(
+        calibraw_core::diagnostics::record(format!(
             "Export geometry, final sharpening and output encoding finished in {:.3}s: {}x{}",
             finalize_started.elapsed().as_secs_f64(),
             request.output_width,
@@ -1065,7 +1065,7 @@ where
         raw.inpaint_opposed_chroma_for_exposure(exposure);
     }
     let plan = TilePlan::new(raw.width, raw.height, tile_spec);
-    crate::diagnostics::record(format!(
+    calibraw_core::diagnostics::record(format!(
         "Tiled export plan: source={}x{} requested_output={}x{} tiles={} core={} halo={} linear_row_stream=f32",
         raw.width,
         raw.height,
@@ -1125,13 +1125,13 @@ where
             export_mask_edge,
         ) {
             Ok(pipeline) => {
-                crate::diagnostics::record(
+                calibraw_core::diagnostics::record(
                     "Full-quality export reused startup-precompiled GPU programs",
                 );
                 pipeline
             }
             Err(reuse_error) => {
-                crate::diagnostics::record(format!(
+                calibraw_core::diagnostics::record(format!(
                     "Full-quality export program reuse unavailable ({reuse_error:#}); compiling programs"
                 ));
                 RawGpuPipeline::new_headless_with_quality_and_mask_edge(
@@ -1156,7 +1156,7 @@ where
         )
         .context("create reusable full-quality export pipeline")?
     };
-    crate::diagnostics::record(format!(
+    calibraw_core::diagnostics::record(format!(
         "Full-quality export pipeline prepared in {:.3}s; padded_tile={}x{} viewport-local mask_atlas={}x{} R16F",
         pipeline_started.elapsed().as_secs_f64(),
         first_raw.width,
@@ -1217,7 +1217,7 @@ where
             .with_context(|| format!("apply Remove to tone-analysis tile {}", index + 1))?;
     }
     tile_pipeline.finish_export_tone_analysis(queue, device);
-    crate::diagnostics::record(format!(
+    calibraw_core::diagnostics::record(format!(
         "Exact full-resolution tone-analysis prepass queued in {:.3}s across {} tiles",
         tone_analysis_started.elapsed().as_secs_f64(),
         plan.tile_count()
@@ -1371,7 +1371,7 @@ fn report_completed_export_tile(
     *completed_tiles += 1;
     if !*first_progress_logged {
         *first_progress_logged = true;
-        crate::diagnostics::record(format!(
+        calibraw_core::diagnostics::record(format!(
             "First export tile completed after {:.3}s; pipelined GPU readback is active",
             export_started.elapsed().as_secs_f64()
         ));
@@ -2319,7 +2319,7 @@ fn encode_jpeg_rgb(request: JpegEncodeRequest<'_>) -> Result<()> {
         .encode(rgb, width, height, jpeg_encoder::ColorType::Rgb)
         .with_context(|| format!("encode JPEG {}", output_path.display()))?;
     writer.flush().context("flush JPEG export")?;
-    crate::diagnostics::record(format!(
+    calibraw_core::diagnostics::record(format!(
         "JPEG compression finished in {:.3}s: {}x{} quality={}",
         encode_started.elapsed().as_secs_f64(),
         output_width,
@@ -3038,7 +3038,7 @@ fn bounded_tile_spec(mut spec: TileSpec, source_width: u32) -> Result<TileSpec> 
 fn is_direct_export_destination(path: &Path) -> bool {
     #[cfg(target_os = "android")]
     {
-        crate::android::is_direct_export_path(path)
+        calibraw_ffi::is_direct_export_path(path)
     }
     #[cfg(not(target_os = "android"))]
     {
@@ -3065,7 +3065,7 @@ fn temporary_export_path(destination: &Path) -> Result<PathBuf> {
     let parent = if direct {
         #[cfg(target_os = "android")]
         {
-            crate::android::direct_export_temp_dir(destination)
+            calibraw_ffi::direct_export_temp_dir(destination)
                 .context("Android direct export has no temporary staging directory")?
         }
         #[cfg(not(target_os = "android"))]

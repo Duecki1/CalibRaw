@@ -19,6 +19,7 @@ use crate::pipeline::{
 };
 use crate::ModelDownloadProgress;
 use anyhow::{Context, Result};
+use calibraw_core::color_math::{srgb_decode_signed, srgb_encode_signed};
 use image::{imageops::FilterType, GrayImage, ImageBuffer, Luma, Rgb, Rgb32FImage};
 use ort::value::Tensor;
 use std::{
@@ -545,10 +546,9 @@ fn build_retouch_patch(
                             continue;
                         };
                         let source = pipeline_scene_to_working_rec2020(raw, source_scene_pixel)
-                            .map(perceptual_encode_signed);
+                            .map(srgb_encode_signed);
                         source_perceptual[local_index] = source;
-                        let destination =
-                            output_working[y * width + x].map(perceptual_encode_signed);
+                        let destination = output_working[y * width + x].map(srgb_encode_signed);
                         for channel in 0..3 {
                             difference[local_index * 3 + channel] =
                                 destination[channel] - source[channel];
@@ -587,7 +587,7 @@ fn build_retouch_patch(
                         let index = y * width + x;
                         let source = source_perceptual[local_index];
                         let healed: [f32; 3] = std::array::from_fn(|channel| {
-                            perceptual_decode_signed(
+                            srgb_decode_signed(
                                 source[channel] + difference[local_index * 3 + channel],
                             )
                         });
@@ -746,26 +746,6 @@ fn sample_scene_bilinear(
         let bottom = sample(x0, y1, channel) * (1.0 - tx) + sample(x1, y1, channel) * tx;
         top * (1.0 - ty) + bottom * ty
     }))
-}
-
-fn perceptual_encode_signed(value: f32) -> f32 {
-    let sign = value.signum();
-    let value = value.abs();
-    sign * if value <= 0.003_130_8 {
-        value * 12.92
-    } else {
-        1.055 * value.powf(1.0 / 2.4) - 0.055
-    }
-}
-
-fn perceptual_decode_signed(value: f32) -> f32 {
-    let sign = value.signum();
-    let value = value.abs();
-    sign * if value <= 0.040_45 {
-        value / 12.92
-    } else {
-        ((value + 0.055) / 1.055).powf(2.4)
-    }
 }
 
 /// Port of GIMP 3.0.4's `app/paint/gimpheal.c` solver.

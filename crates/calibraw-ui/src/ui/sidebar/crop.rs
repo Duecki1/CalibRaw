@@ -1,7 +1,8 @@
+use super::*;
 use crate::pipeline::{CropAspectRatio, GeometryTransform};
 
 impl Sidebar {
-    fn reset_crop(app: &mut CalibRawApp) {
+    pub(super) fn reset_crop(app: &mut CalibRawApp) {
         app.develop.geometry = GeometryTransform::default();
         app.develop_ui.crop_constraint_reference = Some(app.develop.geometry.crop);
         app.develop_ui.crop_drag = None;
@@ -10,8 +11,10 @@ impl Sidebar {
         app.note_geometry_changed();
     }
 
-    fn show_crop(ui: &mut Ui, app: &mut CalibRawApp, _layout: ScreenLayout) {
-        let source_dimensions = app.develop.loaded_raw
+    pub(super) fn show_crop(ui: &mut Ui, app: &mut CalibRawApp, _layout: ScreenLayout) {
+        let source_dimensions = app
+            .develop
+            .loaded_raw
             .as_ref()
             .map(|raw| (raw.width, raw.height))
             .unwrap_or((1, 1));
@@ -76,15 +79,15 @@ impl Sidebar {
                     app.develop.geometry.rotate_quarter_turn(true);
                 }
             });
-            adjustment_slider(
-                ui,
+            AdjustmentSlider::new(
                 "Straighten",
                 &mut app.develop.geometry.rotation_degrees,
                 -45.0..=45.0,
-                1,
-                0.1,
-                Some("Fine rotation for leveling the image."),
-            );
+            )
+            .decimals(1)
+            .step(0.1)
+            .hover_text("Fine rotation for leveling the image.")
+            .show(ui);
             let straighten_label = if app.develop_ui.straighten_tool_active {
                 "Drawing straighten line…"
             } else {
@@ -126,37 +129,40 @@ impl Sidebar {
                     app.develop.geometry.flip_vertical = !app.develop.geometry.flip_vertical;
                 }
             });
-            adjustment_slider(
-                ui,
+            AdjustmentSlider::new(
                 "Horizontal",
                 &mut app.develop.geometry.horizontal_transform,
                 -30.0..=30.0,
-                1,
-                0.1,
-                Some("Correct horizontal perspective."),
-            );
-            adjustment_slider(
-                ui,
+            )
+            .decimals(1)
+            .step(0.1)
+            .hover_text("Correct horizontal perspective.")
+            .show(ui);
+            AdjustmentSlider::new(
                 "Vertical",
                 &mut app.develop.geometry.vertical_transform,
                 -30.0..=30.0,
-                1,
-                0.1,
-                Some("Correct vertical perspective."),
-            );
+            )
+            .decimals(1)
+            .step(0.1)
+            .hover_text("Correct vertical perspective.")
+            .show(ui);
         });
 
         app.develop.geometry = app.develop.geometry.sanitized();
         let containment_transform_changed =
             (app.develop.geometry.rotation_degrees - before.rotation_degrees).abs() > 1e-6
-                || (app.develop.geometry.horizontal_transform - before.horizontal_transform).abs() > 1e-6
-                || (app.develop.geometry.vertical_transform - before.vertical_transform).abs() > 1e-6;
+                || (app.develop.geometry.horizontal_transform - before.horizontal_transform).abs()
+                    > 1e-6
+                || (app.develop.geometry.vertical_transform - before.vertical_transform).abs()
+                    > 1e-6;
         if containment_transform_changed {
             if let Some(reference) = app.develop_ui.crop_constraint_reference {
                 app.develop.geometry.crop = reference;
             }
         }
-        app.develop.geometry
+        app.develop
+            .geometry
             .fit_crop_inside_transformed_source(source_dimensions.0, source_dimensions.1);
         if app.develop.geometry != before {
             app.note_geometry_changed();
@@ -164,7 +170,12 @@ impl Sidebar {
     }
 
     fn apply_crop_aspect(app: &mut CalibRawApp, source_width: u32, source_height: u32) {
-        let Some(ratio) = app.develop.geometry.aspect_ratio.value(source_width, source_height) else {
+        let Some(ratio) = app
+            .develop
+            .geometry
+            .aspect_ratio
+            .value(source_width, source_height)
+        else {
             return;
         };
         let crop = app.develop.geometry.crop;

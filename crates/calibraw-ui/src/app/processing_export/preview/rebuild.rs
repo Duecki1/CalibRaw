@@ -187,7 +187,7 @@ impl CalibRawApp {
             pipeline
                 .update_mask_layer(queue, layer, &bytes)
                 .map_err(|error| format!("Could not update preview mask: {error:#}"))?;
-            crate::diagnostics::record(format!(
+            calibraw_core::diagnostics::record(format!(
                 "Preview mask layer {} rasterized/uploaded in {:.3}s (raster {:.3}s)",
                 layer + 1,
                 layer_started.elapsed().as_secs_f64(),
@@ -368,7 +368,7 @@ impl CalibRawApp {
                 .err()
                 .is_some_and(|error| error.to_string().contains("GPU pipelines already reserve"));
         if needs_in_place_replacement {
-            crate::diagnostics::record(
+            calibraw_core::diagnostics::record(
                 "DPI preview replacement exceeded coexistence budget; released old graph and reused its compiled programs",
             );
             let previous = self.take_preview_pipeline_and_release_textures();
@@ -383,7 +383,7 @@ impl CalibRawApp {
                 return;
             }
         };
-        crate::diagnostics::record(format!(
+        calibraw_core::diagnostics::record(format!(
             "DPI preview GPU graph prepared on the UI thread in {:.3}s",
             pipeline_started.elapsed().as_secs_f64()
         ));
@@ -486,7 +486,7 @@ impl CalibRawApp {
                 self.preview.quality_dirty = true;
             }
         }
-        crate::diagnostics::record(format!(
+        calibraw_core::diagnostics::record(format!(
             "DPI preview rebuild installed: edge {} -> {}x{} ({})",
             prepared.requested_edge,
             self.develop.preview_raw.as_ref().map_or(0, |raw| raw.width),

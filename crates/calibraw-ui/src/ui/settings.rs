@@ -2,7 +2,7 @@
 use crate::app::OnnxRuntimeMode;
 use crate::app::{maximum_raw_cache_limit, CalibRawApp, PreviewQuality};
 use crate::pipeline::CameraProfileMode;
-use crate::ui::components::adjustment_slider::adjustment_slider_with_reset;
+use crate::ui::components::adjustment_slider::AdjustmentSlider;
 use crate::ui::layout::ScreenLayout;
 use crate::ui::library::maximum_thumbnail_worker_count;
 use eframe::egui::{self, Ui};
@@ -17,7 +17,7 @@ const RUST_DEPENDENCY_LICENSES: &str =
 pub(crate) struct Settings;
 
 fn diagnostics_snapshot_with_ai_backends() -> String {
-    let mut diagnostic_log = crate::diagnostics::snapshot();
+    let mut diagnostic_log = calibraw_core::diagnostics::snapshot();
     let providers = calibraw_ai::active_execution_providers();
     if providers.is_empty() {
         return diagnostic_log;
@@ -329,32 +329,31 @@ impl Settings {
                     if raw_cache_files == 1 { "file" } else { "files" }
                 )
             };
-            if adjustment_slider_with_reset(
-                ui,
+            if AdjustmentSlider::new(
                 "Decoded RAW cache",
                 &mut raw_cache_files,
                 0..=maximum_raw_cache_limit(),
-                0,
-                1.0,
-                Some(&raw_cache_help),
-                crate::app::default_raw_cache_limit(),
-            ) {
+            )
+            .decimals(0)
+            .step(1.0)
+            .hover_text(raw_cache_help.as_str())
+            .reset_to(crate::app::default_raw_cache_limit())
+            .show(ui)
+            {
                 app.set_raw_cache_limit(raw_cache_files);
             }
 
             let mut thumbnail_workers = app.thumbnail_worker_count();
-            if adjustment_slider_with_reset(
-                ui,
-                "Thumbnail workers",
-                &mut thumbnail_workers,
-                1..=maximum_thumbnail_worker_count(),
-                0,
-                1.0,
-                Some(
-                    "Concurrent thumbnail jobs. Higher values fill the library faster but preview-less and edited jobs may unpack a full sensor and use substantial memory. Changing this restarts the queue.",
-                ),
-                crate::ui::library::default_thumbnail_worker_count(),
-            ) {
+            if AdjustmentSlider::new(
+                    "Thumbnail workers",
+                    &mut thumbnail_workers,
+                    1..=maximum_thumbnail_worker_count(),
+                )
+                .decimals(0)
+                .step(1.0)
+                .hover_text("Concurrent thumbnail jobs. Higher values fill the library faster but preview-less and edited jobs may unpack a full sensor and use substantial memory. Changing this restarts the queue." )
+                .reset_to(crate::ui::library::default_thumbnail_worker_count())
+                .show(ui) {
                 app.set_thumbnail_worker_count(thumbnail_workers);
             }
 
@@ -619,7 +618,7 @@ impl Settings {
                         180.0,
                         &quality_help,
                         |ui| {
-                            for option in crate::ai_masks::BiRefNetQuality::ALL {
+                            for option in calibraw_ai::ai_masks::BiRefNetQuality::ALL {
                                 ui.selectable_value(&mut quality, option, option.label())
                                     .on_hover_text(option.model().explanation);
                             }
@@ -824,10 +823,10 @@ impl Settings {
                     );
                     #[cfg(target_os = "android")]
                     match app.copy_text_to_clipboard("CalibRaw legal notices", &legal_text) {
-                        Ok(()) => crate::diagnostics::record(
+                        Ok(()) => calibraw_core::diagnostics::record(
                             "CalibRaw legal notices copied to Android clipboard",
                         ),
-                        Err(error) => crate::diagnostics::record(format!(
+                        Err(error) => calibraw_core::diagnostics::record(format!(
                             "Android legal-notice clipboard copy failed: {error}"
                         )),
                     }
@@ -863,10 +862,10 @@ impl Settings {
                 {
                     #[cfg(target_os = "android")]
                     match app.copy_text_to_clipboard("CalibRaw diagnostics", &diagnostic_log) {
-                        Ok(()) => {
-                            crate::diagnostics::record("Diagnostic log copied to Android clipboard")
-                        }
-                        Err(error) => crate::diagnostics::record(format!(
+                        Ok(()) => calibraw_core::diagnostics::record(
+                            "Diagnostic log copied to Android clipboard",
+                        ),
+                        Err(error) => calibraw_core::diagnostics::record(format!(
                             "Android clipboard copy failed: {error}"
                         )),
                     }
@@ -877,7 +876,7 @@ impl Settings {
                     .on_hover_text("Clear recorded runtime events from the diagnostic report.")
                     .clicked()
                 {
-                    crate::diagnostics::clear();
+                    calibraw_core::diagnostics::clear();
                     diagnostic_log = diagnostics_snapshot_with_ai_backends();
                 }
             });

@@ -112,24 +112,11 @@ impl CalibRawApp {
         #[cfg(not(target_os = "android"))]
         {
             let crate::sidecar::SidecarTarget::Desktop { raw_path } = sidecar_target;
-            let label = self
-                .develop
-                .current_label
-                .clone()
-                .unwrap_or_else(|| raw_path.display().to_string());
-            let target = crate::sidecar::SidecarTarget::Desktop {
-                raw_path: raw_path.clone(),
+            let reload = ProfileReload {
+                camera_profile: profile_selection,
+                edits: edit_override,
             };
-            self.open_path_labeled_with_options(
-                raw_path,
-                label,
-                false,
-                target,
-                frame,
-                Some(profile_selection),
-                Some(edit_override),
-                None,
-            );
+            self.reopen_desktop_with_camera_profile(raw_path, reload, frame);
             // Background reload returns to the library without triggering
             // interactive tab-exit side effects (AI operation cancellation).
             self.ui.active_tab = AppTab::Library;
@@ -139,24 +126,11 @@ impl CalibRawApp {
         {
             match sidecar_target {
                 crate::sidecar::SidecarTarget::Desktop { raw_path } => {
-                    let label = self
-                        .develop
-                        .current_label
-                        .clone()
-                        .unwrap_or_else(|| raw_path.display().to_string());
-                    let target = crate::sidecar::SidecarTarget::Desktop {
-                        raw_path: raw_path.clone(),
+                    let reload = ProfileReload {
+                        camera_profile: profile_selection,
+                        edits: edit_override,
                     };
-                    self.open_path_labeled_with_options(
-                        raw_path,
-                        label,
-                        false,
-                        target,
-                        frame,
-                        Some(profile_selection),
-                        Some(edit_override),
-                        None,
-                    );
+                    self.reopen_desktop_with_camera_profile(raw_path, reload, frame);
                     // Background reload returns to the library without triggering
                     // interactive tab-exit side effects (AI operation cancellation).
                     self.ui.active_tab = AppTab::Library;
@@ -164,14 +138,16 @@ impl CalibRawApp {
                 crate::sidecar::SidecarTarget::Android {
                     raw_uri,
                     display_name,
-                } => match crate::android::open_library_document(
+                } => match calibraw_ffi::open_library_document(
                     &self.android.android_app,
                     &raw_uri,
                     &display_name,
                 ) {
                     Ok(()) => {
-                        self.android.pending_android_profile_reload =
-                            Some((profile_selection, edit_override));
+                        self.android.pending_android_profile_reload = Some(ProfileReload {
+                            camera_profile: profile_selection,
+                            edits: edit_override,
+                        });
                         self.android.picker_pending = true;
                         // Keep the background profile reload in the library while
                         // preserving its in-flight operation state.
@@ -637,7 +613,7 @@ impl CalibRawApp {
                 return;
             };
 
-            match crate::android::open_library_document(
+            match calibraw_ffi::open_library_document(
                 &self.android.android_app,
                 &job.uri,
                 &job.display_name,

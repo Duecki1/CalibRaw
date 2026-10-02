@@ -356,7 +356,7 @@ impl CalibRawApp {
                 }
             }
             Err(error) => {
-                crate::diagnostics::record(format!("Version check failed: {error}"));
+                calibraw_core::diagnostics::record(format!("Version check failed: {error}"));
                 self.ui.version_check.status = VersionCheckStatus::Failed(error);
             }
         }

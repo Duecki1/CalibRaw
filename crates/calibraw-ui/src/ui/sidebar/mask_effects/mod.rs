@@ -1,7 +1,10 @@
 pub(super) mod blur;
+mod controls;
 pub(super) mod edge_glow;
 pub(super) mod fog;
 pub(super) mod glow;
+pub(super) mod grain;
+pub(super) mod halation;
 pub(super) mod lens_blur;
 pub(super) mod light_rays;
 pub(super) mod motion_blur;
@@ -10,11 +13,14 @@ pub(super) mod pixelate;
 pub(super) mod radial_blur;
 pub(super) mod smoke;
 pub(super) mod tilt_shift;
+pub(super) mod vignette;
+
+use controls::{effect_details, effect_position};
 
 use super::{egui, MaskEffect, Ui};
 use crate::pipeline::effect_params::ColorParamSpec;
 
-pub(super) use crate::ui::components::adjustment_slider::float_param_slider as effect_slider;
+pub(super) use crate::ui::components::adjustment_slider::float_param_slider;
 
 fn effect_card<Settings>(
     ui: &mut Ui,
@@ -29,6 +35,13 @@ where
 {
     let mut changed = false;
     let mut reset = false;
+    let body = |ui: &mut Ui, settings: &mut Settings| {
+        if let Some(description) = effect_description(effect) {
+            ui.add(egui::Label::new(egui::RichText::new(description).small().weak()).wrap());
+            ui.add_space(crate::ui::theme::SPACE_XS);
+        }
+        body(ui, settings)
+    };
     crate::ui::theme::content_card(ui, |ui| {
         ui.push_id(effect.label(), |ui| {
             ui.spacing_mut().interact_size.y = ui.spacing().interact_size.y.max(26.0);
@@ -145,19 +158,52 @@ where
 
 pub(super) fn effect_description(effect: MaskEffect) -> Option<&'static str> {
     match effect {
+        MaskEffect::Blur => Some(
+            "Soften distracting detail. The mask controls where the blurred image is blended in.",
+        ),
         MaskEffect::LensBlur => Some(
-            "Uses an aperture-shaped scene-linear blur for natural bokeh.",
+            "Defocus backgrounds with aperture-shaped bokeh. The mask controls the blend; use a soft edge for a gradual transition.",
+        ),
+        MaskEffect::MotionBlur => Some(
+            "Add directional movement. Distance sets the trail length; the mask controls where the blur appears.",
+        ),
+        MaskEffect::RadialBlur => Some(
+            "Zoom toward a center or spin around it. Position is relative to the full image; the mask controls the blend.",
+        ),
+        MaskEffect::TiltShift => Some(
+            "Keep a band in focus and soften its surroundings. Position is relative to the full image. Use a Fullscreen mask for an uninterrupted focus transition.",
+        ),
+        MaskEffect::EdgeGlow => Some(
+            "Light up image contours with a soft halo. Both the outlines and their glow stay inside the mask.",
+        ),
+        MaskEffect::Glow => Some(
+            "Spread colored light from bright pixels. The mask selects the highlights that emit light; their glow can extend beyond the selection.",
         ),
         MaskEffect::LightRays => Some(
-            "Position the source with Source X and Source Y. The mask shapes soft atmospheric light shafts emitted beyond it.",
+            "Place the source relative to the full image, then paint its openings. The mask shapes emitting regions; light shafts extend beyond them.",
+        ),
+        MaskEffect::Neon => Some(
+            "Trace image edges with colored light inside the mask. Original image keeps the photo visible behind the lines; the glow also stays inside the mask.",
+        ),
+        MaskEffect::Pixelate => Some(
+            "Create a graphic mosaic. Block size sets the tile scale; the mask controls where the result appears.",
         ),
         MaskEffect::Fog => Some(
-            "Fog builds with distance using shared scene depth. The tint is scattered light, blended through the editable mask.",
+            "Add atmospheric haze through the mask. Scene depth builds fog with distance; turn it off for an even-distance veil.",
         ),
         MaskEffect::Smoke => Some(
-            "Smoke is generated in full-image coordinates and blended through the editable mask.",
+            "Layer drifting plumes through the mask. The pattern stays anchored to the full image as you edit the selection.",
         ),
-        _ => None,
+        MaskEffect::Grain => Some(
+            "Add photographic texture. Grain stays anchored to the image; the mask controls its local strength.",
+        ),
+        MaskEffect::Halation => Some(
+            "Give bright highlights a warm film halo inside the mask. Nearby highlights outside the selection can cast a halo into it. Use Fullscreen for a whole-image finish.",
+        ),
+        MaskEffect::Vignette => Some(
+            "Darken edges with negative amounts or brighten them with positive amounts. The center follows the cropped, rotated frame; the mask controls the blend.",
+        ),
+        MaskEffect::Adjustment => None,
     }
 }
 
@@ -450,5 +496,11 @@ mod tests {
         check!(pixelate);
         check!(fog);
         check!(smoke);
+        check!(grain);
+        check!(halation);
+        check!(vignette);
     }
 }
+
+#[cfg(test)]
+mod controls_tests;

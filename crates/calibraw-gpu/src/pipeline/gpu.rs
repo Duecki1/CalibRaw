@@ -12,6 +12,7 @@ use crate::pipeline::{
 };
 use anyhow::{anyhow, Context, Result};
 use bytemuck::{Pod, Zeroable};
+use calibraw_core::color_math::{linear_srgb_to_oklab, srgb_decode};
 use std::sync::{Arc, Condvar, Mutex, OnceLock};
 
 use crate::gpu_errors::GpuErrorScopes;
@@ -37,11 +38,15 @@ mod black_tone_tests;
 #[cfg(test)]
 mod blacks_pipeline_tests;
 #[cfg(test)]
+mod existing_effects_tests;
+#[cfg(test)]
 mod film_effects_tests;
 #[cfg(test)]
 mod fog_tests;
 #[cfg(test)]
 mod light_rays_tests;
+#[cfg(test)]
+mod photographic_modules_tests;
 #[cfg(test)]
 mod point_color_tests;
 #[cfg(test)]
@@ -217,6 +222,7 @@ const SHADER_MASK_NEON: &str = include_str!("../shaders/mask_effects/neon.wgsl")
 const SHADER_MASK_PIXELATE: &str = include_str!("../shaders/mask_effects/pixelate.wgsl");
 const SHADER_MASK_RADIAL_BLUR: &str = include_str!("../shaders/mask_effects/radial_blur.wgsl");
 const SHADER_MASK_TILT_SHIFT: &str = include_str!("../shaders/mask_effects/tilt_shift.wgsl");
+const SHADER_MASK_FILM_FINISH: &str = include_str!("../shaders/mask_effects/film_finish.wgsl");
 const SHADER_CREATIVE_EFFECTS: &str = include_str!("../shaders/creative_effects.wgsl");
 const SHADER_VIEW_TRANSFORM: &str = include_str!("../shaders/view_transform.wgsl");
 const SHADER_REMOVE_COMPOSITE: &str = r#"
@@ -556,22 +562,7 @@ fn color_grade_hue_turns(hue_degrees: f32) -> f32 {
         4 => (value * fraction, 0.0, value),
         _ => (value, 0.0, value * (1.0 - fraction)),
     };
-    let decode = |encoded: f32| {
-        if encoded <= 0.04045 {
-            encoded / 12.92
-        } else {
-            ((encoded + 0.055) / 1.055).powf(2.4)
-        }
-    };
-    let rgb = [decode(r), decode(g), decode(b)];
-    let l = 0.412_221_46 * rgb[0] + 0.536_332_55 * rgb[1] + 0.051_445_995 * rgb[2];
-    let m = 0.211_903_5 * rgb[0] + 0.680_699_5 * rgb[1] + 0.107_396_96 * rgb[2];
-    let s = 0.088_302_46 * rgb[0] + 0.281_718_85 * rgb[1] + 0.629_978_7 * rgb[2];
-    let l = l.cbrt();
-    let m = m.cbrt();
-    let s = s.cbrt();
-    let a = 1.977_998_5 * l - 2.428_592_2 * m + 0.450_593_7 * s;
-    let b = 0.025_904_037 * l + 0.782_771_77 * m - 0.808_675_77 * s;
+    let [_, a, b] = linear_srgb_to_oklab([r, g, b].map(srgb_decode));
     b.atan2(a).rem_euclid(std::f32::consts::TAU) / std::f32::consts::TAU
 }
 
@@ -884,6 +875,59 @@ fn pack_effect_mask(
                     0.0,
                     0.0,
                 ],
+            )
+        }
+        MaskEffect::Grain => {
+            let config = settings.grain;
+            use effect_params::grain as params;
+            effect_mask_data(
+                effect,
+                enabled && config.is_active(),
+                [
+                    params::AMOUNT.clamp(config.amount),
+                    params::SIZE.clamp(config.size),
+                    params::ROUGHNESS.clamp(config.roughness),
+                    params::COLOR.clamp(config.color),
+                ],
+                [params::SEED.clamp(config.seed).round(), 0.0, 0.0, 0.0],
+                zero,
+            )
+        }
+        MaskEffect::Halation => {
+            let config = settings.halation;
+            use effect_params::halation as params;
+            effect_mask_data(
+                effect,
+                enabled && config.is_active(),
+                [
+                    params::AMOUNT.clamp(config.amount),
+                    params::RADIUS.clamp(config.radius),
+                    params::THRESHOLD.clamp(config.threshold),
+                    params::WARMTH.clamp(config.warmth),
+                ],
+                zero,
+                zero,
+            )
+        }
+        MaskEffect::Vignette => {
+            let config = settings.vignette;
+            use effect_params::vignette as params;
+            effect_mask_data(
+                effect,
+                enabled && config.is_active(),
+                [
+                    params::AMOUNT.clamp(config.amount),
+                    params::MIDPOINT.clamp(config.midpoint),
+                    params::ROUNDNESS.clamp(config.roundness),
+                    params::FEATHER.clamp(config.feather),
+                ],
+                [
+                    params::HIGHLIGHTS.clamp(config.highlights),
+                    params::CENTER_X.clamp(config.center[0]),
+                    params::CENTER_Y.clamp(config.center[1]),
+                    0.0,
+                ],
+                zero,
             )
         }
         MaskEffect::Adjustment => return None,
@@ -1303,14 +1347,6 @@ fn pack_effect_params(ctx: &GpuParamContext<'_>, mask_data: &[MaskData]) -> Effe
         full_height,
         ..
     } = ctx.tile;
-    let local_glow_radius = mask_data
-        .iter()
-        .filter(|mask| {
-            mask.metadata[0] != 0
-                && mask.metadata[3] >> MASK_EFFECT_ID_SHIFT == MaskEffect::Glow.shader_id()
-        })
-        .map(|mask| mask.adjust_0[1])
-        .fold(0.0_f32, f32::max);
     let global_glow_radius = if exposure.glow_amount.abs() > 1e-6 {
         exposure.glow_radius.clamp(0.0, 100.0)
     } else {
@@ -1320,7 +1356,7 @@ fn pack_effect_params(ctx: &GpuParamContext<'_>, mask_data: &[MaskData]) -> Effe
         presence: [exposure.texture, exposure.clarity, exposure.dehaze, 0.0],
         creative_effects: [
             exposure.glow_amount.clamp(0.0, 100.0),
-            global_glow_radius.max(local_glow_radius),
+            global_glow_radius,
             exposure.glow_threshold.clamp(0.0, 100.0),
             exposure.sharpen_amount.clamp(0.0, 150.0),
         ],
@@ -1539,8 +1575,14 @@ impl GpuParams {
                 || effect_id == MaskEffect::Pixelate.shader_id()
                 || effect_id == MaskEffect::Fog.shader_id()
                 || effect_id == MaskEffect::Smoke.shader_id()
+                || effect_id == MaskEffect::Halation.shader_id()
             {
                 return true;
+            }
+            // Grain and vignette operate after the display transform and need no
+            // scene neighborhood passes. Their packed controls are not adjustments.
+            if effect_id != MaskEffect::Adjustment.shader_id() {
+                return false;
             }
 
             let tone = local.adjust_0[1..].iter().any(|value| value.abs() > 1e-6);
@@ -1562,11 +1604,9 @@ impl GpuParams {
             return true;
         }
         let local_count = (self.scene_tone.mask_counts[0] as usize).min(MAX_RENDER_MASK_SLOTS);
-        self.mask_data[..local_count].iter().any(|mask| {
-            mask.metadata[0] != 0
-                && (mask.metadata[3] >> MASK_EFFECT_ID_SHIFT == MaskEffect::Glow.shader_id()
-                    || mask.film_effects[0] > 1e-6)
-        })
+        self.mask_data[..local_count]
+            .iter()
+            .any(|mask| mask.metadata[0] != 0 && mask.film_effects[0] > 1e-6)
     }
 
     fn needs_blur_passes(&self) -> bool {
@@ -1911,7 +1951,7 @@ impl GpuOutputSnapshot {
         )?;
         let image = image::RgbaImage::from_raw(self.width, self.height, rgba)
             .ok_or_else(|| anyhow!("developed thumbnail readback has an invalid byte count"))?;
-        let image = crate::thumbnail_cache::downscale_to_fit(
+        let image = calibraw_core::thumbnail_cache::downscale_to_fit(
             image::DynamicImage::ImageRgba8(image),
             maximum_edge,
         )

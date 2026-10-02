@@ -43,7 +43,7 @@ fn light_ray_beams(turn: f32, count: u32, seed: u32, softness: f32) -> f32 {
     let primary = light_ray_circular_noise(warped_turn, count, seed);
     let detail = light_ray_circular_noise(warped_turn, count * 2u + 1u, seed + 37u);
     let aperture = smoothstep(0.16, 0.88, primary * 0.82 + detail * 0.18);
-    return 0.035 + 2.1 * pow(aperture, mix(3.8, 1.15, softness));
+    return 0.06 + 1.4 * pow(aperture, mix(3.8, 1.15, softness));
 }
 
 fn light_ray_angular_pattern(
@@ -62,7 +62,7 @@ fn light_ray_angular_pattern(
     let pattern = light_ray_beams(turn, count, seed, softness) * 0.5
         + light_ray_beams(turn - offset, count, seed, softness) * 0.25
         + light_ray_beams(turn + offset, count, seed, softness) * 0.25;
-    let resolved = 1.0 - smoothstep(0.45, 1.4, f32(count) * footprint);
+    let resolved = 1.0 - smoothstep(0.35, 1.0, f32(count) * footprint / (2.0 * LIGHT_RAY_PI));
     return mix(1.0, pattern, variation * resolved);
 }
 
@@ -90,13 +90,14 @@ fn light_ray_path_energy(
     if visible_end <= 1e-6 { return 0.0; }
     let perpendicular = vec2<f32>(-radial_pixels.y, radial_pixels.x) / max(radial_length, 1.0);
     let cone_slope = tan(radians(spread * 0.5));
-    let tap_count = u32(clamp(ceil(24.0 + radial_length * visible_end
-        / min(full_size.x, full_size.y) * 64.0), 24.0, 96.0));
+    let atlas_size = vec2<f32>(textureDimensions(SceneAdjustments::light_rays_mask_tex));
+    let path_texels = length(path * visible_end * atlas_size);
+    let tap_count = u32(clamp(ceil(path_texels), 32.0, 192.0));
     var energy = 0.0;
     var weights = 0.0;
     // Integrate source coverage along the visible path, emphasizing its source
     // end. Midpoint taps and an analytic frame intersection avoid edge bands.
-    for (var tap = 0u; tap < 96u; tap = tap + 1u) {
+    for (var tap = 0u; tap < 192u; tap = tap + 1u) {
         if tap >= tap_count { break; }
         let t = (f32(tap) + 0.5) / f32(tap_count);
         let progress = visible_end * t;
@@ -171,7 +172,7 @@ fn apply_light_rays(pos: vec2<i32>, input_rgb: vec3<f32>) -> vec3<f32> {
         ), variation);
         let shaft = light_ray_scattering(distance, reach, 0.006, fade, pattern) * density;
         let color = mask_effect_picker_color_to_working(secondary.xyz);
-        scattered += color * shaft * aperture * amount * 0.65;
+        scattered += color * shaft * aperture * amount * 0.32;
     }
     // Restrained scene-linear scattering retains texture in bright areas; tone
     // mapping later rolls the added light into the existing scene highlights.

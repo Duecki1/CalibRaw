@@ -57,7 +57,7 @@ impl CalibRawApp {
             return;
         }
         self.develop_ui.loading_thumbnail.clear();
-        match crate::android::open_raw_document(&self.android.android_app) {
+        match calibraw_ffi::open_raw_document(&self.android.android_app) {
             Ok(()) => {
                 self.android.picker_pending = true;
                 self.ui.notice = None;
@@ -105,14 +105,14 @@ impl CalibRawApp {
 
     #[cfg(target_os = "android")]
     pub(in crate::app) fn poll_android_picker(&mut self, frame: &eframe::Frame) {
-        while let Some(result) = crate::android::take_camera_profile_folder_result() {
+        while let Some(result) = calibraw_ffi::take_camera_profile_folder_result() {
             match result {
-                crate::android::CameraProfileFolderResult::ImportStarted { label } => {
+                calibraw_ffi::CameraProfileFolderResult::ImportStarted { label } => {
                     self.android.camera_profile_folder_importing_label = Some(label.clone());
                     self.ui.status = format!("Importing DCP profiles from {label}…");
                     self.ui.notice = None;
                 }
-                crate::android::CameraProfileFolderResult::Picked {
+                calibraw_ffi::CameraProfileFolderResult::Picked {
                     path,
                     label,
                     profiles,
@@ -130,7 +130,7 @@ impl CalibRawApp {
                             if self.preferences.camera_profile_folder.as_deref()
                                 != Some(previous_folder.as_path())
                             {
-                                if let Err(error) = crate::android::remove_camera_profile_mirror(
+                                if let Err(error) = calibraw_ffi::remove_camera_profile_mirror(
                                     &self.android.android_app,
                                     &previous_folder,
                                 ) {
@@ -144,12 +144,12 @@ impl CalibRawApp {
                         if profiles == 1 { "profile" } else { "profiles" }
                     ));
                 }
-                crate::android::CameraProfileFolderResult::Cancelled => {
+                calibraw_ffi::CameraProfileFolderResult::Cancelled => {
                     self.android.picker_pending = false;
                     self.android.camera_profile_folder_importing_label = None;
                     self.ui.notice = Some("No camera profile folder selected.".to_owned());
                 }
-                crate::android::CameraProfileFolderResult::Failed(error) => {
+                calibraw_ffi::CameraProfileFolderResult::Failed(error) => {
                     self.android.picker_pending = false;
                     self.android.camera_profile_folder_importing_label = None;
                     self.ui.notice = Some(format!("Could not import camera profiles: {error}"));
@@ -157,10 +157,10 @@ impl CalibRawApp {
             }
         }
 
-        while let Some(result) = crate::android::take_picker_result() {
+        while let Some(result) = calibraw_ffi::take_picker_result() {
             self.android.picker_pending = false;
             match result {
-                crate::android::PickerResult::Picked(document) => {
+                calibraw_ffi::PickerResult::Picked(document) => {
                     self.library.refresh(&self.egui_ctx);
                     let batch_owned_open = self.export.android_batch_load_pending;
                     let profile_reload_owned_open =
@@ -190,28 +190,16 @@ impl CalibRawApp {
                         raw_uri: document.library_uri,
                         display_name: document.display_name.clone(),
                     };
-                    if let Some((selection, edit_override)) =
-                        self.android.pending_android_profile_reload.take()
-                    {
-                        self.open_path_labeled_with_options(
-                            document.path,
-                            document.display_name,
-                            document.delete_after_decode,
-                            sidecar_target,
-                            frame,
-                            Some(selection),
-                            Some(edit_override),
-                            document.raw_fd_guard,
-                        );
-                    } else {
-                        self.open_path_labeled(
-                            document.path,
-                            document.display_name,
-                            document.delete_after_decode,
-                            sidecar_target,
-                            frame,
-                            document.raw_fd_guard,
-                        );
+                    let source = DocumentSource {
+                        path: document.path,
+                        label: document.display_name,
+                        sidecar_target,
+                        delete_after_decode: document.delete_after_decode,
+                        raw_fd_guard: document.raw_fd_guard,
+                    };
+                    match self.android.pending_android_profile_reload.take() {
+                        Some(reload) => self.reopen_with_camera_profile(source, reload, frame),
+                        None => self.open_document(source, frame),
                     }
 
                     if self.develop.load_receiver.is_none() {
@@ -226,7 +214,7 @@ impl CalibRawApp {
                         }
                     }
                 }
-                crate::android::PickerResult::BatchImported {
+                calibraw_ffi::PickerResult::BatchImported {
                     imported,
                     failed,
                     errors,
@@ -258,7 +246,7 @@ impl CalibRawApp {
                         None
                     };
                 }
-                crate::android::PickerResult::Cancelled => {
+                calibraw_ffi::PickerResult::Cancelled => {
                     self.develop_ui.loading_thumbnail.clear();
                     self.android.pending_android_profile_reload = None;
                     let was_reset_reload =
@@ -282,7 +270,7 @@ impl CalibRawApp {
                         self.ui.notice = Some("No RAW files selected.".to_owned());
                     }
                 }
-                crate::android::PickerResult::Failed(error) => {
+                calibraw_ffi::PickerResult::Failed(error) => {
                     self.develop_ui.loading_thumbnail.clear();
                     let was_profile_reload =
                         self.android.pending_android_profile_reload.take().is_some();

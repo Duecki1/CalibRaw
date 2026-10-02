@@ -5,12 +5,10 @@ impl Preview {
         ui: &Ui,
         app: &mut CalibRawApp,
         frame: &eframe::Frame,
-        image_rect: Rect,
-        preview_rect: Rect,
-        source_width: u32,
-        source_height: u32,
+        layout: PreviewLayout,
         response: &egui::Response,
     ) {
+        let PreviewLayout { visible_rect, .. } = layout;
         let mask_index = match app.ui.sidebar_tab {
             SidebarTab::Adjustments if app.develop_ui.point_color.picker_active => None,
             SidebarTab::Masks if app.develop_ui.mask_point_color.picker_active => {
@@ -59,19 +57,16 @@ impl Preview {
         }
         let Some(pointer) = response
             .interact_pointer_pos()
-            .filter(|position| preview_rect.contains(*position))
+            .filter(|position| visible_rect.contains(*position))
         else {
             return;
         };
         let lens_geometry = loaded_lens_geometry(app).cloned();
-        let Some(uv) = editable_source_uv(final_geometry_screen_to_native_source(
-            image_rect,
-            app.develop.geometry,
-            lens_geometry.as_deref(),
-            source_width,
-            source_height,
-            pointer,
-        )) else {
+        let Some(uv) = editable_source_uv(
+            layout
+                .projection(app.develop.geometry, lens_geometry.as_deref())
+                .to_source(pointer),
+        ) else {
             return;
         };
         if !ui.input(|input| input.pointer.primary_released()) {
@@ -123,9 +118,8 @@ impl Preview {
             }
         };
         // The preview attachment is linear Rec.2020; point colors store encoded sRGB.
-        let srgb_linear = calibraw_core::color_math::rec2020_to_linear_srgb(rgb)
-            .map(|value| value.clamp(0.0, 1.0));
-        let srgb = srgb_linear.map(linear_to_srgb);
+        let srgb = calibraw_core::color_math::rec2020_to_linear_srgb(rgb)
+            .map(calibraw_core::color_math::srgb_encode);
         let point = crate::pipeline::PointColor::from_srgb(srgb);
         if let Some(index) = mask_index {
             if let Some(mask) = app.masks.stack.masks.get_mut(index) {
@@ -187,26 +181,5 @@ impl Preview {
                 Stroke::new(1.0, Color32::WHITE),
             );
         }
-    }
-}
-
-fn linear_to_srgb(value: f32) -> f32 {
-    let value = value.clamp(0.0, 1.0);
-    if value <= 0.0031308 {
-        value * 12.92
-    } else {
-        1.055 * value.powf(1.0 / 2.4) - 0.055
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::linear_to_srgb;
-
-    #[test]
-    fn converts_linear_black_white_and_mid_gray() {
-        assert_eq!(linear_to_srgb(0.0), 0.0);
-        assert!((linear_to_srgb(1.0) - 1.0).abs() < 1e-6);
-        assert!((linear_to_srgb(0.18) - 0.461).abs() < 0.002);
     }
 }

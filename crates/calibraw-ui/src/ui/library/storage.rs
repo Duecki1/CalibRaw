@@ -190,8 +190,8 @@ pub(super) fn materialize_library_asset(
         let uri = asset
             .android_uri()
             .ok_or_else(|| "Library asset is not available from Android storage".to_owned())?;
-        let raw_path = crate::android::materialize_library_document(app, uri, &asset.display_name)?;
-        let sidecar = crate::android::materialize_raw_sidecar(app, uri, &asset.display_name)?;
+        let raw_path = calibraw_ffi::materialize_library_document(app, uri, &asset.display_name)?;
+        let sidecar = calibraw_ffi::materialize_raw_sidecar(app, uri, &asset.display_name)?;
         if let Some(sidecar) = sidecar {
             let destination = crate::sidecar::sidecar_path_for_raw(&raw_path);
             let copy_result = fs::copy(&sidecar, &destination)
@@ -248,7 +248,7 @@ pub(super) enum ImportedLibraryAsset {
     #[cfg(not(target_os = "android"))]
     Desktop(PathBuf),
     #[cfg(target_os = "android")]
-    Android(crate::android::ImportedLibraryDocument),
+    Android(calibraw_ffi::ImportedLibraryDocument),
 }
 
 pub(super) fn import_materialized_library_asset(
@@ -269,7 +269,7 @@ pub(super) fn import_materialized_library_asset(
     #[cfg(target_os = "android")]
     {
         let LibraryTransferDestination::LocalLibrary = destination;
-        crate::android::import_local_library_document(
+        calibraw_ffi::import_local_library_document(
             app,
             &materialized.raw_path,
             &materialized.display_name,
@@ -294,7 +294,7 @@ pub(super) fn preserve_imported_thumbnail(
             .android_uri()
             .ok_or_else(|| "Library asset is not available from Android storage".to_owned())?;
         let ImportedLibraryAsset::Android(imported) = imported;
-        crate::android::copy_library_developed_thumbnail_cache(app, source_uri, &imported.uri)
+        calibraw_ffi::copy_library_developed_thumbnail_cache(app, source_uri, &imported.uri)
     }
 }
 
@@ -322,7 +322,7 @@ pub(super) fn rollback_imported_library_asset(
         }
         #[cfg(target_os = "android")]
         ImportedLibraryAsset::Android(imported) => {
-            if let Err(error) = crate::android::delete_imported_library_document(
+            if let Err(error) = calibraw_ffi::delete_imported_library_document(
                 app,
                 &imported.uri,
                 &imported.display_name,

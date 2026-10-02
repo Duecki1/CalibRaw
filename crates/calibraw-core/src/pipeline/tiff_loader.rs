@@ -6,6 +6,8 @@ use std::fs::File;
 use std::io::{BufReader, Read, Seek, SeekFrom};
 use std::path::Path;
 
+use crate::color_math::{linear_srgb_to_rec2020, srgb_decode};
+
 #[cfg(target_os = "android")]
 const MAX_TIFF_DECODE_BYTES: u64 = 768 * 1024 * 1024;
 #[cfg(not(target_os = "android"))]
@@ -15,12 +17,6 @@ const MAX_TIFF_IFD_ENTRIES: u64 = 4096;
 const MAX_TIFF_SUBIFDS: usize = 64;
 const MIN_TIFF_ICC_BYTES: u64 = 132;
 const MAX_TIFF_ICC_BYTES: u64 = 16 * 1024 * 1024;
-
-const REC709_TO_REC2020: [[f32; 3]; 3] = [
-    [0.627_403_9, 0.329_283, 0.043_313_1],
-    [0.069_097_3, 0.919_540_4, 0.011_362_3],
-    [0.016_391_4, 0.088_013_3, 0.895_595_3],
-];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum TiffContainerKind {
@@ -358,30 +354,12 @@ fn decode_scene_linear_rec2020(path: &Path) -> Result<(u32, u32, Vec<f32>)> {
         }
     } else if !source_is_float {
         rgb.par_chunks_exact_mut(3).for_each(|pixel| {
-            let r = srgb_to_linear(pixel[0]);
-            let g = srgb_to_linear(pixel[1]);
-            let b = srgb_to_linear(pixel[2]);
-            pixel[0] = REC709_TO_REC2020[0][0] * r
-                + REC709_TO_REC2020[0][1] * g
-                + REC709_TO_REC2020[0][2] * b;
-            pixel[1] = REC709_TO_REC2020[1][0] * r
-                + REC709_TO_REC2020[1][1] * g
-                + REC709_TO_REC2020[1][2] * b;
-            pixel[2] = REC709_TO_REC2020[2][0] * r
-                + REC709_TO_REC2020[2][1] * g
-                + REC709_TO_REC2020[2][2] * b;
+            let linear = [pixel[0], pixel[1], pixel[2]].map(srgb_decode);
+            pixel.copy_from_slice(&linear_srgb_to_rec2020(linear));
         });
     }
 
     Ok((width, height, rgb))
-}
-
-fn srgb_to_linear(value: f32) -> f32 {
-    if value <= 0.04045 {
-        value / 12.92
-    } else {
-        ((value + 0.055) / 1.055).powf(2.4)
-    }
 }
 
 pub(super) fn load_raster_tiff_dimensions(path: &Path) -> Result<[u32; 2]> {
@@ -679,9 +657,9 @@ mod tests {
         let loaded = load_raster_tiff(path).unwrap();
         assert!(loaded.is_pre_demosaiced_raster());
         let rgb = loaded.scene_linear_raster().unwrap();
-        assert!((rgb[0] - REC709_TO_REC2020[0][0]).abs() < 2e-4);
-        assert!((rgb[1] - REC709_TO_REC2020[1][0]).abs() < 2e-4);
-        assert!((rgb[2] - REC709_TO_REC2020[2][0]).abs() < 2e-4);
+        assert!((rgb[0] - crate::color_math::LINEAR_SRGB_TO_REC2020[0][0]).abs() < 2e-4);
+        assert!((rgb[1] - crate::color_math::LINEAR_SRGB_TO_REC2020[1][0]).abs() < 2e-4);
+        assert!((rgb[2] - crate::color_math::LINEAR_SRGB_TO_REC2020[2][0]).abs() < 2e-4);
     }
 
     #[test]

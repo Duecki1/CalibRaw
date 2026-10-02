@@ -1,7 +1,8 @@
+use super::*;
 use crate::pipeline::CfaKind;
 
 impl Sidebar {
-    fn show_info(ui: &mut Ui, app: &CalibRawApp) {
+    pub(super) fn show_info(ui: &mut Ui, app: &CalibRawApp) {
         let Some(raw) = app
             .develop
             .original_raw
@@ -26,7 +27,8 @@ impl Sidebar {
                 "Editing time",
                 &crate::app::format_usage_duration(app.raw_edit_duration()),
             );
-            ui.ctx().request_repaint_after(std::time::Duration::from_secs(1));
+            ui.ctx()
+                .request_repaint_after(std::time::Duration::from_secs(1));
             #[cfg(not(target_os = "android"))]
             if let Some(path) = app.develop.current_path.as_deref() {
                 if let Some(parent) = path.parent() {
@@ -48,19 +50,31 @@ impl Sidebar {
             );
             optional_metadata_row(ui, "Aperture", format_aperture(raw.aperture));
             optional_metadata_row(ui, "Focal length", format_focal_length(raw.focal_length));
-            optional_metadata_row(ui, "Focus distance", format_focus_distance(raw.focus_distance));
+            optional_metadata_row(
+                ui,
+                "Focus distance",
+                format_focus_distance(raw.focus_distance),
+            );
             optional_metadata_row(ui, "Flash", raw.capture_metadata.flash.map(format_flash));
         });
 
         crate::ui::theme::card_gap(ui);
         crate::ui::theme::section_card(ui, "Equipment", |ui| {
-            optional_metadata_row(ui, "Camera", equipment_name(&raw.camera_make, &raw.camera_model));
+            optional_metadata_row(
+                ui,
+                "Camera",
+                equipment_name(&raw.camera_make, &raw.camera_model),
+            );
             optional_metadata_row(ui, "Lens", equipment_name(&raw.lens_make, &raw.lens_model));
         });
 
         crate::ui::theme::card_gap(ui);
         crate::ui::theme::section_card(ui, "Image", |ui| {
-            metadata_row(ui, "Dimensions", &format!("{} × {} px", raw.width, raw.height));
+            metadata_row(
+                ui,
+                "Dimensions",
+                &format!("{} × {} px", raw.width, raw.height),
+            );
             let megapixels = f64::from(raw.width) * f64::from(raw.height) / 1_000_000.0;
             metadata_row(ui, "Resolution", &format!("{megapixels:.1} MP"));
             metadata_row(
@@ -77,7 +91,11 @@ impl Sidebar {
                 .geometry
                 .crop_pixel_dimensions(raw.width, raw.height);
             if cropped != (raw.width, raw.height) {
-                metadata_row(ui, "Cropped size", &format!("{} × {} px", cropped.0, cropped.1));
+                metadata_row(
+                    ui,
+                    "Cropped size",
+                    &format!("{} × {} px", cropped.0, cropped.1),
+                );
             }
         });
 
@@ -209,7 +227,11 @@ fn equipment_name(make: &str, model: &str) -> Option<String> {
         (true, true) => None,
         (false, true) => Some(make.to_owned()),
         (true, false) => Some(model.to_owned()),
-        (false, false) if model.to_ascii_lowercase().starts_with(&make.to_ascii_lowercase()) => {
+        (false, false)
+            if model
+                .to_ascii_lowercase()
+                .starts_with(&make.to_ascii_lowercase()) =>
+        {
             Some(model.to_owned())
         }
         (false, false) => Some(format!("{make} {model}")),
@@ -239,7 +261,10 @@ mod info_tests {
     #[test]
     fn formats_common_capture_values() {
         assert_eq!(format_iso(400.0).as_deref(), Some("ISO 400"));
-        assert_eq!(format_shutter_speed(1.0 / 125.0).as_deref(), Some("1/125 s"));
+        assert_eq!(
+            format_shutter_speed(1.0 / 125.0).as_deref(),
+            Some("1/125 s")
+        );
         assert_eq!(format_shutter_speed(0.8).as_deref(), Some("0.8 s"));
         assert_eq!(format_shutter_speed(2.0).as_deref(), Some("2 s"));
         assert_eq!(format_aperture(2.8).as_deref(), Some("f/2.8"));
