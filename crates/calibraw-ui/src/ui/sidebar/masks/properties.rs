@@ -312,6 +312,24 @@ impl Sidebar {
                 &mut component.enabled,
                 remove,
             ),
+            MaskEffect::Grain => mask_effects::grain::show(
+                ui,
+                &mut component.settings.grain,
+                &mut component.enabled,
+                remove,
+            ),
+            MaskEffect::Halation => mask_effects::halation::show(
+                ui,
+                &mut component.settings.halation,
+                &mut component.enabled,
+                remove,
+            ),
+            MaskEffect::Vignette => mask_effects::vignette::show(
+                ui,
+                &mut component.settings.vignette,
+                &mut component.enabled,
+                remove,
+            ),
             MaskEffect::Adjustment => false,
         }
     }

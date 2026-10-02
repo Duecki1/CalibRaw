@@ -12,6 +12,9 @@ const MASK_EFFECT_RADIAL_BLUR_ID: u32 = 9u;
 const MASK_EFFECT_TILT_SHIFT_ID: u32 = 10u;
 const MASK_EFFECT_FOG_ID: u32 = 11u;
 const MASK_EFFECT_SMOKE_ID: u32 = 12u;
+const MASK_EFFECT_GRAIN_ID: u32 = 13u;
+const MASK_EFFECT_HALATION_ID: u32 = 14u;
+const MASK_EFFECT_VIGNETTE_ID: u32 = 15u;
 
 fn mask_effect_srgb_component_to_linear(value: f32) -> f32 {
     let encoded = clamp(value, 0.0, 1.0);

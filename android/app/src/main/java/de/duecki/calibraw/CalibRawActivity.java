@@ -25,6 +25,12 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 public final class CalibRawActivity extends NativeActivity {
+    // Construct on the attached Rust worker using this Activity's class loader.
+    ReplayVideoEncoder createReplayEncoder(String path, int width, int height, int fps)
+            throws Exception {
+        return new ReplayVideoEncoder(path, width, height, fps);
+    }
+
     private static final String LOG_TAG = "CalibRaw";
     private static final int TABLET_SMALLEST_WIDTH_DP = 600;
     private static final int OPEN_RAW_DOCUMENT = 1001;

@@ -1,8 +1,8 @@
-use super::{effect_card, effect_slider};
+use super::{effect_card, effect_position, effect_slider};
 use crate::pipeline::{
     effect_params::radial_blur, MaskEffect, RadialBlurEffectSettings, RadialBlurMode,
 };
-use eframe::egui::{self, Ui};
+use eframe::egui::Ui;
 
 pub(crate) fn show(
     ui: &mut Ui,
@@ -17,30 +17,37 @@ pub(crate) fn show(
         enabled,
         remove,
         |ui, settings| {
-            let mut changed = false;
-            changed |= mode_selector(ui, &mut settings.mode);
+            let mut changed = mode_selector(ui, &mut settings.mode);
             changed |= effect_slider(ui, &mut settings.amount, radial_blur::AMOUNT);
             changed |= effect_slider(ui, &mut settings.strength, radial_blur::STRENGTH);
-            changed |= effect_slider(ui, &mut settings.center[0], radial_blur::CENTER_X);
-            changed |= effect_slider(ui, &mut settings.center[1], radial_blur::CENTER_Y);
+            changed |= effect_position(
+                ui,
+                "Blur center",
+                &mut settings.center,
+                [radial_blur::CENTER_X, radial_blur::CENTER_Y],
+            );
             changed
         },
     )
 }
 
-/// Radial blur is the only effect with an enumerated mode in addition to its sliders.
 fn mode_selector(ui: &mut Ui, mode: &mut RadialBlurMode) -> bool {
     let mut changed = false;
-    crate::ui::theme::property_row(ui, "Mode", |ui| {
-        egui::ComboBox::from_id_salt("radial-blur-mode")
-            .selected_text(mode.label())
-            .show_ui(ui, |ui| {
-                for candidate in RadialBlurMode::ALL {
-                    changed |= ui
-                        .selectable_value(mode, candidate, candidate.label())
-                        .changed();
-                }
-            });
+    ui.horizontal(|ui| {
+        let width = ((ui.available_width() - ui.spacing().item_spacing.x) * 0.5).max(1.0);
+        for candidate in RadialBlurMode::ALL {
+            if crate::ui::theme::segmented_button(ui, candidate.label(), *mode == candidate, width)
+                .on_hover_text(match candidate {
+                    RadialBlurMode::Zoom => "Trails radiate toward the blur center.",
+                    RadialBlurMode::Spin => "Trails rotate around the blur center.",
+                })
+                .clicked()
+                && *mode != candidate
+            {
+                *mode = candidate;
+                changed = true;
+            }
+        }
     });
     changed
 }

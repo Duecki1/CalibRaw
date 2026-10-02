@@ -263,7 +263,6 @@ impl Sidebar {
                     app.persist_performance_settings();
                 }
 
-                #[cfg(not(target_os = "android"))]
                 if let Some((fraction, phase)) = app.edit_replay_progress_state() {
                     ui.add_space(crate::ui::theme::SPACE_SM);
                     ui.add_sized(
@@ -298,9 +297,7 @@ impl Sidebar {
                 }
 
                 ui.add_space(crate::ui::theme::SPACE_SM);
-                #[cfg(not(target_os = "android"))]
                 let export_enabled = app.can_export();
-                #[cfg(not(target_os = "android"))]
                 {
                     crate::ui::theme::section_separator(ui);
                     let replay_response = ui

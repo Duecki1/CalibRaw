@@ -25,6 +25,7 @@ fn main() {
         "mask_effects/pixelate.wgsl",
         "mask_effects/radial_blur.wgsl",
         "mask_effects/tilt_shift.wgsl",
+        "mask_effects/film_finish.wgsl",
         "creative_effects.wgsl",
         "view_transform.wgsl",
         "detail_capture.wgsl",

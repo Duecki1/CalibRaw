@@ -123,7 +123,7 @@ pub mod blur {
         50.0,
         0.5,
         0,
-        Some("Blends the blurred result into the developed image."),
+        Some("Controls how strongly the blur softens the photograph."),
     );
     float_param!(
         RADIUS,
@@ -133,7 +133,7 @@ pub mod blur {
         8.0,
         0.1,
         1,
-        Some("Controls the scale-aware blur radius."),
+        Some("Sets the width of the blur. Larger values soften broader details."),
     );
 }
 
@@ -148,7 +148,7 @@ pub mod lens_blur {
         50.0,
         0.5,
         0,
-        Some("Blends the lens-blurred result into the developed image."),
+        Some("Controls how strongly the photograph falls out of focus."),
     );
     float_param!(
         RADIUS,
@@ -158,37 +158,37 @@ pub mod lens_blur {
         12.0,
         0.1,
         1,
-        Some("Controls the aperture radius in reference-image pixels."),
+        Some("Sets the size of out-of-focus highlights and the overall blur."),
     );
     float_param!(
         BLADES,
-        "Blades",
+        "Aperture blades",
         3.0,
         12.0,
         6.0,
         1.0,
         0,
-        Some("Sets the number of sides in the simulated aperture."),
+        Some("Sets the number of aperture blades that shape out-of-focus highlights."),
     );
     float_param!(
         ROTATION,
-        "Rotation",
+        "Bokeh rotation",
         -180.0,
         180.0,
         0.0,
         1.0,
         0,
-        Some("Rotates the simulated aperture."),
+        Some("Rotates the shape of out-of-focus highlights."),
     );
     float_param!(
         HIGHLIGHTS,
-        "Highlights",
+        "Highlight boost",
         0.0,
         100.0,
         0.0,
         0.5,
         0,
-        Some("Gives bright samples more weight so bokeh highlights stand out."),
+        Some("Makes bright out-of-focus highlights stand out."),
     );
 }
 
@@ -203,17 +203,17 @@ pub mod motion_blur {
         50.0,
         0.5,
         0,
-        Some("Blends the directional blur into the developed image."),
+        Some("Controls the strength of the motion streaks."),
     );
     float_param!(
         DISTANCE,
-        "Distance",
+        "Trail length",
         0.0,
         96.0,
         32.0,
         0.1,
         1,
-        Some("Controls the total shutter trail in reference-image pixels."),
+        Some("Sets the length of the motion streaks, like a longer shutter exposure."),
     );
     float_param!(
         ANGLE,
@@ -238,17 +238,17 @@ pub mod radial_blur {
         50.0,
         0.5,
         0,
-        Some("Blends the radial trail into the developed image."),
+        Some("Controls the strength of the zoom or spin blur."),
     );
     float_param!(
         STRENGTH,
-        "Strength",
+        "Trail length",
         0.0,
         96.0,
         36.0,
         0.1,
         1,
-        Some("Sets the maximum trail length in reference-image pixels."),
+        Some("Sets how far details streak away from or around the blur center."),
     );
     float_param!(
         CENTER_X,
@@ -293,7 +293,7 @@ pub mod tilt_shift {
         16.0,
         0.1,
         1,
-        Some("Controls the defocus radius in reference-image pixels."),
+        Some("Sets how far the foreground and background fall out of focus."),
     );
     float_param!(
         CENTER_X,
@@ -368,7 +368,7 @@ pub mod edge_glow {
         1.5,
         0.05,
         1,
-        Some("Sets the scale used to detect and widen edges."),
+        Some("Sets the thickness of the glowing outlines."),
     );
     float_param!(
         DETAIL,
@@ -424,7 +424,7 @@ pub mod glow {
     );
     float_param!(
         CORE,
-        "Core",
+        "Source brightness",
         0.0,
         100.0,
         65.0,
@@ -552,7 +552,7 @@ pub mod neon {
         1.0,
         0.05,
         1,
-        Some("Sets the scale used to find and widen image edges."),
+        Some("Sets the thickness of the neon outlines."),
     );
     float_param!(
         DETAIL,
@@ -576,7 +576,7 @@ pub mod neon {
     );
     float_param!(
         BACKGROUND,
-        "Background",
+        "Original image",
         0.0,
         100.0,
         50.0,
@@ -614,7 +614,170 @@ pub mod pixelate {
         16.0,
         1.0,
         0,
-        Some("Controls the scale-aware size of each square pixel block."),
+        Some("Sets the size of the square blocks. Larger values hide more detail."),
+    );
+}
+
+pub mod grain {
+    use super::*;
+
+    float_param!(
+        AMOUNT,
+        "Amount",
+        0.0,
+        100.0,
+        25.0,
+        0.5,
+        0,
+        Some("Controls the strength of the film grain. Zero leaves the image unchanged."),
+    );
+    float_param!(
+        SIZE,
+        "Size",
+        0.5,
+        4.0,
+        1.0,
+        0.05,
+        2,
+        Some("Sets the grain size, from fine texture to coarse film grain."),
+    );
+    float_param!(
+        ROUGHNESS,
+        "Roughness",
+        0.0,
+        100.0,
+        50.0,
+        0.5,
+        0,
+        Some("Varies the grain texture from smooth and even to rough and irregular."),
+    );
+    float_param!(
+        COLOR,
+        "Color",
+        0.0,
+        100.0,
+        0.0,
+        0.5,
+        0,
+        Some("Blends monochrome grain into colored grain."),
+    );
+    float_param!(
+        SEED,
+        "Pattern",
+        0.0,
+        1_000.0,
+        0.0,
+        1.0,
+        0,
+        Some("Chooses a different grain pattern that stays fixed between preview and export."),
+    );
+}
+
+pub mod halation {
+    use super::*;
+
+    float_param!(
+        AMOUNT,
+        "Amount",
+        0.0,
+        100.0,
+        25.0,
+        0.5,
+        0,
+        Some("Adds a film-like halo around bright highlights. Zero leaves the image unchanged."),
+    );
+    float_param!(
+        RADIUS,
+        "Radius",
+        0.0,
+        32.0,
+        8.0,
+        0.1,
+        1,
+        Some("Controls how far the highlight halo spreads into surrounding tones."),
+    );
+    float_param!(
+        THRESHOLD,
+        "Highlight threshold",
+        0.0,
+        100.0,
+        60.0,
+        0.5,
+        0,
+        Some("Higher values limit the halo to brighter highlights."),
+    );
+    float_param!(
+        WARMTH,
+        "Warmth",
+        0.0,
+        100.0,
+        75.0,
+        0.5,
+        0,
+        Some("Shifts the halo from neutral light toward warm red and orange film tones."),
+    );
+}
+
+pub mod vignette {
+    use super::*;
+
+    float_param!(
+        AMOUNT, "Amount", -100.0, 100.0, -25.0, 0.5, 0,
+        Some("Negative values darken the edges; positive values brighten them. Zero leaves the image unchanged."),
+    );
+    float_param!(
+        MIDPOINT, "Midpoint", 0.0, 100.0, 50.0, 0.5, 0,
+        Some("Sets how far the vignette reaches toward the center. Higher values keep more of the center clear."),
+    );
+    float_param!(
+        ROUNDNESS,
+        "Roundness",
+        -100.0,
+        100.0,
+        0.0,
+        0.5,
+        0,
+        Some("Changes the vignette shape from a rounded rectangle toward a circle."),
+    );
+    float_param!(
+        FEATHER,
+        "Feather",
+        0.0,
+        100.0,
+        70.0,
+        0.5,
+        0,
+        Some("Softens the transition between the clear center and the vignette."),
+    );
+    float_param!(
+        HIGHLIGHTS,
+        "Preserve highlights",
+        0.0,
+        100.0,
+        30.0,
+        0.5,
+        0,
+        Some("Protects bright highlights from a darkening vignette."),
+    );
+    float_param!(
+        CENTER_X,
+        "Center X",
+        0.0,
+        100.0,
+        50.0,
+        0.5,
+        1,
+        Some("Places the vignette center horizontally, as a percentage of the cropped and rotated frame width."),
+    );
+    float_param!(
+        CENTER_Y,
+        "Center Y",
+        0.0,
+        100.0,
+        50.0,
+        0.5,
+        1,
+        Some("Places the vignette center vertically, as a percentage of the cropped and rotated frame height."),
     );
 }
 
@@ -664,7 +827,7 @@ pub mod fog {
     );
     float_param!(
         SCALE,
-        "Scale",
+        "Bank size",
         1.0,
         100.0,
         65.0,
@@ -694,13 +857,13 @@ pub mod fog {
     );
     float_param!(
         SEED,
-        "Seed",
+        "Pattern",
         0.0,
         1_000.0,
         0.0,
         1.0,
         0,
-        Some("Chooses another deterministic fog pattern."),
+        Some("Chooses a different fog pattern that stays fixed between preview and export."),
     );
     color_param!(
         COLOR,
@@ -736,7 +899,7 @@ pub mod smoke {
     );
     float_param!(
         SCALE,
-        "Scale",
+        "Plume size",
         1.0,
         100.0,
         55.0,
@@ -746,7 +909,7 @@ pub mod smoke {
     );
     float_param!(
         TURBULENCE,
-        "Turbulence",
+        "Swirl",
         0.0,
         100.0,
         65.0,
@@ -766,7 +929,7 @@ pub mod smoke {
     );
     float_param!(
         ANGLE,
-        "Angle",
+        "Flow direction",
         -180.0,
         180.0,
         -12.0,
@@ -776,13 +939,13 @@ pub mod smoke {
     );
     float_param!(
         SEED,
-        "Seed",
+        "Pattern",
         0.0,
         1_000.0,
         0.0,
         1.0,
         0,
-        Some("Chooses another deterministic smoke pattern."),
+        Some("Chooses a different smoke pattern that stays fixed between preview and export."),
     );
     color_param!(
         COLOR,

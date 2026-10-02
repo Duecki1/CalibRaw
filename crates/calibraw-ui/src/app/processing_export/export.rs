@@ -19,7 +19,6 @@ impl ExportTask {
             progress: 0.0,
             phase: match kind {
                 ExportTaskKind::LibraryBatch => "Preparing batch export…".to_owned(),
-                #[cfg(not(target_os = "android"))]
                 ExportTaskKind::Replay => "Preparing edit replay…".to_owned(),
                 ExportTaskKind::Single => "Preparing tiled export…".to_owned(),
             },
@@ -58,7 +57,6 @@ impl ExportTask {
         self.cancelling = true;
         self.phase = match self.kind {
             ExportTaskKind::LibraryBatch => "Cancelling batch export…".to_owned(),
-            #[cfg(not(target_os = "android"))]
             ExportTaskKind::Replay => "Cancelling edit replay…".to_owned(),
             ExportTaskKind::Single => "Cancelling export…".to_owned(),
         };
@@ -414,7 +412,6 @@ impl CalibRawApp {
             (ExportTaskKind::LibraryBatch, _) => {
                 return Err("the library batch export is no longer active".to_owned());
             }
-            #[cfg(not(target_os = "android"))]
             (ExportTaskKind::Replay, _) => {
                 return Err("edit replay uses its dedicated export worker".to_owned());
             }
@@ -471,10 +468,7 @@ impl CalibRawApp {
         if !task.minimized {
             return;
         }
-        #[cfg(not(target_os = "android"))]
         let replay = task.kind == ExportTaskKind::Replay;
-        #[cfg(target_os = "android")]
-        let replay = false;
         let label = if replay {
             format!("Replay {:.0}%", task.progress.clamp(0.0, 1.0) * 100.0)
         } else if task.total > 1 {
@@ -545,10 +539,7 @@ impl CalibRawApp {
         let cancelling = task.cancelling;
         let mut minimize = false;
         let mut cancel = false;
-        #[cfg(not(target_os = "android"))]
         let replay = task.kind == ExportTaskKind::Replay;
-        #[cfg(target_os = "android")]
-        let replay = false;
         let window_title = if replay {
             "Creating Edit Replay"
         } else {
@@ -617,7 +608,6 @@ impl CalibRawApp {
     }
 
     pub(in crate::app) fn poll_export_worker(&mut self, _frame: &eframe::Frame) {
-        #[cfg(not(target_os = "android"))]
         if self
             .export
             .task

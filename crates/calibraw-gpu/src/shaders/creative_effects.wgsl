@@ -255,7 +255,7 @@ fn apply_halation(pos: vec2<i32>, rgb: vec3<f32>) -> vec3<f32> {
 
 fn apply_glow(pos: vec2<i32>, rgb: vec3<f32>) -> vec3<f32> {
     let global_amount = clamp(Common::effects_uniforms.creative_effects.x / 100.0, 0.0, 1.0);
-    if global_amount < 1e-6 && !mask_glow_active() {
+    if global_amount < 1e-6 {
         return rgb;
     }
 
@@ -276,6 +276,10 @@ fn full_image_uv(pos: vec2<i32>) -> vec2<f32> {
 }
 
 fn vignette_distance(pos: vec2<i32>, roundness: f32) -> f32 {
+    return vignette_distance_from_center(pos, roundness, vec2<f32>(0.5));
+}
+
+fn vignette_distance_from_center(pos: vec2<i32>, roundness: f32, center: vec2<f32>) -> f32 {
     let dimensions = max(Common::effects_uniforms.vignette_frame.zw, vec2<f32>(1.0));
     let source_delta = full_image_uv(pos) - Common::effects_uniforms.vignette_frame.xy;
     let transform = Common::effects_uniforms.vignette_transform;
@@ -283,7 +287,7 @@ fn vignette_distance(pos: vec2<i32>, roundness: f32) -> f32 {
         0.5 + transform.x * source_delta.x + transform.y * source_delta.y,
         0.5 + transform.z * source_delta.x + transform.w * source_delta.y,
     );
-    let p = abs(frame_uv * 2.0 - vec2<f32>(1.0));
+    let p = abs((frame_uv - center) * 2.0);
     let frame_ellipse = length(p);
     let frame_rectangle = pow(pow(p.x, 8.0) + pow(p.y, 8.0), 1.0 / 8.0);
     let short_dimension = max(min(dimensions.x, dimensions.y), 1.0);
@@ -452,7 +456,8 @@ fn apply_local_creative_mask_effect_nodes(pos: vec2<i32>, input_rgb: vec3<f32>) 
         if effect_id != MASK_EFFECT_EDGE_GLOW_ID
             && effect_id != MASK_EFFECT_PIXELATE_ID
             && effect_id != MASK_EFFECT_FOG_ID
-            && effect_id != MASK_EFFECT_SMOKE_ID {
+            && effect_id != MASK_EFFECT_SMOKE_ID
+            && effect_id != MASK_EFFECT_HALATION_ID {
             continue;
         }
         let weight = SceneAdjustments::local_mask_weight(pos, index);
@@ -469,6 +474,8 @@ fn apply_local_creative_mask_effect_nodes(pos: vec2<i32>, input_rgb: vec3<f32>) 
             adjusted = apply_fog(pos, rgb, primary, secondary, Common::mask_data[index].adjust_2_field);
         } else if effect_id == MASK_EFFECT_SMOKE_ID {
             adjusted = apply_smoke(pos, rgb, primary, secondary, Common::mask_data[index].adjust_2_field);
+        } else if effect_id == MASK_EFFECT_HALATION_ID {
+            adjusted = apply_mask_halation(pos, rgb, primary);
         }
         rgb = mix(rgb, adjusted, weight);
     }
@@ -501,8 +508,7 @@ fn prepare_glow_source(@builtin(global_invocation_id) gid: vec3<u32>) {
     let pos = vec2<i32>(i32(gid.x), i32(gid.y));
     let global_amount = clamp(Common::effects_uniforms.creative_effects.x / 100.0, 0.0, 1.0);
     let emission = glow_emission(SceneAdjustments::local_effects_at(pos), glow_cutoff())
-        * global_amount
-        + mask_glow_source_at(pos);
+        * global_amount;
     textureStore(SceneAdjustments::glow_work_out, pos, vec4<f32>(emission, halation_emission(SceneAdjustments::local_effects_at(pos))));
 }
 

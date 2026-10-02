@@ -22,6 +22,15 @@ public final class AndroidStorageContractTest {
     @Rule public final TemporaryFolder temporaryFolder = new TemporaryFolder();
 
     @Test
+    public void replayExportsPreserveVideoMimeTypeAndMp4Names() {
+        assertEquals("video/mp4", AndroidStorageContract.normalizeExportMimeType("VIDEO/MP4"));
+        assertEquals("photo-edit-replay.mp4", AndroidStorageContract.safeImageName("photo-edit-replay.mp4", "video/mp4"));
+        assertEquals("photo.mp4", AndroidStorageContract.safeImageName("photo", "video/mp4"));
+        assertEquals("CalibRaw-export.mp4", AndroidStorageContract.safeImageName(null, "video/mp4"));
+        assertEquals("Movies/CalibRaw/photo.mp4", AndroidStorageContract.exportLocation("Movies", "photo.mp4"));
+    }
+
+    @Test
     public void namesAndRawFileIdentityFollowTheStorageContract() throws Exception {
         File root = temporaryFolder.getRoot();
         File media = new File(root, "media");
