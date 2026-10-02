@@ -6,7 +6,10 @@ use std::path::Path;
 mod dcp;
 mod icc;
 
-use crate::color_math::{rec2020_from_oklab, rec2020_to_linear_srgb, rec2020_to_oklab};
+use crate::color_math::{
+    rec2020_from_oklab, rec2020_to_linear_srgb, rec2020_to_oklab, srgb_decode, srgb_encode,
+};
+use crate::matrix::transform;
 use dcp::{profile_from_tags, profile_identity_from_tags, TiffReader};
 
 #[cfg(test)]
@@ -654,15 +657,11 @@ fn sample_natural_cubic(points: &[[f32; 2]], second: &[f64], x: f32) -> f32 {
     value as f32
 }
 
-fn mul3(matrix: [[f32; 3]; 3], vector: [f32; 3]) -> [f32; 3] {
-    matrix.map(|row| row[0] * vector[0] + row[1] * vector[1] + row[2] * vector[2])
-}
-
 pub(super) fn display_linear_rec2020_to_srgb(rgb: [f32; 3]) -> [f32; 3] {
     perceptual_gamut_compress(rec2020_to_linear_srgb(rgb)).map(srgb_encode)
 }
 
-pub(super) fn perceptual_gamut_compress(rgb: [f32; 3]) -> [f32; 3] {
+fn perceptual_gamut_compress(rgb: [f32; 3]) -> [f32; 3] {
     let min = rgb[0].min(rgb[1]).min(rgb[2]);
     let max = rgb[0].max(rgb[1]).max(rgb[2]);
     if min >= 0.0 && max <= 1.0 {
@@ -681,39 +680,17 @@ pub(super) fn perceptual_gamut_compress(rgb: [f32; 3]) -> [f32; 3] {
     rgb.map(|value| (luma + (value - luma) * scale.clamp(0.0, 1.0)).clamp(0.0, 1.0))
 }
 
-pub(super) fn srgb_encode(value: f32) -> f32 {
-    let value = value.clamp(0.0, 1.0);
-    if value <= 0.003_130_8 {
-        value * 12.92
-    } else {
-        1.055 * value.powf(1.0 / 2.4) - 0.055
-    }
-}
-
-pub(super) fn srgb_decode(value: f32) -> f32 {
-    let value = value.clamp(0.0, 1.0);
-    if value <= 0.040_45 {
-        value / 12.92
-    } else {
-        ((value + 0.055) / 1.055).powf(2.4)
-    }
-}
-
 fn output_lut_linear_node(index: u32, size: u32) -> f32 {
     srgb_decode(index as f32 / (size.max(2) - 1) as f32)
 }
 
 fn output_lut_shaper(value: f32) -> f32 {
-    let magnitude = value.abs();
-    if magnitude >= 1.0 {
-        return value.signum().clamp(0.0, 1.0);
-    }
-    let encoded = if magnitude <= 0.003_130_8 {
-        magnitude * 12.92
+    // In f32, srgb_encode(1.0) is one ULP short of 1.0; pin the top LUT node.
+    if value >= 1.0 {
+        1.0
     } else {
-        1.055 * magnitude.powf(1.0 / 2.4) - 0.055
-    };
-    (value.signum() * encoded).clamp(0.0, 1.0)
+        srgb_encode(value)
+    }
 }
 
 fn rgb_is_unit(rgb: [f32; 3]) -> bool {

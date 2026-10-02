@@ -169,8 +169,8 @@ impl MatrixShaperProfile {
             self.curves[1].forward_extended(encoded[1]),
             self.curves[2].forward_extended(encoded[2]),
         ];
-        let xyz_d50 = mul3(self.device_to_pcs, linear);
-        mul3(XYZ_D65_TO_REC2020, mul3(D50_TO_D65, xyz_d50))
+        let xyz_d50 = transform(self.device_to_pcs, linear);
+        transform(XYZ_D65_TO_REC2020, transform(D50_TO_D65, xyz_d50))
     }
 }
 

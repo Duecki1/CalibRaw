@@ -10,6 +10,7 @@ use super::{
     CameraProfileMode, CameraWhiteBalanceModel, CfaKind, CompactPixelMap, DngColorEndpoint,
     LoadedRaw, RawThumbnail, MAX_RAW_FILE_BYTES, MAX_SENSOR_EDGE, MAX_SENSOR_PIXELS,
 };
+use crate::matrix;
 use crate::pipeline::basicadj::{
     temperature_kelvin_from_offset, white_balance_tint_from_offset, MAX_TEMPERATURE_KELVIN,
     MAX_WHITE_BALANCE_TINT, MIN_TEMPERATURE_KELVIN, MIN_WHITE_BALANCE_TINT,
@@ -1916,14 +1917,14 @@ pub(super) fn daylight_white_balance(model: &CameraWhiteBalanceModel) -> Option<
             analog_balance,
         } => {
             let target = interpolate_endpoints(endpoints, endpoint_weight(endpoints, 6504.0));
-            multiply_4x4_4x3(
-                multiply_4x4(*analog_balance, target.calibration),
+            matrix::multiply(
+                matrix::multiply(*analog_balance, target.calibration),
                 target.color_matrix,
             )
         }
         CameraColorModel::Matrix { xyz_to_camera } => *xyz_to_camera,
     };
-    let physical = multiply_4x3_vector(xyz_to_camera, D65_XYZ);
+    let physical = matrix::transform(xyz_to_camera, D65_XYZ);
     let mut sums = [0.0f32; 3];
     let mut counts = [0u32; 3];
     for (index, response) in physical.into_iter().enumerate() {
@@ -2027,13 +2028,13 @@ fn estimate_cct_from_model(color: &CameraColorModel, wb: [f32; 4]) -> Option<f32
         CameraColorModel::Dng {
             endpoints,
             analog_balance,
-        } => multiply_4x4_4x3(
-            multiply_4x4(*analog_balance, endpoints[0].calibration),
+        } => matrix::multiply(
+            matrix::multiply(*analog_balance, endpoints[0].calibration),
             endpoints[0].color_matrix,
         ),
         CameraColorModel::Matrix { xyz_to_camera } => *xyz_to_camera,
     };
-    xyz_to_cct(multiply_3x4_vector(pseudoinverse(xyz_to_camera), neutral))
+    xyz_to_cct(matrix::transform(pseudoinverse(xyz_to_camera), neutral))
 }
 
 pub(super) fn adjusted_white_balance_coefficients(
@@ -2062,8 +2063,8 @@ fn white_balance_xyz_to_camera(model: &CameraWhiteBalanceModel) -> [[f32; 3]; 4]
             analog_balance,
         } => {
             let reference = interpolate_endpoints(endpoints, endpoint_weight(endpoints, 6504.0));
-            multiply_4x4_4x3(
-                multiply_4x4(*analog_balance, reference.calibration),
+            matrix::multiply(
+                matrix::multiply(*analog_balance, reference.calibration),
                 reference.color_matrix,
             )
         }
@@ -2205,7 +2206,7 @@ pub(super) fn white_balance_temperature_range(
             return false;
         };
         xyz[1] /= tint;
-        let camera = multiply_4x3_vector(matrix, xyz);
+        let camera = matrix::transform(matrix, xyz);
         (0..4).all(|index| {
             logical_rgb_channel(model.cdesc, index).is_none()
                 || missing_second_green(model, index, matrix[index])
@@ -2236,7 +2237,7 @@ pub(super) fn temperature_tint_to_coefficients(
     tint: f32,
 ) -> Option<[f32; 4]> {
     let matrix = white_balance_xyz_to_camera(model);
-    let camera = multiply_4x3_vector(matrix, darktable_temperature_tint_xyz(temperature, tint)?);
+    let camera = matrix::transform(matrix, darktable_temperature_tint_xyz(temperature, tint)?);
     let mut coefficients = [1.0; 4];
     for index in 0..4 {
         if logical_rgb_channel(model.cdesc, index).is_none() {
@@ -2266,7 +2267,7 @@ pub(super) fn temperature_tint_from_coefficients(
         };
     }
     let camera_to_xyz = pseudoinverse(white_balance_xyz_to_camera(model));
-    let xyz = multiply_3x4_vector(camera_to_xyz, camera_neutral);
+    let xyz = matrix::transform(camera_to_xyz, camera_neutral);
     if xyz[0].abs() <= 1e-10 || !xyz.iter().all(|value| value.is_finite()) {
         return None;
     }
@@ -2303,8 +2304,8 @@ fn endpoint_weight(endpoints: &[DngColorEndpoint; 2], cct: f32) -> f32 {
 
 fn interpolate_endpoints(endpoints: &[DngColorEndpoint; 2], weight: f32) -> InterpolatedDngProfile {
     InterpolatedDngProfile {
-        color_matrix: lerp_4x3(endpoints[0].color_matrix, endpoints[1].color_matrix, weight),
-        calibration: lerp_4x4(endpoints[0].calibration, endpoints[1].calibration, weight),
+        color_matrix: matrix::lerp(endpoints[0].color_matrix, endpoints[1].color_matrix, weight),
+        calibration: matrix::lerp(endpoints[0].calibration, endpoints[1].calibration, weight),
         forward_matrix: interpolate_optional_forward_matrix(
             endpoints[0].forward_matrix,
             endpoints[1].forward_matrix,
@@ -2400,12 +2401,12 @@ fn interpolated_parsed_dng_profile_with_fallbacks(
 
     let mut weight = mired_interpolation_weight(scene_cct, cct0, cct1);
     for _ in 0..6 {
-        let color_matrix = lerp_4x3(first_color, second_color, weight);
-        let calibration = lerp_4x4(first_calibration, second_calibration, weight);
-        let abcc = multiply_4x4(analog_balance, calibration);
-        let xyz_to_camera = multiply_4x4_4x3(abcc, color_matrix);
+        let color_matrix = matrix::lerp(first_color, second_color, weight);
+        let calibration = matrix::lerp(first_calibration, second_calibration, weight);
+        let abcc = matrix::multiply(analog_balance, calibration);
+        let xyz_to_camera = matrix::multiply(abcc, color_matrix);
         let camera_to_xyz = pseudoinverse(xyz_to_camera);
-        let white_xyz = multiply_3x4_vector(camera_to_xyz, neutral);
+        let white_xyz = matrix::transform(camera_to_xyz, neutral);
         if let Some(refined) = xyz_to_cct(white_xyz) {
             scene_cct = refined.clamp(1500.0, 50_000.0);
             weight = mired_interpolation_weight(scene_cct, cct0, cct1);
@@ -2413,8 +2414,8 @@ fn interpolated_parsed_dng_profile_with_fallbacks(
     }
 
     Some(InterpolatedDngProfile {
-        color_matrix: lerp_4x3(first_color, second_color, weight),
-        calibration: lerp_4x4(first_calibration, second_calibration, weight),
+        color_matrix: matrix::lerp(first_color, second_color, weight),
+        calibration: matrix::lerp(first_calibration, second_calibration, weight),
         forward_matrix: interpolate_optional_forward_matrix(
             first.forward_matrix,
             second.forward_matrix,
@@ -2492,13 +2493,13 @@ fn interpolated_dng_profile(
 
     let mut weight = mired_interpolation_weight(scene_cct, cct0, cct1);
     for _ in 0..6 {
-        let color_matrix = lerp_4x3(
+        let color_matrix = matrix::lerp(
             color.dng_color[0].colormatrix,
             color.dng_color[1].colormatrix,
             weight,
         );
         let calibration = if calibration_compatible {
-            lerp_4x4(
+            matrix::lerp(
                 identity_fallback_4x4(color.dng_color[0].calibration),
                 identity_fallback_4x4(color.dng_color[1].calibration),
                 weight,
@@ -2506,23 +2507,23 @@ fn interpolated_dng_profile(
         } else {
             identity_4x4()
         };
-        let abcc = multiply_4x4(analog_balance, calibration);
-        let xyz_to_camera = multiply_4x4_4x3(abcc, color_matrix);
+        let abcc = matrix::multiply(analog_balance, calibration);
+        let xyz_to_camera = matrix::multiply(abcc, color_matrix);
         let camera_to_xyz = pseudoinverse(xyz_to_camera);
-        let white_xyz = multiply_3x4_vector(camera_to_xyz, neutral);
+        let white_xyz = matrix::transform(camera_to_xyz, neutral);
         if let Some(refined) = xyz_to_cct(white_xyz) {
             scene_cct = refined.clamp(1500.0, 50_000.0);
             weight = mired_interpolation_weight(scene_cct, cct0, cct1);
         }
     }
 
-    let color_matrix = lerp_4x3(
+    let color_matrix = matrix::lerp(
         color.dng_color[0].colormatrix,
         color.dng_color[1].colormatrix,
         weight,
     );
     let calibration = if calibration_compatible {
-        lerp_4x4(
+        matrix::lerp(
             identity_fallback_4x4(color.dng_color[0].calibration),
             identity_fallback_4x4(color.dng_color[1].calibration),
             weight,
@@ -2567,13 +2568,13 @@ fn dng_camera_to_working(
     applied_wb: [f32; 4],
     cdesc: [u8; 4],
 ) -> Result<[[f32; 4]; 3]> {
-    let abcc = multiply_4x4(analog_balance, profile.calibration);
+    let abcc = matrix::multiply(analog_balance, profile.calibration);
     let neutral = camera_neutral(neutral_wb);
 
     let camera_to_xyz_d50 = if let Some(forward) = profile.forward_matrix {
-        let inverse_abcc = invert_4x4(abcc)
+        let inverse_abcc = matrix::invert(abcc)
             .ok_or_else(|| anyhow!("DNG AnalogBalance * CameraCalibration is singular"))?;
-        let reference_neutral = multiply_4x4_vector(inverse_abcc, neutral);
+        let reference_neutral = matrix::transform(inverse_abcc, neutral);
         let mut balanced_reference_to_xyz = forward;
         for column in 0..4 {
             let value = reference_neutral[column];
@@ -2584,9 +2585,9 @@ fn dng_camera_to_working(
                 row[column] /= value;
             }
         }
-        multiply_3x4_4x4(balanced_reference_to_xyz, inverse_abcc)
+        matrix::multiply(balanced_reference_to_xyz, inverse_abcc)
     } else {
-        let xyz_to_camera = multiply_4x4_4x3(abcc, profile.color_matrix);
+        let xyz_to_camera = matrix::multiply(abcc, profile.color_matrix);
         let camera_to_xyz = pseudoinverse(xyz_to_camera);
         if camera_to_xyz
             .iter()
@@ -2595,10 +2596,10 @@ fn dng_camera_to_working(
         {
             return Err(anyhow!("DNG XYZ-to-camera matrix is singular"));
         }
-        let source_white = multiply_3x4_vector(camera_to_xyz, neutral);
+        let source_white = matrix::transform(camera_to_xyz, neutral);
         let adaptation = bradford_adaptation(source_white, [0.964_22, 1.0, 0.825_21])
             .ok_or_else(|| anyhow!("DNG CameraNeutral does not define a valid white point"))?;
-        multiply_3x3_3x4(adaptation, camera_to_xyz)
+        matrix::multiply(adaptation, camera_to_xyz)
     };
 
     const D50_TO_D65: [[f32; 3]; 3] = [
@@ -2606,8 +2607,8 @@ fn dng_camera_to_working(
         [-0.028_369_7, 1.009_995_5, 0.021_041_4],
         [0.012_314, -0.020_507_7, 1.330_365_9],
     ];
-    let xyz_d50_to_rec2020 = multiply_3x3(XYZ_TO_REC2020, D50_TO_D65);
-    let mut physical = multiply_3x3_3x4(xyz_d50_to_rec2020, camera_to_xyz_d50);
+    let xyz_d50_to_rec2020 = matrix::multiply(XYZ_TO_REC2020, D50_TO_D65);
+    let mut physical = matrix::multiply(xyz_d50_to_rec2020, camera_to_xyz_d50);
     for column in 0..4 {
         let gain = applied_wb[column].max(1e-8);
         for row in &mut physical {
@@ -2652,7 +2653,7 @@ fn interpolate_forward_matrix(
     weight: f32,
 ) -> Option<[[f32; 4]; 3]> {
     match (matrix3x4_is_valid(first), matrix3x4_is_valid(second)) {
-        (true, true) => Some(lerp_3x4(first, second, weight)),
+        (true, true) => Some(matrix::lerp(first, second, weight)),
         (true, false) => Some(first),
         (false, true) => Some(second),
         (false, false) => None,
@@ -2668,7 +2669,7 @@ fn interpolate_optional_forward_matrix(
         first.filter(|matrix| matrix3x4_is_valid(*matrix)),
         second.filter(|matrix| matrix3x4_is_valid(*matrix)),
     ) {
-        (Some(a), Some(b)) => Some(lerp_3x4(a, b, weight)),
+        (Some(a), Some(b)) => Some(matrix::lerp(a, b, weight)),
         (Some(matrix), None) | (None, Some(matrix)) => Some(matrix),
         (None, None) => None,
     }
@@ -2690,7 +2691,7 @@ fn identity_fallback_4x4(mut matrix: [[f32; 4]; 4]) -> [[f32; 4]; 4] {
         matrix[3][3] = 1.0;
     }
 
-    if matrix.iter().flatten().any(|value| value.abs() > 1e-8) && invert_4x4(matrix).is_some() {
+    if matrix.iter().flatten().any(|value| value.abs() > 1e-8) && matrix::invert(matrix).is_some() {
         matrix
     } else {
         identity_4x4()
@@ -2821,8 +2822,8 @@ fn bradford_adaptation(source: [f32; 3], target: [f32; 3]) -> Option<[[f32; 3]; 
         return None;
     }
     let normalized_source = source.map(|v| v / source[1]);
-    let source_lms = multiply_3x3_vector(BRADFORD, normalized_source);
-    let target_lms = multiply_3x3_vector(BRADFORD, target);
+    let source_lms = matrix::transform(BRADFORD, normalized_source);
+    let target_lms = matrix::transform(BRADFORD, target);
     if source_lms.iter().any(|v| !v.is_finite() || v.abs() < 1e-10) {
         return None;
     }
@@ -2831,164 +2832,10 @@ fn bradford_adaptation(source: [f32; 3], target: [f32; 3]) -> Option<[[f32; 3]; 
         [0.0, target_lms[1] / source_lms[1], 0.0],
         [0.0, 0.0, target_lms[2] / source_lms[2]],
     ];
-    Some(multiply_3x3(BRADFORD_INV, multiply_3x3(diagonal, BRADFORD)))
-}
-
-fn lerp_4x3(a: [[f32; 3]; 4], b: [[f32; 3]; 4], t: f32) -> [[f32; 3]; 4] {
-    let mut out = [[0.0; 3]; 4];
-    for row in 0..4 {
-        for col in 0..3 {
-            out[row][col] = a[row][col] + (b[row][col] - a[row][col]) * t;
-        }
-    }
-    out
-}
-
-fn lerp_3x4(a: [[f32; 4]; 3], b: [[f32; 4]; 3], t: f32) -> [[f32; 4]; 3] {
-    let mut out = [[0.0; 4]; 3];
-    for row in 0..3 {
-        for col in 0..4 {
-            out[row][col] = a[row][col] + (b[row][col] - a[row][col]) * t;
-        }
-    }
-    out
-}
-
-fn lerp_4x4(a: [[f32; 4]; 4], b: [[f32; 4]; 4], t: f32) -> [[f32; 4]; 4] {
-    let mut out = [[0.0; 4]; 4];
-    for row in 0..4 {
-        for col in 0..4 {
-            out[row][col] = a[row][col] + (b[row][col] - a[row][col]) * t;
-        }
-    }
-    out
-}
-
-fn multiply_4x4(a: [[f32; 4]; 4], b: [[f32; 4]; 4]) -> [[f32; 4]; 4] {
-    let mut out = [[0.0; 4]; 4];
-    for row in 0..4 {
-        for col in 0..4 {
-            for k in 0..4 {
-                out[row][col] += a[row][k] * b[k][col];
-            }
-        }
-    }
-    out
-}
-
-fn multiply_4x4_4x3(a: [[f32; 4]; 4], b: [[f32; 3]; 4]) -> [[f32; 3]; 4] {
-    let mut out = [[0.0; 3]; 4];
-    for row in 0..4 {
-        for col in 0..3 {
-            for k in 0..4 {
-                out[row][col] += a[row][k] * b[k][col];
-            }
-        }
-    }
-    out
-}
-
-fn multiply_3x4_4x4(a: [[f32; 4]; 3], b: [[f32; 4]; 4]) -> [[f32; 4]; 3] {
-    let mut out = [[0.0; 4]; 3];
-    for row in 0..3 {
-        for col in 0..4 {
-            for k in 0..4 {
-                out[row][col] += a[row][k] * b[k][col];
-            }
-        }
-    }
-    out
-}
-
-fn multiply_3x3(a: [[f32; 3]; 3], b: [[f32; 3]; 3]) -> [[f32; 3]; 3] {
-    let mut out = [[0.0; 3]; 3];
-    for row in 0..3 {
-        for col in 0..3 {
-            for k in 0..3 {
-                out[row][col] += a[row][k] * b[k][col];
-            }
-        }
-    }
-    out
-}
-
-fn multiply_3x3_3x4(a: [[f32; 3]; 3], b: [[f32; 4]; 3]) -> [[f32; 4]; 3] {
-    let mut out = [[0.0; 4]; 3];
-    for row in 0..3 {
-        for col in 0..4 {
-            for k in 0..3 {
-                out[row][col] += a[row][k] * b[k][col];
-            }
-        }
-    }
-    out
-}
-
-fn multiply_4x4_vector(matrix: [[f32; 4]; 4], vector: [f32; 4]) -> [f32; 4] {
-    matrix.map(|row| {
-        row[0] * vector[0] + row[1] * vector[1] + row[2] * vector[2] + row[3] * vector[3]
-    })
-}
-
-fn multiply_3x4_vector(matrix: [[f32; 4]; 3], vector: [f32; 4]) -> [f32; 3] {
-    matrix.map(|row| {
-        row[0] * vector[0] + row[1] * vector[1] + row[2] * vector[2] + row[3] * vector[3]
-    })
-}
-
-fn multiply_4x3_vector(matrix: [[f32; 3]; 4], vector: [f32; 3]) -> [f32; 4] {
-    matrix.map(|row| row[0] * vector[0] + row[1] * vector[1] + row[2] * vector[2])
-}
-
-fn multiply_3x3_vector(matrix: [[f32; 3]; 3], vector: [f32; 3]) -> [f32; 3] {
-    matrix.map(|row| row[0] * vector[0] + row[1] * vector[1] + row[2] * vector[2])
-}
-
-fn invert_4x4(matrix: [[f32; 4]; 4]) -> Option<[[f32; 4]; 4]> {
-    let mut augmented = [[0.0f64; 8]; 4];
-    for row in 0..4 {
-        for col in 0..4 {
-            augmented[row][col] = f64::from(matrix[row][col]);
-        }
-        augmented[row][row + 4] = 1.0;
-    }
-    for pivot in 0..4 {
-        let mut best = pivot;
-        for row in pivot + 1..4 {
-            if augmented[row][pivot].abs() > augmented[best][pivot].abs() {
-                best = row;
-            }
-        }
-        if !augmented[best][pivot].is_finite() || augmented[best][pivot].abs() < 1e-14 {
-            return None;
-        }
-        augmented.swap(pivot, best);
-        let divisor = augmented[pivot][pivot];
-        for value in &mut augmented[pivot] {
-            *value /= divisor;
-        }
-        let pivot_values = augmented[pivot];
-        for (row_index, row) in augmented.iter_mut().enumerate() {
-            if row_index == pivot {
-                continue;
-            }
-            let factor = row[pivot];
-            for (value, pivot_value) in row.iter_mut().zip(pivot_values) {
-                *value -= factor * pivot_value;
-            }
-        }
-    }
-    let mut out = [[0.0; 4]; 4];
-    for row in 0..4 {
-        for col in 0..4 {
-            let value = augmented[row][col + 4];
-            if !value.is_finite() {
-                return None;
-            }
-            out[row][col] = value as f32;
-        }
-    }
-    Some(out)
+    Some(matrix::multiply(
+        BRADFORD_INV,
+        matrix::multiply(diagonal, BRADFORD),
+    ))
 }
 
 fn normalized_pseudoinverse(mut xyz_to_cam: [[f32; 3]; 4]) -> [[f32; 4]; 3] {
@@ -3147,12 +2994,13 @@ mod tests {
         adjusted_white_balance_coefficients, apply_resolved_default_exposure, black_levels,
         cam_to_working, canonical_cfa_map, canonicalize_f32x4, cfa_kind_from_filters,
         daylight_white_balance, effective_black_level, identity_4x4, identity_fallback_4x4,
-        invert_4x4, matching_thumbnail_orientation, oriented_source_pos,
-        resolve_default_exposure_ev, valid_baseline_exposure, validate_embedded_thumbnail_metadata,
-        white_balance, white_levels, CameraColorModel, CameraProfile, CameraWhiteBalanceModel,
-        CfaKind, DcpMatrixSet, DcpProfile, DngColorEndpoint, MAX_EMBEDDED_THUMBNAIL_BYTES,
+        matching_thumbnail_orientation, oriented_source_pos, resolve_default_exposure_ev,
+        valid_baseline_exposure, validate_embedded_thumbnail_metadata, white_balance, white_levels,
+        CameraColorModel, CameraProfile, CameraWhiteBalanceModel, CfaKind, DcpMatrixSet,
+        DcpProfile, DngColorEndpoint, MAX_EMBEDDED_THUMBNAIL_BYTES,
         MISSING_BASELINE_EXPOSURE_FALLBACK_EV,
     };
+    use crate::matrix;
 
     #[test]
     fn capture_timestamp_preserves_camera_calendar_time() {
@@ -3705,7 +3553,7 @@ mod tests {
         ];
         let completed = identity_fallback_4x4(matrix);
         assert_eq!(completed[3][3], 1.0);
-        assert!(invert_4x4(completed).is_some());
+        assert!(matrix::invert(completed).is_some());
         assert_eq!(completed[0][0], 1.1);
         assert_eq!(completed[1][1], 0.9);
         assert_eq!(completed[2][2], 1.05);
