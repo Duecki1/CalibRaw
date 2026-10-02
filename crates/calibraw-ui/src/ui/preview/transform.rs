@@ -22,86 +22,248 @@ pub(super) fn source_angle_from(
     dy.atan2(dx)
 }
 
-pub(super) fn linear_rotation_handle_geometry(
-    image_rect: Rect,
-    geometry: GeometryTransform,
-    lens_geometry: Option<&LensGeometryMap>,
-    source_width: u32,
-    source_height: u32,
-    start: [f32; 2],
-    end: [f32; 2],
-) -> (Pos2, Pos2) {
-    let midpoint_uv = [(start[0] + end[0]) * 0.5, (start[1] + end[1]) * 0.5];
-    let midpoint = final_geometry_native_source_to_screen(
-        image_rect,
-        geometry,
-        lens_geometry,
-        source_width,
-        source_height,
-        midpoint_uv,
-    );
-
-    let tangent_a_uv = [
-        start[0] + (end[0] - start[0]) * 0.48,
-        start[1] + (end[1] - start[1]) * 0.48,
-    ];
-    let tangent_b_uv = [
-        start[0] + (end[0] - start[0]) * 0.52,
-        start[1] + (end[1] - start[1]) * 0.52,
-    ];
-    let tangent_a = final_geometry_native_source_to_screen(
-        image_rect,
-        geometry,
-        lens_geometry,
-        source_width,
-        source_height,
-        tangent_a_uv,
-    );
-    let tangent_b = final_geometry_native_source_to_screen(
-        image_rect,
-        geometry,
-        lens_geometry,
-        source_width,
-        source_height,
-        tangent_b_uv,
-    );
-    let tangent = tangent_b - tangent_a;
-    let normal = if tangent.length_sq() > 1e-6 {
-        egui::vec2(-tangent.y, tangent.x) / tangent.length()
-    } else {
-        egui::vec2(0.0, -1.0)
-    };
-    (midpoint, midpoint + normal * 34.0)
+/// Projects normalized source-image coordinates onto the screen: optional lens
+/// correction, then the output geometry (crop, rotation, perspective), then
+/// the on-screen image rectangle.
+#[derive(Clone, Copy)]
+pub(super) struct SourceProjection<'a> {
+    pub(super) image_rect: Rect,
+    pub(super) geometry: GeometryTransform,
+    /// Maps native sensor coordinates to lens-corrected ones. `None` when the
+    /// projected coordinates are already corrected.
+    pub(super) lens: Option<&'a LensGeometryMap>,
+    pub(super) source_width: u32,
+    pub(super) source_height: u32,
 }
 
-pub(super) fn linear_axis_geometry_screen_points(
-    image_rect: Rect,
-    geometry: GeometryTransform,
-    lens_geometry: Option<&LensGeometryMap>,
-    source_width: u32,
-    source_height: u32,
-    start: [f32; 2],
-    end: [f32; 2],
-    segments: usize,
-) -> Vec<Pos2> {
-    let segments = segments.max(2);
-    (0..=segments)
-        .map(|index| {
-            let t = index as f32 / segments as f32;
-            let uv = [
+impl<'a> SourceProjection<'a> {
+    pub(super) fn new(
+        image_rect: Rect,
+        geometry: GeometryTransform,
+        lens: Option<&'a LensGeometryMap>,
+        source_width: u32,
+        source_height: u32,
+    ) -> Self {
+        Self {
+            image_rect,
+            geometry,
+            lens,
+            source_width,
+            source_height,
+        }
+    }
+
+    /// The same projection for coordinates that are already lens-corrected.
+    pub(super) fn without_lens(self) -> Self {
+        Self { lens: None, ..self }
+    }
+
+    pub(super) fn to_screen(self, source_uv: [f32; 2]) -> Pos2 {
+        let corrected_uv = self.lens.map_or(source_uv, |lens| {
+            native_source_to_corrected_uv(lens, self.source_width, self.source_height, source_uv)
+        });
+        final_geometry_source_to_screen(
+            self.image_rect,
+            self.geometry,
+            self.source_width,
+            self.source_height,
+            corrected_uv,
+        )
+    }
+
+    pub(super) fn to_source(self, screen: Pos2) -> [f32; 2] {
+        let corrected_uv = final_geometry_screen_to_source(
+            self.image_rect,
+            self.geometry,
+            self.source_width,
+            self.source_height,
+            screen,
+        );
+        corrected_uv_to_native_source(
+            corrected_uv,
+            self.lens,
+            self.source_width,
+            self.source_height,
+        )
+    }
+
+    /// Source-space bounding box of the on-screen `visible_rect`, sampled
+    /// densely when lens correction makes the mapping nonlinear.
+    pub(super) fn visible_source_uv(self, visible_rect: Rect) -> crate::app::PreviewUvRect {
+        source_uv_bbox(
+            visible_rect_sample_points(visible_rect, self.lens.is_some())
+                .into_iter()
+                .map(|point| self.to_source(point)),
+        )
+    }
+
+    /// Screen radius of a brush of relative `size` (a fraction of the shorter
+    /// source edge), measured along the more stretched axis.
+    pub(super) fn brush_radius(self, center: [f32; 2], size: f32) -> f32 {
+        let radius_source_pixels =
+            size.max(0.0) * self.source_width.min(self.source_height).max(1) as f32;
+        let center_screen = self.to_screen(center);
+        let x_screen = self.to_screen([
+            center[0] + radius_source_pixels / self.source_width.max(1) as f32,
+            center[1],
+        ]);
+        let y_screen = self.to_screen([
+            center[0],
+            center[1] + radius_source_pixels / self.source_height.max(1) as f32,
+        ]);
+        center_screen
+            .distance(x_screen)
+            .max(center_screen.distance(y_screen))
+    }
+
+    pub(super) fn brush_outline(self, center: [f32; 2], size: f32, segments: usize) -> Vec<Pos2> {
+        let width = self.source_width.max(1) as f32;
+        let height = self.source_height.max(1) as f32;
+        let radius = size.max(0.0) * self.source_width.min(self.source_height).max(1) as f32;
+        let center_px = [center[0] * width, center[1] * height];
+        let segments = segments.max(16);
+        (0..=segments)
+            .map(|index| {
+                let angle = std::f32::consts::TAU * index as f32 / segments as f32;
+                self.to_screen([
+                    (center_px[0] + radius * angle.cos()) / width,
+                    (center_px[1] + radius * angle.sin()) / height,
+                ])
+            })
+            .collect()
+    }
+
+    /// The straight source segment from `start` to `end`, sampled so that
+    /// lens correction can bend it on screen.
+    pub(super) fn linear_axis(self, start: [f32; 2], end: [f32; 2], segments: usize) -> Vec<Pos2> {
+        let segments = segments.max(2);
+        (0..=segments)
+            .map(|index| {
+                let t = index as f32 / segments as f32;
+                self.to_screen([
+                    start[0] + (end[0] - start[0]) * t,
+                    start[1] + (end[1] - start[1]) * t,
+                ])
+            })
+            .collect()
+    }
+
+    /// The line perpendicular to `start`..`end` at fraction `t` along it,
+    /// clipped to the source image.
+    pub(super) fn linear_isoline(
+        self,
+        start: [f32; 2],
+        end: [f32; 2],
+        t: f32,
+        segments: usize,
+    ) -> Vec<Pos2> {
+        let width = self.source_width.max(1) as f32;
+        let height = self.source_height.max(1) as f32;
+        let start_px = [start[0] * width, start[1] * height];
+        let delta = [(end[0] - start[0]) * width, (end[1] - start[1]) * height];
+        let center = [start_px[0] + delta[0] * t, start_px[1] + delta[1] * t];
+        let perpendicular = [-delta[1], delta[0]];
+        if perpendicular[0].abs().max(perpendicular[1].abs()) <= 1e-6 {
+            return vec![self.to_screen(start)];
+        }
+        let Some((q0, q1)) =
+            clip_infinite_source_line(center, perpendicular, self.source_width, self.source_height)
+        else {
+            return Vec::new();
+        };
+        let segments = segments.max(2);
+        (0..=segments)
+            .map(|index| {
+                let fraction = index as f32 / segments as f32;
+                let q = q0 + (q1 - q0) * fraction;
+                self.to_screen([
+                    (center[0] + perpendicular[0] * q) / width,
+                    (center[1] + perpendicular[1] * q) / height,
+                ])
+            })
+            .collect()
+    }
+
+    /// The midpoint of `start`..`end` and the rotation handle offset
+    /// perpendicular to it on screen.
+    pub(super) fn linear_rotation_handle(self, start: [f32; 2], end: [f32; 2]) -> (Pos2, Pos2) {
+        let along = |t: f32| {
+            [
                 start[0] + (end[0] - start[0]) * t,
                 start[1] + (end[1] - start[1]) * t,
-            ];
-            final_geometry_native_source_to_screen(
-                image_rect,
-                geometry,
-                lens_geometry,
-                source_width,
-                source_height,
-                uv,
-            )
-        })
-        .collect()
+            ]
+        };
+        let midpoint = self.to_screen(along(0.5));
+        let tangent = self.to_screen(along(0.52)) - self.to_screen(along(0.48));
+        let normal = if tangent.length_sq() > 1e-6 {
+            egui::vec2(-tangent.y, tangent.x) / tangent.length()
+        } else {
+            egui::vec2(0.0, -1.0)
+        };
+        (midpoint, midpoint + normal * 34.0)
+    }
+
+    /// Screen positions of the ellipse's +major, -major, +minor and -minor
+    /// axis handles.
+    pub(super) fn radial_handles(
+        self,
+        center: [f32; 2],
+        radius: [f32; 2],
+        rotation: f32,
+    ) -> [Pos2; 4] {
+        [
+            0.0,
+            std::f32::consts::PI,
+            std::f32::consts::FRAC_PI_2,
+            -std::f32::consts::FRAC_PI_2,
+        ]
+        .map(|angle| self.to_screen(self.radial_point(center, radius, rotation, angle)))
+    }
+
+    pub(super) fn radial_rotation_handle(
+        self,
+        center: [f32; 2],
+        radius: [f32; 2],
+        rotation: f32,
+    ) -> Pos2 {
+        let center_screen = self.to_screen(center);
+        let major_screen = self.radial_handles(center, radius, rotation)[0];
+        let direction = (major_screen - center_screen).normalized();
+        major_screen + direction * 30.0
+    }
+
+    pub(super) fn radial_outline(
+        self,
+        center: [f32; 2],
+        radius: [f32; 2],
+        rotation: f32,
+        segments: usize,
+    ) -> Vec<Pos2> {
+        let segments = segments.max(12);
+        (0..=segments)
+            .map(|index| {
+                let angle = std::f32::consts::TAU * index as f32 / segments as f32;
+                self.to_screen(self.radial_point(center, radius, rotation, angle))
+            })
+            .collect()
+    }
+
+    fn radial_point(
+        self,
+        center: [f32; 2],
+        radius: [f32; 2],
+        rotation: f32,
+        angle: f32,
+    ) -> [f32; 2] {
+        radial_source_uv_at(
+            center,
+            radius,
+            rotation,
+            angle,
+            self.source_width,
+            self.source_height,
+        )
+    }
 }
 
 pub(super) fn clip_infinite_source_line(
@@ -133,94 +295,6 @@ pub(super) fn clip_infinite_source_line(
     (lo.is_finite() && hi.is_finite()).then_some((lo, hi))
 }
 
-pub(super) fn linear_isot_geometry_screen_points(
-    image_rect: Rect,
-    geometry: GeometryTransform,
-    lens_geometry: Option<&LensGeometryMap>,
-    source_width: u32,
-    source_height: u32,
-    start: [f32; 2],
-    end: [f32; 2],
-    t: f32,
-    segments: usize,
-) -> Vec<Pos2> {
-    let width = source_width.max(1) as f32;
-    let height = source_height.max(1) as f32;
-    let start_px = [start[0] * width, start[1] * height];
-    let delta = [(end[0] - start[0]) * width, (end[1] - start[1]) * height];
-    let center = [start_px[0] + delta[0] * t, start_px[1] + delta[1] * t];
-    let perpendicular = [-delta[1], delta[0]];
-    if perpendicular[0].abs().max(perpendicular[1].abs()) <= 1e-6 {
-        return vec![final_geometry_native_source_to_screen(
-            image_rect,
-            geometry,
-            lens_geometry,
-            source_width,
-            source_height,
-            start,
-        )];
-    }
-    let Some((q0, q1)) =
-        clip_infinite_source_line(center, perpendicular, source_width, source_height)
-    else {
-        return Vec::new();
-    };
-    let segments = segments.max(2);
-    (0..=segments)
-        .map(|index| {
-            let fraction = index as f32 / segments as f32;
-            let q = q0 + (q1 - q0) * fraction;
-            let source_px = [
-                center[0] + perpendicular[0] * q,
-                center[1] + perpendicular[1] * q,
-            ];
-            let uv = [source_px[0] / width, source_px[1] / height];
-            final_geometry_native_source_to_screen(
-                image_rect,
-                geometry,
-                lens_geometry,
-                source_width,
-                source_height,
-                uv,
-            )
-        })
-        .collect()
-}
-
-pub(super) fn brush_outline_geometry_screen_points(
-    image_rect: Rect,
-    geometry: GeometryTransform,
-    lens_geometry: Option<&LensGeometryMap>,
-    source_width: u32,
-    source_height: u32,
-    center: [f32; 2],
-    size: f32,
-    segments: usize,
-) -> Vec<Pos2> {
-    let width = source_width.max(1) as f32;
-    let height = source_height.max(1) as f32;
-    let radius = size.max(0.0) * source_width.min(source_height).max(1) as f32;
-    let center_px = [center[0] * width, center[1] * height];
-    let segments = segments.max(16);
-    (0..=segments)
-        .map(|index| {
-            let angle = std::f32::consts::TAU * index as f32 / segments as f32;
-            let uv = [
-                (center_px[0] + radius * angle.cos()) / width,
-                (center_px[1] + radius * angle.sin()) / height,
-            ];
-            final_geometry_native_source_to_screen(
-                image_rect,
-                geometry,
-                lens_geometry,
-                source_width,
-                source_height,
-                uv,
-            )
-        })
-        .collect()
-}
-
 pub(super) fn radial_source_uv_at(
     center: [f32; 2],
     radius: [f32; 2],
@@ -238,93 +312,6 @@ pub(super) fn radial_source_uv_at(
     let dx = cos_r * local_x - sin_r * local_y;
     let dy = sin_r * local_x + cos_r * local_y;
     [center[0] + dx / width, center[1] + dy / height]
-}
-
-pub(super) fn radial_handles_geometry_screen(
-    image_rect: Rect,
-    geometry: GeometryTransform,
-    lens_geometry: Option<&LensGeometryMap>,
-    source_width: u32,
-    source_height: u32,
-    center: [f32; 2],
-    radius: [f32; 2],
-    rotation: f32,
-) -> [Pos2; 4] {
-    [
-        0.0,
-        std::f32::consts::PI,
-        std::f32::consts::FRAC_PI_2,
-        -std::f32::consts::FRAC_PI_2,
-    ]
-    .map(|angle| {
-        final_geometry_native_source_to_screen(
-            image_rect,
-            geometry,
-            lens_geometry,
-            source_width,
-            source_height,
-            radial_source_uv_at(center, radius, rotation, angle, source_width, source_height),
-        )
-    })
-}
-
-pub(super) fn radial_rotation_handle_geometry(
-    image_rect: Rect,
-    geometry: GeometryTransform,
-    lens_geometry: Option<&LensGeometryMap>,
-    source_width: u32,
-    source_height: u32,
-    center: [f32; 2],
-    radius: [f32; 2],
-    rotation: f32,
-) -> Pos2 {
-    let center_screen = final_geometry_native_source_to_screen(
-        image_rect,
-        geometry,
-        lens_geometry,
-        source_width,
-        source_height,
-        center,
-    );
-    let major_screen = radial_handles_geometry_screen(
-        image_rect,
-        geometry,
-        lens_geometry,
-        source_width,
-        source_height,
-        center,
-        radius,
-        rotation,
-    )[0];
-    let direction = (major_screen - center_screen).normalized();
-    major_screen + direction * 30.0
-}
-
-pub(super) fn radial_outline_geometry_screen_points(
-    image_rect: Rect,
-    geometry: GeometryTransform,
-    lens_geometry: Option<&LensGeometryMap>,
-    source_width: u32,
-    source_height: u32,
-    center: [f32; 2],
-    radius: [f32; 2],
-    rotation: f32,
-    segments: usize,
-) -> Vec<Pos2> {
-    let segments = segments.max(12);
-    (0..=segments)
-        .map(|index| {
-            let angle = std::f32::consts::TAU * index as f32 / segments as f32;
-            final_geometry_native_source_to_screen(
-                image_rect,
-                geometry,
-                lens_geometry,
-                source_width,
-                source_height,
-                radial_source_uv_at(center, radius, rotation, angle, source_width, source_height),
-            )
-        })
-        .collect()
 }
 
 pub(super) fn distance_to_segment(point: Pos2, start: Pos2, end: Pos2) -> f32 {
@@ -490,26 +477,6 @@ pub(super) fn final_geometry_source_to_screen(
     normalized_to_screen(image_rect, output_uv)
 }
 
-pub(super) fn final_geometry_native_source_to_screen(
-    image_rect: Rect,
-    geometry: GeometryTransform,
-    lens_geometry: Option<&LensGeometryMap>,
-    source_width: u32,
-    source_height: u32,
-    source_uv: [f32; 2],
-) -> Pos2 {
-    let corrected_uv = lens_geometry.map_or(source_uv, |lens_geometry| {
-        native_source_to_corrected_uv(lens_geometry, source_width, source_height, source_uv)
-    });
-    final_geometry_source_to_screen(
-        image_rect,
-        geometry,
-        source_width,
-        source_height,
-        corrected_uv,
-    )
-}
-
 pub(super) fn final_geometry_screen_to_source(
     image_rect: Rect,
     geometry: GeometryTransform,
@@ -547,50 +514,6 @@ pub(super) fn editable_source_uv(uv: [f32; 2]) -> Option<[f32; 2]> {
         return None;
     }
     Some([uv[0].clamp(0.0, 1.0), uv[1].clamp(0.0, 1.0)])
-}
-
-pub(super) fn geometry_brush_radius_screen(
-    image_rect: Rect,
-    geometry: GeometryTransform,
-    lens_geometry: Option<&LensGeometryMap>,
-    source_width: u32,
-    source_height: u32,
-    center: [f32; 2],
-    size: f32,
-) -> f32 {
-    let source_width_f = source_width.max(1) as f32;
-    let source_height_f = source_height.max(1) as f32;
-    let radius_source_pixels = size.max(0.0) * source_width.min(source_height).max(1) as f32;
-    let center_screen = final_geometry_native_source_to_screen(
-        image_rect,
-        geometry,
-        lens_geometry,
-        source_width,
-        source_height,
-        center,
-    );
-    let x_screen = final_geometry_native_source_to_screen(
-        image_rect,
-        geometry,
-        lens_geometry,
-        source_width,
-        source_height,
-        [center[0] + radius_source_pixels / source_width_f, center[1]],
-    );
-    let y_screen = final_geometry_native_source_to_screen(
-        image_rect,
-        geometry,
-        lens_geometry,
-        source_width,
-        source_height,
-        [
-            center[0],
-            center[1] + radius_source_pixels / source_height_f,
-        ],
-    );
-    center_screen
-        .distance(x_screen)
-        .max(center_screen.distance(y_screen))
 }
 
 pub(super) fn crop_workspace_source_to_screen(
@@ -713,30 +636,6 @@ pub(super) fn visible_rect_sample_points(rect: Rect, nonlinear: bool) -> Vec<Pos
     points
 }
 
-pub(super) fn final_geometry_visible_source_uv(
-    image_rect: Rect,
-    visible_rect: Rect,
-    geometry: GeometryTransform,
-    lens_geometry: Option<&LensGeometryMap>,
-    source_width: u32,
-    source_height: u32,
-) -> crate::app::PreviewUvRect {
-    source_uv_bbox(
-        visible_rect_sample_points(visible_rect, lens_geometry.is_some())
-            .into_iter()
-            .map(|point| {
-                final_geometry_screen_to_native_source(
-                    image_rect,
-                    geometry,
-                    lens_geometry,
-                    source_width,
-                    source_height,
-                    point,
-                )
-            }),
-    )
-}
-
 pub(super) fn crop_workspace_visible_source_uv(
     image_rect: Rect,
     visible_rect: Rect,
@@ -779,19 +678,6 @@ pub(super) fn native_source_to_corrected_uv(
         source_height,
     );
     [corrected[0] / width, corrected[1] / height]
-}
-
-pub(super) fn final_geometry_screen_to_native_source(
-    image_rect: Rect,
-    geometry: GeometryTransform,
-    lens_geometry: Option<&LensGeometryMap>,
-    source_width: u32,
-    source_height: u32,
-    screen: Pos2,
-) -> [f32; 2] {
-    let corrected_uv =
-        final_geometry_screen_to_source(image_rect, geometry, source_width, source_height, screen);
-    corrected_uv_to_native_source(corrected_uv, lens_geometry, source_width, source_height)
 }
 
 pub(super) fn crop_workspace_screen_to_native_source(

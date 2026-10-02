@@ -8,13 +8,16 @@ impl Preview {
     pub(in crate::ui::preview) fn handle_mask_interaction(
         ui: &Ui,
         app: &mut CalibRawApp,
-        image_rect: Rect,
-        preview_rect: Rect,
-        overlay_rect: Rect,
-        source_width: u32,
-        source_height: u32,
+        layout: PreviewLayout,
         response: &egui::Response,
     ) {
+        let PreviewLayout {
+            visible_rect,
+            viewport_rect,
+            source_width,
+            source_height,
+            ..
+        } = layout;
         let lens_geometry = loaded_lens_geometry(app).cloned();
         let Some(mask_index) = app.masks.stack.selected_mask else {
             app.finish_mask_geometry_interaction();
@@ -42,6 +45,7 @@ impl Preview {
         // and brush strokes retain native coordinates so they follow the photo.
         let lens_geometry =
             lens_geometry.filter(|_| !matches!(kind, MaskKind::Radial | MaskKind::Linear));
+        let projection = layout.projection(app.develop.geometry, lens_geometry.as_deref());
         if !kind.is_available() {
             return;
         }
@@ -64,9 +68,9 @@ impl Preview {
                         .and_then(|mask| mask.components.get(component_index))
                         .is_some_and(|component| component.geometry.is_initialized()));
         let pointer_bounds = if geometry_can_leave_image {
-            overlay_rect
+            viewport_rect
         } else {
-            preview_rect
+            visible_rect
         };
         let pointer = response
             .interact_pointer_pos()
@@ -136,11 +140,7 @@ impl Preview {
         };
         let brush_samples: Option<BrushStrokeSamples> = if let Some(tool_size) = brush_tool_size {
             let sampled = sample_brush_stroke(
-                image_rect,
-                app.develop.geometry,
-                lens_geometry.as_deref(),
-                source_width,
-                source_height,
+                projection,
                 pointer,
                 tool_size,
                 app.preview.zoom,
@@ -162,14 +162,7 @@ impl Preview {
         let uv = if let Some(stroke) = brush_samples.as_ref() {
             stroke.uv
         } else {
-            let source_uv = final_geometry_screen_to_native_source(
-                image_rect,
-                app.develop.geometry,
-                lens_geometry.as_deref(),
-                source_width,
-                source_height,
-                pointer,
-            );
+            let source_uv = projection.to_source(pointer);
             if geometry_can_leave_image {
                 source_uv
             } else if let Some(uv) = editable_source_uv(source_uv) {
@@ -224,17 +217,8 @@ impl Preview {
         if app.masks.drag.is_none() && kind != MaskKind::Brush && kind != MaskKind::Object {
             let geometry = &app.masks.stack.masks[mask_index].components[component_index].geometry;
             let path_curve_modifier = ui.input(|input| input.modifiers.alt);
-            app.masks.drag = begin_mask_drag(
-                geometry,
-                uv,
-                pointer,
-                image_rect,
-                app.develop.geometry,
-                lens_geometry.as_deref(),
-                source_width,
-                source_height,
-                path_curve_modifier,
-            );
+            app.masks.drag =
+                begin_mask_drag(geometry, uv, pointer, projection, path_curve_modifier);
         }
 
         let mut changed = false;
@@ -546,13 +530,18 @@ impl Preview {
     pub(in crate::ui::preview) fn paint_mask_overlay(
         ui: &Ui,
         app: &mut CalibRawApp,
-        image_rect: Rect,
-        preview_rect: Rect,
-        overlay_rect: Rect,
-        source_width: u32,
-        source_height: u32,
+        layout: PreviewLayout,
     ) {
+        let PreviewLayout {
+            image_rect,
+            visible_rect,
+            viewport_rect,
+            ..
+        } = layout;
         let lens_geometry = loaded_lens_geometry(app).cloned();
+        let projection = layout.projection(app.develop.geometry, lens_geometry.as_deref());
+        // Radial and linear shapes are stored in lens-corrected coordinates.
+        let corrected_projection = projection.without_lens();
         let Some(mask_index) = app.masks.stack.selected_mask else {
             return;
         };
@@ -565,7 +554,7 @@ impl Preview {
             .map(mask_component_color)
             .unwrap_or(crate::ui::theme::MASK_ADD);
         let subtract = crate::ui::theme::MASK_SUBTRACT;
-        let painter = ui.painter_at(overlay_rect);
+        let painter = ui.painter_at(viewport_rect);
 
         let force_overlay =
             crate::app::preview_visibility::PreviewVisibility::mask_overlay_forced(ui.ctx());
@@ -599,7 +588,7 @@ impl Preview {
             && ui
                 .ctx()
                 .pointer_interact_pos()
-                .is_some_and(|position| preview_rect.contains(position));
+                .is_some_and(|position| visible_rect.contains(position));
         if pointer_editing {
             let editing_live_mask = selected_component.is_some_and(|index| {
                 app.masks.stack.masks[mask_index]
@@ -633,16 +622,7 @@ impl Preview {
         }
         if mask.enabled || force_overlay {
             if let Some(component) = coverage_target {
-                Self::paint_coverage_texture(
-                    ui,
-                    app,
-                    image_rect,
-                    preview_rect,
-                    mask_index,
-                    component,
-                    source_width,
-                    source_height,
-                );
+                Self::paint_coverage_texture(ui, app, layout, mask_index, component);
             }
         }
 
@@ -666,25 +646,11 @@ impl Preview {
                     feather,
                     initialized: true,
                 } => {
-                    let outer = radial_outline_geometry_screen_points(
-                        image_rect,
-                        app.develop.geometry,
-                        None,
-                        source_width,
-                        source_height,
-                        *center,
-                        *radius,
-                        *rotation,
-                        72,
-                    );
+                    let outer =
+                        corrected_projection.radial_outline(*center, *radius, *rotation, 72);
                     painter.add(egui::Shape::line(outer, Stroke::new(2.0, color)));
                     let inner_scale = 1.0 - feather.clamp(0.0, 1.0) * 0.98;
-                    let inner = radial_outline_geometry_screen_points(
-                        image_rect,
-                        app.develop.geometry,
-                        None,
-                        source_width,
-                        source_height,
+                    let inner = corrected_projection.radial_outline(
                         *center,
                         [radius[0] * inner_scale, radius[1] * inner_scale],
                         *rotation,
@@ -694,47 +660,15 @@ impl Preview {
                         inner,
                         Stroke::new(1.0, color.gamma_multiply(0.65)),
                     ));
-                    let center_screen = final_geometry_native_source_to_screen(
-                        image_rect,
-                        app.develop.geometry,
-                        None,
-                        source_width,
-                        source_height,
-                        *center,
-                    );
+                    let center_screen = corrected_projection.to_screen(*center);
                     painter.circle_filled(center_screen, 5.0, color);
-                    for handle in radial_handles_geometry_screen(
-                        image_rect,
-                        app.develop.geometry,
-                        None,
-                        source_width,
-                        source_height,
-                        *center,
-                        *radius,
-                        *rotation,
-                    ) {
+                    for handle in corrected_projection.radial_handles(*center, *radius, *rotation) {
                         painter.circle_filled(handle, 4.0, color);
                     }
-                    let major_handle = radial_handles_geometry_screen(
-                        image_rect,
-                        app.develop.geometry,
-                        None,
-                        source_width,
-                        source_height,
-                        *center,
-                        *radius,
-                        *rotation,
-                    )[0];
-                    let rotation_handle = radial_rotation_handle_geometry(
-                        image_rect,
-                        app.develop.geometry,
-                        None,
-                        source_width,
-                        source_height,
-                        *center,
-                        *radius,
-                        *rotation,
-                    );
+                    let major_handle =
+                        corrected_projection.radial_handles(*center, *radius, *rotation)[0];
+                    let rotation_handle =
+                        corrected_projection.radial_rotation_handle(*center, *radius, *rotation);
                     painter.line_segment(
                         [major_handle, rotation_handle],
                         Stroke::new(1.0, color.gamma_multiply(0.72)),
@@ -747,47 +681,17 @@ impl Preview {
                     feather,
                     initialized: true,
                 } => {
-                    let axis = linear_axis_geometry_screen_points(
-                        image_rect,
-                        app.develop.geometry,
-                        None,
-                        source_width,
-                        source_height,
-                        *start,
-                        *end,
-                        48,
-                    );
+                    let axis = corrected_projection.linear_axis(*start, *end, 48);
                     painter.add(Shape::line(
                         axis,
                         Stroke::new(1.0, color.gamma_multiply(0.65)),
                     ));
-                    let a = final_geometry_native_source_to_screen(
-                        image_rect,
-                        app.develop.geometry,
-                        None,
-                        source_width,
-                        source_height,
-                        *start,
-                    );
-                    let b = final_geometry_native_source_to_screen(
-                        image_rect,
-                        app.develop.geometry,
-                        None,
-                        source_width,
-                        source_height,
-                        *end,
-                    );
+                    let a = corrected_projection.to_screen(*start);
+                    let b = corrected_projection.to_screen(*end);
                     painter.circle_filled(a, 5.0, color);
                     painter.circle_filled(b, 5.0, color);
-                    let (middle, rotation_handle) = linear_rotation_handle_geometry(
-                        image_rect,
-                        app.develop.geometry,
-                        None,
-                        source_width,
-                        source_height,
-                        *start,
-                        *end,
-                    );
+                    let (middle, rotation_handle) =
+                        corrected_projection.linear_rotation_handle(*start, *end);
                     painter.line_segment(
                         [middle, rotation_handle],
                         Stroke::new(1.0, color.gamma_multiply(0.72)),
@@ -795,30 +699,10 @@ impl Preview {
                     painter.circle_stroke(rotation_handle, 6.0, Stroke::new(2.0, color));
 
                     let width_factor = feather.clamp(0.02, 1.0);
-                    let center_line = linear_isot_geometry_screen_points(
-                        image_rect,
-                        app.develop.geometry,
-                        None,
-                        source_width,
-                        source_height,
-                        *start,
-                        *end,
-                        0.5,
-                        64,
-                    );
+                    let center_line = corrected_projection.linear_isoline(*start, *end, 0.5, 64);
                     painter.add(Shape::line(center_line, Stroke::new(2.0, color)));
                     for t in [0.5 - 0.5 * width_factor, 0.5 + 0.5 * width_factor] {
-                        let boundary = linear_isot_geometry_screen_points(
-                            image_rect,
-                            app.develop.geometry,
-                            None,
-                            source_width,
-                            source_height,
-                            *start,
-                            *end,
-                            t,
-                            64,
-                        );
+                        let boundary = corrected_projection.linear_isoline(*start, *end, t, 64);
                         painter.add(Shape::line(
                             boundary,
                             Stroke::new(1.0, color.gamma_multiply(0.65)),
@@ -829,57 +713,25 @@ impl Preview {
                     if points.len() >= 3 {
                         let outline = crate::pipeline::path_outline_points(points, 16)
                             .into_iter()
-                            .map(|uv| {
-                                final_geometry_native_source_to_screen(
-                                    image_rect,
-                                    app.develop.geometry,
-                                    lens_geometry.as_deref(),
-                                    source_width,
-                                    source_height,
-                                    uv,
-                                )
-                            })
+                            .map(|uv| projection.to_screen(uv))
                             .collect::<Vec<_>>();
                         painter.add(Shape::line(outline, Stroke::new(2.0, color)));
                     } else if points.len() >= 2 {
                         let outline = points
                             .iter()
-                            .map(|point| {
-                                final_geometry_native_source_to_screen(
-                                    image_rect,
-                                    app.develop.geometry,
-                                    lens_geometry.as_deref(),
-                                    source_width,
-                                    source_height,
-                                    point.position,
-                                )
-                            })
+                            .map(|point| projection.to_screen(point.position))
                             .collect::<Vec<_>>();
                         painter.add(Shape::line(outline, Stroke::new(2.0, color)));
                     }
                     for point in points {
-                        let anchor = final_geometry_native_source_to_screen(
-                            image_rect,
-                            app.develop.geometry,
-                            lens_geometry.as_deref(),
-                            source_width,
-                            source_height,
-                            point.position,
-                        );
+                        let anchor = projection.to_screen(point.position);
                         for handle in [point.incoming(), point.outgoing()] {
                             let dx = handle[0] - point.position[0];
                             let dy = handle[1] - point.position[1];
                             if dx * dx + dy * dy <= 1e-10 {
                                 continue;
                             }
-                            let handle_screen = final_geometry_native_source_to_screen(
-                                image_rect,
-                                app.develop.geometry,
-                                lens_geometry.as_deref(),
-                                source_width,
-                                source_height,
-                                handle,
-                            );
+                            let handle_screen = projection.to_screen(handle);
                             painter.line_segment(
                                 [anchor, handle_screen],
                                 Stroke::new(1.0, color.gamma_multiply(0.65)),
@@ -916,52 +768,27 @@ impl Preview {
                 .ctx()
                 .pointer_hover_pos()
                 .or_else(|| ui.ctx().pointer_interact_pos())
-                .filter(|position| preview_rect.contains(*position))
+                .filter(|position| visible_rect.contains(*position))
             {
                 let cursor_color = match app.masks.brush_mode {
                     BrushMode::Paint => Color32::WHITE,
                     BrushMode::Erase => subtract,
                 };
                 if refining_subject {
-                    let source_uv = final_geometry_screen_to_native_source(
-                        image_rect,
-                        app.develop.geometry,
-                        lens_geometry.as_deref(),
-                        source_width,
-                        source_height,
-                        pointer,
-                    );
+                    let source_uv = projection.to_source(pointer);
                     if let Some(uv) = editable_source_uv(source_uv) {
                         let brush_size = zoom_scaled_brush_size(
                             app.masks.stack.subject_refinement.size,
                             app.preview.zoom,
                             app.preferences.image_relative_brush_size,
                         );
-                        let outline = brush_outline_geometry_screen_points(
-                            image_rect,
-                            app.develop.geometry,
-                            lens_geometry.as_deref(),
-                            source_width,
-                            source_height,
-                            uv,
-                            brush_size,
-                            64,
-                        );
-                        let cursor_painter = ui.painter_at(preview_rect.intersect(image_rect));
+                        let outline = projection.brush_outline(uv, brush_size, 64);
+                        let cursor_painter = ui.painter_at(visible_rect.intersect(image_rect));
                         cursor_painter.add(Shape::line(outline, Stroke::new(1.5, cursor_color)));
                         let inner_size = brush_size
                             * (1.0 - app.masks.stack.subject_refinement.feather.clamp(0.0, 1.0));
                         if inner_size > brush_size * 0.04 {
-                            let inner = brush_outline_geometry_screen_points(
-                                image_rect,
-                                app.develop.geometry,
-                                lens_geometry.as_deref(),
-                                source_width,
-                                source_height,
-                                uv,
-                                inner_size,
-                                64,
-                            );
+                            let inner = projection.brush_outline(uv, inner_size, 64);
                             cursor_painter.add(Shape::line(
                                 inner,
                                 Stroke::new(1.0, cursor_color.gamma_multiply(0.65)),
@@ -971,21 +798,9 @@ impl Preview {
                 } else if let Some(component) = app.masks.stack.selected_component() {
                     match &component.geometry {
                         MaskGeometry::Brush { size, .. } => {
-                            let source_uv = final_geometry_screen_to_native_source(
-                                image_rect,
-                                app.develop.geometry,
-                                lens_geometry.as_deref(),
-                                source_width,
-                                source_height,
-                                pointer,
-                            );
+                            let source_uv = projection.to_source(pointer);
                             if let Some(uv) = editable_source_uv(source_uv) {
-                                let outline = brush_outline_geometry_screen_points(
-                                    image_rect,
-                                    app.develop.geometry,
-                                    lens_geometry.as_deref(),
-                                    source_width,
-                                    source_height,
+                                let outline = projection.brush_outline(
                                     uv,
                                     zoom_scaled_brush_size(
                                         *size,
@@ -998,21 +813,9 @@ impl Preview {
                             }
                         }
                         MaskGeometry::Object { brush_size, .. } => {
-                            let source_uv = final_geometry_screen_to_native_source(
-                                image_rect,
-                                app.develop.geometry,
-                                lens_geometry.as_deref(),
-                                source_width,
-                                source_height,
-                                pointer,
-                            );
+                            let source_uv = projection.to_source(pointer);
                             if let Some(uv) = editable_source_uv(source_uv) {
-                                let outline = brush_outline_geometry_screen_points(
-                                    image_rect,
-                                    app.develop.geometry,
-                                    lens_geometry.as_deref(),
-                                    source_width,
-                                    source_height,
+                                let outline = projection.brush_outline(
                                     uv,
                                     zoom_scaled_brush_size(
                                         *brush_size,
@@ -1034,13 +837,16 @@ impl Preview {
     pub(in crate::ui::preview) fn paint_coverage_texture(
         ui: &Ui,
         app: &mut CalibRawApp,
-        image_rect: Rect,
-        preview_rect: Rect,
+        layout: PreviewLayout,
         mask_index: usize,
         component_index: Option<usize>,
-        source_width: u32,
-        source_height: u32,
     ) {
+        let PreviewLayout {
+            visible_rect,
+            source_width,
+            source_height,
+            ..
+        } = layout;
         // Draw parametric-only overlays directly in corrected image space. This
         // preserves exact straight guides and avoids lens inversion on every drag.
         let corrected_space = app.masks.stack.masks.get(mask_index).is_some_and(|mask| {
@@ -1066,14 +872,9 @@ impl Preview {
             .cloned()
             .filter(|_| !corrected_space);
         let visible_uv = if corrected_space {
-            final_geometry_visible_source_uv(
-                image_rect,
-                preview_rect,
-                app.develop.geometry,
-                None,
-                source_width,
-                source_height,
-            )
+            layout
+                .projection(app.develop.geometry, None)
+                .visible_source_uv(visible_rect)
         } else {
             app.preview.visible_uv
         };
@@ -1089,7 +890,7 @@ impl Preview {
                 visible_uv,
                 source_width,
                 source_height,
-                preview_rect,
+                visible_rect,
                 physical_pixels_per_point(ui.ctx()),
                 margin,
             ),
@@ -1155,11 +956,7 @@ impl Preview {
             paint_final_geometry_overlay_texture(
                 ui,
                 texture.id(),
-                image_rect,
-                app.develop.geometry,
-                lens_geometry.as_deref(),
-                source_width,
-                source_height,
+                layout.projection(app.develop.geometry, lens_geometry.as_deref()),
                 Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)),
                 overlay_source_uv(region, source_width, source_height),
             );

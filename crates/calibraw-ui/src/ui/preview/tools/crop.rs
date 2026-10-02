@@ -4,19 +4,22 @@ impl Preview {
     pub(in crate::ui::preview) fn handle_crop_interaction(
         ui: &mut Ui,
         app: &mut CalibRawApp,
-        image_rect: Rect,
-        interaction_rect: Rect,
-        source_width: u32,
-        source_height: u32,
+        layout: PreviewLayout,
     ) {
+        let PreviewLayout {
+            image_rect,
+            viewport_rect,
+            source_width,
+            source_height,
+            ..
+        } = layout;
         if image_rect.width() <= 1.0 || image_rect.height() <= 1.0 {
             return;
         }
         let pointer = ui.input(|input| input.pointer.interact_pos());
         let primary_pressed = ui.input(|input| input.pointer.primary_pressed())
             && pointer.is_some_and(|point| {
-                interaction_rect.contains(point)
-                    && ui.ctx().layer_id_at(point) == Some(ui.layer_id())
+                viewport_rect.contains(point) && ui.ctx().layer_id_at(point) == Some(ui.layer_id())
             });
         let primary_down = ui.input(|input| input.pointer.primary_down());
         let primary_released = ui.input(|input| input.pointer.primary_released());
@@ -190,13 +193,17 @@ impl Preview {
     pub(in crate::ui::preview) fn paint_crop_overlay(
         ui: &mut Ui,
         app: &CalibRawApp,
-        image_rect: Rect,
-        visible_rect: Rect,
-        overlay_clip_rect: Rect,
-        source_width: u32,
-        source_height: u32,
+        layout: PreviewLayout,
     ) {
-        let painter = ui.painter_at(overlay_clip_rect);
+        let PreviewLayout {
+            image_rect,
+            visible_rect,
+            viewport_rect,
+            source_width,
+            source_height,
+            ..
+        } = layout;
+        let painter = ui.painter_at(viewport_rect);
         let crop_rect = crop_preview_screen_rect(
             image_rect,
             app.develop.geometry,

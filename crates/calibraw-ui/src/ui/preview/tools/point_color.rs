@@ -5,12 +5,10 @@ impl Preview {
         ui: &Ui,
         app: &mut CalibRawApp,
         frame: &eframe::Frame,
-        image_rect: Rect,
-        preview_rect: Rect,
-        source_width: u32,
-        source_height: u32,
+        layout: PreviewLayout,
         response: &egui::Response,
     ) {
+        let PreviewLayout { visible_rect, .. } = layout;
         let mask_index = match app.ui.sidebar_tab {
             SidebarTab::Adjustments if app.develop_ui.point_color.picker_active => None,
             SidebarTab::Masks if app.develop_ui.mask_point_color.picker_active => {
@@ -59,19 +57,16 @@ impl Preview {
         }
         let Some(pointer) = response
             .interact_pointer_pos()
-            .filter(|position| preview_rect.contains(*position))
+            .filter(|position| visible_rect.contains(*position))
         else {
             return;
         };
         let lens_geometry = loaded_lens_geometry(app).cloned();
-        let Some(uv) = editable_source_uv(final_geometry_screen_to_native_source(
-            image_rect,
-            app.develop.geometry,
-            lens_geometry.as_deref(),
-            source_width,
-            source_height,
-            pointer,
-        )) else {
+        let Some(uv) = editable_source_uv(
+            layout
+                .projection(app.develop.geometry, lens_geometry.as_deref())
+                .to_source(pointer),
+        ) else {
             return;
         };
         if !ui.input(|input| input.pointer.primary_released()) {

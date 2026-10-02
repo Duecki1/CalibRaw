@@ -4,16 +4,14 @@ impl Preview {
     pub(in crate::ui::preview) fn handle_white_balance_picker(
         ui: &Ui,
         app: &mut CalibRawApp,
-        image_rect: Rect,
-        preview_rect: Rect,
-        source_width: u32,
-        source_height: u32,
+        layout: PreviewLayout,
         response: &egui::Response,
     ) {
+        let PreviewLayout { visible_rect, .. } = layout;
         let lens_geometry = loaded_lens_geometry(app).cloned();
         let pointer = response
             .interact_pointer_pos()
-            .filter(|position| preview_rect.contains(*position));
+            .filter(|position| visible_rect.contains(*position));
         let (pressed, down, released) = ui.input(|input| {
             (
                 input.pointer.primary_pressed(),
@@ -22,14 +20,11 @@ impl Preview {
             )
         });
         let pointer_uv = pointer.and_then(|position| {
-            editable_source_uv(final_geometry_screen_to_native_source(
-                image_rect,
-                app.develop.geometry,
-                lens_geometry.as_deref(),
-                source_width,
-                source_height,
-                position,
-            ))
+            editable_source_uv(
+                layout
+                    .projection(app.develop.geometry, lens_geometry.as_deref())
+                    .to_source(position),
+            )
         });
 
         if pressed {
@@ -59,14 +54,12 @@ impl Preview {
     pub(in crate::ui::preview) fn paint_white_balance_picker(
         ui: &Ui,
         app: &CalibRawApp,
-        image_rect: Rect,
-        preview_rect: Rect,
-        source_width: u32,
-        source_height: u32,
+        layout: PreviewLayout,
     ) {
-        let painter = ui.painter_at(preview_rect);
+        let PreviewLayout { visible_rect, .. } = layout;
+        let painter = ui.painter_at(visible_rect);
         painter.text(
-            preview_rect.left_top() + egui::vec2(12.0, 12.0),
+            visible_rect.left_top() + egui::vec2(12.0, 12.0),
             egui::Align2::LEFT_TOP,
             "Drag over a neutral gray or white area",
             egui::FontId::proportional(13.0),
@@ -75,24 +68,13 @@ impl Preview {
         let Some(area) = app.develop_ui.white_balance_picker_drag else {
             return;
         };
-        let lens_geometry = loaded_lens_geometry(app).map(AsRef::as_ref);
-        let start = final_geometry_native_source_to_screen(
-            image_rect,
+        let projection = layout.projection(
             app.develop.geometry,
-            lens_geometry,
-            source_width,
-            source_height,
-            area[0],
+            loaded_lens_geometry(app).map(AsRef::as_ref),
         );
-        let current = final_geometry_native_source_to_screen(
-            image_rect,
-            app.develop.geometry,
-            lens_geometry,
-            source_width,
-            source_height,
-            area[1],
-        );
-        let rect = Rect::from_two_pos(start, current).intersect(preview_rect);
+        let start = projection.to_screen(area[0]);
+        let current = projection.to_screen(area[1]);
+        let rect = Rect::from_two_pos(start, current).intersect(visible_rect);
         if rect.width() > 0.0 && rect.height() > 0.0 {
             painter.rect_filled(rect, 0.0, Color32::from_white_alpha(24));
             painter.rect_stroke(
