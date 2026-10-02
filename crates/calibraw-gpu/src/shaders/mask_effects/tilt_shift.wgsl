@@ -1,6 +1,4 @@
 
-const MASK_TILT_SHIFT_MAX_SAMPLE_COUNT: u32 = 64u;
-const MASK_TILT_SHIFT_GOLDEN_ANGLE: f32 = 2.39996323;
 const MASK_TILT_SHIFT_PI: f32 = 3.14159265;
 
 fn mask_tilt_shift_weight(
@@ -26,16 +24,29 @@ fn mask_tilt_shift_weight(
     );
 }
 
+// The caller scales the circle of confusion by distance from the focus band.
+// A Gaussian falloff gives a soft defocus shoulder, avoiding a sharp/blurred
+// double image in the transition. The support remains bounded by 144 pixels.
 fn mask_tilt_shift_at(pos: vec2<i32>, primary: vec4<f32>) -> vec3<f32> {
-    let radius = f32(SceneAdjustments::presence_step(primary.y, 144));
-    let sample_count = u32(clamp(ceil(radius * 0.5), 24.0, f32(MASK_TILT_SHIFT_MAX_SAMPLE_COUNT)));
+    let radius = mask_focus_blur_radius(primary.y, 144.0);
+    if radius <= 1e-6 { return SceneAdjustments::local_effects_at(pos); }
+    let rings = u32(clamp(ceil(radius), 2.0, 12.0));
     var sum = vec3<f32>(0.0);
-    for (var index = 0u; index < MASK_TILT_SHIFT_MAX_SAMPLE_COUNT; index = index + 1u) {
-        if index >= sample_count { break; }
-        let unit = (f32(index) + 0.5) / f32(sample_count);
-        let angle = f32(index) * MASK_TILT_SHIFT_GOLDEN_ANGLE;
-        let offset = vec2<f32>(cos(angle), sin(angle)) * (radius * sqrt(unit));
-        sum = sum + mask_effect_source_linear_at(vec2<f32>(pos) + offset);
+    var total_weight = 0.0;
+    for (var ring = 0u; ring < 12u; ring += 1u) {
+        if ring >= rings { break; }
+        let radial = (f32(ring) + 0.5) / f32(rings);
+        let pairs = 2u * ring + 2u;
+        let weight = radial * exp(-3.5 * radial * radial) / f32(pairs);
+        for (var pair = 0u; pair < 24u; pair += 1u) {
+            if pair >= pairs { break; }
+            let angle = (f32(pair) + fract(f32(ring) * 0.381966))
+                * MASK_TILT_SHIFT_PI / f32(pairs);
+            let offset = vec2<f32>(cos(angle), sin(angle)) * (radius * radial);
+            sum += (mask_effect_source_linear_at(vec2<f32>(pos) + offset)
+                + mask_effect_source_linear_at(vec2<f32>(pos) - offset)) * weight;
+            total_weight += 2.0 * weight;
+        }
     }
-    return sum / f32(sample_count);
+    return sum / max(total_weight, 1e-6);
 }

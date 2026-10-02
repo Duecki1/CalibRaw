@@ -56,8 +56,19 @@ CalibRaw runs natively on **Linux**, **Android**, **Windows**, and **macOS** wit
 ### Masking & AI
 - **Masks:** Brush, Linear Gradient, Radial Gradient, and Shape masks with independent curves and adjustments.
 - **Local AI Tools:** High quality subject, sky, and object masks, AI Denoise, and AI Remove.
-- **GPU Creative Effects:** Stackable effect cards for masks or the full image, including Light Rays, Lens Blur (bokeh), Motion Blur, Radial Blur, Fog, Smoke, Glow, and Neon.
-- **Light Rays:** Position the source manually, including beyond the frame, and use masks to shape soft atmospheric shafts with irregular brightness and natural falloff.
+
+### Creative Effects
+
+Apply effects to the whole photo or stack them on a local mask. Each card keeps its main controls visible, with optional details collapsed. Hide a card to compare, reset its settings, or remove it independently.
+
+- **Blur & Movement:** Soften distractions with Blur, shape bokeh with Lens Blur, add directional trails with Motion Blur, zoom or spin with Radial Blur, or keep a band in focus with Tilt Shift. Feather the mask for a smooth transition.
+- **Glow & Light Rays:** Glow spreads colored light from bright pixels selected by the mask. Light Rays uses the mask to shape light shafts. Both can spread beyond the selection. Drag position pads to place a center or source; Precise position also lets you place a ray source beyond the image.
+- **Edge Glow & Neon:** Trace image contours with colored outlines and halos. Both effects stay inside the mask; Neon's Original image control retains the photo behind the lines.
+- **Fog & Smoke:** Add atmospheric haze or textured plumes. Fog's Scene depth control builds haze with distance; turn it off for an even-distance veil.
+- **Grain:** Add photographic texture with adjustable size, roughness, color, and seed. Use a local mask for selective grain or Fullscreen for a film finish.
+- **Halation:** Add warm halos around bright highlights, with radius, highlight threshold, and warmth controls. The halo appears only inside the mask, including light from nearby highlights outside it.
+- **Vignette:** Darken edges with negative amounts or brighten them with positive amounts. Adjust the falloff, shape, center, and highlight protection. Its center follows the cropped, rotated frame; the other position pads use the full image.
+- **Pixelate:** Turn selected areas into a mosaic with adjustable block size.
 
 ---
 

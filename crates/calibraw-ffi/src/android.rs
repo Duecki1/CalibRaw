@@ -1,3 +1,6 @@
+mod replay;
+pub use replay::ReplayVideoEncoder;
+
 use android_activity::AndroidApp;
 use jni::{
     errors::LogContextErrorAndDefault,

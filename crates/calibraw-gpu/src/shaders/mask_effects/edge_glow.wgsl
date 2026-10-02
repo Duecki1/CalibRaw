@@ -1,24 +1,49 @@
 
-fn edge_glow_log_luminance_at(pos: vec2<i32>) -> f32 {
-    return log2(max(Common::safe_luma(SceneAdjustments::local_effects_at(pos)), 1e-6));
+fn luminous_edge_sample(pos: vec2<f32>) -> f32 {
+    let rgb = mask_effect_source_linear_at(pos);
+    // A soft black floor rejects shadow noise without singular log(black) edges.
+    return log2(1.0 + max(Common::safe_luma(rgb), 0.0) / 0.08);
 }
 
-fn edge_glow_sobel_energy(pos: vec2<i32>, radius: i32) -> f32 {
-    let x = vec2<i32>(radius, 0);
-    let y = vec2<i32>(0, radius);
-    let tl = edge_glow_log_luminance_at(pos - x - y);
-    let tc = edge_glow_log_luminance_at(pos - y);
-    let tr = edge_glow_log_luminance_at(pos + x - y);
-    let ml = edge_glow_log_luminance_at(pos - x);
-    let mr = edge_glow_log_luminance_at(pos + x);
-    let bl = edge_glow_log_luminance_at(pos - x + y);
-    let bc = edge_glow_log_luminance_at(pos + y);
-    let br = edge_glow_log_luminance_at(pos + x + y);
+fn luminous_edge_energy(pos: vec2<f32>, radius: f32) -> f32 {
+    let x = vec2<f32>(radius, 0.0);
+    let y = vec2<f32>(0.0, radius);
+    let tl = luminous_edge_sample(pos - x - y);
+    let tc = luminous_edge_sample(pos - y);
+    let tr = luminous_edge_sample(pos + x - y);
+    let ml = luminous_edge_sample(pos - x);
+    let mr = luminous_edge_sample(pos + x);
+    let bl = luminous_edge_sample(pos - x + y);
+    let bc = luminous_edge_sample(pos + y);
+    let br = luminous_edge_sample(pos + x + y);
+    // Pairwise differences guarantee zero DC response, even for HDR flat fields.
     let gradient = vec2<f32>(
-        -tl - 2.0 * ml - bl + tr + 2.0 * mr + br,
-        -tl - 2.0 * tc - tr + bl + 2.0 * bc + br,
-    );
-    return length(gradient) * 0.125;
+        (tr - tl) + 2.0 * (mr - ml) + (br - bl),
+        (bl - tl) + 2.0 * (bc - tc) + (br - tr),
+    ) * 0.125;
+    return length(gradient);
+}
+
+fn luminous_edge_profile(pos: vec2<i32>, primary: vec4<f32>) -> vec2<f32> {
+    let width = mask_focus_blur_radius(clamp(primary.y, 0.5, 8.0), 24.0);
+    let detail = clamp(primary.z / 100.0, 0.0, 1.0);
+    let threshold = mix(0.16, 0.012, detail);
+    let p = vec2<f32>(pos);
+    let energy = luminous_edge_energy(p, width);
+    let core = smoothstep(threshold, threshold + 0.32, energy);
+    var halo = core * 0.4;
+    // Diffuse the same line instead of thresholding a second, larger Sobel.
+    // This prevents disconnected parallel outlines and rectangular wide halos.
+    for (var y = -1; y <= 1; y += 1) {
+        for (var x = -1; x <= 1; x += 1) {
+            if x == 0 && y == 0 { continue; }
+            let offset = vec2<f32>(f32(x), f32(y)) * width;
+            let neighbor = luminous_edge_energy(p + offset, width);
+            let weight = select(0.1, 0.05, x != 0 && y != 0);
+            halo += smoothstep(threshold, threshold + 0.32, neighbor) * weight;
+        }
+    }
+    return vec2<f32>(core, halo);
 }
 
 fn apply_edge_glow(
@@ -28,22 +53,11 @@ fn apply_edge_glow(
     secondary: vec4<f32>,
 ) -> vec3<f32> {
     let amount = clamp(primary.x / 100.0, 0.0, 1.0);
-    if amount <= 1e-6 {
-        return source_rgb;
-    }
-
-    let edge_width = clamp(primary.y, 0.5, 8.0);
-    let detail = clamp(primary.z / 100.0, 0.0, 1.0);
+    if amount <= 1e-6 { return source_rgb; }
+    let profile = luminous_edge_profile(pos, primary);
     let glow = clamp(primary.w / 100.0, 0.0, 1.0);
-    let inner_radius = SceneAdjustments::presence_step(edge_width, 24);
-    let outer_radius = min(inner_radius * 2, 48);
-    let threshold = mix(0.22, 0.018, detail);
-    let inner_energy = edge_glow_sobel_energy(pos, inner_radius);
-    let outer_energy = edge_glow_sobel_energy(pos, outer_radius);
-    let core = smoothstep(threshold, threshold * 2.75 + 0.02, inner_energy);
-    let halo = smoothstep(threshold * 0.42, threshold * 1.45 + 0.01, outer_energy);
-    let emission = max(core, halo * glow * 0.78);
     let color = mask_effect_picker_color_to_working(secondary.xyz);
-    let emitted = color * emission * amount * 1.8;
-    return Color::perceptual_gamut_compress_nonnegative_rec2020(source_rgb + emitted);
+    let emission = profile.x * 0.36 + profile.y * glow * 0.22;
+    // Scene-linear addition retains detail without a whole-image exposure lift.
+    return source_rgb + color * emission * amount;
 }

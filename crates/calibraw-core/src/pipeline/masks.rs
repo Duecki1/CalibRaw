@@ -11,10 +11,10 @@ mod raster_cache;
 
 pub use effects::{
     params as effect_params, BlurEffectSettings, EdgeGlowEffectSettings, FogEffectSettings,
-    GlowEffectSettings, LensBlurEffectSettings, LightRaysEffectSettings, MaskEffect,
-    MaskEffectCategory, MaskEffectSettings, MotionBlurEffectSettings, NeonEffectSettings,
-    PixelateEffectSettings, RadialBlurEffectSettings, RadialBlurMode, SmokeEffectSettings,
-    TiltShiftEffectSettings,
+    GlowEffectSettings, GrainEffectSettings, HalationEffectSettings, LensBlurEffectSettings,
+    LightRaysEffectSettings, MaskEffect, MaskEffectCategory, MaskEffectSettings,
+    MotionBlurEffectSettings, NeonEffectSettings, PixelateEffectSettings, RadialBlurEffectSettings,
+    RadialBlurMode, SmokeEffectSettings, TiltShiftEffectSettings, VignetteEffectSettings,
 };
 
 pub const MAX_LOCAL_MASKS: usize = 32;
@@ -957,6 +957,9 @@ impl EffectComponent {
             MaskEffect::Pixelate => self.settings.pixelate.is_active(),
             MaskEffect::Fog => self.settings.fog.is_active(),
             MaskEffect::Smoke => self.settings.smoke.is_active(),
+            MaskEffect::Grain => self.settings.grain.is_active(),
+            MaskEffect::Halation => self.settings.halation.is_active(),
+            MaskEffect::Vignette => self.settings.vignette.is_active(),
         }
     }
 }

@@ -696,6 +696,8 @@ const MASK_BLUR_SUPPORT: u32 = 72;
 const FOCUS_BLUR_SUPPORT: u32 = 144;
 const EDGE_GLOW_SUPPORT: u32 = 48;
 const PIXELATE_SUPPORT: u32 = 96;
+// Maximum footprint of Glow diffusion and independent Glow/Halation modules.
+// These sample the same local_effects input, so their support is not cumulative.
 const GLOW_SUPPORT: u32 = 96;
 const COLOR_MIXER_SUPPORT: u32 = 4;
 const EXPORT_CUMULATIVE_SUPPORT: u32 = HIGHLIGHT_RECONSTRUCTION_SUPPORT
@@ -720,6 +722,24 @@ pub const MIN_EXPORT_TILE_HALO: u32 = (HIGHLIGHT_RECONSTRUCTION_SUPPORT
     * 8;
 
 pub fn required_export_tile_halo(exposure: &ExposureParams, masks: &MaskStack) -> u32 {
+    // Global components, mask components, and legacy mask effects all feed the
+    // same spatial passes and must contribute identical sampling support.
+    let effect_active = |effect| {
+        let active = |component: &super::EffectComponent| {
+            component.effect == effect && component.is_active()
+        };
+        masks.global_effects.iter().any(active)
+            || masks.masks.iter().any(|mask| {
+                mask.enabled
+                    && mask.opacity > 0.0
+                    && (mask.effect_components.iter().any(active)
+                        || active(&super::EffectComponent {
+                            effect: mask.effect,
+                            enabled: true,
+                            settings: mask.effect_settings,
+                        }))
+            })
+    };
     let mut support = HIGHLIGHT_RECONSTRUCTION_SUPPORT
         + DEMOSAIC_CHAIN_SUPPORT
         + TONE_GUIDE_SUPPORT
@@ -739,6 +759,8 @@ pub fn required_export_tile_halo(exposure: &ExposureParams, masks: &MaskStack) -
         || exposure.dehaze.abs() > 1e-6
         || masks.masks.iter().any(|mask| {
             mask.enabled
+                && mask.opacity > 0.0
+                && mask.adjustments_enabled
                 && mask.effect.uses_adjustments()
                 && (mask.adjustments.texture.abs() > 1e-6
                     || mask.adjustments.clarity.abs() > 1e-6
@@ -748,56 +770,52 @@ pub fn required_export_tile_halo(exposure: &ExposureParams, masks: &MaskStack) -
         support += LOCAL_EFFECTS_SUPPORT;
     }
 
-    let neon_active = masks.masks.iter().any(|mask| {
-        mask.enabled && mask.effect == MaskEffect::Neon && mask.effect_settings.neon.is_active()
-    });
-    if neon_active {
+    if effect_active(MaskEffect::Neon) {
         support += NEON_SUPPORT;
     }
 
-    let mask_blur_active = masks.masks.iter().any(|mask| {
-        mask.enabled && mask.effect == MaskEffect::Blur && mask.effect_settings.blur.is_active()
-    });
-    if mask_blur_active {
+    if effect_active(MaskEffect::Blur) {
         support += MASK_BLUR_SUPPORT;
     }
 
-    let focus_blur_active = masks.masks.iter().any(|mask| {
-        mask.enabled
-            && match mask.effect {
-                MaskEffect::LensBlur => mask.effect_settings.lens_blur.is_active(),
-                MaskEffect::MotionBlur => mask.effect_settings.motion_blur.is_active(),
-                MaskEffect::RadialBlur => mask.effect_settings.radial_blur.is_active(),
-                MaskEffect::TiltShift => mask.effect_settings.tilt_shift.is_active(),
-                _ => false,
-            }
-    });
+    let focus_blur_active = [
+        MaskEffect::LensBlur,
+        MaskEffect::MotionBlur,
+        MaskEffect::RadialBlur,
+        MaskEffect::TiltShift,
+    ]
+    .into_iter()
+    .any(effect_active);
     if focus_blur_active {
         support += FOCUS_BLUR_SUPPORT;
     }
 
-    let post_blur_creative_support = masks
-        .masks
-        .iter()
-        .filter(|mask| mask.enabled)
-        .map(|mask| match mask.effect {
-            MaskEffect::EdgeGlow if mask.effect_settings.edge_glow.is_active() => EDGE_GLOW_SUPPORT,
-            MaskEffect::Pixelate if mask.effect_settings.pixelate.is_active() => PIXELATE_SUPPORT,
-            _ => 0,
-        })
-        .max()
-        .unwrap_or(0);
+    let post_blur_creative_support = [
+        (MaskEffect::EdgeGlow, EDGE_GLOW_SUPPORT),
+        (MaskEffect::Pixelate, PIXELATE_SUPPORT),
+    ]
+    .into_iter()
+    .filter(|(effect, _)| effect_active(*effect))
+    .map(|(_, support)| support)
+    .max()
+    .unwrap_or(0);
     support += post_blur_creative_support;
 
-    let mask_glow_active = masks.masks.iter().any(|mask| {
-        mask.enabled && mask.effect == MaskEffect::Glow && mask.effect_settings.glow.is_active()
-    });
-    // Halation shares the diffusion passes with glow, with smaller support.
+    // Legacy adjustment Halation shares the Glow diffusion passes. The Halation
+    // module samples the scene neighborhood independently; a Glow module may
+    // likewise sample with its own radius. All read the same local_effects input
+    // with at most GLOW_SUPPORT pixels of support, so reserve the maximum once,
+    // not the sum of their footprints or the number of active components.
     let mask_halation_active = masks.masks.iter().any(|mask| {
-        mask.enabled && mask.effect.uses_adjustments() && mask.adjustments.halation_amount > 1e-6
+        mask.enabled
+            && mask.opacity > 0.0
+            && mask.adjustments_enabled
+            && mask.effect.uses_adjustments()
+            && mask.adjustments.halation_amount > 1e-6
     });
     if exposure.glow_amount.abs() > 1e-6
-        || mask_glow_active
+        || effect_active(MaskEffect::Glow)
+        || effect_active(MaskEffect::Halation)
         || exposure.halation_amount > 1e-6
         || mask_halation_active
     {
@@ -1046,7 +1064,7 @@ mod tests {
     use super::{
         affected_stage, build_proxy, build_region_proxy, crop_raw, extract_padded_tile,
         extract_padded_tile_into, required_export_tile_halo, ExportTile, ProcessingStage,
-        ProxySpec, TilePlan, TileSpec, EXPORT_TILE_HALO, MIN_EXPORT_TILE_HALO,
+        ProxySpec, TilePlan, TileSpec, EXPORT_TILE_HALO, GLOW_SUPPORT, MIN_EXPORT_TILE_HALO,
     };
     use crate::pipeline::{
         AiDenoisedImage, CameraProfile, CfaKind, CompactPixelMap, DenoiseQuality, ExposureParams,
@@ -1443,6 +1461,228 @@ mod tests {
             required_export_tile_halo(&exposure, &neon_masks),
             EXPORT_TILE_HALO
         );
+    }
+
+    #[test]
+    fn export_halo_covers_global_masked_and_legacy_spatial_effects() {
+        use crate::pipeline::{EffectComponent, MaskKind};
+
+        let exposure = ExposureParams {
+            sharpen_amount: 0.0,
+            ..Default::default()
+        };
+        for effect in MaskEffect::ALL {
+            if effect == MaskEffect::Adjustment {
+                continue;
+            }
+            let mut stack = MaskStack::default();
+            stack.add_mask(MaskKind::Fullscreen).unwrap();
+            stack.masks[0].effect = effect;
+            let legacy_halo = required_export_tile_halo(&exposure, &stack);
+            let effect_support = match effect {
+                MaskEffect::Neon => super::NEON_SUPPORT,
+                MaskEffect::Blur => super::MASK_BLUR_SUPPORT,
+                MaskEffect::LensBlur
+                | MaskEffect::MotionBlur
+                | MaskEffect::RadialBlur
+                | MaskEffect::TiltShift => super::FOCUS_BLUR_SUPPORT,
+                MaskEffect::EdgeGlow => super::EDGE_GLOW_SUPPORT,
+                MaskEffect::Pixelate => super::PIXELATE_SUPPORT,
+                MaskEffect::Glow | MaskEffect::Halation => GLOW_SUPPORT,
+                MaskEffect::Adjustment
+                | MaskEffect::LightRays
+                | MaskEffect::Fog
+                | MaskEffect::Smoke
+                | MaskEffect::Grain
+                | MaskEffect::Vignette => 0,
+            };
+            assert_eq!(
+                legacy_halo,
+                MIN_EXPORT_TILE_HALO + effect_support,
+                "{effect:?}"
+            );
+            stack.masks[0].enabled = false;
+            assert_eq!(
+                required_export_tile_halo(&exposure, &stack),
+                MIN_EXPORT_TILE_HALO
+            );
+            stack.masks[0].enabled = true;
+            stack.masks[0].opacity = 0.0;
+            assert_eq!(
+                required_export_tile_halo(&exposure, &stack),
+                MIN_EXPORT_TILE_HALO
+            );
+            stack.masks[0].opacity = 1.0;
+            stack.masks[0].effect = MaskEffect::Adjustment;
+            stack.masks[0]
+                .effect_components
+                .push(EffectComponent::new(effect));
+            assert_eq!(
+                required_export_tile_halo(&exposure, &stack),
+                legacy_halo,
+                "{effect:?}"
+            );
+            stack.masks[0].effect_components[0].enabled = false;
+            assert_eq!(
+                required_export_tile_halo(&exposure, &stack),
+                MIN_EXPORT_TILE_HALO
+            );
+            stack.masks[0].effect_components[0].enabled = true;
+            stack.masks[0].enabled = false;
+            assert_eq!(
+                required_export_tile_halo(&exposure, &stack),
+                MIN_EXPORT_TILE_HALO
+            );
+            stack.masks[0].enabled = true;
+            stack.masks[0].opacity = 0.0;
+            assert_eq!(
+                required_export_tile_halo(&exposure, &stack),
+                MIN_EXPORT_TILE_HALO
+            );
+
+            stack.global_effects.push(EffectComponent::new(effect));
+            assert_eq!(
+                required_export_tile_halo(&exposure, &stack),
+                legacy_halo,
+                "{effect:?}"
+            );
+            stack.global_effects[0].enabled = false;
+            assert_eq!(
+                required_export_tile_halo(&exposure, &stack),
+                MIN_EXPORT_TILE_HALO
+            );
+        }
+    }
+
+    #[test]
+    fn photographic_export_halo_uses_maximum_footprint_and_skips_point_effects() {
+        use crate::pipeline::{EffectComponent, MaskKind};
+
+        let exposure = ExposureParams {
+            sharpen_amount: 0.0,
+            ..Default::default()
+        };
+        let mut stack = MaskStack::default();
+        for effect in [MaskEffect::Grain, MaskEffect::Vignette] {
+            stack.global_effects.push(EffectComponent::new(effect));
+            stack.add_mask(MaskKind::Fullscreen).unwrap();
+            stack
+                .masks
+                .last_mut()
+                .unwrap()
+                .effect_components
+                .push(EffectComponent::new(effect));
+        }
+        assert_eq!(
+            required_export_tile_halo(&exposure, &stack),
+            MIN_EXPORT_TILE_HALO
+        );
+
+        stack
+            .global_effects
+            .push(EffectComponent::new(MaskEffect::Halation));
+        let neighborhood_halo = required_export_tile_halo(&exposure, &stack);
+        assert_eq!(neighborhood_halo, MIN_EXPORT_TILE_HALO + GLOW_SUPPORT);
+        stack
+            .global_effects
+            .last_mut()
+            .unwrap()
+            .settings
+            .halation
+            .amount = 0.0;
+        assert_eq!(
+            required_export_tile_halo(&exposure, &stack),
+            MIN_EXPORT_TILE_HALO
+        );
+
+        stack
+            .global_effects
+            .last_mut()
+            .unwrap()
+            .settings
+            .halation
+            .amount = 25.0;
+        stack
+            .global_effects
+            .push(EffectComponent::new(MaskEffect::Glow));
+        stack.masks[0]
+            .effect_components
+            .push(EffectComponent::new(MaskEffect::Halation));
+        stack.masks[0].adjustments.halation_amount = 50.0;
+        let legacy_exposure = ExposureParams {
+            halation_amount: 50.0,
+            glow_amount: 50.0,
+            ..exposure
+        };
+        assert_eq!(
+            required_export_tile_halo(&legacy_exposure, &stack),
+            neighborhood_halo
+        );
+
+        // Independent modules retain their own radii, but their footprints
+        // overlap rather than accumulate, including at the largest radii.
+        for component in stack.global_effects.iter_mut().chain(
+            stack
+                .masks
+                .iter_mut()
+                .flat_map(|mask| &mut mask.effect_components),
+        ) {
+            component.settings.halation.radius =
+                crate::pipeline::effect_params::halation::RADIUS.max;
+            component.settings.glow.radius = crate::pipeline::effect_params::glow::RADIUS.max;
+        }
+        assert_eq!(
+            required_export_tile_halo(&legacy_exposure, &stack),
+            neighborhood_halo
+        );
+    }
+
+    #[test]
+    fn export_halo_ignores_disabled_or_transparent_legacy_adjustments() {
+        use crate::pipeline::{LocalAdjustments, MaskKind};
+
+        let exposure = ExposureParams {
+            sharpen_amount: 0.0,
+            ..Default::default()
+        };
+        type AdjustmentCase = (fn(&mut LocalAdjustments) -> &mut f32, u32);
+        let cases: [AdjustmentCase; 4] = [
+            (|a| &mut a.texture, super::LOCAL_EFFECTS_SUPPORT),
+            (|a| &mut a.clarity, super::LOCAL_EFFECTS_SUPPORT),
+            (|a| &mut a.dehaze, super::LOCAL_EFFECTS_SUPPORT),
+            (|a| &mut a.halation_amount, GLOW_SUPPORT),
+        ];
+        for (field, support) in cases {
+            let mut stack = MaskStack::default();
+            stack.add_mask(MaskKind::Fullscreen).unwrap();
+            *field(&mut stack.masks[0].adjustments) = 50.0;
+            let expected = (super::HIGHLIGHT_RECONSTRUCTION_SUPPORT
+                + super::DEMOSAIC_CHAIN_SUPPORT
+                + super::TONE_GUIDE_SUPPORT
+                + super::COLOR_MIXER_SUPPORT
+                + support)
+                .div_ceil(8)
+                * 8;
+            assert_eq!(required_export_tile_halo(&exposure, &stack), expected);
+            stack.masks[0].adjustments_enabled = false;
+            assert_eq!(
+                required_export_tile_halo(&exposure, &stack),
+                MIN_EXPORT_TILE_HALO
+            );
+            stack.masks[0].adjustments_enabled = true;
+            stack.masks[0].opacity = 0.0;
+            assert_eq!(
+                required_export_tile_halo(&exposure, &stack),
+                MIN_EXPORT_TILE_HALO
+            );
+            stack.masks[0].opacity = 0.25;
+            assert_eq!(required_export_tile_halo(&exposure, &stack), expected);
+            stack.masks[0].enabled = false;
+            assert_eq!(
+                required_export_tile_halo(&exposure, &stack),
+                MIN_EXPORT_TILE_HALO
+            );
+        }
     }
 
     #[test]

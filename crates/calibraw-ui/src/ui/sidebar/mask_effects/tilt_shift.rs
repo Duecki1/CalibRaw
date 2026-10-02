@@ -1,4 +1,4 @@
-use super::{effect_card, effect_slider};
+use super::{effect_card, effect_details, effect_position, effect_slider};
 use crate::pipeline::{effect_params::tilt_shift, MaskEffect, TiltShiftEffectSettings};
 use eframe::egui::Ui;
 
@@ -16,21 +16,25 @@ pub(crate) fn show(
         enabled,
         remove,
         |ui, settings| {
-            let mut changed = false;
             if !is_fullscreen_mask {
-                ui.colored_label(
-                ui.visuals().warn_fg_color,
-                "Best used with a Fullscreen mask. Other masks clip the built-in focus band and can create an abrupt blur boundary.",
-            );
-                ui.add_space(3.0);
+                ui.add(eframe::egui::Label::new(eframe::egui::RichText::new(
+                    "This mask also limits the blur. Feather its edge for a smooth transition."
+                ).small()).wrap());
             }
-            changed |= effect_slider(ui, &mut settings.amount, tilt_shift::AMOUNT);
+            let mut changed = effect_slider(ui, &mut settings.amount, tilt_shift::AMOUNT);
             changed |= effect_slider(ui, &mut settings.radius, tilt_shift::RADIUS);
-            changed |= effect_slider(ui, &mut settings.center[0], tilt_shift::CENTER_X);
-            changed |= effect_slider(ui, &mut settings.center[1], tilt_shift::CENTER_Y);
-            changed |= effect_slider(ui, &mut settings.angle, tilt_shift::ANGLE);
             changed |= effect_slider(ui, &mut settings.focus_width, tilt_shift::FOCUS_WIDTH);
-            changed |= effect_slider(ui, &mut settings.feather, tilt_shift::FEATHER);
+            changed |= effect_details(ui, "Focus band details", |ui| {
+                let mut changed = effect_position(
+                    ui,
+                    "Focus position",
+                    &mut settings.center,
+                    [tilt_shift::CENTER_X, tilt_shift::CENTER_Y],
+                );
+                changed |= effect_slider(ui, &mut settings.angle, tilt_shift::ANGLE);
+                changed |= effect_slider(ui, &mut settings.feather, tilt_shift::FEATHER);
+                changed
+            });
             changed
         },
     )
