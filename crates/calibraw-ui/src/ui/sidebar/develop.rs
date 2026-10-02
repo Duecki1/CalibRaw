@@ -1,5 +1,7 @@
+use super::*;
+
 impl Sidebar {
-    fn show_optics(ui: &mut Ui, app: &mut CalibRawApp, foldable: bool) -> bool {
+    pub(super) fn show_optics(ui: &mut Ui, app: &mut CalibRawApp, foldable: bool) -> bool {
         let mut rebuild = false;
         let capture = app.develop.original_raw.as_ref().map(|raw| {
             let lens = match (raw.lens_make.trim(), raw.lens_model.trim()) {
@@ -13,147 +15,140 @@ impl Sidebar {
             (lens, focal, aperture)
         });
 
-        let action = Self::adjustment_card(
-            ui,
-            "Lens Corrections",
-            false,
-            foldable,
-            true,
-            |ui| {
-                let lens_correction_busy = app.lens_correction_busy();
-                let state = &mut app.develop.lens_correction;
-                let has_selection = state.selected_lens().is_some();
-                let enabled_response = ui.add_enabled(
-                    state.catalog.available && has_selection && !lens_correction_busy,
-                    egui::Checkbox::new(&mut state.enabled, "Enabled"),
-                );
-                if enabled_response.changed() {
+        let action = Self::adjustment_card(ui, "Lens Corrections", false, foldable, true, |ui| {
+            let lens_correction_busy = app.lens_correction_busy();
+            let state = &mut app.develop.lens_correction;
+            let has_selection = state.selected_lens().is_some();
+            let enabled_response = ui.add_enabled(
+                state.catalog.available && has_selection && !lens_correction_busy,
+                egui::Checkbox::new(&mut state.enabled, "Enabled"),
+            );
+            if enabled_response.changed() {
+                rebuild = true;
+            }
+            if !state.catalog.available {
+                state.enabled = false;
+                state.applied = false;
+            }
+
+            ui.add_space(crate::ui::theme::SPACE_XXS);
+            egui::Grid::new("lens-correction-capture-metadata")
+                .num_columns(2)
+                .spacing(egui::vec2(10.0, 3.0))
+                .show(ui, |ui| {
+                    ui.label("Camera");
+                    ui.label(if state.catalog.camera_label.is_empty() {
+                        "Not matched"
+                    } else {
+                        state.catalog.camera_label.as_str()
+                    });
+                    ui.end_row();
+                    if let Some((lens, focal, aperture)) = &capture {
+                        ui.label("RAW lens");
+                        ui.label(lens);
+                        ui.end_row();
+                        if let Some(focal) = focal {
+                            ui.label("Focal length");
+                            ui.label(focal);
+                            ui.end_row();
+                        }
+                        if let Some(aperture) = aperture {
+                            ui.label("Aperture");
+                            ui.label(aperture);
+                            ui.end_row();
+                        }
+                    }
+                });
+
+            ui.add_space(crate::ui::theme::SPACE_XS);
+            let makers = state.makers();
+            let previous_maker = state.selected_maker.clone();
+            let selected_maker_text = if state.selected_maker.is_empty() {
+                if state.selected_model.is_empty() {
+                    "Select a brand".to_owned()
+                } else {
+                    "Unknown".to_owned()
+                }
+            } else {
+                state.selected_maker.clone()
+            };
+            ui.add_enabled_ui(
+                state.catalog.available && !makers.is_empty() && !lens_correction_busy,
+                |ui| {
+                    crate::ui::theme::form_combo(
+                        ui,
+                        "Brand",
+                        "lens-correction-brand",
+                        selected_maker_text,
+                        240.0,
+                        |ui| {
+                            for maker in &makers {
+                                ui.selectable_value(
+                                    &mut state.selected_maker,
+                                    maker.clone(),
+                                    if maker.is_empty() { "Unknown" } else { maker },
+                                );
+                            }
+                        },
+                    );
+                },
+            );
+            let mut selection_changed = state.selected_maker != previous_maker;
+            if selection_changed {
+                let first_model = state
+                    .models_for_maker(&state.selected_maker)
+                    .into_iter()
+                    .next()
+                    .unwrap_or_default();
+                state.selected_model = first_model;
+            }
+
+            let models = state.models_for_maker(&state.selected_maker);
+            let previous_model = state.selected_model.clone();
+            let selected_model_text = if state.selected_model.is_empty() {
+                "Select a lens".to_owned()
+            } else {
+                state.selected_model.clone()
+            };
+            ui.add_enabled_ui(
+                state.catalog.available && !models.is_empty() && !lens_correction_busy,
+                |ui| {
+                    crate::ui::theme::form_combo(
+                        ui,
+                        "Lens",
+                        "lens-correction-model",
+                        selected_model_text,
+                        240.0,
+                        |ui| {
+                            for model in &models {
+                                ui.selectable_value(
+                                    &mut state.selected_model,
+                                    model.clone(),
+                                    model,
+                                );
+                            }
+                        },
+                    );
+                },
+            );
+            selection_changed |= state.selected_model != previous_model;
+            if selection_changed {
+                state.applied = false;
+                if let Some(selection) = state.selected_lens() {
+                    state.catalog.status = if state.enabled {
+                        format!("Applying {}…", selection.label())
+                    } else {
+                        format!(
+                            "Selected {}. Enable correction to apply it.",
+                            selection.label()
+                        )
+                    };
+                }
+                if state.enabled {
                     rebuild = true;
                 }
-                if !state.catalog.available {
-                    state.enabled = false;
-                    state.applied = false;
-                }
-
-                ui.add_space(crate::ui::theme::SPACE_XXS);
-                egui::Grid::new("lens-correction-capture-metadata")
-                    .num_columns(2)
-                    .spacing(egui::vec2(10.0, 3.0))
-                    .show(ui, |ui| {
-                        ui.label("Camera");
-                        ui.label(if state.catalog.camera_label.is_empty() {
-                            "Not matched"
-                        } else {
-                            state.catalog.camera_label.as_str()
-                        });
-                        ui.end_row();
-                        if let Some((lens, focal, aperture)) = &capture {
-                            ui.label("RAW lens");
-                            ui.label(lens);
-                            ui.end_row();
-                            if let Some(focal) = focal {
-                                ui.label("Focal length");
-                                ui.label(focal);
-                                ui.end_row();
-                            }
-                            if let Some(aperture) = aperture {
-                                ui.label("Aperture");
-                                ui.label(aperture);
-                                ui.end_row();
-                            }
-                        }
-                    });
-
-                ui.add_space(crate::ui::theme::SPACE_XS);
-                let makers = state.makers();
-                let previous_maker = state.selected_maker.clone();
-                let selected_maker_text = if state.selected_maker.is_empty() {
-                    if state.selected_model.is_empty() {
-                        "Select a brand".to_owned()
-                    } else {
-                        "Unknown".to_owned()
-                    }
-                } else {
-                    state.selected_maker.clone()
-                };
-                ui.add_enabled_ui(
-                    state.catalog.available && !makers.is_empty() && !lens_correction_busy,
-                    |ui| {
-                        crate::ui::theme::form_combo(
-                            ui,
-                            "Brand",
-                            "lens-correction-brand",
-                            selected_maker_text,
-                            240.0,
-                            |ui| {
-                                for maker in &makers {
-                                    ui.selectable_value(
-                                        &mut state.selected_maker,
-                                        maker.clone(),
-                                        if maker.is_empty() { "Unknown" } else { maker },
-                                    );
-                                }
-                            },
-                        );
-                    },
-                );
-                let mut selection_changed = state.selected_maker != previous_maker;
-                if selection_changed {
-                    let first_model = state
-                        .models_for_maker(&state.selected_maker)
-                        .into_iter()
-                        .next()
-                        .unwrap_or_default();
-                    state.selected_model = first_model;
-                }
-
-                let models = state.models_for_maker(&state.selected_maker);
-                let previous_model = state.selected_model.clone();
-                let selected_model_text = if state.selected_model.is_empty() {
-                    "Select a lens".to_owned()
-                } else {
-                    state.selected_model.clone()
-                };
-                ui.add_enabled_ui(
-                    state.catalog.available && !models.is_empty() && !lens_correction_busy,
-                    |ui| {
-                        crate::ui::theme::form_combo(
-                            ui,
-                            "Lens",
-                            "lens-correction-model",
-                            selected_model_text,
-                            240.0,
-                            |ui| {
-                                for model in &models {
-                                    ui.selectable_value(
-                                        &mut state.selected_model,
-                                        model.clone(),
-                                        model,
-                                    );
-                                }
-                            },
-                        );
-                    },
-                );
-                selection_changed |= state.selected_model != previous_model;
-                if selection_changed {
-                    state.applied = false;
-                    if let Some(selection) = state.selected_lens() {
-                        state.catalog.status = if state.enabled {
-                            format!("Applying {}…", selection.label())
-                        } else {
-                            format!(
-                                "Selected {}. Enable correction to apply it.",
-                                selection.label()
-                            )
-                        };
-                    }
-                    if state.enabled {
-                        rebuild = true;
-                    }
-                }
-            },
-        );
+            }
+        });
         match action {
             adjustment_cards::CardAction::None => {}
             adjustment_cards::CardAction::Toggle => {}
@@ -166,7 +161,7 @@ impl Sidebar {
         rebuild
     }
 
-    fn show_basic(ui: &mut Ui, exposure: &mut ExposureParams, foldable: bool) -> bool {
+    pub(super) fn show_basic(ui: &mut Ui, exposure: &mut ExposureParams, foldable: bool) -> bool {
         let mut changed = false;
         let action = Self::adjustment_card(ui, "Light", true, foldable, true, |ui| {
             changed |= AdjustmentSlider::new("Exposure", &mut exposure.exposure, -5.0..=5.0)
@@ -181,12 +176,15 @@ impl Sidebar {
                 .hover_text("Maps -100%..+100% to darktable's normal sigmoid contrast range, 0.7..3.0 around its 1.5 default.")
                 .gradient(SliderGradient::Brightness)
                 .show(ui);
-            changed |= AdjustmentSlider::new("Highlights", &mut exposure.highlights, -100.0..=100.0)
-                .decimals(0)
-                .step(1.0)
-                .hover_text("Recovers or brightens the upper tonal range without hard clipping.")
-                .gradient(SliderGradient::Brightness)
-                .show(ui);
+            changed |=
+                AdjustmentSlider::new("Highlights", &mut exposure.highlights, -100.0..=100.0)
+                    .decimals(0)
+                    .step(1.0)
+                    .hover_text(
+                        "Recovers or brightens the upper tonal range without hard clipping.",
+                    )
+                    .gradient(SliderGradient::Brightness)
+                    .show(ui);
             changed |= AdjustmentSlider::new("Shadows", &mut exposure.shadows, -100.0..=100.0)
                 .decimals(0)
                 .step(1.0)
@@ -210,7 +208,7 @@ impl Sidebar {
         changed
     }
 
-    fn show_tone_curve(
+    pub(super) fn show_tone_curve(
         ui: &mut Ui,
         exposure: &mut ExposureParams,
         selected_tab: &mut ToneCurveTab,
@@ -234,7 +232,7 @@ impl Sidebar {
         changed
     }
 
-    fn show_color(
+    pub(super) fn show_color(
         ui: &mut Ui,
         exposure: &mut ExposureParams,
         raw: Option<&LoadedRaw>,
@@ -402,7 +400,7 @@ impl Sidebar {
                 let tint_range = raw.white_balance_tint_range(kelvin).unwrap_or(tint..=tint);
                 let tint_neutral_fraction = ((1.0 - tint_range.start())
                     / (tint_range.end() - tint_range.start()).max(f32::EPSILON))
-                    .clamp(0.0, 1.0);
+                .clamp(0.0, 1.0);
                 let tint_changed = ui
                     .push_id(base_tint.to_bits(), |ui| {
                         AdjustmentSlider::new("Tint", &mut tint, tint_range)
@@ -443,15 +441,18 @@ impl Sidebar {
             changed |= AdjustmentSlider::new("Vibrance", &mut exposure.vibrance, -100.0..=100.0)
                 .decimals(0)
                 .step(1.0)
-                .hover_text("Perceptual colorfulness with protection for saturated colors and skin hues.")
+                .hover_text(
+                    "Perceptual colorfulness with protection for saturated colors and skin hues.",
+                )
                 .gradient(SliderGradient::Colorfulness)
                 .show(ui);
-            changed |= AdjustmentSlider::new("Saturation", &mut exposure.saturation, -100.0..=100.0)
-                .decimals(0)
-                .step(1.0)
-                .hover_text("Uniform perceptual chroma scaling.")
-                .gradient(SliderGradient::Colorfulness)
-                .show(ui);
+            changed |=
+                AdjustmentSlider::new("Saturation", &mut exposure.saturation, -100.0..=100.0)
+                    .decimals(0)
+                    .step(1.0)
+                    .hover_text("Uniform perceptual chroma scaling.")
+                    .gradient(SliderGradient::Colorfulness)
+                    .show(ui);
         });
         changed |= action.apply(exposure, AdjustmentGroup::Color);
         if !crate::app::preview_visibility::PreviewVisibility::visible(ui.ctx(), "Color")
@@ -462,7 +463,7 @@ impl Sidebar {
         changed
     }
 
-    fn show_color_grading(
+    pub(super) fn show_color_grading(
         ui: &mut Ui,
         exposure: &mut ExposureParams,
         selected_tab: &mut ColorGradeTab,
@@ -476,7 +477,7 @@ impl Sidebar {
         changed
     }
 
-    fn show_detail(
+    pub(super) fn show_detail(
         ui: &mut Ui,
         exposure: &mut ExposureParams,
         foldable: bool,
@@ -593,13 +594,19 @@ impl Sidebar {
         (changed, ai_request)
     }
 
-    fn show_presence(ui: &mut Ui, exposure: &mut ExposureParams, foldable: bool) -> bool {
+    pub(super) fn show_presence(
+        ui: &mut Ui,
+        exposure: &mut ExposureParams,
+        foldable: bool,
+    ) -> bool {
         let mut changed = false;
         let action = Self::adjustment_card(ui, "Effects", false, foldable, true, |ui| {
             changed |= AdjustmentSlider::new("Texture", &mut exposure.texture, -100.0..=100.0)
                 .decimals(0)
                 .step(1.0)
-                .hover_text("Enhances or softens fine surface detail without changing overall exposure.")
+                .hover_text(
+                    "Enhances or softens fine surface detail without changing overall exposure.",
+                )
                 .show(ui);
             changed |= AdjustmentSlider::new("Clarity", &mut exposure.clarity, -100.0..=100.0)
                 .decimals(0)
@@ -609,7 +616,9 @@ impl Sidebar {
             changed |= AdjustmentSlider::new("Dehaze", &mut exposure.dehaze, -100.0..=100.0)
                 .decimals(0)
                 .step(1.0)
-                .hover_text("Removes or adds atmospheric veil while preserving color relationships.")
+                .hover_text(
+                    "Removes or adds atmospheric veil while preserving color relationships.",
+                )
                 .show(ui);
 
             crate::ui::theme::section_separator(ui);
@@ -618,16 +627,24 @@ impl Sidebar {
                 changed |= AdjustmentSlider::new("Amount", &mut exposure.glow_amount, 0.0..=100.0)
                     .decimals(0)
                     .step(1.0)
-                    .hover_text("Softens and blooms bright light sources without lifting the entire image." )
+                    .hover_text(
+                        "Softens and blooms bright light sources without lifting the entire image.",
+                    )
                     .show(ui);
             });
 
             crate::ui::theme::section_separator(ui);
-            changed |= AdjustmentSlider::new("Halation", &mut exposure.halation_amount, 0.0..=100.0)
-                .decimals(0)
-                .step(1.0)
-                .hover_text("Adds a warm film halo around bright edges while preserving highlight cores.")
-                .show(ui);
+            changed |= AdjustmentSlider::new(
+                "Halation",
+                &mut exposure.halation_amount,
+                0.0..=100.0,
+            )
+            .decimals(0)
+            .step(1.0)
+            .hover_text(
+                "Adds a warm film halo around bright edges while preserving highlight cores.",
+            )
+            .show(ui);
             changed |= AdjustmentSlider::new("Grain", &mut exposure.grain_amount, 0.0..=100.0)
                 .decimals(0)
                 .step(1.0)
@@ -638,61 +655,62 @@ impl Sidebar {
             ui.push_id("vignette", |ui| {
                 ui.strong("Vignette");
                 changed |= AdjustmentSlider::new(
-                        "Amount",
-                        &mut exposure.vignette_amount,
-                        -100.0..=100.0,
-                    )
-                    .decimals(0)
-                    .step(1.0)
-                    .hover_text("Darkens negative values or brightens positive values toward the image edges.")
-                    .gradient(SliderGradient::Brightness)
-                    .show(ui);
+                    "Amount",
+                    &mut exposure.vignette_amount,
+                    -100.0..=100.0,
+                )
+                .decimals(0)
+                .step(1.0)
+                .hover_text(
+                    "Darkens negative values or brightens positive values toward the image edges.",
+                )
+                .gradient(SliderGradient::Brightness)
+                .show(ui);
                 changed |= AdjustmentSlider::new(
-                        "Midpoint",
-                        &mut exposure.vignette_midpoint,
-                        0.0..=100.0,
-                    )
-                    .decimals(0)
-                    .step(1.0)
-                    .hover_text("Moves the vignette transition inward or confines it to the outermost edge.")
-                    .reset_to(ExposureParams::default().vignette_midpoint)
-                    .show(ui);
+                    "Midpoint",
+                    &mut exposure.vignette_midpoint,
+                    0.0..=100.0,
+                )
+                .decimals(0)
+                .step(1.0)
+                .hover_text(
+                    "Moves the vignette transition inward or confines it to the outermost edge.",
+                )
+                .reset_to(ExposureParams::default().vignette_midpoint)
+                .show(ui);
                 changed |= AdjustmentSlider::new(
-                        "Roundness",
-                        &mut exposure.vignette_roundness,
-                        -100.0..=100.0,
-                    )
-                    .decimals(0)
-                    .step(1.0)
-                    .hover_text("Changes the vignette shape from frame-like to circular.")
-                    .show(ui);
+                    "Roundness",
+                    &mut exposure.vignette_roundness,
+                    -100.0..=100.0,
+                )
+                .decimals(0)
+                .step(1.0)
+                .hover_text("Changes the vignette shape from frame-like to circular.")
+                .show(ui);
+                changed |=
+                    AdjustmentSlider::new("Feather", &mut exposure.vignette_feather, 0.0..=100.0)
+                        .decimals(0)
+                        .step(1.0)
+                        .hover_text("Controls the softness of the vignette transition.")
+                        .reset_to(ExposureParams::default().vignette_feather)
+                        .show(ui);
                 changed |= AdjustmentSlider::new(
-                        "Feather",
-                        &mut exposure.vignette_feather,
-                        0.0..=100.0,
-                    )
-                    .decimals(0)
-                    .step(1.0)
-                    .hover_text("Controls the softness of the vignette transition.")
-                    .reset_to(ExposureParams::default().vignette_feather)
-                    .show(ui);
-                changed |= AdjustmentSlider::new(
-                        "Highlights",
-                        &mut exposure.vignette_highlights,
-                        0.0..=100.0,
-                    )
-                    .decimals(0)
-                    .step(1.0)
-                    .hover_text("Restores bright edge highlights when using a dark vignette.")
-                    .gradient(SliderGradient::Brightness)
-                    .show(ui);
+                    "Highlights",
+                    &mut exposure.vignette_highlights,
+                    0.0..=100.0,
+                )
+                .decimals(0)
+                .step(1.0)
+                .hover_text("Restores bright edge highlights when using a dark vignette.")
+                .gradient(SliderGradient::Brightness)
+                .show(ui);
             });
         });
         changed |= action.apply(exposure, AdjustmentGroup::Effects);
         changed
     }
 
-    fn show_hsl(
+    pub(super) fn show_hsl(
         ui: &mut Ui,
         exposure: &mut ExposureParams,
         selected_color: &mut HslMixerColor,

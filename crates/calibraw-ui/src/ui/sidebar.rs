@@ -79,21 +79,21 @@ impl Sidebar {
     const CONTEXT_TAB_WIDTH: f32 = 64.0;
 }
 
-include!("sidebar/navigation.rs");
+mod crop;
+mod develop;
+mod export;
+mod info;
+mod inpainting;
 mod masks;
-include!("sidebar/inpainting.rs");
-include!("sidebar/export.rs");
-include!("sidebar/info.rs");
-include!("sidebar/develop.rs");
-include!("sidebar/crop.rs");
+mod navigation;
+
+pub(crate) use export::export_settings_controls;
 
 #[cfg(test)]
 mod tests {
     use super::masks::{mask_component_badge, mask_creation_icon};
-    use super::{
-        mobile_tab_icon_geometry, mobile_tab_text_geometry, MaskCardSize, MaskCombineMode,
-        MaskStripOrientation,
-    };
+    use super::navigation::{mobile_tab_icon_geometry, mobile_tab_text_geometry};
+    use super::{MaskCardSize, MaskCombineMode, MaskStripOrientation};
     use eframe::egui;
 
     #[test]
@@ -189,7 +189,7 @@ mod tests {
                     },
                     |ui| {
                         let viewport = ui.available_rect_before_wrap();
-                        let button = super::show_export_action_panel(ui, |ui| {
+                        let button = super::export::show_export_action_panel(ui, |ui| {
                             ui.add_sized(
                                 [ui.available_width(), crate::ui::theme::CONTROL_HEIGHT],
                                 egui::Button::new("Export…"),
@@ -223,14 +223,14 @@ mod tests {
             bit_depth: ExportBitDepth::Float32Linear,
             ..ExportSettings::default()
         };
-        super::enforce_export_bit_depth(ExportFormat::Tiff, &mut settings);
+        super::export::enforce_export_bit_depth(ExportFormat::Tiff, &mut settings);
         assert_eq!(settings.bit_depth, ExportBitDepth::Float32Linear);
-        super::enforce_export_bit_depth(ExportFormat::Png, &mut settings);
+        super::export::enforce_export_bit_depth(ExportFormat::Png, &mut settings);
         assert_eq!(settings.bit_depth, ExportBitDepth::Sixteen);
-        super::enforce_export_bit_depth(ExportFormat::Jpeg, &mut settings);
+        super::export::enforce_export_bit_depth(ExportFormat::Jpeg, &mut settings);
         assert_eq!(settings.bit_depth, ExportBitDepth::Eight);
         settings.bit_depth = ExportBitDepth::Float32Linear;
-        super::enforce_export_bit_depth(ExportFormat::JpegXl, &mut settings);
+        super::export::enforce_export_bit_depth(ExportFormat::JpegXl, &mut settings);
         assert_eq!(settings.bit_depth, ExportBitDepth::Sixteen);
     }
 

@@ -1,4 +1,6 @@
-fn show_export_action_panel<R>(
+use super::*;
+
+pub(super) fn show_export_action_panel<R>(
     ui: &mut Ui,
     contents: impl FnOnce(&mut Ui) -> R,
 ) -> egui::InnerResponse<R> {
@@ -13,7 +15,10 @@ fn show_export_action_panel<R>(
         .show(ui, contents)
 }
 
-fn enforce_export_bit_depth(format: ExportFormat, settings: &mut crate::pipeline::ExportSettings) {
+pub(super) fn enforce_export_bit_depth(
+    format: ExportFormat,
+    settings: &mut crate::pipeline::ExportSettings,
+) {
     match format {
         ExportFormat::Jpeg => settings.bit_depth = ExportBitDepth::Eight,
         ExportFormat::Png | ExportFormat::JpegXl if settings.bit_depth.is_float() => {
@@ -201,7 +206,7 @@ pub(crate) fn export_settings_controls(
 }
 
 impl Sidebar {
-    fn show_export_action(ui: &mut Ui, app: &mut CalibRawApp, frame: &eframe::Frame) {
+    pub(super) fn show_export_action(ui: &mut Ui, app: &mut CalibRawApp, frame: &eframe::Frame) {
         let dimensions_valid = app.develop.loaded_raw.as_ref().is_some_and(|raw| {
             let (width, height) = app
                 .develop
@@ -229,7 +234,7 @@ impl Sidebar {
         }
     }
 
-    fn show_export(ui: &mut Ui, app: &mut CalibRawApp, _frame: &eframe::Frame) {
+    pub(super) fn show_export(ui: &mut Ui, app: &mut CalibRawApp, _frame: &eframe::Frame) {
         let content_width = ui.available_width().max(1.0);
         let column_width = content_width;
 
