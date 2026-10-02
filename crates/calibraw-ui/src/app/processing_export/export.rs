@@ -288,7 +288,7 @@ impl CalibRawApp {
         let export_dir = data_dir.join("cache").join("exports");
         std::fs::create_dir_all(&export_dir)
             .map_err(|error| format!("Could not prepare Android export cache: {error}"))?;
-        match crate::android::prepare_direct_export(
+        match calibraw_ffi::prepare_direct_export(
             &self.android.android_app,
             &export_dir,
             &display_name,
@@ -317,7 +317,7 @@ impl CalibRawApp {
         destination: &ExportDestination,
     ) {
         if let ExportDestination::AndroidDirect { path } = destination {
-            crate::android::cancel_direct_export(&self.android.android_app, path);
+            calibraw_ffi::cancel_direct_export(&self.android.android_app, path);
         }
     }
 
@@ -493,7 +493,7 @@ impl CalibRawApp {
     pub(crate) fn sync_android_export_notification(&self) {
         let Some(task) = self.export.task.as_ref() else {
             if let Err(error) =
-                crate::android::clear_background_task_notification(&self.android.android_app)
+                calibraw_ffi::clear_background_task_notification(&self.android.android_app)
             {
                 log::warn!("{error}");
             }
@@ -512,7 +512,7 @@ impl CalibRawApp {
             )
         });
         let percent = (task.progress.clamp(0.0, 1.0) * 100.0).round() as i32;
-        if let Err(error) = crate::android::update_background_task_notification(
+        if let Err(error) = calibraw_ffi::update_background_task_notification(
             &self.android.android_app,
             title,
             &task.phase,
@@ -712,7 +712,7 @@ impl CalibRawApp {
                                         path: direct_path,
                                     }) => {
                                         debug_assert_eq!(path, direct_path);
-                                        match crate::android::finalize_direct_export(
+                                        match calibraw_ffi::finalize_direct_export(
                                             &self.android.android_app,
                                             &direct_path,
                                         ) {
@@ -743,7 +743,7 @@ impl CalibRawApp {
                                         format,
                                     }) => {
                                         debug_assert_eq!(path, cache_path);
-                                        match crate::android::publish_image(
+                                        match calibraw_ffi::publish_image(
                                             &self.android.android_app,
                                             &cache_path,
                                             &display_name,
@@ -789,9 +789,7 @@ impl CalibRawApp {
                         Err(error) => {
                             #[cfg(target_os = "android")]
                             {
-                                crate::android::cancel_all_direct_exports(
-                                    &self.android.android_app,
-                                );
+                                calibraw_ffi::cancel_all_direct_exports(&self.android.android_app);
                                 if is_batch {
                                     android_batch_result = Some(Err(error.clone()));
                                 } else {
@@ -822,7 +820,7 @@ impl CalibRawApp {
             self.ui.notice = Some("Export worker stopped unexpectedly.".to_owned());
             #[cfg(target_os = "android")]
             {
-                crate::android::cancel_all_direct_exports(&self.android.android_app);
+                calibraw_ffi::cancel_all_direct_exports(&self.android.android_app);
                 if self.export.batch.is_some() {
                     android_batch_result =
                         Some(Err("export worker stopped unexpectedly".to_owned()));

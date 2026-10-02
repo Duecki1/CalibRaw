@@ -390,7 +390,7 @@ impl Sidebar {
         mask: &mut crate::pipeline::LocalMask,
         component_index: usize,
         brush_mode: &mut BrushMode,
-        subject_controls: (&mut bool, crate::ai_masks::BiRefNetQuality, bool),
+        subject_controls: (&mut bool, calibraw_ai::ai_masks::BiRefNetQuality, bool),
         refinement_controls: (&mut bool, &mut f32, &mut f32, &mut f32, &mut bool),
         request_object: &mut bool,
     ) -> bool {

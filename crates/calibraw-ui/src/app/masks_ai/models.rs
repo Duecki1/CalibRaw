@@ -209,17 +209,17 @@ impl CalibRawApp {
 
     pub(in crate::app) fn skyseg_model_path(&self) -> PathBuf {
         self.ai_model_root()
-            .join(crate::ai_masks::SKYSEG_MODEL_FILENAME)
+            .join(calibraw_ai::ai_masks::SKYSEG_MODEL_FILENAME)
     }
 
     pub(in crate::app) fn depth_model_path(&self) -> PathBuf {
         self.ai_model_root()
-            .join(crate::ai_masks::DEPTH_MODEL.cache_filename)
+            .join(calibraw_ai::ai_masks::DEPTH_MODEL.cache_filename)
     }
 
     pub(in crate::app) fn big_lama_model_path(&self) -> PathBuf {
         self.ai_model_root()
-            .join(crate::remove::BIG_LAMA_MODEL_FILENAME)
+            .join(calibraw_ai::remove::BIG_LAMA_MODEL_FILENAME)
     }
 
     #[cfg(not(target_os = "android"))]
@@ -268,9 +268,9 @@ impl CalibRawApp {
             match std::fs::remove_file(&config) {
                 Ok(()) => {
                     if let Some(parent) = config.parent() {
-                        crate::file_ops::sync_parent_directory(parent).map_err(|error| {
-                            format!("could not flush {}: {error}", parent.display())
-                        })?;
+                        calibraw_core::file_ops::sync_parent_directory(parent).map_err(
+                            |error| format!("could not flush {}: {error}", parent.display()),
+                        )?;
                     }
                 }
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
@@ -333,9 +333,9 @@ impl CalibRawApp {
                     .to_owned(),
             );
         }
-        let sha256 = crate::ai_masks::sha256_file_hex(&path)
+        let sha256 = calibraw_ai::ai_masks::sha256_file_hex(&path)
             .map_err(|error| format!("Could not hash selected ONNX Runtime: {error:#}"))?;
-        if let Err(error) = crate::ai_masks::probe_runtime_subprocess(&path, &sha256) {
+        if let Err(error) = calibraw_ai::ai_masks::probe_runtime_subprocess(&path, &sha256) {
             return Err(format!(
                 "This ONNX Runtime could not be loaded safely: {error:#}"
             ));

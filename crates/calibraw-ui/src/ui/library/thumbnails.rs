@@ -505,7 +505,7 @@ pub(super) fn render_uncached_developed_thumbnail(
     let sidecar_fingerprint = crate::sidecar::desktop_sidecar_fingerprint(path)?
         .ok_or_else(|| "edit sidecar disappeared before thumbnail rendering".to_owned())?;
 
-    let _render_permit = crate::thumbnail_cache::acquire_rendered_thumbnail_worker();
+    let _render_permit = calibraw_core::thumbnail_cache::acquire_rendered_thumbnail_worker();
 
     if let Some(thumbnail) = crate::sidecar::load_developed_thumbnail_cache(path, maximum_edge)? {
         let cached_edge = thumbnail.width.max(thumbnail.height);
@@ -696,7 +696,7 @@ pub(crate) fn load_desktop_cached_thumbnail(
             path.display()
         ),
     }
-    crate::thumbnail_cache::load_desktop_raw_thumbnail(path, maximum_edge)
+    calibraw_core::thumbnail_cache::load_desktop_raw_thumbnail(path, maximum_edge)
 }
 
 #[cfg(not(target_os = "android"))]
@@ -753,7 +753,7 @@ fn load_desktop_raw_library_thumbnail(
             );
             (crate::pipeline::GeometryTransform::default(), has_edits)
         });
-    match crate::thumbnail_cache::load_desktop_raw_thumbnail(path, THUMBNAIL_EDGE) {
+    match calibraw_core::thumbnail_cache::load_desktop_raw_thumbnail(path, THUMBNAIL_EDGE) {
         Ok(Some(thumbnail)) => {
             let thumbnail = crate::pipeline::transform_thumbnail_geometry(&thumbnail, geometry);
             return Ok(if has_edits && render_edited_thumbnails_during_indexing {
@@ -773,7 +773,8 @@ fn load_desktop_raw_library_thumbnail(
 
     let thumbnail = load_raw_thumbnail(path, THUMBNAIL_EDGE)
         .map_err(|error| format!("could not render a RAW preview: {error:#}"))?;
-    if let Err(error) = crate::thumbnail_cache::save_desktop_raw_thumbnail(path, &thumbnail) {
+    if let Err(error) = calibraw_core::thumbnail_cache::save_desktop_raw_thumbnail(path, &thumbnail)
+    {
         log::warn!(
             "could not persist RAW thumbnail cache for {}: {error}",
             path.display()
@@ -802,7 +803,7 @@ pub(super) fn load_android_library_thumbnail(
     let display_name = asset.display_name.as_str();
     let bytes = asset.metadata.bytes;
     let modified_seconds = asset.metadata.modified_seconds;
-    match crate::android::load_developed_thumbnail_cache(app, uri, display_name, THUMBNAIL_EDGE) {
+    match calibraw_ffi::load_developed_thumbnail_cache(app, uri, display_name, THUMBNAIL_EDGE) {
         Ok(Some(thumbnail)) => {
             let mut loaded = loaded_library_thumbnail(thumbnail, true);
             loaded.review = match crate::sidecar::load_android_review(app, uri, display_name) {
@@ -829,7 +830,7 @@ pub(super) fn load_android_library_thumbnail(
         }
     };
     let review = sidecar.as_ref().map(|sidecar| sidecar.review);
-    let mut thumbnail = crate::android::load_library_thumbnail(
+    let mut thumbnail = calibraw_ffi::load_library_thumbnail(
         app,
         uri,
         display_name,

@@ -52,7 +52,7 @@ impl CalibRawApp {
                 "SkySeg U2Net runs locally on a 320 × 320 image and produces a sky probability mask. License: MIT.".to_owned(),
             ),
             AiMaskModel::Depth => {
-                let depth_model = crate::ai_masks::DEPTH_MODEL;
+                let depth_model = calibraw_ai::ai_masks::DEPTH_MODEL;
                 (
                     format!("{} (~{:.0} MB)", depth_model.name, depth_model.download_bytes as f64 / 1_000_000.0),
                     "create depth masks and fog",
@@ -127,7 +127,7 @@ impl CalibRawApp {
         {
             let (encoder, decoder) = self.sam21_model_paths();
             let model_download_needed =
-                !crate::ai_masks::object_models_are_verified(&encoder, &decoder);
+                !calibraw_ai::ai_masks::object_models_are_verified(&encoder, &decoder);
             let title = match (model_download_needed, runtime_download_needed) {
                 (true, true) => "Download object model and ONNX Runtime?",
                 (true, false) => "Download object-selection model?",

@@ -286,7 +286,7 @@ fn show_ai(ui: &mut egui::Ui, app: &mut CalibRawApp) {
         180.0,
         explanation,
         |ui| {
-            for option in crate::ai_masks::BiRefNetQuality::ALL {
+            for option in calibraw_ai::ai_masks::BiRefNetQuality::ALL {
                 ui.selectable_value(&mut quality, option, option.label())
                     .on_hover_text(option.model().explanation);
             }

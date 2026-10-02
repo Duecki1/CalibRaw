@@ -38,7 +38,7 @@ impl CalibRawApp {
             "{action} was not applied because the resulting edit could not be saved: {error}"
         );
         self.ui.notice = Some(message.clone());
-        crate::diagnostics::record(&message);
+        calibraw_core::diagnostics::record(&message);
         log::warn!("{message}");
         self.egui_ctx.request_repaint();
     }
@@ -57,7 +57,7 @@ impl CalibRawApp {
         self.ui.notice = Some(message.clone());
         self.persistence.sidecar_save_error_dialog = Some(message.clone());
         self.persistence.sidecar_recovery = None;
-        crate::diagnostics::record(format!("Edit save failed: {}", detail.as_ref()));
+        calibraw_core::diagnostics::record(format!("Edit save failed: {}", detail.as_ref()));
         log::error!("{message}");
         self.egui_ctx.request_repaint();
     }
@@ -415,14 +415,14 @@ impl CalibRawApp {
         let was_current =
             self.detach_current_android_document_for_library_action(raw_uri, display_name);
         let result = if was_current {
-            crate::android::reset_android_adjustments_with_editing_time(
+            calibraw_ffi::reset_android_adjustments_with_editing_time(
                 &self.android.android_app,
                 raw_uri,
                 display_name,
                 self.raw_editing_time_ms(),
             )
         } else {
-            crate::android::reset_android_adjustments(
+            calibraw_ffi::reset_android_adjustments(
                 &self.android.android_app,
                 raw_uri,
                 display_name,
@@ -443,7 +443,7 @@ impl CalibRawApp {
     ) -> Result<String, String> {
         let was_current =
             self.detach_current_android_document_for_library_action(raw_uri, display_name);
-        let result = crate::android::rename_library_document(
+        let result = calibraw_ffi::rename_library_document(
             &self.android.android_app,
             raw_uri,
             display_name,
@@ -473,11 +473,8 @@ impl CalibRawApp {
     ) -> Result<(), String> {
         let was_current =
             self.detach_current_android_document_for_library_action(raw_uri, display_name);
-        let result = crate::android::delete_library_document(
-            &self.android.android_app,
-            raw_uri,
-            display_name,
-        );
+        let result =
+            calibraw_ffi::delete_library_document(&self.android.android_app, raw_uri, display_name);
         if result.is_err() && was_current {
             self.open_android_library_document(raw_uri, display_name);
         }
@@ -733,7 +730,7 @@ impl CalibRawApp {
             crate::sidecar::SidecarTarget::Android {
                 raw_uri,
                 display_name,
-            } => crate::android::load_developed_thumbnail_cache(
+            } => calibraw_ffi::load_developed_thumbnail_cache(
                 &self.android.android_app,
                 raw_uri,
                 display_name,
@@ -909,7 +906,7 @@ impl CalibRawApp {
                         crate::sidecar::SidecarTarget::Android {
                             raw_uri,
                             display_name,
-                        } => crate::android::save_developed_thumbnail_cache(
+                        } => calibraw_ffi::save_developed_thumbnail_cache(
                             &android_app,
                             raw_uri,
                             display_name,

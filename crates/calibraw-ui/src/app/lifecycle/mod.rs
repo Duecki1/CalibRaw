@@ -56,7 +56,7 @@ pub(super) fn prewarm_dcp_profile_folder(folder: Option<std::path::PathBuf>) {
         .spawn(move || {
             let started = Instant::now();
             crate::pipeline::prewarm_dcp_profile_index(&folder);
-            crate::diagnostics::record(format!(
+            calibraw_core::diagnostics::record(format!(
                 "DCP profile index prewarmed in {:.3}s",
                 started.elapsed().as_secs_f64()
             ));
@@ -93,7 +93,7 @@ pub(super) fn spawn_gpu_preview_prewarm(
         .name("calibraw-gpu-preview-prewarm".to_owned())
         .spawn(move || {
             let started = Instant::now();
-            crate::diagnostics::record("GPU preview prewarm started at app initialization");
+            calibraw_core::diagnostics::record("GPU preview prewarm started at app initialization");
 
             let persistent_cache = match cache_root.as_deref() {
                 Some(cache_root) => {
@@ -104,12 +104,12 @@ pub(super) fn spawn_gpu_preview_prewarm(
                     ) {
                         Ok(Some((cache, loaded_bytes))) => {
                             if loaded_bytes == 0 {
-                                crate::diagnostics::record(format!(
+                                calibraw_core::diagnostics::record(format!(
                                     "GPU pipeline cache cold start: {}",
                                     cache.path().display()
                                 ));
                             } else {
-                                crate::diagnostics::record(format!(
+                                calibraw_core::diagnostics::record(format!(
                                     "GPU pipeline cache loaded: {} bytes from {}",
                                     loaded_bytes,
                                     cache.path().display()
@@ -118,13 +118,13 @@ pub(super) fn spawn_gpu_preview_prewarm(
                             Some(cache)
                         }
                         Ok(None) => {
-                            crate::diagnostics::record(
+                            calibraw_core::diagnostics::record(
                                 "GPU pipeline cache unavailable on this wgpu device/backend",
                             );
                             None
                         }
                         Err(error) => {
-                            crate::diagnostics::record(format!(
+                            calibraw_core::diagnostics::record(format!(
                                 "GPU pipeline cache could not be initialized: {error:#}"
                             ));
                             None
@@ -132,7 +132,7 @@ pub(super) fn spawn_gpu_preview_prewarm(
                     }
                 }
                 None => {
-                    crate::diagnostics::record(
+                    calibraw_core::diagnostics::record(
                         "GPU pipeline cache path unavailable; using in-process prewarm only",
                     );
                     None
@@ -148,11 +148,11 @@ pub(super) fn spawn_gpu_preview_prewarm(
             )
             .map_err(|error| format!("GPU preview prewarm failed: {error:#}"));
             match &result {
-                Ok(_) => crate::diagnostics::record(format!(
+                Ok(_) => calibraw_core::diagnostics::record(format!(
                     "GPU preview prewarm finished in {:.3}s",
                     started.elapsed().as_secs_f64()
                 )),
-                Err(error) => crate::diagnostics::record(error),
+                Err(error) => calibraw_core::diagnostics::record(error),
             }
 
             let _ = sender.send(result);
@@ -167,11 +167,11 @@ pub(super) fn spawn_gpu_preview_prewarm(
             )
             .map_err(|error| format!("GPU export program prewarm failed: {error:#}"));
             match &export_result {
-                Ok(_) => crate::diagnostics::record(format!(
+                Ok(_) => calibraw_core::diagnostics::record(format!(
                     "GPU export program prewarm finished in {:.3}s",
                     export_started.elapsed().as_secs_f64()
                 )),
-                Err(error) => crate::diagnostics::record(error),
+                Err(error) => calibraw_core::diagnostics::record(error),
             }
             export_prewarm_for_thread.publish(export_result);
             repaint.request_repaint();
@@ -179,17 +179,17 @@ pub(super) fn spawn_gpu_preview_prewarm(
             if let Some(cache) = cache_to_persist {
                 let cache_save_started = Instant::now();
                 match cache.persist() {
-                    Ok(bytes) if bytes > 0 => crate::diagnostics::record(format!(
+                    Ok(bytes) if bytes > 0 => calibraw_core::diagnostics::record(format!(
                         "GPU pipeline cache saved: {} bytes in {:.3}s to {}",
                         bytes,
                         cache_save_started.elapsed().as_secs_f64(),
                         cache.path().display()
                     )),
-                    Ok(_) => crate::diagnostics::record(format!(
+                    Ok(_) => calibraw_core::diagnostics::record(format!(
                         "GPU pipeline cache returned no persistent data for {}",
                         cache.path().display()
                     )),
-                    Err(error) => crate::diagnostics::record(format!(
+                    Err(error) => calibraw_core::diagnostics::record(format!(
                         "GPU pipeline cache could not be saved: {error:#}"
                     )),
                 }
@@ -199,7 +199,7 @@ pub(super) fn spawn_gpu_preview_prewarm(
         Ok(_) => Some(receiver),
         Err(error) => {
             export_prewarm.publish(Err(format!("GPU prewarm thread could not start: {error}")));
-            crate::diagnostics::record(format!(
+            calibraw_core::diagnostics::record(format!(
                 "GPU preview prewarm thread could not start: {error}"
             ));
             None

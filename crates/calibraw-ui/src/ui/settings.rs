@@ -17,7 +17,7 @@ const RUST_DEPENDENCY_LICENSES: &str =
 pub(crate) struct Settings;
 
 fn diagnostics_snapshot_with_ai_backends() -> String {
-    let mut diagnostic_log = crate::diagnostics::snapshot();
+    let mut diagnostic_log = calibraw_core::diagnostics::snapshot();
     let providers = calibraw_ai::active_execution_providers();
     if providers.is_empty() {
         return diagnostic_log;
@@ -619,7 +619,7 @@ impl Settings {
                         180.0,
                         &quality_help,
                         |ui| {
-                            for option in crate::ai_masks::BiRefNetQuality::ALL {
+                            for option in calibraw_ai::ai_masks::BiRefNetQuality::ALL {
                                 ui.selectable_value(&mut quality, option, option.label())
                                     .on_hover_text(option.model().explanation);
                             }
@@ -824,10 +824,10 @@ impl Settings {
                     );
                     #[cfg(target_os = "android")]
                     match app.copy_text_to_clipboard("CalibRaw legal notices", &legal_text) {
-                        Ok(()) => crate::diagnostics::record(
+                        Ok(()) => calibraw_core::diagnostics::record(
                             "CalibRaw legal notices copied to Android clipboard",
                         ),
-                        Err(error) => crate::diagnostics::record(format!(
+                        Err(error) => calibraw_core::diagnostics::record(format!(
                             "Android legal-notice clipboard copy failed: {error}"
                         )),
                     }
@@ -863,10 +863,10 @@ impl Settings {
                 {
                     #[cfg(target_os = "android")]
                     match app.copy_text_to_clipboard("CalibRaw diagnostics", &diagnostic_log) {
-                        Ok(()) => {
-                            crate::diagnostics::record("Diagnostic log copied to Android clipboard")
-                        }
-                        Err(error) => crate::diagnostics::record(format!(
+                        Ok(()) => calibraw_core::diagnostics::record(
+                            "Diagnostic log copied to Android clipboard",
+                        ),
+                        Err(error) => calibraw_core::diagnostics::record(format!(
                             "Android clipboard copy failed: {error}"
                         )),
                     }
@@ -877,7 +877,7 @@ impl Settings {
                     .on_hover_text("Clear recorded runtime events from the diagnostic report.")
                     .clicked()
                 {
-                    crate::diagnostics::clear();
+                    calibraw_core::diagnostics::clear();
                     diagnostic_log = diagnostics_snapshot_with_ai_backends();
                 }
             });

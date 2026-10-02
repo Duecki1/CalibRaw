@@ -11,7 +11,7 @@ pub(super) fn apply_library_adjustment_paste(
     let (completed, ai_refresh, failures) = app.paste_library_adjustments(&assets, mode, frame);
     app.library.clear_selection();
     #[cfg(target_os = "android")]
-    crate::android::set_back_navigation_active(false);
+    calibraw_ffi::set_back_navigation_active(false);
     app.library.refresh(context);
     app.library.status = if failures.is_empty() {
         format!(

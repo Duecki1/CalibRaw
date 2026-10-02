@@ -382,7 +382,7 @@ pub fn spawn_rawnind_denoise(
                         });
                         match load_result_cache(path, &raw) {
                             Ok(Some(image)) => {
-                                crate::diagnostics::record(format!(
+                                calibraw_core::diagnostics::record(format!(
                                     "AI-denoise worker restored {} without model inference",
                                     path.display()
                                 ));
@@ -394,7 +394,7 @@ pub fn spawn_rawnind_denoise(
                                     "discarding invalid AI-denoise result cache {}: {error:#}",
                                     path.display()
                                 );
-                                crate::diagnostics::record(format!(
+                                calibraw_core::diagnostics::record(format!(
                                     "AI-denoise worker rejected saved result: {error:#}"
                                 ));
                                 if let Err(remove_error) = fs::remove_file(path) {
@@ -462,7 +462,7 @@ pub fn spawn_rawnind_denoise(
                                 "could not persist AI-denoise result {}: {error:#}",
                                 path.display()
                             );
-                            crate::diagnostics::record(format!(
+                            calibraw_core::diagnostics::record(format!(
                                 "AI-denoise result cache write failed for {}: {error:#}",
                                 path.display()
                             ));

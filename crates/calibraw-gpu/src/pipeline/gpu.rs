@@ -1951,7 +1951,7 @@ impl GpuOutputSnapshot {
         )?;
         let image = image::RgbaImage::from_raw(self.width, self.height, rgba)
             .ok_or_else(|| anyhow!("developed thumbnail readback has an invalid byte count"))?;
-        let image = crate::thumbnail_cache::downscale_to_fit(
+        let image = calibraw_core::thumbnail_cache::downscale_to_fit(
             image::DynamicImage::ImageRgba8(image),
             maximum_edge,
         )

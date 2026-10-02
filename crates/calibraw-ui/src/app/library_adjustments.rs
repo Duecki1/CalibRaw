@@ -164,7 +164,7 @@ impl CalibRawApp {
                 crate::sidecar::SidecarTarget::Android {
                     raw_uri,
                     display_name,
-                } => match crate::android::open_library_document(
+                } => match calibraw_ffi::open_library_document(
                     &self.android.android_app,
                     &raw_uri,
                     &display_name,
@@ -637,7 +637,7 @@ impl CalibRawApp {
                 return;
             };
 
-            match crate::android::open_library_document(
+            match calibraw_ffi::open_library_document(
                 &self.android.android_app,
                 &job.uri,
                 &job.display_name,

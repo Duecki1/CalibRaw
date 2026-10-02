@@ -548,7 +548,7 @@ impl CalibRawApp {
             );
             return false;
         };
-        match crate::ai_masks::probe_runtime_subprocess(&runtime_path, &runtime_sha256) {
+        match calibraw_ai::ai_masks::probe_runtime_subprocess(&runtime_path, &runtime_sha256) {
             Ok(()) => true,
             Err(error) => {
                 self.ui.notice = Some(format!(
@@ -688,7 +688,7 @@ impl CalibRawApp {
 
             let (encoder, decoder) = self.sam21_model_paths();
             let runtime_download_needed = self.automatic_onnx_runtime_download_needed();
-            if crate::ai_masks::object_models_are_verified(&encoder, &decoder)
+            if calibraw_ai::ai_masks::object_models_are_verified(&encoder, &decoder)
                 && !runtime_download_needed
             {
                 if matches!(self.ai.consent, AiConsentState::Object { .. }) {
