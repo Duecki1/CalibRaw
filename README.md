@@ -2,7 +2,7 @@
 
 # CalibRaw
 
-**A free, open-source RAW photo editor with a Lightroom-style workflow and offline AI — native on Linux, Windows, macOS and Android.**
+**A free, open-source RAW photo editor with a Lightroom-style workflow and offline AI — native on Linux, Android, Windows and macOS.**
 
 [![Latest release](https://img.shields.io/github/v/release/Duecki1/CalibRaw?label=Download&color=brightgreen)](https://github.com/Duecki1/CalibRaw/releases/latest)
 [![License: GPL-3.0-or-later](https://img.shields.io/badge/License-GPL--3.0--or--later-blue.svg)](COPYING)
@@ -31,10 +31,10 @@ Edit your RAW files with sliders, curves, color grading and masks you already kn
 
 | Platform | Get it |
 | --- | --- |
-| **Windows** (x86_64 / ARM64) | Installer or portable `.zip` from the [latest release](https://github.com/Duecki1/CalibRaw/releases/latest) |
-| **macOS** (Apple Silicon / Intel) | `.zip` from the [latest release](https://github.com/Duecki1/CalibRaw/releases/latest) |
 | **Linux** (x86_64 / ARM64) | `.AppImage` from the [latest release](https://github.com/Duecki1/CalibRaw/releases/latest) |
 | **Android** (ARM64) | `.apk` from the [latest release](https://github.com/Duecki1/CalibRaw/releases/latest) |
+| **Windows** (x86_64 / ARM64) | Installer or portable `.zip` from the [latest release](https://github.com/Duecki1/CalibRaw/releases/latest) |
+| **macOS** (Apple Silicon / Intel) | `.zip` from the [latest release](https://github.com/Duecki1/CalibRaw/releases/latest) |
 
 AI models are downloaded once, on first use and only after you agree; they are verified by SHA-256 and then run offline.
 
@@ -172,7 +172,7 @@ calibraw-develop-export --input photo.ARW --output photo.jxl
 - **Rust Toolchain:** 1.92.0 or newer
 - **System Dependencies:** `libclang`, `cmake`, `pkg-config`, and standard C/C++ build tools (for LibRaw and Lensfun)
 
-### Desktop (Linux / macOS / Windows)
+### Desktop (Linux / Windows / macOS)
 
 Cargo automatically downloads Moduwu Design from GitHub; no separate checkout
 is required.
