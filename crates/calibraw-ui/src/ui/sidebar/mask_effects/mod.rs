@@ -15,7 +15,8 @@ pub(super) mod smoke;
 pub(super) mod tilt_shift;
 pub(super) mod vignette;
 
-use controls::{effect_details, effect_position};
+pub(crate) use controls::EffectFrame;
+use controls::{effect_details, effect_position, PositionSpace};
 
 use super::{egui, MaskEffect, Ui};
 use crate::pipeline::effect_params::ColorParamSpec;

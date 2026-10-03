@@ -896,6 +896,7 @@ impl Sidebar {
             lens_changed |= Self::show_optics(ui, app, true);
         }
 
+        let effect_frame = mask_effects::EffectFrame::of(app);
         if layout == ScreenLayout::Vertical {
             if app.develop_ui.adjustment_section == AdjustmentSection::Effects
                 && Self::show_selected_effect_component(
@@ -903,11 +904,17 @@ impl Sidebar {
                     &mut app.masks.stack.global_effects,
                     &mut app.develop_ui.effect_component,
                     true,
+                    &effect_frame,
                 )
             {
                 app.mark_mask_adjustments_dirty();
             }
-        } else if Self::show_effect_components(ui, &mut app.masks.stack.global_effects, true) {
+        } else if Self::show_effect_components(
+            ui,
+            &mut app.masks.stack.global_effects,
+            true,
+            &effect_frame,
+        ) {
             app.mark_mask_adjustments_dirty();
         }
 
