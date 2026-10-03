@@ -96,7 +96,8 @@ impl NativeRect {
         let y0 = self.y.max(other.y);
         let x1 = self.right().min(other.right());
         let y1 = self.bottom().min(other.bottom());
-        (x1 > x0 && y1 > y0).then_some(Self {
+        // Lazy: the sizes underflow when the rectangles do not overlap.
+        (x1 > x0 && y1 > y0).then(|| Self {
             x: x0,
             y: y0,
             width: x1 - x0,
@@ -1046,6 +1047,24 @@ mod tests {
             );
         }
         assert!(remaining.is_empty(), "some stroke pixels are never filled");
+    }
+
+    #[test]
+    fn disjoint_rectangles_do_not_intersect() {
+        let left = NativeRect {
+            x: 0,
+            y: 0,
+            width: 10,
+            height: 10,
+        };
+        let right = NativeRect {
+            x: 20,
+            y: 0,
+            width: 10,
+            height: 10,
+        };
+        assert_eq!(left.intersect(right), None);
+        assert_eq!(right.intersect(left), None);
     }
 
     #[test]

@@ -191,6 +191,20 @@ fn run_remove(request: RemoveRequest, events: &mpsc::Sender<RemoveEvent>) -> Res
             });
         }
         let crop = pass.crop;
+        let surroundings_bounds =
+            lama::surroundings_region(pass, request.raw.width, request.raw.height);
+        let surroundings = render_remove_scene_crop(DevelopedCropJob {
+            device: request.device.clone(),
+            queue: request.queue.clone(),
+            raw: Arc::clone(&request.raw),
+            geometry: request.geometry,
+            exposure: request.exposure,
+            masks: request.masks.clone(),
+            remove: context.clone(),
+            crop: surroundings_bounds,
+            program_prewarm: request.program_prewarm.clone(),
+        })
+        .context("render native surroundings for Remove grain")?;
         let scene = render_remove_scene_crop_resized(
             DevelopedCropJob {
                 device: request.device.clone(),
@@ -219,6 +233,10 @@ fn run_remove(request: RemoveRequest, events: &mpsc::Sender<RemoveEvent>) -> Res
             &request.raw,
             &request.exposure,
             &scene,
+            &lama::NativeSurroundings {
+                bounds: surroundings_bounds,
+                scene: surroundings,
+            },
         )?);
         unfilled.subtract(&pass.target);
         let _ = events.send(RemoveEvent::Processing {
