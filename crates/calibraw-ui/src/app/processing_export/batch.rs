@@ -477,7 +477,7 @@ impl CalibRawApp {
             let name = current.target.display_name().to_owned();
             if let Some(batch) = self.export.batch.as_mut() {
                 if !batch.cancel_requested {
-                    batch.failures.push(format!("{name}: RAW load failed"));
+                    batch.failures.push(format!("{name}: photo load failed"));
                     batch.completed += 1;
                 }
                 batch.current = None;
@@ -493,7 +493,7 @@ impl CalibRawApp {
         let original_name = super::export::export_source_stem(None, Some(&display_name));
         let Some(raw) = self.develop.loaded_raw.as_deref() else {
             self.complete_android_library_batch_export_item(Err(format!(
-                "{display_name}: loaded RAW data is unavailable"
+                "{display_name}: loaded photo data is unavailable"
             )));
             return;
         };

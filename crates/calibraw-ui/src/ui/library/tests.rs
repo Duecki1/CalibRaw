@@ -395,7 +395,7 @@ fn cover_uv_crops_without_leaving_unit_square() {
 fn image_paste_summary_reports_success_and_partial_failure() {
     assert_eq!(
         image_paste_summary(ImageClipboardMode::Copy, 2, 2, "destination", Vec::new()).unwrap(),
-        "Copied 2 RAWs to destination."
+        "Copied 2 photos to destination."
     );
     let error = image_paste_summary(
         ImageClipboardMode::Cut,
@@ -405,7 +405,7 @@ fn image_paste_summary_reports_success_and_partial_failure() {
         vec!["two.NEF: denied".to_owned()],
     )
     .unwrap_err();
-    assert!(error.contains("Moved 1 of 2 RAWs"));
+    assert!(error.contains("Moved 1 of 2 photos"));
     assert!(error.contains("denied"));
 }
 
@@ -1694,6 +1694,8 @@ fn raw_companions_pair_rendered_copies_in_the_same_folder_by_base_name() {
         "other/IMG_1.jpg",
         "trip/IMG_3.tif",
         "trip/IMG_3.jpg",
+        "trip/IMG_5.dng",
+        "trip/IMG_5.png",
     ]
     .map(test_asset);
     let companions = RawCompanions::index(&assets);
@@ -1718,6 +1720,9 @@ fn raw_companions_pair_rendered_copies_in_the_same_folder_by_base_name() {
     assert_eq!(paired("trip/IMG_2.jpg"), (false, vec![]));
     assert_eq!(paired("other/IMG_1.jpg"), (false, vec![]));
     assert_eq!(paired("trip/IMG_3.jpg"), (false, vec![]));
+    // Cameras never record PNG; a same-named PNG is the photographer's export.
+    assert_eq!(paired("trip/IMG_5.dng"), (false, vec![]));
+    assert_eq!(paired("trip/IMG_5.png"), (false, vec![]));
 }
 
 #[cfg(not(target_os = "android"))]

@@ -219,7 +219,7 @@ impl TopBar {
         } else if app.sidecar_save_succeeded_recently() {
             "Edits saved"
         } else if shortcut {
-            "Save non-destructive edits beside the RAW (Ctrl/Cmd+S)"
+            "Save non-destructive edits beside the photo (Ctrl/Cmd+S)"
         } else {
             "Save non-destructive edits"
         };

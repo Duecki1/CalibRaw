@@ -26,7 +26,7 @@ impl CalibRawApp {
             .develop
             .loaded_raw
             .as_deref()
-            .ok_or_else(|| "The original RAW is not available.".to_owned())?;
+            .ok_or_else(|| "The original photo is not available.".to_owned())?;
         pipeline
             .recompute_with_remove(
                 &render_state.queue,
@@ -85,7 +85,7 @@ impl CalibRawApp {
 
         preview_restore?;
         let rgba = readback
-            .map_err(|error| format!("Could not read the original RAW for masking: {error:#}"))?;
+            .map_err(|error| format!("Could not read the original photo for masking: {error:#}"))?;
         MaskRgbImage::new(pipeline.width, pipeline.height, rgba)
             .ok_or_else(|| "The canonical mask source has invalid dimensions.".to_owned())
     }
@@ -118,7 +118,7 @@ impl CalibRawApp {
                 .develop
                 .loaded_raw
                 .as_ref()
-                .ok_or_else(|| "The original RAW is not available.".to_owned())?;
+                .ok_or_else(|| "The original photo is not available.".to_owned())?;
             let reference_exposure = ExposureParams::scene_referred_default();
             if full_raw.uses_opposed_chroma(&reference_exposure) {
                 full_raw.inpaint_opposed_chroma_for_exposure(&reference_exposure);
@@ -159,7 +159,7 @@ impl CalibRawApp {
                 }
                 Err(error) => {
                     return Err(format!(
-                        "Could not prepare the original RAW for masking: {error:#}"
+                        "Could not prepare the original photo for masking: {error:#}"
                     ));
                 }
             };
@@ -189,7 +189,7 @@ impl CalibRawApp {
                     reference_pipeline.height,
                 )
                 .map_err(|error| {
-                    format!("Could not read the original RAW for masking: {error:#}")
+                    format!("Could not read the original photo for masking: {error:#}")
                 })?;
             let source =
                 MaskRgbImage::new(reference_pipeline.width, reference_pipeline.height, rgba)

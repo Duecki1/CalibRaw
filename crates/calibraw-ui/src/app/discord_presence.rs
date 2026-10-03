@@ -223,7 +223,7 @@ fn activity_payload(presence: PresenceActivity) -> activity::Activity<'static> {
             GET_CALIBRAW_URL,
         )]);
     match presence {
-        PresenceActivity::Browsing => payload.details("Browsing RAW Photos"),
+        PresenceActivity::Browsing => payload.details("Browsing Photos"),
         PresenceActivity::Editing { started_at } => payload
             .details("Editing a Picture")
             .timestamps(activity::Timestamps::new().start(started_at)),
@@ -282,7 +282,7 @@ mod tests {
         }))
         .unwrap();
 
-        assert!(browsing.contains("Browsing RAW Photos"));
+        assert!(browsing.contains("Browsing Photos"));
         assert!(editing.contains("Editing a Picture"));
         assert!(editing.contains("\"start\":123"));
         assert!(browsing.contains("Get CalibRaw"));

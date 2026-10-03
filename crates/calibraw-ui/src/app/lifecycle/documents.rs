@@ -145,7 +145,7 @@ impl CalibRawApp {
             if let Some(copy) = source.disposable_copy() {
                 remove_temporary_raw(copy);
             }
-            self.ui.notice = Some("Wait for the current RAW to finish opening.".to_owned());
+            self.ui.notice = Some("Wait for the current photo to finish opening.".to_owned());
             return;
         }
         let Some(render_state) = frame.wgpu_render_state() else {
@@ -240,7 +240,7 @@ impl CalibRawApp {
             self.develop.load_receiver = None;
             self.develop.loading_label = None;
             self.develop_ui.loading_thumbnail.clear();
-            self.ui.notice = Some(format!("could not start RAW decode worker: {error}"));
+            self.ui.notice = Some(format!("could not start the photo decode worker: {error}"));
             self.refresh_status();
         }
     }
@@ -354,7 +354,7 @@ impl CalibRawApp {
                 self.develop.load_receiver = None;
                 self.develop.loading_label = None;
                 self.develop_ui.loading_thumbnail.clear();
-                self.ui.notice = Some("RAW decode worker stopped unexpectedly.".to_owned());
+                self.ui.notice = Some("The photo decode worker stopped unexpectedly.".to_owned());
                 self.on_library_ai_mask_refresh_load_finished(false, frame);
                 #[cfg(target_os = "android")]
                 if std::mem::take(&mut self.export.android_batch_load_pending) {
@@ -519,7 +519,10 @@ impl CalibRawApp {
                 self.on_library_batch_load_finished(true, frame);
             }
             Err(error) => {
-                self.ui.notice = Some(format!("Failed to decode or render RAW: {}", error.message));
+                self.ui.notice = Some(format!(
+                    "Failed to decode or render the photo: {}",
+                    error.message
+                ));
                 let interactive_open = !self.document_load_is_background();
                 if error.unsupported && interactive_open {
                     self.ui.unsupported_file_dialog = Some(UnsupportedFileDialog {
