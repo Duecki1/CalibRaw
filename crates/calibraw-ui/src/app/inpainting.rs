@@ -16,6 +16,7 @@ impl InpaintState {
             cancellation.store(true, std::sync::atomic::Ordering::Release);
         }
         self.source_pick_active = false;
+        self.source_placement_press = false;
         self.active_points.clear();
         self.last_brush_uv = None;
         self.pending_brush = None;

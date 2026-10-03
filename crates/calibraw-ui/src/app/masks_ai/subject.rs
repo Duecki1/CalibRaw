@@ -64,6 +64,11 @@ impl CalibRawApp {
         {
             return;
         }
+        // Remove owns the runtime while Inpainting is open, so a depth job started
+        // here would be cancelled on the next frame. Defer until the user leaves.
+        if self.ai_runtime_context() == Some(calibraw_ai::AiRuntimeContext::Remove) {
+            return;
+        }
 
         self.masks.fog_depth_auto_requested =
             self.request_generated_mask(AiMaskModel::Depth, frame);
@@ -429,6 +434,34 @@ mod tests {
         assert!(app.ui.notice.is_none());
         assert!(!app.ai.consent.is_open());
         assert!(!app.foreground_operation_active());
+    }
+
+    #[test]
+    fn fog_depth_waits_until_inpainting_releases_the_runtime() {
+        let mut app = CalibRawApp::empty(&egui::Context::default());
+        app.masks
+            .stack
+            .global_effects
+            .push(crate::pipeline::EffectComponent::new(
+                crate::pipeline::MaskEffect::Fog,
+            ));
+        app.ui.active_tab = AppTab::Develop;
+        app.ui.sidebar_tab = SidebarTab::Inpainting;
+        let frame = eframe::Frame::_new_kittest();
+
+        app.ensure_fog_scene_depth(&frame);
+        assert!(app.ui.notice.is_none());
+        assert!(!app.masks.fog_depth_auto_requested);
+        assert!(app.masks.stack.global_effects[0].settings.fog.depth_enabled);
+
+        // A headless frame cannot capture the source, so the error proves the
+        // deferred request runs once Inpainting is closed.
+        app.ui.sidebar_tab = SidebarTab::Adjustments;
+        app.ensure_fog_scene_depth(&frame);
+        assert_eq!(
+            app.ui.notice.as_deref(),
+            Some("The GPU preview is not available.")
+        );
     }
 
     #[test]

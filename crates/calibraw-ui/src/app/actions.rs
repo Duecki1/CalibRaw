@@ -118,6 +118,7 @@ impl CalibRawApp {
         self.inpaint.active_points.clear();
         self.inpaint.last_brush_uv = None;
         self.inpaint.source_pick_active = false;
+        self.inpaint.source_placement_press = false;
         self.inpaint.aligned_offset = None;
         self.inpaint.hovered_stroke = None;
         self.inpaint.selected_stroke = None;
