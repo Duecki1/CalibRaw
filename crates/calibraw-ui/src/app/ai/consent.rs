@@ -14,6 +14,15 @@ struct AiJobDescription {
     details_id: &'static str,
     artifact: (&'static str, String),
     details: String,
+    /// Wording for re-running the model behind an edit that is already on.
+    restore: Option<AiRestorePrompt>,
+}
+
+struct AiRestorePrompt {
+    title: &'static str,
+    explanation: &'static str,
+    accept: &'static str,
+    decline: &'static str,
 }
 
 fn megabytes(bytes: u64) -> f64 {
@@ -41,6 +50,7 @@ impl CalibRawApp {
                         checkpoint.input_height,
                         checkpoint.input_width
                     ),
+                    restore: None,
                 }
             }
             AiFeature::Sky => AiJobDescription {
@@ -52,6 +62,7 @@ impl CalibRawApp {
                 details: "SkySeg U2Net runs locally on a 320 × 320 image and produces a sky \
                           probability mask. License: MIT."
                     .to_owned(),
+                restore: None,
             },
             AiFeature::SceneDepth => {
                 let depth_model = calibraw_ai::ai_masks::DEPTH_MODEL;
@@ -71,6 +82,7 @@ impl CalibRawApp {
                         name = depth_model.name,
                         edge = depth_model.input_edge,
                     ),
+                    restore: None,
                 }
             }
             AiFeature::Object => AiJobDescription {
@@ -82,6 +94,7 @@ impl CalibRawApp {
                 details: "SAM 2.1 Hiera Tiny uses an encoder and decoder with local \
                           edge-aware cleanup. License: Apache-2.0."
                     .to_owned(),
+                restore: None,
             },
             AiFeature::Remove => AiJobDescription {
                 label: "Remove",
@@ -99,6 +112,7 @@ impl CalibRawApp {
                     calibraw_ai::remove::BIG_LAMA_MODEL_PROVENANCE,
                     &calibraw_ai::remove::BIG_LAMA_MODEL_SHA256_HEX[..12]
                 ),
+                restore: None,
             },
             AiFeature::Denoise => AiJobDescription {
                 label: "AI denoise",
@@ -112,6 +126,14 @@ impl CalibRawApp {
                 details: "RawNIND handles Bayer denoise/demosaic and X-Trans images. The \
                           verified models are cached locally under GPL-3.0."
                     .to_owned(),
+                restore: Some(AiRestorePrompt {
+                    title: "Re-apply AI denoise?",
+                    explanation: "AI denoise is turned on for this image, but there is no saved \
+                                  AI-denoise result for it. Applying it runs RawNIND on this \
+                                  device again, which can take a few minutes.",
+                    accept: "Re-apply",
+                    decline: "Turn off AI denoise",
+                }),
             },
         }
     }
@@ -125,17 +147,26 @@ impl CalibRawApp {
         let Some(AiConsent {
             feature,
             runtime_download_needed,
+            origin,
         }) = self.ai.consent
         else {
             return;
         };
         let model_download_needed = self.model_download_needed(feature);
         let description = self.describe_ai_job(feature);
-        let title = match (model_download_needed, runtime_download_needed) {
-            (true, true) => format!("Download {} model and ONNX Runtime?", description.label),
-            (true, false) => format!("Download {} model?", description.label),
-            (false, true) => "Download ONNX Runtime?".to_owned(),
-            (false, false) => format!("Prepare {}?", description.label),
+        let download_needed = model_download_needed || runtime_download_needed;
+        let restore = description
+            .restore
+            .as_ref()
+            .filter(|_| origin == AiJobOrigin::Restore);
+        let title = match (restore, model_download_needed, runtime_download_needed) {
+            (Some(restore), ..) => restore.title.to_owned(),
+            (None, true, true) => {
+                format!("Download {} model and ONNX Runtime?", description.label)
+            }
+            (None, true, false) => format!("Download {} model?", description.label),
+            (None, false, true) => "Download ONNX Runtime?".to_owned(),
+            (None, false, false) => format!("Prepare {}?", description.label),
         };
         let runtime_ready = self.ai_runtime_ready();
         let mut action = crate::ui::theme::DialogAction::None;
@@ -143,13 +174,18 @@ impl CalibRawApp {
             .show_with_footer(
                 ctx,
                 |ui| {
-                    Self::show_ai_download_summary(
-                        ui,
-                        &description.model,
-                        description.purpose,
-                        model_download_needed,
-                        runtime_download_needed,
-                    );
+                    if let Some(restore) = restore {
+                        ui.label(restore.explanation);
+                    }
+                    if restore.is_none() || download_needed {
+                        Self::show_ai_download_summary(
+                            ui,
+                            &description.model,
+                            description.purpose,
+                            model_download_needed,
+                            runtime_download_needed,
+                        );
+                    }
                     self.show_ai_download_details(
                         ui,
                         description.details_id,
@@ -163,15 +199,13 @@ impl CalibRawApp {
                     self.show_manual_runtime_warning(ui);
                 },
                 |ui| {
-                    action = Self::show_ai_consent_buttons(
-                        ui,
-                        if model_download_needed || runtime_download_needed {
-                            "Accept & download"
-                        } else {
-                            "Continue"
-                        },
-                        runtime_ready,
-                    );
+                    let accept = match restore {
+                        _ if download_needed => "Accept & download",
+                        Some(restore) => restore.accept,
+                        None => "Continue",
+                    };
+                    let decline = restore.map_or("Cancel", |restore| restore.decline);
+                    action = Self::show_ai_consent_buttons(ui, decline, accept, runtime_ready);
                 },
             );
         match action {

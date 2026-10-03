@@ -353,6 +353,7 @@ impl CalibRawApp {
         crate::ui::theme::apply(&cc.egui_ctx, app.preferences.ui_design);
         app.preview.gpu_prewarm_receiver = gpu_preview_prewarm_receiver;
         app.export.gpu_prewarm = Some(gpu_export_prewarm);
+        app.remove_legacy_ai_denoise_cache();
         app
     }
 
@@ -415,6 +416,7 @@ impl CalibRawApp {
         ) {
             log::warn!("{error}");
         }
+        app.remove_legacy_ai_denoise_cache();
         app
     }
 }

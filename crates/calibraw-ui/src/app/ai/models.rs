@@ -143,17 +143,17 @@ impl CalibRawApp {
         }
     }
 
-    /// The consent row shared by every local-AI download dialog: Cancel, plus an accept button
-    /// whose enablement the caller decides — AI Denoise gates on the model download, the mask and
-    /// Remove dialogs gate on the runtime being usable.
+    /// The decline and accept buttons of the local-AI consent dialog; accept is
+    /// enabled only while the runtime is usable.
     pub(in crate::app) fn show_ai_consent_buttons(
         ui: &mut egui::Ui,
+        decline_label: &str,
         accept_label: &str,
         accept_enabled: bool,
     ) -> crate::ui::theme::DialogAction {
         crate::ui::theme::dialog_confirmation_buttons(
             ui,
-            "Cancel",
+            decline_label,
             accept_label,
             accept_enabled,
             false,

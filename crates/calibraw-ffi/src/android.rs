@@ -1059,6 +1059,46 @@ pub fn remove_raw_sidecar(
     Ok(())
 }
 
+/// Where the RAW's AI-denoise result lives, next to its sidecar.
+pub fn ai_denoise_result_path(
+    app: &AndroidApp,
+    raw_uri: &str,
+    display_name: &str,
+) -> Result<PathBuf, String> {
+    with_storage_manager(app, |env, storage_manager| {
+        let raw_uri = env.new_string(raw_uri)?;
+        let display_name = env.new_string(display_name)?;
+        let object = env
+            .call_method(
+                storage_manager,
+                jni::jni_str!("aiDenoiseResultPath"),
+                jni::jni_sig!((JString, JString) -> JString),
+                &[JValue::Object(&raw_uri), JValue::Object(&display_name)],
+            )?
+            .l()?;
+        let path = env.cast_local::<JString>(object)?;
+        Ok(PathBuf::from(path.to_string()))
+    })
+    .map_err(|error| format!("could not locate the Android AI-denoise result: {error:#}"))
+}
+
+/// Deletes the AI-denoise result once the saved edit no longer uses it. A
+/// failure only leaves a stale file behind, so it is logged.
+fn remove_unused_ai_denoise_result(app: &AndroidApp, raw_uri: &str, display_name: &str) {
+    let path = match ai_denoise_result_path(app, raw_uri, display_name) {
+        Ok(path) => path,
+        Err(error) => {
+            log::warn!("{error}");
+            return;
+        }
+    };
+    match fs::remove_file(&path) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => log::warn!("could not remove {}: {error}", path.display()),
+    }
+}
+
 pub fn reset_android_adjustments(
     app: &AndroidApp,
     raw_uri: &str,
@@ -1861,6 +1901,7 @@ pub fn save_android_with_review_and_editing_time(
     review: calibraw_core::sidecar::PhotoReview,
     editing_time_ms: u64,
 ) -> Result<String, calibraw_core::sidecar::SidecarError> {
+    let uses_ai_denoise = edits.exposure.ai_denoise_enabled;
     let bytes = calibraw_core::sidecar::encode_with_review_and_editing_time(
         edits,
         review,
@@ -1877,6 +1918,9 @@ pub fn save_android_with_review_and_editing_time(
             "could not remove Android sidecar cache {}: {error}",
             path.display()
         );
+    }
+    if result.is_ok() && !uses_ai_denoise {
+        remove_unused_ai_denoise_result(app, raw_uri, display_name);
     }
     result
 }

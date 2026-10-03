@@ -76,7 +76,7 @@ pub(super) struct DocumentLoadJob {
     pub(super) preview_quality: PreviewQuality,
     pub(super) viewport_pixels: [u32; 2],
     pub(super) camera_profiles: CameraProfileSettings,
-    pub(super) ai_denoise_cache_path: PathBuf,
+    pub(super) ai_denoise_result_path: Option<PathBuf>,
     pub(super) device: wgpu::Device,
     pub(super) queue: wgpu::Queue,
     pub(super) programs: PreviewProgramSources,
@@ -102,7 +102,7 @@ pub(super) fn run_document_load(job: DocumentLoadJob) -> Result<LoadedPreview, L
         preview_quality,
         viewport_pixels,
         camera_profiles,
-        ai_denoise_cache_path,
+        ai_denoise_result_path,
         device,
         queue,
         programs,
@@ -224,7 +224,7 @@ pub(super) fn run_document_load(job: DocumentLoadJob) -> Result<LoadedPreview, L
 
         let (lens_correction, full_raw) =
             apply_saved_lens_correction(&original_raw, saved_lens, &mut sidecar_warning);
-        restore_ai_denoise_result(&full_raw, &exposure, &ai_denoise_cache_path)?;
+        restore_ai_denoise_result(&full_raw, &exposure, ai_denoise_result_path.as_deref())?;
         if full_raw.uses_opposed_chroma(&exposure) {
             let highlight_started = Instant::now();
             full_raw.inpaint_opposed_chroma_for_exposure(&exposure);
@@ -598,13 +598,14 @@ fn apply_saved_lens_correction(
     (lens_correction, full_raw)
 }
 
-/// Installs a cached RawNIND result when AI denoise is enabled, or drops any
-/// installed result when it is not. A rejected cache file is deleted so the
-/// model reruns.
+/// Installs the RawNIND result saved next to the RAW when AI denoise is
+/// enabled, or drops any installed result when it is not. A result that no
+/// longer matches the RAW is deleted; after the open the user is asked before
+/// the model runs again.
 fn restore_ai_denoise_result(
     raw: &LoadedRaw,
     exposure: &ExposureParams,
-    cache_path: &Path,
+    result_path: Option<&Path>,
 ) -> Result<(), String> {
     if !exposure.ai_denoise_enabled {
         raw.clear_ai_denoised_image();
@@ -613,33 +614,34 @@ fn restore_ai_denoise_result(
     if raw.ai_denoised_image().is_some() {
         return Ok(());
     }
-    let cache_started = Instant::now();
-    match calibraw_ai::ai_denoise::load_result_cache(cache_path, raw) {
+    let Some(result_path) = result_path else {
+        return Ok(());
+    };
+    let restore_started = Instant::now();
+    match calibraw_ai::ai_denoise::load_saved_result(result_path, raw) {
         Ok(Some(image)) => {
             raw.set_ai_denoised_image(image)
                 .map_err(|error| format!("could not install saved AI-denoise result: {error:#}"))?;
             calibraw_core::diagnostics::record(format!(
-                "AI-denoise result cache restored in {:.3}s from {}",
-                cache_started.elapsed().as_secs_f64(),
-                cache_path.display()
+                "AI-denoise result restored in {:.3}s from {}",
+                restore_started.elapsed().as_secs_f64(),
+                result_path.display()
             ));
         }
         Ok(None) => calibraw_core::diagnostics::record(
-            "AI-denoise result cache miss; RawNIND will run after open",
+            "No saved AI-denoise result; the user is asked after open",
         ),
         Err(error) => {
             log::warn!(
-                "discarding invalid AI-denoise result cache {}: {error:#}",
-                cache_path.display()
+                "discarding invalid AI-denoise result {}: {error:#}",
+                result_path.display()
             );
-            calibraw_core::diagnostics::record(format!(
-                "AI-denoise result cache rejected: {error:#}"
-            ));
-            match std::fs::remove_file(cache_path) {
+            calibraw_core::diagnostics::record(format!("AI-denoise result rejected: {error:#}"));
+            match std::fs::remove_file(result_path) {
                 Err(remove_error) if remove_error.kind() != std::io::ErrorKind::NotFound => {
                     log::warn!(
-                        "could not remove invalid AI-denoise cache {}: {remove_error}",
-                        cache_path.display()
+                        "could not remove invalid AI-denoise result {}: {remove_error}",
+                        result_path.display()
                     );
                 }
                 _ => {}

@@ -1776,3 +1776,27 @@ fn legacy_edits_default_film_effects_to_zero() {
     let restored: crate::pipeline::LocalAdjustments = serde_json::from_value(local).unwrap();
     assert!(restored.is_neutral());
 }
+
+#[cfg(not(target_os = "android"))]
+#[test]
+fn ai_denoise_result_lives_only_while_the_saved_edit_uses_it() {
+    let directory = temporary_directory("ai-denoise-companion");
+    let raw = directory.join("photo.NEF");
+    let companion = ai_denoise_path_for_raw(&raw);
+    assert_eq!(companion.file_name().unwrap(), "photo.NEF.calibraw-denoise");
+    let mut edits = sample_edits();
+
+    edits.exposure.ai_denoise_enabled = true;
+    fs::write(&companion, b"result").unwrap();
+    save_desktop(&raw, edits.clone()).unwrap();
+    assert!(companion.exists());
+
+    edits.exposure.ai_denoise_enabled = false;
+    save_desktop_with_editing_time(&raw, edits, 1).unwrap();
+    assert!(!companion.exists());
+
+    fs::write(&companion, b"result").unwrap();
+    assert!(remove_desktop_edits(&raw).unwrap());
+    assert!(!companion.exists());
+    fs::remove_dir_all(directory).unwrap();
+}

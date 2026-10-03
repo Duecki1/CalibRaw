@@ -154,6 +154,7 @@ mod tests {
         app.ai.consent = Some(AiConsent {
             feature: calibraw_ai::AiFeature::Subject,
             runtime_download_needed: false,
+            origin: AiJobOrigin::Requested,
         });
         assert!(!app.app_shortcuts_allowed(&ctx));
         app.ai.consent = None;

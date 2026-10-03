@@ -19,6 +19,9 @@ use std::sync::Arc;
 pub const SIDECAR_SCHEMA_VERSION: u32 = 1;
 pub const DEVELOPED_THUMBNAIL_CACHE_VERSION_SALT: u64 = 0x4155_5241_5700_0007;
 pub const SIDECAR_SUFFIX: &str = ".calibraw";
+/// The AI-denoise result saved next to a RAW. It is large derived data, so it
+/// lives outside the sidecar and only while the saved edit uses AI denoise.
+pub const AI_DENOISE_SUFFIX: &str = ".calibraw-denoise";
 #[cfg(not(target_os = "android"))]
 pub const DEVELOPED_THUMBNAIL_SUFFIX: &str = ".calibraw-thumb.jpg";
 #[cfg(not(target_os = "android"))]
@@ -1134,10 +1137,10 @@ mod desktop;
 pub use desktop::sidecar_path_for_raw;
 #[cfg(not(target_os = "android"))]
 pub use desktop::{
-    copy_developed_thumbnail_cache, desktop_sidecar_fingerprint,
+    ai_denoise_path_for_raw, copy_developed_thumbnail_cache, desktop_sidecar_fingerprint,
     developed_thumbnail_cache_is_fresh, developed_thumbnail_path_for_raw,
-    invalidate_developed_thumbnail_cache, load_developed_thumbnail_cache, remove_desktop_edits,
-    save_developed_thumbnail_cache,
+    invalidate_developed_thumbnail_cache, load_developed_thumbnail_cache, raw_companion_paths,
+    remove_desktop_edits, save_developed_thumbnail_cache,
 };
 
 pub fn encode(edits: EditState) -> Result<Vec<u8>, SidecarError> {
@@ -1268,9 +1271,11 @@ pub fn save_desktop(raw_path: &Path, edits: EditState) -> Result<PathBuf, Sideca
         .unwrap_or_else(|error| error.into_inner());
     let path = sidecar_path_for_raw(raw_path);
     let metadata = load_sidecar_metadata(raw_path)?;
+    let uses_ai_denoise = edits.exposure.ai_denoise_enabled;
     let bytes =
         encode_with_review_and_editing_time(edits, metadata.review, metadata.editing_time_ms)?;
     atomic_write(&path, &bytes)?;
+    remove_unused_ai_denoise_result(raw_path, uses_ai_denoise);
     Ok(path)
 }
 
@@ -1284,8 +1289,10 @@ pub fn save_desktop_with_editing_time(
         .unwrap_or_else(|error| error.into_inner());
     let path = sidecar_path_for_raw(raw_path);
     let review = load_sidecar_metadata(raw_path)?.review;
+    let uses_ai_denoise = edits.exposure.ai_denoise_enabled;
     let bytes = encode_with_review_and_editing_time(edits, review, editing_time_ms)?;
     atomic_write(&path, &bytes)?;
+    remove_unused_ai_denoise_result(raw_path, uses_ai_denoise);
     Ok(path)
 }
 
@@ -1301,11 +1308,29 @@ pub fn backup_and_replace_desktop_sidecar(
         .lock()
         .unwrap_or_else(|error| error.into_inner());
     let path = sidecar_path_for_raw(raw_path);
+    let uses_ai_denoise = edits.exposure.ai_denoise_enabled;
     let bytes =
         encode_with_review_and_editing_time(edits, PhotoReview::default(), editing_time_ms)?;
     let backup = create_backup_copy(&path)?;
     atomic_write(&path, &bytes)?;
+    remove_unused_ai_denoise_result(raw_path, uses_ai_denoise);
     Ok(backup)
+}
+
+/// Deletes the AI-denoise result next to a RAW once its saved edit no longer
+/// uses AI denoise. A failure only leaves a stale file behind, so it is logged
+/// instead of failing the save.
+#[cfg(not(target_os = "android"))]
+fn remove_unused_ai_denoise_result(raw_path: &Path, uses_ai_denoise: bool) {
+    if uses_ai_denoise {
+        return;
+    }
+    let path = ai_denoise_path_for_raw(raw_path);
+    match std::fs::remove_file(&path) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => log::warn!("could not remove {}: {error}", path.display()),
+    }
 }
 
 /// Copies `path` to a new, uniquely named `<path>.backup-<pid>-<n>` file.
