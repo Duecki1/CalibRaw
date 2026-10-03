@@ -1,4 +1,43 @@
-use crate::matrix::{transform, Matrix3};
+use crate::matrix::{multiply, transform, Matrix3};
+
+/// CIE D65 white (x = 0.3127, y = 0.3290) normalized to Y = 1.
+pub const D65_XYZ: [f32; 3] = [0.950_455_9, 1.0, 1.089_057_8];
+
+/// D50 white (x = 0.3457, y = 0.3585) used by the DNG SDK as its profile
+/// connection space; DNG forward matrices map camera neutral to this value.
+pub const DNG_PCS_D50_XYZ: [f32; 3] = [0.964_295_7, 1.0, 0.825_104_6];
+
+/// Linear Bradford chromatic adaptation that maps `source` white to `target`
+/// white, preserving luminance. Returns `None` for degenerate whites.
+pub fn bradford_adaptation(source: [f32; 3], target: [f32; 3]) -> Option<Matrix3> {
+    const BRADFORD: Matrix3 = [
+        [0.8951, 0.2664, -0.1614],
+        [-0.7502, 1.7135, 0.0367],
+        [0.0389, -0.0685, 1.0296],
+    ];
+    const BRADFORD_INV: Matrix3 = [
+        [0.986_992_9, -0.147_054_3, 0.159_962_7],
+        [0.432_305_3, 0.518_360_3, 0.049_291_2],
+        [-0.008_528_7, 0.040_042_8, 0.968_486_7],
+    ];
+    if !source.iter().chain(&target).all(|v| v.is_finite())
+        || source[1].abs() < 1e-10
+        || target[1].abs() < 1e-10
+    {
+        return None;
+    }
+    let source_lms = transform(BRADFORD, source.map(|v| v / source[1]));
+    let target_lms = transform(BRADFORD, target.map(|v| v / target[1]));
+    if source_lms.iter().any(|v| !v.is_finite() || v.abs() < 1e-10) {
+        return None;
+    }
+    let diagonal = [
+        [target_lms[0] / source_lms[0], 0.0, 0.0],
+        [0.0, target_lms[1] / source_lms[1], 0.0],
+        [0.0, 0.0, target_lms[2] / source_lms[2]],
+    ];
+    Some(multiply(BRADFORD_INV, multiply(diagonal, BRADFORD)))
+}
 
 /// IEC 61966-2-1 sRGB encoding of a linear value, clamped to `[0, 1]`.
 pub fn srgb_encode(linear: f32) -> f32 {
@@ -53,7 +92,7 @@ pub fn linear_srgb_to_oklab(rgb: [f32; 3]) -> [f32; 3] {
     )
 }
 
-fn oklab_to_linear_srgb(lab: [f32; 3]) -> [f32; 3] {
+pub fn oklab_to_linear_srgb(lab: [f32; 3]) -> [f32; 3] {
     let root = transform(
         [
             [1.0, 0.396_337_78, 0.215_803_76],
@@ -127,6 +166,16 @@ mod tests {
         for (actual, expected) in converted.into_iter().zip([1.0, 0.0, 0.0]) {
             assert!((actual - expected).abs() < 1e-6);
         }
+    }
+
+    #[test]
+    fn bradford_adaptation_maps_source_white_to_target_white() {
+        let adaptation = bradford_adaptation(DNG_PCS_D50_XYZ, D65_XYZ).unwrap();
+        let adapted = transform(adaptation, DNG_PCS_D50_XYZ);
+        for (actual, expected) in adapted.into_iter().zip(D65_XYZ) {
+            assert!((actual - expected).abs() < 1e-6);
+        }
+        assert!(bradford_adaptation([1.0, 0.0, 1.0], D65_XYZ).is_none());
     }
 
     #[test]
