@@ -10,7 +10,7 @@
 //! files and a damaged file never hides the others.
 
 use crate::file_ops::write_bytes_atomically;
-use crate::pipeline::{MaskGeometry, MaskKind, MaskStack};
+use crate::pipeline::{ExposureParams, MaskGeometry, MaskKind, MaskStack, MAX_LOCAL_MASKS};
 use crate::sidecar::{
     default_edit_state, transfer_edits, validate_edit_state, AdjustmentPasteMode, EditSelection,
     EditState,
@@ -176,6 +176,52 @@ impl Preset {
             .extend(preset_masks.global_effects.iter().cloned());
         destination.ai_masks_need_update |=
             !preset_masks.content_dependencies().is_empty() || masks.scene_depth_missing();
+    }
+
+    // A quick preview shows the part of a preset that renders without reloading
+    // the photo or running AI models: the adjustment groups, plus masks and
+    // effects placed by hand. Camera profile, lens correction, geometry, RAW
+    // processing, AI denoise and AI masks only take effect when the preset is
+    // applied.
+
+    /// Applies the preset's adjustment groups to `exposure` for a quick preview.
+    pub fn preview_adjustments_on(&self, exposure: &mut ExposureParams) {
+        let ai_denoise_enabled = exposure.ai_denoise_enabled;
+        for group in self.selection.adjustment_groups.iter() {
+            exposure.copy_group_from(&self.edits.exposure, group);
+        }
+        exposure.ai_denoise_enabled = ai_denoise_enabled;
+    }
+
+    /// Adds the preset's hand-placed masks and global effects to `masks` for a
+    /// quick preview. Masks with any AI component are left out, as are effects
+    /// that need a scene depth this photo does not have yet.
+    pub fn preview_masks_on(&self, masks: &mut MaskStack) {
+        if !self.selection.masks {
+            return;
+        }
+        let preset_masks = &self.edits.masks;
+        masks.masks.extend(
+            preset_masks
+                .masks
+                .iter()
+                .filter(|mask| {
+                    mask.components
+                        .iter()
+                        .all(|component| crate::sidecar::is_manual_mask_kind(component.kind))
+                })
+                .cloned(),
+        );
+        masks.masks.truncate(MAX_LOCAL_MASKS);
+
+        let depth_was_missing = masks.scene_depth_missing();
+        let own_effects = masks.global_effects.len();
+        masks
+            .global_effects
+            .extend(preset_masks.global_effects.iter().cloned());
+        if !depth_was_missing && masks.scene_depth_missing() {
+            masks.global_effects.truncate(own_effects);
+        }
     }
 
     pub fn encode(&self) -> Result<Vec<u8>, PresetError> {

@@ -2,6 +2,9 @@
 use super::*;
 use crate::presets::{Preset, StoredPreset};
 
+mod preview;
+use preview::PresetHoverPreview;
+
 /// The folder that stores presets, next to the app settings file.
 pub(crate) fn preset_folder_for_settings(settings_path: &Path) -> Option<PathBuf> {
     settings_path.parent().map(|folder| folder.join("presets"))
@@ -16,6 +19,7 @@ pub(crate) struct PresetState {
     pub(crate) load_failures: Vec<String>,
     pub(crate) editor: Option<PresetEditor>,
     pub(crate) pending_delete: Option<PathBuf>,
+    pub(crate) hover: PresetHoverPreview,
 }
 
 impl PresetState {
@@ -266,6 +270,7 @@ impl CalibRawApp {
             self.ui.notice = Some("Wait for the current photo to finish opening.".to_owned());
             return;
         }
+        self.end_preset_hover_preview_for(path);
         self.ui.notice = Some(
             match self.apply_edit_transfer_to_current(
                 EditTransfer::Preset(&preset),

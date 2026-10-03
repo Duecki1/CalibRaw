@@ -5,6 +5,11 @@ use crate::sidecar::EditSelection;
 use eframe::egui::{self, Ui};
 use std::path::PathBuf;
 
+#[cfg(not(target_os = "android"))]
+const ROW_HELP: &str = "Previewing on the photo. Click to apply.";
+#[cfg(target_os = "android")]
+const ROW_HELP: &str = "Tap to apply to this photo.";
+
 const PANEL_HELP: &str = "Click a preset to apply it to this photo. A preset changes only the settings it includes, and adds its masks next to the photo's own.";
 
 #[derive(Clone, Debug)]
@@ -183,6 +188,7 @@ pub(crate) fn show_panel(ui: &mut Ui, app: &mut CalibRawApp, frame: &eframe::Fra
         }
     });
 
+    let mut hovered = None;
     for group in &list.groups {
         crate::ui::theme::card_gap(ui);
         crate::ui::theme::content_card(ui, |ui| {
@@ -191,11 +197,20 @@ pub(crate) fn show_panel(ui: &mut Ui, app: &mut CalibRawApp, frame: &eframe::Fra
                 .default_open(true)
                 .show(ui, |ui| {
                     for entry in &group.presets {
-                        show_preset_row(ui, entry, &mut action);
+                        if show_preset_row(ui, entry, &mut action) {
+                            hovered = Some(entry.path.clone());
+                        }
                     }
                 });
         });
     }
+    // Touch screens have no hover; a tap applies the preset directly.
+    #[cfg(not(target_os = "android"))]
+    if let Some(path) = hovered {
+        app.presets.hover.request(path);
+    }
+    #[cfg(target_os = "android")]
+    let _ = hovered;
 
     match action {
         Some(PresetAction::Apply(path)) => app.apply_preset_to_current(&path, frame),
@@ -207,7 +222,12 @@ pub(crate) fn show_panel(ui: &mut Ui, app: &mut CalibRawApp, frame: &eframe::Fra
     }
 }
 
-fn show_preset_row(ui: &mut Ui, entry: &PresetListEntry, action: &mut Option<PresetAction>) {
+/// Draws one preset row. Returns whether the pointer rests on its name.
+fn show_preset_row(
+    ui: &mut Ui,
+    entry: &PresetListEntry,
+    action: &mut Option<PresetAction>,
+) -> bool {
     ui.horizontal(|ui| {
         let menu_width = crate::ui::theme::CONTROL_HEIGHT;
         let row_width = (ui.available_width() - menu_width - ui.spacing().item_spacing.x).max(1.0);
@@ -217,7 +237,7 @@ fn show_preset_row(ui: &mut Ui, entry: &PresetListEntry, action: &mut Option<Pre
                 |ui| crate::ui::theme::navigation_row(ui, &entry.name, false, egui::Sense::click()),
             )
             .inner
-            .on_hover_text(format!("Apply to this photo\n{}", entry.summary));
+            .on_hover_text(format!("{ROW_HELP}\n{}", entry.summary));
         if response.clicked() {
             *action = Some(PresetAction::Apply(entry.path.clone()));
         }
@@ -227,7 +247,11 @@ fn show_preset_row(ui: &mut Ui, entry: &PresetListEntry, action: &mut Option<Pre
         })
         .response
         .on_hover_text("Preset actions");
-    });
+        // An open context menu means the pointer is choosing an action, not
+        // looking at the preset.
+        response.hovered() && !egui::Popup::is_any_open(ui.ctx())
+    })
+    .inner
 }
 
 fn preset_actions_menu(ui: &mut Ui, entry: &PresetListEntry, action: &mut Option<PresetAction>) {

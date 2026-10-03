@@ -376,6 +376,7 @@ impl eframe::App for CalibRawApp {
             crate::ui::library::show_library_action_overlays(ui, self, frame);
         }
 
+        self.sync_preset_hover_preview();
         self.sync_preview_visibility();
         self.advance_remove_worker(frame);
         self.apply_pending_lens_correction(frame);
