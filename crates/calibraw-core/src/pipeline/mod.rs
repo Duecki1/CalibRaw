@@ -1,5 +1,5 @@
 pub mod adjustment_groups;
-pub use adjustment_groups::AdjustmentGroup;
+pub use adjustment_groups::{AdjustmentGroup, AdjustmentGroupSet};
 pub mod basicadj;
 pub mod color_profile;
 mod display_raster;

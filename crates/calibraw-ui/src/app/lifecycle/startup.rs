@@ -258,6 +258,11 @@ impl CalibRawApp {
                 raw_accumulated: Duration::ZERO,
                 raw_active_since: None,
             },
+            presets: PresetState::load(
+                performance_settings_path
+                    .as_deref()
+                    .and_then(crate::app::presets::preset_folder_for_settings),
+            ),
             preferences: PreferencesState {
                 image_relative_brush_size: performance.image_relative_brush_size,
                 show_develop_navigation_labels: performance.show_develop_navigation_labels,

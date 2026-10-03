@@ -60,6 +60,7 @@ AI models are downloaded once, on first use and only after you agree; they are v
 - **Local AI Tools (Offline):** Subject, sky, depth and object masks, AI Denoise, and AI Remove.
 - **Native Android App:** A real ARM64 NDK build with 16 KB memory page support, touch layouts, and MediaStore exporting.
 - **Non-Destructive Edits:** All sliders, curves, and masks are saved to lightweight `.calibraw` JSON sidecar files.
+- **Presets:** Save any combination of adjustment groups, masks and profile choices as a named preset, apply it in Develop or to a whole Library selection, and share it as a `.calibraw-preset` file.
 - **Tiled Export & CLI:** Exports large RAW files in tiles to avoid GPU memory limits, plus a command-line tool for batch rendering.
 - **JPEG XL Export:** Exports lossless `.jxl` images at 8-bit or 16-bit precision, including EXIF metadata when enabled.
 - **Edit Replay:** Export a short 30 FPS MP4 that replays the current edit by category.

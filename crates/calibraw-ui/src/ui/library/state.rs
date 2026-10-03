@@ -158,9 +158,9 @@ impl LibraryState {
     pub(crate) fn install_adjustment_clipboard(
         &mut self,
         edits: crate::sidecar::EditState,
-        settings: crate::sidecar::AdjustmentCopySettings,
+        selection: crate::sidecar::EditSelection,
     ) {
-        self.adjustment_clipboard = Some(LibraryAdjustmentClipboard { edits, settings });
+        self.adjustment_clipboard = Some(AdjustmentClipboard { edits, selection });
     }
 
     #[cfg(any(target_os = "android", test))]
@@ -283,6 +283,7 @@ impl LibraryState {
     }
 
     /// Rendered formats stacked under the RAW `asset`, for its hover details.
+    #[cfg(not(target_os = "android"))]
     pub(super) fn stacked_formats(
         &self,
         asset: &LibraryAssetId,

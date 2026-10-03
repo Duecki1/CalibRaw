@@ -219,9 +219,11 @@ impl CalibRawApp {
             .into_iter()
             .collect(),
             SidebarTab::Inpainting => AiFeatureSet::EMPTY.with(AiFeature::Remove),
-            SidebarTab::Adjustments | SidebarTab::Crop | SidebarTab::Export | SidebarTab::Info => {
-                AiFeatureSet::EMPTY
-            }
+            SidebarTab::Adjustments
+            | SidebarTab::Presets
+            | SidebarTab::Crop
+            | SidebarTab::Export
+            | SidebarTab::Info => AiFeatureSet::EMPTY,
         }
     }
 
