@@ -460,8 +460,8 @@ pub(super) fn validate_library_item_name(name: &str, raw: bool) -> Result<(), St
     {
         return Err("Enter a single safe name without leading or trailing spaces.".to_owned());
     }
-    if raw && !crate::pipeline::is_supported_raw_path(Path::new(name)) {
-        return Err("Keep a supported RAW filename extension.".to_owned());
+    if raw && !crate::pipeline::is_supported_image_path(Path::new(name)) {
+        return Err("Keep a supported photo filename extension.".to_owned());
     }
     Ok(())
 }

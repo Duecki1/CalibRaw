@@ -6,8 +6,7 @@ impl CalibRawApp {
         if self.ui.desktop_picker_receiver.is_some() {
             return;
         }
-        let extensions = crate::pipeline::SUPPORTED_RAW_EXTENSIONS
-            .iter()
+        let extensions = crate::pipeline::supported_image_extensions()
             .flat_map(|extension| [extension.to_string(), extension.to_ascii_uppercase()])
             .collect::<Vec<_>>();
         let initial_directory = self
@@ -16,7 +15,8 @@ impl CalibRawApp {
             .as_deref()
             .and_then(selected_picker_directory)
             .or_else(|| self.library.folder().map(std::path::Path::to_path_buf));
-        let mut dialog = rfd::AsyncFileDialog::new().add_filter("RAW and TIFF images", &extensions);
+        let mut dialog = rfd::AsyncFileDialog::new()
+            .add_filter("RAW, TIFF, JPEG, PNG and HEIC images", &extensions);
         if let Some(directory) = initial_directory {
             dialog = dialog.set_directory(directory);
         }

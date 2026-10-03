@@ -193,7 +193,7 @@ impl Preview {
                     available,
                     backdrop,
                     "No image open",
-                    Some("Open a RAW from the Library to start developing."),
+                    Some("Open a photo from the Library to start developing."),
                     false,
                 );
             }
@@ -560,6 +560,9 @@ impl Preview {
                 Color32::WHITE,
             );
         }
+        if let Some(format) = app.current_rendered_format() {
+            paint_rendered_source_pill(&painter, outer_rect, format);
+        }
 
         if !app.preview.original_visible() {
             if app.ui.sidebar_tab == SidebarTab::Inpainting && !touch_navigation && !fit_gesture {
@@ -590,4 +593,24 @@ impl Preview {
             }
         }
     }
+}
+
+/// Marks the canvas while a rendered JPEG, PNG or HEIC is open, so it is never
+/// mistaken for a RAW with its wider editing latitude.
+fn paint_rendered_source_pill(
+    painter: &egui::Painter,
+    canvas: Rect,
+    format: crate::pipeline::RenderedImageFormat,
+) {
+    let text = painter.layout_no_wrap(
+        format!("Editing {}", format.label()),
+        egui::FontId::proportional(11.5),
+        Color32::WHITE,
+    );
+    let pill = Rect::from_min_size(
+        canvas.left_top() + egui::vec2(12.0, 12.0),
+        text.size() + egui::vec2(16.0, 8.0),
+    );
+    painter.rect_filled(pill, 6.0, Color32::from_black_alpha(150));
+    painter.galley(pill.center() - text.size() * 0.5, text, Color32::WHITE);
 }

@@ -360,7 +360,11 @@ fn sparse_row_keeps_the_selected_thumbnail_height() {
 fn thumbnail_hover_details_include_format_and_dimensions() {
     let asset = test_asset("portrait.CR3");
 
-    assert_eq!(thumbnail_hover_details(&asset), "CR3  ·  6000 × 4000");
+    assert_eq!(thumbnail_hover_details(&asset, &[]), "CR3  ·  6000 × 4000");
+    assert_eq!(
+        thumbnail_hover_details(&asset, &[crate::pipeline::RenderedImageFormat::Jpeg]),
+        "CR3 + JPEG  ·  6000 × 4000"
+    );
 }
 
 #[test]
@@ -407,8 +411,10 @@ fn image_paste_summary_reports_success_and_partial_failure() {
 
 #[test]
 fn raw_names_require_safe_supported_extensions() {
-    assert!(validate_library_item_name("photo.CR3", true).is_ok());
-    for invalid in ["", " photo.CR3", "nested/photo.CR3", "photo.jpg"] {
+    for valid in ["photo.CR3", "photo.jpg", "photo.HEIC", "photo.png"] {
+        assert!(validate_library_item_name(valid, true).is_ok(), "{valid:?}");
+    }
+    for invalid in ["", " photo.CR3", "nested/photo.CR3", "photo.txt", "photo"] {
         assert!(
             validate_library_item_name(invalid, true).is_err(),
             "accepted {invalid:?}"
@@ -1419,22 +1425,25 @@ fn dropped_raw_import_preserves_name_and_never_overwrites() {
 
 #[cfg(not(target_os = "android"))]
 #[test]
-fn folder_scan_only_includes_direct_raw_children() {
+fn folder_scan_only_includes_direct_photo_children() {
     let root = unique_temp_dir("library-scan-test");
     let nested = root.join("nested");
     fs::create_dir_all(&nested).unwrap();
     fs::write(root.join("one.DNG"), b"raw").unwrap();
+    fs::write(root.join("three.jpg"), b"jpeg").unwrap();
     fs::write(nested.join("two.nef"), b"raw").unwrap();
-    fs::write(root.join("ignore.jpg"), b"jpeg").unwrap();
+    fs::write(root.join("ignore.txt"), b"text").unwrap();
+    fs::write(root.join("one.DNG.calibraw"), b"{}").unwrap();
 
     let (assets, warnings, truncated) = scan_folder(&root, || false).unwrap().unwrap();
-    let names = assets
+    let mut names = assets
         .iter()
         .map(|asset| asset.display_name.as_str())
         .collect::<Vec<_>>();
+    names.sort_unstable();
     assert_eq!(warnings, 0);
     assert!(!truncated);
-    assert_eq!(names, vec!["one.DNG"]);
+    assert_eq!(names, vec!["one.DNG", "three.jpg"]);
     fs::remove_dir_all(root).unwrap();
 }
 
@@ -1650,4 +1659,115 @@ fn resetting_crop_invalidates_geometry_only_raw_preview() {
         library.entries[0].layout_size,
         asset.metadata.dimensions_hint
     );
+}
+
+#[cfg(not(target_os = "android"))]
+fn library_with_assets(names: &[&str]) -> LibraryState {
+    let mut library = LibraryState::new();
+    for name in names {
+        library.entries.push(new_library_entry(test_asset(*name)));
+    }
+    library.sort_entries();
+    library
+}
+
+#[cfg(not(target_os = "android"))]
+fn visible_paths(library: &LibraryState) -> Vec<String> {
+    let mut paths = library
+        .visible_entry_indices()
+        .unwrap_or_else(|| (0..library.entries.len()).collect())
+        .into_iter()
+        .map(|index| library.entries[index].asset.display_path.clone())
+        .collect::<Vec<_>>();
+    paths.sort();
+    paths
+}
+
+#[test]
+fn raw_companions_pair_rendered_copies_in_the_same_folder_by_base_name() {
+    let assets = [
+        "trip/IMG_1.CR3",
+        "trip/IMG_1.JPG",
+        "trip/img_4.nef",
+        "trip/IMG_4.HEIC",
+        "trip/IMG_2.jpg",
+        "other/IMG_1.jpg",
+        "trip/IMG_3.tif",
+        "trip/IMG_3.jpg",
+    ]
+    .map(test_asset);
+    let companions = RawCompanions::index(&assets);
+    let paired = |name: &str| {
+        let asset = assets
+            .iter()
+            .find(|asset| asset.display_path.ends_with(name))
+            .unwrap();
+        (
+            companions.is_companion(&asset.id),
+            companions.paired_formats(&asset.id).to_vec(),
+        )
+    };
+    use crate::pipeline::RenderedImageFormat::{Heif, Jpeg};
+
+    assert_eq!(paired("trip/IMG_1.CR3"), (false, vec![Jpeg]));
+    assert_eq!(paired("trip/IMG_1.JPG"), (true, vec![]));
+    // Base names match case-insensitively.
+    assert_eq!(paired("trip/img_4.nef"), (false, vec![Heif]));
+    assert_eq!(paired("trip/IMG_4.HEIC"), (true, vec![]));
+    // A lone JPEG, a JPEG in another folder and a JPEG beside a TIFF stay.
+    assert_eq!(paired("trip/IMG_2.jpg"), (false, vec![]));
+    assert_eq!(paired("other/IMG_1.jpg"), (false, vec![]));
+    assert_eq!(paired("trip/IMG_3.jpg"), (false, vec![]));
+}
+
+#[cfg(not(target_os = "android"))]
+#[test]
+fn library_shows_only_the_raw_of_raw_jpeg_pairs_by_default() {
+    let mut library = library_with_assets(&[
+        "shoot/DSC_0001.NEF",
+        "shoot/DSC_0001.JPG",
+        "shoot/DSC_0002.JPG",
+    ]);
+    assert!(library.stacks_raw_companions());
+    assert_eq!(
+        visible_paths(&library),
+        ["shoot/DSC_0001.NEF", "shoot/DSC_0002.JPG"]
+    );
+    assert_eq!(library.photo_count(), 2);
+    let raw = LibraryAssetId::Desktop(PathBuf::from("shoot/DSC_0001.NEF"));
+    assert_eq!(
+        library.stacked_formats(&raw),
+        [crate::pipeline::RenderedImageFormat::Jpeg]
+    );
+
+    // The develop filmstrip and arrow navigation skip the stacked JPEG too.
+    let filmstrip = library
+        .filmstrip_entry_indices()
+        .into_iter()
+        .map(|index| library.entries[index].asset.display_name.clone())
+        .collect::<Vec<_>>();
+    assert_eq!(filmstrip.len(), 2);
+    assert!(!filmstrip.contains(&"DSC_0001.JPG".to_owned()));
+    let neighbours = [true, false].map(|forward| {
+        library
+            .adjacent_library_item_for_path(Path::new("shoot/DSC_0001.NEF"), forward)
+            .map(|item| item.asset.display_name)
+    });
+    assert!(!neighbours.contains(&Some("DSC_0001.JPG".to_owned())));
+
+    assert!(library.set_stack_raw_companions(false));
+    assert!(library.visible_entry_indices().is_none());
+    assert_eq!(visible_paths(&library).len(), 3);
+    assert!(library.stacked_formats(&raw).is_empty());
+    assert_eq!(library.filmstrip_entry_indices().len(), 3);
+}
+
+#[cfg(not(target_os = "android"))]
+#[test]
+fn rendered_photos_are_labelled_by_format() {
+    assert_eq!(rendered_format_label("IMG_0001.HEIC"), Some("HEIC"));
+    assert_eq!(rendered_format_label("scan.jpeg"), Some("JPEG"));
+    assert_eq!(rendered_format_label("export.png"), Some("PNG"));
+    assert_eq!(rendered_format_label("DSC_0001.NEF"), None);
+    assert_eq!(rendered_format_label("rendered.tif"), None);
 }

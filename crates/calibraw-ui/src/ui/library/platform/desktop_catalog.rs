@@ -154,7 +154,7 @@ pub(in crate::ui::library) fn scan_folder_with_limit(
                 continue;
             }
         };
-        if !file_type.is_file() || !is_supported_raw_path(&entry.path()) {
+        if !file_type.is_file() || !is_supported_image_path(&entry.path()) {
             continue;
         }
         let path = entry.path();

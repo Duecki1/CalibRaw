@@ -19,7 +19,7 @@ pub(super) fn send_scan_failure(
 pub(super) fn catalog_status(warning_count: usize, truncated: bool) -> String {
     let mut notices = Vec::new();
     if truncated {
-        notices.push(format!("Newest {MAX_LIBRARY_FILES} RAW files shown"));
+        notices.push(format!("Newest {MAX_LIBRARY_FILES} photos shown"));
     }
     if warning_count > 0 {
         notices.push(format!(
@@ -276,13 +276,14 @@ pub(super) fn thumbnail_tile(
             } else if entry.thumbnail_queued {
                 "Loading preview…"
             } else {
-                "RAW"
+                rendered_format_label(&entry.asset.display_name).unwrap_or("RAW")
             },
             FontId::proportional(11.0),
             ui.visuals().weak_text_color(),
         );
     }
 
+    let mut corner_inset = 0.0;
     if entry.developed_thumbnail_pending {
         let badge_edge = 25.0_f32.min(rect.width() * 0.32).min(rect.height() * 0.32);
         let center = egui::pos2(
@@ -295,6 +296,12 @@ pub(super) fn thumbnail_tile(
             badge_edge * 0.5,
             (badge_edge * 0.72).max(12.0),
         );
+        corner_inset = badge_edge + 4.0;
+    }
+    if entry.texture.is_some() {
+        if let Some(label) = rendered_format_label(&entry.asset.display_name) {
+            paint_format_badge(ui, tile_rect, label, corner_inset);
+        }
     }
 
     #[cfg(not(target_os = "android"))]
@@ -318,13 +325,20 @@ pub(super) fn thumbnail_tile(
 }
 
 #[cfg(any(not(target_os = "android"), test))]
-pub(super) fn thumbnail_hover_details(asset: &LibraryAsset) -> String {
-    let format = Path::new(&asset.display_name)
+pub(super) fn thumbnail_hover_details(
+    asset: &LibraryAsset,
+    stacked_formats: &[crate::pipeline::RenderedImageFormat],
+) -> String {
+    let mut format = Path::new(&asset.display_name)
         .extension()
         .and_then(|extension| extension.to_str())
         .filter(|extension| !extension.is_empty())
         .map(str::to_uppercase)
         .unwrap_or_else(|| "RAW".to_owned());
+    for stacked in stacked_formats {
+        format.push_str(" + ");
+        format.push_str(stacked.label());
+    }
     asset
         .metadata
         .dimensions_hint

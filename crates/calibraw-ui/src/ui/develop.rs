@@ -166,11 +166,12 @@ impl Develop {
 }
 
 fn show_filmstrip_contents(ui: &mut Ui, app: &mut CalibRawApp, frame: &eframe::Frame) {
-    let count = app.library.filmstrip_len();
+    let filmstrip = app.library.filmstrip_entry_indices();
+    let count = filmstrip.len();
     if count == 0 {
         ui.centered_and_justified(|ui| {
             ui.label(
-                egui::RichText::new("No RAW images in the active folder")
+                egui::RichText::new("No photos in the active folder")
                     .small()
                     .color(ui.visuals().weak_text_color()),
             );
@@ -186,7 +187,8 @@ fn show_filmstrip_contents(ui: &mut Ui, app: &mut CalibRawApp, frame: &eframe::F
         } else {
             app.library
                 .filmstrip_index_for_path(path)
-                .map(|index| (index, path.clone()))
+                .and_then(|index| filmstrip.binary_search(&index).ok())
+                .map(|position| (position, path.clone()))
         }
     });
     let mut centered_path = None;
@@ -194,8 +196,9 @@ fn show_filmstrip_contents(ui: &mut Ui, app: &mut CalibRawApp, frame: &eframe::F
     let mut library_action = None;
     let mut protected_indices = HashSet::new();
     let mut cards_width = 0.0;
-    let filmstrip_cards = (0..count)
-        .map(|index| {
+    let filmstrip_cards = filmstrip
+        .iter()
+        .map(|&index| {
             let width = app.library.filmstrip_item_aspect(index) * FILMSTRIP_CARD_HEIGHT;
             let card = (cards_width, width);
             cards_width += width + FILMSTRIP_GAP;
@@ -225,8 +228,9 @@ fn show_filmstrip_contents(ui: &mut Ui, app: &mut CalibRawApp, frame: &eframe::F
                 );
                 let items_left = content_rect.left();
 
-                if let Some((index, path)) = center_request.as_ref() {
-                    let (offset, width) = filmstrip_cards[*index];
+                if let Some((position, path)) = center_request.as_ref() {
+                    let index = filmstrip[*position];
+                    let (offset, width) = filmstrip_cards[*position];
                     let x = items_left + offset;
                     let y = content_rect.center().y - FILMSTRIP_CARD_HEIGHT * 0.5;
                     let active_rect = egui::Rect::from_min_size(
@@ -235,8 +239,8 @@ fn show_filmstrip_contents(ui: &mut Ui, app: &mut CalibRawApp, frame: &eframe::F
                     );
                     ui.scroll_to_rect(active_rect, Some(egui::Align::Center));
                     centered_path = Some(path.clone());
-                    protected_indices.insert(*index);
-                    app.library.touch_and_request_thumbnail(*index, ui.ctx());
+                    protected_indices.insert(index);
+                    app.library.touch_and_request_thumbnail(index, ui.ctx());
                     ui.ctx().request_repaint();
                 }
 
@@ -253,9 +257,10 @@ fn show_filmstrip_contents(ui: &mut Ui, app: &mut CalibRawApp, frame: &eframe::F
                     .partition_point(|(offset, _)| *offset <= relative_right)
                     .min(count);
 
-                for (index, &(offset, width)) in
+                for (position, &(offset, width)) in
                     filmstrip_cards.iter().enumerate().take(last).skip(first)
                 {
+                    let index = filmstrip[position];
                     protected_indices.insert(index);
                     app.library.touch_and_request_thumbnail(index, ui.ctx());
                     let Some(item) = app.library.filmstrip_item(index) else {
@@ -569,6 +574,7 @@ fn filmstrip_thumbnail(
     );
     let painter = ui.painter_at(rect);
     let card_radius = crate::ui::theme::CARD_RADIUS;
+    let format_label = crate::ui::library::rendered_format_label(&item.asset.display_name);
 
     if let Some(texture) = item.texture.as_ref() {
         painter.add(
@@ -580,7 +586,7 @@ fn filmstrip_thumbnail(
         painter.text(
             rect.center(),
             Align2::CENTER_CENTER,
-            "RAW",
+            format_label.unwrap_or("RAW"),
             FontId::proportional(11.0),
             ui.visuals().weak_text_color(),
         );
@@ -589,6 +595,14 @@ fn filmstrip_thumbnail(
     filmstrip_name_hover_overlay(ui, &response, rect, &item.asset.display_name);
     if !response.hovered() {
         crate::ui::library::paint_review_badge(ui, rect, item.asset.metadata.review);
+        if let Some(label) = format_label.filter(|_| item.texture.is_some()) {
+            let pending_inset = if item.developed_thumbnail_pending {
+                24.0
+            } else {
+                0.0
+            };
+            crate::ui::library::paint_format_badge(ui, rect, label, pending_inset);
+        }
     }
 
     if item.developed_thumbnail_pending {

@@ -45,9 +45,9 @@ pub(in crate::ui::library) fn copy_raw_bundle_to_folder(
 ) -> Result<PathBuf, String> {
     let requested_path = Path::new(requested_name);
     if requested_path.file_name() != Some(requested_name)
-        || !crate::pipeline::is_supported_raw_path(requested_path)
+        || !crate::pipeline::is_supported_image_path(requested_path)
     {
-        return Err("The RAW has an unsafe or unsupported filename.".to_owned());
+        return Err("The photo has an unsafe or unsupported filename.".to_owned());
     }
     if !source_raw.is_file() {
         return Err(format!("{} is no longer a file.", source_raw.display()));
