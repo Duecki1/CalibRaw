@@ -584,7 +584,7 @@ fn apply_saved_lens_correction(
                     );
                     append_notice(
                         sidecar_warning,
-                        "The saved lens correction failed; the original RAW geometry is shown.",
+                        "The saved lens correction failed; the original geometry is shown.",
                     );
                     Arc::clone(original_raw)
                 }

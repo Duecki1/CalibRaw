@@ -951,50 +951,14 @@ fn load_raw_file_with_selected_profile(
 }
 
 pub(super) fn read_exif_capture_metadata(path: &Path) -> Result<super::CaptureMetadata> {
-    const MAX_EXIF_SCAN_BYTES: u64 = 256_000_000;
-    if std::fs::metadata(path)
-        .with_context(|| format!("inspect EXIF source {}", path.display()))?
-        .len()
-        > MAX_EXIF_SCAN_BYTES
-    {
-        return Ok(Default::default());
-    }
-    let file = std::fs::File::open(path)
-        .with_context(|| format!("open EXIF source {}", path.display()))?;
-    let mut input = std::io::BufReader::new(file);
-    let mut reader = exif::Reader::new();
-    reader.continue_on_error(true);
-    let metadata = reader
-        .read_from_container(&mut input)
-        .or_else(|error| error.distill_partial_result(|_| {}))
-        .context("read EXIF metadata")?;
-    let mut capture = super::CaptureMetadata {
-        flash: metadata
-            .fields()
-            .find(|field| field.tag == exif::Tag::Flash)
-            .and_then(|field| field.value.get_uint(0))
-            .and_then(|value| u16::try_from(value).ok()),
+    // LibRaw and Rawler report the numeric capture fields themselves; EXIF
+    // only supplies the verbatim dates and the flash state.
+    let capture = crate::pipeline::exif_metadata::ExifSummary::read(path)?.capture;
+    Ok(super::CaptureMetadata {
+        exif_dates: capture.exif_dates,
+        flash: capture.flash,
         ..Default::default()
-    };
-    for field in metadata
-        .fields()
-        .filter(|field| field.ifd_num == exif::In::PRIMARY)
-    {
-        let tag = field.tag.number();
-        if matches!(tag, 0x0132 | 0x9003 | 0x9004 | 0x9010..=0x9012 | 0x9290..=0x9292) {
-            if let exif::Value::Ascii(values) = &field.value {
-                if let Some(value) = values
-                    .first()
-                    .and_then(|value| std::str::from_utf8(value).ok())
-                {
-                    if !value.trim().is_empty() {
-                        capture.exif_dates.push((tag, value.to_owned()));
-                    }
-                }
-            }
-        }
-    }
-    Ok(capture)
+    })
 }
 
 pub(super) fn read_exif_capture_metadata_or_default(path: &Path) -> super::CaptureMetadata {

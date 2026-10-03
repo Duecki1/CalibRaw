@@ -663,6 +663,7 @@ dependencies = [
  "base64",
  "bindgen",
  "half",
+ "heic-rs",
  "image",
  "kamadak-exif",
  "log",
@@ -1860,6 +1861,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ed5909b6e89a2db4456e54cd5f673791d7eca6732202bbf2a9cc504fe2f9b84a"
 dependencies = [
  "foldhash 0.2.0",
+]
+
+[[package]]
+name = "heic-rs"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "adf9dde634bb6d5b718bacd01bef80192f2334306b2f785519a0136cca7b9618"
+dependencies = [
+ "rayon",
 ]
 
 [[package]]

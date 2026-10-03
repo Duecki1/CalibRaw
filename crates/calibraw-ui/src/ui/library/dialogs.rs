@@ -38,18 +38,18 @@ pub(super) fn show_delete_originals_confirmation(
                 ));
             } else {
                 ui.label(format!(
-                    "Remove the {count} selected RAW originals from the Library?"
+                    "Remove the {count} selected originals from the Library?"
                 ));
             }
             #[cfg(not(target_os = "android"))]
             ui.label(if count == 1 {
                 format!(
-                    "The original RAW and its saved adjustments will be moved to the system {}.",
+                    "The original photo and its saved adjustments will be moved to the system {}.",
                     system_trash_name()
                 )
             } else {
                 format!(
-                    "The selected RAW originals and their saved adjustments will be moved to the system {}.",
+                    "The selected originals and their saved adjustments will be moved to the system {}.",
                     system_trash_name()
                 )
             });
@@ -169,7 +169,7 @@ pub(super) fn show_ai_mask_refresh_choice(
             );
             if !can_regenerate {
                 ui.label(
-                    egui::RichText::new("Waiting for the current RAW load or edit save to finish…")
+                    egui::RichText::new("Waiting for the current photo load or edit save to finish…")
                         .small()
                         .color(ui.visuals().weak_text_color()),
                 );
@@ -460,8 +460,8 @@ pub(super) fn validate_library_item_name(name: &str, raw: bool) -> Result<(), St
     {
         return Err("Enter a single safe name without leading or trailing spaces.".to_owned());
     }
-    if raw && !crate::pipeline::is_supported_raw_path(Path::new(name)) {
-        return Err("Keep a supported RAW filename extension.".to_owned());
+    if raw && !crate::pipeline::is_supported_image_path(Path::new(name)) {
+        return Err("Keep a supported photo filename extension.".to_owned());
     }
     Ok(())
 }
@@ -477,13 +477,13 @@ pub(super) fn show_library_raw_name_dialog(
     let mut rename = None;
     if let Some(dialog) = app.library.raw_name_dialog.as_mut() {
         crate::ui::theme::dialog_window(
-            "Rename RAW",
+            "Rename Photo",
             ui.ctx(),
             crate::ui::theme::DIALOG_WIDTH_FORM,
         )
         .id(egui::Id::new("library-raw-name-dialog"))
         .show(ui.ctx(), |ui| {
-            ui.label("RAW filename");
+            ui.label("Filename");
             let response = ui.add(
                 crate::ui::theme::singleline_text_edit(&mut dialog.name)
                     .desired_width(crate::ui::theme::DIALOG_TEXT_FIELD_WIDTH)
@@ -547,7 +547,7 @@ pub(super) fn show_library_raw_name_dialog(
             #[cfg(target_os = "android")]
             calibraw_ffi::set_back_navigation_active(false);
             app.library.refresh(ui.ctx());
-            app.library.status = format!("Renamed RAW to {name}.");
+            app.library.status = format!("Renamed photo to {name}.");
 
             #[cfg(not(target_os = "android"))]
             if current_path.is_some() {

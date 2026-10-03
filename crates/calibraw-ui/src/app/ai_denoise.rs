@@ -123,7 +123,7 @@ impl CalibRawApp {
         if self.develop.loaded_raw.is_none() {
             self.develop.exposure.ai_denoise_enabled = false;
             self.develop.target_exposure.ai_denoise_enabled = false;
-            self.ui.notice = Some("Open a RAW image before enabling AI denoise.".to_owned());
+            self.ui.notice = Some("Open a photo before enabling AI denoise.".to_owned());
             self.egui_ctx.request_repaint();
             return;
         }
@@ -136,7 +136,7 @@ impl CalibRawApp {
             self.develop.exposure.ai_denoise_enabled = false;
             self.develop.target_exposure.ai_denoise_enabled = false;
             self.ui.notice = Some(
-                "AI denoise is a sensor-RAW operation; rendered TIFFs use the standard Detail controls."
+                "AI denoise works on sensor RAW data; rendered photos (JPEG, PNG, HEIC, TIFF) use the standard Detail controls."
                     .to_owned(),
             );
             self.egui_ctx.request_repaint();
@@ -172,7 +172,7 @@ impl CalibRawApp {
             return;
         }
         let Some(raw) = self.develop.loaded_raw.as_ref().map(Arc::clone) else {
-            self.ui.notice = Some("Open a RAW image before enabling AI denoise.".to_owned());
+            self.ui.notice = Some("Open a photo before enabling AI denoise.".to_owned());
             return;
         };
         let result_path = self.ai_denoise_result_path();

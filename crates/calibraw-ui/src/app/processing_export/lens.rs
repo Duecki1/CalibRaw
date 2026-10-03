@@ -97,7 +97,7 @@ impl CalibRawApp {
             .selection
             .as_ref()
             .map(LensfunLens::label)
-            .unwrap_or_else(|| "original RAW geometry".to_owned());
+            .unwrap_or_else(|| "original geometry".to_owned());
         self.develop.lens_correction.catalog.status = if request.selection.is_some() {
             format!("Applying {status_label}…")
         } else {
@@ -106,7 +106,7 @@ impl CalibRawApp {
         let progress = ForegroundProgress::indeterminate(if request.selection.is_some() {
             "Applying lens profile…"
         } else {
-            "Restoring original RAW geometry…"
+            "Restoring original geometry…"
         });
 
         let repaint = self.egui_ctx.clone();
@@ -399,7 +399,7 @@ impl CalibRawApp {
         self.preview.pending_stage = None;
         self.develop.lens_correction.applied = prepared.applied_label.is_some();
         self.develop.lens_correction.catalog.status = prepared.applied_label.map_or_else(
-            || "Lens correction disabled; using the original RAW geometry.".to_owned(),
+            || "Lens correction disabled; using the original geometry.".to_owned(),
             |label| format!("Applied {label}"),
         );
         self.ui.notice = None;

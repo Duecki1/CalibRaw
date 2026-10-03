@@ -6,7 +6,9 @@ use std::fs::File;
 use std::io::{BufReader, Read, Seek, SeekFrom};
 use std::path::Path;
 
-use crate::color_math::{linear_srgb_to_rec2020, srgb_decode};
+use super::display_raster::{
+    encoded_rgb_to_scene_linear_rec2020, ensure_finite, scene_linear_thumbnail, EncodedColorSpace,
+};
 
 #[cfg(target_os = "android")]
 const MAX_TIFF_DECODE_BYTES: u64 = 768 * 1024 * 1024;
@@ -345,19 +347,12 @@ fn decode_scene_linear_rec2020(path: &Path) -> Result<(u32, u32, Vec<f32>)> {
     }
 
     if let Some(icc) = read_embedded_icc_profile(path)? {
-        super::color_profile::convert_embedded_icc_rgb_to_rec2020(&icc, &mut rgb)
+        encoded_rgb_to_scene_linear_rec2020(&mut rgb, EncodedColorSpace::Icc(&icc))
             .with_context(|| format!("apply embedded TIFF ICC profile from {}", path.display()))?;
-        if rgb.par_iter().any(|value| !value.is_finite()) {
-            return Err(anyhow!(
-                "embedded TIFF ICC conversion produced NaN or infinity"
-            ));
-        }
     } else if !source_is_float {
-        rgb.par_chunks_exact_mut(3).for_each(|pixel| {
-            let linear = [pixel[0], pixel[1], pixel[2]].map(srgb_decode);
-            pixel.copy_from_slice(&linear_srgb_to_rec2020(linear));
-        });
+        encoded_rgb_to_scene_linear_rec2020(&mut rgb, EncodedColorSpace::SRGB)?;
     }
+    ensure_finite(&rgb)?;
 
     Ok((width, height, rgb))
 }
@@ -382,21 +377,11 @@ pub(super) fn load_raster_tiff_thumbnail(path: &Path, maximum_edge: u32) -> Resu
     );
     let image = crate::thumbnail_cache::downscale_to_fit(image, maximum_edge);
     let (width, height) = (image.width(), image.height());
-    let rgb = image.into_rgb32f().into_raw();
-    let mut rgba = Vec::with_capacity(width as usize * height as usize * 4);
-    for pixel in rgb.chunks_exact(3) {
-        let encoded =
-            super::color_profile::display_linear_rec2020_to_srgb([pixel[0], pixel[1], pixel[2]]);
-        for value in encoded {
-            rgba.push((value.clamp(0.0, 1.0) * 255.0).round() as u8);
-        }
-        rgba.push(255);
-    }
-    Ok(RawThumbnail {
+    Ok(scene_linear_thumbnail(
         width,
         height,
-        rgba,
-    })
+        &image.into_rgb32f().into_raw(),
+    ))
 }
 
 fn read_embedded_icc_profile(path: &Path) -> Result<Option<Vec<u8>>> {

@@ -2,6 +2,8 @@ pub mod adjustment_groups;
 pub use adjustment_groups::AdjustmentGroup;
 pub mod basicadj;
 pub mod color_profile;
+mod display_raster;
+mod exif_metadata;
 pub mod geometry;
 pub mod hdr;
 pub mod lensfun;
@@ -12,7 +14,9 @@ pub mod point_color;
 pub mod processing;
 pub mod raw_loader;
 pub mod remove;
+mod rendered_loader;
 pub mod sigmoid;
+pub mod source_format;
 mod tiff_loader;
 pub mod white_balance_presets;
 
@@ -73,4 +77,8 @@ pub use remove::{
     REMOVE_MAX_POINTS_PER_STROKE, REMOVE_MAX_STROKES,
 };
 pub use sigmoid::{SigmoidColorProcessing, SigmoidParams};
+pub use source_format::{
+    is_camera_raw_path, is_supported_image_path, supported_image_extensions, RenderedImageFormat,
+    SUPPORTED_RENDERED_EXTENSIONS,
+};
 pub use white_balance_presets::WhiteBalancePreset;

@@ -10,7 +10,7 @@
 [![Graphics: wgpu](https://img.shields.io/badge/Graphics-wgpu_%2F_WGSL-red.svg)](https://wgpu.rs/)
 [![Platform](https://img.shields.io/badge/Platform-Linux_%7C_Android_%7C_Windows_%7C_macOS-green.svg)](https://github.com/Duecki1/CalibRaw/releases/latest)
 
-[**Download**](#download) • [**Why CalibRaw**](#why-calibraw) • [**Features**](#key-features) • [**FAQ**](#faq) • [**Supported Formats**](#supported-raw-formats) • [**Building**](#building-from-source)
+[**Download**](#download) • [**Why CalibRaw**](#why-calibraw) • [**Features**](#key-features) • [**FAQ**](#faq) • [**Supported Formats**](#supported-formats) • [**Building**](#building-from-source)
 
 </div>
 
@@ -118,12 +118,14 @@ creative effects such as depth-aware fog and light rays, and Edit Replay videos.
 No. Editing, AI masks, AI Remove and AI Denoise all run locally. CalibRaw only goes online to
 download AI models or the ONNX Runtime, and only after you agree.
 
-**Which cameras are supported?**
-Anything LibRaw supports, plus DNG via Rawler; see [Supported RAW Formats](#supported-raw-formats).
+**Which cameras and files are supported?**
+Anything LibRaw supports, plus DNG via Rawler, as well as JPEG, PNG, HEIC and TIFF; see [Supported Formats](#supported-formats).
 
 ---
 
-## Supported RAW Formats
+## Supported Formats
+
+### RAW
 
 CalibRaw uses **LibRaw (0.22.1)** for broad camera compatibility, paired with **Rawler (0.8.0)** for DNG and JPEG-XL DNG streams:
 
@@ -132,8 +134,18 @@ CalibRaw uses **LibRaw (0.22.1)** for broad camera compatibility, paired with **
 .cs1   .dc2   .dcr   .dcs   .dng   .drf   .eip   .erf   .fff   .gpr
 .iiq   .k25   .kc2   .kdc   .mdc   .mef   .mos   .mrw   .nef   .nrw
 .obm   .orf   .pef   .ptx   .pxn   .qtk   .r3d   .raf   .raw   .rdc
-.rw2   .rwl   .rwz   .sr2   .srf   .srw   .sti   .tif   .tiff  .x3f
+.rw2   .rwl   .rwz   .sr2   .srf   .srw   .sti   .x3f
 ```
+
+### Rendered images
+
+JPEG, PNG, HEIC/HEIF and rendered TIFF files are edited with the same tools. They open looking exactly as captured, with embedded ICC profiles, Display P3, HLG/PQ HDR HEIF and EXIF orientation honored:
+
+```text
+.jpg   .jpeg  .jpe   .png   .heic  .heif  .hif   .tif   .tiff
+```
+
+When a camera saves RAW+JPEG (or RAW+HEIC), the Library shows each pair once, as the RAW. Turn this off under **Sort & filter → RAW + JPEG**.
 
 ---
 

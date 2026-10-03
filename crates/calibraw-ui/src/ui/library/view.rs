@@ -100,6 +100,7 @@ impl Library {
         let mut selected_sort = app.library.sort_order();
         let mut selected_size = app.library.thumbnail_size();
         let mut selected_filter = app.library.review_filter;
+        let mut stack_raw_companions = app.library.stacks_raw_companions();
         let header_title = library_header_title(app);
         let thumbnail_progress = app.library.thumbnail_background_progress();
         let show_header = |ui: &mut Ui| {
@@ -161,6 +162,7 @@ impl Library {
                             ui,
                             &mut selected_sort,
                             &mut selected_filter,
+                            &mut stack_raw_companions,
                             Some(&mut selected_size),
                             64.0,
                         );
@@ -170,6 +172,7 @@ impl Library {
                             &mut selected_sort,
                             &mut selected_size,
                             &mut selected_filter,
+                            &mut stack_raw_companions,
                         );
                     }
                 });
@@ -193,12 +196,13 @@ impl Library {
         app.set_library_sort_order(selected_sort);
         app.set_library_thumbnail_size(selected_size);
         app.library.review_filter = selected_filter;
+        app.set_library_stack_raw_companions(stack_raw_companions);
         if app.library.review_filter.active() {
             ui.horizontal_wrapped(|ui| {
                 ui.weak(format!(
                     "Showing {} of {} · {}",
                     app.library.filtered_entry_indices().len(),
-                    app.library.entries.len(),
+                    app.library.photo_count(),
                     app.library.review_filter.summary()
                 ));
                 if ui.small_button("Clear filters").clicked() {
@@ -206,9 +210,8 @@ impl Library {
                 }
             });
         }
-        let filtered = app.library.search_active() || app.library.review_filter.active();
-        let visible_indices = filtered.then(|| app.library.filtered_entry_indices());
-        if filtered {
+        let visible_indices = app.library.visible_entry_indices();
+        if visible_indices.is_some() {
             app.library.retain_visible_selection();
         }
 
@@ -219,7 +222,7 @@ impl Library {
             if show_library_empty_state(
                 ui,
                 "Build your photo library",
-                "Choose a top-level photo folder. CalibRaw keeps your hierarchy intact and shows the RAW files in each folder.",
+                "Choose a top-level photo folder. CalibRaw keeps your hierarchy intact and shows the RAW, JPEG, PNG and HEIC photos in each folder.",
                 Some("Open Folder…"),
             ) {
                 app.open_library_folder_dialog();
@@ -228,7 +231,7 @@ impl Library {
             show_library_empty_state(
                 ui,
                 "Your library is ready",
-                "Use the folder sidebar to browse your Library, or tap + to import RAW files.",
+                "Use the folder sidebar to browse your Library, or tap + to import photos.",
                 None,
             );
         } else if app.library.scanning && !app.library.catalog_ready {
@@ -237,15 +240,15 @@ impl Library {
             #[cfg(not(target_os = "android"))]
             show_library_empty_state(
                 ui,
-                "No RAW photos here yet",
-                "Choose another folder in the sidebar or add RAW files to this folder.",
+                "No photos here yet",
+                "Choose another folder in the sidebar or add RAW, JPEG, PNG or HEIC photos to this folder.",
                 None,
             );
             #[cfg(target_os = "android")]
             show_library_empty_state(
                 ui,
-                "No RAW photos here yet",
-                "Tap + to import one or more RAW files.",
+                "No photos here yet",
+                "Tap + to import RAW, JPEG, PNG or HEIC photos.",
                 None,
             );
         } else if visible_indices
@@ -349,7 +352,12 @@ impl Library {
                             paint_review_badge(ui, item_rect, entry.review);
                         }
                         #[cfg(not(target_os = "android"))]
-                        if let Some(action) = thumbnail_hover_overlay(ui, item_rect, entry) {
+                        if let Some(action) = thumbnail_hover_overlay(
+                            ui,
+                            item_rect,
+                            entry,
+                            app.library.stacked_formats(&asset.id),
+                        ) {
                             library_action = Some(action);
                             continue;
                         }
@@ -572,6 +580,7 @@ fn show_library_view_combos(
     selected_sort: &mut LibrarySortOrder,
     selected_size: &mut LibraryThumbnailSize,
     selected_filter: &mut LibraryReviewFilter,
+    stack_raw_companions: &mut bool,
 ) {
     const SORT_WIDTH: f32 = 154.0;
     const SIZE_WIDTH: f32 = 118.0;
@@ -584,7 +593,14 @@ fn show_library_view_combos(
         (SORT_WIDTH, SIZE_WIDTH)
     };
 
-    sort_filter_popup(ui, selected_sort, selected_filter, None, sort_width);
+    sort_filter_popup(
+        ui,
+        selected_sort,
+        selected_filter,
+        stack_raw_companions,
+        None,
+        sort_width,
+    );
     crate::ui::theme::responsive_combo_box(
         ui,
         "library-thumbnail-size",

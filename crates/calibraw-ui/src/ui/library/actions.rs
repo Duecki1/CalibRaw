@@ -144,7 +144,7 @@ pub(crate) fn library_image_context_menu(
         action_enabled && app.library.image_clipboard.is_some(),
         paste_label,
     )
-    .on_disabled_hover_text("Copy or cut RAWs first")
+    .on_disabled_hover_text("Copy or cut photos first")
     .clicked()
     {
         action = Some(LibraryAction::PasteIntoAssetFolder(context_asset.clone()));
@@ -392,7 +392,7 @@ fn set_library_clipboard(
     app.library.folder_clipboard = None;
     app.library.clear_selection();
     app.library.status = format!(
-        "{} {count} RAW{}. Choose Paste in a Library folder.",
+        "{} {count} photo{}. Choose Paste in a Library folder.",
         if mode == ImageClipboardMode::Copy {
             "Copied"
         } else {
@@ -658,7 +658,7 @@ pub(super) fn show_library_selection_action_bar(
                             };
                         ui.strong(count_label).on_hover_text(format!(
                             "{count} selected {}",
-                            if count == 1 { "RAW" } else { "RAWs" }
+                            if count == 1 { "photo" } else { "photos" }
                         ));
                         ui.separator();
                         let action_enabled = !local_action_in_progress(app)
@@ -821,12 +821,12 @@ pub(crate) fn show_library_action_overlays(
                 }
                 #[cfg(not(target_os = "android"))]
                 let help = if count > 1 {
-                    "A destination folder will be selected for the batch. File names are generated from each RAW name."
+                    "A destination folder will be selected for the batch. File names are generated from each photo's name."
                 } else {
                     "Choose the output file after pressing Export."
                 };
                 #[cfg(target_os = "android")]
-                let help = "Exports are saved to Pictures/CalibRaw. File names are generated from each RAW name.";
+                let help = "Exports are saved to Pictures/CalibRaw. File names are generated from each photo's name.";
                 let label = if count == 1 {
                     #[cfg(not(target_os = "android"))]
                     { "Export 1 image…".to_owned() }
