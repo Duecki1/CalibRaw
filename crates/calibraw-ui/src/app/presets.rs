@@ -1,0 +1,413 @@
+//! Preset storage, editing and application for the open photo.
+use super::*;
+use crate::presets::{Preset, StoredPreset};
+
+/// The folder that stores presets, next to the app settings file.
+pub(crate) fn preset_folder_for_settings(settings_path: &Path) -> Option<PathBuf> {
+    settings_path.parent().map(|folder| folder.join("presets"))
+}
+
+#[derive(Default)]
+pub(crate) struct PresetState {
+    /// `None` when there is no writable app data folder.
+    folder: Option<PathBuf>,
+    presets: Vec<StoredPreset>,
+    /// Files in the preset folder that could not be read.
+    pub(crate) load_failures: Vec<String>,
+    pub(crate) editor: Option<PresetEditor>,
+    pub(crate) pending_delete: Option<PathBuf>,
+}
+
+impl PresetState {
+    pub(crate) fn load(folder: Option<PathBuf>) -> Self {
+        let mut state = Self {
+            folder,
+            ..Self::default()
+        };
+        if let Err(error) = state.reload() {
+            log::warn!("could not read presets: {error}");
+        }
+        state
+    }
+
+    pub(crate) fn reload(&mut self) -> Result<(), String> {
+        let Some(folder) = self.folder.as_deref() else {
+            return Ok(());
+        };
+        let contents = crate::presets::load_preset_folder(folder)
+            .map_err(|error| format!("Could not read presets in {}: {error}", folder.display()))?;
+        self.presets = contents.presets;
+        self.load_failures = contents.failures;
+        Ok(())
+    }
+
+    pub(crate) fn is_available(&self) -> bool {
+        self.folder.is_some()
+    }
+
+    /// Every preset, sorted by group and then name.
+    pub(crate) fn all(&self) -> &[StoredPreset] {
+        &self.presets
+    }
+
+    pub(crate) fn get(&self, path: &Path) -> Option<&Preset> {
+        self.presets
+            .iter()
+            .find(|stored| stored.path == path)
+            .map(|stored| &stored.preset)
+    }
+
+    /// Group names in display order.
+    pub(crate) fn groups(&self) -> Vec<&str> {
+        let mut groups: Vec<&str> = self
+            .presets
+            .iter()
+            .map(|stored| stored.preset.group())
+            .collect();
+        groups.dedup();
+        groups
+    }
+
+    /// The preset listed as `name` in `group`, other than the one at `except`.
+    pub(crate) fn find_named(
+        &self,
+        name: &str,
+        group: &str,
+        except: Option<&Path>,
+    ) -> Option<&StoredPreset> {
+        self.presets.iter().find(|stored| {
+            Some(stored.path.as_path()) != except && stored.preset.is_named(name, group)
+        })
+    }
+
+    pub(crate) fn dialog_open(&self) -> bool {
+        self.editor.is_some() || self.pending_delete.is_some()
+    }
+
+    fn folder(&self) -> Result<&Path, String> {
+        self.folder.as_deref().ok_or_else(|| {
+            "Presets are unavailable because CalibRaw has no settings folder.".to_owned()
+        })
+    }
+
+    #[cfg(not(target_os = "android"))]
+    /// A name for `preset` that does not collide with an existing preset in
+    /// its group: "Name", then "Name 2", "Name 3", …
+    fn unique_name(&self, preset: &Preset) -> String {
+        let base = preset.name();
+        std::iter::once(base.to_owned())
+            .chain((2..).map(|index| format!("{base} {index}")))
+            .find(|name| self.find_named(name, preset.group(), None).is_none())
+            .unwrap_or_else(|| base.to_owned())
+    }
+}
+
+pub(crate) enum PresetEditorMode {
+    /// Save settings of the open photo as a new preset.
+    Create { edits: Box<SidecarEditState> },
+    /// Change the name and group of a saved preset.
+    Rename { path: PathBuf },
+}
+
+pub(crate) struct PresetEditor {
+    pub(crate) mode: PresetEditorMode,
+    pub(crate) name: String,
+    pub(crate) group: String,
+    /// Only used when creating; a rename keeps the preset's settings.
+    pub(crate) selection: EditSelection,
+    pub(crate) error: Option<String>,
+    pub(crate) focus_requested: bool,
+}
+
+impl CalibRawApp {
+    pub(crate) fn preset_at(&self, path: &Path) -> Option<&Preset> {
+        self.presets.get(path)
+    }
+
+    pub(crate) fn can_create_preset(&self) -> bool {
+        self.presets.is_available() && self.develop.loaded_raw.is_some()
+    }
+
+    pub(crate) fn open_new_preset_editor(&mut self) {
+        if !self.can_create_preset() {
+            return;
+        }
+        self.finish_mask_geometry_interaction();
+        self.commit_edit_history_now();
+        let edits = self.capture_sidecar_edit_state();
+        self.presets.editor = Some(PresetEditor {
+            selection: crate::presets::suggested_selection(&edits),
+            mode: PresetEditorMode::Create {
+                edits: Box::new(edits),
+            },
+            name: String::new(),
+            group: self
+                .presets
+                .groups()
+                .first()
+                .copied()
+                .unwrap_or(crate::presets::DEFAULT_PRESET_GROUP)
+                .to_owned(),
+            error: None,
+            focus_requested: false,
+        });
+    }
+
+    pub(crate) fn open_rename_preset_editor(&mut self, path: &Path) {
+        let Some(preset) = self.presets.get(path) else {
+            return;
+        };
+        self.presets.editor = Some(PresetEditor {
+            name: preset.name().to_owned(),
+            group: preset.group().to_owned(),
+            selection: preset.selection(),
+            mode: PresetEditorMode::Rename {
+                path: path.to_owned(),
+            },
+            error: None,
+            focus_requested: false,
+        });
+    }
+
+    /// Saves the open preset editor. On failure the editor stays open and
+    /// shows the error.
+    pub(crate) fn confirm_preset_editor(&mut self) {
+        let Some(editor) = self.presets.editor.take() else {
+            return;
+        };
+        match self.save_preset_editor(&editor) {
+            Ok(message) => {
+                self.ui.notice = Some(message);
+                if let Err(error) = self.presets.reload() {
+                    self.ui.notice = Some(error);
+                }
+            }
+            Err(error) => {
+                self.presets.editor = Some(PresetEditor {
+                    error: Some(error),
+                    ..editor
+                });
+            }
+        }
+    }
+
+    fn save_preset_editor(&self, editor: &PresetEditor) -> Result<String, String> {
+        let folder = self.presets.folder()?;
+        match &editor.mode {
+            PresetEditorMode::Create { edits } => {
+                let preset = Preset::new(&editor.name, &editor.group, editor.selection, edits)
+                    .map_err(|error| capitalize(&error.to_string()))?;
+                // Saving under an existing name replaces that preset; the
+                // dialog labels its button "Replace" in that case.
+                let existing = self
+                    .presets
+                    .find_named(preset.name(), preset.group(), None)
+                    .map(|stored| stored.path.clone());
+                match existing {
+                    Some(path) => {
+                        crate::presets::write_preset_file(&path, &preset)
+                            .map_err(|error| format!("Could not save the preset: {error}"))?;
+                        Ok(format!("Replaced preset “{}”.", preset.name()))
+                    }
+                    None => {
+                        crate::presets::save_new_preset(folder, &preset)
+                            .map_err(|error| format!("Could not save the preset: {error}"))?;
+                        Ok(format!("Saved preset “{}”.", preset.name()))
+                    }
+                }
+            }
+            PresetEditorMode::Rename { path } => {
+                let preset = self
+                    .presets
+                    .get(path)
+                    .ok_or_else(|| "That preset no longer exists.".to_owned())?
+                    .renamed(&editor.name, &editor.group)
+                    .map_err(|error| capitalize(&error.to_string()))?;
+                if self
+                    .presets
+                    .find_named(preset.name(), preset.group(), Some(path))
+                    .is_some()
+                {
+                    return Err(format!(
+                        "A preset named “{}” already exists in {}.",
+                        preset.name(),
+                        preset.group()
+                    ));
+                }
+                crate::presets::write_preset_file(path, &preset)
+                    .map_err(|error| format!("Could not rename the preset: {error}"))?;
+                Ok(format!("Renamed preset to “{}”.", preset.name()))
+            }
+        }
+    }
+
+    pub(crate) fn delete_preset(&mut self, path: &Path) {
+        let name = self
+            .presets
+            .get(path)
+            .map(|preset| preset.name().to_owned())
+            .unwrap_or_default();
+        self.ui.notice = Some(match std::fs::remove_file(path) {
+            Ok(()) => format!("Deleted preset “{name}”."),
+            Err(error) => format!("Could not delete preset “{name}”: {error}"),
+        });
+        if let Err(error) = self.presets.reload() {
+            self.ui.notice = Some(error);
+        }
+    }
+
+    /// Applies a preset to the open photo as one undoable edit.
+    pub(crate) fn apply_preset_to_current(&mut self, path: &Path, frame: &eframe::Frame) {
+        let Some(preset) = self.presets.get(path).cloned() else {
+            self.ui.notice = Some("That preset no longer exists.".to_owned());
+            return;
+        };
+        if self.develop.load_receiver.is_some() {
+            self.ui.notice = Some("Wait for the current photo to finish opening.".to_owned());
+            return;
+        }
+        self.ui.notice = Some(
+            match self.apply_edit_transfer_to_current(
+                EditTransfer::Preset(&preset),
+                EditTransferOrigin::Develop,
+                frame,
+            ) {
+                Ok(_) => format!("Applied preset “{}”.", preset.name()),
+                Err(error) => error,
+            },
+        );
+    }
+
+    #[cfg(not(target_os = "android"))]
+    /// Copies preset files into the preset folder. Imported presets whose
+    /// name is taken in their group get a numbered name.
+    pub(crate) fn import_preset_files(&mut self, paths: &[PathBuf]) {
+        let folder = match self.presets.folder() {
+            Ok(folder) => folder.to_owned(),
+            Err(error) => {
+                self.ui.notice = Some(error);
+                return;
+            }
+        };
+        let mut imported = 0usize;
+        let mut failures = Vec::new();
+        for path in paths {
+            let label = path
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .into_owned();
+            let result = crate::presets::read_preset_file(path).and_then(|preset| {
+                let name = self.presets.unique_name(&preset);
+                let preset = preset.renamed(&name, preset.group())?;
+                crate::presets::save_new_preset(&folder, &preset)
+            });
+            match result {
+                Ok(_) => {
+                    imported += 1;
+                    // Later files in this import must see the new names.
+                    if let Err(error) = self.presets.reload() {
+                        failures.push(error);
+                    }
+                }
+                Err(error) => failures.push(format!("{label}: {error}")),
+            }
+        }
+        let summary = format!(
+            "Imported {imported} {}.",
+            if imported == 1 { "preset" } else { "presets" }
+        );
+        self.ui.notice = Some(if failures.is_empty() {
+            summary
+        } else {
+            format!("{summary} {}", failures.join(" · "))
+        });
+    }
+
+    #[cfg(not(target_os = "android"))]
+    pub(crate) fn choose_preset_files_to_import(&mut self) {
+        if self.ui.desktop_picker_receiver.is_some() || !self.presets.is_available() {
+            return;
+        }
+        let extension = PRESET_FILE_EXTENSIONS[0];
+        let dialog = rfd::AsyncFileDialog::new().add_filter("CalibRaw presets", &[extension]);
+        self.ui.desktop_picker_receiver = Some(spawn_ui_worker(&self.egui_ctx, move || {
+            let paths = pollster::block_on(dialog.pick_files()).map(|handles| {
+                handles
+                    .into_iter()
+                    .map(|handle| handle.path().to_path_buf())
+                    .collect()
+            });
+            DesktopPickerEvent::PresetFiles(paths)
+        }));
+    }
+
+    #[cfg(not(target_os = "android"))]
+    pub(crate) fn export_preset(&mut self, path: &Path) {
+        let Some(preset) = self.presets.get(path).cloned() else {
+            return;
+        };
+        let file_name: String = preset
+            .name()
+            .chars()
+            .map(|character| match character {
+                '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|' => '-',
+                character => character,
+            })
+            .collect();
+        let Some(destination) = crate::ui::choose_save_path(
+            "CalibRaw preset".to_owned(),
+            PRESET_FILE_EXTENSIONS,
+            &format!("{file_name}{}", crate::presets::PRESET_SUFFIX),
+            None,
+        ) else {
+            return;
+        };
+        self.ui.notice = Some(
+            match crate::presets::write_preset_file(&destination, &preset) {
+                Ok(()) => format!(
+                    "Exported preset “{}” to {}.",
+                    preset.name(),
+                    destination.display()
+                ),
+                Err(error) => format!("Could not export the preset: {error}"),
+            },
+        );
+    }
+}
+
+/// [`crate::presets::PRESET_SUFFIX`] without its leading dot, for file pickers.
+#[cfg(not(target_os = "android"))]
+const PRESET_FILE_EXTENSIONS: &[&str] = &["calibraw-preset"];
+
+fn capitalize(message: &str) -> String {
+    let mut characters = message.chars();
+    match characters.next() {
+        Some(first) => first.to_uppercase().chain(characters).collect(),
+        None => String::new(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn preset_file_extension_matches_the_preset_suffix() {
+        #[cfg(not(target_os = "android"))]
+        assert_eq!(
+            format!(".{}", PRESET_FILE_EXTENSIONS[0]),
+            crate::presets::PRESET_SUFFIX
+        );
+        assert_eq!(
+            preset_folder_for_settings(Path::new("/config/calibraw/performance.json")),
+            Some(PathBuf::from("/config/calibraw/presets"))
+        );
+    }
+
+    #[test]
+    fn errors_are_shown_as_sentences() {
+        assert_eq!(capitalize("enter a preset name"), "Enter a preset name");
+        assert_eq!(capitalize(""), "");
+    }
+}

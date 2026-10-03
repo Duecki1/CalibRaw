@@ -688,10 +688,12 @@ impl LibraryFolderNode {
     }
 }
 
+/// Adjustments taken with Copy adjustments, waiting to be pasted.
 #[derive(Clone, Debug)]
-pub(crate) struct LibraryAdjustmentClipboard {
+pub(crate) struct AdjustmentClipboard {
     pub(crate) edits: crate::sidecar::EditState,
-    pub(crate) settings: crate::sidecar::AdjustmentCopySettings,
+    /// The categories chosen in Settings when the adjustments were copied.
+    pub(crate) selection: crate::sidecar::EditSelection,
 }
 
 pub(crate) struct LibraryState {
@@ -733,7 +735,7 @@ pub(crate) struct LibraryState {
     selection_anchor: Option<LibraryAssetId>,
     #[cfg(not(target_os = "android"))]
     image_clipboard: Option<ImageClipboard>,
-    pub(crate) adjustment_clipboard: Option<LibraryAdjustmentClipboard>,
+    pub(crate) adjustment_clipboard: Option<AdjustmentClipboard>,
     asset_transfer_receiver: Option<mpsc::Receiver<AssetTransferCompletion>>,
     #[cfg(not(target_os = "android"))]
     hdr_merge: Option<hdr::HdrMergeTask>,

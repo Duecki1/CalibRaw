@@ -171,14 +171,7 @@ mod tests {
         crate::ui::theme::install(&ctx);
         let mut app = CalibRawApp::empty(&ctx);
         let frame = eframe::Frame::_new_kittest();
-        for tab in [
-            SidebarTab::Adjustments,
-            SidebarTab::Crop,
-            SidebarTab::Masks,
-            SidebarTab::Inpainting,
-            SidebarTab::Export,
-            SidebarTab::Info,
-        ] {
+        for tab in SidebarTab::ALL {
             app.ui.sidebar_tab = tab;
             for width in [320.0, 480.0] {
                 for open in [true, false] {

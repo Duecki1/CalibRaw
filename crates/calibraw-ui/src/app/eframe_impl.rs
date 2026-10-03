@@ -422,6 +422,7 @@ impl eframe::App for CalibRawApp {
         self.show_ai_consent_dialog(ui.ctx(), frame);
         self.show_ai_error_dialog(ui.ctx());
         self.show_sidecar_save_error_dialog(ui.ctx());
+        crate::ui::presets::show_dialogs(ui.ctx(), self);
         if self.ui.gpu_memory_error_dialog {
             let mut close = false;
             crate::ui::theme::dialog_window(
