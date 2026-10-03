@@ -49,9 +49,14 @@ impl CalibRawApp {
             })?;
         }
 
+        let ai_denoise_was_enabled = self.develop.exposure.ai_denoise_enabled;
         if adjustments_changed {
             self.develop.exposure = merged.exposure;
             self.develop.exposure.sanitize_tone_curves();
+        }
+        if !ai_denoise_was_enabled && self.develop.exposure.ai_denoise_enabled {
+            // Ask about applying the pasted AI denoise once the image is shown.
+            self.ai.denoise_resume_pending = true;
         }
         if geometry_changed {
             self.develop.geometry = merged.geometry.sanitized();

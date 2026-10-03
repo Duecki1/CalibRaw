@@ -48,6 +48,9 @@ public final class AndroidStorageContractTest {
         assertEquals("capture.dng.calibraw", AndroidStorageContract.sidecarDisplayName("capture.dng"));
         assertEquals("rendered.tif.calibraw", AndroidStorageContract.sidecarDisplayName("rendered.tif"));
         assertEquals(
+                "capture.dng.calibraw-denoise",
+                AndroidStorageContract.aiDenoiseDisplayName("capture.dng"));
+        assertEquals(
                 ".calibraw-import-capture.dng.part",
                 AndroidStorageContract.importPartialName("capture.dng"));
         assertTrue(library.mkdirs());
@@ -151,6 +154,11 @@ public final class AndroidStorageContractTest {
 
         AndroidStorageContract.deleteSidecar(library, "capture.dng");
         assertFalse(destination.exists());
+
+        File denoised = new File(library, "capture.dng.calibraw-denoise");
+        Files.write(denoised.toPath(), oldPayload);
+        AndroidStorageContract.deleteAiDenoiseResult(library, "capture.dng");
+        assertFalse(denoised.exists());
     }
 
     @Test

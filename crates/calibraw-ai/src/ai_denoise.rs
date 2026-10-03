@@ -67,12 +67,12 @@ const TILE_EDGE: usize = 512;
 const OVERLAP: usize = 64;
 const CORE_EDGE: usize = TILE_EDGE - 2 * OVERLAP;
 const MAX_MODEL_ABS: f32 = 60_000.0;
-const RESULT_CACHE_MAGIC: [u8; 8] = *b"CALIBRAW";
-const RESULT_CACHE_VERSION: u32 = 2;
-const RESULT_CACHE_MANIFEST: &str = "manifest.bin";
-const RESULT_CACHE_PAYLOAD: &str = "denoised-pixels.bin";
-const RESULT_CACHE_HEADER_BYTES: usize = 96;
-const RESULT_CACHE_IO_CHUNK: usize = 1024 * 1024;
+const RESULT_FILE_MAGIC: [u8; 8] = *b"CALIBRAW";
+const RESULT_FILE_VERSION: u32 = 2;
+const RESULT_FILE_MANIFEST: &str = "manifest.bin";
+const RESULT_FILE_PAYLOAD: &str = "denoised-pixels.bin";
+const RESULT_FILE_HEADER_BYTES: usize = 96;
+const RESULT_FILE_IO_CHUNK: usize = 1024 * 1024;
 
 #[derive(Debug)]
 pub enum AiDenoiseEvent {
@@ -85,7 +85,25 @@ pub enum AiDenoiseEvent {
         completed: usize,
         total: usize,
     },
+    /// A [`RawNindJob::Restore`] found no usable result; the model was not run.
+    SavedResultUnusable,
+    /// The new result could not be written next to the RAW, so it only lasts
+    /// for this session.
+    ResultNotSaved(String),
     Finished(Result<AiDenoisedImage, String>),
+}
+
+/// What a RawNIND worker does.
+#[derive(Clone, Debug)]
+pub enum RawNindJob {
+    /// Loads the result saved at `path`. Never runs the model, so restoring
+    /// needs no models, runtime or user consent.
+    Restore { path: PathBuf },
+    /// Runs the model and saves the result to `save_to` when given.
+    Infer {
+        save_to: Option<PathBuf>,
+        allow_model_download: bool,
+    },
 }
 
 #[cfg(not(target_os = "android"))]
@@ -93,41 +111,36 @@ pub fn model_cache_dir() -> PathBuf {
     crate::desktop_model_cache_root().join("rawdenoise-nind-1.0")
 }
 
-pub fn result_cache_path(root: &Path, source_identity: &str) -> PathBuf {
-    let digest = ring::digest::digest(&SHA256, source_identity.as_bytes());
-    root.join(format!("{}.calibraw-ai.zip", hex::encode(digest.as_ref())))
-}
-
-pub fn load_result_cache(path: &Path, raw: &LoadedRaw) -> Result<Option<AiDenoisedImage>> {
+pub fn load_saved_result(path: &Path, raw: &LoadedRaw) -> Result<Option<AiDenoisedImage>> {
     let file = match File::open(path) {
         Ok(file) => file,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(error).with_context(|| format!("open {}", path.display())),
     };
     let mut archive = ZipArchive::new(file)
-        .with_context(|| format!("read AI-denoise cache archive {}", path.display()))?;
+        .with_context(|| format!("read AI-denoise result archive {}", path.display()))?;
     let header = {
         let mut entry = archive
-            .by_name(RESULT_CACHE_MANIFEST)
-            .context("AI-denoise cache has no manifest")?;
+            .by_name(RESULT_FILE_MANIFEST)
+            .context("AI-denoise result has no manifest")?;
         anyhow::ensure!(
-            entry.size() == RESULT_CACHE_HEADER_BYTES as u64,
-            "AI-denoise cache manifest has an unexpected size"
+            entry.size() == RESULT_FILE_HEADER_BYTES as u64,
+            "AI-denoise result manifest has an unexpected size"
         );
-        let mut header = [0u8; RESULT_CACHE_HEADER_BYTES];
+        let mut header = [0u8; RESULT_FILE_HEADER_BYTES];
         entry
             .read_exact(&mut header)
-            .context("read AI-denoise cache manifest")?;
+            .context("read AI-denoise result manifest")?;
         header
     };
     let manifest = ResultCacheManifest::decode(&header)?;
     anyhow::ensure!(
         manifest.width == raw.width && manifest.height == raw.height,
-        "AI-denoise cache dimensions do not match the RAW"
+        "AI-denoise result dimensions do not match the RAW"
     );
     anyhow::ensure!(
         manifest.cfa_kind == cfa_cache_code(raw.cfa_kind),
-        "AI-denoise cache CFA type does not match the RAW"
+        "AI-denoise result CFA type does not match the RAW"
     );
     let channels = match raw.cfa_kind {
         CfaKind::Bayer => 1,
@@ -137,41 +150,41 @@ pub fn load_result_cache(path: &Path, raw: &LoadedRaw) -> Result<Option<AiDenois
         .checked_mul(u64::from(raw.height))
         .and_then(|pixels| pixels.checked_mul(channels))
         .and_then(|elements| usize::try_from(elements).ok())
-        .context("AI-denoise cache dimensions overflow")?;
+        .context("AI-denoise result dimensions overflow")?;
     let expected_bytes = expected_elements
         .checked_mul(std::mem::size_of::<u16>())
-        .context("AI-denoise cache byte count overflow")?;
+        .context("AI-denoise result byte count overflow")?;
     anyhow::ensure!(
         manifest.payload_bytes == expected_bytes as u64,
-        "AI-denoise cache payload size does not match the RAW"
+        "AI-denoise result payload size does not match the RAW"
     );
     anyhow::ensure!(
         manifest.source_sha256 == source_fingerprint(raw, None)?,
-        "AI-denoise cache belongs to a different RAW reconstruction"
+        "AI-denoise result belongs to a different RAW reconstruction"
     );
 
     let mut payload = vec![0u16; expected_elements];
     {
         let mut entry = archive
-            .by_name(RESULT_CACHE_PAYLOAD)
-            .context("AI-denoise cache has no scene payload")?;
+            .by_name(RESULT_FILE_PAYLOAD)
+            .context("AI-denoise result has no scene payload")?;
         anyhow::ensure!(
             entry.size() == expected_bytes as u64,
-            "AI-denoise cache scene payload has an unexpected size"
+            "AI-denoise result scene payload has an unexpected size"
         );
         entry
             .read_exact(bytemuck::cast_slice_mut(&mut payload))
-            .context("read AI-denoise cache scene payload")?;
+            .context("read AI-denoise result scene payload")?;
         let mut trailing = [0u8; 1];
         anyhow::ensure!(
             entry.read(&mut trailing)? == 0,
-            "AI-denoise cache scene payload contains trailing data"
+            "AI-denoise result scene payload contains trailing data"
         );
     }
     let actual_payload = ring::digest::digest(&SHA256, bytemuck::cast_slice(&payload));
     anyhow::ensure!(
         actual_payload.as_ref() == manifest.payload_sha256,
-        "AI-denoise cache scene checksum does not match"
+        "AI-denoise result scene checksum does not match"
     );
     match raw.cfa_kind {
         CfaKind::Bayer => AiDenoisedImage::new_bayer_cfa(raw.width, raw.height, payload),
@@ -180,7 +193,7 @@ pub fn load_result_cache(path: &Path, raw: &LoadedRaw) -> Result<Option<AiDenois
     .map(Some)
 }
 
-pub fn save_result_cache(
+pub fn save_result(
     path: &Path,
     raw: &LoadedRaw,
     image: &AiDenoisedImage,
@@ -188,13 +201,13 @@ pub fn save_result_cache(
 ) -> Result<()> {
     anyhow::ensure!(
         image.is_valid_for(raw.width, raw.height),
-        "cannot cache an AI-denoise result with mismatched dimensions"
+        "cannot save an AI-denoise result with mismatched dimensions"
     );
     ensure_not_cancelled(cancellation)?;
     let source_sha256 = source_fingerprint(raw, Some(cancellation))?;
     anyhow::ensure!(
         matches!(raw.cfa_kind, CfaKind::Bayer) == image.bayer_cfa().is_some(),
-        "cannot cache an AI-denoise payload for a different CFA type"
+        "cannot save an AI-denoise payload for a different CFA type"
     );
     let payload = bytemuck::cast_slice(image.payload());
     let payload_sha256 = digest_cancelable(payload, Some(cancellation))?;
@@ -210,34 +223,34 @@ pub fn save_result_cache(
 
     let parent = path
         .parent()
-        .context("AI-denoise cache path has no parent directory")?;
+        .context("AI-denoise result path has no parent directory")?;
     fs::create_dir_all(parent)
-        .with_context(|| format!("create AI-denoise cache directory {}", parent.display()))?;
+        .with_context(|| format!("create AI-denoise result directory {}", parent.display()))?;
     write_atomically(path, |file| -> Result<()> {
         let mut archive = ZipWriter::new(file);
         let stored = FileOptions::default().compression_method(CompressionMethod::Stored);
         archive
-            .start_file(RESULT_CACHE_MANIFEST, stored)
-            .context("start AI-denoise cache manifest")?;
+            .start_file(RESULT_FILE_MANIFEST, stored)
+            .context("start AI-denoise result manifest")?;
         archive
             .write_all(&manifest)
-            .context("write AI-denoise cache manifest")?;
+            .context("write AI-denoise result manifest")?;
         let compressed = FileOptions::default()
             .compression_method(CompressionMethod::Deflated)
             .compression_level(Some(3));
         archive
-            .start_file(RESULT_CACHE_PAYLOAD, compressed)
-            .context("start AI-denoise cache scene payload")?;
-        for chunk in payload.chunks(RESULT_CACHE_IO_CHUNK) {
+            .start_file(RESULT_FILE_PAYLOAD, compressed)
+            .context("start AI-denoise result scene payload")?;
+        for chunk in payload.chunks(RESULT_FILE_IO_CHUNK) {
             ensure_not_cancelled(cancellation)?;
             archive
                 .write_all(chunk)
-                .context("write AI-denoise cache scene payload")?;
+                .context("write AI-denoise result scene payload")?;
         }
-        archive.finish().context("finalize AI-denoise cache")?;
+        archive.finish().context("finalize AI-denoise result")?;
         ensure_not_cancelled(cancellation)
     })
-    .with_context(|| format!("write AI-denoise cache {}", path.display()))
+    .with_context(|| format!("write AI-denoise result {}", path.display()))
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -251,10 +264,10 @@ struct ResultCacheManifest {
 }
 
 impl ResultCacheManifest {
-    fn encode(self) -> [u8; RESULT_CACHE_HEADER_BYTES] {
-        let mut bytes = [0u8; RESULT_CACHE_HEADER_BYTES];
-        bytes[0..8].copy_from_slice(&RESULT_CACHE_MAGIC);
-        bytes[8..12].copy_from_slice(&RESULT_CACHE_VERSION.to_le_bytes());
+    fn encode(self) -> [u8; RESULT_FILE_HEADER_BYTES] {
+        let mut bytes = [0u8; RESULT_FILE_HEADER_BYTES];
+        bytes[0..8].copy_from_slice(&RESULT_FILE_MAGIC);
+        bytes[8..12].copy_from_slice(&RESULT_FILE_VERSION.to_le_bytes());
         bytes[12..16].copy_from_slice(&self.width.to_le_bytes());
         bytes[16..20].copy_from_slice(&self.height.to_le_bytes());
         bytes[20..24].copy_from_slice(&self.cfa_kind.to_le_bytes());
@@ -264,18 +277,18 @@ impl ResultCacheManifest {
         bytes
     }
 
-    fn decode(bytes: &[u8; RESULT_CACHE_HEADER_BYTES]) -> Result<Self> {
+    fn decode(bytes: &[u8; RESULT_FILE_HEADER_BYTES]) -> Result<Self> {
         anyhow::ensure!(
-            bytes[0..8] == RESULT_CACHE_MAGIC,
-            "invalid AI-denoise cache magic"
+            bytes[0..8] == RESULT_FILE_MAGIC,
+            "invalid AI-denoise result magic"
         );
         let read_u32 = |offset: usize| {
             u32::from_le_bytes(bytes[offset..offset + 4].try_into().expect("fixed header"))
         };
         let version = read_u32(8);
         anyhow::ensure!(
-            version == RESULT_CACHE_VERSION,
-            "AI-denoise cache format version {version} is stale"
+            version == RESULT_FILE_VERSION,
+            "AI-denoise result format version {version} is stale"
         );
         Ok(Self {
             width: read_u32(12),
@@ -340,7 +353,7 @@ fn update_digest_cancelable(
     bytes: &[u8],
     cancellation: Option<&AtomicBool>,
 ) -> Result<()> {
-    for chunk in bytes.chunks(RESULT_CACHE_IO_CHUNK) {
+    for chunk in bytes.chunks(RESULT_FILE_IO_CHUNK) {
         if let Some(cancellation) = cancellation {
             ensure_not_cancelled(cancellation)?;
         }
@@ -362,8 +375,7 @@ pub fn spawn_rawnind_denoise(
     raw: Arc<LoadedRaw>,
     device: Option<wgpu::Device>,
     queue: Option<wgpu::Queue>,
-    result_cache_path: Option<PathBuf>,
-    allow_model_download: bool,
+    job: RawNindJob,
     cancellation: Arc<AtomicBool>,
 ) -> mpsc::Receiver<AiDenoiseEvent> {
     let (sender, receiver) = mpsc::channel();
@@ -374,41 +386,15 @@ pub fn spawn_rawnind_denoise(
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 (|| {
                     ensure_not_cancelled(&cancellation)?;
-                    if let Some(path) = result_cache_path.as_deref() {
-                        let _ = worker_sender.send(AiDenoiseEvent::Progress {
-                            phase: "Restoring saved AI denoise",
-                            completed: 0,
-                            total: 0,
-                        });
-                        match load_result_cache(path, &raw) {
-                            Ok(Some(image)) => {
-                                calibraw_core::diagnostics::record(format!(
-                                    "AI-denoise worker restored {} without model inference",
-                                    path.display()
-                                ));
-                                return Ok(image);
-                            }
-                            Ok(None) => {}
-                            Err(error) => {
-                                log::warn!(
-                                    "discarding invalid AI-denoise result cache {}: {error:#}",
-                                    path.display()
-                                );
-                                calibraw_core::diagnostics::record(format!(
-                                    "AI-denoise worker rejected saved result: {error:#}"
-                                ));
-                                if let Err(remove_error) = fs::remove_file(path) {
-                                    if remove_error.kind() != std::io::ErrorKind::NotFound {
-                                        log::warn!(
-                                            "could not remove invalid AI-denoise cache {}: {remove_error}",
-                                            path.display()
-                                        );
-                                    }
-                                }
-                            }
+                    let (save_to, allow_model_download) = match job {
+                        RawNindJob::Restore { path } => {
+                            return restore_saved_result(&path, &raw, &worker_sender);
                         }
-                        ensure_not_cancelled(&cancellation)?;
-                    }
+                        RawNindJob::Infer {
+                            save_to,
+                            allow_model_download,
+                        } => (save_to, allow_model_download),
+                    };
                     let _ = worker_sender.send(AiDenoiseEvent::Progress {
                         phase: "Checking RawNIND models",
                         completed: 0,
@@ -416,7 +402,7 @@ pub fn spawn_rawnind_denoise(
                     });
                     anyhow::ensure!(
                         allow_model_download || models_are_verified(&model_dir),
-                        "the saved AI-denoise result is unavailable; enable AI denoise again to authorize any required model download"
+                        "RawNIND models are not installed; enable AI denoise again to authorize the download"
                     );
                     ensure_models(&model_dir, &worker_sender, &cancellation)?;
                     ensure_not_cancelled(&cancellation)?;
@@ -449,21 +435,23 @@ pub fn spawn_rawnind_denoise(
                             &cancellation,
                         ),
                     }?;
-                    if let Some(path) = result_cache_path.as_deref() {
+                    if let Some(path) = save_to.as_deref() {
                         ensure_not_cancelled(&cancellation)?;
                         let _ = worker_sender.send(AiDenoiseEvent::Progress {
                             phase: "Saving AI denoise result",
                             completed: 0,
                             total: 0,
                         });
-                        if let Err(error) = save_result_cache(path, &raw, &image, &cancellation) {
+                        if let Err(error) = save_result(path, &raw, &image, &cancellation) {
                             ensure_not_cancelled(&cancellation)?;
                             log::warn!(
                                 "could not persist AI-denoise result {}: {error:#}",
                                 path.display()
                             );
+                            let _ = worker_sender
+                                .send(AiDenoiseEvent::ResultNotSaved(format!("{error:#}")));
                             calibraw_core::diagnostics::record(format!(
-                                "AI-denoise result cache write failed for {}: {error:#}",
+                                "AI-denoise result write failed for {}: {error:#}",
                                 path.display()
                             ));
                         }
@@ -492,6 +480,48 @@ pub fn spawn_rawnind_denoise(
         ))));
     }
     receiver
+}
+
+fn restore_saved_result(
+    path: &Path,
+    raw: &LoadedRaw,
+    events: &mpsc::Sender<AiDenoiseEvent>,
+) -> Result<AiDenoisedImage> {
+    let _ = events.send(AiDenoiseEvent::Progress {
+        phase: "Restoring saved AI denoise",
+        completed: 0,
+        total: 0,
+    });
+    let error = match load_saved_result(path, raw) {
+        Ok(Some(image)) => {
+            calibraw_core::diagnostics::record(format!(
+                "AI-denoise worker restored {} without model inference",
+                path.display()
+            ));
+            return Ok(image);
+        }
+        Ok(None) => anyhow::anyhow!("no saved AI-denoise result at {}", path.display()),
+        Err(error) => {
+            log::warn!(
+                "discarding invalid AI-denoise result {}: {error:#}",
+                path.display()
+            );
+            if let Err(remove_error) = fs::remove_file(path) {
+                if remove_error.kind() != std::io::ErrorKind::NotFound {
+                    log::warn!(
+                        "could not remove invalid AI-denoise result {}: {remove_error}",
+                        path.display()
+                    );
+                }
+            }
+            error
+        }
+    };
+    calibraw_core::diagnostics::record(format!(
+        "AI-denoise worker could not restore a saved result: {error:#}"
+    ));
+    let _ = events.send(AiDenoiseEvent::SavedResultUnusable);
+    Err(error)
 }
 
 fn ensure_not_cancelled(cancellation: &AtomicBool) -> Result<()> {
@@ -1212,9 +1242,9 @@ fn rows3(rows: [[f32; 4]; 3]) -> Matrix3 {
 #[cfg(test)]
 mod tests {
     use super::{
-        bayer_rggb_origin, load_result_cache, match_gain_tile, reflect_index, result_cache_path,
-        run_model_tile, save_result_cache, seam_weight, spawn_rawnind_denoise, AiDenoiseEvent,
-        CORE_EDGE, TILE_EDGE,
+        bayer_rggb_origin, load_saved_result, match_gain_tile, reflect_index, run_model_tile,
+        save_result, seam_weight, spawn_rawnind_denoise, AiDenoiseEvent, RawNindJob, CORE_EDGE,
+        TILE_EDGE,
     };
 
     use crate::execution_provider::SessionOptions;
@@ -1225,7 +1255,7 @@ mod tests {
         RawGpuPipeline,
     };
 
-    fn cache_test_raw(width: u32, height: u32) -> LoadedRaw {
+    fn result_test_raw(width: u32, height: u32) -> LoadedRaw {
         let pixels = (width * height) as usize;
         LoadedRaw {
             width,
@@ -1343,33 +1373,33 @@ mod tests {
     }
 
     #[test]
-    fn result_cache_round_trips_and_rejects_changed_source() {
+    fn saved_result_round_trips_and_rejects_changed_source() {
         let temp = tempfile::tempdir().unwrap();
         let directory = temp.path();
-        let path = result_cache_path(directory, "synthetic-source");
-        let mut raw = cache_test_raw(4, 4);
+        let path = directory.join("synthetic.NEF.calibraw-denoise");
+        let mut raw = result_test_raw(4, 4);
         let values = (0..4 * 4).map(|index| index as u16 * 97).collect();
         let expected = AiDenoisedImage::new_bayer_cfa(4, 4, values).unwrap();
         let cancellation = std::sync::atomic::AtomicBool::new(false);
 
-        save_result_cache(&path, &raw, &expected, &cancellation).unwrap();
-        let restored = load_result_cache(&path, &raw).unwrap().unwrap();
+        save_result(&path, &raw, &expected, &cancellation).unwrap();
+        let restored = load_saved_result(&path, &raw).unwrap().unwrap();
         assert_eq!(restored.raw_cfa16.as_ref(), expected.raw_cfa16.as_ref());
 
         raw.raw_pixels[3] ^= 1;
-        assert!(load_result_cache(&path, &raw).is_err());
+        assert!(load_saved_result(&path, &raw).is_err());
     }
 
     #[test]
     fn saved_result_worker_finishes_without_models_runtime_or_gpu() {
         let temp = tempfile::tempdir().unwrap();
         let directory = temp.path();
-        let path = result_cache_path(directory, "restore-only-source");
-        let raw = std::sync::Arc::new(cache_test_raw(4, 4));
+        let path = directory.join("restore-only.NEF.calibraw-denoise");
+        let raw = std::sync::Arc::new(result_test_raw(4, 4));
         let values = (0..4 * 4).map(|index| index as u16 * 97).collect();
         let expected = AiDenoisedImage::new_bayer_cfa(4, 4, values).unwrap();
         let cancellation = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-        save_result_cache(&path, &raw, &expected, &cancellation).unwrap();
+        save_result(&path, &raw, &expected, &cancellation).unwrap();
 
         let receiver = spawn_rawnind_denoise(
             directory.join("models-do-not-exist"),
@@ -1378,8 +1408,7 @@ mod tests {
             std::sync::Arc::clone(&raw),
             None,
             None,
-            Some(path),
-            false,
+            RawNindJob::Restore { path },
             cancellation,
         );
         let restored = receiver
@@ -1393,10 +1422,44 @@ mod tests {
     }
 
     #[test]
-    fn cache_miss_cannot_download_models_without_consent() {
+    fn unusable_saved_result_never_runs_the_model() {
         let temp = tempfile::tempdir().unwrap();
         let directory = temp.path();
-        let raw = std::sync::Arc::new(cache_test_raw(4, 4));
+        let path = directory.join("changed.NEF.calibraw-denoise");
+        let mut raw = result_test_raw(4, 4);
+        let values = (0..4 * 4).map(|index| index as u16 * 97).collect();
+        let saved = AiDenoisedImage::new_bayer_cfa(4, 4, values).unwrap();
+        let cancellation = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        save_result(&path, &raw, &saved, &cancellation).unwrap();
+        raw.raw_pixels[3] ^= 1;
+
+        let receiver = spawn_rawnind_denoise(
+            directory.join("models-do-not-exist"),
+            None,
+            None,
+            std::sync::Arc::new(raw),
+            None,
+            None,
+            RawNindJob::Restore { path: path.clone() },
+            cancellation,
+        );
+        let events = receiver.into_iter().collect::<Vec<_>>();
+        assert!(events
+            .iter()
+            .any(|event| matches!(event, AiDenoiseEvent::SavedResultUnusable)));
+        assert!(matches!(
+            events.last(),
+            Some(AiDenoiseEvent::Finished(Err(_)))
+        ));
+        assert!(!path.exists());
+        assert!(!directory.join("models-do-not-exist").exists());
+    }
+
+    #[test]
+    fn inference_cannot_download_models_without_consent() {
+        let temp = tempfile::tempdir().unwrap();
+        let directory = temp.path();
+        let raw = std::sync::Arc::new(result_test_raw(4, 4));
         let cancellation = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         let receiver = spawn_rawnind_denoise(
             directory.join("models-do-not-exist"),
@@ -1405,8 +1468,10 @@ mod tests {
             raw,
             None,
             None,
-            Some(result_cache_path(directory, "missing-source")),
-            false,
+            RawNindJob::Infer {
+                save_to: Some(directory.join("missing.NEF.calibraw-denoise")),
+                allow_model_download: false,
+            },
             cancellation,
         );
         let error = receiver
@@ -1415,15 +1480,15 @@ mod tests {
                 AiDenoiseEvent::Finished(Err(error)) => Some(error),
                 _ => None,
             })
-            .expect("cache miss must terminate before model acquisition");
-        assert!(error.contains("authorize any required model download"));
+            .expect("inference must stop before model acquisition");
+        assert!(error.contains("authorize the download"));
         assert!(!directory.join("models-do-not-exist").exists());
     }
 
     #[test]
     fn daylight_white_balance_falls_back_to_as_shot_coefficients() {
         assert_eq!(
-            cache_test_raw(2, 2).rawnind_daylight_white_balance(),
+            result_test_raw(2, 2).rawnind_daylight_white_balance(),
             [2.0, 1.0, 1.5]
         );
     }

@@ -135,14 +135,16 @@ fn recycle_local_raw_bundle(raw_path: &Path) -> Result<(), String> {
         )
     })?;
 
-    let sidecar = crate::sidecar::sidecar_path_for_raw(raw_path);
-    if sidecar.is_file() {
-        if let Err(error) = trash::delete(&sidecar) {
+    for companion in crate::sidecar::raw_companion_paths(raw_path) {
+        if !companion.is_file() {
+            continue;
+        }
+        if let Err(error) = trash::delete(&companion) {
             log::warn!(
-                "moved RAW {} to the system {} but could not move its sidecar {}: {error}",
+                "moved RAW {} to the system {} but could not move {}: {error}",
                 raw_path.display(),
                 system_trash_name(),
-                sidecar.display()
+                companion.display()
             );
         }
     }

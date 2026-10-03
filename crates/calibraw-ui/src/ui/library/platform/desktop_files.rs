@@ -64,12 +64,12 @@ pub(in crate::ui::library) fn copy_raw_bundle_to_folder(
         .map(OsString::from)
         .unwrap_or_else(|| requested_name.to_os_string());
     let extension = requested_path.extension().map(OsString::from);
-    let source_sidecar = crate::sidecar::sidecar_path_for_raw(source_raw);
+    let source_companions = crate::sidecar::raw_companion_paths(source_raw);
     for number in 0..=10_000usize {
         let file_name = numbered_file_name(requested_name, &stem, extension.as_deref(), number);
         let destination_raw = destination_folder.join(file_name);
-        let destination_sidecar = crate::sidecar::sidecar_path_for_raw(&destination_raw);
-        if destination_raw.exists() || destination_sidecar.exists() {
+        let destination_companions = crate::sidecar::raw_companion_paths(&destination_raw);
+        if destination_raw.exists() || destination_companions.iter().any(|path| path.exists()) {
             continue;
         }
         match copy_file_create_new(source_raw, &destination_raw) {
@@ -79,11 +79,16 @@ pub(in crate::ui::library) fn copy_raw_bundle_to_folder(
                 return Err(format!("Could not copy {}: {error}", source_raw.display()));
             }
         }
-        if source_sidecar.is_file() {
-            if let Err(error) = copy_file_create_new(&source_sidecar, &destination_sidecar) {
+        for (source, destination) in source_companions.iter().zip(&destination_companions) {
+            if !source.is_file() {
+                continue;
+            }
+            if let Err(error) = copy_file_create_new(source, destination) {
                 let _ = fs::remove_file(&destination_raw);
-                let _ = fs::remove_file(&destination_sidecar);
-                return Err(format!("Could not copy the matching sidecar: {error}"));
+                for created in &destination_companions {
+                    let _ = fs::remove_file(created);
+                }
+                return Err(format!("Could not copy {}: {error}", source.display()));
             }
         }
         if let Err(error) =
@@ -118,13 +123,14 @@ pub(in crate::ui::library) fn remove_local_raw_bundle(raw_path: &Path) -> Result
             raw_path.display()
         )
     })?;
-    let sidecar = crate::sidecar::sidecar_path_for_raw(raw_path);
-    if let Err(error) = fs::remove_file(&sidecar) {
-        if error.kind() != io::ErrorKind::NotFound {
-            log::warn!(
-                "could not remove the old sidecar {} after moving its RAW: {error}",
-                sidecar.display()
-            );
+    for companion in crate::sidecar::raw_companion_paths(raw_path) {
+        if let Err(error) = fs::remove_file(&companion) {
+            if error.kind() != io::ErrorKind::NotFound {
+                log::warn!(
+                    "could not remove {} after moving its RAW: {error}",
+                    companion.display()
+                );
+            }
         }
     }
     if let Err(error) = crate::sidecar::invalidate_developed_thumbnail_cache(raw_path) {
@@ -145,9 +151,9 @@ pub(in crate::ui::library) fn rename_raw_bundle(
     if destination_raw == source_raw {
         return Ok(destination_raw);
     }
-    let source_sidecar = crate::sidecar::sidecar_path_for_raw(source_raw);
-    let destination_sidecar = crate::sidecar::sidecar_path_for_raw(&destination_raw);
-    if destination_raw.exists() || destination_sidecar.exists() {
+    let source_companions = crate::sidecar::raw_companion_paths(source_raw);
+    let destination_companions = crate::sidecar::raw_companion_paths(&destination_raw);
+    if destination_raw.exists() || destination_companions.iter().any(|path| path.exists()) {
         return Err(format!("{} already exists.", destination_raw.display()));
     }
     let developed_thumbnail = match crate::sidecar::load_developed_thumbnail_cache(source_raw, 8192)
@@ -168,18 +174,27 @@ pub(in crate::ui::library) fn rename_raw_bundle(
             destination_raw.display()
         )
     })?;
-    if source_sidecar.is_file() {
-        if let Err(error) = fs::rename(&source_sidecar, &destination_sidecar) {
-            let rollback = fs::rename(&destination_raw, source_raw);
+    let mut renamed = Vec::new();
+    for (source, destination) in source_companions.iter().zip(&destination_companions) {
+        if !source.is_file() {
+            continue;
+        }
+        if let Err(error) = fs::rename(source, destination) {
+            let rollback = renamed
+                .iter()
+                .try_for_each(|&(source, destination)| fs::rename(destination, source))
+                .and_then(|()| fs::rename(&destination_raw, source_raw));
             return Err(if rollback.is_ok() {
-                format!("Could not rename the matching sidecar: {error}")
+                format!("Could not rename {}: {error}", source.display())
             } else {
                 format!(
-                    "The RAW was renamed to {}, but its sidecar could not be renamed: {error}",
-                    destination_raw.display()
+                    "The RAW was renamed to {}, but {} could not be renamed: {error}",
+                    destination_raw.display(),
+                    source.display()
                 )
             });
         }
+        renamed.push((source, destination));
     }
     if let Some(thumbnail) = developed_thumbnail {
         let thumbnail_result = crate::sidecar::desktop_sidecar_fingerprint(&destination_raw)

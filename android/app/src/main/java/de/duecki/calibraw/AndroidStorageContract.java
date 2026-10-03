@@ -118,12 +118,21 @@ final class AndroidStorageContract {
     }
 
     static String sidecarDisplayName(String rawDisplayName) {
+        return companionDisplayName(rawDisplayName, ".calibraw");
+    }
+
+    /** The AI-denoise result kept next to a RAW while its edit uses AI denoise. */
+    static String aiDenoiseDisplayName(String rawDisplayName) {
+        return companionDisplayName(rawDisplayName, ".calibraw-denoise");
+    }
+
+    private static String companionDisplayName(String rawDisplayName, String suffix) {
         String name = sanitizeRawName(rawDisplayName);
         if (!name.equals(rawDisplayName)
                 || name.getBytes(StandardCharsets.UTF_8).length > 240) {
             throw new IllegalArgumentException("The RAW name cannot be used for a sidecar");
         }
-        return name + ".calibraw";
+        return name + suffix;
     }
 
     static String importPartialName(String destinationName) {
@@ -235,6 +244,13 @@ final class AndroidStorageContract {
         File sidecar = new File(directory, sidecarDisplayName(rawDisplayName));
         if (sidecar.exists() && !sidecar.delete()) {
             throw new IllegalStateException("Could not delete the RAW sidecar");
+        }
+    }
+
+    static void deleteAiDenoiseResult(File directory, String rawDisplayName) {
+        File result = new File(directory, aiDenoiseDisplayName(rawDisplayName));
+        if (result.exists() && !result.delete()) {
+            throw new IllegalStateException("Could not delete the AI-denoise result");
         }
     }
 

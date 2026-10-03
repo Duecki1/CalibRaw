@@ -1,6 +1,12 @@
 use super::*;
 
 impl CalibRawApp {
+    /// The current document was opened by a batch job (library AI refresh or
+    /// batch export) rather than by the user.
+    pub(in crate::app) fn document_load_is_background(&self) -> bool {
+        self.ai.library_mask_refresh.is_some() || self.export.batch.is_some()
+    }
+
     #[cfg(target_os = "android")]
     pub fn open_android_library_document(&mut self, uri: &str, display_name: &str) {
         if self.android_foreground_task_active() {
@@ -200,8 +206,7 @@ impl CalibRawApp {
                 folder: self.preferences.camera_profile_folder.clone(),
                 last_used: self.preferences.last_camera_profile.clone(),
             },
-            ai_denoise_cache_path: self
-                .rawnind_result_cache_path_for_target(&source.sidecar_target),
+            ai_denoise_result_path: self.ai_denoise_result_path_for_target(&source.sidecar_target),
             device: render_state.device.clone(),
             queue: render_state.queue.clone(),
             programs,
@@ -515,8 +520,7 @@ impl CalibRawApp {
             }
             Err(error) => {
                 self.ui.notice = Some(format!("Failed to decode or render RAW: {}", error.message));
-                let interactive_open =
-                    self.ai.library_mask_refresh.is_none() && self.export.batch.is_none();
+                let interactive_open = !self.document_load_is_background();
                 if error.unsupported && interactive_open {
                     self.ui.unsupported_file_dialog = Some(UnsupportedFileDialog {
                         label: error.label.clone(),

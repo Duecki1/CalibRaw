@@ -95,19 +95,33 @@ impl CalibRawApp {
     }
 
     /// The single gate every local-AI job passes, with its inputs (mask
-    /// source, object target, brush) already staged. Returns whether the job
-    /// may start now; otherwise it waits for download consent, or could not
-    /// run and was abandoned.
+    /// source, object target, brush) already staged. Returns whether a job the
+    /// user just asked for may start now; otherwise it waits for consent, or
+    /// could not run and was abandoned.
     pub(in crate::app) fn ai_job_may_start(&mut self, feature: AiFeature) -> bool {
+        self.ai_job_may_start_from(feature, AiJobOrigin::Requested)
+    }
+
+    /// Like [`Self::ai_job_may_start`], but a restored job always asks first
+    /// because it re-runs a model the user did not just ask for.
+    pub(in crate::app) fn ai_job_may_start_from(
+        &mut self,
+        feature: AiFeature,
+        origin: AiJobOrigin,
+    ) -> bool {
         if !self.ai_runtime_ready() {
             self.abandon_ai_job(feature);
             return false;
         }
         let runtime_download_needed = self.automatic_onnx_runtime_download_needed();
-        if runtime_download_needed || self.model_download_needed(feature) {
+        if runtime_download_needed
+            || self.model_download_needed(feature)
+            || origin == AiJobOrigin::Restore
+        {
             self.ai.consent = Some(AiConsent {
                 feature,
                 runtime_download_needed,
+                origin,
             });
             self.egui_ctx.request_repaint();
             return false;
@@ -174,8 +188,13 @@ impl CalibRawApp {
                 self.inpaint.last_brush_uv = None;
             }
             AiFeature::Denoise => {
+                // Declining a restore turns off a saved edit, so record it.
+                let changed = self.develop.exposure.ai_denoise_enabled;
                 self.develop.exposure.ai_denoise_enabled = false;
                 self.develop.target_exposure.ai_denoise_enabled = false;
+                if changed {
+                    self.note_edit_changed();
+                }
             }
             AiFeature::Subject | AiFeature::Sky | AiFeature::SceneDepth => {}
         }
@@ -280,6 +299,7 @@ mod tests {
             app.ai.consent = Some(AiConsent {
                 feature,
                 runtime_download_needed: false,
+                origin: AiJobOrigin::Requested,
             });
             app.abandon_ai_job(feature);
             assert!(app.ai.consent.is_none());
@@ -297,6 +317,7 @@ mod tests {
         app.ai.consent = Some(AiConsent {
             feature: AiFeature::Sky,
             runtime_download_needed: true,
+            origin: AiJobOrigin::Requested,
         });
 
         app.abandon_ai_job(AiFeature::Sky);

@@ -395,8 +395,22 @@ final class StorageManager {
     void removeRawSidecar(String rawUriText, String displayName) throws Exception {
         Uri rawUri = Uri.parse(rawUriText);
         verifyFileRawLibraryIdentity(rawUri, displayName);
-        AndroidStorageContract.deleteSidecar(
-                new File(rawUri.getPath()).getParentFile(), displayName);
+        File directory = new File(rawUri.getPath()).getParentFile();
+        AndroidStorageContract.deleteSidecar(directory, displayName);
+        AndroidStorageContract.deleteAiDenoiseResult(directory, displayName);
+    }
+
+    /**
+     * Returns where the RAW's AI-denoise result lives. Native code reads and
+     * writes it directly: it is too large to stage through the cache directory
+     * like the sidecar.
+     */
+    String aiDenoiseResultPath(String rawUriText, String displayName) throws Exception {
+        Uri rawUri = Uri.parse(rawUriText);
+        verifyFileRawLibraryIdentity(rawUri, displayName);
+        return new File(
+                new File(rawUri.getPath()).getParentFile(),
+                AndroidStorageContract.aiDenoiseDisplayName(displayName)).getAbsolutePath();
     }
 
     String importLocalRawLibraryDocument(String rawPath, String displayName) throws Exception {
@@ -484,6 +498,11 @@ final class StorageManager {
             AndroidStorageContract.deleteSidecar(raw.getParentFile(), displayName);
         } catch (Exception error) {
             Log.w(LOG_TAG, "Deleted RAW but could not clean up its sidecar", error);
+        }
+        try {
+            AndroidStorageContract.deleteAiDenoiseResult(raw.getParentFile(), displayName);
+        } catch (Exception error) {
+            Log.w(LOG_TAG, "Deleted RAW but could not clean up its AI-denoise result", error);
         }
         thumbnailCache.clearDeveloped(rawUriText);
     }

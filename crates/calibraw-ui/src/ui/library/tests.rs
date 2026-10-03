@@ -1069,6 +1069,11 @@ fn shared_clipboard_flow_copies_and_moves_raw_sidecar_bundles() {
     let raw = source.join("photo.CR3");
     fs::write(&raw, b"raw-bytes").unwrap();
     fs::write(crate::sidecar::sidecar_path_for_raw(&raw), b"sidecar-bytes").unwrap();
+    fs::write(
+        crate::sidecar::ai_denoise_path_for_raw(&raw),
+        b"denoise-bytes",
+    )
+    .unwrap();
     install_test_developed_thumbnail(&raw);
 
     let asset = LibraryAsset::from_desktop_path(raw.clone(), 9, 1, None);
@@ -1087,6 +1092,10 @@ fn shared_clipboard_flow_copies_and_moves_raw_sidecar_bundles() {
         fs::read(crate::sidecar::sidecar_path_for_raw(&copied)).unwrap(),
         b"sidecar-bytes"
     );
+    assert_eq!(
+        fs::read(crate::sidecar::ai_denoise_path_for_raw(&copied)).unwrap(),
+        b"denoise-bytes"
+    );
     assert_test_developed_thumbnail(&copied);
     assert!(raw.exists());
 
@@ -1101,11 +1110,16 @@ fn shared_clipboard_flow_copies_and_moves_raw_sidecar_bundles() {
     assert!(cut.clear_clipboard);
     assert!(!raw.exists());
     assert!(!crate::sidecar::sidecar_path_for_raw(&raw).exists());
+    assert!(!crate::sidecar::ai_denoise_path_for_raw(&raw).exists());
     let moved = destination.join("photo (1).CR3");
     assert_eq!(fs::read(&moved).unwrap(), b"raw-bytes");
     assert_eq!(
         fs::read(crate::sidecar::sidecar_path_for_raw(&moved)).unwrap(),
         b"sidecar-bytes"
+    );
+    assert_eq!(
+        fs::read(crate::sidecar::ai_denoise_path_for_raw(&moved)).unwrap(),
+        b"denoise-bytes"
     );
     assert_test_developed_thumbnail(&moved);
 
@@ -1280,6 +1294,7 @@ fn rename_raw_keeps_matching_sidecar() {
     let raw = root.join("before.NEF");
     fs::write(&raw, b"raw").unwrap();
     fs::write(crate::sidecar::sidecar_path_for_raw(&raw), b"sidecar").unwrap();
+    fs::write(crate::sidecar::ai_denoise_path_for_raw(&raw), b"denoise").unwrap();
     install_test_developed_thumbnail(&raw);
 
     let renamed = rename_raw_bundle(&raw, "after.NEF").unwrap();
@@ -1290,6 +1305,11 @@ fn rename_raw_keeps_matching_sidecar() {
     assert_eq!(
         fs::read(crate::sidecar::sidecar_path_for_raw(&renamed)).unwrap(),
         b"sidecar"
+    );
+    assert!(!crate::sidecar::ai_denoise_path_for_raw(&raw).exists());
+    assert_eq!(
+        fs::read(crate::sidecar::ai_denoise_path_for_raw(&renamed)).unwrap(),
+        b"denoise"
     );
     assert_test_developed_thumbnail(&renamed);
     assert!(crate::sidecar::load_developed_thumbnail_cache(&raw, 512)

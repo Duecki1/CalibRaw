@@ -1,5 +1,5 @@
 use super::*;
-use calibraw_ai::ai_denoise::AiDenoiseEvent;
+use calibraw_ai::ai_denoise::{AiDenoiseEvent, RawNindJob};
 use calibraw_ai::AiFeature;
 use std::{
     path::PathBuf,
@@ -28,48 +28,67 @@ impl CalibRawApp {
         }
     }
 
-    fn rawnind_result_cache_dir(&self) -> PathBuf {
-        #[cfg(target_os = "android")]
-        {
-            self.android
-                .android_app
-                .internal_data_path()
-                .unwrap_or_else(std::env::temp_dir)
-                .join("ai-denoise-results-v2")
-        }
-        #[cfg(not(target_os = "android"))]
-        {
-            let model_dir = self.rawnind_model_dir();
-            model_dir
-                .parent()
-                .and_then(std::path::Path::parent)
-                .map(std::path::Path::to_path_buf)
-                .unwrap_or_else(std::env::temp_dir)
-                .join("ai-denoise-results-v2")
-        }
-    }
-
-    pub(crate) fn rawnind_result_cache_path_for_target(
+    /// The AI-denoise result saved next to the RAW. `None` when the RAW has no
+    /// writable location, e.g. an Android URI outside CalibRaw's library.
+    pub(crate) fn ai_denoise_result_path_for_target(
         &self,
         target: &crate::sidecar::SidecarTarget,
-    ) -> PathBuf {
-        let identity = match target {
+    ) -> Option<PathBuf> {
+        match target {
+            #[cfg(not(target_os = "android"))]
             crate::sidecar::SidecarTarget::Desktop { raw_path } => {
-                format!("desktop:{}", raw_path.display())
+                Some(crate::sidecar::ai_denoise_path_for_raw(raw_path))
             }
             #[cfg(target_os = "android")]
-            crate::sidecar::SidecarTarget::Android { raw_uri, .. } => {
-                format!("android:{raw_uri}")
-            }
-        };
-        calibraw_ai::ai_denoise::result_cache_path(&self.rawnind_result_cache_dir(), &identity)
+            crate::sidecar::SidecarTarget::Desktop { .. } => None,
+            #[cfg(target_os = "android")]
+            crate::sidecar::SidecarTarget::Android {
+                raw_uri,
+                display_name,
+            } => calibraw_ffi::ai_denoise_result_path(
+                &self.android.android_app,
+                raw_uri,
+                display_name,
+            )
+            .map_err(|error| log::warn!("{error}"))
+            .ok(),
+        }
     }
 
-    fn rawnind_result_cache_path(&self) -> Option<PathBuf> {
+    fn ai_denoise_result_path(&self) -> Option<PathBuf> {
         self.persistence
             .sidecar_target
             .as_ref()
-            .map(|target| self.rawnind_result_cache_path_for_target(target))
+            .and_then(|target| self.ai_denoise_result_path_for_target(target))
+    }
+
+    /// Results used to live in an app-data cache keyed by the RAW's path;
+    /// they now live next to the RAW. Removes that old folder and nothing else.
+    pub(in crate::app) fn remove_legacy_ai_denoise_cache(&self) {
+        #[cfg(target_os = "android")]
+        let root = self
+            .android
+            .android_app
+            .internal_data_path()
+            .map(|data| data.join("ai-denoise-results-v2"));
+        #[cfg(not(target_os = "android"))]
+        let root = self
+            .rawnind_model_dir()
+            .parent()
+            .and_then(std::path::Path::parent)
+            .map(|cache_root| cache_root.join("ai-denoise-results-v2"));
+        let Some(root) = root.filter(|root| root.is_dir()) else {
+            return;
+        };
+        let spawned = std::thread::Builder::new()
+            .name("calibraw-legacy-denoise-cleanup".to_owned())
+            .spawn(move || match std::fs::remove_dir_all(&root) {
+                Ok(()) => log::info!("removed legacy AI-denoise cache {}", root.display()),
+                Err(error) => log::warn!("could not remove {}: {error}", root.display()),
+            });
+        if let Err(error) = spawned {
+            log::warn!("could not start legacy AI-denoise cleanup: {error}");
+        }
     }
 
     pub(crate) fn set_ai_denoise_enabled(&mut self, enabled: bool, frame: &eframe::Frame) {
@@ -92,6 +111,10 @@ impl CalibRawApp {
             self.egui_ctx.request_repaint();
             return;
         }
+        self.enable_ai_denoise(frame, AiJobOrigin::Requested);
+    }
+
+    fn enable_ai_denoise(&mut self, frame: &eframe::Frame, origin: AiJobOrigin) {
         if self.foreground_operation_active() {
             self.ui.notice =
                 Some("Finish or cancel the current editing operation first.".to_owned());
@@ -132,10 +155,10 @@ impl CalibRawApp {
             return;
         }
         let saved_result_exists = self
-            .rawnind_result_cache_path()
+            .ai_denoise_result_path()
             .is_some_and(|path| path.is_file());
-        // A saved result restores without the runtime or models.
-        if saved_result_exists || self.ai_job_may_start(AiFeature::Denoise) {
+        // A saved result restores without running the model, so it never asks.
+        if saved_result_exists || self.ai_job_may_start_from(AiFeature::Denoise, origin) {
             self.start_ai_denoise(frame, false);
         }
     }
@@ -152,10 +175,8 @@ impl CalibRawApp {
             self.ui.notice = Some("Open a RAW image before enabling AI denoise.".to_owned());
             return;
         };
-        let result_cache_path = self.rawnind_result_cache_path();
-        let saved_result_exists = result_cache_path
-            .as_ref()
-            .is_some_and(|path| path.is_file());
+        let result_path = self.ai_denoise_result_path();
+        let saved_result_exists = result_path.as_ref().is_some_and(|path| path.is_file());
         #[cfg(not(target_os = "android"))]
         if !saved_result_exists && !self.validate_onnx_runtime_for_ai() {
             self.develop.exposure.ai_denoise_enabled = false;
@@ -221,8 +242,13 @@ impl CalibRawApp {
             raw,
             Some(render_state.device.clone()),
             Some(render_state.queue.clone()),
-            result_cache_path,
-            allow_model_download,
+            match result_path {
+                Some(path) if saved_result_exists => RawNindJob::Restore { path },
+                save_to => RawNindJob::Infer {
+                    save_to,
+                    allow_model_download,
+                },
+            },
             Arc::clone(&cancellation),
         );
         if self.ai_consent_is_for(AiFeature::Denoise) {
@@ -276,8 +302,12 @@ impl CalibRawApp {
             matches!(event, AiDenoiseEvent::Finished(_))
         });
         let mut finished = None;
+        let mut saved_result_unusable = false;
+        let mut save_error = None;
         for event in events {
             match event {
+                AiDenoiseEvent::SavedResultUnusable => saved_result_unusable = true,
+                AiDenoiseEvent::ResultNotSaved(error) => save_error = Some(error),
                 AiDenoiseEvent::DownloadProgress { downloaded, total } => {
                     operation.progress = ForegroundProgress::units(
                         downloaded,
@@ -337,10 +367,13 @@ impl CalibRawApp {
                     .and_then(|raw| raw.set_ai_denoised_image(image));
                 match install {
                     Ok(()) => {
-                        self.ui.notice = Some(
-                            "AI denoise applied locally. Standard denoise values were preserved."
+                        self.ui.notice = Some(match save_error {
+                            Some(error) => format!(
+                                "AI denoise applied, but its result could not be saved next to the photo ({error}). It will need to run again the next time the photo is opened."
+                            ),
+                            None => "AI denoise applied locally. Standard denoise values were preserved."
                                 .to_owned(),
-                        );
+                        });
                     }
                     Err(error) => {
                         let changed = self.develop.exposure.ai_denoise_enabled;
@@ -356,6 +389,11 @@ impl CalibRawApp {
             Ok(_) => {
                 self.develop.exposure.ai_denoise_enabled = false;
                 self.develop.target_exposure.ai_denoise_enabled = false;
+            }
+            Err(_) if saved_result_unusable && !operation.is_cancelled() => {
+                // The saved result no longer matches this RAW. Keep the edit and
+                // ask before running the model again.
+                self.ai.denoise_resume_pending = true;
             }
             Err(error) => {
                 let changed = self.develop.exposure.ai_denoise_enabled;
@@ -399,13 +437,79 @@ impl CalibRawApp {
                 );
                 return;
             }
-            self.set_ai_denoise_enabled(true, frame);
+            // Background opens (batch export, library AI refresh) must not stop
+            // for a prompt; the result is restored the next time the image is
+            // opened interactively.
+            if self.document_load_is_background() {
+                return;
+            }
+            self.enable_ai_denoise(frame, AiJobOrigin::Restore);
         }
     }
 
+    /// Restores AI denoise that an undo or paste turned on, once the image is
+    /// on screen so the prompt clearly refers to it.
     pub(crate) fn resume_pending_ai_denoise(&mut self, frame: &eframe::Frame) {
-        if self.ai.denoise_resume_pending {
+        if self.ai.denoise_resume_pending && self.ui.active_tab == AppTab::Develop {
             self.resume_persisted_ai_denoise(frame);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn app() -> CalibRawApp {
+        let mut app = CalibRawApp::empty(&egui::Context::default());
+        #[cfg(not(target_os = "android"))]
+        {
+            app.ai.runtime_mode = OnnxRuntimeMode::Automatic;
+        }
+        app
+    }
+
+    #[test]
+    fn restoring_ai_denoise_always_asks_first() {
+        let mut app = app();
+        assert!(!app.ai_job_may_start_from(AiFeature::Denoise, AiJobOrigin::Restore));
+        assert_eq!(
+            app.ai
+                .consent
+                .map(|consent| (consent.feature, consent.origin)),
+            Some((AiFeature::Denoise, AiJobOrigin::Restore))
+        );
+        assert!(!app.foreground_operation_active());
+    }
+
+    #[test]
+    fn declining_a_restore_turns_ai_denoise_off_as_an_edit() {
+        let mut app = app();
+        app.develop.exposure.ai_denoise_enabled = true;
+        app.reset_edit_history();
+        let revision = app.edit_commit_revision();
+        assert!(!app.ai_job_may_start_from(AiFeature::Denoise, AiJobOrigin::Restore));
+
+        app.abandon_ai_job(AiFeature::Denoise);
+        app.commit_edit_history_now();
+
+        assert!(app.ai.consent.is_none());
+        assert!(!app.develop.exposure.ai_denoise_enabled);
+        assert_ne!(app.edit_commit_revision(), revision);
+    }
+
+    #[test]
+    fn pending_restore_waits_until_the_image_is_on_screen() {
+        let mut app = app();
+        let frame = eframe::Frame::_new_kittest();
+        app.ai.denoise_resume_pending = true;
+
+        app.ui.active_tab = AppTab::Library;
+        app.resume_pending_ai_denoise(&frame);
+        assert!(app.ai.denoise_resume_pending);
+
+        app.ui.active_tab = AppTab::Develop;
+        app.resume_pending_ai_denoise(&frame);
+        assert!(!app.ai.denoise_resume_pending);
     }
 }

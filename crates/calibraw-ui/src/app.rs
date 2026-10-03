@@ -1161,11 +1161,24 @@ pub(crate) enum OnnxRuntimeMode {
     Manual,
 }
 
-/// A local-AI job waiting for the user to accept its model or runtime download.
+/// Why a local-AI job is about to run.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum AiJobOrigin {
+    /// The user asked for the result just now.
+    Requested,
+    /// Re-creates a result an edit already uses but that is not saved, e.g.
+    /// AI denoise on a reopened image. The model has to run again, so the user
+    /// confirms first.
+    Restore,
+}
+
+/// A local-AI job waiting for the user to confirm it, either to accept a model
+/// or runtime download or to re-run a model for a restored edit.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct AiConsent {
     pub(crate) feature: calibraw_ai::AiFeature,
     pub(crate) runtime_download_needed: bool,
+    pub(crate) origin: AiJobOrigin,
 }
 
 pub(crate) struct AiState {
