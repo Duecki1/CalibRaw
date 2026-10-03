@@ -57,6 +57,7 @@ impl CalibRawApp {
             || self.ui.unsupported_file_dialog.is_some()
             || self.ui.version_check.dialog_open()
             || self.library.transient_dialog_open()
+            || self.presets.dialog_open()
             || self.ai.consent.is_some()
             || self.ai.object_error_dialog.is_some()
             || self.persistence.sidecar_save_error_dialog.is_some()

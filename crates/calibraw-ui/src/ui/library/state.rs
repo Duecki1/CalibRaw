@@ -158,9 +158,9 @@ impl LibraryState {
     pub(crate) fn install_adjustment_clipboard(
         &mut self,
         edits: crate::sidecar::EditState,
-        settings: crate::sidecar::AdjustmentCopySettings,
+        selection: crate::sidecar::EditSelection,
     ) {
-        self.adjustment_clipboard = Some(LibraryAdjustmentClipboard { edits, settings });
+        self.adjustment_clipboard = Some(AdjustmentClipboard { edits, selection });
     }
 
     #[cfg(any(target_os = "android", test))]

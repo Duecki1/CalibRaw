@@ -12,14 +12,14 @@ use crate::pipeline::{
     TiledExportJob, MAX_LOCAL_MASKS,
 };
 use crate::sidecar::{
-    AdjustmentCopySettings, AdjustmentPasteMode, EditState as SidecarEditState,
+    AdjustmentCopySettings, AdjustmentPasteMode, EditSelection, EditState as SidecarEditState,
     LensEditState as SidecarLensEditState,
 };
 use crate::ui::components::adjustment_slider::slider_scroll_locked;
 #[cfg(not(target_os = "android"))]
 use crate::ui::develop::Develop;
 use crate::ui::layout::ScreenLayout;
-use crate::ui::library::{Library, LibraryAdjustmentClipboard, LibraryState};
+use crate::ui::library::{AdjustmentClipboard, Library, LibraryState};
 #[cfg(target_os = "android")]
 use crate::ui::preview::Preview;
 use crate::ui::settings::Settings;
@@ -63,6 +63,7 @@ pub(crate) enum DesktopPickerEvent {
     LibraryFolder(Option<PathBuf>),
     CameraProfileFolder(Option<PathBuf>),
     OnnxRuntime(Result<Option<(PathBuf, String)>, String>),
+    PresetFiles(Option<Vec<PathBuf>>),
 }
 
 #[cfg(target_os = "android")]
@@ -302,11 +303,76 @@ pub(crate) enum AppTab {
 pub(crate) enum SidebarTab {
     #[default]
     Adjustments,
+    Presets,
     Crop,
     Masks,
     Inpainting,
     Export,
     Info,
+}
+
+impl SidebarTab {
+    /// Tabs in navigation order.
+    pub(crate) const ALL: [Self; 7] = [
+        Self::Adjustments,
+        Self::Presets,
+        Self::Crop,
+        Self::Masks,
+        Self::Inpainting,
+        Self::Export,
+        Self::Info,
+    ];
+
+    /// The sidebar header title.
+    pub(crate) const fn title(self) -> &'static str {
+        match self {
+            Self::Adjustments => "Edit",
+            Self::Presets => "Presets",
+            Self::Crop => "Crop",
+            Self::Masks => "Masking",
+            Self::Inpainting => "Inpaint",
+            Self::Export => "Export",
+            Self::Info => "Image Info",
+        }
+    }
+
+    /// The label under the icon in compact navigation.
+    pub(crate) const fn short_label(self) -> &'static str {
+        match self {
+            Self::Adjustments => "Edit",
+            Self::Presets => "Presets",
+            Self::Crop => "Crop",
+            Self::Masks => "Mask",
+            Self::Inpainting => "Remove",
+            Self::Export => "Export",
+            Self::Info => "Info",
+        }
+    }
+
+    pub(crate) const fn tooltip(self) -> &'static str {
+        match self {
+            Self::Adjustments => "Edit adjustments",
+            Self::Presets => "Presets",
+            Self::Crop => "Crop",
+            Self::Masks => "Masking",
+            Self::Inpainting => "Remove unwanted objects",
+            Self::Export => "Export",
+            Self::Info => "Image information",
+        }
+    }
+
+    pub(crate) const fn glyph(self) -> &'static str {
+        use egui_phosphor::regular;
+        match self {
+            Self::Adjustments => regular::SLIDERS_HORIZONTAL,
+            Self::Presets => regular::PALETTE,
+            Self::Crop => regular::CROP,
+            Self::Masks => regular::SELECTION,
+            Self::Inpainting => regular::BANDAIDS,
+            Self::Export => regular::EXPORT,
+            Self::Info => regular::INFO,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -1288,6 +1354,7 @@ pub struct CalibRawApp {
     pub(crate) persistence: PersistenceState,
     pub(crate) usage: UsageState,
     pub(crate) preferences: PreferencesState,
+    pub(crate) presets: PresetState,
     pub(crate) ui: UiState,
     #[cfg(not(target_os = "android"))]
     discord_presence: DiscordPresence,
@@ -1478,6 +1545,11 @@ mod eframe_impl;
 mod foreground;
 mod inpainting;
 mod library_adjustments;
+mod presets;
+pub(crate) use library_adjustments::{
+    EditTransfer, EditTransferOrigin, LibraryEditTransferOutcome,
+};
+pub(crate) use presets::{PresetEditorMode, PresetState};
 mod lifecycle;
 mod preview_clipping;
 mod preview_histogram;

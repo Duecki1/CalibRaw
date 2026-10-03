@@ -71,46 +71,6 @@ pub struct LensEditState {
     pub model: String,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
-pub struct AdjustmentCopySettings {
-    #[serde(default = "default_true")]
-    pub adjustments: bool,
-    #[serde(default)]
-    pub geometry: bool,
-    #[serde(default = "default_true")]
-    pub camera_profile: bool,
-    #[serde(default = "default_true")]
-    pub masks: bool,
-    #[serde(default = "default_true")]
-    pub ai_masks: bool,
-    #[serde(default)]
-    pub lens_correction: bool,
-}
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum AdjustmentPasteMode {
-    #[default]
-    Merge,
-    Replace,
-}
-
-const fn default_true() -> bool {
-    true
-}
-
-impl Default for AdjustmentCopySettings {
-    fn default() -> Self {
-        Self {
-            adjustments: true,
-            geometry: false,
-            camera_profile: true,
-            masks: true,
-            ai_masks: true,
-            lens_correction: false,
-        }
-    }
-}
-
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct EditState {
     pub exposure: ExposureParams,
@@ -145,91 +105,6 @@ pub fn default_edit_state() -> EditState {
     }
 }
 
-fn is_manual_mask_kind(kind: MaskKind) -> bool {
-    matches!(
-        kind,
-        MaskKind::Brush
-            | MaskKind::Fullscreen
-            | MaskKind::Radial
-            | MaskKind::Linear
-            | MaskKind::Path
-    )
-}
-
-fn filtered_mask_stack(masks: &MaskStack, include_manual: bool, include_ai: bool) -> MaskStack {
-    if include_manual && include_ai {
-        let mut selected = masks.clone();
-        selected.scene_depth = None;
-        return selected;
-    }
-
-    MaskStack {
-        global_effects: if include_manual {
-            masks.global_effects.clone()
-        } else {
-            Vec::new()
-        },
-        masks: masks
-            .masks
-            .iter()
-            .filter_map(|mask| {
-                let mut selected = mask.clone();
-                selected.components.retain(|component| {
-                    if is_manual_mask_kind(component.kind) {
-                        include_manual
-                    } else {
-                        include_ai
-                    }
-                });
-                (!selected.components.is_empty()).then_some(selected)
-            })
-            .collect(),
-        subject_refinement: if include_ai {
-            masks.subject_refinement.clone()
-        } else {
-            Default::default()
-        },
-        ..Default::default()
-    }
-}
-
-fn replace_selected_mask_categories(
-    destination: &mut MaskStack,
-    source: &MaskStack,
-    include_manual: bool,
-    include_ai: bool,
-) {
-    // Depth is tied to the destination image, not to the transferred adjustments.
-    let scene_depth = destination.scene_depth.clone();
-    if include_manual && include_ai {
-        *destination = source.clone();
-        destination.scene_depth = scene_depth;
-        clear_copied_depth_images(destination);
-        return;
-    }
-
-    let mut merged = filtered_mask_stack(destination, !include_manual, !include_ai);
-    let mut copied = filtered_mask_stack(source, include_manual, include_ai);
-    clear_copied_depth_images(&mut copied);
-    if include_manual {
-        merged.global_effects = copied.global_effects;
-    }
-    if include_ai {
-        merged.subject_refinement = copied.subject_refinement.clone();
-    }
-    merged.masks.extend(copied.masks);
-    merged.scene_depth = scene_depth;
-    *destination = merged;
-}
-
-fn clear_copied_depth_images(masks: &mut MaskStack) {
-    for component in masks.masks.iter_mut().flat_map(|mask| &mut mask.components) {
-        if let MaskGeometry::DepthRange { depth, .. } = &mut component.geometry {
-            *depth = None;
-        }
-    }
-}
-
 pub fn edit_state_has_adjustments(edits: &EditState) -> bool {
     let default = default_edit_state();
     edits.exposure != default.exposure
@@ -239,76 +114,6 @@ pub fn edit_state_has_adjustments(edits: &EditState) -> bool {
         || edits.subject_refinement != default.subject_refinement
         || edits.lens != default.lens
         || edits.remove != default.remove
-}
-
-pub fn apply_copied_adjustments(
-    destination: &mut EditState,
-    source: &EditState,
-    settings: AdjustmentCopySettings,
-) {
-    apply_copied_adjustments_with_mode(destination, source, settings, AdjustmentPasteMode::Merge);
-}
-
-pub fn apply_copied_adjustments_with_mode(
-    destination: &mut EditState,
-    source: &EditState,
-    settings: AdjustmentCopySettings,
-    mode: AdjustmentPasteMode,
-) {
-    if mode == AdjustmentPasteMode::Replace {
-        let remove = Arc::clone(&destination.remove);
-        let scene_depth = destination.masks.scene_depth.clone();
-        *destination = default_edit_state();
-        destination.remove = remove;
-        Arc::make_mut(&mut destination.masks).scene_depth = scene_depth;
-    }
-    if settings.adjustments {
-        destination.exposure = source.exposure;
-    }
-    if settings.geometry {
-        destination.geometry = source.geometry;
-    }
-    if settings.camera_profile {
-        let camera_profile_changed = destination.camera_profile != source.camera_profile;
-        destination.camera_profile = source.camera_profile.clone();
-        if camera_profile_changed && !destination.masks.content_dependencies().is_empty() {
-            destination.ai_masks_need_update = true;
-        }
-    }
-    if settings.masks || settings.ai_masks {
-        let previous_ai_masks_need_update = destination.ai_masks_need_update;
-        let previous_subject_refinement = destination.subject_refinement.clone();
-        let mut masks = destination.masks.as_ref().clone();
-        replace_selected_mask_categories(
-            &mut masks,
-            &source.masks,
-            settings.masks,
-            settings.ai_masks,
-        );
-        destination.masks = Arc::new(masks);
-        destination.subject_refinement = if settings.ai_masks {
-            source.subject_refinement.clone().or_else(|| {
-                (!source.masks.subject_refinement.is_empty())
-                    .then(|| source.masks.subject_refinement.clone())
-            })
-        } else {
-            previous_subject_refinement
-        };
-        destination.ai_masks_need_update = if settings.ai_masks {
-            source.ai_masks_need_update || !destination.masks.content_dependencies().is_empty()
-        } else {
-            previous_ai_masks_need_update
-        };
-        // Pasted depth fog or depth masks need this image's own scene depth.
-        destination.ai_masks_need_update |= destination.masks.scene_depth_missing();
-    }
-    if settings.lens_correction {
-        let lens_changed = destination.lens != source.lens;
-        destination.lens = source.lens.clone();
-        if lens_changed && !destination.masks.content_dependencies().is_empty() {
-            destination.ai_masks_need_update = true;
-        }
-    }
 }
 
 fn synchronize_subject_refinement(edits: &mut EditState) {
@@ -1133,6 +938,10 @@ impl From<std::io::Error> for SidecarError {
 }
 
 mod desktop;
+mod transfer;
+
+pub(crate) use transfer::is_manual_mask_kind;
+pub use transfer::{transfer_edits, AdjustmentCopySettings, AdjustmentPasteMode, EditSelection};
 
 pub use desktop::sidecar_path_for_raw;
 #[cfg(not(target_os = "android"))]
@@ -1602,7 +1411,7 @@ fn validate_scene_depth(masks: &MaskStack) -> Result<(), SidecarError> {
     Ok(())
 }
 
-fn validate_edit_state(edits: &EditState) -> Result<(), SidecarError> {
+pub(crate) fn validate_edit_state(edits: &EditState) -> Result<(), SidecarError> {
     validate_scene_depth(&edits.masks)?;
     validation::validate_edit_state(edits)
 }

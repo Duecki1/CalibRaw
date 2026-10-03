@@ -62,14 +62,7 @@ impl Sidebar {
     }
 
     fn show_sidebar_header(ui: &mut Ui, app: &mut CalibRawApp) {
-        let title = match app.ui.sidebar_tab {
-            SidebarTab::Adjustments => "Edit",
-            SidebarTab::Crop => "Crop",
-            SidebarTab::Masks => "Masking",
-            SidebarTab::Inpainting => "Inpaint",
-            SidebarTab::Export => "Export",
-            SidebarTab::Info => "Image Info",
-        };
+        let title = app.ui.sidebar_tab.title();
         crate::ui::theme::card_header(ui, |ui| {
             let width = ui.available_width().max(1.0);
             ui.allocate_ui_with_layout(
@@ -139,7 +132,7 @@ impl Sidebar {
                                     app.reset_masks();
                                 }
                             }
-                            SidebarTab::Export | SidebarTab::Info => {}
+                            SidebarTab::Presets | SidebarTab::Export | SidebarTab::Info => {}
                         }
                         Self::show_histogram_toggle(ui, app);
                         Self::show_clipping_toggles(ui, app);
@@ -211,8 +204,6 @@ impl Sidebar {
     }
 
     fn show_mobile_primary_tabs(ui: &mut Ui, app: &mut CalibRawApp) {
-        use egui_phosphor::regular;
-
         // Treat the two portrait navigation rows as one surface. The context
         // row paints the outer divider when it is present; otherwise the
         // primary row still needs to separate itself from the content.
@@ -229,34 +220,17 @@ impl Sidebar {
         } else {
             56.0
         };
-        let item_width = (ui.available_width() / 6.0).max(1.0);
+        let item_width = (ui.available_width() / SidebarTab::ALL.len() as f32).max(1.0);
         ui.horizontal(|ui| {
-            for (tab, icon, label, tooltip) in [
-                (
-                    SidebarTab::Adjustments,
-                    regular::SLIDERS_HORIZONTAL,
-                    "Edit",
-                    "Edit adjustments",
-                ),
-                (SidebarTab::Crop, regular::CROP, "Crop", "Crop"),
-                (SidebarTab::Masks, regular::SELECTION, "Mask", "Masking"),
-                (
-                    SidebarTab::Inpainting,
-                    regular::BANDAIDS,
-                    "Remove",
-                    "Remove unwanted objects",
-                ),
-                (SidebarTab::Export, regular::EXPORT, "Export", "Export"),
-                (SidebarTab::Info, regular::INFO, "Info", "Image information"),
-            ] {
+            for tab in SidebarTab::ALL {
                 if Self::mobile_icon_tab(
                     ui,
-                    icon,
-                    label,
+                    tab.glyph(),
+                    tab.short_label(),
                     show_labels,
                     app.ui.sidebar_tab == tab,
                     egui::vec2(item_width, tab_height),
-                    tooltip,
+                    tab.tooltip(),
                 )
                 .clicked()
                 {
@@ -425,7 +399,11 @@ impl Sidebar {
                     }
                 }
             }
-            SidebarTab::Crop | SidebarTab::Inpainting | SidebarTab::Export | SidebarTab::Info => {}
+            SidebarTab::Presets
+            | SidebarTab::Crop
+            | SidebarTab::Inpainting
+            | SidebarTab::Export
+            | SidebarTab::Info => {}
         });
     }
 
@@ -588,6 +566,9 @@ impl Sidebar {
                                 SidebarTab::Adjustments => {
                                     Self::show_adjustments(ui, app, layout, frame)
                                 }
+                                SidebarTab::Presets => {
+                                    crate::ui::presets::show_panel(ui, app, frame)
+                                }
                                 SidebarTab::Crop => Self::show_crop(ui, app, layout),
                                 SidebarTab::Masks => {
                                     mask_edit_header_rect = Self::show_masks(ui, app, layout, frame)
@@ -677,7 +658,7 @@ impl Sidebar {
                             app.clear_inpainting_tool();
                         }
                     }
-                    SidebarTab::Export | SidebarTab::Info => {}
+                    SidebarTab::Presets | SidebarTab::Export | SidebarTab::Info => {}
                 }
                 Self::show_vertical_card_footer_actions(ui);
                 Self::show_histogram_toggle(ui, app);
@@ -688,30 +669,19 @@ impl Sidebar {
 
     #[cfg(not(target_os = "android"))]
     pub(crate) fn show_desktop_tool_rail(ui: &mut Ui, app: &mut CalibRawApp) {
-        use crate::ui::icons::{icon_toggle_button, UiIcon};
+        use crate::ui::icons::{glyph_toggle_button, icon_toggle_button, UiIcon};
 
         ui.set_min_width(ui.available_width());
         ui.spacing_mut().item_spacing.y = crate::ui::theme::SPACE_XS;
         ui.vertical_centered(|ui| {
             ui.add_space(5.0);
-            for (tab, icon, tooltip) in [
-                (SidebarTab::Adjustments, UiIcon::Adjustments, "Edit"),
-                (SidebarTab::Crop, UiIcon::Crop, "Crop"),
-                (SidebarTab::Masks, UiIcon::Mask, "Masking"),
-                (
-                    SidebarTab::Inpainting,
-                    UiIcon::Heal,
-                    "Remove unwanted objects",
-                ),
-                (SidebarTab::Export, UiIcon::Export, "Export"),
-                (SidebarTab::Info, UiIcon::Info, "Image information"),
-            ] {
-                if icon_toggle_button(
+            for tab in SidebarTab::ALL {
+                if glyph_toggle_button(
                     ui,
-                    icon,
+                    tab.glyph(),
                     app.ui.sidebar_tab == tab,
                     crate::ui::theme::tool_rail_icon_size(),
-                    tooltip,
+                    tab.tooltip(),
                 )
                 .clicked()
                 {
@@ -762,38 +732,19 @@ impl Sidebar {
 
     #[cfg(target_os = "android")]
     pub(crate) fn show_android_landscape_primary_tabs(ui: &mut Ui, app: &mut CalibRawApp) {
-        use egui_phosphor::regular;
-
         ui.set_width(Self::ANDROID_LANDSCAPE_TOOL_RAIL_WIDTH);
         ui.spacing_mut().item_spacing.y = 0.0;
         let show_labels = app.preferences.show_develop_navigation_labels;
         ui.vertical_centered(|ui| {
-            for (tab, icon, label, tooltip) in [
-                (
-                    SidebarTab::Adjustments,
-                    regular::SLIDERS_HORIZONTAL,
-                    "Edit",
-                    "Edit adjustments",
-                ),
-                (SidebarTab::Crop, regular::CROP, "Crop", "Crop"),
-                (SidebarTab::Masks, regular::SELECTION, "Mask", "Masking"),
-                (
-                    SidebarTab::Inpainting,
-                    regular::BANDAIDS,
-                    "Remove",
-                    "Remove unwanted objects",
-                ),
-                (SidebarTab::Export, regular::EXPORT, "Export", "Export"),
-                (SidebarTab::Info, regular::INFO, "Info", "Image information"),
-            ] {
+            for tab in SidebarTab::ALL {
                 if Self::mobile_icon_tab(
                     ui,
-                    icon,
-                    label,
+                    tab.glyph(),
+                    tab.short_label(),
                     show_labels,
                     app.ui.sidebar_tab == tab,
                     egui::vec2(56.0, 56.0),
-                    tooltip,
+                    tab.tooltip(),
                 )
                 .clicked()
                 {

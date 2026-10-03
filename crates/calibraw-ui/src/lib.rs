@@ -1,5 +1,6 @@
 pub(crate) mod export_naming;
 pub(crate) mod performance_settings;
+pub(crate) use calibraw_core::presets;
 
 pub mod pipeline {
     pub use calibraw_gpu::pipeline::*;
