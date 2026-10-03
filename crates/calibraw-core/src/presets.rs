@@ -320,6 +320,16 @@ fn normalize_group(group: &str) -> Result<String, PresetError> {
     Ok(group.to_owned())
 }
 
+/// Checks a group name typed by the user and returns it trimmed.
+pub fn validate_group_name(name: &str) -> Result<String, PresetError> {
+    let name = name.trim();
+    if name.is_empty() {
+        return invalid("enter a group name");
+    }
+    validate_label(name, "group name")?;
+    Ok(name.to_owned())
+}
+
 fn validate_label(label: &str, kind: &str) -> Result<(), PresetError> {
     if label.chars().count() > MAX_PRESET_NAME_CHARS {
         return invalid(format!(
@@ -402,6 +412,9 @@ pub struct StoredPreset {
 pub struct PresetFolderContents {
     /// Sorted by group, then name.
     pub presets: Vec<StoredPreset>,
+    /// Every group, including empty ones, sorted by name. Groups only named
+    /// by a preset are included too.
+    pub groups: Vec<String>,
     /// One message per file that could not be read.
     pub failures: Vec<String>,
 }
@@ -435,7 +448,187 @@ pub fn load_preset_folder(folder: &Path) -> Result<PresetFolderContents, PresetE
             stored.preset.name.to_lowercase(),
         )
     });
+    let stored_groups = read_group_list(folder).unwrap_or_else(|error| {
+        contents.failures.push(format!("{GROUPS_FILE}: {error}"));
+        Vec::new()
+    });
+    contents.groups = merge_groups(
+        stored_groups.into_iter().chain(
+            contents
+                .presets
+                .iter()
+                .map(|stored| stored.preset.group.clone()),
+        ),
+    );
     Ok(contents)
+}
+
+// Groups are stored in a list next to the presets so that a group exists,
+// empty or not, until it is deleted. Each preset also names its group, so a
+// preset copied in from elsewhere brings its group along.
+
+const GROUPS_FILE: &str = "groups.json";
+const GROUPS_FORMAT: &str = "CalibRaw preset groups";
+/// Bump for every incompatible change to the group list layout.
+const GROUPS_SCHEMA_VERSION: u32 = 1;
+
+#[derive(Deserialize, Serialize)]
+struct GroupsDocument {
+    format: String,
+    schema_version: u32,
+    groups: Vec<String>,
+}
+
+/// What happens to the presets of a deleted group.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DeletedGroupPresets {
+    /// Keep them under [`DEFAULT_PRESET_GROUP`].
+    MoveToDefaultGroup,
+    Delete,
+}
+
+/// The group in `groups` that `name` refers to. Group names are compared
+/// the way they are shown, ignoring case.
+pub fn find_group<'g>(groups: &'g [String], name: &str) -> Option<&'g str> {
+    let name = name.trim().to_lowercase();
+    groups
+        .iter()
+        .find(|group| group.to_lowercase() == name)
+        .map(String::as_str)
+}
+
+/// Unique group names, sorted. The first spelling of a name wins.
+fn merge_groups(groups: impl IntoIterator<Item = String>) -> Vec<String> {
+    let mut merged: Vec<String> = Vec::new();
+    for group in groups {
+        if find_group(&merged, &group).is_none() {
+            merged.push(group);
+        }
+    }
+    merged.sort_by_cached_key(|group| group.to_lowercase());
+    merged
+}
+
+fn read_group_list(folder: &Path) -> Result<Vec<String>, PresetError> {
+    let bytes = match std::fs::read(folder.join(GROUPS_FILE)) {
+        Ok(bytes) => bytes,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => return Err(error.into()),
+    };
+    if bytes.len() as u64 > MAX_PRESET_BYTES {
+        return Err(PresetError::TooLarge(bytes.len() as u64));
+    }
+    let document: GroupsDocument = serde_json::from_slice(&bytes)
+        .map_err(|error| PresetError::Invalid(format!("invalid group list: {error}")))?;
+    if document.format != GROUPS_FORMAT {
+        return invalid("not a CalibRaw preset group list");
+    }
+    if document.schema_version != GROUPS_SCHEMA_VERSION {
+        return Err(PresetError::Unsupported(format!(
+            "group list schema {} is not supported",
+            document.schema_version
+        )));
+    }
+    document
+        .groups
+        .iter()
+        .map(|group| validate_group_name(group))
+        .collect()
+}
+
+fn write_group_list(folder: &Path, groups: Vec<String>) -> Result<(), PresetError> {
+    let document = GroupsDocument {
+        format: GROUPS_FORMAT.to_owned(),
+        schema_version: GROUPS_SCHEMA_VERSION,
+        groups: merge_groups(groups),
+    };
+    let bytes = serde_json::to_vec_pretty(&document)
+        .map_err(|error| PresetError::Invalid(format!("could not encode groups: {error}")))?;
+    write_bytes_atomically(&folder.join(GROUPS_FILE), &bytes)?;
+    Ok(())
+}
+
+/// Adds a group to `folder` and returns its name. When a group with that
+/// name exists, ignoring case, nothing changes and its name is returned.
+pub fn create_group(folder: &Path, name: &str) -> Result<String, PresetError> {
+    let name = validate_group_name(name)?;
+    let contents = load_preset_folder(folder)?;
+    if let Some(existing) = find_group(&contents.groups, &name) {
+        return Ok(existing.to_owned());
+    }
+    let mut groups = contents.groups;
+    groups.push(name.clone());
+    write_group_list(folder, groups)?;
+    Ok(name)
+}
+
+/// Renames a group and moves its presets along. Returns the new name.
+pub fn rename_group(folder: &Path, old: &str, new: &str) -> Result<String, PresetError> {
+    let new = validate_group_name(new)?;
+    let contents = load_preset_folder(folder)?;
+    let Some(old) = find_group(&contents.groups, old).map(str::to_owned) else {
+        return invalid(format!("the group “{}” no longer exists", old.trim()));
+    };
+    if let Some(existing) = find_group(&contents.groups, &new) {
+        if existing != old {
+            return invalid(format!("a group named “{existing}” already exists"));
+        }
+    }
+    for stored in &contents.presets {
+        if find_group(std::slice::from_ref(&old), stored.preset.group()).is_some() {
+            let renamed = stored.preset.renamed(stored.preset.name(), &new)?;
+            write_preset_file(&stored.path, &renamed)?;
+        }
+    }
+    let groups = contents
+        .groups
+        .into_iter()
+        .map(|group| if group == old { new.clone() } else { group })
+        .collect();
+    write_group_list(folder, groups)?;
+    Ok(new)
+}
+
+/// Deletes a group, and either deletes its presets or moves them to
+/// [`DEFAULT_PRESET_GROUP`].
+pub fn delete_group(
+    folder: &Path,
+    name: &str,
+    presets: DeletedGroupPresets,
+) -> Result<(), PresetError> {
+    let contents = load_preset_folder(folder)?;
+    let Some(group) = find_group(&contents.groups, name).map(str::to_owned) else {
+        return Ok(());
+    };
+    let moves_to_itself = find_group(std::slice::from_ref(&group), DEFAULT_PRESET_GROUP).is_some();
+    if presets == DeletedGroupPresets::MoveToDefaultGroup && moves_to_itself {
+        return invalid(format!(
+            "presets cannot be moved out of “{DEFAULT_PRESET_GROUP}” into itself"
+        ));
+    }
+    let mut moved_any = false;
+    for stored in &contents.presets {
+        if find_group(std::slice::from_ref(&group), stored.preset.group()).is_none() {
+            continue;
+        }
+        match presets {
+            DeletedGroupPresets::Delete => std::fs::remove_file(&stored.path)?,
+            DeletedGroupPresets::MoveToDefaultGroup => {
+                let moved = stored.preset.renamed(stored.preset.name(), "")?;
+                write_preset_file(&stored.path, &moved)?;
+                moved_any = true;
+            }
+        }
+    }
+    let mut groups: Vec<String> = contents
+        .groups
+        .into_iter()
+        .filter(|existing| *existing != group)
+        .collect();
+    if moved_any {
+        groups.push(DEFAULT_PRESET_GROUP.to_owned());
+    }
+    write_group_list(folder, groups)
 }
 
 pub fn is_preset_file(path: &Path) -> bool {

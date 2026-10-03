@@ -1,17 +1,16 @@
 //! The Presets sidebar panel, its dialogs and the "Apply preset" menus.
-use crate::app::{CalibRawApp, PresetEditorMode};
+use crate::app::{CalibRawApp, GroupDialogMode, PresetEditor, PresetEditorMode};
 use crate::pipeline::AdjustmentGroup;
+use crate::presets::DeletedGroupPresets;
 use crate::sidecar::EditSelection;
-use crate::ui::{icons, theme};
+use crate::ui::theme;
 use eframe::egui::{self, Ui};
 use std::path::PathBuf;
 
 #[cfg(not(target_os = "android"))]
-const ROW_HELP: &str = "Previewing on the photo. Click to apply.";
+const ROW_HELP: &str = "Previewing on the photo. Click to apply, right-click for more.";
 #[cfg(target_os = "android")]
 const ROW_HELP: &str = "Tap to apply to this photo.";
-
-const PANEL_HELP: &str = "Click a preset to apply it to this photo. A preset changes only the settings it includes, and adds its masks next to the photo's own.";
 
 #[derive(Clone, Debug)]
 enum PresetAction {
@@ -20,6 +19,10 @@ enum PresetAction {
     #[cfg(not(target_os = "android"))]
     Export(PathBuf),
     Delete(PathBuf),
+    NewPreset(String),
+    NewGroup,
+    RenameGroup(String),
+    DeleteGroup(String),
 }
 
 /// Presets grouped for display. Collected up front so drawing does not hold
@@ -43,27 +46,39 @@ struct PresetListEntry {
 }
 
 impl PresetList {
+    /// Every group with its presets, including empty groups.
     pub(crate) fn from_app(app: &CalibRawApp) -> Self {
-        let mut groups: Vec<PresetListGroup> = Vec::new();
-        for stored in app.presets.all() {
-            let entry = PresetListEntry {
-                path: stored.path.clone(),
-                name: stored.preset.name().to_owned(),
-                summary: selection_summary(stored.preset.selection()),
-            };
-            match groups.last_mut() {
-                Some(group) if group.name == stored.preset.group() => group.presets.push(entry),
-                _ => groups.push(PresetListGroup {
-                    name: stored.preset.group().to_owned(),
-                    presets: vec![entry],
-                }),
-            }
-        }
+        let groups = app
+            .presets
+            .groups()
+            .iter()
+            .map(|group| PresetListGroup {
+                name: group.clone(),
+                presets: app
+                    .presets
+                    .all()
+                    .iter()
+                    .filter(|stored| {
+                        crate::presets::find_group(
+                            std::slice::from_ref(group),
+                            stored.preset.group(),
+                        )
+                        .is_some()
+                    })
+                    .map(|stored| PresetListEntry {
+                        path: stored.path.clone(),
+                        name: stored.preset.name().to_owned(),
+                        summary: selection_summary(stored.preset.selection()),
+                    })
+                    .collect(),
+            })
+            .collect();
         Self { groups }
     }
 
+    /// Whether there is no preset to apply. Empty groups do not count.
     pub(crate) fn is_empty(&self) -> bool {
-        self.groups.is_empty()
+        self.groups.iter().all(|group| group.presets.is_empty())
     }
 
     /// Menu items for every preset, one submenu per group when there are
@@ -81,7 +96,12 @@ impl PresetList {
                 }
             }
         };
-        match self.groups.as_slice() {
+        let groups: Vec<_> = self
+            .groups
+            .iter()
+            .filter(|group| !group.presets.is_empty())
+            .collect();
+        match groups.as_slice() {
             [group] => show_entries(ui, group),
             groups => {
                 for group in groups {
@@ -126,76 +146,99 @@ fn selection_summary(selection: EditSelection) -> String {
     parts.join(" · ")
 }
 
+/// The Presets tab's action for the sidebar header, next to the histogram
+/// toggle, like the reset buttons of the other tabs. Creating presets and
+/// groups happens in the list itself.
+#[cfg(not(target_os = "android"))]
+pub(crate) fn show_header_actions(ui: &mut Ui, app: &mut CalibRawApp) {
+    if crate::ui::icons::phosphor_icon_button_enabled(
+        ui,
+        app.presets.is_available(),
+        egui_phosphor::regular::DOWNLOAD_SIMPLE,
+        theme::toolbar_icon_size(),
+        "Import presets",
+    )
+    .clicked()
+    {
+        app.choose_preset_files_to_import();
+    }
+}
+
 pub(crate) fn show_panel(ui: &mut Ui, app: &mut CalibRawApp, frame: &eframe::Frame) {
     let list = PresetList::from_app(app);
     let mut action = None;
 
-    theme::section_card_with_help(ui, "Presets", PANEL_HELP, |ui| {
-        theme::action_row(ui, |ui| {
-            if ui
-                .add_enabled_ui(app.can_create_preset(), |ui| {
-                    theme::primary_action_button(
-                        ui,
-                        format!("{}  Create preset…", egui_phosphor::regular::PLUS),
-                    )
-                })
-                .inner
-                .on_hover_text("Save settings of this photo as a new preset")
-                .on_disabled_hover_text("Open a photo to create a preset from its settings")
-                .clicked()
-            {
-                app.open_new_preset_editor();
-            }
-            #[cfg(not(target_os = "android"))]
-            if theme::secondary_button_enabled(
-                ui,
-                app.presets.is_available(),
-                format!("{}  Import…", egui_phosphor::regular::DOWNLOAD_SIMPLE),
-            )
-            .on_hover_text("Add .calibraw-preset files")
-            .clicked()
-            {
-                app.choose_preset_files_to_import();
+    let mut notes = Vec::new();
+    if !app.presets.is_available() {
+        notes.push((
+            "Presets are unavailable because CalibRaw has no settings folder.".to_owned(),
+            ui.visuals().warn_fg_color,
+            None,
+        ));
+    }
+    if !app.presets.load_failures.is_empty() {
+        let count = app.presets.load_failures.len();
+        notes.push((
+            format!(
+                "{count} preset {} could not be read.",
+                if count == 1 { "file" } else { "files" }
+            ),
+            ui.visuals().warn_fg_color,
+            Some(app.presets.load_failures.join("\n")),
+        ));
+    }
+    if list.groups.is_empty() {
+        notes.push((
+            "No presets yet. Create a group, then add presets to it from an edited photo."
+                .to_owned(),
+            ui.visuals().weak_text_color(),
+            None,
+        ));
+    }
+    if !notes.is_empty() {
+        theme::content_card(ui, |ui| {
+            for (text, color, details) in &notes {
+                let response = show_note(ui, text, *color);
+                if let Some(details) = details {
+                    response.on_hover_text(details);
+                }
             }
         });
-        if !app.presets.is_available() {
-            show_note(
-                ui,
-                "Presets are unavailable because CalibRaw has no settings folder.",
-                ui.visuals().warn_fg_color,
-            );
-        }
-        if !app.presets.load_failures.is_empty() {
-            let count = app.presets.load_failures.len();
-            show_note(
-                ui,
-                &format!(
-                    "{count} preset {} could not be read.",
-                    if count == 1 { "file" } else { "files" }
-                ),
-                ui.visuals().warn_fg_color,
-            )
-            .on_hover_text(app.presets.load_failures.join("\n"));
-        }
-        if list.is_empty() {
-            show_note(
-                ui,
-                "No presets yet. Edit a photo, then choose Create preset to reuse its settings.",
-                ui.visuals().weak_text_color(),
-            );
-        }
-    });
+    }
 
+    let can_create_preset = app.can_create_preset();
     let mut hovered = None;
-    for group in &list.groups {
-        theme::card_gap(ui);
-        theme::section_card(ui, &group.name, |ui| {
+    for (index, group) in list.groups.iter().enumerate() {
+        if index > 0 || !notes.is_empty() {
+            theme::card_gap(ui);
+        }
+        theme::content_card(ui, |ui| {
+            show_group_title(ui, &group.name, &mut action);
             for entry in &group.presets {
                 if show_preset_row(ui, entry, &mut action) {
                     hovered = Some(entry.path.clone());
                 }
             }
+            if show_add_row(ui, can_create_preset, "New preset")
+                .on_hover_text("Save settings of this photo as a preset in this group")
+                .on_disabled_hover_text("Open a photo to create a preset from its settings")
+                .clicked()
+            {
+                action = Some(PresetAction::NewPreset(group.name.clone()));
+            }
         });
+    }
+    if !list.groups.is_empty() || !notes.is_empty() {
+        theme::card_gap(ui);
+    }
+    if ui
+        .add_enabled_ui(app.presets.is_available(), |ui| {
+            theme::full_width_button(ui, format!("{}  New group", egui_phosphor::regular::PLUS))
+        })
+        .inner
+        .clicked()
+    {
+        action = Some(PresetAction::NewGroup);
     }
     // Touch screens have no hover; a tap applies the preset directly.
     #[cfg(not(target_os = "android"))]
@@ -211,6 +254,12 @@ pub(crate) fn show_panel(ui: &mut Ui, app: &mut CalibRawApp, frame: &eframe::Fra
         #[cfg(not(target_os = "android"))]
         Some(PresetAction::Export(path)) => app.export_preset(&path),
         Some(PresetAction::Delete(path)) => app.presets.pending_delete = Some(path),
+        Some(PresetAction::NewPreset(group)) => app.open_new_preset_editor(group),
+        Some(PresetAction::NewGroup) => app.open_group_dialog(GroupDialogMode::Create),
+        Some(PresetAction::RenameGroup(group)) => {
+            app.open_group_dialog(GroupDialogMode::Rename { group });
+        }
+        Some(PresetAction::DeleteGroup(group)) => app.presets.pending_group_delete = Some(group),
         None => {}
     }
 }
@@ -219,37 +268,88 @@ fn show_note(ui: &mut Ui, text: &str, color: egui::Color32) -> egui::Response {
     ui.add(egui::Label::new(egui::RichText::new(text).small().color(color)).wrap())
 }
 
-/// Draws one preset row. Returns whether the pointer rests on its name.
+/// The group's card title. Like the mask list, its actions are on a
+/// right-click menu, and on a corner menu button on Android.
+fn show_group_title(ui: &mut Ui, group: &str, action: &mut Option<PresetAction>) {
+    let title = |ui: &mut Ui| {
+        ui.add(
+            egui::Label::new(egui::RichText::new(group).strong())
+                .truncate()
+                .sense(egui::Sense::click()),
+        )
+    };
+    #[cfg(not(target_os = "android"))]
+    let response = title(ui);
+    // The corner menu button needs a row of control height.
+    #[cfg(target_os = "android")]
+    let response = ui
+        .allocate_ui_with_layout(
+            egui::vec2(ui.available_width(), theme::CONTROL_HEIGHT),
+            egui::Layout::left_to_right(egui::Align::Center),
+            |ui| {
+                title(ui);
+                ui.allocate_space(ui.available_size());
+            },
+        )
+        .response;
+
+    let menu = |ui: &mut Ui, action: &mut Option<PresetAction>| {
+        if theme::menu_item(ui, true, "Rename group…").clicked() {
+            *action = Some(PresetAction::RenameGroup(group.to_owned()));
+            ui.close();
+        }
+        ui.separator();
+        if theme::destructive_menu_item(ui, "Delete group…").clicked() {
+            *action = Some(PresetAction::DeleteGroup(group.to_owned()));
+            ui.close();
+        }
+    };
+    theme::context_menu(&response, |ui| menu(ui, action));
+    #[cfg(target_os = "android")]
+    crate::ui::android_overflow_menu(
+        ui,
+        response.rect,
+        ui.make_persistent_id(("preset-group-overflow", group)),
+        22.0,
+        |ui| menu(ui, action),
+    );
+}
+
+/// The button that ends a group card, styled like "New group" below the
+/// cards.
+fn show_add_row(ui: &mut Ui, enabled: bool, label: &str) -> egui::Response {
+    ui.add_enabled_ui(enabled, |ui| {
+        theme::full_width_button(ui, format!("{}  {label}", egui_phosphor::regular::PLUS))
+    })
+    .inner
+}
+
+/// Draws one preset row. Returns whether the pointer rests on it.
 fn show_preset_row(
     ui: &mut Ui,
     entry: &PresetListEntry,
     action: &mut Option<PresetAction>,
 ) -> bool {
-    ui.push_id(&entry.path, |ui| {
-        theme::toolbar_row(ui, |ui| {
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                let menu = icons::phosphor_icon_button(
-                    ui,
-                    egui_phosphor::regular::DOTS_THREE_VERTICAL,
-                    theme::toolbar_icon_size(),
-                    "Preset actions",
-                );
-                theme::dropdown_menu(&menu, |ui| preset_actions_menu(ui, entry, action));
-                let response = theme::navigation_row(ui, &entry.name, false, egui::Sense::click())
-                    .on_hover_text(format!("{ROW_HELP}\n{}", entry.summary));
-                if response.clicked() {
-                    *action = Some(PresetAction::Apply(entry.path.clone()));
-                }
-                theme::context_menu(&response, |ui| preset_actions_menu(ui, entry, action));
-                // An open menu means the pointer is choosing an action, not
-                // looking at the preset.
-                response.hovered() && !egui::Popup::is_any_open(ui.ctx())
-            })
-            .inner
-        })
-        .inner
-    })
-    .inner
+    let response = theme::navigation_row(ui, &entry.name, false, egui::Sense::click())
+        .on_hover_text(format!("{ROW_HELP}\n{}", entry.summary));
+    theme::context_menu(&response, |ui| preset_actions_menu(ui, entry, action));
+    #[cfg(target_os = "android")]
+    let overflow_clicked = crate::ui::android_overflow_menu(
+        ui,
+        response.rect,
+        ui.make_persistent_id(("preset-overflow", &entry.path)),
+        22.0,
+        |ui| preset_actions_menu(ui, entry, action),
+    )
+    .clicked();
+    #[cfg(not(target_os = "android"))]
+    let overflow_clicked = false;
+    if response.clicked() && !overflow_clicked {
+        *action = Some(PresetAction::Apply(entry.path.clone()));
+    }
+    // An open menu means the pointer is choosing an action, not looking at
+    // the preset.
+    response.hovered() && !egui::Popup::is_any_open(ui.ctx())
 }
 
 fn preset_actions_menu(ui: &mut Ui, entry: &PresetListEntry, action: &mut Option<PresetAction>) {
@@ -276,16 +376,16 @@ fn preset_actions_menu(ui: &mut Ui, entry: &PresetListEntry, action: &mut Option
 /// The preset editor and delete confirmation. Shown on top of every tab.
 pub(crate) fn show_dialogs(ctx: &egui::Context, app: &mut CalibRawApp) {
     show_editor(ctx, app);
+    // Drawn after the editor so it opens on top of it.
+    show_group_dialog(ctx, app);
+    show_group_delete_confirmation(ctx, app);
     show_delete_confirmation(ctx, app);
 }
 
 fn show_editor(ctx: &egui::Context, app: &mut CalibRawApp) {
-    let groups: Vec<String> = app
-        .presets
-        .groups()
-        .into_iter()
-        .map(str::to_owned)
-        .collect();
+    let groups = app.presets.groups().to_vec();
+    // The group dialog on top owns the keyboard and pointer.
+    let group_dialog_open = app.presets.group_dialog.is_some();
     let replaces_existing = app.presets.editor.as_ref().is_some_and(|editor| {
         matches!(editor.mode, PresetEditorMode::Create { .. })
             && app
@@ -298,6 +398,7 @@ fn show_editor(ctx: &egui::Context, app: &mut CalibRawApp) {
     };
 
     let creating = matches!(editor.mode, PresetEditorMode::Create { .. });
+    let mut open_group_dialog = false;
     // The body updates eligibility before the fixed footer is drawn, without
     // making either closure hold a second borrow of the editor.
     let confirm_enabled = std::cell::Cell::new(false);
@@ -319,43 +420,20 @@ fn show_editor(ctx: &egui::Context, app: &mut CalibRawApp) {
     .show_with_footer(
         ctx,
         |ui| {
+            if group_dialog_open {
+                ui.disable();
+            }
             ui.label("Name");
-            let response = ui.add(
-                theme::dialog_text_edit(&mut editor.name, "preset-editor-name")
-                    .hint_text("e.g. Warm matte"),
+            let response = theme::dialog_text_field(
+                ui,
+                &mut editor.name,
+                "preset-editor-name",
+                "e.g. Warm matte",
             );
             theme::request_initial_focus(&response, &mut editor.focus_requested);
 
             ui.label("Group");
-            // A row of fixed height: a bare right-to-left layout would claim
-            // the dialog's remaining height and grow the window.
-            ui.allocate_ui_with_layout(
-                egui::vec2(ui.available_width(), theme::CONTROL_HEIGHT),
-                egui::Layout::right_to_left(egui::Align::Center),
-                |ui| {
-                    // The button takes its natural width first; the field fills
-                    // what is left.
-                    let menu = icons::phosphor_icon_button_enabled(
-                        ui,
-                        !groups.is_empty(),
-                        egui_phosphor::regular::CARET_DOWN,
-                        theme::toolbar_icon_size(),
-                        "Choose an existing group",
-                    );
-                    theme::dropdown_menu(&menu, |ui| {
-                        for group in &groups {
-                            if theme::menu_item(ui, true, group).clicked() {
-                                editor.group.clone_from(group);
-                                ui.close();
-                            }
-                        }
-                    });
-                    ui.add(
-                        theme::dialog_text_edit(&mut editor.group, "preset-editor-group")
-                            .hint_text(crate::presets::DEFAULT_PRESET_GROUP),
-                    );
-                },
-            );
+            open_group_dialog |= show_group_dropdown(ui, editor, &groups);
 
             if let PresetEditorMode::Create { edits } = &editor.mode {
                 theme::card_gap(ui);
@@ -389,6 +467,9 @@ fn show_editor(ctx: &egui::Context, app: &mut CalibRawApp) {
                 .set(!editor.name.trim().is_empty() && (!creating || !editor.selection.is_empty()));
         },
         |ui| {
+            if group_dialog_open {
+                ui.disable();
+            }
             let confirm_label = match (creating, replaces_existing) {
                 (true, true) => "Replace",
                 (true, false) => "Save preset",
@@ -405,10 +486,149 @@ fn show_editor(ctx: &egui::Context, app: &mut CalibRawApp) {
         },
     );
 
+    if open_group_dialog {
+        app.open_group_dialog(GroupDialogMode::Create);
+    }
     match choice {
         crate::ui::theme::DialogAction::Cancel => app.presets.editor = None,
         crate::ui::theme::DialogAction::Confirm => app.confirm_preset_editor(),
         crate::ui::theme::DialogAction::None => {}
+    }
+}
+
+/// The group dropdown: existing groups, the editor's group when it is new,
+/// and "New group…". Returns whether "New group…" was chosen.
+fn show_group_dropdown(ui: &mut Ui, editor: &mut PresetEditor, groups: &[String]) -> bool {
+    let mut choices = groups.to_vec();
+    let current = editor.group.to_lowercase();
+    if !choices.iter().any(|group| group.to_lowercase() == current) {
+        choices.insert(0, editor.group.clone());
+    }
+    let mut open_new_group = false;
+    theme::combo_box(
+        "preset-editor-group",
+        editor.group.clone(),
+        ui.available_width(),
+    )
+    .show_ui(ui, |ui| {
+        for group in &choices {
+            ui.selectable_value(&mut editor.group, group.clone(), group);
+        }
+        ui.separator();
+        if ui
+            .selectable_label(
+                false,
+                format!("{}  New group…", egui_phosphor::regular::PLUS),
+            )
+            .clicked()
+        {
+            open_new_group = true;
+        }
+    });
+    open_new_group
+}
+
+fn show_group_dialog(ctx: &egui::Context, app: &mut CalibRawApp) {
+    let Some(dialog) = app.presets.group_dialog.as_mut() else {
+        return;
+    };
+    let (title, confirm_label) = match dialog.mode {
+        GroupDialogMode::Create => ("New group", "Add group"),
+        GroupDialogMode::Rename { .. } => ("Rename group", "Rename"),
+    };
+    let mut choice = theme::DialogAction::None;
+    theme::dialog_window(title, ctx, theme::DIALOG_WIDTH_FORM)
+        .id(egui::Id::new("preset-group-dialog"))
+        .show(ctx, |ui| {
+            ui.label("Group name");
+            let response =
+                theme::dialog_text_field(ui, &mut dialog.name, "preset-group-name", "e.g. Film");
+            theme::request_initial_focus(&response, &mut dialog.focus_requested);
+            if let Some(error) = &dialog.error {
+                show_note(ui, error, ui.visuals().error_fg_color);
+            }
+            choice = theme::dialog_confirmation_buttons(
+                ui,
+                "Cancel",
+                confirm_label,
+                !dialog.name.trim().is_empty(),
+                false,
+                theme::DialogKeyboard::CONFIRM_ON_ENTER,
+            );
+        });
+    match choice {
+        theme::DialogAction::Cancel => app.presets.group_dialog = None,
+        theme::DialogAction::Confirm => app.confirm_group_dialog(),
+        theme::DialogAction::None => {}
+    }
+}
+
+fn show_group_delete_confirmation(ctx: &egui::Context, app: &mut CalibRawApp) {
+    let Some(group) = app.presets.pending_group_delete.clone() else {
+        return;
+    };
+    let count = PresetList::from_app(app)
+        .groups
+        .iter()
+        .find(|listed| listed.name == group)
+        .map_or(0, |listed| listed.presets.len());
+    let can_move = crate::presets::find_group(
+        std::slice::from_ref(&group),
+        crate::presets::DEFAULT_PRESET_GROUP,
+    )
+    .is_none();
+
+    let mut choice = None;
+    let mut cancel = false;
+    theme::dialog_window("Delete group?", ctx, theme::DIALOG_WIDTH_DEFAULT)
+        .id(egui::Id::new("preset-group-delete-confirmation"))
+        .show(ctx, |ui| {
+            ui.add(
+                egui::Label::new(match count {
+                    0 => format!("“{group}” will be deleted."),
+                    1 => format!("“{group}” contains 1 preset."),
+                    count => format!("“{group}” contains {count} presets."),
+                })
+                .wrap(),
+            );
+            theme::dialog_button_row(ui, |ui| {
+                let delete_label = if count == 0 {
+                    "Delete"
+                } else {
+                    "Delete with presets"
+                };
+                if ui
+                    .add(
+                        egui::Button::new(
+                            egui::RichText::new(delete_label).color(ui.visuals().error_fg_color),
+                        )
+                        .min_size(egui::vec2(0.0, theme::CONTROL_HEIGHT)),
+                    )
+                    .clicked()
+                {
+                    choice = Some(DeletedGroupPresets::Delete);
+                }
+                if count > 0
+                    && can_move
+                    && theme::primary_action_button(
+                        ui,
+                        format!("Move presets to {}", crate::presets::DEFAULT_PRESET_GROUP),
+                    )
+                    .clicked()
+                {
+                    choice = Some(DeletedGroupPresets::MoveToDefaultGroup);
+                }
+                cancel |= theme::secondary_button(ui, "Cancel").clicked();
+            });
+            cancel |= choice.is_none()
+                && theme::dialog_keyboard_action(ui, theme::DialogKeyboard::CLOSE_ONLY, false)
+                    == theme::DialogAction::Cancel;
+        });
+    if let Some(presets) = choice {
+        app.presets.pending_group_delete = None;
+        app.delete_preset_group(&group, presets);
+    } else if cancel {
+        app.presets.pending_group_delete = None;
     }
 }
 
@@ -420,7 +640,7 @@ fn show_selection_controls(
     theme::strong_with_help(
         ui,
         "Include settings",
-        "Unchecked settings keep the destination photo’s values. Selecting an unchanged group also saves its default values.",
+        "Settings that are not selected keep the destination photo’s values. Selecting an unchanged group also saves its default values.",
     );
     ui.add_space(theme::SPACE_XS);
     // Each column retains a readable checkbox width; small viewports stack the
@@ -495,7 +715,7 @@ fn show_adjustment_selection(
         theme::strong_with_help(
             ui,
             "Adjustments",
-            "Each group matches a card in the Edit tab. Unchecked groups keep the destination photo's settings.",
+            "Each group matches a card in the Edit tab. Groups that are not selected keep the destination photo's settings. Edited groups are shown in bold.",
         );
         theme::action_row(ui, |ui| {
             if theme::secondary_button(ui, "All")
@@ -512,20 +732,25 @@ fn show_adjustment_selection(
             }
         });
         ui.add_space(theme::SPACE_XS);
-        for group in AdjustmentGroup::ALL {
-            let mut included = selection.adjustment_groups.contains(group);
-            let edited = edits.exposure.group_is_edited(group);
-            let label = egui::RichText::new(group.label());
-            let label = if edited { label.strong() } else { label };
-            let help = if edited {
-                "Edited on this photo. Include this group’s current settings."
-            } else {
-                "Unchanged on this photo. Including this group replaces the destination’s settings with these defaults."
-            };
-            if theme::checkbox_with_help(ui, &mut included, label, help).changed() {
-                selection.adjustment_groups.set(group, included);
+        theme::action_row(ui, |ui| {
+            for group in AdjustmentGroup::ALL {
+                let included = selection.adjustment_groups.contains(group);
+                let edited = edits.exposure.group_is_edited(group);
+                let label = egui::RichText::new(group.label());
+                let label = if edited { label.strong() } else { label };
+                let help = if edited {
+                    "Edited on this photo. Include this group’s current settings."
+                } else {
+                    "Unchanged on this photo. Including this group replaces the destination’s settings with these defaults."
+                };
+                if theme::toggle_button(ui, label, included)
+                    .on_hover_text(help)
+                    .clicked()
+                {
+                    selection.adjustment_groups.set(group, !included);
+                }
             }
-        }
+        });
     });
 }
 
@@ -533,37 +758,42 @@ fn show_additional_selection(ui: &mut Ui, selection: &mut EditSelection) {
     theme::content_card(ui, |ui| {
         ui.strong("Also include");
         ui.add_space(theme::SPACE_XS);
-        theme::checkbox_with_help(
-        ui,
-        &mut selection.camera_profile,
-        "Camera profile",
-        "The DCP profile chosen for this photo. Photos from other camera models keep their automatic profile.",
-    );
-        theme::checkbox_with_help(
-        ui,
-        &mut selection.masks,
-        "Masks",
-        "Fullscreen, linear and radial masks with their adjustments, and global effects such as fog. They are added next to each photo's own masks.",
-    );
-        theme::checkbox_with_help(
-        ui,
-        &mut selection.ai_masks,
-        "AI masks",
-        "Subject, background, sky, depth and range masks. They are regenerated for each photo the preset is applied to.",
-    );
-        theme::section_separator(ui);
-        theme::checkbox_with_help(
-            ui,
-            &mut selection.geometry,
-            "Crop & geometry",
-            "Crop, rotation, straighten, perspective and flips.",
-        );
-        theme::checkbox_with_help(
-            ui,
-            &mut selection.lens_correction,
-            "Lens correction",
-            "Lens correction state and the selected lens profile.",
-        );
+        theme::action_row(ui, |ui| {
+            for (included, label, help) in [
+                (
+                    &mut selection.camera_profile,
+                    "Camera profile",
+                    "The DCP profile chosen for this photo. Photos from other camera models keep their automatic profile.",
+                ),
+                (
+                    &mut selection.masks,
+                    "Masks",
+                    "Fullscreen, linear and radial masks with their adjustments, and global effects such as fog. They are added next to each photo's own masks.",
+                ),
+                (
+                    &mut selection.ai_masks,
+                    "AI masks",
+                    "Subject, background, sky, depth and range masks. They are regenerated for each photo the preset is applied to.",
+                ),
+                (
+                    &mut selection.geometry,
+                    "Crop & geometry",
+                    "Crop, rotation, straighten, perspective and flips.",
+                ),
+                (
+                    &mut selection.lens_correction,
+                    "Lens correction",
+                    "Lens correction state and the selected lens profile.",
+                ),
+            ] {
+                if theme::toggle_button(ui, label, *included)
+                    .on_hover_text(help)
+                    .clicked()
+                {
+                    *included = !*included;
+                }
+            }
+        });
     });
 }
 
@@ -663,6 +893,37 @@ mod tests {
         );
         assert!(settled.x < 600.0, "dialog grew to {} wide", settled.x);
         assert!(settled.y < 400.0, "dialog grew to {} high", settled.y);
+
+        // "New group" opens on top of the editor and keeps its size too.
+        app.open_group_dialog(GroupDialogMode::Create);
+        let mut sizes = Vec::new();
+        for _ in 0..12 {
+            let _ = ctx.run_ui(input(), |root| show_dialogs(root.ctx(), &mut app));
+            sizes.push(
+                ctx.memory(|memory| memory.area_rect(egui::Id::new("preset-group-dialog")))
+                    .expect("the new group dialog is open")
+                    .size(),
+            );
+        }
+        let settled = sizes[2];
+        assert!(
+            sizes[2..]
+                .iter()
+                .all(|size| (*size - settled).length() < 0.5),
+            "new group dialog size changed between frames: {sizes:?}"
+        );
+        // Both dialogs are centered, so whatever is hit at the new group
+        // dialog's center is the dialog drawn on top.
+        let center = ctx
+            .memory(|memory| memory.area_rect(egui::Id::new("preset-group-dialog")))
+            .unwrap()
+            .center();
+        let on_top = ctx.layer_id_at(center).map(|layer| layer.id)
+            == Some(egui::Id::new("preset-group-dialog"));
+        assert!(
+            on_top,
+            "the new group dialog must be drawn above the editor"
+        );
 
         std::fs::remove_dir_all(folder).unwrap();
     }

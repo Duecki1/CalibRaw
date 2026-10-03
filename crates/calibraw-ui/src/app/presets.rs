@@ -15,10 +15,14 @@ pub(crate) struct PresetState {
     /// `None` when there is no writable app data folder.
     folder: Option<PathBuf>,
     presets: Vec<StoredPreset>,
+    /// Every group, including empty ones, sorted by name.
+    groups: Vec<String>,
     /// Files in the preset folder that could not be read.
     pub(crate) load_failures: Vec<String>,
     pub(crate) editor: Option<PresetEditor>,
     pub(crate) pending_delete: Option<PathBuf>,
+    pub(crate) group_dialog: Option<GroupDialog>,
+    pub(crate) pending_group_delete: Option<String>,
     pub(crate) hover: PresetHoverPreview,
 }
 
@@ -41,6 +45,7 @@ impl PresetState {
         let contents = crate::presets::load_preset_folder(folder)
             .map_err(|error| format!("Could not read presets in {}: {error}", folder.display()))?;
         self.presets = contents.presets;
+        self.groups = contents.groups;
         self.load_failures = contents.failures;
         Ok(())
     }
@@ -61,15 +66,9 @@ impl PresetState {
             .map(|stored| &stored.preset)
     }
 
-    /// Group names in display order.
-    pub(crate) fn groups(&self) -> Vec<&str> {
-        let mut groups: Vec<&str> = self
-            .presets
-            .iter()
-            .map(|stored| stored.preset.group())
-            .collect();
-        groups.dedup();
-        groups
+    /// Every group, including empty ones, in display order.
+    pub(crate) fn groups(&self) -> &[String] {
+        &self.groups
     }
 
     /// The preset listed as `name` in `group`, other than the one at `except`.
@@ -85,7 +84,10 @@ impl PresetState {
     }
 
     pub(crate) fn dialog_open(&self) -> bool {
-        self.editor.is_some() || self.pending_delete.is_some()
+        self.editor.is_some()
+            || self.pending_delete.is_some()
+            || self.group_dialog.is_some()
+            || self.pending_group_delete.is_some()
     }
 
     fn folder(&self) -> Result<&Path, String> {
@@ -123,6 +125,20 @@ pub(crate) struct PresetEditor {
     pub(crate) focus_requested: bool,
 }
 
+pub(crate) enum GroupDialogMode {
+    Create,
+    Rename { group: String },
+}
+
+/// Names a new group or renames one. Shared by the Presets panel and the
+/// preset editor, where it opens on top.
+pub(crate) struct GroupDialog {
+    pub(crate) mode: GroupDialogMode,
+    pub(crate) name: String,
+    pub(crate) error: Option<String>,
+    pub(crate) focus_requested: bool,
+}
+
 impl CalibRawApp {
     pub(crate) fn preset_at(&self, path: &Path) -> Option<&Preset> {
         self.presets.get(path)
@@ -132,7 +148,8 @@ impl CalibRawApp {
         self.presets.is_available() && self.develop.loaded_raw.is_some()
     }
 
-    pub(crate) fn open_new_preset_editor(&mut self) {
+    /// Opens the preset editor for the open photo with `group` chosen.
+    pub(crate) fn open_new_preset_editor(&mut self, group: String) {
         if !self.can_create_preset() {
             return;
         }
@@ -145,13 +162,7 @@ impl CalibRawApp {
                 edits: Box::new(edits),
             },
             name: String::new(),
-            group: self
-                .presets
-                .groups()
-                .first()
-                .copied()
-                .unwrap_or(crate::presets::DEFAULT_PRESET_GROUP)
-                .to_owned(),
+            group,
             error: None,
             focus_requested: false,
         });
@@ -200,7 +211,7 @@ impl CalibRawApp {
         match &editor.mode {
             PresetEditorMode::Create { edits } => {
                 let preset = Preset::new(&editor.name, &editor.group, editor.selection, edits)
-                    .map_err(|error| capitalize(&error.to_string()))?;
+                    .map_err(|error| sentence_case(&error.to_string()))?;
                 // Saving under an existing name replaces that preset; the
                 // dialog labels its button "Replace" in that case.
                 let existing = self
@@ -226,7 +237,7 @@ impl CalibRawApp {
                     .get(path)
                     .ok_or_else(|| "That preset no longer exists.".to_owned())?
                     .renamed(&editor.name, &editor.group)
-                    .map_err(|error| capitalize(&error.to_string()))?;
+                    .map_err(|error| sentence_case(&error.to_string()))?;
                 if self
                     .presets
                     .find_named(preset.name(), preset.group(), Some(path))
@@ -242,6 +253,81 @@ impl CalibRawApp {
                     .map_err(|error| format!("Could not rename the preset: {error}"))?;
                 Ok(format!("Renamed preset to “{}”.", preset.name()))
             }
+        }
+    }
+
+    pub(crate) fn open_group_dialog(&mut self, mode: GroupDialogMode) {
+        let name = match &mode {
+            GroupDialogMode::Create => String::new(),
+            GroupDialogMode::Rename { group } => group.clone(),
+        };
+        self.presets.group_dialog = Some(GroupDialog {
+            mode,
+            name,
+            error: None,
+            focus_requested: false,
+        });
+    }
+
+    /// Creates or renames the group in the open group dialog. A preset editor
+    /// underneath follows the change. On failure the dialog shows the error.
+    pub(crate) fn confirm_group_dialog(&mut self) {
+        let Some(dialog) = self.presets.group_dialog.as_ref() else {
+            return;
+        };
+        let result = self.presets.folder().and_then(|folder| {
+            match &dialog.mode {
+                GroupDialogMode::Create => crate::presets::create_group(folder, &dialog.name),
+                GroupDialogMode::Rename { group } => {
+                    crate::presets::rename_group(folder, group, &dialog.name)
+                }
+            }
+            .map_err(|error| sentence_case(&error.to_string()))
+        });
+        let Some(dialog) = self.presets.group_dialog.take() else {
+            return;
+        };
+        let name = match result {
+            Ok(name) => name,
+            Err(error) => {
+                self.presets.group_dialog = Some(GroupDialog {
+                    error: Some(error),
+                    ..dialog
+                });
+                return;
+            }
+        };
+        if let Some(editor) = self.presets.editor.as_mut() {
+            let follows = match &dialog.mode {
+                GroupDialogMode::Create => true,
+                GroupDialogMode::Rename { group } => {
+                    editor.group.to_lowercase() == group.to_lowercase()
+                }
+            };
+            if follows {
+                editor.group.clone_from(&name);
+            }
+        }
+        if let Err(error) = self.presets.reload() {
+            self.ui.notice = Some(error);
+        }
+    }
+
+    pub(crate) fn delete_preset_group(
+        &mut self,
+        group: &str,
+        presets: crate::presets::DeletedGroupPresets,
+    ) {
+        let result = self.presets.folder().and_then(|folder| {
+            crate::presets::delete_group(folder, group, presets)
+                .map_err(|error| sentence_case(&error.to_string()))
+        });
+        self.ui.notice = Some(match result {
+            Ok(()) => format!("Deleted group “{group}”."),
+            Err(error) => format!("Could not delete group “{group}”: {error}"),
+        });
+        if let Err(error) = self.presets.reload() {
+            self.ui.notice = Some(error);
         }
     }
 
@@ -385,7 +471,7 @@ impl CalibRawApp {
 #[cfg(not(target_os = "android"))]
 const PRESET_FILE_EXTENSIONS: &[&str] = &["calibraw-preset"];
 
-fn capitalize(message: &str) -> String {
+pub(crate) fn sentence_case(message: &str) -> String {
     let mut characters = message.chars();
     match characters.next() {
         Some(first) => first.to_uppercase().chain(characters).collect(),
@@ -412,7 +498,7 @@ mod tests {
 
     #[test]
     fn errors_are_shown_as_sentences() {
-        assert_eq!(capitalize("enter a preset name"), "Enter a preset name");
-        assert_eq!(capitalize(""), "");
+        assert_eq!(sentence_case("enter a preset name"), "Enter a preset name");
+        assert_eq!(sentence_case(""), "");
     }
 }

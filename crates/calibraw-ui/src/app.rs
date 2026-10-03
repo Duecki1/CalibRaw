@@ -1549,7 +1549,7 @@ mod presets;
 pub(crate) use library_adjustments::{
     EditTransfer, EditTransferOrigin, LibraryEditTransferOutcome,
 };
-pub(crate) use presets::{PresetEditorMode, PresetState};
+pub(crate) use presets::{GroupDialogMode, PresetEditor, PresetEditorMode, PresetState};
 mod lifecycle;
 mod preview_clipping;
 mod preview_histogram;

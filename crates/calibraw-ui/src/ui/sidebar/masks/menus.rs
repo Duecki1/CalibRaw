@@ -274,10 +274,12 @@ impl Sidebar {
         crate::ui::theme::dialog_window(title, ctx, crate::ui::theme::DIALOG_WIDTH_NARROW)
             .id(egui::Id::new("mask-rename-dialog-window"))
             .show(ctx, |ui| {
-                let response = ui.add(crate::ui::theme::dialog_text_edit(
+                let response = crate::ui::theme::dialog_text_field(
+                    ui,
                     &mut dialog.name,
                     "mask-rename-input",
-                ));
+                    "",
+                );
                 crate::ui::theme::request_initial_focus(&response, &mut dialog.focus_requested);
                 let trimmed_is_empty = dialog.name.trim().is_empty();
                 match crate::ui::theme::dialog_confirmation_buttons(
