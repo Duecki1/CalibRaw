@@ -118,7 +118,15 @@ struct Report {
 fn load_rows(reader: impl Read) -> Result<Vec<Patch>> {
     let mut reader = csv::Reader::from_reader(reader);
     let headers = reader.headers().map_err(csv_error)?.clone();
-    let column = |name: &str| headers.iter().rposition(|header| header == name);
+    let column = |name: &str| {
+        let mut found = None;
+        for (index, header) in headers.iter().enumerate() {
+            if header == name {
+                found = Some(index);
+            }
+        }
+        found
+    };
     let missing: Vec<_> = REQUIRED_COLUMNS
         .iter()
         .copied()
