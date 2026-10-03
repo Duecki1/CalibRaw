@@ -148,25 +148,34 @@ fn open_decoder(path: &Path, format: RenderedImageFormat) -> Result<impl ImageDe
 
 fn decode_heif(path: &Path) -> Result<DecodedImage> {
     let bytes = read_heif(path, None)?;
-    let info = heic_rs::probe(&bytes)?;
-    validate_raw_dimensions(info.width, info.height)?;
-    let color = heif_color(&bytes)?;
-    let options = heic_rs::DecodeOptions::default()
-        .with_layout(heic_rs::PixelLayout::Rgb16)
-        .with_max_pixels(Some(MAX_RAW_PIXELS))
-        .with_alpha(false);
-    let image = heic_rs::decode(&bytes, &options)?;
-    let samples = image
-        .data
-        .chunks_exact(2)
-        .map(|sample| u16::from_ne_bytes([sample[0], sample[1]]))
-        .collect();
-    let pixels = image::ImageBuffer::from_raw(image.width, image.height, samples)
-        .context("HEIF decoder returned a buffer that does not match its dimensions")?;
-    Ok(DecodedImage {
-        pixels: DynamicImage::ImageRgb16(pixels),
-        color,
+    heif_guarded(|| {
+        let info = heic_rs::probe(&bytes)?;
+        validate_raw_dimensions(info.width, info.height)?;
+        let color = heif_color(&bytes)?;
+        let options = heic_rs::DecodeOptions::default()
+            .with_layout(heic_rs::PixelLayout::Rgb16)
+            .with_max_pixels(Some(MAX_RAW_PIXELS))
+            .with_alpha(false);
+        let image = heic_rs::decode(&bytes, &options)?;
+        let samples = image
+            .data
+            .chunks_exact(2)
+            .map(|sample| u16::from_ne_bytes([sample[0], sample[1]]))
+            .collect();
+        let pixels = image::ImageBuffer::from_raw(image.width, image.height, samples)
+            .context("HEIF decoder returned a buffer that does not match its dimensions")?;
+        Ok(DecodedImage {
+            pixels: DynamicImage::ImageRgb16(pixels),
+            color,
+        })
     })
+}
+
+/// heic-rs is young; a panic on a malformed or unusual file must surface as
+/// an ordinary decode error instead of taking down the worker thread.
+fn heif_guarded<T>(operation: impl FnOnce() -> Result<T>) -> Result<T> {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(operation))
+        .map_err(|_| anyhow!("the HEIF decoder rejected malformed or unsupported data"))?
 }
 
 /// Colour comes from the primary item, or from its first tile when a grid
@@ -196,9 +205,12 @@ fn heif_color(bytes: &[u8]) -> Result<SourceColor> {
 
 fn heif_dimensions(path: &Path) -> Result<[u32; 2]> {
     let prefix = read_heif(path, Some(HEIF_PROBE_PREFIX_BYTES))?;
-    let info = match heic_rs::probe(&prefix) {
+    let info = match heif_guarded(|| Ok(heic_rs::probe(&prefix)?)) {
         Ok(info) => info,
-        Err(_) => heic_rs::probe(&read_heif(path, None)?)?,
+        Err(_) => {
+            let bytes = read_heif(path, None)?;
+            heif_guarded(|| Ok(heic_rs::probe(&bytes)?))?
+        }
     };
     Ok([info.width, info.height])
 }
@@ -325,6 +337,22 @@ mod tests {
 
         let thumbnail = load_rendered_thumbnail(file.path(), RenderedImageFormat::Jpeg, 4).unwrap();
         assert_eq!([thumbnail.width, thumbnail.height], [2, 4]);
+    }
+
+    #[test]
+    fn heif_decoder_panics_become_errors() {
+        let error = heif_guarded::<()>(|| panic!("decoder bug")).unwrap_err();
+        assert!(error.to_string().contains("malformed or unsupported"));
+    }
+
+    #[test]
+    fn truncated_heif_is_an_error_not_a_crash() {
+        let bytes = include_bytes!("../../tests/fixtures/display-p3-32x16.heic");
+        for length in [0, 16, 64, bytes.len() / 2, bytes.len() - 1] {
+            let file = temp_image(".heic");
+            std::fs::write(file.path(), &bytes[..length]).unwrap();
+            assert!(load_rendered_image(file.path(), RenderedImageFormat::Heif).is_err());
+        }
     }
 
     #[test]
