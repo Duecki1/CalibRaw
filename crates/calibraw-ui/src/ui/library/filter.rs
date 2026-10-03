@@ -131,7 +131,7 @@ pub(super) fn show_sort_filter_options(
     ui.checkbox(stack_raw_companions, "Show only the RAW")
         .on_hover_text(
             "Cameras shooting RAW+JPEG or RAW+HEIC save both files. Show each pair once, \
-             as the RAW, and hide the JPEG, PNG or HEIC with the same name.",
+             as the RAW, and hide the JPEG or HEIC with the same name.",
         );
 
     #[cfg(not(target_os = "android"))]

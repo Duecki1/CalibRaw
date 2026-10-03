@@ -612,12 +612,12 @@ pub(in crate::ui::library) fn raw_import_status(result: &RawImportResult) -> Str
     let mut parts = Vec::new();
     if !result.imported.is_empty() {
         parts.push(format!(
-            "Imported {} RAW {}",
+            "Imported {} {}",
             result.imported.len(),
             if result.imported.len() == 1 {
-                "file"
+                "photo"
             } else {
-                "files"
+                "photos"
             }
         ));
     }

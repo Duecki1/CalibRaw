@@ -473,7 +473,7 @@ struct ImageClipboard {
 impl ImageClipboard {
     fn paste_label(&self) -> String {
         let count = self.assets.len();
-        format!("Paste {count} RAW{}", if count == 1 { "" } else { "s" })
+        format!("Paste {count} photo{}", if count == 1 { "" } else { "s" })
     }
 }
 

@@ -4,7 +4,7 @@
 
 use super::display_raster::{
     encoded_rgb_to_scene_linear_rec2020, ensure_finite, scene_linear_thumbnail, EncodedColorSpace,
-    Primaries,
+    Primaries, Transfer,
 };
 use super::exif_metadata::ExifSummary;
 use super::raw_loader::{
@@ -82,7 +82,17 @@ struct DecodedImage {
 
 enum SourceColor {
     Icc(Vec<u8>),
-    SrgbCurve(Primaries),
+    Coded {
+        primaries: Primaries,
+        transfer: Transfer,
+    },
+}
+
+impl SourceColor {
+    const SRGB: Self = Self::Coded {
+        primaries: Primaries::Srgb,
+        transfer: Transfer::Srgb,
+    };
 }
 
 impl DecodedImage {
@@ -90,7 +100,13 @@ impl DecodedImage {
         let mut rgb = self.pixels.into_rgb32f().into_raw();
         let space = match &self.color {
             SourceColor::Icc(profile) => EncodedColorSpace::Icc(profile),
-            SourceColor::SrgbCurve(primaries) => EncodedColorSpace::SrgbCurve(*primaries),
+            SourceColor::Coded {
+                primaries,
+                transfer,
+            } => EncodedColorSpace::Coded {
+                primaries: *primaries,
+                transfer: *transfer,
+            },
         };
         if let Err(error) = encoded_rgb_to_scene_linear_rec2020(&mut rgb, space) {
             // Photos commonly carry LUT or CMYK profiles CalibRaw cannot
@@ -126,7 +142,7 @@ fn decode_with_image(path: &Path, format: RenderedImageFormat) -> Result<Decoded
     pixels.apply_orientation(orientation);
     Ok(DecodedImage {
         pixels,
-        color: icc.map_or(SourceColor::SrgbCurve(Primaries::Srgb), SourceColor::Icc),
+        color: icc.map_or(SourceColor::SRGB, SourceColor::Icc),
     })
 }
 
@@ -193,14 +209,13 @@ fn heif_color(bytes: &[u8]) -> Result<SourceColor> {
             return Ok(SourceColor::Icc(profile.to_vec()));
         }
         if let Some(nclx) = props.nclx {
-            return Ok(SourceColor::SrgbCurve(match nclx.primaries {
-                9 => Primaries::Rec2020,
-                12 => Primaries::DisplayP3,
-                _ => Primaries::Srgb,
-            }));
+            return Ok(SourceColor::Coded {
+                primaries: Primaries::from_h273(nclx.primaries),
+                transfer: Transfer::from_h273(nclx.transfer),
+            });
         }
     }
-    Ok(SourceColor::SrgbCurve(Primaries::Srgb))
+    Ok(SourceColor::SRGB)
 }
 
 fn heif_dimensions(path: &Path) -> Result<[u32; 2]> {
@@ -353,6 +368,23 @@ mod tests {
             std::fs::write(file.path(), &bytes[..length]).unwrap();
             assert!(load_rendered_image(file.path(), RenderedImageFormat::Heif).is_err());
         }
+    }
+
+    #[test]
+    fn hlg_heif_reference_white_decodes_to_sdr_white() {
+        // heif-enc -b 10 --colour_primaries 9 --transfer_characteristic 18
+        // of a flat 75% grey: HLG reference white, which BT.2408 puts at the
+        // same brightness as SDR diffuse white.
+        let file = temp_image(".heic");
+        std::fs::write(
+            file.path(),
+            include_bytes!("../../tests/fixtures/hlg-reference-white-16x16.heic"),
+        )
+        .unwrap();
+        let raw = load_rendered_image(file.path(), RenderedImageFormat::Heif).unwrap();
+        let rgb = raw.scene_linear_raster().unwrap();
+        let mean = rgb.iter().sum::<f32>() / rgb.len() as f32;
+        assert!((mean - 1.0).abs() < 0.03, "mean {mean}");
     }
 
     #[test]

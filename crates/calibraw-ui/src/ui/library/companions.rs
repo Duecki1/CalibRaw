@@ -6,7 +6,12 @@
 use super::*;
 use crate::pipeline::{is_camera_raw_path, RenderedImageFormat};
 
-/// Rendered images that share a folder and a base name with a camera RAW.
+/// Rendered formats cameras record beside a RAW. A PNG with a RAW's name is
+/// an export or screenshot the photographer made, so it is never stacked.
+const IN_CAMERA_FORMATS: [RenderedImageFormat; 2] =
+    [RenderedImageFormat::Jpeg, RenderedImageFormat::Heif];
+
+/// In-camera JPEG/HEIF copies that share a folder and base name with a RAW.
 #[derive(Debug, Default)]
 pub(super) struct RawCompanions {
     companions: HashSet<LibraryAssetId>,
@@ -20,7 +25,9 @@ impl RawCompanions {
         for asset in assets {
             let name = Path::new(&asset.display_name);
             if let Some(format) = RenderedImageFormat::from_path(name) {
-                rendered.push((pair_key(asset), &asset.id, format));
+                if IN_CAMERA_FORMATS.contains(&format) {
+                    rendered.push((pair_key(asset), &asset.id, format));
+                }
             } else if is_camera_raw_path(name) {
                 raws.insert(pair_key(asset), &asset.id);
             }

@@ -82,6 +82,9 @@ pub struct CameraProfileCandidate {
     pub name: String,
 }
 
+/// Sensor RAW (and TIFF) extensions. Rendered JPEG/PNG/HEIF extensions live in
+/// [`super::SUPPORTED_RENDERED_EXTENSIONS`]; use
+/// [`super::is_supported_image_path`] to ask whether CalibRaw opens a file.
 pub const SUPPORTED_RAW_EXTENSIONS: &[&str] = &[
     "3fr", "ari", "arw", "bay", "bmq", "cap", "cine", "cr2", "cr3", "crw", "cs1", "dc2", "dcr",
     "dcs", "dng", "drf", "eip", "erf", "fff", "gpr", "iiq", "k25", "kc2", "kdc", "mdc", "mef",
@@ -99,6 +102,7 @@ pub fn is_supported_raw_path(path: &Path) -> bool {
         })
 }
 
+/// An sRGB RGBA8 library preview of any supported photo, RAW or rendered.
 #[derive(Clone, Debug)]
 pub struct RawThumbnail {
     pub width: u32,
@@ -498,6 +502,10 @@ impl AiDenoisedImage {
     }
 }
 
+/// A decoded source photo ready for the develop pipeline. Despite the name it
+/// holds either sensor data (`raw_pixels` + CFA metadata) or, for rendered
+/// TIFF/JPEG/PNG/HEIF photos, a scene-linear Rec.2020 raster; see
+/// [`LoadedRaw::is_display_referred_raster`].
 #[derive(Clone, Debug)]
 pub struct LoadedRaw {
     pub width: u32,
@@ -1458,6 +1466,7 @@ impl RasterSource {
     }
 }
 
+/// Decodes any supported photo: camera RAW, TIFF, JPEG, PNG or HEIF.
 #[cfg(not(libraw_available))]
 pub fn load_raw_file(path: &Path) -> Result<LoadedRaw> {
     if let Some(raster) = RasterSource::detect(path)? {
@@ -1563,6 +1572,7 @@ fn try_rawler_then_libraw<T>(
     }
 }
 
+/// Decodes any supported photo: camera RAW, TIFF, JPEG, PNG or HEIF.
 #[cfg(libraw_available)]
 pub fn load_raw_file(path: &Path) -> Result<LoadedRaw> {
     load_raw_file_with_profile_config(path, CameraProfileMode::Automatic, None)

@@ -139,7 +139,7 @@ CalibRaw uses **LibRaw (0.22.1)** for broad camera compatibility, paired with **
 
 ### Rendered images
 
-JPEG, PNG, HEIC/HEIF and rendered TIFF files are edited with the same tools. They open looking exactly as captured, with embedded ICC profiles, Display P3 and EXIF orientation honored:
+JPEG, PNG, HEIC/HEIF and rendered TIFF files are edited with the same tools. They open looking exactly as captured, with embedded ICC profiles, Display P3, HLG/PQ HDR HEIF and EXIF orientation honored:
 
 ```text
 .jpg   .jpeg  .jpe   .png   .heic  .heif  .hif   .tif   .tiff

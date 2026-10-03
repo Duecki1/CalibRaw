@@ -131,7 +131,7 @@ impl CalibRawApp {
         allow_download: bool,
     ) -> bool {
         let Some(raw) = self.develop.loaded_raw.as_ref().cloned() else {
-            self.ui.notice = Some("Open a RAW image before using Remove.".to_owned());
+            self.ui.notice = Some("Open a photo before using Remove.".to_owned());
             return false;
         };
         let Some(render_state) = frame.wgpu_render_state() else {
@@ -195,7 +195,7 @@ impl CalibRawApp {
             return;
         }
         let Some(raw) = self.develop.loaded_raw.as_ref().cloned() else {
-            self.ui.notice = Some("Open a RAW image before using retouch brushes.".to_owned());
+            self.ui.notice = Some("Open a photo before using retouch brushes.".to_owned());
             return;
         };
         let Some(render_state) = frame.wgpu_render_state() else {

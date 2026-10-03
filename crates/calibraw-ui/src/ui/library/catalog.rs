@@ -465,8 +465,8 @@ pub(super) fn thumbnail_selection_checkbox(
     }
 
     response.on_hover_text(if selected {
-        "Deselect RAW"
+        "Deselect photo"
     } else {
-        "Select RAW"
+        "Select photo"
     })
 }
