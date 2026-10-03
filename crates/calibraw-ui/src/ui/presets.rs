@@ -268,31 +268,45 @@ fn show_note(ui: &mut Ui, text: &str, color: egui::Color32) -> egui::Response {
     ui.add(egui::Label::new(egui::RichText::new(text).small().color(color)).wrap())
 }
 
-/// The group's card title. Like the mask list, its actions are on a
-/// right-click menu, and on a corner menu button on Android.
-fn show_group_title(ui: &mut Ui, group: &str, action: &mut Option<PresetAction>) {
-    let title = |ui: &mut Ui| {
-        ui.add(
-            egui::Label::new(egui::RichText::new(group).strong())
-                .truncate()
-                .sense(egui::Sense::click()),
-        )
-    };
-    #[cfg(not(target_os = "android"))]
-    let response = title(ui);
-    // The corner menu button needs a row of control height.
-    #[cfg(target_os = "android")]
-    let response = ui
-        .allocate_ui_with_layout(
-            egui::vec2(ui.available_width(), theme::CONTROL_HEIGHT),
-            egui::Layout::left_to_right(egui::Align::Center),
-            |ui| {
-                title(ui);
-                ui.allocate_space(ui.available_size());
-            },
-        )
-        .response;
+/// A row of control height: the title or button fills it, and on Android a
+/// menu button sits at its right end. A bare right-to-left layout would
+/// claim the remaining height of the panel.
+fn show_menu_row<R>(
+    ui: &mut Ui,
+    menu_id: impl egui::AsIdSalt,
+    add_menu: impl FnOnce(&mut Ui),
+    add_contents: impl FnOnce(&mut Ui) -> R,
+) -> R {
+    ui.allocate_ui_with_layout(
+        egui::vec2(ui.available_width(), theme::CONTROL_HEIGHT),
+        egui::Layout::right_to_left(egui::Align::Center),
+        |ui| {
+            // Touch screens have no right-click, so the menu gets a button.
+            #[cfg(target_os = "android")]
+            ui.push_id(menu_id, |ui| {
+                let button = crate::ui::icons::phosphor_icon_button(
+                    ui,
+                    egui_phosphor::regular::DOTS_THREE_VERTICAL,
+                    theme::toolbar_icon_size(),
+                    "More actions",
+                );
+                theme::dropdown_menu(&button, add_menu);
+            });
+            #[cfg(not(target_os = "android"))]
+            let _ = (menu_id, add_menu);
+            ui.with_layout(
+                egui::Layout::left_to_right(egui::Align::Center),
+                add_contents,
+            )
+            .inner
+        },
+    )
+    .inner
+}
 
+/// The group's card title. Its actions are on a right-click menu, like the
+/// mask list, and on a menu button on Android.
+fn show_group_title(ui: &mut Ui, group: &str, action: &mut Option<PresetAction>) {
     let menu = |ui: &mut Ui, action: &mut Option<PresetAction>| {
         if theme::menu_item(ui, true, "Rename group…").clicked() {
             *action = Some(PresetAction::RenameGroup(group.to_owned()));
@@ -304,15 +318,23 @@ fn show_group_title(ui: &mut Ui, group: &str, action: &mut Option<PresetAction>)
             ui.close();
         }
     };
-    theme::context_menu(&response, |ui| menu(ui, action));
-    #[cfg(target_os = "android")]
-    crate::ui::android_overflow_menu(
+    let mut android_action = None;
+    let title = show_menu_row(
         ui,
-        response.rect,
-        ui.make_persistent_id(("preset-group-overflow", group)),
-        22.0,
-        |ui| menu(ui, action),
+        ("preset-group-menu", group),
+        |ui| menu(ui, &mut android_action),
+        |ui| {
+            ui.add(
+                egui::Label::new(egui::RichText::new(group).strong())
+                    .truncate()
+                    .sense(egui::Sense::click()),
+            )
+        },
     );
+    theme::context_menu(&title, |ui| menu(ui, action));
+    if android_action.is_some() {
+        *action = android_action;
+    }
 }
 
 /// The button that ends a group card, styled like "New group" below the
@@ -324,28 +346,35 @@ fn show_add_row(ui: &mut Ui, enabled: bool, label: &str) -> egui::Response {
     .inner
 }
 
-/// Draws one preset row. Returns whether the pointer rests on it.
+/// Draws one preset as a framed button with its name on the left. Returns
+/// whether the pointer rests on it.
 fn show_preset_row(
     ui: &mut Ui,
     entry: &PresetListEntry,
     action: &mut Option<PresetAction>,
 ) -> bool {
-    let response = theme::navigation_row(ui, &entry.name, false, egui::Sense::click())
-        .on_hover_text(format!("{ROW_HELP}\n{}", entry.summary));
-    theme::context_menu(&response, |ui| preset_actions_menu(ui, entry, action));
-    #[cfg(target_os = "android")]
-    let overflow_clicked = crate::ui::android_overflow_menu(
+    let mut android_action = None;
+    let response = show_menu_row(
         ui,
-        response.rect,
-        ui.make_persistent_id(("preset-overflow", &entry.path)),
-        22.0,
-        |ui| preset_actions_menu(ui, entry, action),
+        ("preset-menu", &entry.path),
+        |ui| preset_actions_menu(ui, entry, &mut android_action),
+        |ui| {
+            ui.add_sized(
+                [ui.available_width(), theme::CONTROL_HEIGHT],
+                egui::Button::new(())
+                    .left_text(entry.name.as_str())
+                    .truncate()
+                    .corner_radius(theme::CARD_RADIUS),
+            )
+        },
     )
-    .clicked();
-    #[cfg(not(target_os = "android"))]
-    let overflow_clicked = false;
-    if response.clicked() && !overflow_clicked {
+    .on_hover_text(format!("{ROW_HELP}\n{}", entry.summary));
+    theme::context_menu(&response, |ui| preset_actions_menu(ui, entry, action));
+    if response.clicked() {
         *action = Some(PresetAction::Apply(entry.path.clone()));
+    }
+    if android_action.is_some() {
+        *action = android_action;
     }
     // An open menu means the pointer is choosing an action, not looking at
     // the preset.
