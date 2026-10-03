@@ -213,6 +213,7 @@ impl CalibRawApp {
                 alignment: RetouchAlignment::None,
                 source_point: None,
                 source_pick_active: false,
+                source_placement_press: false,
                 aligned_offset: None,
                 edits: Arc::new(RemoveEditState::default()),
                 active_points: Vec::new(),

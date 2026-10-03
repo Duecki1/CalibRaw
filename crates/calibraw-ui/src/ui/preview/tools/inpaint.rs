@@ -34,6 +34,9 @@ impl Preview {
             });
         let primary_down =
             pointer.is_some() && response.is_pointer_button_down_on() && primary_is_down;
+        if !primary_is_down {
+            app.inpaint.source_placement_press = false;
+        }
 
         if app.inpaint.tool.retouch().is_some()
             && ((primary_down && (set_source_modifier || app.inpaint.source_pick_active))
@@ -53,12 +56,19 @@ impl Preview {
                         .clamp(0.0, source_height.saturating_sub(1) as f32),
                 ]);
                 app.inpaint.source_pick_active = false;
+                app.inpaint.source_placement_press |= primary_down;
                 app.inpaint.aligned_offset = None;
                 app.inpaint.active_points.clear();
                 app.inpaint.last_brush_uv = None;
                 app.ui.notice = None;
                 ui.ctx().request_repaint();
             }
+            return;
+        }
+
+        // The press that placed the source ends before a stroke can begin, even
+        // once pick mode or the modifier no longer routes it to placement.
+        if app.inpaint.source_placement_press {
             return;
         }
 

@@ -1276,6 +1276,9 @@ pub(crate) struct InpaintState {
     pub(crate) alignment: RetouchAlignment,
     pub(crate) source_point: Option<[f32; 2]>,
     pub(crate) source_pick_active: bool,
+    /// The primary press that placed the source is still held; it must not
+    /// continue as a stroke.
+    pub(crate) source_placement_press: bool,
     pub(crate) aligned_offset: Option<[f32; 2]>,
     pub(crate) edits: Arc<RemoveEditState>,
     pub(crate) active_points: Vec<RemoveBrushPoint>,
@@ -1369,34 +1372,36 @@ impl CalibRawApp {
         self.develop.loaded_raw.is_some() && self.ui.active_tab == AppTab::Develop
     }
 
-    pub(crate) fn sync_ai_model_runtime_context(&mut self) {
-        // Fog can request scene depth while its controls live outside the Masks sidebar.
-        // Keep the mask runtime context alive from the initial automatic request through
-        // consent/download/inference; otherwise the next frame cancels the DepthMask
-        // foreground operation just because the user is still in Adjustments.
-        let fog_depth_request_active = self.masks.stack.has_depth_fog_effect()
+    /// The local-AI runtime the current view owns. Mask jobs survive only while
+    /// it is `Masks`, and Remove jobs only while it is `Remove`.
+    pub(in crate::app) fn ai_runtime_context(&self) -> Option<calibraw_ai::AiRuntimeContext> {
+        if self.ui.active_tab != AppTab::Develop {
+            return None;
+        }
+        match self.ui.sidebar_tab {
+            SidebarTab::Masks => Some(calibraw_ai::AiRuntimeContext::Masks),
+            SidebarTab::Inpainting => Some(calibraw_ai::AiRuntimeContext::Remove),
+            SidebarTab::Adjustments | SidebarTab::Crop | SidebarTab::Export | SidebarTab::Info => {
+                self.fog_depth_request_active()
+                    .then_some(calibraw_ai::AiRuntimeContext::Masks)
+            }
+        }
+    }
+
+    /// Fog can request scene depth while its controls live outside the Masks sidebar.
+    /// The mask runtime stays alive from the initial automatic request through
+    /// consent/download/inference; otherwise the next frame cancels the DepthMask
+    /// foreground operation just because the user is still in Adjustments.
+    fn fog_depth_request_active(&self) -> bool {
+        self.masks.stack.has_depth_fog_effect()
             && self.masks.stack.scene_depth_image().is_none()
             && (!self.masks.fog_depth_auto_requested
                 || matches!(self.ai.consent, AiConsentState::Depth { .. })
-                || self.foreground_operation_is(ForegroundOperationKind::DepthMask));
-        let context = if self.ui.active_tab == AppTab::Develop {
-            match self.ui.sidebar_tab {
-                SidebarTab::Masks => Some(calibraw_ai::AiRuntimeContext::Masks),
-                SidebarTab::Inpainting => Some(calibraw_ai::AiRuntimeContext::Remove),
-                SidebarTab::Adjustments
-                | SidebarTab::Crop
-                | SidebarTab::Export
-                | SidebarTab::Info => {
-                    if fog_depth_request_active {
-                        Some(calibraw_ai::AiRuntimeContext::Masks)
-                    } else {
-                        None
-                    }
-                }
-            }
-        } else {
-            None
-        };
+                || self.foreground_operation_is(ForegroundOperationKind::DepthMask))
+    }
+
+    pub(crate) fn sync_ai_model_runtime_context(&mut self) {
+        let context = self.ai_runtime_context();
         calibraw_ai::set_active_ai_context(context);
 
         if context != Some(calibraw_ai::AiRuntimeContext::Remove)
