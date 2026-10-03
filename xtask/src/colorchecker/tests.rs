@@ -184,8 +184,8 @@ fn aggregate_groups_by_illuminant_and_stage_and_only_counts_neutral_chroma() {
         assert_eq!(summary.neutral_patch_count, 0);
         assert_close(summary.mean_delta_e_2000, error, 1e-12);
         assert_close(summary.max_delta_e_2000, error, 1e-12);
-        assert_eq!(summary.mean_neutral_lab_chroma, None);
-        assert_eq!(summary.max_neutral_lab_chroma, None);
+        assert!(summary.mean_neutral_lab_chroma.is_none());
+        assert!(summary.max_neutral_lab_chroma.is_none());
     }
     assert!(aggregate(&[]).is_empty());
 }
