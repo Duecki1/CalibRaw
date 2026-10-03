@@ -293,3 +293,103 @@ fn preset_folders_save_list_and_report_damaged_files() {
 
     std::fs::remove_dir_all(folder).unwrap();
 }
+
+fn depth_fog() -> crate::pipeline::EffectComponent {
+    let mut fog = crate::pipeline::EffectComponent::new(crate::pipeline::MaskEffect::Fog);
+    fog.settings.fog.amount = 50.0;
+    fog.settings.fog.density = 50.0;
+    fog.settings.fog.depth_enabled = true;
+    fog
+}
+
+#[test]
+fn previews_show_adjustments_and_hand_placed_masks_only() {
+    let mut photo = edited_photo();
+    photo.exposure.ai_denoise_enabled = true;
+    let masks = Arc::make_mut(&mut photo.masks);
+    masks.add_mask(MaskKind::Radial).unwrap();
+    masks
+        .add_component(MaskKind::Sky, crate::pipeline::MaskCombineMode::Subtract)
+        .unwrap();
+    let preset = Preset::new(
+        "Everything",
+        "",
+        EditSelection {
+            adjustment_groups: AdjustmentGroupSet::ALL,
+            camera_profile: true,
+            masks: true,
+            ai_masks: true,
+            geometry: true,
+            lens_correction: true,
+            ..EditSelection::default()
+        },
+        &photo,
+    )
+    .unwrap();
+
+    let mut exposure = crate::pipeline::ExposureParams::default();
+    assert!(!exposure.ai_denoise_enabled);
+    preset.preview_adjustments_on(&mut exposure);
+    assert_eq!(exposure.exposure, 0.7);
+    assert!(!exposure.ai_denoise_enabled, "AI denoise runs a model");
+    assert_eq!(exposure.clarity, 25.0);
+    assert_eq!(
+        exposure.demosaic_mode,
+        crate::pipeline::ExposureParams::default().demosaic_mode
+    );
+
+    let mut stack = MaskStack::default();
+    stack.add_mask(MaskKind::Fullscreen).unwrap();
+    preset.preview_masks_on(&mut stack);
+    // The sky mask and the radial mask that subtracts sky both need AI.
+    let kinds: Vec<_> = stack
+        .masks
+        .iter()
+        .map(|mask| mask.components[0].kind)
+        .collect();
+    assert_eq!(kinds, vec![MaskKind::Fullscreen, MaskKind::Linear]);
+    assert!(stack.content_dependencies().is_empty());
+}
+
+#[test]
+fn previews_skip_masks_the_preset_does_not_include() {
+    let preset = Preset::new(
+        "Tone only",
+        "",
+        selection(&[AdjustmentGroup::Light]),
+        &edited_photo(),
+    )
+    .unwrap();
+    let mut stack = MaskStack::default();
+    preset.preview_masks_on(&mut stack);
+    assert!(stack.masks.is_empty());
+}
+
+#[test]
+fn previews_leave_out_effects_that_need_missing_scene_depth() {
+    let mut photo = default_edit_state();
+    Arc::make_mut(&mut photo.masks)
+        .global_effects
+        .push(depth_fog());
+    let preset = Preset::new(
+        "Fog",
+        "",
+        EditSelection {
+            masks: true,
+            ..EditSelection::default()
+        },
+        &photo,
+    )
+    .unwrap();
+
+    let mut without_depth = MaskStack::default();
+    preset.preview_masks_on(&mut without_depth);
+    assert!(without_depth.global_effects.is_empty());
+
+    let mut with_depth = MaskStack {
+        scene_depth: MaskImage::new(2, 1, vec![0, 255]),
+        ..MaskStack::default()
+    };
+    preset.preview_masks_on(&mut with_depth);
+    assert_eq!(with_depth.global_effects, vec![depth_fog()]);
+}
