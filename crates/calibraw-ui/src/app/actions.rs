@@ -57,7 +57,7 @@ impl CalibRawApp {
             || self.ui.unsupported_file_dialog.is_some()
             || self.ui.version_check.dialog_open()
             || self.library.transient_dialog_open()
-            || self.ai.consent.is_open()
+            || self.ai.consent.is_some()
             || self.ai.object_error_dialog.is_some()
             || self.persistence.sidecar_save_error_dialog.is_some()
             || self.ui.gpu_memory_error_dialog
@@ -89,7 +89,7 @@ impl CalibRawApp {
         if tab != SidebarTab::Masks {
             self.cancel_mask_point_color_preview();
         }
-        self.sync_ai_model_runtime_context();
+        self.sync_ai_runtime();
     }
 
     /// Stops picking point colors for the selected mask and hides their range
@@ -151,11 +151,12 @@ mod tests {
         assert!(!app.app_shortcuts_allowed(&ctx));
         app.ui.onboarding_step = None;
         assert!(app.app_shortcuts_allowed(&ctx));
-        app.ai.consent = AiConsentState::Subject {
+        app.ai.consent = Some(AiConsent {
+            feature: calibraw_ai::AiFeature::Subject,
             runtime_download_needed: false,
-        };
+        });
         assert!(!app.app_shortcuts_allowed(&ctx));
-        app.ai.consent = AiConsentState::None;
+        app.ai.consent = None;
 
         egui::Popup::open_id(&ctx, egui::Id::new("shortcut-blocking-test-popup"));
         assert!(!app.app_shortcuts_allowed(&ctx));

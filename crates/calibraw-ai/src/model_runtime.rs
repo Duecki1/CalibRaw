@@ -25,15 +25,74 @@ pub(crate) enum AiModel {
     RawNindLinear,
 }
 
+impl AiModel {
+    const fn feature(self) -> AiFeature {
+        match self {
+            Self::BiRefNetLow | Self::BiRefNetMedium | Self::BiRefNetHigh => AiFeature::Subject,
+            Self::SkySeg => AiFeature::Sky,
+            Self::Depth => AiFeature::SceneDepth,
+            Self::SamEncoder | Self::SamDecoder => AiFeature::Object,
+            Self::BigLama => AiFeature::Remove,
+            Self::RawNindBayer | Self::RawNindLinear => AiFeature::Denoise,
+        }
+    }
+}
+
+/// What a local model is used for, independent of where in the UI it runs.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum AiRuntimeContext {
-    Masks,
+pub enum AiFeature {
+    Subject,
+    Sky,
+    SceneDepth,
+    Object,
     Remove,
+    Denoise,
+}
+
+impl AiFeature {
+    pub const ALL: [Self; 6] = [
+        Self::Subject,
+        Self::Sky,
+        Self::SceneDepth,
+        Self::Object,
+        Self::Remove,
+        Self::Denoise,
+    ];
+
+    const fn bit(self) -> u8 {
+        1 << self as u8
+    }
+}
+
+/// Features whose models may stay loaded between jobs, typically those whose
+/// tools are on screen. It only governs memory: a running job always finishes.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct AiFeatureSet(u8);
+
+impl AiFeatureSet {
+    pub const EMPTY: Self = Self(0);
+
+    #[must_use]
+    pub const fn with(self, feature: AiFeature) -> Self {
+        Self(self.0 | feature.bit())
+    }
+
+    pub const fn contains(self, feature: AiFeature) -> bool {
+        self.0 & feature.bit() != 0
+    }
+}
+
+impl FromIterator<AiFeature> for AiFeatureSet {
+    fn from_iter<I: IntoIterator<Item = AiFeature>>(features: I) -> Self {
+        features.into_iter().fold(Self::EMPTY, Self::with)
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ModelRetention {
-    Interactive(AiRuntimeContext),
+    /// Stays loaded after a job while the model's feature is warm.
+    WhileWarm,
+    /// Unloads as soon as its job releases the session.
     OneShot,
 }
 
@@ -95,17 +154,15 @@ impl<S> RuntimeSlot<S> {
 
     fn reconcile(
         &mut self,
-        active_context: Option<AiRuntimeContext>,
+        warm: AiFeatureSet,
         provider_generation: u64,
         acceleration_enabled: bool,
     ) {
         let retain = self.active.as_ref().is_some_and(|active| {
             active.provider_generation == provider_generation
                 && active.acceleration_enabled == acceleration_enabled
-                && matches!(
-                    active.retention,
-                    ModelRetention::Interactive(context) if Some(context) == active_context
-                )
+                && active.retention == ModelRetention::WhileWarm
+                && warm.contains(active.model.feature())
         });
         if !retain {
             if let Some(active) = self.active.take() {
@@ -126,26 +183,11 @@ fn runtime() -> &'static Mutex<RuntimeSlot<FallbackSession>> {
     RUNTIME.get_or_init(|| Mutex::new(RuntimeSlot::default()))
 }
 
-const CONTEXT_NONE: u8 = 0;
-const CONTEXT_MASKS: u8 = 1;
-const CONTEXT_REMOVE: u8 = 2;
-static ACTIVE_CONTEXT: AtomicU8 = AtomicU8::new(CONTEXT_NONE);
+static WARM_FEATURES: AtomicU8 = AtomicU8::new(0);
 static PROVIDER_GENERATION: AtomicU64 = AtomicU64::new(0);
 
-fn encode_context(context: Option<AiRuntimeContext>) -> u8 {
-    match context {
-        None => CONTEXT_NONE,
-        Some(AiRuntimeContext::Masks) => CONTEXT_MASKS,
-        Some(AiRuntimeContext::Remove) => CONTEXT_REMOVE,
-    }
-}
-
-fn active_context() -> Option<AiRuntimeContext> {
-    match ACTIVE_CONTEXT.load(Ordering::Acquire) {
-        CONTEXT_MASKS => Some(AiRuntimeContext::Masks),
-        CONTEXT_REMOVE => Some(AiRuntimeContext::Remove),
-        _ => None,
-    }
+fn warm_features() -> AiFeatureSet {
+    AiFeatureSet(WARM_FEATURES.load(Ordering::Acquire))
 }
 
 fn lock_runtime() -> MutexGuard<'static, RuntimeSlot<FallbackSession>> {
@@ -156,29 +198,31 @@ fn lock_runtime() -> MutexGuard<'static, RuntimeSlot<FallbackSession>> {
 
 fn try_reconcile<S>(
     runtime: &Mutex<RuntimeSlot<S>>,
-    context: Option<AiRuntimeContext>,
+    warm: AiFeatureSet,
     provider_generation: u64,
     acceleration_enabled: bool,
 ) -> bool {
     match runtime.try_lock() {
         Ok(mut slot) => {
-            slot.reconcile(context, provider_generation, acceleration_enabled);
+            slot.reconcile(warm, provider_generation, acceleration_enabled);
             true
         }
         Err(TryLockError::Poisoned(error)) => {
             let mut slot = error.into_inner();
-            slot.reconcile(context, provider_generation, acceleration_enabled);
+            slot.reconcile(warm, provider_generation, acceleration_enabled);
             true
         }
         Err(TryLockError::WouldBlock) => false,
     }
 }
 
-pub fn set_active_ai_context(context: Option<AiRuntimeContext>) {
-    ACTIVE_CONTEXT.store(encode_context(context), Ordering::Release);
+/// Declares which features may keep their model loaded between jobs. Models
+/// of other features unload now, or once their running job releases them.
+pub fn set_warm_ai_features(features: AiFeatureSet) {
+    WARM_FEATURES.store(features.0, Ordering::Release);
     let _ = try_reconcile(
         runtime(),
-        context,
+        features,
         PROVIDER_GENERATION.load(Ordering::Acquire),
         ai_acceleration_enabled(),
     );
@@ -189,7 +233,7 @@ pub(crate) fn invalidate_for_provider_change() {
     let generation = PROVIDER_GENERATION.fetch_add(1, Ordering::AcqRel) + 1;
     let _ = try_reconcile(
         runtime(),
-        active_context(),
+        warm_features(),
         generation,
         ai_acceleration_enabled(),
     );
@@ -233,7 +277,7 @@ impl Drop for ModelSessionGuard {
             return;
         };
         guard.reconcile(
-            active_context(),
+            warm_features(),
             PROVIDER_GENERATION.load(Ordering::Acquire),
             ai_acceleration_enabled(),
         );
@@ -241,7 +285,7 @@ impl Drop for ModelSessionGuard {
 
         let _ = try_reconcile(
             runtime(),
-            active_context(),
+            warm_features(),
             PROVIDER_GENERATION.load(Ordering::Acquire),
             ai_acceleration_enabled(),
         );
@@ -304,29 +348,41 @@ mod tests {
         }
     }
 
-    fn interactive_masks() -> ModelRetention {
-        ModelRetention::Interactive(AiRuntimeContext::Masks)
+    fn warm(feature: AiFeature) -> AiFeatureSet {
+        AiFeatureSet::EMPTY.with(feature)
     }
 
     #[test]
     fn same_model_is_reused() {
         let events = Arc::new(Mutex::new(Vec::new()));
         let mut slot = RuntimeSlot::default();
-        slot.ensure_model(AiModel::BiRefNetLow, interactive_masks(), 0, true, || {
-            events.lock().unwrap().push("create low".to_owned());
-            Ok::<_, ()>(DropLog {
-                label: "low",
-                events: Arc::clone(&events),
-            })
-        })
+        slot.ensure_model(
+            AiModel::BiRefNetLow,
+            ModelRetention::WhileWarm,
+            0,
+            true,
+            || {
+                events.lock().unwrap().push("create low".to_owned());
+                Ok::<_, ()>(DropLog {
+                    label: "low",
+                    events: Arc::clone(&events),
+                })
+            },
+        )
         .unwrap();
-        slot.ensure_model(AiModel::BiRefNetLow, interactive_masks(), 0, true, || {
-            events.lock().unwrap().push("create low again".to_owned());
-            Ok::<_, ()>(DropLog {
-                label: "low again",
-                events: Arc::clone(&events),
-            })
-        })
+        slot.ensure_model(
+            AiModel::BiRefNetLow,
+            ModelRetention::WhileWarm,
+            0,
+            true,
+            || {
+                events.lock().unwrap().push("create low again".to_owned());
+                Ok::<_, ()>(DropLog {
+                    label: "low again",
+                    events: Arc::clone(&events),
+                })
+            },
+        )
         .unwrap();
         assert_eq!(slot.active_model(), Some(AiModel::BiRefNetLow));
         assert_eq!(&*events.lock().unwrap(), &["create low".to_owned()]);
@@ -336,20 +392,32 @@ mod tests {
     fn different_model_drops_previous_before_create() {
         let events = Arc::new(Mutex::new(Vec::new()));
         let mut slot = RuntimeSlot::default();
-        slot.ensure_model(AiModel::BiRefNetLow, interactive_masks(), 0, true, || {
-            Ok::<_, ()>(DropLog {
-                label: "low",
-                events: Arc::clone(&events),
-            })
-        })
+        slot.ensure_model(
+            AiModel::BiRefNetLow,
+            ModelRetention::WhileWarm,
+            0,
+            true,
+            || {
+                Ok::<_, ()>(DropLog {
+                    label: "low",
+                    events: Arc::clone(&events),
+                })
+            },
+        )
         .unwrap();
-        slot.ensure_model(AiModel::SamEncoder, interactive_masks(), 0, true, || {
-            events.lock().unwrap().push("create encoder".to_owned());
-            Ok::<_, ()>(DropLog {
-                label: "encoder",
-                events: Arc::clone(&events),
-            })
-        })
+        slot.ensure_model(
+            AiModel::SamEncoder,
+            ModelRetention::WhileWarm,
+            0,
+            true,
+            || {
+                events.lock().unwrap().push("create encoder".to_owned());
+                Ok::<_, ()>(DropLog {
+                    label: "encoder",
+                    events: Arc::clone(&events),
+                })
+            },
+        )
         .unwrap();
         assert_eq!(
             &*events.lock().unwrap(),
@@ -359,14 +427,31 @@ mod tests {
     }
 
     #[test]
-    fn leaving_ai_context_requests_unload() {
+    fn warm_feature_keeps_its_model_and_cooling_it_unloads() {
         let mut slot = RuntimeSlot::default();
-        slot.ensure_model(AiModel::SamDecoder, interactive_masks(), 0, true, || {
+        slot.ensure_model(
+            AiModel::SamDecoder,
+            ModelRetention::WhileWarm,
+            0,
+            true,
+            || Ok::<_, ()>(()),
+        )
+        .unwrap();
+        slot.reconcile(warm(AiFeature::Object), 0, true);
+        assert_eq!(slot.active_model(), Some(AiModel::SamDecoder));
+        slot.reconcile(warm(AiFeature::SceneDepth), 0, true);
+        assert_eq!(slot.active_model(), None);
+    }
+
+    #[test]
+    fn scene_depth_stays_warm_for_effects_without_a_mask_context() {
+        let mut slot = RuntimeSlot::default();
+        slot.ensure_model(AiModel::Depth, ModelRetention::WhileWarm, 0, true, || {
             Ok::<_, ()>(())
         })
         .unwrap();
-        slot.reconcile(None, 0, true);
-        assert_eq!(slot.active_model(), None);
+        slot.reconcile(warm(AiFeature::SceneDepth), 0, true);
+        assert_eq!(slot.active_model(), Some(AiModel::Depth));
     }
 
     #[test]
@@ -380,12 +465,12 @@ mod tests {
             || Ok::<_, ()>(()),
         )
         .unwrap();
-        slot.reconcile(Some(AiRuntimeContext::Masks), 0, true);
+        slot.reconcile(AiFeatureSet::from_iter(AiFeature::ALL), 0, true);
         assert_eq!(slot.active_model(), None);
     }
 
     #[test]
-    fn tab_switch_unload_request_does_not_block() {
+    fn unload_request_does_not_block() {
         let runtime = Arc::new(Mutex::new(RuntimeSlot::<()>::default()));
         let entered = Arc::new(Barrier::new(2));
         let release = Arc::new(Barrier::new(2));
@@ -399,7 +484,7 @@ mod tests {
         });
         entered.wait();
         let start = Instant::now();
-        assert!(!try_reconcile(&runtime, None, 0, true));
+        assert!(!try_reconcile(&runtime, AiFeatureSet::EMPTY, 0, true));
         assert!(start.elapsed() < Duration::from_millis(100));
         release.wait();
         worker.join().unwrap();
@@ -409,43 +494,36 @@ mod tests {
     fn pending_unload_is_applied_after_inference_releases_session() {
         let events = Arc::new(Mutex::new(Vec::new()));
         let runtime = Arc::new(Mutex::new(RuntimeSlot::<DropLog>::default()));
-        let context = Arc::new(AtomicU8::new(CONTEXT_REMOVE));
+        let warm_set = Arc::new(AtomicU8::new(warm(AiFeature::Remove).0));
         let entered = Arc::new(Barrier::new(2));
         let release = Arc::new(Barrier::new(2));
 
         let worker_runtime = Arc::clone(&runtime);
-        let worker_context = Arc::clone(&context);
+        let worker_warm_set = Arc::clone(&warm_set);
         let worker_events = Arc::clone(&events);
         let worker_entered = Arc::clone(&entered);
         let worker_release = Arc::clone(&release);
         let worker = thread::spawn(move || {
             let mut slot = worker_runtime.lock().unwrap();
-            slot.ensure_model(
-                AiModel::BigLama,
-                ModelRetention::Interactive(AiRuntimeContext::Remove),
-                0,
-                true,
-                || {
-                    Ok::<_, ()>(DropLog {
-                        label: "big-lama",
-                        events: worker_events,
-                    })
-                },
-            )
+            slot.ensure_model(AiModel::BigLama, ModelRetention::WhileWarm, 0, true, || {
+                Ok::<_, ()>(DropLog {
+                    label: "big-lama",
+                    events: worker_events,
+                })
+            })
             .unwrap();
             worker_entered.wait();
             worker_release.wait();
-            let active_context = match worker_context.load(Ordering::Acquire) {
-                CONTEXT_REMOVE => Some(AiRuntimeContext::Remove),
-                CONTEXT_MASKS => Some(AiRuntimeContext::Masks),
-                _ => None,
-            };
-            slot.reconcile(active_context, 0, true);
+            slot.reconcile(
+                AiFeatureSet(worker_warm_set.load(Ordering::Acquire)),
+                0,
+                true,
+            );
         });
 
         entered.wait();
-        context.store(CONTEXT_NONE, Ordering::Release);
-        assert!(!try_reconcile(&runtime, None, 0, true));
+        warm_set.store(AiFeatureSet::EMPTY.0, Ordering::Release);
+        assert!(!try_reconcile(&runtime, AiFeatureSet::EMPTY, 0, true));
         release.wait();
         worker.join().unwrap();
         assert_eq!(runtime.lock().unwrap().active_model(), None);
@@ -455,11 +533,15 @@ mod tests {
     #[test]
     fn provider_policy_change_invalidates_current_session() {
         let mut slot = RuntimeSlot::default();
-        slot.ensure_model(AiModel::SamDecoder, interactive_masks(), 4, true, || {
-            Ok::<_, ()>(())
-        })
+        slot.ensure_model(
+            AiModel::SamDecoder,
+            ModelRetention::WhileWarm,
+            4,
+            true,
+            || Ok::<_, ()>(()),
+        )
         .unwrap();
-        slot.reconcile(Some(AiRuntimeContext::Masks), 5, false);
+        slot.reconcile(warm(AiFeature::Object), 5, false);
         assert_eq!(slot.active_model(), None);
     }
 }

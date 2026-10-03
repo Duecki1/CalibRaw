@@ -63,14 +63,14 @@ impl CalibRawApp {
         }
         if pipeline_adjustments_changed {
             self.note_edit_changed();
-            self.ai.masks_need_update |= merged.ai_masks_need_update;
+            self.ai.update_needed |= merged.ai_masks_need_update;
         }
 
         if masks_changed {
             self.masks.stack = Arc::unwrap_or_clone(merged.masks);
-            self.ai.masks_need_update = merged.ai_masks_need_update;
+            self.ai.update_needed = merged.ai_masks_need_update;
             self.rehydrate_restored_mask_state();
-            self.ai.masks_need_update |= merged.ai_masks_need_update;
+            self.ai.update_needed |= merged.ai_masks_need_update;
             self.mark_all_mask_layers_dirty();
         }
 
@@ -80,7 +80,7 @@ impl CalibRawApp {
             self.develop.lens_correction.selected_model = merged.lens.model;
             if lens_changed {
                 self.note_lens_correction_changed_for_masks();
-                self.ai.masks_need_update |= merged.ai_masks_need_update;
+                self.ai.update_needed |= merged.ai_masks_need_update;
                 self.mark_lens_correction_dirty();
             }
         }
@@ -91,7 +91,7 @@ impl CalibRawApp {
 
         self.commit_edit_history_now();
         self.queue_explicit_sidecar_save();
-        let needs_ai_refresh = self.ai.masks_need_update;
+        let needs_ai_refresh = self.ai_update_needed();
         if camera_profile_category_changed && previous_camera_profile != pasted_camera_profile {
             let edit_override = self.capture_sidecar_edit_state();
             self.reload_current_after_adjustment_paste(frame, pasted_camera_profile, edit_override);
@@ -118,7 +118,7 @@ impl CalibRawApp {
             };
             self.reopen_desktop_with_camera_profile(raw_path, reload, frame);
             // Background reload returns to the library without triggering
-            // interactive tab-exit side effects (AI operation cancellation).
+            // interactive tab-exit side effects.
             self.ui.active_tab = AppTab::Library;
         }
 
@@ -132,7 +132,7 @@ impl CalibRawApp {
                     };
                     self.reopen_desktop_with_camera_profile(raw_path, reload, frame);
                     // Background reload returns to the library without triggering
-                    // interactive tab-exit side effects (AI operation cancellation).
+                    // interactive tab-exit side effects.
                     self.ui.active_tab = AppTab::Library;
                 }
                 crate::sidecar::SidecarTarget::Android {
@@ -366,41 +366,6 @@ pub(super) fn desktop_library_sidecar_edits(
     }
 }
 
-pub(super) fn ai_mask_refresh_target_count(masks: &crate::pipeline::MaskStack) -> usize {
-    masks
-        .masks
-        .iter()
-        .flat_map(|mask| &mask.components)
-        .filter(|component| match (component.kind, &component.geometry) {
-            (
-                crate::pipeline::MaskKind::Subject
-                | crate::pipeline::MaskKind::Background
-                | crate::pipeline::MaskKind::Sky,
-                crate::pipeline::MaskGeometry::Ai { .. },
-            ) => true,
-            (
-                crate::pipeline::MaskKind::Object,
-                crate::pipeline::MaskGeometry::Object { strokes, .. },
-            ) => strokes
-                .iter()
-                .any(|stroke| stroke.positive && !stroke.points.is_empty()),
-            (
-                crate::pipeline::MaskKind::LuminanceRange,
-                crate::pipeline::MaskGeometry::LuminanceRange { .. },
-            )
-            | (
-                crate::pipeline::MaskKind::ColorRange,
-                crate::pipeline::MaskGeometry::ColorRange { .. },
-            )
-            | (
-                crate::pipeline::MaskKind::DepthRange,
-                crate::pipeline::MaskGeometry::DepthRange { .. },
-            ) => true,
-            _ => false,
-        })
-        .count()
-}
-
 pub(super) fn complete_library_ai_mask_refresh_item(state: &mut LibraryAiMaskRefreshState) {
     if let Some(job) = state.current.take() {
         state.completed += 1;
@@ -432,13 +397,13 @@ impl CalibRawApp {
                     return 0;
                 }
                 if state.phase == LibraryAiMaskRefreshPhase::Updating
-                    && self.ai.masks_need_update
-                    && !self.ai_mask_update_busy()
+                    && self.ai_update_needed()
+                    && !self.ai_update_busy()
                 {
                     return 0;
                 }
                 job.mask_targets
-                    .saturating_sub(self.ai_mask_update_remaining_target_count())
+                    .saturating_sub(self.ai_update_remaining_runs())
             });
             let current = state.current.as_ref().map(|job| {
                 #[cfg(not(target_os = "android"))]
@@ -677,7 +642,7 @@ impl CalibRawApp {
             return;
         }
 
-        let mask_targets = ai_mask_refresh_target_count(&self.masks.stack);
+        let mask_targets = self.masks.stack.content_dependencies().ai_run_count();
         if let Some(state) = self.ai.library_mask_refresh.as_mut() {
             let previous_targets = state.current.as_ref().map_or(0, |job| job.mask_targets);
             state.mask_total = state.mask_total.saturating_sub(previous_targets);
@@ -687,9 +652,9 @@ impl CalibRawApp {
             state.mask_total = state.mask_total.saturating_add(mask_targets);
             state.phase = LibraryAiMaskRefreshPhase::Updating;
         }
-        self.request_update_all_ai_masks(frame);
-        // Completion is a background transition; preserve its operation state
-        // instead of invoking interactive AI cancellation hooks.
+        self.request_ai_update(frame);
+        // Completion is a background transition; skip the interactive
+        // tab-exit side effects of `activate_tab`.
         self.ui.active_tab = AppTab::Library;
     }
 
@@ -722,15 +687,7 @@ impl CalibRawApp {
             state.cancel_requested = true;
             state.pending.clear();
         }
-        if matches!(
-            self.foreground_operation_kind(),
-            Some(
-                ForegroundOperationKind::SubjectMask
-                    | ForegroundOperationKind::SkyMask
-                    | ForegroundOperationKind::DepthMask
-                    | ForegroundOperationKind::ObjectMask
-            )
-        ) {
+        if self.content_job_active() {
             self.cancel_foreground_operation();
         }
         self.egui_ctx.request_repaint();
@@ -761,7 +718,7 @@ impl CalibRawApp {
             .is_some_and(|state| state.cancel_requested);
         if cancel_after_phase
             && phase == LibraryAiMaskRefreshPhase::Updating
-            && !self.ai_mask_update_busy()
+            && !self.ai_update_busy()
         {
             if let Some(state) = self.ai.library_mask_refresh.as_mut() {
                 state.current = None;
@@ -790,16 +747,16 @@ impl CalibRawApp {
         match phase {
             LibraryAiMaskRefreshPhase::Loading => (),
             LibraryAiMaskRefreshPhase::Updating => {
-                if self.ai_mask_update_busy() {
+                if self.ai_update_busy() {
                     return;
                 }
 
-                if self.ai.masks_need_update {
+                if self.ai_update_needed() {
                     let reason = self
                         .ui
                         .notice
                         .clone()
-                        .unwrap_or_else(|| "AI masks still need an update".to_owned());
+                        .unwrap_or_else(|| "AI results still need an update".to_owned());
                     if let Some(state) = self.ai.library_mask_refresh.as_mut() {
                         state.failures.push(format!("{label}: {reason}"));
                         complete_library_ai_mask_refresh_item(state);

@@ -6,7 +6,7 @@
 use crate::execution_provider::SessionOptions;
 use crate::model_artifact::{DownloadOptions, ModelArtifact};
 use crate::model_install::ModelInstallSpec;
-use crate::model_runtime::{with_model_session, AiModel, AiRuntimeContext, ModelRetention};
+use crate::model_runtime::{with_model_session, AiModel, ModelRetention};
 use crate::pipeline::{
     adaptive_remove_dilation, pipeline_scene_to_canonical_remove_scene,
     pipeline_scene_to_working_rec2020, plan_remove_context_crop, rasterize_remove_brush,
@@ -901,7 +901,7 @@ fn infer_crop(
         AiModel::BigLama,
         model_path,
         SessionOptions::new("Big-LaMa Remove"),
-        ModelRetention::Interactive(AiRuntimeContext::Remove),
+        ModelRetention::WhileWarm,
         |session| {
             session.run_with_fallback(
                 "Big-LaMa Remove ONNX inference",

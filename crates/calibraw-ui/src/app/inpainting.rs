@@ -1,4 +1,5 @@
 use super::*;
+use calibraw_ai::AiFeature;
 
 impl InpaintState {
     pub(crate) fn reset_for_document(&mut self) {
@@ -33,13 +34,13 @@ impl InpaintState {
 impl CalibRawApp {
     pub(crate) fn reset_inpainting_state(&mut self) {
         self.inpaint.reset_for_document();
-        if matches!(self.ai.consent, AiConsentState::Remove { .. }) {
-            self.ai.consent = AiConsentState::None;
+        if self.ai_consent_is_for(AiFeature::Remove) {
+            self.ai.consent = None;
         }
     }
 
     pub(crate) fn inpaint_processing(&self) -> bool {
-        self.inpaint.worker_active() || matches!(self.ai.consent, AiConsentState::Remove { .. })
+        self.inpaint.worker_active() || self.ai_consent_is_for(AiFeature::Remove)
     }
 
     pub(crate) fn install_remove_edits(&mut self, edits: Arc<RemoveEditState>) {
@@ -52,8 +53,8 @@ impl CalibRawApp {
 
     pub(crate) fn cancel_remove_processing(&mut self) {
         self.inpaint.cancel_processing();
-        if matches!(self.ai.consent, AiConsentState::Remove { .. }) {
-            self.ai.consent = AiConsentState::None;
+        if self.ai_consent_is_for(AiFeature::Remove) {
+            self.ai.consent = None;
         }
     }
 
@@ -122,7 +123,7 @@ impl CalibRawApp {
         self.note_remove_edit_changed();
     }
 
-    fn start_remove_request(
+    pub(in crate::app) fn start_remove_request(
         &mut self,
         frame: &eframe::Frame,
         existing: RemoveEditState,
@@ -177,26 +178,10 @@ impl CalibRawApp {
         if self.inpaint_processing() || brush.points.is_empty() {
             return;
         }
-        #[cfg(not(target_os = "android"))]
-        if !self.validate_onnx_runtime_for_ai() {
-            return;
-        }
-        let model_path = self.big_lama_model_path();
-        let runtime_download_needed = self.automatic_onnx_runtime_download_needed();
-        if calibraw_ai::remove::big_lama_model_is_verified(&model_path) && !runtime_download_needed
-        {
-            if matches!(self.ai.consent, AiConsentState::Remove { .. }) {
-                self.ai.consent = AiConsentState::None;
-            }
-            let existing = self.inpaint.edits.as_ref().clone();
-            let _ = self.start_remove_request(frame, existing, brush, false);
-        } else {
-            self.inpaint.pending_brush = Some(brush);
-            self.inpaint.pending_retouch = None;
-            self.ai.consent = AiConsentState::Remove {
-                runtime_download_needed,
-            };
-            self.egui_ctx.request_repaint();
+        self.inpaint.pending_brush = Some(brush);
+        self.inpaint.pending_retouch = None;
+        if self.ai_job_may_start(AiFeature::Remove) {
+            self.start_ai_job(AiFeature::Remove, false, frame);
         }
     }
 
@@ -241,91 +226,6 @@ impl CalibRawApp {
         self.inpaint.receiver = Some(spawn_retouch(request));
         self.egui_ctx
             .request_repaint_after(Duration::from_millis(16));
-    }
-
-    pub(crate) fn show_remove_model_dialog(&mut self, ctx: &egui::Context, frame: &eframe::Frame) {
-        let AiConsentState::Remove {
-            runtime_download_needed,
-        } = self.ai.consent
-        else {
-            return;
-        };
-        let model_download_needed =
-            !calibraw_ai::remove::big_lama_model_is_verified(&self.big_lama_model_path());
-        let title = match (model_download_needed, runtime_download_needed) {
-            (true, true) => "Download Remove model and ONNX Runtime?",
-            (true, false) => "Download Remove model?",
-            (false, true) => "Download ONNX Runtime?",
-            (false, false) => "Prepare Remove?",
-        };
-        let runtime_ready = self.ai_runtime_ready();
-        let mut action = crate::ui::theme::DialogAction::None;
-        crate::ui::theme::dialog_window(title, ctx, crate::ui::theme::DIALOG_WIDTH_LARGE)
-            .show_with_footer(
-                ctx,
-                |ui| {
-                    Self::show_ai_download_summary(
-                        ui,
-                        &format!(
-                            "Big-LaMa (~{:.0} MB)",
-                            calibraw_ai::remove::BIG_LAMA_MODEL_BYTES as f64 / 1_000_000.0
-                        ),
-                        "remove unwanted content",
-                        model_download_needed,
-                        runtime_download_needed,
-                    );
-                    self.show_ai_download_details(
-                        ui,
-                        "remove-download-details",
-                        model_download_needed,
-                        runtime_download_needed,
-                        &[(
-                            "Big-LaMa model artifact",
-                            "https://huggingface.co/Duecki/CalibRaw-Artifacts/tree/main/models/lama",
-                        )],
-                        |ui| {
-                            ui.label(format!(
-                                "Big-LaMa Places2 ONNX repairs a local context crop. License: {}.",
-                                calibraw_ai::remove::BIG_LAMA_MODEL_LICENSE
-                            ));
-                            ui.label(format!(
-                                "Source: {}. CalibRaw verifies its pinned size and SHA-256 ({}).",
-                                calibraw_ai::remove::BIG_LAMA_MODEL_PROVENANCE,
-                                &calibraw_ai::remove::BIG_LAMA_MODEL_SHA256_HEX[..12]
-                            ));
-                        },
-                    );
-                    self.show_manual_runtime_warning(ui);
-                },
-                |ui| {
-                    action = Self::show_ai_consent_buttons(
-                        ui,
-                        if model_download_needed || runtime_download_needed {
-                            "Accept & download"
-                        } else {
-                            "Continue"
-                        },
-                        runtime_ready,
-                    );
-                },
-            );
-        match action {
-            crate::ui::theme::DialogAction::Confirm => {
-                self.ai.consent = AiConsentState::None;
-                if let Some(brush) = self.inpaint.pending_brush.take() {
-                    let existing = self.inpaint.edits.as_ref().clone();
-                    let _ =
-                        self.start_remove_request(frame, existing, brush, model_download_needed);
-                }
-            }
-            crate::ui::theme::DialogAction::Cancel => {
-                self.ai.consent = AiConsentState::None;
-                self.inpaint.pending_brush = None;
-                self.inpaint.pending_retouch = None;
-                self.inpaint.last_brush_uv = None;
-            }
-            crate::ui::theme::DialogAction::None => {}
-        }
     }
 
     pub(crate) fn show_remove_progress_dialog(&mut self, ctx: &egui::Context) {
@@ -404,9 +304,10 @@ impl CalibRawApp {
                                 self.inpaint.pending_brush = pending_brush;
                                 let runtime_download_needed =
                                     self.automatic_onnx_runtime_download_needed();
-                                self.ai.consent = AiConsentState::Remove {
+                                self.ai.consent = Some(AiConsent {
+                                    feature: AiFeature::Remove,
                                     runtime_download_needed,
-                                };
+                                });
                                 self.ui.notice = Some(
                                     "Big-LaMa needs to be installed or re-verified before Remove can continue."
                                         .to_owned(),
@@ -456,9 +357,10 @@ mod tests {
             app.inpaint.aligned_offset = Some([0.2, 0.2]);
             app.inpaint.source_pick_active = true;
             app.inpaint.selected_stroke = Some(0);
-            app.ai.consent = AiConsentState::Remove {
+            app.ai.consent = Some(AiConsent {
+                feature: AiFeature::Remove,
                 runtime_download_needed: false,
-            };
+            });
 
             match transition {
                 "cancel" => app.cancel_remove_processing(),

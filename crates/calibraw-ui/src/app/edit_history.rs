@@ -1,7 +1,4 @@
-use super::{
-    needs_canonical_mask_source, AiConsentState, AppAction, AppTab, CalibRawApp,
-    LensCorrectionState,
-};
+use super::{needs_canonical_mask_source, AppAction, AppTab, CalibRawApp, LensCorrectionState};
 use crate::pipeline::{ExposureParams, MaskGeometry, MaskStack, ProcessingStage, RemoveEditState};
 use eframe::egui;
 use std::collections::VecDeque;
@@ -538,8 +535,8 @@ impl CalibRawApp {
             self.inpaint.edits = Arc::clone(&snapshot.remove);
             self.inpaint.active_points.clear();
             self.inpaint.pending_brush = None;
-            if matches!(self.ai.consent, AiConsentState::Remove { .. }) {
-                self.ai.consent = AiConsentState::None;
+            if self.ai_consent_is_for(calibraw_ai::AiFeature::Remove) {
+                self.ai.consent = None;
             }
             self.inpaint.receiver = None;
             self.inpaint.processing_progress = None;
@@ -619,25 +616,15 @@ impl CalibRawApp {
         if restored_source.is_some() || !needs_canonical_mask_source(&self.masks.stack) {
             self.masks.source_cache = restored_source;
         }
-        if self.ai.masks_need_update {
+        if self.ai.update_needed {
             self.masks.clear_generated_caches();
         } else {
             self.masks.restore_generated_caches();
         }
-        self.ai.mask_update_active = false;
-        self.ai.mask_update_subject_pending = false;
-        self.ai.mask_update_object_queue.clear();
-        self.ai.mask_update_failed = false;
-        if self.ai.masks_need_update {
-            let (subject, objects) = self.generated_ai_mask_targets();
-            self.ai.masks_need_update =
-                subject || !objects.is_empty() || self.has_range_mask_targets();
+        self.reset_ai_update_state();
+        if self.ai.update_needed {
+            self.ai.update_needed = !self.masks.stack.content_dependencies().is_empty();
         }
-        if self.ai.consent.is_mask_consent() {
-            self.ai.consent = AiConsentState::None;
-        }
-        self.ai.object_pending_target = None;
-        self.ai.object_cache = None;
     }
 }
 

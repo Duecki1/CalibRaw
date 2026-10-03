@@ -871,15 +871,10 @@ struct LensCorrectionTaskRequest {
     cached_raws: Option<(Arc<LoadedRaw>, Arc<LoadedRaw>)>,
 }
 
-type GeneratedAiMaskTargets = (bool, VecDeque<(usize, usize)>);
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ForegroundOperationKind {
-    SubjectMask,
-    SkyMask,
-    DepthMask,
-    ObjectMask,
-    AiDenoise,
+    /// A local-AI job; Remove runs in its own worker and never appears here.
+    Ai(calibraw_ai::AiFeature),
     LensCorrection,
 }
 
@@ -1152,8 +1147,6 @@ pub(crate) struct MaskState {
     pub(crate) subject_cache: Option<MaskImage>,
     pub(crate) sky_cache: Option<MaskImage>,
     pub(crate) depth_cache: Option<MaskImage>,
-    /// Prevents automatic fog depth generation from re-prompting every frame after cancellation.
-    pub(crate) fog_depth_auto_requested: bool,
     pub(crate) dirty_layers: [bool; MAX_LOCAL_MASKS],
     pub(crate) detail_dirty_layers: [bool; MAX_LOCAL_MASKS],
     pub(crate) navigation_dirty_layers: [bool; MAX_LOCAL_MASKS],
@@ -1168,42 +1161,11 @@ pub(crate) enum OnnxRuntimeMode {
     Manual,
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(crate) enum AiConsentState {
-    #[default]
-    None,
-    Subject {
-        runtime_download_needed: bool,
-    },
-    Sky {
-        runtime_download_needed: bool,
-    },
-    Depth {
-        runtime_download_needed: bool,
-        model_download_needed: bool,
-    },
-    Object {
-        runtime_download_needed: bool,
-    },
-    Denoise {
-        runtime_download_needed: bool,
-    },
-    Remove {
-        runtime_download_needed: bool,
-    },
-}
-
-impl AiConsentState {
-    pub(crate) const fn is_open(self) -> bool {
-        !matches!(self, Self::None)
-    }
-
-    pub(crate) const fn is_mask_consent(self) -> bool {
-        matches!(
-            self,
-            Self::Subject { .. } | Self::Sky { .. } | Self::Depth { .. } | Self::Object { .. }
-        )
-    }
+/// A local-AI job waiting for the user to accept its model or runtime download.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct AiConsent {
+    pub(crate) feature: calibraw_ai::AiFeature,
+    pub(crate) runtime_download_needed: bool,
 }
 
 pub(crate) struct AiState {
@@ -1212,11 +1174,10 @@ pub(crate) struct AiState {
     pub(crate) subject_crop_refinement: bool,
     #[cfg(not(target_os = "android"))]
     pub(crate) gpu_acceleration: bool,
-    pub(crate) masks_need_update: bool,
-    pub(crate) mask_update_active: bool,
-    pub(crate) mask_update_subject_pending: bool,
-    pub(crate) mask_update_object_queue: VecDeque<(usize, usize)>,
-    pub(crate) mask_update_failed: bool,
+    /// Content results (AI masks, scene depth, range sources) were made from an
+    /// image that has since changed. Persisted as `ai_masks_need_update`.
+    pub(crate) update_needed: bool,
+    pub(crate) update: Option<AiUpdate>,
     #[cfg(not(target_os = "android"))]
     pub(crate) runtime_mode: OnnxRuntimeMode,
     #[cfg(not(target_os = "android"))]
@@ -1224,7 +1185,7 @@ pub(crate) struct AiState {
     #[cfg(not(target_os = "android"))]
     pub(crate) runtime_sha256: Option<String>,
     pub(crate) library_mask_refresh: Option<LibraryAiMaskRefreshState>,
-    pub(crate) consent: AiConsentState,
+    pub(crate) consent: Option<AiConsent>,
     pub(crate) object_pending_target: Option<(usize, usize)>,
     pub(crate) object_error_dialog: Option<String>,
     pub(crate) object_cache: Option<((usize, usize), ObjectInferenceCache)>,
@@ -1372,60 +1333,6 @@ impl CalibRawApp {
         self.develop.loaded_raw.is_some() && self.ui.active_tab == AppTab::Develop
     }
 
-    /// The local-AI runtime the current view owns. Mask jobs survive only while
-    /// it is `Masks`, and Remove jobs only while it is `Remove`.
-    pub(in crate::app) fn ai_runtime_context(&self) -> Option<calibraw_ai::AiRuntimeContext> {
-        if self.ui.active_tab != AppTab::Develop {
-            return None;
-        }
-        match self.ui.sidebar_tab {
-            SidebarTab::Masks => Some(calibraw_ai::AiRuntimeContext::Masks),
-            SidebarTab::Inpainting => Some(calibraw_ai::AiRuntimeContext::Remove),
-            SidebarTab::Adjustments | SidebarTab::Crop | SidebarTab::Export | SidebarTab::Info => {
-                self.fog_depth_request_active()
-                    .then_some(calibraw_ai::AiRuntimeContext::Masks)
-            }
-        }
-    }
-
-    /// Fog can request scene depth while its controls live outside the Masks sidebar.
-    /// The mask runtime stays alive from the initial automatic request through
-    /// consent/download/inference; otherwise the next frame cancels the DepthMask
-    /// foreground operation just because the user is still in Adjustments.
-    fn fog_depth_request_active(&self) -> bool {
-        self.masks.stack.has_depth_fog_effect()
-            && self.masks.stack.scene_depth_image().is_none()
-            && (!self.masks.fog_depth_auto_requested
-                || matches!(self.ai.consent, AiConsentState::Depth { .. })
-                || self.foreground_operation_is(ForegroundOperationKind::DepthMask))
-    }
-
-    pub(crate) fn sync_ai_model_runtime_context(&mut self) {
-        let context = self.ai_runtime_context();
-        calibraw_ai::set_active_ai_context(context);
-
-        if context != Some(calibraw_ai::AiRuntimeContext::Remove)
-            && self.inpaint.cancellation.is_some()
-        {
-            self.cancel_remove_processing();
-        }
-
-        if context != Some(calibraw_ai::AiRuntimeContext::Masks)
-            && self.ai.library_mask_refresh.is_none()
-            && matches!(
-                self.foreground_operation_kind(),
-                Some(
-                    ForegroundOperationKind::SubjectMask
-                        | ForegroundOperationKind::SkyMask
-                        | ForegroundOperationKind::DepthMask
-                        | ForegroundOperationKind::ObjectMask
-                )
-            )
-        {
-            self.cancel_foreground_operation();
-        }
-    }
-
     pub(crate) fn activate_tab(&mut self, tab: AppTab) {
         if self.ui.active_tab == tab {
             return;
@@ -1448,7 +1355,7 @@ impl CalibRawApp {
         if tab == AppTab::Develop {
             self.resume_raw_edit_timer();
         }
-        self.sync_ai_model_runtime_context();
+        self.sync_ai_runtime();
         #[cfg(target_os = "android")]
         calibraw_ffi::set_back_navigation_active(tab != AppTab::Library);
     }
@@ -1542,12 +1449,12 @@ pub(crate) fn format_usage_duration(duration: Duration) -> String {
     }
 }
 
+mod ai;
 mod eframe_impl;
 mod foreground;
 mod inpainting;
 mod library_adjustments;
 mod lifecycle;
-mod masks_ai;
 mod preview_clipping;
 mod preview_histogram;
 #[cfg(all(test, not(target_os = "android")))]
@@ -1555,6 +1462,7 @@ mod preview_tests;
 mod processing_export;
 mod sidecar_persistence;
 
+use ai::AiUpdate;
 use lifecycle::needs_canonical_mask_source;
 pub(crate) use lifecycle::ProfileReload;
 #[cfg(not(target_os = "android"))]

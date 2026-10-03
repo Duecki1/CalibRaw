@@ -79,6 +79,7 @@ impl Sidebar {
     const CONTEXT_TAB_WIDTH: f32 = 64.0;
 }
 
+mod ai_update;
 mod crop;
 mod develop;
 mod export;

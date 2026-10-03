@@ -312,16 +312,8 @@ impl CalibRawApp {
         self.masks.stack.clear();
         self.reset_inpainting_state();
         self.masks.reset_transient_state();
-        self.ai.masks_need_update = false;
-        self.ai.mask_update_active = false;
-        self.ai.mask_update_subject_pending = false;
-        self.ai.mask_update_object_queue.clear();
-        self.ai.mask_update_failed = false;
-        if self.ai.consent.is_mask_consent() {
-            self.ai.consent = AiConsentState::None;
-        }
-        self.ai.object_pending_target = None;
-        self.ai.object_cache = None;
+        self.ai.update_needed = false;
+        self.reset_ai_update_state();
         self.preview.pending_stage = None;
         self.preview.detail_pending_stage = None;
         self.preview.navigation_pending_stage = None;
@@ -445,9 +437,9 @@ impl CalibRawApp {
                 self.develop.geometry_revision = 0;
                 self.masks.stack = loaded.rendered_masks;
                 self.install_remove_edits(Arc::new(loaded.remove));
-                self.ai.masks_need_update = loaded.ai_masks_need_update;
+                self.ai.update_needed = loaded.ai_masks_need_update;
                 self.rehydrate_restored_mask_state();
-                self.ai.masks_need_update |= loaded.ai_masks_need_update;
+                self.ai.update_needed |= loaded.ai_masks_need_update;
                 if loaded.mask_source.is_some() {
                     self.masks.source_cache = loaded.mask_source;
                 }

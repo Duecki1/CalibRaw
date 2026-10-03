@@ -67,7 +67,7 @@ impl CalibRawApp {
 
     pub(crate) fn preview_is_preparing(&self) -> bool {
         self.develop.load_receiver.is_some()
-            || self.foreground_operation_is(ForegroundOperationKind::AiDenoise)
+            || self.ai_denoise_running()
             || self.preview.rebuild_receiver.is_some()
             || self.preview.quality_dirty
     }
@@ -510,7 +510,7 @@ impl CalibRawApp {
             return;
         }
         #[cfg(target_os = "android")]
-        if self.foreground_operation_is(ForegroundOperationKind::AiDenoise) {
+        if self.ai_denoise_running() {
             return;
         }
         let Some(source_raw) = preview_source.as_ref().map(Arc::clone) else {

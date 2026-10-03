@@ -20,7 +20,7 @@ impl CalibRawApp {
             || self.develop.lens_correction_dirty
             || self.lens_correction_busy()
             || self.develop.load_receiver.is_some()
-            || self.foreground_operation_is(ForegroundOperationKind::AiDenoise)
+            || self.ai_denoise_running()
             || self.preview.detail_rebuild_receiver.is_some()
         {
             return;
