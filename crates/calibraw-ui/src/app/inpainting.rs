@@ -277,9 +277,18 @@ impl CalibRawApp {
                         )),
                     );
                 }
-                RemoveEvent::Processing { .. } => {
-                    self.inpaint.processing_progress =
-                        Some(ForegroundProgress::indeterminate("Applying Big-LaMa…"));
+                RemoveEvent::Processing { completed, total } => {
+                    // A stroke is filled in one or more passes; show which.
+                    self.inpaint.processing_progress = Some(if total > 1 {
+                        ForegroundProgress::units(
+                            completed as u64,
+                            total as u64,
+                            Some("areas".to_owned()),
+                            "Applying Big-LaMa",
+                        )
+                    } else {
+                        ForegroundProgress::indeterminate("Applying Big-LaMa…")
+                    });
                 }
                 RemoveEvent::Finished(result) => {
                     self.inpaint.receiver = None;
