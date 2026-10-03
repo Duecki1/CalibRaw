@@ -99,6 +99,9 @@ impl CalibRawApp {
             crate::app::DesktopPickerEvent::OnnxRuntime(Err(error)) => {
                 self.ui.notice = Some(error);
             }
+            crate::app::DesktopPickerEvent::PresetFiles(Some(paths)) => {
+                self.import_preset_files(&paths);
+            }
             _ => {}
         }
     }

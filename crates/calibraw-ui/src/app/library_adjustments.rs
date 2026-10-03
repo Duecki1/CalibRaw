@@ -1,10 +1,72 @@
 use super::*;
 
-impl CalibRawApp {
-    pub(super) fn apply_adjustment_clipboard_to_current(
-        &mut self,
-        clipboard: &LibraryAdjustmentClipboard,
+/// Settings to apply to one or more photos.
+#[derive(Clone, Copy)]
+pub(crate) enum EditTransfer<'a> {
+    /// Adjustments copied from another photo with Copy adjustments.
+    Paste {
+        clipboard: &'a AdjustmentClipboard,
         mode: AdjustmentPasteMode,
+    },
+    Preset(&'a crate::presets::Preset),
+}
+
+impl EditTransfer<'_> {
+    fn selection(self) -> EditSelection {
+        match self {
+            Self::Paste { clipboard, .. } => clipboard.selection,
+            Self::Preset(preset) => preset.selection(),
+        }
+    }
+
+    /// Whether every category is rewritten, selected or not.
+    fn replaces_all_categories(self) -> bool {
+        matches!(
+            self,
+            Self::Paste {
+                mode: AdjustmentPasteMode::Replace,
+                ..
+            }
+        )
+    }
+
+    fn apply(self, destination: &mut SidecarEditState) {
+        match self {
+            Self::Paste { clipboard, mode } => crate::sidecar::transfer_edits(
+                destination,
+                &clipboard.edits,
+                clipboard.selection,
+                mode,
+            ),
+            Self::Preset(preset) => preset.apply_to(destination),
+        }
+    }
+}
+
+/// Where an edit transfer started. Changing the camera profile reopens the
+/// photo; a Library action keeps the Library on screen while that happens.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum EditTransferOrigin {
+    Library,
+    Develop,
+}
+
+/// The result of applying an [`EditTransfer`] to several Library photos.
+#[derive(Debug, Default)]
+pub(crate) struct LibraryEditTransferOutcome {
+    pub(crate) completed: usize,
+    /// Photos whose new edit has AI masks that must be regenerated.
+    pub(crate) ai_refresh: Vec<crate::ui::library::LibraryAsset>,
+    pub(crate) failures: Vec<String>,
+}
+
+impl CalibRawApp {
+    /// Applies `transfer` to the open photo as one undoable edit. Returns
+    /// whether AI masks must be regenerated.
+    pub(crate) fn apply_edit_transfer_to_current(
+        &mut self,
+        transfer: EditTransfer<'_>,
+        origin: EditTransferOrigin,
         frame: &eframe::Frame,
     ) -> Result<bool, String> {
         if self.develop.loaded_raw.is_none() || self.persistence.sidecar_target.is_none() {
@@ -14,12 +76,7 @@ impl CalibRawApp {
         self.finish_mask_geometry_interaction();
         self.commit_edit_history_now();
         let mut merged = self.capture_sidecar_edit_state();
-        crate::sidecar::apply_copied_adjustments_with_mode(
-            &mut merged,
-            &clipboard.edits,
-            clipboard.settings,
-            mode,
-        );
+        transfer.apply(&mut merged);
 
         let previous_camera_profile = self.develop.selected_camera_profile.clone();
         let pasted_camera_profile = merged.camera_profile.as_ref().and_then(|relative| {
@@ -29,14 +86,16 @@ impl CalibRawApp {
                 .map(|root| root.join(relative))
         });
 
-        let replacing = mode == AdjustmentPasteMode::Replace;
-        let adjustments_changed = clipboard.settings.adjustments || replacing;
-        let geometry_changed = clipboard.settings.geometry || replacing;
-        let camera_profile_category_changed = clipboard.settings.camera_profile || replacing;
+        let selection = transfer.selection();
+        let replacing = transfer.replaces_all_categories();
+        let adjustments_changed = selection.includes_exposure() || replacing;
+        let geometry_changed = selection.geometry || replacing;
+        let camera_profile_category_changed = selection.camera_profile || replacing;
         let pipeline_adjustments_changed =
             adjustments_changed || geometry_changed || camera_profile_category_changed;
-        let masks_changed = clipboard.settings.masks || clipboard.settings.ai_masks || replacing;
-        let lens_changed = (clipboard.settings.lens_correction || replacing)
+        let masks_changed = selection.includes_masks() || replacing;
+        let lens_category_changed = selection.lens_correction || replacing;
+        let lens_changed = lens_category_changed
             && (self.develop.lens_correction.enabled != merged.lens.enabled
                 || self.develop.lens_correction.selected_maker != merged.lens.maker
                 || self.develop.lens_correction.selected_model != merged.lens.model);
@@ -44,7 +103,7 @@ impl CalibRawApp {
         if masks_changed {
             crate::sidecar::preflight_mask_change(&merged.masks).map_err(|error| {
                 format!(
-                    "Paste was not applied because the resulting edit could not be saved: {error}"
+                    "The adjustments were not applied because the resulting edit could not be saved: {error}"
                 )
             })?;
         }
@@ -79,7 +138,7 @@ impl CalibRawApp {
             self.mark_all_mask_layers_dirty();
         }
 
-        if clipboard.settings.lens_correction || replacing {
+        if lens_category_changed {
             self.develop.lens_correction.enabled = merged.lens.enabled;
             self.develop.lens_correction.selected_maker = merged.lens.maker;
             self.develop.lens_correction.selected_model = merged.lens.model;
@@ -99,72 +158,67 @@ impl CalibRawApp {
         let needs_ai_refresh = self.ai_update_needed();
         if camera_profile_category_changed && previous_camera_profile != pasted_camera_profile {
             let edit_override = self.capture_sidecar_edit_state();
-            self.reload_current_after_adjustment_paste(frame, pasted_camera_profile, edit_override);
+            self.reload_current_after_edit_transfer(
+                frame,
+                pasted_camera_profile,
+                edit_override,
+                origin,
+            );
         }
         Ok(needs_ai_refresh)
     }
 
-    pub(super) fn reload_current_after_adjustment_paste(
+    fn reload_current_after_edit_transfer(
         &mut self,
         frame: &eframe::Frame,
         profile_selection: Option<PathBuf>,
         edit_override: SidecarEditState,
+        origin: EditTransferOrigin,
     ) {
         let Some(sidecar_target) = self.persistence.sidecar_target.clone() else {
             return;
+        };
+        let reload = ProfileReload {
+            camera_profile: profile_selection,
+            edits: edit_override,
         };
 
         #[cfg(not(target_os = "android"))]
         {
             let crate::sidecar::SidecarTarget::Desktop { raw_path } = sidecar_target;
-            let reload = ProfileReload {
-                camera_profile: profile_selection,
-                edits: edit_override,
-            };
             self.reopen_desktop_with_camera_profile(raw_path, reload, frame);
-            // Background reload returns to the library without triggering
-            // interactive tab-exit side effects.
-            self.ui.active_tab = AppTab::Library;
         }
 
         #[cfg(target_os = "android")]
-        {
-            match sidecar_target {
-                crate::sidecar::SidecarTarget::Desktop { raw_path } => {
-                    let reload = ProfileReload {
-                        camera_profile: profile_selection,
-                        edits: edit_override,
-                    };
-                    self.reopen_desktop_with_camera_profile(raw_path, reload, frame);
-                    // Background reload returns to the library without triggering
-                    // interactive tab-exit side effects.
-                    self.ui.active_tab = AppTab::Library;
-                }
-                crate::sidecar::SidecarTarget::Android {
-                    raw_uri,
-                    display_name,
-                } => match calibraw_ffi::open_library_document(
-                    &self.android.android_app,
-                    &raw_uri,
-                    &display_name,
-                ) {
-                    Ok(()) => {
-                        self.android.pending_android_profile_reload = Some(ProfileReload {
-                            camera_profile: profile_selection,
-                            edits: edit_override,
-                        });
-                        self.android.picker_pending = true;
-                        // Keep the background profile reload in the library while
-                        // preserving its in-flight operation state.
-                        self.ui.active_tab = AppTab::Library;
-                    }
-                    Err(error) => {
-                        self.ui.notice = Some(format!(
-                            "Adjustments were pasted, but the camera profile could not be reloaded: {error}"
-                        ));
-                    }
-                },
+        match sidecar_target {
+            crate::sidecar::SidecarTarget::Desktop { raw_path } => {
+                self.reopen_desktop_with_camera_profile(raw_path, reload, frame);
             }
+            crate::sidecar::SidecarTarget::Android {
+                raw_uri,
+                display_name,
+            } => match calibraw_ffi::open_library_document(
+                &self.android.android_app,
+                &raw_uri,
+                &display_name,
+            ) {
+                Ok(()) => {
+                    self.android.pending_android_profile_reload = Some(reload);
+                    self.android.picker_pending = true;
+                }
+                Err(error) => {
+                    self.ui.notice = Some(format!(
+                        "The adjustments were applied, but the camera profile could not be reloaded: {error}"
+                    ));
+                    return;
+                }
+            },
+        }
+
+        if origin == EditTransferOrigin::Library {
+            // Reload in the background without the interactive tab-exit side
+            // effects of leaving Develop.
+            self.ui.active_tab = AppTab::Library;
         }
     }
 
@@ -298,42 +352,30 @@ impl CalibRawApp {
     ) -> Result<(), String> {
         let edits = self.library_asset_edit_state(asset)?;
         self.library
-            .install_adjustment_clipboard(edits, self.preferences.adjustment_copy_settings);
+            .install_adjustment_clipboard(edits, self.preferences.adjustment_copy_settings.into());
         Ok(())
     }
 
-    pub(crate) fn paste_library_adjustments(
+    /// Applies `transfer` to every photo in `assets`, saving each sidecar.
+    pub(crate) fn apply_edit_transfer_to_library_assets(
         &mut self,
         assets: &[crate::ui::library::LibraryAsset],
-        mode: AdjustmentPasteMode,
+        transfer: EditTransfer<'_>,
         frame: &eframe::Frame,
-    ) -> (usize, Vec<crate::ui::library::LibraryAsset>, Vec<String>) {
-        let Some(clipboard) = self.library.adjustment_clipboard.clone() else {
-            return (
-                0,
-                Vec::new(),
-                vec!["Copy adjustments from an image first.".to_owned()],
-            );
-        };
-        let mut completed = 0usize;
-        let mut ai_refresh = Vec::new();
-        let mut failures = Vec::new();
+    ) -> LibraryEditTransferOutcome {
+        let mut outcome = LibraryEditTransferOutcome::default();
 
+        // The open photo reloads when its camera profile changes, so it goes last.
         let mut ordered_assets = assets.to_vec();
         ordered_assets.sort_by_key(|asset| self.library_asset_is_current(asset));
 
         for asset in &ordered_assets {
             let result = if self.library_asset_is_current(asset) {
-                self.apply_adjustment_clipboard_to_current(&clipboard, mode, frame)
+                self.apply_edit_transfer_to_current(transfer, EditTransferOrigin::Library, frame)
             } else {
                 (|| {
                     let mut destination = self.library_asset_edit_state(asset)?;
-                    crate::sidecar::apply_copied_adjustments_with_mode(
-                        &mut destination,
-                        &clipboard.edits,
-                        clipboard.settings,
-                        mode,
-                    );
+                    transfer.apply(&mut destination);
                     let needs_ai_refresh = destination.ai_masks_need_update;
                     self.save_library_asset_edit_state(asset, destination)?;
                     Ok(needs_ai_refresh)
@@ -342,15 +384,39 @@ impl CalibRawApp {
 
             match result {
                 Ok(needs_ai_refresh) => {
-                    completed += 1;
+                    outcome.completed += 1;
                     if needs_ai_refresh {
-                        ai_refresh.push(asset.clone());
+                        outcome.ai_refresh.push(asset.clone());
                     }
                 }
-                Err(error) => failures.push(format!("{}: {error}", asset.display_name)),
+                Err(error) => outcome
+                    .failures
+                    .push(format!("{}: {error}", asset.display_name)),
             }
         }
-        (completed, ai_refresh, failures)
+        outcome
+    }
+
+    pub(crate) fn paste_library_adjustments(
+        &mut self,
+        assets: &[crate::ui::library::LibraryAsset],
+        mode: AdjustmentPasteMode,
+        frame: &eframe::Frame,
+    ) -> LibraryEditTransferOutcome {
+        let Some(clipboard) = self.library.adjustment_clipboard.clone() else {
+            return LibraryEditTransferOutcome {
+                failures: vec!["Copy adjustments from an image first.".to_owned()],
+                ..LibraryEditTransferOutcome::default()
+            };
+        };
+        self.apply_edit_transfer_to_library_assets(
+            assets,
+            EditTransfer::Paste {
+                clipboard: &clipboard,
+                mode,
+            },
+            frame,
+        )
     }
 }
 

@@ -11,6 +11,7 @@ pub(crate) enum LibraryAction {
     HdrMerge(Vec<LibraryAsset>),
     CopyAdjustments(LibraryAsset),
     PasteAdjustments(Vec<LibraryAsset>),
+    ApplyPreset(Vec<LibraryAsset>, PathBuf),
     #[cfg(not(target_os = "android"))]
     Copy(Vec<LibraryAsset>),
     #[cfg(not(target_os = "android"))]
@@ -123,6 +124,9 @@ pub(crate) fn library_image_context_menu(
     {
         action = Some(LibraryAction::PasteAdjustments(context_assets.to_vec()));
         ui.close();
+    }
+    if let Some(preset) = apply_preset_menu(ui, app, action_enabled) {
+        action = Some(LibraryAction::ApplyPreset(context_assets.to_vec(), preset));
     }
 
     ui.separator();
@@ -254,6 +258,9 @@ pub(crate) fn apply_library_action(
                 );
             }
         }
+        LibraryAction::ApplyPreset(assets, preset) => {
+            apply_library_preset(app, assets, &preset, ui.ctx(), frame);
+        }
         #[cfg(not(target_os = "android"))]
         LibraryAction::Copy(assets) => {
             set_library_clipboard(app, ImageClipboardMode::Copy, assets);
@@ -333,6 +340,27 @@ pub(crate) fn apply_library_action(
             }
         }
     }
+}
+
+/// An "Apply preset" submenu listing every preset. Returns the chosen preset.
+#[cfg(not(target_os = "android"))]
+fn apply_preset_menu(ui: &mut Ui, app: &CalibRawApp, enabled: bool) -> Option<PathBuf> {
+    presets_submenu(ui, &crate::ui::presets::PresetList::from_app(app), enabled)
+}
+
+fn presets_submenu(
+    ui: &mut Ui,
+    presets: &crate::ui::presets::PresetList,
+    enabled: bool,
+) -> Option<PathBuf> {
+    let mut chosen = None;
+    ui.add_enabled_ui(enabled && !presets.is_empty(), |ui| {
+        let menu = ui.menu_button("Apply preset", |ui| presets.show_menu(ui));
+        chosen = menu.inner.flatten();
+        menu.response
+            .on_disabled_hover_text("Create a preset in the editor's Presets tab first");
+    });
+    chosen
 }
 
 fn delete_confirmed_library_assets(ui: &Ui, app: &mut CalibRawApp, assets: Vec<LibraryAsset>) {
@@ -443,13 +471,14 @@ pub(super) fn selection_bar_more_menu<R>(
         .inner
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) enum SelectionBarCommand {
     Export,
     #[cfg(not(target_os = "android"))]
     HdrMerge,
     CopyAdjustments,
     PasteAdjustments,
+    ApplyPreset(PathBuf),
     #[cfg(not(target_os = "android"))]
     Copy,
     #[cfg(not(target_os = "android"))]
@@ -465,6 +494,7 @@ pub(super) fn selection_bar_actions(
     selected_count: usize,
     action_enabled: bool,
     can_paste_adjustments: bool,
+    presets: &crate::ui::presets::PresetList,
     compact: bool,
 ) -> Option<SelectionBarCommand> {
     let mut action = None;
@@ -529,6 +559,9 @@ pub(super) fn selection_bar_actions(
         action = Some(SelectionBarCommand::Copy);
     }
     selection_bar_more_menu(ui, action_enabled, compact, |ui| {
+        if let Some(preset) = presets_submenu(ui, presets, true) {
+            action = Some(SelectionBarCommand::ApplyPreset(preset));
+        }
         #[cfg(not(target_os = "android"))]
         if crate::ui::theme::menu_item(ui, true, "Cut").clicked() {
             action = Some(SelectionBarCommand::Cut);
@@ -604,6 +637,9 @@ pub(super) fn library_selection_action(
         SelectionBarCommand::PasteAdjustments => {
             Some(LibraryAction::PasteAdjustments(assets.to_vec()))
         }
+        SelectionBarCommand::ApplyPreset(preset) => {
+            Some(LibraryAction::ApplyPreset(assets.to_vec(), preset))
+        }
         #[cfg(not(target_os = "android"))]
         SelectionBarCommand::Copy => Some(LibraryAction::Copy(assets.to_vec())),
         #[cfg(not(target_os = "android"))]
@@ -664,11 +700,13 @@ pub(super) fn show_library_selection_action_bar(
                         let action_enabled = !local_action_in_progress(app)
                             && app.library_batch_export_progress().is_none()
                             && app.library_ai_mask_refresh_status().is_none();
+                        let presets = crate::ui::presets::PresetList::from_app(app);
                         if let Some(action) = selection_bar_actions(
                             ui,
                             count,
                             action_enabled,
                             app.library.has_copied_adjustments(),
+                            &presets,
                             compact,
                         )
                         .and_then(|command| library_selection_action(command, selected))

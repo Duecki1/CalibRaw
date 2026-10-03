@@ -67,6 +67,15 @@ impl PreviewVisibility {
         state.write(ctx);
         ctx.request_repaint();
     }
+    /// Re-renders the preview after an input of the projection other than
+    /// the eye controls changed, such as a hovered preset.
+    pub(in crate::app) fn refresh_projection(ctx: &egui::Context) {
+        let mut state = Self::read(ctx);
+        state.pending = true;
+        state.masks = None;
+        state.write(ctx);
+        ctx.request_repaint();
+    }
     pub(crate) fn show(ctx: &egui::Context, title: &'static str) {
         if !Self::visible(ctx, title) {
             Self::toggle(ctx, title);
@@ -145,7 +154,11 @@ impl PreviewVisibility {
 
 impl CalibRawApp {
     pub(in crate::app) fn preview_exposure(&self) -> ExposureParams {
-        let mut exposure = PreviewVisibility::read(&self.egui_ctx).exposure(self.develop.exposure);
+        let mut exposure = self.develop.exposure;
+        if let Some(preset) = self.previewed_preset() {
+            preset.preview_adjustments_on(&mut exposure);
+        }
+        let mut exposure = PreviewVisibility::read(&self.egui_ctx).exposure(exposure);
         exposure.point_color_visualize = (self.ui.sidebar_tab == SidebarTab::Adjustments
             && self.develop_ui.point_color_tab
             && self.develop_ui.point_color.visualize_range
@@ -159,7 +172,14 @@ impl CalibRawApp {
         if let Some(masks) = state.masks {
             return masks;
         }
-        let mut masks = state.project_masks(&self.masks.stack);
+        let mut masks = match self.previewed_preset() {
+            Some(preset) => {
+                let mut with_preset = self.masks.stack.clone();
+                preset.preview_masks_on(&mut with_preset);
+                state.project_masks(&with_preset)
+            }
+            None => state.project_masks(&self.masks.stack),
+        };
         if self.ui.sidebar_tab == SidebarTab::Masks
             && self.develop_ui.mask_point_color_tab
             && self.develop_ui.mask_point_color.visualize_range

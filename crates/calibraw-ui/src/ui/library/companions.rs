@@ -57,6 +57,7 @@ impl RawCompanions {
     }
 
     /// Rendered formats saved alongside the RAW `asset`, e.g. `[Jpeg]`.
+    #[cfg(not(target_os = "android"))]
     pub(super) fn paired_formats(&self, asset: &LibraryAssetId) -> &[RenderedImageFormat] {
         self.paired_formats.get(asset).map_or(&[], Vec::as_slice)
     }

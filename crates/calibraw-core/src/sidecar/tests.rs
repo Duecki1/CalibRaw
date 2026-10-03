@@ -10,6 +10,19 @@ use crate::pipeline::{
 use std::fs;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+fn paste(destination: &mut EditState, source: &EditState, settings: AdjustmentCopySettings) {
+    paste_with_mode(destination, source, settings, AdjustmentPasteMode::Merge);
+}
+
+fn paste_with_mode(
+    destination: &mut EditState,
+    source: &EditState,
+    settings: AdjustmentCopySettings,
+    mode: AdjustmentPasteMode,
+) {
+    transfer_edits(destination, source, settings.into(), mode);
+}
+
 fn sample_edits() -> EditState {
     let mut exposure = ExposureParams::scene_referred_default();
     exposure.dehaze = 27.0;
@@ -229,7 +242,7 @@ fn copied_fog_uses_only_destination_scene_depth_in_merge_and_replace_modes() {
                 let mut destination = default_edit_state();
                 let own_depth = cached.then(|| MaskImage::new(1, 2, vec![32, 160]).unwrap());
                 Arc::make_mut(&mut destination.masks).scene_depth = own_depth.clone();
-                apply_copied_adjustments_with_mode(
+                paste_with_mode(
                     &mut destination,
                     &source,
                     AdjustmentCopySettings {
@@ -413,7 +426,7 @@ fn copied_adjustments_respect_category_settings_and_mark_ai_masks_stale() {
     let original_exposure = destination.exposure;
     let original_lens = destination.lens.clone();
 
-    apply_copied_adjustments(
+    paste(
         &mut destination,
         &source,
         AdjustmentCopySettings {
@@ -448,7 +461,7 @@ fn copied_uncached_ai_masks_are_still_marked_stale() {
     source.masks = Arc::new(source_masks);
 
     let mut destination = default_edit_state();
-    apply_copied_adjustments(
+    paste(
         &mut destination,
         &source,
         AdjustmentCopySettings {
@@ -488,7 +501,7 @@ fn manual_and_ai_masks_can_be_copied_independently() {
     source.masks = Arc::new(source_masks);
 
     let mut destination = default_edit_state();
-    apply_copied_adjustments(
+    paste(
         &mut destination,
         &source,
         AdjustmentCopySettings {
@@ -516,7 +529,7 @@ fn manual_and_ai_masks_can_be_copied_independently() {
     assert!(destination.masks.subject_refinement.is_empty());
     assert!(destination.subject_refinement.is_none());
 
-    apply_copied_adjustments(
+    paste(
         &mut destination,
         &source,
         AdjustmentCopySettings {
@@ -562,7 +575,7 @@ fn mixed_mask_groups_do_not_copy_disabled_manual_components() {
     source.masks = Arc::new(masks);
 
     let mut destination = default_edit_state();
-    apply_copied_adjustments(
+    paste(
         &mut destination,
         &source,
         AdjustmentCopySettings {
@@ -583,7 +596,7 @@ fn mixed_mask_groups_do_not_copy_disabled_manual_components() {
     );
     assert!(destination.ai_masks_need_update);
 
-    apply_copied_adjustments(
+    paste(
         &mut destination,
         &source,
         AdjustmentCopySettings {
@@ -620,7 +633,7 @@ fn copied_adjustments_include_camera_profile_and_replace_clears_other_categories
         .push(RemoveStroke::default());
     let destination_remove = Arc::clone(&destination.remove);
 
-    apply_copied_adjustments_with_mode(
+    paste_with_mode(
         &mut destination,
         &source,
         AdjustmentCopySettings {

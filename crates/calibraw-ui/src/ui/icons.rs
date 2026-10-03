@@ -4,18 +4,6 @@ use egui_phosphor::regular;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum UiIcon {
     #[cfg(not(target_os = "android"))]
-    Adjustments,
-    #[cfg(not(target_os = "android"))]
-    Crop,
-    #[cfg(not(target_os = "android"))]
-    Mask,
-    #[cfg(not(target_os = "android"))]
-    Heal,
-    #[cfg(not(target_os = "android"))]
-    Export,
-    #[cfg(not(target_os = "android"))]
-    Info,
-    #[cfg(not(target_os = "android"))]
     Sidebar,
     #[cfg(not(target_os = "android"))]
     Filmstrip,
@@ -26,18 +14,6 @@ pub(crate) enum UiIcon {
 impl UiIcon {
     fn glyph(self) -> &'static str {
         match self {
-            #[cfg(not(target_os = "android"))]
-            Self::Adjustments => regular::SLIDERS_HORIZONTAL,
-            #[cfg(not(target_os = "android"))]
-            Self::Crop => regular::CROP,
-            #[cfg(not(target_os = "android"))]
-            Self::Mask => regular::SELECTION,
-            #[cfg(not(target_os = "android"))]
-            Self::Heal => regular::BANDAIDS,
-            #[cfg(not(target_os = "android"))]
-            Self::Export => regular::EXPORT,
-            #[cfg(not(target_os = "android"))]
-            Self::Info => regular::INFO,
             #[cfg(not(target_os = "android"))]
             Self::Sidebar => regular::SIDEBAR_SIMPLE,
             #[cfg(not(target_os = "android"))]
@@ -56,9 +32,21 @@ pub(crate) fn icon_toggle_button(
     size: Vec2,
     tooltip: &str,
 ) -> Response {
+    glyph_toggle_button(ui, icon.glyph(), selected, size, tooltip)
+}
+
+/// [`icon_toggle_button`] for any Phosphor glyph. Only the selected state is framed.
+#[cfg(not(target_os = "android"))]
+pub(crate) fn glyph_toggle_button(
+    ui: &mut Ui,
+    glyph: &str,
+    selected: bool,
+    size: Vec2,
+    tooltip: &str,
+) -> Response {
     ui.add_sized(
         size,
-        egui::Button::new(RichText::new(icon.glyph()).size(size.y * 0.52))
+        egui::Button::new(RichText::new(glyph).size(size.y * 0.52))
             .selected(selected)
             .frame(selected),
     )

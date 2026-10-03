@@ -89,7 +89,7 @@ impl Sidebar {
             .hover_text("Fine rotation for leveling the image.")
             .show(ui);
             let straighten_label = if app.develop_ui.straighten_tool_active {
-                "Drawing straighten line…"
+                "Cancel straighten line"
             } else {
                 "Draw straighten line"
             };
@@ -104,6 +104,11 @@ impl Sidebar {
                 app.develop_ui.straighten_tool_active = !app.develop_ui.straighten_tool_active;
                 app.develop_ui.straighten_drag = None;
                 app.develop_ui.crop_drag = None;
+            }
+            if app.develop_ui.straighten_tool_active {
+                ui.small(
+                    "Drag along a horizon or vertical edge in the preview to level the image.",
+                );
             }
         });
 

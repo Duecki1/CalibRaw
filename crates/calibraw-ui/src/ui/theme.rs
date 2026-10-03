@@ -20,9 +20,8 @@ pub(crate) use moduwu_design::{
 };
 pub(crate) use moduwu_design::{
     dialog_button_row, dialog_confirmation_buttons, dialog_keyboard_action, dialog_window,
-    request_initial_focus, DialogAction, DialogKeyboard, DIALOG_TEXT_FIELD_WIDTH,
-    DIALOG_WIDTH_DEFAULT, DIALOG_WIDTH_FORM, DIALOG_WIDTH_LARGE, DIALOG_WIDTH_NARROW,
-    DIALOG_WIDTH_WIDE,
+    request_initial_focus, DialogAction, DialogKeyboard, DIALOG_WIDTH_DEFAULT, DIALOG_WIDTH_FORM,
+    DIALOG_WIDTH_LARGE, DIALOG_WIDTH_NARROW, DIALOG_WIDTH_WIDE,
 };
 #[cfg(not(target_os = "android"))]
 pub(crate) use moduwu_design::{tab_button, tool_rail_icon_size, CONTENT_MARGIN};
@@ -208,6 +207,22 @@ pub(crate) fn adaptive_backdrop_from_rgba(rgba: &[u8]) -> Color32 {
     };
     let muted = offsets.map(|offset| (32.0 + offset * chroma_scale).clamp(18.0, 50.0) as u8);
     Color32::from_rgb(muted[0], muted[1], muted[2])
+}
+
+/// The single-line text field used in every dialog. It has the height of
+/// the Library search field and fills the dialog's width. egui caps a
+/// field at the space it is given, margins included, so the field never
+/// widens the window.
+pub(crate) fn dialog_text_field(
+    ui: &mut egui::Ui,
+    text: &mut dyn egui::TextBuffer,
+    id_salt: impl egui::AsIdSalt,
+    hint: &str,
+) -> egui::Response {
+    ui.add_sized(
+        [ui.available_width(), CONTROL_HEIGHT],
+        singleline_text_edit(text).hint_text(hint).id_salt(id_salt),
+    )
 }
 
 pub(crate) fn text_on_backdrop(color: Color32) -> Color32 {

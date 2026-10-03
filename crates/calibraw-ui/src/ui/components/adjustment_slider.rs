@@ -387,11 +387,15 @@ fn compact_slider_label(
         );
         text_x += 15.0;
     }
-    painter.text(
-        egui::pos2(text_x, rect.center().y),
-        Align2::LEFT_CENTER,
-        label,
-        egui::TextStyle::Body.resolve(ui.style()),
+    let galley = egui::WidgetText::from(label).into_galley(
+        ui,
+        Some(egui::TextWrapMode::Truncate),
+        (rect.right() - text_x).max(1.0),
+        egui::TextStyle::Body,
+    );
+    painter.galley(
+        egui::pos2(text_x, rect.center().y - galley.size().y * 0.5),
+        galley,
         ui.visuals().text_color(),
     );
     response
