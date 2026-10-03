@@ -6,7 +6,7 @@ use crate::pipeline::{
     mask_atlas_edge, pipeline_scene_to_working_rec2020, AiDenoisedImage, CfaKind, ExposureParams,
     GeometryTransform, HighlightReconstructionMethod, LensGeometryMap, LoadedRaw, LocalMask,
     MaskEffect, MaskImage, MaskStack, PointColor, PointCurve, ProcessingStage, RawThumbnail,
-    RemoveEditState, RemovePatch, SigmoidParams, SrgbOutputLut, GLOBAL_TEMPERATURE_LIMIT,
+    RemoveEditState, RemovePatch, SigmoidParams, GLOBAL_TEMPERATURE_LIMIT,
     GLOBAL_TINT_OFFSET_LIMIT, MAX_EFFECT_COMPONENTS, MAX_LOCAL_MASKS, MAX_POINT_COLORS,
     MAX_POINT_CURVE_POINTS,
 };
@@ -52,7 +52,7 @@ mod point_color_tests;
 #[cfg(test)]
 mod tests;
 
-const GPU_PARAMS_ABI_VERSION: u32 = 9;
+const GPU_PARAMS_ABI_VERSION: u32 = 10;
 const MASK_EFFECT_ID_SHIFT: u32 = 8;
 pub(super) const LIGHT_RAYS_MASK_ATLAS_EDGE: u32 = if cfg!(target_os = "android") {
     256
@@ -60,7 +60,7 @@ pub(super) const LIGHT_RAYS_MASK_ATLAS_EDGE: u32 = if cfg!(target_os = "android"
     512
 };
 const GPU_PARAMS_ABI_SIZE_BYTES: u32 = 1_072;
-const CAMERA_UNIFORMS_SIZE_BYTES: u32 = 368;
+const CAMERA_UNIFORMS_SIZE_BYTES: u32 = 352;
 const SCENE_TONE_UNIFORMS_SIZE_BYTES: u32 = 1_680;
 const EFFECTS_UNIFORMS_SIZE_BYTES: u32 = 224;
 const GPU_STAGE_UNIFORM_SIZE_BYTES: u32 =
@@ -291,7 +291,6 @@ struct CameraUniforms {
     profile_hue_sat: [u32; 4],
     profile_look: [u32; 4],
     profile_tone: [u32; 4],
-    output_lut: [u32; 4],
     profile_flags: [u32; 4],
     ai_denoise_enabled: u32,
     user_exposure_bits: u32,
@@ -415,7 +414,7 @@ struct EffectsUniforms {
 
 const _: () =
     assert!(std::mem::size_of::<EffectsUniforms>() == EFFECTS_UNIFORMS_SIZE_BYTES as usize);
-const _: () = assert!(GPU_STAGE_UNIFORM_SIZE_BYTES == 2_272);
+const _: () = assert!(GPU_STAGE_UNIFORM_SIZE_BYTES == 2_256);
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
@@ -1194,7 +1193,6 @@ fn pack_camera_params(ctx: &GpuParamContext<'_>) -> CameraUniforms {
         profile_hue_sat: profile_stages.characterization.hue_sat,
         profile_look: profile_stages.optional_look.look_table,
         profile_tone: profile_stages.view.profile_tone,
-        output_lut: profile_stages.output.output_lut,
         profile_flags: profile_layout.flags,
         ai_denoise_enabled: u32::from(exposure.ai_denoise_enabled),
         user_exposure_bits: exposure.exposure.to_bits(),
@@ -2355,8 +2353,7 @@ impl RawGpuPipeline {
 
         let geometry = compute_derived_geometry(raw, params, quality, config);
 
-        let srgb_output_lut = SrgbOutputLut::new();
-        let profile_gpu_data = raw.camera_profile.gpu_data(&srgb_output_lut);
+        let profile_gpu_data = raw.camera_profile.gpu_data();
         profile_gpu_data.validate()?;
         let profile_buffer_size_bytes = u64::try_from(
             profile_gpu_data

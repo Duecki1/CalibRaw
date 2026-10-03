@@ -4,9 +4,9 @@ use super::{
     mask_atlas_edge, mask_region_texture_extent, mask_source_region_uv, required_export_tile_halo,
     CfaKind, ExposureParams, GeometryTransform, GpuParams, GpuProgramPrewarm, LensGeometryMap,
     LoadedRaw, MaskStack, NativeRect, ProcessingQuality, ProcessingStage, ProxySpec,
-    RawGpuPipeline, RawGpuProgramTemplate, RemoveEditState, RemoveSceneContext, SrgbOutputLut,
-    TilePlan, TileSpec, EXPORT_TILE_HALO, MAX_LOCAL_MASKS, MIN_EXPORT_TILE_HALO,
-    TONE_GUIDE_CELL_SIZE,
+    RawGpuPipeline, RawGpuProgramTemplate, RemoveEditState, RemoveSceneContext,
+    SrgbOutputTransform, TilePlan, TileSpec, EXPORT_TILE_HALO, MAX_LOCAL_MASKS,
+    MIN_EXPORT_TILE_HALO, TONE_GUIDE_CELL_SIZE,
 };
 use anyhow::{Context, Result};
 use calibraw_core::file_ops::{replace_file, sync_parent_directory};
@@ -2381,7 +2381,7 @@ impl FinalSizeOutputSharpen {
     fn push_row<W: Write>(
         &mut self,
         row: Vec<f32>,
-        output_transform: Option<&SrgbOutputLut>,
+        output_transform: Option<&SrgbOutputTransform>,
         row_format: ExportRowFormat,
         output: &mut W,
     ) -> Result<()> {
@@ -2408,7 +2408,7 @@ impl FinalSizeOutputSharpen {
 
     fn finish<W: Write>(
         &mut self,
-        output_transform: Option<&SrgbOutputLut>,
+        output_transform: Option<&SrgbOutputTransform>,
         row_format: ExportRowFormat,
         output: &mut W,
     ) -> Result<()> {
@@ -2426,7 +2426,7 @@ impl FinalSizeOutputSharpen {
 
     fn flush_full_batch<W: Write>(
         &mut self,
-        output_transform: Option<&SrgbOutputLut>,
+        output_transform: Option<&SrgbOutputTransform>,
         row_format: ExportRowFormat,
         output: &mut W,
     ) -> Result<()> {
@@ -2438,7 +2438,7 @@ impl FinalSizeOutputSharpen {
 
     fn flush_batch<W: Write>(
         &mut self,
-        output_transform: Option<&SrgbOutputLut>,
+        output_transform: Option<&SrgbOutputTransform>,
         row_format: ExportRowFormat,
         output: &mut W,
     ) -> Result<()> {
@@ -2612,7 +2612,7 @@ impl LinearLightResizer {
         &mut self,
         source_y: u32,
         source: &[f32],
-        output_transform: Option<&SrgbOutputLut>,
+        output_transform: Option<&SrgbOutputTransform>,
         output: &mut W,
     ) -> Result<()> {
         anyhow::ensure!(
@@ -2666,7 +2666,7 @@ impl LinearLightResizer {
 
     fn finish<W: Write>(
         &mut self,
-        output_transform: Option<&SrgbOutputLut>,
+        output_transform: Option<&SrgbOutputTransform>,
         output: &mut W,
     ) -> Result<()> {
         anyhow::ensure!(
@@ -2706,7 +2706,7 @@ impl LinearLightResizer {
         &mut self,
         source_y: u32,
         completed_through_output: u32,
-        output_transform: Option<&SrgbOutputLut>,
+        output_transform: Option<&SrgbOutputTransform>,
         output: &mut W,
     ) -> Result<()> {
         while self.next_output_row < self.output_height
@@ -2871,14 +2871,14 @@ fn resize_horizontal_row(source: &[f32], weights: &[Vec<SampleWeight>]) -> Resul
 }
 
 #[cfg(test)]
-fn encode_srgb_row(row: &[f32], transform: &SrgbOutputLut) -> Result<Vec<u8>> {
+fn encode_srgb_row(row: &[f32], transform: &SrgbOutputTransform) -> Result<Vec<u8>> {
     encode_output_row(row, Some(transform), ExportRowFormat::Rgba8)
 }
 
 #[cfg(test)]
 fn encode_srgb_row_with_format(
     row: &[f32],
-    transform: &SrgbOutputLut,
+    transform: &SrgbOutputTransform,
     row_format: ExportRowFormat,
 ) -> Result<Vec<u8>> {
     encode_output_row(row, Some(transform), row_format)
@@ -2886,7 +2886,7 @@ fn encode_srgb_row_with_format(
 
 fn encode_output_row(
     row: &[f32],
-    transform: Option<&SrgbOutputLut>,
+    transform: Option<&SrgbOutputTransform>,
     row_format: ExportRowFormat,
 ) -> Result<Vec<u8>> {
     anyhow::ensure!(

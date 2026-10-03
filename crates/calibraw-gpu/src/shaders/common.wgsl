@@ -72,7 +72,6 @@ struct CameraUniforms {
     profile_hue_sat: vec4<u32>,
     profile_look: vec4<u32>,
     profile_tone: vec4<u32>,
-    output_lut: vec4<u32>,
     profile_flags: vec4<u32>,
     ai_denoise_enabled: u32,
     user_exposure_bits: u32,

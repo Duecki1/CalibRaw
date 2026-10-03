@@ -81,7 +81,7 @@ impl TransferCurve {
 
 #[derive(Clone, Debug)]
 pub(super) struct MatrixShaperProfile {
-    device_to_pcs: [[f32; 3]; 3],
+    device_to_rec2020: [[f32; 3]; 3],
     curves: [TransferCurve; 3],
 }
 
@@ -148,30 +148,38 @@ impl MatrixShaperProfile {
         ];
         curves.iter().try_for_each(TransferCurve::validate)?;
         Ok(Self {
-            device_to_pcs,
+            device_to_rec2020: device_to_rec2020_from_colorants(device_to_pcs)?,
             curves,
         })
     }
 
     fn transform_input_to_rec2020(&self, encoded: [f32; 3]) -> [f32; 3] {
-        const D50_TO_D65: [[f32; 3]; 3] = [
-            [0.955_473_4, -0.023_098_5, 0.063_259_3],
-            [-0.028_369_7, 1.009_995_5, 0.021_041_4],
-            [0.012_314_0, -0.020_507_7, 1.330_365_9],
-        ];
-        const XYZ_D65_TO_REC2020: [[f32; 3]; 3] = [
-            [1.716_651_1, -0.355_670_8, -0.253_366_3],
-            [-0.666_684_3, 1.616_481_2, 0.015_768_5],
-            [0.017_639_9, -0.042_770_6, 0.942_103_1],
-        ];
         let linear = [
             self.curves[0].forward_extended(encoded[0]),
             self.curves[1].forward_extended(encoded[1]),
             self.curves[2].forward_extended(encoded[2]),
         ];
-        let xyz_d50 = transform(self.device_to_pcs, linear);
-        transform(XYZ_D65_TO_REC2020, transform(D50_TO_D65, xyz_d50))
+        transform(self.device_to_rec2020, linear)
     }
+}
+
+/// Builds the device-to-Rec.2020 matrix of a matrix/shaper profile. Profiles
+/// disagree on the exact D50 their colorants sum to, so adapt from the
+/// profile's own device white: white then lands exactly on Rec.2020 white.
+fn device_to_rec2020_from_colorants(device_to_pcs: [[f32; 3]; 3]) -> Result<[[f32; 3]; 3]> {
+    const XYZ_D65_TO_REC2020: [[f32; 3]; 3] = [
+        [1.716_651_1, -0.355_670_8, -0.253_366_3],
+        [-0.666_684_3, 1.616_481_2, 0.015_768_5],
+        [0.017_639_9, -0.042_770_6, 0.942_103_1],
+    ];
+    let device_white = transform(device_to_pcs, [1.0, 1.0, 1.0]);
+    let adaptation =
+        crate::color_math::bradford_adaptation(device_white, crate::color_math::D65_XYZ)
+            .ok_or_else(|| anyhow!("ICC colorants do not define a usable white point"))?;
+    Ok(crate::matrix::multiply(
+        XYZ_D65_TO_REC2020,
+        crate::matrix::multiply(adaptation, device_to_pcs),
+    ))
 }
 
 pub(super) fn convert_input_rgb_to_rec2020(bytes: &[u8], rgb: &mut [f32]) -> Result<()> {
@@ -335,7 +343,7 @@ mod tests {
             [-0.001_932_4, 0.029_977_84, 0.797_059_24],
         ];
         let profile = MatrixShaperProfile {
-            device_to_pcs,
+            device_to_rec2020: device_to_rec2020_from_colorants(device_to_pcs).unwrap(),
             curves: [
                 TransferCurve::Identity,
                 TransferCurve::Identity,
