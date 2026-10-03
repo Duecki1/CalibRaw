@@ -1557,6 +1557,8 @@ mod preview_histogram;
 mod preview_tests;
 mod processing_export;
 mod sidecar_persistence;
+#[cfg(all(test, not(target_os = "android")))]
+mod ui_review_tests;
 
 use ai::AiUpdate;
 use lifecycle::needs_canonical_mask_source;

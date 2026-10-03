@@ -124,13 +124,20 @@ impl Sidebar {
 
 fn metadata_row(ui: &mut Ui, label: &str, value: &str) {
     ui.horizontal_top(|ui| {
-        ui.add_sized(
-            [92.0, 18.0],
-            egui::Label::new(
-                egui::RichText::new(label)
-                    .small()
-                    .color(ui.visuals().weak_text_color()),
-            ),
+        ui.allocate_ui_with_layout(
+            egui::vec2(92.0, 18.0),
+            egui::Layout::top_down(egui::Align::Min),
+            |ui| {
+                ui.set_min_width(92.0);
+                ui.add(
+                    egui::Label::new(
+                        egui::RichText::new(label)
+                            .small()
+                            .color(ui.visuals().weak_text_color()),
+                    )
+                    .wrap(),
+                );
+            },
         );
         ui.add(egui::Label::new(value).wrap());
     });

@@ -2,7 +2,7 @@
 use crate::app::OnnxRuntimeMode;
 use crate::app::{maximum_raw_cache_limit, CalibRawApp, PreviewQuality};
 use crate::pipeline::CameraProfileMode;
-use crate::ui::components::adjustment_slider::AdjustmentSlider;
+use crate::ui::components::adjustment_slider::step_focused_numeric_field;
 use crate::ui::layout::ScreenLayout;
 use crate::ui::library::maximum_thumbnail_worker_count;
 use eframe::egui::{self, Ui};
@@ -15,6 +15,61 @@ const RUST_DEPENDENCY_LICENSES: &str =
     include_str!(concat!(env!("OUT_DIR"), "/THIRD_PARTY_LICENSES.md"));
 
 pub(crate) struct Settings;
+
+fn count_setting(
+    ui: &mut Ui,
+    label: &str,
+    value: &mut usize,
+    range: std::ops::RangeInclusive<usize>,
+    default: usize,
+    unit: &str,
+    help: &str,
+) -> bool {
+    let before = *value;
+    ui.push_id(label, |ui| {
+        crate::ui::theme::form_row(ui, label, 220.0, |ui, width| {
+            ui.allocate_ui_with_layout(
+                egui::vec2(width, crate::ui::theme::CONTROL_HEIGHT),
+                egui::Layout::right_to_left(egui::Align::Center),
+                |ui| {
+                    let reset = crate::ui::theme::secondary_button_enabled(
+                        ui,
+                        *value != default,
+                        format!("Default: {default}"),
+                    )
+                    .on_hover_text("Restore the default for this device.")
+                    .clicked();
+                    ui.allocate_ui_with_layout(
+                        egui::vec2(
+                            ui.available_width().max(1.0),
+                            crate::ui::theme::CONTROL_HEIGHT,
+                        ),
+                        egui::Layout::centered_and_justified(egui::Direction::LeftToRight),
+                        |ui| {
+                            let id = ui.next_auto_id();
+                            step_focused_numeric_field(ui, id, value, range.clone());
+                            let suffix = format!(" {unit}{}", if *value == 1 { "" } else { "s" });
+                            ui.add(
+                                egui::DragValue::new(value)
+                                    .range(range)
+                                    .speed(1.0)
+                                    .fixed_decimals(0)
+                                    .suffix(suffix)
+                                    .update_while_editing(false),
+                            )
+                            .on_hover_text(help);
+                        },
+                    );
+                    if reset {
+                        *value = default;
+                    }
+                },
+            );
+        });
+        ui.small(help);
+    });
+    *value != before
+}
 
 fn diagnostics_snapshot_with_ai_backends() -> String {
     let mut diagnostic_log = calibraw_core::diagnostics::snapshot();
@@ -321,39 +376,29 @@ impl Settings {
             }
 
             let mut raw_cache_files = app.develop.raw_cache_limit;
-            let raw_cache_help = if raw_cache_files == 0 {
-                "Decoded RAW reuse is disabled; only the current edit remains loaded. Zero disables the cache. The default is 2 on desktop and 1 on Android.".to_owned()
-            } else {
-                format!(
-                    "Keeps up to {raw_cache_files} decoded RAW {} in memory, including the current image, for faster switching. The default is 2 on desktop and 1 on Android.",
-                    if raw_cache_files == 1 { "file" } else { "files" }
-                )
-            };
-            if AdjustmentSlider::new(
+            if count_setting(
+                ui,
                 "Decoded RAW cache",
                 &mut raw_cache_files,
                 0..=maximum_raw_cache_limit(),
-            )
-            .decimals(0)
-            .step(1.0)
-            .hover_text(raw_cache_help.as_str())
-            .reset_to(crate::app::default_raw_cache_limit())
-            .show(ui)
-            {
+                crate::app::default_raw_cache_limit(),
+                "file",
+                "Keeps decoded RAW files in memory for faster switching, including the current image. Set to 0 to disable reuse; the current edit stays loaded.",
+            ) {
                 app.set_raw_cache_limit(raw_cache_files);
             }
 
+            ui.add_space(crate::ui::theme::SPACE_SM);
             let mut thumbnail_workers = app.thumbnail_worker_count();
-            if AdjustmentSlider::new(
-                    "Thumbnail workers",
-                    &mut thumbnail_workers,
-                    1..=maximum_thumbnail_worker_count(),
-                )
-                .decimals(0)
-                .step(1.0)
-                .hover_text("Concurrent thumbnail jobs. Higher values fill the library faster but preview-less and edited jobs may unpack a full sensor and use substantial memory. Changing this restarts the queue." )
-                .reset_to(crate::ui::library::default_thumbnail_worker_count())
-                .show(ui) {
+            if count_setting(
+                ui,
+                "Thumbnail workers",
+                &mut thumbnail_workers,
+                1..=maximum_thumbnail_worker_count(),
+                crate::ui::library::default_thumbnail_worker_count(),
+                "job",
+                "Concurrent thumbnail jobs. More workers can fill the library faster but use more memory, especially for edited RAW files or files without embedded previews. Changing this restarts the queue.",
+            ) {
                 app.set_thumbnail_worker_count(thumbnail_workers);
             }
 
