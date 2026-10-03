@@ -7,11 +7,14 @@ impl Preview {
         layout: PreviewLayout,
         response: &egui::Response,
     ) {
-        let PreviewLayout { visible_rect, .. } = layout;
+        let PreviewLayout {
+            image_rect,
+            visible_rect,
+            ..
+        } = layout;
         let lens_geometry = loaded_lens_geometry(app).cloned();
-        let pointer = response
-            .interact_pointer_pos()
-            .filter(|position| visible_rect.contains(*position));
+        let projection = layout.projection(app.develop.geometry, lens_geometry.as_deref());
+        let pointer = response.interact_pointer_pos();
         let (pressed, down, released) = ui.input(|input| {
             (
                 input.pointer.primary_pressed(),
@@ -19,33 +22,31 @@ impl Preview {
                 input.pointer.primary_released(),
             )
         });
-        let pointer_uv = pointer.and_then(|position| {
-            editable_source_uv(
-                layout
-                    .projection(app.develop.geometry, lens_geometry.as_deref())
-                    .to_source(position),
-            )
-        });
 
         if pressed {
-            if let Some(uv) = pointer_uv {
+            // The area must start on the image...
+            if let Some(uv) = pointer
+                .filter(|position| visible_rect.contains(*position))
+                .and_then(|position| editable_source_uv(projection.to_source(position)))
+            {
                 app.develop_ui.white_balance_picker_drag = Some([uv, uv]);
             }
-        } else if down {
-            if let (Some(area), Some(uv)) = (
-                app.develop_ui.white_balance_picker_drag.as_mut(),
-                pointer_uv,
-            ) {
-                area[1] = uv;
-                ui.ctx().request_repaint();
+        } else if down || released {
+            // ...but may be dragged past its edge, which pins that corner to
+            // the edge rather than leaving it wherever the pointer last was.
+            if let (Some(area), Some(position)) =
+                (app.develop_ui.white_balance_picker_drag.as_mut(), pointer)
+            {
+                let uv = projection.to_source(image_rect.clamp(position));
+                if uv.iter().all(|value| value.is_finite()) {
+                    area[1] = uv.map(|value| value.clamp(0.0, 1.0));
+                    ui.ctx().request_repaint();
+                }
             }
         }
 
         if released {
-            if let Some(mut area) = app.develop_ui.white_balance_picker_drag.take() {
-                if let Some(uv) = pointer_uv {
-                    area[1] = uv;
-                }
+            if let Some(area) = app.develop_ui.white_balance_picker_drag.take() {
                 app.apply_white_balance_area(area);
             }
         }

@@ -26,7 +26,7 @@ pub(super) fn source_angle_from(
 /// correction, then the output geometry (crop, rotation, perspective), then
 /// the on-screen image rectangle.
 #[derive(Clone, Copy)]
-pub(super) struct SourceProjection<'a> {
+pub(crate) struct SourceProjection<'a> {
     pub(super) image_rect: Rect,
     pub(super) geometry: GeometryTransform,
     /// Maps native sensor coordinates to lens-corrected ones. `None` when the
@@ -37,7 +37,7 @@ pub(super) struct SourceProjection<'a> {
 }
 
 impl<'a> SourceProjection<'a> {
-    pub(super) fn new(
+    pub(crate) fn new(
         image_rect: Rect,
         geometry: GeometryTransform,
         lens: Option<&'a LensGeometryMap>,
@@ -58,7 +58,7 @@ impl<'a> SourceProjection<'a> {
         Self { lens: None, ..self }
     }
 
-    pub(super) fn to_screen(self, source_uv: [f32; 2]) -> Pos2 {
+    pub(crate) fn to_screen(self, source_uv: [f32; 2]) -> Pos2 {
         let corrected_uv = self.lens.map_or(source_uv, |lens| {
             native_source_to_corrected_uv(lens, self.source_width, self.source_height, source_uv)
         });
@@ -71,7 +71,7 @@ impl<'a> SourceProjection<'a> {
         )
     }
 
-    pub(super) fn to_source(self, screen: Pos2) -> [f32; 2] {
+    pub(crate) fn to_source(self, screen: Pos2) -> [f32; 2] {
         let corrected_uv = final_geometry_screen_to_source(
             self.image_rect,
             self.geometry,
@@ -1046,26 +1046,60 @@ pub(super) fn crop_handle_points(rect: Rect) -> [Pos2; 8] {
     ]
 }
 
+/// The crop handle under `pointer`: corners first, then anywhere along an
+/// edge, then the interior. Grab zones shrink on small crops so the interior
+/// stays reachable for moving.
 pub(super) fn crop_handle_at(rect: Rect, pointer: Pos2, radius: f32) -> Option<CropHandle> {
-    let candidates = [
+    let radius = radius.min(rect.width().min(rect.height()) * 0.3).max(6.0);
+    let corners = [
         (CropHandle::TopLeft, rect.left_top()),
         (CropHandle::TopRight, rect.right_top()),
         (CropHandle::BottomLeft, rect.left_bottom()),
         (CropHandle::BottomRight, rect.right_bottom()),
-        (CropHandle::Top, Pos2::new(rect.center().x, rect.top())),
+    ];
+    if let Some((handle, _)) = corners
+        .into_iter()
+        .map(|(handle, point)| (handle, point.distance(pointer)))
+        .filter(|(_, distance)| *distance <= radius)
+        .min_by(|a, b| a.1.total_cmp(&b.1))
+    {
+        return Some(handle);
+    }
+    let within_x = (rect.left()..=rect.right()).contains(&pointer.x);
+    let within_y = (rect.top()..=rect.bottom()).contains(&pointer.y);
+    let edges = [
+        (CropHandle::Top, (pointer.y - rect.top()).abs(), within_x),
         (
             CropHandle::Bottom,
-            Pos2::new(rect.center().x, rect.bottom()),
+            (pointer.y - rect.bottom()).abs(),
+            within_x,
         ),
-        (CropHandle::Left, Pos2::new(rect.left(), rect.center().y)),
-        (CropHandle::Right, Pos2::new(rect.right(), rect.center().y)),
+        (CropHandle::Left, (pointer.x - rect.left()).abs(), within_y),
+        (
+            CropHandle::Right,
+            (pointer.x - rect.right()).abs(),
+            within_y,
+        ),
     ];
-    for (handle, point) in candidates {
-        if point.distance(pointer) <= radius {
-            return Some(handle);
-        }
+    if let Some((handle, _, _)) = edges
+        .into_iter()
+        .filter(|(_, distance, within)| *within && *distance <= radius)
+        .min_by(|a, b| a.1.total_cmp(&b.1))
+    {
+        return Some(handle);
     }
     rect.contains(pointer).then_some(CropHandle::Move)
+}
+
+/// The pointer shape for hovering or dragging a crop handle on screen.
+pub(super) fn crop_handle_cursor(handle: CropHandle) -> egui::CursorIcon {
+    match handle {
+        CropHandle::Move => egui::CursorIcon::Move,
+        CropHandle::Left | CropHandle::Right => egui::CursorIcon::ResizeHorizontal,
+        CropHandle::Top | CropHandle::Bottom => egui::CursorIcon::ResizeVertical,
+        CropHandle::TopLeft | CropHandle::BottomRight => egui::CursorIcon::ResizeNwSe,
+        CropHandle::TopRight | CropHandle::BottomLeft => egui::CursorIcon::ResizeNeSw,
+    }
 }
 
 pub(super) fn sanitize_dragged_crop(mut crop: [f32; 4], handle: CropHandle) -> [f32; 4] {
@@ -1108,15 +1142,10 @@ pub(super) fn constrain_crop_corner_aspect(
     handle: CropHandle,
 ) -> Option<[f32; 4]> {
     let raw = app.develop.loaded_raw.as_ref()?;
-    let ratio = app
+    let normalized_ratio = app
         .develop
         .geometry
-        .aspect_ratio
-        .value(raw.width, raw.height)?;
-    let normalized_ratio = ratio / (raw.width.max(1) as f32 / raw.height.max(1) as f32);
-    if !normalized_ratio.is_finite() || normalized_ratio <= f32::EPSILON {
-        return None;
-    }
+        .normalized_crop_aspect(raw.width, raw.height)?;
 
     let (anchor_x, anchor_y, x_sign, y_sign) = match handle {
         CropHandle::TopLeft => (original_crop[2], original_crop[3], -1.0, -1.0),
@@ -1166,21 +1195,16 @@ pub(super) fn constrain_crop_aspect(
     mut crop: [f32; 4],
     handle: CropHandle,
 ) -> [f32; 4] {
-    let Some(raw) = app.develop.loaded_raw.as_ref() else {
+    let Some(normalized_ratio) = app.develop.loaded_raw.as_ref().and_then(|raw| {
+        app.develop
+            .geometry
+            .normalized_crop_aspect(raw.width, raw.height)
+    }) else {
         return crop;
     };
-    let Some(ratio) = app
-        .develop
-        .geometry
-        .aspect_ratio
-        .value(raw.width, raw.height)
-    else {
-        return crop;
-    };
-    let normalized_ratio = ratio / (raw.width.max(1) as f32 / raw.height.max(1) as f32);
     let width = crop[2] - crop[0];
     let height = crop[3] - crop[1];
-    let target_height = width / normalized_ratio.max(f32::EPSILON);
+    let target_height = width / normalized_ratio;
     let target_width = height * normalized_ratio;
 
     let horizontal_edge = matches!(handle, CropHandle::Left | CropHandle::Right);

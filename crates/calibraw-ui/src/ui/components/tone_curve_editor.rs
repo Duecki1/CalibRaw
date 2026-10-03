@@ -10,6 +10,14 @@ const POINT_RADIUS: f32 = 5.0;
 const PICK_RADIUS: f32 = 16.0;
 const MIN_POINT_X_GAP: f32 = 0.005;
 
+/// The curve point being dragged and its offset from the pointer, so it moves
+/// with the pointer instead of jumping onto it.
+#[derive(Clone, Copy)]
+struct GrabbedPoint {
+    index: usize,
+    offset: [f32; 2],
+}
+
 pub(crate) fn tone_curve_editor(ui: &mut Ui, curve: &mut PointCurve, curve_color: Color32) -> bool {
     curve.sanitize();
     let width = ui.available_width().max(1.0);
@@ -65,29 +73,62 @@ pub(crate) fn tone_curve_editor(ui: &mut Ui, curve: &mut PointCurve, curve_color
     }
 
     let mut changed = false;
-    if response.dragged() {
-        if let Some(pointer) = response.interact_pointer_pos() {
-            if let Some(index) = nearest_point(curve, rect, pointer, PICK_RADIUS * 2.0) {
-                let mut normalized = screen_to_curve(rect, pointer);
-                let len = curve.len as usize;
-                if index == 0 {
-                    normalized[0] = normalized[0].clamp(0.0, curve.points[1][0] - MIN_POINT_X_GAP);
-                } else if index + 1 == len {
-                    normalized[0] =
-                        normalized[0].clamp(curve.points[index - 1][0] + MIN_POINT_X_GAP, 1.0);
-                } else {
-                    normalized[0] = normalized[0].clamp(
-                        curve.points[index - 1][0] + MIN_POINT_X_GAP,
-                        curve.points[index + 1][0] - MIN_POINT_X_GAP,
-                    );
-                }
-                normalized[1] = normalized[1].clamp(0.0, 1.0);
-                if curve.points[index] != normalized {
-                    curve.points[index] = normalized;
-                    changed = true;
-                }
+    // The point is chosen where the press began and kept for the whole drag.
+    // Re-picking the nearest point each frame dropped it whenever the pointer
+    // outran it (e.g. while it was pinned at an edge or a neighbor) or
+    // switched to a neighbor passed on the way.
+    let drag_id = response.id.with("dragged-point");
+    if response.drag_started() {
+        let grabbed = ui
+            .input(|input| input.pointer.press_origin())
+            .and_then(|origin| {
+                let index = nearest_point(curve, rect, origin, PICK_RADIUS * 2.0)?;
+                let pointer = screen_to_curve(rect, origin);
+                let point = curve.points[index];
+                Some(GrabbedPoint {
+                    index,
+                    offset: [point[0] - pointer[0], point[1] - pointer[1]],
+                })
+            });
+        ui.data_mut(|data| match grabbed {
+            Some(grabbed) => {
+                data.insert_temp(drag_id, grabbed);
             }
+            None => {
+                data.remove::<GrabbedPoint>(drag_id);
+            }
+        });
+    }
+    let grabbed = response
+        .dragged()
+        .then(|| ui.data(|data| data.get_temp::<GrabbedPoint>(drag_id)))
+        .flatten()
+        .filter(|grabbed| grabbed.index < curve.len as usize);
+    if let (Some(pointer), Some(GrabbedPoint { index, offset })) =
+        (response.interact_pointer_pos(), grabbed)
+    {
+        let pointer = screen_to_curve(rect, pointer);
+        let mut normalized = [pointer[0] + offset[0], pointer[1] + offset[1]];
+        let len = curve.len as usize;
+        let min_x = if index == 0 {
+            0.0
+        } else {
+            curve.points[index - 1][0] + MIN_POINT_X_GAP
+        };
+        let max_x = if index + 1 == len {
+            1.0
+        } else {
+            curve.points[index + 1][0] - MIN_POINT_X_GAP
+        };
+        normalized[0] = normalized[0].clamp(min_x, max_x.max(min_x));
+        normalized[1] = normalized[1].clamp(0.0, 1.0);
+        if curve.points[index] != normalized {
+            curve.points[index] = normalized;
+            changed = true;
         }
+    }
+    if response.drag_stopped() {
+        ui.data_mut(|data| data.remove::<GrabbedPoint>(drag_id));
     }
 
     #[cfg(not(target_os = "android"))]
@@ -371,5 +412,66 @@ fn tone_curve_description(tab: ToneCurveTab) -> &'static str {
         ToneCurveTab::Red => "Red channel curve",
         ToneCurveTab::Green => "Green channel curve",
         ToneCurveTab::Blue => "Blue channel curve",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn show(ctx: &egui::Context, curve: &mut PointCurve, events: Vec<egui::Event>) -> egui::Rect {
+        let mut rect = egui::Rect::NOTHING;
+        let _ = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    Pos2::ZERO,
+                    egui::vec2(320.0, 260.0),
+                )),
+                events,
+                ..Default::default()
+            },
+            |ui| {
+                ui.set_width(300.0);
+                tone_curve_editor(ui, curve, Color32::WHITE);
+                rect = ui.min_rect();
+            },
+        );
+        rect
+    }
+
+    fn button(pos: Pos2, pressed: bool) -> egui::Event {
+        egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        }
+    }
+
+    #[test]
+    fn dragged_point_stays_grabbed_past_its_neighbor_and_the_edge() {
+        let ctx = egui::Context::default();
+        let mut curve = PointCurve::linear();
+        assert!(insert_point(&mut curve, [0.5, 0.5]));
+        assert!(insert_point(&mut curve, [0.6, 0.6]));
+        let rect = show(&ctx, &mut curve, vec![]);
+        let rect = egui::Rect::from_min_size(rect.min, egui::vec2(rect.width(), CURVE_HEIGHT));
+        let start = curve_to_screen(rect, curve.points[1]);
+        show(
+            &ctx,
+            &mut curve,
+            vec![egui::Event::PointerMoved(start), button(start, true)],
+        );
+        // Sweep right over the neighbor and far past the top edge; the
+        // grabbed point stays pinned against both instead of being dropped.
+        for step in 1..=6 {
+            let pointer = start + egui::vec2(step as f32 * 20.0, -step as f32 * 60.0);
+            show(&ctx, &mut curve, vec![egui::Event::PointerMoved(pointer)]);
+        }
+        assert_eq!(curve.len, 4);
+        assert!((curve.points[1][0] - (0.6 - MIN_POINT_X_GAP)).abs() < 1e-4);
+        assert_eq!(curve.points[1][1], 1.0);
+        assert!((curve.points[2][0] - 0.6).abs() < 1e-6);
+        assert!((curve.points[2][1] - 0.6).abs() < 1e-6);
     }
 }

@@ -1,5 +1,8 @@
 use super::super::*;
 
+/// Screen distance at which a crop corner or edge can be grabbed.
+const CROP_HANDLE_RADIUS: f32 = 28.0;
+
 impl Preview {
     pub(in crate::ui::preview) fn handle_crop_interaction(
         ui: &mut Ui,
@@ -45,18 +48,12 @@ impl Preview {
                 }
             }
             if primary_down {
-                if let (Some(pointer), Some(mut drag)) = (pointer, app.develop_ui.straighten_drag) {
-                    let uv = crop_workspace_screen_to_source(
-                        image_rect,
-                        app.develop.geometry,
-                        source_width,
-                        source_height,
-                        pointer,
-                    );
-                    if source_uv_inside_image(uv) {
-                        drag.current = pointer;
-                        app.develop_ui.straighten_drag = Some(drag);
-                    }
+                // Only the line's angle matters, so its end may leave the
+                // image; freezing it there would skew the measured angle.
+                if let (Some(pointer), Some(drag)) =
+                    (pointer, app.develop_ui.straighten_drag.as_mut())
+                {
+                    drag.current = pointer;
                 }
             }
             if primary_released {
@@ -92,16 +89,20 @@ impl Preview {
             return;
         }
 
+        let display_crop_rect = crop_preview_screen_rect(
+            image_rect,
+            app.develop.geometry,
+            source_width,
+            source_height,
+        );
+        let grabbable = |point: Pos2| {
+            viewport_rect.contains(point) && image_rect.expand(CROP_HANDLE_RADIUS).contains(point)
+        };
         if primary_pressed {
-            if let Some(pointer) = pointer.filter(|point| image_rect.expand(28.0).contains(*point))
-            {
-                let display_crop_rect = crop_preview_screen_rect(
-                    image_rect,
-                    app.develop.geometry,
-                    source_width,
-                    source_height,
-                );
-                if let Some(display_handle) = crop_handle_at(display_crop_rect, pointer, 28.0) {
+            if let Some(pointer) = pointer.filter(|point| grabbable(*point)) {
+                if let Some(display_handle) =
+                    crop_handle_at(display_crop_rect, pointer, CROP_HANDLE_RADIUS)
+                {
                     let handle = crop_source_handle_for_display(display_handle, quarter_turns);
                     let start = crop_preview_pointer_to_source_normalized(
                         image_rect,
@@ -119,6 +120,22 @@ impl Preview {
             }
         }
 
+        let cursor_handle = match app.develop_ui.crop_drag {
+            Some(drag) => Some(crop_source_handle_for_display(
+                drag.handle,
+                (4 - quarter_turns) % 4,
+            )),
+            None => ui
+                .input(|input| input.pointer.hover_pos())
+                .filter(|point| {
+                    grabbable(*point) && ui.ctx().layer_id_at(*point) == Some(ui.layer_id())
+                })
+                .and_then(|point| crop_handle_at(display_crop_rect, point, CROP_HANDLE_RADIUS)),
+        };
+        if let Some(handle) = cursor_handle {
+            ui.ctx().set_cursor_icon(crop_handle_cursor(handle));
+        }
+
         if primary_down {
             if let (Some(pointer), Some(drag)) = (pointer, app.develop_ui.crop_drag) {
                 let current = crop_preview_pointer_to_source_normalized(
@@ -129,54 +146,8 @@ impl Preview {
                     pointer,
                 );
                 let delta = [current[0] - drag.start[0], current[1] - drag.start[1]];
-                let mut crop = drag.crop;
-                match drag.handle {
-                    CropHandle::Move => {
-                        let width = crop[2] - crop[0];
-                        let height = crop[3] - crop[1];
-                        let left = (crop[0] + delta[0]).clamp(0.0, 1.0 - width);
-                        let top = (crop[1] + delta[1]).clamp(0.0, 1.0 - height);
-                        crop = [left, top, left + width, top + height];
-                    }
-                    CropHandle::Left => crop[0] += delta[0],
-                    CropHandle::Right => crop[2] += delta[0],
-                    CropHandle::Top => crop[1] += delta[1],
-                    CropHandle::Bottom => crop[3] += delta[1],
-                    CropHandle::TopLeft => {
-                        crop[0] += delta[0];
-                        crop[1] += delta[1];
-                    }
-                    CropHandle::TopRight => {
-                        crop[2] += delta[0];
-                        crop[1] += delta[1];
-                    }
-                    CropHandle::BottomLeft => {
-                        crop[0] += delta[0];
-                        crop[3] += delta[1];
-                    }
-                    CropHandle::BottomRight => {
-                        crop[2] += delta[0];
-                        crop[3] += delta[1];
-                    }
-                }
-                crop = sanitize_dragged_crop(crop, drag.handle);
-                if drag.handle != CropHandle::Move {
-                    crop = if is_crop_corner(drag.handle) {
-                        constrain_crop_corner_aspect(app, drag.crop, current, drag.handle)
-                            .unwrap_or(crop)
-                    } else {
-                        constrain_crop_aspect(app, crop, drag.handle)
-                    };
-                }
-                crop = app
-                    .develop
-                    .geometry
-                    .constrain_crop_drag_to_transformed_source(
-                        drag.crop,
-                        crop,
-                        source_width,
-                        source_height,
-                    );
+                let crop =
+                    Self::dragged_crop(app, drag, current, delta, source_width, source_height);
                 if crop != app.develop.geometry.crop {
                     app.develop.geometry.crop = crop;
                     app.develop_ui.crop_constraint_reference = Some(crop);
@@ -188,6 +159,76 @@ impl Preview {
         if primary_released || !primary_down {
             app.develop_ui.crop_drag = None;
         }
+    }
+
+    /// The crop for `drag` with the pointer at `current` (`delta` from where
+    /// the drag started), kept inside the rotated and sheared source.
+    fn dragged_crop(
+        app: &CalibRawApp,
+        drag: CropDragState,
+        current: [f32; 2],
+        delta: [f32; 2],
+        source_width: u32,
+        source_height: u32,
+    ) -> [f32; 4] {
+        let geometry = app.develop.geometry;
+        if drag.handle == CropHandle::Move {
+            return geometry.constrain_crop_move_to_transformed_source(
+                drag.crop,
+                delta,
+                source_width,
+                source_height,
+            );
+        }
+        let mut crop = drag.crop;
+        match drag.handle {
+            CropHandle::Move => {}
+            CropHandle::Left => crop[0] += delta[0],
+            CropHandle::Right => crop[2] += delta[0],
+            CropHandle::Top => crop[1] += delta[1],
+            CropHandle::Bottom => crop[3] += delta[1],
+            CropHandle::TopLeft => {
+                crop[0] += delta[0];
+                crop[1] += delta[1];
+            }
+            CropHandle::TopRight => {
+                crop[2] += delta[0];
+                crop[1] += delta[1];
+            }
+            CropHandle::BottomLeft => {
+                crop[0] += delta[0];
+                crop[3] += delta[1];
+            }
+            CropHandle::BottomRight => {
+                crop[2] += delta[0];
+                crop[3] += delta[1];
+            }
+        }
+        crop = sanitize_dragged_crop(crop, drag.handle);
+        let aspect_locked = app.develop.loaded_raw.as_ref().is_some_and(|raw| {
+            geometry
+                .normalized_crop_aspect(raw.width, raw.height)
+                .is_some()
+        });
+        if !aspect_locked {
+            return geometry.constrain_free_crop_resize_to_transformed_source(
+                drag.crop,
+                crop,
+                source_width,
+                source_height,
+            );
+        }
+        crop = if is_crop_corner(drag.handle) {
+            constrain_crop_corner_aspect(app, drag.crop, current, drag.handle).unwrap_or(crop)
+        } else {
+            constrain_crop_aspect(app, crop, drag.handle)
+        };
+        geometry.constrain_crop_drag_to_transformed_source(
+            drag.crop,
+            crop,
+            source_width,
+            source_height,
+        )
     }
 
     pub(in crate::ui::preview) fn paint_crop_overlay(

@@ -12,25 +12,49 @@ enum Handle {
 impl Handle {
     const ALL: [Self; 4] = [Self::Near, Self::Far, Self::NearFeather, Self::FarFeather];
 
-    fn position(self, track: Rect, range: &DepthRangeSettings) -> Pos2 {
-        let (value, y) = match self {
-            Self::Near => (range.near, track.bottom()),
-            Self::Far => (range.far, track.bottom()),
-            Self::NearFeather => (range.near + range.near_feather * 0.5, track.top()),
-            Self::FarFeather => (range.far - range.far_feather * 0.5, track.top()),
-        };
-        pos2(egui::lerp(track.x_range(), value.clamp(0.0, 1.0)), y)
+    /// A feather does nothing at the track end its endpoint sits on (there is
+    /// no depth beyond it to fade into), so its handle is hidden there.
+    fn is_active(self, range: &DepthRangeSettings) -> bool {
+        match self {
+            Self::Near | Self::Far => true,
+            Self::NearFeather => range.near > 0.0,
+            Self::FarFeather => range.far < 1.0,
+        }
     }
 
+    /// The handle's place on the track (0–1). A feather handle marks where its
+    /// ramp reaches full strength and never leaves the track, even when the
+    /// numeric feather is wider than the room left.
+    fn value(self, range: &DepthRangeSettings) -> f32 {
+        let value = match self {
+            Self::Near => range.near,
+            Self::Far => range.far,
+            Self::NearFeather => range.near + range.near_feather * 0.5,
+            Self::FarFeather => range.far - range.far_feather * 0.5,
+        };
+        value.clamp(0.0, 1.0)
+    }
+
+    fn position(self, track: Rect, range: &DepthRangeSettings) -> Pos2 {
+        let y = match self {
+            Self::Near | Self::Far => track.bottom(),
+            Self::NearFeather | Self::FarFeather => track.top(),
+        };
+        pos2(egui::lerp(track.x_range(), self.value(range)), y)
+    }
+
+    /// Moves the handle to where it started plus `delta` of the track, so it
+    /// stays under the pointer instead of first absorbing an off-track excess.
     fn drag(self, range: &mut DepthRangeSettings, start: DepthRangeSettings, delta: f32) {
+        let target = self.value(&start) + delta;
         match self {
-            Self::Near => range.near = (start.near + delta).clamp(0.0, start.far),
-            Self::Far => range.far = (start.far + delta).clamp(start.near, 1.0),
+            Self::Near => range.near = target.clamp(0.0, start.far),
+            Self::Far => range.far = target.clamp(start.near, 1.0),
             Self::NearFeather => {
-                range.near_feather = (start.near_feather + 2.0 * delta).clamp(0.0, 1.0)
+                range.near_feather = (2.0 * (target - start.near)).clamp(0.0, 1.0);
             }
             Self::FarFeather => {
-                range.far_feather = (start.far_feather - 2.0 * delta).clamp(0.0, 1.0)
+                range.far_feather = (2.0 * (start.far - target)).clamp(0.0, 1.0);
             }
         }
     }
@@ -50,6 +74,7 @@ fn nearest_handle(track: Rect, range: &DepthRangeSettings, pointer: Pos2) -> Han
         pointer.x >= egui::lerp(track.x_range(), (range.near + range.far) * 0.5) && range.far < 1.0;
     Handle::ALL
         .into_iter()
+        .filter(|handle| handle.is_active(range))
         .min_by(|a, b| {
             let a_pos = a.position(track, range);
             let b_pos = b.position(track, range);
@@ -61,7 +86,7 @@ fn nearest_handle(track: Rect, range: &DepthRangeSettings, pointer: Pos2) -> Han
                     (far(*a) != prefer_far).cmp(&(far(*b) != prefer_far))
                 })
         })
-        .unwrap()
+        .expect("the near and far handles are always active")
 }
 
 fn range_track(ui: &mut Ui, range: &mut DepthRangeSettings) -> Response {
@@ -148,7 +173,10 @@ fn range_track(ui: &mut Ui, range: &mut DepthRangeSettings) -> Response {
         painter.line_segment([previous, next], Stroke::new(2.0, accent));
         previous = next;
     }
-    for handle in Handle::ALL {
+    for handle in Handle::ALL
+        .into_iter()
+        .filter(|handle| handle.is_active(range))
+    {
         let center = handle.position(track, range);
         let stroke = Stroke::new(1.5, ui.visuals().text_color());
         match handle {
@@ -173,7 +201,7 @@ fn range_track(ui: &mut Ui, range: &mut DepthRangeSettings) -> Response {
             }
         }
     }
-    response.on_hover_text("Drag the lower circles to select near and far depth. Drag each upper diamond to change that end’s feather independently. Double-click to reset.")
+    response.on_hover_text("Drag the lower circles to select near and far depth. Drag each upper diamond to change that end’s feather independently; an end at 0 or 1 has no feather. Double-click to reset.")
 }
 
 pub(crate) fn depth_range_slider(ui: &mut Ui, range: &mut DepthRangeSettings) -> bool {
@@ -206,20 +234,28 @@ pub(crate) fn depth_range_slider(ui: &mut Ui, range: &mut DepthRangeSettings) ->
                     .fixed_decimals(2),
             );
         });
+        let near_feather_active = Handle::NearFeather.is_active(range);
+        let far_feather_active = Handle::FarFeather.is_active(range);
         columns[0].label("Near feather");
-        columns[0].add(
-            DragValue::new(&mut range.near_feather)
-                .range(0.0..=1.0)
-                .speed(0.005)
-                .fixed_decimals(2),
-        );
+        columns[0]
+            .add_enabled(
+                near_feather_active,
+                DragValue::new(&mut range.near_feather)
+                    .range(0.0..=1.0)
+                    .speed(0.005)
+                    .fixed_decimals(2),
+            )
+            .on_disabled_hover_text("Raise Near above 0 to feather the near end.");
         columns[1].label("Far feather");
-        columns[1].add(
-            DragValue::new(&mut range.far_feather)
-                .range(0.0..=1.0)
-                .speed(0.005)
-                .fixed_decimals(2),
-        );
+        columns[1]
+            .add_enabled(
+                far_feather_active,
+                DragValue::new(&mut range.far_feather)
+                    .range(0.0..=1.0)
+                    .speed(0.005)
+                    .fixed_decimals(2),
+            )
+            .on_disabled_hover_text("Lower Far below 1 to feather the far end.");
     });
     *range != before
 }
@@ -341,6 +377,39 @@ mod tests {
         assert_eq!(range.near, range.far);
         assert_eq!(range.near_feather, initial.near_feather);
         assert_eq!(range.far_feather, initial.far_feather);
+    }
+
+    #[test]
+    fn feathers_at_the_track_ends_cannot_be_grabbed() {
+        let track = Rect::from_min_size(Pos2::ZERO, vec2(300.0, 54.0));
+        let range = DepthRangeSettings {
+            near: 0.0,
+            far: 1.0,
+            near_feather: 0.2,
+            far_feather: 0.2,
+        };
+        for pointer in [pos2(30.0, track.top()), pos2(270.0, track.top())] {
+            let handle = nearest_handle(track, &range, pointer);
+            assert!(matches!(handle, Handle::Near | Handle::Far), "{handle:?}");
+        }
+    }
+
+    #[test]
+    fn feather_handle_follows_the_pointer_from_the_track_end() {
+        // The near feather is wider than the room left, so its handle sits
+        // at the right end. Dragging it left moves it at once, with no dead
+        // zone while the hidden excess is used up.
+        let initial = DepthRangeSettings {
+            near: 0.8,
+            far: 1.0,
+            near_feather: 1.0,
+            far_feather: 0.1,
+        };
+        assert_eq!(Handle::NearFeather.value(&initial), 1.0);
+        let mut range = initial;
+        Handle::NearFeather.drag(&mut range, initial, -0.05);
+        assert!((Handle::NearFeather.value(&range) - 0.95).abs() < 1e-5);
+        assert!((range.near_feather - 0.3).abs() < 1e-5);
     }
 
     #[test]
