@@ -6,11 +6,13 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 readme.workspace = true
-description = "CalibRaw project build and release automation"
+description = "CalibRaw project diagnostics, build and release automation"
 publish = false
 
 [dependencies]
+csv.workspace = true
 image.workspace = true
+serde.workspace = true
 serde_json.workspace = true
 tempfile.workspace = true
 zip.workspace = true
