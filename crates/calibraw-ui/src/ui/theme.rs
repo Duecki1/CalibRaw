@@ -209,17 +209,20 @@ pub(crate) fn adaptive_backdrop_from_rgba(rgba: &[u8]) -> Color32 {
     Color32::from_rgb(muted[0], muted[1], muted[2])
 }
 
-/// The single-line text field used in every dialog. It fills the dialog's
-/// width: egui caps a field's desired width, margins included, at the space
-/// available, so the field can never widen the window. Sizing a field from
-/// `ui.available_width()` instead grows the window a little every frame.
-pub(crate) fn dialog_text_edit<'t>(
-    text: &'t mut dyn egui::TextBuffer,
+/// The single-line text field used in every dialog. It has the height of
+/// the Library search field and fills the dialog's width. egui caps a
+/// field at the space it is given, margins included, so the field never
+/// widens the window.
+pub(crate) fn dialog_text_field(
+    ui: &mut egui::Ui,
+    text: &mut dyn egui::TextBuffer,
     id_salt: impl egui::AsIdSalt,
-) -> egui::TextEdit<'t> {
-    singleline_text_edit(text)
-        .desired_width(f32::INFINITY)
-        .id_salt(id_salt)
+    hint: &str,
+) -> egui::Response {
+    ui.add_sized(
+        [ui.available_width(), CONTROL_HEIGHT],
+        singleline_text_edit(text).hint_text(hint).id_salt(id_salt),
+    )
 }
 
 pub(crate) fn text_on_backdrop(color: Color32) -> Color32 {

@@ -272,10 +272,12 @@ pub(super) fn show_android_library_folder_dialog(ui: &mut Ui, app: &mut CalibRaw
         .id(egui::Id::new("android-library-folder-name-dialog"))
         .show(ui.ctx(), |ui| {
             ui.label("Folder name");
-            let response = ui.add(crate::ui::theme::dialog_text_edit(
+            let response = crate::ui::theme::dialog_text_field(
+                ui,
                 &mut dialog.name,
                 "android-library-folder-name-input",
-            ));
+                "",
+            );
             crate::ui::theme::request_initial_focus(&response, &mut dialog.focus_requested);
             show_dialog_error(ui, dialog.error.as_deref());
             match crate::ui::theme::dialog_confirmation_buttons(
@@ -327,10 +329,12 @@ pub(super) fn show_library_folder_dialogs(ui: &mut Ui, app: &mut CalibRawApp) {
             .id(egui::Id::new("library-folder-name-dialog"))
             .show(ui.ctx(), |ui| {
                 ui.label("Folder name");
-                let response = ui.add(crate::ui::theme::dialog_text_edit(
+                let response = crate::ui::theme::dialog_text_field(
+                    ui,
                     &mut dialog.name,
                     "library-folder-name-input",
-                ));
+                    "",
+                );
                 crate::ui::theme::request_initial_focus(&response, &mut dialog.focus_requested);
                 show_dialog_error(ui, dialog.error.as_deref());
                 let confirm_label = match dialog.kind {
@@ -482,10 +486,12 @@ pub(super) fn show_library_raw_name_dialog(
         .id(egui::Id::new("library-raw-name-dialog"))
         .show(ui.ctx(), |ui| {
             ui.label("Filename");
-            let response = ui.add(crate::ui::theme::dialog_text_edit(
+            let response = crate::ui::theme::dialog_text_field(
+                ui,
                 &mut dialog.name,
                 "library-raw-name-input",
-            ));
+                "",
+            );
             crate::ui::theme::request_initial_focus(&response, &mut dialog.focus_requested);
             show_dialog_error(ui, dialog.error.as_deref());
             match crate::ui::theme::dialog_confirmation_buttons(

@@ -393,3 +393,52 @@ fn previews_leave_out_effects_that_need_missing_scene_depth() {
     preset.preview_masks_on(&mut with_depth);
     assert_eq!(with_depth.global_effects, vec![depth_fog()]);
 }
+
+#[test]
+fn groups_persist_until_deleted_and_move_their_presets() {
+    let folder = temporary_folder("groups");
+    let edits = edited_photo();
+    let light = selection(&[AdjustmentGroup::Light]);
+    let matte = Preset::new("Matte", "Film", light, &edits).unwrap();
+    let matte_path = save_new_preset(&folder, &matte).unwrap();
+
+    // Presets bring their groups; created groups exist while empty.
+    assert_eq!(create_group(&folder, "  Travel ").unwrap(), "Travel");
+    assert_eq!(create_group(&folder, "film").unwrap(), "Film");
+    assert_eq!(
+        load_preset_folder(&folder).unwrap().groups,
+        vec!["Film", "Travel"]
+    );
+
+    // Renaming moves the group's presets along.
+    assert!(rename_group(&folder, "Film", "travel").is_err());
+    assert_eq!(rename_group(&folder, "film", "Analog").unwrap(), "Analog");
+    let contents = load_preset_folder(&folder).unwrap();
+    assert_eq!(contents.groups, vec!["Analog", "Travel"]);
+    assert_eq!(read_preset_file(&matte_path).unwrap().group(), "Analog");
+
+    // Moving out of a deleted group keeps the presets.
+    delete_group(&folder, "Analog", DeletedGroupPresets::MoveToDefaultGroup).unwrap();
+    let contents = load_preset_folder(&folder).unwrap();
+    assert_eq!(contents.groups, vec!["Travel", DEFAULT_PRESET_GROUP]);
+    assert_eq!(
+        read_preset_file(&matte_path).unwrap().group(),
+        DEFAULT_PRESET_GROUP
+    );
+    assert!(delete_group(
+        &folder,
+        DEFAULT_PRESET_GROUP,
+        DeletedGroupPresets::MoveToDefaultGroup
+    )
+    .is_err());
+
+    // Deleting with presets removes their files.
+    delete_group(&folder, DEFAULT_PRESET_GROUP, DeletedGroupPresets::Delete).unwrap();
+    let contents = load_preset_folder(&folder).unwrap();
+    assert!(contents.presets.is_empty());
+    assert_eq!(contents.groups, vec!["Travel"]);
+    assert!(!matte_path.exists());
+    assert!(contents.failures.is_empty());
+
+    std::fs::remove_dir_all(folder).unwrap();
+}

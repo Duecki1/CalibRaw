@@ -132,7 +132,11 @@ impl Sidebar {
                                     app.reset_masks();
                                 }
                             }
-                            SidebarTab::Presets | SidebarTab::Export | SidebarTab::Info => {}
+                            SidebarTab::Presets => {
+                                #[cfg(not(target_os = "android"))]
+                                crate::ui::presets::show_header_actions(ui, app);
+                            }
+                            SidebarTab::Export | SidebarTab::Info => {}
                         }
                         Self::show_histogram_toggle(ui, app);
                         Self::show_clipping_toggles(ui, app);
@@ -658,7 +662,11 @@ impl Sidebar {
                             app.clear_inpainting_tool();
                         }
                     }
-                    SidebarTab::Presets | SidebarTab::Export | SidebarTab::Info => {}
+                    SidebarTab::Presets => {
+                        #[cfg(not(target_os = "android"))]
+                        crate::ui::presets::show_header_actions(ui, app);
+                    }
+                    SidebarTab::Export | SidebarTab::Info => {}
                 }
                 Self::show_vertical_card_footer_actions(ui);
                 Self::show_histogram_toggle(ui, app);

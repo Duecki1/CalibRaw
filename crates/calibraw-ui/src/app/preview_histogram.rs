@@ -170,6 +170,8 @@ mod tests {
         let ctx = egui::Context::default();
         crate::ui::theme::install(&ctx);
         let mut app = CalibRawApp::empty(&ctx);
+        // Independent of the presets saved on this machine.
+        app.presets = crate::app::PresetState::load(None);
         let frame = eframe::Frame::_new_kittest();
         for tab in SidebarTab::ALL {
             app.ui.sidebar_tab = tab;

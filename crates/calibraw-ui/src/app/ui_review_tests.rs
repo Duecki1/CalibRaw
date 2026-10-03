@@ -247,7 +247,7 @@ fn capture_review(root: &Path, output_dir: &Path) {
                     if case == "presets-empty" { 0 } else { 6 }
                 );
                 if case == "preset-create" {
-                    app.open_new_preset_editor();
+                    app.open_new_preset_editor("Landscape".to_owned());
                     let editor = app.presets.editor.as_mut().expect("create preset dialog");
                     editor.name = "Evening light".to_owned();
                     editor.group = "Landscape".to_owned();
