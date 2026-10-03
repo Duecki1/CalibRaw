@@ -1129,6 +1129,11 @@ pub fn backup_and_replace_desktop_sidecar(
 /// Deletes the AI-denoise result next to a RAW once its saved edit no longer
 /// uses AI denoise. A failure only leaves a stale file behind, so it is logged
 /// instead of failing the save.
+/// Android keeps AI-denoise results in app storage, never next to the RAW,
+/// so there is nothing to remove here.
+#[cfg(target_os = "android")]
+fn remove_unused_ai_denoise_result(_raw_path: &Path, _uses_ai_denoise: bool) {}
+
 #[cfg(not(target_os = "android"))]
 fn remove_unused_ai_denoise_result(raw_path: &Path, uses_ai_denoise: bool) {
     if uses_ai_denoise {

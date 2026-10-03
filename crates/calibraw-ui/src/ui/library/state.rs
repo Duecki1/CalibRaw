@@ -283,6 +283,7 @@ impl LibraryState {
     }
 
     /// Rendered formats stacked under the RAW `asset`, for its hover details.
+    #[cfg(not(target_os = "android"))]
     pub(super) fn stacked_formats(
         &self,
         asset: &LibraryAssetId,
