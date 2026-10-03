@@ -9,18 +9,20 @@ use crate::model_install::ModelInstallSpec;
 use crate::model_runtime::{with_model_session, AiModel, ModelRetention};
 use crate::pipeline::{
     adaptive_remove_dilation, pipeline_scene_to_canonical_remove_scene,
-    pipeline_scene_to_working_rec2020, plan_remove_context_crop, rasterize_remove_brush,
+    pipeline_scene_to_working_rec2020, plan_remove_passes, rasterize_remove_brush,
     remove_model_srgb_to_canonical_scene, remove_model_view_gain, remove_scene_to_model_srgb,
     render_remove_scene_crop, render_remove_scene_crop_resized,
     working_rec2020_to_canonical_remove_scene, DevelopedCropJob, ExposureParams, GeometryTransform,
     GpuProgramPrewarm, LoadedRaw, MaskStack, NativeRect, RemoveBrushStroke, RemoveEditState,
-    RemoveMask, RemovePatch, RemoveStroke, ResizedRemoveSceneCrop, RetouchAlignment, RetouchStroke,
-    RetouchTool, BIG_LAMA_INPUT_EDGE,
+    RemoveMask, RemovePass, RemovePatch, RemoveStroke, ResizedRemoveSceneCrop, RetouchAlignment,
+    RetouchStroke, RetouchTool, BIG_LAMA_INPUT_EDGE,
 };
 use crate::ModelDownloadProgress;
+
+mod lama;
 use anyhow::{Context, Result};
 use calibraw_core::color_math::{srgb_decode_signed, srgb_encode_signed};
-use image::{imageops::FilterType, GrayImage, ImageBuffer, Luma, Rgb, Rgb32FImage};
+use image::{imageops::FilterType, ImageBuffer, Rgb32FImage};
 use ort::value::Tensor;
 use std::{
     path::{Path, PathBuf},
@@ -170,47 +172,64 @@ fn run_remove(request: RemoveRequest, events: &mpsc::Sender<RemoveEvent>) -> Res
     }
     let mask = rasterize_remove_brush(request.raw.width, request.raw.height, &brush)
         .context("Remove brush produced no native image mask")?;
-    let crop = plan_remove_context_crop(request.raw.width, request.raw.height, &mask)
-        .context("Remove mask produced no context crop")?;
-    ensure_not_cancelled(&request.cancellation)?;
-    let scene = render_remove_scene_crop_resized(
-        DevelopedCropJob {
-            device: request.device.clone(),
-            queue: request.queue.clone(),
-            raw: Arc::clone(&request.raw),
-            geometry: request.geometry,
-            exposure: request.exposure,
-            masks: request.masks.clone(),
-            remove: request.existing,
-            crop,
-            program_prewarm: request.program_prewarm.clone(),
-        },
-        BIG_LAMA_INPUT_EDGE,
-    )
-    .with_context(|| {
-        format!(
-            "render bounded Big-LaMa scene for native context {}x{} at {},{}",
-            crop.width, crop.height, crop.x, crop.y,
-        )
-    })?;
-    ensure_not_cancelled(&request.cancellation)?;
+    let passes = plan_remove_passes(request.raw.width, request.raw.height, &mask);
+    anyhow::ensure!(!passes.is_empty(), "Remove mask produced no inference pass");
 
-    let patch = infer_crop(
-        &request.model_path,
-        crop,
-        &request.raw,
-        &request.exposure,
-        &scene,
-        &mask,
-    )?;
-    let _ = events.send(RemoveEvent::Processing {
-        completed: 1,
-        total: 1,
-    });
+    // Passes run in order: each one sees earlier fills as real context, while
+    // the stroke pixels still to fill stay masked.
+    let mut unfilled = mask;
+    let mut patches = Vec::with_capacity(passes.len());
+    for (index, pass) in passes.iter().enumerate() {
+        ensure_not_cancelled(&request.cancellation)?;
+        let mut context = request.existing.clone();
+        if !patches.is_empty() {
+            context.strokes.push(RemoveStroke {
+                brush: RemoveBrushStroke::default(),
+                patches: patches.clone(),
+                retouch: None,
+                opacity: 1.0,
+            });
+        }
+        let crop = pass.crop;
+        let scene = render_remove_scene_crop_resized(
+            DevelopedCropJob {
+                device: request.device.clone(),
+                queue: request.queue.clone(),
+                raw: Arc::clone(&request.raw),
+                geometry: request.geometry,
+                exposure: request.exposure,
+                masks: request.masks.clone(),
+                remove: context,
+                crop,
+                program_prewarm: request.program_prewarm.clone(),
+            },
+            BIG_LAMA_INPUT_EDGE,
+        )
+        .with_context(|| {
+            format!(
+                "render Big-LaMa context {}x{} at {},{}",
+                crop.width, crop.height, crop.x, crop.y,
+            )
+        })?;
+        ensure_not_cancelled(&request.cancellation)?;
+        patches.push(lama::infer_pass(
+            &request.model_path,
+            pass,
+            &unfilled,
+            &request.raw,
+            &request.exposure,
+            &scene,
+        )?);
+        unfilled.subtract(&pass.target);
+        let _ = events.send(RemoveEvent::Processing {
+            completed: index + 1,
+            total: passes.len(),
+        });
+    }
 
     Ok(RemoveStroke {
         brush,
-        patches: vec![patch],
+        patches,
         retouch: None,
         opacity: request.opacity,
     })
@@ -811,245 +830,6 @@ fn gimp_heal_laplace_loop(
     Ok(())
 }
 
-fn infer_crop(
-    model_path: &Path,
-    crop: NativeRect,
-    raw: &LoadedRaw,
-    exposure: &ExposureParams,
-    scene: &ResizedRemoveSceneCrop,
-    mask: &RemoveMask,
-) -> Result<RemovePatch> {
-    anyhow::ensure!(
-        scene.width <= BIG_LAMA_INPUT_EDGE && scene.height <= BIG_LAMA_INPUT_EDGE,
-        "Big-LaMa working scene {}x{} exceeds {}px",
-        scene.width,
-        scene.height,
-        BIG_LAMA_INPUT_EDGE,
-    );
-    let expected = scene.width as usize * scene.height as usize * 3;
-    anyhow::ensure!(
-        scene.pixels.len() == expected,
-        "scene Remove crop has an invalid RGB length"
-    );
-
-    let view_gain = remove_model_view_gain(raw, &scene.pixels);
-    let mut srgb = Vec::with_capacity(expected);
-    for pixel in scene.pixels.chunks_exact(3) {
-        let converted = remove_scene_to_model_srgb(raw, [pixel[0], pixel[1], pixel[2]], view_gain);
-        srgb.extend_from_slice(&converted);
-    }
-    let source: Rgb32FImage = ImageBuffer::from_raw(scene.width, scene.height, srgb)
-        .context("construct developed Remove crop")?;
-    let resized = image::imageops::resize(
-        &source,
-        BIG_LAMA_INPUT_EDGE,
-        BIG_LAMA_INPUT_EDGE,
-        FilterType::Lanczos3,
-    );
-    let source_mask = crop_binary_mask(crop, mask);
-    let resized_mask = image::imageops::resize(
-        &source_mask,
-        BIG_LAMA_INPUT_EDGE,
-        BIG_LAMA_INPUT_EDGE,
-        FilterType::Nearest,
-    );
-
-    let plane = (BIG_LAMA_INPUT_EDGE * BIG_LAMA_INPUT_EDGE) as usize;
-    let mut image_values = vec![0.0f32; plane * 3];
-    let mut mask_values = vec![0.0f32; plane];
-    for y in 0..BIG_LAMA_INPUT_EDGE {
-        for x in 0..BIG_LAMA_INPUT_EDGE {
-            let index = (y * BIG_LAMA_INPUT_EDGE + x) as usize;
-            let pixel = resized.get_pixel(x, y);
-            image_values[index] = pixel[0].clamp(0.0, 1.0);
-            image_values[plane + index] = pixel[1].clamp(0.0, 1.0);
-            image_values[plane * 2 + index] = pixel[2].clamp(0.0, 1.0);
-            mask_values[index] = if resized_mask.get_pixel(x, y)[0] >= 128 {
-                1.0
-            } else {
-                0.0
-            };
-        }
-    }
-    anyhow::ensure!(
-        mask_values.iter().any(|value| *value > 0.5),
-        "Remove mask vanished during resize"
-    );
-
-    let image_tensor = Tensor::from_array((
-        [
-            1usize,
-            3,
-            BIG_LAMA_INPUT_EDGE as usize,
-            BIG_LAMA_INPUT_EDGE as usize,
-        ],
-        image_values,
-    ))
-    .context("create Big-LaMa image tensor")?;
-    let mask_tensor = Tensor::from_array((
-        [
-            1usize,
-            1,
-            BIG_LAMA_INPUT_EDGE as usize,
-            BIG_LAMA_INPUT_EDGE as usize,
-        ],
-        mask_values,
-    ))
-    .context("create Big-LaMa mask tensor")?;
-
-    let output_values = with_model_session(
-        AiModel::BigLama,
-        model_path,
-        SessionOptions::new("Big-LaMa Remove"),
-        ModelRetention::WhileWarm,
-        |session| {
-            session.run_with_fallback(
-                "Big-LaMa Remove ONNX inference",
-                |ort_session, _accelerated| {
-                    let outputs = ort_session
-                        .run(ort::inputs![&image_tensor, &mask_tensor])
-                        .context("run Big-LaMa ONNX inference")?;
-                    let output = outputs
-                        .values()
-                        .next()
-                        .context("Big-LaMa returned no output tensor")?;
-                    let (shape, values) = output
-                        .try_extract_tensor::<f32>()
-                        .context("read Big-LaMa output tensor")?;
-                    anyhow::ensure!(
-                        shape.as_ref()
-                            == [1, 3, BIG_LAMA_INPUT_EDGE as i64, BIG_LAMA_INPUT_EDGE as i64,],
-                        "unexpected Big-LaMa output shape {shape:?}"
-                    );
-                    anyhow::ensure!(
-                        values.len() == plane * 3 && values.iter().all(|value| value.is_finite()),
-                        "Big-LaMa output tensor is invalid"
-                    );
-                    Ok(values.to_vec())
-                },
-            )
-        },
-    )?;
-
-    let mut output_interleaved = vec![0.0f32; plane * 3];
-    for index in 0..plane {
-        output_interleaved[index * 3] = (output_values[index] / 255.0).clamp(0.0, 1.0);
-        output_interleaved[index * 3 + 1] = (output_values[plane + index] / 255.0).clamp(0.0, 1.0);
-        output_interleaved[index * 3 + 2] =
-            (output_values[plane * 2 + index] / 255.0).clamp(0.0, 1.0);
-    }
-    let model_output: Rgb32FImage =
-        ImageBuffer::from_raw(BIG_LAMA_INPUT_EDGE, BIG_LAMA_INPUT_EDGE, output_interleaved)
-            .context("construct Big-LaMa output image")?;
-    let source_scene: Rgb32FImage =
-        ImageBuffer::from_raw(scene.width, scene.height, scene.pixels.clone())
-            .context("construct bounded Big-LaMa source scene")?;
-
-    build_cached_patch(
-        crop,
-        raw,
-        exposure,
-        &source_scene,
-        view_gain,
-        &model_output,
-        &source_mask,
-    )
-}
-
-fn crop_binary_mask(crop: NativeRect, mask: &RemoveMask) -> GrayImage {
-    let mut out = GrayImage::new(crop.width, crop.height);
-    if let Some(intersection) = mask.bounds.intersect(crop) {
-        for y in intersection.y..intersection.bottom() {
-            for x in intersection.x..intersection.right() {
-                if mask.contains_global(x, y) {
-                    out.put_pixel(x - crop.x, y - crop.y, Luma([255]));
-                }
-            }
-        }
-    }
-    out
-}
-
-fn build_cached_patch(
-    crop: NativeRect,
-    raw: &LoadedRaw,
-    exposure: &ExposureParams,
-    source_scene: &Rgb32FImage,
-    view_gain: f32,
-    model_output: &Rgb32FImage,
-    binary_mask: &GrayImage,
-) -> Result<RemovePatch> {
-    let scale = crop.width.max(crop.height) as f32 / BIG_LAMA_INPUT_EDGE as f32;
-    let sigma = (1.25 * scale).clamp(1.25, 5.0);
-    let blurred = image::imageops::blur(binary_mask, sigma);
-    let mut left = crop.width;
-    let mut top = crop.height;
-    let mut right = 0u32;
-    let mut bottom = 0u32;
-    for y in 0..crop.height {
-        for x in 0..crop.width {
-            let binary = binary_mask.get_pixel(x, y)[0];
-            let soft = blurred.get_pixel(x, y)[0];
-            let alpha = if binary != 0 { soft } else { 0 };
-            if alpha >= 2 {
-                left = left.min(x);
-                top = top.min(y);
-                right = right.max(x + 1);
-                bottom = bottom.max(y + 1);
-            }
-        }
-    }
-    anyhow::ensure!(
-        right > left && bottom > top,
-        "Big-LaMa patch has no compositing coverage"
-    );
-    let bounds = NativeRect {
-        x: crop.x + left,
-        y: crop.y + top,
-        width: right - left,
-        height: bottom - top,
-    };
-    let pixels = bounds.width as usize * bounds.height as usize;
-    let mut rgb16f = Vec::with_capacity(pixels * 3);
-    let mut alpha = Vec::with_capacity(pixels);
-    for y in top..bottom {
-        for x in left..right {
-            let u = (x as f32 + 0.5) / crop.width.max(1) as f32;
-            let v = (y as f32 + 0.5) / crop.height.max(1) as f32;
-            let pixel: Rgb<f32> = image::imageops::sample_bilinear(model_output, u, v)
-                .context("sample upscaled Big-LaMa output")?;
-            let generated = remove_model_srgb_to_canonical_scene(
-                raw,
-                exposure,
-                [pixel[0], pixel[1], pixel[2]],
-                view_gain,
-            );
-            let source_pixel: Rgb<f32> = image::imageops::sample_bilinear(source_scene, u, v)
-                .context("sample bounded Big-LaMa source scene")?;
-            let source = pipeline_scene_to_canonical_remove_scene(
-                raw,
-                exposure,
-                [source_pixel[0], source_pixel[1], source_pixel[2]],
-            );
-            let binary = binary_mask.get_pixel(x, y)[0];
-            let soft = blurred.get_pixel(x, y)[0];
-            let coverage = if binary != 0 { soft } else { 0 };
-            let mix = coverage as f32 / 255.0;
-            for channel in 0..3 {
-                let value = source[channel] * (1.0 - mix) + generated[channel] * mix;
-                let finite = if value.is_finite() {
-                    value
-                } else {
-                    source[channel]
-                };
-                rgb16f.push(half::f16::from_f32(finite.clamp(-65_504.0, 65_504.0)).to_bits());
-            }
-            alpha.push(coverage);
-        }
-    }
-    RemovePatch::new_scene(bounds, rgb16f, alpha).map_err(anyhow::Error::msg)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1147,69 +927,5 @@ mod tests {
                 "{tool:?} cached different pixels at different live opacities"
             );
         }
-    }
-
-    #[test]
-    fn cached_patch_feather_stays_inside_binary_mask() {
-        let crop = NativeRect {
-            x: 100,
-            y: 200,
-            width: 64,
-            height: 64,
-        };
-        let mut binary = GrayImage::new(64, 64);
-        for y in 20..44 {
-            for x in 18..46 {
-                binary.put_pixel(x, y, Luma([255]));
-            }
-        }
-        let restored = Rgb32FImage::from_pixel(16, 16, Rgb([0.4, 0.5, 0.6]));
-        let raw = LoadedRaw::from_scene_linear_rec2020(1, 1, vec![0.18, 0.18, 0.18]).unwrap();
-        let exposure = ExposureParams::default();
-        let source_scene = Rgb32FImage::from_pixel(8, 8, Rgb([0.18, 0.18, 0.18]));
-        let patch = build_cached_patch(
-            crop,
-            &raw,
-            &exposure,
-            &source_scene,
-            1.0,
-            &restored,
-            &binary,
-        )
-        .unwrap();
-        assert_eq!(patch.bounds.x, crop.x + 18);
-        assert_eq!(patch.bounds.y, crop.y + 20);
-        assert_eq!(patch.bounds.right(), crop.x + 46);
-        assert_eq!(patch.bounds.bottom(), crop.y + 44);
-        assert!(patch.alpha.iter().all(|alpha| *alpha > 0));
-    }
-
-    #[test]
-    fn nearest_model_mask_stays_binary() {
-        let brush = RemoveBrushStroke {
-            points: vec![RemoveBrushPoint {
-                x: 50.0,
-                y: 40.0,
-                radius: 8.0,
-            }],
-            dilation_radius: 2,
-        };
-        let mask = rasterize_remove_brush(100, 80, &brush).unwrap();
-        let crop = NativeRect {
-            x: 10,
-            y: 0,
-            width: 80,
-            height: 80,
-        };
-        let source = crop_binary_mask(crop, &mask);
-        let resized = image::imageops::resize(
-            &source,
-            BIG_LAMA_INPUT_EDGE,
-            BIG_LAMA_INPUT_EDGE,
-            FilterType::Nearest,
-        );
-        assert!(resized
-            .pixels()
-            .all(|pixel| pixel[0] == 0 || pixel[0] == 255));
     }
 }

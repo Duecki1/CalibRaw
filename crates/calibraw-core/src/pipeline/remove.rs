@@ -233,6 +233,222 @@ impl RemoveMask {
         self.pixels.iter().all(|value| *value == 0)
     }
 
+    /// Number of masked pixels inside `region`.
+    fn count_in(&self, region: NativeRect) -> usize {
+        let Some(overlap) = self.bounds.intersect(region) else {
+            return 0;
+        };
+        let width = self.bounds.width as usize;
+        (overlap.y..overlap.bottom())
+            .map(|y| {
+                let row = (y - self.bounds.y) as usize * width;
+                let start = row + (overlap.x - self.bounds.x) as usize;
+                self.pixels[start..start + overlap.width as usize]
+                    .iter()
+                    .filter(|value| **value != 0)
+                    .count()
+            })
+            .sum()
+    }
+
+    fn masked_fraction(&self, region: NativeRect) -> f32 {
+        let area = region.width as usize * region.height as usize;
+        self.count_in(region) as f32 / area.max(1) as f32
+    }
+
+    /// Masked pixels inside `region`, with bounds shrunk to fit them.
+    fn restricted_to(&self, region: NativeRect) -> Option<Self> {
+        let overlap = self.bounds.intersect(region)?;
+        let mut pixels = vec![0u8; overlap.width as usize * overlap.height as usize];
+        for y in overlap.y..overlap.bottom() {
+            for x in overlap.x..overlap.right() {
+                if self.contains_global(x, y) {
+                    pixels[(y - overlap.y) as usize * overlap.width as usize
+                        + (x - overlap.x) as usize] = 255;
+                }
+            }
+        }
+        Self {
+            bounds: overlap,
+            pixels,
+        }
+        .shrunk()
+    }
+
+    /// Clears every pixel that is set in `other`.
+    pub fn subtract(&mut self, other: &Self) {
+        let Some(overlap) = self.bounds.intersect(other.bounds) else {
+            return;
+        };
+        for y in overlap.y..overlap.bottom() {
+            for x in overlap.x..overlap.right() {
+                if other.contains_global(x, y) {
+                    let index = (y - self.bounds.y) as usize * self.bounds.width as usize
+                        + (x - self.bounds.x) as usize;
+                    self.pixels[index] = 0;
+                }
+            }
+        }
+    }
+
+    /// Separate spots of the mask (8-connected), each with tight bounds.
+    fn connected_components(&self) -> Vec<Self> {
+        let width = self.bounds.width as usize;
+        let height = self.bounds.height as usize;
+        // 0 = unvisited; otherwise the 1-based component number.
+        let mut labels = vec![0u32; self.pixels.len()];
+        let mut component_bounds: Vec<[usize; 4]> = Vec::new();
+        let mut stack = Vec::new();
+        for start in 0..self.pixels.len() {
+            if labels[start] != 0 || self.pixels[start] == 0 {
+                continue;
+            }
+            let label = component_bounds.len() as u32 + 1;
+            let mut bounds = [usize::MAX, usize::MAX, 0, 0];
+            labels[start] = label;
+            stack.push(start);
+            while let Some(index) = stack.pop() {
+                let (x, y) = (index % width, index / width);
+                bounds = [
+                    bounds[0].min(x),
+                    bounds[1].min(y),
+                    bounds[2].max(x + 1),
+                    bounds[3].max(y + 1),
+                ];
+                for neighbor_y in y.saturating_sub(1)..(y + 2).min(height) {
+                    for neighbor_x in x.saturating_sub(1)..(x + 2).min(width) {
+                        let neighbor = neighbor_y * width + neighbor_x;
+                        if labels[neighbor] == 0 && self.pixels[neighbor] != 0 {
+                            labels[neighbor] = label;
+                            stack.push(neighbor);
+                        }
+                    }
+                }
+            }
+            component_bounds.push(bounds);
+        }
+        component_bounds
+            .into_iter()
+            .enumerate()
+            .map(|(index, [left, top, right, bottom])| {
+                let label = index as u32 + 1;
+                let mut pixels = Vec::with_capacity((right - left) * (bottom - top));
+                for y in top..bottom {
+                    pixels.extend(
+                        labels[y * width + left..y * width + right]
+                            .iter()
+                            .map(|value| if *value == label { 255 } else { 0 }),
+                    );
+                }
+                Self {
+                    bounds: NativeRect {
+                        x: self.bounds.x + left as u32,
+                        y: self.bounds.y + top as u32,
+                        width: (right - left) as u32,
+                        height: (bottom - top) as u32,
+                    },
+                    pixels,
+                }
+            })
+            .collect()
+    }
+
+    /// Largest distance in native pixels from a masked pixel to the nearest
+    /// unmasked one: half the stroke's thickness at its widest.
+    fn max_half_width(&self) -> f32 {
+        const ORTHOGONAL: u32 = 3;
+        const DIAGONAL: u32 = 4;
+        // Pad by one pixel so the bounds' border counts as unmasked.
+        let width = self.bounds.width as usize + 2;
+        let height = self.bounds.height as usize + 2;
+        let mut distance = vec![0u32; width * height];
+        for y in 0..self.bounds.height as usize {
+            for x in 0..self.bounds.width as usize {
+                if self.pixels[y * self.bounds.width as usize + x] != 0 {
+                    distance[(y + 1) * width + x + 1] = u32::MAX / 2;
+                }
+            }
+        }
+        let neighbors = [
+            (-1isize, 0isize, ORTHOGONAL),
+            (0, -1, ORTHOGONAL),
+            (-1, -1, DIAGONAL),
+            (1, -1, DIAGONAL),
+        ];
+        for y in 1..height - 1 {
+            for x in 1..width - 1 {
+                let index = y * width + x;
+                for (dx, dy, step) in neighbors {
+                    let neighbor = (index as isize + dy * width as isize + dx) as usize;
+                    distance[index] = distance[index].min(distance[neighbor] + step);
+                }
+            }
+        }
+        let mut maximum = 0;
+        for y in (1..height - 1).rev() {
+            for x in (1..width - 1).rev() {
+                let index = y * width + x;
+                for (dx, dy, step) in neighbors {
+                    let neighbor = (index as isize - dy * width as isize - dx) as usize;
+                    distance[index] = distance[index].min(distance[neighbor] + step);
+                }
+                maximum = maximum.max(distance[index]);
+            }
+        }
+        maximum as f32 / ORTHOGONAL as f32
+    }
+
+    /// The mask split into square tiles of `edge`, dropping empty ones.
+    fn tiles(&self, edge: u32) -> Vec<Self> {
+        let edge = edge.max(1);
+        let mut tiles = Vec::new();
+        let mut y = self.bounds.y;
+        while y < self.bounds.bottom() {
+            let mut x = self.bounds.x;
+            while x < self.bounds.right() {
+                let tile = NativeRect {
+                    x,
+                    y,
+                    width: edge.min(self.bounds.right() - x),
+                    height: edge.min(self.bounds.bottom() - y),
+                };
+                tiles.extend(self.restricted_to(tile));
+                x += edge;
+            }
+            y += edge;
+        }
+        tiles
+    }
+
+    /// The same mask with bounds shrunk to its set pixels; `None` when empty.
+    fn shrunk(self) -> Option<Self> {
+        let width = self.bounds.width as usize;
+        let (mut left, mut top, mut right, mut bottom) = (usize::MAX, usize::MAX, 0, 0);
+        for (index, value) in self.pixels.iter().enumerate() {
+            if *value != 0 {
+                let (x, y) = (index % width, index / width);
+                left = left.min(x);
+                top = top.min(y);
+                right = right.max(x + 1);
+                bottom = bottom.max(y + 1);
+            }
+        }
+        if right <= left || bottom <= top {
+            return None;
+        }
+        let bounds = NativeRect {
+            x: self.bounds.x + left as u32,
+            y: self.bounds.y + top as u32,
+            width: (right - left) as u32,
+            height: (bottom - top) as u32,
+        };
+        let mut pixels = Vec::with_capacity((right - left) * (bottom - top));
+        for y in top..bottom {
+            pixels.extend_from_slice(&self.pixels[y * width + left..y * width + right]);
+        }
+        Some(Self { bounds, pixels })
+    }
+
     pub fn contains_global(&self, x: u32, y: u32) -> bool {
         if x < self.bounds.x
             || y < self.bounds.y
@@ -333,37 +549,148 @@ fn paint_disc(pixels: &mut [u8], bounds: NativeRect, center_x: f32, center_y: f3
     }
 }
 
-/// Chooses the sole native context for one Big-LaMa stroke. This deliberately
-/// never tiles: every stroke is resized into one model input and inferred once.
-pub fn plan_remove_context_crop(
+/// Native pixels a Big-LaMa pass sends to the model: exactly its fixed input,
+/// so a pass of this size is inferred without any resampling.
+const NATIVE_PASS_EDGE: u32 = BIG_LAMA_INPUT_EDGE;
+/// Context kept around a target before it no longer fits a native pass.
+const MIN_CONTEXT_MARGIN: u32 = 64;
+/// Thin strokes too long for one native pass are filled in tiles of this edge.
+const REMOVE_TILE_EDGE: u32 = 320;
+/// Only strokes at most this many native pixels from edge to centre are thin
+/// enough to tile: every tile then still sees background right beside the
+/// stroke. Thicker objects are filled whole so no tile cuts through them.
+const MAX_TILED_HALF_WIDTH: f32 = 40.0;
+/// Beyond this many tiles a stroke is filled in fewer, downscaled passes;
+/// each pass costs about a second and a half of CPU inference.
+const MAX_TILED_PASSES: usize = 32;
+/// Largest share of a crop that may be masked; the rest is the context the
+/// model fills from.
+const MAX_MASKED_FRACTION: f32 = 0.4;
+/// Context edge of a downscaled pass relative to its target's edge.
+const DOWNSCALED_CONTEXT_FACTOR: f32 = 1.75;
+
+/// One Big-LaMa inference within a Remove stroke.
+///
+/// `target` holds the mask pixels this pass fills. Stroke pixels inside `crop`
+/// that later passes fill stay masked, so the model never copies the object
+/// being removed, while pixels filled by earlier passes are real context.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RemovePass {
+    pub crop: NativeRect,
+    pub target: RemoveMask,
+}
+
+/// Splits a stroke into the passes that fill it at the best resolution the
+/// fixed 512px model allows: each separate spot on its own, thin strokes in
+/// native-resolution tiles, and larger objects in one downscaled pass with
+/// enough surrounding context.
+pub fn plan_remove_passes(
     image_width: u32,
     image_height: u32,
     mask: &RemoveMask,
-) -> Option<NativeRect> {
+) -> Vec<RemovePass> {
     if image_width == 0 || image_height == 0 || mask.is_empty() {
+        return Vec::new();
+    }
+    let components = mask.connected_components();
+    let tiled = components
+        .iter()
+        .flat_map(|component| {
+            native_passes(image_width, image_height, mask, component).unwrap_or_else(|| {
+                vec![downscaled_pass(image_width, image_height, mask, component)]
+            })
+        })
+        .collect::<Vec<_>>();
+    let native_count = tiled
+        .iter()
+        .filter(|pass| pass.crop.width.max(pass.crop.height) <= NATIVE_PASS_EDGE)
+        .count();
+    if native_count <= MAX_TILED_PASSES && tiled.len() <= REMOVE_MAX_PATCHES_PER_STROKE {
+        return tiled;
+    }
+    let per_component = components
+        .iter()
+        .map(|component| downscaled_pass(image_width, image_height, mask, component))
+        .collect::<Vec<_>>();
+    if per_component.len() <= REMOVE_MAX_PATCHES_PER_STROKE {
+        per_component
+    } else {
+        vec![downscaled_pass(image_width, image_height, mask, mask)]
+    }
+}
+
+/// Native-resolution passes for a target, or `None` when one of them would
+/// not keep enough unmasked context.
+fn native_passes(
+    image_width: u32,
+    image_height: u32,
+    stroke: &RemoveMask,
+    target: &RemoveMask,
+) -> Option<Vec<RemovePass>> {
+    let target_edge = target.bounds.width.max(target.bounds.height);
+    let tiles = if target_edge + 2 * MIN_CONTEXT_MARGIN <= NATIVE_PASS_EDGE {
+        vec![target.clone()]
+    } else if target.max_half_width() <= MAX_TILED_HALF_WIDTH {
+        target.tiles(REMOVE_TILE_EDGE)
+    } else {
+        return None;
+    };
+    if tiles.len() > MAX_TILED_PASSES {
         return None;
     }
+    tiles
+        .into_iter()
+        .map(|tile| {
+            let crop = square_around(image_width, image_height, tile.bounds, NATIVE_PASS_EDGE);
+            (stroke.masked_fraction(crop) <= MAX_MASKED_FRACTION)
+                .then_some(RemovePass { crop, target: tile })
+        })
+        .collect()
+}
+
+fn downscaled_pass(
+    image_width: u32,
+    image_height: u32,
+    stroke: &RemoveMask,
+    target: &RemoveMask,
+) -> RemovePass {
     let shortest = image_width.min(image_height).max(1);
-    let mask_edge = mask.bounds.width.max(mask.bounds.height).max(1);
-    let desired = mask_edge.saturating_mul(6).max(768).min(shortest);
-    if mask_edge <= shortest {
-        return Some(square_inside_image(
-            image_width,
-            image_height,
-            mask.bounds.x + mask.bounds.width / 2,
-            mask.bounds.y + mask.bounds.height / 2,
-            desired,
-        ));
+    let target_edge = target.bounds.width.max(target.bounds.height).max(1);
+    if target_edge > shortest {
+        // A square crop cannot contain the target; use the complete image.
+        return RemovePass {
+            crop: NativeRect {
+                x: 0,
+                y: 0,
+                width: image_width,
+                height: image_height,
+            },
+            target: target.clone(),
+        };
     }
-    // A square crop cannot contain a mask spanning more than the image's
-    // shortest edge. Use the complete image in that uncommon case; Big-LaMa
-    // still receives exactly one resized 512x512 input and runs once.
-    Some(NativeRect {
-        x: 0,
-        y: 0,
-        width: image_width,
-        height: image_height,
-    })
+    let mut edge = ((target_edge as f32 * DOWNSCALED_CONTEXT_FACTOR).ceil() as u32)
+        .max(target_edge + 2 * MIN_CONTEXT_MARGIN)
+        .max(NATIVE_PASS_EDGE)
+        .min(shortest);
+    let mut crop = square_around(image_width, image_height, target.bounds, edge);
+    while stroke.masked_fraction(crop) > MAX_MASKED_FRACTION && edge < shortest {
+        edge = (edge + edge / 4).min(shortest);
+        crop = square_around(image_width, image_height, target.bounds, edge);
+    }
+    RemovePass {
+        crop,
+        target: target.clone(),
+    }
+}
+
+fn square_around(image_width: u32, image_height: u32, bounds: NativeRect, edge: u32) -> NativeRect {
+    square_inside_image(
+        image_width,
+        image_height,
+        bounds.x + bounds.width / 2,
+        bounds.y + bounds.height / 2,
+        edge,
+    )
 }
 
 fn square_inside_image(
@@ -522,7 +849,10 @@ pub fn remove_model_view_gain(raw: &LoadedRaw, scene_rgb: &[f32]) -> f32 {
     luminance.sort_by(f32::total_cmp);
     let index = ((luminance.len() - 1) as f32 * 0.75).round() as usize;
     let p75 = luminance[index].max(1e-5);
-    let target_linear = 0.55 / (1.0 - 0.55);
+    // Place the upper quartile like a normally exposed photo (about 0.63 in
+    // sRGB), the kind of image Big-LaMa was trained on.
+    let target_display = 0.35;
+    let target_linear = target_display / (1.0 - target_display);
     (target_linear / p75).clamp(0.25, 64.0)
 }
 
@@ -688,80 +1018,163 @@ mod tests {
         assert!(mask.pixels.contains(&0));
     }
 
-    #[test]
-    fn small_mask_gets_three_x_context_square() {
+    fn disc_mask(width: u32, height: u32, discs: &[(f32, f32, f32)]) -> RemoveMask {
         let brush = RemoveBrushStroke {
-            points: vec![RemoveBrushPoint {
-                x: 3500.0,
-                y: 3000.0,
-                radius: 150.0,
-            }],
-            dilation_radius: 4,
+            points: discs
+                .iter()
+                .map(|&(x, y, radius)| RemoveBrushPoint { x, y, radius })
+                .collect(),
+            dilation_radius: 0,
         };
-        let mask = rasterize_remove_brush(7000, 6000, &brush).unwrap();
-        let crop = plan_remove_context_crop(7000, 6000, &mask).unwrap();
-        assert_eq!(crop.width, crop.height);
-        assert!(crop.width >= 900);
-        assert_eq!(crop.intersect(mask.bounds), Some(mask.bounds));
+        rasterize_remove_brush(width, height, &brush).unwrap()
     }
 
-    #[test]
-    fn large_mask_uses_one_context_containing_the_entire_stroke() {
-        let mut points = Vec::new();
-        for x in (1000..4000).step_by(120) {
-            points.push(RemoveBrushPoint {
-                x: x as f32,
-                y: 2500.0,
-                radius: 90.0,
-            });
+    /// Every stroke pixel is filled by exactly one pass, inside its crop.
+    fn assert_passes_partition(mask: &RemoveMask, passes: &[RemovePass]) {
+        let mut remaining = mask.clone();
+        for pass in passes {
+            assert_eq!(
+                pass.crop.intersect(pass.target.bounds),
+                Some(pass.target.bounds)
+            );
+            let before = remaining.count_in(mask.bounds);
+            remaining.subtract(&pass.target);
+            assert_eq!(
+                before - remaining.count_in(mask.bounds),
+                pass.target.count_in(pass.target.bounds),
+                "a pass refills pixels an earlier pass filled"
+            );
         }
-        let brush = RemoveBrushStroke {
-            points,
-            dilation_radius: 5,
-        };
-        let mask = rasterize_remove_brush(7000, 6000, &brush).unwrap();
-        let crop = plan_remove_context_crop(7000, 6000, &mask).unwrap();
-        assert_eq!(crop.width, crop.height);
-        assert_eq!(crop.intersect(mask.bounds), Some(mask.bounds));
+        assert!(remaining.is_empty(), "some stroke pixels are never filled");
     }
 
     #[test]
-    fn huge_contiguous_mask_still_uses_one_context() {
+    fn small_spot_is_inferred_at_native_resolution() {
+        let mask = disc_mask(7000, 6000, &[(3500.0, 3000.0, 60.0)]);
+        let passes = plan_remove_passes(7000, 6000, &mask);
+        assert_eq!(passes.len(), 1);
+        assert_eq!(passes[0].crop.width, BIG_LAMA_INPUT_EDGE);
+        assert_eq!(passes[0].crop.height, BIG_LAMA_INPUT_EDGE);
+        assert_passes_partition(&mask, &passes);
+    }
+
+    #[test]
+    fn separate_spots_get_their_own_native_passes() {
+        let mask = disc_mask(7000, 6000, &[(800.0, 900.0, 40.0), (5200.0, 4100.0, 50.0)]);
+        let passes = plan_remove_passes(7000, 6000, &mask);
+        assert_eq!(passes.len(), 2);
+        assert!(passes
+            .iter()
+            .all(|pass| pass.crop.width == BIG_LAMA_INPUT_EDGE));
+        assert_passes_partition(&mask, &passes);
+    }
+
+    #[test]
+    fn thin_long_stroke_is_tiled_at_native_resolution() {
+        let wire = (0..60)
+            .map(|step| (500.0 + step as f32 * 40.0, 2000.0 + step as f32 * 10.0, 6.0))
+            .collect::<Vec<_>>();
+        let mask = disc_mask(7000, 6000, &wire);
+        let passes = plan_remove_passes(7000, 6000, &mask);
+        assert!(passes.len() > 1);
+        for pass in &passes {
+            assert_eq!(pass.crop.width, BIG_LAMA_INPUT_EDGE);
+            assert!(mask.masked_fraction(pass.crop) <= MAX_MASKED_FRACTION);
+        }
+        assert_passes_partition(&mask, &passes);
+    }
+
+    #[test]
+    fn tall_object_is_filled_whole_instead_of_tiled() {
+        let mask = RemoveMask {
+            bounds: NativeRect {
+                x: 600,
+                y: 2000,
+                width: 220,
+                height: 600,
+            },
+            pixels: vec![255; 220 * 600],
+        };
+        assert!(mask.max_half_width() > MAX_TILED_HALF_WIDTH);
+        let passes = plan_remove_passes(7000, 6000, &mask);
+        assert_eq!(passes.len(), 1);
+        assert!(passes[0].crop.width > BIG_LAMA_INPUT_EDGE);
+        assert_passes_partition(&mask, &passes);
+    }
+
+    #[test]
+    fn half_width_measures_stroke_thickness() {
+        let wire = disc_mask(2000, 1000, &[(100.0, 500.0, 6.0), (1900.0, 500.0, 6.0)]);
+        assert!(wire.max_half_width() < 8.0);
+        let blob = disc_mask(2000, 1000, &[(1000.0, 500.0, 100.0)]);
+        assert!((blob.max_half_width() - 100.0).abs() < 10.0);
+    }
+
+    #[test]
+    fn large_object_keeps_context_in_one_downscaled_pass() {
         let mask = RemoveMask {
             bounds: NativeRect {
                 x: 1000,
                 y: 1000,
-                width: 3000,
-                height: 2200,
+                width: 1200,
+                height: 900,
             },
-            pixels: vec![255; 3000 * 2200],
+            pixels: vec![255; 1200 * 900],
         };
-        let crop = plan_remove_context_crop(7000, 6000, &mask).unwrap();
+        let passes = plan_remove_passes(7000, 6000, &mask);
+        assert_eq!(passes.len(), 1);
+        let crop = passes[0].crop;
         assert_eq!(crop.width, crop.height);
-        assert_eq!(crop.intersect(mask.bounds), Some(mask.bounds));
+        assert!(crop.width > BIG_LAMA_INPUT_EDGE);
+        assert!(mask.masked_fraction(crop) <= MAX_MASKED_FRACTION);
+        assert_passes_partition(&mask, &passes);
     }
 
     #[test]
-    fn full_image_mask_uses_the_full_image_once() {
+    fn mask_wider_than_the_image_uses_the_full_image_once() {
         let mask = RemoveMask {
             bounds: NativeRect {
                 x: 0,
-                y: 0,
-                width: 7000,
-                height: 6000,
+                y: 100,
+                width: 1200,
+                height: 300,
             },
-            pixels: vec![255; 7000 * 6000],
+            pixels: vec![255; 1200 * 300],
         };
-        let crop = plan_remove_context_crop(7000, 6000, &mask).unwrap();
+        let passes = plan_remove_passes(1200, 1000, &mask);
+        assert_eq!(passes.len(), 1);
         assert_eq!(
-            crop,
+            passes[0].crop,
             NativeRect {
                 x: 0,
                 y: 0,
-                width: 7000,
-                height: 6000,
+                width: 1200,
+                height: 1000,
             }
         );
+    }
+
+    #[test]
+    fn components_and_restriction_keep_global_coordinates() {
+        let mask = disc_mask(400, 300, &[(50.0, 50.0, 10.0), (300.0, 200.0, 12.0)]);
+        let components = mask.connected_components();
+        assert_eq!(components.len(), 2);
+        assert_eq!(
+            components
+                .iter()
+                .map(|c| c.count_in(c.bounds))
+                .sum::<usize>(),
+            mask.count_in(mask.bounds)
+        );
+        let left = mask
+            .restricted_to(NativeRect {
+                x: 0,
+                y: 0,
+                width: 200,
+                height: 300,
+            })
+            .unwrap();
+        assert_eq!(left, components[0]);
     }
 
     #[test]
