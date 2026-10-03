@@ -3,19 +3,22 @@
 
 @group(0) @binding(20) var<storage, read> profile_data: array<vec4<f32>>;
 
+// Linear Rec.2020 (D65) to the DNG SDK's ProPhoto RGB, Bradford-adapted to
+// the DNG PCS white (x = 0.3457, y = 0.3585). White maps to white exactly.
 const REC2020_TO_PROPHOTO: mat3x3<f32> = mat3x3<f32>(
-    vec3<f32>( 0.83528284,  0.05403228, -0.00234171),
-    vec3<f32>( 0.04887048,  0.92886970,  0.03632753),
-    vec3<f32>( 0.11595392,  0.01705474,  0.96588654),
+    vec3<f32>( 0.83515571,  0.05412894, -0.00234204),
+    vec3<f32>( 0.04884459,  0.92884833,  0.03633215),
+    vec3<f32>( 0.11599970,  0.01702272,  0.96600989),
 );
 
 const PROPHOTO_TO_REC2020: mat3x3<f32> = mat3x3<f32>(
-    vec3<f32>( 1.20052188, -0.06993601,  0.00554089),
-    vec3<f32>(-0.05756611,  1.08067472, -0.04078434),
-    vec3<f32>(-0.14310526, -0.01068580,  1.03537324),
+    vec3<f32>( 1.20070939, -0.07007339,  0.00554655),
+    vec3<f32>(-0.05754065,  1.08070269, -0.04078532),
+    vec3<f32>(-0.14316875, -0.01062930,  1.03523876),
 );
 
-const PROPHOTO_LUMA: vec3<f32> = vec3<f32>(0.26828944, 0.71515419, 0.01656066);
+// Rec.2020 luminance expressed on ProPhoto components.
+const PROPHOTO_LUMA: vec3<f32> = vec3<f32>(0.26824590, 0.71517979, 0.01657431);
 
 fn profile_srgb_encode_value(value: f32) -> f32 {
     let magnitude = abs(value);
@@ -244,50 +247,12 @@ fn apply_profile_view_tone(rgb: vec3<f32>) -> vec3<f32> {
     return apply_profile_tone_curve(rgb);
 }
 
-fn output_lut_fetch(r: u32, g: u32, b: u32) -> vec3<f32> {
-    let lut_info = Common::camera_uniforms.output_lut;
-    let index = lut_info.w + (b * lut_info.y + g) * lut_info.x + r;
-    return profile_data[index].xyz;
-}
-
-fn map_output_lut_input_rec2020(rgb: vec3<f32>) -> vec3<f32> {
-    if Color::rgb_is_unit(rgb) {
-        return clamp(rgb, vec3<f32>(0.0), vec3<f32>(1.0));
-    }
-    return Color::perceptual_gamut_compress_unit_rec2020(rgb);
-}
-
-fn apply_output_lut(rgb: vec3<f32>) -> vec3<f32> {
-    // The output LUT is sRGB-encoded; never apply an sRGB transfer afterward.
-    let lut_info = Common::camera_uniforms.output_lut;
-    if lut_info.x < 2u || lut_info.y < 2u || lut_info.z < 2u {
-        let output_linear = Common::REC2020_TO_SRGB * rgb;
-        let mapped = Color::perceptual_gamut_compress_unit_srgb(output_linear);
-        return Color::srgb_oetf(mapped);
-    }
-    let mapped = map_output_lut_input_rec2020(rgb);
-    let shaped = vec3<f32>(
-        profile_srgb_encode_value(mapped.r),
-        profile_srgb_encode_value(mapped.g),
-        profile_srgb_encode_value(mapped.b),
-    );
-    let lookup_coordinate = clamp(shaped, vec3<f32>(0.0), vec3<f32>(1.0));
-    let coordinate = lookup_coordinate
-        * vec3<f32>(f32(lut_info.x - 1u), f32(lut_info.y - 1u), f32(lut_info.z - 1u));
-    let low = vec3<u32>(floor(coordinate));
-    let high = min(low + vec3<u32>(1u), lut_info.xyz - vec3<u32>(1u));
-    let f = coordinate - vec3<f32>(low);
-
-    let c000 = output_lut_fetch(low.x, low.y, low.z);
-    let c100 = output_lut_fetch(high.x, low.y, low.z);
-    let c010 = output_lut_fetch(low.x, high.y, low.z);
-    let c110 = output_lut_fetch(high.x, high.y, low.z);
-    let c001 = output_lut_fetch(low.x, low.y, high.z);
-    let c101 = output_lut_fetch(high.x, low.y, high.z);
-    let c011 = output_lut_fetch(low.x, high.y, high.z);
-    let c111 = output_lut_fetch(high.x, high.y, high.z);
-
-    let low_z = mix(mix(c000, c100, f.x), mix(c010, c110, f.x), f.y);
-    let high_z = mix(mix(c001, c101, f.x), mix(c011, c111, f.x), f.y);
-    return mix(low_z, high_z, f.z);
+// Encodes display-linear Rec.2020 as sRGB. In-gamut colors are converted
+// exactly; out-of-gamut colors keep their OKLab lightness and hue while their
+// chroma is compressed to the sRGB boundary. Mirrors
+// display_linear_rec2020_to_srgb in color_profile.rs.
+fn apply_output_encoding(rgb: vec3<f32>) -> vec3<f32> {
+    let output_linear = Common::REC2020_TO_SRGB * rgb;
+    let mapped = Color::perceptual_gamut_compress_unit_srgb(output_linear);
+    return clamp(Color::srgb_oetf(mapped), vec3<f32>(0.0), vec3<f32>(1.0));
 }

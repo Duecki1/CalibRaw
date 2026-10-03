@@ -1,7 +1,7 @@
 use super::*;
 
 pub(super) struct ResolvedExportColor {
-    pub(super) transform: Option<SrgbOutputLut>,
+    pub(super) transform: Option<SrgbOutputTransform>,
     pub(super) embedded_icc: Option<Vec<u8>>,
     pub(super) srgb: bool,
 }
@@ -145,7 +145,7 @@ pub(super) fn resolve_export_color(settings: &ExportSettings) -> Result<Resolved
     }
 
     Ok(ResolvedExportColor {
-        transform: Some(SrgbOutputLut::new()),
+        transform: Some(SrgbOutputTransform::new()),
         embedded_icc: None,
         srgb: true,
     })

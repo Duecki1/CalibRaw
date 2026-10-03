@@ -24,7 +24,8 @@ pub use basicadj::{
     MAX_WHITE_BALANCE_TINT, MIN_TEMPERATURE_KELVIN, MIN_WHITE_BALANCE_TINT,
 };
 pub use color_profile::{
-    CameraProfile, DcpMatrixSet, DcpProfile, HsvMap, ProfileEncoding, SrgbOutputLut, ToneCurve,
+    CameraProfile, DcpMatrixSet, DcpProfile, HsvMap, ProfileEncoding, SrgbOutputTransform,
+    ToneCurve,
 };
 pub use geometry::{
     transform_thumbnail_geometry, transform_thumbnail_geometry_with_lens, CropAspectRatio,
