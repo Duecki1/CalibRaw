@@ -136,7 +136,7 @@ const MAX_THUMBNAIL_DECODE_BYTES: u64 = 256 * 1024 * 1024;
 #[cfg(target_os = "android")]
 const MAX_ANDROID_THUMBNAIL_FALLBACK_SENSOR_PIXELS: u64 = MAX_SENSOR_PIXELS;
 
-const D65_XYZ: [f32; 3] = [0.9504559, 1.0, 1.0890578];
+use crate::color_math::{bradford_adaptation, D65_XYZ, DNG_PCS_D50_XYZ};
 const XYZ_TO_REC2020: [[f32; 3]; 3] = [
     [1.7166512, -0.3556708, -0.2533663],
     [-0.6666844, 1.6164812, 0.0157685],
@@ -2572,6 +2572,7 @@ fn dng_camera_to_working(
     let neutral = camera_neutral(neutral_wb);
 
     let camera_to_xyz_d50 = if let Some(forward) = profile.forward_matrix {
+        let forward = normalize_forward_matrix(forward)?;
         let inverse_abcc = matrix::invert(abcc)
             .ok_or_else(|| anyhow!("DNG AnalogBalance * CameraCalibration is singular"))?;
         let reference_neutral = matrix::transform(inverse_abcc, neutral);
@@ -2597,11 +2598,15 @@ fn dng_camera_to_working(
             return Err(anyhow!("DNG XYZ-to-camera matrix is singular"));
         }
         let source_white = matrix::transform(camera_to_xyz, neutral);
-        let adaptation = bradford_adaptation(source_white, [0.964_22, 1.0, 0.825_21])
+        let adaptation = bradford_adaptation(source_white, DNG_PCS_D50_XYZ)
             .ok_or_else(|| anyhow!("DNG CameraNeutral does not define a valid white point"))?;
-        matrix::multiply(adaptation, camera_to_xyz)
+        // Bradford preserves the white's luminance; rescale so CameraNeutral
+        // reaches PCS white at Y = 1, as the ForwardMatrix path does.
+        let white_luminance = source_white[1];
+        matrix::multiply(adaptation, camera_to_xyz).map(|row| row.map(|v| v / white_luminance))
     };
 
+    // Bradford from DNG_PCS_D50_XYZ to D65_XYZ.
     const D50_TO_D65: [[f32; 3]; 3] = [
         [0.955_473_4, -0.023_098_5, 0.063_259_3],
         [-0.028_369_7, 1.009_995_5, 0.021_041_4],
@@ -2616,6 +2621,25 @@ fn dng_camera_to_working(
         }
     }
     Ok(fold_physical_camera_planes(physical, cdesc))
+}
+
+/// Scales ForwardMatrix rows so camera white maps exactly to the DNG PCS
+/// white, matching the DNG SDK's `NormalizeForwardMatrix`. Stored matrices are
+/// rounded and some third-party profiles are not normalized at all.
+fn normalize_forward_matrix(forward: [[f32; 4]; 3]) -> Result<[[f32; 4]; 3]> {
+    let mut normalized = forward;
+    for (row, target) in normalized.iter_mut().zip(DNG_PCS_D50_XYZ) {
+        let white = row.iter().sum::<f32>();
+        if !white.is_finite() || white <= 1e-6 {
+            return Err(anyhow!(
+                "DNG ForwardMatrix does not map camera white to a valid XYZ"
+            ));
+        }
+        for value in row {
+            *value *= target / white;
+        }
+    }
+    Ok(normalized)
 }
 
 fn fold_physical_camera_planes(physical: [[f32; 4]; 3], cdesc: [u8; 4]) -> [[f32; 4]; 3] {
@@ -2753,27 +2777,29 @@ fn estimate_scene_cct(
     }
 }
 
+/// Temperatures the DNG SDK assigns to EXIF LightSource values when it
+/// interpolates dual-illuminant profiles.
 fn calibration_illuminant_cct(illuminant: u16) -> Option<f32> {
     match illuminant {
-        1 => Some(5500.0),
-        2 => Some(4000.0),
-        3 => Some(2856.0),
-        4 => Some(5500.0),
-        9 => Some(5500.0),
-        10 => Some(6500.0),
-        11 => Some(7500.0),
-        12 => Some(6500.0),
-        13 => Some(5000.0),
-        14 => Some(4150.0),
-        15 => Some(3500.0),
-        16 => Some(3000.0),
-        17 => Some(2856.0),
-        18 => Some(4874.0),
-        19 => Some(6774.0),
-        20 => Some(5503.0),
-        21 => Some(6504.0),
-        22 => Some(7504.0),
-        23 => Some(5003.0),
+        // Daylight, flash, fine weather, standard light B, D55.
+        1 | 4 | 9 | 18 | 20 => Some(5500.0),
+        // Fluorescent and cool white fluorescent (3800-4500 K).
+        2 | 14 => Some(4150.0),
+        // Tungsten and standard light A.
+        3 | 17 => Some(2850.0),
+        // Cloudy, standard light C, D65.
+        10 | 19 | 21 => Some(6500.0),
+        // Shade, D75.
+        11 | 22 => Some(7500.0),
+        // Daylight fluorescent (5700-7100 K).
+        12 => Some(6400.0),
+        // Day white fluorescent (4600-5500 K).
+        13 => Some(5050.0),
+        // White fluorescent (3250-3800 K).
+        15 => Some(3525.0),
+        // Warm white fluorescent (2600-3250 K).
+        16 => Some(2925.0),
+        23 => Some(5000.0),
         24 => Some(3200.0),
         _ => None,
     }
@@ -2791,51 +2817,75 @@ fn mired_interpolation_weight(cct: f32, first_cct: f32, second_cct: f32) -> f32 
     }
 }
 
-fn xyz_to_cct(xyz: [f32; 3]) -> Option<f32> {
-    let sum = xyz[0] + xyz[1] + xyz[2];
-    if !sum.is_finite() || sum.abs() < 1e-10 {
-        return None;
-    }
-    let x = xyz[0] / sum;
-    let y = xyz[1] / sum;
-    let denominator = y - 0.1858;
-    if denominator.abs() < 1e-8 {
-        return None;
-    }
-    let n = (x - 0.3320) / denominator;
-    let cct = -449.0 * n * n * n + 3525.0 * n * n - 6823.3 * n + 5520.33;
-    (cct.is_finite() && cct > 0.0).then_some(cct)
-}
+/// Robertson (1968) isotemperature lines: reciprocal temperature in mired,
+/// CIE 1960 u and v of the Planckian locus, and the isotherm slope. The DNG
+/// SDK uses the same method to interpolate dual-illuminant profiles.
+const ROBERTSON_ISOTHERMS: [[f64; 4]; 31] = [
+    [0.0, 0.18006, 0.26352, -0.24341],
+    [10.0, 0.18066, 0.26589, -0.25479],
+    [20.0, 0.18133, 0.26846, -0.26876],
+    [30.0, 0.18208, 0.27119, -0.28539],
+    [40.0, 0.18293, 0.27407, -0.30470],
+    [50.0, 0.18388, 0.27709, -0.32675],
+    [60.0, 0.18494, 0.28021, -0.35156],
+    [70.0, 0.18611, 0.28342, -0.37915],
+    [80.0, 0.18740, 0.28668, -0.40955],
+    [90.0, 0.18880, 0.28997, -0.44278],
+    [100.0, 0.19032, 0.29326, -0.47888],
+    [125.0, 0.19462, 0.30141, -0.58204],
+    [150.0, 0.19962, 0.30921, -0.70471],
+    [175.0, 0.20525, 0.31647, -0.84901],
+    [200.0, 0.21142, 0.32312, -1.0182],
+    [225.0, 0.21807, 0.32909, -1.2168],
+    [250.0, 0.22511, 0.33439, -1.4512],
+    [275.0, 0.23247, 0.33904, -1.7298],
+    [300.0, 0.24010, 0.34308, -2.0637],
+    [325.0, 0.24792, 0.34655, -2.4681],
+    [350.0, 0.25591, 0.34951, -2.9641],
+    [375.0, 0.26400, 0.35200, -3.5814],
+    [400.0, 0.27218, 0.35407, -4.3633],
+    [425.0, 0.28039, 0.35577, -5.3762],
+    [450.0, 0.28863, 0.35714, -6.7262],
+    [475.0, 0.29685, 0.35823, -8.5955],
+    [500.0, 0.30505, 0.35907, -11.324],
+    [525.0, 0.31320, 0.35968, -15.628],
+    [550.0, 0.32129, 0.36011, -23.325],
+    [575.0, 0.32931, 0.36038, -40.770],
+    [600.0, 0.33724, 0.36051, -116.45],
+];
 
-fn bradford_adaptation(source: [f32; 3], target: [f32; 3]) -> Option<[[f32; 3]; 3]> {
-    const BRADFORD: [[f32; 3]; 3] = [
-        [0.8951, 0.2664, -0.1614],
-        [-0.7502, 1.7135, 0.0367],
-        [0.0389, -0.0685, 1.0296],
-    ];
-    const BRADFORD_INV: [[f32; 3]; 3] = [
-        [0.986_992_9, -0.147_054_3, 0.159_962_7],
-        [0.432_305_3, 0.518_360_3, 0.049_291_2],
-        [-0.008_528_7, 0.040_042_8, 0.968_486_7],
-    ];
-    if !source.iter().all(|v| v.is_finite()) || source[1].abs() < 1e-10 {
+/// Correlated colour temperature of an XYZ white by Robertson's method.
+fn xyz_to_cct(xyz: [f32; 3]) -> Option<f32> {
+    let [x, y, z] = xyz.map(f64::from);
+    let denominator = x + 15.0 * y + 3.0 * z;
+    if !denominator.is_finite() || denominator.abs() < 1e-10 {
         return None;
     }
-    let normalized_source = source.map(|v| v / source[1]);
-    let source_lms = matrix::transform(BRADFORD, normalized_source);
-    let target_lms = matrix::transform(BRADFORD, target);
-    if source_lms.iter().any(|v| !v.is_finite() || v.abs() < 1e-10) {
-        return None;
+    let u = 4.0 * x / denominator;
+    let v = 6.0 * y / denominator;
+
+    let mut previous_distance = 0.0;
+    for index in 1..ROBERTSON_ISOTHERMS.len() {
+        let [mired, line_u, line_v, slope] = ROBERTSON_ISOTHERMS[index];
+        let length = (1.0 + slope * slope).sqrt();
+        // Signed distance from this isotherm; it changes sign between the
+        // two isotherms that bracket the white.
+        let distance = (-(u - line_u) * slope + (v - line_v)) / length;
+        if distance <= 0.0 || index == ROBERTSON_ISOTHERMS.len() - 1 {
+            let distance = -distance.min(0.0);
+            let fraction = if index == 1 {
+                0.0
+            } else {
+                distance / (previous_distance + distance)
+            };
+            let previous_mired = ROBERTSON_ISOTHERMS[index - 1][0];
+            let interpolated = previous_mired * fraction + mired * (1.0 - fraction);
+            let cct = (1.0e6 / interpolated) as f32;
+            return (cct.is_finite() && cct > 0.0).then_some(cct);
+        }
+        previous_distance = distance;
     }
-    let diagonal = [
-        [target_lms[0] / source_lms[0], 0.0, 0.0],
-        [0.0, target_lms[1] / source_lms[1], 0.0],
-        [0.0, 0.0, target_lms[2] / source_lms[2]],
-    ];
-    Some(matrix::multiply(
-        BRADFORD_INV,
-        matrix::multiply(diagonal, BRADFORD),
-    ))
+    None
 }
 
 fn normalized_pseudoinverse(mut xyz_to_cam: [[f32; 3]; 4]) -> [[f32; 4]; 3] {
@@ -3428,6 +3478,63 @@ mod tests {
                 (mapped_neutral - 1.0).abs() < 1e-5,
                 "camera neutral mapped to {mapped_neutral} in working channel {channel}"
             );
+        }
+    }
+
+    fn assert_white_balanced_neutral_maps_to_unit_white(matrix: [[f32; 4]; 3]) {
+        // The shader feeds raw * wb, so a neutral camera response becomes ones.
+        for (channel, row) in matrix.iter().enumerate() {
+            let mapped = row[0] + row[1] + row[2];
+            assert!(
+                (mapped - 1.0).abs() < 1e-5,
+                "neutral mapped to {mapped} in working channel {channel}"
+            );
+        }
+    }
+
+    #[test]
+    fn dng_color_and_forward_matrix_paths_map_neutral_to_unit_white() {
+        let wb = [2.1, 1.0, 1.4, 1.0];
+        // A realistic, non-normalized D65 ColorMatrix: camera white luminance is not 1.
+        let color_matrix_only = super::InterpolatedDngProfile {
+            color_matrix: [
+                [0.7374, -0.2389, -0.0551],
+                [-0.5435, 1.3162, 0.2519],
+                [-0.1006, 0.1795, 0.6552],
+                [0.0, 0.0, 0.0],
+            ],
+            calibration: identity_4x4(),
+            forward_matrix: None,
+            weight: 0.0,
+        };
+        assert_white_balanced_neutral_maps_to_unit_white(
+            super::dng_camera_to_working(color_matrix_only, identity_4x4(), wb, wb, RGBG).unwrap(),
+        );
+
+        // Rows that do not sum to the PCS white, as in some third-party profiles.
+        let unnormalized_forward = super::InterpolatedDngProfile {
+            forward_matrix: Some([
+                [0.61, 0.29, 0.09, 0.0],
+                [0.26, 0.69, 0.06, 0.0],
+                [0.02, 0.11, 0.73, 0.0],
+            ]),
+            ..color_matrix_only
+        };
+        assert_white_balanced_neutral_maps_to_unit_white(
+            super::dng_camera_to_working(unnormalized_forward, identity_4x4(), wb, wb, RGBG)
+                .unwrap(),
+        );
+    }
+
+    #[test]
+    fn robertson_cct_matches_reference_illuminants() {
+        for ([x, y], expected) in [
+            ([0.3127, 0.3290], 6504.0),
+            ([0.447_57, 0.407_45], 2856.0),
+            ([0.3457, 0.3585], 5003.0),
+        ] {
+            let cct = super::xyz_to_cct([x / y, 1.0, (1.0 - x - y) / y]).unwrap();
+            assert!((cct - expected).abs() < 15.0, "xy {x},{y}: {cct} K");
         }
     }
 

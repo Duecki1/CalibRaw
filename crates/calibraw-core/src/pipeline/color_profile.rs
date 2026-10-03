@@ -7,7 +7,7 @@ mod dcp;
 mod icc;
 
 use crate::color_math::{
-    rec2020_from_oklab, rec2020_to_linear_srgb, rec2020_to_oklab, srgb_decode, srgb_encode,
+    linear_srgb_to_oklab, oklab_to_linear_srgb, rec2020_to_linear_srgb, srgb_encode,
 };
 use crate::matrix::transform;
 use dcp::{profile_from_tags, profile_identity_from_tags, TiffReader};
@@ -15,7 +15,6 @@ use dcp::{profile_from_tags, profile_identity_from_tags, TiffReader};
 #[cfg(test)]
 mod tests;
 
-pub const OUTPUT_LUT_EDGE: u32 = 33;
 const PROFILE_TONE_LUT_SIZE: usize = 4096;
 const MAX_DCP_TAG_BYTES: u64 = 16 * 1024 * 1024;
 const MAX_DCP_MAP_ENTRIES: usize = 1_000_000;
@@ -282,53 +281,22 @@ impl CameraProfile {
         ProfileGpuLayout::new(self)
     }
 
-    pub fn gpu_data(&self, output: &SrgbOutputLut) -> ProfileGpuData {
-        ProfileGpuData::new(self, output)
+    pub fn gpu_data(&self) -> ProfileGpuData {
+        ProfileGpuData::new(self)
     }
 }
 
-#[derive(Clone, Debug)]
-pub struct SrgbOutputLut {
-    size: u32,
-    entries: Vec<[f32; 4]>,
-}
+/// Encodes display-linear Rec.2020 as sRGB for 8- and 16-bit export.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct SrgbOutputTransform;
 
-impl Default for SrgbOutputLut {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl SrgbOutputLut {
+impl SrgbOutputTransform {
     pub fn new() -> Self {
-        let size = OUTPUT_LUT_EDGE;
-        let mut entries = Vec::with_capacity((size * size * size) as usize);
-        for b in 0..size {
-            for g in 0..size {
-                for r in 0..size {
-                    let rec2020 = [
-                        output_lut_linear_node(r, size),
-                        output_lut_linear_node(g, size),
-                        output_lut_linear_node(b, size),
-                    ];
-                    let encoded = display_linear_rec2020_to_srgb(rec2020);
-                    entries.push([encoded[0], encoded[1], encoded[2], 0.0]);
-                }
-            }
-        }
-        Self { size, entries }
-    }
-
-    pub fn size(&self) -> u32 {
-        self.size
+        Self
     }
 
     pub fn transform_rgb(&self, rgb: [f32; 3]) -> [f32; 3] {
-        sample_rgb_lut(&self.entries, self.size, rgb)
-    }
-
-    pub fn entries(&self) -> &[[f32; 4]] {
-        &self.entries
+        display_linear_rec2020_to_srgb(rgb)
     }
 }
 
@@ -338,7 +306,6 @@ pub struct ProfileGpuLayout {
     pub hue_sat_2: [u32; 4],
     pub look: [u32; 4],
     pub tone: [u32; 4],
-    pub output: [u32; 4],
     pub flags: [u32; 4],
 }
 
@@ -359,16 +326,10 @@ pub struct ViewTransformGpuStage {
 }
 
 #[derive(Clone, Copy, Debug)]
-pub struct OutputEncodingGpuStage {
-    pub output_lut: [u32; 4],
-}
-
-#[derive(Clone, Copy, Debug)]
 pub struct ProfileGpuStages {
     pub characterization: CameraCharacterizationGpuStage,
     pub optional_look: OptionalLookGpuStage,
     pub view: ViewTransformGpuStage,
-    pub output: OutputEncodingGpuStage,
 }
 
 impl ProfileGpuLayout {
@@ -383,9 +344,6 @@ impl ProfileGpuLayout {
             },
             view: ViewTransformGpuStage {
                 profile_tone: self.tone,
-            },
-            output: OutputEncodingGpuStage {
-                output_lut: self.output,
             },
         }
     }
@@ -422,13 +380,10 @@ impl ProfileGpuLayout {
             [0; 4]
         };
         let tone = if profile.tone_curve.is_some() {
-            let out = [PROFILE_TONE_LUT_SIZE as u32, offset, 0, 0];
-            offset += PROFILE_TONE_LUT_SIZE as u32;
-            out
+            [PROFILE_TONE_LUT_SIZE as u32, offset, 0, 0]
         } else {
             [0; 4]
         };
-        let output = [OUTPUT_LUT_EDGE, OUTPUT_LUT_EDGE, OUTPUT_LUT_EDGE, offset];
         let flags = [
             profile
                 .hue_sat_maps
@@ -448,7 +403,6 @@ impl ProfileGpuLayout {
             hue_sat_2,
             look,
             tone,
-            output,
             flags,
         }
     }
@@ -460,11 +414,9 @@ pub struct ProfileGpuData {
 }
 
 impl ProfileGpuData {
-    fn new(profile: &CameraProfile, output: &SrgbOutputLut) -> Self {
+    fn new(profile: &CameraProfile) -> Self {
         let layout = profile.gpu_layout();
-        debug_assert_eq!(output.size(), OUTPUT_LUT_EDGE);
-        let total = layout.output[3] as usize + output.entries().len();
-        let mut words = Vec::with_capacity(total);
+        let mut words = Vec::new();
         words.push(layout.hue_sat_2.map(f32::from_bits));
         if let Some(map) = profile.hue_sat_maps[0]
             .as_ref()
@@ -500,8 +452,6 @@ impl ProfileGpuData {
                     .map(|value| [value, 0.0, 0.0, 0.0]),
             );
         }
-        debug_assert_eq!(words.len(), layout.output[3] as usize);
-        words.extend_from_slice(output.entries());
         Self { layout, words }
     }
 
@@ -544,21 +494,9 @@ impl ProfileGpuData {
             }
         }
 
-        let output_offset = self.layout.output[3] as usize;
-        if output_offset != cursor {
-            bail!("output LUT starts at {output_offset}, expected {cursor}");
-        }
-        let output_entries = checked_map_len([
-            self.layout.output[0],
-            self.layout.output[1],
-            self.layout.output[2],
-        ])?;
-        let expected_total = output_offset
-            .checked_add(output_entries)
-            .ok_or_else(|| anyhow!("output LUT range overflows"))?;
-        if expected_total != self.words.len() {
+        if cursor != self.words.len() {
             bail!(
-                "packed GPU profile contains {} words; layout requires {expected_total}",
+                "packed GPU profile contains {} words; layout requires {cursor}",
                 self.words.len()
             );
         }
@@ -657,40 +595,30 @@ fn sample_natural_cubic(points: &[[f32; 2]], second: &[f64], x: f32) -> f32 {
     value as f32
 }
 
+/// Encodes display-linear Rec.2020 as sRGB. In-gamut colors are converted
+/// exactly; out-of-gamut colors keep their OKLab lightness and hue while their
+/// chroma is compressed to the sRGB boundary. Mirrors `apply_output_encoding`
+/// in profile.wgsl so exports match the preview.
 pub(super) fn display_linear_rec2020_to_srgb(rgb: [f32; 3]) -> [f32; 3] {
-    perceptual_gamut_compress(rec2020_to_linear_srgb(rgb)).map(srgb_encode)
+    perceptual_gamut_compress_unit_srgb(rec2020_to_linear_srgb(rgb)).map(srgb_encode)
 }
 
-fn perceptual_gamut_compress(rgb: [f32; 3]) -> [f32; 3] {
-    let min = rgb[0].min(rgb[1]).min(rgb[2]);
-    let max = rgb[0].max(rgb[1]).max(rgb[2]);
-    if min >= 0.0 && max <= 1.0 {
+fn perceptual_gamut_compress_unit_srgb(rgb: [f32; 3]) -> [f32; 3] {
+    let lab = linear_srgb_to_oklab(rgb);
+    let lightness = lab[0].clamp(0.0, 1.0);
+    let chroma = lab[1].hypot(lab[2]);
+    if chroma <= 1e-9 {
+        return oklab_to_linear_srgb([lightness, 0.0, 0.0]);
+    }
+    let hue = [lab[1] / chroma, lab[2] / chroma];
+    let knee_chroma = chroma / 0.90;
+    let knee_probe = oklab_to_linear_srgb([lightness, hue[0] * knee_chroma, hue[1] * knee_chroma]);
+    if (lightness - lab[0]).abs() <= 1e-7 && rgb_is_unit(rgb) && rgb_is_unit(knee_probe) {
         return rgb;
     }
-    let luma = (rgb[0] * 0.212_672_9 + rgb[1] * 0.715_152_2 + rgb[2] * 0.072_175).clamp(0.0, 1.0);
-    let mut scale: f32 = 1.0;
-    for value in rgb {
-        let delta = value - luma;
-        if delta > 0.0 {
-            scale = scale.min((1.0 - luma) / delta);
-        } else if delta < 0.0 {
-            scale = scale.min((0.0 - luma) / delta);
-        }
-    }
-    rgb.map(|value| (luma + (value - luma) * scale.clamp(0.0, 1.0)).clamp(0.0, 1.0))
-}
-
-fn output_lut_linear_node(index: u32, size: u32) -> f32 {
-    srgb_decode(index as f32 / (size.max(2) - 1) as f32)
-}
-
-fn output_lut_shaper(value: f32) -> f32 {
-    // In f32, srgb_encode(1.0) is one ULP short of 1.0; pin the top LUT node.
-    if value >= 1.0 {
-        1.0
-    } else {
-        srgb_encode(value)
-    }
+    let boundary = srgb_unit_boundary(lightness, hue, chroma);
+    let compressed = perceptual_soft_chroma(chroma, boundary);
+    oklab_to_linear_srgb([lightness, hue[0] * compressed, hue[1] * compressed])
 }
 
 fn rgb_is_unit(rgb: [f32; 3]) -> bool {
@@ -710,12 +638,12 @@ fn perceptual_soft_chroma(requested: f32, boundary: f32) -> f32 {
     (knee + span * (1.0 - (-(chroma - knee) / span).exp())).min(boundary * 0.999_95)
 }
 
-fn rec2020_unit_boundary(lightness: f32, hue: [f32; 2], requested: f32) -> f32 {
+fn srgb_unit_boundary(lightness: f32, hue: [f32; 2], requested: f32) -> f32 {
     let lightness = lightness.clamp(0.0, 1.0);
     let mut low = 0.0;
     let mut high = requested.max(0.04);
     for _ in 0..8 {
-        let probe = rec2020_from_oklab([lightness, hue[0] * high, hue[1] * high]);
+        let probe = oklab_to_linear_srgb([lightness, hue[0] * high, hue[1] * high]);
         if rgb_is_unit(probe) {
             low = high;
             high *= 2.0;
@@ -723,7 +651,7 @@ fn rec2020_unit_boundary(lightness: f32, hue: [f32; 2], requested: f32) -> f32 {
     }
     for _ in 0..11 {
         let middle = 0.5 * (low + high);
-        let probe = rec2020_from_oklab([lightness, hue[0] * middle, hue[1] * middle]);
+        let probe = oklab_to_linear_srgb([lightness, hue[0] * middle, hue[1] * middle]);
         if rgb_is_unit(probe) {
             low = middle;
         } else {
@@ -731,53 +659,4 @@ fn rec2020_unit_boundary(lightness: f32, hue: [f32; 2], requested: f32) -> f32 {
         }
     }
     low
-}
-
-fn map_output_lut_input_rec2020(rgb: [f32; 3]) -> [f32; 3] {
-    if rgb_is_unit(rgb) {
-        return rgb.map(|value| value.clamp(0.0, 1.0));
-    }
-    let lab = rec2020_to_oklab(rgb);
-    let lightness = lab[0].clamp(0.0, 1.0);
-    let chroma = lab[1].hypot(lab[2]);
-    if chroma <= 1e-9 {
-        return rec2020_from_oklab([lightness, 0.0, 0.0]);
-    }
-    let hue = [lab[1] / chroma, lab[2] / chroma];
-    let boundary = rec2020_unit_boundary(lightness, hue, chroma);
-    let compressed = perceptual_soft_chroma(chroma, boundary);
-    rec2020_from_oklab([lightness, hue[0] * compressed, hue[1] * compressed])
-        .map(|value| value.clamp(0.0, 1.0))
-}
-
-fn sample_rgb_lut(entries: &[[f32; 4]], size: u32, rgb: [f32; 3]) -> [f32; 3] {
-    let edge = size.max(2);
-    let mapped = map_output_lut_input_rec2020(rgb);
-    let coord = mapped.map(|value| output_lut_shaper(value) * (edge - 1) as f32);
-    let lo = coord.map(|value| (value.floor() as u32).min(edge - 1));
-    let hi = lo.map(|value| value.saturating_add(1).min(edge - 1));
-    let f = [
-        coord[0] - lo[0] as f32,
-        coord[1] - lo[1] as f32,
-        coord[2] - lo[2] as f32,
-    ];
-    let fetch = |r: u32, g: u32, b: u32| -> [f32; 3] {
-        let index = ((b * edge + g) * edge + r) as usize;
-        let entry = entries[index];
-        [entry[0], entry[1], entry[2]]
-    };
-    let lerp = |a: [f32; 3], b: [f32; 3], t: f32| {
-        [
-            a[0] + (b[0] - a[0]) * t,
-            a[1] + (b[1] - a[1]) * t,
-            a[2] + (b[2] - a[2]) * t,
-        ]
-    };
-    let c00 = lerp(fetch(lo[0], lo[1], lo[2]), fetch(hi[0], lo[1], lo[2]), f[0]);
-    let c10 = lerp(fetch(lo[0], hi[1], lo[2]), fetch(hi[0], hi[1], lo[2]), f[0]);
-    let c01 = lerp(fetch(lo[0], lo[1], hi[2]), fetch(hi[0], lo[1], hi[2]), f[0]);
-    let c11 = lerp(fetch(lo[0], hi[1], hi[2]), fetch(hi[0], hi[1], hi[2]), f[0]);
-    let c0 = lerp(c00, c10, f[1]);
-    let c1 = lerp(c01, c11, f[1]);
-    lerp(c0, c1, f[2])
 }

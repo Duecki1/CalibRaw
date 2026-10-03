@@ -663,14 +663,14 @@ fn apply_view_node(@builtin(global_invocation_id) gid: vec3<u32>) {
     display_linear = CreativeEffects::apply_film_finish_modules(pos, display_linear);
     textureStore(SceneAdjustments::display_linear_out, pos, vec4<f32>(display_linear, 1.0));
 
-    var output_rgb = Profile::apply_output_lut(display_linear);
+    var output_rgb = Profile::apply_output_encoding(display_linear);
     let visualize_index = Common::scene_tone_uniforms.point_color_meta.y;
     if visualize_index > 0u || local_selection > 0.0 {
         let selected_weight = max(
             select(0.0, point_color_selection_weight(point_color_sample, visualize_index - 1u), visualize_index > 0u),
             local_selection,
         );
-        // Match the mask overlay after the output LUT.
+        // Match the mask overlay after output encoding.
         let overlay_rgb = vec3<f32>(78.0 / 255.0, 163.0 / 255.0, 1.0);
         let overlay_alpha = selected_weight * (92.0 / 255.0);
         output_rgb = mix(output_rgb, overlay_rgb, overlay_alpha);
