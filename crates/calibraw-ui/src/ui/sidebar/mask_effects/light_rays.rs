@@ -1,4 +1,7 @@
-use super::{effect_card, effect_color, effect_details, effect_position, float_param_slider};
+use super::{
+    effect_card, effect_color, effect_details, effect_position, float_param_slider, EffectFrame,
+    PositionSpace,
+};
 use crate::pipeline::{effect_params::light_rays, LightRaysEffectSettings, MaskEffect};
 use eframe::egui::Ui;
 
@@ -7,6 +10,7 @@ pub(crate) fn show(
     settings: &mut LightRaysEffectSettings,
     enabled: &mut bool,
     remove: &mut bool,
+    frame: &EffectFrame,
 ) -> bool {
     effect_card(
         ui,
@@ -22,6 +26,8 @@ pub(crate) fn show(
                 "Source position",
                 &mut settings.source,
                 [light_rays::SOURCE_X, light_rays::SOURCE_Y],
+                frame,
+                PositionSpace::Source,
             );
             changed |= effect_color(
                 ui,

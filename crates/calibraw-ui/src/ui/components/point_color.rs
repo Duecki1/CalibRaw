@@ -324,6 +324,29 @@ fn set_range_handle(range: &mut PointColorRange, index: usize, value: f32, limit
     *range = PointColorRange::new(values[0], values[1], values[2], values[3]);
 }
 
+/// The range handle nearest `pointer`. Handles at the same spot (a collapsed
+/// core or feather) resolve toward the drag direction, since only the one on
+/// that side can move: each handle is clamped between its neighbors.
+fn nearest_range_handle(
+    values: [f32; 4],
+    pointer: egui::Pos2,
+    moving_right: bool,
+    position: impl Fn(usize, f32) -> egui::Pos2,
+) -> usize {
+    (0..values.len())
+        .min_by(|&a, &b| {
+            let distance = |index: usize| position(index, values[index]).distance_sq(pointer);
+            distance(a).total_cmp(&distance(b)).then_with(|| {
+                if moving_right {
+                    b.cmp(&a)
+                } else {
+                    a.cmp(&b)
+                }
+            })
+        })
+        .unwrap_or(0)
+}
+
 fn range_editor(
     ui: &mut Ui,
     label: &str,
@@ -343,23 +366,19 @@ fn range_editor(
         let handle_pos = |value: f32| egui::lerp(bar.x_range(), (value / limit + 1.0) * 0.5);
         let drag_id = ui.id().with("active-range-handle");
         if response.drag_started() || response.clicked() {
-            if let Some(pos) = response.interact_pointer_pos() {
-                let index = values
-                    .iter()
-                    .enumerate()
-                    .min_by(|(a, x), (b, y)| {
-                        let distance = |index: usize, value: f32| {
-                            let dy = if index == 0 || index == 3 {
-                                rect.bottom()
-                            } else {
-                                rect.top()
-                            };
-                            egui::pos2(handle_pos(value), dy).distance_sq(pos)
-                        };
-                        distance(*a, **x).total_cmp(&distance(*b, **y))
-                    })
-                    .map(|(index, _)| index)
-                    .unwrap_or(0);
+            let origin = ui.input(|input| input.pointer.press_origin());
+            if let Some(pos) = origin.or(response.interact_pointer_pos()) {
+                let moving_right = response
+                    .interact_pointer_pos()
+                    .is_some_and(|current| current.x > pos.x);
+                let index = nearest_range_handle(values, pos, moving_right, |index, value| {
+                    let y = if index == 0 || index == 3 {
+                        bar.bottom() + 4.0
+                    } else {
+                        bar.top() - 4.0
+                    };
+                    egui::pos2(handle_pos(value), y)
+                });
                 ui.ctx().data_mut(|data| data.insert_temp(drag_id, index));
             }
         }
@@ -478,6 +497,20 @@ mod tests {
                 assert!(range.max <= 0.5);
             }
         }
+    }
+
+    #[test]
+    fn collapsed_core_opens_in_the_drag_direction() {
+        let values = [-0.2, 0.1, 0.1, 0.3];
+        let position = |index: usize, value: f32| {
+            egui::pos2(
+                value * 100.0,
+                if index == 0 || index == 3 { 10.0 } else { 0.0 },
+            )
+        };
+        let core = egui::pos2(10.0, 0.0);
+        assert_eq!(nearest_range_handle(values, core, true, position), 2);
+        assert_eq!(nearest_range_handle(values, core, false, position), 1);
     }
 
     #[test]

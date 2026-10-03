@@ -79,6 +79,7 @@ impl CardUi {
                             &mut self.components,
                             &mut self.selection,
                             true,
+                            &EffectFrame::uncropped(3000, 2000),
                         );
                         if self.viewport.y > self.viewport.x {
                             ui.with_layout(
@@ -471,6 +472,8 @@ struct PadUi {
     enabled: bool,
     time: f64,
     rect: egui::Rect,
+    frame: EffectFrame,
+    space: controls::PositionSpace,
 }
 
 impl PadUi {
@@ -486,7 +489,14 @@ impl PadUi {
             enabled: true,
             time: 0.0,
             rect: egui::Rect::NOTHING,
+            frame: EffectFrame::uncropped(3000, 2000),
+            space: controls::PositionSpace::Source,
         }
+    }
+
+    /// The image area the pad draws inside its fixed footprint.
+    fn canvas(&self) -> egui::Rect {
+        controls::fit_aspect(self.rect.shrink(8.0), self.frame.output_aspect())
     }
 
     fn frame(&mut self, events: Vec<egui::Event>, elapsed: f64) -> bool {
@@ -512,8 +522,14 @@ impl PadUi {
             },
             |ui| {
                 ui.add_enabled_ui(self.enabled, |ui| {
-                    let (response, edited) =
-                        controls::position_pad(ui, "Source position", &mut self.value, Self::SPECS);
+                    let (response, edited) = controls::position_pad(
+                        ui,
+                        "Source position",
+                        &mut self.value,
+                        Self::SPECS,
+                        &self.frame,
+                        self.space,
+                    );
                     self.rect = response.rect;
                     assert_eq!(response.changed(), edited);
                     changed = edited;
@@ -549,7 +565,7 @@ fn position_pad_edits_both_axes_keeps_off_image_values_and_resets_to_spec() {
     let mut pad = PadUi::new([-25.0, 130.0]);
     assert!(!pad.frame(Vec::new(), 0.1));
     assert_eq!(pad.value, [-25.0, 130.0]);
-    let canvas = pad.rect.shrink(8.0);
+    let canvas = pad.canvas();
     let target = egui::pos2(
         egui::lerp(canvas.x_range(), 0.25),
         egui::lerp(canvas.y_range(), 0.75),
@@ -573,7 +589,8 @@ fn position_pad_drag_stops_at_frame_but_keyboard_can_place_off_image_sources() {
     let target = pad.rect.right_top() + egui::vec2(80.0, -80.0);
     pad.frame(pointer(pad.rect.center(), true), 0.5);
     assert!(pad.frame(vec![egui::Event::PointerMoved(target)], 0.1));
-    assert_eq!(pad.value, [100.0, 0.0]);
+    assert!((pad.value[0] - 100.0).abs() < 1e-3 && pad.value[1].abs() < 1e-3);
+    pad.value = [100.0, 0.0];
     pad.frame(pointer(target, false), 0.1);
     assert!(pad.key(egui::Key::ArrowRight, egui::Modifiers::SHIFT));
     assert!(pad.key(egui::Key::ArrowUp, egui::Modifiers::NONE));
@@ -584,6 +601,31 @@ fn position_pad_drag_stops_at_frame_but_keyboard_can_place_off_image_sources() {
     assert_eq!(pad.value, [PadUi::SPECS[0].max, PadUi::SPECS[1].min]);
     assert!(!pad.key(egui::Key::ArrowRight, egui::Modifiers::SHIFT));
     assert!(!pad.key(egui::Key::ArrowUp, egui::Modifiers::SHIFT));
+}
+
+#[test]
+fn position_pad_has_the_cropped_preview_shape_and_maps_into_the_crop() {
+    let mut pad = PadUi::new([50.0, 50.0]);
+    pad.frame.geometry.crop = [0.5, 0.0, 1.0, 1.0];
+    pad.frame(Vec::new(), 0.1);
+    let full_size = pad.rect;
+    let canvas = pad.canvas();
+    // A 3:2 source cropped to its right half is 3:4, which the pad shows
+    // inside the same footprint.
+    assert!((canvas.width() / canvas.height() - 0.75).abs() < 1e-3);
+    assert!(canvas.height() <= full_size.shrink(8.0).height() + 1e-3);
+    assert!(pad.click(canvas.left_top()));
+    assert!((pad.value[0] - 50.0).abs() < 0.01, "{:?}", pad.value);
+    assert!(pad.value[1].abs() < 0.01, "{:?}", pad.value);
+    assert!(pad.click(canvas.center()));
+    assert!((pad.value[0] - 75.0).abs() < 0.01, "{:?}", pad.value);
+
+    // Vignette centers are measured in the cropped frame itself.
+    pad.space = controls::PositionSpace::Output;
+    assert!(pad.click(canvas.left_top()));
+    assert!(pad.value[0].abs() < 0.01 && pad.value[1].abs() < 0.01);
+    pad.frame(Vec::new(), 0.1);
+    assert_eq!(pad.rect, full_size);
 }
 
 #[test]

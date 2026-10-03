@@ -300,6 +300,7 @@ impl Sidebar {
         };
         let previous_point_color_preview = point_color_preview(&app.develop_ui);
 
+        let effect_frame = mask_effects::EffectFrame::of(app);
         {
             let mask = &mut app.masks.stack.masks[mask_index];
             let light_rays_before = mask.has_light_rays_effect();
@@ -384,6 +385,7 @@ impl Sidebar {
                                 &mut mask.effect_components,
                                 &mut app.develop_ui.mask_effect_component,
                                 fullscreen,
+                                &effect_frame,
                             );
                         }
                         section => {
@@ -406,8 +408,12 @@ impl Sidebar {
             }
             if orientation == MaskStripOrientation::Horizontal {
                 let fullscreen = Self::is_plain_fullscreen_mask(mask);
-                adjustments_changed |=
-                    Self::show_effect_components(ui, &mut mask.effect_components, fullscreen);
+                adjustments_changed |= Self::show_effect_components(
+                    ui,
+                    &mut mask.effect_components,
+                    fullscreen,
+                    &effect_frame,
+                );
             }
             light_rays_changed = light_rays_before != mask.has_light_rays_effect();
         }

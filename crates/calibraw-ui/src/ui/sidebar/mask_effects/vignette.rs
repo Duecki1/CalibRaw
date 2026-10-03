@@ -1,4 +1,6 @@
-use super::{effect_card, effect_details, effect_position, float_param_slider};
+use super::{
+    effect_card, effect_details, effect_position, float_param_slider, EffectFrame, PositionSpace,
+};
 use crate::pipeline::{effect_params::vignette, MaskEffect, VignetteEffectSettings};
 use eframe::egui::Ui;
 
@@ -7,6 +9,7 @@ pub(crate) fn show(
     settings: &mut VignetteEffectSettings,
     enabled: &mut bool,
     remove: &mut bool,
+    frame: &EffectFrame,
 ) -> bool {
     effect_card(
         ui,
@@ -30,6 +33,8 @@ pub(crate) fn show(
                     "Vignette center",
                     &mut settings.center,
                     [vignette::CENTER_X, vignette::CENTER_Y],
+                    frame,
+                    PositionSpace::Output,
                 );
                 changed
             });

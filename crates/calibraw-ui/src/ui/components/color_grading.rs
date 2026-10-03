@@ -204,7 +204,9 @@ fn color_wheel_picker(ui: &mut Ui, wheel: &mut ColorGradeWheel) -> bool {
         let (rect, response) = ui.allocate_exact_size(egui::vec2(size, size), Sense::click_and_drag());
         let painter = ui.painter_at(rect);
         let center = rect.center();
-        let radius = 0.5 * rect.width().min(rect.height()) - 4.0;
+        // Leave room for the marker (radius 6.5 plus stroke) at full
+        // saturation, where it would otherwise be clipped by the widget.
+        let radius = (0.5 * rect.width().min(rect.height()) - 8.0).max(1.0);
 
         painter.circle_filled(center, radius + 2.0, ui.visuals().extreme_bg_color);
         painter.add(Shape::mesh(build_wheel_mesh(center, radius)));

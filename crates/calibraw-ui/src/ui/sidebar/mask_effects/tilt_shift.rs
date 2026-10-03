@@ -1,4 +1,6 @@
-use super::{effect_card, effect_details, effect_position, float_param_slider};
+use super::{
+    effect_card, effect_details, effect_position, float_param_slider, EffectFrame, PositionSpace,
+};
 use crate::pipeline::{effect_params::tilt_shift, MaskEffect, TiltShiftEffectSettings};
 use eframe::egui::Ui;
 
@@ -7,6 +9,7 @@ pub(crate) fn show(
     settings: &mut TiltShiftEffectSettings,
     enabled: &mut bool,
     remove: &mut bool,
+    frame: &EffectFrame,
     is_fullscreen_mask: bool,
 ) -> bool {
     effect_card(
@@ -30,6 +33,8 @@ pub(crate) fn show(
                     "Focus position",
                     &mut settings.center,
                     [tilt_shift::CENTER_X, tilt_shift::CENTER_Y],
+                    frame,
+                    PositionSpace::Source,
                 );
                 changed |= float_param_slider(ui, &mut settings.angle, tilt_shift::ANGLE);
                 changed |= float_param_slider(ui, &mut settings.feather, tilt_shift::FEATHER);

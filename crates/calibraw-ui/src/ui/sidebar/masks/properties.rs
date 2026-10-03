@@ -183,6 +183,7 @@ impl Sidebar {
         ui: &mut Ui,
         components: &mut Vec<crate::pipeline::EffectComponent>,
         is_fullscreen_mask: bool,
+        frame: &mask_effects::EffectFrame,
     ) -> bool {
         let mut changed = false;
         let mut remove = None;
@@ -194,6 +195,7 @@ impl Sidebar {
                     component,
                     &mut remove_component,
                     is_fullscreen_mask,
+                    frame,
                 );
                 if remove_component {
                     remove = Some(index);
@@ -220,6 +222,7 @@ impl Sidebar {
         components: &mut Vec<crate::pipeline::EffectComponent>,
         selection: &mut Option<MaskEffect>,
         is_fullscreen_mask: bool,
+        frame: &mask_effects::EffectFrame,
     ) -> bool {
         let Some(effect) = *selection else {
             return false;
@@ -239,6 +242,7 @@ impl Sidebar {
                     &mut components[index],
                     &mut remove,
                     is_fullscreen_mask,
+                    frame,
                 )
             })
             .inner;
@@ -254,6 +258,7 @@ impl Sidebar {
         component: &mut crate::pipeline::EffectComponent,
         remove: &mut bool,
         is_fullscreen_mask: bool,
+        frame: &mask_effects::EffectFrame,
     ) -> bool {
         match component.effect {
             MaskEffect::Blur => mask_effects::blur::show(
@@ -279,12 +284,14 @@ impl Sidebar {
                 &mut component.settings.radial_blur,
                 &mut component.enabled,
                 remove,
+                frame,
             ),
             MaskEffect::TiltShift => mask_effects::tilt_shift::show(
                 ui,
                 &mut component.settings.tilt_shift,
                 &mut component.enabled,
                 remove,
+                frame,
                 is_fullscreen_mask,
             ),
             MaskEffect::EdgeGlow => mask_effects::edge_glow::show(
@@ -304,6 +311,7 @@ impl Sidebar {
                 &mut component.settings.light_rays,
                 &mut component.enabled,
                 remove,
+                frame,
             ),
             MaskEffect::Neon => mask_effects::neon::show(
                 ui,
@@ -346,6 +354,7 @@ impl Sidebar {
                 &mut component.settings.vignette,
                 &mut component.enabled,
                 remove,
+                frame,
             ),
             MaskEffect::Adjustment => false,
         }
