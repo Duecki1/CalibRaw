@@ -49,6 +49,7 @@ calibraw-cli = { version = "1.1.0", path = "crates/calibraw-cli" }
 anyhow = "1.0"
 base64 = "0.22"
 bytemuck = { version = "1.16", features = ["derive"] }
+csv = "1"
 discord-rich-presence = "1.1.0"
 exif = { package = "kamadak-exif", version = "0.6.1" }
 flate2 = "1.1"

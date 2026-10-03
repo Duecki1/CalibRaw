@@ -1,3 +1,5 @@
+mod colorchecker;
+
 use image::{imageops::FilterType, DynamicImage, ImageFormat, RgbaImage};
 use serde_json::Value;
 use std::env;
@@ -34,6 +36,7 @@ fn run() -> Result<()> {
     let rest: Vec<OsString> = args.collect();
 
     match command.to_string_lossy().as_ref() {
+        "colorchecker-wb-validate" => colorchecker::run(rest),
         "icons" => {
             ensure_no_extra_args(&rest, "icons")?;
             command_icons()
@@ -61,9 +64,10 @@ fn run() -> Result<()> {
 
 fn print_help() {
     println!(
-        "CalibRaw project-specific build helpers.\n\n\
+        "CalibRaw project-specific diagnostics and build helpers.\n\n\
          Usage: cargo xtask <command> [options]\n\n\
          Commands:\n\
+           colorchecker-wb-validate CSV [--json PATH]\n\
            icons\n\
            build-android [ABI] [PROFILE]\n\
            build-android-libraw [ABI]\n\
