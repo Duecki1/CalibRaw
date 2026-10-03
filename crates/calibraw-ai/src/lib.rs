@@ -12,7 +12,7 @@ mod model_runtime;
 mod onnx_runtime_artifact;
 pub mod remove;
 pub use model_install::ModelDownloadProgress;
-pub use model_runtime::{set_active_ai_context, AiRuntimeContext};
+pub use model_runtime::{set_warm_ai_features, AiFeature, AiFeatureSet};
 
 #[cfg(not(target_os = "android"))]
 pub use model_artifact::desktop_model_cache_root;

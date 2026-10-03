@@ -72,7 +72,7 @@ impl CalibRawApp {
         }
         self.ai.gpu_acceleration = enabled;
         calibraw_ai::set_ai_acceleration_enabled(enabled);
-        self.sync_ai_model_runtime_context();
+        self.sync_ai_runtime();
         self.persist_performance_settings();
         self.ui.notice = Some(if enabled {
             "AI GPU acceleration enabled. New AI model sessions will use it when available."

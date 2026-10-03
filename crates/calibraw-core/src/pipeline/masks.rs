@@ -7,8 +7,11 @@ use std::sync::Arc;
 use super::LensGeometryMap;
 use crate::color_math::{linear_srgb_to_oklab, srgb_decode_signed};
 
+mod content_dependencies;
 mod effects;
 mod raster_cache;
+
+pub use content_dependencies::ContentDependencies;
 
 pub use effects::{
     params as effect_params, BlurEffectSettings, EdgeGlowEffectSettings, FogEffectSettings,

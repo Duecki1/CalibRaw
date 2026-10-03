@@ -176,7 +176,6 @@ impl CalibRawApp {
                 subject_cache: None,
                 sky_cache: None,
                 depth_cache: None,
-                fog_depth_auto_requested: false,
                 dirty_layers: [false; MAX_LOCAL_MASKS],
                 detail_dirty_layers: [false; MAX_LOCAL_MASKS],
                 navigation_dirty_layers: [false; MAX_LOCAL_MASKS],
@@ -187,11 +186,8 @@ impl CalibRawApp {
                 subject_crop_refinement: performance.subject_crop_refinement,
                 #[cfg(not(target_os = "android"))]
                 gpu_acceleration: performance.ai_gpu_acceleration,
-                masks_need_update: false,
-                mask_update_active: false,
-                mask_update_subject_pending: false,
-                mask_update_object_queue: VecDeque::new(),
-                mask_update_failed: false,
+                update_needed: false,
+                update: None,
                 #[cfg(not(target_os = "android"))]
                 runtime_mode: performance.onnx_runtime_mode,
                 #[cfg(not(target_os = "android"))]
@@ -199,7 +195,7 @@ impl CalibRawApp {
                 #[cfg(not(target_os = "android"))]
                 runtime_sha256: onnx_runtime_sha256,
                 library_mask_refresh: None,
-                consent: AiConsentState::None,
+                consent: None,
                 object_pending_target: None,
                 object_error_dialog: None,
                 object_cache: None,

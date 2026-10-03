@@ -11,18 +11,7 @@ impl Sidebar {
         layout: ScreenLayout,
         frame: &eframe::Frame,
     ) -> Option<egui::Rect> {
-        if app.ai.masks_need_update && !app.ai_mask_update_busy() {
-            crate::ui::theme::section_card(ui, "Masks need updating", |ui| {
-                ui.label(
-                    "The image used by existing masks changed. Refresh masks to rebuild content-aware masks and mask sources without deleting your edits.",
-                );
-                ui.add_space(crate::ui::theme::SPACE_XS);
-                if crate::ui::theme::secondary_button(ui, "Update masks").clicked() {
-                    app.request_update_all_ai_masks(frame);
-                }
-            });
-            crate::ui::theme::card_gap(ui);
-        }
+        Self::show_ai_update_card(ui, app, frame);
 
         if app.masks.stack.masks.is_empty() {
             crate::ui::theme::section_card(ui, "No masks yet", |_| {});
@@ -55,6 +44,17 @@ impl Sidebar {
     }
 
     fn show_mask_strip(
+        ui: &mut Ui,
+        app: &mut CalibRawApp,
+        frame: &eframe::Frame,
+        orientation: MaskStripOrientation,
+    ) {
+        Self::requesting_new_content(app, frame, |app| {
+            Self::show_mask_strip_contents(ui, app, frame, orientation);
+        });
+    }
+
+    fn show_mask_strip_contents(
         ui: &mut Ui,
         app: &mut CalibRawApp,
         frame: &eframe::Frame,

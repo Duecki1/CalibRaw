@@ -1,13 +1,19 @@
 use super::*;
-use calibraw_ai::ai_denoise::{AiDenoiseEvent, RAWNIND_PACKAGE_BYTES};
-use eframe::egui;
+use calibraw_ai::ai_denoise::AiDenoiseEvent;
+use calibraw_ai::AiFeature;
 use std::{
     path::PathBuf,
     sync::{atomic::AtomicBool, Arc},
 };
 
+const DENOISE_JOB: ForegroundOperationKind = ForegroundOperationKind::Ai(AiFeature::Denoise);
+
 impl CalibRawApp {
-    fn rawnind_model_dir(&self) -> PathBuf {
+    pub(crate) fn ai_denoise_running(&self) -> bool {
+        self.foreground_operation_is(DENOISE_JOB)
+    }
+
+    pub(in crate::app) fn rawnind_model_dir(&self) -> PathBuf {
         #[cfg(target_os = "android")]
         {
             self.android
@@ -68,10 +74,10 @@ impl CalibRawApp {
 
     pub(crate) fn set_ai_denoise_enabled(&mut self, enabled: bool, frame: &eframe::Frame) {
         if !enabled {
-            if matches!(self.ai.consent, AiConsentState::Denoise { .. }) {
-                self.ai.consent = AiConsentState::None;
+            if self.ai_consent_is_for(AiFeature::Denoise) {
+                self.ai.consent = None;
             }
-            self.cancel_foreground_operation_if(ForegroundOperationKind::AiDenoise);
+            self.cancel_foreground_operation_if(DENOISE_JOB);
             let changed = self.develop.exposure.ai_denoise_enabled;
             self.develop.exposure.ai_denoise_enabled = false;
             self.develop.target_exposure.ai_denoise_enabled = false;
@@ -128,32 +134,17 @@ impl CalibRawApp {
         let saved_result_exists = self
             .rawnind_result_cache_path()
             .is_some_and(|path| path.is_file());
-        #[cfg(not(target_os = "android"))]
-        if !saved_result_exists && !self.validate_onnx_runtime_for_ai() {
-            self.develop.exposure.ai_denoise_enabled = false;
-            self.develop.target_exposure.ai_denoise_enabled = false;
-            return;
-        }
-        let model_dir = self.rawnind_model_dir();
-        let runtime_download_needed =
-            !saved_result_exists && self.automatic_onnx_runtime_download_needed();
-        if saved_result_exists
-            || (calibraw_ai::ai_denoise::models_are_verified(&model_dir)
-                && !runtime_download_needed)
-        {
-            if matches!(self.ai.consent, AiConsentState::Denoise { .. }) {
-                self.ai.consent = AiConsentState::None;
-            }
+        // A saved result restores without the runtime or models.
+        if saved_result_exists || self.ai_job_may_start(AiFeature::Denoise) {
             self.start_ai_denoise(frame, false);
-        } else {
-            self.ai.consent = AiConsentState::Denoise {
-                runtime_download_needed,
-            };
-            self.egui_ctx.request_repaint();
         }
     }
 
-    fn start_ai_denoise(&mut self, frame: &eframe::Frame, allow_model_download: bool) {
+    pub(in crate::app) fn start_ai_denoise(
+        &mut self,
+        frame: &eframe::Frame,
+        allow_model_download: bool,
+    ) {
         if self.foreground_operation_active() {
             return;
         }
@@ -234,8 +225,8 @@ impl CalibRawApp {
             allow_model_download,
             Arc::clone(&cancellation),
         );
-        if matches!(self.ai.consent, AiConsentState::Denoise { .. }) {
-            self.ai.consent = AiConsentState::None;
+        if self.ai_consent_is_for(AiFeature::Denoise) {
+            self.ai.consent = None;
         }
         let progress = ForegroundProgress::indeterminate(if saved_result_exists {
             "Restoring saved AI denoise…"
@@ -243,7 +234,7 @@ impl CalibRawApp {
             "Preparing RawNIND models…"
         });
         self.begin_foreground_operation(ForegroundOperation {
-            kind: ForegroundOperationKind::AiDenoise,
+            kind: DENOISE_JOB,
             document_id: self.persistence.sidecar_generation,
             cancellation,
             progress,
@@ -271,7 +262,7 @@ impl CalibRawApp {
     }
 
     pub(crate) fn poll_ai_denoise_worker(&mut self) {
-        if !self.foreground_operation_is(ForegroundOperationKind::AiDenoise) {
+        if !self.ai_denoise_running() {
             return;
         }
         let Some(mut operation) = self.foreground_operation.take() else {
@@ -382,9 +373,9 @@ impl CalibRawApp {
     }
 
     pub(crate) fn abandon_ai_denoise_worker(&mut self) {
-        self.cancel_foreground_operation_if(ForegroundOperationKind::AiDenoise);
-        if matches!(self.ai.consent, AiConsentState::Denoise { .. }) {
-            self.ai.consent = AiConsentState::None;
+        self.cancel_foreground_operation_if(DENOISE_JOB);
+        if self.ai_consent_is_for(AiFeature::Denoise) {
+            self.ai.consent = None;
         }
     }
 
@@ -415,74 +406,6 @@ impl CalibRawApp {
     pub(crate) fn resume_pending_ai_denoise(&mut self, frame: &eframe::Frame) {
         if self.ai.denoise_resume_pending {
             self.resume_persisted_ai_denoise(frame);
-        }
-    }
-
-    pub(crate) fn show_ai_denoise_dialogs(&mut self, ctx: &egui::Context, frame: &eframe::Frame) {
-        if let AiConsentState::Denoise {
-            runtime_download_needed,
-        } = self.ai.consent
-        {
-            let model_download_needed =
-                !calibraw_ai::ai_denoise::models_are_verified(&self.rawnind_model_dir());
-            let title = match (model_download_needed, runtime_download_needed) {
-                (true, true) => "Download AI denoise models and ONNX Runtime?",
-                (true, false) => "Download RawNIND AI denoise models?",
-                (false, true) => "Download ONNX Runtime?",
-                (false, false) => "Prepare AI denoise?",
-            };
-            let mut action = crate::ui::theme::DialogAction::None;
-            crate::ui::theme::dialog_window(title, ctx, crate::ui::theme::DIALOG_WIDTH_LARGE)
-                .movable(false)
-                .show_with_footer(
-                    ctx,
-                    |ui| {
-                        Self::show_ai_download_summary(
-                            ui,
-                            &format!("RawNIND (~{:.1} MB)", RAWNIND_PACKAGE_BYTES as f64 / 1_000_000.0),
-                            "apply AI denoise",
-                            model_download_needed,
-                            runtime_download_needed,
-                        );
-                        self.show_ai_download_details(
-                            ui,
-                            "denoise-download-details",
-                            model_download_needed,
-                            runtime_download_needed,
-                            &[(
-                                "RawNIND model artifact",
-                                "https://huggingface.co/Duecki/CalibRaw-Artifacts/tree/main/models/rawnind",
-                            )],
-                            |ui| {
-                                ui.label("RawNIND handles Bayer denoise/demosaic and X-Trans images. The verified models are cached locally under GPL-3.0.");
-                            },
-                        );
-                        self.show_manual_runtime_warning(ui);
-                    },
-                    |ui| {
-                        // This action starts the runtime download when needed.
-                        action = Self::show_ai_consent_buttons(
-                            ui,
-                            if model_download_needed || runtime_download_needed {
-                                "Accept & download"
-                            } else {
-                                "Apply"
-                            },
-                            true,
-                        );
-                    },
-                );
-            match action {
-                crate::ui::theme::DialogAction::Confirm => {
-                    self.ai.consent = AiConsentState::None;
-                    self.start_ai_denoise(frame, model_download_needed);
-                }
-                crate::ui::theme::DialogAction::Cancel => {
-                    self.ai.consent = AiConsentState::None;
-                    self.develop.exposure.ai_denoise_enabled = false;
-                }
-                crate::ui::theme::DialogAction::None => {}
-            }
         }
     }
 }

@@ -1,5 +1,8 @@
 use super::*;
 
+const OBJECT_JOB: ForegroundOperationKind =
+    ForegroundOperationKind::Ai(calibraw_ai::AiFeature::Object);
+
 impl CalibRawApp {
     /// Start a new submask when drawing after a completed object selection.
     pub(crate) fn prepare_object_mask_for_stroke(
@@ -19,10 +22,6 @@ impl CalibRawApp {
 
     pub(crate) fn request_object_mask(&mut self, mask_index: usize, component_index: usize) {
         self.ai.object_error_dialog = None;
-        #[cfg(not(target_os = "android"))]
-        if !self.validate_onnx_runtime_for_ai() {
-            return;
-        }
         let Some(component) = self
             .masks
             .stack
@@ -50,7 +49,7 @@ impl CalibRawApp {
             return;
         }
         if self.foreground_operation_active() {
-            if self.foreground_operation_is(ForegroundOperationKind::ObjectMask) {
+            if self.foreground_operation_is(OBJECT_JOB) {
                 self.ai.object_pending_target = Some((mask_index, component_index));
                 self.cancel_foreground_operation();
             } else {
@@ -60,21 +59,8 @@ impl CalibRawApp {
             return;
         }
 
-        let (encoder, decoder) = self.sam21_model_paths();
-        let runtime_download_needed = self.automatic_onnx_runtime_download_needed();
-        if calibraw_ai::ai_masks::object_models_are_verified(&encoder, &decoder)
-            && !runtime_download_needed
-        {
-            if matches!(self.ai.consent, AiConsentState::Object { .. }) {
-                self.ai.consent = AiConsentState::None;
-            }
-            self.start_object_worker(mask_index, component_index, encoder, decoder, false);
-        } else {
-            self.ai.object_pending_target = Some((mask_index, component_index));
-            self.ai.consent = AiConsentState::Object {
-                runtime_download_needed,
-            };
-        }
+        self.ai.object_pending_target = Some((mask_index, component_index));
+        self.request_content_job(calibraw_ai::AiFeature::Object);
     }
 
     pub(in crate::app) fn start_object_worker(
@@ -86,7 +72,7 @@ impl CalibRawApp {
         allow_download: bool,
     ) {
         if self.foreground_operation_active() {
-            if self.foreground_operation_is(ForegroundOperationKind::ObjectMask) {
+            if self.foreground_operation_is(OBJECT_JOB) {
                 self.ai.object_pending_target = Some((mask_index, component_index));
                 self.cancel_foreground_operation();
             }
@@ -176,7 +162,7 @@ impl CalibRawApp {
             "Encoding the image and generating the object mask…"
         });
         self.begin_foreground_operation(ForegroundOperation {
-            kind: ForegroundOperationKind::ObjectMask,
+            kind: OBJECT_JOB,
             document_id: self.persistence.sidecar_generation,
             cancellation,
             progress,
@@ -190,7 +176,7 @@ impl CalibRawApp {
     }
 
     pub(in crate::app) fn poll_object_worker(&mut self) {
-        if !self.foreground_operation_is(ForegroundOperationKind::ObjectMask) {
+        if !self.foreground_operation_is(OBJECT_JOB) {
             return;
         }
         let Some(mut operation) = self.foreground_operation.take() else {
@@ -253,7 +239,7 @@ impl CalibRawApp {
             } => (Some(target.clone()), *inference_started),
             _ => (None, false),
         };
-        let updating_all = self.ai.mask_update_active && target.is_some();
+        let updating_all = self.ai.update.is_some() && target.is_some();
         let cancelled = operation.is_cancelled();
         let stale = operation.document_id != self.persistence.sidecar_generation;
 
@@ -319,23 +305,15 @@ impl CalibRawApp {
         }
 
         if updating_all {
-            if cancelled || stale {
-                let pending_target = self.ai.object_pending_target.take();
-                self.cancel_ai_mask_update();
-                if !stale {
-                    if let Some((mask_index, component_index)) = pending_target {
-                        self.request_object_mask(mask_index, component_index);
-                    }
+            let pending_target = self.ai.object_pending_target.take();
+            if !succeeded {
+                self.skip_remaining_object_updates();
+            }
+            self.advance_ai_update(succeeded, cancelled || stale, error_message);
+            if cancelled && !stale {
+                if let Some((mask_index, component_index)) = pending_target {
+                    self.request_object_mask(mask_index, component_index);
                 }
-            } else {
-                self.ai.mask_update_failed |= !succeeded;
-                if !succeeded {
-                    self.ai.mask_update_object_queue.clear();
-                }
-                if let Some(message) = error_message {
-                    self.ui.notice = Some(message);
-                }
-                self.continue_ai_mask_update();
             }
         } else if cancelled || stale {
             if let Some((mask_index, component_index)) = self.ai.object_pending_target.take() {

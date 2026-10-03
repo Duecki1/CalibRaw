@@ -243,6 +243,9 @@ fn copied_fog_uses_only_destination_scene_depth_in_merge_and_replace_modes() {
                 assert_eq!(destination.masks.has_fog_effect(), manual);
                 if manual {
                     assert_eq!(destination.masks.global_effects, vec![fog.clone()]);
+                    // Depth fog without this image's depth must ask for an update
+                    // instead of being regenerated behind the user's back.
+                    assert_eq!(destination.ai_masks_need_update, ai || !cached);
                 }
                 if ai {
                     assert!(destination.ai_masks_need_update);

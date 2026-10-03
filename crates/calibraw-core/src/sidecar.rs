@@ -227,26 +227,6 @@ fn clear_copied_depth_images(masks: &mut MaskStack) {
     }
 }
 
-fn masks_contain_content_aware_components(masks: &MaskStack) -> bool {
-    masks.masks.iter().any(|mask| {
-        mask.components
-            .iter()
-            .any(|component| match (component.kind, &component.geometry) {
-                (
-                    MaskKind::Subject | MaskKind::Background | MaskKind::Sky,
-                    MaskGeometry::Ai { .. },
-                ) => true,
-                (MaskKind::Object, MaskGeometry::Object { strokes, .. }) => strokes
-                    .iter()
-                    .any(|stroke| stroke.positive && !stroke.points.is_empty()),
-                (MaskKind::LuminanceRange, MaskGeometry::LuminanceRange { .. }) => true,
-                (MaskKind::ColorRange, MaskGeometry::ColorRange { sampled: true, .. }) => true,
-                (MaskKind::DepthRange, MaskGeometry::DepthRange { .. }) => true,
-                _ => false,
-            })
-    })
-}
-
 pub fn edit_state_has_adjustments(edits: &EditState) -> bool {
     let default = default_edit_state();
     edits.exposure != default.exposure
@@ -288,7 +268,7 @@ pub fn apply_copied_adjustments_with_mode(
     if settings.camera_profile {
         let camera_profile_changed = destination.camera_profile != source.camera_profile;
         destination.camera_profile = source.camera_profile.clone();
-        if camera_profile_changed && masks_contain_content_aware_components(&destination.masks) {
+        if camera_profile_changed && !destination.masks.content_dependencies().is_empty() {
             destination.ai_masks_need_update = true;
         }
     }
@@ -312,16 +292,17 @@ pub fn apply_copied_adjustments_with_mode(
             previous_subject_refinement
         };
         destination.ai_masks_need_update = if settings.ai_masks {
-            source.ai_masks_need_update
-                || masks_contain_content_aware_components(&destination.masks)
+            source.ai_masks_need_update || !destination.masks.content_dependencies().is_empty()
         } else {
             previous_ai_masks_need_update
         };
+        // Pasted depth fog or depth masks need this image's own scene depth.
+        destination.ai_masks_need_update |= destination.masks.scene_depth_missing();
     }
     if settings.lens_correction {
         let lens_changed = destination.lens != source.lens;
         destination.lens = source.lens.clone();
-        if lens_changed && masks_contain_content_aware_components(&destination.masks) {
+        if lens_changed && !destination.masks.content_dependencies().is_empty() {
             destination.ai_masks_need_update = true;
         }
     }

@@ -60,7 +60,6 @@ impl MaskState {
         self.thumbnail_revision = self.overlay_revision;
         self.source_cache = None;
         self.clear_generated_caches();
-        self.fog_depth_auto_requested = false;
         self.dirty_layers.fill(false);
         self.detail_dirty_layers.fill(false);
         self.navigation_dirty_layers.fill(false);
@@ -176,10 +175,8 @@ impl CalibRawApp {
         self.develop_ui.mask_section = MaskSection::Properties;
 
         self.invalidate_generated_mask_sources();
-        self.ai.masks_need_update = false;
-        if self.ai.consent.is_mask_consent() {
-            self.ai.consent = AiConsentState::None;
-        }
+        self.reset_ai_update_state();
+        self.ai.update_needed = false;
         self.ai.object_error_dialog = None;
 
         if masks_changed {
@@ -335,7 +332,9 @@ impl CalibRawApp {
             false
         };
         self.ai.object_cache = backup.object_cache;
-        self.cancel_foreground_operation_if(ForegroundOperationKind::ObjectMask);
+        self.cancel_foreground_operation_if(ForegroundOperationKind::Ai(
+            calibraw_ai::AiFeature::Object,
+        ));
         self.masks.last_brush_point = None;
         self.masks.drag = None;
         self.masks.interaction_dirty_layer = None;
@@ -399,134 +398,23 @@ impl CalibRawApp {
         self.egui_ctx.request_repaint();
     }
 
-    pub(crate) fn ai_mask_update_busy(&self) -> bool {
-        self.ai.mask_update_active
-            || matches!(
-                self.foreground_operation_kind(),
-                Some(
-                    ForegroundOperationKind::SubjectMask
-                        | ForegroundOperationKind::SkyMask
-                        | ForegroundOperationKind::DepthMask
-                        | ForegroundOperationKind::ObjectMask
-                )
-            )
-            || self.ai.consent.is_mask_consent()
-    }
-
-    pub(crate) fn ai_mask_update_remaining_target_count(&self) -> usize {
-        if !self.ai.mask_update_active {
-            return 0;
-        }
-
-        let subject_targets = self
-            .masks
-            .stack
-            .masks
-            .iter()
-            .flat_map(|mask| &mask.components)
-            .filter(|component| {
-                matches!(
-                    (component.kind, &component.geometry),
-                    (
-                        MaskKind::Subject | MaskKind::Background,
-                        MaskGeometry::Ai { .. },
-                    )
-                )
-            })
-            .count();
-        let current_non_subject = usize::from(
-            matches!(
-                self.foreground_operation_kind(),
-                Some(
-                    ForegroundOperationKind::ObjectMask
-                        | ForegroundOperationKind::SkyMask
-                        | ForegroundOperationKind::DepthMask
-                )
-            ) || self.ai.object_pending_target.is_some()
-                || matches!(
-                    self.ai.consent,
-                    AiConsentState::Sky { .. } | AiConsentState::Depth { .. }
-                ),
-        );
-        let subject_remaining = usize::from(self.ai.mask_update_subject_pending) * subject_targets;
-        subject_remaining + self.ai.mask_update_object_queue.len() + current_non_subject
-    }
-
-    pub(in crate::app) fn generated_ai_mask_targets(&self) -> GeneratedAiMaskTargets {
-        let mut subject = false;
-        let mut sky = false;
-        let mut depth = false;
-        let mut objects = VecDeque::new();
-        for (mask_index, local_mask) in self.masks.stack.masks.iter().enumerate() {
-            for (component_index, component) in local_mask.components.iter().enumerate() {
-                match (component.kind, &component.geometry) {
-                    (MaskKind::Subject | MaskKind::Background, MaskGeometry::Ai { .. }) => {
-                        subject = true
-                    }
-                    (MaskKind::Sky, MaskGeometry::Ai { .. }) if !sky => {
-                        sky = true;
-                        objects.push_back((mask_index, component_index));
-                    }
-                    (MaskKind::DepthRange, MaskGeometry::DepthRange { .. }) if !depth => {
-                        depth = true;
-                        objects.push_back((mask_index, component_index));
-                    }
-                    (MaskKind::Object, MaskGeometry::Object { strokes, .. })
-                        if strokes
-                            .iter()
-                            .any(|stroke| stroke.positive && !stroke.points.is_empty()) =>
-                    {
-                        objects.push_back((mask_index, component_index));
-                    }
-                    _ => {}
-                }
-            }
-        }
-        (subject, objects)
-    }
-
-    pub(in crate::app) fn has_range_mask_targets(&self) -> bool {
-        self.masks.stack.masks.iter().any(|mask| {
-            mask.components.iter().any(|component| {
-                matches!(
-                    &component.geometry,
-                    MaskGeometry::LuminanceRange { .. } | MaskGeometry::ColorRange { .. }
-                )
-            })
-        })
-    }
-
+    /// The image content results were made from changed. Results stay in place
+    /// so edits keep rendering, but they are marked for an update and running
+    /// content jobs stop because their output would already be stale.
     pub(in crate::app) fn invalidate_generated_mask_sources(&mut self) {
         self.masks.source_cache = None;
         self.masks.clear_generated_caches();
-        self.masks.fog_depth_auto_requested = false;
-        if self.masks.stack.scene_depth.take().is_some() {
-            self.mark_mask_adjustments_dirty();
-        }
         self.ai.object_cache = None;
-        if matches!(
-            self.foreground_operation_kind(),
-            Some(
-                ForegroundOperationKind::SubjectMask
-                    | ForegroundOperationKind::SkyMask
-                    | ForegroundOperationKind::DepthMask
-                    | ForegroundOperationKind::ObjectMask
-            )
-        ) {
+        if self.content_job_active() {
             self.cancel_foreground_operation();
         }
         self.ai.object_pending_target = None;
-        self.ai.mask_update_active = false;
-        self.ai.mask_update_subject_pending = false;
-        self.ai.mask_update_object_queue.clear();
-        self.ai.mask_update_failed = false;
+        self.ai.update = None;
     }
 
     pub(crate) fn note_mask_source_changed(&mut self) {
-        let (has_subject, object_targets) = self.generated_ai_mask_targets();
-        let has_ranges = self.has_range_mask_targets();
         self.invalidate_generated_mask_sources();
-        self.ai.masks_need_update = has_subject || !object_targets.is_empty() || has_ranges;
+        self.ai.update_needed = !self.masks.stack.content_dependencies().is_empty();
     }
 
     pub(crate) fn note_lens_correction_changed_for_masks(&mut self) {
@@ -569,184 +457,6 @@ impl CalibRawApp {
             self.validate_onnx_runtime_for_ai()
         }
     }
-
-    pub(crate) fn request_update_all_ai_masks(&mut self, frame: &eframe::Frame) {
-        if self.ai_mask_update_busy() {
-            self.ui.notice = Some("Wait for the current AI mask operation to finish.".to_owned());
-            return;
-        }
-        let (update_subject, object_targets) = self.generated_ai_mask_targets();
-        let update_ranges = self.has_range_mask_targets();
-        if self.masks.stack.masks.is_empty() {
-            self.save_completed_mask_update();
-            return;
-        }
-        #[cfg(not(target_os = "android"))]
-        if (update_subject || !object_targets.is_empty()) && !self.validate_onnx_runtime_for_ai() {
-            return;
-        }
-
-        if update_subject || !object_targets.is_empty() || update_ranges {
-            self.masks.source_cache = None;
-            self.masks.clear_generated_caches();
-            self.ai.object_cache = None;
-            if let Err(error) = self.capture_mask_source(frame) {
-                self.ui.notice = Some(error);
-                return;
-            }
-
-            if update_ranges {
-                let source = self.masks.source_cache.clone();
-                let mut range_layers_changed = Vec::new();
-                for (mask_index, mask) in self.masks.stack.masks.iter_mut().enumerate() {
-                    let mut changed = false;
-                    for component in &mut mask.components {
-                        match &mut component.geometry {
-                            MaskGeometry::LuminanceRange { source: target, .. }
-                            | MaskGeometry::ColorRange { source: target, .. } => {
-                                *target = source.clone();
-                                changed = true;
-                            }
-                            _ => {}
-                        }
-                    }
-                    if changed {
-                        range_layers_changed.push(mask_index);
-                    }
-                }
-                for mask_index in range_layers_changed {
-                    self.mark_mask_geometry_dirty(mask_index);
-                }
-            }
-        }
-
-        if !update_subject && object_targets.is_empty() {
-            self.save_completed_mask_update();
-            self.ui.notice =
-                Some("Masks were refreshed for the current image geometry.".to_owned());
-            self.egui_ctx.request_repaint();
-            return;
-        }
-
-        self.ai.mask_update_active = true;
-        self.ai.mask_update_subject_pending = update_subject;
-        self.ai.mask_update_object_queue = object_targets;
-        self.ai.mask_update_failed = false;
-
-        if update_subject {
-            self.prepare_generated_mask(AiMaskModel::Subject);
-        } else {
-            self.continue_ai_mask_update();
-        }
-    }
-
-    pub(in crate::app) fn continue_ai_mask_update(&mut self) {
-        if !self.ai.mask_update_active
-            || self.ai.mask_update_subject_pending
-            || matches!(
-                self.foreground_operation_kind(),
-                Some(
-                    ForegroundOperationKind::SubjectMask
-                        | ForegroundOperationKind::SkyMask
-                        | ForegroundOperationKind::DepthMask
-                        | ForegroundOperationKind::ObjectMask
-                )
-            )
-            || self.ai.consent.is_mask_consent()
-        {
-            return;
-        }
-
-        while let Some((mask_index, component_index)) = self.ai.mask_update_object_queue.pop_front()
-        {
-            let valid = self
-                .masks
-                .stack
-                .masks
-                .get(mask_index)
-                .and_then(|mask| mask.components.get(component_index))
-                .is_some_and(|component| {
-                    component.kind == MaskKind::Sky
-                        || component.kind == MaskKind::DepthRange
-                        || matches!(
-                            &component.geometry,
-                            MaskGeometry::Object { strokes, .. } if strokes
-                                .iter()
-                                .any(|stroke| stroke.positive && !stroke.points.is_empty())
-                        )
-                });
-            if !valid {
-                continue;
-            }
-
-            if let Some(model) = generated_mask_model(
-                self.masks.stack.masks[mask_index].components[component_index].kind,
-            ) {
-                self.prepare_generated_mask(model);
-                return;
-            }
-
-            let (encoder, decoder) = self.sam21_model_paths();
-            let runtime_download_needed = self.automatic_onnx_runtime_download_needed();
-            if calibraw_ai::ai_masks::object_models_are_verified(&encoder, &decoder)
-                && !runtime_download_needed
-            {
-                if matches!(self.ai.consent, AiConsentState::Object { .. }) {
-                    self.ai.consent = AiConsentState::None;
-                }
-                self.start_object_worker(mask_index, component_index, encoder, decoder, false);
-            } else {
-                self.ai.object_pending_target = Some((mask_index, component_index));
-                self.ai.consent = AiConsentState::Object {
-                    runtime_download_needed,
-                };
-                self.egui_ctx.request_repaint();
-            }
-            return;
-        }
-
-        self.finish_ai_mask_update();
-    }
-
-    pub(in crate::app) fn finish_ai_mask_update(&mut self) {
-        if !self.ai.mask_update_active {
-            return;
-        }
-        self.ai.mask_update_active = false;
-        self.ai.mask_update_subject_pending = false;
-        self.ai.mask_update_object_queue.clear();
-        if self.ai.mask_update_failed {
-            self.ai.masks_need_update = true;
-            self.ui.notice = Some(
-                "Some AI masks could not be updated. The update button will remain available."
-                    .to_owned(),
-            );
-        } else {
-            self.save_completed_mask_update();
-            self.ui.notice =
-                Some("Masks were refreshed for the current image geometry.".to_owned());
-        }
-        self.egui_ctx.request_repaint();
-    }
-
-    fn save_completed_mask_update(&mut self) {
-        self.ai.masks_need_update = false;
-        // Refreshing may reproduce identical pixels, leaving the edit revision
-        // unchanged. Still persist the cleared flag, including after a pending
-        // save that captured the old flag.
-        self.queue_explicit_sidecar_save();
-    }
-
-    pub(in crate::app) fn cancel_ai_mask_update(&mut self) {
-        self.ai.mask_update_active = false;
-        self.ai.mask_update_subject_pending = false;
-        self.ai.mask_update_object_queue.clear();
-        self.ai.mask_update_failed = false;
-        self.ai.object_pending_target = None;
-        self.ai.masks_need_update = true;
-        self.ui.notice = Some("AI-mask update canceled.".to_owned());
-        self.egui_ctx.request_repaint();
-    }
 }
 
 #[cfg(test)]
@@ -777,7 +487,6 @@ mod tests {
             subject_cache: None,
             sky_cache: None,
             depth_cache: None,
-            fog_depth_auto_requested: false,
             dirty_layers: [false; MAX_LOCAL_MASKS],
             detail_dirty_layers: [false; MAX_LOCAL_MASKS],
             navigation_dirty_layers: [false; MAX_LOCAL_MASKS],
@@ -833,7 +542,7 @@ mod tests {
             .geometry
             .is_initialized());
         assert!(!app.foreground_operation_active());
-        assert!(!app.ai.consent.is_open());
+        assert!(app.ai.consent.is_none());
         assert!(app.masks.source_cache.is_none());
     }
 
@@ -946,12 +655,12 @@ mod tests {
                 .geometry
                 .is_initialized());
             assert!(!app.foreground_operation_active());
-            assert!(!app.ai.consent.is_open());
+            assert!(app.ai.consent.is_none());
             assert!(app.masks.source_cache.is_none());
         }
 
         app.note_mask_source_changed();
-        assert!(app.ai.masks_need_update);
+        assert!(app.ai.update_needed);
         assert!(app.masks.subject_cache.is_none());
         assert!(app.masks.sky_cache.is_none());
         assert!(app.masks.depth_cache.is_none());
@@ -1034,37 +743,5 @@ mod tests {
             .resolve_ai_target(&target)
             .unwrap_err()
             .contains("ambiguous"));
-    }
-
-    #[cfg(not(target_os = "android"))]
-    #[test]
-    fn ai_mask_update_persists_completion_when_pixels_are_unchanged() {
-        let mut app = CalibRawApp::empty(&egui::Context::default());
-        let directory = tempfile::tempdir().unwrap();
-        app.persistence.sidecar_target = Some(crate::sidecar::SidecarTarget::Desktop {
-            raw_path: directory.path().join("copied-masks.ARW"),
-        });
-        app.masks.stack.add_mask(MaskKind::Object);
-        app.reset_edit_history();
-        let revision = app.edit_commit_revision();
-        app.persistence.sidecar_saved_revision = Some(revision);
-        // Keep the new save queued behind a save of the same edit revision.
-        app.persistence.sidecar_in_flight = Some(SidecarSaveJob {
-            generation: app.persistence.sidecar_generation,
-            revision,
-            explicit: false,
-        });
-        app.ai.masks_need_update = true;
-        app.ai.mask_update_active = true;
-
-        app.finish_ai_mask_update();
-
-        assert!(!app.ai.masks_need_update);
-        assert!(!app.ai.mask_update_active);
-        assert_eq!(app.edit_commit_revision(), revision);
-        let save = app.persistence.sidecar_pending.front().unwrap();
-        assert!(!save.edits.ai_masks_need_update);
-        assert_eq!(save.revision, revision);
-        assert_eq!(save.edits.masks.masks, app.masks.stack.masks);
     }
 }

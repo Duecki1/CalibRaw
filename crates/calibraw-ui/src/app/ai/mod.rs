@@ -1,5 +1,6 @@
 use super::*;
 use calibraw_ai::ai_masks::AiMaskModel;
+use tasks::{generated_feature, generated_model};
 
 fn generated_mask_model(kind: MaskKind) -> Option<AiMaskModel> {
     match kind {
@@ -26,12 +27,16 @@ pub(super) fn ai_mask_source_proxy_edge(width: u32, height: u32) -> u32 {
     longest.min(AI_MASK_SOURCE_MAX_EDGE).min(pixel_limited_edge)
 }
 
-mod dialogs;
+mod consent;
+mod generated;
 mod models;
 mod object;
 mod source;
 mod state;
-mod subject;
+mod tasks;
+mod update;
+
+pub(crate) use update::AiUpdate;
 
 #[cfg(test)]
 mod tests;

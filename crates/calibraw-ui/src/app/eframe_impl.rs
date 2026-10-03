@@ -53,8 +53,8 @@ impl CalibRawApp {
 
     fn stop_ai_after_gpu_memory_failure(&mut self) {
         self.cancel_foreground_operation();
-        if self.ai.mask_update_active {
-            self.cancel_ai_mask_update();
+        if self.ai.update.is_some() {
+            self.cancel_ai_update();
         }
         self.masks.source_cache = None;
         self.ai.object_cache = None;
@@ -367,8 +367,7 @@ impl eframe::App for CalibRawApp {
                     .show(ui, |ui| Settings::show(ui, self, layout));
             }
         });
-        self.sync_ai_model_runtime_context();
-        self.ensure_fog_scene_depth(frame);
+        self.sync_ai_runtime();
         #[cfg(not(target_os = "android"))]
         self.sync_discord_presence();
 
@@ -420,9 +419,8 @@ impl eframe::App for CalibRawApp {
         self.show_unsupported_file_dialog(ui.ctx());
         self.show_version_check_consent_dialog(ui.ctx());
         self.show_version_update_dialog(ui.ctx());
-        self.show_subject_dialogs(ui.ctx());
-        self.show_remove_model_dialog(ui.ctx(), frame);
-        self.show_ai_denoise_dialogs(ui.ctx(), frame);
+        self.show_ai_consent_dialog(ui.ctx(), frame);
+        self.show_ai_error_dialog(ui.ctx());
         self.show_sidecar_save_error_dialog(ui.ctx());
         if self.ui.gpu_memory_error_dialog {
             let mut close = false;
@@ -460,7 +458,7 @@ impl eframe::App for CalibRawApp {
     }
 
     fn on_exit(&mut self) {
-        calibraw_ai::set_active_ai_context(None);
+        calibraw_ai::set_warm_ai_features(calibraw_ai::AiFeatureSet::EMPTY);
         #[cfg(not(target_os = "android"))]
         self.discord_presence.shutdown();
         #[cfg(target_os = "android")]

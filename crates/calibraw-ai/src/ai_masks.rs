@@ -2,7 +2,6 @@ use crate::execution_provider::{CpuFallbackProfile, FallbackSession, SessionOpti
 use crate::model_artifact::{DownloadOptions, ModelArtifact};
 use crate::model_install::ModelInstallSpec;
 #[cfg(not(target_os = "android"))]
-use crate::model_runtime::AiRuntimeContext;
 use crate::model_runtime::{with_model_session, AiModel, ModelRetention};
 use crate::pipeline::MaskImage;
 use crate::ModelDownloadProgress;
@@ -196,7 +195,7 @@ fn mask_model_retention(cache_supported: bool) -> ModelRetention {
     #[cfg(not(target_os = "android"))]
     {
         if cache_supported {
-            ModelRetention::Interactive(AiRuntimeContext::Masks)
+            ModelRetention::WhileWarm
         } else {
             ModelRetention::OneShot
         }

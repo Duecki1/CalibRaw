@@ -4,7 +4,7 @@ impl CalibRawApp {
     pub(in crate::app) fn advance_navigation_preview(&mut self, frame: &eframe::Frame) {
         let preview_masks = self.preview_mask_stack();
         let preview_source = self.preview_source_raw();
-        if self.foreground_operation_is(ForegroundOperationKind::AiDenoise) {
+        if self.ai_denoise_running() {
             return;
         }
         if self.defer_background_mask_processing()
