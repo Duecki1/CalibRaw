@@ -86,11 +86,18 @@ cargo-about. It normalizes generated line endings and writes the ignored
 cargo-about to 0.9.2; run `bash scripts/generate_licenses.sh` to generate the
 bundle locally.
 
-`tools/colorchecker_wb_validate.py` compares rendered and reference D50 XYZ
-ColorChecker patches using CIEDE2000. Run `python3 tools/colorchecker_wb_validate.py
---self-check` for the implementation check, or pass a CSV with the required
-`patch`, `reference_x/y/z`, and `rendered_x/y/z` columns. `--json PATH`
-additionally writes machine-readable results.
+`cargo xtask colorchecker-wb-validate patches.csv` compares rendered and reference
+D50 XYZ ColorChecker patches using CIEDE2000. The CSV requires `patch`,
+`reference_x`, `reference_y`, `reference_z`, `rendered_x`, `rendered_y`, and
+`rendered_z` columns; `illuminant`, `stage`, and `neutral` are optional.
+Both sides must use the same D50 reference white and XYZ scale (Y=1 or Y=100).
+Adapt values from other white points to D50 before comparing them.
+`--json PATH` additionally writes machine-readable results, including per-patch
+errors and summaries grouped by illuminant and stage.
+
+Run `cargo test --locked -p xtask colorchecker` for the color-difference reference
+check and CSV/report regression tests. These also run with the workspace test
+suite in CI; Python is not required for this diagnostic.
 
 `calibraw-wb-diagnostics` is an intentionally separate CLI binary for inspecting
 camera white-balance coefficients and the camera-to-working matrix without
