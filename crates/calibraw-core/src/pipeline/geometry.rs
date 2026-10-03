@@ -257,6 +257,20 @@ impl CropAspectRatio {
             Self::NineSixteen => Some(9.0 / 16.0),
         }
     }
+
+    /// The same ratio in the other orientation; `Free`, `Original` and
+    /// `Square` are their own transpose.
+    pub const fn transposed(self) -> Self {
+        match self {
+            Self::FourThree => Self::ThreeFour,
+            Self::ThreeFour => Self::FourThree,
+            Self::ThreeTwo => Self::TwoThree,
+            Self::TwoThree => Self::ThreeTwo,
+            Self::SixteenNine => Self::NineSixteen,
+            Self::NineSixteen => Self::SixteenNine,
+            other => other,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Deserialize, Serialize)]
@@ -344,12 +358,36 @@ impl GeometryTransform {
         }
     }
 
+    /// Rotates the output by 90°. The crop rotates with the image, so a fixed
+    /// aspect ratio swaps orientation to keep describing the same crop.
     pub fn rotate_quarter_turn(&mut self, clockwise: bool) {
         self.quarter_turns = if clockwise {
             (self.quarter_turns + 1) % 4
         } else {
             (self.quarter_turns + 3) % 4
         };
+        self.aspect_ratio = self.aspect_ratio.transposed();
+    }
+
+    /// The crop's width / height in normalized source units for the chosen
+    /// aspect ratio, which applies to the output as displayed (after quarter
+    /// turns). `Original` is the uncropped output's own shape.
+    pub fn normalized_crop_aspect(self, source_width: u32, source_height: u32) -> Option<f32> {
+        let source_aspect = source_width.max(1) as f32 / source_height.max(1) as f32;
+        let swapped = self.quarter_turns % 2 == 1;
+        let (output_width, output_height) = if swapped {
+            (source_height, source_width)
+        } else {
+            (source_width, source_height)
+        };
+        let output_ratio = self.aspect_ratio.value(output_width, output_height)?;
+        let source_ratio = if swapped {
+            1.0 / output_ratio
+        } else {
+            output_ratio
+        };
+        let normalized = source_ratio / source_aspect;
+        (normalized.is_finite() && normalized > f32::EPSILON).then_some(normalized)
     }
 
     pub fn fit_crop_inside_transformed_source(
@@ -455,6 +493,110 @@ impl GeometryTransform {
             }
         }
         sanitized_crop(lerp_crop(start, proposed, low * 0.999_999))
+    }
+
+    /// Like [`Self::constrain_crop_drag_to_transformed_source`], but each edge
+    /// stops independently, so a corner dragged into one source edge keeps
+    /// following the pointer along that edge. Only for unconstrained aspect
+    /// ratios: the edges are not kept in proportion.
+    pub fn constrain_free_crop_resize_to_transformed_source(
+        self,
+        start_crop: [f32; 4],
+        proposed_crop: [f32; 4],
+        source_width: u32,
+        source_height: u32,
+    ) -> [f32; 4] {
+        let geometry = self.sanitized();
+        let proposed = sanitized_crop(proposed_crop);
+        let mut crop = geometry.constrain_crop_drag_to_transformed_source(
+            start_crop,
+            proposed,
+            source_width,
+            source_height,
+        );
+        if !crop_fits_transformed_source(geometry, crop, source_width, source_height) {
+            return crop;
+        }
+        // A second pass lets an edge use room freed by the other one.
+        for _ in 0..2 {
+            for edge in 0..4 {
+                if crop[edge] == proposed[edge] {
+                    continue;
+                }
+                let from = crop[edge];
+                let mut low = 0.0_f32;
+                let mut high = 1.0_f32;
+                for _ in 0..24 {
+                    let mid = (low + high) * 0.5;
+                    let mut candidate = crop;
+                    candidate[edge] = from + (proposed[edge] - from) * mid;
+                    if crop_fits_transformed_source(
+                        geometry,
+                        candidate,
+                        source_width,
+                        source_height,
+                    ) {
+                        low = mid;
+                    } else {
+                        high = mid;
+                    }
+                }
+                crop[edge] = from + (proposed[edge] - from) * low * 0.999_999;
+                crop = sanitized_crop(crop);
+            }
+        }
+        crop
+    }
+
+    /// Translates `start_crop` by `delta` (normalized source units) without
+    /// resizing it. The crop slides along any source edge it reaches instead
+    /// of stopping, because for a fixed size the valid centers form an
+    /// axis-aligned rectangle.
+    pub fn constrain_crop_move_to_transformed_source(
+        self,
+        start_crop: [f32; 4],
+        delta: [f32; 2],
+        source_width: u32,
+        source_height: u32,
+    ) -> [f32; 4] {
+        let geometry = self.sanitized();
+        let start = sanitized_crop(start_crop);
+        let source_width_f = source_width.max(1) as f32;
+        let source_height_f = source_height.max(1) as f32;
+        let width = (start[2] - start[0]) * source_width_f;
+        let height = (start[3] - start[1]) * source_height_f;
+        let Some(([min_cx, max_cx], [min_cy, max_cy])) =
+            feasible_crop_center_bounds(geometry, width, height, source_width_f, source_height_f)
+        else {
+            let mut fitted = geometry;
+            fitted.crop = start;
+            fitted.fit_crop_inside_transformed_source(source_width, source_height);
+            return fitted.crop;
+        };
+        // The stored rectangle must also stay inside [0, 1], or sanitizing
+        // would resize it.
+        let min_cx = min_cx.max(width * 0.5);
+        let max_cx = max_cx.min(source_width_f - width * 0.5);
+        let min_cy = min_cy.max(height * 0.5);
+        let max_cy = max_cy.min(source_height_f - height * 0.5);
+        if min_cx > max_cx || min_cy > max_cy {
+            return start;
+        }
+        let delta = delta.map(|value| if value.is_finite() { value } else { 0.0 });
+        let center_x =
+            (((start[0] + start[2]) * 0.5 + delta[0]) * source_width_f).clamp(min_cx, max_cx);
+        let center_y =
+            (((start[1] + start[3]) * 0.5 + delta[1]) * source_height_f).clamp(min_cy, max_cy);
+        let half_width = (start[2] - start[0]) * 0.5;
+        let half_height = (start[3] - start[1]) * 0.5;
+        let center_u = center_x / source_width_f;
+        let center_v = center_y / source_height_f;
+        [
+            center_u - half_width,
+            center_v - half_height,
+            center_u + half_width,
+            center_v + half_height,
+        ]
     }
 }
 
@@ -946,6 +1088,86 @@ mod tests {
             4000,
             3000
         ));
+    }
+
+    #[test]
+    fn quarter_turn_keeps_the_crop_and_transposes_its_aspect() {
+        let mut geometry = GeometryTransform {
+            aspect_ratio: CropAspectRatio::FourThree,
+            ..Default::default()
+        };
+        let before = geometry.normalized_crop_aspect(4000, 3000).unwrap();
+        geometry.rotate_quarter_turn(true);
+        assert_eq!(geometry.aspect_ratio, CropAspectRatio::ThreeFour);
+        let after = geometry.normalized_crop_aspect(4000, 3000).unwrap();
+        assert!((before - after).abs() < 1e-6);
+        // Original always means the full, uncropped frame.
+        geometry.aspect_ratio = CropAspectRatio::Original;
+        assert!((geometry.normalized_crop_aspect(4000, 3000).unwrap() - 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn crop_move_slides_along_the_edge_it_hits() {
+        let geometry = GeometryTransform {
+            crop: [0.0, 0.2, 0.5, 0.6],
+            ..Default::default()
+        };
+        // Pushing left into the edge while moving down still moves down.
+        let moved = geometry.constrain_crop_move_to_transformed_source(
+            geometry.crop,
+            [-0.2, 0.1],
+            4000,
+            3000,
+        );
+        assert!((moved[0] - 0.0).abs() < 1e-6);
+        assert!((moved[1] - 0.3).abs() < 1e-6);
+        assert!((moved[2] - moved[0] - 0.5).abs() < 1e-6);
+        assert!((moved[3] - moved[1] - 0.4).abs() < 1e-6);
+    }
+
+    #[test]
+    fn rotated_crop_move_slides_and_keeps_its_size() {
+        let mut geometry = GeometryTransform {
+            crop: [0.3, 0.3, 0.6, 0.6],
+            rotation_degrees: 12.0,
+            ..Default::default()
+        };
+        geometry.fit_crop_inside_transformed_source(4000, 3000);
+        let start = geometry.crop;
+        let mut crop = start;
+        // Walk the crop into the left edge, then along it.
+        for delta in [[-0.5, 0.0], [-0.5, 0.05], [-0.5, 0.1]] {
+            crop = geometry.constrain_crop_move_to_transformed_source(start, delta, 4000, 3000);
+            assert!(crop_fits_transformed_source(geometry, crop, 4000, 3000));
+            assert!((crop[2] - crop[0] - (start[2] - start[0])).abs() < 1e-5);
+            assert!((crop[3] - crop[1] - (start[3] - start[1])).abs() < 1e-5);
+        }
+        assert!(crop[0] < start[0]);
+        assert!((crop[1] - (start[1] + 0.1)).abs() < 1e-5);
+    }
+
+    #[test]
+    fn free_corner_resize_slides_along_the_edge_it_hits() {
+        let geometry = GeometryTransform {
+            crop: [0.2, 0.2, 0.8, 0.8],
+            rotation_degrees: 10.0,
+            ..Default::default()
+        };
+        let mut fitted = geometry;
+        fitted.fit_crop_inside_transformed_source(4000, 3000);
+        let start = fitted.crop;
+        // The bottom-right corner moves far right (into the edge) and a
+        // little down; the downward part should still apply.
+        let proposed = [start[0], start[1], 1.5, start[3] + 0.02];
+        let proportional =
+            fitted.constrain_crop_drag_to_transformed_source(start, proposed, 4000, 3000);
+        let free =
+            fitted.constrain_free_crop_resize_to_transformed_source(start, proposed, 4000, 3000);
+        assert!(crop_fits_transformed_source(fitted, free, 4000, 3000));
+        assert!(free[2] >= proportional[2] - 1e-6);
+        assert!(free[3] > proportional[3]);
+        assert!((free[0] - start[0]).abs() < 1e-6);
+        assert!((free[1] - start[1]).abs() < 1e-6);
     }
 
     #[test]

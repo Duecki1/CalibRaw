@@ -170,25 +170,22 @@ impl Sidebar {
     }
 
     fn apply_crop_aspect(app: &mut CalibRawApp, source_width: u32, source_height: u32) {
-        let Some(ratio) = app
+        let Some(target_normalized_ratio) = app
             .develop
             .geometry
-            .aspect_ratio
-            .value(source_width, source_height)
+            .normalized_crop_aspect(source_width, source_height)
         else {
             return;
         };
         let crop = app.develop.geometry.crop;
         let center_x = (crop[0] + crop[2]) * 0.5;
         let center_y = (crop[1] + crop[3]) * 0.5;
-        let source_aspect = source_width.max(1) as f32 / source_height.max(1) as f32;
-        let target_normalized_ratio = ratio / source_aspect;
         let mut width = crop[2] - crop[0];
         let mut height = crop[3] - crop[1];
         if width / height.max(f32::EPSILON) > target_normalized_ratio {
             width = height * target_normalized_ratio;
         } else {
-            height = width / target_normalized_ratio.max(f32::EPSILON);
+            height = width / target_normalized_ratio;
         }
         width = width.clamp(GeometryTransform::MIN_CROP_EXTENT, 1.0);
         height = height.clamp(GeometryTransform::MIN_CROP_EXTENT, 1.0);

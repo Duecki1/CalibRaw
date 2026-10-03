@@ -84,6 +84,8 @@ mod overlays;
 mod tools;
 mod transform;
 
+pub(crate) use transform::SourceProjection;
+
 use canvas::*;
 use interaction::*;
 use overlays::*;
