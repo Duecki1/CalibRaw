@@ -241,9 +241,9 @@ final class StorageManager {
     }
 
     private StoredRaw importDocumentIntoLibrary(Uri uri, String displayName) throws Exception {
-        if (!AndroidStorageContract.isRawName(displayName)) {
+        if (!AndroidStorageContract.isSupportedImageName(displayName)) {
             throw new IllegalArgumentException(
-                    "Choose a supported RAW file (for example DNG, CR3, NEF, ARW, RAF, or RW2)");
+                    "Choose a supported photo (for example DNG, CR3, NEF, ARW, JPEG, PNG, or HEIC)");
         }
         Long declaredSize = queryDocumentSize(uri);
         if (declaredSize != null && declaredSize > MAX_RAW_IMPORT_BYTES) {
@@ -415,8 +415,8 @@ final class StorageManager {
 
     String importLocalRawLibraryDocument(String rawPath, String displayName) throws Exception {
         File sourceRaw = new File(rawPath);
-        if (!sourceRaw.isFile() || !AndroidStorageContract.isRawName(displayName)) {
-            throw new IllegalArgumentException("The local RAW is missing or unsupported");
+        if (!sourceRaw.isFile() || !AndroidStorageContract.isSupportedImageName(displayName)) {
+            throw new IllegalArgumentException("The local photo is missing or unsupported");
         }
         StoredRaw imported = null;
         try {
@@ -451,8 +451,8 @@ final class StorageManager {
         Uri rawUri = Uri.parse(rawUriText);
         verifyFileRawLibraryIdentity(rawUri, displayName);
         String safeName = AndroidStorageContract.safeRawName(requestedName);
-        if (!safeName.equals(requestedName) || !AndroidStorageContract.isRawName(requestedName)) {
-            throw new IllegalArgumentException("Enter a safe supported RAW filename");
+        if (!safeName.equals(requestedName) || !AndroidStorageContract.isSupportedImageName(requestedName)) {
+            throw new IllegalArgumentException("Enter a safe supported photo filename");
         }
         File sourceRaw = new File(rawUri.getPath());
         if (displayName.equals(requestedName)) {
@@ -717,7 +717,7 @@ final class StorageManager {
         for (int index = 0; index < files.length; index++) {
             File file = files[index];
             long modifiedMillis = file.lastModified();
-            if (!file.isFile() || !AndroidStorageContract.isRawName(file.getName())) {
+            if (!file.isFile() || !AndroidStorageContract.isSupportedImageName(file.getName())) {
                 continue;
             }
             retainRawLibraryCandidate(

@@ -40,11 +40,18 @@ public final class AndroidStorageContractTest {
         assertEquals(".nomedia", AndroidStorageContract.noMediaMarker(library).getName());
 
         assertEquals("a_b_c.dng", AndroidStorageContract.safeRawName("a/b\\c.dng"));
-        assertTrue(AndroidStorageContract.isRawName("capture.DNG"));
-        assertTrue(AndroidStorageContract.isRawName("capture.raf"));
-        assertTrue(AndroidStorageContract.isRawName("rendered.TIF"));
-        assertTrue(AndroidStorageContract.isRawName("rendered.tiff"));
-        assertFalse(AndroidStorageContract.isRawName("capture.jpg"));
+        assertTrue(AndroidStorageContract.isSupportedImageName("capture.DNG"));
+        assertTrue(AndroidStorageContract.isSupportedImageName("capture.raf"));
+        assertTrue(AndroidStorageContract.isSupportedImageName("rendered.TIF"));
+        assertTrue(AndroidStorageContract.isSupportedImageName("rendered.tiff"));
+        assertTrue(AndroidStorageContract.isSupportedImageName("capture.jpg"));
+        assertTrue(AndroidStorageContract.isSupportedImageName("capture.JPEG"));
+        assertTrue(AndroidStorageContract.isSupportedImageName("screenshot.png"));
+        assertTrue(AndroidStorageContract.isSupportedImageName("phone.HEIC"));
+        assertTrue(AndroidStorageContract.isSupportedImageName("camera.hif"));
+        assertFalse(AndroidStorageContract.isSupportedImageName("clip.mp4"));
+        assertFalse(AndroidStorageContract.isSupportedImageName("capture.dng.calibraw"));
+        assertFalse(AndroidStorageContract.isSupportedImageName("noextension"));
         assertEquals("capture.dng.calibraw", AndroidStorageContract.sidecarDisplayName("capture.dng"));
         assertEquals("rendered.tif.calibraw", AndroidStorageContract.sidecarDisplayName("rendered.tif"));
         assertEquals(

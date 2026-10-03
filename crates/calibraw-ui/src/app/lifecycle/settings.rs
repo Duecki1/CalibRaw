@@ -235,6 +235,13 @@ impl CalibRawApp {
         }
     }
 
+    pub(crate) fn set_library_stack_raw_companions(&mut self, stack: bool) {
+        if self.library.set_stack_raw_companions(stack) {
+            self.persist_performance_settings();
+            self.egui_ctx.request_repaint();
+        }
+    }
+
     pub(crate) fn set_library_folder_sidebar_open(&mut self, open: bool) {
         if self.library.set_folder_sidebar_open(open) {
             #[cfg(not(target_os = "android"))]
@@ -285,6 +292,7 @@ impl CalibRawApp {
                 .renders_edited_thumbnails_during_indexing(),
             library_thumbnail_size: self.library.thumbnail_size(),
             library_sort_order: self.library.sort_order(),
+            library_stack_raw_companions: self.library.stacks_raw_companions(),
             preview_quality: self.preview.quality,
             image_relative_brush_size: self.preferences.image_relative_brush_size,
             show_develop_navigation_labels: self.preferences.show_develop_navigation_labels,

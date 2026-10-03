@@ -13,7 +13,7 @@ pub(super) fn image_paste_summary(
     } else {
         "Moved"
     };
-    let noun = if total == 1 { "RAW" } else { "RAWs" };
+    let noun = if total == 1 { "photo" } else { "photos" };
     if errors.is_empty() {
         Ok(format!("{verb} {completed} {noun} to {destination}."))
     } else {

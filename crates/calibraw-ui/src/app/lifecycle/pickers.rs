@@ -6,8 +6,7 @@ impl CalibRawApp {
         if self.ui.desktop_picker_receiver.is_some() {
             return;
         }
-        let extensions = crate::pipeline::SUPPORTED_RAW_EXTENSIONS
-            .iter()
+        let extensions = crate::pipeline::supported_image_extensions()
             .flat_map(|extension| [extension.to_string(), extension.to_ascii_uppercase()])
             .collect::<Vec<_>>();
         let initial_directory = self
@@ -16,7 +15,8 @@ impl CalibRawApp {
             .as_deref()
             .and_then(selected_picker_directory)
             .or_else(|| self.library.folder().map(std::path::Path::to_path_buf));
-        let mut dialog = rfd::AsyncFileDialog::new().add_filter("RAW and TIFF images", &extensions);
+        let mut dialog = rfd::AsyncFileDialog::new()
+            .add_filter("RAW, TIFF, JPEG, PNG and HEIC images", &extensions);
         if let Some(directory) = initial_directory {
             dialog = dialog.set_directory(directory);
         }
@@ -47,7 +47,7 @@ impl CalibRawApp {
     pub fn open_file_dialog(&mut self, _frame: &eframe::Frame) {
         if self.android_foreground_task_active() {
             self.ui.notice = Some(
-                "Wait for the current foreground operation to finish before opening another RAW."
+                "Wait for the current foreground operation to finish before opening another photo."
                     .to_owned(),
             );
             self.egui_ctx.request_repaint();
@@ -61,7 +61,7 @@ impl CalibRawApp {
             Ok(()) => {
                 self.android.picker_pending = true;
                 self.ui.notice = None;
-                self.ui.status = "Choose one or more RAW or TIFF files…".to_owned();
+                self.ui.status = "Choose one or more photos…".to_owned();
             }
             Err(error) => self.ui.notice = Some(error),
         }
@@ -204,7 +204,7 @@ impl CalibRawApp {
 
                     if self.develop.load_receiver.is_none() {
                         let error = self.ui.notice.clone().unwrap_or_else(|| {
-                            "The RAW decode worker could not be started.".to_owned()
+                            "The photo decode worker could not be started.".to_owned()
                         });
                         if batch_owned_open {
                             self.export.android_batch_load_pending = false;
@@ -226,21 +226,21 @@ impl CalibRawApp {
                     self.ui.active_tab = AppTab::Library;
                     self.library.refresh(&self.egui_ctx);
                     self.ui.status = match (imported, failed) {
-                        (0, 0) => "No RAW files were imported.".to_owned(),
+                        (0, 0) => "No photos were imported.".to_owned(),
                         (_, 0) => format!(
-                            "Imported {imported} RAW {}.",
-                            if imported == 1 { "file" } else { "files" }
+                            "Imported {imported} {}.",
+                            if imported == 1 { "photo" } else { "photos" }
                         ),
                         _ => format!(
-                            "Imported {imported} RAW {}; {failed} failed.",
-                            if imported == 1 { "file" } else { "files" }
+                            "Imported {imported} {}; {failed} failed.",
+                            if imported == 1 { "photo" } else { "photos" }
                         ),
                     };
                     self.ui.notice = if failed > 0 {
                         Some(if errors.is_empty() {
-                            format!("{failed} selected RAW imports failed.")
+                            format!("{failed} selected photo imports failed.")
                         } else {
-                            format!("Some RAW files could not be imported:\n{errors}")
+                            format!("Some photos could not be imported:\n{errors}")
                         })
                     } else {
                         None
@@ -263,11 +263,11 @@ impl CalibRawApp {
                         );
                     } else if was_reset_reload {
                         self.ui.notice = Some(
-                            "The RAW could not be reloaded after resetting adjustments. Reopen it from the Library before continuing in Develop."
+                            "The photo could not be reloaded after resetting adjustments. Reopen it from the Library before continuing in Develop."
                                 .to_owned(),
                         );
                     } else {
-                        self.ui.notice = Some("No RAW files selected.".to_owned());
+                        self.ui.notice = Some("No photos selected.".to_owned());
                     }
                 }
                 calibraw_ffi::PickerResult::Failed(error) => {
@@ -291,7 +291,9 @@ impl CalibRawApp {
                         self.ui.notice = Some(if was_profile_reload {
                             format!("Could not reload RAW for camera profile: {error}")
                         } else if was_reset_reload {
-                            format!("Could not reload RAW after resetting adjustments: {error}")
+                            format!(
+                                "Could not reload the photo after resetting adjustments: {error}"
+                            )
                         } else {
                             format!("Could not import the selected file: {error}")
                         });

@@ -548,7 +548,7 @@ impl CalibRawApp {
 
             if let Some(state) = self.ai.library_mask_refresh.as_mut() {
                 state.failures.push(format!(
-                    "{}: could not start RAW load",
+                    "{}: could not start photo load",
                     job.source.display()
                 ));
                 complete_library_ai_mask_refresh_item(state);
@@ -640,7 +640,7 @@ impl CalibRawApp {
             #[cfg(target_os = "android")]
             let label = current.display_name.clone();
             if let Some(state) = self.ai.library_mask_refresh.as_mut() {
-                state.failures.push(format!("{label}: RAW load failed"));
+                state.failures.push(format!("{label}: photo load failed"));
                 complete_library_ai_mask_refresh_item(state);
             }
             self.start_next_library_ai_mask_refresh(frame);

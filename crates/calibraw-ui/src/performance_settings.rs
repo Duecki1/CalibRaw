@@ -17,6 +17,8 @@ pub(crate) struct PerformanceSettings {
     pub render_edited_thumbnails_during_indexing: bool,
     pub library_thumbnail_size: crate::ui::library::LibraryThumbnailSize,
     pub library_sort_order: crate::ui::library::LibrarySortOrder,
+    /// Show RAW+JPEG (or RAW+HEIC) pairs once, as the RAW.
+    pub library_stack_raw_companions: bool,
     pub preview_quality: crate::app::PreviewQuality,
     pub image_relative_brush_size: bool,
     pub show_develop_navigation_labels: bool,
@@ -132,6 +134,7 @@ impl Default for PerformanceSettings {
             render_edited_thumbnails_during_indexing: false,
             library_thumbnail_size: crate::ui::library::LibraryThumbnailSize::default(),
             library_sort_order: crate::ui::library::LibrarySortOrder::default(),
+            library_stack_raw_companions: true,
             preview_quality: crate::app::PreviewQuality::default(),
             image_relative_brush_size: false,
             show_develop_navigation_labels: false,
@@ -449,6 +452,7 @@ mod tests {
             settings.library_sort_order,
             crate::ui::library::LibrarySortOrder::NewestFirst
         );
+        assert!(settings.library_stack_raw_companions);
         #[cfg(not(target_os = "android"))]
         {
             assert!(settings.subject_crop_refinement);
@@ -474,6 +478,7 @@ mod tests {
             develop_histogram_open: true,
             library_thumbnail_size: crate::ui::library::LibraryThumbnailSize::Enormous,
             library_sort_order: crate::ui::library::LibrarySortOrder::SmallestFirst,
+            library_stack_raw_companions: false,
             birefnet_quality: calibraw_ai::ai_masks::BiRefNetQuality::High,
             image_relative_brush_size: true,
             show_develop_navigation_labels: true,
@@ -507,6 +512,7 @@ mod tests {
             restored.library_sort_order,
             crate::ui::library::LibrarySortOrder::SmallestFirst
         );
+        assert!(!restored.library_stack_raw_companions);
         assert_eq!(
             restored.birefnet_quality,
             calibraw_ai::ai_masks::BiRefNetQuality::High

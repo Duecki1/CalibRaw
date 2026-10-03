@@ -21,12 +21,16 @@ final class AndroidStorageContract {
     static final int MAX_RAW_NAME_BYTES = 220;
     static final int MAX_EXPORT_NAME_BYTES = 240;
 
+    // Keep in sync with SUPPORTED_RAW_EXTENSIONS and SUPPORTED_RENDERED_EXTENSIONS
+    // in calibraw-core.
     private static final Set<String> RAW_SUFFIXES = new HashSet<>(Arrays.asList(
             "3fr", "ari", "arw", "bay", "bmq", "cap", "cine", "cr2", "cr3", "crw",
             "cs1", "dc2", "dcr", "dcs", "dng", "drf", "eip", "erf", "fff", "gpr",
             "iiq", "k25", "kc2", "kdc", "mdc", "mef", "mos", "mrw", "nef", "nrw",
             "obm", "orf", "pef", "ptx", "pxn", "qtk", "r3d", "raf", "raw", "rdc",
             "rw2", "rwl", "rwz", "sr2", "srf", "srw", "sti", "tif", "tiff", "x3f"));
+    private static final Set<String> RENDERED_IMAGE_SUFFIXES = new HashSet<>(Arrays.asList(
+            "jpg", "jpeg", "jpe", "png", "heic", "heif", "hif"));
 
     private AndroidStorageContract() {}
 
@@ -108,13 +112,17 @@ final class AndroidStorageContract {
         return name.isEmpty() ? "imported.raw" : name;
     }
 
-    static boolean isRawName(String displayName) {
+    /** Whether the library can hold and edit this file: a RAW, TIFF, JPEG, PNG or HEIC photo. */
+    static boolean isSupportedImageName(String displayName) {
         if (displayName == null) {
             return false;
         }
         int dot = displayName.lastIndexOf('.');
-        return dot >= 0 && dot < displayName.length() - 1
-                && RAW_SUFFIXES.contains(displayName.substring(dot + 1).toLowerCase(Locale.ROOT));
+        if (dot < 0 || dot >= displayName.length() - 1) {
+            return false;
+        }
+        String suffix = displayName.substring(dot + 1).toLowerCase(Locale.ROOT);
+        return RAW_SUFFIXES.contains(suffix) || RENDERED_IMAGE_SUFFIXES.contains(suffix);
     }
 
     static String sidecarDisplayName(String rawDisplayName) {

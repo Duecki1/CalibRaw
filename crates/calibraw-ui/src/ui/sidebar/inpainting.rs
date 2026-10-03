@@ -281,7 +281,7 @@ impl Sidebar {
                 ui.add_space(crate::ui::theme::SPACE_SM);
                 ui.colored_label(
                     ui.visuals().warn_fg_color,
-                    "Open a RAW image to use inpainting tools.",
+                    "Open a photo to use inpainting tools.",
                 );
             }
         });

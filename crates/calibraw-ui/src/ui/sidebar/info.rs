@@ -10,7 +10,7 @@ impl Sidebar {
             .or(app.develop.loaded_raw.as_deref())
         else {
             crate::ui::theme::content_card(ui, |ui| {
-                ui.label("Open a RAW image to view its metadata.");
+                ui.label("Open a photo to view its metadata.");
             });
             return;
         };
@@ -22,6 +22,11 @@ impl Sidebar {
 
         crate::ui::theme::section_card(ui, "File", |ui| {
             metadata_row(ui, "Name", &file_name);
+            metadata_row(
+                ui,
+                "Format",
+                &source_format_description(&file_name, app.current_rendered_format(), raw),
+            );
             metadata_row(
                 ui,
                 "Editing time",
@@ -77,14 +82,16 @@ impl Sidebar {
             );
             let megapixels = f64::from(raw.width) * f64::from(raw.height) / 1_000_000.0;
             metadata_row(ui, "Resolution", &format!("{megapixels:.1} MP"));
-            metadata_row(
-                ui,
-                "Sensor pattern",
-                match raw.cfa_kind {
-                    CfaKind::Bayer => "Bayer",
-                    CfaKind::XTrans => "X-Trans",
-                },
-            );
+            if !raw.is_display_referred_raster() {
+                metadata_row(
+                    ui,
+                    "Sensor pattern",
+                    match raw.cfa_kind {
+                        CfaKind::Bayer => "Bayer",
+                        CfaKind::XTrans => "X-Trans",
+                    },
+                );
+            }
 
             let cropped = app
                 .develop
@@ -139,6 +146,27 @@ fn optional_metadata_row(ui: &mut Ui, label: &str, value: Option<String>) {
 
 fn finite_positive(value: f32) -> Option<f32> {
     (value.is_finite() && value > 0.0).then_some(value)
+}
+
+/// "JPEG · rendered photo", "TIFF · rendered image" or "NEF · camera RAW".
+fn source_format_description(
+    file_name: &str,
+    rendered: Option<crate::pipeline::RenderedImageFormat>,
+    raw: &crate::pipeline::LoadedRaw,
+) -> String {
+    if let Some(format) = rendered {
+        return format!("{} · rendered photo", format.label());
+    }
+    let extension = std::path::Path::new(file_name)
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .map(str::to_uppercase)
+        .unwrap_or_else(|| "RAW".to_owned());
+    if raw.is_display_referred_raster() {
+        format!("{extension} · rendered image")
+    } else {
+        format!("{extension} · camera RAW")
+    }
 }
 
 fn display_file_name(label: Option<&str>, path: Option<&std::path::Path>) -> String {
