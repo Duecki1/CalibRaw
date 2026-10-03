@@ -8,6 +8,7 @@ impl LibraryState {
             LibraryThumbnailSize::default(),
             LibrarySortOrder::default(),
             true,
+            true,
             false,
         )
     }
@@ -17,6 +18,7 @@ impl LibraryState {
         workers: usize,
         thumbnail_size: LibraryThumbnailSize,
         sort_order: LibrarySortOrder,
+        stack_raw_companions: bool,
         folder_sidebar_open: bool,
         render_edited_thumbnails_during_indexing: bool,
     ) -> Self {
@@ -39,7 +41,7 @@ impl LibraryState {
             thumbnail_progress: ThumbnailBackgroundProgress::default(),
             scanning: false,
             catalog_ready: false,
-            status: "Open a folder to build your RAW library.".to_owned(),
+            status: "Open a folder to build your photo library.".to_owned(),
             usage_clock: 0,
             thumbnail_workers,
             render_edited_thumbnails_during_indexing,
@@ -47,6 +49,8 @@ impl LibraryState {
             thumbnail_size,
             search_query: String::new(),
             review_filter: LibraryReviewFilter::default(),
+            stack_raw_companions,
+            raw_companions: RawCompanions::default(),
             selected_assets: HashSet::new(),
             selection_mode: false,
             selection_anchor: None,
@@ -75,6 +79,7 @@ impl LibraryState {
         workers: usize,
         thumbnail_size: LibraryThumbnailSize,
         sort_order: LibrarySortOrder,
+        stack_raw_companions: bool,
         selected_folder: String,
         render_edited_thumbnails_during_indexing: bool,
     ) -> Self {
@@ -125,6 +130,8 @@ impl LibraryState {
             thumbnail_size,
             search_query: String::new(),
             review_filter: LibraryReviewFilter::default(),
+            stack_raw_companions,
+            raw_companions: RawCompanions::default(),
             selected_assets: HashSet::new(),
             selection_mode: false,
             selection_anchor: None,
@@ -235,10 +242,56 @@ impl LibraryState {
             .enumerate()
             .filter_map(|(index, entry)| {
                 (library_filename_matches(&entry.asset.display_name, &terms)
-                    && self.review_filter.matches(entry.review))
+                    && self.review_filter.matches(entry.review)
+                    && !self.hides_raw_companion(&entry.asset.id))
                 .then_some(index)
             })
             .collect()
+    }
+
+    /// Entry indices the grid shows, or `None` when it shows every entry.
+    pub(super) fn visible_entry_indices(&self) -> Option<Vec<usize>> {
+        let hides_entries = self.search_active()
+            || self.review_filter.active()
+            || (self.stack_raw_companions && !self.raw_companions.is_empty());
+        hides_entries.then(|| self.filtered_entry_indices())
+    }
+
+    /// Photos in the folder, counting each stacked RAW+JPEG pair once.
+    pub(super) fn photo_count(&self) -> usize {
+        self.entries
+            .iter()
+            .filter(|entry| !self.hides_raw_companion(&entry.asset.id))
+            .count()
+    }
+
+    pub(crate) fn stacks_raw_companions(&self) -> bool {
+        self.stack_raw_companions
+    }
+
+    pub(crate) fn set_stack_raw_companions(&mut self, stack: bool) -> bool {
+        if self.stack_raw_companions == stack {
+            return false;
+        }
+        self.stack_raw_companions = stack;
+        self.retain_visible_selection();
+        true
+    }
+
+    pub(super) fn hides_raw_companion(&self, asset: &LibraryAssetId) -> bool {
+        self.stack_raw_companions && self.raw_companions.is_companion(asset)
+    }
+
+    /// Rendered formats stacked under the RAW `asset`, for its hover details.
+    pub(super) fn stacked_formats(
+        &self,
+        asset: &LibraryAssetId,
+    ) -> &[crate::pipeline::RenderedImageFormat] {
+        if self.stack_raw_companions {
+            self.raw_companions.paired_formats(asset)
+        } else {
+            &[]
+        }
     }
 
     pub(super) fn retain_visible_selection(&mut self) {
@@ -409,6 +462,7 @@ impl LibraryState {
             .enumerate()
             .map(|(index, entry)| (entry.asset.id.clone(), index))
             .collect();
+        self.raw_companions = RawCompanions::index(self.entries.iter().map(|entry| &entry.asset));
     }
 
     pub(crate) fn set_thumbnail_worker_count(&mut self, workers: usize, context: &egui::Context) {
@@ -493,14 +547,14 @@ impl LibraryState {
                 self.event_receiver = None;
                 self.request_sender = None;
                 self.scanning = false;
-                self.status = "Open a folder to build your RAW library.".to_owned();
+                self.status = "Open a folder to build your photo library.".to_owned();
                 return;
             };
             let Some(root_folder) = self.root_folder.clone() else {
                 self.event_receiver = None;
                 self.request_sender = None;
                 self.scanning = false;
-                self.status = "Open a top-level folder to build your RAW library.".to_owned();
+                self.status = "Open a top-level folder to build your photo library.".to_owned();
                 return;
             };
             self.status = format!("Scanning {}…", folder.display());

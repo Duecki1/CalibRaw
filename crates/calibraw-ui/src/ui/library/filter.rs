@@ -100,6 +100,7 @@ pub(super) fn show_sort_filter_options(
     ui: &mut Ui,
     sort: &mut LibrarySortOrder,
     filter: &mut LibraryReviewFilter,
+    stack_raw_companions: &mut bool,
 ) {
     #[cfg(target_os = "android")]
     let _ = filter;
@@ -124,6 +125,14 @@ pub(super) fn show_sort_filter_options(
             ui.selectable_value(sort, order, label);
         }
     });
+
+    ui.separator();
+    ui.strong("RAW + JPEG");
+    ui.checkbox(stack_raw_companions, "Show only the RAW")
+        .on_hover_text(
+            "Cameras shooting RAW+JPEG or RAW+HEIC save both files. Show each pair once, \
+             as the RAW, and hide the JPEG, PNG or HEIC with the same name.",
+        );
 
     #[cfg(not(target_os = "android"))]
     {
@@ -196,6 +205,7 @@ pub(super) fn sort_filter_popup(
     ui: &mut Ui,
     sort: &mut LibrarySortOrder,
     filter: &mut LibraryReviewFilter,
+    stack_raw_companions: &mut bool,
     compact_size: Option<&mut LibraryThumbnailSize>,
     width: f32,
 ) {
@@ -229,7 +239,7 @@ pub(super) fn sort_filter_popup(
         egui::ScrollArea::vertical()
             .max_height(480.0)
             .show(ui, |ui| {
-                show_sort_filter_options(ui, sort, filter);
+                show_sort_filter_options(ui, sort, filter, stack_raw_companions);
                 if let Some(size) = compact_size {
                     ui.separator();
                     ui.strong("Thumbnail size");

@@ -1306,6 +1306,17 @@ impl CalibRawApp {
             .saturating_add(self.usage.app_started_at.elapsed())
     }
 
+    /// The format of the open photo when it is a rendered JPEG, PNG or HEIC
+    /// rather than a RAW. Android documents only carry their name in the label.
+    pub(crate) fn current_rendered_format(&self) -> Option<crate::pipeline::RenderedImageFormat> {
+        self.develop
+            .current_label
+            .as_deref()
+            .map(std::path::Path::new)
+            .or(self.develop.current_path.as_deref())
+            .and_then(crate::pipeline::RenderedImageFormat::from_path)
+    }
+
     pub(crate) fn raw_edit_duration(&self) -> Duration {
         self.usage.raw_accumulated.saturating_add(
             self.usage

@@ -11,6 +11,7 @@ use super::basicadj::{
 use super::color_profile::CameraProfile;
 use super::geometry::LensGeometryMap;
 use super::noise::NoiseProfile;
+use super::source_format::RenderedImageFormat;
 use super::white_balance_presets::WhiteBalancePreset;
 #[cfg(not(libraw_available))]
 use anyhow::anyhow;
@@ -648,6 +649,12 @@ impl LoadedRaw {
         self.is_pre_demosaiced_raster() && self.white_balance_model.is_some()
     }
 
+    /// A raster decoded from a rendered photo (JPEG, PNG, HEIF or rendered
+    /// TIFF) whose tones and colours were already developed.
+    pub fn is_display_referred_raster(&self) -> bool {
+        self.is_pre_demosaiced_raster() && !self.is_camera_linear_raster()
+    }
+
     pub fn scene_linear_raster(&self) -> Option<&[f32]> {
         self.scene_linear_raster.as_deref()
     }
@@ -1102,6 +1109,14 @@ impl LoadedRaw {
     }
 
     pub fn apply_adaptive_detail_defaults(&self, exposure: &mut ExposureParams) {
+        if self.is_display_referred_raster() {
+            // Rendered photos were already denoised and sharpened when they
+            // were developed; start them untouched, as other editors do.
+            exposure.luminance_denoise = 0.0;
+            exposure.chroma_denoise = 0.0;
+            exposure.sharpen_amount = 0.0;
+            return;
+        }
         let defaults = self.noise_profile.adaptive_detail_defaults(
             self.capture_metadata.iso_speed,
             self.white_levels,
@@ -1395,20 +1410,58 @@ impl LoadedRaw {
     }
 }
 
-fn tiff_routes_to_raster(path: &Path) -> Result<bool> {
-    if !super::tiff_loader::is_tiff_path(path) {
-        return Ok(false);
+/// Display-referred sources that bypass the sensor decoders and enter the
+/// pipeline as scene-linear Rec.2020 rasters.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum RasterSource {
+    Tiff,
+    Rendered(RenderedImageFormat),
+}
+
+impl RasterSource {
+    fn detect(path: &Path) -> Result<Option<Self>> {
+        if let Some(format) = RenderedImageFormat::detect(path)? {
+            return Ok(Some(Self::Rendered(format)));
+        }
+        let raster_tiff = super::tiff_loader::is_tiff_path(path)
+            && super::tiff_loader::inspect_tiff_container(path)?
+                == super::tiff_loader::TiffContainerKind::Raster;
+        Ok(raster_tiff.then_some(Self::Tiff))
     }
-    Ok(matches!(
-        super::tiff_loader::inspect_tiff_container(path)?,
-        super::tiff_loader::TiffContainerKind::Raster
-    ))
+
+    fn load(self, path: &Path) -> Result<LoadedRaw> {
+        match self {
+            Self::Tiff => super::tiff_loader::load_raster_tiff(path),
+            Self::Rendered(format) => super::rendered_loader::load_rendered_image(path, format),
+        }
+    }
+
+    fn thumbnail(self, path: &Path, maximum_edge: u32) -> Result<RawThumbnail> {
+        match self {
+            Self::Tiff => super::tiff_loader::load_raster_tiff_thumbnail(path, maximum_edge),
+            Self::Rendered(format) => {
+                super::rendered_loader::load_rendered_thumbnail(path, format, maximum_edge)
+            }
+        }
+    }
+
+    fn display_metadata(self, path: &Path) -> Result<RawDisplayMetadata> {
+        match self {
+            Self::Tiff => Ok(RawDisplayMetadata {
+                dimensions: super::tiff_loader::load_raster_tiff_dimensions(path)?,
+                ..Default::default()
+            }),
+            Self::Rendered(format) => {
+                super::rendered_loader::load_rendered_display_metadata(path, format)
+            }
+        }
+    }
 }
 
 #[cfg(not(libraw_available))]
 pub fn load_raw_file(path: &Path) -> Result<LoadedRaw> {
-    if tiff_routes_to_raster(path)? {
-        return super::tiff_loader::load_raster_tiff(path);
+    if let Some(raster) = RasterSource::detect(path)? {
+        return raster.load(path);
     }
     Err(anyhow!(
         "this build was compiled without LibRaw. Install LibRaw and make libraw.pc visible through PKG_CONFIG_PATH, then rebuild CalibRaw."
@@ -1417,8 +1470,8 @@ pub fn load_raw_file(path: &Path) -> Result<LoadedRaw> {
 
 #[cfg(not(libraw_available))]
 pub fn load_raw_embedded_thumbnail(path: &Path, maximum_edge: u32) -> Result<RawThumbnail> {
-    if tiff_routes_to_raster(path)? {
-        return super::tiff_loader::load_raster_tiff_thumbnail(path, maximum_edge);
+    if let Some(raster) = RasterSource::detect(path)? {
+        return raster.thumbnail(path, maximum_edge);
     }
     Err(anyhow!(
         "this build was compiled without LibRaw, so embedded RAW thumbnails are unavailable"
@@ -1427,8 +1480,8 @@ pub fn load_raw_embedded_thumbnail(path: &Path, maximum_edge: u32) -> Result<Raw
 
 #[cfg(not(libraw_available))]
 pub fn load_raw_thumbnail(path: &Path, maximum_edge: u32) -> Result<RawThumbnail> {
-    if tiff_routes_to_raster(path)? {
-        return super::tiff_loader::load_raster_tiff_thumbnail(path, maximum_edge);
+    if let Some(raster) = RasterSource::detect(path)? {
+        return raster.thumbnail(path, maximum_edge);
     }
     Err(anyhow!(
         "this build was compiled without LibRaw, so RAW thumbnails are unavailable"
@@ -1442,11 +1495,8 @@ pub fn load_raw_display_dimensions(path: &Path) -> Result<[u32; 2]> {
 
 #[cfg(not(libraw_available))]
 pub fn load_raw_display_metadata(path: &Path) -> Result<RawDisplayMetadata> {
-    if tiff_routes_to_raster(path)? {
-        return Ok(RawDisplayMetadata {
-            dimensions: super::tiff_loader::load_raster_tiff_dimensions(path)?,
-            ..Default::default()
-        });
+    if let Some(raster) = RasterSource::detect(path)? {
+        return raster.display_metadata(path);
     }
     Err(anyhow!(
         "this build was compiled without LibRaw, so RAW display metadata is unavailable"
@@ -1534,8 +1584,8 @@ pub fn load_raw_file_with_profile_selection(
     profile_folder: Option<&Path>,
     selected_profile: Option<&Path>,
 ) -> Result<LoadedRaw> {
-    if tiff_routes_to_raster(path)? {
-        super::tiff_loader::load_raster_tiff(path)
+    if let Some(raster) = RasterSource::detect(path)? {
+        raster.load(path)
     } else if path_is_dng(path) {
         try_rawler_then_libraw(
             path,
@@ -1569,8 +1619,8 @@ pub fn load_raw_file_with_profile_selection(
 
 #[cfg(libraw_available)]
 pub fn load_raw_file_with_dcp(path: &Path, profile_path: &Path) -> Result<LoadedRaw> {
-    if tiff_routes_to_raster(path)? {
-        super::tiff_loader::load_raster_tiff(path)
+    if let Some(raster) = RasterSource::detect(path)? {
+        raster.load(path)
     } else if path_is_dng(path) {
         try_rawler_then_libraw(
             path,
@@ -1585,8 +1635,8 @@ pub fn load_raw_file_with_dcp(path: &Path, profile_path: &Path) -> Result<Loaded
 
 #[cfg(libraw_available)]
 pub fn load_raw_embedded_thumbnail(path: &Path, maximum_edge: u32) -> Result<RawThumbnail> {
-    if tiff_routes_to_raster(path)? {
-        super::tiff_loader::load_raster_tiff_thumbnail(path, maximum_edge)
+    if let Some(raster) = RasterSource::detect(path)? {
+        raster.thumbnail(path, maximum_edge)
     } else if path_is_dng(path) {
         try_rawler_then_libraw(
             path,
@@ -1601,8 +1651,8 @@ pub fn load_raw_embedded_thumbnail(path: &Path, maximum_edge: u32) -> Result<Raw
 
 #[cfg(libraw_available)]
 pub fn load_raw_thumbnail(path: &Path, maximum_edge: u32) -> Result<RawThumbnail> {
-    if tiff_routes_to_raster(path)? {
-        super::tiff_loader::load_raster_tiff_thumbnail(path, maximum_edge)
+    if let Some(raster) = RasterSource::detect(path)? {
+        raster.thumbnail(path, maximum_edge)
     } else if path_is_dng(path) {
         try_rawler_then_libraw(
             path,
@@ -1622,11 +1672,8 @@ pub fn load_raw_display_dimensions(path: &Path) -> Result<[u32; 2]> {
 
 #[cfg(libraw_available)]
 pub fn load_raw_display_metadata(path: &Path) -> Result<RawDisplayMetadata> {
-    if tiff_routes_to_raster(path)? {
-        Ok(RawDisplayMetadata {
-            dimensions: super::tiff_loader::load_raster_tiff_dimensions(path)?,
-            ..Default::default()
-        })
+    if let Some(raster) = RasterSource::detect(path)? {
+        raster.display_metadata(path)
     } else if path_is_dng(path) {
         try_rawler_then_libraw(
             path,

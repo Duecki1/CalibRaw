@@ -79,7 +79,8 @@ impl CalibRawApp {
                 lens_correction_dirty: false,
                 load_receiver: None,
                 loading_label: None,
-                image_status: "Open a RAW or TIFF file to get started.".to_owned(),
+                image_status: "Open a RAW, TIFF, JPEG, PNG or HEIC photo to get started."
+                    .to_owned(),
                 current_label: None,
             },
             preview: PreviewState {
@@ -284,7 +285,7 @@ impl CalibRawApp {
                 sidebar_tab: SidebarTab::default(),
                 #[cfg(not(target_os = "android"))]
                 desktop_picker_receiver: None,
-                status: "Open a RAW or TIFF file to get started.".to_owned(),
+                status: "Open a RAW, TIFF, JPEG, PNG or HEIC photo to get started.".to_owned(),
                 adaptive_preview_backdrop: crate::ui::theme::CANVAS_BACKDROP,
                 notice: None,
                 gpu_memory_error_dialog: false,
@@ -298,6 +299,7 @@ impl CalibRawApp {
                 performance.thumbnail_workers,
                 performance.library_thumbnail_size,
                 performance.library_sort_order,
+                performance.library_stack_raw_companions,
                 performance.library_folder_sidebar_open,
                 performance.render_edited_thumbnails_during_indexing,
             ),
@@ -308,6 +310,7 @@ impl CalibRawApp {
                 performance.thumbnail_workers,
                 performance.library_thumbnail_size,
                 performance.library_sort_order,
+                performance.library_stack_raw_companions,
                 performance.last_android_library_folder.clone(),
                 performance.render_edited_thumbnails_during_indexing,
             ),

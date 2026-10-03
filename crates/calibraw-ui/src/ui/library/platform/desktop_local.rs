@@ -9,8 +9,12 @@ impl LibraryState {
         self.root_folder.as_deref()
     }
 
-    pub(crate) fn filmstrip_len(&self) -> usize {
-        self.entries.len()
+    /// Entry indices in filmstrip order: every photo, with RAW+JPEG pairs
+    /// stacked like the library grid.
+    pub(crate) fn filmstrip_entry_indices(&self) -> Vec<usize> {
+        (0..self.entries.len())
+            .filter(|index| !self.hides_raw_companion(&self.entries[*index].asset.id))
+            .collect()
     }
 
     pub(crate) fn filmstrip_item_aspect(&self, index: usize) -> f32 {
@@ -271,7 +275,7 @@ impl LibraryState {
                         }
                         continue;
                     }
-                    if !source.is_file() || !is_supported_raw_path(&source) {
+                    if !source.is_file() || !is_supported_image_path(&source) {
                         ignored += 1;
                         continue;
                     }

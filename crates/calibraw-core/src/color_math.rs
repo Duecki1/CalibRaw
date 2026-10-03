@@ -139,6 +139,14 @@ pub const LINEAR_SRGB_TO_REC2020: Matrix3 = [
     [0.016_391_4, 0.088_013_3, 0.895_595_3],
 ];
 
+/// Linear Display P3 (D65) primaries to linear Rec.2020, as tagged by phone
+/// HEIF images that carry `nclx` colour primaries 12 instead of an ICC profile.
+pub const LINEAR_DISPLAY_P3_TO_REC2020: Matrix3 = [
+    [0.753_833, 0.198_597_3, 0.047_569_7],
+    [0.045_743_8, 0.941_777_2, 0.012_478_9],
+    [-0.001_210_3, 0.017_601_7, 0.983_608_6],
+];
+
 pub fn rec2020_from_oklab(lab: [f32; 3]) -> [f32; 3] {
     linear_srgb_to_rec2020(oklab_to_linear_srgb(lab))
 }

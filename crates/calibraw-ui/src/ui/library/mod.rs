@@ -1,7 +1,7 @@
 use crate::app::CalibRawApp;
 #[cfg(not(target_os = "android"))]
 use crate::pipeline::{
-    apply_lensfun_correction, build_proxy, is_supported_raw_path, lensfun_catalog,
+    apply_lensfun_correction, build_proxy, is_supported_image_path, lensfun_catalog,
     load_raw_display_metadata, load_raw_file_with_profile_selection, load_raw_thumbnail,
     mask_atlas_edge, GpuParams, LensfunLens, MaskRgbImage, MaskStack, ProcessingQuality, ProxySpec,
     RawGpuPipeline, MAX_LOCAL_MASKS,
@@ -28,6 +28,7 @@ mod actions;
 mod adjustments;
 mod catalog;
 mod clipboard;
+mod companions;
 mod dialogs;
 mod export;
 mod filter;
@@ -48,6 +49,7 @@ use actions::*;
 use adjustments::*;
 use catalog::*;
 use clipboard::*;
+use companions::*;
 use dialogs::*;
 use export::*;
 use filter::*;
@@ -59,6 +61,7 @@ use thumbnails::*;
 pub(crate) use actions::library_image_context_menu;
 #[cfg(not(target_os = "android"))]
 pub(crate) use actions::{apply_library_action, show_library_action_overlays};
+pub(crate) use companions::{paint_format_badge, rendered_format_label};
 #[cfg(not(target_os = "android"))]
 pub(crate) use thumbnails::{load_desktop_cached_thumbnail, load_desktop_reference_preview};
 pub(crate) use view::Library;
@@ -722,6 +725,9 @@ pub(crate) struct LibraryState {
     thumbnail_size: LibraryThumbnailSize,
     search_query: String,
     review_filter: LibraryReviewFilter,
+    /// Show RAW+JPEG pairs once, as the RAW. Rebuilt with the entry indices.
+    stack_raw_companions: bool,
+    raw_companions: RawCompanions,
     selected_assets: HashSet<LibraryAssetId>,
     selection_mode: bool,
     selection_anchor: Option<LibraryAssetId>,

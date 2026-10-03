@@ -22,6 +22,7 @@ pub(super) fn thumbnail_hover_overlay(
     ui: &mut Ui,
     rect: egui::Rect,
     entry: &LibraryEntry,
+    stacked_formats: &[crate::pipeline::RenderedImageFormat],
 ) -> Option<LibraryAction> {
     let asset = &entry.asset;
     let hovered = ui.rect_contains_pointer(rect);
@@ -51,7 +52,7 @@ pub(super) fn thumbnail_hover_overlay(
             }
             .to_owned()
         } else {
-            thumbnail_hover_details(asset)
+            thumbnail_hover_details(asset, stacked_formats)
         }
     });
     for (text, size, offset, alpha) in hover_text_lines(ui, rect, asset, detail) {
@@ -694,7 +695,7 @@ mod tests {
                             ui.interact(rect, ui.make_persistent_id("photo"), Sense::click());
                         let mut entry = new_library_entry(asset.clone());
                         entry.review = review;
-                        action = thumbnail_hover_overlay(ui, rect, &entry);
+                        action = thumbnail_hover_overlay(ui, rect, &entry, &[]);
                         if action.is_some() {
                             assert!(
                                 !photo.clicked(),
