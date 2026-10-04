@@ -58,6 +58,7 @@ use worker::spawn_ui_worker;
 mod develop_state;
 mod export_state;
 mod job_state;
+mod mask_properties;
 mod mask_state;
 mod mask_strip;
 mod mask_tool;
@@ -67,6 +68,9 @@ mod ui_state;
 pub(crate) use develop_state::*;
 pub(crate) use export_state::*;
 pub(crate) use job_state::*;
+pub(crate) use mask_properties::{
+    apply_mask_property_actions, MaskPropertiesControls, MaskPropertyAction,
+};
 pub(crate) use mask_state::*;
 pub(crate) use mask_strip::{MaskStripActions, MaskStripCommand, MaskStripEdit};
 pub(crate) use mask_tool::{BrushStrokeSamples, MaskPointerEdit, MaskToolAction};
