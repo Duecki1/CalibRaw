@@ -371,10 +371,6 @@ impl MaskStack {
         })
     }
 
-    pub fn has_fog_effect(&self) -> bool {
-        self.has_fog_effect_matching(|_| true)
-    }
-
     pub fn has_depth_fog_effect(&self) -> bool {
         self.has_fog_effect_matching(|settings| settings.depth_enabled)
     }
@@ -420,18 +416,6 @@ fn copied_name(base: &str, exists: impl Fn(&str) -> bool) -> String {
         }
     }
     format!("{base} Copy")
-}
-
-fn moved_index(selected: usize, from: usize, to: usize) -> usize {
-    if selected == from {
-        to
-    } else if from < to && selected > from && selected <= to {
-        selected - 1
-    } else if from > to && selected >= to && selected < from {
-        selected + 1
-    } else {
-        selected
-    }
 }
 
 #[cfg(test)]

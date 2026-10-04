@@ -1,5 +1,11 @@
 use super::*;
 
+/// Fog activity regardless of depth, through the predicate behind
+/// `has_depth_fog_effect`.
+fn has_fog_effect(stack: &MaskStack) -> bool {
+    stack.has_fog_effect_matching(|_| true)
+}
+
 #[test]
 fn fog_depth_defaults_on_and_disabled_setting_round_trips() {
     let legacy: FogEffectSettings = serde_json::from_str(r#"{"amount":75.0}"#).unwrap();
@@ -18,17 +24,17 @@ fn fog_without_depth_stays_active_but_does_not_request_depth() {
     fog.settings.fog.depth_enabled = false;
     let mut stack = MaskStack::default();
     stack.global_effects.push(fog.clone());
-    assert!(stack.has_fog_effect());
+    assert!(has_fog_effect(&stack));
     assert!(!stack.has_depth_fog_effect());
     stack.global_effects.clear();
     stack.add_mask(MaskKind::Fullscreen).unwrap();
     stack.masks[0].effect_components.push(fog.clone());
-    assert!(stack.has_fog_effect());
+    assert!(has_fog_effect(&stack));
     assert!(!stack.has_depth_fog_effect());
     stack.masks[0].effect_components.clear();
     stack.masks[0].effect = MaskEffect::Fog;
     stack.masks[0].effect_settings = fog.settings;
-    assert!(stack.has_fog_effect());
+    assert!(has_fog_effect(&stack));
     assert!(!stack.has_depth_fog_effect());
     stack.masks[0].effect_settings.fog.depth_enabled = true;
     assert!(stack.has_depth_fog_effect());
@@ -117,46 +123,46 @@ fn fog_detection_checks_global_local_and_legacy_activity() {
     fog.settings.fog.density = 50.0;
     assert!(fog.is_active());
     let mut stack = MaskStack::default();
-    assert!(!stack.has_fog_effect());
+    assert!(!has_fog_effect(&stack));
     stack.global_effects.push(fog.clone());
-    assert!(stack.has_fog_effect());
+    assert!(has_fog_effect(&stack));
     stack.global_effects[0].enabled = false;
-    assert!(!stack.has_fog_effect());
+    assert!(!has_fog_effect(&stack));
     stack.global_effects[0].enabled = true;
     stack.global_effects[0].settings.fog.amount = 0.0;
-    assert!(!stack.has_fog_effect());
+    assert!(!has_fog_effect(&stack));
     stack.global_effects[0] = fog.clone();
     stack.global_effects[0].settings.fog.density = 0.0;
-    assert!(!stack.has_fog_effect());
+    assert!(!has_fog_effect(&stack));
     stack.global_effects.clear();
 
     stack.add_mask(MaskKind::Fullscreen).unwrap();
     stack.masks[0].effect_components.push(fog.clone());
-    assert!(stack.has_fog_effect());
+    assert!(has_fog_effect(&stack));
     stack.masks[0].enabled = false;
-    assert!(!stack.has_fog_effect());
+    assert!(!has_fog_effect(&stack));
     stack.masks[0].enabled = true;
     stack.masks[0].opacity = 0.0;
-    assert!(!stack.has_fog_effect());
+    assert!(!has_fog_effect(&stack));
     stack.masks[0].opacity = 1.0;
     stack.masks[0].effect_components[0].enabled = false;
-    assert!(!stack.has_fog_effect());
+    assert!(!has_fog_effect(&stack));
     stack.masks[0].effect_components[0].enabled = true;
     stack.masks[0].effect_components[0].settings.fog.amount = 0.0;
-    assert!(!stack.has_fog_effect());
+    assert!(!has_fog_effect(&stack));
     stack.masks[0].effect_components.clear();
 
     stack.masks[0].effect = MaskEffect::Fog;
     stack.masks[0].effect_settings = fog.settings;
     stack.masks[0].adjustments_enabled = false;
-    assert!(stack.has_fog_effect());
+    assert!(has_fog_effect(&stack));
     stack.masks[0].enabled = false;
-    assert!(!stack.has_fog_effect());
+    assert!(!has_fog_effect(&stack));
     stack.masks[0].enabled = true;
     stack.masks[0].effect_settings.fog.density = 0.0;
-    assert!(!stack.has_fog_effect());
+    assert!(!has_fog_effect(&stack));
     stack.masks[0].effect = MaskEffect::Smoke;
-    assert!(!stack.has_fog_effect());
+    assert!(!has_fog_effect(&stack));
 }
 
 #[test]
@@ -976,22 +982,6 @@ fn partial_brush_and_eraser_dabs_change_only_stored_stroke_coverage() {
     let erased = stack.rasterize_layer_coverage(0, 64, 64, 100, 100);
     assert!((erased[32 * 64 + 32] - 0.2).abs() < 0.01);
     assert_eq!(stack.masks[0].opacity, 1.0);
-}
-
-#[test]
-fn reordering_tracks_selected_mask_and_component() {
-    let mut stack = MaskStack::default();
-    stack.add_mask(MaskKind::Brush);
-    stack.add_mask(MaskKind::Radial);
-    stack.add_mask(MaskKind::Linear);
-    assert!(stack.move_mask(2, 0));
-    assert_eq!(stack.selected_mask, Some(0));
-    assert_eq!(stack.masks[0].components[0].kind, MaskKind::Linear);
-
-    stack.add_component(MaskKind::Brush, MaskCombineMode::Subtract);
-    assert!(stack.move_component(1, 0));
-    assert_eq!(stack.selected_component, Some(0));
-    assert_eq!(stack.masks[0].components[0].kind, MaskKind::Brush);
 }
 
 #[test]

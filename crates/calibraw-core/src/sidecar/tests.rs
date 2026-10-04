@@ -253,7 +253,7 @@ fn copied_fog_uses_only_destination_scene_depth_in_merge_and_replace_modes() {
                     mode,
                 );
                 assert_eq!(destination.masks.scene_depth_image(), own_depth.as_ref());
-                assert_eq!(destination.masks.has_fog_effect(), manual);
+                assert_eq!(destination.masks.has_depth_fog_effect(), manual);
                 if manual {
                     assert_eq!(destination.masks.global_effects, vec![fog.clone()]);
                     // Depth fog without this image's depth must ask for an update
@@ -1698,7 +1698,7 @@ fn encoded_review_is_available_with_decoded_edits() {
         rating: 3,
     };
     let encoded = encode_with_review(sample_edits(), review).unwrap();
-    assert_eq!(decode_photo_review(&encoded).unwrap(), review);
+    assert_eq!(decode_sidecar_metadata(&encoded).unwrap().review, review);
     let loaded = decode(&encoded).unwrap();
     assert_eq!(loaded.review, review);
     assert_eq!(loaded.editing_time_ms, 0);
