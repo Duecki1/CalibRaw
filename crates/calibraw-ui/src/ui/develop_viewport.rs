@@ -1,5 +1,5 @@
 use crate::app::{CalibRawApp, SidebarTab};
-use crate::ui::{preview::Preview, sidebar::Sidebar, top_bar::TopBar};
+use crate::ui::{sidebar::Sidebar, top_bar::TopBar};
 use eframe::egui::{self, Rect, Sense, Ui};
 use moduwu_design::ScreenLayout;
 
@@ -95,7 +95,7 @@ pub(crate) fn show(ui: &mut Ui, app: &mut CalibRawApp, frame: &eframe::Frame) {
         egui::pos2(canvas.left(), top.bottom().min(sheet.top())),
         egui::pos2(canvas.right(), sheet.top()),
     );
-    Preview::show_in_viewport(ui, app, frame, Some(exposed));
+    app.show_preview(ui, frame, Some(exposed));
 }
 
 fn show_top_controls(
@@ -177,7 +177,7 @@ fn show_landscape(ui: &mut Ui, app: &mut CalibRawApp, frame: &eframe::Frame) {
             Sidebar::show(&mut content, app, ScreenLayout::Horizontal, frame);
         });
     let exposed = Rect::from_min_max(egui::pos2(canvas.left(), top.bottom()), tools.left_bottom());
-    Preview::show_in_viewport(ui, app, frame, Some(exposed));
+    app.show_preview(ui, frame, Some(exposed));
 }
 
 #[cfg(test)]

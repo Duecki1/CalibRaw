@@ -463,7 +463,7 @@ impl eframe::App for CalibRawApp {
                 #[cfg(not(target_os = "android"))]
                 Develop::show_preview(ui, self, frame);
                 #[cfg(target_os = "android")]
-                Preview::show(ui, self, frame);
+                self.show_preview(ui, frame, None);
             }
             AppTab::Settings => {
                 let settings_scroll_source = if slider_scroll_locked(ui.ctx()) {

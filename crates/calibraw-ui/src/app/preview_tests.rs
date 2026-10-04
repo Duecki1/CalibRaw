@@ -215,7 +215,7 @@ fn portrait_gpu_layout_and_input() {
                         },
                         |ui| {
                             egui::CentralPanel::default().show(ui, |ui| {
-                                crate::ui::preview::Preview::show(ui, &mut app, &frame);
+                                app.show_preview(ui, &frame, None);
                             });
                         },
                     );
