@@ -759,3 +759,44 @@ fn photographic_modules_match_full_frame_in_padded_export_tiles() -> anyhow::Res
     }
     Ok(())
 }
+
+#[test]
+fn mask_curves_starting_above_zero_map_negative_scene_values_to_black() -> anyhow::Result<()> {
+    const WIDTH: u32 = 32;
+    const HEIGHT: u32 = 8;
+    // Out-of-gamut colours: the blue channel is negative at two different levels.
+    let pixels = (0..WIDTH * HEIGHT)
+        .flat_map(|i| {
+            let blue = if i % WIDTH < WIDTH / 2 { -0.01 } else { -0.04 };
+            [0.3, 0.2, blue]
+        })
+        .collect();
+    let Some(scene) =
+        PhotoScene::new(LoadedRaw::from_scene_linear_rec2020(WIDTH, HEIGHT, pixels)?)?
+    else {
+        return Ok(());
+    };
+    scene.coverage(&vec![
+        half::f16::ONE.to_bits();
+        (MASK_EDGE * MASK_EDGE) as usize
+    ])?;
+    // The curve is flat left of its first point, so both blue levels must render
+    // alike, as they do for the global curve.
+    let mut lifted = crate::pipeline::PointCurve::linear();
+    lifted.points[0] = [0.1, 0.05];
+    let mut mask = LocalMask::new(MaskKind::Fullscreen, 1);
+    mask.adjustments.tone_curve_blue = lifted;
+    let rgb = scene.render(&MaskStack {
+        masks: vec![mask],
+        ..Default::default()
+    })?;
+    let near = patch_mean(&rgb, WIDTH, 0, 0, WIDTH / 2, HEIGHT);
+    let far = patch_mean(&rgb, WIDTH, WIDTH / 2, 0, WIDTH / 2, HEIGHT);
+    for c in 0..3 {
+        assert!(
+            (near[c] - far[c]).abs() <= RGB_TOLERANCE,
+            "negative blue levels differ below the curve's first point: {near:?} vs {far:?}"
+        );
+    }
+    Ok(())
+}
