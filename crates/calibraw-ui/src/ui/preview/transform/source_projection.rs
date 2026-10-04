@@ -2,7 +2,7 @@
 
 use super::*;
 
-pub(in crate::ui::preview) fn shortest_angle_delta(from: f32, to: f32) -> f32 {
+pub(crate) fn shortest_angle_delta(from: f32, to: f32) -> f32 {
     let mut delta = to - from;
     while delta > std::f32::consts::PI {
         delta -= std::f32::consts::TAU;
@@ -13,7 +13,7 @@ pub(in crate::ui::preview) fn shortest_angle_delta(from: f32, to: f32) -> f32 {
     delta
 }
 
-pub(in crate::ui::preview) fn source_angle_from(
+pub(crate) fn source_angle_from(
     center: [f32; 2],
     point: [f32; 2],
     source_width: u32,

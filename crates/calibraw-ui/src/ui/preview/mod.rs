@@ -3,8 +3,8 @@ use crate::app::{
     SidebarTab, StraightenDragState,
 };
 use crate::pipeline::{
-    BrushDab, BrushMode, GeometryTransform, LensGeometryMap, MaskCombineMode, MaskGeometry,
-    MaskKind, ObjectStroke, RetouchStroke,
+    BrushMode, GeometryTransform, LensGeometryMap, MaskCombineMode, MaskGeometry, MaskKind,
+    RetouchStroke,
 };
 use crate::ui::mask_component_color;
 use eframe::egui::{self, Color32, Mesh, Pos2, Rect, Sense, Shape, Stroke, Ui};
@@ -84,7 +84,7 @@ mod overlays;
 mod tools;
 mod transform;
 
-pub(crate) use transform::SourceProjection;
+pub(crate) use transform::{shortest_angle_delta, source_angle_from, SourceProjection};
 
 use canvas::*;
 use interaction::*;
@@ -582,7 +582,13 @@ impl Preview {
 
             if app.ui.sidebar_tab == SidebarTab::Masks {
                 if !touch_navigation && !fit_gesture && !point_color_canvas {
-                    Self::handle_mask_interaction(ui, app, layout, &response);
+                    let actions = Self::mask_tool_actions(
+                        ui,
+                        &tools::MaskToolInput::of(app),
+                        layout,
+                        &response,
+                    );
+                    app.apply_mask_tool_actions(ui.ctx(), actions);
                 }
                 Self::paint_mask_overlay(ui, app, layout);
                 Self::paint_tool_hint(ui, app, visible_screen);
