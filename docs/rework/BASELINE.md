@@ -69,6 +69,11 @@ sky, RawNIND) were not run; they are listed in [FEATURE_MATRIX.md](FEATURE_MATRI
 | `2026-10-04-e7c871b5c-step10-final` | 132 | final state after visibility tightening: 0 differences |
 | `2026-10-04-e7c871b5c-step11-views` | 132 | settings cards and frame phases extracted: 0 differences |
 | `2026-10-04-e7c871b5c-step12-library-grid` | 132 | library thumbnail grid extracted: 0 differences |
+| `2026-10-04-0dba15690-rework2-before` | 132 | reference for the action-returning views (captured from a clean worktree): 0 differences against `step12-library-grid` |
+| `2026-10-04-0dba15690-rework2-mask-tool` | 132 | mask tool returns actions: 0 differences against `rework2-before` |
+| `2026-10-04-037956b8d-rework2-viewport` | 132 | preview viewport returns actions: 0 differences |
+| `2026-10-04-fb5e986ec-rework2-mask-strip` | 132 | mask strip returns actions: 0 differences |
+| `2026-10-04-f9c51dc02-rework2-mask-properties` | 132 | mask properties return actions: 0 differences |
 
 The harness is deterministic on this machine, so any later difference at
 tolerance 0 is a real change.
