@@ -190,14 +190,18 @@ final class AndroidStorageContract {
         if ("image/jxl".equalsIgnoreCase(mimeType)) {
             return "image/jxl";
         }
+        if ("image/tiff".equalsIgnoreCase(mimeType)) {
+            return "image/tiff";
+        }
         return "image/png";
     }
 
     static String safeImageName(String requestedName, String mimeType) {
         boolean jpeg = "image/jpeg".equalsIgnoreCase(mimeType);
         boolean jxl = "image/jxl".equalsIgnoreCase(mimeType);
+        boolean tiff = "image/tiff".equalsIgnoreCase(mimeType);
         String extension = "video/mp4".equalsIgnoreCase(mimeType)
-                ? ".mp4" : jpeg ? ".jpg" : jxl ? ".jxl" : ".png";
+                ? ".mp4" : jpeg ? ".jpg" : jxl ? ".jxl" : tiff ? ".tif" : ".png";
         String fallback = "CalibRaw-export" + extension;
         String name = requestedName == null ? fallback : requestedName;
         name = name.replaceAll("[^A-Za-z0-9._-]", "_");
@@ -207,6 +211,10 @@ final class AndroidStorageContract {
         String lower = name.toLowerCase(Locale.ROOT);
         if (jpeg) {
             if (!lower.endsWith(".jpg") && !lower.endsWith(".jpeg")) {
+                name += extension;
+            }
+        } else if (tiff) {
+            if (!lower.endsWith(".tif") && !lower.endsWith(".tiff")) {
                 name += extension;
             }
         } else if (!lower.endsWith(extension)) {

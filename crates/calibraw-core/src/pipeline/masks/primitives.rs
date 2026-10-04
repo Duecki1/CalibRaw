@@ -164,7 +164,7 @@ pub struct ObjectStroke {
 pub struct MaskImage {
     pub width: u32,
     pub height: u32,
-    #[serde(with = "base64_arc_bytes")]
+    #[serde(with = "crate::base64_arc_bytes")]
     pub pixels: Arc<[u8]>,
     #[serde(skip, default = "unit_sampling_rect")]
     pub(super) sampling_rect: [f32; 4],
@@ -188,7 +188,7 @@ impl MaskImage {
 pub struct MaskRgbImage {
     pub width: u32,
     pub height: u32,
-    #[serde(with = "base64_arc_bytes")]
+    #[serde(with = "crate::base64_arc_bytes")]
     pub rgba: Arc<[u8]>,
     #[serde(skip, default = "unit_sampling_rect")]
     pub(super) sampling_rect: [f32; 4],
@@ -211,33 +211,6 @@ impl MaskRgbImage {
 
 fn unit_sampling_rect() -> [f32; 4] {
     [0.0, 0.0, 1.0, 1.0]
-}
-
-mod base64_arc_bytes {
-    use base64::Engine as _;
-    use serde::{Deserialize, Deserializer, Serializer};
-    use std::sync::Arc;
-
-    pub(super) fn serialize<S>(bytes: &Arc<[u8]>, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        serializer.collect_str(&base64::display::Base64Display::new(
-            bytes.as_ref(),
-            &base64::engine::general_purpose::STANDARD,
-        ))
-    }
-
-    pub(super) fn deserialize<'de, D>(deserializer: D) -> Result<Arc<[u8]>, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let encoded = String::deserialize(deserializer)?;
-        base64::engine::general_purpose::STANDARD
-            .decode(encoded)
-            .map(Arc::from)
-            .map_err(serde::de::Error::custom)
-    }
 }
 
 impl Default for BrushDab {

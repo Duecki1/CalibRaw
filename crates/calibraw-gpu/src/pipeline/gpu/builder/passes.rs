@@ -91,100 +91,12 @@ pub(in crate::pipeline::gpu) fn assemble_passes(
     image_workgroups: [u32; 3],
     tone_workgroups: [u32; 3],
 ) -> Result<AssembledPasses> {
-    let BindGroupLayouts {
-        bgl_scene_tone,
-        bgl_effects,
-        bgl_highlights,
-        bgl1,
-        bgl2,
-        bgl3,
-        bgl_dual_green,
-        bgl_dual_rgb,
-        bgl4,
-        bgl_xtrans_derivatives,
-        bgl_xtrans_homogeneity,
-        bgl_xtrans_accumulate,
-        bgl_xtrans_finish,
-        bgl_color_denoise,
-        bgl_tone_prepare,
-        bgl_tone_blur,
-        bgl_tone_reduce,
-        bgl_adjust_prepare,
-        bgl_adjust_tone,
-        bgl_adjust_effects,
-        bgl_mask_blur,
-        bgl_glow_prepare,
-        bgl_glow_blur,
-        bgl_adjust_creative,
-        bgl_adjust_render,
-    } = layouts;
-    let BindGroups {
-        bg_highlights,
-        bg1,
-        bg2,
-        bg3,
-        bg_dual_green,
-        bg_dual_rgb,
-        bg4,
-        bg_xtrans_derivatives,
-        bg_xtrans_homogeneity,
-        bg_xtrans_accumulate,
-        bg_xtrans_finish,
-        bg_color_denoise,
-        bg_tone_prepare,
-        bg_tone_horizontal,
-        bg_tone_vertical,
-        bg_tone_reduce,
-        bg_adjust_prepare,
-        bg_adjust_tone,
-        bg_adjust_local_tone,
-        bg_adjust_effects,
-        bg_adjust_effects_copy,
-        bg_mask_blur_0,
-        bg_mask_blur_1,
-        bg_mask_blur_2,
-        bg_mask_blur_3,
-        bg_mask_blur_4,
-        bg_glow_prepare,
-        bg_glow_blur_0,
-        bg_glow_blur_1,
-        bg_glow_blur_2,
-        bg_glow_blur_3,
-        bg_glow_blur_4,
-        bg_glow_prepare_after_blur,
-        bg_glow_blur_after_blur_0,
-        bg_glow_blur_after_blur_1,
-        bg_glow_blur_after_blur_2,
-        bg_glow_blur_after_blur_3,
-        bg_glow_blur_after_blur_4,
-        bg_adjust_creative,
-        bg_adjust_creative_after_blur,
-        bg_adjust_render,
-        bg_adjust_render_after_blur,
-        ..
-    } = groups;
-    let ShaderSet {
-        highlight_module,
-        bayer_rcd_p1_module,
-        bayer_rcd_p2_module,
-        bayer_rcd_p3_module,
-        bayer_rcd_p4_module,
-        dual_demosaic_module,
-        xtrans_demosaic_module,
-        xtrans_finish_module,
-        color_denoise_module,
-        tone_analysis_module,
-        scene_adjustments_module,
-        creative_effects_module,
-        view_transform_module,
-    } = shaders;
-
     let mut assembler = PassAssembler {
         device,
         program_template,
         pipeline_cache,
-        bgl_scene_tone,
-        bgl_effects,
+        bgl_scene_tone: &layouts.bgl_scene_tone,
+        bgl_effects: &layouts.bgl_effects,
         next_program_index: 0,
     };
     let single_workgroup = [1, 1, 1];
@@ -192,10 +104,10 @@ pub(in crate::pipeline::gpu) fn assemble_passes(
     let mut passes = Vec::with_capacity(expected_pass_count(cfa_kind));
 
     passes.push(assembler.make_pass(
-        highlight_module.as_ref(),
+        shaders.highlight_module.as_ref(),
         "highlight_reconstruct",
-        bgl_highlights,
-        bg_highlights.clone(),
+        &layouts.bgl_highlights,
+        groups.bg_highlights.clone(),
         image_workgroups,
     ));
 
@@ -203,75 +115,75 @@ pub(in crate::pipeline::gpu) fn assemble_passes(
     match cfa_kind {
         CfaKind::Bayer => passes.extend([
             assembler.make_pass(
-                bayer_rcd_p1_module.as_ref(),
+                shaders.bayer_rcd_p1_module.as_ref(),
                 "bayer_rcd_directional",
-                bgl1,
-                bg1.clone(),
+                &layouts.bgl1,
+                groups.bg1.clone(),
                 image_workgroups,
             ),
             assembler.make_pass(
-                bayer_rcd_p2_module.as_ref(),
+                shaders.bayer_rcd_p2_module.as_ref(),
                 "bayer_rcd_green",
-                bgl2,
-                bg2.clone(),
+                &layouts.bgl2,
+                groups.bg2.clone(),
                 image_workgroups,
             ),
             assembler.make_pass(
-                bayer_rcd_p3_module.as_ref(),
+                shaders.bayer_rcd_p3_module.as_ref(),
                 "bayer_rcd_chroma",
-                bgl3,
-                bg3.clone(),
+                &layouts.bgl3,
+                groups.bg3.clone(),
                 image_workgroups,
             ),
         ]),
         CfaKind::XTrans => passes.extend([
             assembler.make_pass(
-                xtrans_demosaic_module.as_ref(),
+                shaders.xtrans_demosaic_module.as_ref(),
                 "xtrans_seed",
-                bgl1,
-                bg1.clone(),
+                &layouts.bgl1,
+                groups.bg1.clone(),
                 image_workgroups,
             ),
             assembler.make_pass(
-                xtrans_demosaic_module.as_ref(),
+                shaders.xtrans_demosaic_module.as_ref(),
                 "xtrans_markesteijn_pass1",
-                bgl2,
-                bg2.clone(),
+                &layouts.bgl2,
+                groups.bg2.clone(),
                 image_workgroups,
             ),
             assembler.make_pass(
-                xtrans_demosaic_module.as_ref(),
+                shaders.xtrans_demosaic_module.as_ref(),
                 "xtrans_markesteijn_pass2",
-                bgl3,
-                bg3.clone(),
+                &layouts.bgl3,
+                groups.bg3.clone(),
                 image_workgroups,
             ),
             assembler.make_pass(
-                xtrans_demosaic_module.as_ref(),
+                shaders.xtrans_demosaic_module.as_ref(),
                 "xtrans_markesteijn_pass3",
-                bgl2,
-                bg2.clone(),
+                &layouts.bgl2,
+                groups.bg2.clone(),
                 image_workgroups,
             ),
             assembler.make_pass(
-                xtrans_demosaic_module.as_ref(),
+                shaders.xtrans_demosaic_module.as_ref(),
                 "xtrans_markesteijn_derivatives",
-                bgl_xtrans_derivatives,
-                bg_xtrans_derivatives.clone(),
+                &layouts.bgl_xtrans_derivatives,
+                groups.bg_xtrans_derivatives.clone(),
                 image_workgroups,
             ),
             assembler.make_pass(
-                xtrans_demosaic_module.as_ref(),
+                shaders.xtrans_demosaic_module.as_ref(),
                 "xtrans_markesteijn_homogeneity",
-                bgl_xtrans_homogeneity,
-                bg_xtrans_homogeneity.clone(),
+                &layouts.bgl_xtrans_homogeneity,
+                groups.bg_xtrans_homogeneity.clone(),
                 image_workgroups,
             ),
             assembler.make_pass(
-                xtrans_demosaic_module.as_ref(),
+                shaders.xtrans_demosaic_module.as_ref(),
                 "xtrans_markesteijn_accumulate",
-                bgl_xtrans_accumulate,
-                bg_xtrans_accumulate.clone(),
+                &layouts.bgl_xtrans_accumulate,
+                groups.bg_xtrans_accumulate.clone(),
                 image_workgroups,
             ),
         ]),
@@ -280,17 +192,17 @@ pub(in crate::pipeline::gpu) fn assemble_passes(
     let demosaic_dual_start_index = passes.len();
     passes.extend([
         assembler.make_pass(
-            dual_demosaic_module.as_ref(),
+            shaders.dual_demosaic_module.as_ref(),
             "dual_green_reconstruct",
-            bgl_dual_green,
-            bg_dual_green.clone(),
+            &layouts.bgl_dual_green,
+            groups.bg_dual_green.clone(),
             image_workgroups,
         ),
         assembler.make_pass(
-            dual_demosaic_module.as_ref(),
+            shaders.dual_demosaic_module.as_ref(),
             "dual_rgb_reconstruct",
-            bgl_dual_rgb,
-            bg_dual_rgb.clone(),
+            &layouts.bgl_dual_rgb,
+            groups.bg_dual_rgb.clone(),
             image_workgroups,
         ),
     ]);
@@ -299,17 +211,17 @@ pub(in crate::pipeline::gpu) fn assemble_passes(
     let demosaic_finish_index = passes.len();
     match cfa_kind {
         CfaKind::Bayer => passes.push(assembler.make_pass(
-            bayer_rcd_p4_module.as_ref(),
+            shaders.bayer_rcd_p4_module.as_ref(),
             "bayer_rcd_output",
-            bgl4,
-            bg4.clone(),
+            &layouts.bgl4,
+            groups.bg4.clone(),
             image_workgroups,
         )),
         CfaKind::XTrans => passes.push(assembler.make_pass(
-            xtrans_finish_module.as_ref(),
+            shaders.xtrans_finish_module.as_ref(),
             "xtrans_demosaic_finish",
-            bgl_xtrans_finish,
-            bg_xtrans_finish.clone(),
+            &layouts.bgl_xtrans_finish,
+            groups.bg_xtrans_finish.clone(),
             image_workgroups,
         )),
     }
@@ -317,12 +229,12 @@ pub(in crate::pipeline::gpu) fn assemble_passes(
     let color_denoise_start_index = passes.len();
     for (entry, bind_group) in COLOR_DENOISE_ENTRY_POINTS
         .iter()
-        .zip(bg_color_denoise.iter())
+        .zip(groups.bg_color_denoise.iter())
     {
         passes.push(assembler.make_pass(
-            color_denoise_module.as_ref(),
+            shaders.color_denoise_module.as_ref(),
             entry,
-            bgl_color_denoise,
+            &layouts.bgl_color_denoise,
             bind_group.clone(),
             image_workgroups,
         ));
@@ -332,31 +244,31 @@ pub(in crate::pipeline::gpu) fn assemble_passes(
     let tone_prepare_pass_index = passes.len();
     passes.extend([
         assembler.make_pass(
-            tone_analysis_module.as_ref(),
+            shaders.tone_analysis_module.as_ref(),
             "tone_guide_prepare",
-            bgl_tone_prepare,
-            bg_tone_prepare.clone(),
+            &layouts.bgl_tone_prepare,
+            groups.bg_tone_prepare.clone(),
             tone_workgroups,
         ),
         assembler.make_pass(
-            tone_analysis_module.as_ref(),
+            shaders.tone_analysis_module.as_ref(),
             "tone_guide_horizontal",
-            bgl_tone_blur,
-            bg_tone_horizontal.clone(),
+            &layouts.bgl_tone_blur,
+            groups.bg_tone_horizontal.clone(),
             tone_workgroups,
         ),
         assembler.make_pass(
-            tone_analysis_module.as_ref(),
+            shaders.tone_analysis_module.as_ref(),
             "tone_guide_vertical",
-            bgl_tone_blur,
-            bg_tone_vertical.clone(),
+            &layouts.bgl_tone_blur,
+            groups.bg_tone_vertical.clone(),
             tone_workgroups,
         ),
         assembler.make_pass(
-            tone_analysis_module.as_ref(),
+            shaders.tone_analysis_module.as_ref(),
             "tone_reduce_histogram",
-            bgl_tone_reduce,
-            bg_tone_reduce.clone(),
+            &layouts.bgl_tone_reduce,
+            groups.bg_tone_reduce.clone(),
             single_workgroup,
         ),
     ]);
@@ -376,173 +288,105 @@ pub(in crate::pipeline::gpu) fn assemble_passes(
 
     passes.extend([
         assembler.make_pass(
-            scene_adjustments_module.as_ref(),
+            shaders.scene_adjustments_module.as_ref(),
             "prepare_scene_node",
-            bgl_adjust_prepare,
-            bg_adjust_prepare.clone(),
+            &layouts.bgl_adjust_prepare,
+            groups.bg_adjust_prepare.clone(),
             image_workgroups,
         ),
         assembler.make_pass(
-            scene_adjustments_module.as_ref(),
+            shaders.scene_adjustments_module.as_ref(),
             "apply_scene_tone_node",
-            bgl_adjust_tone,
-            bg_adjust_tone.clone(),
+            &layouts.bgl_adjust_tone,
+            groups.bg_adjust_tone.clone(),
             image_workgroups,
         ),
         assembler.make_pass(
-            scene_adjustments_module.as_ref(),
+            shaders.scene_adjustments_module.as_ref(),
             "apply_local_scene_tone_node",
-            bgl_adjust_tone,
-            bg_adjust_local_tone.clone(),
+            &layouts.bgl_adjust_tone,
+            groups.bg_adjust_local_tone.clone(),
             image_workgroups,
         ),
         assembler.make_pass(
-            creative_effects_module.as_ref(),
+            shaders.creative_effects_module.as_ref(),
             "apply_scene_effects_node",
-            bgl_adjust_effects,
-            bg_adjust_effects.clone(),
+            &layouts.bgl_adjust_effects,
+            groups.bg_adjust_effects.clone(),
             image_workgroups,
         ),
         assembler.make_pass(
-            creative_effects_module.as_ref(),
+            shaders.creative_effects_module.as_ref(),
             "copy_scene_effects_node",
-            bgl_adjust_effects,
-            bg_adjust_effects_copy.clone(),
+            &layouts.bgl_adjust_effects,
+            groups.bg_adjust_effects_copy.clone(),
             image_workgroups,
         ),
-        assembler.make_pass(
-            creative_effects_module.as_ref(),
-            "diffuse_mask_blur_0",
-            bgl_mask_blur,
-            bg_mask_blur_0.clone(),
+    ]);
+    for (step, bind_group) in groups.bg_mask_blur.iter().enumerate() {
+        passes.push(assembler.make_pass(
+            shaders.creative_effects_module.as_ref(),
+            &format!("diffuse_mask_blur_{step}"),
+            &layouts.bgl_mask_blur,
+            bind_group.clone(),
             image_workgroups,
-        ),
-        assembler.make_pass(
-            creative_effects_module.as_ref(),
-            "diffuse_mask_blur_1",
-            bgl_mask_blur,
-            bg_mask_blur_1.clone(),
+        ));
+    }
+    passes.push(assembler.make_pass(
+        shaders.creative_effects_module.as_ref(),
+        "prepare_glow_source",
+        &layouts.bgl_glow_prepare,
+        groups.bg_glow_prepare.clone(),
+        image_workgroups,
+    ));
+    for (step, bind_group) in groups.bg_glow_blur.iter().enumerate() {
+        passes.push(assembler.make_pass(
+            shaders.creative_effects_module.as_ref(),
+            &format!("diffuse_glow_{step}"),
+            &layouts.bgl_glow_blur,
+            bind_group.clone(),
             image_workgroups,
-        ),
+        ));
+    }
+    passes.extend([
         assembler.make_pass(
-            creative_effects_module.as_ref(),
-            "diffuse_mask_blur_2",
-            bgl_mask_blur,
-            bg_mask_blur_2.clone(),
-            image_workgroups,
-        ),
-        assembler.make_pass(
-            creative_effects_module.as_ref(),
-            "diffuse_mask_blur_3",
-            bgl_mask_blur,
-            bg_mask_blur_3.clone(),
-            image_workgroups,
-        ),
-        assembler.make_pass(
-            creative_effects_module.as_ref(),
-            "diffuse_mask_blur_4",
-            bgl_mask_blur,
-            bg_mask_blur_4.clone(),
-            image_workgroups,
-        ),
-        assembler.make_pass(
-            creative_effects_module.as_ref(),
-            "prepare_glow_source",
-            bgl_glow_prepare,
-            bg_glow_prepare.clone(),
-            image_workgroups,
-        ),
-        assembler.make_pass(
-            creative_effects_module.as_ref(),
-            "diffuse_glow_0",
-            bgl_glow_blur,
-            bg_glow_blur_0.clone(),
-            image_workgroups,
-        ),
-        assembler.make_pass(
-            creative_effects_module.as_ref(),
-            "diffuse_glow_1",
-            bgl_glow_blur,
-            bg_glow_blur_1.clone(),
-            image_workgroups,
-        ),
-        assembler.make_pass(
-            creative_effects_module.as_ref(),
-            "diffuse_glow_2",
-            bgl_glow_blur,
-            bg_glow_blur_2.clone(),
-            image_workgroups,
-        ),
-        assembler.make_pass(
-            creative_effects_module.as_ref(),
-            "diffuse_glow_3",
-            bgl_glow_blur,
-            bg_glow_blur_3.clone(),
-            image_workgroups,
-        ),
-        assembler.make_pass(
-            creative_effects_module.as_ref(),
-            "diffuse_glow_4",
-            bgl_glow_blur,
-            bg_glow_blur_4.clone(),
-            image_workgroups,
-        ),
-        assembler.make_pass(
-            creative_effects_module.as_ref(),
+            shaders.creative_effects_module.as_ref(),
             "apply_creative_effects",
-            bgl_adjust_creative,
-            bg_adjust_creative.clone(),
+            &layouts.bgl_adjust_creative,
+            groups.bg_adjust_creative.clone(),
             image_workgroups,
         ),
         assembler.make_pass(
-            view_transform_module.as_ref(),
+            shaders.view_transform_module.as_ref(),
             "apply_view_node",
-            bgl_adjust_render,
-            bg_adjust_render.clone(),
+            &layouts.bgl_adjust_render,
+            groups.bg_adjust_render.clone(),
             image_workgroups,
         ),
     ]);
 
-    let post_blur_glow_passes = vec![
-        Pass {
-            pipeline: passes[glow_prepare_pass_index].pipeline.clone(),
-            bind_group: bg_glow_prepare_after_blur.clone(),
+    // The post-blur variants reuse the programs above with bind groups that
+    // read the mask-blurred scene.
+    let mut post_blur_glow_passes = vec![Pass {
+        pipeline: passes[glow_prepare_pass_index].pipeline.clone(),
+        bind_group: groups.bg_glow_prepare_after_blur.clone(),
+        workgroups: image_workgroups,
+    }];
+    post_blur_glow_passes.extend(groups.bg_glow_blur_after_blur.iter().enumerate().map(
+        |(step, bind_group)| Pass {
+            pipeline: passes[glow_blur_start_index + step].pipeline.clone(),
+            bind_group: bind_group.clone(),
             workgroups: image_workgroups,
         },
-        Pass {
-            pipeline: passes[glow_blur_start_index].pipeline.clone(),
-            bind_group: bg_glow_blur_after_blur_0.clone(),
-            workgroups: image_workgroups,
-        },
-        Pass {
-            pipeline: passes[glow_blur_start_index + 1].pipeline.clone(),
-            bind_group: bg_glow_blur_after_blur_1.clone(),
-            workgroups: image_workgroups,
-        },
-        Pass {
-            pipeline: passes[glow_blur_start_index + 2].pipeline.clone(),
-            bind_group: bg_glow_blur_after_blur_2.clone(),
-            workgroups: image_workgroups,
-        },
-        Pass {
-            pipeline: passes[glow_blur_start_index + 3].pipeline.clone(),
-            bind_group: bg_glow_blur_after_blur_3.clone(),
-            workgroups: image_workgroups,
-        },
-        Pass {
-            pipeline: passes[glow_blur_start_index + 4].pipeline.clone(),
-            bind_group: bg_glow_blur_after_blur_4.clone(),
-            workgroups: image_workgroups,
-        },
-    ];
+    ));
     let post_blur_creative_pass = Pass {
         pipeline: passes[adjustment_creative_pass_index].pipeline.clone(),
-        bind_group: bg_adjust_creative_after_blur.clone(),
+        bind_group: groups.bg_adjust_creative_after_blur.clone(),
         workgroups: image_workgroups,
     };
     let post_blur_render_pass = Pass {
         pipeline: passes[adjustment_render_pass_index].pipeline.clone(),
-        bind_group: bg_adjust_render_after_blur.clone(),
+        bind_group: groups.bg_adjust_render_after_blur.clone(),
         workgroups: image_workgroups,
     };
 

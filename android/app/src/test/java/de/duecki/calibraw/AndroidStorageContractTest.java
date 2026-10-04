@@ -184,6 +184,15 @@ public final class AndroidStorageContractTest {
     }
 
     @Test
+    public void tiffExportsKeepTheirMimeTypeAndExtension() {
+        assertEquals("image/tiff", AndroidStorageContract.normalizeExportMimeType("IMAGE/TIFF"));
+        assertEquals("edit.tif", AndroidStorageContract.safeImageName("edit.tif", "image/tiff"));
+        assertEquals("edit.TIFF", AndroidStorageContract.safeImageName("edit.TIFF", "image/tiff"));
+        assertEquals("edit.tif", AndroidStorageContract.safeImageName("edit", "image/tiff"));
+        assertEquals("CalibRaw-export.tif", AndroidStorageContract.safeImageName(null, "image/tiff"));
+    }
+
+    @Test
     public void thumbnailTrimEnforcesThePersistentCacheByteBudget() throws Exception {
         File directory = temporaryFolder.newFolder("thumbnail-cache");
         File oldest = new File(directory, "oldest.raw.jpg");

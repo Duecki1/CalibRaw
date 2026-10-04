@@ -9,43 +9,15 @@ impl RawGpuPipeline {
         layer: usize,
         values: &[u16],
     ) -> Result<()> {
-        if layer >= self.mask_layer_capacity {
-            return Err(anyhow!(
-                "local-mask layer {layer} exceeds atlas capacity {}",
-                self.mask_layer_capacity
-            ));
-        }
-        let expected = self.mask_atlas_edge as usize * self.mask_atlas_edge as usize;
-        if values.len() != expected {
-            return Err(anyhow!(
-                "local-mask layer has {} samples, expected {expected}",
-                values.len()
-            ));
-        }
-        queue.write_texture(
-            wgpu::TexelCopyTextureInfo {
-                texture: &self.mask_texture,
-                mip_level: 0,
-                origin: wgpu::Origin3d {
-                    x: 0,
-                    y: 0,
-                    z: layer as u32,
-                },
-                aspect: wgpu::TextureAspect::All,
-            },
-            bytemuck::cast_slice(values),
-            wgpu::TexelCopyBufferLayout {
-                offset: 0,
-                bytes_per_row: Some(self.mask_atlas_edge * 2),
-                rows_per_image: Some(self.mask_atlas_edge),
-            },
-            wgpu::Extent3d {
-                width: self.mask_atlas_edge,
-                height: self.mask_atlas_edge,
-                depth_or_array_layers: 1,
-            },
-        );
-        Ok(())
+        self.check_mask_layer(layer, "local-mask")?;
+        write_r16_mask_layer(
+            queue,
+            &self.mask_texture,
+            layer,
+            [self.mask_atlas_edge, self.mask_atlas_edge],
+            values,
+            "local-mask layer",
+        )
     }
 
     pub fn update_mask_layer_region(
@@ -56,12 +28,7 @@ impl RawGpuPipeline {
         height: u32,
         values: &[u16],
     ) -> Result<()> {
-        if layer >= self.mask_layer_capacity {
-            return Err(anyhow!(
-                "local-mask layer {layer} exceeds atlas capacity {}",
-                self.mask_layer_capacity
-            ));
-        }
+        self.check_mask_layer(layer, "local-mask")?;
         if width == 0
             || height == 0
             || width > self.mask_atlas_edge
@@ -73,37 +40,14 @@ impl RawGpuPipeline {
                 self.mask_atlas_edge
             ));
         }
-        let expected = width as usize * height as usize;
-        if values.len() != expected {
-            return Err(anyhow!(
-                "local-mask region has {} samples, expected {expected}",
-                values.len()
-            ));
-        }
-        queue.write_texture(
-            wgpu::TexelCopyTextureInfo {
-                texture: &self.mask_texture,
-                mip_level: 0,
-                origin: wgpu::Origin3d {
-                    x: 0,
-                    y: 0,
-                    z: layer as u32,
-                },
-                aspect: wgpu::TextureAspect::All,
-            },
-            bytemuck::cast_slice(values),
-            wgpu::TexelCopyBufferLayout {
-                offset: 0,
-                bytes_per_row: Some(width * 2),
-                rows_per_image: Some(height),
-            },
-            wgpu::Extent3d {
-                width,
-                height,
-                depth_or_array_layers: 1,
-            },
-        );
-        Ok(())
+        write_r16_mask_layer(
+            queue,
+            &self.mask_texture,
+            layer,
+            [width, height],
+            values,
+            "local-mask region",
+        )
     }
 
     pub(crate) fn update_light_rays_mask_layer(
@@ -112,43 +56,27 @@ impl RawGpuPipeline {
         layer: usize,
         values: &[u16],
     ) -> Result<()> {
+        self.check_mask_layer(layer, "Light Rays mask")?;
+        let edge = LIGHT_RAYS_MASK_ATLAS_EDGE;
+        write_r16_mask_layer(
+            queue,
+            &self.light_rays_mask_texture,
+            layer,
+            [edge, edge],
+            values,
+            "Light Rays mask layer",
+        )
+    }
+
+    /// Rejects array layers past the mask atlas capacity; `kind` names the atlas
+    /// in the error.
+    fn check_mask_layer(&self, layer: usize, kind: &str) -> Result<()> {
         if layer >= self.mask_layer_capacity {
             return Err(anyhow!(
-                "Light Rays mask layer {layer} exceeds atlas capacity {}",
+                "{kind} layer {layer} exceeds atlas capacity {}",
                 self.mask_layer_capacity
             ));
         }
-        let edge = LIGHT_RAYS_MASK_ATLAS_EDGE;
-        let expected = edge as usize * edge as usize;
-        if values.len() != expected {
-            return Err(anyhow!(
-                "Light Rays mask layer has {} samples, expected {expected}",
-                values.len()
-            ));
-        }
-        queue.write_texture(
-            wgpu::TexelCopyTextureInfo {
-                texture: &self.light_rays_mask_texture,
-                mip_level: 0,
-                origin: wgpu::Origin3d {
-                    x: 0,
-                    y: 0,
-                    z: layer as u32,
-                },
-                aspect: wgpu::TextureAspect::All,
-            },
-            bytemuck::cast_slice(values),
-            wgpu::TexelCopyBufferLayout {
-                offset: 0,
-                bytes_per_row: Some(edge * 2),
-                rows_per_image: Some(edge),
-            },
-            wgpu::Extent3d {
-                width: edge,
-                height: edge,
-                depth_or_array_layers: 1,
-            },
-        );
         Ok(())
     }
 
@@ -202,4 +130,47 @@ impl RawGpuPipeline {
         }
         Ok(())
     }
+}
+
+/// Writes `width`x`height` R16 samples (row-major, one `u16` per texel) to the
+/// top-left corner of array layer `layer`. `name` labels the sample-count error.
+fn write_r16_mask_layer(
+    queue: &wgpu::Queue,
+    texture: &wgpu::Texture,
+    layer: usize,
+    [width, height]: [u32; 2],
+    values: &[u16],
+    name: &str,
+) -> Result<()> {
+    let expected = width as usize * height as usize;
+    if values.len() != expected {
+        return Err(anyhow!(
+            "{name} has {} samples, expected {expected}",
+            values.len()
+        ));
+    }
+    queue.write_texture(
+        wgpu::TexelCopyTextureInfo {
+            texture,
+            mip_level: 0,
+            origin: wgpu::Origin3d {
+                x: 0,
+                y: 0,
+                z: layer as u32,
+            },
+            aspect: wgpu::TextureAspect::All,
+        },
+        bytemuck::cast_slice(values),
+        wgpu::TexelCopyBufferLayout {
+            offset: 0,
+            bytes_per_row: Some(width * 2),
+            rows_per_image: Some(height),
+        },
+        wgpu::Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+        },
+    );
+    Ok(())
 }

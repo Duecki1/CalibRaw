@@ -273,25 +273,6 @@ pub fn save_jpeg(path: &Path, thumbnail: &RawThumbnail) -> Result<(), String> {
     })
 }
 
-#[cfg(target_os = "android")]
-pub fn fingerprint_file(path: &Path, maximum_bytes: u64) -> Result<u64, String> {
-    let metadata = fs::metadata(path)
-        .map_err(|error| format!("could not inspect {}: {error}", path.display()))?;
-    if !metadata.is_file() {
-        return Err(format!("{} is not a regular file", path.display()));
-    }
-    if metadata.len() > maximum_bytes {
-        return Err(format!(
-            "{} is {} bytes; the fingerprint limit is {maximum_bytes}",
-            path.display(),
-            metadata.len()
-        ));
-    }
-    let bytes =
-        fs::read(path).map_err(|error| format!("could not read {}: {error}", path.display()))?;
-    Ok(fnv1a64(&bytes))
-}
-
 pub fn fnv1a64(bytes: &[u8]) -> u64 {
     let mut hash = 0xcbf29ce484222325u64;
     for byte in bytes {

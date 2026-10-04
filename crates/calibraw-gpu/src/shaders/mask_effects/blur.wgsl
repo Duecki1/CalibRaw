@@ -37,8 +37,8 @@ fn mask_blur_diffused_at(pos: vec2<i32>, stage: u32) -> vec3<f32> {
     var total_weight = 0.0;
     for (var y = -2; y <= 2; y = y + 1) {
         for (var x = -2; x <= 2; x = x + 1) {
-            let weight = SceneAdjustments::atrous_kernel_weight(x)
-                * SceneAdjustments::atrous_kernel_weight(y);
+            let weight = Common::binomial5_weight(x)
+                * Common::binomial5_weight(y);
             sum = sum + SceneAdjustments::local_effects_at(
                 pos + vec2<i32>(x * step, y * step),
             ) * weight;

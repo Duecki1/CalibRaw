@@ -73,11 +73,7 @@ fn sample_remove_patch_scene(patch: &RemovePatch, x: f32, y: f32) -> [f32; 3] {
     let ty = y - y0 as f32;
     let decode = |index: usize| {
         if patch.rgb_scene16f.len() == width * height * 3 {
-            [
-                half::f16::from_bits(patch.rgb_scene16f[index * 3]).to_f32(),
-                half::f16::from_bits(patch.rgb_scene16f[index * 3 + 1]).to_f32(),
-                half::f16::from_bits(patch.rgb_scene16f[index * 3 + 2]).to_f32(),
-            ]
+            decode_f16_rgb(&patch.rgb_scene16f, index)
         } else {
             [0.0; 3]
         }
@@ -174,6 +170,23 @@ impl RawGpuPipeline {
                     height: output_height,
                     depth_or_array_layers: 1,
                 };
+                let write_patch = |data: &[u8], bytes_per_texel: u32| {
+                    queue.write_texture(
+                        wgpu::TexelCopyTextureInfo {
+                            texture: &self._tex1,
+                            mip_level: 0,
+                            origin: upload_origin,
+                            aspect: wgpu::TextureAspect::All,
+                        },
+                        data,
+                        wgpu::TexelCopyBufferLayout {
+                            offset: 0,
+                            bytes_per_row: Some(output_width * bytes_per_texel),
+                            rows_per_image: Some(output_height),
+                        },
+                        upload_extent,
+                    );
+                };
                 match self.scene_format {
                     wgpu::TextureFormat::Rgba16Float => {
                         let mut rgba = Vec::<u16>::with_capacity(
@@ -190,21 +203,7 @@ impl RawGpuPipeline {
                                 }
                             }
                         }
-                        queue.write_texture(
-                            wgpu::TexelCopyTextureInfo {
-                                texture: &self._tex1,
-                                mip_level: 0,
-                                origin: upload_origin,
-                                aspect: wgpu::TextureAspect::All,
-                            },
-                            bytemuck::cast_slice(&rgba),
-                            wgpu::TexelCopyBufferLayout {
-                                offset: 0,
-                                bytes_per_row: Some(output_width * 8),
-                                rows_per_image: Some(output_height),
-                            },
-                            upload_extent,
-                        );
+                        write_patch(bytemuck::cast_slice(&rgba), 8);
                     }
                     wgpu::TextureFormat::Rgba32Float => {
                         let mut rgba = Vec::<f32>::with_capacity(
@@ -215,21 +214,7 @@ impl RawGpuPipeline {
                                 rgba.extend(sample(x, y));
                             }
                         }
-                        queue.write_texture(
-                            wgpu::TexelCopyTextureInfo {
-                                texture: &self._tex1,
-                                mip_level: 0,
-                                origin: upload_origin,
-                                aspect: wgpu::TextureAspect::All,
-                            },
-                            bytemuck::cast_slice(&rgba),
-                            wgpu::TexelCopyBufferLayout {
-                                offset: 0,
-                                bytes_per_row: Some(output_width * 16),
-                                rows_per_image: Some(output_height),
-                            },
-                            upload_extent,
-                        );
+                        write_patch(bytemuck::cast_slice(&rgba), 16);
                     }
                     format => {
                         return Err(anyhow!("unsupported Remove scene format {format:?}"));

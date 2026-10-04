@@ -168,10 +168,13 @@ pub(super) fn pack_scene_tone_params(ctx: &GpuParamContext<'_>) -> SceneToneUnif
             && mask.effect.uses_adjustments()
             && mask.adjustments.point_color_visualize.is_some()
     })) << 1);
-    let tone_curve = pack_point_curve(&exposure.tone_curve);
-    let tone_curve_red = pack_point_curve(&exposure.tone_curve_red);
-    let tone_curve_green = pack_point_curve(&exposure.tone_curve_green);
-    let tone_curve_blue = pack_point_curve(&exposure.tone_curve_blue);
+    let tone_curves = [
+        &exposure.tone_curve,
+        &exposure.tone_curve_red,
+        &exposure.tone_curve_green,
+        &exposure.tone_curve_blue,
+    ]
+    .map(pack_local_point_curve);
     let mut point_colors = [PackedPointColor::zeroed(); MAX_POINT_COLORS];
     for (destination, point) in point_colors.iter_mut().zip(exposure.point_colors.iter()) {
         *destination = pack_point_color(*point);
@@ -200,42 +203,7 @@ pub(super) fn pack_scene_tone_params(ctx: &GpuParamContext<'_>) -> SceneToneUnif
             sigmoid.hue_preservation,
             sigmoid.color_processing,
         ],
-        tone_curve_0: tone_curve.pairs[0],
-        tone_curve_1: tone_curve.pairs[1],
-        tone_curve_2: tone_curve.pairs[2],
-        tone_curve_3: tone_curve.pairs[3],
-        tone_curve_4: tone_curve.pairs[4],
-        tone_curve_5: tone_curve.pairs[5],
-        tone_curve_6: tone_curve.pairs[6],
-        tone_curve_7: tone_curve.pairs[7],
-        tone_curve_meta: tone_curve.meta,
-        tone_curve_red_0: tone_curve_red.pairs[0],
-        tone_curve_red_1: tone_curve_red.pairs[1],
-        tone_curve_red_2: tone_curve_red.pairs[2],
-        tone_curve_red_3: tone_curve_red.pairs[3],
-        tone_curve_red_4: tone_curve_red.pairs[4],
-        tone_curve_red_5: tone_curve_red.pairs[5],
-        tone_curve_red_6: tone_curve_red.pairs[6],
-        tone_curve_red_7: tone_curve_red.pairs[7],
-        tone_curve_red_meta: tone_curve_red.meta,
-        tone_curve_green_0: tone_curve_green.pairs[0],
-        tone_curve_green_1: tone_curve_green.pairs[1],
-        tone_curve_green_2: tone_curve_green.pairs[2],
-        tone_curve_green_3: tone_curve_green.pairs[3],
-        tone_curve_green_4: tone_curve_green.pairs[4],
-        tone_curve_green_5: tone_curve_green.pairs[5],
-        tone_curve_green_6: tone_curve_green.pairs[6],
-        tone_curve_green_7: tone_curve_green.pairs[7],
-        tone_curve_green_meta: tone_curve_green.meta,
-        tone_curve_blue_0: tone_curve_blue.pairs[0],
-        tone_curve_blue_1: tone_curve_blue.pairs[1],
-        tone_curve_blue_2: tone_curve_blue.pairs[2],
-        tone_curve_blue_3: tone_curve_blue.pairs[3],
-        tone_curve_blue_4: tone_curve_blue.pairs[4],
-        tone_curve_blue_5: tone_curve_blue.pairs[5],
-        tone_curve_blue_6: tone_curve_blue.pairs[6],
-        tone_curve_blue_7: tone_curve_blue.pairs[7],
-        tone_curve_blue_meta: tone_curve_blue.meta,
+        tone_curves,
         hsl_hue_0,
         hsl_hue_1,
         hsl_saturation_0,

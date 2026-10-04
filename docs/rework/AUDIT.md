@@ -27,10 +27,29 @@ accepted with the listed evidence.
 | 17 | Hand-written stale checks `operation.document_id != generation` | AI denoise, object and generated masks | cancellation is still reported separately | `ForegroundOperation::is_for_document`; `sidecar_generation` renamed `document_generation` | existing stale-result tests |
 | 18 | Rust toolchain version repeated in three workflow `toolchain:` inputs, four cache keys and two `rustup-init` calls | CI, macOS, Windows, Linux/Android workflows; `scripts/build_linux_release.sh` | — | all read `rust-toolchain.toml` (step output, `hashFiles`, `sed`) | YAML parses, script `bash -n`, command output checked locally; needs a real CI run |
 | 19 | Java stream-copy loops beside `BoundedStreams.copy` | profile import, Lensfun asset copy | profile import keeps its per-file and per-tree limit messages | `BoundedStreams.copy` | 3 new JVM tests |
+| 20 | Global tone curves as 36 `vec4` uniform fields, a 64-case WGSL switch, and a second Hermite/tangent evaluator for mask curves | global and local point curves | global curve keeps its `first.x > 0` zero-slope guard; local curves keep their extrapolation | `tone_curves: array<array<vec4<f32>, 9>, 4>` (same bytes); shared `tone_curve_secant`/`interior_tangent`/`hermite` | golden hashes identical (see below); `layout_contract_tests` |
+| 21 | Chromatic-aberration warp (3 shaders) and scene-source sampling (tone analysis, scene adjustments) | tone analysis, scene adjustments, CA finish | — | `Common::ca_warped_pos`; composable `scene_source.wgsl` declaring binding 11 | golden hashes; Naga validation at both qualities |
+| 22 | Bayer/X-Trans finish helpers (dual-demosaic confidence, Scharr detail, YUV→RGB), four 1-4-6-4-1 kernel weights, three hash finalizers, two circular hue distances | `pass4`, `xtrans_finish`, scene adjustments, creative effects, blur, colour denoise, atmosphere, light rays, view transform | `bayer_uv` (`dot`) and `xt_uv` (explicit sum) stay separate to keep FMA rounding; false-colour strengths unchanged | shared functions in `noise_ca_finish`, `Common::binomial5_weight`, `mask_effect_hash_unit`, `Color::circular_hue_distance` | golden hashes |
+| 23 | 15 blur/glow bind-group fields and passes written out per step; destructure lists repeating struct fields | pipeline builder | labels and entry-point names unchanged | `[wgpu::BindGroup; 5]` arrays and loops | golden hashes; 0/132 screenshot diffs |
+| 24 | Readback padding/copy/map, R16 mask-layer upload (3 copies), RGBA16F/32F row upload, crop-job checks (3 copies) | readback, mask layers, resources, Remove scene, export crops | `update_mask_layer` keeps its own error text | private helpers | golden hashes; export byte-identical |
+| 25 | `LoadedRaw` rebuilt field by field for crops, proxies, tiles, lens-corrected mosaics and AI-denoise tiles (5 copies) | core processing, Lensfun, AI denoise | per-site noise profile, lens geometry, AI-denoise slot and opposed-chroma reference source | `LoadedRaw::derive_with` | `raw_open_bench` fingerprint; core tests |
+| 26 | Brush-dab footprint loop (4 copies), grouped max coverage (2), Lensfun coordinate/vignette batches, three base64 serde modules | brush rasterization, Lensfun correction, sidecar/mask/Remove serialization | `arc_u16_le_base64` is a different format and stays | `for_each_dab_coverage`, `StrokeGroupCoverage`, Lensfun batch helpers, `crate::base64_arc_bytes` | bench checksums identical (brush 7–11% faster); serialized bytes identical |
+| 27 | Dead code: `thumbnail_cache::fingerprint_file`, `save_android_with_review` | none | — | removed | Android `cargo ndk check` |
+
+Rows 20–27 were accepted with a temporary golden-hash harness (Bayer and X-Trans, Preview and High, three demosaic modes, three highlight methods, non-identity global, channel and local curves, CA, every mask effect at partial coverage: 104 hashes identical before and after), the export golden `ed2103ff…`, the `raw_open_bench` fingerprint and 0/132 screenshot differences.
 
 ## Remaining candidates
 
-None; long single-screen view functions are tracked in [COVERAGE.md](COVERAGE.md).
+| Candidate | Callers | Note |
+|---|---|---|
+| Saved document preparation (sidecar → profile → decode → lens → AI denoise → mask source) implemented three times | interactive open, desktop batch export, library thumbnails | the copies already differ (`"."` camera profile, lens selection, AI-denoise restoration); merging changes batch and thumbnail output, so it is a separate behavior change |
+| Mask effects listed in parallel (15 UI files, 15 validators, GPU packing, effect groupings) | sidebar, sidecar validation, GPU params | |
+| Neon and Edge Glow edge detector | mask effect shaders | Neon's pass layout has no binding 24, so sharing needs a layout change |
+| UI chrome: context menu vs selection bar, settings vs onboarding controls, name/confirm/progress dialogs | library, presets, settings, masks | |
+| Views still taking `&mut CalibRawApp` | 129 functions under `ui/` | see [COVERAGE.md](COVERAGE.md) |
+| Java copy-then-fsync (8) and best-effort delete (4); FFI JNI call wrappers | Android storage, export, thumbnails | |
+
+Found while consolidating, behavior unchanged: the global curve's `scene_curve_zero_slope` returns 0 when the first point has `x > 0`; the local (mask) curve has no such guard and extrapolates below the first point although the curve is flat there. This looks accidental; changing it alters mask-curve output and is left for a separate change.
 
 ## Reviewed, no change
 

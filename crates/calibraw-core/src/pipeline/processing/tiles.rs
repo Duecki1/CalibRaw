@@ -239,47 +239,23 @@ pub fn extract_padded_tile(raw: &LoadedRaw, tile: ExportTile) -> LoadedRaw {
     if raw.is_pre_demosaiced_raster() {
         return extract_padded_raster_tile(raw, tile);
     }
-    let mut tile_raw = LoadedRaw {
-        width: tile.padded_width,
-        height: tile.padded_height,
-        camera_make: raw.camera_make.clone(),
-        camera_model: raw.camera_model.clone(),
-        lens_make: raw.lens_make.clone(),
-        lens_model: raw.lens_model.clone(),
-        focal_length: raw.focal_length,
-        aperture: raw.aperture,
-        focus_distance: raw.focus_distance,
-        capture_metadata: raw.capture_metadata.clone(),
-        cfa_kind: raw.cfa_kind,
-        raw_pixels: Vec::new(),
-        scene_linear_raster: None,
-        color_indices: raw.color_indices.subregion_clamped(
+    let mut tile_raw = raw.derive_with(
+        tile.padded_width,
+        tile.padded_height,
+        Vec::new(),
+        raw.color_indices.subregion_clamped(
             i64::from(tile.global_origin_x),
             i64::from(tile.global_origin_y),
             tile.padded_width,
             tile.padded_height,
         ),
-        wb_coeffs: raw.wb_coeffs,
-        cam_to_srgb: raw.cam_to_srgb,
-        black_levels: raw.black_levels,
-        black_levels_per_pixel: raw.black_levels_per_pixel.subregion_clamped(
+        raw.black_levels_per_pixel.subregion_clamped(
             i64::from(tile.global_origin_x),
             i64::from(tile.global_origin_y),
             tile.padded_width,
             tile.padded_height,
         ),
-        white_levels: raw.white_levels,
-        noise_profile: raw.noise_profile,
-        camera_profile: raw.camera_profile.clone(),
-        camera_profile_source: raw.camera_profile_source.clone(),
-        available_camera_profiles: raw.available_camera_profiles.clone(),
-        white_balance_model: raw.white_balance_model.clone(),
-        lens_geometry: None,
-        ai_denoised: std::sync::Arc::new(std::sync::RwLock::new(None)),
-        opposed_chroma_cache: std::sync::Arc::clone(&raw.opposed_chroma_cache),
-        opposed_chroma_source_identity: std::sync::Arc::clone(&raw.opposed_chroma_source_identity),
-        opposed_chroma_reference_source: false,
-    };
+    );
     fill_padded_tile(raw, tile, &mut tile_raw);
     tile_raw
 }

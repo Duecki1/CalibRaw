@@ -63,6 +63,7 @@ pub(super) const NOISE: ShaderSource = wgsl!("noise.wgsl");
 pub(super) const RAW_SAMPLING: ShaderSource = wgsl!("raw_sampling.wgsl");
 pub(super) const PROFILE: ShaderSource = wgsl!("profile.wgsl");
 pub(super) const BASIC_ADJUSTMENTS: ShaderSource = wgsl!("basic_adjustments.wgsl");
+pub(super) const SCENE_SOURCE: ShaderSource = wgsl!("scene_source.wgsl");
 pub(super) const TONE_COMMON: ShaderSource = wgsl!("tone_common.wgsl");
 pub(super) const TONEMAP: ShaderSource = wgsl!("tonemap.wgsl");
 pub(super) const NOISE_CA_FINISH: ShaderSource = wgsl!("noise_ca_finish.wgsl");
@@ -158,7 +159,7 @@ const fn xtrans_module(source: ShaderSource) -> ComposableModule {
 
 /// Composable modules in registration order: a module may only import
 /// modules listed before it.
-pub(super) const COMPOSABLE_MODULES: [ComposableModule; 21] = [
+pub(super) const COMPOSABLE_MODULES: [ComposableModule; 22] = [
     module(COMMON),
     module(COLOR),
     module(NOISE),
@@ -172,6 +173,7 @@ pub(super) const COMPOSABLE_MODULES: [ComposableModule; 21] = [
     xtrans_module(XTRANS_MARKESTEIJN_ACCUMULATE),
     module(PROFILE),
     module(BASIC_ADJUSTMENTS),
+    module(SCENE_SOURCE),
     module(TONE_COMMON),
     module(TONEMAP),
     module(NOISE_CA_FINISH),

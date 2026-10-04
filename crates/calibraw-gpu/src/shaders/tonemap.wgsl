@@ -236,103 +236,59 @@ fn apply_mask_contrast_value(rgb: vec3<f32>, value: f32) -> vec3<f32> {
     return rgb * clamp(adjusted_luminance / luminance, 0.0, 64.0);
 }
 
+// `curve` selects master (0), red (1), green (2) or blue (3); callers pass
+// constants. Point indices stay below the clamped count of at most 16.
+fn tone_curve_block(curve: u32, block: u32) -> vec4<f32> {
+    return Common::scene_tone_uniforms.tone_curves[curve][block];
+}
+
 fn tone_curve_point(curve: u32, index: u32) -> vec2<f32> {
-    if curve == 1u {
-        switch index {
-            case 0u: { return Common::scene_tone_uniforms.tone_curve_red_0_field.xy; }
-            case 1u: { return Common::scene_tone_uniforms.tone_curve_red_0_field.zw; }
-            case 2u: { return Common::scene_tone_uniforms.tone_curve_red_1_field.xy; }
-            case 3u: { return Common::scene_tone_uniforms.tone_curve_red_1_field.zw; }
-            case 4u: { return Common::scene_tone_uniforms.tone_curve_red_2_field.xy; }
-            case 5u: { return Common::scene_tone_uniforms.tone_curve_red_2_field.zw; }
-            case 6u: { return Common::scene_tone_uniforms.tone_curve_red_3_field.xy; }
-            case 7u: { return Common::scene_tone_uniforms.tone_curve_red_3_field.zw; }
-            case 8u: { return Common::scene_tone_uniforms.tone_curve_red_4_field.xy; }
-            case 9u: { return Common::scene_tone_uniforms.tone_curve_red_4_field.zw; }
-            case 10u: { return Common::scene_tone_uniforms.tone_curve_red_5_field.xy; }
-            case 11u: { return Common::scene_tone_uniforms.tone_curve_red_5_field.zw; }
-            case 12u: { return Common::scene_tone_uniforms.tone_curve_red_6_field.xy; }
-            case 13u: { return Common::scene_tone_uniforms.tone_curve_red_6_field.zw; }
-            case 14u: { return Common::scene_tone_uniforms.tone_curve_red_7_field.xy; }
-            default: { return Common::scene_tone_uniforms.tone_curve_red_7_field.zw; }
-        }
-    }
-    if curve == 2u {
-        switch index {
-            case 0u: { return Common::scene_tone_uniforms.tone_curve_green_0_field.xy; }
-            case 1u: { return Common::scene_tone_uniforms.tone_curve_green_0_field.zw; }
-            case 2u: { return Common::scene_tone_uniforms.tone_curve_green_1_field.xy; }
-            case 3u: { return Common::scene_tone_uniforms.tone_curve_green_1_field.zw; }
-            case 4u: { return Common::scene_tone_uniforms.tone_curve_green_2_field.xy; }
-            case 5u: { return Common::scene_tone_uniforms.tone_curve_green_2_field.zw; }
-            case 6u: { return Common::scene_tone_uniforms.tone_curve_green_3_field.xy; }
-            case 7u: { return Common::scene_tone_uniforms.tone_curve_green_3_field.zw; }
-            case 8u: { return Common::scene_tone_uniforms.tone_curve_green_4_field.xy; }
-            case 9u: { return Common::scene_tone_uniforms.tone_curve_green_4_field.zw; }
-            case 10u: { return Common::scene_tone_uniforms.tone_curve_green_5_field.xy; }
-            case 11u: { return Common::scene_tone_uniforms.tone_curve_green_5_field.zw; }
-            case 12u: { return Common::scene_tone_uniforms.tone_curve_green_6_field.xy; }
-            case 13u: { return Common::scene_tone_uniforms.tone_curve_green_6_field.zw; }
-            case 14u: { return Common::scene_tone_uniforms.tone_curve_green_7_field.xy; }
-            default: { return Common::scene_tone_uniforms.tone_curve_green_7_field.zw; }
-        }
-    }
-    if curve == 3u {
-        switch index {
-            case 0u: { return Common::scene_tone_uniforms.tone_curve_blue_0_field.xy; }
-            case 1u: { return Common::scene_tone_uniforms.tone_curve_blue_0_field.zw; }
-            case 2u: { return Common::scene_tone_uniforms.tone_curve_blue_1_field.xy; }
-            case 3u: { return Common::scene_tone_uniforms.tone_curve_blue_1_field.zw; }
-            case 4u: { return Common::scene_tone_uniforms.tone_curve_blue_2_field.xy; }
-            case 5u: { return Common::scene_tone_uniforms.tone_curve_blue_2_field.zw; }
-            case 6u: { return Common::scene_tone_uniforms.tone_curve_blue_3_field.xy; }
-            case 7u: { return Common::scene_tone_uniforms.tone_curve_blue_3_field.zw; }
-            case 8u: { return Common::scene_tone_uniforms.tone_curve_blue_4_field.xy; }
-            case 9u: { return Common::scene_tone_uniforms.tone_curve_blue_4_field.zw; }
-            case 10u: { return Common::scene_tone_uniforms.tone_curve_blue_5_field.xy; }
-            case 11u: { return Common::scene_tone_uniforms.tone_curve_blue_5_field.zw; }
-            case 12u: { return Common::scene_tone_uniforms.tone_curve_blue_6_field.xy; }
-            case 13u: { return Common::scene_tone_uniforms.tone_curve_blue_6_field.zw; }
-            case 14u: { return Common::scene_tone_uniforms.tone_curve_blue_7_field.xy; }
-            default: { return Common::scene_tone_uniforms.tone_curve_blue_7_field.zw; }
-        }
-    }
-    switch index {
-        case 0u: { return Common::scene_tone_uniforms.tone_curve_0_field.xy; }
-        case 1u: { return Common::scene_tone_uniforms.tone_curve_0_field.zw; }
-        case 2u: { return Common::scene_tone_uniforms.tone_curve_1_field.xy; }
-        case 3u: { return Common::scene_tone_uniforms.tone_curve_1_field.zw; }
-        case 4u: { return Common::scene_tone_uniforms.tone_curve_2_field.xy; }
-        case 5u: { return Common::scene_tone_uniforms.tone_curve_2_field.zw; }
-        case 6u: { return Common::scene_tone_uniforms.tone_curve_3_field.xy; }
-        case 7u: { return Common::scene_tone_uniforms.tone_curve_3_field.zw; }
-        case 8u: { return Common::scene_tone_uniforms.tone_curve_4_field.xy; }
-        case 9u: { return Common::scene_tone_uniforms.tone_curve_4_field.zw; }
-        case 10u: { return Common::scene_tone_uniforms.tone_curve_5_field.xy; }
-        case 11u: { return Common::scene_tone_uniforms.tone_curve_5_field.zw; }
-        case 12u: { return Common::scene_tone_uniforms.tone_curve_6_field.xy; }
-        case 13u: { return Common::scene_tone_uniforms.tone_curve_6_field.zw; }
-        case 14u: { return Common::scene_tone_uniforms.tone_curve_7_field.xy; }
-        default: { return Common::scene_tone_uniforms.tone_curve_7_field.zw; }
-    }
+    let packed = tone_curve_block(curve, index / 2u);
+    return select(packed.xy, packed.zw, (index & 1u) != 0u);
 }
 
 fn tone_curve_count(curve: u32) -> u32 {
-    if curve == 1u { return u32(clamp(Common::scene_tone_uniforms.tone_curve_red_meta.x, 2.0, 16.0)); }
-    if curve == 2u { return u32(clamp(Common::scene_tone_uniforms.tone_curve_green_meta.x, 2.0, 16.0)); }
-    if curve == 3u { return u32(clamp(Common::scene_tone_uniforms.tone_curve_blue_meta.x, 2.0, 16.0)); }
-    return u32(clamp(Common::scene_tone_uniforms.tone_curve_meta.x, 2.0, 16.0));
+    return u32(clamp(tone_curve_block(curve, 8u).x, 2.0, 16.0));
 }
 
 fn tone_curve_is_identity(curve: u32) -> bool {
-    if curve == 1u { return Common::scene_tone_uniforms.tone_curve_red_meta.y > 0.5; }
-    if curve == 2u { return Common::scene_tone_uniforms.tone_curve_green_meta.y > 0.5; }
-    if curve == 3u { return Common::scene_tone_uniforms.tone_curve_blue_meta.y > 0.5; }
-    return Common::scene_tone_uniforms.tone_curve_meta.y > 0.5;
+    return tone_curve_block(curve, 8u).y > 0.5;
 }
 
+// Monotone cubic Hermite pieces shared by the global curves here and the
+// mask curves in scene_adjustments.wgsl, which only fetch points differently.
 fn tone_curve_secant(a: vec2<f32>, b: vec2<f32>) -> f32 {
     return (b.y - a.y) / max(b.x - a.x, 1e-5);
+}
+
+// Harmonic-mean tangent at an interior point; zero at local extrema.
+fn tone_curve_interior_tangent(previous: f32, next: f32) -> f32 {
+    if previous * next <= 0.0 {
+        return 0.0;
+    }
+    return 2.0 * previous * next / max(abs(previous + next), 1e-6) * sign(previous + next);
+}
+
+// Evaluates segment p0..p1 at `x` from per-unit-x endpoint tangents and
+// clamps the result to the segment's y range.
+fn tone_curve_hermite(
+    x: f32,
+    p0: vec2<f32>,
+    p1: vec2<f32>,
+    tangent0: f32,
+    tangent1: f32,
+) -> f32 {
+    let width = max(p1.x - p0.x, 1e-5);
+    let t = clamp((x - p0.x) / width, 0.0, 1.0);
+    let t2 = t * t;
+    let t3 = t2 * t;
+    let m0 = tangent0 * width;
+    let m1 = tangent1 * width;
+    let hermite = (2.0 * t3 - 3.0 * t2 + 1.0) * p0.y
+        + (t3 - 2.0 * t2 + t) * m0
+        + (-2.0 * t3 + 3.0 * t2) * p1.y
+        + (t3 - t2) * m1;
+    return clamp(hermite, min(p0.y, p1.y), max(p0.y, p1.y));
 }
 
 fn tone_curve_tangent(curve: u32, index: u32, count: u32) -> f32 {
@@ -356,10 +312,7 @@ fn tone_curve_tangent(curve: u32, index: u32, count: u32) -> f32 {
         tone_curve_point(curve, index),
         tone_curve_point(curve, index + 1u),
     );
-    if previous * next <= 0.0 {
-        return 0.0;
-    }
-    return 2.0 * previous * next / max(abs(previous + next), 1e-6) * sign(previous + next);
+    return tone_curve_interior_tangent(previous, next);
 }
 
 fn point_curve_value(curve: u32, input: f32) -> f32 {
@@ -373,19 +326,13 @@ fn point_curve_value(curve: u32, input: f32) -> f32 {
         }
     }
 
-    let p0 = tone_curve_point(curve, segment);
-    let p1 = tone_curve_point(curve, segment + 1u);
-    let width = max(p1.x - p0.x, 1e-5);
-    let t = clamp((x - p0.x) / width, 0.0, 1.0);
-    let t2 = t * t;
-    let t3 = t2 * t;
-    let m0 = tone_curve_tangent(curve, segment, count) * width;
-    let m1 = tone_curve_tangent(curve, segment + 1u, count) * width;
-    let hermite = (2.0 * t3 - 3.0 * t2 + 1.0) * p0.y
-        + (t3 - 2.0 * t2 + t) * m0
-        + (-2.0 * t3 + 3.0 * t2) * p1.y
-        + (t3 - t2) * m1;
-    return clamp(hermite, min(p0.y, p1.y), max(p0.y, p1.y));
+    return tone_curve_hermite(
+        x,
+        tone_curve_point(curve, segment),
+        tone_curve_point(curve, segment + 1u),
+        tone_curve_tangent(curve, segment, count),
+        tone_curve_tangent(curve, segment + 1u, count),
+    );
 }
 
 const SCENE_CURVE_DECODE_MAX: f32 = 32768.0;

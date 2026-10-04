@@ -61,43 +61,113 @@ pub(super) fn rasterize_brush(space: MaskRasterSpace, dabs: &[BrushDab]) -> Vec<
 
     let specs = brush_raster_specs(space, dabs);
 
-    const ROW_BAND_HEIGHT: usize = 64;
     let row_stride = width as usize;
     let mut out = vec![0.0f32; row_stride * height as usize];
     out.par_chunks_mut(row_stride * ROW_BAND_HEIGHT)
         .enumerate()
         .for_each(|(band_index, band)| {
-            let band_start_y = band_index * ROW_BAND_HEIGHT;
-            let band_height = band.len() / row_stride;
-            let band_end_y = band_start_y + band_height - 1;
-
+            let rows = RowBand::new(band_index, band.len(), row_stride);
             for spec in &specs {
-                if spec.max_y < band_start_y as i32 || spec.min_y > band_end_y as i32 {
-                    continue;
-                }
-                let min_y = spec.min_y.max(band_start_y as i32);
-                let max_y = spec.max_y.min(band_end_y as i32);
-                for y in min_y..=max_y {
-                    let dy = (y as f32 + 0.5 - spec.center_y) / spec.radius_y.max(0.5);
-                    let row_offset = (y as usize - band_start_y) * row_stride;
-                    for x in spec.min_x..=spec.max_x {
-                        let dx = (x as f32 + 0.5 - spec.center_x) / spec.radius_x.max(0.5);
-                        let distance = (dx * dx + dy * dy).sqrt();
-                        if distance >= 1.0 + spec.antialias {
-                            continue;
-                        }
-                        let coverage = 1.0 - smoothstep(spec.inner, 1.0 + spec.antialias, distance);
-                        let index = row_offset + x as usize;
-                        if spec.opacity >= 0.0 {
-                            band[index] = band[index].max(coverage * spec.opacity.clamp(0.0, 1.0));
-                        } else {
-                            band[index] *= 1.0 - coverage * (-spec.opacity).clamp(0.0, 1.0);
-                        }
+                for_each_dab_coverage(spec, rows, |index, coverage| {
+                    if spec.opacity >= 0.0 {
+                        band[index] = band[index].max(coverage * spec.opacity.clamp(0.0, 1.0));
+                    } else {
+                        band[index] *= 1.0 - coverage * (-spec.opacity).clamp(0.0, 1.0);
                     }
-                }
+                });
             }
         });
     out
+}
+
+/// Brush rasters are processed in parallel bands of this many rows.
+const ROW_BAND_HEIGHT: usize = 64;
+
+/// The raster rows held by one parallel band slice (row-major, `row_stride` pixels per row).
+#[derive(Clone, Copy)]
+struct RowBand {
+    start_y: usize,
+    end_y: usize,
+    row_stride: usize,
+}
+
+impl RowBand {
+    fn new(band_index: usize, band_len: usize, row_stride: usize) -> Self {
+        let start_y = band_index * ROW_BAND_HEIGHT;
+        let band_height = band_len / row_stride;
+        Self {
+            start_y,
+            end_y: start_y + band_height - 1,
+            row_stride,
+        }
+    }
+}
+
+/// Calls `apply(index, coverage)` for every pixel of `rows` inside the dab footprint, in
+/// row-major order. `index` addresses the band slice; `coverage` is the anti-aliased
+/// `1 - smoothstep(inner, 1 + antialias, distance)`. Hot path: keep the float ops in this order.
+#[inline]
+fn for_each_dab_coverage(spec: &BrushRasterSpec, rows: RowBand, mut apply: impl FnMut(usize, f32)) {
+    if spec.max_y < rows.start_y as i32 || spec.min_y > rows.end_y as i32 {
+        return;
+    }
+    let min_y = spec.min_y.max(rows.start_y as i32);
+    let max_y = spec.max_y.min(rows.end_y as i32);
+    for y in min_y..=max_y {
+        let dy = (y as f32 + 0.5 - spec.center_y) / spec.radius_y.max(0.5);
+        let row_offset = (y as usize - rows.start_y) * rows.row_stride;
+        for x in spec.min_x..=spec.max_x {
+            let dx = (x as f32 + 0.5 - spec.center_x) / spec.radius_x.max(0.5);
+            let distance = (dx * dx + dy * dy).sqrt();
+            if distance >= 1.0 + spec.antialias {
+                continue;
+            }
+            let coverage = 1.0 - smoothstep(spec.inner, 1.0 + spec.antialias, distance);
+            apply(row_offset + x as usize, coverage);
+        }
+    }
+}
+
+/// Per-band scratch for one recorded stroke group: overlapping dabs within a group keep their
+/// strongest alpha instead of compounding, and the group is applied once when flushed.
+struct StrokeGroupCoverage {
+    alpha: Vec<f32>,
+    touched: Vec<usize>,
+}
+
+impl StrokeGroupCoverage {
+    fn new(band_len: usize) -> Self {
+        Self {
+            alpha: vec![0.0f32; band_len],
+            touched: Vec::new(),
+        }
+    }
+
+    /// Raises every covered pixel to `coverage * |opacity|` (opacity clamped to 1).
+    #[inline]
+    fn accumulate(&mut self, specs: &[BrushRasterSpec], rows: RowBand) {
+        for spec in specs {
+            for_each_dab_coverage(spec, rows, |index, coverage| {
+                let alpha = coverage * spec.opacity.abs().clamp(0.0, 1.0);
+                if alpha > self.alpha[index] {
+                    if self.alpha[index] == 0.0 {
+                        self.touched.push(index);
+                    }
+                    self.alpha[index] = alpha;
+                }
+            });
+        }
+    }
+
+    /// Hands each touched pixel's group alpha to `apply(index, alpha)` and clears the scratch
+    /// for the next group.
+    #[inline]
+    fn flush(&mut self, mut apply: impl FnMut(usize, f32)) {
+        for index in self.touched.drain(..) {
+            apply(index, self.alpha[index]);
+            self.alpha[index] = 0.0;
+        }
+    }
 }
 
 fn brush_raster_specs(space: MaskRasterSpace, dabs: &[BrushDab]) -> Vec<BrushRasterSpec> {
@@ -205,49 +275,15 @@ pub(super) fn rasterize_recorded_brush(
     let mut out = rasterize_brush(space, &dabs[..ungrouped_end]);
     let specs = brush_raster_specs(space, &dabs[ungrouped_end..]);
 
-    const ROW_BAND_HEIGHT: usize = 64;
     let row_stride = width as usize;
     out.par_chunks_mut(row_stride * ROW_BAND_HEIGHT)
         .enumerate()
         .for_each(|(band_index, band)| {
-            let band_start_y = band_index * ROW_BAND_HEIGHT;
-            let band_height = band.len() / row_stride;
-            let band_end_y = band_start_y + band_height - 1;
-            let mut stroke_coverage = vec![0.0f32; band.len()];
-            let mut touched = Vec::new();
-
+            let rows = RowBand::new(band_index, band.len(), row_stride);
+            let mut stroke = StrokeGroupCoverage::new(band.len());
             for group in &groups {
-                for spec in &specs[group.start..group.end] {
-                    if spec.max_y < band_start_y as i32 || spec.min_y > band_end_y as i32 {
-                        continue;
-                    }
-                    let min_y = spec.min_y.max(band_start_y as i32);
-                    let max_y = spec.max_y.min(band_end_y as i32);
-                    for y in min_y..=max_y {
-                        let dy = (y as f32 + 0.5 - spec.center_y) / spec.radius_y.max(0.5);
-                        let row_offset = (y as usize - band_start_y) * row_stride;
-                        for x in spec.min_x..=spec.max_x {
-                            let dx = (x as f32 + 0.5 - spec.center_x) / spec.radius_x.max(0.5);
-                            let distance = (dx * dx + dy * dy).sqrt();
-                            if distance >= 1.0 + spec.antialias {
-                                continue;
-                            }
-                            let coverage =
-                                1.0 - smoothstep(spec.inner, 1.0 + spec.antialias, distance);
-                            let alpha = coverage * spec.opacity.abs().clamp(0.0, 1.0);
-                            let index = row_offset + x as usize;
-                            if alpha > stroke_coverage[index] {
-                                if stroke_coverage[index] == 0.0 {
-                                    touched.push(index);
-                                }
-                                stroke_coverage[index] = alpha;
-                            }
-                        }
-                    }
-                }
-
-                for index in touched.drain(..) {
-                    let alpha = stroke_coverage[index];
+                stroke.accumulate(&specs[group.start..group.end], rows);
+                stroke.flush(|index, alpha| {
                     if group.positive {
                         band[index] = if overlap_enabled {
                             band[index] + alpha * (1.0 - band[index])
@@ -257,8 +293,7 @@ pub(super) fn rasterize_recorded_brush(
                     } else {
                         band[index] *= 1.0 - alpha;
                     }
-                    stroke_coverage[index] = 0.0;
-                }
+                });
             }
         });
     out
@@ -276,81 +311,28 @@ pub(super) fn rasterize_subject_refinement_delta(
     let (ungrouped_end, groups) =
         recorded_brush_groups(&refinement.dabs, &refinement.stroke_starts);
     let specs = brush_raster_specs(space, &refinement.dabs);
-    const ROW_BAND_HEIGHT: usize = 64;
     let row_stride = width as usize;
     let mut out = vec![0.0f32; row_stride * height as usize];
 
     out.par_chunks_mut(row_stride * ROW_BAND_HEIGHT)
         .enumerate()
         .for_each(|(band_index, band)| {
-            let band_start_y = band_index * ROW_BAND_HEIGHT;
-            let band_height = band.len() / row_stride;
-            let band_end_y = band_start_y + band_height - 1;
-
-            let apply_spec = |band: &mut [f32], spec: &BrushRasterSpec| {
-                if spec.max_y < band_start_y as i32 || spec.min_y > band_end_y as i32 {
-                    return;
-                }
-                let min_y = spec.min_y.max(band_start_y as i32);
-                let max_y = spec.max_y.min(band_end_y as i32);
-                for y in min_y..=max_y {
-                    let dy = (y as f32 + 0.5 - spec.center_y) / spec.radius_y.max(0.5);
-                    let row_offset = (y as usize - band_start_y) * row_stride;
-                    for x in spec.min_x..=spec.max_x {
-                        let dx = (x as f32 + 0.5 - spec.center_x) / spec.radius_x.max(0.5);
-                        let distance = (dx * dx + dy * dy).sqrt();
-                        if distance >= 1.0 + spec.antialias {
-                            continue;
-                        }
-                        let coverage = 1.0 - smoothstep(spec.inner, 1.0 + spec.antialias, distance);
-                        let index = row_offset + x as usize;
-                        band[index] = (band[index] + coverage * spec.opacity.clamp(-1.0, 1.0))
-                            .clamp(-1.0, 1.0);
-                    }
-                }
-            };
-
+            let rows = RowBand::new(band_index, band.len(), row_stride);
             for spec in &specs[..ungrouped_end] {
-                apply_spec(band, spec);
+                for_each_dab_coverage(spec, rows, |index, coverage| {
+                    band[index] =
+                        (band[index] + coverage * spec.opacity.clamp(-1.0, 1.0)).clamp(-1.0, 1.0);
+                });
             }
 
             let grouped_specs = &specs[ungrouped_end..];
-            let mut stroke_coverage = vec![0.0f32; band.len()];
-            let mut touched = Vec::new();
+            let mut stroke = StrokeGroupCoverage::new(band.len());
             for group in &groups {
-                for spec in &grouped_specs[group.start..group.end] {
-                    if spec.max_y < band_start_y as i32 || spec.min_y > band_end_y as i32 {
-                        continue;
-                    }
-                    let min_y = spec.min_y.max(band_start_y as i32);
-                    let max_y = spec.max_y.min(band_end_y as i32);
-                    for y in min_y..=max_y {
-                        let dy = (y as f32 + 0.5 - spec.center_y) / spec.radius_y.max(0.5);
-                        let row_offset = (y as usize - band_start_y) * row_stride;
-                        for x in spec.min_x..=spec.max_x {
-                            let dx = (x as f32 + 0.5 - spec.center_x) / spec.radius_x.max(0.5);
-                            let distance = (dx * dx + dy * dy).sqrt();
-                            if distance >= 1.0 + spec.antialias {
-                                continue;
-                            }
-                            let coverage =
-                                1.0 - smoothstep(spec.inner, 1.0 + spec.antialias, distance);
-                            let alpha = coverage * spec.opacity.abs().clamp(0.0, 1.0);
-                            let index = row_offset + x as usize;
-                            if alpha > stroke_coverage[index] {
-                                if stroke_coverage[index] == 0.0 {
-                                    touched.push(index);
-                                }
-                                stroke_coverage[index] = alpha;
-                            }
-                        }
-                    }
-                }
+                stroke.accumulate(&grouped_specs[group.start..group.end], rows);
                 let sign = if group.positive { 1.0 } else { -1.0 };
-                for index in touched.drain(..) {
-                    band[index] = (band[index] + sign * stroke_coverage[index]).clamp(-1.0, 1.0);
-                    stroke_coverage[index] = 0.0;
-                }
+                stroke.flush(|index, alpha| {
+                    band[index] = (band[index] + sign * alpha).clamp(-1.0, 1.0);
+                });
             }
         });
     out

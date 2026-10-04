@@ -26,23 +26,11 @@ pub(in crate::pipeline::gpu) struct BindGroups {
     pub(in crate::pipeline::gpu) bg_adjust_local_tone: wgpu::BindGroup,
     pub(in crate::pipeline::gpu) bg_adjust_effects: wgpu::BindGroup,
     pub(in crate::pipeline::gpu) bg_adjust_effects_copy: wgpu::BindGroup,
-    pub(in crate::pipeline::gpu) bg_mask_blur_0: wgpu::BindGroup,
-    pub(in crate::pipeline::gpu) bg_mask_blur_1: wgpu::BindGroup,
-    pub(in crate::pipeline::gpu) bg_mask_blur_2: wgpu::BindGroup,
-    pub(in crate::pipeline::gpu) bg_mask_blur_3: wgpu::BindGroup,
-    pub(in crate::pipeline::gpu) bg_mask_blur_4: wgpu::BindGroup,
+    pub(in crate::pipeline::gpu) bg_mask_blur: [wgpu::BindGroup; 5],
     pub(in crate::pipeline::gpu) bg_glow_prepare: wgpu::BindGroup,
-    pub(in crate::pipeline::gpu) bg_glow_blur_0: wgpu::BindGroup,
-    pub(in crate::pipeline::gpu) bg_glow_blur_1: wgpu::BindGroup,
-    pub(in crate::pipeline::gpu) bg_glow_blur_2: wgpu::BindGroup,
-    pub(in crate::pipeline::gpu) bg_glow_blur_3: wgpu::BindGroup,
-    pub(in crate::pipeline::gpu) bg_glow_blur_4: wgpu::BindGroup,
+    pub(in crate::pipeline::gpu) bg_glow_blur: [wgpu::BindGroup; 5],
     pub(in crate::pipeline::gpu) bg_glow_prepare_after_blur: wgpu::BindGroup,
-    pub(in crate::pipeline::gpu) bg_glow_blur_after_blur_0: wgpu::BindGroup,
-    pub(in crate::pipeline::gpu) bg_glow_blur_after_blur_1: wgpu::BindGroup,
-    pub(in crate::pipeline::gpu) bg_glow_blur_after_blur_2: wgpu::BindGroup,
-    pub(in crate::pipeline::gpu) bg_glow_blur_after_blur_3: wgpu::BindGroup,
-    pub(in crate::pipeline::gpu) bg_glow_blur_after_blur_4: wgpu::BindGroup,
+    pub(in crate::pipeline::gpu) bg_glow_blur_after_blur: [wgpu::BindGroup; 5],
     pub(in crate::pipeline::gpu) bg_adjust_creative: wgpu::BindGroup,
     pub(in crate::pipeline::gpu) bg_adjust_creative_after_blur: wgpu::BindGroup,
     pub(in crate::pipeline::gpu) bg_adjust_render: wgpu::BindGroup,
@@ -56,33 +44,6 @@ pub(in crate::pipeline::gpu) fn create_bind_groups(
     surfaces: &PipelineSurfaces,
     cfa_kind: CfaKind,
 ) -> BindGroups {
-    let BindGroupLayouts {
-        bgl_scene_tone,
-        bgl_effects,
-        bgl_highlights,
-        bgl1,
-        bgl2,
-        bgl3,
-        bgl_dual_green,
-        bgl_dual_rgb,
-        bgl4,
-        bgl_xtrans_derivatives,
-        bgl_xtrans_homogeneity,
-        bgl_xtrans_accumulate,
-        bgl_xtrans_finish,
-        bgl_color_denoise,
-        bgl_tone_prepare,
-        bgl_tone_blur,
-        bgl_tone_reduce,
-        bgl_adjust_prepare,
-        bgl_adjust_tone,
-        bgl_adjust_effects,
-        bgl_mask_blur,
-        bgl_glow_prepare,
-        bgl_glow_blur,
-        bgl_adjust_creative,
-        bgl_adjust_render,
-    } = layouts;
     let PipelineBuffers {
         camera_uniforms_buffer,
         scene_tone_uniforms_buffer,
@@ -117,20 +78,20 @@ pub(in crate::pipeline::gpu) fn create_bind_groups(
     let scene_tone_bind_group = create_bind_group(
         device,
         "bg scene-tone uniforms",
-        bgl_scene_tone,
+        &layouts.bgl_scene_tone,
         &[buffer_binding(0, scene_tone_uniforms_buffer)],
     );
     let effects_bind_group = create_bind_group(
         device,
         "bg effects uniforms",
-        bgl_effects,
+        &layouts.bgl_effects,
         &[buffer_binding(0, effects_uniforms_buffer)],
     );
 
     let bg_highlights = create_bind_group(
         device,
         "bg highlight reconstruction",
-        bgl_highlights,
+        &layouts.bgl_highlights,
         &[
             buffer_binding(0, camera_uniforms_buffer),
             texture_binding(1, raw_view),
@@ -143,7 +104,7 @@ pub(in crate::pipeline::gpu) fn create_bind_groups(
     let bg1 = create_bind_group(
         device,
         "bg1",
-        bgl1,
+        &layouts.bgl1,
         &[
             buffer_binding(0, camera_uniforms_buffer),
             texture_binding(1, raw_view),
@@ -157,7 +118,7 @@ pub(in crate::pipeline::gpu) fn create_bind_groups(
     let bg2 = create_bind_group(
         device,
         "bg2",
-        bgl2,
+        &layouts.bgl2,
         &[
             buffer_binding(0, camera_uniforms_buffer),
             texture_binding(1, raw_view),
@@ -172,7 +133,7 @@ pub(in crate::pipeline::gpu) fn create_bind_groups(
     let bg3 = create_bind_group(
         device,
         "bg3",
-        bgl3,
+        &layouts.bgl3,
         &[
             buffer_binding(0, camera_uniforms_buffer),
             texture_binding(1, raw_view),
@@ -192,7 +153,7 @@ pub(in crate::pipeline::gpu) fn create_bind_groups(
     let bg_dual_green = create_bind_group(
         device,
         "bg dual demosaic green",
-        bgl_dual_green,
+        &layouts.bgl_dual_green,
         &[
             buffer_binding(0, camera_uniforms_buffer),
             texture_binding(1, raw_view),
@@ -206,7 +167,7 @@ pub(in crate::pipeline::gpu) fn create_bind_groups(
     let bg_dual_rgb = create_bind_group(
         device,
         "bg dual demosaic rgb",
-        bgl_dual_rgb,
+        &layouts.bgl_dual_rgb,
         &[
             buffer_binding(0, camera_uniforms_buffer),
             texture_binding(1, raw_view),
@@ -221,7 +182,7 @@ pub(in crate::pipeline::gpu) fn create_bind_groups(
     let bg4 = create_bind_group(
         device,
         "bg4",
-        bgl4,
+        &layouts.bgl4,
         &[
             buffer_binding(0, camera_uniforms_buffer),
             texture_binding(1, raw_view),
@@ -238,7 +199,7 @@ pub(in crate::pipeline::gpu) fn create_bind_groups(
     let bg_xtrans_derivatives = create_bind_group(
         device,
         "bg X-Trans derivatives",
-        bgl_xtrans_derivatives,
+        &layouts.bgl_xtrans_derivatives,
         &[
             buffer_binding(0, camera_uniforms_buffer),
             texture_binding(1, raw_view),
@@ -254,7 +215,7 @@ pub(in crate::pipeline::gpu) fn create_bind_groups(
     let bg_xtrans_homogeneity = create_bind_group(
         device,
         "bg X-Trans homogeneity",
-        bgl_xtrans_homogeneity,
+        &layouts.bgl_xtrans_homogeneity,
         &[
             buffer_binding(0, camera_uniforms_buffer),
             texture_binding(1, raw_view),
@@ -271,7 +232,7 @@ pub(in crate::pipeline::gpu) fn create_bind_groups(
     let bg_xtrans_accumulate = create_bind_group(
         device,
         "bg X-Trans accumulate",
-        bgl_xtrans_accumulate,
+        &layouts.bgl_xtrans_accumulate,
         &[
             buffer_binding(0, camera_uniforms_buffer),
             texture_binding(1, raw_view),
@@ -288,7 +249,7 @@ pub(in crate::pipeline::gpu) fn create_bind_groups(
     let bg_xtrans_finish = create_bind_group(
         device,
         "bg X-Trans finish",
-        bgl_xtrans_finish,
+        &layouts.bgl_xtrans_finish,
         &[
             buffer_binding(0, camera_uniforms_buffer),
             texture_binding(1, raw_view),
@@ -306,7 +267,7 @@ pub(in crate::pipeline::gpu) fn create_bind_groups(
             create_bind_group(
                 device,
                 label,
-                bgl_color_denoise,
+                &layouts.bgl_color_denoise,
                 &[
                     buffer_binding(0, camera_uniforms_buffer),
                     texture_binding(10, write_view),
@@ -326,7 +287,7 @@ pub(in crate::pipeline::gpu) fn create_bind_groups(
     let bg_tone_prepare = create_bind_group(
         device,
         "bg tone prepare",
-        bgl_tone_prepare,
+        &layouts.bgl_tone_prepare,
         &[
             buffer_binding(0, camera_uniforms_buffer),
             texture_binding(11, scene_view),
@@ -341,7 +302,7 @@ pub(in crate::pipeline::gpu) fn create_bind_groups(
             create_bind_group(
                 device,
                 label,
-                bgl_tone_blur,
+                &layouts.bgl_tone_blur,
                 &[
                     buffer_binding(0, camera_uniforms_buffer),
                     texture_binding(17, read_view),
@@ -363,7 +324,7 @@ pub(in crate::pipeline::gpu) fn create_bind_groups(
     let bg_tone_reduce = create_bind_group(
         device,
         "bg tone histogram reduction",
-        bgl_tone_reduce,
+        &layouts.bgl_tone_reduce,
         &[
             buffer_binding(15, tone_histogram_buffer),
             buffer_binding(16, tone_stats_buffer),
@@ -373,7 +334,7 @@ pub(in crate::pipeline::gpu) fn create_bind_groups(
     let bg_adjust_prepare = create_bind_group(
         device,
         "bg adjustment preparation",
-        bgl_adjust_prepare,
+        &layouts.bgl_adjust_prepare,
         &[
             buffer_binding(0, camera_uniforms_buffer),
             texture_binding(1, raw_view),
@@ -395,7 +356,7 @@ pub(in crate::pipeline::gpu) fn create_bind_groups(
             create_bind_group(
                 device,
                 label,
-                bgl_adjust_tone,
+                &layouts.bgl_adjust_tone,
                 &[
                     buffer_binding(0, camera_uniforms_buffer),
                     texture_binding(22, input),
@@ -418,7 +379,7 @@ pub(in crate::pipeline::gpu) fn create_bind_groups(
             create_bind_group(
                 device,
                 label,
-                bgl_adjust_effects,
+                &layouts.bgl_adjust_effects,
                 &[
                     buffer_binding(0, camera_uniforms_buffer),
                     texture_binding(22, input),
@@ -440,7 +401,7 @@ pub(in crate::pipeline::gpu) fn create_bind_groups(
             create_bind_group(
                 device,
                 label,
-                bgl_mask_blur,
+                &layouts.bgl_mask_blur,
                 &[
                     buffer_binding(0, camera_uniforms_buffer),
                     texture_binding(24, read_view),
@@ -451,23 +412,26 @@ pub(in crate::pipeline::gpu) fn create_bind_groups(
                 ],
             )
         };
-    let bg_mask_blur_0 =
-        make_mask_blur_bind_group("bg mask Blur diffusion 0", tex1_view, tex2_view);
-    let bg_mask_blur_1 =
-        make_mask_blur_bind_group("bg mask Blur diffusion 1", tex2_view, display_linear_view);
-    let bg_mask_blur_2 =
-        make_mask_blur_bind_group("bg mask Blur diffusion 2", display_linear_view, tex2_view);
-    let bg_mask_blur_3 =
-        make_mask_blur_bind_group("bg mask Blur diffusion 3", tex2_view, display_linear_view);
-    let bg_mask_blur_4 =
-        make_mask_blur_bind_group("bg mask Blur diffusion 4", display_linear_view, tex2_view);
+    // Step 0 reads the effects output in tex1; later steps alternate between
+    // tex2 and display_linear.
+    let bg_mask_blur = std::array::from_fn(|step| {
+        let (read_view, write_view) = match step {
+            0 => (tex1_view, tex2_view),
+            _ => ping_pong(step - 1, tex2_view, display_linear_view),
+        };
+        make_mask_blur_bind_group(
+            &format!("bg mask Blur diffusion {step}"),
+            read_view,
+            write_view,
+        )
+    });
 
     let make_glow_prepare_bind_group =
         |label: &str, source: &wgpu::TextureView, extracted: &wgpu::TextureView| {
             create_bind_group(
                 device,
                 label,
-                bgl_glow_prepare,
+                &layouts.bgl_glow_prepare,
                 &[
                     buffer_binding(0, camera_uniforms_buffer),
                     texture_binding(24, source),
@@ -486,7 +450,7 @@ pub(in crate::pipeline::gpu) fn create_bind_groups(
             create_bind_group(
                 device,
                 label,
-                bgl_glow_blur,
+                &layouts.bgl_glow_blur,
                 &[
                     buffer_binding(0, camera_uniforms_buffer),
                     texture_binding(30, read_view),
@@ -494,54 +458,31 @@ pub(in crate::pipeline::gpu) fn create_bind_groups(
                 ],
             )
         };
-    let bg_glow_blur_0 =
-        make_glow_blur_bind_group("bg Glow diffusion 0", tex2_view, display_linear_view);
-    let bg_glow_blur_1 =
-        make_glow_blur_bind_group("bg Glow diffusion 1", display_linear_view, tex2_view);
-    let bg_glow_blur_2 =
-        make_glow_blur_bind_group("bg Glow diffusion 2", tex2_view, display_linear_view);
-    let bg_glow_blur_3 =
-        make_glow_blur_bind_group("bg Glow diffusion 3", display_linear_view, tex2_view);
-    let bg_glow_blur_4 =
-        make_glow_blur_bind_group("bg Glow diffusion 4", tex2_view, display_linear_view);
+    let bg_glow_blur = std::array::from_fn(|step| {
+        let (read_view, write_view) = ping_pong(step, tex2_view, display_linear_view);
+        make_glow_blur_bind_group(&format!("bg Glow diffusion {step}"), read_view, write_view)
+    });
 
     let bg_glow_prepare_after_blur = make_glow_prepare_bind_group(
         "bg Glow source extraction after mask Blur",
         tex2_view,
         tex1_view,
     );
-    let bg_glow_blur_after_blur_0 = make_glow_blur_bind_group(
-        "bg Glow diffusion after mask Blur 0",
-        tex1_view,
-        display_linear_view,
-    );
-    let bg_glow_blur_after_blur_1 = make_glow_blur_bind_group(
-        "bg Glow diffusion after mask Blur 1",
-        display_linear_view,
-        tex1_view,
-    );
-    let bg_glow_blur_after_blur_2 = make_glow_blur_bind_group(
-        "bg Glow diffusion after mask Blur 2",
-        tex1_view,
-        display_linear_view,
-    );
-    let bg_glow_blur_after_blur_3 = make_glow_blur_bind_group(
-        "bg Glow diffusion after mask Blur 3",
-        display_linear_view,
-        tex1_view,
-    );
-    let bg_glow_blur_after_blur_4 = make_glow_blur_bind_group(
-        "bg Glow diffusion after mask Blur 4",
-        tex1_view,
-        display_linear_view,
-    );
+    let bg_glow_blur_after_blur = std::array::from_fn(|step| {
+        let (read_view, write_view) = ping_pong(step, tex1_view, display_linear_view);
+        make_glow_blur_bind_group(
+            &format!("bg Glow diffusion after mask Blur {step}"),
+            read_view,
+            write_view,
+        )
+    });
 
     let make_adjust_creative_bind_group =
         |label: &str, input: &wgpu::TextureView, output: &wgpu::TextureView| {
             create_bind_group(
                 device,
                 label,
-                bgl_adjust_creative,
+                &layouts.bgl_adjust_creative,
                 &[
                     buffer_binding(0, camera_uniforms_buffer),
                     texture_binding(24, input),
@@ -568,7 +509,7 @@ pub(in crate::pipeline::gpu) fn create_bind_groups(
         create_bind_group(
             device,
             label,
-            bgl_adjust_render,
+            &layouts.bgl_adjust_render,
             &[
                 buffer_binding(0, camera_uniforms_buffer),
                 texture_binding(12, out_view),
@@ -611,26 +552,28 @@ pub(in crate::pipeline::gpu) fn create_bind_groups(
         bg_adjust_local_tone,
         bg_adjust_effects,
         bg_adjust_effects_copy,
-        bg_mask_blur_0,
-        bg_mask_blur_1,
-        bg_mask_blur_2,
-        bg_mask_blur_3,
-        bg_mask_blur_4,
+        bg_mask_blur,
         bg_glow_prepare,
-        bg_glow_blur_0,
-        bg_glow_blur_1,
-        bg_glow_blur_2,
-        bg_glow_blur_3,
-        bg_glow_blur_4,
+        bg_glow_blur,
         bg_glow_prepare_after_blur,
-        bg_glow_blur_after_blur_0,
-        bg_glow_blur_after_blur_1,
-        bg_glow_blur_after_blur_2,
-        bg_glow_blur_after_blur_3,
-        bg_glow_blur_after_blur_4,
+        bg_glow_blur_after_blur,
         bg_adjust_creative,
         bg_adjust_creative_after_blur,
         bg_adjust_render,
         bg_adjust_render_after_blur,
+    }
+}
+
+/// Returns the `(read, write)` views of diffusion `step` for a blur that
+/// alternates between two textures, starting by reading `first`.
+fn ping_pong<'a>(
+    step: usize,
+    first: &'a wgpu::TextureView,
+    second: &'a wgpu::TextureView,
+) -> (&'a wgpu::TextureView, &'a wgpu::TextureView) {
+    if step.is_multiple_of(2) {
+        (first, second)
+    } else {
+        (second, first)
     }
 }
