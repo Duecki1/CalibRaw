@@ -14,14 +14,30 @@
 
 </div>
 
-<!-- TODO: hero GIF (10 to 15 s): open a RAW, apply an AI subject mask, finish with a before/after.
-     "Export > Create Edit Replay…" produces an MP4 of an edit you can convert to GIF. -->
-<img width="100%" alt="CalibRaw editing a RAW photo" src="https://github.com/user-attachments/assets/b4afad3f-8577-411c-a310-995e71a79cb4" />
+<img width="100%" alt="CalibRaw desktop editor with light and color controls" src="docs/images/demos/develop-edit.png" />
 
-<p>
-  <img width="49.5%" alt="Library" src="https://github.com/user-attachments/assets/c64bbc1e-d2c1-4498-8d64-7ba6ee552af6" />
-  <img width="49.5%" alt="Android (Library/Edit/AI Subject)" src="https://github.com/user-attachments/assets/0f6ffbb4-233a-4a58-9386-fbd44393225b" />
-</p>
+<table>
+  <tr>
+    <td width="50%" align="center">
+      <strong>Library</strong><br />
+      <img width="100%" alt="Desktop library with folders, photo thumbnails and ratings" src="docs/images/demos/library.png" />
+    </td>
+    <td width="50%" align="center">
+      <strong>AI subject mask</strong><br />
+      <img width="100%" alt="Animated demo of AI subject masking and separate subject and background adjustments" src="docs/images/demos/develop-masks-subject.gif" />
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" align="center">
+      <strong>Fog</strong><br />
+      <img width="100%" alt="Animated demo of fog amount, density and scene depth controls" src="docs/images/demos/develop-effects-fog.gif" />
+    </td>
+    <td width="50%" align="center">
+      <strong>Android</strong><br />
+      <img width="100%" alt="Android library, color controls and AI subject mask" src="docs/images/demos/mobile-combined-transparent.png" />
+    </td>
+  </tr>
+</table>
 
 Edit RAW files with sliders, curves, color grading and masks. AI tools can select a subject or the sky, remove objects and denoise high-ISO photos. Everything runs **on your device**, without an account or subscription.
 
