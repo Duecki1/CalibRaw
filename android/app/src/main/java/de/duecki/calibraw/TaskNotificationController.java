@@ -89,7 +89,7 @@ final class TaskNotificationController {
     }
 
     private void createChannel() {
-        if (notificationManager == null || Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
+        if (notificationManager == null) {
             return;
         }
         NotificationChannel channel = new NotificationChannel(

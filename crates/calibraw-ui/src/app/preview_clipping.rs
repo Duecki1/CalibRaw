@@ -26,19 +26,20 @@ pub(crate) struct ClippingState {
 fn composite_texture(
     slot: &mut Option<ClippingComposite>,
     render: &eframe::egui_wgpu::RenderState,
-    source: Option<&RawGpuPipeline>,
+    source: Option<&PreviewPipeline>,
     shadows: bool,
     highlights: bool,
 ) -> Option<egui::TextureId> {
     let source = source.filter(|_| shadows || highlights);
-    let Some(source) = source else {
+    let Some(presented) = source else {
         if let Some(old) = slot.take() {
             render.renderer.write().free_texture(&old.texture);
         }
         return None;
     };
+    let source = presented.gpu();
     let key = ClippingKey {
-        source: source.egui_texture_id?,
+        source: presented.texture(),
         revision: source.output_revision(),
         shadows,
         highlights,
@@ -79,21 +80,22 @@ impl CalibRawApp {
             return;
         };
         let state = &mut self.preview.clipping;
-        for (cached, source) in [
+        for (cached, presented) in [
             (&mut state.base, self.preview.gpu_pipeline.as_ref()),
             (
                 &mut state.detail,
                 self.preview.detail.as_ref().map(|detail| &detail.pipeline),
             ),
         ] {
-            let (Some(cached), Some(source)) = (cached.as_mut(), source) else {
+            let (Some(cached), Some(presented)) = (cached.as_mut(), presented) else {
                 continue;
             };
             let Some(previous) = cached.key else { continue };
             // A replaced pipeline is picked up during the next canvas layout.
-            if Some(previous.source) != source.egui_texture_id {
+            if previous.source != presented.texture() {
                 continue;
             }
+            let source = presented.gpu();
             let key = ClippingKey {
                 revision: source.output_revision(),
                 shadows: state.shadows,

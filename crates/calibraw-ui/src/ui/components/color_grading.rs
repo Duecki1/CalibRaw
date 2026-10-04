@@ -50,13 +50,13 @@ fn color_grading_editor_contents(
     ui.set_max_width(editor_width);
 
     #[cfg(not(target_os = "android"))]
-    crate::ui::theme::toolbar_row(ui, |ui| {
+    moduwu_design::toolbar_row(ui, |ui| {
         ui.strong("Four-way color grading");
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if crate::ui::icons::phosphor_icon_button(
+            if moduwu_design::icon_button(
                 ui,
                 egui_phosphor::regular::ARROW_COUNTER_CLOCKWISE,
-                crate::ui::theme::toolbar_icon_size(),
+                moduwu_design::toolbar_icon_size(),
                 "Reset all color grading",
             )
             .clicked()
@@ -70,7 +70,7 @@ fn color_grading_editor_contents(
     #[cfg(not(target_os = "android"))]
     {
         color_grade_tab_row(ui, selected);
-        ui.add_space(crate::ui::theme::SPACE_XS);
+        ui.add_space(moduwu_design::SPACE_XS);
 
         let (wheel_id, wheel) = selected_color_wheel(grading, *selected);
         changed |= ui.push_id(wheel_id, |ui| color_wheel(ui, wheel)).inner;
@@ -122,7 +122,7 @@ fn color_grade_tab_row(ui: &mut Ui, selected: &mut ColorGradeTab) {
         let segment_width =
             ((ui.available_width() - ui.spacing().item_spacing.x * 3.0).max(4.0)) / 4.0;
         for (tab, label, tooltip) in COLOR_GRADE_TABS {
-            if crate::ui::theme::segmented_button(ui, label, *selected == tab, segment_width)
+            if moduwu_design::segmented_button(ui, label, *selected == tab, segment_width)
                 .on_hover_text(tooltip)
                 .clicked()
             {
@@ -136,16 +136,11 @@ fn color_grade_tab_row(ui: &mut Ui, selected: &mut ColorGradeTab) {
 fn color_grade_tab_rail(ui: &mut Ui, selected: &mut ColorGradeTab) {
     ui.vertical(|ui| {
         ui.spacing_mut().item_spacing.y =
-            ((WHEEL_MAX_SIZE - crate::ui::theme::CONTROL_HEIGHT * 4.0) / 3.0).max(0.0);
+            ((WHEEL_MAX_SIZE - moduwu_design::CONTROL_HEIGHT * 4.0) / 3.0).max(0.0);
         for (tab, label, tooltip) in COLOR_GRADE_TABS {
-            if crate::ui::theme::segmented_button(
-                ui,
-                label,
-                *selected == tab,
-                ANDROID_TAB_RAIL_WIDTH,
-            )
-            .on_hover_text(tooltip)
-            .clicked()
+            if moduwu_design::segmented_button(ui, label, *selected == tab, ANDROID_TAB_RAIL_WIDTH)
+                .on_hover_text(tooltip)
+                .clicked()
             {
                 *selected = tab;
             }
@@ -177,13 +172,13 @@ fn color_wheel(ui: &mut Ui, wheel: &mut ColorGradeWheel) -> bool {
 #[cfg(not(target_os = "android"))]
 fn color_wheel_toolbar(ui: &mut Ui, wheel: &mut ColorGradeWheel) -> bool {
     let mut changed = false;
-    crate::ui::theme::toolbar_row(ui, |ui| {
+    moduwu_design::toolbar_row(ui, |ui| {
         ui.strong("Hue / Saturation");
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if crate::ui::icons::phosphor_icon_button(
+            if moduwu_design::icon_button(
                 ui,
                 egui_phosphor::regular::ARROW_COUNTER_CLOCKWISE,
-                crate::ui::theme::toolbar_icon_size(),
+                moduwu_design::toolbar_icon_size(),
                 "Reset this color wheel",
             )
             .clicked()

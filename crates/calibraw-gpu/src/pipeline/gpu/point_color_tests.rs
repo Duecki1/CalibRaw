@@ -1,4 +1,6 @@
-use super::{tests::request_test_device, GpuParams, ProcessingQuality, RawGpuPipeline};
+use super::{
+    tests::request_test_device, GpuParams, PipelineOptions, ProcessingQuality, RawGpuPipeline,
+};
 use crate::pipeline::{
     ExposureParams, LoadedRaw, LocalMask, MaskKind, MaskStack, PointColor, ProcessingStage,
 };
@@ -28,8 +30,12 @@ fn render(exposure: &ExposureParams, quality: ProcessingQuality) -> anyhow::Resu
     let source = source()?;
     let masks = MaskStack::default();
     let params = GpuParams::new(exposure, &masks, &source);
-    let pipeline = RawGpuPipeline::new_headless_with_quality_and_mask_edge(
-        &device, &queue, &source, &params, quality, 64,
+    let pipeline = RawGpuPipeline::new(
+        &device,
+        &queue,
+        &source,
+        &params,
+        PipelineOptions::new(quality).mask_atlas_edge(64),
     )?;
     pipeline.dispatch_stage(&queue, &device, &params, ProcessingStage::Raw);
     pipeline.dispatch_stage(&queue, &device, &params, ProcessingStage::Tone);
@@ -88,13 +94,12 @@ fn local_point_color_respects_color_and_mask_coverage() -> anyhow::Result<()> {
     masks.masks.push(mask);
     let params = GpuParams::new(&exposure, &masks, &source);
     let render = |coverage: u16| -> anyhow::Result<Vec<f32>> {
-        let pipeline = RawGpuPipeline::new_headless_with_quality_and_mask_edge(
+        let pipeline = RawGpuPipeline::new(
             &device,
             &queue,
             &source,
             &params,
-            ProcessingQuality::High,
-            64,
+            PipelineOptions::new(ProcessingQuality::High).mask_atlas_edge(64),
         )?;
         pipeline.update_mask_layer(&queue, 0, &vec![coverage; 64 * 64])?;
         pipeline.dispatch_stage(&queue, &device, &params, ProcessingStage::Raw);
@@ -248,13 +253,12 @@ fn isolated_color_noise_does_not_punch_a_hole_in_the_selection() -> anyhow::Resu
     let masks = MaskStack::default();
     let mut exposure = ExposureParams::scene_referred_default();
     let params = GpuParams::new(&exposure, &masks, &source);
-    let pipeline = RawGpuPipeline::new_headless_with_quality_and_mask_edge(
+    let pipeline = RawGpuPipeline::new(
         &device,
         &queue,
         &source,
         &params,
-        ProcessingQuality::High,
-        64,
+        PipelineOptions::new(ProcessingQuality::High).mask_atlas_edge(64),
     )?;
     pipeline.dispatch_stage(&queue, &device, &params, ProcessingStage::Raw);
     pipeline.dispatch_stage(&queue, &device, &params, ProcessingStage::Tone);
@@ -270,13 +274,12 @@ fn isolated_color_noise_does_not_punch_a_hole_in_the_selection() -> anyhow::Resu
     exposure.point_colors.push(point);
     exposure.point_color_visualize = Some(0);
     let params = GpuParams::new(&exposure, &masks, &source);
-    let pipeline = RawGpuPipeline::new_headless_with_quality_and_mask_edge(
+    let pipeline = RawGpuPipeline::new(
         &device,
         &queue,
         &source,
         &params,
-        ProcessingQuality::High,
-        64,
+        PipelineOptions::new(ProcessingQuality::High).mask_atlas_edge(64),
     )?;
     pipeline.dispatch_stage(&queue, &device, &params, ProcessingStage::Raw);
     pipeline.dispatch_stage(&queue, &device, &params, ProcessingStage::Tone);
@@ -300,13 +303,12 @@ fn isolated_color_noise_does_not_punch_a_hole_in_the_selection() -> anyhow::Resu
     for hue_shift in [-100.0, 100.0] {
         exposure.point_colors[0].hue_shift = hue_shift;
         let params = GpuParams::new(&exposure, &masks, &source);
-        let pipeline = RawGpuPipeline::new_headless_with_quality_and_mask_edge(
+        let pipeline = RawGpuPipeline::new(
             &device,
             &queue,
             &source,
             &params,
-            ProcessingQuality::High,
-            64,
+            PipelineOptions::new(ProcessingQuality::High).mask_atlas_edge(64),
         )?;
         pipeline.dispatch_stage(&queue, &device, &params, ProcessingStage::Raw);
         pipeline.dispatch_stage(&queue, &device, &params, ProcessingStage::Tone);
@@ -364,8 +366,12 @@ fn preview_and_high_quality_point_color_outputs_agree() -> anyhow::Result<()> {
     let params = GpuParams::new(&exposure, &masks, &source);
     let mut outputs = Vec::new();
     for quality in [ProcessingQuality::Preview, ProcessingQuality::High] {
-        let pipeline = RawGpuPipeline::new_headless_with_quality_and_mask_edge(
-            &device, &queue, &source, &params, quality, 64,
+        let pipeline = RawGpuPipeline::new(
+            &device,
+            &queue,
+            &source,
+            &params,
+            PipelineOptions::new(quality).mask_atlas_edge(64),
         )?;
         pipeline.dispatch_stage(&queue, &device, &params, ProcessingStage::Raw);
         pipeline.dispatch_stage(&queue, &device, &params, ProcessingStage::Tone);
@@ -403,13 +409,12 @@ fn sampling_domain_is_stable_and_visualization_preserves_unselected_colors() -> 
     let masks = MaskStack::default();
     let mut baseline_exposure = ExposureParams::scene_referred_default();
     let baseline_params = GpuParams::new(&baseline_exposure, &masks, &source);
-    let pipeline = RawGpuPipeline::new_headless_with_quality_and_mask_edge(
+    let pipeline = RawGpuPipeline::new(
         &device,
         &queue,
         &source,
         &baseline_params,
-        ProcessingQuality::Preview,
-        64,
+        PipelineOptions::new(ProcessingQuality::Preview).mask_atlas_edge(64),
     )?;
     pipeline.dispatch_stage(&queue, &device, &baseline_params, ProcessingStage::Raw);
     pipeline.dispatch_stage(&queue, &device, &baseline_params, ProcessingStage::Tone);

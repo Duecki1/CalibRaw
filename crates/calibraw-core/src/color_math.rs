@@ -112,10 +112,6 @@ pub fn oklab_to_linear_srgb(lab: [f32; 3]) -> [f32; 3] {
     )
 }
 
-pub fn rec2020_to_oklab(rgb: [f32; 3]) -> [f32; 3] {
-    linear_srgb_to_oklab(rec2020_to_linear_srgb(rgb))
-}
-
 /// Convert linear Rec.2020 primaries to linear sRGB without gamut mapping.
 pub fn rec2020_to_linear_srgb(rgb: [f32; 3]) -> [f32; 3] {
     transform(
@@ -146,10 +142,6 @@ pub const LINEAR_DISPLAY_P3_TO_REC2020: Matrix3 = [
     [0.045_743_8, 0.941_777_2, 0.012_478_9],
     [-0.001_210_3, 0.017_601_7, 0.983_608_6],
 ];
-
-pub fn rec2020_from_oklab(lab: [f32; 3]) -> [f32; 3] {
-    linear_srgb_to_rec2020(oklab_to_linear_srgb(lab))
-}
 
 #[cfg(test)]
 mod tests {
@@ -184,14 +176,5 @@ mod tests {
             assert!((actual - expected).abs() < 1e-6);
         }
         assert!(bradford_adaptation([1.0, 0.0, 1.0], D65_XYZ).is_none());
-    }
-
-    #[test]
-    fn rec2020_oklab_round_trips() {
-        let sample = [0.2, 0.4, 0.8];
-        let reconstructed = rec2020_from_oklab(rec2020_to_oklab(sample));
-        for (actual, expected) in reconstructed.into_iter().zip(sample) {
-            assert!((actual - expected).abs() <= 2e-5);
-        }
     }
 }

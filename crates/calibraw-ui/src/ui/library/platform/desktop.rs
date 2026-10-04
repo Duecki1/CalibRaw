@@ -30,7 +30,7 @@ pub(super) fn show_library_folder_node(
 
     ui.push_id(&node.path, |ui| {
         ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = crate::ui::theme::SPACE_XS;
+            ui.spacing_mut().item_spacing.x = moduwu_design::SPACE_XS;
             let disclosure_size = crate::ui::icons::folder_disclosure_size();
             if has_children {
                 if crate::ui::icons::folder_disclosure_button(ui, expanded).clicked() {
@@ -49,7 +49,7 @@ pub(super) fn show_library_folder_node(
             } else {
                 egui_phosphor::regular::FOLDER
             };
-            let response = crate::ui::theme::navigation_row(
+            let response = moduwu_design::navigation_row(
                 ui,
                 egui::RichText::new(format!("{folder_icon}  {}", node.name)),
                 selected,
@@ -65,9 +65,9 @@ pub(super) fn show_library_folder_node(
             }
 
             let is_root = node.path == root_folder;
-            crate::ui::theme::context_menu(&response, |ui| {
+            moduwu_design::context_menu(&response, |ui| {
                 let enabled = !action_in_progress;
-                if crate::ui::theme::context_menu_item(ui, enabled, "New Folder…").clicked() {
+                if moduwu_design::context_menu_item(ui, enabled, "New Folder…").clicked() {
                     *requested_action = Some(LibraryFolderUiAction::New(node.path.clone()));
                     ui.close();
                 }
@@ -81,7 +81,7 @@ pub(super) fn show_library_folder_node(
                     },
                     ImageClipboard::paste_label,
                 );
-                if crate::ui::theme::context_menu_item(
+                if moduwu_design::context_menu_item(
                     ui,
                     enabled && (clipboard.is_some() || image_clipboard.is_some()),
                     paste_label,
@@ -96,32 +96,31 @@ pub(super) fn show_library_folder_node(
                     ui.close();
                 }
                 ui.separator();
-                if crate::ui::theme::context_menu_item(ui, enabled && !is_root, "Copy Folder")
+                if moduwu_design::context_menu_item(ui, enabled && !is_root, "Copy Folder")
                     .clicked()
                 {
                     *requested_action = Some(LibraryFolderUiAction::Copy(node.path.clone()));
                     ui.close();
                 }
-                if crate::ui::theme::context_menu_item(ui, enabled && !is_root, "Cut Folder")
-                    .clicked()
+                if moduwu_design::context_menu_item(ui, enabled && !is_root, "Cut Folder").clicked()
                 {
                     *requested_action = Some(LibraryFolderUiAction::Cut(node.path.clone()));
                     ui.close();
                 }
-                if crate::ui::theme::context_menu_item(ui, enabled && !is_root, "Rename Folder…")
+                if moduwu_design::context_menu_item(ui, enabled && !is_root, "Rename Folder…")
                     .clicked()
                 {
                     *requested_action = Some(LibraryFolderUiAction::Rename(node.path.clone()));
                     ui.close();
                 }
                 ui.separator();
-                if crate::ui::theme::context_menu_item(ui, enabled && !is_root, "Delete Folder…")
+                if moduwu_design::context_menu_item(ui, enabled && !is_root, "Delete Folder…")
                     .clicked()
                 {
                     *requested_action = Some(LibraryFolderUiAction::Delete(node.path.clone()));
                     ui.close();
                 }
-                if crate::ui::theme::context_menu_item(ui, enabled, "Refresh Folders").clicked() {
+                if moduwu_design::context_menu_item(ui, enabled, "Refresh Folders").clicked() {
                     *requested_action = Some(LibraryFolderUiAction::Refresh);
                     ui.close();
                 }

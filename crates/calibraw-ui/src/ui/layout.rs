@@ -3,7 +3,8 @@ use eframe::egui;
 #[cfg(not(target_os = "android"))]
 use eframe::egui::Vec2;
 
-pub(crate) use moduwu_design::{ResponsiveWidth, ScreenLayout};
+#[cfg(not(target_os = "android"))]
+use moduwu_design::ScreenLayout;
 
 #[cfg(not(target_os = "android"))]
 pub(crate) const DEVELOP_TOOL_RAIL_ID: &str = "develop_tool_rail";

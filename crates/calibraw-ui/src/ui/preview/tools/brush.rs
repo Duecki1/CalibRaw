@@ -1,17 +1,11 @@
 use super::super::*;
+use crate::app::BrushStrokeSamples;
 
 const DAB_SPACING_RADIUS_FRACTION: f32 = 0.22;
 const MIN_DAB_SPACING_PX: f32 = 0.85;
 const MAX_DAB_SPACING_PX: f32 = 24.0;
 pub(super) const STANDARD_BRUSH_MINIMUM_SPACING_FRACTION: f32 = 0.80;
 pub(super) const OBJECT_BRUSH_MINIMUM_SPACING_FRACTION: f32 = 0.75;
-
-pub(super) struct BrushStrokeSamples {
-    pub uv: [f32; 2],
-    pub dab_size: f32,
-    pub first: bool,
-    pub samples: Vec<[f32; 2]>,
-}
 
 pub(super) fn sample_brush_stroke(
     projection: SourceProjection<'_>,

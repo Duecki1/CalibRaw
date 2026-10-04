@@ -198,7 +198,7 @@ fn glow_diffuse_at(pos: vec2<i32>, stage: u32) -> vec4<f32> {
     var sum_weight = 0.0;
     for (var ky = -2; ky <= 2; ky = ky + 1) {
         for (var kx = -2; kx <= 2; kx = kx + 1) {
-            let weight = SceneAdjustments::atrous_kernel_weight(kx) * SceneAdjustments::atrous_kernel_weight(ky);
+            let weight = Common::binomial5_weight(kx) * Common::binomial5_weight(ky);
             let sample_pos = Common::clamp_pos(pos + vec2<i32>(kx * step, ky * step));
             sum = sum + textureLoad(SceneAdjustments::glow_work_tex, sample_pos, 0) * weight;
             sum_weight = sum_weight + weight;

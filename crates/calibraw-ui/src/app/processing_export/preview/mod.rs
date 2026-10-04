@@ -295,6 +295,7 @@ mod navigation;
 mod processing;
 mod rebuild;
 mod state;
+use state::full_frame_tone_pipeline;
 
 #[cfg(test)]
 mod mask_interaction_tests;

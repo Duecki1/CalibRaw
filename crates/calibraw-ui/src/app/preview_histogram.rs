@@ -33,10 +33,10 @@ pub(crate) struct HistogramState {
 
 impl CalibRawApp {
     fn histogram_key(&self) -> Option<HistogramKey> {
-        let pipeline = self.preview.gpu_pipeline.as_ref()?;
+        let presented = self.preview.gpu_pipeline.as_ref()?;
         Some(HistogramKey {
-            texture: pipeline.egui_texture_id?,
-            output_revision: pipeline.output_revision(),
+            texture: presented.texture(),
+            output_revision: presented.gpu().output_revision(),
             geometry: self.develop.geometry,
             original: self.preview.original_requested,
         })
@@ -114,6 +114,7 @@ impl CalibRawApp {
             .preview
             .gpu_pipeline
             .as_ref()
+            .map(PreviewPipeline::gpu)
             .expect("histogram source exists");
         if gpu.request(
             &render_state.device,

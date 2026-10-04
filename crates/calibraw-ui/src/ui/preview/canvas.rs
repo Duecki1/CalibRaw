@@ -1,15 +1,13 @@
 use super::*;
 
+/// Show the embedded thumbnail, with its size, while the preview develops.
 pub(super) fn show_loading_thumbnail(
     ui: &mut Ui,
-    app: &CalibRawApp,
+    thumbnail: Option<(&egui::TextureHandle, [u32; 2])>,
     available: egui::Vec2,
     unobscured: Option<Rect>,
 ) -> bool {
-    let (Some(texture), Some([width, height])) = (
-        app.develop_ui.loading_thumbnail.texture.as_ref(),
-        app.develop_ui.loading_thumbnail.texture_size,
-    ) else {
+    let Some((texture, [width, height])) = thumbnail else {
         return false;
     };
     if available.x <= 0.0 || available.y <= 0.0 || width == 0 || height == 0 {

@@ -61,6 +61,14 @@ impl CalibRawApp {
         let onnx_runtime_path = runtime_selection.as_ref().map(|(path, _)| path.clone());
         #[cfg(not(target_os = "android"))]
         let onnx_runtime_sha256 = runtime_selection.map(|(_, sha256)| sha256);
+        let library_preferences = crate::ui::library::LibraryPreferences {
+            thumbnail_workers: performance.thumbnail_workers,
+            thumbnail_size: performance.library_thumbnail_size,
+            sort_order: performance.library_sort_order,
+            stack_raw_companions: performance.library_stack_raw_companions,
+            render_edited_thumbnails_during_indexing: performance
+                .render_edited_thumbnails_during_indexing,
+        };
         let app = Self {
             develop: DevelopState {
                 current_path: None,
@@ -88,7 +96,7 @@ impl CalibRawApp {
                 clipping: Default::default(),
                 gpu_pipeline: None,
                 program_template: None,
-                retired_egui_textures: Vec::new(),
+                retired_textures: TextureRetirement::new(ctx.clone()),
                 gpu_prewarm_receiver: None,
                 quality: performance.preview_quality,
                 zoom: 1.0,
@@ -238,7 +246,7 @@ impl CalibRawApp {
                 history: edit_history,
                 lens_restore_masks: None,
                 sidecar_target: None,
-                sidecar_generation: 0,
+                document_generation: 0,
                 sidecar_saved_revision: None,
                 sidecar_failed_revision: None,
                 sidecar_pending: VecDeque::new(),
@@ -300,24 +308,16 @@ impl CalibRawApp {
                 version_check: Default::default(),
             },
             #[cfg(not(target_os = "android"))]
-            library: LibraryState::new_desktop_with_preferences(
-                performance.thumbnail_workers,
-                performance.library_thumbnail_size,
-                performance.library_sort_order,
-                performance.library_stack_raw_companions,
+            library: LibraryState::new_desktop(
+                library_preferences,
                 performance.library_folder_sidebar_open,
-                performance.render_edited_thumbnails_during_indexing,
             ),
             #[cfg(target_os = "android")]
-            library: LibraryState::new_android_with_workers(
+            library: LibraryState::new_android(
                 android_app.clone(),
                 ctx,
-                performance.thumbnail_workers,
-                performance.library_thumbnail_size,
-                performance.library_sort_order,
-                performance.library_stack_raw_companions,
-                performance.last_android_library_folder.clone(),
-                performance.render_edited_thumbnails_during_indexing,
+                library_preferences,
+                performance.last_android_library_folder,
             ),
             #[cfg(not(target_os = "android"))]
             discord_presence,
@@ -373,7 +373,8 @@ impl CalibRawApp {
         if let Some(render_state) = cc.wgpu_render_state.as_ref() {
             calibraw_gpu::install_uncaptured_gpu_error_handler(&render_state.device);
         }
-        calibraw_ffi::install_context(&cc.egui_ctx);
+        let repaint = cc.egui_ctx.clone();
+        calibraw_ffi::attach_ui(move || repaint.request_repaint());
         crate::ui::theme::install(&cc.egui_ctx);
         match calibraw_ffi::device_diagnostics(&android_app) {
             Ok(info) => calibraw_core::diagnostics::set_device_info(info),

@@ -117,13 +117,12 @@ fn zoom_drag_mapping_refines_all_layers_and_release_keeps_the_last_edit() {
         }
     }
     let params = GpuParams::new(&exposure, &masks, &raw);
-    let pipeline = RawGpuPipeline::new_headless_with_quality_and_mask_edge(
+    let pipeline = RawGpuPipeline::new(
         &device,
         &queue,
         &raw,
         &params,
-        ProcessingQuality::Preview,
-        1024,
+        PipelineOptions::new(ProcessingQuality::Preview).mask_atlas_edge(1024),
     )
     .unwrap();
     let region = [0, 0, full_raw.width, full_raw.height];
@@ -178,17 +177,32 @@ fn zoom_drag_mapping_refines_all_layers_and_release_keeps_the_last_edit() {
     app.masks.stack = masks;
     app.develop.loaded_raw = Some(Arc::clone(&full_raw));
     app.develop.preview_raw = Some(Arc::clone(&raw));
-    app.preview.gpu_pipeline = Some(
-        RawGpuPipeline::new_headless_reusing_programs_with_mask_edge(
-            &device,
-            &queue,
-            &raw,
-            &params,
-            ProcessingQuality::Preview,
-            &pipeline,
-            64,
-        )
-        .unwrap(),
+    let mut renderer = eframe::egui_wgpu::Renderer::new(
+        &device,
+        wgpu::TextureFormat::Rgba8Unorm,
+        eframe::egui_wgpu::RendererOptions::default(),
+    );
+    let fitted = RawGpuPipeline::new(
+        &device,
+        &queue,
+        &raw,
+        &params,
+        PipelineOptions::new(ProcessingQuality::Preview)
+            .mask_atlas_edge(64)
+            .programs(&pipeline.program_template()),
+    )
+    .unwrap();
+    app.preview.gpu_pipeline = Some(PreviewPipeline::register(
+        fitted,
+        &device,
+        &mut renderer,
+        &app.preview.retired_textures,
+    ));
+    let pipeline = PreviewPipeline::register(
+        pipeline,
+        &device,
+        &mut renderer,
+        &app.preview.retired_textures,
     );
     app.preview.zoom = 2.0;
     app.preview.viewport_pixels = [64, 48];

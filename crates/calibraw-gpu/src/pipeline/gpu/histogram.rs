@@ -130,7 +130,7 @@ impl PreviewHistogramGpu {
         self.request_texture(
             device,
             queue,
-            &source._out_view,
+            source.output_view(),
             Sampling::new(source.width, source.height, geometry),
         )
     }
@@ -222,6 +222,36 @@ mod tests {
         )
         .validate(&module)
         .expect("histogram WGSL validates");
+    }
+
+    #[test]
+    fn preview_histogram_sampling_uniform_matches_rust_layout() {
+        use super::super::layout_contract_tests::{check_struct_layout, rust_layout};
+
+        let module = naga::front::wgsl::parse_str(SHADER).expect("histogram WGSL parses");
+        let rust = rust_layout!(Sampling {
+            origin,
+            step_x,
+            step_y,
+            extent
+        });
+        assert!(check_struct_layout(
+            &module,
+            "Sampling",
+            &rust,
+            "preview histogram"
+        ));
+        let bins = module
+            .types
+            .iter()
+            .find(|(_, ty)| ty.name.as_deref() == Some("Histogram"))
+            .map(|(handle, _)| {
+                let mut layouter = naga::proc::Layouter::default();
+                layouter.update(module.to_ctx()).unwrap();
+                u64::from(layouter[handle].size)
+            })
+            .expect("Histogram is declared");
+        assert_eq!(bins, HISTOGRAM_BYTES, "four 256-bin channels");
     }
 
     #[test]

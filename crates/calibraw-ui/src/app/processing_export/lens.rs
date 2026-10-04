@@ -169,7 +169,7 @@ impl CalibRawApp {
             Ok(_) => {
                 self.begin_foreground_operation(ForegroundOperation {
                     kind: ForegroundOperationKind::LensCorrection,
-                    document_id: self.persistence.sidecar_generation,
+                    document_id: self.persistence.document_generation,
                     cancellation,
                     progress,
                     cancelling: false,
@@ -227,7 +227,7 @@ impl CalibRawApp {
             return;
         };
 
-        let stale = !operation.accepts_result(self.persistence.sidecar_generation);
+        let stale = !operation.accepts_result(self.persistence.document_generation);
         if stale {
             return;
         }
@@ -260,7 +260,7 @@ impl CalibRawApp {
 
         #[cfg(target_os = "android")]
         {
-            let Some(pipeline) = self.preview.gpu_pipeline.as_ref() else {
+            let Some(pipeline) = self.preview.pipeline() else {
                 self.ui.notice = Some("The preview pipeline is unavailable.".to_owned());
                 return;
             };
@@ -317,12 +317,12 @@ impl CalibRawApp {
                 &prepared.preview_raw,
             )
             .with_vignette_geometry(self.develop.geometry);
-            let mut pipeline = match RawGpuPipeline::new_headless_with_quality(
+            let pipeline = match RawGpuPipeline::new(
                 &render_state.device,
                 &render_state.queue,
                 &prepared.preview_raw,
                 &params,
-                ProcessingQuality::Preview,
+                PipelineOptions::new(ProcessingQuality::Preview),
             ) {
                 Ok(pipeline) => pipeline,
                 Err(error) => {
@@ -362,17 +362,14 @@ impl CalibRawApp {
                 return;
             }
 
-            if !operation.accepts_result(self.persistence.sidecar_generation) {
+            if !operation.accepts_result(self.persistence.document_generation) {
                 return;
             }
-            let mut renderer = render_state.renderer.write();
             self.take_preview_pipeline_and_release_textures();
-            pipeline.register_egui_texture(&render_state.device, &mut renderer);
-            drop(renderer);
-            self.preview.gpu_pipeline = Some(pipeline);
+            self.preview.gpu_pipeline = Some(self.present_pipeline(pipeline, render_state));
         }
 
-        if !operation.accepts_result(self.persistence.sidecar_generation) {
+        if !operation.accepts_result(self.persistence.document_generation) {
             return;
         }
 

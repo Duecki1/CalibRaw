@@ -54,9 +54,9 @@ jobs:
             target
             /tmp/calibraw-libraw
             /tmp/linuxdeploy-${{ matrix.linuxdeploy_arch }}.AppImage
-          key: calibraw-linux-native-v2-${{ runner.os }}-${{ runner.arch }}-rust-1.92.0-libraw-823f25d-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'crates/**/Cargo.toml', 'crates/**/build.rs', 'crates/**/build_support/**') }}
+          key: calibraw-linux-native-v2-${{ runner.os }}-${{ runner.arch }}-rust-${{ hashFiles('rust-toolchain.toml') }}-libraw-823f25d-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'crates/**/Cargo.toml', 'crates/**/build.rs', 'crates/**/build_support/**') }}
           restore-keys: |
-            calibraw-linux-native-v2-${{ runner.os }}-${{ runner.arch }}-rust-1.92.0-libraw-823f25d-
+            calibraw-linux-native-v2-${{ runner.os }}-${{ runner.arch }}-rust-${{ hashFiles('rust-toolchain.toml') }}-libraw-823f25d-
 
       - name: Install Linux build dependencies
         shell: bash
@@ -141,7 +141,7 @@ jobs:
             ~/.cargo/bin/cargo-ndk-env
             ~/.cargo/bin/cargo-ndk-runner
             ~/.cargo/bin/cargo-ndk-test
-          key: calibraw-android-tools-${{ runner.os }}-${{ runner.arch }}-arm64-${{ hashFiles('Cargo.toml', 'Cargo.lock', 'rust-toolchain.toml', 'gradle/wrapper/gradle-wrapper.properties', 'scripts/bootstrap_download.py', 'xtask/src/main.rs') }}-v2
+          key: calibraw-android-tools-${{ runner.os }}-${{ runner.arch }}-arm64-${{ hashFiles('Cargo.toml', 'Cargo.lock', 'rust-toolchain.toml', 'gradle/wrapper/gradle-wrapper.properties', 'scripts/bootstrap_download.py', 'xtask/src/**') }}-v2
 
       - name: Restore Android dependency and build cache
         uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
@@ -153,15 +153,15 @@ jobs:
             ~/.gradle/caches
             ~/.gradle/notifications
             android/.gradle
-          key: calibraw-android-build-${{ runner.os }}-${{ runner.arch }}-arm64-rust-1.92.0-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'build.rs', 'android/build.gradle', 'android/app/build.gradle') }}
+          key: calibraw-android-build-${{ runner.os }}-${{ runner.arch }}-arm64-rust-${{ hashFiles('rust-toolchain.toml') }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'crates/**/build.rs', 'android/build.gradle', 'android/app/build.gradle') }}
           restore-keys: |
-            calibraw-android-build-${{ runner.os }}-${{ runner.arch }}-arm64-rust-1.92.0-
+            calibraw-android-build-${{ runner.os }}-${{ runner.arch }}-arm64-rust-${{ hashFiles('rust-toolchain.toml') }}-
 
       - name: Restore Android native dependency cache
         uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
         with:
           path: android/native
-          key: android-native-deps-v1-${{ runner.os }}-${{ hashFiles('Cargo.toml', 'Cargo.lock', 'android/app/src/main/cpp/CMakeLists.txt', 'xtask/src/main.rs') }}
+          key: android-native-deps-v1-${{ runner.os }}-${{ hashFiles('Cargo.toml', 'Cargo.lock', 'android/app/src/main/cpp/CMakeLists.txt', 'xtask/src/**') }}
           restore-keys: |
             android-native-deps-v1-${{ runner.os }}-
 
@@ -250,7 +250,8 @@ jobs:
             /tmp/rustup-init \
             https://static.rust-lang.org/rustup/archive/1.28.2/x86_64-unknown-linux-gnu/rustup-init.sha256
           chmod +x /tmp/rustup-init
-          /tmp/rustup-init -y --profile minimal --default-toolchain 1.92.0
+          /tmp/rustup-init -y --profile minimal \
+            --default-toolchain "$(sed -n 's/^channel = "\(.*\)"$/\1/p' rust-toolchain.toml)"
           source "$HOME/.cargo/env"
           rustup target add aarch64-linux-android
           if [ "$(cargo ndk --version 2>/dev/null || true)" != "cargo-ndk 4.1.2" ]; then
@@ -312,6 +313,8 @@ jobs:
           bash scripts/generate_licenses.sh
           CALIBRAW_ALLOW_NO_LIBRAW=1 cargo check --locked --workspace
           ./gradlew --version
+          # JVM-only unit tests; calibrawBuildRust=false skips CMake and Rust.
+          ./gradlew --no-daemon --stacktrace -p android :app:testDebugUnitTest -PcalibrawBuildRust=false
 
           if [ "$GITHUB_EVENT_NAME" = "push" ] && { [ "$GITHUB_REF" = "refs/heads/main" ] || [[ "$GITHUB_REF" == refs/tags/v* ]]; }; then
             gradle_task=assembleRelease

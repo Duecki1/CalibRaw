@@ -1,7 +1,6 @@
 use crate::app::{AppAction, AppTab, CalibRawApp};
 #[cfg(not(target_os = "android"))]
 use crate::ui::components::adjustment_slider::AdjustmentSlider;
-use crate::ui::theme;
 use eframe::egui::{self, Ui};
 
 pub(crate) struct TopBar;
@@ -85,14 +84,14 @@ fn develop_toolbar_dock_geometry(
         let mut dock_width = crate::ui::sidebar::Sidebar::DESKTOP_TOOL_RAIL_WIDTH;
         if app.develop_ui.sidebar_open {
             let panel_max = crate::ui::layout::develop_sidebar_max_width(viewport_size);
-            let default_width = crate::ui::layout::ScreenLayout::Horizontal
+            let default_width = moduwu_design::ScreenLayout::Horizontal
                 .sidebar_default_size(viewport_size)
                 .min(panel_max);
             let sidebar_width = crate::ui::layout::develop_sidebar_user_width(
                 ctx,
                 sidebar_id,
                 default_width,
-                crate::ui::layout::ScreenLayout::MIN_HORIZONTAL_SIDEBAR_WIDTH,
+                moduwu_design::ScreenLayout::MIN_HORIZONTAL_SIDEBAR_WIDTH,
                 panel_max,
             );
             dock_width += sidebar_width;
@@ -105,7 +104,7 @@ fn develop_toolbar_dock_geometry(
 
     let width = toolbar_right - separator_x;
     (separator_x.is_finite() && width.is_finite())
-        .then_some((separator_x, width.max(crate::ui::theme::SPACE_SM)))
+        .then_some((separator_x, width.max(moduwu_design::SPACE_SM)))
 }
 
 #[cfg(not(target_os = "android"))]
@@ -156,7 +155,7 @@ impl TopBar {
     }
 
     pub(crate) fn back_icon_button(ui: &mut Ui, size: egui::Vec2) -> egui::Response {
-        crate::ui::icons::phosphor_icon_button(
+        moduwu_design::icon_button(
             ui,
             egui_phosphor::regular::ARROW_LEFT,
             size,
@@ -176,7 +175,7 @@ impl TopBar {
         } else {
             egui_phosphor::regular::ARROW_U_UP_LEFT
         };
-        crate::ui::icons::phosphor_icon_button_enabled(ui, enabled, icon, size, hover_text)
+        moduwu_design::icon_button_enabled(ui, enabled, icon, size, hover_text)
     }
 
     fn show_history_controls(ui: &mut Ui, app: &mut CalibRawApp, shortcuts: bool) {
@@ -199,7 +198,7 @@ impl TopBar {
                     AppAction::UndoEdit
                 }),
                 redo,
-                theme::toolbar_icon_size(),
+                moduwu_design::toolbar_icon_size(),
                 tooltip,
             )
             .clicked()
@@ -228,11 +227,11 @@ impl TopBar {
         } else {
             egui_phosphor::regular::FLOPPY_DISK
         };
-        if crate::ui::icons::phosphor_icon_button_enabled(
+        if moduwu_design::icon_button_enabled(
             ui,
             app.action_enabled(AppAction::SaveEdits),
             icon,
-            theme::toolbar_icon_size(),
+            moduwu_design::toolbar_icon_size(),
             tooltip,
         )
         .clicked()
@@ -242,7 +241,7 @@ impl TopBar {
     }
 
     pub(crate) fn show_portrait(ui: &mut Ui, app: &mut CalibRawApp, _frame: &eframe::Frame) {
-        theme::prepare_toolbar(ui);
+        moduwu_design::prepare_toolbar(ui);
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             app.show_export_task_indicator(ui);
 
@@ -250,7 +249,7 @@ impl TopBar {
             crate::ui::library::show_current_photo_review(ui, app, true);
 
             ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                if Self::back_icon_button(ui, theme::toolbar_icon_size()).clicked() {
+                if Self::back_icon_button(ui, moduwu_design::toolbar_icon_size()).clicked() {
                     app.activate_tab(AppTab::Library);
                 }
                 Self::show_history_controls(ui, app, false);
@@ -260,7 +259,7 @@ impl TopBar {
 
     #[cfg(not(target_os = "android"))]
     fn toolbar_brand_size() -> egui::Vec2 {
-        let height = 24.0_f32.min(theme::TOOLBAR_HEIGHT);
+        let height = 24.0_f32.min(moduwu_design::TOOLBAR_HEIGHT);
         // CalibRawIconTransHoriz.png is 440x160, so preserve its 2.75:1 aspect.
         egui::vec2(height * 2.75, height)
     }
@@ -323,7 +322,7 @@ impl TopBar {
             ui.spacing_mut().item_spacing.x = item_spacing;
 
             let icon_response = ui.add_sized(
-                [icon_width, theme::CONTROL_HEIGHT],
+                [icon_width, moduwu_design::CONTROL_HEIGHT],
                 egui::Label::new(
                     egui::RichText::new(egui_phosphor::regular::MAGNIFYING_GLASS).size(15.0),
                 )
@@ -352,7 +351,7 @@ impl TopBar {
             };
             let zoom_text = format!("{:.0}%", displayed_zoom * 100.0);
             let readout_response = ui.add_sized(
-                [readout_width, theme::CONTROL_HEIGHT],
+                [readout_width, moduwu_design::CONTROL_HEIGHT],
                 egui::Label::new(egui::RichText::new(zoom_text).monospace())
                     .sense(egui::Sense::click()),
             );
@@ -403,7 +402,7 @@ impl TopBar {
 
     #[cfg(not(target_os = "android"))]
     fn show_desktop(ui: &mut Ui, app: &mut CalibRawApp, _frame: &eframe::Frame) {
-        theme::prepare_toolbar(ui);
+        moduwu_design::prepare_toolbar(ui);
         let toolbar_width = ui.available_width();
         let compact = toolbar_width < TOOLBAR_COMPACT_WIDTH;
         let compact_review = toolbar_width < TOOLBAR_COMPACT_REVIEW_WIDTH;
@@ -421,7 +420,7 @@ impl TopBar {
                         .filter(|(_, width)| *width >= DEVELOP_DOCK_MIN_WIDTH);
                 if let Some((dock_separator_x, reserved_width)) = dock_geometry {
                     let dock_response = ui.allocate_ui_with_layout(
-                        egui::vec2(reserved_width, theme::TOOLBAR_HEIGHT),
+                        egui::vec2(reserved_width, moduwu_design::TOOLBAR_HEIGHT),
                         egui::Layout::right_to_left(egui::Align::Center),
                         |ui| {
                             Self::show_develop_review_and_zoom(ui, app, compact_review, false);
@@ -458,7 +457,7 @@ impl TopBar {
                     (AppTab::Develop, "Develop"),
                     (AppTab::Settings, "Settings"),
                 ] {
-                    if theme::tab_button(ui, label, app.ui.active_tab == tab, tab_width).clicked() {
+                    if moduwu_design::tab_button(ui, label, app.ui.active_tab == tab, tab_width).clicked() {
                         app.activate_tab(tab);
                     }
                 }
@@ -478,8 +477,8 @@ impl TopBar {
                         });
                     let search_response = ui
                         .add_sized(
-                            [search_width, theme::CONTROL_HEIGHT],
-                            theme::singleline_text_edit(app.library.search_query_mut()).hint_text(
+                            [search_width, moduwu_design::CONTROL_HEIGHT],
+                            moduwu_design::singleline_text_edit(app.library.search_query_mut()).hint_text(
                                 format!(
                                     "{} Search filenames…",
                                     egui_phosphor::regular::MAGNIFYING_GLASS
@@ -509,14 +508,14 @@ impl TopBar {
                     }
 
                     let open = if compact {
-                        crate::ui::icons::phosphor_icon_button(
+                        moduwu_design::icon_button(
                             ui,
                             egui_phosphor::regular::FOLDER_OPEN,
-                            theme::toolbar_icon_size(),
+                            moduwu_design::toolbar_icon_size(),
                             "Open photo folder",
                         )
                     } else {
-                        theme::toolbar_button(ui, "Open Folder…", 108.0)
+                        moduwu_design::toolbar_button(ui, "Open Folder…", 108.0)
                             .on_hover_text("Open photo folder")
                     };
                     if open.clicked() {
@@ -538,12 +537,12 @@ impl TopBar {
                     } else {
                         "Show original preview"
                     };
-                    if crate::ui::icons::phosphor_icon_toggle_button_enabled(
+                    if moduwu_design::icon_toggle_button_enabled(
                         ui,
                         app.preview.gpu_pipeline.is_some(),
                         preview_icon,
                         original_visible,
-                        theme::toolbar_icon_size(),
+                        moduwu_design::toolbar_icon_size(),
                         preview_tooltip,
                     )
                     .clicked()

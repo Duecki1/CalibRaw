@@ -25,8 +25,8 @@ pub(crate) struct PerformanceSettings {
     pub export_name_template: String,
     #[serde(with = "export_format_serde")]
     pub export_format: ExportFormat,
-    pub ui_design: crate::ui::theme::UiDesign,
-    pub preview_backdrop: crate::ui::theme::PreviewBackdrop,
+    pub ui_design: crate::appearance::UiDesign,
+    pub preview_backdrop: crate::appearance::PreviewBackdrop,
     pub onboarding_completed: bool,
     pub auto_check_updates: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -140,8 +140,8 @@ impl Default for PerformanceSettings {
             show_develop_navigation_labels: false,
             export_name_template: crate::export_naming::DEFAULT_EXPORT_NAME_TEMPLATE.to_owned(),
             export_format: ExportFormat::Jpeg,
-            ui_design: crate::ui::theme::UiDesign::default(),
-            preview_backdrop: crate::ui::theme::PreviewBackdrop::default(),
+            ui_design: crate::appearance::UiDesign::default(),
+            preview_backdrop: crate::appearance::PreviewBackdrop::default(),
             onboarding_completed: false,
             auto_check_updates: true,
             github_update_check_allowed: None,
@@ -431,10 +431,13 @@ mod tests {
             crate::export_naming::DEFAULT_EXPORT_NAME_TEMPLATE
         );
         assert_eq!(settings.export_format, ExportFormat::Jpeg);
-        assert_eq!(settings.ui_design, crate::ui::theme::UiDesign::ObsidianBlue);
+        assert_eq!(
+            settings.ui_design,
+            crate::appearance::UiDesign::ObsidianBlue
+        );
         assert_eq!(
             settings.preview_backdrop,
-            crate::ui::theme::PreviewBackdrop::DarkGrey
+            crate::appearance::PreviewBackdrop::DarkGrey
         );
         assert!(!settings.render_edited_thumbnails_during_indexing);
         assert!(settings.auto_check_updates);
@@ -484,8 +487,8 @@ mod tests {
             show_develop_navigation_labels: true,
             export_name_template: "{OriginalName}-{CurrentDate}".to_owned(),
             export_format: ExportFormat::Png,
-            ui_design: crate::ui::theme::UiDesign::Porcelain,
-            preview_backdrop: crate::ui::theme::PreviewBackdrop::MatchPhoto,
+            ui_design: crate::appearance::UiDesign::Porcelain,
+            preview_backdrop: crate::appearance::PreviewBackdrop::MatchPhoto,
             render_edited_thumbnails_during_indexing: true,
             ..Default::default()
         };
@@ -525,10 +528,10 @@ mod tests {
             "{OriginalName}-{CurrentDate}"
         );
         assert_eq!(restored.export_format, ExportFormat::Png);
-        assert_eq!(restored.ui_design, crate::ui::theme::UiDesign::Porcelain);
+        assert_eq!(restored.ui_design, crate::appearance::UiDesign::Porcelain);
         assert_eq!(
             restored.preview_backdrop,
-            crate::ui::theme::PreviewBackdrop::MatchPhoto
+            crate::appearance::PreviewBackdrop::MatchPhoto
         );
         assert!(restored.render_edited_thumbnails_during_indexing);
         #[cfg(not(target_os = "android"))]

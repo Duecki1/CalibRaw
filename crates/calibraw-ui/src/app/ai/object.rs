@@ -163,7 +163,7 @@ impl CalibRawApp {
         });
         self.begin_foreground_operation(ForegroundOperation {
             kind: OBJECT_JOB,
-            document_id: self.persistence.sidecar_generation,
+            document_id: self.persistence.document_generation,
             cancellation,
             progress,
             cancelling: false,
@@ -241,7 +241,7 @@ impl CalibRawApp {
         };
         let updating_all = self.ai.update.is_some() && target.is_some();
         let cancelled = operation.is_cancelled();
-        let stale = operation.document_id != self.persistence.sidecar_generation;
+        let stale = !operation.is_for_document(self.persistence.document_generation);
 
         let mut succeeded = false;
         let mut error_message = None;

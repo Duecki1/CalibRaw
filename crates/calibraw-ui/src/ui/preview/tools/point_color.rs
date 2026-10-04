@@ -81,7 +81,7 @@ impl Preview {
         let Some(render_state) = frame.wgpu_render_state() else {
             return;
         };
-        let Some(pipeline) = app.preview.gpu_pipeline.as_ref() else {
+        let Some(pipeline) = app.preview.pipeline() else {
             return;
         };
         if pipeline.width == 0 || pipeline.height == 0 {

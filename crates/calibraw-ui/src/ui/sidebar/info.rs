@@ -9,7 +9,7 @@ impl Sidebar {
             .as_deref()
             .or(app.develop.loaded_raw.as_deref())
         else {
-            crate::ui::theme::content_card(ui, |ui| {
+            moduwu_design::content_card(ui, |ui| {
                 ui.label("Open a photo to view its metadata.");
             });
             return;
@@ -20,7 +20,7 @@ impl Sidebar {
             app.develop.current_path.as_deref(),
         );
 
-        crate::ui::theme::section_card(ui, "File", |ui| {
+        moduwu_design::section_card(ui, "File", |ui| {
             metadata_row(ui, "Name", &file_name);
             metadata_row(
                 ui,
@@ -45,8 +45,8 @@ impl Sidebar {
             }
         });
 
-        crate::ui::theme::card_gap(ui);
-        crate::ui::theme::section_card(ui, "Capture", |ui| {
+        moduwu_design::card_gap(ui);
+        moduwu_design::section_card(ui, "Capture", |ui| {
             optional_metadata_row(ui, "ISO", format_iso(raw.capture_metadata.iso_speed));
             optional_metadata_row(
                 ui,
@@ -63,8 +63,8 @@ impl Sidebar {
             optional_metadata_row(ui, "Flash", raw.capture_metadata.flash.map(format_flash));
         });
 
-        crate::ui::theme::card_gap(ui);
-        crate::ui::theme::section_card(ui, "Equipment", |ui| {
+        moduwu_design::card_gap(ui);
+        moduwu_design::section_card(ui, "Equipment", |ui| {
             optional_metadata_row(
                 ui,
                 "Camera",
@@ -73,8 +73,8 @@ impl Sidebar {
             optional_metadata_row(ui, "Lens", equipment_name(&raw.lens_make, &raw.lens_model));
         });
 
-        crate::ui::theme::card_gap(ui);
-        crate::ui::theme::section_card(ui, "Image", |ui| {
+        moduwu_design::card_gap(ui);
+        moduwu_design::section_card(ui, "Image", |ui| {
             metadata_row(
                 ui,
                 "Dimensions",
@@ -109,8 +109,8 @@ impl Sidebar {
         if !raw.capture_metadata.artist.trim().is_empty()
             || !raw.capture_metadata.description.trim().is_empty()
         {
-            crate::ui::theme::card_gap(ui);
-            crate::ui::theme::section_card(ui, "Description", |ui| {
+            moduwu_design::card_gap(ui);
+            moduwu_design::section_card(ui, "Description", |ui| {
                 if !raw.capture_metadata.artist.trim().is_empty() {
                     metadata_row(ui, "Creator", raw.capture_metadata.artist.trim());
                 }

@@ -1,4 +1,6 @@
-use super::{tests::request_test_device, GpuParams, ProcessingQuality, RawGpuPipeline};
+use super::{
+    tests::request_test_device, GpuParams, PipelineOptions, ProcessingQuality, RawGpuPipeline,
+};
 use crate::pipeline::{
     extract_padded_tile, EffectComponent, ExportTile, ExposureParams, FogEffectSettings, LoadedRaw,
     LocalMask, MaskEffect, MaskImage, MaskKind, MaskStack, ProcessingStage,
@@ -159,7 +161,7 @@ fn fog_params_depth_presence_preserves_rust_and_wgsl_uniform_layout() {
     assert_eq!(offset_of!(SceneToneUniforms, basic_tone), 16);
     assert_eq!(offset_of!(SceneToneUniforms, mask_counts), 736);
 
-    let module = naga::front::wgsl::parse_str(super::SHADER_COMMON).unwrap();
+    let module = naga::front::wgsl::parse_str(super::shaders::COMMON.text).unwrap();
     let (_, scene_tone) = module
         .types
         .iter()
@@ -215,13 +217,12 @@ impl FogScene {
             masks: vec![LocalMask::new(MaskKind::Fullscreen, 1)],
             ..Default::default()
         };
-        let pipeline = RawGpuPipeline::new_headless_with_quality_and_mask_edge(
+        let pipeline = RawGpuPipeline::new(
             &device,
             &queue,
             &source,
             &GpuParams::new(&exposure, &initial, &source),
-            quality,
-            MASK_EDGE,
+            PipelineOptions::new(quality).mask_atlas_edge(MASK_EDGE),
         )?;
         Ok(Some(Self {
             device,
@@ -956,14 +957,14 @@ fn fog_gpu_depth_and_noise_match_full_frame_in_overlapping_tiles() -> anyhow::Re
             scene.source.width,
             scene.source.height,
         );
-        let pipeline = RawGpuPipeline::new_headless_reusing_programs_with_mask_edge(
+        let pipeline = RawGpuPipeline::new(
             &scene.device,
             &scene.queue,
             &raw,
             &params,
-            ProcessingQuality::High,
-            &scene.pipeline,
-            MASK_EDGE,
+            PipelineOptions::new(ProcessingQuality::High)
+                .mask_atlas_edge(MASK_EDGE)
+                .programs(&scene.pipeline.program_template()),
         )?;
         pipeline.dispatch_stage(&scene.queue, &scene.device, &params, ProcessingStage::Raw);
         // Airlight depends on full-image illumination, not each tile's histogram.

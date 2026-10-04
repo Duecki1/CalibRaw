@@ -1,4 +1,6 @@
-use super::{tests::request_test_device, GpuParams, ProcessingQuality, RawGpuPipeline};
+use super::{
+    tests::request_test_device, GpuParams, PipelineOptions, ProcessingQuality, RawGpuPipeline,
+};
 use crate::pipeline::{
     extract_padded_tile, EffectComponent, ExportTile, ExposureParams, LoadedRaw, LocalMask,
     MaskEffect, MaskKind, MaskStack, ProcessingStage,
@@ -33,13 +35,12 @@ impl PhotoScene {
         };
         // Reserve an atlas layer before switching between global and local modules.
         let initial = local(EffectComponent::new(MaskEffect::Grain));
-        let pipeline = RawGpuPipeline::new_headless_with_quality_and_mask_edge(
+        let pipeline = RawGpuPipeline::new(
             &device,
             &queue,
             &source,
             &GpuParams::new(&exposure, &initial, &source),
-            ProcessingQuality::High,
-            MASK_EDGE,
+            PipelineOptions::new(ProcessingQuality::High).mask_atlas_edge(MASK_EDGE),
         )?;
         Ok(Some(Self {
             device,
@@ -711,14 +712,14 @@ fn photographic_modules_match_full_frame_in_padded_export_tiles() -> anyhow::Res
                 W,
                 H,
             );
-            let pipeline = RawGpuPipeline::new_headless_reusing_programs_with_mask_edge(
+            let pipeline = RawGpuPipeline::new(
                 &scene.device,
                 &scene.queue,
                 &raw,
                 &params,
-                ProcessingQuality::High,
-                &scene.pipeline,
-                MASK_EDGE,
+                PipelineOptions::new(ProcessingQuality::High)
+                    .mask_atlas_edge(MASK_EDGE)
+                    .programs(&scene.pipeline.program_template()),
             )?;
             pipeline.dispatch_stage(&scene.queue, &scene.device, &params, ProcessingStage::Raw);
             pipeline.dispatch_tone_guide_with_inherited_statistics(
@@ -755,6 +756,47 @@ fn photographic_modules_match_full_frame_in_padded_export_tiles() -> anyhow::Res
                 &format!("{name} export tile at {x},{y}"),
             );
         }
+    }
+    Ok(())
+}
+
+#[test]
+fn mask_curves_starting_above_zero_map_negative_scene_values_to_black() -> anyhow::Result<()> {
+    const WIDTH: u32 = 32;
+    const HEIGHT: u32 = 8;
+    // Out-of-gamut colours: the blue channel is negative at two different levels.
+    let pixels = (0..WIDTH * HEIGHT)
+        .flat_map(|i| {
+            let blue = if i % WIDTH < WIDTH / 2 { -0.01 } else { -0.04 };
+            [0.3, 0.2, blue]
+        })
+        .collect();
+    let Some(scene) =
+        PhotoScene::new(LoadedRaw::from_scene_linear_rec2020(WIDTH, HEIGHT, pixels)?)?
+    else {
+        return Ok(());
+    };
+    scene.coverage(&vec![
+        half::f16::ONE.to_bits();
+        (MASK_EDGE * MASK_EDGE) as usize
+    ])?;
+    // The curve is flat left of its first point, so both blue levels must render
+    // alike, as they do for the global curve.
+    let mut lifted = crate::pipeline::PointCurve::linear();
+    lifted.points[0] = [0.1, 0.05];
+    let mut mask = LocalMask::new(MaskKind::Fullscreen, 1);
+    mask.adjustments.tone_curve_blue = lifted;
+    let rgb = scene.render(&MaskStack {
+        masks: vec![mask],
+        ..Default::default()
+    })?;
+    let near = patch_mean(&rgb, WIDTH, 0, 0, WIDTH / 2, HEIGHT);
+    let far = patch_mean(&rgb, WIDTH, WIDTH / 2, 0, WIDTH / 2, HEIGHT);
+    for c in 0..3 {
+        assert!(
+            (near[c] - far[c]).abs() <= RGB_TOLERANCE,
+            "negative blue levels differ below the curve's first point: {near:?} vs {far:?}"
+        );
     }
     Ok(())
 }

@@ -30,13 +30,12 @@ mod mask_upload_tests {
                 masks.add_mask(MaskKind::Fullscreen);
             }
             let params = GpuParams::new(&exposure, &masks, &raw);
-            let pipeline = RawGpuPipeline::new_headless_with_quality_and_mask_edge(
+            let pipeline = RawGpuPipeline::new(
                 &device,
                 &queue,
                 &raw,
                 &params,
-                ProcessingQuality::Preview,
-                16,
+                PipelineOptions::new(ProcessingQuality::Preview).mask_atlas_edge(16),
             )
             .unwrap();
             assert!(pipeline.mask_layer_capacity() < MAX_LOCAL_MASKS);
@@ -61,7 +60,7 @@ mod mask_upload_tests {
 }
 
 impl CalibRawApp {
-    pub(crate) fn preview_base_pipeline(&self) -> Option<&RawGpuPipeline> {
+    pub(crate) fn preview_base_pipeline(&self) -> Option<&PreviewPipeline> {
         self.preview.gpu_pipeline.as_ref()
     }
 
@@ -332,8 +331,7 @@ impl CalibRawApp {
         .with_vignette_geometry(self.develop.geometry);
         let program_template = self
             .preview
-            .gpu_pipeline
-            .as_ref()
+            .pipeline()
             .map(RawGpuPipeline::program_template)
             .or_else(|| self.preview.program_template.clone());
         if let Some(template) = program_template.as_ref() {
@@ -342,21 +340,20 @@ impl CalibRawApp {
 
         let build_pipeline = || {
             if let Some(template) = program_template.as_ref() {
-                RawGpuPipeline::new_headless_reusing_program_template(
+                RawGpuPipeline::new(
                     &render_state.device,
                     &render_state.queue,
                     &prepared.preview_raw,
                     &params,
-                    ProcessingQuality::Preview,
-                    template,
+                    PipelineOptions::new(ProcessingQuality::Preview).programs(template),
                 )
             } else {
-                RawGpuPipeline::new_headless_with_quality(
+                RawGpuPipeline::new(
                     &render_state.device,
                     &render_state.queue,
                     &prepared.preview_raw,
                     &params,
-                    ProcessingQuality::Preview,
+                    PipelineOptions::new(ProcessingQuality::Preview),
                 )
             }
         };
@@ -375,7 +372,7 @@ impl CalibRawApp {
             drop(previous);
             pipeline_result = build_pipeline();
         }
-        let mut pipeline = match pipeline_result {
+        let pipeline = match pipeline_result {
             Ok(pipeline) => pipeline,
             Err(error) => {
                 self.preview.quality_dirty = false;
@@ -419,18 +416,12 @@ impl CalibRawApp {
         } else {
             pipeline.recompute(&render_state.queue, &render_state.device, &params);
         }
-        let previous = {
-            let mut renderer = render_state.renderer.write();
-            let previous = self.take_preview_pipeline_and_release_textures();
-            pipeline.register_egui_texture(&render_state.device, &mut renderer);
-            previous
-        };
-        drop(previous);
+        drop(self.take_preview_pipeline_and_release_textures());
 
         crate::app::preview_visibility::PreviewVisibility::rebuilt(&self.egui_ctx);
         self.preview.program_template = Some(pipeline.program_template());
         self.develop.preview_raw = Some(prepared.preview_raw);
-        self.preview.gpu_pipeline = Some(pipeline);
+        self.preview.gpu_pipeline = Some(self.present_pipeline(pipeline, render_state));
         #[cfg(target_os = "android")]
         {
             if self.develop.lens_correction.applied
@@ -527,7 +518,7 @@ impl CalibRawApp {
                     .develop
                     .preview_raw
                     .as_ref()
-                    .zip(self.preview.gpu_pipeline.as_ref())
+                    .zip(self.preview.pipeline())
                     .is_some_and(|(raw, pipeline)| {
                         raw.width.max(raw.height).saturating_add(5) >= requested_edge
                             && pipeline.immutable_ai_source_matches(source_raw.cfa_kind, ai_enabled)

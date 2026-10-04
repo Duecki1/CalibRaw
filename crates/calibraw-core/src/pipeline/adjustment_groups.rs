@@ -39,10 +39,6 @@ impl AdjustmentGroup {
         }
     }
 
-    pub fn from_label(label: &str) -> Option<Self> {
-        Self::ALL.into_iter().find(|group| group.label() == label)
-    }
-
     const fn bit(self) -> u8 {
         1 << self as u8
     }
@@ -427,14 +423,6 @@ mod tests {
                 assert!(!destination.group_is_edited(group), "{group:?}");
             }
         }
-    }
-
-    #[test]
-    fn group_labels_round_trip() {
-        for group in AdjustmentGroup::ALL {
-            assert_eq!(AdjustmentGroup::from_label(group.label()), Some(group));
-        }
-        assert_eq!(AdjustmentGroup::from_label("Optics"), None);
     }
 
     #[test]

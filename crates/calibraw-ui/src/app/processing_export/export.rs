@@ -3,6 +3,8 @@ use super::*;
 use super::batch::batch_export_overall_fraction;
 use super::preview::DETAIL_ZOOM_START;
 
+mod task_view;
+
 impl ExportTask {
     pub(super) fn new(
         kind: ExportTaskKind,
@@ -102,7 +104,7 @@ pub(in crate::app) fn spawn_export_item(
         gpu_export_prewarm,
     } = source;
     let metadata = ExportMetadata::from_raw(&raw, source_file_name);
-    let path = destination.path().to_path_buf();
+    let target = destination.target();
     spawn_tiled_export(
         format,
         TiledExportJob {
@@ -113,7 +115,7 @@ pub(in crate::app) fn spawn_export_item(
             exposure,
             masks,
             remove,
-            path,
+            target,
             tile_spec: TileSpec::default(),
             settings,
             metadata,
@@ -255,17 +257,14 @@ impl CalibRawApp {
             .as_millis();
         let display_name = format!("{stem}.{}", format.extension());
         let cache_file_name = format!("{stem}-{timestamp}.{}", format.extension());
-        let destination = match self.prepare_android_export_destination(
-            display_name.clone(),
-            cache_file_name,
-            format,
-        ) {
-            Ok(destination) => destination,
-            Err(error) => {
-                self.ui.notice = Some(error);
-                return;
-            }
-        };
+        let destination =
+            match self.prepare_android_export_destination(display_name, cache_file_name, format) {
+                Ok(destination) => destination,
+                Err(error) => {
+                    self.ui.notice = Some(error);
+                    return;
+                }
+            };
         let cleanup = destination.clone();
         if self
             .start_export_destination(destination, frame, format)
@@ -290,11 +289,13 @@ impl CalibRawApp {
             .map_err(|error| format!("Could not prepare Android export cache: {error}"))?;
         match calibraw_ffi::prepare_direct_export(
             &self.android.android_app,
-            &export_dir,
             &display_name,
             format.mime_type(),
         ) {
-            Ok(Some(path)) => Ok(ExportDestination::AndroidDirect { path }),
+            Ok(Some(path)) => Ok(ExportDestination::AndroidDirect {
+                path,
+                staging_dir: export_dir,
+            }),
             Ok(None) => Ok(ExportDestination::AndroidGallery {
                 path: export_dir.join(cache_file_name),
                 display_name,
@@ -316,7 +317,7 @@ impl CalibRawApp {
         &self,
         destination: &ExportDestination,
     ) {
-        if let ExportDestination::AndroidDirect { path } = destination {
+        if let ExportDestination::AndroidDirect { path, .. } = destination {
             calibraw_ffi::cancel_direct_export(&self.android.android_app, path);
         }
     }
@@ -461,152 +462,6 @@ impl CalibRawApp {
         }
     }
 
-    pub(crate) fn show_export_task_indicator(&mut self, ui: &mut egui::Ui) {
-        let Some(task) = self.export.task.as_ref() else {
-            return;
-        };
-        if !task.minimized {
-            return;
-        }
-        let replay = task.kind == ExportTaskKind::Replay;
-        let label = if replay {
-            format!("Replay {:.0}%", task.progress.clamp(0.0, 1.0) * 100.0)
-        } else if task.total > 1 {
-            format!(
-                "Exporting {} / {}",
-                task.completed.min(task.total),
-                task.total
-            )
-        } else {
-            format!("Exporting {:.0}%", task.progress.clamp(0.0, 1.0) * 100.0)
-        };
-        if ui
-            .small_button(label)
-            .on_hover_text("Show export progress")
-            .clicked()
-        {
-            self.restore_export_task();
-        }
-    }
-
-    #[cfg(target_os = "android")]
-    pub(crate) fn sync_android_export_notification(&self) {
-        let Some(task) = self.export.task.as_ref() else {
-            if let Err(error) =
-                calibraw_ffi::clear_background_task_notification(&self.android.android_app)
-            {
-                log::warn!("{error}");
-            }
-            return;
-        };
-        let title = if task.kind == ExportTaskKind::LibraryBatch {
-            "CalibRaw batch export"
-        } else {
-            "CalibRaw export"
-        };
-        let detail = (task.total > 1).then(|| {
-            format!(
-                "{} / {} images complete",
-                task.completed.min(task.total),
-                task.total
-            )
-        });
-        let percent = (task.progress.clamp(0.0, 1.0) * 100.0).round() as i32;
-        if let Err(error) = calibraw_ffi::update_background_task_notification(
-            &self.android.android_app,
-            title,
-            &task.phase,
-            detail.as_deref(),
-            percent,
-            task.total_tiles == 0 && task.progress <= 0.0,
-            0,
-        ) {
-            log::warn!("{error}");
-        }
-    }
-
-    pub(crate) fn show_export_task_dialog(&mut self, ctx: &egui::Context) {
-        let Some(task) = self.export.task.as_ref() else {
-            return;
-        };
-        if task.minimized {
-            return;
-        }
-        let progress = task.progress.clamp(0.0, 1.0);
-        let phase = task.phase.clone();
-        let completed = task.completed;
-        let total = task.total;
-        let cancelling = task.cancelling;
-        let mut minimize = false;
-        let mut cancel = false;
-        let replay = task.kind == ExportTaskKind::Replay;
-        let window_title = if replay {
-            "Creating Edit Replay"
-        } else {
-            "Exporting"
-        };
-        crate::ui::theme::dialog_window(window_title, ctx, crate::ui::theme::DIALOG_WIDTH_DEFAULT)
-            .id(egui::Id::new("active-export-progress"))
-            .show(ctx, |ui| {
-                if replay {
-                    ui.label(egui::RichText::new("Creating edit replay").strong());
-                } else if total > 1 {
-                    ui.label(
-                        egui::RichText::new(format!(
-                            "{} / {} images complete",
-                            completed.min(total),
-                            total
-                        ))
-                        .strong(),
-                    );
-                } else {
-                    ui.label(egui::RichText::new("Exporting image").strong());
-                }
-                ui.label(&phase);
-                ui.add_space(6.0);
-                ui.add(
-                    egui::ProgressBar::new(progress)
-                        .show_percentage()
-                        .animate(!cancelling),
-                );
-                if cancelling {
-                    ui.label(
-                        egui::RichText::new("Stopping at the next safe point…")
-                            .small()
-                            .color(ui.visuals().weak_text_color()),
-                    );
-                }
-                crate::ui::theme::dialog_button_row(ui, |ui| {
-                    cancel |= ui
-                        .add_enabled_ui(!cancelling, |ui| {
-                            crate::ui::theme::secondary_button(ui, "Cancel")
-                        })
-                        .inner
-                        .clicked();
-                    if crate::ui::theme::secondary_button(ui, "Minimize").clicked() {
-                        minimize = true;
-                    }
-                });
-                if !cancel
-                    && !cancelling
-                    && crate::ui::theme::dialog_keyboard_action(
-                        ui,
-                        crate::ui::theme::DialogKeyboard::CLOSE_ONLY,
-                        false,
-                    ) == crate::ui::theme::DialogAction::Cancel
-                {
-                    cancel = true;
-                }
-            });
-        if minimize {
-            self.minimize_export_task();
-        }
-        if cancel {
-            self.cancel_export_task();
-        }
-        ctx.request_repaint_after(Duration::from_millis(50));
-    }
-
     pub(in crate::app) fn poll_export_worker(&mut self, _frame: &eframe::Frame) {
         if self
             .export
@@ -710,6 +565,7 @@ impl CalibRawApp {
                                 match destination {
                                     Some(ExportDestination::AndroidDirect {
                                         path: direct_path,
+                                        ..
                                     }) => {
                                         debug_assert_eq!(path, direct_path);
                                         match calibraw_ffi::finalize_direct_export(

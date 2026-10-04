@@ -4,7 +4,6 @@ use crate::ui::library::library_image_context_menu;
 use crate::ui::library::{
     apply_library_action, load_desktop_reference_preview, DesktopFilmstripItem,
 };
-use crate::ui::preview::Preview;
 use eframe::egui::{self, Align2, Color32, FontId, Sense, Stroke, StrokeKind, Ui};
 use std::collections::HashSet;
 use std::sync::{mpsc, Mutex, OnceLock};
@@ -69,10 +68,7 @@ impl Develop {
 
         egui::Frame::new()
             .fill(ui.visuals().panel_fill)
-            .inner_margin(egui::Margin::symmetric(
-                crate::ui::theme::CONTENT_MARGIN,
-                10,
-            ))
+            .inner_margin(egui::Margin::symmetric(moduwu_design::CONTENT_MARGIN, 10))
             .show(ui, |ui| {
                 ui.set_min_height(FILMSTRIP_CARD_HEIGHT);
                 show_filmstrip_contents(ui, app, frame);
@@ -81,7 +77,7 @@ impl Develop {
 
     pub(crate) fn show_preview(ui: &mut Ui, app: &mut CalibRawApp, frame: &eframe::Frame) {
         if app.develop_ui.reference.path.is_none() {
-            Preview::show(ui, app, frame);
+            app.show_preview(ui, frame, None);
             return;
         }
 
@@ -161,7 +157,7 @@ impl Develop {
 
         let mut develop_ui = ui.new_child(egui::UiBuilder::new().max_rect(right_rect));
         develop_ui.shrink_clip_rect(right_rect);
-        Preview::show(&mut develop_ui, app, frame);
+        app.show_preview(&mut develop_ui, frame, None);
     }
 }
 
@@ -281,7 +277,7 @@ fn show_filmstrip_contents(ui: &mut Ui, app: &mut CalibRawApp, frame: &eframe::F
                         open_path = Some(item.path.clone());
                     }
 
-                    crate::ui::theme::context_menu(&response, |ui| {
+                    moduwu_design::context_menu(&response, |ui| {
                         let context_assets = [item.asset.clone()];
                         if let Some(action) =
                             library_image_context_menu(ui, app, &item.asset, &context_assets, false)
@@ -290,17 +286,13 @@ fn show_filmstrip_contents(ui: &mut Ui, app: &mut CalibRawApp, frame: &eframe::F
                         }
                         ui.separator();
                         if reference {
-                            if crate::ui::theme::context_menu_item(
-                                ui,
-                                true,
-                                "Clear Reference Image",
-                            )
-                            .clicked()
+                            if moduwu_design::context_menu_item(ui, true, "Clear Reference Image")
+                                .clicked()
                             {
                                 app.develop_ui.reference.clear();
                                 ui.close();
                             }
-                        } else if crate::ui::theme::context_menu_item(
+                        } else if moduwu_design::context_menu_item(
                             ui,
                             true,
                             "Set as Reference Image",
@@ -573,7 +565,7 @@ fn filmstrip_thumbnail(
         Sense::click(),
     );
     let painter = ui.painter_at(rect);
-    let card_radius = crate::ui::theme::CARD_RADIUS;
+    let card_radius = moduwu_design::CARD_RADIUS;
     let format_label = crate::ui::library::rendered_format_label(&item.asset.display_name);
 
     if let Some(texture) = item.texture.as_ref() {
@@ -663,7 +655,7 @@ fn filmstrip_name_hover_overlay(ui: &Ui, response: &egui::Response, rect: egui::
     let painter = ui.painter_at(rect);
     painter.rect_filled(
         rect,
-        crate::ui::theme::CARD_RADIUS,
+        moduwu_design::CARD_RADIUS,
         Color32::from_black_alpha(
             (f32::from(FILMSTRIP_HOVER_OVERLAY_ALPHA) * hover_progress).round() as u8,
         ),

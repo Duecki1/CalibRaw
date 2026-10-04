@@ -12,7 +12,8 @@ bootstrap_download_verified \
   /tmp/rustup-init \
   "https://static.rust-lang.org/rustup/archive/1.28.2/${RUSTUP_ARCH}-unknown-linux-gnu/rustup-init.sha256"
 chmod +x /tmp/rustup-init
-/tmp/rustup-init -y --profile minimal --default-toolchain 1.92.0
+rust_version="$(sed -n 's/^channel = "\(.*\)"$/\1/p' rust-toolchain.toml)"
+/tmp/rustup-init -y --profile minimal --default-toolchain "$rust_version"
 source "$HOME/.cargo/env"
 
 CALIBRAW_LIBRAW_REVISION="$(cargo metadata --locked --no-deps --format-version 1 | python3 -c 'import json,sys; print(json.load(sys.stdin)["metadata"]["libraw_revision"])')"

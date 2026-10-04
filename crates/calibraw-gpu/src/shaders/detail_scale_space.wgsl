@@ -20,10 +20,10 @@ fn creative_broad_base_ev(pos: vec2<i32>) -> f32 {
 
 fn creative_edge_guard(pos: vec2<i32>) -> f32 {
     let step = SceneAdjustments::presence_step(1.0, 3);
-    let left = SceneAdjustments::log_luminance(SceneAdjustments::adjustment_base_at(pos + vec2<i32>(-step, 0)));
-    let right = SceneAdjustments::log_luminance(SceneAdjustments::adjustment_base_at(pos + vec2<i32>(step, 0)));
-    let up = SceneAdjustments::log_luminance(SceneAdjustments::adjustment_base_at(pos + vec2<i32>(0, -step)));
-    let down = SceneAdjustments::log_luminance(SceneAdjustments::adjustment_base_at(pos + vec2<i32>(0, step)));
+    let left = Common::log_luminance(SceneAdjustments::adjustment_base_at(pos + vec2<i32>(-step, 0)));
+    let right = Common::log_luminance(SceneAdjustments::adjustment_base_at(pos + vec2<i32>(step, 0)));
+    let up = Common::log_luminance(SceneAdjustments::adjustment_base_at(pos + vec2<i32>(0, -step)));
+    let down = Common::log_luminance(SceneAdjustments::adjustment_base_at(pos + vec2<i32>(0, step)));
     let gradient = length(vec2<f32>(right - left, down - up));
     return 1.0 - 0.78 * smoothstep(0.48, 1.25, gradient);
 }
@@ -40,7 +40,7 @@ fn apply_texture_and_clarity_values(
         return rgb;
     }
 
-    let center_ev = SceneAdjustments::log_luminance(rgb);
+    let center_ev = Common::log_luminance(rgb);
     let fine_base_ev = creative_fine_base_ev(pos);
     var broad_base_ev = fine_base_ev;
     if abs(clarity) >= 1e-6 {

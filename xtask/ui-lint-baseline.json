@@ -1,0 +1,10 @@
+{
+  "approved": [
+    {
+      "rule": "combo-box",
+      "function": "component_header",
+      "code": "egui::ComboBox::from_id_salt(\"vertical-mask-combine\")",
+      "reason": "Inline selector in a wrapping header row that sizes to egui's default combo width; moduwu_design::combo_box requires an explicit width and truncates, which would change the compact mask strip layout."
+    }
+  ]
+}

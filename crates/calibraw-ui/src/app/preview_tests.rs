@@ -38,13 +38,12 @@ fn portrait_gpu_layout_and_input() {
         .unwrap(),
     );
     let params = GpuParams::new(&app.develop.exposure, &app.masks.stack, &raw);
-    let mut pipeline = RawGpuPipeline::new_headless_with_quality_and_mask_edge(
+    let pipeline = RawGpuPipeline::new(
         &device,
         &queue,
         &raw,
         &params,
-        ProcessingQuality::Preview,
-        256,
+        PipelineOptions::new(ProcessingQuality::Preview).mask_atlas_edge(256),
     )
     .unwrap();
     pipeline.recompute(&queue, &device, &params);
@@ -53,8 +52,13 @@ fn portrait_gpu_layout_and_input() {
         wgpu::TextureFormat::Rgba8Unorm,
         RendererOptions::default(),
     );
-    pipeline.register_egui_texture(&device, &mut renderer);
-    let image_id = pipeline.egui_texture_id.unwrap();
+    let pipeline = PreviewPipeline::register(
+        pipeline,
+        &device,
+        &mut renderer,
+        &app.preview.retired_textures,
+    );
+    let image_id = pipeline.texture();
     app.preview.gpu_pipeline = Some(pipeline);
     app.develop.loaded_raw = Some(Arc::clone(&raw));
     app.develop.preview_raw = Some(raw);
@@ -211,7 +215,7 @@ fn portrait_gpu_layout_and_input() {
                         },
                         |ui| {
                             egui::CentralPanel::default().show(ui, |ui| {
-                                crate::ui::preview::Preview::show(ui, &mut app, &frame);
+                                app.show_preview(ui, &frame, None);
                             });
                         },
                     );
@@ -280,13 +284,8 @@ fn portrait_gpu_layout_and_input() {
         "a late result attempted an unnecessary GPU upload"
     );
     assert_eq!(
-        app.preview
-            .detail
-            .as_ref()
-            .unwrap()
-            .pipeline
-            .egui_texture_id,
-        Some(image_id)
+        app.preview.detail.as_ref().unwrap().pipeline.texture(),
+        image_id
     );
 }
 

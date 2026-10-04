@@ -1,3 +1,4 @@
+mod base64_arc_bytes;
 pub mod color_math;
 pub mod diagnostics;
 pub mod file_ops;

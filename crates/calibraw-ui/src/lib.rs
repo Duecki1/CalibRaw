@@ -1,3 +1,4 @@
+pub(crate) mod appearance;
 pub(crate) mod export_naming;
 pub(crate) mod performance_settings;
 pub(crate) use calibraw_core::presets;
@@ -10,12 +11,12 @@ pub mod sidecar {
     pub use calibraw_core::sidecar::*;
     #[cfg(target_os = "android")]
     pub use calibraw_ffi::{
-        load_android, load_android_review, save_android, save_android_with_review,
-        save_android_with_review_and_editing_time,
+        load_android, load_android_review, save_android, save_android_with_review_and_editing_time,
     };
 }
 
 mod app;
+mod services;
 mod ui;
 
 pub use app::CalibRawApp;
@@ -88,11 +89,7 @@ fn native_options() -> eframe::NativeOptions {
                 adapter_limits.max_texture_dimension_2d,
                 adapter.features(),
             ));
-            let mut required_limits = if info.backend == eframe::wgpu::Backend::Gl {
-                eframe::wgpu::Limits::downlevel_webgl2_defaults()
-            } else {
-                eframe::wgpu::Limits::default()
-            };
+            let mut required_limits = calibraw_gpu::base_device_limits(info.backend);
             required_limits.max_texture_dimension_2d = adapter_limits.max_texture_dimension_2d;
             let required_features = adapter.features() & eframe::wgpu::Features::PIPELINE_CACHE;
             eframe::wgpu::DeviceDescriptor {
@@ -176,7 +173,7 @@ pub fn android_main(android_app: calibraw_ffi::AndroidApp) {
     let result = eframe::run_native(
         "CalibRaw",
         options,
-        Box::new(move |cc| Ok(Box::new(CalibRawApp::new_android(cc, android_app.clone())))),
+        Box::new(move |cc| Ok(Box::new(CalibRawApp::new_android(cc, android_app)))),
     );
     if let Err(error) = result {
         log::error!("CalibRaw terminated: {error:#}");

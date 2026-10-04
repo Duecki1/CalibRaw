@@ -652,7 +652,6 @@ dependencies = [
  "calibraw-core",
  "calibraw-gpu",
  "env_logger",
- "pollster",
 ]
 
 [[package]]
@@ -684,7 +683,6 @@ version = "1.1.1"
 dependencies = [
  "android-activity",
  "calibraw-core",
- "egui",
  "jni",
  "log",
 ]
@@ -696,9 +694,6 @@ dependencies = [
  "anyhow",
  "bytemuck",
  "calibraw-core",
- "calibraw-ffi",
- "egui",
- "egui-wgpu",
  "half",
  "image",
  "jpeg-encoder",
@@ -2631,8 +2626,8 @@ dependencies = [
 
 [[package]]
 name = "moduwu-design"
-version = "1.1.0"
-source = "git+https://github.com/Duecki1/Moduwu?rev=64acb1e255dc66126f722104f0359ba71756f7b9#64acb1e255dc66126f722104f0359ba71756f7b9"
+version = "2.0.0"
+source = "git+https://github.com/Duecki1/Moduwu?rev=a77b977c28cd65806ffa0fdf20d73735ef5198da#a77b977c28cd65806ffa0fdf20d73735ef5198da"
 dependencies = [
  "egui",
 ]
@@ -4197,7 +4192,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.3.4",
+ "getrandom 0.4.3",
  "once_cell",
  "rustix 1.1.4",
  "windows-sys 0.61.2",
@@ -5539,6 +5534,7 @@ version = "1.1.1"
 dependencies = [
  "csv",
  "image",
+ "ring",
  "serde",
  "serde_json",
  "tempfile",

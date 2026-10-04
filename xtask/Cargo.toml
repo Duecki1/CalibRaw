@@ -12,6 +12,7 @@ publish = false
 [dependencies]
 csv.workspace = true
 image.workspace = true
+ring.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tempfile.workspace = true

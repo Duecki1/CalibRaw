@@ -16,11 +16,7 @@ fn light_ray_emission_at(uv: vec2<f32>, mask_index: u32) -> f32 {
 }
 
 fn light_ray_hash(cell: u32, seed: u32) -> f32 {
-    var h = cell * 1597334677u ^ seed * 3812015801u;
-    h = (h ^ (h >> 16u)) * 2246822519u;
-    h = (h ^ (h >> 13u)) * 3266489917u;
-    h = h ^ (h >> 16u);
-    return f32(h & 0x00ffffffu) / 16777215.0;
+    return mask_effect_hash_unit(cell * 1597334677u ^ seed * 3812015801u);
 }
 
 fn light_ray_circular_noise(turn: f32, frequency: u32, seed: u32) -> f32 {
