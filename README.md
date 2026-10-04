@@ -23,13 +23,13 @@
       <img width="100%" alt="Desktop library with folders, photo thumbnails and ratings" src="docs/images/demos/library.png" />
     </td>
     <td width="50%" align="center">
-      <strong>AI subject mask</strong><br />
+      <strong>AI Masks</strong><br />
       <img width="100%" alt="Animated demo of AI subject masking and separate subject and background adjustments" src="docs/images/demos/develop-masks-subject.gif" />
     </td>
   </tr>
   <tr>
     <td width="50%" align="center">
-      <strong>Fog</strong><br />
+      <strong>Effects</strong><br />
       <img width="100%" alt="Animated demo of fog amount, density and scene depth controls" src="docs/images/demos/develop-effects-fog.gif" />
     </td>
     <td width="50%" align="center">
