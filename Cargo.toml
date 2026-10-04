@@ -41,7 +41,7 @@ repository = "https://github.com/Duecki1/CalibRaw"
 readme = "README.md"
 
 [workspace.dependencies]
-moduwu-design = { version = "2.0.0", git = "https://github.com/Duecki1/Moduwu", rev = "64acb1e255dc66126f722104f0359ba71756f7b9" }
+moduwu-design = { version = "2.0.0", git = "https://github.com/Duecki1/Moduwu", rev = "a77b977c28cd65806ffa0fdf20d73735ef5198da" }
 calibraw-core = { version = "1.1.0", path = "crates/calibraw-core" }
 calibraw-gpu = { version = "1.1.0", path = "crates/calibraw-gpu" }
 calibraw-ai = { version = "1.1.0", path = "crates/calibraw-ai" }
@@ -110,9 +110,3 @@ panic = "unwind"
 
 [profile.dev]
 opt-level = 1
-
-# Development override: CalibRaw uses Moduwu changes that are not published yet.
-# Before merging, push the Moduwu commit, set `rev` above to it, delete this
-# section and run `cargo update -p moduwu-design` (see docs/DEVELOPMENT.md).
-[patch."https://github.com/Duecki1/Moduwu"]
-moduwu-design = { path = "../moduwu-design" }
