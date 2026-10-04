@@ -353,7 +353,7 @@ mod tests {
         app.persistence.sidecar_saved_revision = Some(revision);
         // Keep the new save queued behind a save of the same edit revision.
         app.persistence.sidecar_in_flight = Some(SidecarSaveJob {
-            generation: app.persistence.sidecar_generation,
+            generation: app.persistence.document_generation,
             revision,
             explicit: false,
         });

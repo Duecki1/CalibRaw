@@ -62,6 +62,13 @@ sky, RawNIND) were not run; they are listed in [FEATURE_MATRIX.md](FEATURE_MATRI
 | `2026-10-03-82e810577-ui-before` | 132 | 4 themes × 3 viewports × 11 states |
 | `2026-10-03-82e810577-ui-repeat` | 132 | `baseline-compare` against `ui-before`: 0 differences at tolerance 0 |
 | `2026-10-04-82e810577-ui-before-harness-fixed` | 132 | **reference for comparisons**: baseline code plus a one-line harness fix (below) |
+| `2026-10-04-e7c871b5c-step6-number-field` | 132 | `NumberField` in export and settings: 0 differences against the reference |
+| `2026-10-04-e7c871b5c-step7-slider` | 132 | slider moved to Moduwu: 0 differences |
+| `2026-10-04-e7c871b5c-step8-theme` | 132 | theme re-exports removed: 0 differences |
+| `2026-10-04-e7c871b5c-step9-module-splits` | 132 | module splits, back-navigation and export-view changes: 0 differences |
+| `2026-10-04-e7c871b5c-step10-final` | 132 | final state after visibility tightening: 0 differences |
+| `2026-10-04-e7c871b5c-step11-views` | 132 | settings cards and frame phases extracted: 0 differences |
+| `2026-10-04-e7c871b5c-step12-library-grid` | 132 | library thumbnail grid extracted: 0 differences |
 
 The harness is deterministic on this machine, so any later difference at
 tolerance 0 is a real change.
@@ -97,6 +104,15 @@ numerical work, which is out of scope for the rework.
 | `raw_open_bench` (decode, lens catalog and correction, highlight analysis, proxy) | 1.46–1.47 s | 270 MiB |
 | headless develop export, full-size PNG | 5.65–5.95 s | 597 MiB |
 | `cargo bench -p calibraw-core --bench mask_rasterization` | 512² brush: 289 MP/s positive, 575 MP/s erase; 2048² first raster 91.2 ms (generated source) / 86.5 ms (curved path); 2048² grow sweep 8.80 / 4.54 ms | — |
+
+Final measurements (same machine, fixture and method; working tree on top of
+`e7c871b5`):
+
+| Operation | Time | Peak RSS |
+|---|---|---|
+| `raw_open_bench` | 1.38–1.40 s, fingerprint `0ef93f3cdaae2b92` | 269–270 MiB |
+| headless develop export, full-size PNG | 5.17–5.20 s, sha256 `ed2103ff…270acb` (byte-identical) | 596 MiB |
+| `mask_rasterization` | 512² brush: 302 MP/s positive, 617 MP/s erase; 2048² first raster 90.7 / 81.9 ms; grow sweep 8.40 / 4.44 ms | — |
 
 Budget for the rework: no operation slower than its baseline by more than
 normal run-to-run variance (≈5 % here) and no peak-memory increase.

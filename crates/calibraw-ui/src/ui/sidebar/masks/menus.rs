@@ -45,7 +45,7 @@ impl Sidebar {
             MaskCombineMode::Subtract,
             MaskCombineMode::Intersect,
         ] {
-            crate::ui::theme::dropdown_submenu(ui, combine.label(), |ui| {
+            moduwu_design::dropdown_submenu(ui, combine.label(), |ui| {
                 if let Some(kind) = Self::mask_kind_menu(ui, unavailable_message) {
                     selected = Some((kind, combine));
                 }
@@ -65,7 +65,7 @@ impl Sidebar {
         paste_mask: &mut Option<usize>,
         mask_index: usize,
     ) {
-        if crate::ui::theme::menu_item(ui, true, "Rename…").clicked() {
+        if moduwu_design::menu_item(ui, true, "Rename…").clicked() {
             Self::open_mask_rename_dialog(
                 ui.ctx(),
                 MaskRenameTarget::Group(mask_index),
@@ -78,7 +78,7 @@ impl Sidebar {
         if ui.checkbox(&mut enabled, "Enabled").changed() {
             *enabled_changed |= mask.common.set_enabled(enabled);
         }
-        if crate::ui::theme::menu_item(ui, can_add_group, "Duplicate").clicked() {
+        if moduwu_design::menu_item(ui, can_add_group, "Duplicate").clicked() {
             *duplicate_mask = Some((mask_index, false));
             ui.close();
         }
@@ -87,19 +87,19 @@ impl Sidebar {
             *geometry_changed = true;
             ui.close();
         }
-        if crate::ui::theme::menu_item(ui, can_add_group, "Duplicate & Invert").clicked() {
+        if moduwu_design::menu_item(ui, can_add_group, "Duplicate & Invert").clicked() {
             *duplicate_mask = Some((mask_index, true));
             ui.close();
         }
         ui.separator();
-        if crate::ui::theme::menu_item(ui, true, "Copy Mask Group").clicked() {
+        if moduwu_design::menu_item(ui, true, "Copy Mask Group").clicked() {
             ui.ctx().data_mut(|data| {
                 data.insert_temp(Self::mask_group_clipboard_id(), mask.clone());
             });
             ui.close();
         }
         let can_paste = can_add_group && Self::copied_mask_group(ui.ctx()).is_some();
-        if crate::ui::theme::menu_item(ui, can_paste, "Paste Mask Group")
+        if moduwu_design::menu_item(ui, can_paste, "Paste Mask Group")
             .on_disabled_hover_text("Copy a mask group first")
             .clicked()
         {
@@ -107,7 +107,7 @@ impl Sidebar {
             ui.close();
         }
         ui.separator();
-        if crate::ui::theme::destructive_menu_item(
+        if moduwu_design::destructive_menu_item(
             ui,
             format!("{}  Delete mask group", egui_phosphor::regular::TRASH),
         )
@@ -134,7 +134,7 @@ impl Sidebar {
         mask_index: usize,
         component_index: usize,
     ) {
-        if crate::ui::theme::menu_item(ui, true, "Rename…").clicked() {
+        if moduwu_design::menu_item(ui, true, "Rename…").clicked() {
             Self::open_mask_rename_dialog(
                 ui.ctx(),
                 MaskRenameTarget::Component {
@@ -150,7 +150,7 @@ impl Sidebar {
         if ui.checkbox(&mut enabled, "Enabled").changed() {
             *geometry_changed |= component.common.set_enabled(enabled);
         }
-        if crate::ui::theme::menu_item(ui, can_add_component, "Duplicate").clicked() {
+        if moduwu_design::menu_item(ui, can_add_component, "Duplicate").clicked() {
             *duplicate_component = Some((mask_index, component_index, false));
             ui.close();
         }
@@ -159,19 +159,19 @@ impl Sidebar {
             *geometry_changed = true;
             ui.close();
         }
-        if crate::ui::theme::menu_item(ui, can_add_component, "Duplicate & Invert").clicked() {
+        if moduwu_design::menu_item(ui, can_add_component, "Duplicate & Invert").clicked() {
             *duplicate_component = Some((mask_index, component_index, true));
             ui.close();
         }
         ui.separator();
-        if crate::ui::theme::menu_item(ui, true, "Copy Component").clicked() {
+        if moduwu_design::menu_item(ui, true, "Copy Component").clicked() {
             ui.ctx().data_mut(|data| {
                 data.insert_temp(Self::mask_component_clipboard_id(), component.clone());
             });
             ui.close();
         }
         let can_paste = can_add_component && Self::copied_mask_component(ui.ctx()).is_some();
-        if crate::ui::theme::menu_item(ui, can_paste, "Paste Component")
+        if moduwu_design::menu_item(ui, can_paste, "Paste Component")
             .on_disabled_hover_text("Copy a component first")
             .clicked()
         {
@@ -181,7 +181,7 @@ impl Sidebar {
         ui.separator();
         if ui
             .add_enabled_ui(can_delete, |ui| {
-                crate::ui::theme::destructive_menu_item(
+                moduwu_design::destructive_menu_item(
                     ui,
                     format!("{}  Delete sub-mask", egui_phosphor::regular::TRASH),
                 )
@@ -271,28 +271,24 @@ impl Sidebar {
         };
         let mut save = false;
         let mut cancel = false;
-        crate::ui::theme::dialog_window(title, ctx, crate::ui::theme::DIALOG_WIDTH_NARROW)
+        moduwu_design::dialog_window(title, ctx, moduwu_design::DIALOG_WIDTH_NARROW)
             .id(egui::Id::new("mask-rename-dialog-window"))
             .show(ctx, |ui| {
-                let response = crate::ui::theme::dialog_text_field(
-                    ui,
-                    &mut dialog.name,
-                    "mask-rename-input",
-                    "",
-                );
-                crate::ui::theme::request_initial_focus(&response, &mut dialog.focus_requested);
+                let response =
+                    moduwu_design::dialog_text_field(ui, &mut dialog.name, "mask-rename-input", "");
+                moduwu_design::request_initial_focus(&response, &mut dialog.focus_requested);
                 let trimmed_is_empty = dialog.name.trim().is_empty();
-                match crate::ui::theme::dialog_confirmation_buttons(
+                match moduwu_design::dialog_confirmation_buttons(
                     ui,
                     "Cancel",
                     "Rename",
                     !trimmed_is_empty,
                     false,
-                    crate::ui::theme::DialogKeyboard::CONFIRM_ON_ENTER,
+                    moduwu_design::DialogKeyboard::CONFIRM_ON_ENTER,
                 ) {
-                    crate::ui::theme::DialogAction::Cancel => cancel = true,
-                    crate::ui::theme::DialogAction::Confirm => save = true,
-                    crate::ui::theme::DialogAction::None => {}
+                    moduwu_design::DialogAction::Cancel => cancel = true,
+                    moduwu_design::DialogAction::Confirm => save = true,
+                    moduwu_design::DialogAction::None => {}
                 }
             });
 
@@ -346,28 +342,28 @@ impl Sidebar {
                 "Delete Sub-mask",
             ),
         };
-        let mut action = crate::ui::theme::DialogAction::None;
-        crate::ui::theme::dialog_window(title, &ctx, crate::ui::theme::DIALOG_WIDTH_NARROW)
+        let mut action = moduwu_design::DialogAction::None;
+        moduwu_design::dialog_window(title, &ctx, moduwu_design::DIALOG_WIDTH_NARROW)
             .id(egui::Id::new("mask-delete-dialog-window"))
             .show(&ctx, |ui| {
                 ui.label(message);
-                action = crate::ui::theme::dialog_confirmation_buttons(
+                action = moduwu_design::dialog_confirmation_buttons(
                     ui,
                     "Cancel",
                     confirm_label,
                     true,
                     true,
-                    crate::ui::theme::DialogKeyboard::CLOSE_ONLY,
+                    moduwu_design::DialogKeyboard::CLOSE_ONLY,
                 );
             });
 
         match action {
-            crate::ui::theme::DialogAction::Cancel => {
+            moduwu_design::DialogAction::Cancel => {
                 ctx.data_mut(|data| {
                     data.remove::<MaskDeleteDialog>(Self::mask_delete_dialog_id());
                 });
             }
-            crate::ui::theme::DialogAction::Confirm => {
+            moduwu_design::DialogAction::Confirm => {
                 let changed = match dialog.target {
                     MaskDeleteTarget::Group(mask_index) => {
                         if app.masks.stack.delete_mask(mask_index) {
@@ -404,7 +400,7 @@ impl Sidebar {
                     Self::refresh_mask_thumbnails(ui, app);
                 }
             }
-            crate::ui::theme::DialogAction::None => {}
+            moduwu_design::DialogAction::None => {}
         }
     }
 

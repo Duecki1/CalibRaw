@@ -38,13 +38,12 @@ fn portrait_gpu_layout_and_input() {
         .unwrap(),
     );
     let params = GpuParams::new(&app.develop.exposure, &app.masks.stack, &raw);
-    let pipeline = RawGpuPipeline::new_headless_with_quality_and_mask_edge(
+    let pipeline = RawGpuPipeline::new(
         &device,
         &queue,
         &raw,
         &params,
-        ProcessingQuality::Preview,
-        256,
+        PipelineOptions::new(ProcessingQuality::Preview).mask_atlas_edge(256),
     )
     .unwrap();
     pipeline.recompute(&queue, &device, &params);

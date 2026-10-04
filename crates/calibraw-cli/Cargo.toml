@@ -18,5 +18,4 @@ path = "src/bin/calibraw-develop-export.rs"
 calibraw-core.workspace = true
 calibraw-gpu.workspace = true
 anyhow.workspace = true
-pollster.workspace = true
 env_logger.workspace = true

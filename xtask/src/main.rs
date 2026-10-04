@@ -14,6 +14,7 @@ mod jni_contract;
 mod loc;
 mod process;
 mod rust_source;
+mod ui_lint;
 
 pub(crate) use error::{Result, XtaskError};
 
@@ -60,6 +61,7 @@ fn run() -> Result<()> {
             jni_contract::run()
         }
         "loc" => loc::run(rest),
+        "ui-lint" => ui_lint::run(rest),
         "build-android" => android::build_android(rest),
         "build-android-libraw" => android::build_android_libraw(rest),
         "build-android-lensfun" => android::build_android_lensfun(rest),
@@ -83,6 +85,7 @@ pub(crate) fn print_help() {
            arch-check                       check crate dependency boundaries\n\
            jni-contract                     check Rust JNI exports and calls against Java\n\
            loc [--json PATH] [REPO...]      count production, test and build lines\n\
+           ui-lint [--suggest]              find bypasses of shared Moduwu controls\n\
            baseline-run LABEL [--filter F]  capture UI review screenshots into\n\
                                             $CALIBRAW_BASELINE_DIR/<date>-<rev>-LABEL\n\
            baseline-compare BEFORE AFTER    compare two capture runs pixel by pixel\n\

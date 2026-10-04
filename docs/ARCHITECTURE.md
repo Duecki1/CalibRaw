@@ -74,7 +74,7 @@ change that establishes a boundary, not in advance.
 | Active work | `ForegroundOperation`, `ExportTask`, `PreviewState` receivers, `AiState::update`, `InpaintState::receiver` | AI masks, export, preview rebuilds |
 | Caches | `DevelopState::raw_cache`, `PreviewState::program_template`, `MaskState` caches, library thumbnail caches, `calibraw-ai` model runtime | decoded RAWs, compiled GPU programs, AI inference results |
 
-`PersistenceState::sidecar_generation` identifies the open document: it
+`PersistenceState::document_generation` identifies the open document: it
 increases whenever a different document is installed, and every document-bound
 job records the value it started with.
 
@@ -95,17 +95,43 @@ job records the value it started with.
 
 | Job | Queue | Cancellation | Document change | Failure / disconnect |
 |---|---|---|---|---|
-| Document load | single receiver; a new load replaces it | the replaced receiver is dropped and its result discarded | the load installs the new document and bumps `sidecar_generation` | notice or unsupported-file dialog; a disconnected worker is reported |
+| Document load | single receiver; a new load replaces it | the replaced receiver is dropped and its result discarded | the load installs the new document and bumps `document_generation` | notice or unsupported-file dialog; a disconnected worker is reported |
 | Preview rebuild / detail | single receiver each; latest request wins | replaced receiver discards the stale result; `PreviewState::revision` rejects outdated detail renders | receivers cleared with the preview | disconnect clears the pending state |
-| Foreground AI / lens correction | one `ForegroundOperation` slot; a second request is refused | shared `AtomicBool`; the worker stops at its next safe point | results are applied only if `document_id` equals the current `sidecar_generation` | error dialog or notice; slot cleared |
+| Foreground AI / lens correction | one `ForegroundOperation` slot; a second request is refused | shared `AtomicBool`; the worker stops at its next safe point | results are applied only if `document_id` equals the current `document_generation` | error dialog or notice; slot cleared |
 | Remove / retouch | one receiver in `InpaintState` | `AtomicBool` | `reset_for_document` sets the flag and drops the receiver, so late results are discarded | notice; the pending stroke is kept only when the user must re-consent to a download |
 | Export / batch export / replay | one `ExportTask`; batch items run sequentially | `AtomicBool`; partial files are removed and never reported as success | export works on an immutable snapshot of the edit | notice; temporary output removed |
 | Sidecar save | `VecDeque` of requests, one write in flight | none; writes are short | requests carry `generation` and `revision`; stale completions are ignored | failure keeps a recovery request and shows a dialog |
 | Library thumbnails | shared work queue for a worker pool | `AtomicU64` generation; workers exit when it changes | generation bump on folder change | each item's result, success or error, is sent with its generation; older generations are ignored |
 
-All channels are unbounded `std::sync::mpsc` channels drained each frame by
+Job channels are unbounded `std::sync::mpsc` channels: each job sends a
+bounded number of progress events and one result, drained each frame by
 `drain_worker_events`, which stops at a terminal event and reports a
-disconnected worker so the app never waits on a dead job.
+disconnected worker so the app never waits on a dead job. The library
+thumbnail pool is the exception: its request and result channels are bounded
+(`MAX_PENDING_THUMBNAILS`, `MAX_PENDING_THUMBNAIL_RESULTS`), so a large folder
+applies back-pressure to the scanner and workers instead of growing memory.
+GPU readbacks wait on one-slot channels.
+
+### Synchronization
+
+| Lock | Owner | Holders | Purpose |
+|---|---|---|---|
+| decode gate (`RwLock<()>`) | `LibraryState`, shared by `decode_gate()` | write: document load and batch-export decodes, and the UI thread while clearing the thumbnail cache; read: library thumbnail and reference-preview decodes | an interactive decode runs alone; background decodes share the gate and yield; the cache is never cleared under a reader |
+| `REFERENCE_PREVIEW_SERIAL` | `ui::develop` | the reference-preview worker | one reference decode at a time |
+| `DEVELOPED_THUMBNAIL_GPU` | `ui::library::thumbnails::developed` | thumbnail workers | one headless device for developed thumbnails, used by one render at a time |
+| thumbnail work queue and request receiver | `ThumbnailWorkerContext` | thumbnail workers | short critical sections; never held while decoding |
+| model runtime slot | `calibraw_ai::model_runtime` | the running AI job | one ONNX session at a time; evicted models unload once released |
+| `RUNTIME_INIT_LOCK`, provider statuses, artifact lock | `calibraw_ai` | AI jobs | serialize ONNX Runtime initialization and probes |
+| `SIDECAR_SAVE_LOCK` | `calibraw_core::sidecar::files` | sidecar writers | one sidecar write at a time |
+| `TextureRetirement` | `PreviewState` | any thread dropping a `PreviewPipeline`; drained by the UI thread | short pushes and one drain per frame |
+| FFI result queues, `REPAINT_NOTIFIER` | `calibraw_ffi::android` | Java callback threads push; the UI thread pops | short critical sections; no JNI call while held |
+
+Only two nestings exist, both in a fixed order: the reference-preview serial
+lock is taken before the decode gate, and a thumbnail worker takes
+`DEVELOPED_THUMBNAIL_GPU` while holding the decode gate for reading. No code
+takes the decode gate while holding any other lock in this table. Poisoned
+locks are recovered (`PoisonError::into_inner`) where the protected data stays
+valid, and reported as errors where it may not.
 
 ### Shutdown
 

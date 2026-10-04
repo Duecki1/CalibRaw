@@ -31,7 +31,7 @@ impl Sidebar {
                 state.applied = false;
             }
 
-            ui.add_space(crate::ui::theme::SPACE_XXS);
+            ui.add_space(moduwu_design::SPACE_XXS);
             egui::Grid::new("lens-correction-capture-metadata")
                 .num_columns(2)
                 .spacing(egui::vec2(10.0, 3.0))
@@ -60,7 +60,7 @@ impl Sidebar {
                     }
                 });
 
-            ui.add_space(crate::ui::theme::SPACE_XS);
+            ui.add_space(moduwu_design::SPACE_XS);
             let makers = state.makers();
             let previous_maker = state.selected_maker.clone();
             let selected_maker_text = if state.selected_maker.is_empty() {
@@ -75,7 +75,7 @@ impl Sidebar {
             ui.add_enabled_ui(
                 state.catalog.available && !makers.is_empty() && !lens_correction_busy,
                 |ui| {
-                    crate::ui::theme::form_combo(
+                    moduwu_design::form_combo(
                         ui,
                         "Brand",
                         "lens-correction-brand",
@@ -113,7 +113,7 @@ impl Sidebar {
             ui.add_enabled_ui(
                 state.catalog.available && !models.is_empty() && !lens_correction_busy,
                 |ui| {
-                    crate::ui::theme::form_combo(
+                    moduwu_design::form_combo(
                         ui,
                         "Lens",
                         "lens-correction-model",
@@ -276,57 +276,78 @@ impl Sidebar {
                     "user modified".to_owned()
                 };
                 ui.horizontal(|ui| {
-                    let picker_width = crate::ui::theme::TOOLBAR_ICON_EDGE;
+                    let picker_width = moduwu_design::TOOLBAR_ICON_EDGE;
                     let combo_width =
                         (ui.available_width() - picker_width - ui.spacing().item_spacing.x)
                             .clamp(1.0, 240.0);
-                    crate::ui::theme::combo_box(
-                        "global-white-balance-preset",
-                        selection,
-                        combo_width,
-                    )
-                    .show_ui(ui, |ui| {
-                        if ui.selectable_label(false, "as shot").clicked() {
-                            exposure.temperature = 0.0;
-                            exposure.tint = 0.0;
-                            *white_balance_picker_active = false;
-                            changed = true;
-                        }
-                        if ui.selectable_label(false, "from image area").clicked() {
-                            *white_balance_picker_active = true;
-                        }
-                        ui.label(
-                            egui::RichText::new("reference")
-                                .strong()
-                                .color(ui.visuals().weak_text_color()),
-                        );
-                        if ui
-                            .selectable_label(false, "camera reference (D65)")
-                            .clicked()
-                        {
-                            if let Some((temperature, tint)) =
-                                raw.white_balance_offsets_from_temperature_tint(6504.0, 1.0)
-                            {
-                                exposure.temperature = temperature;
-                                exposure.tint = tint;
+                    moduwu_design::combo_box("global-white-balance-preset", selection, combo_width)
+                        .show_ui(ui, |ui| {
+                            if ui.selectable_label(false, "as shot").clicked() {
+                                exposure.temperature = 0.0;
+                                exposure.tint = 0.0;
                                 *white_balance_picker_active = false;
                                 changed = true;
                             }
-                        }
-                        if !presets.is_empty() {
+                            if ui.selectable_label(false, "from image area").clicked() {
+                                *white_balance_picker_active = true;
+                            }
+                            ui.label(
+                                egui::RichText::new("reference")
+                                    .strong()
+                                    .color(ui.visuals().weak_text_color()),
+                            );
+                            if ui
+                                .selectable_label(false, "camera reference (D65)")
+                                .clicked()
+                            {
+                                if let Some((temperature, tint)) =
+                                    raw.white_balance_offsets_from_temperature_tint(6504.0, 1.0)
+                                {
+                                    exposure.temperature = temperature;
+                                    exposure.tint = tint;
+                                    *white_balance_picker_active = false;
+                                    changed = true;
+                                }
+                            }
+                            if !presets.is_empty() {
+                                ui.separator();
+                                ui.label(
+                                    egui::RichText::new(format!(
+                                        "{} {}",
+                                        raw.camera_make, raw.camera_model
+                                    ))
+                                    .strong(),
+                                );
+                                for preset in &presets {
+                                    if ui.selectable_label(false, &preset.name).clicked() {
+                                        if let Some((temperature, tint)) = raw
+                                            .white_balance_offsets_from_coefficients(
+                                                preset.coefficients,
+                                            )
+                                        {
+                                            exposure.temperature = temperature;
+                                            exposure.tint = tint;
+                                            *white_balance_picker_active = false;
+                                            changed = true;
+                                        }
+                                    }
+                                }
+                            }
                             ui.separator();
                             ui.label(
-                                egui::RichText::new(format!(
-                                    "{} {}",
-                                    raw.camera_make, raw.camera_model
-                                ))
-                                .strong(),
+                                egui::RichText::new("fixed temperature")
+                                    .strong()
+                                    .color(ui.visuals().weak_text_color()),
                             );
-                            for preset in &presets {
-                                if ui.selectable_label(false, &preset.name).clicked() {
+                            for temperature in [2500.0, 3200.0, 4500.0, 6000.0, 8500.0] {
+                                if ui
+                                    .selectable_label(false, format!("{temperature:.0}K"))
+                                    .clicked()
+                                {
                                     if let Some((temperature, tint)) = raw
-                                        .white_balance_offsets_from_coefficients(
-                                            preset.coefficients,
+                                        .white_balance_offsets_from_temperature_tint(
+                                            temperature,
+                                            1.0,
                                         )
                                     {
                                         exposure.temperature = temperature;
@@ -336,34 +357,12 @@ impl Sidebar {
                                     }
                                 }
                             }
-                        }
-                        ui.separator();
-                        ui.label(
-                            egui::RichText::new("fixed temperature")
-                                .strong()
-                                .color(ui.visuals().weak_text_color()),
-                        );
-                        for temperature in [2500.0, 3200.0, 4500.0, 6000.0, 8500.0] {
-                            if ui
-                                .selectable_label(false, format!("{temperature:.0}K"))
-                                .clicked()
-                            {
-                                if let Some((temperature, tint)) = raw
-                                    .white_balance_offsets_from_temperature_tint(temperature, 1.0)
-                                {
-                                    exposure.temperature = temperature;
-                                    exposure.tint = tint;
-                                    *white_balance_picker_active = false;
-                                    changed = true;
-                                }
-                            }
-                        }
-                    });
-                    let picker = crate::ui::icons::phosphor_icon_toggle_button(
+                        });
+                    let picker = moduwu_design::icon_toggle_button(
                         ui,
                         egui_phosphor::regular::EYEDROPPER,
                         *white_balance_picker_active,
-                        egui::vec2(picker_width, crate::ui::theme::CONTROL_HEIGHT),
+                        egui::vec2(picker_width, moduwu_design::CONTROL_HEIGHT),
                         "Pick a neutral gray or white area in the image",
                     );
                     if picker.clicked() {
@@ -494,8 +493,8 @@ impl Sidebar {
             ai_response.on_hover_text(
                 "Runs the pinned darktable-ai RawNIND model locally. Bayer uses joint denoise/demosaic; X-Trans uses the linear Rec.2020 variant.",
             );
-            crate::ui::theme::section_separator(ui);
-            crate::ui::theme::strong_with_help(
+            moduwu_design::section_separator(ui);
+            moduwu_design::strong_with_help(
                 ui,
                 "Noise reduction",
                 "Sensor-profiled noise reduction uses the RAW's estimated a·signal+b sensor model. AI Denoise replaces these manual controls while enabled.",
@@ -530,7 +529,7 @@ impl Sidebar {
                     .reset_to(ExposureParams::default().denoise_detail)
                     .show(ui);
                 let previous_quality = exposure.denoise_quality;
-                crate::ui::theme::form_combo(
+                moduwu_design::form_combo(
                     ui,
                     "Denoise quality",
                     "develop-denoise-quality",
@@ -556,8 +555,8 @@ impl Sidebar {
                 );
                 changed |= previous_quality != exposure.denoise_quality;
             });
-            crate::ui::theme::section_separator(ui);
-            crate::ui::theme::strong_with_help(
+            moduwu_design::section_separator(ui);
+            moduwu_design::strong_with_help(
                 ui,
                 "Capture sharpening",
                 "Edge-aware capture sharpening restores fine RAW detail while its radius, detail, and masking controls limit halos and noisy texture.",
@@ -621,7 +620,7 @@ impl Sidebar {
                 )
                 .show(ui);
 
-            crate::ui::theme::section_separator(ui);
+            moduwu_design::section_separator(ui);
             ui.push_id("glow", |ui| {
                 ui.strong("Glow");
                 changed |= AdjustmentSlider::new("Amount", &mut exposure.glow_amount, 0.0..=100.0)
@@ -633,7 +632,7 @@ impl Sidebar {
                     .show(ui);
             });
 
-            crate::ui::theme::section_separator(ui);
+            moduwu_design::section_separator(ui);
             changed |= AdjustmentSlider::new(
                 "Halation",
                 &mut exposure.halation_amount,
@@ -651,7 +650,7 @@ impl Sidebar {
                 .hover_text("Adds fine monochrome film grain, strongest in midtones.")
                 .show(ui);
 
-            crate::ui::theme::section_separator(ui);
+            moduwu_design::section_separator(ui);
             ui.push_id("vignette", |ui| {
                 ui.strong("Vignette");
                 changed |= AdjustmentSlider::new(
@@ -724,7 +723,7 @@ impl Sidebar {
                 ui.selectable_value(point_color_tab, false, "Mixer");
                 ui.selectable_value(point_color_tab, true, "Point Color");
             });
-            ui.add_space(crate::ui::theme::SPACE_XS);
+            ui.add_space(moduwu_design::SPACE_XS);
             if *point_color_tab {
                 changed |= crate::ui::components::point_color::point_color(
                     ui,

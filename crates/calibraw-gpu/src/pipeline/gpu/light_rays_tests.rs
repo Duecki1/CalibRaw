@@ -1,4 +1,6 @@
-use super::{tests::request_test_device, GpuParams, ProcessingQuality, RawGpuPipeline};
+use super::{
+    tests::request_test_device, GpuParams, PipelineOptions, ProcessingQuality, RawGpuPipeline,
+};
 use crate::pipeline::{
     extract_padded_tile, EffectComponent, ExportTile, ExposureParams, LightRaysEffectSettings,
     LoadedRaw, LocalMask, MaskEffect, MaskKind, MaskStack, ProcessingStage,
@@ -121,13 +123,12 @@ impl LightRaysScene {
         };
         // Reserve one real atlas layer, even when initially rendering globally.
         let masks = local_rays(rays());
-        let pipeline = RawGpuPipeline::new_headless_with_quality_and_mask_edge(
+        let pipeline = RawGpuPipeline::new(
             &device,
             &queue,
             &source,
             &GpuParams::new(&exposure, &masks, &source),
-            ProcessingQuality::High,
-            MASK_EDGE,
+            PipelineOptions::new(ProcessingQuality::High).mask_atlas_edge(MASK_EDGE),
         )?;
         Ok(Some(Self {
             device,
@@ -377,14 +378,14 @@ fn light_rays_gpu_off_tile_manual_source_matches_full_frame() -> anyhow::Result<
             FULL_WIDTH,
             FULL_HEIGHT,
         );
-        let pipeline = RawGpuPipeline::new_headless_reusing_programs_with_mask_edge(
+        let pipeline = RawGpuPipeline::new(
             &scene.device,
             &scene.queue,
             &raw,
             &params,
-            ProcessingQuality::High,
-            &scene.pipeline,
-            MASK_EDGE,
+            PipelineOptions::new(ProcessingQuality::High)
+                .mask_atlas_edge(MASK_EDGE)
+                .programs(&scene.pipeline.program_template()),
         )?;
         let read = || {
             pipeline.read_display_linear_region_blocking(

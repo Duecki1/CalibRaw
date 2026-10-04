@@ -6,11 +6,11 @@ pub(super) fn show_export_action_panel<R>(
 ) -> egui::InnerResponse<R> {
     egui::Panel::bottom("develop-export-action")
         .resizable(false)
-        .exact_size(crate::ui::theme::CONTROL_HEIGHT + 2.0 * crate::ui::theme::SPACE_SM)
+        .exact_size(moduwu_design::CONTROL_HEIGHT + 2.0 * moduwu_design::SPACE_SM)
         .frame(
             egui::Frame::new()
                 .fill(ui.visuals().panel_fill)
-                .inner_margin(egui::Margin::symmetric(0, crate::ui::theme::SPACE_SM as i8)),
+                .inner_margin(egui::Margin::symmetric(0, moduwu_design::SPACE_SM as i8)),
         )
         .show(ui, contents)
 }
@@ -41,34 +41,13 @@ fn export_number_row<Num>(
     Num: egui::emath::Numeric + Copy,
 {
     ui.push_id(label, |ui| {
-        crate::ui::theme::form_row(ui, label, EXPORT_FIELD_WIDTH, |ui, width| {
+        moduwu_design::form_row(ui, label, EXPORT_FIELD_WIDTH, |ui, width| {
             ui.allocate_ui_with_layout(
-                egui::vec2(width, crate::ui::theme::CONTROL_HEIGHT),
+                egui::vec2(width, moduwu_design::CONTROL_HEIGHT),
                 egui::Layout::centered_and_justified(egui::Direction::LeftToRight),
                 |ui| {
-                    let id = ui.next_auto_id();
-                    crate::ui::components::adjustment_slider::step_focused_numeric_field(
-                        ui,
-                        id,
-                        value,
-                        range.clone(),
-                    );
-                    let decimals = if !Num::INTEGRAL
-                        && (ui.memory(|memory| memory.has_focus(id))
-                            || (value.to_f64() - value.to_f64().round()).abs() > 0.0001)
-                    {
-                        2
-                    } else {
-                        0
-                    };
-                    ui.add(
-                        egui::DragValue::new(value)
-                            .range(range)
-                            .speed(1.0)
-                            .suffix(suffix)
-                            .fixed_decimals(decimals),
-                    )
-                    .on_hover_text(help);
+                    ui.add(moduwu_design::NumberField::new(value, range).suffix(suffix))
+                        .on_hover_text(help);
                 },
             );
         });
@@ -82,7 +61,7 @@ pub(crate) fn export_settings_controls(
     _fallback_picker_directory: Option<&std::path::Path>,
 ) -> bool {
     let previous_format = *format;
-    crate::ui::theme::section_card(ui, "Format", |ui| {
+    moduwu_design::section_card(ui, "Format", |ui| {
         ui.horizontal(|ui| {
             let spacing = ui.spacing().item_spacing.x;
             let format_width = ((ui.available_width() - spacing * 3.0) / 4.0).max(1.0);
@@ -92,7 +71,7 @@ pub(crate) fn export_settings_controls(
                 (ExportFormat::Tiff, "TIFF"),
                 (ExportFormat::JpegXl, "JXL"),
             ] {
-                if crate::ui::theme::segmented_button(
+                if moduwu_design::segmented_button(
                     ui,
                     label,
                     *format == export_format,
@@ -105,7 +84,7 @@ pub(crate) fn export_settings_controls(
             }
         });
         enforce_export_bit_depth(*format, settings);
-        crate::ui::theme::section_separator(ui);
+        moduwu_design::section_separator(ui);
 
         if *format == ExportFormat::Jpeg {
             export_number_row(
@@ -130,7 +109,7 @@ pub(crate) fn export_settings_controls(
                         "Quality 100: maximum JPEG quality, with larger files.",
                     ),
                 ] {
-                    if crate::ui::theme::segmented_button(
+                    if moduwu_design::segmented_button(
                         ui,
                         label,
                         settings.jpeg_quality == quality,
@@ -145,7 +124,7 @@ pub(crate) fn export_settings_controls(
             });
             ui.small("8-bit output. Higher quality produces larger files.");
         } else {
-            crate::ui::theme::form_combo_with_help(
+            moduwu_design::form_combo_with_help(
                 ui,
                 "Precision",
                 "export-bit-depth",
@@ -177,14 +156,14 @@ pub(crate) fn export_settings_controls(
             });
         }
     });
-    crate::ui::theme::card_gap(ui);
+    moduwu_design::card_gap(ui);
 
-    crate::ui::theme::section_card_with_help(
+    moduwu_design::section_card_with_help(
         ui,
         "Resize",
         "Choose how the exported image is sized. Edge and dimension modes preserve the aspect ratio.",
         |ui| {
-            crate::ui::theme::form_combo(
+            moduwu_design::form_combo(
                 ui,
                 "Size",
                 "export-resize-mode",
@@ -235,7 +214,7 @@ pub(crate) fn export_settings_controls(
 
             if settings.resize_mode != ExportResizeMode::Original {
                 ui.small("Aspect ratio is preserved.");
-                crate::ui::theme::checkbox_with_help(
+                moduwu_design::checkbox_with_help(
                     ui,
                     &mut settings.allow_upscale,
                     "Allow upscaling",
@@ -244,10 +223,10 @@ pub(crate) fn export_settings_controls(
             }
         },
     );
-    crate::ui::theme::card_gap(ui);
+    moduwu_design::card_gap(ui);
 
-    crate::ui::theme::section_card(ui, "Metadata", |ui| {
-        crate::ui::theme::checkbox_with_help(
+    moduwu_design::section_card(ui, "Metadata", |ui| {
+        moduwu_design::checkbox_with_help(
             ui,
             &mut settings.keep_metadata,
             "Keep metadata",
@@ -274,7 +253,7 @@ impl Sidebar {
 
         let response = ui
             .add_enabled_ui(export_enabled, |ui| {
-                crate::ui::theme::full_width_button(ui, "Export…")
+                moduwu_design::full_width_button(ui, "Export…")
             })
             .inner;
         if response.clicked() {
@@ -318,7 +297,7 @@ impl Sidebar {
                 }
 
                 if let Some((fraction, phase)) = app.edit_replay_progress_state() {
-                    ui.add_space(crate::ui::theme::SPACE_SM);
+                    ui.add_space(moduwu_design::SPACE_SM);
                     ui.add_sized(
                         [ui.available_width(), 18.0],
                         egui::ProgressBar::new(fraction).text(phase),
@@ -326,7 +305,7 @@ impl Sidebar {
                 }
 
                 if let Some((completed, total)) = app.export_progress_state() {
-                    ui.add_space(crate::ui::theme::SPACE_SM);
+                    ui.add_space(moduwu_design::SPACE_SM);
                     let (fraction, text) = if total == 0 {
                         (0.0, "Preparing export…".to_owned())
                     } else {
@@ -350,13 +329,13 @@ impl Sidebar {
                     }
                 }
 
-                ui.add_space(crate::ui::theme::SPACE_SM);
+                ui.add_space(moduwu_design::SPACE_SM);
                 let export_enabled = app.can_export();
                 {
-                    crate::ui::theme::section_separator(ui);
+                    moduwu_design::section_separator(ui);
                     let replay_response = ui
                         .add_enabled_ui(export_enabled, |ui| {
-                            crate::ui::theme::full_width_button(ui, "Create Edit Replay…")
+                            moduwu_design::full_width_button(ui, "Create Edit Replay…")
                         })
                         .inner
                         .on_hover_text(

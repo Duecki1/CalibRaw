@@ -171,13 +171,12 @@ fn capture_review(root: &Path, output_dir: &Path) {
     let (mask, _) = masks.add_mask(MaskKind::Radial).unwrap();
     masks.masks[mask].name = "Foreground light".to_owned();
     let params = GpuParams::new(&ExposureParams::scene_referred_default(), &masks, &raw);
-    let mut pipeline = RawGpuPipeline::new_headless_with_quality_and_mask_edge(
+    let mut pipeline = RawGpuPipeline::new(
         &device,
         &queue,
         &raw,
         &params,
-        ProcessingQuality::Preview,
-        256,
+        PipelineOptions::new(ProcessingQuality::Preview).mask_atlas_edge(256),
     )
     .expect("create review scene GPU pipeline");
     pipeline.recompute(&queue, &device, &params);

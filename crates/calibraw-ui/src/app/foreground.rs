@@ -25,8 +25,13 @@ impl ForegroundOperation {
         self.cancelling || self.cancellation.load(Ordering::Acquire)
     }
 
-    pub(in crate::app) fn accepts_result(&self, document_id: u64) -> bool {
-        self.document_id == document_id && !self.is_cancelled()
+    /// Whether the operation started on the document `generation` identifies.
+    pub(in crate::app) fn is_for_document(&self, generation: u64) -> bool {
+        self.document_id == generation
+    }
+
+    pub(in crate::app) fn accepts_result(&self, generation: u64) -> bool {
+        self.is_for_document(generation) && !self.is_cancelled()
     }
 }
 
@@ -38,7 +43,7 @@ pub(super) fn show_processing_dialog(
     cancelling: bool,
 ) -> bool {
     let mut cancel = false;
-    crate::ui::theme::dialog_window(title, ctx, crate::ui::theme::DIALOG_WIDTH_FORM)
+    moduwu_design::dialog_window(title, ctx, moduwu_design::DIALOG_WIDTH_FORM)
         .id(egui::Id::new(id))
         .movable(false)
         .show(ctx, |ui| {
@@ -47,7 +52,7 @@ pub(super) fn show_processing_dialog(
             ui.horizontal(|ui| {
                 if !measured {
                     ui.add(egui::Spinner::new().size(20.0));
-                    ui.add_space(crate::ui::theme::SPACE_XS);
+                    ui.add_space(moduwu_design::SPACE_XS);
                 }
                 ui.add(egui::Label::new(egui::RichText::new(&progress.phase).size(14.0)).wrap());
             });
@@ -60,7 +65,7 @@ pub(super) fn show_processing_dialog(
             {
                 if total > 0 {
                     let fraction = (completed as f32 / total as f32).clamp(0.0, 1.0);
-                    ui.add_space(crate::ui::theme::SPACE_MD);
+                    ui.add_space(moduwu_design::SPACE_MD);
                     ui.add(
                         egui::ProgressBar::new(fraction)
                             .desired_height(10.0)
@@ -106,19 +111,16 @@ pub(super) fn show_processing_dialog(
                         .color(ui.visuals().weak_text_color()),
                 );
             }
-            ui.add_space(crate::ui::theme::SPACE_SM);
+            ui.add_space(moduwu_design::SPACE_SM);
             ui.separator();
-            ui.add_space(crate::ui::theme::SPACE_XS);
+            ui.add_space(moduwu_design::SPACE_XS);
             ui.allocate_ui_with_layout(
-                egui::vec2(
-                    ui.available_width().max(1.0),
-                    crate::ui::theme::CONTROL_HEIGHT,
-                ),
+                egui::vec2(ui.available_width().max(1.0), moduwu_design::CONTROL_HEIGHT),
                 egui::Layout::right_to_left(egui::Align::Center),
                 |ui| {
                     cancel = ui
                         .add_enabled_ui(!cancelling, |ui| {
-                            crate::ui::theme::secondary_button(ui, "Cancel")
+                            moduwu_design::secondary_button(ui, "Cancel")
                         })
                         .inner
                         .clicked();
@@ -126,11 +128,11 @@ pub(super) fn show_processing_dialog(
             );
             if !cancel
                 && !cancelling
-                && crate::ui::theme::dialog_keyboard_action(
+                && moduwu_design::dialog_keyboard_action(
                     ui,
-                    crate::ui::theme::DialogKeyboard::CLOSE_ONLY,
+                    moduwu_design::DialogKeyboard::CLOSE_ONLY,
                     false,
-                ) == crate::ui::theme::DialogAction::Cancel
+                ) == moduwu_design::DialogAction::Cancel
             {
                 cancel = true;
             }

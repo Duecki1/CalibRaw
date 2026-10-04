@@ -175,13 +175,7 @@ impl CalibRawApp {
                 &render_state.queue,
                 &render_state.device,
                 &params,
-                RemoveSceneContext::new(
-                    &self.inpaint.edits,
-                    full_raw,
-                    exposure,
-                    [0.0, 0.0],
-                    [full_raw.width as f32, full_raw.height as f32],
-                ),
+                RemoveSceneContext::full_frame(&self.inpaint.edits, full_raw, exposure),
             ) {
                 self.ui.notice = Some(format!("Could not apply Remove to preview: {error:#}"));
             }
@@ -201,13 +195,7 @@ impl CalibRawApp {
                 &render_state.queue,
                 &render_state.device,
                 &params,
-                RemoveSceneContext::new(
-                    &self.inpaint.edits,
-                    full_raw,
-                    exposure,
-                    [0.0, 0.0],
-                    [full_raw.width as f32, full_raw.height as f32],
-                ),
+                RemoveSceneContext::full_frame(&self.inpaint.edits, full_raw, exposure),
             ) {
                 self.ui.notice = Some(format!(
                     "Could not apply Remove to navigation preview: {error:#}"

@@ -1,46 +1,12 @@
-use eframe::egui::{self, Align, Align2, DragValue, Layout, RichText, Sense, Stroke, Ui};
+//! CalibRaw's adjustment slider: [`moduwu_design::Slider`] configured from
+//! parameter specifications, with photographic track gradients.
+
+use crate::pipeline::effect_params::FloatParamSpec;
+use eframe::egui::{self, Ui};
+use moduwu_design::Slider;
 use std::ops::RangeInclusive;
-use std::time::Duration;
 
-#[cfg(not(target_os = "android"))]
-const VALUE_FIELD_WIDTH: f32 = 72.0;
-#[cfg(target_os = "android")]
-const VALUE_FIELD_WIDTH: f32 = 60.0;
-const HEADER_HEIGHT: f32 = crate::ui::theme::CONTROL_HEIGHT;
-#[cfg(not(target_os = "android"))]
-const SLIDER_HEIGHT: f32 = 28.0;
-#[cfg(target_os = "android")]
-const SLIDER_HEIGHT: f32 = 24.0;
-const TRACK_HEIGHT: f32 = 4.0;
-#[cfg(not(target_os = "android"))]
-const HANDLE_RADIUS: f32 = 7.0;
-#[cfg(target_os = "android")]
-const HANDLE_RADIUS: f32 = 8.0;
-const HANDLE_TOUCH_RADIUS: f32 = 18.0;
-const TRACK_DRAG_THRESHOLD: f32 = 8.0;
-const HANDLE_DRAG_THRESHOLD: f32 = 2.0;
-#[cfg(not(target_os = "android"))]
-const CONTROL_GAP: f32 = 4.0;
-#[cfg(target_os = "android")]
-const CONTROL_GAP: f32 = 2.0;
-#[cfg(not(target_os = "android"))]
-const ROW_BOTTOM_SPACE: f32 = 7.0;
-#[cfg(target_os = "android")]
-const ROW_BOTTOM_SPACE: f32 = 3.0;
-const COMPACT_ROW_GAP: f32 = 4.0;
-const COMPACT_ROW_BOTTOM_SPACE: f32 = 1.0;
-const COMPACT_LABEL_MIN_WIDTH: f32 = 76.0;
-const COMPACT_LABEL_MAX_WIDTH: f32 = 104.0;
-const COMPACT_TRACK_MIN_WIDTH: f32 = 64.0;
-const ARROW_REPEAT_DELAY: f64 = 0.35;
-const ARROW_REPEAT_INTERVAL: f64 = 0.05;
-
-#[derive(Clone, Copy, Default)]
-struct ArrowRepeat {
-    direction: i8,
-    next_at: f64,
-}
-
+/// Colours painted along a slider track.
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum SliderGradient {
     HueDegrees {
@@ -63,60 +29,13 @@ pub(crate) enum SliderGradient {
     Luminance(egui::Color32),
 }
 
-#[derive(Clone, Copy)]
-struct SliderOptions<'a> {
-    decimals: usize,
-    step: f64,
-    hover_text: Option<&'a str>,
-    explicit_reset_value: Option<f64>,
-    accent: Option<egui::Color32>,
-    gradient: Option<SliderGradient>,
-}
-
-fn slider_scroll_lock_id() -> egui::Id {
-    egui::Id::new("calibraw-adjustment-slider-scroll-lock")
-}
-
-pub(crate) fn slider_scroll_locked(ctx: &egui::Context) -> bool {
-    let pointer_down = ctx.input(|input| input.pointer.any_down());
-    if !pointer_down {
-        ctx.data_mut(|data| data.remove::<egui::Id>(slider_scroll_lock_id()));
-        return false;
-    }
-
-    slider_scroll_lock_owner(ctx).is_some()
-}
-
-fn slider_scroll_lock_owner(ctx: &egui::Context) -> Option<egui::Id> {
-    let owner = ctx.data(|data| data.get_temp::<egui::Id>(slider_scroll_lock_id()));
-    if owner.is_some_and(|owner| ctx.is_being_dragged(owner)) {
-        return owner;
-    }
-
-    // Some screens do not contain a scroll area and therefore never call
-    // `slider_scroll_locked` while the pointer is up. Do not let their stale
-    // owner token turn a later pointer press elsewhere into another slider drag.
-    if owner.is_some() {
-        ctx.data_mut(|data| data.remove::<egui::Id>(slider_scroll_lock_id()));
-    }
-    None
-}
-
-pub(super) fn lock_slider_scroll(ctx: &egui::Context, slider_id: egui::Id) {
-    ctx.data_mut(|data| data.insert_temp(slider_scroll_lock_id(), slider_id));
-    ctx.set_dragged_id(slider_id);
-}
-
 /// A labelled numeric slider with an editable value field.
 ///
 /// Double-clicking the label or track resets to [`Self::reset_to`] (zero by
 /// default), never to the value the widget was first shown with.
 #[must_use = "call `show` to render the slider"]
 pub(crate) struct AdjustmentSlider<'a, Num> {
-    label: &'a str,
-    value: &'a mut Num,
-    range: RangeInclusive<Num>,
-    options: SliderOptions<'a>,
+    slider: Slider<'a, Num>,
 }
 
 impl<'a, Num> AdjustmentSlider<'a, Num>
@@ -125,74 +44,65 @@ where
 {
     pub(crate) fn new(label: &'a str, value: &'a mut Num, range: RangeInclusive<Num>) -> Self {
         Self {
-            label,
-            value,
-            range,
-            options: SliderOptions {
-                decimals: 0,
-                step: 1.0,
-                hover_text: None,
-                explicit_reset_value: None,
-                accent: None,
-                gradient: None,
-            },
+            slider: Slider::new(label, value, range),
         }
     }
 
     /// Decimal places shown and stored.
-    pub(crate) fn decimals(mut self, decimals: usize) -> Self {
-        self.options.decimals = decimals;
-        self
+    pub(crate) fn decimals(self, decimals: usize) -> Self {
+        Self {
+            slider: self.slider.decimals(decimals),
+        }
     }
 
     /// Value change per arrow-key press or dragged point in the value field.
-    pub(crate) fn step(mut self, step: f64) -> Self {
-        self.options.step = step;
-        self
+    pub(crate) fn step(self, step: f64) -> Self {
+        Self {
+            slider: self.slider.step(step),
+        }
     }
 
-    pub(crate) fn hover_text(mut self, hover_text: impl Into<Option<&'a str>>) -> Self {
-        self.options.hover_text = hover_text.into();
-        self
+    pub(crate) fn hover_text(self, hover_text: impl Into<Option<&'a str>>) -> Self {
+        Self {
+            slider: self.slider.hover_text(hover_text),
+        }
     }
 
-    pub(crate) fn reset_to(mut self, reset_value: Num) -> Self {
-        self.options.explicit_reset_value = Some(reset_value.to_f64());
-        self
+    pub(crate) fn reset_to(self, reset_value: Num) -> Self {
+        Self {
+            slider: self.slider.reset_to(reset_value),
+        }
     }
 
-    pub(crate) fn gradient(mut self, gradient: SliderGradient) -> Self {
-        self.options.gradient = Some(gradient);
-        self
+    pub(crate) fn gradient(self, gradient: SliderGradient) -> Self {
+        Self {
+            slider: self
+                .slider
+                .gradient(move |fraction| gradient_color_at(gradient, fraction)),
+        }
     }
 
-    pub(crate) fn accent(mut self, accent: egui::Color32) -> Self {
-        self.options.accent = Some(accent);
-        self
+    pub(crate) fn accent(self, accent: egui::Color32) -> Self {
+        Self {
+            slider: self.slider.accent(accent),
+        }
     }
 
     /// Renders the full labelled row and returns whether the value changed.
     pub(crate) fn show(self, ui: &mut Ui) -> bool {
-        adjustment_slider_impl(ui, self.label, self.value, self.range, self.options)
+        self.slider.show(ui)
     }
 
     /// Renders only the track at `width`, using the label as the widget id.
     #[cfg(any(not(target_os = "android"), test))]
-    pub(crate) fn show_inline(self, ui: &mut Ui, width: f32) -> AdjustmentSliderInteraction {
-        let reset_value = self.options.explicit_reset_value.unwrap_or(0.0);
-        ui.push_id(self.label, |ui| {
-            guarded_slider(ui, self.value, self.range, width, reset_value, self.options)
-        })
-        .inner
+    pub(crate) fn show_inline(self, ui: &mut Ui, width: f32) -> moduwu_design::SliderResponse {
+        self.slider.show_track(ui, width)
     }
 }
 
 impl<'a> AdjustmentSlider<'a, f32> {
     /// A resettable slider configured from a shared parameter specification.
-    pub(crate) fn from_spec(
-        value: &'a mut f32,
-        spec: crate::pipeline::effect_params::FloatParamSpec,
-    ) -> Self {
+    pub(crate) fn from_spec(value: &'a mut f32, spec: FloatParamSpec) -> Self {
         Self::new(spec.label, value, spec.range())
             .decimals(spec.decimals)
             .step(spec.step)
@@ -216,582 +126,19 @@ pub(crate) fn hue_adjustment_slider(
         .show(ui)
 }
 
-#[derive(Clone, Copy, Debug, Default)]
-pub(crate) struct AdjustmentSliderInteraction {
-    pub(crate) changed: bool,
-    #[cfg(any(not(target_os = "android"), test))]
-    pub(crate) reset_requested: bool,
-}
-
-pub(crate) fn float_param_slider(
-    ui: &mut Ui,
-    value: &mut f32,
-    spec: crate::pipeline::effect_params::FloatParamSpec,
-) -> bool {
+pub(crate) fn float_param_slider(ui: &mut Ui, value: &mut f32, spec: FloatParamSpec) -> bool {
     AdjustmentSlider::from_spec(value, spec).show(ui)
 }
 
 pub(crate) fn gradient_float_param_slider(
     ui: &mut Ui,
     value: &mut f32,
-    spec: crate::pipeline::effect_params::FloatParamSpec,
+    spec: FloatParamSpec,
     gradient: SliderGradient,
 ) -> bool {
     AdjustmentSlider::from_spec(value, spec)
         .gradient(gradient)
         .show(ui)
-}
-
-fn adjustment_slider_impl<Num>(
-    ui: &mut Ui,
-    label: &str,
-    value: &mut Num,
-    range: RangeInclusive<Num>,
-    options: SliderOptions<'_>,
-) -> bool
-where
-    Num: egui::emath::Numeric + Copy,
-{
-    let SliderOptions {
-        decimals,
-        step,
-        hover_text,
-        explicit_reset_value,
-        accent,
-        gradient: _,
-    } = options;
-    let mut changed = false;
-
-    ui.push_id(label, |ui| {
-        // Reset to a stable neutral value, never the value of the first image
-        // or mask displayed in this widget. Nonzero defaults are explicit.
-        let start = range.start().to_f64();
-        let end = range.end().to_f64();
-        let reset_value = explicit_reset_value
-            .unwrap_or(0.0)
-            .clamp(start.min(end), start.max(end));
-        let control_width = ui.available_width().max(1.0);
-
-        ui.vertical(|ui| {
-            ui.set_width(control_width);
-            ui.spacing_mut().item_spacing.y = CONTROL_GAP;
-
-            if crate::ui::theme::is_compact_portrait(ui) {
-                let (label_width, track_width) = compact_slider_widths(control_width);
-                ui.allocate_ui_with_layout(
-                    egui::vec2(control_width, HEADER_HEIGHT),
-                    Layout::left_to_right(Align::Center),
-                    |ui| {
-                        ui.spacing_mut().item_spacing.x = COMPACT_ROW_GAP;
-                        let label_tooltip = format!("{label}\n{}", reset_tooltip(hover_text));
-                        let label_response = compact_slider_label(ui, label, accent, label_width)
-                            .on_hover_text(label_tooltip);
-                        if label_response.double_clicked() {
-                            changed |= set_numeric(value, reset_value, decimals);
-                        }
-
-                        changed |= guarded_slider(
-                            ui,
-                            value,
-                            range.clone(),
-                            track_width,
-                            reset_value,
-                            options,
-                        )
-                        .changed;
-
-                        let (mut value_response, value_changed) =
-                            numeric_value_field(ui, value, range.clone(), decimals, step);
-                        changed |= value_changed;
-                        value_response = value_response.on_hover_text(reset_tooltip(hover_text));
-                        if value_response.double_clicked() {
-                            changed |= set_numeric(value, reset_value, decimals);
-                        }
-                    },
-                );
-                ui.add_space(COMPACT_ROW_BOTTOM_SPACE);
-            } else {
-                ui.allocate_ui_with_layout(
-                    egui::vec2(control_width, HEADER_HEIGHT),
-                    Layout::left_to_right(Align::Center),
-                    |ui| {
-                        let mut label_response =
-                            if let Some(accent) = accent {
-                                let (swatch_rect, swatch_response) =
-                                    ui.allocate_exact_size(egui::vec2(9.0, 9.0), Sense::hover());
-                                ui.painter()
-                                    .circle_filled(swatch_rect.center(), 4.5, accent);
-                                ui.painter().circle_stroke(
-                                    swatch_rect.center(),
-                                    4.5,
-                                    Stroke::new(1.0, egui::Color32::from_white_alpha(90)),
-                                );
-                                swatch_response.union(ui.add(
-                                    egui::Label::new(RichText::new(label)).sense(Sense::click()),
-                                ))
-                            } else {
-                                ui.add(egui::Label::new(label).sense(Sense::click()))
-                            };
-                        label_response = label_response.on_hover_text(reset_tooltip(hover_text));
-                        if label_response.double_clicked() {
-                            changed |= set_numeric(value, reset_value, decimals);
-                        }
-
-                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                            let (mut value_response, value_changed) =
-                                numeric_value_field(ui, value, range.clone(), decimals, step);
-                            changed |= value_changed;
-                            value_response =
-                                value_response.on_hover_text(reset_tooltip(hover_text));
-                            if value_response.double_clicked() {
-                                changed |= set_numeric(value, reset_value, decimals);
-                            }
-                        });
-                    },
-                );
-
-                changed |=
-                    guarded_slider(ui, value, range, control_width, reset_value, options).changed;
-                ui.add_space(ROW_BOTTOM_SPACE);
-            }
-        });
-    });
-
-    changed
-}
-
-fn compact_slider_widths(control_width: f32) -> (f32, f32) {
-    let usable_width = (control_width - VALUE_FIELD_WIDTH - COMPACT_ROW_GAP * 2.0).max(2.0);
-    let label_width = (control_width * 0.27)
-        .clamp(COMPACT_LABEL_MIN_WIDTH, COMPACT_LABEL_MAX_WIDTH)
-        .min((usable_width - COMPACT_TRACK_MIN_WIDTH).max(1.0));
-    (label_width, (usable_width - label_width).max(1.0))
-}
-
-fn compact_slider_label(
-    ui: &mut Ui,
-    label: &str,
-    accent: Option<egui::Color32>,
-    width: f32,
-) -> egui::Response {
-    let (rect, response) = ui.allocate_exact_size(egui::vec2(width, HEADER_HEIGHT), Sense::click());
-    let painter = ui.painter_at(rect);
-    let mut text_x = rect.left();
-    if let Some(accent) = accent {
-        let center = egui::pos2(rect.left() + 5.0, rect.center().y);
-        painter.circle_filled(center, 4.5, accent);
-        painter.circle_stroke(
-            center,
-            4.5,
-            Stroke::new(1.0, egui::Color32::from_white_alpha(90)),
-        );
-        text_x += 15.0;
-    }
-    let galley = egui::WidgetText::from(label).into_galley(
-        ui,
-        Some(egui::TextWrapMode::Truncate),
-        (rect.right() - text_x).max(1.0),
-        egui::TextStyle::Body,
-    );
-    painter.galley(
-        egui::pos2(text_x, rect.center().y - galley.size().y * 0.5),
-        galley,
-        ui.visuals().text_color(),
-    );
-    response
-}
-
-fn touch_value_field(ui: &mut Ui, value: f64, decimals: usize) -> egui::Response {
-    let (rect, response) =
-        ui.allocate_exact_size(egui::vec2(VALUE_FIELD_WIDTH, HEADER_HEIGHT), Sense::click());
-    let visuals = ui.style().interact(&response);
-    let painter = ui.painter_at(rect);
-    painter.rect_filled(rect, visuals.corner_radius, visuals.bg_fill);
-    painter.rect_stroke(
-        rect,
-        visuals.corner_radius,
-        visuals.bg_stroke,
-        egui::StrokeKind::Inside,
-    );
-    let formatted = format!("{value:.decimals$}");
-    painter.text(
-        rect.center(),
-        Align2::CENTER_CENTER,
-        formatted,
-        egui::TextStyle::Monospace.resolve(ui.style()),
-        visuals.fg_stroke.color,
-    );
-    response
-}
-
-fn numeric_value_field<Num>(
-    ui: &mut Ui,
-    value: &mut Num,
-    range: RangeInclusive<Num>,
-    decimals: usize,
-    step: f64,
-) -> (egui::Response, bool)
-where
-    Num: egui::emath::Numeric + Copy,
-{
-    if ui.input(|input| input.has_touch_screen()) {
-        (touch_value_field(ui, value.to_f64(), decimals), false)
-    } else {
-        ui.allocate_ui_with_layout(
-            egui::vec2(VALUE_FIELD_WIDTH, HEADER_HEIGHT),
-            Layout::centered_and_justified(ui.layout().main_dir()),
-            |ui| {
-                let id = ui.next_auto_id();
-                let mut changed = step_focused_numeric_field(ui, id, value, range.clone());
-                let display_decimals = if !Num::INTEGRAL
-                    && (ui.memory(|memory| memory.has_focus(id))
-                        || (value.to_f64() - value.to_f64().round()).abs() > 0.0001)
-                {
-                    decimals.max(2)
-                } else {
-                    decimals
-                };
-                let response = ui.add(
-                    DragValue::new(value)
-                        .range(range)
-                        .speed(step)
-                        .fixed_decimals(display_decimals),
-                );
-                changed |= response.changed();
-                (response, changed)
-            },
-        )
-        .inner
-    }
-}
-
-pub(crate) fn step_focused_numeric_field<Num>(
-    ui: &mut Ui,
-    id: egui::Id,
-    value: &mut Num,
-    range: RangeInclusive<Num>,
-) -> bool
-where
-    Num: egui::emath::Numeric + Copy,
-{
-    let direction = focused_number_arrow_step(ui, id);
-    if direction == 0 {
-        return false;
-    }
-    let step = numeric_arrow_step(&range);
-    let start = range.start().to_f64();
-    let end = range.end().to_f64();
-    let next = (value.to_f64() + f64::from(direction) * step).clamp(start.min(end), start.max(end));
-    let changed = set_numeric(value, next, if Num::INTEGRAL { 0 } else { 2 });
-    if changed {
-        // DragValue caches the text being edited under its widget ID.
-        ui.data_mut(|data| data.remove_temp::<String>(id));
-    }
-    changed
-}
-
-fn numeric_arrow_step<Num>(range: &RangeInclusive<Num>) -> f64
-where
-    Num: egui::emath::Numeric,
-{
-    if Num::INTEGRAL {
-        return 1.0;
-    }
-    // 0.2% of the largest endpoint: 0.01 for Exposure (±5), 0.2 for ±100.
-    let maximum = range.start().to_f64().abs().max(range.end().to_f64().abs());
-    (maximum / 500.0).max(0.01)
-}
-
-fn focused_number_arrow_step(ui: &mut Ui, id: egui::Id) -> i8 {
-    let repeat_id = id.with("arrow-repeat");
-    if !ui.is_enabled() || !ui.memory(|memory| memory.has_focus(id)) {
-        ui.data_mut(|data| data.remove_temp::<ArrowRepeat>(repeat_id));
-        return 0;
-    }
-
-    let (now, up, down) = ui.input_mut(|input| {
-        let up_pressed = input.consume_key(egui::Modifiers::NONE, egui::Key::ArrowUp);
-        let down_pressed = input.consume_key(egui::Modifiers::NONE, egui::Key::ArrowDown);
-        (
-            input.time,
-            input.key_down(egui::Key::ArrowUp) || up_pressed,
-            input.key_down(egui::Key::ArrowDown) || down_pressed,
-        )
-    });
-    let direction = i8::from(up) - i8::from(down);
-    if direction == 0 {
-        ui.data_mut(|data| data.remove_temp::<ArrowRepeat>(repeat_id));
-        return 0;
-    }
-
-    let previous = ui.data(|data| data.get_temp::<ArrowRepeat>(repeat_id));
-    let (step, next_at) = match previous {
-        Some(previous) if previous.direction == direction && now < previous.next_at => {
-            (0, previous.next_at)
-        }
-        Some(previous) if previous.direction == direction => {
-            (direction, now + ARROW_REPEAT_INTERVAL)
-        }
-        _ => (direction, now + ARROW_REPEAT_DELAY),
-    };
-    ui.data_mut(|data| {
-        data.insert_temp(repeat_id, ArrowRepeat { direction, next_at });
-    });
-    ui.ctx()
-        .request_repaint_after(Duration::from_secs_f64((next_at - now).max(0.0)));
-    step
-}
-
-fn guarded_slider<Num>(
-    ui: &mut Ui,
-    value: &mut Num,
-    range: RangeInclusive<Num>,
-    width: f32,
-    reset_value: f64,
-    options: SliderOptions<'_>,
-) -> AdjustmentSliderInteraction
-where
-    Num: egui::emath::Numeric + Copy,
-{
-    let SliderOptions {
-        decimals,
-        step: keyboard_step,
-        hover_text,
-        explicit_reset_value: _,
-        accent,
-        gradient,
-    } = options;
-    let start = (*range.start()).to_f64();
-    let end = (*range.end()).to_f64();
-    let span = end - start;
-    let fraction = if span.abs() <= f64::EPSILON {
-        0.0
-    } else {
-        ((value.to_f64() - start) / span).clamp(0.0, 1.0)
-    } as f32;
-
-    let slider_height = if crate::ui::theme::is_compact_portrait(ui) {
-        HEADER_HEIGHT
-    } else {
-        SLIDER_HEIGHT
-    };
-    let (rect, _) = ui.allocate_exact_size(egui::vec2(width, slider_height), Sense::hover());
-    let track_rect = egui::Rect::from_center_size(
-        rect.center(),
-        egui::vec2((rect.width() - HANDLE_RADIUS * 2.0).max(1.0), TRACK_HEIGHT),
-    );
-    let handle_x = egui::lerp(track_rect.left()..=track_rect.right(), fraction);
-    let handle_center = egui::pos2(handle_x, track_rect.center().y);
-    let handle_hit_rect = egui::Rect::from_center_size(
-        handle_center,
-        egui::vec2(HANDLE_TOUCH_RADIUS * 2.0, HANDLE_TOUCH_RADIUS * 2.0),
-    )
-    .intersect(rect);
-
-    let track_response = ui.interact(rect, ui.id().with("guarded-track"), Sense::click());
-    let handle_response = ui.interact(
-        handle_hit_rect,
-        ui.id().with("guarded-handle"),
-        Sense::click(),
-    );
-
-    let enabled = track_response.enabled() && handle_response.enabled();
-    let slider_drag_id = ui.id().with("guarded-slider-drag");
-    if !enabled && slider_scroll_lock_owner(ui.ctx()).is_some_and(|owner| owner == slider_drag_id) {
-        ui.ctx().stop_dragging();
-        ui.ctx()
-            .data_mut(|data| data.remove::<egui::Id>(slider_scroll_lock_id()));
-    }
-
-    if enabled && track_response.clicked() {
-        track_response.request_focus();
-    }
-    if enabled && handle_response.clicked() {
-        handle_response.request_focus();
-    }
-
-    let mut changed = false;
-    let reset_requested =
-        enabled && (track_response.double_clicked() || handle_response.double_clicked());
-    if reset_requested {
-        changed |= set_numeric(value, reset_value, decimals);
-    }
-    let pointer = if enabled {
-        ui.input(|input| {
-            (
-                input.pointer.press_origin(),
-                input.pointer.interact_pos(),
-                input.pointer.any_down(),
-            )
-        })
-    } else {
-        (None, None, false)
-    };
-    let mut slider_drag_active = pointer.2
-        && slider_scroll_lock_owner(ui.ctx()).is_some_and(|owner| owner == slider_drag_id);
-    let slider_owns_pointer =
-        enabled && (track_response.contains_pointer() || handle_response.contains_pointer());
-    if enabled && !reset_requested {
-        if let (Some(origin), Some(position), true) = pointer {
-            if slider_drag_active {
-                lock_slider_scroll(ui.ctx(), slider_drag_id);
-                changed |= set_from_pointer(value, start, end, decimals, track_rect, position.x);
-            } else if rect.contains(origin) && slider_owns_pointer {
-                let delta = position - origin;
-                let began_on_handle = handle_hit_rect.contains(origin);
-                let threshold = if began_on_handle {
-                    HANDLE_DRAG_THRESHOLD
-                } else {
-                    TRACK_DRAG_THRESHOLD
-                };
-                let horizontal_intent =
-                    delta.x.abs() >= threshold && delta.x.abs() >= delta.y.abs() * 1.15;
-                if horizontal_intent {
-                    slider_drag_active = true;
-                    lock_slider_scroll(ui.ctx(), slider_drag_id);
-                    track_response.request_focus();
-                    changed |=
-                        set_from_pointer(value, start, end, decimals, track_rect, position.x);
-                }
-            }
-        }
-    }
-
-    let focused = track_response.has_focus() || handle_response.has_focus();
-    let keyboard_enabled = enabled;
-    if focused && keyboard_enabled {
-        let decrease = ui.input_mut(|input| {
-            input.consume_key(egui::Modifiers::NONE, egui::Key::ArrowLeft)
-                || input.consume_key(egui::Modifiers::NONE, egui::Key::ArrowDown)
-        });
-        let increase = ui.input_mut(|input| {
-            input.consume_key(egui::Modifiers::NONE, egui::Key::ArrowRight)
-                || input.consume_key(egui::Modifiers::NONE, egui::Key::ArrowUp)
-        });
-        let direction = (increase as i8 - decrease as i8) as f64;
-        if direction != 0.0 {
-            let next =
-                (value.to_f64() + direction * keyboard_step).clamp(start.min(end), start.max(end));
-            changed |= set_numeric(value, next, decimals);
-        }
-    }
-
-    let active = slider_drag_active
-        || handle_response.is_pointer_button_down_on()
-        || (track_response.is_pointer_button_down_on()
-            && pointer.0.is_some_and(|origin| rect.contains(origin)));
-    let hovered = track_response.hovered() || handle_response.hovered();
-    let interaction = crate::ui::theme::interaction_visuals_for_flags(
-        ui, enabled, false, active, hovered, focused,
-    );
-
-    let painter = ui.painter();
-    let gradient_color = gradient.map(|gradient| gradient_color_at(gradient, fraction));
-    let visual_accent = gradient_color.or(accent);
-    if let Some(gradient) = gradient {
-        paint_gradient_track(painter, track_rect, gradient);
-    } else {
-        painter.rect_filled(
-            track_rect,
-            TRACK_HEIGHT * 0.5,
-            ui.visuals().widgets.inactive.bg_fill,
-        );
-    }
-    let bipolar = start < 0.0 && end > 0.0;
-    let fill_origin = if bipolar {
-        let zero_fraction = ((-start) / span).clamp(0.0, 1.0) as f32;
-        egui::lerp(track_rect.left()..=track_rect.right(), zero_fraction)
-    } else {
-        track_rect.left()
-    };
-    let fill_left = fill_origin.min(handle_x);
-    let fill_right = fill_origin.max(handle_x);
-    if gradient.is_none() && fill_right - fill_left > 0.25 {
-        let fill_rect = egui::Rect::from_min_max(
-            egui::pos2(fill_left, track_rect.top()),
-            egui::pos2(fill_right, track_rect.bottom()),
-        );
-        painter.rect_filled(
-            fill_rect,
-            TRACK_HEIGHT * 0.5,
-            visual_accent.unwrap_or(ui.visuals().selection.bg_fill),
-        );
-    }
-    if bipolar {
-        painter.vline(
-            fill_origin,
-            (track_rect.center().y - 5.0)..=(track_rect.center().y + 5.0),
-            Stroke::new(1.0, egui::Color32::from_white_alpha(75)),
-        );
-    }
-    painter.circle_filled(
-        handle_center,
-        HANDLE_RADIUS,
-        visual_accent.unwrap_or(interaction.fill),
-    );
-    painter.circle_stroke(
-        handle_center,
-        HANDLE_RADIUS,
-        Stroke::new(1.0, interaction.foreground),
-    );
-
-    let combined = track_response
-        .union(handle_response)
-        .on_hover_cursor(egui::CursorIcon::ResizeHorizontal);
-    combined.on_hover_text(reset_tooltip(hover_text));
-
-    AdjustmentSliderInteraction {
-        changed,
-        #[cfg(any(not(target_os = "android"), test))]
-        reset_requested,
-    }
-}
-
-fn reset_tooltip(hover_text: Option<&str>) -> String {
-    match hover_text {
-        Some(text) => format!("{text}\nDouble-click to reset."),
-        None => "Double-click to reset.".to_owned(),
-    }
-}
-
-fn set_from_pointer<Num>(
-    value: &mut Num,
-    start: f64,
-    end: f64,
-    decimals: usize,
-    track_rect: egui::Rect,
-    pointer_x: f32,
-) -> bool
-where
-    Num: egui::emath::Numeric + Copy,
-{
-    let fraction = ((pointer_x - track_rect.left()) / track_rect.width().max(1.0)).clamp(0.0, 1.0);
-    set_numeric(value, start + (end - start) * fraction as f64, decimals)
-}
-
-fn paint_gradient_track(painter: &egui::Painter, rect: egui::Rect, gradient: SliderGradient) {
-    const SEGMENTS: usize = 64;
-    for segment in 0..SEGMENTS {
-        let left_fraction = segment as f32 / SEGMENTS as f32;
-        let right_fraction = (segment + 1) as f32 / SEGMENTS as f32;
-        let left = egui::lerp(rect.left()..=rect.right(), left_fraction);
-        let right = egui::lerp(rect.left()..=rect.right(), right_fraction);
-        let color = gradient_color_at(gradient, (left_fraction + right_fraction) * 0.5);
-        painter.rect_filled(
-            egui::Rect::from_min_max(
-                egui::pos2(left - 0.25, rect.top()),
-                egui::pos2(right + 0.25, rect.bottom()),
-            ),
-            0.0,
-            color,
-        );
-    }
-    painter.rect_stroke(
-        rect,
-        TRACK_HEIGHT * 0.5,
-        Stroke::new(0.75, egui::Color32::from_black_alpha(100)),
-        egui::StrokeKind::Inside,
-    );
 }
 
 fn gradient_color_at(gradient: SliderGradient, fraction: f32) -> egui::Color32 {
@@ -988,187 +335,51 @@ fn rgb_to_hsv(color: egui::Color32) -> (f32, f32, f32) {
     (hue, saturation, max)
 }
 
-fn set_numeric<Num>(value: &mut Num, raw: f64, decimals: usize) -> bool
-where
-    Num: egui::emath::Numeric + Copy,
-{
-    let scale = 10_f64.powi(decimals.min(12) as i32);
-    let rounded = (raw * scale).round() / scale;
-    let next = Num::from_f64(rounded);
-    if next == *value {
-        false
-    } else {
-        *value = next;
-        true
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{
-        compact_slider_widths, gradient_color_at, rgb_to_hsv, slider_scroll_locked,
-        AdjustmentSlider, SliderGradient, COMPACT_ROW_GAP, HEADER_HEIGHT, SLIDER_HEIGHT,
-        VALUE_FIELD_WIDTH,
-    };
+    use super::{gradient_color_at, rgb_to_hsv, AdjustmentSlider, SliderGradient};
+    use crate::pipeline::effect_params::FloatParamSpec;
+    use eframe::egui::{pos2, Event, Modifiers, PointerButton, RawInput};
 
-    fn pointer_input(events: Vec<eframe::egui::Event>) -> eframe::egui::RawInput {
-        eframe::egui::RawInput {
-            screen_rect: Some(eframe::egui::Rect::from_min_size(
-                eframe::egui::Pos2::ZERO,
-                eframe::egui::vec2(400.0, 240.0),
-            )),
-            events,
-            ..Default::default()
-        }
-    }
-
-    fn show_test_slider(
-        ctx: &eframe::egui::Context,
-        input: eframe::egui::RawInput,
-        value: &mut u8,
-    ) {
-        show_test_slider_with_bar(ctx, input, value, false);
-    }
-
-    fn show_test_slider_with_bar(
-        ctx: &eframe::egui::Context,
-        input: eframe::egui::RawInput,
-        value: &mut u8,
-        cover_slider: bool,
-    ) {
-        show_test_slider_with_enabled_bar(ctx, input, value, true, cover_slider);
-    }
-
-    fn show_test_slider_with_enabled_bar(
-        ctx: &eframe::egui::Context,
-        input: eframe::egui::RawInput,
-        value: &mut u8,
-        enabled: bool,
-        cover_slider: bool,
-    ) {
-        let _ = ctx.run_ui(input, |ui| {
-            ui.set_width(400.0);
-            ui.add_enabled_ui(enabled, |ui| {
-                AdjustmentSlider::new("Quality", value, 1..=100)
-                    .decimals(0)
-                    .step(1.0)
+    #[test]
+    fn spec_slider_double_click_restores_the_spec_default() {
+        let spec = FloatParamSpec {
+            label: "Strength",
+            min: -1.0,
+            max: 1.0,
+            default: 0.25,
+            step: 0.01,
+            decimals: 2,
+            tooltip: None,
+        };
+        let ctx = eframe::egui::Context::default();
+        let mut value = -0.5_f32;
+        let mut time = 0.0;
+        let mut show = |events| {
+            time += 0.05;
+            let input = RawInput {
+                screen_rect: Some(eframe::egui::Rect::from_min_size(
+                    eframe::egui::Pos2::ZERO,
+                    eframe::egui::vec2(400.0, 240.0),
+                )),
+                time: Some(time),
+                events,
+                ..Default::default()
+            };
+            let _ = ctx.run_ui(input, |ui| {
+                AdjustmentSlider::from_spec(&mut value, spec)
+                    .gradient(SliderGradient::Brightness)
                     .show(ui);
             });
-            if cover_slider {
-                eframe::egui::Area::new(eframe::egui::Id::new("test-bottom-bar"))
-                    .order(eframe::egui::Order::Foreground)
-                    .fixed_pos(eframe::egui::pos2(0.0, HEADER_HEIGHT + 4.0))
-                    .show(ui.ctx(), |ui| {
-                        ui.allocate_exact_size(
-                            eframe::egui::vec2(400.0, SLIDER_HEIGHT),
-                            eframe::egui::Sense::click_and_drag(),
-                        );
-                    });
-            }
-        });
-    }
-
-    #[test]
-    fn double_click_resets_edited_values_to_stable_defaults() {
-        use eframe::egui::{pos2, Event, Modifiers, PointerButton};
-
-        // Include reopened edits, switching images in the same widget, and
-        // per-image white balance defaults that change without a new UI id.
-        for gradient in [false, true] {
-            for click_label in [false, true] {
-                let ctx = eframe::egui::Context::default();
-                let mut time = 0.0;
-                for (initial, reset) in [
-                    (37.0, None),
-                    (-24.0, None),
-                    (81.0, Some(50.0)),
-                    (72.0, Some(65.0)),
-                ] {
-                    let mut value = initial;
-                    let mut show = |events| {
-                        let mut input = pointer_input(events);
-                        input.time = Some(time);
-                        time += 0.05;
-                        let _ = ctx.run_ui(input, |ui| {
-                            let options = super::SliderOptions {
-                                decimals: 0,
-                                step: 1.0,
-                                hover_text: None,
-                                explicit_reset_value: reset,
-                                accent: None,
-                                gradient: gradient.then_some(SliderGradient::Colorfulness),
-                            };
-                            super::adjustment_slider_impl(
-                                ui,
-                                "Saturation",
-                                &mut value,
-                                -100.0..=100.0,
-                                options,
-                            );
-                        });
-                    };
-                    show(Vec::new());
-                    let pos = if click_label {
-                        pos2(20.0, HEADER_HEIGHT * 0.5)
-                    } else {
-                        pos2(20.0, HEADER_HEIGHT + 4.0 + SLIDER_HEIGHT * 0.5)
-                    };
-                    for _ in 0..2 {
-                        for pressed in [true, false] {
-                            show(vec![
-                                Event::PointerMoved(pos),
-                                Event::PointerButton {
-                                    pos,
-                                    button: PointerButton::Primary,
-                                    pressed,
-                                    modifiers: Modifiers::NONE,
-                                },
-                            ]);
-                        }
-                    }
-                    assert_eq!(
-                        value,
-                        reset.unwrap_or(0.0) as f32,
-                        "gradient={gradient}, label={click_label}"
-                    );
-                    time += 1.0;
-                }
-            }
-        }
-    }
-
-    #[test]
-    fn inline_slider_reports_double_click_reset_even_when_value_is_already_reset() {
-        use eframe::egui::{pos2, Event, Modifiers, PointerButton};
-
-        let ctx = eframe::egui::Context::default();
-        let reset_value = 0.18_f32;
-        let mut value = reset_value;
-        let mut reset_seen = false;
-        let mut time = 0.0;
-
-        let mut show = |events| {
-            let mut input = pointer_input(events);
-            input.time = Some(time);
-            time += 0.05;
-            let _ = ctx.run_ui(input, |ui| {
-                let interaction = AdjustmentSlider::new("inline-reset-test", &mut value, 0.0..=1.0)
-                    .decimals(5)
-                    .step(0.01)
-                    .reset_to(reset_value)
-                    .show_inline(ui, 100.0);
-                reset_seen |= interaction.reset_requested;
-            });
         };
-
         show(Vec::new());
-        let pos = pos2(50.0, SLIDER_HEIGHT * 0.5);
+        let label = pos2(10.0, moduwu_design::CONTROL_HEIGHT * 0.5);
         for _ in 0..2 {
             for pressed in [true, false] {
                 show(vec![
-                    Event::PointerMoved(pos),
+                    Event::PointerMoved(label),
                     Event::PointerButton {
-                        pos,
+                        pos: label,
                         button: PointerButton::Primary,
                         pressed,
                         modifiers: Modifiers::NONE,
@@ -1176,14 +387,7 @@ mod tests {
                 ]);
             }
         }
-
-        assert!(reset_seen);
-        assert_eq!(value, reset_value);
-    }
-
-    #[test]
-    fn slider_header_reserves_the_full_themed_control_height() {
-        assert_eq!(HEADER_HEIGHT, crate::ui::theme::CONTROL_HEIGHT);
+        assert_eq!(value, 0.25);
     }
 
     #[test]
@@ -1196,350 +400,6 @@ mod tests {
         assert!((neutral.0 - positive.0).abs() < 1.0);
         assert!(quarter.1 < neutral.1);
         assert!(neutral.1 < positive.1);
-    }
-
-    #[test]
-    fn compact_slider_row_uses_the_available_width() {
-        let width = 360.0;
-        let (label, track) = compact_slider_widths(width);
-        assert!((label + track + VALUE_FIELD_WIDTH + COMPACT_ROW_GAP * 2.0 - width).abs() < 0.001);
-        assert!(track >= 64.0);
-    }
-
-    #[test]
-    fn completed_slider_drag_does_not_capture_a_later_drag_elsewhere() {
-        use eframe::egui::{pos2, Event, Modifiers, PointerButton};
-
-        let ctx = eframe::egui::Context::default();
-        let mut value = 50;
-        show_test_slider(&ctx, pointer_input(Vec::new()), &mut value);
-
-        let slider_y = HEADER_HEIGHT + 4.0 + 14.0;
-        show_test_slider(
-            &ctx,
-            pointer_input(vec![
-                Event::PointerMoved(pos2(100.0, slider_y)),
-                Event::PointerButton {
-                    pos: pos2(100.0, slider_y),
-                    button: PointerButton::Primary,
-                    pressed: true,
-                    modifiers: Modifiers::NONE,
-                },
-                Event::PointerMoved(pos2(300.0, slider_y)),
-            ]),
-            &mut value,
-        );
-        let dragged_value = value;
-        assert_ne!(dragged_value, 50);
-
-        show_test_slider(
-            &ctx,
-            pointer_input(vec![Event::PointerButton {
-                pos: pos2(300.0, slider_y),
-                button: PointerButton::Primary,
-                pressed: false,
-                modifiers: Modifiers::NONE,
-            }]),
-            &mut value,
-        );
-
-        let outside_y = 160.0;
-        show_test_slider(
-            &ctx,
-            pointer_input(vec![
-                Event::PointerMoved(pos2(100.0, outside_y)),
-                Event::PointerButton {
-                    pos: pos2(100.0, outside_y),
-                    button: PointerButton::Primary,
-                    pressed: true,
-                    modifiers: Modifiers::NONE,
-                },
-                Event::PointerMoved(pos2(300.0, outside_y)),
-            ]),
-            &mut value,
-        );
-
-        assert_eq!(value, dragged_value);
-    }
-
-    #[test]
-    fn foreground_bar_blocks_slider_drag_beneath_it() {
-        use eframe::egui::{pos2, Event, Modifiers, PointerButton};
-
-        let ctx = eframe::egui::Context::default();
-        let mut value = 50;
-        show_test_slider_with_bar(&ctx, pointer_input(Vec::new()), &mut value, true);
-
-        let slider_y = HEADER_HEIGHT + 4.0 + SLIDER_HEIGHT * 0.5;
-        show_test_slider_with_bar(
-            &ctx,
-            pointer_input(vec![
-                Event::PointerMoved(pos2(100.0, slider_y)),
-                Event::PointerButton {
-                    pos: pos2(100.0, slider_y),
-                    button: PointerButton::Primary,
-                    pressed: true,
-                    modifiers: Modifiers::NONE,
-                },
-                Event::PointerMoved(pos2(300.0, slider_y)),
-            ]),
-            &mut value,
-            true,
-        );
-
-        assert_eq!(value, 50);
-    }
-
-    #[test]
-    fn disabled_slider_does_not_start_or_continue_a_drag() {
-        use eframe::egui::{pos2, Event, Modifiers, PointerButton};
-
-        let ctx = eframe::egui::Context::default();
-        let mut value = 50;
-        show_test_slider_with_enabled_bar(&ctx, pointer_input(Vec::new()), &mut value, true, false);
-        let slider_y = HEADER_HEIGHT + 4.0 + SLIDER_HEIGHT * 0.5;
-        show_test_slider_with_enabled_bar(
-            &ctx,
-            pointer_input(vec![
-                Event::PointerMoved(pos2(100.0, slider_y)),
-                Event::PointerButton {
-                    pos: pos2(100.0, slider_y),
-                    button: PointerButton::Primary,
-                    pressed: true,
-                    modifiers: Modifiers::NONE,
-                },
-                Event::PointerMoved(pos2(300.0, slider_y)),
-            ]),
-            &mut value,
-            false,
-            false,
-        );
-        assert_eq!(value, 50);
-        assert!(!slider_scroll_locked(&ctx));
-
-        show_test_slider_with_enabled_bar(
-            &ctx,
-            pointer_input(vec![
-                Event::PointerMoved(pos2(100.0, slider_y)),
-                Event::PointerButton {
-                    pos: pos2(100.0, slider_y),
-                    button: PointerButton::Primary,
-                    pressed: true,
-                    modifiers: Modifiers::NONE,
-                },
-                Event::PointerMoved(pos2(300.0, slider_y)),
-            ]),
-            &mut value,
-            true,
-            false,
-        );
-        let dragged_value = value;
-        assert_ne!(dragged_value, 50);
-        assert!(slider_scroll_locked(&ctx));
-
-        show_test_slider_with_enabled_bar(
-            &ctx,
-            pointer_input(vec![Event::PointerMoved(pos2(350.0, slider_y))]),
-            &mut value,
-            false,
-            false,
-        );
-        assert_eq!(value, dragged_value);
-        assert!(!slider_scroll_locked(&ctx));
-        assert!(ctx.dragged_id().is_none());
-    }
-
-    #[test]
-    fn focused_slider_consumes_arrow_keys_for_one_step() {
-        use eframe::egui::{pos2, Event, Key, Modifiers, PointerButton};
-
-        let ctx = eframe::egui::Context::default();
-        let mut value = 50;
-        let slider_y = HEADER_HEIGHT + 4.0 + SLIDER_HEIGHT * 0.5;
-        show_test_slider(&ctx, pointer_input(Vec::new()), &mut value);
-        show_test_slider(
-            &ctx,
-            pointer_input(vec![Event::PointerButton {
-                pos: pos2(200.0, slider_y),
-                button: PointerButton::Primary,
-                pressed: true,
-                modifiers: Modifiers::NONE,
-            }]),
-            &mut value,
-        );
-        show_test_slider(
-            &ctx,
-            pointer_input(vec![Event::PointerButton {
-                pos: pos2(200.0, slider_y),
-                button: PointerButton::Primary,
-                pressed: false,
-                modifiers: Modifiers::NONE,
-            }]),
-            &mut value,
-        );
-        show_test_slider(
-            &ctx,
-            pointer_input(vec![Event::Key {
-                key: Key::ArrowRight,
-                physical_key: None,
-                pressed: true,
-                repeat: false,
-                modifiers: Modifiers::NONE,
-            }]),
-            &mut value,
-        );
-        assert_eq!(value, 51);
-        assert!(!ctx.input_mut(|input| { input.consume_key(Modifiers::NONE, Key::ArrowRight) }));
-    }
-
-    #[test]
-    fn focused_number_arrows_step_by_hundredths_and_repeat_after_delay() {
-        use eframe::egui::{pos2, Event, Key, Modifiers, PointerButton};
-        use std::cell::Cell;
-
-        let ctx = eframe::egui::Context::default();
-        let mut value = 1.0_f32;
-        let maximum = Cell::new(5.0_f32);
-        let mut show = |time, events| {
-            let mut input = pointer_input(events);
-            input.time = Some(time);
-            let mut focused = false;
-            let _ = ctx.run_ui(input, |ui| {
-                let limit = maximum.get();
-                let (response, _) =
-                    super::numeric_value_field(ui, &mut value, -limit..=limit, 2, 0.05);
-                focused = response.has_focus();
-            });
-            (value, focused)
-        };
-
-        show(0.0, Vec::new());
-        let up = Event::Key {
-            key: Key::ArrowUp,
-            physical_key: None,
-            pressed: true,
-            repeat: false,
-            modifiers: Modifiers::NONE,
-        };
-        assert!((show(0.001, vec![up.clone()]).0 - 1.0).abs() < 0.0001);
-        assert!(ctx.input_mut(|input| input.consume_key(Modifiers::NONE, Key::ArrowUp)));
-        show(
-            0.002,
-            vec![Event::Key {
-                key: Key::ArrowUp,
-                physical_key: None,
-                pressed: false,
-                repeat: false,
-                modifiers: Modifiers::NONE,
-            }],
-        );
-        let field = pos2(VALUE_FIELD_WIDTH * 0.5, HEADER_HEIGHT * 0.5);
-        for pressed in [true, false] {
-            show(
-                if pressed { 0.01 } else { 0.02 },
-                vec![
-                    Event::PointerMoved(field),
-                    Event::PointerButton {
-                        pos: field,
-                        button: PointerButton::Primary,
-                        pressed,
-                        modifiers: Modifiers::NONE,
-                    },
-                ],
-            );
-        }
-        assert!(show(0.03, Vec::new()).1);
-        assert!((show(0.10, vec![up]).0 - 1.01).abs() < 0.0001);
-        assert!((show(0.40, Vec::new()).0 - 1.01).abs() < 0.0001);
-        assert!((show(0.46, Vec::new()).0 - 1.02).abs() < 0.0001);
-        assert!((show(0.52, Vec::new()).0 - 1.03).abs() < 0.0001);
-        let release = Event::Key {
-            key: Key::ArrowUp,
-            physical_key: None,
-            pressed: false,
-            repeat: false,
-            modifiers: Modifiers::NONE,
-        };
-        assert!((show(0.53, vec![release]).0 - 1.03).abs() < 0.0001);
-        assert!((show(1.0, Vec::new()).0 - 1.03).abs() < 0.0001);
-        let down = Event::Key {
-            key: Key::ArrowDown,
-            physical_key: None,
-            pressed: true,
-            repeat: false,
-            modifiers: Modifiers::NONE,
-        };
-        assert!((show(1.1, vec![down]).0 - 1.02).abs() < 0.0001);
-        show(
-            1.11,
-            vec![Event::Key {
-                key: Key::ArrowDown,
-                physical_key: None,
-                pressed: false,
-                repeat: false,
-                modifiers: Modifiers::NONE,
-            }],
-        );
-        maximum.set(100.0);
-        assert!(
-            (show(
-                1.2,
-                vec![Event::Key {
-                    key: Key::ArrowUp,
-                    physical_key: None,
-                    pressed: true,
-                    repeat: false,
-                    modifiers: Modifiers::NONE,
-                }]
-            )
-            .0 - 1.22)
-                .abs()
-                < 0.0001
-        );
-    }
-
-    #[test]
-    fn focused_number_step_scales_with_slider_maximum() {
-        assert!((super::numeric_arrow_step(&(-5.0_f32..=5.0)) - 0.01).abs() < 0.0001);
-        assert!((super::numeric_arrow_step(&(-100.0_f32..=100.0)) - 0.2).abs() < 0.0001);
-        assert!((super::numeric_arrow_step(&(0.0_f32..=100.0)) - 0.2).abs() < 0.0001);
-        assert_eq!(super::numeric_arrow_step(&(1_u32..=100_u32)), 1.0);
-    }
-
-    #[test]
-    fn disabled_focused_slider_ignores_arrow_keys() {
-        use eframe::egui::{pos2, Event, Key, Modifiers, PointerButton};
-
-        let ctx = eframe::egui::Context::default();
-        let mut value = 50;
-        let slider_y = HEADER_HEIGHT + 4.0 + SLIDER_HEIGHT * 0.5;
-        show_test_slider(&ctx, pointer_input(Vec::new()), &mut value);
-        for pressed in [true, false] {
-            show_test_slider(
-                &ctx,
-                pointer_input(vec![Event::PointerButton {
-                    pos: pos2(200.0, slider_y),
-                    button: PointerButton::Primary,
-                    pressed,
-                    modifiers: Modifiers::NONE,
-                }]),
-                &mut value,
-            );
-        }
-        show_test_slider_with_enabled_bar(
-            &ctx,
-            pointer_input(vec![Event::Key {
-                key: Key::ArrowRight,
-                physical_key: None,
-                pressed: true,
-                repeat: false,
-                modifiers: Modifiers::NONE,
-            }]),
-            &mut value,
-            false,
-            false,
-        );
-        assert_eq!(value, 50);
     }
 
     #[test]

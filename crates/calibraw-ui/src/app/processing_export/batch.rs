@@ -254,12 +254,12 @@ fn prepare_desktop_library_export_item(
         };
         let neutral_masks = MaskStack::default();
         let neutral_params = GpuParams::new(&neutral_exposure, &neutral_masks, &source_raw);
-        let pipeline = RawGpuPipeline::new_headless_with_quality(
+        let pipeline = RawGpuPipeline::new(
             device,
             queue,
             &source_raw,
             &neutral_params,
-            ProcessingQuality::Preview,
+            PipelineOptions::new(ProcessingQuality::Preview),
         )
         .map_err(|error| {
             format!(

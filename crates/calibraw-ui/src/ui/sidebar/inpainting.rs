@@ -31,12 +31,12 @@ impl Sidebar {
         _frame: &eframe::Frame,
     ) {
         let tool_help = inpaint_tool_help(app.inpaint.tool);
-        crate::ui::theme::section_card_with_help(ui, "Tool", tool_help, |ui| {
+        moduwu_design::section_card_with_help(ui, "Tool", tool_help, |ui| {
             ui.horizontal(|ui| {
                 let spacing = ui.spacing().item_spacing.x;
                 let tool_width = ((ui.available_width() - spacing * 2.0) / 3.0).max(1.0);
                 for tool in InpaintTool::ALL {
-                    if crate::ui::theme::segmented_button(
+                    if moduwu_design::segmented_button(
                         ui,
                         tool.label(),
                         app.inpaint.tool == tool,
@@ -53,7 +53,7 @@ impl Sidebar {
             if app.inpaint.tool.retouch().is_some() {
                 let previous_alignment = app.inpaint.alignment;
                 let alignment_help = retouch_alignment_help(app.inpaint.alignment);
-                crate::ui::theme::form_combo_with_help(
+                moduwu_design::form_combo_with_help(
                     ui,
                     "Source alignment",
                     "retouch-source-alignment",
@@ -76,7 +76,7 @@ impl Sidebar {
                 }
                 if ui
                     .add_enabled_ui(!app.inpaint_processing(), |ui| {
-                        crate::ui::theme::toggle_button(
+                        moduwu_design::toggle_button(
                             ui,
                             if app.inpaint.source_pick_active {
                                 "Cancel source placement"
@@ -109,8 +109,8 @@ impl Sidebar {
             }
         });
 
-        crate::ui::theme::card_gap(ui);
-        crate::ui::theme::section_card(ui, "Brush", |ui| {
+        moduwu_design::card_gap(ui);
+        moduwu_design::section_card(ui, "Brush", |ui| {
             ui.add_enabled_ui(!app.inpaint_processing(), |ui| {
                 let size_help = if app.preferences.image_relative_brush_size {
                     "Brush covers the same area of the photo as you zoom."
@@ -150,7 +150,7 @@ impl Sidebar {
                 .as_ref()
                 .filter(|_| app.inpaint.pending_retouch.is_some())
             {
-                ui.add_space(crate::ui::theme::SPACE_SM);
+                ui.add_space(moduwu_design::SPACE_SM);
                 ui.horizontal(|ui| {
                     ui.spinner();
                     ui.label(egui::RichText::new(&status.phase).small());
@@ -158,9 +158,9 @@ impl Sidebar {
             }
         });
 
-        crate::ui::theme::card_gap(ui);
+        moduwu_design::card_gap(ui);
         let history_title = format!("{} stroke history", app.inpaint.tool.label());
-        crate::ui::theme::section_card(ui, &history_title, |ui| {
+        moduwu_design::section_card(ui, &history_title, |ui| {
             app.inpaint.hovered_stroke = None;
             let mut delete_stroke = None;
             let visible_strokes = app
@@ -184,21 +184,21 @@ impl Sidebar {
                 );
             } else {
                 for (history_index, index) in visible_strokes.iter().copied().enumerate().rev() {
-                    crate::ui::theme::toolbar_row(ui, |ui| {
+                    moduwu_design::toolbar_row(ui, |ui| {
                         let selected = app.inpaint.selected_stroke == Some(index);
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            if crate::ui::icons::phosphor_icon_button_enabled(
+                            if moduwu_design::icon_button_enabled(
                                 ui,
                                 !app.inpaint_processing(),
                                 egui_phosphor::regular::TRASH,
-                                crate::ui::theme::toolbar_icon_size(),
+                                moduwu_design::toolbar_icon_size(),
                                 "Delete this stroke",
                             )
                             .clicked()
                             {
                                 delete_stroke = Some(index);
                             }
-                            let stroke_response = crate::ui::theme::navigation_row(
+                            let stroke_response = moduwu_design::navigation_row(
                                 ui,
                                 format!("◎  Stroke {}", history_index + 1),
                                 selected,
@@ -246,7 +246,7 @@ impl Sidebar {
                     )
                 });
             if let Some((index, history_index, opacity, feather)) = selected_settings {
-                crate::ui::theme::section_separator(ui);
+                moduwu_design::section_separator(ui);
                 ui.strong(format!("Selected stroke {}", history_index + 1));
                 if let Some(feather) = feather {
                     ui.label(
@@ -278,7 +278,7 @@ impl Sidebar {
             }
 
             if app.preview.gpu_pipeline.is_none() {
-                ui.add_space(crate::ui::theme::SPACE_SM);
+                ui.add_space(moduwu_design::SPACE_SM);
                 ui.colored_label(
                     ui.visuals().warn_fg_color,
                     "Open a photo to use Remove, Clone or Heal.",

@@ -342,14 +342,14 @@ impl CalibRawApp {
         let Some(program_template) = self.preview.pipeline() else {
             return false;
         };
-        let pipeline = match RawGpuPipeline::new_headless_reusing_programs_with_mask_edge(
+        let pipeline = match RawGpuPipeline::new(
             &render_state.device,
             &render_state.queue,
             &detail_raw,
             &params,
-            ProcessingQuality::Preview,
-            program_template,
-            detail_mask_edge(),
+            PipelineOptions::new(ProcessingQuality::Preview)
+                .mask_atlas_edge(detail_mask_edge())
+                .programs(&program_template.program_template()),
         ) {
             Ok(pipeline) => pipeline,
             Err(error) => {

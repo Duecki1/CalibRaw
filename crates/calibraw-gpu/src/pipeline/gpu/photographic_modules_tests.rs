@@ -1,4 +1,6 @@
-use super::{tests::request_test_device, GpuParams, ProcessingQuality, RawGpuPipeline};
+use super::{
+    tests::request_test_device, GpuParams, PipelineOptions, ProcessingQuality, RawGpuPipeline,
+};
 use crate::pipeline::{
     extract_padded_tile, EffectComponent, ExportTile, ExposureParams, LoadedRaw, LocalMask,
     MaskEffect, MaskKind, MaskStack, ProcessingStage,
@@ -33,13 +35,12 @@ impl PhotoScene {
         };
         // Reserve an atlas layer before switching between global and local modules.
         let initial = local(EffectComponent::new(MaskEffect::Grain));
-        let pipeline = RawGpuPipeline::new_headless_with_quality_and_mask_edge(
+        let pipeline = RawGpuPipeline::new(
             &device,
             &queue,
             &source,
             &GpuParams::new(&exposure, &initial, &source),
-            ProcessingQuality::High,
-            MASK_EDGE,
+            PipelineOptions::new(ProcessingQuality::High).mask_atlas_edge(MASK_EDGE),
         )?;
         Ok(Some(Self {
             device,
@@ -711,14 +712,14 @@ fn photographic_modules_match_full_frame_in_padded_export_tiles() -> anyhow::Res
                 W,
                 H,
             );
-            let pipeline = RawGpuPipeline::new_headless_reusing_programs_with_mask_edge(
+            let pipeline = RawGpuPipeline::new(
                 &scene.device,
                 &scene.queue,
                 &raw,
                 &params,
-                ProcessingQuality::High,
-                &scene.pipeline,
-                MASK_EDGE,
+                PipelineOptions::new(ProcessingQuality::High)
+                    .mask_atlas_edge(MASK_EDGE)
+                    .programs(&scene.pipeline.program_template()),
             )?;
             pipeline.dispatch_stage(&scene.queue, &scene.device, &params, ProcessingStage::Raw);
             pipeline.dispatch_tone_guide_with_inherited_statistics(

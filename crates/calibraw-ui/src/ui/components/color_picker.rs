@@ -41,7 +41,7 @@ pub(crate) fn sidebar_color_picker(
         state.hue = color_hue;
     }
 
-    let swatch = crate::ui::theme::property_row(ui, label, |ui| {
+    let swatch = moduwu_design::property_row(ui, label, |ui| {
         color_swatch_button(ui, display_color(*color), state.expanded)
     });
     swatch.response.on_hover_text(tooltip);
@@ -54,7 +54,7 @@ pub(crate) fn sidebar_color_picker(
         ui.push_id(picker_id.with("inline-picker"), |ui| {
             let frame = egui::Frame::new()
                 .fill(ui.visuals().extreme_bg_color)
-                .inner_margin(egui::Margin::same(crate::ui::theme::SPACE_SM as i8))
+                .inner_margin(egui::Margin::same(moduwu_design::SPACE_SM as i8))
                 .corner_radius(6.0)
                 .stroke(Stroke::new(
                     1.0,
@@ -127,9 +127,9 @@ pub(crate) fn sidebar_color_picker(
 }
 
 fn color_swatch_button(ui: &mut Ui, color: Color32, expanded: bool) -> Response {
-    let desired_size = egui::vec2(SWATCH_WIDTH, crate::ui::theme::CONTROL_HEIGHT);
+    let desired_size = egui::vec2(SWATCH_WIDTH, moduwu_design::CONTROL_HEIGHT);
     let (rect, response) = ui.allocate_exact_size(desired_size, Sense::click());
-    let interaction = crate::ui::theme::interaction_visuals(ui, &response, expanded);
+    let interaction = moduwu_design::interaction_visuals(ui, &response, expanded);
     let painter = ui.painter_at(rect);
 
     painter.rect_filled(rect, 5.0, interaction.weak_fill);

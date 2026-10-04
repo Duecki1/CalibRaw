@@ -261,7 +261,7 @@ impl CalibRawApp {
         });
         self.begin_foreground_operation(ForegroundOperation {
             kind: DENOISE_JOB,
-            document_id: self.persistence.sidecar_generation,
+            document_id: self.persistence.document_generation,
             cancellation,
             progress,
             cancelling: false,
@@ -277,7 +277,7 @@ impl CalibRawApp {
         }
         calibraw_core::diagnostics::record(format!(
             "RawNIND worker started for document {} on {}",
-            self.persistence.sidecar_generation,
+            self.persistence.document_generation,
             if cfg!(target_os = "android") {
                 "Android"
             } else {
@@ -347,7 +347,7 @@ impl CalibRawApp {
             self.foreground_operation = Some(operation);
             return;
         };
-        let stale = operation.document_id != self.persistence.sidecar_generation;
+        let stale = !operation.is_for_document(self.persistence.document_generation);
         if stale {
             return;
         }

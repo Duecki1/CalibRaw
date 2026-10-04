@@ -73,7 +73,7 @@ pub(crate) fn run(args: Vec<OsString>) -> Result<()> {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize)]
 #[serde(rename_all = "snake_case")]
-enum Category {
+pub(crate) enum Category {
     Production,
     Test,
     Build,
@@ -290,32 +290,7 @@ fn count_rust_package(
     files: &[PathBuf],
 ) -> Result<(Area, BTreeSet<PathBuf>, Vec<String>)> {
     let mut area = Area::new(package.name.clone(), "rust");
-    let mut categories: BTreeMap<PathBuf, Category> = BTreeMap::new();
-    let mut queue = Vec::new();
-    for (category, path) in &package.targets {
-        let path = fs::canonicalize(path).unwrap_or_else(|_| path.clone());
-        queue.push((path.clone(), *category, true));
-    }
-
-    while let Some((file, category, is_root)) = queue.pop() {
-        // A file reachable as production and as a test module stays production.
-        if let Some(existing) = categories.get(&file) {
-            if *existing <= category {
-                continue;
-            }
-        }
-        categories.insert(file.clone(), category);
-        let Ok(text) = fs::read_to_string(&file) else {
-            continue;
-        };
-        let source = RustSource::new(text);
-        let test_ranges = test_item_ranges(&source);
-        for (child, child_category) in
-            child_modules(&file, is_root, &source, &test_ranges, category)
-        {
-            queue.push((child, child_category, false));
-        }
-    }
+    let categories = module_categories(&package.targets);
 
     for (file, category) in &categories {
         let text = fs::read_to_string(file)
@@ -359,6 +334,38 @@ fn count_rust_package(
     Ok((area, visited, orphans))
 }
 
+/// Every module file reachable from the target roots, with its category. A
+/// module declared under a test-only attribute or item is test code.
+pub(crate) fn module_categories(targets: &[(Category, PathBuf)]) -> BTreeMap<PathBuf, Category> {
+    let mut categories: BTreeMap<PathBuf, Category> = BTreeMap::new();
+    let mut queue = Vec::new();
+    for (category, path) in targets {
+        let path = fs::canonicalize(path).unwrap_or_else(|_| path.clone());
+        queue.push((path, *category, true));
+    }
+
+    while let Some((file, category, is_root)) = queue.pop() {
+        // A file reachable as production and as a test module stays production.
+        if let Some(existing) = categories.get(&file) {
+            if *existing <= category {
+                continue;
+            }
+        }
+        categories.insert(file.clone(), category);
+        let Ok(text) = fs::read_to_string(&file) else {
+            continue;
+        };
+        let source = RustSource::new(text);
+        let test_ranges = test_item_ranges(&source);
+        for (child, child_category) in
+            child_modules(&file, is_root, &source, &test_ranges, category)
+        {
+            queue.push((child, child_category, false));
+        }
+    }
+    categories
+}
+
 fn is_in_nested_package(file: &Path, package_directory: &Path) -> bool {
     let mut directory = file.parent();
     while let Some(current) = directory {
@@ -374,7 +381,7 @@ fn is_in_nested_package(file: &Path, package_directory: &Path) -> bool {
 }
 
 /// Byte ranges of items that are compiled only for tests.
-fn test_item_ranges(source: &RustSource) -> Vec<Range<usize>> {
+pub(crate) fn test_item_ranges(source: &RustSource) -> Vec<Range<usize>> {
     source
         .attributed_items()
         .into_iter()

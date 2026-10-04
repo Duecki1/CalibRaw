@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 /// Keep the detail sliders full-width even in narrow portrait cards.
 pub(super) fn effect_details(ui: &mut Ui, label: &str, body: impl FnOnce(&mut Ui) -> bool) -> bool {
-    ui.add_space(crate::ui::theme::SPACE_XS);
+    ui.add_space(moduwu_design::SPACE_XS);
     egui::CollapsingHeader::new(label)
         .default_open(false)
         .show_unindented(ui, body)

@@ -218,3 +218,8 @@ fn clamp_pos(pos: vec2<i32>) -> vec2<i32> {
 fn safe_luma(rgb: vec3<f32>) -> f32 {
     return max(dot(rgb, LUMA), 1e-6);
 }
+
+/// Base-2 log of the Rec.2020 luminance, floored at 1e-6 to stay finite.
+fn log_luminance(rgb: vec3<f32>) -> f32 {
+    return log2(safe_luma(rgb));
+}

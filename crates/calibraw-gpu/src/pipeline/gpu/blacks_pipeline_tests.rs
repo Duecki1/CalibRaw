@@ -1,4 +1,7 @@
-use super::{tests::request_test_device_with_info, GpuParams, ProcessingQuality, RawGpuPipeline};
+use super::{
+    tests::request_test_device_with_info, GpuParams, PipelineOptions, ProcessingQuality,
+    RawGpuPipeline,
+};
 use crate::pipeline::{ExposureParams, LoadedRaw, LocalMask, MaskKind, MaskStack};
 
 #[test]
@@ -43,8 +46,12 @@ fn blacks_match_between_global_masks_preview_and_export() -> anyhow::Result<()> 
     let initial = GpuParams::new(&neutral, &no_masks, &source);
     let mut preview_results = Vec::new();
     for quality in [ProcessingQuality::Preview, ProcessingQuality::High] {
-        let pipeline = RawGpuPipeline::new_headless_with_quality_and_mask_edge(
-            &device, &queue, &source, &initial, quality, MASK_EDGE,
+        let pipeline = RawGpuPipeline::new(
+            &device,
+            &queue,
+            &source,
+            &initial,
+            PipelineOptions::new(quality).mask_atlas_edge(MASK_EDGE),
         )?;
         pipeline.update_mask_layer(
             &queue,

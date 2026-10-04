@@ -434,7 +434,7 @@ impl Sidebar {
             return geometry_changed;
         };
 
-        ui.add_space(crate::ui::theme::SPACE_XS);
+        ui.add_space(moduwu_design::SPACE_XS);
         ui.scope(|ui| {
             let is_fullscreen = matches!(&component.geometry, MaskGeometry::Fullscreen);
             ui.horizontal_wrapped(|ui| {
@@ -443,7 +443,7 @@ impl Sidebar {
                     component_name
                         .on_hover_text("Covers the complete image with uniform mask strength.");
                 }
-                if crate::ui::theme::toggle_button(ui, "Invert", component.invert).clicked() {
+                if moduwu_design::toggle_button(ui, "Invert", component.invert).clicked() {
                     component.common.toggle_invert();
                     geometry_changed = true;
                 }
@@ -498,7 +498,7 @@ impl Sidebar {
                         geometry_changed = true;
                     }
                     ui.horizontal(|ui| {
-                        if crate::ui::theme::toggle_button(ui, "Opacity", *opacity_enabled)
+                        if moduwu_design::toggle_button(ui, "Opacity", *opacity_enabled)
                             .on_hover_text(
                                 "Use the opacity setting for newly drawn brush and eraser strokes. \
                                  Disabled strokes always use 100% opacity.",
@@ -508,7 +508,7 @@ impl Sidebar {
                             *opacity_enabled = !*opacity_enabled;
                             geometry_changed = true;
                         }
-                        if crate::ui::theme::toggle_button(ui, "Overlapping", *overlap_enabled)
+                        if moduwu_design::toggle_button(ui, "Overlapping", *overlap_enabled)
                             .on_hover_text(
                                 "Allow separate brush strokes to build opacity where they overlap. \
                                  For example, 10% over 10% produces about 19% coverage.",
@@ -531,10 +531,10 @@ impl Sidebar {
                                 .reset_to(1.0)
                                 .show(ui);
                     });
-                    if crate::ui::icons::phosphor_icon_button(
+                    if moduwu_design::icon_button(
                         ui,
                         egui_phosphor::regular::ERASER,
-                        crate::ui::theme::toolbar_icon_size(),
+                        moduwu_design::toolbar_icon_size(),
                         "Clear brush strokes",
                     )
                     .clicked()
@@ -659,7 +659,7 @@ impl Sidebar {
                         )
                         .reset_to(0.055)
                         .show(ui);
-                    ui.add_space(crate::ui::theme::SPACE_XS);
+                    ui.add_space(moduwu_design::SPACE_XS);
                     geometry_changed |= Self::mask_grow_slider(ui, grow);
                     geometry_changed |= Self::mask_feather_slider(
                         ui,
@@ -681,20 +681,20 @@ impl Sidebar {
                         controls.request_object = true;
                     }
                     ui.horizontal_wrapped(|ui| {
-                        if crate::ui::icons::phosphor_icon_button(
+                        if moduwu_design::icon_button(
                             ui,
                             egui_phosphor::regular::ARROW_CLOCKWISE,
-                            crate::ui::theme::toolbar_icon_size(),
+                            moduwu_design::toolbar_icon_size(),
                             "Recalculate object selection",
                         )
                         .clicked()
                         {
                             controls.request_object = true;
                         }
-                        if crate::ui::icons::phosphor_icon_button(
+                        if moduwu_design::icon_button(
                             ui,
                             egui_phosphor::regular::X,
-                            crate::ui::theme::toolbar_icon_size(),
+                            moduwu_design::toolbar_icon_size(),
                             "Clear object selection",
                         )
                         .clicked()
@@ -801,8 +801,7 @@ impl Sidebar {
                 (BrushMode::Paint, paint_label),
                 (BrushMode::Erase, erase_label),
             ] {
-                if crate::ui::theme::segmented_button(ui, label, *brush_mode == mode, width)
-                    .clicked()
+                if moduwu_design::segmented_button(ui, label, *brush_mode == mode, width).clicked()
                 {
                     *brush_mode = mode;
                 }
@@ -818,7 +817,7 @@ impl Sidebar {
         } else {
             "Refine"
         };
-        if crate::ui::theme::toggle_button(ui, toggle_label, controls.refinement_active)
+        if moduwu_design::toggle_button(ui, toggle_label, controls.refinement_active)
             .on_hover_text("Fine-tune the shared Subject / Background boundary with a brush.")
             .clicked()
         {
@@ -854,10 +853,10 @@ impl Sidebar {
                 .hover_text("Strength captured by newly painted add/subtract strokes.")
                 .reset_to(1.0)
                 .show(ui);
-            if crate::ui::icons::phosphor_icon_button(
+            if moduwu_design::icon_button(
                 ui,
                 egui_phosphor::regular::ERASER,
-                crate::ui::theme::toolbar_icon_size(),
+                moduwu_design::toolbar_icon_size(),
                 "Clear subject refinement",
             )
             .clicked()

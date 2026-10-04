@@ -169,10 +169,6 @@ fn local_effects_at(pos: vec2<i32>) -> vec3<f32> {
     return textureLoad(local_effects_tex, Common::clamp_pos(pos), 0).xyz;
 }
 
-fn log_luminance(rgb: vec3<f32>) -> f32 {
-    return log2(Common::safe_luma(rgb));
-}
-
 fn presence_step(reference_pixels: f32, maximum: i32) -> i32 {
     return clamp(
         i32(round(reference_pixels * DetailUtils::presence_reference_scale())),
@@ -187,7 +183,7 @@ fn bilateral_log_luminance(
     step: i32,
     range_strength: f32,
 ) -> f32 {
-    let center = log_luminance(adjustment_base_at(pos));
+    let center = Common::log_luminance(adjustment_base_at(pos));
     let sigma = max(f32(radius) * 0.72, 0.85);
     var sum = 0.0;
     var sum_w = 0.0;
@@ -195,7 +191,7 @@ fn bilateral_log_luminance(
     for (var dy = -3; dy <= 3; dy = dy + 1) {
         for (var dx = -3; dx <= 3; dx = dx + 1) {
             if abs(dx) > radius || abs(dy) > radius { continue; }
-            let sample_ev = log_luminance(
+            let sample_ev = Common::log_luminance(
                 adjustment_base_at(pos + vec2<i32>(dx * step, dy * step)),
             );
             let distance_squared = f32(dx * dx + dy * dy);
@@ -219,13 +215,13 @@ fn atrous_kernel_weight(offset: i32) -> f32 {
 }
 
 fn atrous_log_luminance(pos: vec2<i32>, step: i32, range_strength: f32) -> f32 {
-    let center = log_luminance(adjustment_base_at(pos));
+    let center = Common::log_luminance(adjustment_base_at(pos));
     var sum = 0.0;
     var sum_w = 0.0;
     for (var ky = -2; ky <= 2; ky = ky + 1) {
         for (var kx = -2; kx <= 2; kx = kx + 1) {
             let sample_pos = pos + vec2<i32>(kx * step, ky * step);
-            let sample_ev = log_luminance(adjustment_base_at(sample_pos));
+            let sample_ev = Common::log_luminance(adjustment_base_at(sample_pos));
             let delta = sample_ev - center;
             let spatial = atrous_kernel_weight(kx) * atrous_kernel_weight(ky);
             let range = exp(-range_strength * delta * delta);

@@ -246,7 +246,7 @@ impl CalibRawApp {
                 history: edit_history,
                 lens_restore_masks: None,
                 sidecar_target: None,
-                sidecar_generation: 0,
+                document_generation: 0,
                 sidecar_saved_revision: None,
                 sidecar_failed_revision: None,
                 sidecar_pending: VecDeque::new(),

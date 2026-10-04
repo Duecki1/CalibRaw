@@ -169,8 +169,8 @@ impl CalibRawApp {
             (None, false, false) => format!("Prepare {}?", description.label),
         };
         let runtime_ready = self.ai_runtime_ready();
-        let mut action = crate::ui::theme::DialogAction::None;
-        crate::ui::theme::dialog_window(title, ctx, crate::ui::theme::DIALOG_WIDTH_LARGE)
+        let mut action = moduwu_design::DialogAction::None;
+        moduwu_design::dialog_window(title, ctx, moduwu_design::DIALOG_WIDTH_LARGE)
             .show_with_footer(
                 ctx,
                 |ui| {
@@ -209,12 +209,12 @@ impl CalibRawApp {
                 },
             );
         match action {
-            crate::ui::theme::DialogAction::Confirm => {
+            moduwu_design::DialogAction::Confirm => {
                 self.ai.consent = None;
                 self.start_ai_job(feature, model_download_needed, frame);
             }
-            crate::ui::theme::DialogAction::Cancel => self.abandon_ai_job(feature),
-            crate::ui::theme::DialogAction::None => {}
+            moduwu_design::DialogAction::Cancel => self.abandon_ai_job(feature),
+            moduwu_design::DialogAction::None => {}
         }
     }
 
@@ -223,27 +223,23 @@ impl CalibRawApp {
             return;
         };
         let mut close = false;
-        crate::ui::theme::dialog_window(
-            "AI mask failed",
-            ctx,
-            crate::ui::theme::DIALOG_WIDTH_DEFAULT,
-        )
-        .resizable(true)
-        .show(ctx, |ui| {
-            ui.label(message);
-            crate::ui::theme::dialog_button_row(ui, |ui| {
-                close |= crate::ui::theme::secondary_button(ui, "Close").clicked();
+        moduwu_design::dialog_window("AI mask failed", ctx, moduwu_design::DIALOG_WIDTH_DEFAULT)
+            .resizable(true)
+            .show(ctx, |ui| {
+                ui.label(message);
+                moduwu_design::dialog_button_row(ui, |ui| {
+                    close |= moduwu_design::secondary_button(ui, "Close").clicked();
+                });
+                if !close
+                    && moduwu_design::dialog_keyboard_action(
+                        ui,
+                        moduwu_design::DialogKeyboard::CLOSE_ONLY,
+                        false,
+                    ) == moduwu_design::DialogAction::Cancel
+                {
+                    close = true;
+                }
             });
-            if !close
-                && crate::ui::theme::dialog_keyboard_action(
-                    ui,
-                    crate::ui::theme::DialogKeyboard::CLOSE_ONLY,
-                    false,
-                ) == crate::ui::theme::DialogAction::Cancel
-            {
-                close = true;
-            }
-        });
         if close {
             self.ai.object_error_dialog = None;
         }

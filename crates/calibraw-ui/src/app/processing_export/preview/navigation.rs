@@ -60,14 +60,14 @@ impl CalibRawApp {
             let Some(template) = self.preview.pipeline() else {
                 return;
             };
-            let pipeline = match RawGpuPipeline::new_headless_reusing_programs_with_mask_edge(
+            let pipeline = match RawGpuPipeline::new(
                 &render_state.device,
                 &render_state.queue,
                 &raw,
                 &params,
-                ProcessingQuality::Preview,
-                template,
-                navigation_mask_edge(),
+                PipelineOptions::new(ProcessingQuality::Preview)
+                    .mask_atlas_edge(navigation_mask_edge())
+                    .programs(&template.program_template()),
             ) {
                 Ok(pipeline) => pipeline,
                 Err(error) => {
@@ -89,12 +89,10 @@ impl CalibRawApp {
                 &render_state.queue,
                 &render_state.device,
                 &params,
-                RemoveSceneContext::new(
+                RemoveSceneContext::full_frame(
                     &self.inpaint.edits,
                     &full_raw,
                     &self.develop.target_exposure,
-                    [0.0, 0.0],
-                    [full_raw.width as f32, full_raw.height as f32],
                 ),
             ) {
                 self.ui.notice = Some(format!(
@@ -158,12 +156,10 @@ impl CalibRawApp {
                 &render_state.device,
                 &params,
                 *stage,
-                RemoveSceneContext::new(
+                RemoveSceneContext::full_frame(
                     &self.inpaint.edits,
                     &full_raw,
                     &self.develop.target_exposure,
-                    [0.0, 0.0],
-                    [full_raw.width as f32, full_raw.height as f32],
                 ),
             ) {
                 self.ui.notice = Some(format!(

@@ -14,7 +14,7 @@ impl Sidebar {
         Self::show_ai_update_card(ui, app, frame);
 
         if app.masks.stack.masks.is_empty() {
-            crate::ui::theme::section_card(ui, "No masks yet", |_| {});
+            moduwu_design::section_card(ui, "No masks yet", |_| {});
             return None;
         }
 
@@ -61,7 +61,7 @@ impl Sidebar {
         orientation: MaskStripOrientation,
     ) {
         ui.spacing_mut().item_spacing =
-            egui::vec2(crate::ui::theme::SPACE_XS, crate::ui::theme::SPACE_XXS);
+            egui::vec2(moduwu_design::SPACE_XS, moduwu_design::SPACE_XXS);
 
         app.masks.stack.ensure_selection();
 
@@ -102,7 +102,7 @@ impl Sidebar {
                 ui.add_enabled_ui(app.masks.stack.masks.len() < MAX_LOCAL_MASKS, |ui| {
                     Self::create_mask_group_card(ui, &mut new_mask, orientation);
                 });
-                ui.add_space(crate::ui::theme::SPACE_XXS);
+                ui.add_space(moduwu_design::SPACE_XXS);
 
                 for index in (0..app.masks.stack.masks.len()).rev() {
                     let mask_name = app.masks.stack.masks[index].name.clone();
@@ -168,7 +168,7 @@ impl Sidebar {
                             }
                         }
                     }
-                    crate::ui::theme::context_menu(&response, |ui| {
+                    moduwu_design::context_menu(&response, |ui| {
                         let mut geometry_changed = false;
                         Self::mask_group_context_menu(
                             ui,
@@ -298,7 +298,7 @@ impl Sidebar {
                                     drag.hover_group = None;
                                 }
                             }
-                            crate::ui::theme::context_menu(&response, |ui| {
+                            moduwu_design::context_menu(&response, |ui| {
                                 Self::submask_context_menu(
                                     ui,
                                     &mut app.masks.stack.masks[index].components[component_index],
@@ -328,7 +328,7 @@ impl Sidebar {
                             }
                         }
                         Self::create_submask_card(ui, &mut add_component, orientation);
-                        ui.add_space(crate::ui::theme::SPACE_XXS);
+                        ui.add_space(moduwu_design::SPACE_XXS);
                     }
                 }
             };

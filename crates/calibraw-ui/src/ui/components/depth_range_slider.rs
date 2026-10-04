@@ -1,5 +1,6 @@
 use crate::pipeline::DepthRangeSettings;
-use eframe::egui::{self, pos2, vec2, DragValue, Pos2, Rect, Response, Sense, Stroke, Ui};
+use eframe::egui::{self, pos2, vec2, Pos2, Rect, Response, Sense, Stroke, Ui};
+use moduwu_design::NumberField;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Handle {
@@ -122,7 +123,7 @@ fn range_track(ui: &mut Ui, range: &mut DepthRangeSettings) -> Response {
             ui.data(|data| data.get_temp::<RangeDrag>(drag_id)),
             response.interact_pointer_pos(),
         ) {
-            super::adjustment_slider::lock_slider_scroll(ui.ctx(), response.id);
+            moduwu_design::lock_slider_scroll(ui.ctx(), response.id);
             drag.handle.drag(
                 range,
                 drag.initial,
@@ -219,19 +220,17 @@ pub(crate) fn depth_range_slider(ui: &mut Ui, range: &mut DepthRangeSettings) ->
         columns[0].horizontal(|ui| {
             ui.label("Near");
             ui.add(
-                DragValue::new(&mut range.near)
-                    .range(0.0..=range.far)
+                NumberField::new(&mut range.near, 0.0..=range.far)
                     .speed(0.005)
-                    .fixed_decimals(2),
+                    .decimals(2),
             );
         });
         columns[1].horizontal(|ui| {
             ui.label("Far");
             ui.add(
-                DragValue::new(&mut range.far)
-                    .range(range.near..=1.0)
+                NumberField::new(&mut range.far, range.near..=1.0)
                     .speed(0.005)
-                    .fixed_decimals(2),
+                    .decimals(2),
             );
         });
         let near_feather_active = Handle::NearFeather.is_active(range);
@@ -240,20 +239,18 @@ pub(crate) fn depth_range_slider(ui: &mut Ui, range: &mut DepthRangeSettings) ->
         columns[0]
             .add_enabled(
                 near_feather_active,
-                DragValue::new(&mut range.near_feather)
-                    .range(0.0..=1.0)
+                NumberField::new(&mut range.near_feather, 0.0..=1.0)
                     .speed(0.005)
-                    .fixed_decimals(2),
+                    .decimals(2),
             )
             .on_disabled_hover_text("Raise Near above 0 to feather the near end.");
         columns[1].label("Far feather");
         columns[1]
             .add_enabled(
                 far_feather_active,
-                DragValue::new(&mut range.far_feather)
-                    .range(0.0..=1.0)
+                NumberField::new(&mut range.far_feather, 0.0..=1.0)
                     .speed(0.005)
-                    .fixed_decimals(2),
+                    .decimals(2),
             )
             .on_disabled_hover_text("Lower Far below 1 to feather the far end.");
     });
@@ -432,7 +429,7 @@ mod tests {
             true,
         );
         assert_eq!(range, initial);
-        assert!(!super::super::adjustment_slider::slider_scroll_locked(&ctx));
+        assert!(!moduwu_design::slider_scroll_locked(&ctx));
     }
 
     #[test]

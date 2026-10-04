@@ -13,8 +13,8 @@ pub use export::{
     TiledExportJob, MAX_EXPORT_EDGE, MAX_EXPORT_PIXELS,
 };
 pub use gpu::{
-    GpuOutputSnapshot, GpuParams, GpuProgramPrewarm, PreviewClippingGpu, PreviewHistogram,
-    PreviewHistogramGpu, ProcessingQuality, RawGpuPipeline, RawGpuProgramTemplate,
-    RemoveSceneContext,
+    GpuOutputSnapshot, GpuParams, GpuProgramPrewarm, PipelineOptions, PreviewClippingGpu,
+    PreviewHistogram, PreviewHistogramGpu, ProcessingQuality, RawGpuPipeline,
+    RawGpuProgramTemplate, RemoveSceneContext,
 };
 pub use gpu_cache::PersistentGpuPipelineCache;

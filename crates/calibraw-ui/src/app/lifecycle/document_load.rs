@@ -71,7 +71,7 @@ pub(super) struct DocumentLoadJob {
     pub(super) raw_cache_key: String,
     pub(super) cached_original_raw: Option<Arc<LoadedRaw>>,
     pub(super) decode_gate: Arc<RwLock<()>>,
-    pub(super) sidecar_generation: u64,
+    pub(super) document_generation: u64,
     pub(super) initial_exposure: ExposureParams,
     pub(super) preview_quality: PreviewQuality,
     pub(super) viewport_pixels: [u32; 2],
@@ -97,7 +97,7 @@ pub(super) fn run_document_load(job: DocumentLoadJob) -> Result<LoadedPreview, L
         raw_cache_key,
         cached_original_raw,
         decode_gate,
-        sidecar_generation,
+        document_generation,
         initial_exposure,
         preview_quality,
         viewport_pixels,
@@ -266,13 +266,7 @@ pub(super) fn run_document_load(job: DocumentLoadJob) -> Result<LoadedPreview, L
                 &queue,
                 &device,
                 &params,
-                RemoveSceneContext::new(
-                    &remove,
-                    &full_raw,
-                    &exposure,
-                    [0.0, 0.0],
-                    [full_raw.width as f32, full_raw.height as f32],
-                ),
+                RemoveSceneContext::full_frame(&remove, &full_raw, &exposure),
             )
             .map_err(|error| format!("initial Remove scene integration failed: {error:#}"))?;
         calibraw_core::diagnostics::record(format!(
@@ -300,7 +294,7 @@ pub(super) fn run_document_load(job: DocumentLoadJob) -> Result<LoadedPreview, L
             mask_source,
             lens_correction,
             sidecar_target,
-            sidecar_generation,
+            document_generation,
             sidecar_warning,
             sidecar_needs_rewrite,
             editing_time_ms,
@@ -734,18 +728,23 @@ fn create_preview_pipeline(
 
     let quality = ProcessingQuality::Preview;
     let compile = || {
-        RawGpuPipeline::new_headless_with_quality(device, queue, preview_raw, params, quality)
-            .map_err(|error| format!("GPU preview setup failed: {error:#}"))
-    };
-    let pipeline_started = Instant::now();
-    let pipeline = match template {
-        Some(template) => match RawGpuPipeline::new_headless_reusing_program_template(
+        RawGpuPipeline::new(
             device,
             queue,
             preview_raw,
             params,
-            quality,
-            &template,
+            PipelineOptions::new(quality),
+        )
+        .map_err(|error| format!("GPU preview setup failed: {error:#}"))
+    };
+    let pipeline_started = Instant::now();
+    let pipeline = match template {
+        Some(template) => match RawGpuPipeline::new(
+            device,
+            queue,
+            preview_raw,
+            params,
+            PipelineOptions::new(quality).programs(&template),
         ) {
             Ok(pipeline) => {
                 calibraw_core::diagnostics::record("GPU preview reused precompiled programs");
