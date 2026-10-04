@@ -275,34 +275,4 @@ impl MaskStack {
         self.selected_component = Some(insert_at);
         Some((target_mask, insert_at))
     }
-
-    pub fn move_mask(&mut self, from: usize, to: usize) -> bool {
-        if from == to || from >= self.masks.len() || to >= self.masks.len() {
-            return false;
-        }
-        let mask = self.masks.remove(from);
-        self.masks.insert(to, mask);
-        self.selected_mask = self
-            .selected_mask
-            .map(|selected| moved_index(selected, from, to));
-        true
-    }
-
-    pub fn move_component(&mut self, from: usize, to: usize) -> bool {
-        let Some(mask_index) = self.selected_mask else {
-            return false;
-        };
-        let Some(mask) = self.masks.get_mut(mask_index) else {
-            return false;
-        };
-        if from == to || from >= mask.components.len() || to >= mask.components.len() {
-            return false;
-        }
-        let component = mask.components.remove(from);
-        mask.components.insert(to, component);
-        self.selected_component = self
-            .selected_component
-            .map(|selected| moved_index(selected, from, to));
-        true
-    }
 }

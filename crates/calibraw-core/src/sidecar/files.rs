@@ -186,10 +186,6 @@ pub fn decode_sidecar_metadata(bytes: &[u8]) -> Result<SidecarMetadata, SidecarE
     })
 }
 
-pub fn decode_photo_review(bytes: &[u8]) -> Result<PhotoReview, SidecarError> {
-    decode_sidecar_metadata(bytes).map(|metadata| metadata.review)
-}
-
 /// Read review/timer metadata from a desktop sidecar, returning defaults when absent.
 pub fn load_sidecar_metadata(raw_path: &Path) -> Result<SidecarMetadata, SidecarError> {
     let bytes = match read_bounded(&sidecar_path_for_raw(raw_path)) {
