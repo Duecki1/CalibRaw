@@ -851,13 +851,13 @@ impl CalibRawApp {
         };
         let snapshot = if self.preview.pending_stage.is_none() {
             self.preview
-                .gpu_pipeline
-                .as_ref()
+                .pipeline()
                 .map(|pipeline| pipeline.output_snapshot(&render_state.device, &render_state.queue))
         } else if self.preview.navigation_pending_stage.is_none() {
             self.preview.navigation.as_ref().map(|preview| {
                 preview
                     .pipeline
+                    .gpu()
                     .output_snapshot(&render_state.device, &render_state.queue)
             })
         } else {

@@ -1,29 +1,51 @@
 use super::*;
 
+/// Library settings restored from the persisted performance settings.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct LibraryPreferences {
+    pub(crate) thumbnail_workers: usize,
+    pub(crate) thumbnail_size: LibraryThumbnailSize,
+    pub(crate) sort_order: LibrarySortOrder,
+    pub(crate) stack_raw_companions: bool,
+    pub(crate) render_edited_thumbnails_during_indexing: bool,
+}
+
+impl LibraryPreferences {
+    /// Clamps the worker count and applies it to the shared rendered-thumbnail limit.
+    fn thumbnail_workers(self) -> usize {
+        let thumbnail_workers = self
+            .thumbnail_workers
+            .clamp(1, maximum_thumbnail_worker_count());
+        calibraw_core::thumbnail_cache::set_rendered_thumbnail_worker_limit(thumbnail_workers);
+        thumbnail_workers
+    }
+}
+
 impl LibraryState {
     #[cfg(all(not(target_os = "android"), test))]
     pub(crate) fn new() -> Self {
-        Self::new_desktop_with_preferences(
-            default_thumbnail_worker_count(),
-            LibraryThumbnailSize::default(),
-            LibrarySortOrder::default(),
+        Self::new_desktop(
+            LibraryPreferences {
+                thumbnail_workers: default_thumbnail_worker_count(),
+                thumbnail_size: LibraryThumbnailSize::default(),
+                sort_order: LibrarySortOrder::default(),
+                stack_raw_companions: true,
+                render_edited_thumbnails_during_indexing: false,
+            },
             true,
-            true,
-            false,
         )
     }
 
     #[cfg(not(target_os = "android"))]
-    pub(crate) fn new_desktop_with_preferences(
-        workers: usize,
-        thumbnail_size: LibraryThumbnailSize,
-        sort_order: LibrarySortOrder,
-        stack_raw_companions: bool,
-        folder_sidebar_open: bool,
-        render_edited_thumbnails_during_indexing: bool,
-    ) -> Self {
-        let thumbnail_workers = workers.clamp(1, maximum_thumbnail_worker_count());
-        calibraw_core::thumbnail_cache::set_rendered_thumbnail_worker_limit(thumbnail_workers);
+    pub(crate) fn new_desktop(preferences: LibraryPreferences, folder_sidebar_open: bool) -> Self {
+        let LibraryPreferences {
+            thumbnail_size,
+            sort_order,
+            stack_raw_companions,
+            render_edited_thumbnails_during_indexing,
+            ..
+        } = preferences;
+        let thumbnail_workers = preferences.thumbnail_workers();
         Self {
             location: None,
             folder: None,
@@ -73,16 +95,19 @@ impl LibraryState {
     }
 
     #[cfg(target_os = "android")]
-    pub(crate) fn new_android_with_workers(
+    pub(crate) fn new_android(
         android_app: calibraw_ffi::AndroidApp,
         context: &egui::Context,
-        workers: usize,
-        thumbnail_size: LibraryThumbnailSize,
-        sort_order: LibrarySortOrder,
-        stack_raw_companions: bool,
+        preferences: LibraryPreferences,
         selected_folder: String,
-        render_edited_thumbnails_during_indexing: bool,
     ) -> Self {
+        let LibraryPreferences {
+            thumbnail_size,
+            sort_order,
+            stack_raw_companions,
+            render_edited_thumbnails_during_indexing,
+            ..
+        } = preferences;
         let root_location = calibraw_ffi::library_location(&android_app).unwrap_or_else(|error| {
             log::warn!("{error}");
             "Android/media/de.duecki.calibraw/.library".to_owned()
@@ -99,8 +124,7 @@ impl LibraryState {
                 }
             };
         let location = android_library_location_label(&root_location, &selected_folder);
-        let thumbnail_workers = workers.clamp(1, maximum_thumbnail_worker_count());
-        calibraw_core::thumbnail_cache::set_rendered_thumbnail_worker_limit(thumbnail_workers);
+        let thumbnail_workers = preferences.thumbnail_workers();
         let mut state = Self {
             location: Some(location),
             folder_sidebar_open: false,

@@ -67,7 +67,6 @@ struct DirectExportTarget {
     descriptor: TransferredFileDescriptor,
     uri: String,
     location: String,
-    temp_dir: PathBuf,
 }
 
 #[derive(Debug)]
@@ -149,7 +148,9 @@ static CAMERA_PROFILE_FOLDER_RESULTS: OnceLock<Mutex<VecDeque<CameraProfileFolde
     OnceLock::new();
 static EXPORT_RESULTS: OnceLock<Mutex<VecDeque<ExportPublishResult>>> = OnceLock::new();
 static DIRECT_EXPORTS: OnceLock<Mutex<HashMap<PathBuf, DirectExportTarget>>> = OnceLock::new();
-static EGUI_CONTEXT: Mutex<Option<egui::Context>> = Mutex::new(None);
+/// Wakes the UI thread after a Java callback queued a result.
+type RepaintNotifier = std::sync::Arc<dyn Fn() + Send + Sync>;
+static REPAINT_NOTIFIER: Mutex<Option<RepaintNotifier>> = Mutex::new(None);
 static BACK_NAVIGATION_ACTIVE: AtomicBool = AtomicBool::new(false);
 static BACK_REQUESTED: AtomicBool = AtomicBool::new(false);
 static SYSTEM_INSET_LEFT_PX: AtomicI32 = AtomicI32::new(0);
@@ -197,24 +198,32 @@ fn take_queued<T>(queue: &'static Mutex<VecDeque<T>>) -> Option<T> {
 }
 
 fn request_repaint() {
-    if let Ok(installed) = EGUI_CONTEXT.lock() {
-        if let Some(context) = installed.as_ref() {
-            context.request_repaint();
-        }
+    // Call outside the lock so a notifier can never deadlock against attach.
+    let notifier = REPAINT_NOTIFIER
+        .lock()
+        .ok()
+        .and_then(|installed| installed.clone());
+    if let Some(notify) = notifier {
+        notify();
     }
 }
 
-pub fn install_context(context: &egui::Context) {
-    if let Ok(mut installed) = EGUI_CONTEXT.lock() {
-        *installed = Some(context.clone());
+/// Connects the running UI. Java callbacks queue their results and then call
+/// `request_repaint`, so the UI thread polls them on its next frame. Clears
+/// task-notification state left by a previous activity.
+pub fn attach_ui(request_repaint: impl Fn() + Send + Sync + 'static) {
+    if let Ok(mut installed) = REPAINT_NOTIFIER.lock() {
+        *installed = Some(std::sync::Arc::new(request_repaint));
     }
     if let Ok(mut notification) = TASK_NOTIFICATION_STATE.lock() {
         *notification = None;
     }
 }
 
-pub fn uninstall_context() {
-    if let Ok(mut installed) = EGUI_CONTEXT.lock() {
+/// Disconnects the UI before its activity goes away. Later callbacks still
+/// queue results but wake nothing, and back navigation returns to the system.
+pub fn detach_ui() {
+    if let Ok(mut installed) = REPAINT_NOTIFIER.lock() {
         *installed = None;
     }
     BACK_NAVIGATION_ACTIVE.store(false, Ordering::Release);
@@ -1411,7 +1420,6 @@ fn hex_digit(value: u8) -> Result<u8, String> {
 
 pub fn prepare_direct_export(
     app: &AndroidApp,
-    temp_dir: &Path,
     display_name: &str,
     mime_type: &str,
 ) -> Result<Option<PathBuf>, String> {
@@ -1445,28 +1453,12 @@ pub fn prepare_direct_export(
         descriptor,
         uri,
         location,
-        temp_dir: temp_dir.to_path_buf(),
     };
     direct_exports()
         .lock()
         .map_err(|_| "Android direct-export state is poisoned".to_owned())?
         .insert(path.clone(), target);
     Ok(Some(path))
-}
-
-pub fn is_direct_export_path(path: &Path) -> bool {
-    direct_exports()
-        .lock()
-        .ok()
-        .is_some_and(|targets| targets.contains_key(path))
-}
-
-pub fn direct_export_temp_dir(path: &Path) -> Option<PathBuf> {
-    direct_exports()
-        .lock()
-        .ok()?
-        .get(path)
-        .map(|target| target.temp_dir.clone())
 }
 
 pub fn finalize_direct_export(app: &AndroidApp, path: &Path) -> Result<String, String> {

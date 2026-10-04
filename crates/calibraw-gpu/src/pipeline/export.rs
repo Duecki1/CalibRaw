@@ -427,6 +427,29 @@ pub enum ExportEvent {
     Finished(Result<PathBuf, String>),
 }
 
+/// Where an export is written.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ExportTarget {
+    /// A file path. The export is written to a temporary file in the same
+    /// directory and renamed into place on success, so a failed or cancelled
+    /// export never leaves a partial file at the path.
+    File(PathBuf),
+    /// A writable descriptor path the platform handed out (an Android
+    /// MediaStore `/proc/self/fd/N`), which cannot be renamed into. The export
+    /// writes into it directly and stages intermediate files in `staging_dir`;
+    /// the caller publishes or cancels the descriptor afterwards.
+    Descriptor { path: PathBuf, staging_dir: PathBuf },
+}
+
+impl ExportTarget {
+    /// The final output path.
+    pub fn path(&self) -> &Path {
+        match self {
+            Self::File(path) | Self::Descriptor { path, .. } => path,
+        }
+    }
+}
+
 pub struct TiledExportJob {
     pub device: wgpu::Device,
     pub queue: wgpu::Queue,
@@ -435,7 +458,7 @@ pub struct TiledExportJob {
     pub exposure: ExposureParams,
     pub masks: MaskStack,
     pub remove: RemoveEditState,
-    pub path: PathBuf,
+    pub target: ExportTarget,
     pub tile_spec: TileSpec,
     pub settings: ExportSettings,
     pub metadata: ExportMetadata,
@@ -627,7 +650,7 @@ pub fn spawn_tiled_export(
 ) -> mpsc::Receiver<ExportEvent> {
     let (sender, receiver) = mpsc::channel();
     let worker_sender = sender.clone();
-    let worker_path = job.path.clone();
+    let worker_path = job.target.path().to_path_buf();
     let worker_name = format.worker_name();
 
     let spawn_result = std::thread::Builder::new()
@@ -635,7 +658,7 @@ pub fn spawn_tiled_export(
         .spawn(move || {
             let worker_started = Instant::now();
             record_export_worker_started(format, &job);
-            let result = run_export_worker(format, &job, &worker_sender, &worker_path);
+            let result = run_export_worker(format, &job, &worker_sender);
             record_export_worker_finished(format, worker_started, &result);
             let _ = worker_sender.send(ExportEvent::Finished(
                 result
@@ -703,7 +726,6 @@ fn run_export_worker(
     format: ExportFormat,
     job: &TiledExportJob,
     events: &mpsc::Sender<ExportEvent>,
-    destination: &Path,
 ) -> Result<()> {
     let program_template = (job.raw.cfa_kind == CfaKind::Bayer)
         .then(|| await_export_program_template(job.program_prewarm.as_deref()))
@@ -734,7 +756,7 @@ fn run_export_worker(
         job.settings.bit_depth
     };
 
-    export_to_destination(destination, &job.cancellation, |path| {
+    export_to_destination(&job.target, &job.cancellation, |output| {
         let context = ExportContext {
             device: &job.device,
             queue: &job.queue,
@@ -747,7 +769,7 @@ fn run_export_worker(
             exposure: &job.exposure,
             masks: &job.masks,
             remove: &job.remove,
-            path,
+            output,
             tile_spec,
             output_width,
             output_height,
@@ -781,21 +803,59 @@ fn resolved_export_tile_spec(
     bounded_tile_spec(tile_spec, source_width)
 }
 
-fn export_to_destination<F>(destination: &Path, cancellation: &AtomicBool, export: F) -> Result<()>
+/// Where an export writer puts its file and its intermediate staging files.
+#[derive(Clone, Copy, Debug)]
+struct ExportOutput<'a> {
+    /// The file the writer produces.
+    path: &'a Path,
+    /// `path` is an existing platform descriptor to truncate rather than a
+    /// new file to create exclusively.
+    truncate_existing: bool,
+    staging_dir: &'a Path,
+    /// Name prefix of staged intermediates (see [`temporary_export_path`]).
+    staging_name: &'a str,
+}
+
+/// Name prefix of staged files for descriptor targets, whose paths carry no name.
+const DESCRIPTOR_STAGING_NAME: &str = "calibraw-direct-export";
+
+fn export_to_destination<F>(
+    target: &ExportTarget,
+    cancellation: &AtomicBool,
+    export: F,
+) -> Result<()>
 where
-    F: FnOnce(&Path) -> Result<()>,
+    F: FnOnce(ExportOutput<'_>) -> Result<()>,
 {
     ensure_export_not_cancelled(cancellation)?;
-    if is_direct_export_destination(destination) {
-        export(destination)?;
-        return ensure_export_not_cancelled(cancellation);
+    match target {
+        ExportTarget::Descriptor { path, staging_dir } => {
+            export(ExportOutput {
+                path,
+                truncate_existing: true,
+                staging_dir,
+                staging_name: DESCRIPTOR_STAGING_NAME,
+            })?;
+            ensure_export_not_cancelled(cancellation)
+        }
+        ExportTarget::File(destination) => {
+            let staging_dir = parent_directory(destination);
+            let name = file_name(destination)?;
+            let temporary = temporary_export_path(staging_dir, name)?;
+            let result = (|| {
+                export(ExportOutput {
+                    path: &temporary,
+                    truncate_existing: false,
+                    staging_dir,
+                    staging_name: file_name(&temporary)?,
+                })?;
+                ensure_export_not_cancelled(cancellation)?;
+                publish_completed_export(&temporary, destination)
+            })();
+            let _ = fs::remove_file(&temporary);
+            result
+        }
     }
-
-    with_temporary_export_path(destination, |temporary| {
-        export(temporary)?;
-        ensure_export_not_cancelled(cancellation)?;
-        publish_completed_export(temporary, destination)
-    })
 }
 
 fn ensure_export_not_cancelled(cancellation: &AtomicBool) -> Result<()> {
@@ -840,7 +900,7 @@ struct ExportRequest<'a> {
     exposure: &'a ExposureParams,
     masks: &'a MaskStack,
     remove: &'a RemoveEditState,
-    path: &'a Path,
+    output: ExportOutput<'a>,
     tile_spec: TileSpec,
     output_width: u32,
     output_height: u32,
@@ -870,8 +930,8 @@ fn export_tiled_png(context: ExportContext<'_>, request: ExportRequest<'_>) -> R
         !request.bit_depth.is_float(),
         "PNG export supports 8-bit or 16-bit integer output; use TIFF for a float/linear master"
     );
-    let file = open_export_destination(request.path)
-        .with_context(|| format!("create export {}", request.path.display()))?;
+    let file = open_export_destination(request.output)
+        .with_context(|| format!("create export {}", request.output.path.display()))?;
     let mut info = png::Info::with_size(request.output_width, request.output_height);
     info.color_type = png::ColorType::Rgba;
     info.bit_depth = match request.bit_depth {
@@ -907,7 +967,7 @@ fn export_tiled_png(context: ExportContext<'_>, request: ExportRequest<'_>) -> R
     }
     let mut writer = encoder
         .write_header()
-        .with_context(|| format!("write PNG header for {}", request.path.display()))?;
+        .with_context(|| format!("write PNG header for {}", request.output.path.display()))?;
     let mut stream = writer
         .stream_writer_with_size(64 * 1024)
         .context("create streaming PNG writer")?;
@@ -954,7 +1014,7 @@ fn render_geometry_output<W: Write>(
     output: &mut W,
     row_format: ExportRowFormat,
 ) -> Result<()> {
-    with_temporary_export_path(request.path, |staged_linear| {
+    with_staging_file(request.output, |staged_linear| {
         {
             let linear_file = OpenOptions::new()
                 .write(true)
@@ -1041,7 +1101,7 @@ where
         exposure,
         masks,
         remove,
-        path: _,
+        output: _,
         tile_spec,
         output_width,
         output_height,
@@ -1385,8 +1445,8 @@ fn report_completed_export_tile(
 fn export_tiled_tiff(context: ExportContext<'_>, request: ExportRequest<'_>) -> Result<()> {
     validate_export_dimensions(request.output_width, request.output_height)?;
 
-    let file = open_export_destination(request.path)
-        .with_context(|| format!("create TIFF {}", request.path.display()))?;
+    let file = open_export_destination(request.output)
+        .with_context(|| format!("create TIFF {}", request.output.path.display()))?;
     let mut writer = BufWriter::new(file);
     let row_format = tiff_row_format(request.bit_depth);
     let profile = tiff_embedded_profile(request.color);
@@ -2102,7 +2162,7 @@ fn export_tiled_jpeg(
     quality: u8,
 ) -> Result<()> {
     let quality = quality.clamp(1, 100);
-    with_temporary_export_path(request.path, |staged_rgb| {
+    with_staging_file(request.output, |staged_rgb| {
         {
             let rgb_file = OpenOptions::new()
                 .write(true)
@@ -2121,7 +2181,7 @@ fn export_tiled_jpeg(
 
         encode_jpeg_rgb(JpegEncodeRequest {
             rgb: &mapped,
-            output_path: request.path,
+            output: request.output,
             width: request.output_width,
             height: request.output_height,
             quality,
@@ -2149,7 +2209,7 @@ fn export_tiled_jxl(context: ExportContext<'_>, request: ExportRequest<'_>) -> R
         ExportBitDepth::Sixteen => ExportRowFormat::Rgb16Le,
         ExportBitDepth::Float32Linear => unreachable!(),
     };
-    with_temporary_export_path(request.path, |staged_rgb| {
+    with_staging_file(request.output, |staged_rgb| {
         {
             let file = OpenOptions::new()
                 .write(true)
@@ -2189,7 +2249,7 @@ fn export_tiled_jxl(context: ExportContext<'_>, request: ExportRequest<'_>) -> R
         );
         let encoder = zune_jpegxl::JxlSimpleEncoder::new(&mapped, options);
         if request.keep_metadata {
-            with_temporary_export_path(request.path, |staged_jxl| {
+            with_staging_file(request.output, |staged_jxl| {
                 let encoded_file = OpenOptions::new()
                     .write(true)
                     .create_new(true)
@@ -2204,8 +2264,8 @@ fn export_tiled_jxl(context: ExportContext<'_>, request: ExportRequest<'_>) -> R
                 let mut encoded_file =
                     fs::File::open(staged_jxl).context("open staged JPEG XL codestream")?;
                 let codestream_len = encoded_file.metadata()?.len();
-                let output_file = open_export_destination(request.path)
-                    .with_context(|| format!("create JPEG XL {}", request.path.display()))?;
+                let output_file = open_export_destination(request.output)
+                    .with_context(|| format!("create JPEG XL {}", request.output.path.display()))?;
                 let mut writer = BufWriter::new(output_file);
                 write_jxl_container(
                     &mut writer,
@@ -2220,8 +2280,8 @@ fn export_tiled_jxl(context: ExportContext<'_>, request: ExportRequest<'_>) -> R
                 writer.flush().context("flush JPEG XL container")
             })?;
         } else {
-            let output_file = open_export_destination(request.path)
-                .with_context(|| format!("create JPEG XL {}", request.path.display()))?;
+            let output_file = open_export_destination(request.output)
+                .with_context(|| format!("create JPEG XL {}", request.output.path.display()))?;
             let mut writer = BufWriter::new(output_file);
             encoder
                 .encode(&mut writer)
@@ -2276,7 +2336,7 @@ fn write_jxl_container<W: Write>(
 
 struct JpegEncodeRequest<'a> {
     rgb: &'a [u8],
-    output_path: &'a Path,
+    output: ExportOutput<'a>,
     width: u32,
     height: u32,
     quality: u8,
@@ -2288,7 +2348,7 @@ struct JpegEncodeRequest<'a> {
 fn encode_jpeg_rgb(request: JpegEncodeRequest<'_>) -> Result<()> {
     let JpegEncodeRequest {
         rgb,
-        output_path,
+        output,
         width: output_width,
         height: output_height,
         quality,
@@ -2299,8 +2359,8 @@ fn encode_jpeg_rgb(request: JpegEncodeRequest<'_>) -> Result<()> {
     validate_rgb_raster_len(rgb, output_width, output_height)?;
     let width = u16::try_from(output_width).context("JPEG width exceeds baseline limit")?;
     let height = u16::try_from(output_height).context("JPEG height exceeds baseline limit")?;
-    let file = open_export_destination(output_path)
-        .with_context(|| format!("create JPEG {}", output_path.display()))?;
+    let file = open_export_destination(output)
+        .with_context(|| format!("create JPEG {}", output.path.display()))?;
     let mut writer = BufWriter::with_capacity(256 * 1024, file);
     let encode_started = Instant::now();
     let mut encoder = jpeg_encoder::Encoder::new(&mut writer, quality.clamp(1, 100));
@@ -2317,7 +2377,7 @@ fn encode_jpeg_rgb(request: JpegEncodeRequest<'_>) -> Result<()> {
     }
     encoder
         .encode(rgb, width, height, jpeg_encoder::ColorType::Rgb)
-        .with_context(|| format!("encode JPEG {}", output_path.display()))?;
+        .with_context(|| format!("encode JPEG {}", output.path.display()))?;
     writer.flush().context("flush JPEG export")?;
     calibraw_core::diagnostics::record(format!(
         "JPEG compression finished in {:.3}s: {}x{} quality={}",
@@ -3035,67 +3095,43 @@ fn bounded_tile_spec(mut spec: TileSpec, source_width: u32) -> Result<TileSpec> 
     Ok(spec)
 }
 
-fn is_direct_export_destination(path: &Path) -> bool {
-    #[cfg(target_os = "android")]
-    {
-        calibraw_ffi::is_direct_export_path(path)
-    }
-    #[cfg(not(target_os = "android"))]
-    {
-        let _ = path;
-        false
-    }
-}
-
-fn open_export_destination(destination: &Path) -> Result<fs::File> {
+fn open_export_destination(output: ExportOutput<'_>) -> Result<fs::File> {
     let mut options = OpenOptions::new();
     options.write(true);
-    if is_direct_export_destination(destination) {
+    if output.truncate_existing {
         options.truncate(true);
     } else {
         options.create_new(true);
     }
     options
-        .open(destination)
-        .with_context(|| format!("open export destination {}", destination.display()))
+        .open(output.path)
+        .with_context(|| format!("open export destination {}", output.path.display()))
 }
 
-fn temporary_export_path(destination: &Path) -> Result<PathBuf> {
-    let direct = is_direct_export_destination(destination);
-    let parent = if direct {
-        #[cfg(target_os = "android")]
-        {
-            calibraw_ffi::direct_export_temp_dir(destination)
-                .context("Android direct export has no temporary staging directory")?
-        }
-        #[cfg(not(target_os = "android"))]
-        {
-            unreachable!("direct export destinations only exist on Android")
-        }
-    } else {
-        destination
-            .parent()
-            .filter(|path| !path.as_os_str().is_empty())
-            .unwrap_or_else(|| Path::new("."))
-            .to_path_buf()
-    };
-    fs::create_dir_all(&parent)
-        .with_context(|| format!("create export directory {}", parent.display()))?;
-    let name = if direct {
-        "calibraw-direct-export"
-    } else {
-        destination
-            .file_name()
-            .and_then(|value| value.to_str())
-            .context("export path has no valid file name")?
-    };
-    cleanup_stale_export_parts(&parent, name);
+fn parent_directory(path: &Path) -> &Path {
+    path.parent()
+        .filter(|path| !path.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."))
+}
+
+fn file_name(path: &Path) -> Result<&str> {
+    path.file_name()
+        .and_then(|value| value.to_str())
+        .context("export path has no valid file name")
+}
+
+/// A new unique `.<name>.<pid>.<nonce>.<id>.part` path in `directory`, after
+/// removing day-old parts that earlier interrupted exports of `name` left.
+fn temporary_export_path(directory: &Path, name: &str) -> Result<PathBuf> {
+    fs::create_dir_all(directory)
+        .with_context(|| format!("create export directory {}", directory.display()))?;
+    cleanup_stale_export_parts(directory, name);
     let nonce = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_nanos();
     let temporary_id = NEXT_EXPORT_TEMPORARY_ID.fetch_add(1, Ordering::Relaxed);
-    Ok(parent.join(format!(
+    Ok(directory.join(format!(
         ".{name}.{}.{}.{}.part",
         std::process::id(),
         nonce,
@@ -3103,11 +3139,13 @@ fn temporary_export_path(destination: &Path) -> Result<PathBuf> {
     )))
 }
 
-fn with_temporary_export_path<T, F>(destination: &Path, action: F) -> Result<T>
+/// Runs `action` with a staged intermediate file for `output`, which is
+/// removed afterwards whatever the outcome.
+fn with_staging_file<T, F>(output: ExportOutput<'_>, action: F) -> Result<T>
 where
     F: FnOnce(&Path) -> Result<T>,
 {
-    let temporary = temporary_export_path(destination)?;
+    let temporary = temporary_export_path(output.staging_dir, output.staging_name)?;
     let result = action(&temporary);
     let _ = fs::remove_file(&temporary);
     result
@@ -3159,10 +3197,7 @@ fn publish_completed_export(temporary: &Path, destination: &Path) -> Result<()> 
         )
     })?;
 
-    let parent = destination
-        .parent()
-        .filter(|path| !path.as_os_str().is_empty())
-        .unwrap_or_else(|| Path::new("."));
+    let parent = parent_directory(destination);
     sync_parent_directory(parent)
         .with_context(|| format!("flush export directory {}", parent.display()))
 }

@@ -312,6 +312,8 @@ jobs:
           bash scripts/generate_licenses.sh
           CALIBRAW_ALLOW_NO_LIBRAW=1 cargo check --locked --workspace
           ./gradlew --version
+          # JVM-only unit tests; calibrawBuildRust=false skips CMake and Rust.
+          ./gradlew --no-daemon --stacktrace -p android :app:testDebugUnitTest -PcalibrawBuildRust=false
 
           if [ "$GITHUB_EVENT_NAME" = "push" ] && { [ "$GITHUB_REF" = "refs/heads/main" ] || [[ "$GITHUB_REF" == refs/tags/v* ]]; }; then
             gradle_task=assembleRelease

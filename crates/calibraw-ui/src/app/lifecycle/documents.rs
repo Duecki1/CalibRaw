@@ -377,7 +377,7 @@ impl CalibRawApp {
         let batch_owned_load = std::mem::take(&mut self.export.android_batch_load_pending);
 
         match result {
-            Ok(mut loaded) => {
+            Ok(loaded) => {
                 let Some(render_state) = frame.wgpu_render_state() else {
                     self.ui.notice =
                         Some("eframe is not running with the wgpu backend.".to_owned());
@@ -390,15 +390,7 @@ impl CalibRawApp {
                     self.on_library_batch_load_finished(false, frame);
                     return;
                 };
-                let previous_pipeline = {
-                    let mut renderer = render_state.renderer.write();
-                    let previous = self.take_preview_pipeline_and_release_textures();
-                    loaded
-                        .pipeline
-                        .register_egui_texture(&render_state.device, &mut renderer);
-                    previous
-                };
-                drop(previous_pipeline);
+                drop(self.take_preview_pipeline_and_release_textures());
 
                 let full_width = loaded.full_raw.width;
                 let full_height = loaded.full_raw.height;
@@ -431,7 +423,8 @@ impl CalibRawApp {
                 self.develop.preview_raw = Some(loaded.preview_raw);
                 self.install_raw_edit_timer(loaded.editing_time_ms);
                 self.preview.program_template = Some(loaded.pipeline.program_template());
-                self.preview.gpu_pipeline = Some(loaded.pipeline);
+                self.preview.gpu_pipeline =
+                    Some(self.present_pipeline(loaded.pipeline, render_state));
                 self.develop.review = loaded.review;
                 self.develop.exposure = loaded.rendered_exposure;
                 self.develop.geometry = loaded.geometry.sanitized();

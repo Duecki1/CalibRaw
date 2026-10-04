@@ -260,7 +260,7 @@ impl CalibRawApp {
 
         #[cfg(target_os = "android")]
         {
-            let Some(pipeline) = self.preview.gpu_pipeline.as_ref() else {
+            let Some(pipeline) = self.preview.pipeline() else {
                 self.ui.notice = Some("The preview pipeline is unavailable.".to_owned());
                 return;
             };
@@ -317,7 +317,7 @@ impl CalibRawApp {
                 &prepared.preview_raw,
             )
             .with_vignette_geometry(self.develop.geometry);
-            let mut pipeline = match RawGpuPipeline::new_headless_with_quality(
+            let pipeline = match RawGpuPipeline::new_headless_with_quality(
                 &render_state.device,
                 &render_state.queue,
                 &prepared.preview_raw,
@@ -365,11 +365,8 @@ impl CalibRawApp {
             if !operation.accepts_result(self.persistence.sidecar_generation) {
                 return;
             }
-            let mut renderer = render_state.renderer.write();
             self.take_preview_pipeline_and_release_textures();
-            pipeline.register_egui_texture(&render_state.device, &mut renderer);
-            drop(renderer);
-            self.preview.gpu_pipeline = Some(pipeline);
+            self.preview.gpu_pipeline = Some(self.present_pipeline(pipeline, render_state));
         }
 
         if !operation.accepts_result(self.persistence.sidecar_generation) {

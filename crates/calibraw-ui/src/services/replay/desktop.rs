@@ -1,8 +1,11 @@
-use super::*;
+//! Desktop replay encoding through an FFmpeg child process (H.264, MP4).
+
+use super::REPLAY_FPS;
 use std::ffi::OsString;
 use std::io::Write as _;
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
+use std::path::Path;
 use std::process::{Command, Stdio};
 
 pub(super) struct ReplayFrameWriter {

@@ -16,6 +16,7 @@ pub mod sidecar {
 }
 
 mod app;
+mod services;
 mod ui;
 
 pub use app::CalibRawApp;
@@ -176,7 +177,7 @@ pub fn android_main(android_app: calibraw_ffi::AndroidApp) {
     let result = eframe::run_native(
         "CalibRaw",
         options,
-        Box::new(move |cc| Ok(Box::new(CalibRawApp::new_android(cc, android_app.clone())))),
+        Box::new(move |cc| Ok(Box::new(CalibRawApp::new_android(cc, android_app)))),
     );
     if let Err(error) = result {
         log::error!("CalibRaw terminated: {error:#}");

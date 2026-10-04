@@ -1,6 +1,11 @@
 use super::*;
 
 impl PreviewState {
+    /// The GPU pipeline of the fitted (full-image) preview, if one is shown.
+    pub(crate) fn pipeline(&self) -> Option<&RawGpuPipeline> {
+        self.gpu_pipeline.as_ref().map(PreviewPipeline::gpu)
+    }
+
     pub(in crate::app) fn source_viewport_pixels(&self) -> [u32; 2] {
         if self.source_axes_swapped {
             [self.viewport_pixels[1], self.viewport_pixels[0]]
@@ -17,6 +22,28 @@ impl PreviewState {
 
     pub(crate) fn original_visible(&self) -> bool {
         self.original_requested
+    }
+}
+
+/// The full-frame pipeline whose tone statistics a zoomed detail crop
+/// inherits: the fitted preview while its tone is current, otherwise the
+/// navigation preview. Takes fields rather than `&PreviewState` so callers can
+/// hold `PreviewState::detail` mutably at the same time.
+pub(in crate::app) fn full_frame_tone_pipeline<'a>(
+    fitted: Option<&'a PreviewPipeline>,
+    navigation: Option<&'a PreviewNavigation>,
+    pending_stage: Option<ProcessingStage>,
+) -> Option<&'a RawGpuPipeline> {
+    let fitted = fitted.map(PreviewPipeline::gpu);
+    let navigation = navigation.map(|navigation| navigation.pipeline.gpu());
+    let fitted_tone_is_current = !matches!(
+        pending_stage,
+        Some(ProcessingStage::Raw | ProcessingStage::Tone)
+    );
+    if fitted_tone_is_current {
+        fitted.or(navigation)
+    } else {
+        navigation.or(fitted)
     }
 }
 
@@ -52,7 +79,7 @@ impl CalibRawApp {
                 && !detail.needs_native_refinement(&requested)
                 && detail_covers_view(
                     detail.uv_rect,
-                    [detail.pipeline.width, detail.pipeline.height],
+                    [detail.pipeline.gpu().width, detail.pipeline.gpu().height],
                     detail.source_size,
                     self.preview.visible_uv,
                     &requested,
@@ -137,7 +164,7 @@ impl CalibRawApp {
         }
         if let (Some(raw), Some(pipeline), Some(full_raw)) = (
             &self.develop.preview_raw,
-            &self.preview.gpu_pipeline,
+            self.preview.pipeline(),
             &preview_source,
         ) {
             let params =
@@ -165,10 +192,12 @@ impl CalibRawApp {
             let params = GpuParams::new(exposure, masks, &navigation.raw)
                 .with_vignette_geometry(self.develop.geometry);
             if self.preview.original_requested {
-                navigation
-                    .pipeline
-                    .recompute(&render_state.queue, &render_state.device, &params);
-            } else if let Err(error) = navigation.pipeline.recompute_with_remove(
+                navigation.pipeline.gpu().recompute(
+                    &render_state.queue,
+                    &render_state.device,
+                    &params,
+                );
+            } else if let Err(error) = navigation.pipeline.gpu().recompute_with_remove(
                 &render_state.queue,
                 &render_state.device,
                 &params,
@@ -214,9 +243,10 @@ impl CalibRawApp {
             if self.preview.original_requested {
                 detail
                     .pipeline
+                    .gpu()
                     .recompute(&render_state.queue, &render_state.device, &params);
             } else if let Some(full_raw) = preview_source.as_ref() {
-                if let Err(error) = detail.pipeline.recompute_with_remove(
+                if let Err(error) = detail.pipeline.gpu().recompute_with_remove(
                     &render_state.queue,
                     &render_state.device,
                     &params,

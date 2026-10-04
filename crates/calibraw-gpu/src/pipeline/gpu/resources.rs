@@ -22,10 +22,6 @@ pub(super) fn tone_guide_format() -> wgpu::TextureFormat {
     wgpu::TextureFormat::R32Float
 }
 
-pub(super) fn default_processing_quality() -> ProcessingQuality {
-    ProcessingQuality::Preview
-}
-
 pub(super) fn interactive_mask_atlas_edge(width: u32, height: u32) -> u32 {
     mask_atlas_edge()
         .min(width.max(height))

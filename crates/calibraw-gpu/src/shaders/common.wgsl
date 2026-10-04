@@ -28,8 +28,11 @@ struct MaskData {
     point_color_meta: vec4<u32>,
 }
 
+// `metadata.w` packs the mask effect's shader ID above eight flag bits.
+const MASK_EFFECT_ID_SHIFT: u32 = 8u;
+
 fn mask_effect_id(metadata: vec4<u32>) -> u32 {
-    return metadata.w >> 8u;
+    return metadata.w >> MASK_EFFECT_ID_SHIFT;
 }
 
 struct CameraUniforms {
