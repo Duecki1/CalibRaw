@@ -15,8 +15,7 @@ impl CalibRawApp {
             .ok_or_else(|| "The preview image is not available yet.".to_owned())?;
         let pipeline = self
             .preview
-            .gpu_pipeline
-            .as_ref()
+            .pipeline()
             .ok_or_else(|| "Open an image before creating this mask.".to_owned())?;
 
         let reference_exposure = ExposureParams::scene_referred_default();
@@ -109,8 +108,7 @@ impl CalibRawApp {
                 .ok_or_else(|| "The GPU preview is not available.".to_owned())?;
             let program_template = self
                 .preview
-                .gpu_pipeline
-                .as_ref()
+                .pipeline()
                 .map(RawGpuPipeline::program_template)
                 .or_else(|| self.preview.program_template.clone())
                 .ok_or_else(|| "Open an image before creating this mask.".to_owned())?;

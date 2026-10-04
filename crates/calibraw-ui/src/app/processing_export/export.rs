@@ -102,7 +102,7 @@ pub(in crate::app) fn spawn_export_item(
         gpu_export_prewarm,
     } = source;
     let metadata = ExportMetadata::from_raw(&raw, source_file_name);
-    let path = destination.path().to_path_buf();
+    let target = destination.target();
     spawn_tiled_export(
         format,
         TiledExportJob {
@@ -113,7 +113,7 @@ pub(in crate::app) fn spawn_export_item(
             exposure,
             masks,
             remove,
-            path,
+            target,
             tile_spec: TileSpec::default(),
             settings,
             metadata,
@@ -255,17 +255,14 @@ impl CalibRawApp {
             .as_millis();
         let display_name = format!("{stem}.{}", format.extension());
         let cache_file_name = format!("{stem}-{timestamp}.{}", format.extension());
-        let destination = match self.prepare_android_export_destination(
-            display_name.clone(),
-            cache_file_name,
-            format,
-        ) {
-            Ok(destination) => destination,
-            Err(error) => {
-                self.ui.notice = Some(error);
-                return;
-            }
-        };
+        let destination =
+            match self.prepare_android_export_destination(display_name, cache_file_name, format) {
+                Ok(destination) => destination,
+                Err(error) => {
+                    self.ui.notice = Some(error);
+                    return;
+                }
+            };
         let cleanup = destination.clone();
         if self
             .start_export_destination(destination, frame, format)
@@ -290,11 +287,13 @@ impl CalibRawApp {
             .map_err(|error| format!("Could not prepare Android export cache: {error}"))?;
         match calibraw_ffi::prepare_direct_export(
             &self.android.android_app,
-            &export_dir,
             &display_name,
             format.mime_type(),
         ) {
-            Ok(Some(path)) => Ok(ExportDestination::AndroidDirect { path }),
+            Ok(Some(path)) => Ok(ExportDestination::AndroidDirect {
+                path,
+                staging_dir: export_dir,
+            }),
             Ok(None) => Ok(ExportDestination::AndroidGallery {
                 path: export_dir.join(cache_file_name),
                 display_name,
@@ -316,7 +315,7 @@ impl CalibRawApp {
         &self,
         destination: &ExportDestination,
     ) {
-        if let ExportDestination::AndroidDirect { path } = destination {
+        if let ExportDestination::AndroidDirect { path, .. } = destination {
             calibraw_ffi::cancel_direct_export(&self.android.android_app, path);
         }
     }
@@ -710,6 +709,7 @@ impl CalibRawApp {
                                 match destination {
                                     Some(ExportDestination::AndroidDirect {
                                         path: direct_path,
+                                        ..
                                     }) => {
                                         debug_assert_eq!(path, direct_path);
                                         match calibraw_ffi::finalize_direct_export(

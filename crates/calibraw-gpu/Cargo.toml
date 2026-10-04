@@ -9,14 +9,11 @@ repository.workspace = true
 readme.workspace = true
 description = "CalibRaw wgpu pipelines, WGSL shaders, GPU memory management, and tiled export"
 publish = false
-build = "build.rs"
 
 [dependencies]
 calibraw-core.workspace = true
 anyhow.workspace = true
 bytemuck.workspace = true
-egui.workspace = true
-egui-wgpu.workspace = true
 half.workspace = true
 image.workspace = true
 jpeg-encoder.workspace = true
@@ -29,9 +26,6 @@ wgpu = { workspace = true, features = ["naga-ir"] }
 naga_oil.workspace = true
 zune-core.workspace = true
 zune-jpegxl.workspace = true
-
-[target.'cfg(target_os = "android")'.dependencies]
-calibraw-ffi.workspace = true
 
 [dev-dependencies]
 exif.workspace = true

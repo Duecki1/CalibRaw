@@ -1,11 +1,7 @@
 use super::{
     pack_effect_mask, pack_local_point_curve, pack_point_curve, processing_work_format,
-    shader_manager::ShaderManager, work_shader_source, GpuParams, ProcessingQuality,
-    RawGpuPipeline, SHADER_BAYER_RCD_P1, SHADER_BAYER_RCD_P2, SHADER_BAYER_RCD_P3,
-    SHADER_BAYER_RCD_P4, SHADER_COLOR_DENOISE, SHADER_CREATIVE_EFFECTS, SHADER_DUAL_DEMOSAIC,
-    SHADER_HIGHLIGHTS, SHADER_RAW_SAMPLING, SHADER_REMOVE_COMPOSITE, SHADER_SCENE_ADJUSTMENTS,
-    SHADER_TONEMAP, SHADER_TONE_ANALYSIS, SHADER_VIEW_TRANSFORM, SHADER_XTRANS_DEMOSAIC,
-    SHADER_XTRANS_FINISH,
+    shader_manager::ShaderManager, shaders, work_shader_source, GpuParams, ProcessingQuality,
+    RawGpuPipeline,
 };
 use crate::pipeline::{
     extract_padded_tile, CameraProfile, CfaKind, CompactPixelMap, ExportTile, ExposureParams,
@@ -15,27 +11,39 @@ use crate::pipeline::{
 
 #[test]
 fn point_color_shader_uses_display_srgb_hsl_and_combined_unadjusted_selection() {
-    assert!(SHADER_VIEW_TRANSFORM
+    assert!(shaders::VIEW_TRANSFORM
+        .text
         .contains("fn apply_point_colors(input_rgb: vec3<f32>, selection_sample: vec3<f32>)"));
-    assert!(SHADER_VIEW_TRANSFORM
+    assert!(shaders::VIEW_TRANSFORM
+        .text
         .contains("fn point_color_selection_weight(sample: vec3<f32>, index: u32)"));
-    assert!(SHADER_VIEW_TRANSFORM.contains("point_color_hue_weight"));
-    assert!(SHADER_VIEW_TRANSFORM.contains("point_color_hsl_to_rgb"));
-    assert!(SHADER_VIEW_TRANSFORM
+    assert!(shaders::VIEW_TRANSFORM
+        .text
+        .contains("point_color_hue_weight"));
+    assert!(shaders::VIEW_TRANSFORM
+        .text
+        .contains("point_color_hsl_to_rgb"));
+    assert!(shaders::VIEW_TRANSFORM
+        .text
         .contains("display_linear = apply_point_colors(display_linear, point_color_sample)"));
-    assert!(SHADER_VIEW_TRANSFORM
+    assert!(shaders::VIEW_TRANSFORM
+        .text
         .contains("color_delta = color_delta + (adjusted - input_rgb) * weight"));
 }
 
 #[test]
 fn point_color_visualization_matches_the_mask_overlay_style() {
-    assert!(SHADER_VIEW_TRANSFORM
+    assert!(shaders::VIEW_TRANSFORM
+        .text
         .contains("let overlay_rgb = vec3<f32>(78.0 / 255.0, 163.0 / 255.0, 1.0);"));
-    assert!(SHADER_VIEW_TRANSFORM.contains("let overlay_alpha = selected_weight * (92.0 / 255.0);"));
-    assert!(
-        SHADER_VIEW_TRANSFORM.contains("output_rgb = mix(output_rgb, overlay_rgb, overlay_alpha);")
-    );
-    assert!(!SHADER_VIEW_TRANSFORM
+    assert!(shaders::VIEW_TRANSFORM
+        .text
+        .contains("let overlay_alpha = selected_weight * (92.0 / 255.0);"));
+    assert!(shaders::VIEW_TRANSFORM
+        .text
+        .contains("output_rgb = mix(output_rgb, overlay_rgb, overlay_alpha);"));
+    assert!(!shaders::VIEW_TRANSFORM
+        .text
         .contains("adjusted = mix(vec3<f32>(luminance), adjusted, selected_weight);"));
 }
 
@@ -53,33 +61,25 @@ fn local_point_colors_pack_with_mask_adjustments() {
     assert!((packed.point_colors[0].shifts[0] - 0.125).abs() < 1e-6);
 }
 
-fn validate_shader(name: &str, source: &str, quality: ProcessingQuality) {
+/// Composes `shader` the way production does for `quality` and validates it.
+fn validate_shader(shader: shaders::EntryShader, quality: ProcessingQuality) {
     let format = processing_work_format(quality);
-    let mut manager = ShaderManager::new(
-        format,
-        if name.starts_with("X-Trans") {
-            CfaKind::XTrans
-        } else {
-            CfaKind::Bayer
-        },
-    )
-    .unwrap();
-    let source = match quality {
-        ProcessingQuality::Preview => std::borrow::Cow::Borrowed(source),
-        ProcessingQuality::High if source.contains("CALIBRAW_WORK_FORMAT") => {
-            work_shader_source(source, format).unwrap()
-        }
-        ProcessingQuality::High => std::borrow::Cow::Borrowed(source),
+    let mut manager = ShaderManager::new(format, shader.sensor.unwrap_or(CfaKind::Bayer)).unwrap();
+    let module_text = shader.source.module_text();
+    let text = if shader.work_format {
+        work_shader_source(&module_text, format).unwrap()
+    } else {
+        std::borrow::Cow::Borrowed(module_text.as_ref())
     };
     let module = manager
-        .compose_naga_module(source.as_ref(), "shader_test.wgsl")
-        .unwrap_or_else(|error| panic!("{name} did not compose: {error:#}"));
+        .compose_naga_module(text.as_ref(), shader.source.file_name)
+        .unwrap_or_else(|error| panic!("{} did not compose: {error:#}", shader.label));
     naga::valid::Validator::new(
         naga::valid::ValidationFlags::all(),
         naga::valid::Capabilities::all(),
     )
     .validate(&module)
-    .unwrap_or_else(|error| panic!("{name} did not validate: {error}"));
+    .unwrap_or_else(|error| panic!("{} did not validate: {error}", shader.label));
 }
 
 fn shader_f32_const(source: &str, name: &str) -> f32 {
@@ -97,7 +97,7 @@ fn shader_f32_const(source: &str, name: &str) -> f32 {
 }
 
 fn shared_highlight_sensor_clip_for_test(highlight_clip: f32) -> f32 {
-    let safety = shader_f32_const(SHADER_RAW_SAMPLING, "SHARED_HIGHLIGHT_CLIP_SAFETY");
+    let safety = shader_f32_const(shaders::RAW_SAMPLING.text, "SHARED_HIGHLIGHT_CLIP_SAFETY");
     safety * highlight_clip.max(0.01)
 }
 
@@ -117,25 +117,29 @@ fn adjacent_f32(value: f32, above: bool) -> f32 {
 
 #[test]
 fn lch_and_rcd_share_sensor_space_highlight_clip_definition() {
-    assert!(SHADER_RAW_SAMPLING.contains("fn shared_highlight_sensor_clip() -> f32"));
-    assert!(
-        SHADER_RAW_SAMPLING.contains("return raw_sensor_at(p) >= shared_highlight_sensor_clip();")
-    );
-    assert!(SHADER_RAW_SAMPLING
+    assert!(shaders::RAW_SAMPLING
+        .text
+        .contains("fn shared_highlight_sensor_clip() -> f32"));
+    assert!(shaders::RAW_SAMPLING
+        .text
+        .contains("return raw_sensor_at(p) >= shared_highlight_sensor_clip();"));
+    assert!(shaders::RAW_SAMPLING
+        .text
         .contains("fn shared_highlight_clip_for_cfa_channel(channel: u32) -> f32"));
-    assert!(!SHADER_RAW_SAMPLING.contains("min_wb"));
-    assert!(SHADER_HIGHLIGHTS.contains("#import calibraw::raw_sampling as RawSampling"));
-    assert!(SHADER_HIGHLIGHTS.contains("clipped = clipped || RawSampling::is_raw_clipped(p);"));
-    assert!(SHADER_HIGHLIGHTS
+    assert!(!shaders::RAW_SAMPLING.text.contains("min_wb"));
+    assert!(shaders::HIGHLIGHTS
+        .text
+        .contains("#import calibraw::raw_sampling as RawSampling"));
+    assert!(shaders::HIGHLIGHTS
+        .text
+        .contains("clipped = clipped || RawSampling::is_raw_clipped(p);"));
+    assert!(shaders::HIGHLIGHTS
+        .text
         .contains("RawSampling::shared_highlight_clip_for_cfa_channel(physical_channel)"));
-    assert!(!SHADER_HIGHLIGHTS.contains("fn lch_common_clip()"));
+    assert!(!shaders::HIGHLIGHTS.text.contains("fn lch_common_clip()"));
 
-    validate_shader("highlights", SHADER_HIGHLIGHTS, ProcessingQuality::Preview);
-    validate_shader(
-        "Bayer pass 2",
-        SHADER_BAYER_RCD_P2,
-        ProcessingQuality::Preview,
-    );
+    validate_shader(shaders::HIGHLIGHTS_ENTRY, ProcessingQuality::Preview);
+    validate_shader(shaders::BAYER_RCD_P2_ENTRY, ProcessingQuality::Preview);
 }
 
 #[test]
@@ -176,10 +180,11 @@ fn opposed_sensor_and_channel_wb_clipping_are_equivalent_with_unequal_wb() {
     const DARKTABLE_OPPOSED_CLIP_MAGIC: f32 = 0.987;
 
     assert_eq!(
-        shader_f32_const(SHADER_HIGHLIGHTS, "DARKTABLE_OPPOSED_CLIP_MAGIC"),
+        shader_f32_const(shaders::HIGHLIGHTS.text, "DARKTABLE_OPPOSED_CLIP_MAGIC"),
         DARKTABLE_OPPOSED_CLIP_MAGIC
     );
-    assert!(SHADER_RAW_SAMPLING
+    assert!(shaders::RAW_SAMPLING
+        .text
         .contains("raw_sensor_at(p) >= 0.987 * max(Common::camera_uniforms.highlight_clip, 0.01)"));
 
     let highlight_clip = 1.03_f32;
@@ -209,38 +214,15 @@ fn opposed_sensor_and_channel_wb_clipping_are_equivalent_with_unequal_wb() {
 
 #[test]
 fn compute_shaders_validate() {
-    for (name, source) in [
-        ("highlights", SHADER_HIGHLIGHTS),
-        ("Bayer pass 1", SHADER_BAYER_RCD_P1),
-        ("Bayer pass 2", SHADER_BAYER_RCD_P2),
-        ("Bayer pass 3", SHADER_BAYER_RCD_P3),
-        ("Bayer pass 4", SHADER_BAYER_RCD_P4),
-        ("dual demosaic", SHADER_DUAL_DEMOSAIC),
-        ("X-Trans demosaic", SHADER_XTRANS_DEMOSAIC),
-        ("X-Trans finish", SHADER_XTRANS_FINISH),
-        ("color denoise", SHADER_COLOR_DENOISE),
-        ("tone analysis", SHADER_TONE_ANALYSIS),
-        ("scene adjustments", SHADER_SCENE_ADJUSTMENTS),
-        ("creative effects", SHADER_CREATIVE_EFFECTS),
-        ("Remove composite", SHADER_REMOVE_COMPOSITE),
-        ("view transform", SHADER_VIEW_TRANSFORM),
-    ] {
-        validate_shader(name, source, ProcessingQuality::Preview);
+    for shader in shaders::ALL_ENTRY_SHADERS {
+        validate_shader(shader, ProcessingQuality::Preview);
     }
 }
 
 #[test]
 fn high_quality_shaders_validate() {
-    for (name, source) in [
-        ("Bayer pass 1", SHADER_BAYER_RCD_P1),
-        ("dual demosaic", SHADER_DUAL_DEMOSAIC),
-        ("X-Trans demosaic", SHADER_XTRANS_DEMOSAIC),
-        ("color denoise", SHADER_COLOR_DENOISE),
-        ("Remove composite", SHADER_REMOVE_COMPOSITE),
-        ("scene adjustments", SHADER_SCENE_ADJUSTMENTS),
-        ("creative effects", SHADER_CREATIVE_EFFECTS),
-    ] {
-        validate_shader(name, source, ProcessingQuality::High);
+    for shader in shaders::ALL_ENTRY_SHADERS {
+        validate_shader(shader, ProcessingQuality::High);
     }
 }
 
@@ -315,7 +297,7 @@ fn mask_effect_packing_preserves_shader_id_activity_and_clamps() {
 
 #[test]
 fn effect_components_share_mask_layer_and_global_effects_cover_image() {
-    assert!(super::SHADER_COMMON.contains(&format!(
+    assert!(super::shaders::COMMON.text.contains(&format!(
         "const MAX_RENDER_MASK_SLOTS: u32 = {}u;",
         super::MAX_RENDER_MASK_SLOTS
     )));
@@ -641,7 +623,8 @@ fn neon_amount_approaches_the_unmodified_image_smoothly() -> anyhow::Result<()> 
 }
 
 fn tone_percentile_exposure_follow_from_shader() -> f32 {
-    let function = SHADER_TONEMAP
+    let function = shaders::TONEMAP
+        .text
         .split_once("fn tone_percentiles()")
         .expect("tone_percentiles shader function exists")
         .1

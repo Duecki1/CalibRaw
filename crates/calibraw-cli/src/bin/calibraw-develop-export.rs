@@ -1,9 +1,9 @@
 use anyhow::{anyhow, bail, Context, Result};
 use calibraw_cli::pipeline::{
     crop_raw, export_mask_atlas_edge, load_raw_file, load_raw_file_with_dcp, spawn_tiled_export,
-    DenoiseQuality, ExportEvent, ExportFormat, ExportMetadata, ExportSettings, ExposureParams,
-    GeometryTransform, MaskStack, TileSpec, TiledExportJob, GLOBAL_TINT_OFFSET_LIMIT,
-    HUE_ROTATION_LIMIT_DEGREES,
+    DenoiseQuality, ExportEvent, ExportFormat, ExportMetadata, ExportSettings, ExportTarget,
+    ExposureParams, GeometryTransform, MaskStack, TileSpec, TiledExportJob,
+    GLOBAL_TINT_OFFSET_LIMIT, HUE_ROTATION_LIMIT_DEGREES,
 };
 use calibraw_gpu::wgpu;
 use std::env;
@@ -177,7 +177,7 @@ impl ExportHarness<'_> {
                 exposure,
                 masks: MaskStack::default(),
                 remove: calibraw_cli::pipeline::RemoveEditState::default(),
-                path: output.to_owned(),
+                target: ExportTarget::File(output.to_owned()),
                 tile_spec: TileSpec::default(),
                 settings: self.settings.clone(),
                 metadata: self.metadata.clone(),

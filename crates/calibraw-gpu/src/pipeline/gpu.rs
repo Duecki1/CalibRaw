@@ -24,6 +24,7 @@ mod histogram;
 mod readback;
 mod resources;
 mod shader_manager;
+mod shaders;
 
 use builder::*;
 pub use clipping::PreviewClippingGpu;
@@ -43,6 +44,8 @@ mod existing_effects_tests;
 mod film_effects_tests;
 #[cfg(test)]
 mod fog_tests;
+#[cfg(test)]
+mod layout_contract_tests;
 #[cfg(test)]
 mod light_rays_tests;
 #[cfg(test)]
@@ -72,6 +75,8 @@ const MASK_DATA_SIZE_BYTES: u64 = (std::mem::size_of::<MaskData>() * MAX_RENDER_
 const WORK_FORMAT_MARKER: &str = "rgba16float /* CALIBRAW_WORK_FORMAT */";
 const WORKGROUP_EDGE: u32 = 8;
 const TONE_STATS_SIZE_BYTES: u64 = 2 * std::mem::size_of::<[f32; 4]>() as u64;
+/// Bins of the scene EV histogram (`ToneHistogram` in `tone_analysis.wgsl`).
+const TONE_HISTOGRAM_BIN_COUNT: u32 = 256;
 #[cfg(test)]
 const DESKTOP_GPU_WORKING_SET_LIMIT_BYTES: u64 = 1_500 * 1024 * 1024;
 const ANDROID_GPU_WORKING_SET_LIMIT_BYTES: u64 = 384 * 1024 * 1024;
@@ -160,21 +165,6 @@ fn dispatch_for_extent(width: u32, height: u32) -> [u32; 3] {
     ]
 }
 
-const SHADER_COMMON: &str = include_str!("../shaders/common.wgsl");
-const SHADER_COLOR: &str = include_str!("../shaders/color.wgsl");
-const SHADER_NOISE: &str = include_str!("../shaders/noise.wgsl");
-const SHADER_RAW_SAMPLING: &str = include_str!("../shaders/raw_sampling.wgsl");
-const SHADER_PROFILE: &str = include_str!("../shaders/profile.wgsl");
-const SHADER_BASIC_ADJUSTMENTS: &str = include_str!("../shaders/basic_adjustments.wgsl");
-const SHADER_TONE_COMMON: &str = include_str!("../shaders/tone_common.wgsl");
-const SHADER_TONEMAP: &str = include_str!("../shaders/tonemap.wgsl");
-const SHADER_NOISE_CA_FINISH: &str = include_str!("../shaders/noise_ca_finish.wgsl");
-const SHADER_DETAIL_UTILS: &str = include_str!("../shaders/detail_utils.wgsl");
-const SHADER_DETAIL_CAPTURE: &str = include_str!("../shaders/detail_capture.wgsl");
-const SHADER_DETAIL_SCALE_SPACE: &str = include_str!("../shaders/detail_scale_space.wgsl");
-
-const SHADER_HIGHLIGHTS: &str = include_str!("../shaders/highlights.wgsl");
-
 const COLOR_DENOISE_ENTRY_POINTS: [&str; 6] = [
     "color_denoise_scale_1",
     "color_denoise_scale_2",
@@ -198,57 +188,6 @@ fn expected_pass_count(cfa_kind: CfaKind) -> usize {
     };
     1 + demosaic_passes + COLOR_DENOISE_ENTRY_POINTS.len() + 4 + 18
 }
-
-const SHADER_BAYER_RCD_P1: &str = include_str!("../shaders/pass1.wgsl");
-const SHADER_BAYER_RCD_P2: &str = include_str!("../shaders/pass2.wgsl");
-const SHADER_BAYER_RCD_P3: &str = include_str!("../shaders/pass3.wgsl");
-const SHADER_BAYER_RCD_P4: &str = include_str!("../shaders/pass4.wgsl");
-const SHADER_DUAL_DEMOSAIC: &str = include_str!("../shaders/dual_demosaic.wgsl");
-const SHADER_XTRANS_DEMOSAIC: &str = include_str!("../shaders/xtrans_demosaic.wgsl");
-const SHADER_XTRANS_FINISH: &str = include_str!("../shaders/xtrans_finish.wgsl");
-const SHADER_COLOR_DENOISE: &str = include_str!("../shaders/color_denoise.wgsl");
-const SHADER_TONE_ANALYSIS: &str = include_str!("../shaders/tone_analysis.wgsl");
-
-const SHADER_SCENE_ADJUSTMENTS: &str = include_str!("../shaders/scene_adjustments.wgsl");
-const SHADER_MASK_EFFECTS_SHARED: &str = include_str!("../shaders/mask_effects/shared.wgsl");
-const SHADER_MASK_ATMOSPHERE: &str = include_str!("../shaders/mask_effects/atmosphere.wgsl");
-const SHADER_MASK_BLUR: &str = include_str!("../shaders/mask_effects/blur.wgsl");
-const SHADER_MASK_EDGE_GLOW: &str = include_str!("../shaders/mask_effects/edge_glow.wgsl");
-const SHADER_MASK_GLOW: &str = include_str!("../shaders/mask_effects/glow.wgsl");
-const SHADER_MASK_LENS_BLUR: &str = include_str!("../shaders/mask_effects/lens_blur.wgsl");
-const SHADER_MASK_LIGHT_RAYS: &str = include_str!("../shaders/mask_effects/light_rays.wgsl");
-const SHADER_MASK_MOTION_BLUR: &str = include_str!("../shaders/mask_effects/motion_blur.wgsl");
-const SHADER_MASK_NEON: &str = include_str!("../shaders/mask_effects/neon.wgsl");
-const SHADER_MASK_PIXELATE: &str = include_str!("../shaders/mask_effects/pixelate.wgsl");
-const SHADER_MASK_RADIAL_BLUR: &str = include_str!("../shaders/mask_effects/radial_blur.wgsl");
-const SHADER_MASK_TILT_SHIFT: &str = include_str!("../shaders/mask_effects/tilt_shift.wgsl");
-const SHADER_MASK_FILM_FINISH: &str = include_str!("../shaders/mask_effects/film_finish.wgsl");
-const SHADER_CREATIVE_EFFECTS: &str = include_str!("../shaders/creative_effects.wgsl");
-const SHADER_VIEW_TRANSFORM: &str = include_str!("../shaders/view_transform.wgsl");
-const SHADER_REMOVE_COMPOSITE: &str = r#"
-struct RemoveCompositeParams {
-    origin: vec2<u32>,
-    extent: vec2<u32>,
-};
-
-@group(0) @binding(0) var scene_input: texture_2d<f32>;
-@group(0) @binding(1) var patch_input: texture_2d<f32>;
-@group(0) @binding(2) var scene_output: texture_storage_2d<rgba16float /* CALIBRAW_WORK_FORMAT */, write>;
-@group(0) @binding(3) var<uniform> params: RemoveCompositeParams;
-
-@compute @workgroup_size(8, 8)
-fn composite_remove_patch(@builtin(global_invocation_id) id: vec3<u32>) {
-    if (id.x >= params.extent.x || id.y >= params.extent.y) {
-        return;
-    }
-    let location = params.origin + id.xy;
-    let coordinates = vec2<i32>(location);
-    let base = textureLoad(scene_input, coordinates, 0);
-    let cached = textureLoad(patch_input, coordinates, 0);
-    let blended = base.rgb + (cached.rgb - base.rgb) * cached.a;
-    textureStore(scene_output, coordinates, vec4<f32>(blended, 1.0));
-}
-"#;
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
@@ -1793,7 +1732,6 @@ impl GpuProgramPrewarm {
 
 pub struct RawGpuPipeline {
     output_revision: std::sync::atomic::AtomicU64,
-    pub egui_texture_id: Option<egui::TextureId>,
     pub width: u32,
     pub height: u32,
     tone_guide_extent: [u32; 2],
@@ -1857,7 +1795,7 @@ pub struct RawGpuPipeline {
     mask_layer_capacity: usize,
     mask_atlas_edge: u32,
     out_texture: wgpu::Texture,
-    _out_view: wgpu::TextureView,
+    out_view: wgpu::TextureView,
     pipeline_cache: Option<Arc<PersistentGpuPipelineCache>>,
     _gpu_budget_reservation: GpuBudgetReservation,
 }
@@ -1899,9 +1837,10 @@ fn create_remove_composite_program(
             buffer_binding(3, &params_buffer),
         ],
     );
-    let source = work_shader_source(SHADER_REMOVE_COMPOSITE, format)?;
+    let shader = shaders::REMOVE_COMPOSITE_ENTRY;
+    let source = work_shader_source(shader.source.text, format)?;
     let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-        label: Some("calibraw Remove composite shader"),
+        label: Some(shader.label),
         source: wgpu::ShaderSource::Wgsl(source),
     });
     let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -1966,7 +1905,6 @@ impl GpuOutputSnapshot {
 struct RawGpuPipelineBuild<'a> {
     device: &'a wgpu::Device,
     queue: &'a wgpu::Queue,
-    renderer: Option<&'a mut egui_wgpu::Renderer>,
     program_template: Option<&'a RawGpuProgramTemplate>,
     pipeline_cache: Option<Arc<PersistentGpuPipelineCache>>,
     raw: &'a LoadedRaw,
@@ -2139,7 +2077,6 @@ impl RawGpuPipeline {
         Self::new_internal(RawGpuPipelineBuild {
             device,
             queue,
-            renderer: None,
             program_template: None,
             pipeline_cache,
             raw: &raw,
@@ -2175,44 +2112,6 @@ impl RawGpuPipeline {
         }
     }
 
-    pub fn new(
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        renderer: &mut egui_wgpu::Renderer,
-        raw: &LoadedRaw,
-        params: &GpuParams,
-    ) -> Result<Self> {
-        Self::new_with_quality(
-            device,
-            queue,
-            renderer,
-            raw,
-            params,
-            default_processing_quality(),
-        )
-    }
-
-    pub fn new_with_quality(
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        renderer: &mut egui_wgpu::Renderer,
-        raw: &LoadedRaw,
-        params: &GpuParams,
-        quality: ProcessingQuality,
-    ) -> Result<Self> {
-        Self::new_internal(RawGpuPipelineBuild {
-            device,
-            queue,
-            renderer: Some(renderer),
-            program_template: None,
-            pipeline_cache: None,
-            raw,
-            params,
-            quality,
-            config: RawGpuPipelineConfig::default(),
-        })
-    }
-
     pub fn new_headless_with_quality(
         device: &wgpu::Device,
         queue: &wgpu::Queue,
@@ -2223,7 +2122,6 @@ impl RawGpuPipeline {
         Self::new_internal(RawGpuPipelineBuild {
             device,
             queue,
-            renderer: None,
             program_template: None,
             pipeline_cache: None,
             raw,
@@ -2244,7 +2142,6 @@ impl RawGpuPipeline {
         Self::new_internal(RawGpuPipelineBuild {
             device,
             queue,
-            renderer: None,
             program_template: None,
             pipeline_cache: None,
             raw,
@@ -2269,7 +2166,6 @@ impl RawGpuPipeline {
         Self::new_internal(RawGpuPipelineBuild {
             device,
             queue,
-            renderer: None,
             program_template: Some(&program_template),
             pipeline_cache: program_template.pipeline_cache.clone(),
             raw,
@@ -2293,7 +2189,6 @@ impl RawGpuPipeline {
         Self::new_internal(RawGpuPipelineBuild {
             device,
             queue,
-            renderer: None,
             program_template: Some(template),
             pipeline_cache: template.pipeline_cache.clone(),
             raw,
@@ -2316,7 +2211,6 @@ impl RawGpuPipeline {
         Self::new_internal(RawGpuPipelineBuild {
             device,
             queue,
-            renderer: None,
             program_template: Some(template),
             pipeline_cache: template.pipeline_cache.clone(),
             raw,
@@ -2330,7 +2224,6 @@ impl RawGpuPipeline {
         let RawGpuPipelineBuild {
             device,
             queue,
-            renderer,
             program_template,
             pipeline_cache,
             raw,
@@ -2338,7 +2231,6 @@ impl RawGpuPipeline {
             quality,
             config,
         } = build;
-        let mut renderer = renderer;
         validate_raw(raw)?;
         if let Some(template) = program_template {
             if template.cfa_kind != raw.cfa_kind
@@ -2430,9 +2322,6 @@ impl RawGpuPipeline {
             indices,
         } = assembled;
 
-        let egui_texture_id = renderer.as_deref_mut().map(|renderer| {
-            renderer.register_native_texture(device, &surfaces.out_view, wgpu::FilterMode::Linear)
-        });
         let (
             remove_composite_pipeline,
             remove_composite_bind_group,
@@ -2447,7 +2336,6 @@ impl RawGpuPipeline {
 
         let pipeline = Self {
             output_revision: std::sync::atomic::AtomicU64::new(0),
-            egui_texture_id,
             width: raw.width,
             height: raw.height,
             tone_guide_extent: [geometry.tone_size.width, geometry.tone_size.height],
@@ -2515,7 +2403,7 @@ impl RawGpuPipeline {
             mask_layer_capacity: geometry.mask_layer_capacity,
             mask_atlas_edge: geometry.mask_atlas_edge,
             out_texture: surfaces.out_texture,
-            _out_view: surfaces.out_view,
+            out_view: surfaces.out_view,
             pipeline_cache,
             _gpu_budget_reservation: gpu_budget_reservation,
         };
@@ -2532,12 +2420,7 @@ impl RawGpuPipeline {
         );
         pipeline.encode_output_stage(&mut warmup, params);
         drop(warmup);
-        if let Err(error) = gpu_error_scopes.finish("create RAW GPU pipeline") {
-            if let (Some(renderer), Some(texture_id)) = (renderer, pipeline.egui_texture_id) {
-                renderer.free_texture(&texture_id);
-            }
-            return Err(error);
-        }
+        gpu_error_scopes.finish("create RAW GPU pipeline")?;
         Ok(pipeline)
     }
 
@@ -2765,19 +2648,11 @@ impl RawGpuPipeline {
         }
     }
 
-    pub fn register_egui_texture(
-        &mut self,
-        device: &wgpu::Device,
-        renderer: &mut egui_wgpu::Renderer,
-    ) -> egui::TextureId {
-        if let Some(texture_id) = self.egui_texture_id {
-            return texture_id;
-        }
-
-        let texture_id =
-            renderer.register_native_texture(device, &self._out_view, wgpu::FilterMode::Linear);
-        self.egui_texture_id = Some(texture_id);
-        texture_id
+    /// The final display-referred output (`Rgba8Unorm`, sRGB-encoded values),
+    /// which presentation layers may sample, e.g. by registering it as an
+    /// egui texture. It stays valid for the pipeline's lifetime.
+    pub fn output_view(&self) -> &wgpu::TextureView {
+        &self.out_view
     }
 
     pub fn recompute(&self, queue: &wgpu::Queue, device: &wgpu::Device, params: &GpuParams) {

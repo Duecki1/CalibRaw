@@ -342,7 +342,8 @@ public final class AndroidStorageContractTest {
         CountingFile boundarySecond = new CountingFile("boundary-second.dng", 1_000L);
         CountingFile boundaryThird = new CountingFile("boundary-third.dng", 1_000L);
         CountingFile middle = new CountingFile("middle.dng", 2_000L);
-        CountingFile ignored = new CountingFile("ignored.jpg", 9_000L);
+        // JPEGs are library images too, so the newest unsupported file is a text file.
+        CountingFile ignored = new CountingFile("ignored.txt", 9_000L);
 
         java.util.PriorityQueue<StorageManager.RawLibraryCandidate> retained =
                 StorageManager.selectRawLibraryCandidates(

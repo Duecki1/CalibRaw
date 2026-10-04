@@ -3,9 +3,10 @@ use super::{
     encode_jpeg_rgb, encode_srgb_row, encode_srgb_row_with_format, export_to_destination,
     publish_completed_export, resolved_export_tile_spec, stitch_linear_tile_into_band,
     tiff_strip_layout, tile_mask_source_region, tone_grid_aligned_crop_tile,
-    validate_export_dimensions, with_temporary_export_path, ExportFormat, ExportMetadata,
-    ExportResizeMode, ExportRowFormat, ExportSettings, GeometryResampler, JpegEncodeRequest,
-    LinearLightResizer, EXPORT_TILE_HALO, MAX_EXPORT_EDGE, TIFF_TARGET_STRIP_BYTES,
+    validate_export_dimensions, with_staging_file, ExportFormat, ExportMetadata, ExportOutput,
+    ExportResizeMode, ExportRowFormat, ExportSettings, ExportTarget, GeometryResampler,
+    JpegEncodeRequest, LinearLightResizer, EXPORT_TILE_HALO, MAX_EXPORT_EDGE,
+    TIFF_TARGET_STRIP_BYTES,
 };
 use crate::pipeline::{
     ExportTile, ExposureParams, GeometryTransform, MaskStack, NativeRect, SrgbOutputTransform,
@@ -301,7 +302,12 @@ fn fast_jpeg_encoder_writes_decodable_pixels_exif_and_icc() {
 
     encode_jpeg_rgb(JpegEncodeRequest {
         rgb: &rgb,
-        output_path: &destination,
+        output: ExportOutput {
+            path: &destination,
+            truncate_existing: false,
+            staging_dir: &directory,
+            staging_name: "photo.jpg",
+        },
         width,
         height,
         quality: 90,
@@ -539,8 +545,9 @@ fn cancelled_export_removes_temporary_output_before_publication() {
     let destination = directory.join("photo.png");
     let cancellation = AtomicBool::new(false);
 
-    let result = export_to_destination(&destination, &cancellation, |temporary| {
-        std::fs::write(temporary, b"complete but not published")?;
+    let target = ExportTarget::File(destination.clone());
+    let result = export_to_destination(&target, &cancellation, |output| {
+        std::fs::write(output.path, b"complete but not published")?;
         cancellation.store(true, Ordering::Release);
         Ok(())
     });
@@ -566,8 +573,13 @@ fn successful_export_atomically_replaces_existing_destination() {
     std::fs::write(&destination, b"previous export").unwrap();
     let cancellation = AtomicBool::new(false);
 
-    export_to_destination(&destination, &cancellation, |temporary| {
-        std::fs::write(temporary, b"new export")?;
+    let target = ExportTarget::File(destination.clone());
+    export_to_destination(&target, &cancellation, |output| {
+        assert_ne!(
+            output.path, destination,
+            "files are written beside the target"
+        );
+        std::fs::write(output.path, b"new export")?;
         Ok(())
     })
     .unwrap();
@@ -575,6 +587,47 @@ fn successful_export_atomically_replaces_existing_destination() {
     assert_eq!(std::fs::read(&destination).unwrap(), b"new export");
     assert_eq!(std::fs::read_dir(&directory).unwrap().count(), 1);
     std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn descriptor_targets_are_written_in_place_and_stage_elsewhere() {
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!(
+        "calibraw-export-descriptor-{}-{nonce}",
+        std::process::id()
+    ));
+    let staging_dir = root.join("staging");
+    std::fs::create_dir_all(&root).unwrap();
+    // Stands in for the platform's `/proc/self/fd/N` path, which already exists.
+    let descriptor = root.join("descriptor");
+    std::fs::write(&descriptor, b"stale bytes from an earlier, longer write").unwrap();
+    let target = ExportTarget::Descriptor {
+        path: descriptor.clone(),
+        staging_dir: staging_dir.clone(),
+    };
+    let cancellation = AtomicBool::new(false);
+
+    export_to_destination(&target, &cancellation, |output| {
+        assert_eq!(output.path, descriptor);
+        assert!(output.truncate_existing);
+        with_staging_file(output, |staged| {
+            assert!(staged.starts_with(&staging_dir));
+            std::fs::write(staged, b"intermediate")?;
+            Ok(())
+        })?;
+        let mut file = super::open_export_destination(output)?;
+        std::io::Write::write_all(&mut file, b"export")?;
+        Ok(())
+    })
+    .unwrap();
+
+    assert_eq!(std::fs::read(&descriptor).unwrap(), b"export");
+    assert!(std::fs::read_dir(&staging_dir).unwrap().next().is_none());
+    assert_eq!(target.path(), descriptor);
+    std::fs::remove_dir_all(root).unwrap();
 }
 
 #[test]
@@ -609,9 +662,14 @@ fn temporary_raster_helper_cleans_up_after_failure() {
         std::process::id()
     ));
     std::fs::create_dir_all(&directory).unwrap();
-    let destination = directory.join("photo.png");
+    let output = ExportOutput {
+        path: &directory.join("photo.png"),
+        truncate_existing: false,
+        staging_dir: &directory,
+        staging_name: "photo.png",
+    };
 
-    let result = with_temporary_export_path(&destination, |temporary| -> anyhow::Result<()> {
+    let result = with_staging_file(output, |temporary| -> anyhow::Result<()> {
         std::fs::write(temporary, b"partial staged raster")?;
         anyhow::bail!("staging failed")
     });
@@ -812,7 +870,12 @@ fn tiff_header_preserves_create_date_at_relocated_exif_offset() {
                 exposure: &ExposureParams::default(),
                 masks: &MaskStack::default(),
                 remove: &crate::pipeline::RemoveEditState::default(),
-                path: std::path::Path::new("test.tif"),
+                output: ExportOutput {
+                    path: std::path::Path::new("test.tif"),
+                    truncate_existing: false,
+                    staging_dir: std::path::Path::new("."),
+                    staging_name: "test.tif",
+                },
                 tile_spec: TileSpec::default(),
                 output_width: 1,
                 output_height: 1,

@@ -470,7 +470,7 @@ impl eframe::App for CalibRawApp {
             {
                 log::warn!("{error}");
             }
-            calibraw_ffi::uninstall_context();
+            calibraw_ffi::detach_ui();
         }
         self.persist_performance_settings();
         self.flush_sidecar_on_exit();

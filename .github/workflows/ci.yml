@@ -63,6 +63,12 @@ jobs:
       - name: Run tests
         run: cargo test --locked --workspace --all-targets
 
+      - name: Check architecture boundaries
+        run: cargo xtask arch-check
+
+      - name: Check the Rust/Java JNI contract
+        run: cargo xtask jni-contract
+
       - name: Build release artifacts
         env:
           CALIBRAW_DISCORD_APPLICATION_ID: ${{ secrets.CALIBRAW_DISCORD_APPLICATION_ID }}

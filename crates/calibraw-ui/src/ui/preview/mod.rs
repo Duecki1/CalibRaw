@@ -157,14 +157,12 @@ impl Preview {
             app.refresh_develop_loading_thumbnail(ui.ctx());
         }
         let [clipping_base, clipping_detail] = app.preview_clipping_textures(frame);
-        let base_pipeline = app.preview_base_pipeline().and_then(|pipeline| {
-            pipeline.egui_texture_id.map(|texture_id| {
-                (
-                    clipping_base.unwrap_or(texture_id),
-                    pipeline.width,
-                    pipeline.height,
-                )
-            })
+        let base_pipeline = app.preview_base_pipeline().map(|presented| {
+            (
+                clipping_base.unwrap_or(presented.texture()),
+                presented.gpu().width,
+                presented.gpu().height,
+            )
         });
         if base_pipeline.is_none() && preview_size.x > 0.0 && preview_size.y > 0.0 {
             let pixels_per_point = physical_pixels_per_point(ui.ctx());
@@ -501,46 +499,44 @@ impl Preview {
             .as_ref()
             .filter(|detail| detail.revision == app.preview.revision)
         {
-            if let Some(detail_texture_id) = detail.pipeline.egui_texture_id {
-                let detail_texture_id = clipping_detail.unwrap_or(detail_texture_id);
-                let detail_texture_uv = Rect::from_min_max(
-                    Pos2::new(detail.texture_uv_rect.min[0], detail.texture_uv_rect.min[1]),
-                    Pos2::new(detail.texture_uv_rect.max[0], detail.texture_uv_rect.max[1]),
+            let detail_texture_id = clipping_detail.unwrap_or(detail.pipeline.texture());
+            let detail_texture_uv = Rect::from_min_max(
+                Pos2::new(detail.texture_uv_rect.min[0], detail.texture_uv_rect.min[1]),
+                Pos2::new(detail.texture_uv_rect.max[0], detail.texture_uv_rect.max[1]),
+            );
+            let detail_source_uv = [
+                detail.uv_rect.min[0],
+                detail.uv_rect.min[1],
+                detail.uv_rect.max[0],
+                detail.uv_rect.max[1],
+            ];
+            if crop_preview {
+                paint_crop_workspace_texture(
+                    ui,
+                    detail_texture_id,
+                    projection,
+                    detail_texture_uv,
+                    detail_source_uv,
                 );
-                let detail_source_uv = [
-                    detail.uv_rect.min[0],
-                    detail.uv_rect.min[1],
-                    detail.uv_rect.max[0],
-                    detail.uv_rect.max[1],
-                ];
-                if crop_preview {
-                    paint_crop_workspace_texture(
-                        ui,
-                        detail_texture_id,
-                        projection,
-                        detail_texture_uv,
-                        detail_source_uv,
-                    );
-                } else if final_geometry_preview {
-                    paint_final_geometry_texture(
-                        ui,
-                        detail_texture_id,
-                        projection,
-                        detail_texture_uv,
-                        detail_source_uv,
-                    );
-                } else {
-                    let detail_rect = Rect::from_min_max(
-                        normalized_to_screen(image_rect, detail.uv_rect.min),
-                        normalized_to_screen(image_rect, detail.uv_rect.max),
-                    );
-                    painter.image(
-                        detail_texture_id,
-                        detail_rect,
-                        detail_texture_uv,
-                        Color32::WHITE,
-                    );
-                }
+            } else if final_geometry_preview {
+                paint_final_geometry_texture(
+                    ui,
+                    detail_texture_id,
+                    projection,
+                    detail_texture_uv,
+                    detail_source_uv,
+                );
+            } else {
+                let detail_rect = Rect::from_min_max(
+                    normalized_to_screen(image_rect, detail.uv_rect.min),
+                    normalized_to_screen(image_rect, detail.uv_rect.max),
+                );
+                painter.image(
+                    detail_texture_id,
+                    detail_rect,
+                    detail_texture_uv,
+                    Color32::WHITE,
+                );
             }
         }
 

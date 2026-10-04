@@ -1,17 +1,80 @@
 # Development
 
 Use Rust 1.92 with LibRaw, Lensfun, libclang, and the platform graphics
-dependencies.
+dependencies. Crate ownership, dependency rules and threading contracts are in
+[ARCHITECTURE.md](ARCHITECTURE.md).
+
+```sh
+cargo run -p calibraw-ui --bin calibraw --release
+```
+
+## Checks
+
+Ordinary CI runs these on every push and pull request; run them before
+finishing a change:
 
 ```sh
 cargo fmt --all -- --check
-cargo check --workspace --all-targets
-cargo test --workspace --all-targets
-cargo clippy --workspace --all-targets --all-features -- \
+cargo clippy --locked --workspace --all-targets --all-features -- \
   -D warnings -W clippy::perf -W clippy::large_stack_arrays \
   -W clippy::redundant_clone -W unreachable-pub
+cargo test --locked --workspace --all-targets
+cargo xtask arch-check
 cargo deny check
-cargo run -p calibraw-ui --bin calibraw --release
+```
+
+- `cargo xtask arch-check` enforces the crate dependency rules listed in
+  ARCHITECTURE.md against `cargo tree -e normal,build --target all`.
+- `layout_contract_tests` in `calibraw-gpu` compare Rust uniform/storage
+  structs, buffer bindings and shared constants with the WGSL modules the
+  production `ShaderManager` composes. They need no GPU.
+- `cargo xtask loc [--json PATH] [REPO...]` reports production, test and build
+  line counts. It walks each crate's module tree from `cargo metadata` targets;
+  `#[test]`, `#[cfg(test)]` items and test modules count as tests, and blank or
+  comment-only lines are excluded from code totals. Pass `../moduwu-design` to
+  count the design library with the same method.
+
+Code compiled only for Android is not checked by host builds. After changing
+`cfg(target_os = "android")` code, check the Android library with the
+environment `cargo xtask build-android` uses:
+
+```sh
+export ANDROID_NDK_HOME="$ANDROID_SDK_ROOT/ndk/28.2.13676358"
+host="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64"
+CALIBRAW_LIBRAW_ROOT="$PWD/android/native/libraw/arm64-v8a" \
+CALIBRAW_LENSFUN_ROOT="$PWD/android/native/lensfun/arm64-v8a" \
+BINDGEN_EXTRA_CLANG_ARGS="--target=aarch64-linux-android26 --sysroot=$host/sysroot" \
+LIBCLANG_PATH="$host/lib" CARGO_TARGET_DIR=target/android-check \
+  cargo ndk -t arm64-v8a check --locked -p calibraw-ui --lib
+```
+
+The staged LibRaw and Lensfun come from `cargo xtask build-android-libraw` and
+`build-android-lensfun`. Test targets are host-only and do not build for Android.
+
+### Screenshot and numerical baselines
+
+`CALIBRAW_BASELINE_DIR` names one persistent folder outside every checkout
+(for example `~/calibraw-baselines`); never `/tmp`, `target/` or a path inside
+a worktree. `cargo xtask baseline-run LABEL [--filter FILTER]` creates a new
+`<UTC date>-<revision>-LABEL` folder (it refuses to reuse one), records the
+CalibRaw and Moduwu revisions, the `Cargo.lock` hash, command and environment in
+`run-manifest.json`, and captures the GPU UI review (4 themes × 3 viewports ×
+11 states) into it. `--filter` takes comma-separated substrings of
+`theme/size/state.png`.
+
+`cargo xtask baseline-compare BEFORE AFTER [--tolerance N] [--diff-dir DIR]`
+compares two runs pixel by pixel, reports missing, resized and changed
+captures, and optionally writes diff images (changed pixels in red). The
+review harness is deterministic, so structural changes are accepted at
+tolerance 0. The recorded baselines are listed in
+[rework/BASELINE.md](rework/BASELINE.md).
+
+GPU-backed tests that need extra tools are ignored by default and run
+explicitly, for example the end-to-end edit replay (needs a wgpu adapter and
+FFmpeg with libx264):
+
+```sh
+cargo test --locked -p calibraw-ui --lib services::replay -- --ignored --test-threads=1
 ```
 
 The CPU brush-raster baseline is a harness-free benchmark (kept independent

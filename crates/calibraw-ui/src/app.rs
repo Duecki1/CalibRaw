@@ -271,12 +271,12 @@ pub(crate) struct OverlayRasterKey {
 }
 
 pub(crate) struct PreviewNavigation {
-    pub pipeline: RawGpuPipeline,
+    pub pipeline: PreviewPipeline,
     raw: Arc<LoadedRaw>,
 }
 
 pub(crate) struct PreviewDetail {
-    pub pipeline: RawGpuPipeline,
+    pub pipeline: PreviewPipeline,
     pub uv_rect: PreviewUvRect,
     pub texture_uv_rect: PreviewUvRect,
     pub revision: u64,
@@ -860,21 +860,18 @@ enum ExportTaskReceiver {
 }
 
 enum ReplayExportEvent {
-    Progress {
-        progress: f32,
-        phase: String,
-        completed_frames: usize,
-        total_frames: usize,
-    },
-    Finished(Result<PathBuf, String>),
+    Progress(crate::services::replay::ReplayProgress),
+    Finished(Result<PathBuf, crate::services::replay::ReplayError>),
 }
 
 #[derive(Clone, Debug)]
 enum ExportDestination {
     #[cfg(not(target_os = "android"))]
     File(PathBuf),
+    /// A MediaStore descriptor written in place; intermediates are staged in
+    /// `staging_dir`.
     #[cfg(target_os = "android")]
-    AndroidDirect { path: PathBuf },
+    AndroidDirect { path: PathBuf, staging_dir: PathBuf },
     #[cfg(target_os = "android")]
     AndroidGallery {
         path: PathBuf,
@@ -884,12 +881,19 @@ enum ExportDestination {
 }
 
 impl ExportDestination {
-    fn path(&self) -> &Path {
+    fn target(&self) -> crate::pipeline::ExportTarget {
+        use crate::pipeline::ExportTarget;
         match self {
             #[cfg(not(target_os = "android"))]
-            Self::File(path) => path,
+            Self::File(path) => ExportTarget::File(path.clone()),
             #[cfg(target_os = "android")]
-            Self::AndroidDirect { path } | Self::AndroidGallery { path, .. } => path,
+            Self::AndroidDirect { path, staging_dir } => ExportTarget::Descriptor {
+                path: path.clone(),
+                staging_dir: staging_dir.clone(),
+            },
+            // Gallery exports are cached as files and published afterwards.
+            #[cfg(target_os = "android")]
+            Self::AndroidGallery { path, .. } => ExportTarget::File(path.clone()),
         }
     }
 }
@@ -1052,9 +1056,9 @@ pub(crate) struct DevelopState {
 pub(crate) struct PreviewState {
     pub(crate) clipping: preview_clipping::ClippingState,
     pub(crate) histogram: preview_histogram::HistogramState,
-    pub(crate) gpu_pipeline: Option<RawGpuPipeline>,
+    pub(crate) gpu_pipeline: Option<PreviewPipeline>,
     pub(crate) program_template: Option<RawGpuProgramTemplate>,
-    pub(crate) retired_egui_textures: Vec<egui::TextureId>,
+    pub(crate) retired_textures: TextureRetirement,
     pub(crate) gpu_prewarm_receiver: Option<mpsc::Receiver<Result<RawGpuPipeline, String>>>,
     pub(crate) quality: PreviewQuality,
     pub(crate) zoom: f32,
@@ -1459,58 +1463,49 @@ impl CalibRawApp {
     #[cfg(not(target_os = "android"))]
     fn clear_android_original_hold(&mut self) {}
 
-    fn retire_egui_texture(&mut self, texture_id: egui::TextureId) {
-        if !self.preview.retired_egui_textures.contains(&texture_id) {
-            self.preview.retired_egui_textures.push(texture_id);
-        }
-        self.egui_ctx.request_repaint();
-    }
-
     fn release_retired_egui_textures(&mut self, frame: &eframe::Frame) {
-        if self.preview.retired_egui_textures.is_empty() {
+        if self.preview.retired_textures.is_empty() {
             return;
         }
         let Some(render_state) = frame.wgpu_render_state() else {
             return;
         };
-        let retired = std::mem::take(&mut self.preview.retired_egui_textures);
-        let mut renderer = render_state.renderer.write();
-        for texture_id in retired {
-            renderer.free_texture(&texture_id);
-        }
+        self.preview
+            .retired_textures
+            .release(&mut render_state.renderer.write());
+    }
+
+    /// Registers `pipeline`'s output for display; its texture is retired when
+    /// the returned value is dropped.
+    pub(crate) fn present_pipeline(
+        &self,
+        pipeline: RawGpuPipeline,
+        render_state: &eframe::egui_wgpu::RenderState,
+    ) -> PreviewPipeline {
+        PreviewPipeline::register(
+            pipeline,
+            &render_state.device,
+            &mut render_state.renderer.write(),
+            &self.preview.retired_textures,
+        )
     }
 
     fn take_preview_pipeline_and_release_textures(&mut self) -> Option<RawGpuPipeline> {
-        let pipeline = self.preview.gpu_pipeline.take();
+        let pipeline = self
+            .preview
+            .gpu_pipeline
+            .take()
+            .map(PreviewPipeline::into_gpu);
         if let Some(pipeline) = pipeline.as_ref() {
             self.preview.program_template = Some(pipeline.program_template());
-        }
-        if let Some(texture_id) = pipeline
-            .as_ref()
-            .and_then(|pipeline| pipeline.egui_texture_id)
-        {
-            self.retire_egui_texture(texture_id);
         }
         self.discard_auxiliary_previews();
         pipeline
     }
 
     fn discard_auxiliary_previews(&mut self) {
-        for texture_id in [
-            self.preview
-                .detail
-                .take()
-                .and_then(|preview| preview.pipeline.egui_texture_id),
-            self.preview
-                .navigation
-                .take()
-                .and_then(|preview| preview.pipeline.egui_texture_id),
-        ]
-        .into_iter()
-        .flatten()
-        {
-            self.retire_egui_texture(texture_id);
-        }
+        self.preview.detail = None;
+        self.preview.navigation = None;
     }
 
     #[cfg(target_os = "android")]
@@ -1555,6 +1550,8 @@ mod preview_clipping;
 mod preview_histogram;
 #[cfg(all(test, not(target_os = "android")))]
 mod preview_tests;
+mod preview_texture;
+pub(crate) use preview_texture::{PreviewPipeline, TextureRetirement};
 mod processing_export;
 mod sidecar_persistence;
 #[cfg(all(test, not(target_os = "android")))]

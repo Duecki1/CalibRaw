@@ -224,9 +224,14 @@ fn capture_review(root: &Path, output_dir: &Path) {
                 wgpu::TextureFormat::Rgba8Unorm,
                 RendererOptions::default(),
             );
-            pipeline.register_egui_texture(&device, &mut renderer);
-            let image_id = pipeline.egui_texture_id.unwrap();
-            app.preview.gpu_pipeline = Some(pipeline);
+            let presented = PreviewPipeline::register(
+                pipeline,
+                &device,
+                &mut renderer,
+                &app.preview.retired_textures,
+            );
+            let image_id = presented.texture();
+            app.preview.gpu_pipeline = Some(presented);
             let mut frame = eframe::Frame::_new_kittest();
             let mut frame_number = 0;
             for (case, tab, sidebar) in CASES {
@@ -300,7 +305,8 @@ fn capture_review(root: &Path, output_dir: &Path) {
                 .preview
                 .gpu_pipeline
                 .take()
-                .expect("retain reusable scene pipeline");
+                .expect("retain reusable scene pipeline")
+                .into_gpu();
         }
     }
     assert_eq!(count, filenames.len());

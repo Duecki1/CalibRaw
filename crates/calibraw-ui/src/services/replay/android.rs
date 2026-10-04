@@ -1,5 +1,9 @@
+//! Android replay encoding through MediaCodec (`calibraw-ffi`).
+
 #[cfg(target_os = "android")]
-use super::*;
+use super::REPLAY_FPS;
+#[cfg(target_os = "android")]
+use std::path::Path;
 
 #[cfg(target_os = "android")]
 pub(super) struct ReplayFrameWriter {

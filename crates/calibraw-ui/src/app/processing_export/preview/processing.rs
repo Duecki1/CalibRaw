@@ -82,7 +82,7 @@ impl CalibRawApp {
         else {
             return;
         };
-        if detail.pipeline.mask_layer_capacity() < preview_masks.masks.len().max(1) {
+        if detail.pipeline.gpu().mask_layer_capacity() < preview_masks.masks.len().max(1) {
             if let Some(detail) = self.preview.detail.as_mut() {
                 detail.revision = self.preview.revision.wrapping_sub(1);
             }
@@ -120,8 +120,11 @@ impl CalibRawApp {
             Some(detail.mask_source_region),
             interactive,
         );
-        let mask_extent =
-            detail_mask_texture_extent(mask_region, detail.pipeline.mask_atlas_edge(), interactive);
+        let mask_extent = detail_mask_texture_extent(
+            mask_region,
+            detail.pipeline.gpu().mask_atlas_edge(),
+            interactive,
+        );
         let mapping_changed =
             detail.mask_source_region != mask_region || detail.mask_texture_extent != mask_extent;
         let params = GpuParams::new_for_tile(
@@ -139,24 +142,11 @@ impl CalibRawApp {
             mask_extent,
         );
 
-        let normal_tone_is_current = !matches!(
+        let full_frame_tone_pipeline = full_frame_tone_pipeline(
+            self.preview.gpu_pipeline.as_ref(),
+            self.preview.navigation.as_ref(),
             self.preview.pending_stage,
-            Some(ProcessingStage::Raw | ProcessingStage::Tone)
         );
-        let full_frame_tone_pipeline = if normal_tone_is_current {
-            self.preview.gpu_pipeline.as_ref().or_else(|| {
-                self.preview
-                    .navigation
-                    .as_ref()
-                    .map(|preview| &preview.pipeline)
-            })
-        } else {
-            self.preview
-                .navigation
-                .as_ref()
-                .map(|preview| &preview.pipeline)
-                .or(self.preview.gpu_pipeline.as_ref())
-        };
         let Some(detail) = self.preview.detail.as_mut() else {
             return;
         };
@@ -165,7 +155,7 @@ impl CalibRawApp {
                 && self.masks.detail_dirty_layers.iter().any(|dirty| *dirty))
         {
             if let Err(error) = Self::upload_detail_masks(
-                &detail.pipeline,
+                detail.pipeline.gpu(),
                 &render_state.queue,
                 &preview_masks,
                 full_raw,
@@ -186,6 +176,7 @@ impl CalibRawApp {
             if let Some(full_frame) = full_frame_tone_pipeline {
                 detail
                     .pipeline
+                    .gpu()
                     .dispatch_tone_guide_with_inherited_statistics(
                         &render_state.queue,
                         &render_state.device,
@@ -193,7 +184,7 @@ impl CalibRawApp {
                         full_frame,
                     );
             } else {
-                detail.pipeline.dispatch_stage(
+                detail.pipeline.gpu().dispatch_stage(
                     &render_state.queue,
                     &render_state.device,
                     &params,
@@ -203,14 +194,14 @@ impl CalibRawApp {
         } else {
             if stage == ProcessingStage::Output {
                 if let Some(full_frame) = full_frame_tone_pipeline {
-                    detail.pipeline.inherit_tone_statistics(
+                    detail.pipeline.gpu().inherit_tone_statistics(
                         &render_state.queue,
                         &render_state.device,
                         full_frame,
                     );
                 }
             }
-            if let Err(error) = detail.pipeline.dispatch_stage_with_remove(
+            if let Err(error) = detail.pipeline.gpu().dispatch_stage_with_remove(
                 &render_state.queue,
                 &render_state.device,
                 &params,
@@ -348,7 +339,7 @@ impl CalibRawApp {
         let Some(stage) = self.preview.pending_stage else {
             return;
         };
-        let (Some(raw), Some(pipeline)) = (&self.develop.preview_raw, &self.preview.gpu_pipeline)
+        let (Some(raw), Some(pipeline)) = (&self.develop.preview_raw, self.preview.pipeline())
         else {
             self.preview.pending_stage = None;
             return;

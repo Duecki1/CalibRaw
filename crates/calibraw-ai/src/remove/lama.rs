@@ -1130,7 +1130,7 @@ mod tests {
             .map(|index| [noise(index, 0.02); 3])
             .collect::<Vec<_>>();
         assert!(orientation_coherence(&grain, width, 0, 0) < 0.15);
-        let mut line = grain.clone();
+        let mut line = grain;
         for step in 0..width {
             // A visible line: about seven times the grain's deviation.
             line[step * width + step / 2 + 2] = [line[step * width + step / 2 + 2][0] - 0.08; 3];

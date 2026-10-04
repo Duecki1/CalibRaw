@@ -4,11 +4,7 @@ impl CalibRawApp {
     pub(in crate::app) fn advance_preview_detail(&mut self, _frame: &eframe::Frame) {
         let preview_source = self.preview_source_raw();
         if self.preview.zoom <= DETAIL_ZOOM_START {
-            if let Some(old) = self.preview.detail.take() {
-                if let Some(texture_id) = old.pipeline.egui_texture_id {
-                    self.retire_egui_texture(texture_id);
-                }
-            }
+            self.preview.detail = None;
             self.preview.motion_at = None;
             self.preview.detail_pending_stage = None;
             self.preview.detail_urgent = false;
@@ -240,35 +236,24 @@ impl CalibRawApp {
             mask_source_region_uv(mask_region, full_raw.width, full_raw.height),
             mask_extent,
         );
-        let normal_tone_is_current = !matches!(
+        let full_frame_tone_pipeline = full_frame_tone_pipeline(
+            self.preview.gpu_pipeline.as_ref(),
+            self.preview.navigation.as_ref(),
             self.preview.pending_stage,
-            Some(ProcessingStage::Raw | ProcessingStage::Tone)
         );
-        let full_frame_tone_pipeline = if normal_tone_is_current {
-            self.preview.gpu_pipeline.as_ref().or_else(|| {
-                self.preview
-                    .navigation
-                    .as_ref()
-                    .map(|preview| &preview.pipeline)
-            })
-        } else {
-            self.preview
-                .navigation
-                .as_ref()
-                .map(|preview| &preview.pipeline)
-                .or(self.preview.gpu_pipeline.as_ref())
-        };
         let required_mask_layers = preview_masks.masks.len().max(1);
         if let Some(detail) = self.preview.detail.as_mut().filter(|detail| {
-            detail.pipeline.width == detail_raw.width
-                && detail.pipeline.height == detail_raw.height
+            detail.pipeline.gpu().width == detail_raw.width
+                && detail.pipeline.gpu().height == detail_raw.height
                 && detail
                     .pipeline
+                    .gpu()
                     .tone_guide_supports_origin(virtual_origin_x, virtual_origin_y)
-                && detail.pipeline.mask_layer_capacity() >= required_mask_layers
+                && detail.pipeline.gpu().mask_layer_capacity() >= required_mask_layers
         }) {
             if let Err(error) = detail
                 .pipeline
+                .gpu()
                 .upload_raw_tile(&render_state.queue, &detail_raw)
             {
                 self.ui.notice = Some(format!(
@@ -277,7 +262,7 @@ impl CalibRawApp {
                 return false;
             }
             if let Err(error) = Self::upload_detail_masks(
-                &detail.pipeline,
+                detail.pipeline.gpu(),
                 &render_state.queue,
                 &preview_masks,
                 &full_raw,
@@ -288,7 +273,7 @@ impl CalibRawApp {
                 self.ui.notice = Some(error);
                 return false;
             }
-            if let Err(error) = detail.pipeline.dispatch_stage_with_remove(
+            if let Err(error) = detail.pipeline.gpu().dispatch_stage_with_remove(
                 &render_state.queue,
                 &render_state.device,
                 &params,
@@ -309,6 +294,7 @@ impl CalibRawApp {
             if let Some(full_frame) = full_frame_tone_pipeline {
                 detail
                     .pipeline
+                    .gpu()
                     .dispatch_tone_guide_with_inherited_statistics(
                         &render_state.queue,
                         &render_state.device,
@@ -316,14 +302,14 @@ impl CalibRawApp {
                         full_frame,
                     );
             } else {
-                detail.pipeline.dispatch_stage(
+                detail.pipeline.gpu().dispatch_stage(
                     &render_state.queue,
                     &render_state.device,
                     &params,
                     ProcessingStage::Tone,
                 );
             }
-            detail.pipeline.dispatch_stage(
+            detail.pipeline.gpu().dispatch_stage(
                 &render_state.queue,
                 &render_state.device,
                 &params,
@@ -351,14 +337,12 @@ impl CalibRawApp {
         // ready to upload, keeping the fitted image available on failure.
         #[cfg(target_os = "android")]
         if let Some(old) = self.preview.detail.take() {
-            if let Some(id) = old.pipeline.egui_texture_id {
-                render_state.renderer.write().free_texture(&id);
-            }
+            old.pipeline.free_now(&mut render_state.renderer.write());
         }
-        let Some(program_template) = self.preview.gpu_pipeline.as_ref() else {
+        let Some(program_template) = self.preview.pipeline() else {
             return false;
         };
-        let mut pipeline = match RawGpuPipeline::new_headless_reusing_programs_with_mask_edge(
+        let pipeline = match RawGpuPipeline::new_headless_reusing_programs_with_mask_edge(
             &render_state.device,
             &render_state.queue,
             &detail_raw,
@@ -425,14 +409,8 @@ impl CalibRawApp {
             ProcessingStage::Output,
         );
 
-        let mut renderer = render_state.renderer.write();
-        if let Some(old) = self.preview.detail.take() {
-            if let Some(texture_id) = old.pipeline.egui_texture_id {
-                self.retire_egui_texture(texture_id);
-            }
-        }
-        pipeline.register_egui_texture(&render_state.device, &mut renderer);
-        drop(renderer);
+        self.preview.detail = None;
+        let pipeline = self.present_pipeline(pipeline, render_state);
 
         self.preview.detail = Some(PreviewDetail {
             pipeline,
