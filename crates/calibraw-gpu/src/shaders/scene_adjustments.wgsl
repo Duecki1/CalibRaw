@@ -216,9 +216,13 @@ fn local_curve_value(mask_index: u32, curve: u32, input: f32) -> f32 {
     );
 }
 
-// Unlike `Tonemap::scene_curve_zero_slope`, this keeps the endpoint tangent
-// when the curve's first point lies above x = 0.
+// Slope used to extend the curve below scene value 0. As in
+// `Tonemap::scene_curve_zero_slope`, a first point above x = 0 means the curve
+// is flat there, so negative values map to the curve's black.
 fn local_scene_curve_zero_slope(mask_index: u32, curve: u32) -> f32 {
+    if local_curve_point(mask_index, curve, 0u).x > 0.0 {
+        return 0.0;
+    }
     let count = u32(clamp(local_curve_block(mask_index, curve, 8u).x, 2.0, 16.0));
     let encoded_black = local_curve_value(mask_index, curve, 0.0);
     let encoded_slope = local_curve_tangent(mask_index, curve, 0u, count);

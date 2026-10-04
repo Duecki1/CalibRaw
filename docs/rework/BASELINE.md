@@ -75,6 +75,7 @@ sky, RawNIND) were not run; they are listed in [FEATURE_MATRIX.md](FEATURE_MATRI
 | `2026-10-04-fb5e986ec-rework2-mask-strip` | 132 | mask strip returns actions: 0 differences |
 | `2026-10-04-f9c51dc02-rework2-mask-properties` | 132 | mask properties return actions: 0 differences |
 | `2026-10-04-b610dc12c-step2-dedupe` | 132 | audit rows 20–27 (GPU, WGSL and core consolidation), working tree on `b610dc12`: 0 differences against `rework2-mask-properties` |
+| `2026-10-04-0f71335e4-mask-curve-black` | 132 | intentional fix: mask curves map negative values below a lifted first point to black (no review state uses such a curve): 0 differences against `step2-dedupe` |
 
 The harness is deterministic on this machine, so any later difference at
 tolerance 0 is a real change.
