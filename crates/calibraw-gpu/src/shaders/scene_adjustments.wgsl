@@ -5,8 +5,8 @@
 #import calibraw::tonemap as Tonemap
 #import calibraw::detail_capture as DetailCapture
 #import calibraw::detail_utils as DetailUtils
+#import calibraw::scene_source as SceneSource
 
-@group(0) @binding(11) var scene_tex: texture_2d<f32>;
 @group(0) @binding(12) var out_tex: texture_storage_2d<rgba8unorm, write>;
 @group(0) @binding(21) var adjustment_base_out: texture_storage_2d<rgba16float /* CALIBRAW_WORK_FORMAT */, write>;
 @group(0) @binding(23) var local_effects_out: texture_storage_2d<rgba16float /* CALIBRAW_WORK_FORMAT */, write>;
@@ -93,73 +93,6 @@ fn apply_local_exposure_nodes(pos: vec2<i32>, input_rgb: vec3<f32>) -> vec3<f32>
     return rgb;
 }
 
-fn raster_ca_warped_pos(pos: vec2<i32>, amount: f32) -> vec2<f32> {
-    let local_extent = vec2<f32>(
-        f32(Common::camera_uniforms.width - 1u),
-        f32(Common::camera_uniforms.height - 1u),
-    );
-    let origin = vec2<f32>(
-        f32(Common::camera_uniforms.tile_origin_x),
-        f32(Common::camera_uniforms.tile_origin_y),
-    );
-    let full_extent = vec2<f32>(
-        f32(Common::camera_uniforms.full_width - 1u),
-        f32(Common::camera_uniforms.full_height - 1u),
-    );
-    let center = 0.5 * full_extent;
-    let global_pos = vec2<f32>(pos) + origin;
-    let rel = global_pos - center;
-    let norm = rel / max(center, vec2<f32>(1.0));
-    let scale = 1.0 + amount * 0.001 * dot(norm, norm);
-    let warped_global = clamp(center + rel * scale, vec2<f32>(0.0), full_extent);
-    return clamp(warped_global - origin, vec2<f32>(0.0), local_extent);
-}
-
-fn raster_scene_bilinear(pos: vec2<f32>) -> vec3<f32> {
-    let base = floor(pos);
-    let p0 = vec2<i32>(i32(base.x), i32(base.y));
-    let p1 = p0 + vec2<i32>(1, 1);
-    let f = fract(pos);
-    let a = textureLoad(scene_tex, Common::clamp_pos(p0), 0).xyz;
-    let b = textureLoad(scene_tex, Common::clamp_pos(vec2<i32>(p1.x, p0.y)), 0).xyz;
-    let c = textureLoad(scene_tex, Common::clamp_pos(vec2<i32>(p0.x, p1.y)), 0).xyz;
-    let d = textureLoad(scene_tex, Common::clamp_pos(p1), 0).xyz;
-    return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
-}
-
-fn source_scene_at(pos: vec2<i32>) -> vec3<f32> {
-    var rgb = textureLoad(scene_tex, Common::clamp_pos(pos), 0).xyz;
-    if Common::camera_uniforms.pre_demosaiced_raster <= 0.5 {
-        return rgb;
-    }
-    if abs(Common::camera_uniforms.ca_red) > 1e-6 {
-        rgb.r = raster_scene_bilinear(
-            raster_ca_warped_pos(pos, Common::camera_uniforms.ca_red),
-        ).r;
-    }
-    if abs(Common::camera_uniforms.ca_blue) > 1e-6 {
-        rgb.b = raster_scene_bilinear(
-            raster_ca_warped_pos(pos, Common::camera_uniforms.ca_blue),
-        ).b;
-    }
-    return rgb;
-}
-
-fn scene_working_at(pos: vec2<i32>) -> vec3<f32> {
-    let camera_rgb = source_scene_at(pos);
-    var working = Color::cam_to_working(camera_rgb);
-
-    if Common::camera_uniforms.pre_demosaiced_raster > 0.5
-        && Common::camera_uniforms.camera_linear_raster <= 0.5 {
-        working = BasicAdjustments::apply_temperature_tint_values(
-            working,
-            Common::camera_uniforms.temperature,
-            Common::camera_uniforms.tint,
-        );
-    }
-    return working;
-}
-
 fn adjustment_base_at(pos: vec2<i32>) -> vec3<f32> {
     // Binding 22 is stage-relative: pre-tone here, post-tone in the presence pass.
     return DetailCapture::adjustment_base_at(pos);
@@ -167,10 +100,6 @@ fn adjustment_base_at(pos: vec2<i32>) -> vec3<f32> {
 
 fn local_effects_at(pos: vec2<i32>) -> vec3<f32> {
     return textureLoad(local_effects_tex, Common::clamp_pos(pos), 0).xyz;
-}
-
-fn log_luminance(rgb: vec3<f32>) -> f32 {
-    return log2(Common::safe_luma(rgb));
 }
 
 fn presence_step(reference_pixels: f32, maximum: i32) -> i32 {
@@ -187,7 +116,7 @@ fn bilateral_log_luminance(
     step: i32,
     range_strength: f32,
 ) -> f32 {
-    let center = log_luminance(adjustment_base_at(pos));
+    let center = Common::log_luminance(adjustment_base_at(pos));
     let sigma = max(f32(radius) * 0.72, 0.85);
     var sum = 0.0;
     var sum_w = 0.0;
@@ -195,7 +124,7 @@ fn bilateral_log_luminance(
     for (var dy = -3; dy <= 3; dy = dy + 1) {
         for (var dx = -3; dx <= 3; dx = dx + 1) {
             if abs(dx) > radius || abs(dy) > radius { continue; }
-            let sample_ev = log_luminance(
+            let sample_ev = Common::log_luminance(
                 adjustment_base_at(pos + vec2<i32>(dx * step, dy * step)),
             );
             let distance_squared = f32(dx * dx + dy * dy);
@@ -210,24 +139,16 @@ fn bilateral_log_luminance(
     return sum / max(sum_w, 1e-6);
 }
 
-fn atrous_kernel_weight(offset: i32) -> f32 {
-    switch abs(offset) {
-        case 0: { return 6.0; }
-        case 1: { return 4.0; }
-        default: { return 1.0; }
-    }
-}
-
 fn atrous_log_luminance(pos: vec2<i32>, step: i32, range_strength: f32) -> f32 {
-    let center = log_luminance(adjustment_base_at(pos));
+    let center = Common::log_luminance(adjustment_base_at(pos));
     var sum = 0.0;
     var sum_w = 0.0;
     for (var ky = -2; ky <= 2; ky = ky + 1) {
         for (var kx = -2; kx <= 2; kx = kx + 1) {
             let sample_pos = pos + vec2<i32>(kx * step, ky * step);
-            let sample_ev = log_luminance(adjustment_base_at(sample_pos));
+            let sample_ev = Common::log_luminance(adjustment_base_at(sample_pos));
             let delta = sample_ev - center;
-            let spatial = atrous_kernel_weight(kx) * atrous_kernel_weight(ky);
+            let spatial = Common::binomial5_weight(kx) * Common::binomial5_weight(ky);
             let range = exp(-range_strength * delta * delta);
             let weight = spatial * range;
             sum = sum + sample_ev * weight;
@@ -249,37 +170,30 @@ fn local_curve_point(mask_index: u32, curve: u32, index: u32) -> vec2<f32> {
     return select(packed.xy, packed.zw, (index & 1u) != 0u);
 }
 
-fn local_curve_secant(a: vec2<f32>, b: vec2<f32>) -> f32 {
-    return (b.y - a.y) / max(b.x - a.x, 1e-5);
-}
-
 fn local_curve_tangent(mask_index: u32, curve: u32, index: u32, count: u32) -> f32 {
     if index == 0u {
         let endpoint = local_curve_point(mask_index, curve, 0u);
-        let raw_slope = local_curve_secant(
+        let raw_slope = Tonemap::tone_curve_secant(
             endpoint,
             local_curve_point(mask_index, curve, 1u),
         );
         return Tonemap::limit_scene_curve_endpoint_tangent(endpoint.y, raw_slope);
     }
     if index + 1u >= count {
-        return local_curve_secant(
+        return Tonemap::tone_curve_secant(
             local_curve_point(mask_index, curve, count - 2u),
             local_curve_point(mask_index, curve, count - 1u),
         );
     }
-    let previous = local_curve_secant(
+    let previous = Tonemap::tone_curve_secant(
         local_curve_point(mask_index, curve, index - 1u),
         local_curve_point(mask_index, curve, index),
     );
-    let next = local_curve_secant(
+    let next = Tonemap::tone_curve_secant(
         local_curve_point(mask_index, curve, index),
         local_curve_point(mask_index, curve, index + 1u),
     );
-    if previous * next <= 0.0 {
-        return 0.0;
-    }
-    return 2.0 * previous * next / max(abs(previous + next), 1e-6) * sign(previous + next);
+    return Tonemap::tone_curve_interior_tangent(previous, next);
 }
 
 fn local_curve_value(mask_index: u32, curve: u32, input: f32) -> f32 {
@@ -293,22 +207,22 @@ fn local_curve_value(mask_index: u32, curve: u32, input: f32) -> f32 {
         }
     }
 
-    let p0 = local_curve_point(mask_index, curve, segment);
-    let p1 = local_curve_point(mask_index, curve, segment + 1u);
-    let width = max(p1.x - p0.x, 1e-5);
-    let t = clamp((x - p0.x) / width, 0.0, 1.0);
-    let t2 = t * t;
-    let t3 = t2 * t;
-    let m0 = local_curve_tangent(mask_index, curve, segment, count) * width;
-    let m1 = local_curve_tangent(mask_index, curve, segment + 1u, count) * width;
-    let hermite = (2.0 * t3 - 3.0 * t2 + 1.0) * p0.y
-        + (t3 - 2.0 * t2 + t) * m0
-        + (-2.0 * t3 + 3.0 * t2) * p1.y
-        + (t3 - t2) * m1;
-    return clamp(hermite, min(p0.y, p1.y), max(p0.y, p1.y));
+    return Tonemap::tone_curve_hermite(
+        x,
+        local_curve_point(mask_index, curve, segment),
+        local_curve_point(mask_index, curve, segment + 1u),
+        local_curve_tangent(mask_index, curve, segment, count),
+        local_curve_tangent(mask_index, curve, segment + 1u, count),
+    );
 }
 
+// Slope used to extend the curve below scene value 0. As in
+// `Tonemap::scene_curve_zero_slope`, a first point above x = 0 means the curve
+// is flat there, so negative values map to the curve's black.
 fn local_scene_curve_zero_slope(mask_index: u32, curve: u32) -> f32 {
+    if local_curve_point(mask_index, curve, 0u).x > 0.0 {
+        return 0.0;
+    }
     let count = u32(clamp(local_curve_block(mask_index, curve, 8u).x, 2.0, 16.0));
     let encoded_black = local_curve_value(mask_index, curve, 0.0);
     let encoded_slope = local_curve_tangent(mask_index, curve, 0u, count);
@@ -401,7 +315,7 @@ fn prepare_scene_node(@builtin(global_invocation_id) gid: vec3<u32>) {
     if gid.x >= Common::camera_uniforms.width || gid.y >= Common::camera_uniforms.height { return; }
     let pos = vec2<i32>(i32(gid.x), i32(gid.y));
 
-    var rgb = Profile::apply_camera_characterization(scene_working_at(pos));
+    var rgb = Profile::apply_camera_characterization(SceneSource::scene_working_at(pos));
     let profile_exposure_ev = bitcast<f32>(Common::camera_uniforms.profile_flags.z);
     rgb = rgb * exp2(profile_exposure_ev);
     rgb = BasicAdjustments::apply_exposure(rgb);

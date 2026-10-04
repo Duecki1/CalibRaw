@@ -24,38 +24,6 @@ impl<'a> LocalAdjustmentTabs<'a> {
 }
 
 impl Sidebar {
-    pub(super) fn prepare_content_mask(
-        app: &mut CalibRawApp,
-        frame: &eframe::Frame,
-        kind: MaskKind,
-    ) {
-        match kind {
-            MaskKind::Subject | MaskKind::Background => app.request_subject_mask(frame),
-            MaskKind::Sky => app.request_sky_mask(frame),
-            MaskKind::DepthRange => app.request_depth_mask(frame),
-            MaskKind::Object => {
-                if let Err(error) = app.capture_mask_source(frame) {
-                    app.report_ai_mask_error(error);
-                }
-            }
-            MaskKind::LuminanceRange | MaskKind::ColorRange => {
-                if let Err(error) = app.capture_mask_source(frame) {
-                    app.ui.status = error;
-                    return;
-                }
-                let source = app.masks.source_cache.clone();
-                if let Some(component) = app.masks.stack.selected_component_mut() {
-                    match &mut component.geometry {
-                        MaskGeometry::LuminanceRange { source: target, .. }
-                        | MaskGeometry::ColorRange { source: target, .. } => *target = source,
-                        _ => {}
-                    }
-                }
-            }
-            _ => {}
-        }
-    }
-
     pub(super) fn show_local_adjustment_card(
         ui: &mut Ui,
         adjustment: &mut crate::pipeline::LocalAdjustments,
@@ -238,7 +206,7 @@ impl Sidebar {
             ui.selectable_value(point_color_tab, false, "Mixer");
             ui.selectable_value(point_color_tab, true, "Point Color");
         });
-        ui.add_space(crate::ui::theme::SPACE_XS);
+        ui.add_space(moduwu_design::SPACE_XS);
         if *point_color_tab {
             crate::ui::components::point_color::point_color(
                 ui,

@@ -2,11 +2,7 @@
 fn atmosphere_hash(position: vec2<f32>) -> f32 {
     let signed_cell = vec2<i32>(position);
     let cell = bitcast<vec2<u32>>(signed_cell);
-    var state = cell.x * 1597334677u ^ cell.y * 3812015801u;
-    state = (state ^ (state >> 16u)) * 2246822519u;
-    state = (state ^ (state >> 13u)) * 3266489917u;
-    state = state ^ (state >> 16u);
-    return f32(state & 0x00ffffffu) / 16777215.0;
+    return mask_effect_hash_unit(cell.x * 1597334677u ^ cell.y * 3812015801u);
 }
 
 fn atmosphere_noise(position: vec2<f32>) -> f32 {
@@ -93,11 +89,7 @@ fn fog_depth_at(pos: vec2<i32>) -> f32 {
 
 fn fog_hash3(cell: vec3<i32>) -> f32 {
     let p = bitcast<vec3<u32>>(cell);
-    var h = p.x * 1597334677u ^ p.y * 3812015801u ^ p.z * 2798796415u;
-    h = (h ^ (h >> 16u)) * 2246822519u;
-    h = (h ^ (h >> 13u)) * 3266489917u;
-    h = h ^ (h >> 16u);
-    return f32(h & 0x00ffffffu) / 16777215.0;
+    return mask_effect_hash_unit(p.x * 1597334677u ^ p.y * 3812015801u ^ p.z * 2798796415u);
 }
 
 fn fog_noise3(point: vec3<f32>) -> f32 {

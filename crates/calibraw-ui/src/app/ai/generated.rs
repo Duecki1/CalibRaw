@@ -155,7 +155,7 @@ impl CalibRawApp {
         );
         self.begin_foreground_operation(ForegroundOperation {
             kind: ForegroundOperationKind::Ai(generated_feature(model)),
-            document_id: self.persistence.sidecar_generation,
+            document_id: self.persistence.document_generation,
             cancellation,
             progress: ForegroundProgress::indeterminate(
                 self.generated_mask_progress(model, model_present),
@@ -247,7 +247,7 @@ impl CalibRawApp {
         };
 
         let cancelled = operation.is_cancelled();
-        let stale = operation.document_id != self.persistence.sidecar_generation;
+        let stale = !operation.is_for_document(self.persistence.document_generation);
 
         let mut succeeded = false;
         let mut error_message = None;
@@ -412,7 +412,7 @@ mod tests {
                 kind: ForegroundOperationKind::Ai(AiFeature::SceneDepth),
                 document_id: app
                     .persistence
-                    .sidecar_generation
+                    .document_generation
                     .wrapping_add(u64::from(stale)),
                 cancellation: Arc::new(std::sync::atomic::AtomicBool::new(cancelled)),
                 progress: ForegroundProgress::indeterminate("Testing depth failure"),
@@ -462,7 +462,7 @@ mod tests {
                     kind: ForegroundOperationKind::Ai(kind),
                     document_id: app
                         .persistence
-                        .sidecar_generation
+                        .document_generation
                         .wrapping_add(u64::from(stale)),
                     cancellation: Arc::new(std::sync::atomic::AtomicBool::new(cancelled)),
                     progress: ForegroundProgress::indeterminate("Testing mask result"),

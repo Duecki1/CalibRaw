@@ -4,7 +4,7 @@ use super::*;
 /// selected thumbnail height rather than enlarging their images to fill space.
 const THUMBNAIL_IMAGE_HORIZONTAL_INSET: f32 = 0.0;
 const THUMBNAIL_IMAGE_VERTICAL_CHROME: f32 = 0.0;
-const THUMBNAIL_CARD_RADIUS: f32 = crate::ui::theme::CARD_RADIUS;
+const THUMBNAIL_CARD_RADIUS: f32 = moduwu_design::CARD_RADIUS;
 
 pub(super) fn send_scan_failure(
     sender: &mpsc::SyncSender<ScanEvent>,

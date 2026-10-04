@@ -39,7 +39,7 @@ fn mode_selector(ui: &mut Ui, mode: &mut RadialBlurMode) -> bool {
     ui.horizontal(|ui| {
         let width = ((ui.available_width() - ui.spacing().item_spacing.x) * 0.5).max(1.0);
         for candidate in RadialBlurMode::ALL {
-            if crate::ui::theme::segmented_button(ui, candidate.label(), *mode == candidate, width)
+            if moduwu_design::segmented_button(ui, candidate.label(), *mode == candidate, width)
                 .on_hover_text(match candidate {
                     RadialBlurMode::Zoom => "Trails radiate toward the blur center.",
                     RadialBlurMode::Spin => "Trails rotate around the blur center.",

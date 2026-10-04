@@ -23,9 +23,9 @@ impl Sidebar {
         if app.develop_ui.crop_constraint_reference.is_none() {
             app.develop_ui.crop_constraint_reference = Some(app.develop.geometry.crop);
         }
-        crate::ui::theme::section_card(ui, "Aspect ratio", |ui| {
+        moduwu_design::section_card(ui, "Aspect ratio", |ui| {
             let previous_aspect = app.develop.geometry.aspect_ratio;
-            crate::ui::theme::combo_box(
+            moduwu_design::combo_box(
                 "crop-aspect-ratio",
                 app.develop.geometry.aspect_ratio.label(),
                 ui.available_width().max(1.0),
@@ -55,13 +55,13 @@ impl Sidebar {
             }
         });
 
-        crate::ui::theme::card_gap(ui);
-        crate::ui::theme::section_card(ui, "Rotation", |ui| {
+        moduwu_design::card_gap(ui);
+        moduwu_design::section_card(ui, "Rotation", |ui| {
             ui.horizontal(|ui| {
                 if crate::ui::icons::icon_button(
                     ui,
                     crate::ui::icons::UiIcon::RotateLeft,
-                    crate::ui::theme::toolbar_icon_size(),
+                    moduwu_design::toolbar_icon_size(),
                     "Rotate 90° counter-clockwise",
                 )
                 .clicked()
@@ -71,7 +71,7 @@ impl Sidebar {
                 if crate::ui::icons::icon_button(
                     ui,
                     crate::ui::icons::UiIcon::RotateRight,
-                    crate::ui::theme::toolbar_icon_size(),
+                    moduwu_design::toolbar_icon_size(),
                     "Rotate 90° clockwise",
                 )
                 .clicked()
@@ -93,7 +93,7 @@ impl Sidebar {
             } else {
                 "Draw straighten line"
             };
-            if crate::ui::theme::toggle_button(
+            if moduwu_design::toggle_button(
                 ui,
                 straighten_label,
                 app.develop_ui.straighten_tool_active,
@@ -112,10 +112,10 @@ impl Sidebar {
             }
         });
 
-        crate::ui::theme::card_gap(ui);
-        crate::ui::theme::section_card(ui, "Transform", |ui| {
+        moduwu_design::card_gap(ui);
+        moduwu_design::section_card(ui, "Transform", |ui| {
             ui.horizontal_wrapped(|ui| {
-                if crate::ui::theme::toggle_button(
+                if moduwu_design::toggle_button(
                     ui,
                     "Flip horizontal",
                     app.develop.geometry.flip_horizontal,
@@ -124,7 +124,7 @@ impl Sidebar {
                 {
                     app.develop.geometry.flip_horizontal = !app.develop.geometry.flip_horizontal;
                 }
-                if crate::ui::theme::toggle_button(
+                if moduwu_design::toggle_button(
                     ui,
                     "Flip vertical",
                     app.develop.geometry.flip_vertical,

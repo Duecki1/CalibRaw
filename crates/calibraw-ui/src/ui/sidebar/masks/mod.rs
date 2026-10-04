@@ -1,4 +1,5 @@
 use super::*;
+use crate::app::MaskStripEdit;
 
 pub(super) fn mask_component_badge(
     component_index: usize,
@@ -69,6 +70,30 @@ struct SubmaskDragState {
     hover_group: Option<(usize, std::time::Instant)>,
     drop_target: Option<(usize, usize)>,
     target_loss_started: Option<std::time::Instant>,
+}
+
+/// Requests collected while drawing the mask strip; the strip turns them
+/// into `MaskStripActions` after the cards.
+#[derive(Default)]
+struct MaskStripRequests {
+    edits: Vec<MaskStripEdit>,
+    select_mask: Option<usize>,
+    select_component: Option<usize>,
+    new_mask: Option<MaskKind>,
+    add_component: Option<(MaskKind, MaskCombineMode)>,
+    duplicate_mask: Option<(usize, bool)>,
+    paste_mask: Option<usize>,
+    duplicate_component: Option<(usize, usize, bool)>,
+    paste_component: Option<(usize, usize)>,
+}
+
+/// The sub-mask a context menu acts on and what it allows.
+#[derive(Clone, Copy)]
+struct SubmaskMenu {
+    mask_index: usize,
+    component_index: usize,
+    can_delete: bool,
+    can_add_component: bool,
 }
 
 mod adjustments;

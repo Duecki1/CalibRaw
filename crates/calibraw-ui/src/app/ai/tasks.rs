@@ -241,7 +241,7 @@ mod tests {
         let cancellation = Arc::new(AtomicBool::new(false));
         assert!(app.begin_foreground_operation(ForegroundOperation {
             kind: ForegroundOperationKind::Ai(feature),
-            document_id: app.persistence.sidecar_generation,
+            document_id: app.persistence.document_generation,
             cancellation: Arc::clone(&cancellation),
             progress: ForegroundProgress::indeterminate("Testing"),
             cancelling: false,

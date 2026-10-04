@@ -1,6 +1,7 @@
 use crate::app::{CalibRawApp, SidebarTab};
-use crate::ui::{layout::ScreenLayout, preview::Preview, sidebar::Sidebar, top_bar::TopBar};
+use crate::ui::{sidebar::Sidebar, top_bar::TopBar};
 use eframe::egui::{self, Rect, Sense, Ui};
+use moduwu_design::ScreenLayout;
 
 const HANDLE_HEIGHT: f32 = 24.0;
 const COLLAPSED_HEIGHT: f32 = 144.0;
@@ -20,7 +21,7 @@ pub(crate) fn show(ui: &mut Ui, app: &mut CalibRawApp, frame: &eframe::Frame) {
     }
     let canvas = ui.available_rect_before_wrap();
     let context = ui.ctx().clone();
-    let top_height = crate::ui::theme::TOOLBAR_HEIGHT + 12.0;
+    let top_height = moduwu_design::TOOLBAR_HEIGHT + 12.0;
     let top = Rect::from_min_size(canvas.min, egui::vec2(canvas.width(), top_height));
     let height_id = egui::Id::new("portrait-tool-sheet-height");
     let default_height = (canvas.height() * 0.45).max(360.0);
@@ -94,7 +95,7 @@ pub(crate) fn show(ui: &mut Ui, app: &mut CalibRawApp, frame: &eframe::Frame) {
         egui::pos2(canvas.left(), top.bottom().min(sheet.top())),
         egui::pos2(canvas.right(), sheet.top()),
     );
-    Preview::show_in_viewport(ui, app, frame, Some(exposed));
+    app.show_preview(ui, frame, Some(exposed));
 }
 
 fn show_top_controls(
@@ -114,7 +115,7 @@ fn show_top_controls(
             ui.set_clip_rect(top);
             egui::Frame::new()
                 .fill(ui.visuals().panel_fill.gamma_multiply(0.92))
-                .inner_margin(egui::Margin::symmetric(crate::ui::theme::SPACE_SM as i8, 6))
+                .inner_margin(egui::Margin::symmetric(moduwu_design::SPACE_SM as i8, 6))
                 .show(ui, |ui| TopBar::show_portrait(ui, app, frame));
         });
 }
@@ -125,7 +126,7 @@ fn show_landscape(ui: &mut Ui, app: &mut CalibRawApp, frame: &eframe::Frame) {
     let context = ui.ctx().clone();
     let top = Rect::from_min_size(
         canvas.min,
-        egui::vec2(canvas.width(), crate::ui::theme::TOOLBAR_HEIGHT + 12.0),
+        egui::vec2(canvas.width(), moduwu_design::TOOLBAR_HEIGHT + 12.0),
     );
     show_top_controls(&context, top, app, frame);
     let rail_width = Sidebar::ANDROID_LANDSCAPE_TOOL_RAIL_WIDTH;
@@ -176,7 +177,7 @@ fn show_landscape(ui: &mut Ui, app: &mut CalibRawApp, frame: &eframe::Frame) {
             Sidebar::show(&mut content, app, ScreenLayout::Horizontal, frame);
         });
     let exposed = Rect::from_min_max(egui::pos2(canvas.left(), top.bottom()), tools.left_bottom());
-    Preview::show_in_viewport(ui, app, frame, Some(exposed));
+    app.show_preview(ui, frame, Some(exposed));
 }
 
 #[cfg(test)]

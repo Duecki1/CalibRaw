@@ -47,8 +47,6 @@ fn finish_library_edit_transfer(
         failures,
     } = outcome;
     app.library.clear_selection();
-    #[cfg(target_os = "android")]
-    calibraw_ffi::set_back_navigation_active(false);
     app.library.refresh(context);
     app.library.status = if failures.is_empty() {
         format!(

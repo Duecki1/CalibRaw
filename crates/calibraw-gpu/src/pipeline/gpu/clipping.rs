@@ -95,7 +95,7 @@ impl PreviewClippingGpu {
         shadows: bool,
         highlights: bool,
     ) {
-        self.update_texture(device, queue, &source._out_view, shadows, highlights);
+        self.update_texture(device, queue, source.output_view(), shadows, highlights);
     }
 
     fn update_texture(

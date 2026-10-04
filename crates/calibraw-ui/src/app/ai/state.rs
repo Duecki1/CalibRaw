@@ -262,7 +262,7 @@ impl CalibRawApp {
             detail.mask_texture_extent
                 != crate::pipeline::mask_region_texture_extent(
                     detail.mask_source_region,
-                    detail.pipeline.mask_atlas_edge(),
+                    detail.pipeline.gpu().mask_atlas_edge(),
                 )
         });
         let should_commit = self.masks.interaction_has_uncommitted_change || should_refine;

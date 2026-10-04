@@ -40,7 +40,11 @@ pub(super) fn thumbnail_hover_overlay(
     // Full-photo scrim with centered, gently sliding text.
     let mut painter = ui.painter_at(rect);
     painter.set_opacity(progress);
-    painter.rect_filled(rect, theme::CARD_RADIUS, Color32::from_black_alpha(156));
+    painter.rect_filled(
+        rect,
+        moduwu_design::CARD_RADIUS,
+        Color32::from_black_alpha(156),
+    );
     let scale = ((rect.height() - 16.0) / 124.0).clamp(0.4, 1.0);
     let center = rect.center() + egui::vec2(0.0, 7.0 * (1.0 - progress));
     let detail = entry.thumbnail_error.clone().unwrap_or_else(|| {
@@ -429,8 +433,10 @@ fn compact_review_editor(
     asset_id: &LibraryAssetId,
     review: PhotoReview,
 ) -> Option<ReviewChange> {
-    let (rect, response) =
-        ui.allocate_exact_size(egui::vec2(92.0, theme::CONTROL_HEIGHT), Sense::click());
+    let (rect, response) = ui.allocate_exact_size(
+        egui::vec2(92.0, moduwu_design::CONTROL_HEIGHT),
+        Sense::click(),
+    );
     let painter = ui.painter_at(rect);
     let visuals = ui.style().interact(&response);
     painter.rect_filled(rect, visuals.corner_radius, visuals.weak_bg_fill);
@@ -477,9 +483,9 @@ fn compact_review_editor(
         ui.visuals().weak_text_color(),
     );
     let mut change = None;
-    theme::dropdown_menu(&response, |ui| {
+    moduwu_design::dropdown_menu(&response, |ui| {
         let (rect, _) = ui.allocate_exact_size(
-            egui::vec2(EDITOR_WIDTH, theme::CONTROL_HEIGHT),
+            egui::vec2(EDITOR_WIDTH, moduwu_design::CONTROL_HEIGHT),
             Sense::hover(),
         );
         change = review_editor(ui, rect, asset_id, review, false);
@@ -518,7 +524,7 @@ pub(crate) fn show_current_photo_review(ui: &mut Ui, app: &mut CalibRawApp, comp
         .data_mut(|data| data.insert_temp(cache_id, asset.clone()));
     let change = if !compact && ui.available_width() >= EDITOR_WIDTH {
         let (rect, _) = ui.allocate_exact_size(
-            egui::vec2(EDITOR_WIDTH, theme::CONTROL_HEIGHT),
+            egui::vec2(EDITOR_WIDTH, moduwu_design::CONTROL_HEIGHT),
             Sense::hover(),
         );
         review_editor(ui, rect, &asset.id, review, false)

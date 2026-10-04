@@ -1,11 +1,7 @@
 use super::{
     pack_effect_mask, pack_local_point_curve, pack_point_curve, processing_work_format,
-    shader_manager::ShaderManager, work_shader_source, GpuParams, ProcessingQuality,
-    RawGpuPipeline, SHADER_BAYER_RCD_P1, SHADER_BAYER_RCD_P2, SHADER_BAYER_RCD_P3,
-    SHADER_BAYER_RCD_P4, SHADER_COLOR_DENOISE, SHADER_CREATIVE_EFFECTS, SHADER_DUAL_DEMOSAIC,
-    SHADER_HIGHLIGHTS, SHADER_RAW_SAMPLING, SHADER_REMOVE_COMPOSITE, SHADER_SCENE_ADJUSTMENTS,
-    SHADER_TONEMAP, SHADER_TONE_ANALYSIS, SHADER_VIEW_TRANSFORM, SHADER_XTRANS_DEMOSAIC,
-    SHADER_XTRANS_FINISH,
+    shader_manager::ShaderManager, shaders, work_shader_source, GpuParams, PipelineOptions,
+    ProcessingQuality, RawGpuPipeline,
 };
 use crate::pipeline::{
     extract_padded_tile, CameraProfile, CfaKind, CompactPixelMap, ExportTile, ExposureParams,
@@ -15,27 +11,39 @@ use crate::pipeline::{
 
 #[test]
 fn point_color_shader_uses_display_srgb_hsl_and_combined_unadjusted_selection() {
-    assert!(SHADER_VIEW_TRANSFORM
+    assert!(shaders::VIEW_TRANSFORM
+        .text
         .contains("fn apply_point_colors(input_rgb: vec3<f32>, selection_sample: vec3<f32>)"));
-    assert!(SHADER_VIEW_TRANSFORM
+    assert!(shaders::VIEW_TRANSFORM
+        .text
         .contains("fn point_color_selection_weight(sample: vec3<f32>, index: u32)"));
-    assert!(SHADER_VIEW_TRANSFORM.contains("point_color_hue_weight"));
-    assert!(SHADER_VIEW_TRANSFORM.contains("point_color_hsl_to_rgb"));
-    assert!(SHADER_VIEW_TRANSFORM
+    assert!(shaders::VIEW_TRANSFORM
+        .text
+        .contains("point_color_hue_weight"));
+    assert!(shaders::VIEW_TRANSFORM
+        .text
+        .contains("point_color_hsl_to_rgb"));
+    assert!(shaders::VIEW_TRANSFORM
+        .text
         .contains("display_linear = apply_point_colors(display_linear, point_color_sample)"));
-    assert!(SHADER_VIEW_TRANSFORM
+    assert!(shaders::VIEW_TRANSFORM
+        .text
         .contains("color_delta = color_delta + (adjusted - input_rgb) * weight"));
 }
 
 #[test]
 fn point_color_visualization_matches_the_mask_overlay_style() {
-    assert!(SHADER_VIEW_TRANSFORM
+    assert!(shaders::VIEW_TRANSFORM
+        .text
         .contains("let overlay_rgb = vec3<f32>(78.0 / 255.0, 163.0 / 255.0, 1.0);"));
-    assert!(SHADER_VIEW_TRANSFORM.contains("let overlay_alpha = selected_weight * (92.0 / 255.0);"));
-    assert!(
-        SHADER_VIEW_TRANSFORM.contains("output_rgb = mix(output_rgb, overlay_rgb, overlay_alpha);")
-    );
-    assert!(!SHADER_VIEW_TRANSFORM
+    assert!(shaders::VIEW_TRANSFORM
+        .text
+        .contains("let overlay_alpha = selected_weight * (92.0 / 255.0);"));
+    assert!(shaders::VIEW_TRANSFORM
+        .text
+        .contains("output_rgb = mix(output_rgb, overlay_rgb, overlay_alpha);"));
+    assert!(!shaders::VIEW_TRANSFORM
+        .text
         .contains("adjusted = mix(vec3<f32>(luminance), adjusted, selected_weight);"));
 }
 
@@ -53,33 +61,25 @@ fn local_point_colors_pack_with_mask_adjustments() {
     assert!((packed.point_colors[0].shifts[0] - 0.125).abs() < 1e-6);
 }
 
-fn validate_shader(name: &str, source: &str, quality: ProcessingQuality) {
+/// Composes `shader` the way production does for `quality` and validates it.
+fn validate_shader(shader: shaders::EntryShader, quality: ProcessingQuality) {
     let format = processing_work_format(quality);
-    let mut manager = ShaderManager::new(
-        format,
-        if name.starts_with("X-Trans") {
-            CfaKind::XTrans
-        } else {
-            CfaKind::Bayer
-        },
-    )
-    .unwrap();
-    let source = match quality {
-        ProcessingQuality::Preview => std::borrow::Cow::Borrowed(source),
-        ProcessingQuality::High if source.contains("CALIBRAW_WORK_FORMAT") => {
-            work_shader_source(source, format).unwrap()
-        }
-        ProcessingQuality::High => std::borrow::Cow::Borrowed(source),
+    let mut manager = ShaderManager::new(format, shader.sensor.unwrap_or(CfaKind::Bayer)).unwrap();
+    let module_text = shader.source.module_text();
+    let text = if shader.work_format {
+        work_shader_source(&module_text, format).unwrap()
+    } else {
+        std::borrow::Cow::Borrowed(module_text.as_ref())
     };
     let module = manager
-        .compose_naga_module(source.as_ref(), "shader_test.wgsl")
-        .unwrap_or_else(|error| panic!("{name} did not compose: {error:#}"));
+        .compose_naga_module(text.as_ref(), shader.source.file_name)
+        .unwrap_or_else(|error| panic!("{} did not compose: {error:#}", shader.label));
     naga::valid::Validator::new(
         naga::valid::ValidationFlags::all(),
         naga::valid::Capabilities::all(),
     )
     .validate(&module)
-    .unwrap_or_else(|error| panic!("{name} did not validate: {error}"));
+    .unwrap_or_else(|error| panic!("{} did not validate: {error}", shader.label));
 }
 
 fn shader_f32_const(source: &str, name: &str) -> f32 {
@@ -97,7 +97,7 @@ fn shader_f32_const(source: &str, name: &str) -> f32 {
 }
 
 fn shared_highlight_sensor_clip_for_test(highlight_clip: f32) -> f32 {
-    let safety = shader_f32_const(SHADER_RAW_SAMPLING, "SHARED_HIGHLIGHT_CLIP_SAFETY");
+    let safety = shader_f32_const(shaders::RAW_SAMPLING.text, "SHARED_HIGHLIGHT_CLIP_SAFETY");
     safety * highlight_clip.max(0.01)
 }
 
@@ -117,25 +117,29 @@ fn adjacent_f32(value: f32, above: bool) -> f32 {
 
 #[test]
 fn lch_and_rcd_share_sensor_space_highlight_clip_definition() {
-    assert!(SHADER_RAW_SAMPLING.contains("fn shared_highlight_sensor_clip() -> f32"));
-    assert!(
-        SHADER_RAW_SAMPLING.contains("return raw_sensor_at(p) >= shared_highlight_sensor_clip();")
-    );
-    assert!(SHADER_RAW_SAMPLING
+    assert!(shaders::RAW_SAMPLING
+        .text
+        .contains("fn shared_highlight_sensor_clip() -> f32"));
+    assert!(shaders::RAW_SAMPLING
+        .text
+        .contains("return raw_sensor_at(p) >= shared_highlight_sensor_clip();"));
+    assert!(shaders::RAW_SAMPLING
+        .text
         .contains("fn shared_highlight_clip_for_cfa_channel(channel: u32) -> f32"));
-    assert!(!SHADER_RAW_SAMPLING.contains("min_wb"));
-    assert!(SHADER_HIGHLIGHTS.contains("#import calibraw::raw_sampling as RawSampling"));
-    assert!(SHADER_HIGHLIGHTS.contains("clipped = clipped || RawSampling::is_raw_clipped(p);"));
-    assert!(SHADER_HIGHLIGHTS
+    assert!(!shaders::RAW_SAMPLING.text.contains("min_wb"));
+    assert!(shaders::HIGHLIGHTS
+        .text
+        .contains("#import calibraw::raw_sampling as RawSampling"));
+    assert!(shaders::HIGHLIGHTS
+        .text
+        .contains("clipped = clipped || RawSampling::is_raw_clipped(p);"));
+    assert!(shaders::HIGHLIGHTS
+        .text
         .contains("RawSampling::shared_highlight_clip_for_cfa_channel(physical_channel)"));
-    assert!(!SHADER_HIGHLIGHTS.contains("fn lch_common_clip()"));
+    assert!(!shaders::HIGHLIGHTS.text.contains("fn lch_common_clip()"));
 
-    validate_shader("highlights", SHADER_HIGHLIGHTS, ProcessingQuality::Preview);
-    validate_shader(
-        "Bayer pass 2",
-        SHADER_BAYER_RCD_P2,
-        ProcessingQuality::Preview,
-    );
+    validate_shader(shaders::HIGHLIGHTS_ENTRY, ProcessingQuality::Preview);
+    validate_shader(shaders::BAYER_RCD_P2_ENTRY, ProcessingQuality::Preview);
 }
 
 #[test]
@@ -176,10 +180,11 @@ fn opposed_sensor_and_channel_wb_clipping_are_equivalent_with_unequal_wb() {
     const DARKTABLE_OPPOSED_CLIP_MAGIC: f32 = 0.987;
 
     assert_eq!(
-        shader_f32_const(SHADER_HIGHLIGHTS, "DARKTABLE_OPPOSED_CLIP_MAGIC"),
+        shader_f32_const(shaders::HIGHLIGHTS.text, "DARKTABLE_OPPOSED_CLIP_MAGIC"),
         DARKTABLE_OPPOSED_CLIP_MAGIC
     );
-    assert!(SHADER_RAW_SAMPLING
+    assert!(shaders::RAW_SAMPLING
+        .text
         .contains("raw_sensor_at(p) >= 0.987 * max(Common::camera_uniforms.highlight_clip, 0.01)"));
 
     let highlight_clip = 1.03_f32;
@@ -209,38 +214,15 @@ fn opposed_sensor_and_channel_wb_clipping_are_equivalent_with_unequal_wb() {
 
 #[test]
 fn compute_shaders_validate() {
-    for (name, source) in [
-        ("highlights", SHADER_HIGHLIGHTS),
-        ("Bayer pass 1", SHADER_BAYER_RCD_P1),
-        ("Bayer pass 2", SHADER_BAYER_RCD_P2),
-        ("Bayer pass 3", SHADER_BAYER_RCD_P3),
-        ("Bayer pass 4", SHADER_BAYER_RCD_P4),
-        ("dual demosaic", SHADER_DUAL_DEMOSAIC),
-        ("X-Trans demosaic", SHADER_XTRANS_DEMOSAIC),
-        ("X-Trans finish", SHADER_XTRANS_FINISH),
-        ("color denoise", SHADER_COLOR_DENOISE),
-        ("tone analysis", SHADER_TONE_ANALYSIS),
-        ("scene adjustments", SHADER_SCENE_ADJUSTMENTS),
-        ("creative effects", SHADER_CREATIVE_EFFECTS),
-        ("Remove composite", SHADER_REMOVE_COMPOSITE),
-        ("view transform", SHADER_VIEW_TRANSFORM),
-    ] {
-        validate_shader(name, source, ProcessingQuality::Preview);
+    for shader in shaders::ALL_ENTRY_SHADERS {
+        validate_shader(shader, ProcessingQuality::Preview);
     }
 }
 
 #[test]
 fn high_quality_shaders_validate() {
-    for (name, source) in [
-        ("Bayer pass 1", SHADER_BAYER_RCD_P1),
-        ("dual demosaic", SHADER_DUAL_DEMOSAIC),
-        ("X-Trans demosaic", SHADER_XTRANS_DEMOSAIC),
-        ("color denoise", SHADER_COLOR_DENOISE),
-        ("Remove composite", SHADER_REMOVE_COMPOSITE),
-        ("scene adjustments", SHADER_SCENE_ADJUSTMENTS),
-        ("creative effects", SHADER_CREATIVE_EFFECTS),
-    ] {
-        validate_shader(name, source, ProcessingQuality::High);
+    for shader in shaders::ALL_ENTRY_SHADERS {
+        validate_shader(shader, ProcessingQuality::High);
     }
 }
 
@@ -315,7 +297,7 @@ fn mask_effect_packing_preserves_shader_id_activity_and_clamps() {
 
 #[test]
 fn effect_components_share_mask_layer_and_global_effects_cover_image() {
-    assert!(super::SHADER_COMMON.contains(&format!(
+    assert!(super::shaders::COMMON.text.contains(&format!(
         "const MAX_RENDER_MASK_SLOTS: u32 = {}u;",
         super::MAX_RENDER_MASK_SLOTS
     )));
@@ -369,13 +351,12 @@ fn half_mask_exposure_matches_half_the_ev_for_both_signs() -> anyhow::Result<()>
     };
     let mut masks = MaskStack::default();
     masks.add_mask(MaskKind::Fullscreen);
-    let pipeline = RawGpuPipeline::new_headless_with_quality_and_mask_edge(
+    let pipeline = RawGpuPipeline::new(
         &device,
         &queue,
         &source,
         &GpuParams::new(&exposure, &masks, &source),
-        ProcessingQuality::High,
-        MASK_EDGE as u32,
+        PipelineOptions::new(ProcessingQuality::High).mask_atlas_edge(MASK_EDGE as u32),
     )?;
     let mut render = |ev: f32, weight: f32| -> anyhow::Result<Vec<f32>> {
         masks.masks[0].adjustments.exposure = ev;
@@ -439,13 +420,12 @@ fn global_and_fullscreen_mask_effects_render_the_same_pixels() -> anyhow::Result
         global_effects: vec![component],
         ..Default::default()
     };
-    let pipeline = RawGpuPipeline::new_headless_with_quality_and_mask_edge(
+    let pipeline = RawGpuPipeline::new(
         &device,
         &queue,
         &source,
         &GpuParams::new(&exposure, &local, &source),
-        ProcessingQuality::Preview,
-        64,
+        PipelineOptions::new(ProcessingQuality::Preview).mask_atlas_edge(64),
     )?;
     pipeline.update_mask_layer(&queue, 0, &vec![half::f16::ONE.to_bits(); 64 * 64])?;
     let render = |masks: &MaskStack| -> anyhow::Result<Vec<u8>> {
@@ -507,13 +487,12 @@ fn off_frame_light_rays_match_fullscreen_mask() -> anyhow::Result<()> {
         global_effects: vec![rays],
         ..Default::default()
     };
-    let pipeline = RawGpuPipeline::new_headless_with_quality_and_mask_edge(
+    let pipeline = RawGpuPipeline::new(
         &device,
         &queue,
         &source,
         &GpuParams::new(&exposure, &local, &source),
-        ProcessingQuality::Preview,
-        64,
+        PipelineOptions::new(ProcessingQuality::Preview).mask_atlas_edge(64),
     )?;
     pipeline.update_light_rays_mask_layer(
         &queue,
@@ -609,13 +588,12 @@ fn neon_amount_approaches_the_unmodified_image_smoothly() -> anyhow::Result<()> 
         global_effects: vec![neon],
         ..Default::default()
     };
-    let pipeline = RawGpuPipeline::new_headless_with_quality_and_mask_edge(
+    let pipeline = RawGpuPipeline::new(
         &device,
         &queue,
         &source,
         &GpuParams::new(&exposure, &masks, &source),
-        ProcessingQuality::Preview,
-        64,
+        PipelineOptions::new(ProcessingQuality::Preview).mask_atlas_edge(64),
     )?;
     let render = |masks: &MaskStack| -> anyhow::Result<Vec<u8>> {
         pipeline.recompute(&queue, &device, &GpuParams::new(&exposure, masks, &source));
@@ -641,7 +619,8 @@ fn neon_amount_approaches_the_unmodified_image_smoothly() -> anyhow::Result<()> 
 }
 
 fn tone_percentile_exposure_follow_from_shader() -> f32 {
-    let function = SHADER_TONEMAP
+    let function = shaders::TONEMAP
+        .text
         .split_once("fn tone_percentiles()")
         .expect("tone_percentiles shader function exists")
         .1
@@ -830,6 +809,58 @@ fn opposed_highlight_consistency_raw(width: u32, height: u32) -> LoadedRaw {
     }
 }
 
+/// Builds and runs the whole graph for each sensor layout and quality, so
+/// wgpu checks every entry shader against the Rust bind group layouts it is
+/// given. Naga validation alone checks each shader in isolation.
+#[test]
+fn pipelines_build_and_render_for_every_sensor_layout_and_quality() -> anyhow::Result<()> {
+    const EDGE: u32 = 96;
+    // Fujifilm X-Trans: R = 0, G = 1, B = 2.
+    const XTRANS: [[u8; 6]; 6] = [
+        [1, 1, 0, 1, 1, 2],
+        [1, 1, 2, 1, 1, 0],
+        [2, 0, 1, 0, 2, 1],
+        [1, 1, 2, 1, 1, 0],
+        [1, 1, 0, 1, 1, 2],
+        [0, 2, 1, 2, 0, 1],
+    ];
+    let Some((device, queue, _)) = request_test_device_with_info() else {
+        eprintln!("Pipeline construction check skipped: no headless wgpu adapter");
+        return Ok(());
+    };
+    let bayer = opposed_highlight_consistency_raw(EDGE, EDGE);
+    let mut xtrans = opposed_highlight_consistency_raw(EDGE, EDGE);
+    xtrans.cfa_kind = CfaKind::XTrans;
+    xtrans.color_indices = CompactPixelMap::dense(
+        EDGE,
+        EDGE,
+        (0..EDGE * EDGE)
+            .map(|index| XTRANS[((index / EDGE) % 6) as usize][((index % EDGE) % 6) as usize])
+            .collect(),
+    );
+    for raw in [&bayer, &xtrans] {
+        let params = GpuParams::new(&ExposureParams::default(), &MaskStack::default(), raw);
+        for quality in [ProcessingQuality::Preview, ProcessingQuality::High] {
+            let pipeline =
+                RawGpuPipeline::new(&device, &queue, raw, &params, PipelineOptions::new(quality))?;
+            pipeline.recompute(&queue, &device, &params);
+            let rgba = pipeline.read_output_region_blocking(&device, &queue, 0, 0, EDGE, EDGE)?;
+            assert_eq!(
+                rgba.len(),
+                (EDGE * EDGE * 4) as usize,
+                "{:?} {quality:?}",
+                raw.cfa_kind
+            );
+            assert!(
+                rgba.chunks_exact(4).any(|pixel| pixel[..3] != [0, 0, 0]),
+                "{:?} {quality:?} rendered black",
+                raw.cfa_kind
+            );
+        }
+    }
+    Ok(())
+}
+
 #[test]
 fn gpu_params_pack_the_same_full_source_opposed_reference_for_moved_tiles() {
     let source = opposed_highlight_consistency_raw(160, 128);
@@ -941,14 +972,14 @@ fn render_tone_consistency_crop(
         source.width,
         source.height,
     );
-    let crop_pipeline = RawGpuPipeline::new_headless_reusing_programs_with_mask_edge(
+    let crop_pipeline = RawGpuPipeline::new(
         device,
         queue,
         &tile_raw,
         &params,
-        ProcessingQuality::High,
-        full_frame,
-        64,
+        PipelineOptions::new(ProcessingQuality::High)
+            .mask_atlas_edge(64)
+            .programs(&full_frame.program_template()),
     )?;
     crop_pipeline.dispatch_stage(queue, device, &params, ProcessingStage::Raw);
     crop_pipeline.dispatch_tone_guide_with_inherited_statistics(queue, device, &params, full_frame);
@@ -986,13 +1017,12 @@ fn native_overlapping_tone_crops_match_full_frame_away_from_support_boundaries(
     };
 
     let full_params = GpuParams::new(&exposure, &masks, &source);
-    let full_frame = RawGpuPipeline::new_headless_with_quality_and_mask_edge(
+    let full_frame = RawGpuPipeline::new(
         &device,
         &queue,
         &source,
         &full_params,
-        ProcessingQuality::High,
-        64,
+        PipelineOptions::new(ProcessingQuality::High).mask_atlas_edge(64),
     )?;
     full_frame.recompute(&queue, &device, &full_params);
 
@@ -1159,13 +1189,12 @@ fn clipped_colored_highlights_match_across_moved_detail_crops_and_wb() -> anyhow
             &full_params.camera.highlight_options[1..],
             reference.as_slice()
         );
-        let full_frame = RawGpuPipeline::new_headless_with_quality_and_mask_edge(
+        let full_frame = RawGpuPipeline::new(
             &device,
             &queue,
             &source,
             &full_params,
-            ProcessingQuality::High,
-            64,
+            PipelineOptions::new(ProcessingQuality::High).mask_atlas_edge(64),
         )?;
         full_frame.recompute(&queue, &device, &full_params);
 
@@ -1259,23 +1288,22 @@ fn inactive_programs_stay_deferred_across_template_reuse_and_activate_on_edit() 
     let masks = MaskStack::default();
     let mut exposure = ExposureParams::scene_referred_default();
     let params = GpuParams::new(&exposure, &masks, &raw);
-    let pipeline = RawGpuPipeline::new_headless_with_quality(
+    let pipeline = RawGpuPipeline::new(
         &device,
         &queue,
         &raw,
         &params,
-        ProcessingQuality::Preview,
+        PipelineOptions::new(ProcessingQuality::Preview),
     )?;
-    let creative = pipeline.adjustment_creative_pass_index;
+    let creative = pipeline.indices.adjustment_creative_pass_index;
     assert!(pipeline.passes[creative].pipeline.compiled.get().is_none());
     let template = pipeline.program_template();
-    let reused = RawGpuPipeline::new_headless_reusing_program_template(
+    let reused = RawGpuPipeline::new(
         &device,
         &queue,
         &raw,
         &params,
-        ProcessingQuality::Preview,
-        &template,
+        PipelineOptions::new(ProcessingQuality::Preview).programs(&template),
     )?;
     assert!(reused.passes[creative].pipeline.compiled.get().is_none());
     assert!(std::sync::Arc::ptr_eq(
@@ -1319,14 +1347,14 @@ fn specialized_bayer_modes_match_the_dynamic_shader_when_switching_modes() -> an
     exposure.luminance_denoise = 15.0;
     exposure.ca_red = 0.5;
     let params = GpuParams::new(&exposure, &masks, &raw);
-    let mut pipeline = RawGpuPipeline::new_headless_with_quality(
+    let mut pipeline = RawGpuPipeline::new(
         &device,
         &queue,
         &raw,
         &params,
-        ProcessingQuality::High,
+        PipelineOptions::new(ProcessingQuality::High),
     )?;
-    let finish = pipeline.demosaic_finish_index;
+    let finish = pipeline.indices.demosaic_finish_index;
     let specialized = Arc::clone(&pipeline.passes[finish].pipeline);
     let dynamic = specialized.compile(&[]);
     let reference = Arc::new(ComputeProgram {

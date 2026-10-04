@@ -143,7 +143,7 @@ impl Sidebar {
         let mut action = CardAction::None;
         let buttons = ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             let size = egui::vec2(26.0, 26.0);
-            let reset = crate::ui::icons::phosphor_icon_button(
+            let reset = moduwu_design::icon_button(
                 ui,
                 egui_phosphor::regular::ARROW_COUNTER_CLOCKWISE,
                 size,
@@ -156,7 +156,7 @@ impl Sidebar {
                 let forced = crate::app::preview_visibility::PreviewVisibility::mask_overlay_forced(
                     ui.ctx(),
                 );
-                let response = crate::ui::icons::phosphor_icon_toggle_button(
+                let response = moduwu_design::icon_toggle_button(
                     ui,
                     egui_phosphor::regular::EYE,
                     forced,
@@ -176,7 +176,7 @@ impl Sidebar {
             });
             if show_visibility {
                 // Like the topbar eye, highlight the button when edits are bypassed.
-                let eye = crate::ui::icons::phosphor_icon_toggle_button(
+                let eye = moduwu_design::icon_toggle_button(
                     ui,
                     visibility_icon(visible),
                     !visible,
@@ -316,7 +316,7 @@ impl Sidebar {
                 data.get_temp::<Vec<VerticalCardActions>>(Self::vertical_card_actions_id())
             })
             .unwrap_or_default();
-        let size = crate::ui::theme::toolbar_icon_size();
+        let size = moduwu_design::toolbar_icon_size();
 
         for entry in actions {
             crate::app::preview_visibility::PreviewVisibility::set_mask_scope(
@@ -324,7 +324,7 @@ impl Sidebar {
                 entry.scope,
             );
 
-            if crate::ui::icons::phosphor_icon_button(
+            if moduwu_design::icon_button(
                 ui,
                 egui_phosphor::regular::ARROW_COUNTER_CLOCKWISE,
                 size,
@@ -359,7 +359,7 @@ impl Sidebar {
             }
 
             if let VerticalCardKind::Effect { enabled } = entry.kind {
-                if crate::ui::icons::phosphor_icon_button(
+                if moduwu_design::icon_button(
                     ui,
                     egui_phosphor::regular::TRASH,
                     size,
@@ -374,7 +374,7 @@ impl Sidebar {
                         EffectCardAction::Remove,
                     );
                 }
-                if crate::ui::icons::phosphor_icon_toggle_button(
+                if moduwu_design::icon_toggle_button(
                     ui,
                     visibility_icon(enabled),
                     !enabled,
@@ -404,7 +404,7 @@ impl Sidebar {
                 let forced = crate::app::preview_visibility::PreviewVisibility::mask_overlay_forced(
                     ui.ctx(),
                 );
-                if crate::ui::icons::phosphor_icon_toggle_button(
+                if moduwu_design::icon_toggle_button(
                     ui,
                     egui_phosphor::regular::EYE,
                     forced,
@@ -428,7 +428,7 @@ impl Sidebar {
                     ui.ctx(),
                     entry.title,
                 );
-                if crate::ui::icons::phosphor_icon_toggle_button(
+                if moduwu_design::icon_toggle_button(
                     ui,
                     visibility_icon(visible),
                     !visible,
@@ -511,7 +511,7 @@ impl Sidebar {
             || crate::app::preview_visibility::PreviewVisibility::visible(ui.ctx(), title);
         let controls_enabled = controls_enabled && visible;
         let mut action = CardAction::None;
-        crate::ui::theme::content_card(ui, |ui| {
+        moduwu_design::content_card(ui, |ui| {
             ui.push_id(title, |ui| {
                 // Reserve the button height before laying out the title.
                 ui.spacing_mut().interact_size.y = ui.spacing().interact_size.y.max(26.0);
@@ -576,7 +576,7 @@ impl Sidebar {
                 }
             });
         });
-        crate::ui::theme::card_gap(ui);
+        moduwu_design::card_gap(ui);
         match action {
             CardAction::Toggle => {
                 crate::app::preview_visibility::PreviewVisibility::toggle(ui.ctx(), title);

@@ -1,17 +1,92 @@
 # Development
 
 Use Rust 1.92 with LibRaw, Lensfun, libclang, and the platform graphics
-dependencies.
+dependencies. Crate ownership, dependency rules and threading contracts are in
+[ARCHITECTURE.md](ARCHITECTURE.md).
+
+```sh
+cargo run -p calibraw-ui --bin calibraw --release
+```
+
+## Checks
+
+Ordinary CI runs these on every push and pull request; run them before
+finishing a change:
 
 ```sh
 cargo fmt --all -- --check
-cargo check --workspace --all-targets
-cargo test --workspace --all-targets
-cargo clippy --workspace --all-targets --all-features -- \
+cargo clippy --locked --workspace --all-targets --all-features -- \
   -D warnings -W clippy::perf -W clippy::large_stack_arrays \
   -W clippy::redundant_clone -W unreachable-pub
+cargo test --locked --workspace --all-targets
+cargo xtask arch-check
+cargo xtask jni-contract
+cargo xtask ui-lint
 cargo deny check
-cargo run -p calibraw-ui --bin calibraw --release
+```
+
+- `cargo xtask arch-check` enforces the crate dependency rules listed in
+  ARCHITECTURE.md against `cargo tree -e normal,build --target all`.
+- `cargo xtask jni-contract` checks every Rust JNI export and Java `native`
+  declaration, and every Rust-to-Java call, against each other.
+- `cargo xtask ui-lint` reports UI code that bypasses an established shared
+  control (`DragValue` instead of `NumberField`, raw `ComboBox`, `egui::Slider`,
+  singleline `TextEdit` or `Window`) or re-exports Moduwu items. Findings are
+  keyed by rule, enclosing function and source line, so moving code keeps its
+  approval but replacing one bypass with another does not. Approved findings
+  live in `xtask/ui-lint-baseline.json`, each with a reason; stale approvals
+  fail too. `--suggest` prints entries for new findings, whose reasons must be
+  written before they pass. Review baseline changes like code.
+- `layout_contract_tests` in `calibraw-gpu` compare Rust uniform/storage
+  structs, buffer bindings and shared constants with the WGSL modules the
+  production `ShaderManager` composes. They need no GPU.
+- `cargo xtask loc [--json PATH] [REPO...]` reports production, test and build
+  line counts. It walks each crate's module tree from `cargo metadata` targets;
+  `#[test]`, `#[cfg(test)]` items and test modules count as tests, and blank or
+  comment-only lines are excluded from code totals. Pass `../moduwu-design` to
+  count the design library with the same method.
+
+Code compiled only for Android is not checked by host builds. After changing
+`cfg(target_os = "android")` code, check the Android library with the
+environment `cargo xtask build-android` uses:
+
+```sh
+export ANDROID_NDK_HOME="$ANDROID_SDK_ROOT/ndk/28.2.13676358"
+host="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64"
+CALIBRAW_LIBRAW_ROOT="$PWD/android/native/libraw/arm64-v8a" \
+CALIBRAW_LENSFUN_ROOT="$PWD/android/native/lensfun/arm64-v8a" \
+BINDGEN_EXTRA_CLANG_ARGS="--target=aarch64-linux-android26 --sysroot=$host/sysroot" \
+LIBCLANG_PATH="$host/lib" CARGO_TARGET_DIR=target/android-check \
+  cargo ndk -t arm64-v8a check --locked -p calibraw-ui --lib
+```
+
+The staged LibRaw and Lensfun come from `cargo xtask build-android-libraw` and
+`build-android-lensfun`. Test targets are host-only and do not build for Android.
+
+### Screenshot and numerical baselines
+
+`CALIBRAW_BASELINE_DIR` names one persistent folder outside every checkout
+(for example `~/calibraw-baselines`); never `/tmp`, `target/` or a path inside
+a worktree. `cargo xtask baseline-run LABEL [--filter FILTER]` creates a new
+`<UTC date>-<revision>-LABEL` folder (it refuses to reuse one), records the
+CalibRaw and Moduwu revisions, the `Cargo.lock` hash, command and environment in
+`run-manifest.json`, and captures the GPU UI review (4 themes × 3 viewports ×
+11 states) into it. `--filter` takes comma-separated substrings of
+`theme/size/state.png`.
+
+`cargo xtask baseline-compare BEFORE AFTER [--tolerance N] [--diff-dir DIR]`
+compares two runs pixel by pixel, reports missing, resized and changed
+captures, and optionally writes diff images (changed pixels in red). The
+review harness is deterministic, so structural changes are accepted at
+tolerance 0. The recorded baselines are listed in
+[rework/BASELINE.md](rework/BASELINE.md).
+
+GPU-backed tests that need extra tools are ignored by default and run
+explicitly, for example the end-to-end edit replay (needs a wgpu adapter and
+FFmpeg with libx264):
+
+```sh
+cargo test --locked -p calibraw-ui --lib services::replay -- --ignored --test-threads=1
 ```
 
 The CPU brush-raster baseline is a harness-free benchmark (kept independent
@@ -44,23 +119,45 @@ cargo clippy --locked --all-targets -- -D warnings
 This optional checkout is not used by CalibRaw's normal builds. Test changes
 in the library, publish the commit, and update CalibRaw's pinned dependency.
 
+To develop both together, add a temporary override at the end of the root
+`Cargo.toml`:
+
+```toml
+[patch."https://github.com/Duecki1/Moduwu"]
+moduwu-design = { path = "../moduwu-design" }
+```
+
+and run `cargo update -p moduwu-design`. CI has no sibling checkout, so before
+merging publish the Moduwu commit, set `rev` (and `version` if it changed),
+remove the override, and run `cargo update -p moduwu-design` again so
+`Cargo.lock` records the Git source.
+
+`cargo run --example gallery` in the Moduwu checkout shows every shared control
+in each theme, with desktop or Android metrics selectable at runtime, plus
+disabled and keyboard-focus states; its test renders every combination.
+
 ## UI conventions
 
 `moduwu-design` owns reusable UI styling: the four built-in presets,
-palette-driven egui themes, control/layout metrics, cards, toolbar rows, form controls, buttons,
-menus, and responsive helpers. `crates/calibraw-ui/src/ui/theme.rs` remains the
-CalibRaw-facing entry point for app theme selection and photo/editor-specific
-colors while re-exporting those shared primitives. Keep specialized image
-canvases, mask cards, and color controls in their existing components.
+palette-driven egui themes, control/layout metrics, cards, toolbar rows, form
+controls, `NumberField`, `Slider`, buttons, menus, dialogs and responsive
+helpers. Import them from `moduwu_design` directly; CalibRaw does not re-export
+them (`ui-lint` enforces this). `crates/calibraw-ui/src/ui/theme.rs` holds theme
+installation and photo/editor-specific colours, and `appearance.rs` the
+persisted `UiDesign` and `PreviewBackdrop` settings. Keep specialized image
+canvases, mask cards, and colour controls in their existing components.
 
 - Use secondary/primary action buttons for forms and settings, `menu_item` for
   regular menu actions, and `context_menu_item` for selectable navigation menus.
   Preserve each menu's explicit `ui.close()` behavior.
 - Use `icons` helpers for icon actions and folder disclosure controls. Conditional
   variants delegate to the same control so enabled state does not change sizing.
-- Use the shared form rows, text edits, and combo builders. The adjustment slider
-  owns value editing, reset, focus, and pointer/scroll handling on both desktop
-  and touch layouts.
+- Use the shared form rows, text edits, `NumberField` and combo builders.
+  `moduwu_design::Slider` owns value editing, reset, focus, keyboard and
+  accessibility actions, and pointer/scroll handling on desktop and touch
+  layouts; `AdjustmentSlider` adapts it to `FloatParamSpec` and adds the
+  photographic track gradients. Scroll areas that contain sliders consult
+  `moduwu_design::slider_scroll_locked`.
 - Use `dialog_window`, dialog action rows, and keyboard helpers for existing
   window dialogs. Keep initial focus requests one-time, and run keyboard fallback
   after controls process input. Modal surfaces use themed egui frames; preserve

@@ -6,7 +6,6 @@
 
 #import calibraw::common as Common
 #import calibraw::raw_sampling as RawSampling
-#import calibraw::noise as Noise
 #import calibraw::noise_ca_finish as NoiseCaFinish
 
 @group(0) @binding(7) var tex2_read: texture_2d<f32>;
@@ -190,13 +189,6 @@ fn bayer_uv(rgb: vec3<f32>) -> vec2<f32> {
     return vec2<f32>(0.56433 * (rgb.b - y), 0.67815 * (rgb.r - y));
 }
 
-fn bayer_from_yuv(y: f32, uv: vec2<f32>) -> vec3<f32> {
-    let b = y + uv.x / 0.56433;
-    let r = y + uv.y / 0.67815;
-    let g = (y - 0.2627 * r - 0.0593 * b) / 0.6780;
-    return vec3<f32>(r, g, b);
-}
-
 fn bayer_median5(a: f32, b: f32, c: f32, d: f32, e: f32) -> f32 {
     var v0 = a;
     var v1 = b;
@@ -231,7 +223,7 @@ fn bayer_reference_false_color_guard(pos: vec2<i32>, rgb: vec3<f32>) -> vec3<f32
     let strength = 0.55 * smoothstep(0.006, 0.055, disagreement);
     if strength <= 1e-6 { return rgb; }
     let y = dot(rgb, vec3<f32>(0.2627, 0.6780, 0.0593));
-    return bayer_from_yuv(y, mix(uv0, median, strength));
+    return NoiseCaFinish::finish_from_yuv(y, mix(uv0, median, strength));
 }
 
 fn bayer_phase2(offset: i32) -> f32 {
@@ -272,68 +264,11 @@ fn frequency_chroma_at(pos: vec2<i32>, center: vec3<f32>) -> vec3<f32> {
     let spectral_energy = max(length(carrier_alias) - 0.25 * luma_high, 0.0);
     let reject = smoothstep(0.0015, 0.030, spectral_energy)
         * clamp(Common::camera_uniforms.frequency_chroma, 0.0, 1.0);
-    return bayer_from_yuv(center_signal, center_opponents - reject * carrier_alias);
+    return NoiseCaFinish::finish_from_yuv(center_signal, center_opponents - reject * carrier_alias);
 }
 
 fn dual_low_at(pos: vec2<i32>) -> vec4<f32> {
     return textureLoad(dual_low_read, Common::clamp_pos(pos), 0);
-}
-
-fn reference_luma_at(pos: vec2<i32>) -> f32 {
-    return dot(rcd_reference_at(Common::clamp_pos(pos)), vec3<f32>(0.25, 0.50, 0.25));
-}
-
-fn scharr_detail_at(pos: vec2<i32>) -> f32 {
-    let nw = reference_luma_at(pos + vec2<i32>(-1, -1));
-    let n  = reference_luma_at(pos + vec2<i32>( 0, -1));
-    let ne = reference_luma_at(pos + vec2<i32>( 1, -1));
-    let w  = reference_luma_at(pos + vec2<i32>(-1,  0));
-    let e  = reference_luma_at(pos + vec2<i32>( 1,  0));
-    let sw = reference_luma_at(pos + vec2<i32>(-1,  1));
-    let ss = reference_luma_at(pos + vec2<i32>( 0,  1));
-    let se = reference_luma_at(pos + vec2<i32>( 1,  1));
-    let gx = 3.0 * (ne - nw) + 10.0 * (e - w) + 3.0 * (se - sw);
-    let gy = 3.0 * (sw - nw) + 10.0 * (ss - n) + 3.0 * (se - ne);
-    return sqrt(gx * gx + gy * gy) / 32.0;
-}
-
-fn gaussian5_weight(offset: i32) -> f32 {
-    let a = abs(offset);
-    if a == 0 { return 6.0; }
-    if a == 1 { return 4.0; }
-    return 1.0;
-}
-
-fn dual_high_weight(pos: vec2<i32>, reference: vec3<f32>, low: vec4<f32>) -> f32 {
-    var detail = 0.0;
-    for (var dy = -2; dy <= 2; dy = dy + 1) {
-        let wy = gaussian5_weight(dy);
-        for (var dx = -2; dx <= 2; dx = dx + 1) {
-            detail += wy * gaussian5_weight(dx)
-                * scharr_detail_at(Common::clamp_pos(pos + vec2<i32>(dx, dy)));
-        }
-    }
-    detail /= 256.0;
-
-    let threshold = 0.005 * pow(max(Common::camera_uniforms.dual_threshold, 0.0), 1.1);
-    if threshold <= 1e-7 { return 1.0; }
-
-    let variance = Noise::nr_component_variance(0.5 * (reference + low.rgb));
-    let noise_floor = 2.25 * sqrt(max(variance.x, 1e-10));
-    let detail_signal = max(detail - noise_floor, 0.0);
-    let edge_confidence = smoothstep(
-        threshold,
-        max(4.0 * threshold, threshold + 1e-5),
-        detail_signal,
-    );
-
-    let opponent_delta = length(bayer_uv(reference) - bayer_uv(low.rgb));
-    let opponent_sigma = max(sqrt(max(variance.y, 1e-10)), 0.0015);
-    let disagreement = smoothstep(3.0 * opponent_sigma, 8.0 * opponent_sigma, opponent_delta);
-    let low_confidence = clamp(low.a, 0.0, 1.0);
-    let alias_penalty = 0.45 * disagreement * (1.0 - 0.35 * edge_confidence);
-    let high_confidence = clamp(edge_confidence * (1.0 - alias_penalty), 0.0, 1.0);
-    return clamp(1.0 - low_confidence * (1.0 - high_confidence), 0.0, 1.0);
 }
 
 override fn NoiseCaFinish::finish_reference_at(pos: vec2<i32>) -> vec3<f32> {
@@ -349,7 +284,12 @@ fn bayer_rcd_output(@builtin(global_invocation_id) gid: vec3<u32>) {
     let demosaic_mode = select(f32(BAYER_DEMOSAIC_MODE), Common::camera_uniforms.demosaic_mode, BAYER_DEMOSAIC_MODE == 3u);
     if demosaic_mode >= 1.5 {
         let low = dual_low_at(pos);
-        camera_rgb = mix(low.rgb, reference, dual_high_weight(pos, reference, low));
+        let opponent_delta = length(bayer_uv(reference) - bayer_uv(low.rgb));
+        camera_rgb = mix(
+            low.rgb,
+            reference,
+            NoiseCaFinish::finish_dual_high_weight(pos, reference, low, opponent_delta),
+        );
     } else if demosaic_mode >= 0.5 {
         camera_rgb = frequency_chroma_at(pos, reference);
     } else {

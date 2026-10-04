@@ -46,7 +46,7 @@ pub(crate) fn library_image_context_menu(
                     ("Unflag", crate::sidecar::PhotoFlag::Unflagged),
                     ("Reject", crate::sidecar::PhotoFlag::Rejected),
                 ] {
-                    if crate::ui::theme::menu_item(ui, true, label).clicked() {
+                    if moduwu_design::menu_item(ui, true, label).clicked() {
                         action = Some(LibraryAction::Review(
                             context_assets.to_vec(),
                             super::review::ReviewChange::Flag(flag),
@@ -62,7 +62,7 @@ pub(crate) fn library_image_context_menu(
                     } else {
                         format!("{rating} stars")
                     };
-                    if crate::ui::theme::menu_item(ui, true, label).clicked() {
+                    if moduwu_design::menu_item(ui, true, label).clicked() {
                         action = Some(LibraryAction::Review(
                             context_assets.to_vec(),
                             super::review::ReviewChange::Rating(rating),
@@ -75,7 +75,7 @@ pub(crate) fn library_image_context_menu(
         ui.separator();
     }
 
-    if crate::ui::theme::context_menu_item(
+    if moduwu_design::context_menu_item(
         ui,
         action_enabled,
         if selected_count > 1 {
@@ -91,7 +91,7 @@ pub(crate) fn library_image_context_menu(
     }
 
     if selected_count >= 2
-        && crate::ui::theme::context_menu_item(ui, action_enabled, "HDR merge")
+        && moduwu_design::context_menu_item(ui, action_enabled, "HDR merge")
             .on_hover_text("Auto-align and merge RAW exposures into an editable 32-bit float TIFF")
             .clicked()
     {
@@ -100,7 +100,7 @@ pub(crate) fn library_image_context_menu(
     }
 
     ui.separator();
-    if crate::ui::theme::context_menu_item(
+    if moduwu_design::context_menu_item(
         ui,
         action_enabled && selected_count == 1,
         "Copy adjustments",
@@ -110,7 +110,7 @@ pub(crate) fn library_image_context_menu(
         action = Some(LibraryAction::CopyAdjustments(context_asset.clone()));
         ui.close();
     }
-    if crate::ui::theme::context_menu_item(
+    if moduwu_design::context_menu_item(
         ui,
         action_enabled && app.library.has_copied_adjustments(),
         if selected_count > 1 {
@@ -130,11 +130,11 @@ pub(crate) fn library_image_context_menu(
     }
 
     ui.separator();
-    if crate::ui::theme::context_menu_item(ui, action_enabled, "Copy").clicked() {
+    if moduwu_design::context_menu_item(ui, action_enabled, "Copy").clicked() {
         action = Some(LibraryAction::Copy(context_assets.to_vec()));
         ui.close();
     }
-    if crate::ui::theme::context_menu_item(ui, action_enabled, "Cut").clicked() {
+    if moduwu_design::context_menu_item(ui, action_enabled, "Cut").clicked() {
         action = Some(LibraryAction::Cut(context_assets.to_vec()));
         ui.close();
     }
@@ -143,7 +143,7 @@ pub(crate) fn library_image_context_menu(
         .image_clipboard
         .as_ref()
         .map_or_else(|| "Paste here".to_owned(), ImageClipboard::paste_label);
-    if crate::ui::theme::context_menu_item(
+    if moduwu_design::context_menu_item(
         ui,
         action_enabled && app.library.image_clipboard.is_some(),
         paste_label,
@@ -154,7 +154,7 @@ pub(crate) fn library_image_context_menu(
         action = Some(LibraryAction::PasteIntoAssetFolder(context_asset.clone()));
         ui.close();
     }
-    if crate::ui::theme::context_menu_item(
+    if moduwu_design::context_menu_item(
         ui,
         action_enabled,
         if selected_count > 1 {
@@ -168,13 +168,13 @@ pub(crate) fn library_image_context_menu(
         action = Some(LibraryAction::Duplicate(context_assets.to_vec()));
         ui.close();
     }
-    if crate::ui::theme::context_menu_item(ui, action_enabled && selected_count == 1, "Rename…")
+    if moduwu_design::context_menu_item(ui, action_enabled && selected_count == 1, "Rename…")
         .clicked()
     {
         action = Some(LibraryAction::Rename(context_asset.clone()));
         ui.close();
     }
-    if crate::ui::theme::context_menu_item(
+    if moduwu_design::context_menu_item(
         ui,
         action_enabled,
         format!(
@@ -193,7 +193,7 @@ pub(crate) fn library_image_context_menu(
         ui.close();
     }
     ui.separator();
-    if crate::ui::theme::context_menu_item(
+    if moduwu_design::context_menu_item(
         ui,
         action_enabled,
         if selected_count > 1 {
@@ -276,8 +276,6 @@ pub(crate) fn apply_library_action(
         },
         LibraryAction::Duplicate(assets) => {
             app.library.clear_selection();
-            #[cfg(target_os = "android")]
-            calibraw_ffi::set_back_navigation_active(false);
             start_duplicate_assets(app, &assets, ui.ctx());
         }
         LibraryAction::Rename(asset) => {
@@ -314,8 +312,6 @@ pub(crate) fn apply_library_action(
                 }
             }
             app.library.clear_selection();
-            #[cfg(target_os = "android")]
-            calibraw_ffi::set_back_navigation_active(false);
             app.library.refresh(ui.ctx());
             app.library.status = if failures.is_empty() {
                 format!(
@@ -374,8 +370,6 @@ fn delete_confirmed_library_assets(ui: &Ui, app: &mut CalibRawApp, assets: Vec<L
         }
     }
     app.library.clear_selection();
-    #[cfg(target_os = "android")]
-    calibraw_ffi::set_back_navigation_active(false);
     app.library.refresh(ui.ctx());
     app.library.status = if failures.is_empty() {
         #[cfg(not(target_os = "android"))]
@@ -438,18 +432,18 @@ pub(super) fn selection_bar_action_button(
     label: &'static str,
 ) -> egui::Response {
     if compact {
-        crate::ui::icons::phosphor_icon_button_enabled(
+        moduwu_design::icon_button_enabled(
             ui,
             enabled,
             glyph,
-            crate::ui::theme::toolbar_icon_size(),
+            moduwu_design::toolbar_icon_size(),
             label,
         )
     } else {
         ui.add_enabled(
             enabled,
             egui::Button::new(format!("{glyph}  {label}"))
-                .min_size(egui::vec2(0.0, crate::ui::theme::CONTROL_HEIGHT)),
+                .min_size(egui::vec2(0.0, moduwu_design::CONTROL_HEIGHT)),
         )
         .on_hover_text(label)
     }
@@ -463,7 +457,7 @@ pub(super) fn selection_bar_more_menu<R>(
 ) -> egui::InnerResponse<Option<R>> {
     let label = if compact {
         egui::RichText::new(egui_phosphor::regular::DOTS_THREE)
-            .size(crate::ui::theme::CONTROL_HEIGHT * 0.55)
+            .size(moduwu_design::CONTROL_HEIGHT * 0.55)
     } else {
         egui::RichText::new(format!("{}  More", egui_phosphor::regular::DOTS_THREE))
     };
@@ -563,11 +557,11 @@ pub(super) fn selection_bar_actions(
             action = Some(SelectionBarCommand::ApplyPreset(preset));
         }
         #[cfg(not(target_os = "android"))]
-        if crate::ui::theme::menu_item(ui, true, "Cut").clicked() {
+        if moduwu_design::menu_item(ui, true, "Cut").clicked() {
             action = Some(SelectionBarCommand::Cut);
             ui.close();
         }
-        if crate::ui::theme::menu_item(
+        if moduwu_design::menu_item(
             ui,
             true,
             if selected_count > 1 {
@@ -581,11 +575,11 @@ pub(super) fn selection_bar_actions(
             action = Some(SelectionBarCommand::Duplicate);
             ui.close();
         }
-        if selected_count == 1 && crate::ui::theme::menu_item(ui, true, "Rename…").clicked() {
+        if selected_count == 1 && moduwu_design::menu_item(ui, true, "Rename…").clicked() {
             action = Some(SelectionBarCommand::Rename);
             ui.close();
         }
-        if crate::ui::theme::menu_item(
+        if moduwu_design::menu_item(
             ui,
             true,
             if selected_count > 1 {
@@ -600,7 +594,7 @@ pub(super) fn selection_bar_actions(
             ui.close();
         }
         ui.separator();
-        if crate::ui::theme::menu_item(
+        if moduwu_design::menu_item(
             ui,
             true,
             if selected_count > 1 {
@@ -666,7 +660,7 @@ pub(super) fn show_library_selection_action_bar(
         return;
     }
     let bounds = ui.max_rect();
-    let compact = !crate::ui::layout::ResponsiveWidth::from_width(bounds.width()).is_wide();
+    let compact = !moduwu_design::ResponsiveWidth::from_width(bounds.width()).is_wide();
     let count = selected.len();
     let mut clear_selection = false;
     egui::Area::new(egui::Id::new("library-selection-action-bar"))
@@ -677,14 +671,14 @@ pub(super) fn show_library_selection_action_bar(
         .movable(false)
         .show(ui.ctx(), |ui| {
             egui::Frame::popup(ui.style())
-                .inner_margin(egui::Margin::symmetric(crate::ui::theme::SPACE_SM as i8, 6))
+                .inner_margin(egui::Margin::symmetric(moduwu_design::SPACE_SM as i8, 6))
                 .show(ui, |ui| {
                     ui.spacing_mut().item_spacing.x = if compact {
-                        crate::ui::theme::SPACE_XS
+                        moduwu_design::SPACE_XS
                     } else {
                         6.0
                     };
-                    ui.spacing_mut().interact_size.y = crate::ui::theme::CONTROL_HEIGHT;
+                    ui.spacing_mut().interact_size.y = moduwu_design::CONTROL_HEIGHT;
                     ui.horizontal(|ui| {
                         let count_label =
                             if compact && bounds.width() < SELECTION_BAR_COUNT_LABEL_BREAKPOINT {
@@ -714,10 +708,10 @@ pub(super) fn show_library_selection_action_bar(
                             *library_action = Some(action);
                         }
                         ui.separator();
-                        if crate::ui::icons::phosphor_icon_button(
+                        if moduwu_design::icon_button(
                             ui,
                             egui_phosphor::regular::X,
-                            crate::ui::theme::toolbar_icon_size(),
+                            moduwu_design::toolbar_icon_size(),
                             "Clear selection",
                         )
                         .clicked()
@@ -729,8 +723,6 @@ pub(super) fn show_library_selection_action_bar(
         });
     if clear_selection {
         app.library.clear_selection();
-        #[cfg(target_os = "android")]
-        calibraw_ffi::set_back_navigation_active(false);
     }
 }
 
@@ -837,10 +829,10 @@ pub(crate) fn show_library_action_overlays(
         } else {
             format!("Export {count} images")
         };
-        crate::ui::theme::dialog_window(
+        moduwu_design::dialog_window(
             title,
             ui.ctx(),
-            crate::ui::theme::DIALOG_WIDTH_WIDE,
+            moduwu_design::DIALOG_WIDTH_WIDE,
         )
             .id(egui::Id::new("library-export-dialog"))
             .resizable(true)
@@ -876,24 +868,24 @@ pub(crate) fn show_library_action_overlays(
                     #[cfg(target_os = "android")]
                     { format!("Export {count} images") }
                 };
-                crate::ui::theme::dialog_button_row(ui, |ui| {
-                    if crate::ui::theme::primary_action_button(ui, label)
+                moduwu_design::dialog_button_row(ui, |ui| {
+                    if moduwu_design::primary_action_button(ui, label)
                         .on_hover_text(help)
                         .clicked()
                     {
                         confirm_export = true;
                     }
-                    if crate::ui::theme::secondary_button(ui, "Cancel").clicked() {
+                    if moduwu_design::secondary_button(ui, "Cancel").clicked() {
                         close_export_dialog = true;
                     }
                 });
                 if !close_export_dialog
                     && !confirm_export
-                    && crate::ui::theme::dialog_keyboard_action(
+                    && moduwu_design::dialog_keyboard_action(
                         ui,
-                        crate::ui::theme::DialogKeyboard::CLOSE_ONLY,
+                        moduwu_design::DialogKeyboard::CLOSE_ONLY,
                         false,
-                    ) == crate::ui::theme::DialogAction::Cancel
+                    ) == moduwu_design::DialogAction::Cancel
                 {
                     close_export_dialog = true;
                 }
@@ -915,8 +907,6 @@ pub(crate) fn show_library_action_overlays(
                 frame,
             ) {
                 app.library.clear_selection();
-                #[cfg(target_os = "android")]
-                calibraw_ffi::set_back_navigation_active(false);
                 app.library.export_dialog = None;
             }
         }

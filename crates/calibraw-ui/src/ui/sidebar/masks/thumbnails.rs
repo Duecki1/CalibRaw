@@ -178,15 +178,15 @@ impl Sidebar {
         };
         let (rect, response) = ui.allocate_exact_size(size, thumbnail_sense);
         let visuals = ui.visuals();
-        let interaction = crate::ui::theme::interaction_visuals(ui, &response, selected);
+        let interaction = moduwu_design::interaction_visuals(ui, &response, selected);
         let fill = match interaction.state {
-            crate::ui::theme::InteractionVisualState::Selected => {
+            moduwu_design::InteractionVisualState::Selected => {
                 interaction.fill.gamma_multiply(0.18)
             }
-            crate::ui::theme::InteractionVisualState::Inactive => visuals.faint_bg_color,
+            moduwu_design::InteractionVisualState::Inactive => visuals.faint_bg_color,
             _ => interaction.weak_fill,
         };
-        let stroke = if interaction.state == crate::ui::theme::InteractionVisualState::Selected {
+        let stroke = if interaction.state == moduwu_design::InteractionVisualState::Selected {
             Stroke::new(1.5, interaction.stroke.color)
         } else {
             interaction.stroke

@@ -1,6 +1,5 @@
 use super::*;
 use crate::sidecar::{PhotoFlag, PhotoReview};
-use crate::ui::theme;
 
 /// An empty selection means all values; choices within a group are combined with OR.
 /// The rating, flag and filename groups are combined with AND.
@@ -111,7 +110,7 @@ pub(super) fn show_sort_filter_options(
         .position(|(_, choices)| choices.iter().any(|(order, _)| order == sort))
         .unwrap_or(0);
     let previous = group;
-    theme::dropdown_submenu(ui, SORT_GROUPS[group].0, |ui| {
+    moduwu_design::dropdown_submenu(ui, SORT_GROUPS[group].0, |ui| {
         ui.set_min_width(220.0);
         for (index, (label, _)) in SORT_GROUPS.iter().enumerate() {
             ui.selectable_value(&mut group, index, *label);
@@ -174,13 +173,13 @@ pub(super) fn show_sort_filter_options(
             ui.toggle_value(
                 &mut filter.flags[0],
                 egui::RichText::new(format!("{} Pick", egui_phosphor::regular::FLAG))
-                    .color(theme::CHANNEL_GREEN),
+                    .color(crate::ui::theme::CHANNEL_GREEN),
             );
             ui.toggle_value(&mut filter.flags[1], "Unflagged");
             ui.toggle_value(
                 &mut filter.flags[2],
                 egui::RichText::new(format!("{} Reject", egui_phosphor::regular::FLAG))
-                    .color(theme::CHANNEL_RED),
+                    .color(crate::ui::theme::CHANNEL_RED),
             );
         });
         if !had_flags
@@ -193,9 +192,9 @@ pub(super) fn show_sort_filter_options(
         {
             *sort = LibrarySortOrder::FlagPickedFirst;
         }
-        ui.add_space(theme::SPACE_XS);
+        ui.add_space(moduwu_design::SPACE_XS);
         ui.weak("Select several values to include them together.");
-        if theme::menu_item(ui, filter.active(), "Clear filters").clicked() {
+        if moduwu_design::menu_item(ui, filter.active(), "Clear filters").clicked() {
             *filter = LibraryReviewFilter::default();
         }
     }
@@ -216,7 +215,7 @@ pub(super) fn sort_filter_popup(
             egui_phosphor::regular::SLIDERS_HORIZONTAL,
             if filter.active() { " •" } else { "" }
         ))
-        .size(theme::CONTROL_HEIGHT * 0.55)
+        .size(moduwu_design::CONTROL_HEIGHT * 0.55)
         .into()
     } else {
         format!(
@@ -226,7 +225,7 @@ pub(super) fn sort_filter_popup(
         )
         .into()
     };
-    let response = theme::toolbar_button(ui, label, width).on_hover_text(format!(
+    let response = moduwu_design::toolbar_button(ui, label, width).on_hover_text(format!(
         "{}{}",
         sort.label(),
         if filter.active() {
@@ -235,7 +234,7 @@ pub(super) fn sort_filter_popup(
             String::new()
         }
     ));
-    theme::dropdown_menu(&response, |ui| {
+    moduwu_design::dropdown_menu(&response, |ui| {
         egui::ScrollArea::vertical()
             .max_height(480.0)
             .show(ui, |ui| {

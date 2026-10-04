@@ -28,7 +28,7 @@ pub(crate) fn show(ctx: &egui::Context, app: &mut CalibRawApp) {
     let width = available.x.clamp(1.0, 540.0);
     let max_height = available.y.max(1.0);
     let max_body_height =
-        (max_height - crate::ui::theme::CONTROL_HEIGHT - ONBOARDING_FOOTER_EXTRA_HEIGHT).max(1.0);
+        (max_height - moduwu_design::CONTROL_HEIGHT - ONBOARDING_FOOTER_EXTRA_HEIGHT).max(1.0);
     let measurement = ctx.data(|data| {
         data.get_temp::<OnboardingLayoutMeasurement>(egui::Id::new(
             ONBOARDING_LAYOUT_MEASUREMENT_ID,
@@ -71,9 +71,9 @@ pub(crate) fn show(ctx: &egui::Context, app: &mut CalibRawApp) {
                 }
             }
         }
-        ui.add_space(crate::ui::theme::SPACE_MD);
+        ui.add_space(moduwu_design::SPACE_MD);
         ui.separator();
-        ui.add_space(crate::ui::theme::SPACE_SM);
+        ui.add_space(moduwu_design::SPACE_SM);
         show_navigation(ui, step, &mut action);
     });
 
@@ -96,7 +96,7 @@ pub(crate) fn show(ctx: &egui::Context, app: &mut CalibRawApp) {
 
 fn show_step_body(ui: &mut egui::Ui, app: &mut CalibRawApp, step: OnboardingStep) {
     show_header(ui, step);
-    ui.add_space(crate::ui::theme::SPACE_SM);
+    ui.add_space(moduwu_design::SPACE_SM);
     match step {
         OnboardingStep::Appearance => show_appearance(ui, app),
         OnboardingStep::Preview => show_preview(ui, app),
@@ -121,7 +121,7 @@ fn show_header(ui: &mut egui::Ui, step: OnboardingStep) {
 
 fn show_appearance(ui: &mut egui::Ui, app: &mut CalibRawApp) {
     let mut design = app.preferences.ui_design;
-    crate::ui::theme::form_combo_with_help(
+    moduwu_design::form_combo_with_help(
         ui,
         "Design",
         "onboarding-ui-design",
@@ -129,7 +129,7 @@ fn show_appearance(ui: &mut egui::Ui, app: &mut CalibRawApp) {
         220.0,
         design.description(),
         |ui| {
-            for option in crate::ui::theme::UiDesign::ALL {
+            for option in crate::appearance::UiDesign::ALL {
                 ui.selectable_value(&mut design, option, option.label())
                     .on_hover_text(option.description());
             }
@@ -139,9 +139,9 @@ fn show_appearance(ui: &mut egui::Ui, app: &mut CalibRawApp) {
         app.set_ui_design(design);
     }
 
-    ui.add_space(crate::ui::theme::SPACE_SM);
+    ui.add_space(moduwu_design::SPACE_SM);
     let mut backdrop = app.preferences.preview_backdrop;
-    crate::ui::theme::form_combo_with_help(
+    moduwu_design::form_combo_with_help(
         ui,
         "Preview background",
         "onboarding-preview-backdrop",
@@ -149,7 +149,7 @@ fn show_appearance(ui: &mut egui::Ui, app: &mut CalibRawApp) {
         220.0,
         "Sets the canvas color around the photo. Match photo derives a quiet color from each image.",
         |ui| {
-            for option in crate::ui::theme::PreviewBackdrop::ALL {
+            for option in crate::appearance::PreviewBackdrop::ALL {
                 ui.selectable_value(&mut backdrop, option, option.label());
             }
         },
@@ -158,7 +158,7 @@ fn show_appearance(ui: &mut egui::Ui, app: &mut CalibRawApp) {
         app.set_preview_backdrop(backdrop);
     }
 
-    ui.add_space(crate::ui::theme::SPACE_SM);
+    ui.add_space(moduwu_design::SPACE_SM);
     let sample_color = backdrop.color(app.ui.adaptive_preview_backdrop);
     let (sample, _) = ui.allocate_exact_size(
         egui::vec2(ui.available_width().max(1.0), 38.0),
@@ -175,7 +175,7 @@ fn show_appearance(ui: &mut egui::Ui, app: &mut CalibRawApp) {
 
 fn show_preview(ui: &mut egui::Ui, app: &mut CalibRawApp) {
     let mut quality = app.preview.quality;
-    crate::ui::theme::form_combo_with_help(
+    moduwu_design::form_combo_with_help(
         ui,
         "Preview quality",
         "onboarding-preview-quality",
@@ -198,7 +198,7 @@ fn show_preview(ui: &mut egui::Ui, app: &mut CalibRawApp) {
         app.preview_quality_changed();
     }
 
-    ui.add_space(crate::ui::theme::SPACE_SM);
+    ui.add_space(moduwu_design::SPACE_SM);
     ui.small(match quality {
         PreviewQuality::Low => "75% render density · lowest GPU memory use",
         PreviewQuality::Medium => "100% render density · recommended balance",
@@ -210,42 +210,42 @@ fn show_preview(ui: &mut egui::Ui, app: &mut CalibRawApp) {
 fn show_copy_paste(ui: &mut egui::Ui, app: &mut CalibRawApp) {
     let mut settings = app.preferences.adjustment_copy_settings;
     let mut changed = false;
-    changed |= crate::ui::theme::checkbox_with_help(
+    changed |= moduwu_design::checkbox_with_help(
         ui,
         &mut settings.adjustments,
         "Adjustments",
         "Exposure, color, tone, detail, effects, and other Develop adjustments.",
     )
     .changed();
-    changed |= crate::ui::theme::checkbox_with_help(
+    changed |= moduwu_design::checkbox_with_help(
         ui,
         &mut settings.geometry,
         "Crop & geometry",
         "Crop, rotation, transforms, and flips.",
     )
     .changed();
-    changed |= crate::ui::theme::checkbox_with_help(
+    changed |= moduwu_design::checkbox_with_help(
         ui,
         &mut settings.camera_profile,
         "Camera profile",
         "The selected camera profile, when it is available for the destination image.",
     )
     .changed();
-    changed |= crate::ui::theme::checkbox_with_help(
+    changed |= moduwu_design::checkbox_with_help(
         ui,
         &mut settings.masks,
         "Manual masks",
         "Brush, linear, radial, and fullscreen mask components with their local edits.",
     )
     .changed();
-    changed |= crate::ui::theme::checkbox_with_help(
+    changed |= moduwu_design::checkbox_with_help(
         ui,
         &mut settings.ai_masks,
         "Content-aware masks",
         "Subject, background, sky, object, luminance-range, and color-range components. They are regenerated for the destination image when needed.",
     )
     .changed();
-    changed |= crate::ui::theme::checkbox_with_help(
+    changed |= moduwu_design::checkbox_with_help(
         ui,
         &mut settings.lens_correction,
         "Lens correction",
@@ -264,7 +264,7 @@ fn show_export_names(ui: &mut egui::Ui, app: &mut CalibRawApp) {
 #[cfg(not(target_os = "android"))]
 fn show_ai(ui: &mut egui::Ui, app: &mut CalibRawApp) {
     let mut acceleration = app.ai.gpu_acceleration;
-    if crate::ui::theme::checkbox_with_help(
+    if moduwu_design::checkbox_with_help(
         ui,
         &mut acceleration,
         "Use GPU acceleration when available",
@@ -275,10 +275,10 @@ fn show_ai(ui: &mut egui::Ui, app: &mut CalibRawApp) {
         app.set_ai_gpu_acceleration(acceleration);
     }
 
-    ui.add_space(crate::ui::theme::SPACE_SM);
+    ui.add_space(moduwu_design::SPACE_SM);
     let mut quality = app.ai.birefnet_quality;
     let explanation = quality.model().explanation;
-    crate::ui::theme::form_combo_with_help(
+    moduwu_design::form_combo_with_help(
         ui,
         "Subject mask quality",
         "onboarding-subject-mask-quality",
@@ -295,7 +295,7 @@ fn show_ai(ui: &mut egui::Ui, app: &mut CalibRawApp) {
     if quality != app.ai.birefnet_quality {
         app.set_birefnet_quality(quality);
     }
-    ui.add_space(crate::ui::theme::SPACE_SM);
+    ui.add_space(moduwu_design::SPACE_SM);
     ui.small(quality.model().explanation);
     ui.small("AI models are downloaded only when you first use the corresponding tool.");
 }
@@ -303,7 +303,7 @@ fn show_ai(ui: &mut egui::Ui, app: &mut CalibRawApp) {
 #[cfg(not(target_os = "android"))]
 fn show_discord(ui: &mut egui::Ui, app: &mut CalibRawApp) {
     let mut enabled = app.preferences.discord_rich_presence;
-    if crate::ui::theme::checkbox_with_help(
+    if moduwu_design::checkbox_with_help(
         ui,
         &mut enabled,
         "Enable Discord Rich Presence",
@@ -314,10 +314,10 @@ fn show_discord(ui: &mut egui::Ui, app: &mut CalibRawApp) {
         app.set_discord_rich_presence(enabled);
     }
 
-    ui.add_space(crate::ui::theme::SPACE_SM);
+    ui.add_space(moduwu_design::SPACE_SM);
     ui.small("This is optional and disabled by default. You can change it later in Settings.");
     if !app.discord_rich_presence_configured() {
-        ui.add_space(crate::ui::theme::SPACE_SM);
+        ui.add_space(moduwu_design::SPACE_SM);
         ui.colored_label(
             ui.visuals().warn_fg_color,
             "Unavailable in this build: CALIBRAW_DISCORD_APPLICATION_ID is not configured.",
@@ -329,7 +329,7 @@ fn show_navigation(ui: &mut egui::Ui, step: OnboardingStep, action: &mut Option<
     ui.horizontal(|ui| {
         let back = ui
             .add_enabled_ui(step != OnboardingStep::Appearance, |ui| {
-                crate::ui::theme::secondary_button(ui, "Back")
+                moduwu_design::secondary_button(ui, "Back")
             })
             .inner;
         if back.clicked() {
@@ -337,7 +337,7 @@ fn show_navigation(ui: &mut egui::Ui, step: OnboardingStep, action: &mut Option<
         }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             let final_step = is_final_step(step);
-            let next = crate::ui::theme::secondary_button(
+            let next = moduwu_design::secondary_button(
                 ui,
                 if final_step { "Finish setup" } else { "Next" },
             );

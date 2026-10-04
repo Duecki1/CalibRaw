@@ -326,13 +326,7 @@ public final class CalibRawActivity extends NativeActivity {
         }
         try (InputStream input = getAssets().open(assetPath);
                 FileOutputStream output = new FileOutputStream(destination, false)) {
-            byte[] buffer = new byte[32 * 1024];
-            int count;
-            while ((count = input.read(buffer)) >= 0) {
-                if (count > 0) {
-                    output.write(buffer, 0, count);
-                }
-            }
+            BoundedStreams.copy(input, output, Long.MAX_VALUE, "Lensfun asset is too large");
             output.getFD().sync();
         }
     }

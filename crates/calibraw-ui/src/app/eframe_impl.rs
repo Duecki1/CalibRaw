@@ -66,8 +66,10 @@ impl CalibRawApp {
     }
 }
 
-impl eframe::App for CalibRawApp {
-    fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
+/// The phases of one frame, in the order `ui` runs them.
+impl CalibRawApp {
+    /// Reports GPU memory exhaustion from AI or processing work.
+    fn handle_gpu_memory_failures(&mut self) {
         if calibraw_ai::take_ai_gpu_memory_failure() {
             self.stop_ai_after_gpu_memory_failure();
             self.ui.gpu_memory_error_dialog = true;
@@ -84,75 +86,72 @@ impl eframe::App for CalibRawApp {
                     .to_owned(),
             );
         }
-        self.release_retired_egui_textures(frame);
-        self.poll_version_check();
-        #[cfg(not(target_os = "android"))]
-        let raw_drop_hovered = ui.ctx().input(|input| !input.raw.hovered_files.is_empty());
-        #[cfg(not(target_os = "android"))]
-        {
-            let dropped_paths = ui.ctx().input(|input| {
-                input
-                    .raw
-                    .dropped_files
-                    .iter()
-                    .filter_map(|file| file.path.clone())
-                    .collect::<Vec<_>>()
-            });
-            if !dropped_paths.is_empty() {
-                self.library.import_dropped_raws(dropped_paths, ui.ctx());
-            }
-            self.library.poll_dropped_raw_import(ui.ctx());
+    }
+
+    /// Imports RAW files dropped onto the window.
+    #[cfg(not(target_os = "android"))]
+    fn import_dropped_files(&mut self, ctx: &egui::Context) {
+        let dropped_paths = ctx.input(|input| {
+            input
+                .raw
+                .dropped_files
+                .iter()
+                .filter_map(|file| file.path.clone())
+                .collect::<Vec<_>>()
+        });
+        if !dropped_paths.is_empty() {
+            self.library.import_dropped_raws(dropped_paths, ctx);
         }
+        self.library.poll_dropped_raw_import(ctx);
+    }
 
-        #[cfg(not(target_os = "android"))]
-        self.poll_desktop_picker(frame);
-        #[cfg(target_os = "android")]
-        {
-            self.poll_android_picker(frame);
-            self.poll_android_export_publish();
-            if calibraw_ffi::take_back_request() {
-                if self.android_foreground_task_active() {
-                    ui.ctx().request_repaint();
-                } else if self.ui.active_tab == AppTab::Library
-                    && self.library.folder_sidebar_open()
-                {
-                    self.set_library_folder_sidebar_open(false);
-                } else if self.ui.active_tab == AppTab::Library && self.library.has_selection() {
-                    self.library.clear_selection();
-                    calibraw_ffi::set_back_navigation_active(false);
-                } else {
-                    self.activate_tab(AppTab::Library);
-                }
-            }
-
-            let [left, top, right, bottom] =
-                calibraw_ffi::system_bar_insets_points(ui.ctx().pixels_per_point());
-            if top > 0.0 {
-                egui::Panel::top("android_status_bar_safe_area")
-                    .resizable(false)
-                    .exact_size(top)
-                    .show(ui, |_| {});
-            }
-            if bottom > 0.0 {
-                egui::Panel::bottom("android_navigation_bar_safe_area")
-                    .resizable(false)
-                    .exact_size(bottom)
-                    .show(ui, |_| {});
-            }
-            if left > 0.0 {
-                egui::Panel::left("android_left_system_safe_area")
-                    .resizable(false)
-                    .exact_size(left)
-                    .show(ui, |_| {});
-            }
-            if right > 0.0 {
-                egui::Panel::right("android_right_system_safe_area")
-                    .resizable(false)
-                    .exact_size(right)
-                    .show(ui, |_| {});
+    /// Picker and publish results, the back button and system-bar safe areas.
+    #[cfg(target_os = "android")]
+    fn handle_android_platform_events(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
+        self.poll_android_picker(frame);
+        self.poll_android_export_publish();
+        if calibraw_ffi::take_back_request() {
+            if self.android_foreground_task_active() {
+                ui.ctx().request_repaint();
+            } else if self.ui.active_tab == AppTab::Library && self.library.folder_sidebar_open() {
+                self.set_library_folder_sidebar_open(false);
+            } else if self.ui.active_tab == AppTab::Library && self.library.has_selection() {
+                self.library.clear_selection();
+            } else {
+                self.activate_tab(AppTab::Library);
             }
         }
 
+        let [left, top, right, bottom] =
+            calibraw_ffi::system_bar_insets_points(ui.ctx().pixels_per_point());
+        if top > 0.0 {
+            egui::Panel::top("android_status_bar_safe_area")
+                .resizable(false)
+                .exact_size(top)
+                .show(ui, |_| {});
+        }
+        if bottom > 0.0 {
+            egui::Panel::bottom("android_navigation_bar_safe_area")
+                .resizable(false)
+                .exact_size(bottom)
+                .show(ui, |_| {});
+        }
+        if left > 0.0 {
+            egui::Panel::left("android_left_system_safe_area")
+                .resizable(false)
+                .exact_size(left)
+                .show(ui, |_| {});
+        }
+        if right > 0.0 {
+            egui::Panel::right("android_right_system_safe_area")
+                .resizable(false)
+                .exact_size(right)
+                .show(ui, |_| {});
+        }
+    }
+
+    /// Applies the results of background workers that finished since the last frame.
+    fn poll_workers(&mut self, frame: &mut eframe::Frame) {
         self.poll_load_worker(frame);
         self.poll_preview_rebuild_worker(frame);
         self.poll_preview_detail_rebuild_worker(frame);
@@ -166,19 +165,130 @@ impl eframe::App for CalibRawApp {
         self.resume_pending_ai_denoise(frame);
         #[cfg(target_os = "android")]
         self.sync_android_export_notification();
+    }
+
+    /// Edit-history, save and image-navigation shortcuts.
+    fn handle_keyboard_shortcuts(
+        &mut self,
+        ctx: &egui::Context,
+        #[cfg_attr(target_os = "android", allow(unused_variables))] frame: &mut eframe::Frame,
+    ) {
         #[cfg(not(target_os = "android"))]
         {
-            self.handle_edit_history_shortcuts(ui.ctx());
-            self.handle_sidecar_shortcut(ui.ctx());
+            self.handle_edit_history_shortcuts(ctx);
+            self.handle_sidecar_shortcut(ctx);
             if self.ui.active_tab == AppTab::Develop {
-                Develop::handle_image_navigation_shortcuts(ui.ctx(), self, frame);
+                Develop::handle_image_navigation_shortcuts(ctx, self, frame);
             }
         }
         #[cfg(target_os = "android")]
         if !self.android_foreground_task_active() {
-            self.handle_edit_history_shortcuts(ui.ctx());
-            self.handle_sidecar_shortcut(ui.ctx());
+            self.handle_edit_history_shortcuts(ctx);
+            self.handle_sidecar_shortcut(ctx);
         }
+    }
+
+    /// Advances preview, remove and lens work after the views ran, and schedules repaints while work is pending.
+    fn advance_background_work(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+        self.sync_preset_hover_preview();
+        self.sync_preview_visibility();
+        self.advance_remove_worker(frame);
+        self.apply_pending_lens_correction(frame);
+        self.apply_pending_preview_quality(frame);
+        self.advance_preview_detail(frame);
+        self.sync_original_preview(frame);
+        if !self.preview.original_requested {
+            self.advance_navigation_preview(frame);
+            self.advance_processing(frame);
+        }
+        self.refresh_status();
+
+        self.update_preview_histogram(frame);
+        self.refresh_preview_clipping(frame);
+
+        if self.preview.processing_pending() && !self.defer_background_mask_processing() {
+            ctx.request_repaint();
+        }
+        if self.foreground_operation_active()
+            || self.export.task.is_some()
+            || self.export.publish_pending
+            || self.preview.rebuild_receiver.is_some()
+            || self.preview.detail_rebuild_receiver.is_some()
+            || self.inpaint_processing()
+        {
+            ctx.request_repaint_after(Duration::from_millis(80));
+        }
+        #[cfg(not(target_os = "android"))]
+        if self.ui.desktop_picker_receiver.is_some() {
+            ctx.request_repaint_after(Duration::from_millis(120));
+        }
+        #[cfg(target_os = "android")]
+        if self.android.picker_pending {
+            ctx.request_repaint_after(Duration::from_millis(120));
+        }
+    }
+
+    /// Shows the application dialogs, in stacking order.
+    fn show_dialogs(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+        crate::ui::onboarding::show(ctx, self);
+        self.show_unsupported_file_dialog(ctx);
+        self.show_version_check_consent_dialog(ctx);
+        self.show_version_update_dialog(ctx);
+        self.show_ai_consent_dialog(ctx, frame);
+        self.show_ai_error_dialog(ctx);
+        self.show_sidecar_save_error_dialog(ctx);
+        crate::ui::presets::show_dialogs(ctx, self);
+        if self.ui.gpu_memory_error_dialog {
+            let mut close = false;
+            moduwu_design::dialog_window(
+                "GPU memory exhausted",
+                ctx,
+                moduwu_design::DIALOG_WIDTH_WIDE,
+            )
+            .show(ctx, |ui| {
+                ui.label("CalibRaw ran out of GPU memory while processing the image. The current operation could not finish.");
+                ui.add_space(6.0);
+                ui.label("Optional previews were released. Close other GPU-heavy apps or lower Preview Quality, then try again.");
+                if ui.button("Close").clicked() {
+                    close = true;
+                }
+            });
+            if close {
+                self.ui.gpu_memory_error_dialog = false;
+            }
+        }
+        self.show_foreground_operation_dialog(ctx);
+        self.show_remove_progress_dialog(ctx);
+        self.show_export_task_dialog(ctx);
+    }
+
+    /// Records edit history and saves sidecars and developed thumbnails.
+    fn sync_persistence(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+        let edit_interaction_active = sidecar_interaction_active(ctx);
+        self.observe_edit_history(ctx);
+        self.schedule_sidecar_autosave(ctx, edit_interaction_active);
+        self.poll_sidecar_save();
+        self.poll_developed_thumbnail(frame);
+    }
+}
+
+impl eframe::App for CalibRawApp {
+    fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
+        self.handle_gpu_memory_failures();
+        self.release_retired_egui_textures(frame);
+        self.poll_version_check();
+        #[cfg(not(target_os = "android"))]
+        let raw_drop_hovered = ui.ctx().input(|input| !input.raw.hovered_files.is_empty());
+        #[cfg(not(target_os = "android"))]
+        self.import_dropped_files(ui.ctx());
+
+        #[cfg(not(target_os = "android"))]
+        self.poll_desktop_picker(frame);
+        #[cfg(target_os = "android")]
+        self.handle_android_platform_events(ui, frame);
+
+        self.poll_workers(frame);
+        self.handle_keyboard_shortcuts(ui.ctx(), frame);
 
         #[cfg(target_os = "android")]
         if self.android_foreground_task_active() {
@@ -195,13 +305,13 @@ impl eframe::App for CalibRawApp {
         #[cfg(not(target_os = "android"))]
         if !overlay_develop {
             egui::Panel::top("top_bar")
-                .frame(crate::ui::theme::toolbar_frame(ui))
+                .frame(moduwu_design::toolbar_frame(ui))
                 .show(ui, |ui| TopBar::show(ui, self, frame));
         }
         #[cfg(target_os = "android")]
         if self.ui.active_tab == AppTab::Develop && !overlay_develop {
             egui::Panel::top("top_bar")
-                .frame(crate::ui::theme::toolbar_frame(ui))
+                .frame(moduwu_design::toolbar_frame(ui))
                 .show(ui, |ui| TopBar::show(ui, self, frame));
         }
 
@@ -213,7 +323,7 @@ impl eframe::App for CalibRawApp {
                         egui::Panel::right(crate::ui::layout::DEVELOP_TOOL_RAIL_ID)
                             .resizable(false)
                             .exact_size(Sidebar::DESKTOP_TOOL_RAIL_WIDTH)
-                            .frame(crate::ui::theme::panel_frame(ui))
+                            .frame(moduwu_design::panel_frame(ui))
                             .show(ui, |ui| Sidebar::show_desktop_tool_rail(ui, self));
 
                         if self.develop_ui.sidebar_open {
@@ -244,7 +354,7 @@ impl eframe::App for CalibRawApp {
                                 // panel through their layout.
                                 .max_size(panel_width)
                                 .default_size(panel_width)
-                                .frame(crate::ui::theme::panel_frame(ui))
+                                .frame(moduwu_design::panel_frame(ui))
                                 .show(ui, |ui| Sidebar::show(ui, self, layout, frame));
                         }
                     }
@@ -253,7 +363,7 @@ impl eframe::App for CalibRawApp {
                     egui::Panel::right("develop_android_landscape_primary_tabs")
                         .resizable(false)
                         .exact_size(Sidebar::ANDROID_LANDSCAPE_TOOL_RAIL_WIDTH)
-                        .frame(crate::ui::theme::panel_frame(ui))
+                        .frame(moduwu_design::panel_frame(ui))
                         .show(ui, |ui| {
                             Sidebar::show_android_landscape_primary_tabs(ui, self)
                         });
@@ -263,7 +373,7 @@ impl eframe::App for CalibRawApp {
                         .resizable(true)
                         .min_size(ScreenLayout::MIN_HORIZONTAL_SIDEBAR_WIDTH)
                         .default_size(sidebar_size)
-                        .frame(crate::ui::theme::panel_frame(ui))
+                        .frame(moduwu_design::panel_frame(ui))
                         .show(ui, |ui| Sidebar::show(ui, self, layout, frame));
 
                     #[cfg(not(target_os = "android"))]
@@ -271,7 +381,7 @@ impl eframe::App for CalibRawApp {
                         egui::Panel::right(crate::ui::layout::DEVELOP_MASK_STRIP_ID)
                             .resizable(false)
                             .exact_size(Sidebar::HORIZONTAL_MASK_STRIP_WIDTH)
-                            .frame(crate::ui::theme::panel_frame(ui))
+                            .frame(moduwu_design::panel_frame(ui))
                             .show(ui, |ui| {
                                 Sidebar::show_horizontal_mask_strip(ui, self, frame)
                             });
@@ -281,7 +391,7 @@ impl eframe::App for CalibRawApp {
                         egui::Panel::right(crate::ui::layout::DEVELOP_MASK_STRIP_ID)
                             .resizable(false)
                             .exact_size(Sidebar::HORIZONTAL_MASK_STRIP_WIDTH)
-                            .frame(crate::ui::theme::panel_frame(ui))
+                            .frame(moduwu_design::panel_frame(ui))
                             .show(ui, |ui| {
                                 Sidebar::show_horizontal_mask_strip(ui, self, frame)
                             });
@@ -319,7 +429,7 @@ impl eframe::App for CalibRawApp {
                     .min_size(LIBRARY_MIN_SIDEBAR_WIDTH)
                     .max_size(panel_max)
                     .default_size(default_width)
-                    .frame(crate::ui::theme::panel_frame(ui))
+                    .frame(moduwu_design::panel_frame(ui))
                     .show(ui, |ui| Library::show_folder_sidebar(ui, self));
             }
             #[cfg(target_os = "android")]
@@ -330,7 +440,7 @@ impl eframe::App for CalibRawApp {
                         .clamp(220.0, 380.0)
                         .min(viewport_size.x.max(1.0)),
                 )
-                .frame(crate::ui::theme::panel_frame(ui))
+                .frame(moduwu_design::panel_frame(ui))
                 .show(ui, |ui| Library::show_folder_sidebar(ui, self));
         }
 
@@ -342,7 +452,7 @@ impl eframe::App for CalibRawApp {
                     .inner_margin(egui::Margin::same(0)),
             )
         } else {
-            egui::CentralPanel::default().frame(crate::ui::theme::workspace_frame(ui))
+            egui::CentralPanel::default().frame(moduwu_design::workspace_frame(ui))
         };
         let _central = central_panel.show(ui, |ui| match self.ui.active_tab {
             AppTab::Library => Library::show(ui, self, frame),
@@ -353,7 +463,7 @@ impl eframe::App for CalibRawApp {
                 #[cfg(not(target_os = "android"))]
                 Develop::show_preview(ui, self, frame);
                 #[cfg(target_os = "android")]
-                Preview::show(ui, self, frame);
+                self.show_preview(ui, frame, None);
             }
             AppTab::Settings => {
                 let settings_scroll_source = if slider_scroll_locked(ui.ctx()) {
@@ -376,87 +486,17 @@ impl eframe::App for CalibRawApp {
             crate::ui::library::show_library_action_overlays(ui, self, frame);
         }
 
-        self.sync_preset_hover_preview();
-        self.sync_preview_visibility();
-        self.advance_remove_worker(frame);
-        self.apply_pending_lens_correction(frame);
-        self.apply_pending_preview_quality(frame);
-        self.advance_preview_detail(frame);
-        self.sync_original_preview(frame);
-        if !self.preview.original_requested {
-            self.advance_navigation_preview(frame);
-            self.advance_processing(frame);
-        }
-        self.refresh_status();
-
-        self.update_preview_histogram(frame);
-        self.refresh_preview_clipping(frame);
-
-        if self.preview.processing_pending() && !self.defer_background_mask_processing() {
-            ui.ctx().request_repaint();
-        }
-        if self.foreground_operation_active()
-            || self.export.task.is_some()
-            || self.export.publish_pending
-            || self.preview.rebuild_receiver.is_some()
-            || self.preview.detail_rebuild_receiver.is_some()
-            || self.inpaint_processing()
-        {
-            ui.ctx().request_repaint_after(Duration::from_millis(80));
-        }
-        #[cfg(not(target_os = "android"))]
-        if self.ui.desktop_picker_receiver.is_some() {
-            ui.ctx().request_repaint_after(Duration::from_millis(120));
-        }
-        #[cfg(target_os = "android")]
-        if self.android.picker_pending {
-            ui.ctx().request_repaint_after(Duration::from_millis(120));
-        }
+        self.advance_background_work(ui.ctx(), frame);
         #[cfg(not(target_os = "android"))]
         if raw_drop_hovered {
             show_raw_drop_overlay(ui, self.library.folder());
         }
-        crate::ui::onboarding::show(ui.ctx(), self);
-        self.show_unsupported_file_dialog(ui.ctx());
-        self.show_version_check_consent_dialog(ui.ctx());
-        self.show_version_update_dialog(ui.ctx());
-        self.show_ai_consent_dialog(ui.ctx(), frame);
-        self.show_ai_error_dialog(ui.ctx());
-        self.show_sidecar_save_error_dialog(ui.ctx());
-        crate::ui::presets::show_dialogs(ui.ctx(), self);
-        if self.ui.gpu_memory_error_dialog {
-            let mut close = false;
-            crate::ui::theme::dialog_window(
-                "GPU memory exhausted",
-                ui.ctx(),
-                crate::ui::theme::DIALOG_WIDTH_WIDE,
-            )
-            .show(ui.ctx(), |ui| {
-                ui.label("CalibRaw ran out of GPU memory while processing the image. The current operation could not finish.");
-                ui.add_space(6.0);
-                ui.label("Optional previews were released. Close other GPU-heavy apps or lower Preview Quality, then try again.");
-                if ui.button("Close").clicked() {
-                    close = true;
-                }
-            });
-            if close {
-                self.ui.gpu_memory_error_dialog = false;
-            }
-        }
-        self.show_foreground_operation_dialog(ui.ctx());
-        self.show_remove_progress_dialog(ui.ctx());
-        self.show_export_task_dialog(ui.ctx());
-        let edit_interaction_active = sidecar_interaction_active(ui.ctx());
-        self.observe_edit_history(ui.ctx());
-        self.schedule_sidecar_autosave(ui.ctx(), edit_interaction_active);
-        self.poll_sidecar_save();
-        self.poll_developed_thumbnail(frame);
+        self.show_dialogs(ui.ctx(), frame);
+        self.sync_persistence(ui.ctx(), frame);
+        // The only place the Android back-press routing is published: after
+        // every view and handler has run, so it reflects this frame's state.
         #[cfg(target_os = "android")]
-        calibraw_ffi::set_back_navigation_active(
-            self.ui.active_tab != AppTab::Library
-                || self.library.has_selection()
-                || self.library.folder_sidebar_open(),
-        );
+        calibraw_ffi::set_back_navigation_active(self.handles_back_navigation());
     }
 
     fn on_exit(&mut self) {
@@ -470,7 +510,7 @@ impl eframe::App for CalibRawApp {
             {
                 log::warn!("{error}");
             }
-            calibraw_ffi::uninstall_context();
+            calibraw_ffi::detach_ui();
         }
         self.persist_performance_settings();
         self.flush_sidecar_on_exit();

@@ -41,13 +41,8 @@ fn max_abs_vec4(value: vec4<f32>) -> f32 {
     return max(max(abs(value.x), abs(value.y)), max(abs(value.z), abs(value.w)));
 }
 
-fn circular_distance(a: f32, b: f32) -> f32 {
-    let d = abs(a - b);
-    return min(d, 1.0 - d);
-}
-
 fn smooth_hue_bell(hue: f32, anchor: f32, width: f32) -> f32 {
-    let t = clamp(1.0 - circular_distance(hue, anchor) / width, 0.0, 1.0);
+    let t = clamp(1.0 - Color::circular_hue_distance(hue, anchor) / width, 0.0, 1.0);
     let feather = t * t * (3.0 - 2.0 * t);
     return feather * feather;
 }

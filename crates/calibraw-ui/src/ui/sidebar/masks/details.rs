@@ -1,6 +1,6 @@
 use super::adjustments::LocalAdjustmentTabs;
-use super::properties::MaskPropertiesControls;
 use super::*;
+use crate::app::{apply_mask_property_actions, MaskPropertiesControls};
 
 fn mask_creation_menu_button<R>(
     ui: &mut Ui,
@@ -24,7 +24,7 @@ fn mask_creation_menu_button<R>(
         })
         .inner
         .on_hover_text(tooltip);
-    crate::ui::theme::dropdown_menu(&response, add_contents);
+    moduwu_design::dropdown_menu(&response, add_contents);
     response
 }
 
@@ -189,18 +189,18 @@ impl Sidebar {
     }
 
     fn render_mask_edit_header(ui: &mut Ui, on_reset: impl FnOnce()) -> egui::InnerResponse<()> {
-        crate::ui::theme::card_header(ui, |ui| {
+        moduwu_design::card_header(ui, |ui| {
             let width = ui.available_width().max(1.0);
             ui.allocate_ui_with_layout(
-                egui::vec2(width, crate::ui::theme::TOOLBAR_HEIGHT),
+                egui::vec2(width, moduwu_design::TOOLBAR_HEIGHT),
                 egui::Layout::left_to_right(egui::Align::Center),
                 |ui| {
-                    crate::ui::theme::toolbar_title(ui, "Edit");
+                    moduwu_design::toolbar_title(ui, "Edit");
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if crate::ui::icons::phosphor_icon_button(
+                        if moduwu_design::icon_button(
                             ui,
                             egui_phosphor::regular::ARROW_COUNTER_CLOCKWISE,
-                            crate::ui::theme::toolbar_icon_size(),
+                            moduwu_design::toolbar_icon_size(),
                             "Reset local adjustments",
                         )
                         .clicked()
@@ -239,7 +239,7 @@ impl Sidebar {
                             }
                             app.mark_mask_adjustments_dirty();
                         });
-                        crate::ui::theme::card_gap(ui);
+                        moduwu_design::card_gap(ui);
                     });
             });
     }
@@ -310,14 +310,21 @@ impl Sidebar {
             }
             match orientation {
                 MaskStripOrientation::Horizontal => {
+                    let mut property_actions = Vec::new();
                     let action = Self::mask_properties_card(ui, true, true, true, |ui| {
-                        geometry_changed |= Self::show_vertical_mask_properties(
+                        property_actions = Self::show_vertical_mask_properties(
                             ui,
                             mask,
                             component_index,
-                            &mut controls,
+                            &controls,
                         );
                     });
+                    geometry_changed |= apply_mask_property_actions(
+                        mask,
+                        component_index,
+                        &mut controls,
+                        property_actions,
+                    );
                     geometry_changed |=
                         Self::apply_mask_properties_action(mask, component_index, action);
 
@@ -329,7 +336,7 @@ impl Sidebar {
                         .response
                         .rect,
                     );
-                    crate::ui::theme::card_gap(ui);
+                    moduwu_design::card_gap(ui);
 
                     for (section, label, default_open) in [
                         (MaskSection::Light, "Light", true),
@@ -367,14 +374,21 @@ impl Sidebar {
                     };
                     match mask_section {
                         MaskSection::Properties => {
+                            let mut property_actions = Vec::new();
                             let action = Self::mask_properties_card(ui, true, false, true, |ui| {
-                                geometry_changed |= Self::show_vertical_mask_properties(
+                                property_actions = Self::show_vertical_mask_properties(
                                     ui,
                                     mask,
                                     component_index,
-                                    &mut controls,
+                                    &controls,
                                 );
                             });
+                            geometry_changed |= apply_mask_property_actions(
+                                mask,
+                                component_index,
+                                &mut controls,
+                                property_actions,
+                            );
                             geometry_changed |=
                                 Self::apply_mask_properties_action(mask, component_index, action);
                         }
@@ -418,7 +432,7 @@ impl Sidebar {
             light_rays_changed = light_rays_before != mask.has_light_rays_effect();
         }
 
-        if crate::ui::theme::is_compact_portrait(ui)
+        if moduwu_design::is_compact_portrait(ui)
             && vertical_section.is_some_and(|section| section != MaskSection::Properties)
         {
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -434,7 +448,7 @@ impl Sidebar {
                     adjustments_changed = true;
                 }
             });
-            ui.add_space(crate::ui::theme::SPACE_XS);
+            ui.add_space(moduwu_design::SPACE_XS);
         }
 
         if previous_point_color_preview != point_color_preview(&app.develop_ui) {

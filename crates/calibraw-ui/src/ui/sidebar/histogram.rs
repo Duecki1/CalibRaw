@@ -15,11 +15,11 @@ impl Sidebar {
                 "Shadow clipping: mark pixels blue when all processed RGB channels reach 0",
             ),
         ] {
-            if crate::ui::icons::phosphor_icon_toggle_button(
+            if moduwu_design::icon_toggle_button(
                 ui,
                 icon,
                 *enabled,
-                theme::toolbar_icon_size(),
+                moduwu_design::toolbar_icon_size(),
                 tooltip,
             )
             .clicked()
@@ -31,11 +31,11 @@ impl Sidebar {
 
     pub(super) fn show_histogram_toggle(ui: &mut Ui, app: &mut CalibRawApp) {
         let open = app.develop_ui.histogram_open;
-        if crate::ui::icons::phosphor_icon_toggle_button(
+        if moduwu_design::icon_toggle_button(
             ui,
             egui_phosphor::regular::CHART_BAR,
             open,
-            theme::toolbar_icon_size(),
+            moduwu_design::toolbar_icon_size(),
             if open {
                 "Hide RGB + luminance histogram"
             } else {
@@ -58,7 +58,7 @@ impl Sidebar {
             .ctx()
             .data(|data| data.get_temp::<Option<usize>>(channel_id))
             .flatten();
-        theme::content_card(ui, |ui| {
+        moduwu_design::content_card(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.label(egui::RichText::new("Histogram").strong());
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -86,7 +86,7 @@ impl Sidebar {
                     }
                 });
             });
-            let height = if theme::is_compact_portrait(ui) {
+            let height = if moduwu_design::is_compact_portrait(ui) {
                 72.0
             } else {
                 104.0
@@ -178,6 +178,6 @@ impl Sidebar {
                 );
             }
         });
-        theme::card_gap(ui);
+        moduwu_design::card_gap(ui);
     }
 }

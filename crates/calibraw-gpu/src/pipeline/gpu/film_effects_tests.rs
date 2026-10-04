@@ -1,4 +1,6 @@
-use super::{tests::request_test_device, GpuParams, ProcessingQuality, RawGpuPipeline};
+use super::{
+    tests::request_test_device, GpuParams, PipelineOptions, ProcessingQuality, RawGpuPipeline,
+};
 use crate::pipeline::{ExposureParams, LoadedRaw, LocalMask, MaskKind, MaskStack};
 
 #[test]
@@ -72,8 +74,12 @@ fn halation_gpu_preserves_flat_fields_and_cores_and_respects_masks() -> anyhow::
     };
     let initial = GpuParams::new(&neutral, &initial_masks, &source);
     for quality in [ProcessingQuality::High] {
-        let pipeline = RawGpuPipeline::new_headless_with_quality_and_mask_edge(
-            &device, &queue, &source, &initial, quality, EDGE,
+        let pipeline = RawGpuPipeline::new(
+            &device,
+            &queue,
+            &source,
+            &initial,
+            PipelineOptions::new(quality).mask_atlas_edge(EDGE),
         )?;
         let render = |exposure: &ExposureParams, masks: &MaskStack| -> anyhow::Result<Vec<f32>> {
             pipeline.recompute(&queue, &device, &GpuParams::new(exposure, masks, &source));
@@ -165,13 +171,12 @@ fn halation_gpu_preserves_flat_fields_and_cores_and_respects_masks() -> anyhow::
         let params = GpuParams::new(&halation, &no_masks, &source);
         pipeline.recompute(&queue, &device, &params);
         let high_output = pipeline.read_output_region_blocking(&device, &queue, 0, 0, W, H)?;
-        let preview = RawGpuPipeline::new_headless_with_quality_and_mask_edge(
+        let preview = RawGpuPipeline::new(
             &device,
             &queue,
             &source,
             &params,
-            ProcessingQuality::Preview,
-            EDGE,
+            PipelineOptions::new(ProcessingQuality::Preview).mask_atlas_edge(EDGE),
         )?;
         preview.recompute(&queue, &device, &params);
         let preview_output = preview.read_output_region_blocking(&device, &queue, 0, 0, W, H)?;
@@ -203,8 +208,12 @@ fn grain_gpu_is_stable_monochrome_and_matches_overlapping_tiles() -> anyhow::Res
     };
     let initial = GpuParams::new_for_tile(&neutral, &masks, &source, 0, 0, 2160, 2160);
     for quality in [ProcessingQuality::High] {
-        let pipeline = RawGpuPipeline::new_headless_with_quality_and_mask_edge(
-            &device, &queue, &source, &initial, quality, 64,
+        let pipeline = RawGpuPipeline::new(
+            &device,
+            &queue,
+            &source,
+            &initial,
+            PipelineOptions::new(quality).mask_atlas_edge(64),
         )?;
         let render = |exposure: &ExposureParams, x, y| -> anyhow::Result<Vec<f32>> {
             let params = GpuParams::new_for_tile(exposure, &masks, &source, x, y, 2160, 2160);

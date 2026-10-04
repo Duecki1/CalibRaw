@@ -8,10 +8,6 @@ fn adjustment_base_at(pos: vec2<i32>) -> vec3<f32> {
     return textureLoad(adjustment_base_tex, Common::clamp_pos(pos), 0).xyz;
 }
 
-fn log_luminance(rgb: vec3<f32>) -> f32 {
-    return log2(Common::safe_luma(rgb));
-}
-
 fn capture_detail_scale() -> f32 {
     let tuning = Common::effects_uniforms.capture_scale_sigma;
     return clamp(sqrt(DetailUtils::presence_reference_scale()), tuning.x, tuning.y);
@@ -22,7 +18,7 @@ fn capture_sharpen_blur_ev(
     radius_pixels: f32,
     step: i32,
 ) -> f32 {
-    let center_ev = log_luminance(adjustment_base_at(pos));
+    let center_ev = Common::log_luminance(adjustment_base_at(pos));
     let sigma_samples = clamp(
         radius_pixels / max(f32(step), 1.0),
         Common::effects_uniforms.capture_scale_sigma.z,
@@ -33,7 +29,7 @@ fn capture_sharpen_blur_ev(
 
     for (var dy = -2; dy <= 2; dy = dy + 1) {
         for (var dx = -2; dx <= 2; dx = dx + 1) {
-            let sample_ev = log_luminance(
+            let sample_ev = Common::log_luminance(
                 adjustment_base_at(pos + vec2<i32>(dx * step, dy * step)),
             );
             let distance_squared = f32(dx * dx + dy * dy);
@@ -52,10 +48,10 @@ fn capture_sharpen_edge_strength(
     pos: vec2<i32>,
     step: i32,
 ) -> f32 {
-    let left = log_luminance(adjustment_base_at(pos + vec2<i32>(-step, 0)));
-    let right = log_luminance(adjustment_base_at(pos + vec2<i32>(step, 0)));
-    let up = log_luminance(adjustment_base_at(pos + vec2<i32>(0, -step)));
-    let down = log_luminance(adjustment_base_at(pos + vec2<i32>(0, step)));
+    let left = Common::log_luminance(adjustment_base_at(pos + vec2<i32>(-step, 0)));
+    let right = Common::log_luminance(adjustment_base_at(pos + vec2<i32>(step, 0)));
+    let up = Common::log_luminance(adjustment_base_at(pos + vec2<i32>(0, -step)));
+    let down = Common::log_luminance(adjustment_base_at(pos + vec2<i32>(0, step)));
     return length(vec2<f32>(right - left, down - up));
 }
 
@@ -64,7 +60,7 @@ fn capture_local_ev_bounds(pos: vec2<i32>) -> vec2<f32> {
     var high = -1e20;
     for (var dy = -1; dy <= 1; dy = dy + 1) {
         for (var dx = -1; dx <= 1; dx = dx + 1) {
-            let value = log_luminance(adjustment_base_at(pos + vec2<i32>(dx, dy)));
+            let value = Common::log_luminance(adjustment_base_at(pos + vec2<i32>(dx, dy)));
             low = min(low, value);
             high = max(high, value);
         }
@@ -76,10 +72,10 @@ fn capture_impulse_coherence(
     pos: vec2<i32>,
     center_ev: f32,
 ) -> f32 {
-    let left = log_luminance(adjustment_base_at(pos + vec2<i32>(-1, 0)));
-    let right = log_luminance(adjustment_base_at(pos + vec2<i32>(1, 0)));
-    let up = log_luminance(adjustment_base_at(pos + vec2<i32>(0, -1)));
-    let down = log_luminance(adjustment_base_at(pos + vec2<i32>(0, 1)));
+    let left = Common::log_luminance(adjustment_base_at(pos + vec2<i32>(-1, 0)));
+    let right = Common::log_luminance(adjustment_base_at(pos + vec2<i32>(1, 0)));
+    let up = Common::log_luminance(adjustment_base_at(pos + vec2<i32>(0, -1)));
+    let down = Common::log_luminance(adjustment_base_at(pos + vec2<i32>(0, 1)));
     let horizontal = min(abs(center_ev - left), abs(center_ev - right));
     let vertical = min(abs(center_ev - up), abs(center_ev - down));
     let support = min(horizontal, vertical);
@@ -117,14 +113,14 @@ fn apply_capture_sharpening(
     let radius_pixels = radius * capture_detail_scale();
     let step = clamp(i32(round(max(radius_pixels * 0.48, 1.0))), 1, 3);
 
-    let center_ev = log_luminance(rgb);
+    let center_ev = Common::log_luminance(rgb);
     let base_ev = capture_sharpen_blur_ev(pos, radius_pixels, step);
     let acutance_ev = center_ev - base_ev;
 
-    let micro_left = log_luminance(adjustment_base_at(pos + vec2<i32>(-1, 0)));
-    let micro_right = log_luminance(adjustment_base_at(pos + vec2<i32>(1, 0)));
-    let micro_up = log_luminance(adjustment_base_at(pos + vec2<i32>(0, -1)));
-    let micro_down = log_luminance(adjustment_base_at(pos + vec2<i32>(0, 1)));
+    let micro_left = Common::log_luminance(adjustment_base_at(pos + vec2<i32>(-1, 0)));
+    let micro_right = Common::log_luminance(adjustment_base_at(pos + vec2<i32>(1, 0)));
+    let micro_up = Common::log_luminance(adjustment_base_at(pos + vec2<i32>(0, -1)));
+    let micro_down = Common::log_luminance(adjustment_base_at(pos + vec2<i32>(0, 1)));
     let micro_base_ev = 0.25 * (micro_left + micro_right + micro_up + micro_down);
     let micro_ev = center_ev - micro_base_ev;
     let selected_band = mix(acutance_ev, mix(acutance_ev, micro_ev, 0.42), detail * detail);

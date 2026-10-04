@@ -24,10 +24,10 @@ pub(super) fn show_delete_originals_confirmation(
         format!("Delete {count} originals?")
     };
     let mut choice = None;
-    crate::ui::theme::dialog_window(
+    moduwu_design::dialog_window(
         title,
         ui.ctx(),
-        crate::ui::theme::DIALOG_WIDTH_DEFAULT,
+        moduwu_design::DIALOG_WIDTH_DEFAULT,
     )
         .id(egui::Id::new("library-delete-originals-confirmation"))
         .show(ui.ctx(), |ui| {
@@ -65,17 +65,17 @@ pub(super) fn show_delete_originals_confirmation(
             let confirm_label = format!("Move to {}", system_trash_name());
             #[cfg(target_os = "android")]
             let confirm_label = "Delete permanently".to_owned();
-            match crate::ui::theme::dialog_confirmation_buttons(
+            match moduwu_design::dialog_confirmation_buttons(
                 ui,
                 "Cancel",
                 confirm_label,
                 true,
                 true,
-                crate::ui::theme::DialogKeyboard::CLOSE_ONLY,
+                moduwu_design::DialogKeyboard::CLOSE_ONLY,
             ) {
-                crate::ui::theme::DialogAction::Cancel => choice = Some(false),
-                crate::ui::theme::DialogAction::Confirm => choice = Some(true),
-                crate::ui::theme::DialogAction::None => {}
+                moduwu_design::DialogAction::Cancel => choice = Some(false),
+                moduwu_design::DialogAction::Confirm => choice = Some(true),
+                moduwu_design::DialogAction::None => {}
             }
         });
     choice
@@ -95,10 +95,10 @@ pub(super) fn show_adjustment_paste_choice(
     target_count: usize,
 ) -> Option<AdjustmentPasteChoice> {
     let mut choice = None;
-    crate::ui::theme::dialog_window(
+    moduwu_design::dialog_window(
         "Paste adjustments",
         ui.ctx(),
-        crate::ui::theme::DIALOG_WIDTH_WIDE,
+        moduwu_design::DIALOG_WIDTH_WIDE,
     )
         .id(egui::Id::new(id))
         .show(ui.ctx(), |ui| {
@@ -108,30 +108,30 @@ pub(super) fn show_adjustment_paste_choice(
                 target_count,
                 if target_count == 1 { "image" } else { "images" }
             ));
-            ui.add_space(crate::ui::theme::SPACE_XS);
+            ui.add_space(moduwu_design::SPACE_XS);
             ui.label(
                 "Merge overwrites only the copied categories and preserves every unchecked category already on the destination.",
             );
             ui.label(
                 "Replace clears the destination edit state first, then applies the categories stored in the adjustment clipboard.",
             );
-            crate::ui::theme::dialog_button_row(ui, |ui| {
-                if crate::ui::theme::primary_action_button(ui, "Replace").clicked() {
+            moduwu_design::dialog_button_row(ui, |ui| {
+                if moduwu_design::primary_action_button(ui, "Replace").clicked() {
                     choice = Some(AdjustmentPasteChoice::Replace);
                 }
-                if crate::ui::theme::secondary_button(ui, "Merge").clicked() {
+                if moduwu_design::secondary_button(ui, "Merge").clicked() {
                     choice = Some(AdjustmentPasteChoice::Merge);
                 }
-                if crate::ui::theme::secondary_button(ui, "Cancel").clicked() {
+                if moduwu_design::secondary_button(ui, "Cancel").clicked() {
                     choice = Some(AdjustmentPasteChoice::Cancel);
                 }
             });
             if choice.is_none()
-                && crate::ui::theme::dialog_keyboard_action(
+                && moduwu_design::dialog_keyboard_action(
                     ui,
-                    crate::ui::theme::DialogKeyboard::CLOSE_ONLY,
+                    moduwu_design::DialogKeyboard::CLOSE_ONLY,
                     false,
-                ) == crate::ui::theme::DialogAction::Cancel
+                ) == moduwu_design::DialogAction::Cancel
             {
                 choice = Some(AdjustmentPasteChoice::Cancel);
             }
@@ -152,10 +152,10 @@ pub(super) fn show_ai_mask_refresh_choice(
     can_regenerate: bool,
 ) -> Option<AiMaskRefreshChoice> {
     let mut choice = None;
-    crate::ui::theme::dialog_window(
+    moduwu_design::dialog_window(
         "Regenerate AI masks?",
         ui.ctx(),
-        crate::ui::theme::DIALOG_WIDTH_WIDE,
+        moduwu_design::DIALOG_WIDTH_WIDE,
     )
         .id(egui::Id::new(id))
         .show(ui.ctx(), |ui| {
@@ -174,21 +174,21 @@ pub(super) fn show_ai_mask_refresh_choice(
                         .color(ui.visuals().weak_text_color()),
                 );
             }
-            match crate::ui::theme::dialog_confirmation_buttons(
+            match moduwu_design::dialog_confirmation_buttons(
                 ui,
                 "Not now",
                 "Regenerate",
                 can_regenerate,
                 false,
-                crate::ui::theme::DialogKeyboard::CLOSE_ONLY,
+                moduwu_design::DialogKeyboard::CLOSE_ONLY,
             ) {
-                crate::ui::theme::DialogAction::Cancel => {
+                moduwu_design::DialogAction::Cancel => {
                     choice = Some(AiMaskRefreshChoice::Dismiss);
                 }
-                crate::ui::theme::DialogAction::Confirm => {
+                moduwu_design::DialogAction::Confirm => {
                     choice = Some(AiMaskRefreshChoice::Regenerate);
                 }
-                crate::ui::theme::DialogAction::None => {}
+                moduwu_design::DialogAction::None => {}
             }
         });
     choice
@@ -209,10 +209,10 @@ pub(super) fn show_ai_mask_refresh_progress(
     };
     let mut minimize = false;
     let mut cancel = false;
-    crate::ui::theme::dialog_window(
+    moduwu_design::dialog_window(
         "Regenerating AI masks",
         ui.ctx(),
-        crate::ui::theme::DIALOG_WIDTH_NARROW,
+        moduwu_design::DIALOG_WIDTH_NARROW,
     )
     .id(egui::Id::new("library-ai-mask-refresh-progress"))
     .show(ui.ctx(), |ui| {
@@ -240,18 +240,18 @@ pub(super) fn show_ai_mask_refresh_progress(
                 .color(ui.visuals().warn_fg_color),
             );
         }
-        crate::ui::theme::dialog_button_row(ui, |ui| {
-            cancel |= crate::ui::theme::secondary_button(ui, "Cancel").clicked();
+        moduwu_design::dialog_button_row(ui, |ui| {
+            cancel |= moduwu_design::secondary_button(ui, "Cancel").clicked();
             if allow_minimize {
-                minimize = crate::ui::theme::secondary_button(ui, "Minimize").clicked();
+                minimize = moduwu_design::secondary_button(ui, "Minimize").clicked();
             }
         });
         if !cancel
-            && crate::ui::theme::dialog_keyboard_action(
+            && moduwu_design::dialog_keyboard_action(
                 ui,
-                crate::ui::theme::DialogKeyboard::CLOSE_ONLY,
+                moduwu_design::DialogKeyboard::CLOSE_ONLY,
                 false,
-            ) == crate::ui::theme::DialogAction::Cancel
+            ) == moduwu_design::DialogAction::Cancel
         {
             cancel = true;
         }
@@ -264,37 +264,33 @@ pub(super) fn show_android_library_folder_dialog(ui: &mut Ui, app: &mut CalibRaw
     let mut close = false;
     let mut create = None;
     if let Some(dialog) = app.library.platform.folder_name_dialog.as_mut() {
-        crate::ui::theme::dialog_window(
-            "New folder",
-            ui.ctx(),
-            crate::ui::theme::DIALOG_WIDTH_FORM,
-        )
-        .id(egui::Id::new("android-library-folder-name-dialog"))
-        .show(ui.ctx(), |ui| {
-            ui.label("Folder name");
-            let response = crate::ui::theme::dialog_text_field(
-                ui,
-                &mut dialog.name,
-                "android-library-folder-name-input",
-                "",
-            );
-            crate::ui::theme::request_initial_focus(&response, &mut dialog.focus_requested);
-            show_dialog_error(ui, dialog.error.as_deref());
-            match crate::ui::theme::dialog_confirmation_buttons(
-                ui,
-                "Cancel",
-                "Create",
-                true,
-                false,
-                crate::ui::theme::DialogKeyboard::CONFIRM_ON_ENTER,
-            ) {
-                crate::ui::theme::DialogAction::Cancel => close = true,
-                crate::ui::theme::DialogAction::Confirm => {
-                    create = Some((dialog.parent.clone(), dialog.name.clone()));
+        moduwu_design::dialog_window("New folder", ui.ctx(), moduwu_design::DIALOG_WIDTH_FORM)
+            .id(egui::Id::new("android-library-folder-name-dialog"))
+            .show(ui.ctx(), |ui| {
+                ui.label("Folder name");
+                let response = moduwu_design::dialog_text_field(
+                    ui,
+                    &mut dialog.name,
+                    "android-library-folder-name-input",
+                    "",
+                );
+                moduwu_design::request_initial_focus(&response, &mut dialog.focus_requested);
+                show_dialog_error(ui, dialog.error.as_deref());
+                match moduwu_design::dialog_confirmation_buttons(
+                    ui,
+                    "Cancel",
+                    "Create",
+                    true,
+                    false,
+                    moduwu_design::DialogKeyboard::CONFIRM_ON_ENTER,
+                ) {
+                    moduwu_design::DialogAction::Cancel => close = true,
+                    moduwu_design::DialogAction::Confirm => {
+                        create = Some((dialog.parent.clone(), dialog.name.clone()));
+                    }
+                    moduwu_design::DialogAction::None => {}
                 }
-                crate::ui::theme::DialogAction::None => {}
-            }
-        });
+            });
     }
     if close {
         app.library.platform.folder_name_dialog = None;
@@ -325,32 +321,32 @@ pub(super) fn show_library_folder_dialogs(ui: &mut Ui, app: &mut CalibRawApp) {
             LibraryFolderNameDialogKind::Create { .. } => "New folder",
             LibraryFolderNameDialogKind::Rename { .. } => "Rename folder",
         };
-        crate::ui::theme::dialog_window(title, ui.ctx(), crate::ui::theme::DIALOG_WIDTH_FORM)
+        moduwu_design::dialog_window(title, ui.ctx(), moduwu_design::DIALOG_WIDTH_FORM)
             .id(egui::Id::new("library-folder-name-dialog"))
             .show(ui.ctx(), |ui| {
                 ui.label("Folder name");
-                let response = crate::ui::theme::dialog_text_field(
+                let response = moduwu_design::dialog_text_field(
                     ui,
                     &mut dialog.name,
                     "library-folder-name-input",
                     "",
                 );
-                crate::ui::theme::request_initial_focus(&response, &mut dialog.focus_requested);
+                moduwu_design::request_initial_focus(&response, &mut dialog.focus_requested);
                 show_dialog_error(ui, dialog.error.as_deref());
                 let confirm_label = match dialog.kind {
                     LibraryFolderNameDialogKind::Create { .. } => "Create",
                     LibraryFolderNameDialogKind::Rename { .. } => "Rename",
                 };
-                match crate::ui::theme::dialog_confirmation_buttons(
+                match moduwu_design::dialog_confirmation_buttons(
                     ui,
                     "Cancel",
                     confirm_label,
                     true,
                     false,
-                    crate::ui::theme::DialogKeyboard::CONFIRM_ON_ENTER,
+                    moduwu_design::DialogKeyboard::CONFIRM_ON_ENTER,
                 ) {
-                    crate::ui::theme::DialogAction::Cancel => close_name_dialog = true,
-                    crate::ui::theme::DialogAction::Confirm => {
+                    moduwu_design::DialogAction::Cancel => close_name_dialog = true,
+                    moduwu_design::DialogAction::Confirm => {
                         match validate_folder_name(&dialog.name) {
                             Ok(_) => {
                                 let Some(root) = app.library.root_folder.clone() else {
@@ -385,7 +381,7 @@ pub(super) fn show_library_folder_dialogs(ui: &mut Ui, app: &mut CalibRawApp) {
                             Err(error) => dialog.error = Some(error),
                         }
                     }
-                    crate::ui::theme::DialogAction::None => {}
+                    moduwu_design::DialogAction::None => {}
                 }
             });
     }
@@ -400,10 +396,10 @@ pub(super) fn show_library_folder_dialogs(ui: &mut Ui, app: &mut CalibRawApp) {
     let mut close_delete = false;
     let mut confirm_delete = false;
     if let Some(target) = delete_target.as_ref() {
-        crate::ui::theme::dialog_window(
+        moduwu_design::dialog_window(
             "Delete folder?",
             ui.ctx(),
-            crate::ui::theme::DIALOG_WIDTH_DEFAULT,
+            moduwu_design::DIALOG_WIDTH_DEFAULT,
         )
         .id(egui::Id::new("library-folder-delete-confirmation"))
         .show(ui.ctx(), |ui| {
@@ -416,20 +412,20 @@ pub(super) fn show_library_folder_dialogs(ui: &mut Ui, app: &mut CalibRawApp) {
                     .strong()
                     .color(ui.visuals().warn_fg_color),
             );
-            match crate::ui::theme::dialog_confirmation_buttons(
+            match moduwu_design::dialog_confirmation_buttons(
                 ui,
                 "Cancel",
                 "Delete Folder",
                 true,
                 true,
-                crate::ui::theme::DialogKeyboard::CLOSE_ONLY,
+                moduwu_design::DialogKeyboard::CLOSE_ONLY,
             ) {
-                crate::ui::theme::DialogAction::Cancel => close_delete = true,
-                crate::ui::theme::DialogAction::Confirm => {
+                moduwu_design::DialogAction::Cancel => close_delete = true,
+                moduwu_design::DialogAction::Confirm => {
                     confirm_delete = true;
                     close_delete = true;
                 }
-                crate::ui::theme::DialogAction::None => {}
+                moduwu_design::DialogAction::None => {}
             }
         });
     }
@@ -478,42 +474,38 @@ pub(super) fn show_library_raw_name_dialog(
     let mut close = false;
     let mut rename = None;
     if let Some(dialog) = app.library.raw_name_dialog.as_mut() {
-        crate::ui::theme::dialog_window(
-            "Rename Photo",
-            ui.ctx(),
-            crate::ui::theme::DIALOG_WIDTH_FORM,
-        )
-        .id(egui::Id::new("library-raw-name-dialog"))
-        .show(ui.ctx(), |ui| {
-            ui.label("Filename");
-            let response = crate::ui::theme::dialog_text_field(
-                ui,
-                &mut dialog.name,
-                "library-raw-name-input",
-                "",
-            );
-            crate::ui::theme::request_initial_focus(&response, &mut dialog.focus_requested);
-            show_dialog_error(ui, dialog.error.as_deref());
-            match crate::ui::theme::dialog_confirmation_buttons(
-                ui,
-                "Cancel",
-                "Rename",
-                true,
-                false,
-                crate::ui::theme::DialogKeyboard::CONFIRM_ON_ENTER,
-            ) {
-                crate::ui::theme::DialogAction::Cancel => close = true,
-                crate::ui::theme::DialogAction::Confirm => {
-                    match validate_library_item_name(&dialog.name, true) {
-                        Ok(()) => rename = Some((dialog.asset.clone(), dialog.name.clone())),
-                        Err(error) => {
-                            dialog.error = Some(error);
+        moduwu_design::dialog_window("Rename Photo", ui.ctx(), moduwu_design::DIALOG_WIDTH_FORM)
+            .id(egui::Id::new("library-raw-name-dialog"))
+            .show(ui.ctx(), |ui| {
+                ui.label("Filename");
+                let response = moduwu_design::dialog_text_field(
+                    ui,
+                    &mut dialog.name,
+                    "library-raw-name-input",
+                    "",
+                );
+                moduwu_design::request_initial_focus(&response, &mut dialog.focus_requested);
+                show_dialog_error(ui, dialog.error.as_deref());
+                match moduwu_design::dialog_confirmation_buttons(
+                    ui,
+                    "Cancel",
+                    "Rename",
+                    true,
+                    false,
+                    moduwu_design::DialogKeyboard::CONFIRM_ON_ENTER,
+                ) {
+                    moduwu_design::DialogAction::Cancel => close = true,
+                    moduwu_design::DialogAction::Confirm => {
+                        match validate_library_item_name(&dialog.name, true) {
+                            Ok(()) => rename = Some((dialog.asset.clone(), dialog.name.clone())),
+                            Err(error) => {
+                                dialog.error = Some(error);
+                            }
                         }
                     }
+                    moduwu_design::DialogAction::None => {}
                 }
-                crate::ui::theme::DialogAction::None => {}
-            }
-        });
+            });
     }
     if close {
         app.library.raw_name_dialog = None;
@@ -547,8 +539,6 @@ pub(super) fn show_library_raw_name_dialog(
             }
             app.library.raw_name_dialog = None;
             app.library.clear_selection();
-            #[cfg(target_os = "android")]
-            calibraw_ffi::set_back_navigation_active(false);
             app.library.refresh(ui.ctx());
             app.library.status = format!("Renamed photo to {name}.");
 

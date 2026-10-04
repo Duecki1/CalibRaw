@@ -15,8 +15,7 @@ impl CalibRawApp {
             .ok_or_else(|| "The preview image is not available yet.".to_owned())?;
         let pipeline = self
             .preview
-            .gpu_pipeline
-            .as_ref()
+            .pipeline()
             .ok_or_else(|| "Open an image before creating this mask.".to_owned())?;
 
         let reference_exposure = ExposureParams::scene_referred_default();
@@ -32,12 +31,10 @@ impl CalibRawApp {
                 &render_state.queue,
                 &render_state.device,
                 &reference_params,
-                RemoveSceneContext::new(
+                RemoveSceneContext::full_frame(
                     &self.inpaint.edits,
                     source_raw,
                     &reference_exposure,
-                    [0.0, 0.0],
-                    [source_raw.width as f32, source_raw.height as f32],
                 ),
             )
             .map_err(|error| {
@@ -72,12 +69,10 @@ impl CalibRawApp {
                 &render_state.queue,
                 &render_state.device,
                 &restore_params,
-                RemoveSceneContext::new(
+                RemoveSceneContext::full_frame(
                     &self.inpaint.edits,
                     source_raw,
                     &self.develop.target_exposure,
-                    [0.0, 0.0],
-                    [source_raw.width as f32, source_raw.height as f32],
                 ),
             )
         }
@@ -109,8 +104,7 @@ impl CalibRawApp {
                 .ok_or_else(|| "The GPU preview is not available.".to_owned())?;
             let program_template = self
                 .preview
-                .gpu_pipeline
-                .as_ref()
+                .pipeline()
                 .map(RawGpuPipeline::program_template)
                 .or_else(|| self.preview.program_template.clone())
                 .ok_or_else(|| "Open an image before creating this mask.".to_owned())?;
@@ -137,16 +131,15 @@ impl CalibRawApp {
 
             let reference_masks = MaskStack::default();
             let params = GpuParams::new(&reference_exposure, &reference_masks, &raw);
-            let reference_pipeline_result =
-                RawGpuPipeline::new_headless_reusing_program_template_with_mask_edge(
-                    &render_state.device,
-                    &render_state.queue,
-                    &raw,
-                    &params,
-                    ProcessingQuality::Preview,
-                    &program_template,
-                    64,
-                );
+            let reference_pipeline_result = RawGpuPipeline::new(
+                &render_state.device,
+                &render_state.queue,
+                &raw,
+                &params,
+                PipelineOptions::new(ProcessingQuality::Preview)
+                    .mask_atlas_edge(64)
+                    .programs(&program_template),
+            );
             let reference_pipeline = match reference_pipeline_result {
                 Ok(pipeline) => pipeline,
                 Err(error) if error.to_string().contains("GPU pipelines already reserve") => {
@@ -168,12 +161,10 @@ impl CalibRawApp {
                     &render_state.queue,
                     &render_state.device,
                     &params,
-                    RemoveSceneContext::new(
+                    RemoveSceneContext::full_frame(
                         &self.inpaint.edits,
                         full_raw,
                         &reference_exposure,
-                        [0.0, 0.0],
-                        [full_raw.width as f32, full_raw.height as f32],
                     ),
                 )
                 .map_err(|error| {
