@@ -150,14 +150,14 @@ impl CalibRawApp {
         decline_label: &str,
         accept_label: &str,
         accept_enabled: bool,
-    ) -> crate::ui::theme::DialogAction {
-        crate::ui::theme::dialog_confirmation_buttons(
+    ) -> moduwu_design::DialogAction {
+        moduwu_design::dialog_confirmation_buttons(
             ui,
             decline_label,
             accept_label,
             accept_enabled,
             false,
-            crate::ui::theme::DialogKeyboard::CLOSE_ONLY,
+            moduwu_design::DialogKeyboard::CLOSE_ONLY,
         )
     }
 

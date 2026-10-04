@@ -238,7 +238,7 @@ impl Sidebar {
             ui.selectable_value(point_color_tab, false, "Mixer");
             ui.selectable_value(point_color_tab, true, "Point Color");
         });
-        ui.add_space(crate::ui::theme::SPACE_XS);
+        ui.add_space(moduwu_design::SPACE_XS);
         if *point_color_tab {
             crate::ui::components::point_color::point_color(
                 ui,

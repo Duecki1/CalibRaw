@@ -29,7 +29,7 @@ pub(super) fn show_android_library_folder_node(
 
     ui.push_id(("android-library-folder", path), |ui| {
         ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = crate::ui::theme::SPACE_XS;
+            ui.spacing_mut().item_spacing.x = moduwu_design::SPACE_XS;
             let disclosure_size = crate::ui::icons::folder_disclosure_size();
             if has_children {
                 if crate::ui::icons::folder_disclosure_button(ui, expanded).clicked() {
@@ -49,7 +49,7 @@ pub(super) fn show_android_library_folder_node(
                 egui_phosphor::regular::FOLDER
             };
             let response = ui.add_enabled_ui(!action_in_progress, |ui| {
-                crate::ui::theme::navigation_row(
+                moduwu_design::navigation_row(
                     ui,
                     egui::RichText::new(format!("{icon}  {name}")),
                     selected,
@@ -59,12 +59,12 @@ pub(super) fn show_android_library_folder_node(
             if response.inner.clicked() {
                 *requested_action = Some(AndroidLibraryFolderUiAction::Select(path.to_owned()));
             }
-            crate::ui::theme::context_menu(&response.inner, |ui| {
-                if crate::ui::theme::context_menu_item(ui, true, "New folder here…").clicked() {
+            moduwu_design::context_menu(&response.inner, |ui| {
+                if moduwu_design::context_menu_item(ui, true, "New folder here…").clicked() {
                     *requested_action = Some(AndroidLibraryFolderUiAction::New(path.to_owned()));
                     ui.close();
                 }
-                if crate::ui::theme::context_menu_item(ui, true, "Refresh folders").clicked() {
+                if moduwu_design::context_menu_item(ui, true, "Refresh folders").clicked() {
                     *requested_action = Some(AndroidLibraryFolderUiAction::Refresh);
                     ui.close();
                 }

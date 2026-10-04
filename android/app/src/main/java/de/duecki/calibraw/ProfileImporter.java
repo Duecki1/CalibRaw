@@ -22,8 +22,8 @@ import java.util.Locale;
 
 final class ProfileImporter {
     private static final String LOG_TAG = "CalibRaw";
-    private static final long MAX_DCP_FILE_BYTES = 64L * 1024L * 1024L;
-    private static final long MAX_DCP_TREE_BYTES = 1024L * 1024L * 1024L;
+    static final long MAX_DCP_FILE_BYTES = 64L * 1024L * 1024L;
+    static final long MAX_DCP_TREE_BYTES = 1024L * 1024L * 1024L;
     private static final int MAX_DCP_FILES = 10_000;
     private static final int MAX_DCP_TREE_DEPTH = 16;
     private static final String CAMERA_PROFILE_MIRROR_PREFIX = "camera-profiles-";
@@ -266,43 +266,24 @@ final class ProfileImporter {
         }
     }
 
-    private static long copyProfile(InputStream input, OutputStream output, long alreadyImported)
-            throws Exception {
-        byte[] buffer = new byte[256 * 1024];
-        long fileBytes = 0L;
-        while (true) {
-            int count = input.read(buffer);
-            if (count < 0) {
-                break;
-            }
-            if (count == 0) {
-                int value = input.read();
-                if (value < 0) {
-                    break;
-                }
-                fileBytes = checkedProfileCopyLength(fileBytes, 1, alreadyImported);
-                output.write(value);
-                continue;
-            }
-            fileBytes = checkedProfileCopyLength(fileBytes, count, alreadyImported);
-            output.write(buffer, 0, count);
-        }
-        return fileBytes;
-    }
-
-    private static long checkedProfileCopyLength(
-            long fileBytes, int count, long alreadyImported) {
-        if (count < 0 || fileBytes > MAX_DCP_FILE_BYTES - count) {
-            throw new IllegalStateException(
-                    "A DCP exceeds the " + MAX_DCP_FILE_BYTES + "-byte import limit");
-        }
-        long next = fileBytes + count;
-        if (alreadyImported > MAX_DCP_TREE_BYTES - next) {
-            throw new IllegalStateException(
+    // Copies one profile within both the per-file and the per-tree limit;
+    // whichever is tighter decides the reported limit.
+    static long copyProfile(InputStream input, OutputStream output, long alreadyImported)
+            throws IOException {
+        long treeRemaining = Math.max(0L, MAX_DCP_TREE_BYTES - alreadyImported);
+        if (treeRemaining < MAX_DCP_FILE_BYTES) {
+            return BoundedStreams.copy(
+                    input,
+                    output,
+                    treeRemaining,
                     "The selected profile tree exceeds the "
                             + MAX_DCP_TREE_BYTES + "-byte import limit");
         }
-        return next;
+        return BoundedStreams.copy(
+                input,
+                output,
+                MAX_DCP_FILE_BYTES,
+                "A DCP exceeds the " + MAX_DCP_FILE_BYTES + "-byte import limit");
     }
 
     private static String safeProfileComponent(String requestedName) {

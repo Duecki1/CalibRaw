@@ -1,11 +1,9 @@
 use crate::pipeline::{PointColor, PointColorRange, PointColors, MAX_POINT_COLORS};
-use crate::ui::components::adjustment_slider::{
-    step_focused_numeric_field, AdjustmentSlider, SliderGradient,
-};
+use crate::ui::components::adjustment_slider::{AdjustmentSlider, SliderGradient};
 use crate::ui::components::color_picker::sidebar_color_picker;
-use crate::ui::{icons, theme};
 use eframe::egui::{self, Color32, Mesh, Rect, Sense, Shape, Stroke, StrokeKind, Ui};
 use egui_phosphor::regular;
+use moduwu_design::NumberField;
 
 #[derive(Clone, Debug, Default)]
 pub(crate) struct PointColorUiState {
@@ -29,13 +27,13 @@ pub(crate) fn point_color(
     }
     let mut reset = false;
     let mut delete = false;
-    theme::toolbar_row(ui, |ui| {
+    moduwu_design::toolbar_row(ui, |ui| {
         ui.add_enabled_ui(colors.len() < MAX_POINT_COLORS, |ui| {
-            if icons::phosphor_icon_toggle_button(
+            if moduwu_design::icon_toggle_button(
                 ui,
                 regular::EYEDROPPER,
                 state.picker_active,
-                theme::toolbar_icon_size(),
+                moduwu_design::toolbar_icon_size(),
                 "Sample a color from the image",
             )
             .clicked()
@@ -45,19 +43,19 @@ pub(crate) fn point_color(
         });
         ui.weak(format!("{} / {} colors", colors.len(), MAX_POINT_COLORS));
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            delete = icons::phosphor_icon_button_enabled(
+            delete = moduwu_design::icon_button_enabled(
                 ui,
                 !colors.is_empty(),
                 regular::TRASH,
-                theme::toolbar_icon_size(),
+                moduwu_design::toolbar_icon_size(),
                 "Delete selected color",
             )
             .clicked();
-            reset = icons::phosphor_icon_button_enabled(
+            reset = moduwu_design::icon_button_enabled(
                 ui,
                 !colors.is_empty(),
                 regular::ARROW_COUNTER_CLOCKWISE,
-                theme::toolbar_icon_size(),
+                moduwu_design::toolbar_icon_size(),
                 "Reset this color's adjustments and ranges",
             )
             .clicked();
@@ -73,7 +71,7 @@ pub(crate) fn point_color(
             let (rect, response) =
                 ui.allocate_exact_size(egui::vec2(cell_width, 30.0), Sense::click());
             let selected = index == state.selected && index < colors.len();
-            let visual = theme::interaction_visuals(ui, &response, selected);
+            let visual = moduwu_design::interaction_visuals(ui, &response, selected);
             ui.painter().rect_filled(rect, 4.0, visual.weak_fill);
             ui.painter()
                 .rect_stroke(rect, 4.0, visual.stroke, StrokeKind::Inside);
@@ -132,7 +130,7 @@ pub(crate) fn point_color(
             point.sample_hsl = sample;
         }
     }
-    ui.add_space(theme::SPACE_XS);
+    ui.add_space(moduwu_design::SPACE_XS);
     if state.picker_active {
         ui.weak("Click a color in the image. Esc to cancel.");
     }
@@ -200,7 +198,7 @@ pub(crate) fn point_color(
             range_editor(ui, "Saturation range", &mut point.saturation_range, sample, 1);
             range_editor(ui, "Luminance range", &mut point.luminance_range, sample, 2);
         });
-        if theme::toggle_button(ui, "Visualize range", state.visualize_range)
+        if moduwu_design::toggle_button(ui, "Visualize range", state.visualize_range)
             .on_hover_text("Show the selected range with the same blue translucent overlay used for masks. Feathered pixels use a softer overlay. This preview is never exported.")
             .clicked()
         {
@@ -237,7 +235,7 @@ fn adjusted_color_readout(ui: &mut Ui, point: &PointColor) {
         point.saturation_shift,
         point.luminance_shift,
     ));
-    theme::property_row(ui, "Adjusted color", |ui| {
+    moduwu_design::property_row(ui, "Adjusted color", |ui| {
         ui.label(
             egui::RichText::new(format!(
                 "#{:02X}{:02X}{:02X}",
@@ -447,26 +445,14 @@ fn range_editor(
             {
                 let mut value =
                     [range.min, range.inner_min, range.inner_max, range.max][index] * 100.0;
-                let field_id = ui.next_auto_id();
-                let field_range = -limit * 100.0..=limit * 100.0;
-                let stepped =
-                    step_focused_numeric_field(ui, field_id, &mut value, field_range.clone());
-                let display_decimals = if ui.memory(|memory| memory.has_focus(field_id))
-                    || (value - value.round()).abs() > 0.0001
-                {
-                    2
-                } else {
-                    1
-                };
                 let response = ui
                     .add(
-                        egui::DragValue::new(&mut value)
-                            .range(field_range)
+                        NumberField::new(&mut value, -limit * 100.0..=limit * 100.0)
                             .speed(0.5)
-                            .fixed_decimals(display_decimals),
+                            .decimals(1),
                     )
                     .on_hover_text(format!("{name}: offset from sampled color"));
-                if stepped || response.changed() {
+                if response.changed() {
                     set_range_handle(range, index, value / 100.0, limit);
                 }
             }

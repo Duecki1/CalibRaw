@@ -61,13 +61,6 @@ pub(crate) fn icon_button(ui: &mut Ui, icon: UiIcon, size: Vec2, tooltip: &str) 
     .on_hover_text(tooltip)
 }
 
-#[cfg(not(target_os = "android"))]
-pub(crate) use moduwu_design::icon_toggle_button_enabled as phosphor_icon_toggle_button_enabled;
-pub(crate) use moduwu_design::{
-    icon_button as phosphor_icon_button, icon_button_enabled as phosphor_icon_button_enabled,
-    icon_toggle_button as phosphor_icon_toggle_button,
-};
-
 pub(crate) fn folder_disclosure_size() -> Vec2 {
     egui::vec2(
         if cfg!(target_os = "android") {
@@ -75,7 +68,7 @@ pub(crate) fn folder_disclosure_size() -> Vec2 {
         } else {
             26.0
         },
-        crate::ui::theme::CONTROL_HEIGHT,
+        moduwu_design::CONTROL_HEIGHT,
     )
 }
 
@@ -107,7 +100,7 @@ mod tests {
 
     #[test]
     fn conditional_icon_buttons_preserve_geometry_and_block_disabled_clicks() {
-        for design in crate::ui::theme::UiDesign::ALL {
+        for design in crate::appearance::UiDesign::ALL {
             for enabled in [false, true] {
                 let ctx = egui::Context::default();
                 crate::ui::theme::install(&ctx);
@@ -126,16 +119,16 @@ mod tests {
                         },
                         |ui| {
                             let size = egui::vec2(32.0, 20.0);
-                            let conditional = phosphor_icon_button_enabled(
+                            let conditional = moduwu_design::icon_button_enabled(
                                 ui,
                                 enabled,
                                 regular::X,
                                 size,
                                 "Close",
                             );
-                            let regular = phosphor_icon_button(ui, regular::X, size, "Close");
+                            let regular = moduwu_design::icon_button(ui, regular::X, size, "Close");
                             assert_eq!(conditional.rect.size(), regular.rect.size());
-                            assert!(conditional.rect.height() >= crate::ui::theme::CONTROL_HEIGHT);
+                            assert!(conditional.rect.height() >= moduwu_design::CONTROL_HEIGHT);
                             assert_eq!(conditional.enabled(), enabled);
                             rect = conditional.rect;
                             clicked |= conditional.clicked();

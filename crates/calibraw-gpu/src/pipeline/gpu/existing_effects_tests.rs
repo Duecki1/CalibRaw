@@ -1,4 +1,6 @@
-use super::{tests::request_test_device, GpuParams, ProcessingQuality, RawGpuPipeline};
+use super::{
+    tests::request_test_device, GpuParams, PipelineOptions, ProcessingQuality, RawGpuPipeline,
+};
 use crate::pipeline::{
     EffectComponent, ExposureParams, LoadedRaw, LocalMask, MaskEffect, MaskKind, MaskStack,
 };
@@ -36,13 +38,12 @@ impl Fixture {
             masks: vec![LocalMask::new(MaskKind::Fullscreen, 1)],
             ..Default::default()
         };
-        let pipeline = RawGpuPipeline::new_headless_with_quality_and_mask_edge(
+        let pipeline = RawGpuPipeline::new(
             &device,
             &queue,
             &source,
             &GpuParams::new(&exposure, &initial, &source),
-            ProcessingQuality::High,
-            MASK_EDGE,
+            PipelineOptions::new(ProcessingQuality::High).mask_atlas_edge(MASK_EDGE),
         )?;
         Ok(Some(Self {
             device,

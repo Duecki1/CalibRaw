@@ -54,9 +54,9 @@ jobs:
             target
             /tmp/calibraw-libraw
             /tmp/linuxdeploy-${{ matrix.linuxdeploy_arch }}.AppImage
-          key: calibraw-linux-native-v2-${{ runner.os }}-${{ runner.arch }}-rust-1.92.0-libraw-823f25d-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'crates/**/Cargo.toml', 'crates/**/build.rs', 'crates/**/build_support/**') }}
+          key: calibraw-linux-native-v2-${{ runner.os }}-${{ runner.arch }}-rust-${{ hashFiles('rust-toolchain.toml') }}-libraw-823f25d-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'crates/**/Cargo.toml', 'crates/**/build.rs', 'crates/**/build_support/**') }}
           restore-keys: |
-            calibraw-linux-native-v2-${{ runner.os }}-${{ runner.arch }}-rust-1.92.0-libraw-823f25d-
+            calibraw-linux-native-v2-${{ runner.os }}-${{ runner.arch }}-rust-${{ hashFiles('rust-toolchain.toml') }}-libraw-823f25d-
 
       - name: Install Linux build dependencies
         shell: bash
@@ -153,9 +153,9 @@ jobs:
             ~/.gradle/caches
             ~/.gradle/notifications
             android/.gradle
-          key: calibraw-android-build-${{ runner.os }}-${{ runner.arch }}-arm64-rust-1.92.0-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'build.rs', 'android/build.gradle', 'android/app/build.gradle') }}
+          key: calibraw-android-build-${{ runner.os }}-${{ runner.arch }}-arm64-rust-${{ hashFiles('rust-toolchain.toml') }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'build.rs', 'android/build.gradle', 'android/app/build.gradle') }}
           restore-keys: |
-            calibraw-android-build-${{ runner.os }}-${{ runner.arch }}-arm64-rust-1.92.0-
+            calibraw-android-build-${{ runner.os }}-${{ runner.arch }}-arm64-rust-${{ hashFiles('rust-toolchain.toml') }}-
 
       - name: Restore Android native dependency cache
         uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
@@ -250,7 +250,8 @@ jobs:
             /tmp/rustup-init \
             https://static.rust-lang.org/rustup/archive/1.28.2/x86_64-unknown-linux-gnu/rustup-init.sha256
           chmod +x /tmp/rustup-init
-          /tmp/rustup-init -y --profile minimal --default-toolchain 1.92.0
+          /tmp/rustup-init -y --profile minimal \
+            --default-toolchain "$(sed -n 's/^channel = "\(.*\)"$/\1/p' rust-toolchain.toml)"
           source "$HOME/.cargo/env"
           rustup target add aarch64-linux-android
           if [ "$(cargo ndk --version 2>/dev/null || true)" != "cargo-ndk 4.1.2" ]; then

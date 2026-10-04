@@ -138,61 +138,57 @@ impl LibraryState {
             return;
         }
         let mut dismiss = false;
-        crate::ui::theme::dialog_window(
-            "HDR merge",
-            ui.ctx(),
-            crate::ui::theme::DIALOG_WIDTH_DEFAULT,
-        )
-        .id(egui::Id::new("library-hdr-merge-dialog"))
-        .show(ui.ctx(), |ui| {
-            if let Some(task) = &self.hdr_merge {
-                ui.horizontal_wrapped(|ui| {
-                    ui.spinner();
-                    if let Ok(progress) = task.progress.lock() {
-                        ui.label(progress.as_str());
+        moduwu_design::dialog_window("HDR merge", ui.ctx(), moduwu_design::DIALOG_WIDTH_DEFAULT)
+            .id(egui::Id::new("library-hdr-merge-dialog"))
+            .show(ui.ctx(), |ui| {
+                if let Some(task) = &self.hdr_merge {
+                    ui.horizontal_wrapped(|ui| {
+                        ui.spinner();
+                        if let Ok(progress) = task.progress.lock() {
+                            ui.label(progress.as_str());
+                        }
+                    });
+                    let cancelling = task.cancelled.load(Ordering::Relaxed);
+                    let mut button_cancel = false;
+                    moduwu_design::dialog_button_row(ui, |ui| {
+                        button_cancel = ui
+                            .add_enabled_ui(!cancelling, |ui| {
+                                moduwu_design::secondary_button(
+                                    ui,
+                                    if cancelling {
+                                        "Cancelling…"
+                                    } else {
+                                        "Cancel"
+                                    },
+                                )
+                            })
+                            .inner
+                            .clicked();
+                    });
+                    let keyboard_cancel = !button_cancel
+                        && !cancelling
+                        && moduwu_design::dialog_keyboard_action(
+                            ui,
+                            moduwu_design::DialogKeyboard::CLOSE_ONLY,
+                            false,
+                        ) == moduwu_design::DialogAction::Cancel;
+                    if keyboard_cancel || button_cancel {
+                        task.cancelled.store(true, Ordering::Relaxed);
                     }
-                });
-                let cancelling = task.cancelled.load(Ordering::Relaxed);
-                let mut button_cancel = false;
-                crate::ui::theme::dialog_button_row(ui, |ui| {
-                    button_cancel = ui
-                        .add_enabled_ui(!cancelling, |ui| {
-                            crate::ui::theme::secondary_button(
-                                ui,
-                                if cancelling {
-                                    "Cancelling…"
-                                } else {
-                                    "Cancel"
-                                },
-                            )
-                        })
-                        .inner
-                        .clicked();
-                });
-                let keyboard_cancel = !button_cancel
-                    && !cancelling
-                    && crate::ui::theme::dialog_keyboard_action(
-                        ui,
-                        crate::ui::theme::DialogKeyboard::CLOSE_ONLY,
-                        false,
-                    ) == crate::ui::theme::DialogAction::Cancel;
-                if keyboard_cancel || button_cancel {
-                    task.cancelled.store(true, Ordering::Relaxed);
+                } else if let Some(message) = &self.hdr_merge_message {
+                    ui.label(message);
+                    moduwu_design::dialog_button_row(ui, |ui| {
+                        dismiss |= moduwu_design::secondary_button(ui, "Dismiss").clicked();
+                    });
+                    if !dismiss {
+                        dismiss = moduwu_design::dialog_keyboard_action(
+                            ui,
+                            moduwu_design::DialogKeyboard::CLOSE_ONLY,
+                            false,
+                        ) == moduwu_design::DialogAction::Cancel;
+                    }
                 }
-            } else if let Some(message) = &self.hdr_merge_message {
-                ui.label(message);
-                crate::ui::theme::dialog_button_row(ui, |ui| {
-                    dismiss |= crate::ui::theme::secondary_button(ui, "Dismiss").clicked();
-                });
-                if !dismiss {
-                    dismiss = crate::ui::theme::dialog_keyboard_action(
-                        ui,
-                        crate::ui::theme::DialogKeyboard::CLOSE_ONLY,
-                        false,
-                    ) == crate::ui::theme::DialogAction::Cancel;
-                }
-            }
-        });
+            });
         if dismiss {
             self.hdr_merge_message = None;
         }

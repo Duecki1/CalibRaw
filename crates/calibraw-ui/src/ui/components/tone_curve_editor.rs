@@ -310,12 +310,12 @@ pub(crate) fn tone_curve_channel_editor(
     ui.horizontal(|ui| {
         let spacing = ui.spacing().item_spacing.x;
         let segment_width =
-            ((ui.available_width() - crate::ui::theme::TOOLBAR_ICON_EDGE - spacing * 4.0)
+            ((ui.available_width() - moduwu_design::TOOLBAR_ICON_EDGE - spacing * 4.0)
                 .max(min_segment_width))
                 / 4.0;
         for (tab, label, color) in TONE_CURVE_TABS {
             let text = egui::RichText::new(label).color(color);
-            if crate::ui::theme::segmented_button(ui, text, *selected_tab == tab, segment_width)
+            if moduwu_design::segmented_button(ui, text, *selected_tab == tab, segment_width)
                 .on_hover_text(tone_curve_description(tab))
                 .clicked()
             {
@@ -323,10 +323,10 @@ pub(crate) fn tone_curve_channel_editor(
             }
         }
         ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
-            if crate::ui::icons::phosphor_icon_button(
+            if moduwu_design::icon_button(
                 ui,
                 egui_phosphor::regular::ARROW_COUNTER_CLOCKWISE,
-                crate::ui::theme::toolbar_icon_size(),
+                moduwu_design::toolbar_icon_size(),
                 "Reset the selected tone curve",
             )
             .clicked()
@@ -346,17 +346,17 @@ pub(crate) fn tone_curve_channel_editor(
     #[cfg(target_os = "android")]
     ui.horizontal(|ui| {
         ui.vertical(|ui| {
-            let control_height = crate::ui::theme::CONTROL_HEIGHT;
+            let control_height = moduwu_design::CONTROL_HEIGHT;
             ui.spacing_mut().item_spacing.y =
                 ((CURVE_HEIGHT - control_height * 5.0) / 4.0).max(0.0);
 
             for (tab, label, color) in TONE_CURVE_TABS {
                 let text = egui::RichText::new(label).color(color);
-                if crate::ui::theme::segmented_button(
+                if moduwu_design::segmented_button(
                     ui,
                     text,
                     *selected_tab == tab,
-                    crate::ui::theme::TOOLBAR_ICON_EDGE,
+                    moduwu_design::TOOLBAR_ICON_EDGE,
                 )
                 .on_hover_text(tone_curve_description(tab))
                 .clicked()
@@ -365,10 +365,10 @@ pub(crate) fn tone_curve_channel_editor(
                 }
             }
 
-            if crate::ui::icons::phosphor_icon_button(
+            if moduwu_design::icon_button(
                 ui,
                 egui_phosphor::regular::ARROW_COUNTER_CLOCKWISE,
-                crate::ui::theme::toolbar_icon_size(),
+                moduwu_design::toolbar_icon_size(),
                 "Reset the selected tone curve",
             )
             .clicked()

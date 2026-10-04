@@ -373,12 +373,10 @@ impl CalibRawApp {
             &render_state.device,
             &params,
             stage,
-            RemoveSceneContext::new(
+            RemoveSceneContext::full_frame(
                 &self.inpaint.edits,
                 full_raw,
                 &self.develop.target_exposure,
-                [0.0, 0.0],
-                [full_raw.width as f32, full_raw.height as f32],
             ),
         ) {
             self.ui.notice = Some(format!("Could not apply Remove to preview: {error:#}"));

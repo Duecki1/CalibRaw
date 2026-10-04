@@ -1,30 +1,6 @@
+use crate::appearance::UiDesign;
 use eframe::egui::{self, Color32};
-use serde::{Deserialize, Serialize};
 
-#[cfg(target_os = "android")]
-pub(crate) use moduwu_design::floating_action_button;
-#[cfg(target_os = "android")]
-pub(crate) use moduwu_design::floating_action_rect;
-pub(crate) use moduwu_design::{
-    action_row, card_gap, card_header, checkbox_with_help, combo_box, content_card, context_menu,
-    context_menu_item, destructive_menu_item, dropdown_menu, dropdown_submenu, form_combo,
-    form_combo_with_help, form_row, full_width_button, heading_with_help, interaction_visuals,
-    interaction_visuals_for_flags, is_compact_portrait, menu_item, navigation_row, panel_frame,
-    prepare_toolbar, primary_action_button, primary_button, progress_card_header, property_row,
-    responsive_combo_box, secondary_button, secondary_button_enabled, section_card,
-    section_card_with_help, section_separator, segmented_button, singleline_text_edit,
-    strong_with_help, toggle_button, toolbar_button, toolbar_frame, toolbar_icon_size, toolbar_row,
-    toolbar_title, workspace_frame, InteractionVisualState, CARD_RADIUS, CONTROL_HEIGHT,
-    PANEL_TITLE_TEXT_SIZE, SPACE_MD, SPACE_SM, SPACE_XS, SPACE_XXS, TOOLBAR_HEIGHT,
-    TOOLBAR_ICON_EDGE,
-};
-pub(crate) use moduwu_design::{
-    dialog_button_row, dialog_confirmation_buttons, dialog_keyboard_action, dialog_window,
-    request_initial_focus, DialogAction, DialogKeyboard, DIALOG_WIDTH_DEFAULT, DIALOG_WIDTH_FORM,
-    DIALOG_WIDTH_LARGE, DIALOG_WIDTH_NARROW, DIALOG_WIDTH_WIDE,
-};
-#[cfg(not(target_os = "android"))]
-pub(crate) use moduwu_design::{tab_button, tool_rail_icon_size, CONTENT_MARGIN};
 pub(crate) const CANVAS_BACKDROP: Color32 = Color32::from_rgb(13, 15, 18);
 pub(crate) const STATUS_WARNING: Color32 = Color32::from_rgb(244, 142, 48);
 pub(crate) const MASK_ADD: Color32 = Color32::from_rgb(78, 163, 255);
@@ -76,100 +52,6 @@ pub(crate) const COLORFULNESS_BLUE: Color32 = Color32::from_rgb(73, 130, 232);
 pub(crate) const LUMINANCE_BLACK: Color32 = Color32::from_rgb(10, 10, 10);
 pub(crate) const LUMINANCE_WHITE: Color32 = Color32::from_rgb(246, 246, 246);
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum UiDesign {
-    #[default]
-    #[serde(rename = "midnight_pink")]
-    ObsidianBlue,
-    #[serde(rename = "graphite_mint")]
-    ObsidianRed,
-    Porcelain,
-    DaylightBlue,
-}
-
-impl UiDesign {
-    pub(crate) const ALL: [Self; 4] = [
-        Self::ObsidianBlue,
-        Self::ObsidianRed,
-        Self::Porcelain,
-        Self::DaylightBlue,
-    ];
-
-    const fn design(self) -> moduwu_design::Design {
-        use moduwu_design::Design;
-        match self {
-            Self::ObsidianBlue => Design::ObsidianBlue,
-            Self::ObsidianRed => Design::ObsidianRed,
-            Self::Porcelain => Design::Porcelain,
-            Self::DaylightBlue => Design::DaylightBlue,
-        }
-    }
-
-    pub(crate) const fn label(self) -> &'static str {
-        self.design().label()
-    }
-
-    pub(crate) const fn description(self) -> &'static str {
-        self.design().description()
-    }
-
-    #[cfg(target_os = "android")]
-    pub(crate) const fn is_dark(self) -> bool {
-        self.design().is_dark()
-    }
-
-    #[cfg(test)]
-    const fn palette(self) -> moduwu_design::Palette {
-        self.design().palette()
-    }
-
-    const fn theme(self) -> moduwu_design::Theme {
-        self.design().theme()
-    }
-}
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum PreviewBackdrop {
-    Black,
-    #[default]
-    DarkGrey,
-    LightGrey,
-    White,
-    MatchPhoto,
-}
-
-impl PreviewBackdrop {
-    pub(crate) const ALL: [Self; 5] = [
-        Self::Black,
-        Self::DarkGrey,
-        Self::MatchPhoto,
-        Self::LightGrey,
-        Self::White,
-    ];
-
-    pub(crate) const fn label(self) -> &'static str {
-        match self {
-            Self::Black => "Black",
-            Self::DarkGrey => "Dark grey",
-            Self::LightGrey => "Light grey",
-            Self::White => "White",
-            Self::MatchPhoto => "Match photo",
-        }
-    }
-
-    pub(crate) const fn color(self, adaptive: Color32) -> Color32 {
-        match self {
-            Self::Black => Color32::BLACK,
-            Self::DarkGrey => CANVAS_BACKDROP,
-            Self::LightGrey => Color32::from_gray(168),
-            Self::White => Color32::WHITE,
-            Self::MatchPhoto => adaptive,
-        }
-    }
-}
-
 pub(crate) fn adaptive_backdrop_from_rgba(rgba: &[u8]) -> Color32 {
     let pixel_count = rgba.len() / 4;
     if pixel_count == 0 {
@@ -209,22 +91,6 @@ pub(crate) fn adaptive_backdrop_from_rgba(rgba: &[u8]) -> Color32 {
     Color32::from_rgb(muted[0], muted[1], muted[2])
 }
 
-/// The single-line text field used in every dialog. It has the height of
-/// the Library search field and fills the dialog's width. egui caps a
-/// field at the space it is given, margins included, so the field never
-/// widens the window.
-pub(crate) fn dialog_text_field(
-    ui: &mut egui::Ui,
-    text: &mut dyn egui::TextBuffer,
-    id_salt: impl egui::AsIdSalt,
-    hint: &str,
-) -> egui::Response {
-    ui.add_sized(
-        [ui.available_width(), CONTROL_HEIGHT],
-        singleline_text_edit(text).hint_text(hint).id_salt(id_salt),
-    )
-}
-
 pub(crate) fn text_on_backdrop(color: Color32) -> Color32 {
     let luminance = f32::from(color.r()) * 0.2126
         + f32::from(color.g()) * 0.7152
@@ -244,31 +110,12 @@ pub(crate) fn install(ctx: &egui::Context) {
 }
 
 pub(crate) fn apply(ctx: &egui::Context, design: UiDesign) {
-    design.theme().apply(ctx);
+    design.design().theme().apply(ctx);
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn obsidian_blue_is_the_default_and_dark_accents_are_distinct() {
-        assert_eq!(UiDesign::default(), UiDesign::ObsidianBlue);
-        assert_eq!(
-            serde_json::from_str::<UiDesign>(r#""midnight_pink""#).unwrap(),
-            UiDesign::ObsidianBlue
-        );
-        assert_eq!(
-            serde_json::from_str::<UiDesign>(r#""graphite_mint""#).unwrap(),
-            UiDesign::ObsidianRed
-        );
-
-        let blue = UiDesign::ObsidianBlue.palette().accent;
-        let red = UiDesign::ObsidianRed.palette().accent;
-        assert!(blue.b() > blue.r() && blue.b() > blue.g());
-        assert!(red.r() > red.g() && red.r() > red.b());
-        assert_ne!(blue, red);
-    }
 
     #[test]
     fn app_theme_selection_delegates_to_shared_theme_application() {
@@ -279,7 +126,7 @@ mod tests {
         assert!(style.visuals.dark_mode);
         assert_eq!(
             style.visuals.widgets.active.bg_fill,
-            UiDesign::ObsidianRed.palette().accent
+            UiDesign::ObsidianRed.design().palette().accent
         );
     }
 

@@ -9,14 +9,14 @@ use crate::pipeline::{
     MAX_MASK_COMPONENTS,
 };
 use crate::ui::components::adjustment_slider::{
-    float_param_slider, gradient_float_param_slider, hue_adjustment_slider, slider_scroll_locked,
-    AdjustmentSlider, SliderGradient,
+    float_param_slider, gradient_float_param_slider, hue_adjustment_slider, AdjustmentSlider,
+    SliderGradient,
 };
 use crate::ui::components::color_grading::color_grading_editor;
 use crate::ui::components::hsl_mixer::hsl_mixer;
 use crate::ui::components::tone_curve_editor::{tone_curve_channel_editor, ToneCurveChannels};
-use crate::ui::layout::ScreenLayout;
 use eframe::egui::{self, Ui};
+use moduwu_design::ScreenLayout;
 
 pub(crate) struct Sidebar;
 
@@ -59,7 +59,7 @@ impl MaskCardSize {
     }
 
     fn create_button_size(self, orientation: MaskStripOrientation) -> egui::Vec2 {
-        const THIN_EDGE: f32 = crate::ui::theme::CONTROL_HEIGHT;
+        const THIN_EDGE: f32 = moduwu_design::CONTROL_HEIGHT;
         let card = self.card_size();
         match orientation {
             MaskStripOrientation::Horizontal => egui::vec2(THIN_EDGE, card.y),
@@ -192,7 +192,7 @@ mod tests {
                         let viewport = ui.available_rect_before_wrap();
                         let button = super::export::show_export_action_panel(ui, |ui| {
                             ui.add_sized(
-                                [ui.available_width(), crate::ui::theme::CONTROL_HEIGHT],
+                                [ui.available_width(), moduwu_design::CONTROL_HEIGHT],
                                 egui::Button::new("Export…"),
                             )
                         })
@@ -261,19 +261,19 @@ mod tests {
     fn mask_creation_controls_are_thin_along_the_strip_axis() {
         assert_eq!(
             MaskCardSize::Group.create_button_size(MaskStripOrientation::Horizontal),
-            eframe::egui::vec2(crate::ui::theme::CONTROL_HEIGHT, 72.0)
+            eframe::egui::vec2(moduwu_design::CONTROL_HEIGHT, 72.0)
         );
         assert_eq!(
             MaskCardSize::Submask.create_button_size(MaskStripOrientation::Horizontal),
-            eframe::egui::vec2(crate::ui::theme::CONTROL_HEIGHT, 62.0)
+            eframe::egui::vec2(moduwu_design::CONTROL_HEIGHT, 62.0)
         );
         assert_eq!(
             MaskCardSize::Group.create_button_size(MaskStripOrientation::Vertical),
-            eframe::egui::vec2(68.0, crate::ui::theme::CONTROL_HEIGHT)
+            eframe::egui::vec2(68.0, moduwu_design::CONTROL_HEIGHT)
         );
         assert_eq!(
             MaskCardSize::Submask.create_button_size(MaskStripOrientation::Vertical),
-            eframe::egui::vec2(56.0, crate::ui::theme::CONTROL_HEIGHT)
+            eframe::egui::vec2(56.0, moduwu_design::CONTROL_HEIGHT)
         );
     }
 

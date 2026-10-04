@@ -117,13 +117,12 @@ fn zoom_drag_mapping_refines_all_layers_and_release_keeps_the_last_edit() {
         }
     }
     let params = GpuParams::new(&exposure, &masks, &raw);
-    let pipeline = RawGpuPipeline::new_headless_with_quality_and_mask_edge(
+    let pipeline = RawGpuPipeline::new(
         &device,
         &queue,
         &raw,
         &params,
-        ProcessingQuality::Preview,
-        1024,
+        PipelineOptions::new(ProcessingQuality::Preview).mask_atlas_edge(1024),
     )
     .unwrap();
     let region = [0, 0, full_raw.width, full_raw.height];
@@ -183,14 +182,14 @@ fn zoom_drag_mapping_refines_all_layers_and_release_keeps_the_last_edit() {
         wgpu::TextureFormat::Rgba8Unorm,
         eframe::egui_wgpu::RendererOptions::default(),
     );
-    let fitted = RawGpuPipeline::new_headless_reusing_programs_with_mask_edge(
+    let fitted = RawGpuPipeline::new(
         &device,
         &queue,
         &raw,
         &params,
-        ProcessingQuality::Preview,
-        &pipeline,
-        64,
+        PipelineOptions::new(ProcessingQuality::Preview)
+            .mask_atlas_edge(64)
+            .programs(&pipeline.program_template()),
     )
     .unwrap();
     app.preview.gpu_pipeline = Some(PreviewPipeline::register(

@@ -33,14 +33,14 @@ pub(crate) fn hsl_mixer(
     let (name, accent) = CHANNELS[index];
     let mut reset_color = false;
 
-    ui.add_space(crate::ui::theme::SPACE_XS);
-    crate::ui::theme::toolbar_row(ui, |ui| {
+    ui.add_space(moduwu_design::SPACE_XS);
+    moduwu_design::toolbar_row(ui, |ui| {
         ui.label(RichText::new(format!("{name} adjustments")).strong());
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            reset_color = crate::ui::icons::phosphor_icon_button(
+            reset_color = moduwu_design::icon_button(
                 ui,
                 egui_phosphor::regular::ARROW_COUNTER_CLOCKWISE,
-                crate::ui::theme::toolbar_icon_size(),
+                moduwu_design::toolbar_icon_size(),
                 "Reset Hue, Saturation, and Luminance for this color",
             )
             .clicked();
@@ -105,7 +105,7 @@ fn color_selector_button(
 ) -> egui::Response {
     let (rect, response) =
         ui.allocate_exact_size(egui::vec2(width, SELECTOR_HEIGHT), Sense::click());
-    let interaction = crate::ui::theme::interaction_visuals(ui, &response, selected);
+    let interaction = moduwu_design::interaction_visuals(ui, &response, selected);
 
     ui.painter().rect_filled(rect, 4.0, interaction.weak_fill);
     ui.painter()

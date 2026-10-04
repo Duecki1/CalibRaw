@@ -30,13 +30,12 @@ mod mask_upload_tests {
                 masks.add_mask(MaskKind::Fullscreen);
             }
             let params = GpuParams::new(&exposure, &masks, &raw);
-            let pipeline = RawGpuPipeline::new_headless_with_quality_and_mask_edge(
+            let pipeline = RawGpuPipeline::new(
                 &device,
                 &queue,
                 &raw,
                 &params,
-                ProcessingQuality::Preview,
-                16,
+                PipelineOptions::new(ProcessingQuality::Preview).mask_atlas_edge(16),
             )
             .unwrap();
             assert!(pipeline.mask_layer_capacity() < MAX_LOCAL_MASKS);
@@ -341,21 +340,20 @@ impl CalibRawApp {
 
         let build_pipeline = || {
             if let Some(template) = program_template.as_ref() {
-                RawGpuPipeline::new_headless_reusing_program_template(
+                RawGpuPipeline::new(
                     &render_state.device,
                     &render_state.queue,
                     &prepared.preview_raw,
                     &params,
-                    ProcessingQuality::Preview,
-                    template,
+                    PipelineOptions::new(ProcessingQuality::Preview).programs(template),
                 )
             } else {
-                RawGpuPipeline::new_headless_with_quality(
+                RawGpuPipeline::new(
                     &render_state.device,
                     &render_state.queue,
                     &prepared.preview_raw,
                     &params,
-                    ProcessingQuality::Preview,
+                    PipelineOptions::new(ProcessingQuality::Preview),
                 )
             }
         };

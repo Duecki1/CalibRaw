@@ -471,6 +471,215 @@ fn wait_for_mapping(
         .map_err(|error| anyhow!("GPU {label} readback mapping failed: {error}"))
 }
 
+impl RawGpuPipeline {
+    pub fn output_snapshot(&self, device: &wgpu::Device, queue: &wgpu::Queue) -> GpuOutputSnapshot {
+        let texture = create_processing_texture(
+            device,
+            texture_size(self.width, self.height),
+            wgpu::TextureFormat::Rgba8Unorm,
+            wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::COPY_SRC,
+            "calibraw output snapshot",
+        );
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("calibraw output snapshot encoder"),
+        });
+        encoder.copy_texture_to_texture(
+            copy_texture(&self.out_texture),
+            copy_texture(&texture),
+            texture_size(self.width, self.height),
+        );
+        queue.submit(Some(encoder.finish()));
+        GpuOutputSnapshot {
+            texture,
+            width: self.width,
+            height: self.height,
+        }
+    }
+
+    pub fn read_output_region_blocking(
+        &self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        x: u32,
+        y: u32,
+        width: u32,
+        height: u32,
+    ) -> Result<Vec<u8>> {
+        read_rgba8_texture_region_blocking(
+            device,
+            queue,
+            &self.out_texture,
+            TextureReadbackRegion {
+                origin: [x, y],
+                extent: [width, height],
+                texture_extent: [self.width, self.height],
+                label: "calibraw tiled export readback",
+            },
+        )
+    }
+
+    /// Read the display color before global point-color adjustments.
+    pub fn read_point_color_sample_blocking(
+        &self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        params: &GpuParams,
+        x: u32,
+        y: u32,
+    ) -> Result<[f32; 3]> {
+        self.read_point_color_sample_with_mode(device, queue, params, x, y, false)
+    }
+
+    /// Read the display color at the input to local point-color adjustments.
+    pub fn read_local_point_color_sample_blocking(
+        &self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        params: &GpuParams,
+        x: u32,
+        y: u32,
+    ) -> Result<[f32; 3]> {
+        self.read_point_color_sample_with_mode(device, queue, params, x, y, true)
+    }
+
+    pub(super) fn read_point_color_sample_with_mode(
+        &self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        params: &GpuParams,
+        x: u32,
+        y: u32,
+        after_global: bool,
+    ) -> Result<[f32; 3]> {
+        anyhow::ensure!(
+            x < self.width && y < self.height,
+            "point color sample is outside the image"
+        );
+        let mut sample_params = params.clone();
+        sample_params.scene_tone.point_color_meta[2] = if after_global { 2 } else { 1 };
+        self.upload_params(queue, &sample_params);
+        let render = |label| {
+            let mut encoder = device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some(label) });
+            if params.needs_blur_passes() {
+                self.encode_bound_pass(&mut encoder, &self.post_blur_render_pass, label);
+            } else {
+                self.encode_pass(&mut encoder, self.indices.adjustment_render_pass_index);
+            }
+            queue.submit(Some(encoder.finish()));
+        };
+        render("calibraw point color sample");
+        let result = read_float_texture_pixel_blocking(
+            device,
+            queue,
+            &self.display_linear_texture,
+            self.scene_format,
+            x,
+            y,
+        );
+        // Restore even on a mapping failure; visualization must never remain in
+        // the shared export/display attachment after a sampler operation.
+        self.upload_params(queue, params);
+        render("calibraw restore point color preview");
+        result
+    }
+
+    pub fn begin_display_linear_region_readback(
+        &self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        x: u32,
+        y: u32,
+        width: u32,
+        height: u32,
+    ) -> Result<PendingRgba32Readback> {
+        if self.scene_format != wgpu::TextureFormat::Rgba32Float {
+            return Err(anyhow!(
+                "display-linear export readback requires ProcessingQuality::High (RGBA32Float)"
+            ));
+        }
+        begin_rgba32_texture_region_rgb_readback(
+            device,
+            queue,
+            &self.display_linear_texture,
+            TextureReadbackRegion {
+                origin: [x, y],
+                extent: [width, height],
+                texture_extent: [self.width, self.height],
+                label: "calibraw pipelined display-linear export readback",
+            },
+        )
+    }
+
+    pub fn read_display_linear_region_blocking(
+        &self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        x: u32,
+        y: u32,
+        width: u32,
+        height: u32,
+    ) -> Result<Vec<f32>> {
+        if self.scene_format != wgpu::TextureFormat::Rgba32Float {
+            return Err(anyhow!(
+                "display-linear export readback requires ProcessingQuality::High (RGBA32Float)"
+            ));
+        }
+        read_rgba32_texture_region_rgb_blocking(
+            device,
+            queue,
+            &self.display_linear_texture,
+            TextureReadbackRegion {
+                origin: [x, y],
+                extent: [width, height],
+                texture_extent: [self.width, self.height],
+                label: "calibraw display-linear export readback",
+            },
+        )
+    }
+
+    pub fn read_scene_texture_blocking(
+        &self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+    ) -> Result<Vec<f32>> {
+        if self.scene_format != wgpu::TextureFormat::Rgba32Float {
+            return Err(anyhow!(
+                "scene texture readback requires ProcessingQuality::High (RGBA32Float), got {:?}",
+                self.scene_format
+            ));
+        }
+        read_rgba32_texture_rgb_blocking(
+            device,
+            queue,
+            &self.scene_texture,
+            self.width,
+            self.height,
+            "calibraw scene texture readback",
+        )
+    }
+
+    pub fn render_camera_scene_blocking(
+        &self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        params: &GpuParams,
+    ) -> Result<Vec<f32>> {
+        if self.scene_format != wgpu::TextureFormat::Rgba32Float {
+            return Err(anyhow!(
+                "camera scene readback requires ProcessingQuality::High (RGBA32Float)"
+            ));
+        }
+        self.upload_params(queue, params);
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("calibraw camera scene readback encoder"),
+        });
+        self.encode_raw_stage(&mut encoder, params);
+        queue.submit(Some(encoder.finish()));
+        self.read_scene_texture_blocking(device, queue)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{

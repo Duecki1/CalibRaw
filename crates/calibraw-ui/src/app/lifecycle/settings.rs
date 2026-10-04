@@ -1,7 +1,7 @@
 use super::*;
 
 impl CalibRawApp {
-    pub(crate) fn set_ui_design(&mut self, design: crate::ui::theme::UiDesign) {
+    pub(crate) fn set_ui_design(&mut self, design: crate::appearance::UiDesign) {
         if self.preferences.ui_design == design {
             return;
         }
@@ -16,7 +16,7 @@ impl CalibRawApp {
         self.persist_performance_settings();
     }
 
-    pub(crate) fn set_preview_backdrop(&mut self, backdrop: crate::ui::theme::PreviewBackdrop) {
+    pub(crate) fn set_preview_backdrop(&mut self, backdrop: crate::appearance::PreviewBackdrop) {
         if self.preferences.preview_backdrop == backdrop {
             return;
         }
@@ -115,7 +115,7 @@ impl CalibRawApp {
             .develop
             .loaded_raw
             .as_ref()
-            .map(|_| self.persistence.sidecar_generation);
+            .map(|_| self.persistence.document_generation);
         self.discord_presence.sync(self.ui.active_tab, document_id);
     }
 
@@ -246,10 +246,6 @@ impl CalibRawApp {
         if self.library.set_folder_sidebar_open(open) {
             #[cfg(not(target_os = "android"))]
             self.persist_performance_settings();
-            #[cfg(target_os = "android")]
-            calibraw_ffi::set_back_navigation_active(
-                open || self.library.has_selection() || self.ui.active_tab != AppTab::Library,
-            );
             self.egui_ctx.request_repaint();
         }
     }

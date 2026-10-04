@@ -21,15 +21,15 @@ impl Sidebar {
         if !app.ai_update_needed() || app.ai_update_busy() {
             return;
         }
-        crate::ui::theme::section_card(ui, "AI results need updating", |ui| {
+        moduwu_design::section_card(ui, "AI results need updating", |ui| {
             ui.label(
                 "The image changed since AI masks or scene depth were made. Update them to match it without changing your edits.",
             );
-            ui.add_space(crate::ui::theme::SPACE_XS);
-            if crate::ui::theme::secondary_button(ui, "Update AI results").clicked() {
+            ui.add_space(moduwu_design::SPACE_XS);
+            if moduwu_design::secondary_button(ui, "Update AI results").clicked() {
                 app.request_ai_update(frame);
             }
         });
-        crate::ui::theme::card_gap(ui);
+        moduwu_design::card_gap(ui);
     }
 }

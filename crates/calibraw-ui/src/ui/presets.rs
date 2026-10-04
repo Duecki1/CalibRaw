@@ -3,7 +3,6 @@ use crate::app::{CalibRawApp, GroupDialogMode, PresetEditor, PresetEditorMode};
 use crate::pipeline::AdjustmentGroup;
 use crate::presets::DeletedGroupPresets;
 use crate::sidecar::EditSelection;
-use crate::ui::theme;
 use eframe::egui::{self, Ui};
 use std::path::PathBuf;
 
@@ -87,7 +86,7 @@ impl PresetList {
         let mut chosen = None;
         let mut show_entries = |ui: &mut Ui, group: &PresetListGroup| {
             for entry in &group.presets {
-                if crate::ui::theme::menu_item(ui, true, &entry.name)
+                if moduwu_design::menu_item(ui, true, &entry.name)
                     .on_hover_text(&entry.summary)
                     .clicked()
                 {
@@ -151,11 +150,11 @@ fn selection_summary(selection: EditSelection) -> String {
 /// groups happens in the list itself.
 #[cfg(not(target_os = "android"))]
 pub(crate) fn show_header_actions(ui: &mut Ui, app: &mut CalibRawApp) {
-    if crate::ui::icons::phosphor_icon_button_enabled(
+    if moduwu_design::icon_button_enabled(
         ui,
         app.presets.is_available(),
         egui_phosphor::regular::DOWNLOAD_SIMPLE,
-        theme::toolbar_icon_size(),
+        moduwu_design::toolbar_icon_size(),
         "Import presets",
     )
     .clicked()
@@ -196,7 +195,7 @@ pub(crate) fn show_panel(ui: &mut Ui, app: &mut CalibRawApp, frame: &eframe::Fra
         ));
     }
     if !notes.is_empty() {
-        theme::content_card(ui, |ui| {
+        moduwu_design::content_card(ui, |ui| {
             for (text, color, details) in &notes {
                 let response = show_note(ui, text, *color);
                 if let Some(details) = details {
@@ -210,9 +209,9 @@ pub(crate) fn show_panel(ui: &mut Ui, app: &mut CalibRawApp, frame: &eframe::Fra
     let mut hovered = None;
     for (index, group) in list.groups.iter().enumerate() {
         if index > 0 || !notes.is_empty() {
-            theme::card_gap(ui);
+            moduwu_design::card_gap(ui);
         }
-        theme::content_card(ui, |ui| {
+        moduwu_design::content_card(ui, |ui| {
             show_group_title(ui, &group.name, &mut action);
             for entry in &group.presets {
                 if show_preset_row(ui, entry, &mut action) {
@@ -229,11 +228,14 @@ pub(crate) fn show_panel(ui: &mut Ui, app: &mut CalibRawApp, frame: &eframe::Fra
         });
     }
     if !list.groups.is_empty() || !notes.is_empty() {
-        theme::card_gap(ui);
+        moduwu_design::card_gap(ui);
     }
     if ui
         .add_enabled_ui(app.presets.is_available(), |ui| {
-            theme::full_width_button(ui, format!("{}  New group", egui_phosphor::regular::PLUS))
+            moduwu_design::full_width_button(
+                ui,
+                format!("{}  New group", egui_phosphor::regular::PLUS),
+            )
         })
         .inner
         .clicked()
@@ -278,19 +280,19 @@ fn show_menu_row<R>(
     add_contents: impl FnOnce(&mut Ui) -> R,
 ) -> R {
     ui.allocate_ui_with_layout(
-        egui::vec2(ui.available_width(), theme::CONTROL_HEIGHT),
+        egui::vec2(ui.available_width(), moduwu_design::CONTROL_HEIGHT),
         egui::Layout::right_to_left(egui::Align::Center),
         |ui| {
             // Touch screens have no right-click, so the menu gets a button.
             #[cfg(target_os = "android")]
             ui.push_id(menu_id, |ui| {
-                let button = crate::ui::icons::phosphor_icon_button(
+                let button = moduwu_design::icon_button(
                     ui,
                     egui_phosphor::regular::DOTS_THREE_VERTICAL,
-                    theme::toolbar_icon_size(),
+                    moduwu_design::toolbar_icon_size(),
                     "More actions",
                 );
-                theme::dropdown_menu(&button, add_menu);
+                moduwu_design::dropdown_menu(&button, add_menu);
             });
             #[cfg(not(target_os = "android"))]
             let _ = (menu_id, add_menu);
@@ -308,12 +310,12 @@ fn show_menu_row<R>(
 /// mask list, and on a menu button on Android.
 fn show_group_title(ui: &mut Ui, group: &str, action: &mut Option<PresetAction>) {
     let menu = |ui: &mut Ui, action: &mut Option<PresetAction>| {
-        if theme::menu_item(ui, true, "Rename group…").clicked() {
+        if moduwu_design::menu_item(ui, true, "Rename group…").clicked() {
             *action = Some(PresetAction::RenameGroup(group.to_owned()));
             ui.close();
         }
         ui.separator();
-        if theme::destructive_menu_item(ui, "Delete group…").clicked() {
+        if moduwu_design::destructive_menu_item(ui, "Delete group…").clicked() {
             *action = Some(PresetAction::DeleteGroup(group.to_owned()));
             ui.close();
         }
@@ -331,7 +333,7 @@ fn show_group_title(ui: &mut Ui, group: &str, action: &mut Option<PresetAction>)
             )
         },
     );
-    theme::context_menu(&title, |ui| menu(ui, action));
+    moduwu_design::context_menu(&title, |ui| menu(ui, action));
     if android_action.is_some() {
         *action = android_action;
     }
@@ -341,7 +343,7 @@ fn show_group_title(ui: &mut Ui, group: &str, action: &mut Option<PresetAction>)
 /// cards.
 fn show_add_row(ui: &mut Ui, enabled: bool, label: &str) -> egui::Response {
     ui.add_enabled_ui(enabled, |ui| {
-        theme::full_width_button(ui, format!("{}  {label}", egui_phosphor::regular::PLUS))
+        moduwu_design::full_width_button(ui, format!("{}  {label}", egui_phosphor::regular::PLUS))
     })
     .inner
 }
@@ -360,16 +362,16 @@ fn show_preset_row(
         |ui| preset_actions_menu(ui, entry, &mut android_action),
         |ui| {
             ui.add_sized(
-                [ui.available_width(), theme::CONTROL_HEIGHT],
+                [ui.available_width(), moduwu_design::CONTROL_HEIGHT],
                 egui::Button::new(())
                     .left_text(entry.name.as_str())
                     .truncate()
-                    .corner_radius(theme::CARD_RADIUS),
+                    .corner_radius(moduwu_design::CARD_RADIUS),
             )
         },
     )
     .on_hover_text(format!("{ROW_HELP}\n{}", entry.summary));
-    theme::context_menu(&response, |ui| preset_actions_menu(ui, entry, action));
+    moduwu_design::context_menu(&response, |ui| preset_actions_menu(ui, entry, action));
     if response.clicked() {
         *action = Some(PresetAction::Apply(entry.path.clone()));
     }
@@ -382,21 +384,21 @@ fn show_preset_row(
 }
 
 fn preset_actions_menu(ui: &mut Ui, entry: &PresetListEntry, action: &mut Option<PresetAction>) {
-    if crate::ui::theme::menu_item(ui, true, "Apply to this photo").clicked() {
+    if moduwu_design::menu_item(ui, true, "Apply to this photo").clicked() {
         *action = Some(PresetAction::Apply(entry.path.clone()));
         ui.close();
     }
-    if crate::ui::theme::menu_item(ui, true, "Rename…").clicked() {
+    if moduwu_design::menu_item(ui, true, "Rename…").clicked() {
         *action = Some(PresetAction::Rename(entry.path.clone()));
         ui.close();
     }
     #[cfg(not(target_os = "android"))]
-    if crate::ui::theme::menu_item(ui, true, "Export…").clicked() {
+    if moduwu_design::menu_item(ui, true, "Export…").clicked() {
         *action = Some(PresetAction::Export(entry.path.clone()));
         ui.close();
     }
     ui.separator();
-    if crate::ui::theme::destructive_menu_item(ui, "Delete…").clicked() {
+    if moduwu_design::destructive_menu_item(ui, "Delete…").clicked() {
         *action = Some(PresetAction::Delete(entry.path.clone()));
         ui.close();
     }
@@ -431,8 +433,8 @@ fn show_editor(ctx: &egui::Context, app: &mut CalibRawApp) {
     // The body updates eligibility before the fixed footer is drawn, without
     // making either closure hold a second borrow of the editor.
     let confirm_enabled = std::cell::Cell::new(false);
-    let mut choice = theme::DialogAction::None;
-    theme::dialog_window(
+    let mut choice = moduwu_design::DialogAction::None;
+    moduwu_design::dialog_window(
         if creating {
             "New preset"
         } else {
@@ -440,9 +442,9 @@ fn show_editor(ctx: &egui::Context, app: &mut CalibRawApp) {
         },
         ctx,
         if creating {
-            theme::DIALOG_WIDTH_LARGE
+            moduwu_design::DIALOG_WIDTH_LARGE
         } else {
-            theme::DIALOG_WIDTH_FORM
+            moduwu_design::DIALOG_WIDTH_FORM
         },
     )
     .id(egui::Id::new("preset-editor-dialog"))
@@ -453,19 +455,19 @@ fn show_editor(ctx: &egui::Context, app: &mut CalibRawApp) {
                 ui.disable();
             }
             ui.label("Name");
-            let response = theme::dialog_text_field(
+            let response = moduwu_design::dialog_text_field(
                 ui,
                 &mut editor.name,
                 "preset-editor-name",
                 "e.g. Warm matte",
             );
-            theme::request_initial_focus(&response, &mut editor.focus_requested);
+            moduwu_design::request_initial_focus(&response, &mut editor.focus_requested);
 
             ui.label("Group");
             open_group_dialog |= show_group_dropdown(ui, editor, &groups);
 
             if let PresetEditorMode::Create { edits } = &editor.mode {
-                theme::card_gap(ui);
+                moduwu_design::card_gap(ui);
                 show_selection_controls(ui, &mut editor.selection, edits);
             }
 
@@ -504,13 +506,13 @@ fn show_editor(ctx: &egui::Context, app: &mut CalibRawApp) {
                 (true, false) => "Save preset",
                 (false, _) => "Rename",
             };
-            choice = theme::dialog_confirmation_buttons(
+            choice = moduwu_design::dialog_confirmation_buttons(
                 ui,
                 "Cancel",
                 confirm_label,
                 confirm_enabled.get(),
                 false,
-                theme::DialogKeyboard::CONFIRM_ON_ENTER,
+                moduwu_design::DialogKeyboard::CONFIRM_ON_ENTER,
             );
         },
     );
@@ -519,9 +521,9 @@ fn show_editor(ctx: &egui::Context, app: &mut CalibRawApp) {
         app.open_group_dialog(GroupDialogMode::Create);
     }
     match choice {
-        crate::ui::theme::DialogAction::Cancel => app.presets.editor = None,
-        crate::ui::theme::DialogAction::Confirm => app.confirm_preset_editor(),
-        crate::ui::theme::DialogAction::None => {}
+        moduwu_design::DialogAction::Cancel => app.presets.editor = None,
+        moduwu_design::DialogAction::Confirm => app.confirm_preset_editor(),
+        moduwu_design::DialogAction::None => {}
     }
 }
 
@@ -534,7 +536,7 @@ fn show_group_dropdown(ui: &mut Ui, editor: &mut PresetEditor, groups: &[String]
         choices.insert(0, editor.group.clone());
     }
     let mut open_new_group = false;
-    theme::combo_box(
+    moduwu_design::combo_box(
         "preset-editor-group",
         editor.group.clone(),
         ui.available_width(),
@@ -565,30 +567,34 @@ fn show_group_dialog(ctx: &egui::Context, app: &mut CalibRawApp) {
         GroupDialogMode::Create => ("New group", "Add group"),
         GroupDialogMode::Rename { .. } => ("Rename group", "Rename"),
     };
-    let mut choice = theme::DialogAction::None;
-    theme::dialog_window(title, ctx, theme::DIALOG_WIDTH_FORM)
+    let mut choice = moduwu_design::DialogAction::None;
+    moduwu_design::dialog_window(title, ctx, moduwu_design::DIALOG_WIDTH_FORM)
         .id(egui::Id::new("preset-group-dialog"))
         .show(ctx, |ui| {
             ui.label("Group name");
-            let response =
-                theme::dialog_text_field(ui, &mut dialog.name, "preset-group-name", "e.g. Film");
-            theme::request_initial_focus(&response, &mut dialog.focus_requested);
+            let response = moduwu_design::dialog_text_field(
+                ui,
+                &mut dialog.name,
+                "preset-group-name",
+                "e.g. Film",
+            );
+            moduwu_design::request_initial_focus(&response, &mut dialog.focus_requested);
             if let Some(error) = &dialog.error {
                 show_note(ui, error, ui.visuals().error_fg_color);
             }
-            choice = theme::dialog_confirmation_buttons(
+            choice = moduwu_design::dialog_confirmation_buttons(
                 ui,
                 "Cancel",
                 confirm_label,
                 !dialog.name.trim().is_empty(),
                 false,
-                theme::DialogKeyboard::CONFIRM_ON_ENTER,
+                moduwu_design::DialogKeyboard::CONFIRM_ON_ENTER,
             );
         });
     match choice {
-        theme::DialogAction::Cancel => app.presets.group_dialog = None,
-        theme::DialogAction::Confirm => app.confirm_group_dialog(),
-        theme::DialogAction::None => {}
+        moduwu_design::DialogAction::Cancel => app.presets.group_dialog = None,
+        moduwu_design::DialogAction::Confirm => app.confirm_group_dialog(),
+        moduwu_design::DialogAction::None => {}
     }
 }
 
@@ -609,7 +615,7 @@ fn show_group_delete_confirmation(ctx: &egui::Context, app: &mut CalibRawApp) {
 
     let mut choice = None;
     let mut cancel = false;
-    theme::dialog_window("Delete group?", ctx, theme::DIALOG_WIDTH_DEFAULT)
+    moduwu_design::dialog_window("Delete group?", ctx, moduwu_design::DIALOG_WIDTH_DEFAULT)
         .id(egui::Id::new("preset-group-delete-confirmation"))
         .show(ctx, |ui| {
             ui.add(
@@ -620,7 +626,7 @@ fn show_group_delete_confirmation(ctx: &egui::Context, app: &mut CalibRawApp) {
                 })
                 .wrap(),
             );
-            theme::dialog_button_row(ui, |ui| {
+            moduwu_design::dialog_button_row(ui, |ui| {
                 let delete_label = if count == 0 {
                     "Delete"
                 } else {
@@ -631,7 +637,7 @@ fn show_group_delete_confirmation(ctx: &egui::Context, app: &mut CalibRawApp) {
                         egui::Button::new(
                             egui::RichText::new(delete_label).color(ui.visuals().error_fg_color),
                         )
-                        .min_size(egui::vec2(0.0, theme::CONTROL_HEIGHT)),
+                        .min_size(egui::vec2(0.0, moduwu_design::CONTROL_HEIGHT)),
                     )
                     .clicked()
                 {
@@ -639,7 +645,7 @@ fn show_group_delete_confirmation(ctx: &egui::Context, app: &mut CalibRawApp) {
                 }
                 if count > 0
                     && can_move
-                    && theme::primary_action_button(
+                    && moduwu_design::primary_action_button(
                         ui,
                         format!("Move presets to {}", crate::presets::DEFAULT_PRESET_GROUP),
                     )
@@ -647,11 +653,14 @@ fn show_group_delete_confirmation(ctx: &egui::Context, app: &mut CalibRawApp) {
                 {
                     choice = Some(DeletedGroupPresets::MoveToDefaultGroup);
                 }
-                cancel |= theme::secondary_button(ui, "Cancel").clicked();
+                cancel |= moduwu_design::secondary_button(ui, "Cancel").clicked();
             });
             cancel |= choice.is_none()
-                && theme::dialog_keyboard_action(ui, theme::DialogKeyboard::CLOSE_ONLY, false)
-                    == theme::DialogAction::Cancel;
+                && moduwu_design::dialog_keyboard_action(
+                    ui,
+                    moduwu_design::DialogKeyboard::CLOSE_ONLY,
+                    false,
+                ) == moduwu_design::DialogAction::Cancel;
         });
     if let Some(presets) = choice {
         app.presets.pending_group_delete = None;
@@ -666,12 +675,12 @@ fn show_selection_controls(
     selection: &mut EditSelection,
     edits: &crate::sidecar::EditState,
 ) {
-    theme::strong_with_help(
+    moduwu_design::strong_with_help(
         ui,
         "Include settings",
         "Settings that are not selected keep the destination photo’s values. Selecting an unchanged group also saves its default values.",
     );
-    ui.add_space(theme::SPACE_XS);
+    ui.add_space(moduwu_design::SPACE_XS);
     // Each column retains a readable checkbox width; small viewports stack the
     // same cards inside the dialog's bounded scroll area.
     if ui.available_width() >= 440.0 {
@@ -681,7 +690,7 @@ fn show_selection_controls(
         });
     } else {
         show_adjustment_selection(ui, selection, edits);
-        theme::card_gap(ui);
+        moduwu_design::card_gap(ui);
         show_additional_selection(ui, selection);
     }
 
@@ -697,7 +706,7 @@ fn show_selection_controls(
         .into_iter()
         .filter(|included| *included)
         .count();
-    ui.add_space(theme::SPACE_XS);
+    ui.add_space(moduwu_design::SPACE_XS);
     ui.add(
         egui::Label::new(
             egui::RichText::new(if selected_count == 0 {
@@ -740,28 +749,28 @@ fn show_adjustment_selection(
     selection: &mut EditSelection,
     edits: &crate::sidecar::EditState,
 ) {
-    theme::content_card(ui, |ui| {
-        theme::strong_with_help(
+    moduwu_design::content_card(ui, |ui| {
+        moduwu_design::strong_with_help(
             ui,
             "Adjustments",
             "Each group matches a card in the Edit tab. Groups that are not selected keep the destination photo's settings. Edited groups are shown in bold.",
         );
-        theme::action_row(ui, |ui| {
-            if theme::secondary_button(ui, "All")
+        moduwu_design::action_row(ui, |ui| {
+            if moduwu_design::secondary_button(ui, "All")
                 .on_hover_text("Include every adjustment group, including unchanged values")
                 .clicked()
             {
                 selection.adjustment_groups = crate::pipeline::AdjustmentGroupSet::ALL;
             }
-            if theme::secondary_button(ui, "None")
+            if moduwu_design::secondary_button(ui, "None")
                 .on_hover_text("Clear the adjustment groups; other settings stay selected")
                 .clicked()
             {
                 selection.adjustment_groups = crate::pipeline::AdjustmentGroupSet::EMPTY;
             }
         });
-        ui.add_space(theme::SPACE_XS);
-        theme::action_row(ui, |ui| {
+        ui.add_space(moduwu_design::SPACE_XS);
+        moduwu_design::action_row(ui, |ui| {
             for group in AdjustmentGroup::ALL {
                 let included = selection.adjustment_groups.contains(group);
                 let edited = edits.exposure.group_is_edited(group);
@@ -772,7 +781,7 @@ fn show_adjustment_selection(
                 } else {
                     "Unchanged on this photo. Including this group replaces the destination’s settings with these defaults."
                 };
-                if theme::toggle_button(ui, label, included)
+                if moduwu_design::toggle_button(ui, label, included)
                     .on_hover_text(help)
                     .clicked()
                 {
@@ -784,10 +793,10 @@ fn show_adjustment_selection(
 }
 
 fn show_additional_selection(ui: &mut Ui, selection: &mut EditSelection) {
-    theme::content_card(ui, |ui| {
+    moduwu_design::content_card(ui, |ui| {
         ui.strong("Also include");
-        ui.add_space(theme::SPACE_XS);
-        theme::action_row(ui, |ui| {
+        ui.add_space(moduwu_design::SPACE_XS);
+        moduwu_design::action_row(ui, |ui| {
             for (included, label, help) in [
                 (
                     &mut selection.camera_profile,
@@ -815,7 +824,7 @@ fn show_additional_selection(ui: &mut Ui, selection: &mut EditSelection) {
                     "Lens correction state and the selected lens profile.",
                 ),
             ] {
-                if theme::toggle_button(ui, label, *included)
+                if moduwu_design::toggle_button(ui, label, *included)
                     .on_hover_text(help)
                     .clicked()
                 {
@@ -834,33 +843,29 @@ fn show_delete_confirmation(ctx: &egui::Context, app: &mut CalibRawApp) {
         app.presets.pending_delete = None;
         return;
     };
-    let mut choice = crate::ui::theme::DialogAction::None;
-    crate::ui::theme::dialog_window(
-        "Delete preset?",
-        ctx,
-        crate::ui::theme::DIALOG_WIDTH_DEFAULT,
-    )
-    .id(egui::Id::new("preset-delete-confirmation"))
-    .show(ctx, |ui| {
-        ui.label(format!(
-            "“{name}” will be deleted. Photos it was applied to keep their adjustments."
-        ));
-        choice = crate::ui::theme::dialog_confirmation_buttons(
-            ui,
-            "Cancel",
-            "Delete",
-            true,
-            true,
-            crate::ui::theme::DialogKeyboard::CLOSE_ONLY,
-        );
-    });
+    let mut choice = moduwu_design::DialogAction::None;
+    moduwu_design::dialog_window("Delete preset?", ctx, moduwu_design::DIALOG_WIDTH_DEFAULT)
+        .id(egui::Id::new("preset-delete-confirmation"))
+        .show(ctx, |ui| {
+            ui.label(format!(
+                "“{name}” will be deleted. Photos it was applied to keep their adjustments."
+            ));
+            choice = moduwu_design::dialog_confirmation_buttons(
+                ui,
+                "Cancel",
+                "Delete",
+                true,
+                true,
+                moduwu_design::DialogKeyboard::CLOSE_ONLY,
+            );
+        });
     match choice {
-        crate::ui::theme::DialogAction::Cancel => app.presets.pending_delete = None,
-        crate::ui::theme::DialogAction::Confirm => {
+        moduwu_design::DialogAction::Cancel => app.presets.pending_delete = None,
+        moduwu_design::DialogAction::Confirm => {
             app.presets.pending_delete = None;
             app.delete_preset(&path);
         }
-        crate::ui::theme::DialogAction::None => {}
+        moduwu_design::DialogAction::None => {}
     }
 }
 

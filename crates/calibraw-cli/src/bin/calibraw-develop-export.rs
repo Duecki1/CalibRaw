@@ -5,7 +5,9 @@ use calibraw_cli::pipeline::{
     ExposureParams, GeometryTransform, MaskStack, TileSpec, TiledExportJob,
     GLOBAL_TINT_OFFSET_LIMIT, HUE_ROTATION_LIMIT_DEGREES,
 };
-use calibraw_gpu::wgpu;
+use calibraw_gpu::{
+    request_headless_device, wgpu, HeadlessDevice, HeadlessDeviceError, HeadlessDeviceRequest,
+};
 use std::env;
 use std::path::{Path, PathBuf};
 use std::sync::{atomic::AtomicBool, Arc};
@@ -60,42 +62,28 @@ fn run() -> Result<()> {
         raw = crop_raw(&raw, x, y, width, height);
     }
 
-    let instance = wgpu::Instance::default();
-    let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+    let HeadlessDevice {
+        device,
+        queue,
+        adapter_info,
+    } = request_headless_device(&HeadlessDeviceRequest {
+        label: "calibraw headless Develop export",
         power_preference: wgpu::PowerPreference::HighPerformance,
-        compatible_surface: None,
-        force_fallback_adapter: false,
-    }))
-    .or_else(|_| {
-        pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::LowPower,
-            compatible_surface: None,
-            force_fallback_adapter: true,
-        }))
+        texture_dimension: export_mask_atlas_edge(raw.width, raw.height),
     })
-    .context("request a hardware or software wgpu adapter")?;
-    let adapter_info = adapter.get_info();
-    let adapter_limits = adapter.limits();
-    let required_dimension = export_mask_atlas_edge(raw.width, raw.height);
-    if required_dimension > adapter_limits.max_texture_dimension_2d {
-        bail!(
-            "export requires a {required_dimension}-pixel mask atlas, but adapter {:?} supports {}",
-            adapter_info.name,
-            adapter_limits.max_texture_dimension_2d
-        );
-    }
-    let mut required_limits = if adapter_info.backend == wgpu::Backend::Gl {
-        wgpu::Limits::downlevel_webgl2_defaults()
-    } else {
-        wgpu::Limits::default()
-    };
-    required_limits.max_texture_dimension_2d = required_dimension;
-    let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
-        label: Some("calibraw headless Develop export"),
-        required_limits,
-        ..Default::default()
-    }))
-    .context("request a wgpu device")?;
+    .map_err(|error| match error {
+        HeadlessDeviceError::TextureTooLarge {
+            required,
+            supported,
+            adapter,
+        } => anyhow!(
+            "export requires a {required}-pixel mask atlas, but adapter {adapter:?} supports {supported}"
+        ),
+        HeadlessDeviceError::NoAdapter(error) => {
+            anyhow!("request a hardware or software wgpu adapter: {error}")
+        }
+        HeadlessDeviceError::Device(error) => anyhow!("request a wgpu device: {error}"),
+    })?;
 
     let raw = Arc::new(raw);
     let metadata = ExportMetadata::from_raw(

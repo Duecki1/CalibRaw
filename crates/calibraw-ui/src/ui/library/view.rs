@@ -11,25 +11,25 @@ impl Library {
         let can_create_folder = platform::can_create_local_folder(app);
         let mut requested_toolbar_action = None;
 
-        crate::ui::theme::card_header(ui, |ui| {
-            crate::ui::theme::toolbar_row(ui, |ui| {
-                crate::ui::theme::toolbar_title(ui, "Folders");
+        moduwu_design::card_header(ui, |ui| {
+            moduwu_design::toolbar_row(ui, |ui| {
+                moduwu_design::toolbar_title(ui, "Folders");
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if crate::ui::icons::phosphor_icon_button(
+                    if moduwu_design::icon_button(
                         ui,
                         egui_phosphor::regular::X,
-                        crate::ui::theme::toolbar_icon_size(),
+                        moduwu_design::toolbar_icon_size(),
                         "Close folder sidebar",
                     )
                     .clicked()
                     {
                         app.set_library_folder_sidebar_open(false);
                     }
-                    if crate::ui::icons::phosphor_icon_button_enabled(
+                    if moduwu_design::icon_button_enabled(
                         ui,
                         folders_available && !action_in_progress,
                         egui_phosphor::regular::ARROW_CLOCKWISE,
-                        crate::ui::theme::toolbar_icon_size(),
+                        moduwu_design::toolbar_icon_size(),
                         "Refresh folders",
                     )
                     .clicked()
@@ -37,11 +37,11 @@ impl Library {
                         requested_toolbar_action =
                             Some(platform::LocalFolderToolbarAction::Refresh);
                     }
-                    if crate::ui::icons::phosphor_icon_button_enabled(
+                    if moduwu_design::icon_button_enabled(
                         ui,
                         can_create_folder && !action_in_progress,
                         egui_phosphor::regular::FOLDER_PLUS,
-                        crate::ui::theme::toolbar_icon_size(),
+                        moduwu_design::toolbar_icon_size(),
                         "Create folder here",
                     )
                     .clicked()
@@ -51,7 +51,7 @@ impl Library {
                 });
             });
         });
-        crate::ui::theme::card_gap(ui);
+        moduwu_design::card_gap(ui);
         ui.scope(|ui| {
             let mut scroll_style = egui::style::ScrollStyle::solid();
             scroll_style.bar_width = 7.0;
@@ -70,10 +70,10 @@ impl Library {
                         |ui| {
                             ui.set_width(content_width);
                             ui.set_max_width(content_width);
-                            crate::ui::theme::content_card(ui, |ui| {
+                            moduwu_design::content_card(ui, |ui| {
                                 platform::show_local_folder_tree(ui, app, action_in_progress);
                             });
-                            crate::ui::theme::card_gap(ui);
+                            moduwu_design::card_gap(ui);
                         },
                     );
                 });
@@ -96,7 +96,7 @@ impl Library {
         let mut library_action = None;
 
         let compact_header =
-            crate::ui::layout::ResponsiveWidth::from_width(ui.available_width()).is_compact();
+            moduwu_design::ResponsiveWidth::from_width(ui.available_width()).is_compact();
         let mut selected_sort = app.library.sort_order();
         let mut selected_size = app.library.thumbnail_size();
         let mut selected_filter = app.library.review_filter;
@@ -104,15 +104,15 @@ impl Library {
         let header_title = library_header_title(app);
         let thumbnail_progress = app.library.thumbnail_background_progress();
         let show_header = |ui: &mut Ui| {
-            crate::ui::theme::toolbar_row(ui, |ui| {
+            moduwu_design::toolbar_row(ui, |ui| {
                 if compact_header {
-                    ui.spacing_mut().item_spacing.x = crate::ui::theme::SPACE_XS;
+                    ui.spacing_mut().item_spacing.x = moduwu_design::SPACE_XS;
                 }
                 if !app.library.folder_sidebar_open()
-                    && crate::ui::icons::phosphor_icon_button(
+                    && moduwu_design::icon_button(
                         ui,
                         egui_phosphor::regular::SIDEBAR_SIMPLE,
-                        crate::ui::theme::toolbar_icon_size(),
+                        moduwu_design::toolbar_icon_size(),
                         "Open folder sidebar",
                     )
                     .clicked()
@@ -121,9 +121,9 @@ impl Library {
                 }
 
                 if compact_header {
-                    crate::ui::theme::toolbar_title(ui, "Library");
+                    moduwu_design::toolbar_title(ui, "Library");
                 } else {
-                    crate::ui::theme::toolbar_title(ui, &header_title);
+                    moduwu_design::toolbar_title(ui, &header_title);
                 }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     #[cfg(target_os = "android")]
@@ -131,25 +131,25 @@ impl Library {
 
                     #[cfg(target_os = "android")]
                     if (if compact_header {
-                        crate::ui::icons::phosphor_icon_button(
+                        moduwu_design::icon_button(
                             ui,
                             egui_phosphor::regular::GEAR,
-                            crate::ui::theme::toolbar_icon_size(),
+                            moduwu_design::toolbar_icon_size(),
                             "Settings",
                         )
                     } else {
-                        crate::ui::theme::toolbar_button(ui, "Settings", 82.0)
+                        moduwu_design::toolbar_button(ui, "Settings", 82.0)
                     })
                     .clicked()
                     {
                         app.activate_tab(AppTab::Settings);
                     }
 
-                    if crate::ui::icons::phosphor_icon_button_enabled(
+                    if moduwu_design::icon_button_enabled(
                         ui,
                         app.library.location.is_some() && !app.library.scanning,
                         egui_phosphor::regular::ARROW_CLOCKWISE,
-                        crate::ui::theme::toolbar_icon_size(),
+                        moduwu_design::toolbar_icon_size(),
                         "Refresh library",
                     )
                     .clicked()
@@ -184,14 +184,14 @@ impl Library {
             } else {
                 format!("Previews {}/{}", progress.completed, progress.total)
             };
-            crate::ui::theme::progress_card_header(
+            moduwu_design::progress_card_header(
                 ui,
                 progress.completed as f32 / progress.total.max(1) as f32,
                 &label,
                 show_header,
             );
         } else {
-            crate::ui::theme::card_header(ui, show_header);
+            moduwu_design::card_header(ui, show_header);
         }
         app.set_library_sort_order(selected_sort);
         app.set_library_thumbnail_size(selected_size);
@@ -215,7 +215,7 @@ impl Library {
             app.library.retain_visible_selection();
         }
 
-        crate::ui::theme::card_gap(ui);
+        moduwu_design::card_gap(ui);
 
         if app.library.location.is_none() {
             #[cfg(not(target_os = "android"))]
@@ -265,194 +265,13 @@ impl Library {
                 app.library.review_filter = LibraryReviewFilter::default();
             }
         } else {
-            #[cfg(not(target_os = "android"))]
-            let current_path = app.develop.current_path.clone();
-            let available = ui.available_width().max(1.0);
-            let available_height = ui.available_height().max(1.0);
-            let gap = crate::ui::theme::SPACE_SM;
-            let target_thumbnail_height = responsive_thumbnail_target_height(
-                available,
-                available_height,
-                ui.ctx().pixels_per_point(),
-                cfg!(target_os = "android"),
-            ) * app.library.thumbnail_size().scale();
-            let (placements, grid_height) = if let Some(indices) = &visible_indices {
-                justified_thumbnail_layout_for_indices(
-                    &app.library.entries,
-                    indices,
-                    available,
-                    target_thumbnail_height,
-                    gap,
-                )
-            } else {
-                justified_thumbnail_layout(
-                    &app.library.entries,
-                    available,
-                    target_thumbnail_height,
-                    gap,
-                )
-            };
-
-            let mut protected_thumbnail_indices = HashSet::new();
-            #[cfg(not(target_os = "android"))]
-            let selection_order = visible_indices.as_ref().map_or_else(
-                || {
-                    app.library
-                        .entries
-                        .iter()
-                        .map(|entry| entry.asset.id.clone())
-                        .collect::<Vec<_>>()
-                },
-                |indices| {
-                    indices
-                        .iter()
-                        .map(|index| app.library.entries[*index].asset.id.clone())
-                        .collect::<Vec<_>>()
-                },
+            show_thumbnail_grid(
+                ui,
+                app,
+                &visible_indices,
+                &mut open_asset,
+                &mut library_action,
             );
-            egui::ScrollArea::vertical()
-                .auto_shrink([false, false])
-                .show_viewport(ui, |ui, viewport| {
-                    let (content_rect, _) = ui.allocate_exact_size(
-                        egui::vec2(available, grid_height.max(1.0)),
-                        Sense::hover(),
-                    );
-                    let preload_viewport = viewport.expand(600.0);
-
-                    for (placement_index, relative_rect) in placements.iter().copied().enumerate() {
-                        if !relative_rect.intersects(preload_viewport) {
-                            continue;
-                        }
-                        let index = visible_indices
-                            .as_ref()
-                            .map_or(placement_index, |indices| indices[placement_index]);
-                        protected_thumbnail_indices.insert(index);
-                        app.library.touch_and_request_thumbnail(index, ui.ctx());
-                        if !relative_rect.intersects(viewport) {
-                            continue;
-                        }
-                        let item_rect = relative_rect.translate(content_rect.min.to_vec2());
-                        let entry = &app.library.entries[index];
-                        let asset = entry.asset.clone();
-                        let selected = if app.library.selection_mode() {
-                            app.library.selected_assets.contains(&asset.id)
-                        } else {
-                            #[cfg(not(target_os = "android"))]
-                            {
-                                current_path.as_deref() == asset.desktop_path()
-                            }
-                            #[cfg(target_os = "android")]
-                            {
-                                false
-                            }
-                        };
-                        let response = thumbnail_tile(ui, entry, item_rect, selected);
-                        #[cfg(target_os = "android")]
-                        if !response.hovered() {
-                            paint_review_badge(ui, item_rect, entry.review);
-                        }
-                        #[cfg(not(target_os = "android"))]
-                        if let Some(action) = thumbnail_hover_overlay(
-                            ui,
-                            item_rect,
-                            entry,
-                            app.library.stacked_formats(&asset.id),
-                        ) {
-                            library_action = Some(action);
-                            continue;
-                        }
-
-                        #[cfg(target_os = "android")]
-                        {
-                            let checkbox =
-                                thumbnail_selection_checkbox(ui, entry, item_rect, selected);
-                            let checkbox_clicked = checkbox.clicked()
-                                || (response.clicked()
-                                    && response
-                                        .interact_pointer_pos()
-                                        .is_some_and(|pointer| checkbox.rect.contains(pointer)));
-                            if checkbox_clicked {
-                                let back_navigation_active =
-                                    app.library.toggle_thumbnail_selection(&asset.id);
-                                calibraw_ffi::set_back_navigation_active(back_navigation_active);
-                            } else if response.clicked() && !response.secondary_clicked() {
-                                open_asset = Some(asset);
-                            }
-                        }
-
-                        #[cfg(not(target_os = "android"))]
-                        {
-                            if response.clicked() && !response.secondary_clicked() {
-                                let modifiers = ui.input(|input| input.modifiers);
-                                if modifiers.shift {
-                                    app.library.select_thumbnail_range(
-                                        &asset.id,
-                                        &selection_order,
-                                        modifiers.ctrl || modifiers.command,
-                                    );
-                                } else if modifiers.ctrl
-                                    || modifiers.command
-                                    || app.library.selection_mode()
-                                {
-                                    app.library.toggle_thumbnail_selection(&asset.id);
-                                } else {
-                                    open_asset = Some(asset.clone());
-                                }
-                            }
-                            if response.secondary_clicked()
-                                && app.library.selection_mode()
-                                && !app.library.selected_assets.contains(&asset.id)
-                            {
-                                app.library.select_thumbnail(&asset.id);
-                            }
-                            let context_assets = if app.library.selection_mode() {
-                                app.library
-                                    .entries
-                                    .iter()
-                                    .filter(|candidate| {
-                                        app.library.selected_assets.contains(&candidate.asset.id)
-                                    })
-                                    .map(|candidate| candidate.asset.clone())
-                                    .collect::<Vec<_>>()
-                            } else {
-                                vec![asset.clone()]
-                            };
-                            let mut select_from_context_menu = false;
-                            let mut select_all_from_context_menu = false;
-                            crate::ui::theme::context_menu(&response, |ui| {
-                                if !app.library.selection_mode()
-                                    && crate::ui::theme::context_menu_item(ui, true, "Select")
-                                        .clicked()
-                                {
-                                    select_from_context_menu = true;
-                                    ui.close();
-                                }
-                                if crate::ui::theme::context_menu_item(ui, true, "Select All")
-                                    .clicked()
-                                {
-                                    select_all_from_context_menu = true;
-                                    ui.close();
-                                }
-                                ui.separator();
-                                if let Some(action) = library_image_context_menu(
-                                    ui,
-                                    app,
-                                    &asset,
-                                    &context_assets,
-                                    true,
-                                ) {
-                                    library_action = Some(action);
-                                }
-                            });
-                            if select_all_from_context_menu {
-                                app.library.select_all_thumbnails();
-                            } else if select_from_context_menu {
-                                app.library.select_thumbnail(&asset.id);
-                            }
-                        }
-                    }
-                });
-            app.library.evict_old_textures(&protected_thumbnail_indices);
         }
 
         let selected_assets = app
@@ -473,8 +292,8 @@ impl Library {
 
         #[cfg(target_os = "android")]
         if !app.library.has_selection() {
-            let rect = crate::ui::theme::floating_action_rect(ui.max_rect());
-            let response = crate::ui::theme::floating_action_button(
+            let rect = moduwu_design::floating_action_rect(ui.max_rect());
+            let response = moduwu_design::floating_action_button(
                 ui,
                 rect,
                 egui_phosphor::regular::PLUS,
@@ -500,7 +319,6 @@ impl Library {
             #[cfg(target_os = "android")]
             if let Some(uri) = asset.android_uri() {
                 app.library.clear_selection();
-                calibraw_ffi::set_back_navigation_active(false);
                 app.open_android_library_document(uri, &asset.display_name);
             }
         }
@@ -532,11 +350,199 @@ fn selected_library_folder_name(app: &CalibRawApp) -> Option<String> {
     })
 }
 
+/// The justified thumbnail grid of the visible library entries, with selection,
+/// context menus and opening.
+fn show_thumbnail_grid(
+    ui: &mut Ui,
+    app: &mut CalibRawApp,
+    visible_indices: &Option<Vec<usize>>,
+    open_asset: &mut Option<LibraryAsset>,
+    // Set from thumbnail context menus, which exist on desktop only.
+    #[cfg_attr(target_os = "android", allow(unused))] library_action: &mut Option<LibraryAction>,
+) {
+    #[cfg(not(target_os = "android"))]
+    let current_path = app.develop.current_path.clone();
+    let available = ui.available_width().max(1.0);
+    let available_height = ui.available_height().max(1.0);
+    let gap = moduwu_design::SPACE_SM;
+    let target_thumbnail_height = responsive_thumbnail_target_height(
+        available,
+        available_height,
+        ui.ctx().pixels_per_point(),
+        cfg!(target_os = "android"),
+    ) * app.library.thumbnail_size().scale();
+    let (placements, grid_height) = if let Some(indices) = &visible_indices {
+        justified_thumbnail_layout_for_indices(
+            &app.library.entries,
+            indices,
+            available,
+            target_thumbnail_height,
+            gap,
+        )
+    } else {
+        justified_thumbnail_layout(
+            &app.library.entries,
+            available,
+            target_thumbnail_height,
+            gap,
+        )
+    };
+
+    let mut protected_thumbnail_indices = HashSet::new();
+    #[cfg(not(target_os = "android"))]
+    let selection_order = visible_indices.as_ref().map_or_else(
+        || {
+            app.library
+                .entries
+                .iter()
+                .map(|entry| entry.asset.id.clone())
+                .collect::<Vec<_>>()
+        },
+        |indices| {
+            indices
+                .iter()
+                .map(|index| app.library.entries[*index].asset.id.clone())
+                .collect::<Vec<_>>()
+        },
+    );
+    egui::ScrollArea::vertical()
+        .auto_shrink([false, false])
+        .show_viewport(ui, |ui, viewport| {
+            let (content_rect, _) =
+                ui.allocate_exact_size(egui::vec2(available, grid_height.max(1.0)), Sense::hover());
+            let preload_viewport = viewport.expand(600.0);
+
+            for (placement_index, relative_rect) in placements.iter().copied().enumerate() {
+                if !relative_rect.intersects(preload_viewport) {
+                    continue;
+                }
+                let index = visible_indices
+                    .as_ref()
+                    .map_or(placement_index, |indices| indices[placement_index]);
+                protected_thumbnail_indices.insert(index);
+                app.library.touch_and_request_thumbnail(index, ui.ctx());
+                if !relative_rect.intersects(viewport) {
+                    continue;
+                }
+                let item_rect = relative_rect.translate(content_rect.min.to_vec2());
+                let entry = &app.library.entries[index];
+                let asset = entry.asset.clone();
+                let selected = if app.library.selection_mode() {
+                    app.library.selected_assets.contains(&asset.id)
+                } else {
+                    #[cfg(not(target_os = "android"))]
+                    {
+                        current_path.as_deref() == asset.desktop_path()
+                    }
+                    #[cfg(target_os = "android")]
+                    {
+                        false
+                    }
+                };
+                let response = thumbnail_tile(ui, entry, item_rect, selected);
+                #[cfg(target_os = "android")]
+                if !response.hovered() {
+                    paint_review_badge(ui, item_rect, entry.review);
+                }
+                #[cfg(not(target_os = "android"))]
+                if let Some(action) = thumbnail_hover_overlay(
+                    ui,
+                    item_rect,
+                    entry,
+                    app.library.stacked_formats(&asset.id),
+                ) {
+                    *library_action = Some(action);
+                    continue;
+                }
+
+                #[cfg(target_os = "android")]
+                {
+                    let checkbox = thumbnail_selection_checkbox(ui, entry, item_rect, selected);
+                    let checkbox_clicked = checkbox.clicked()
+                        || (response.clicked()
+                            && response
+                                .interact_pointer_pos()
+                                .is_some_and(|pointer| checkbox.rect.contains(pointer)));
+                    if checkbox_clicked {
+                        app.library.toggle_thumbnail_selection(&asset.id);
+                    } else if response.clicked() && !response.secondary_clicked() {
+                        *open_asset = Some(asset);
+                    }
+                }
+
+                #[cfg(not(target_os = "android"))]
+                {
+                    if response.clicked() && !response.secondary_clicked() {
+                        let modifiers = ui.input(|input| input.modifiers);
+                        if modifiers.shift {
+                            app.library.select_thumbnail_range(
+                                &asset.id,
+                                &selection_order,
+                                modifiers.ctrl || modifiers.command,
+                            );
+                        } else if modifiers.ctrl
+                            || modifiers.command
+                            || app.library.selection_mode()
+                        {
+                            app.library.toggle_thumbnail_selection(&asset.id);
+                        } else {
+                            *open_asset = Some(asset.clone());
+                        }
+                    }
+                    if response.secondary_clicked()
+                        && app.library.selection_mode()
+                        && !app.library.selected_assets.contains(&asset.id)
+                    {
+                        app.library.select_thumbnail(&asset.id);
+                    }
+                    let context_assets = if app.library.selection_mode() {
+                        app.library
+                            .entries
+                            .iter()
+                            .filter(|candidate| {
+                                app.library.selected_assets.contains(&candidate.asset.id)
+                            })
+                            .map(|candidate| candidate.asset.clone())
+                            .collect::<Vec<_>>()
+                    } else {
+                        vec![asset.clone()]
+                    };
+                    let mut select_from_context_menu = false;
+                    let mut select_all_from_context_menu = false;
+                    moduwu_design::context_menu(&response, |ui| {
+                        if !app.library.selection_mode()
+                            && moduwu_design::context_menu_item(ui, true, "Select").clicked()
+                        {
+                            select_from_context_menu = true;
+                            ui.close();
+                        }
+                        if moduwu_design::context_menu_item(ui, true, "Select All").clicked() {
+                            select_all_from_context_menu = true;
+                            ui.close();
+                        }
+                        ui.separator();
+                        if let Some(action) =
+                            library_image_context_menu(ui, app, &asset, &context_assets, true)
+                        {
+                            *library_action = Some(action);
+                        }
+                    });
+                    if select_all_from_context_menu {
+                        app.library.select_all_thumbnails();
+                    } else if select_from_context_menu {
+                        app.library.select_thumbnail(&asset.id);
+                    }
+                }
+            }
+        });
+    app.library.evict_old_textures(&protected_thumbnail_indices);
+}
+
 fn show_library_loading_state(ui: &mut Ui) {
     ui.centered_and_justified(|ui| {
         ui.vertical_centered(|ui| {
             ui.add(egui::Spinner::new().size(28.0));
-            ui.add_space(crate::ui::theme::SPACE_SM);
+            ui.add_space(moduwu_design::SPACE_SM);
             ui.label("Loading photos…");
         });
     });
@@ -555,9 +561,9 @@ fn show_library_empty_state(
             ui.label(
                 egui::RichText::new(title)
                     .strong()
-                    .size(crate::ui::theme::PANEL_TITLE_TEXT_SIZE),
+                    .size(moduwu_design::PANEL_TITLE_TEXT_SIZE),
             );
-            ui.add_space(crate::ui::theme::SPACE_XS);
+            ui.add_space(moduwu_design::SPACE_XS);
             ui.add_sized(
                 [text_width, 0.0],
                 egui::Label::new(
@@ -567,8 +573,8 @@ fn show_library_empty_state(
                 .halign(egui::Align::Center),
             );
             if let Some(action) = action {
-                ui.add_space(crate::ui::theme::SPACE_MD);
-                action_clicked = crate::ui::theme::primary_button(ui, action, 132.0).clicked();
+                ui.add_space(moduwu_design::SPACE_MD);
+                action_clicked = moduwu_design::primary_button(ui, action, 132.0).clicked();
             }
         });
     });
@@ -585,9 +591,9 @@ fn show_library_view_combos(
     const SORT_WIDTH: f32 = 154.0;
     const SIZE_WIDTH: f32 = 118.0;
     let available_width = ui.available_width().max(1.0);
-    let minimum_width = SORT_WIDTH + crate::ui::theme::SPACE_SM + SIZE_WIDTH;
+    let minimum_width = SORT_WIDTH + moduwu_design::SPACE_SM + SIZE_WIDTH;
     let (sort_width, size_width) = if available_width < minimum_width {
-        let width = ((available_width - crate::ui::theme::SPACE_SM).max(2.0)) * 0.5;
+        let width = ((available_width - moduwu_design::SPACE_SM).max(2.0)) * 0.5;
         (width, width)
     } else {
         (SORT_WIDTH, SIZE_WIDTH)
@@ -601,7 +607,7 @@ fn show_library_view_combos(
         None,
         sort_width,
     );
-    crate::ui::theme::responsive_combo_box(
+    moduwu_design::responsive_combo_box(
         ui,
         "library-thumbnail-size",
         format!("Size: {}", selected_size.label()),

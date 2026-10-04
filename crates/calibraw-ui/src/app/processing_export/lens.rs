@@ -169,7 +169,7 @@ impl CalibRawApp {
             Ok(_) => {
                 self.begin_foreground_operation(ForegroundOperation {
                     kind: ForegroundOperationKind::LensCorrection,
-                    document_id: self.persistence.sidecar_generation,
+                    document_id: self.persistence.document_generation,
                     cancellation,
                     progress,
                     cancelling: false,
@@ -227,7 +227,7 @@ impl CalibRawApp {
             return;
         };
 
-        let stale = !operation.accepts_result(self.persistence.sidecar_generation);
+        let stale = !operation.accepts_result(self.persistence.document_generation);
         if stale {
             return;
         }
@@ -317,12 +317,12 @@ impl CalibRawApp {
                 &prepared.preview_raw,
             )
             .with_vignette_geometry(self.develop.geometry);
-            let pipeline = match RawGpuPipeline::new_headless_with_quality(
+            let pipeline = match RawGpuPipeline::new(
                 &render_state.device,
                 &render_state.queue,
                 &prepared.preview_raw,
                 &params,
-                ProcessingQuality::Preview,
+                PipelineOptions::new(ProcessingQuality::Preview),
             ) {
                 Ok(pipeline) => pipeline,
                 Err(error) => {
@@ -362,14 +362,14 @@ impl CalibRawApp {
                 return;
             }
 
-            if !operation.accepts_result(self.persistence.sidecar_generation) {
+            if !operation.accepts_result(self.persistence.document_generation) {
                 return;
             }
             self.take_preview_pipeline_and_release_textures();
             self.preview.gpu_pipeline = Some(self.present_pipeline(pipeline, render_state));
         }
 
-        if !operation.accepts_result(self.persistence.sidecar_generation) {
+        if !operation.accepts_result(self.persistence.document_generation) {
             return;
         }
 

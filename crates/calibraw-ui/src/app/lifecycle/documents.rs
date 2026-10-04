@@ -181,7 +181,7 @@ impl CalibRawApp {
         let editing_time_override_ms = (profile_reload.is_some()
             && self.persistence.sidecar_target.as_ref() == Some(&source.sidecar_target))
         .then(|| self.raw_editing_time_ms());
-        let sidecar_generation = self.begin_sidecar_open();
+        let document_generation = self.begin_sidecar_open();
         crate::app::preview_visibility::PreviewVisibility::clear(&self.egui_ctx);
         let programs = PreviewProgramSources {
             previous_pipeline: self.take_preview_pipeline_and_release_textures(),
@@ -197,7 +197,7 @@ impl CalibRawApp {
             raw_cache_key,
             cached_original_raw,
             decode_gate: self.library.decode_gate(),
-            sidecar_generation,
+            document_generation,
             initial_exposure,
             preview_quality: self.preview.quality,
             viewport_pixels: self.preview.viewport_pixels,
@@ -497,7 +497,7 @@ impl CalibRawApp {
                 self.reset_edit_history();
                 self.install_sidecar_target(
                     loaded.sidecar_target,
-                    loaded.sidecar_generation,
+                    loaded.document_generation,
                     loaded.sidecar_needs_rewrite,
                 );
                 self.cancel_document_bound_foreground_operation();
@@ -543,10 +543,10 @@ impl CalibRawApp {
         };
 
         let mut close = false;
-        crate::ui::theme::dialog_window(
+        moduwu_design::dialog_window(
             "Unsupported RAW file",
             ctx,
-            crate::ui::theme::DIALOG_WIDTH_WIDE,
+            moduwu_design::DIALOG_WIDTH_WIDE,
         )
         .resizable(true)
         .show(ctx, |ui| {
@@ -566,15 +566,15 @@ impl CalibRawApp {
                             .selectable(true),
                     );
                 });
-            crate::ui::theme::dialog_button_row(ui, |ui| {
-                close |= crate::ui::theme::secondary_button(ui, "Close").clicked();
+            moduwu_design::dialog_button_row(ui, |ui| {
+                close |= moduwu_design::secondary_button(ui, "Close").clicked();
             });
             if !close
-                && crate::ui::theme::dialog_keyboard_action(
+                && moduwu_design::dialog_keyboard_action(
                     ui,
-                    crate::ui::theme::DialogKeyboard::CLOSE_ONLY,
+                    moduwu_design::DialogKeyboard::CLOSE_ONLY,
                     false,
-                ) == crate::ui::theme::DialogAction::Cancel
+                ) == moduwu_design::DialogAction::Cancel
             {
                 close = true;
             }

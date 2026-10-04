@@ -1,3 +1,4 @@
+pub(crate) mod appearance;
 pub(crate) mod export_naming;
 pub(crate) mod performance_settings;
 pub(crate) use calibraw_core::presets;
@@ -89,11 +90,7 @@ fn native_options() -> eframe::NativeOptions {
                 adapter_limits.max_texture_dimension_2d,
                 adapter.features(),
             ));
-            let mut required_limits = if info.backend == eframe::wgpu::Backend::Gl {
-                eframe::wgpu::Limits::downlevel_webgl2_defaults()
-            } else {
-                eframe::wgpu::Limits::default()
-            };
+            let mut required_limits = calibraw_gpu::base_device_limits(info.backend);
             required_limits.max_texture_dimension_2d = adapter_limits.max_texture_dimension_2d;
             let required_features = adapter.features() & eframe::wgpu::Features::PIPELINE_CACHE;
             eframe::wgpu::DeviceDescriptor {

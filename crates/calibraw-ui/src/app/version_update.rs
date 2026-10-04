@@ -135,11 +135,11 @@ fn fetch_latest_release(permission: Option<bool>) -> Result<Option<AvailableUpda
 
 fn github_consent_body_height(available_height: f32, width: f32) -> f32 {
     let footer_reserve = if width < 220.0 {
-        crate::ui::theme::CONTROL_HEIGHT * 3.0 + 32.0
+        moduwu_design::CONTROL_HEIGHT * 3.0 + 32.0
     } else if width < 480.0 {
-        crate::ui::theme::CONTROL_HEIGHT * 2.0 + 24.0
+        moduwu_design::CONTROL_HEIGHT * 2.0 + 24.0
     } else {
-        crate::ui::theme::CONTROL_HEIGHT + 16.0
+        moduwu_design::CONTROL_HEIGHT + 16.0
     };
     (available_height - footer_reserve - 48.0).max(1.0)
 }
@@ -378,7 +378,7 @@ impl CalibRawApp {
         }
 
         let available = ctx.content_rect().size() - egui::vec2(32.0, 32.0);
-        let width = available.x.clamp(1.0, crate::ui::theme::DIALOG_WIDTH_LARGE);
+        let width = available.x.clamp(1.0, moduwu_design::DIALOG_WIDTH_LARGE);
         let max_body_height = github_consent_body_height(available.y, width);
         let mut action = None;
 
@@ -417,51 +417,51 @@ impl CalibRawApp {
                         });
                 });
 
-            crate::ui::theme::dialog_button_row(ui, |ui| match request {
+            moduwu_design::dialog_button_row(ui, |ui| match request {
                 VersionCheckConsentRequest::Startup => {
                     let label = if width < 240.0 { "Allow" } else { "Allow automatic checks" };
-                    if crate::ui::theme::primary_action_button(ui, label).clicked() {
+                    if moduwu_design::primary_action_button(ui, label).clicked() {
                         action = Some(ConsentAction::Allow);
                     }
-                    if crate::ui::theme::secondary_button(ui, "Don't allow").clicked() {
+                    if moduwu_design::secondary_button(ui, "Don't allow").clicked() {
                         action = Some(ConsentAction::Deny);
                     }
-                    if crate::ui::theme::secondary_button(ui, "Not now").clicked() {
+                    if moduwu_design::secondary_button(ui, "Not now").clicked() {
                         action = Some(ConsentAction::Dismiss);
                     }
                 }
                 VersionCheckConsentRequest::EnableAutomatic => {
                     let label = if width < 240.0 { "Allow" } else { "Allow automatic checks" };
-                    if crate::ui::theme::primary_action_button(ui, label).clicked() {
+                    if moduwu_design::primary_action_button(ui, label).clicked() {
                         action = Some(ConsentAction::Allow);
                     }
-                    if crate::ui::theme::secondary_button(ui, "Don't allow").clicked() {
+                    if moduwu_design::secondary_button(ui, "Don't allow").clicked() {
                         action = Some(ConsentAction::Deny);
                     }
-                    if crate::ui::theme::secondary_button(ui, "Cancel").clicked() {
+                    if moduwu_design::secondary_button(ui, "Cancel").clicked() {
                         action = Some(ConsentAction::Dismiss);
                     }
                 }
                 VersionCheckConsentRequest::Manual => {
-                    if crate::ui::theme::primary_action_button(ui, "Allow & check").clicked() {
+                    if moduwu_design::primary_action_button(ui, "Allow & check").clicked() {
                         action = Some(ConsentAction::Allow);
                     }
-                    if crate::ui::theme::secondary_button(ui, "Don't allow").clicked() {
+                    if moduwu_design::secondary_button(ui, "Don't allow").clicked() {
                         action = Some(ConsentAction::Deny);
                     }
-                    if crate::ui::theme::secondary_button(ui, "Cancel").clicked() {
+                    if moduwu_design::secondary_button(ui, "Cancel").clicked() {
                         action = Some(ConsentAction::Dismiss);
                     }
                 }
                 VersionCheckConsentRequest::Settings => {
                     let label = if width < 240.0 { "Allow" } else { "Allow & remember" };
-                    if crate::ui::theme::primary_action_button(ui, label).clicked() {
+                    if moduwu_design::primary_action_button(ui, label).clicked() {
                         action = Some(ConsentAction::Allow);
                     }
-                    if crate::ui::theme::secondary_button(ui, "Don't allow").clicked() {
+                    if moduwu_design::secondary_button(ui, "Don't allow").clicked() {
                         action = Some(ConsentAction::Deny);
                     }
-                    if crate::ui::theme::secondary_button(ui, "Cancel").clicked() {
+                    if moduwu_design::secondary_button(ui, "Cancel").clicked() {
                         action = Some(ConsentAction::Dismiss);
                     }
                 }
@@ -518,10 +518,10 @@ impl CalibRawApp {
             Update,
         }
         let mut action = None;
-        crate::ui::theme::dialog_window(
+        moduwu_design::dialog_window(
             "CalibRaw update available",
             ctx,
-            crate::ui::theme::DIALOG_WIDTH_WIDE,
+            moduwu_design::DIALOG_WIDTH_WIDE,
         )
             .show(ctx, |ui| {
                 ui.label(format!(
@@ -534,30 +534,30 @@ impl CalibRawApp {
                     .as_deref()
                     .filter(|name| *name != release.tag)
                 {
-                    ui.add_space(crate::ui::theme::SPACE_XS);
+                    ui.add_space(moduwu_design::SPACE_XS);
                     ui.strong(name);
                 }
                 ui.add_space(6.0);
                 ui.small(
                     "Close ignores this version permanently. Remind me next time shows it again after the next app start.",
                 );
-                crate::ui::theme::dialog_button_row(ui, |ui| {
-                    if crate::ui::theme::primary_action_button(ui, "Update Now").clicked() {
+                moduwu_design::dialog_button_row(ui, |ui| {
+                    if moduwu_design::primary_action_button(ui, "Update Now").clicked() {
                         action = Some(Action::Update);
                     }
-                    if crate::ui::theme::secondary_button(ui, "Remind me next time").clicked() {
+                    if moduwu_design::secondary_button(ui, "Remind me next time").clicked() {
                         action = Some(Action::Remind);
                     }
-                    if crate::ui::theme::secondary_button(ui, "Close").clicked() {
+                    if moduwu_design::secondary_button(ui, "Close").clicked() {
                         action = Some(Action::Ignore);
                     }
                 });
                 if action.is_none()
-                    && crate::ui::theme::dialog_keyboard_action(
+                    && moduwu_design::dialog_keyboard_action(
                         ui,
-                        crate::ui::theme::DialogKeyboard::CLOSE_ONLY,
+                        moduwu_design::DialogKeyboard::CLOSE_ONLY,
                         false,
-                    ) == crate::ui::theme::DialogAction::Cancel
+                    ) == moduwu_design::DialogAction::Cancel
                 {
                     action = Some(Action::Remind);
                 }
@@ -781,7 +781,7 @@ mod tests {
                     },
                     |root| {
                         let available = root.ctx().content_rect().size() - egui::vec2(32.0, 32.0);
-                        let width = available.x.clamp(1.0, crate::ui::theme::DIALOG_WIDTH_LARGE);
+                        let width = available.x.clamp(1.0, moduwu_design::DIALOG_WIDTH_LARGE);
                         egui::Modal::new(egui::Id::new("github-consent-geometry-test")).show(
                             root.ctx(),
                             |ui| {
@@ -797,10 +797,10 @@ mod tests {
                                         }
                                     });
                                 footer_rect = Some(
-                                    crate::ui::theme::dialog_button_row(ui, |ui| {
-                                        crate::ui::theme::primary_action_button(ui, "Allow");
-                                        crate::ui::theme::secondary_button(ui, "Don't allow");
-                                        crate::ui::theme::secondary_button(ui, "Not now");
+                                    moduwu_design::dialog_button_row(ui, |ui| {
+                                        moduwu_design::primary_action_button(ui, "Allow");
+                                        moduwu_design::secondary_button(ui, "Don't allow");
+                                        moduwu_design::secondary_button(ui, "Not now");
                                     })
                                     .response
                                     .rect,
