@@ -2,7 +2,7 @@
 
 # CalibRaw
 
-**A free, open-source RAW photo editor with a Lightroom-style workflow and offline AI — native on Linux, Android, Windows and macOS.**
+**A free, open-source RAW photo editor for Linux, Android, Windows and macOS, with a Lightroom-style workflow and AI tools that run locally.**
 
 [![Latest release](https://img.shields.io/github/v/release/Duecki1/CalibRaw?label=Download&color=brightgreen)](https://github.com/Duecki1/CalibRaw/releases/latest)
 [![License: GPL-3.0-or-later](https://img.shields.io/badge/License-GPL--3.0--or--later-blue.svg)](COPYING)
@@ -14,7 +14,7 @@
 
 </div>
 
-<!-- TODO: hero GIF (10–15 s): open a RAW, apply an AI subject mask, finish with a before/after.
+<!-- TODO: hero GIF (10 to 15 s): open a RAW, apply an AI subject mask, finish with a before/after.
      "Export > Create Edit Replay…" produces an MP4 of an edit you can convert to GIF. -->
 <img width="100%" alt="CalibRaw editing a RAW photo" src="https://github.com/user-attachments/assets/b4afad3f-8577-411c-a310-995e71a79cb4" />
 
@@ -23,7 +23,7 @@
   <img width="49.5%" alt="Android (Library/Edit/AI Subject)" src="https://github.com/user-attachments/assets/0f6ffbb4-233a-4a58-9386-fbd44393225b" />
 </p>
 
-Edit your RAW files with sliders, curves, color grading and masks you already know from Lightroom — then select a subject or the sky, remove a passer-by or denoise a high-ISO shot with AI that runs **entirely on your device**. No subscription, no account, no cloud.
+Edit RAW files with sliders, curves, color grading and masks. AI tools can select a subject or the sky, remove objects and denoise high-ISO photos. Everything runs **on your device**, without an account or subscription.
 
 ---
 
@@ -42,23 +42,23 @@ AI models are downloaded once, on first use and only after you agree; they are v
 
 ## Why CalibRaw
 
-- **Familiar from the first minute.** Lightroom-style panels — Light, Tone Curve, Color, Color Mixer, Color Grading, Detail, Optics, Effects and Masks — on top of a scene-referred pipeline with Sigmoid tone mapping and highlight recovery.
-- **Offline AI that does real work.** Subject, sky, depth and click-to-select object masks; AI Remove (Big-LaMa) that blends its fill into your photo's own grain; RawNIND AI denoise for Bayer and X-Trans RAWs.
-- **Truly native and GPU-first.** Rust, `wgpu` and custom WGSL compute shaders with an `egui` interface — no Electron, no WebView, no browser runtime.
-- **The same editor on your phone.** The Android app is a real ARM64 build of the same engine, with touch layouts and the same `.calibraw` sidecars.
-- **Creative effects you can mask.** Fog that thickens with AI scene depth, smoke, light rays, glow, halation, edge glow and neon, lens, motion, radial and tilt-shift blur — globally or inside any mask.
-- **Share how you edited.** *Create Edit Replay* exports a 30 FPS MP4 that replays your edit step by step — made for Reels, Shorts and before/after posts.
+- **Lightroom-style controls:** Light, Tone Curve, Color, Color Mixer, Color Grading, Detail, Optics, Effects and Masks panels, with a scene-referred pipeline, Sigmoid tone mapping and highlight recovery.
+- **Offline AI:** Subject, sky, depth and click-to-select object masks, AI Remove (Big-LaMa) that blends its fill into your photo's grain, and RawNIND denoise for Bayer and X-Trans RAWs.
+- **Native interface and GPU processing:** Written in Rust with `wgpu`, WGSL compute shaders and an `egui` interface.
+- **Android support:** The Android app uses the same engine and `.calibraw` sidecars as the desktop app, with layouts for touch controls.
+- **Effects with masks:** Apply depth-based fog, smoke, light rays, glow, halation, edge glow, neon and lens, motion, radial or tilt-shift blur to the whole photo or inside a mask.
+- **Edit Replay:** Export a 30 FPS MP4 showing your edit step by step for Reels, Shorts or before/after posts.
 
 ---
 
 ## Key Features
 
-- **Pure Native Rust & GPU Compute:** Built with `egui` and `wgpu`. Fast startup, lightweight memory profile, and direct compute shader rendering.
+- **Rust & GPU Compute:** Built with `egui` and `wgpu`, with compute shaders for image processing.
 - **Color Grading & Point Color:** Sample colors directly with an eyedropper, fine-tune custom Hue, Saturation, and Luminance ranges, and preview affected areas with a live selection mask.
-- **Advanced Demosaicing:** Shader-based Bayer RCD, Fujifilm X-Trans (Markesteijn 3-pass), and Dual Demosaicing to reduce noise and artifacts in high-ISO images.
+- **Demosaicing:** Shader-based Bayer RCD, Fujifilm X-Trans (Markesteijn 3-pass), and Dual Demosaicing to reduce noise and artifacts in high-ISO images.
 - **Sigmoid Tone Mapping:** Smooth highlight roll-off inspired by modern scene-referred color workflows, paired with Opposed and LCh highlight recovery.
 - **Local AI Tools (Offline):** Subject, sky, depth and object masks, AI Denoise, and AI Remove.
-- **Native Android App:** A real ARM64 NDK build with 16 KB memory page support, touch layouts, and MediaStore exporting.
+- **Android App:** An ARM64 NDK build with 16 KB memory page support, touch layouts, and MediaStore exporting.
 - **Non-Destructive Edits:** All sliders, curves, and masks are saved to lightweight `.calibraw` JSON sidecar files.
 - **Presets:** Save any combination of adjustment groups, masks and profile choices as a named preset, apply it in Develop or to a whole Library selection, and share it as a `.calibraw-preset` file.
 - **Tiled Export & CLI:** Exports large RAW files in tiles to avoid GPU memory limits, plus a command-line tool for batch rendering.
@@ -109,11 +109,11 @@ Apply effects to the whole photo or stack them on a local mask. Each card keeps 
 ## FAQ
 
 **How is CalibRaw different from darktable or RapidRAW?**
-All three are free and great; use whichever fits you. darktable offers the deepest
-module-level control and a mature color pipeline. RapidRAW pioneered the Lightroom-style
-open-source workflow that inspired CalibRaw and has a wide feature set. CalibRaw's focus is a
-fully native GPU editor (no WebView) with the same engine on desktop and Android, offline AI,
-creative effects such as depth-aware fog and light rays, and Edit Replay videos.
+All three are free. darktable offers detailed module-level control and a mature
+color pipeline. RapidRAW's Lightroom-style workflow inspired CalibRaw.
+CalibRaw uses a native interface and GPU processing, with the same engine on desktop
+and Android. It includes offline AI, creative effects such as depth-aware fog and
+light rays, and Edit Replay videos.
 
 **Does any of my data leave my device?**
 No. Editing, AI masks, AI Remove and AI Denoise all run locally. CalibRaw only goes online to
@@ -207,12 +207,12 @@ cargo install cargo-ndk --version 4.1.2 --locked
 
 ## Acknowledgments
 
-CalibRaw's shader logic and tooling draw valuable inspiration from the open-source imaging community:
+CalibRaw's shaders and tools draw on work from these projects:
 
-- **[darktable](https://www.darktable.org/)** – For pioneering open-source imaging algorithms, including Bayer RCD, X-Trans Markesteijn, Opposed highlight recovery, and Sigmoid tone mapping logic.
-- **[GIMP](https://www.gimp.org/) & [Ansel](https://ansel.photos/)** – For Laplace inpainting foundations and color normalization references.
-- **[LibRaw](https://github.com/LibRaw/LibRaw), [Rawler](https://github.com/dnglab/dnglab), & [Lensfun](https://github.com/lensfun/lensfun)** – For RAW decoding, DNG metadata extraction, and lens profile databases.
-- **[RapidRAW](https://github.com/CyberTimon/RapidRAW)** – For interface and workflow layout inspiration that sparked the creation of this project.
+- **[darktable](https://www.darktable.org/)**: Bayer RCD, X-Trans Markesteijn, Opposed highlight recovery, and Sigmoid tone mapping logic.
+- **[GIMP](https://www.gimp.org/) & [Ansel](https://ansel.photos/)**: Laplace inpainting foundations and color normalization references.
+- **[LibRaw](https://github.com/LibRaw/LibRaw), [Rawler](https://github.com/dnglab/dnglab), & [Lensfun](https://github.com/lensfun/lensfun)**: RAW decoding, DNG metadata extraction, and lens profile databases.
+- **[RapidRAW](https://github.com/CyberTimon/RapidRAW)**: Interface and workflow layout inspiration.
 
 *See [Third-Party Notices](THIRD_PARTY_NOTICES.md) for complete licensing, attributions, and model sources.*
 
