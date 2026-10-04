@@ -7,6 +7,12 @@ fn cam_to_working(rgb: vec3<f32>) -> vec3<f32> {
     return vec3<f32>(r, g, b);
 }
 
+/// Distance between two hues in turns ([0, 1)), wrapping around 1.
+fn circular_hue_distance(a: f32, b: f32) -> f32 {
+    let d = abs(a - b);
+    return min(d, 1.0 - d);
+}
+
 fn signed_cuberoot(value: f32) -> f32 {
     return sign(value) * pow(abs(value), 1.0 / 3.0);
 }

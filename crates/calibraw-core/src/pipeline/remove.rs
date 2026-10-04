@@ -133,7 +133,7 @@ pub struct RemovePatch {
     pub rgb_scene16f: Arc<[u16]>,
     #[serde(
         default,
-        with = "arc_u8_base64",
+        with = "crate::base64_arc_bytes",
         skip_serializing_if = "arc_u8_is_empty"
     )]
     pub alpha: Arc<[u8]>,
@@ -470,29 +470,6 @@ impl RemoveMask {
         let local_x = (x - self.bounds.x) as usize;
         let local_y = (y - self.bounds.y) as usize;
         self.pixels[local_y * self.bounds.width as usize + local_x] != 0
-    }
-}
-
-mod arc_u8_base64 {
-    use super::*;
-    use base64::Engine as _;
-
-    pub(super) fn serialize<S>(bytes: &Arc<[u8]>, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        serializer.serialize_str(&base64::engine::general_purpose::STANDARD.encode(bytes.as_ref()))
-    }
-
-    pub(super) fn deserialize<'de, D>(deserializer: D) -> Result<Arc<[u8]>, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let encoded = String::deserialize(deserializer)?;
-        base64::engine::general_purpose::STANDARD
-            .decode(encoded)
-            .map(Arc::from)
-            .map_err(serde::de::Error::custom)
     }
 }
 

@@ -192,7 +192,7 @@ struct SidecarHeader {
 struct SidecarMaskAsset {
     width: u32,
     height: u32,
-    #[serde(with = "base64_arc_bytes")]
+    #[serde(with = "crate::base64_arc_bytes")]
     png: Arc<[u8]>,
 }
 
@@ -220,9 +220,9 @@ struct SidecarRemoveAsset {
     width: u32,
     height: u32,
     encoding: SidecarRemoveEncoding,
-    #[serde(with = "base64_arc_bytes")]
+    #[serde(with = "crate::base64_arc_bytes")]
     rgb_png: Arc<[u8]>,
-    #[serde(with = "base64_arc_bytes")]
+    #[serde(with = "crate::base64_arc_bytes")]
     alpha_png: Arc<[u8]>,
 }
 
@@ -231,33 +231,6 @@ struct SidecarRemoveAssetRef {
     stroke_index: usize,
     patch_index: usize,
     asset_index: usize,
-}
-
-mod base64_arc_bytes {
-    use base64::Engine as _;
-    use serde::{Deserialize, Deserializer, Serializer};
-    use std::sync::Arc;
-
-    pub(super) fn serialize<S>(bytes: &Arc<[u8]>, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        serializer.collect_str(&base64::display::Base64Display::new(
-            bytes.as_ref(),
-            &base64::engine::general_purpose::STANDARD,
-        ))
-    }
-
-    pub(super) fn deserialize<'de, D>(deserializer: D) -> Result<Arc<[u8]>, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let encoded = String::deserialize(deserializer)?;
-        base64::engine::general_purpose::STANDARD
-            .decode(encoded)
-            .map(Arc::from)
-            .map_err(serde::de::Error::custom)
-    }
 }
 
 #[derive(Clone, Debug, PartialEq)]

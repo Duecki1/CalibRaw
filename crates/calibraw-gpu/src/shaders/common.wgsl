@@ -90,42 +90,9 @@ struct SceneToneUniforms {
     basic_tone: vec4<f32>,
     sigmoid_curve: vec4<f32>,
     sigmoid_power: vec4<f32>,
-    tone_curve_0_field: vec4<f32>,
-    tone_curve_1_field: vec4<f32>,
-    tone_curve_2_field: vec4<f32>,
-    tone_curve_3_field: vec4<f32>,
-    tone_curve_4_field: vec4<f32>,
-    tone_curve_5_field: vec4<f32>,
-    tone_curve_6_field: vec4<f32>,
-    tone_curve_7_field: vec4<f32>,
-    tone_curve_meta: vec4<f32>,
-    tone_curve_red_0_field: vec4<f32>,
-    tone_curve_red_1_field: vec4<f32>,
-    tone_curve_red_2_field: vec4<f32>,
-    tone_curve_red_3_field: vec4<f32>,
-    tone_curve_red_4_field: vec4<f32>,
-    tone_curve_red_5_field: vec4<f32>,
-    tone_curve_red_6_field: vec4<f32>,
-    tone_curve_red_7_field: vec4<f32>,
-    tone_curve_red_meta: vec4<f32>,
-    tone_curve_green_0_field: vec4<f32>,
-    tone_curve_green_1_field: vec4<f32>,
-    tone_curve_green_2_field: vec4<f32>,
-    tone_curve_green_3_field: vec4<f32>,
-    tone_curve_green_4_field: vec4<f32>,
-    tone_curve_green_5_field: vec4<f32>,
-    tone_curve_green_6_field: vec4<f32>,
-    tone_curve_green_7_field: vec4<f32>,
-    tone_curve_green_meta: vec4<f32>,
-    tone_curve_blue_0_field: vec4<f32>,
-    tone_curve_blue_1_field: vec4<f32>,
-    tone_curve_blue_2_field: vec4<f32>,
-    tone_curve_blue_3_field: vec4<f32>,
-    tone_curve_blue_4_field: vec4<f32>,
-    tone_curve_blue_5_field: vec4<f32>,
-    tone_curve_blue_6_field: vec4<f32>,
-    tone_curve_blue_7_field: vec4<f32>,
-    tone_curve_blue_meta: vec4<f32>,
+    // Master, red, green and blue point curves. Blocks 0-7 hold point pairs
+    // (x0, y0, x1, y1) in curve-encoded [0, 1]; block 8 is (count, identity, 0, 0).
+    tone_curves: array<array<vec4<f32>, 9>, 4>,
     hsl_hue_0_field: vec4<f32>,
     hsl_hue_1_field: vec4<f32>,
     hsl_saturation_0_field: vec4<f32>,
@@ -213,6 +180,41 @@ fn full_image_max() -> vec2<i32> {
 
 fn clamp_pos(pos: vec2<i32>) -> vec2<i32> {
     return clamp(pos, vec2<i32>(0, 0), image_max());
+}
+
+/// Lateral chromatic-aberration warp for one colour channel. Returns the
+/// tile-local pixel position to sample for tile-local `pos`: the full-image
+/// position is scaled about the full-image centre by
+/// `1 + amount * 0.001 * r^2` (r normalised to the half extent), clamped to the
+/// full image and then to the tile.
+fn ca_warped_pos(pos: vec2<i32>, amount: f32) -> vec2<f32> {
+    let local_extent = vec2<f32>(
+        f32(camera_uniforms.width - 1u),
+        f32(camera_uniforms.height - 1u),
+    );
+    let origin = vec2<f32>(
+        f32(camera_uniforms.tile_origin_x),
+        f32(camera_uniforms.tile_origin_y),
+    );
+    let full_extent = vec2<f32>(
+        f32(camera_uniforms.full_width - 1u),
+        f32(camera_uniforms.full_height - 1u),
+    );
+    let center = 0.5 * full_extent;
+    let global_pos = vec2<f32>(pos) + origin;
+    let rel = global_pos - center;
+    let norm = rel / max(center, vec2<f32>(1.0));
+    let scale = 1.0 + amount * 0.001 * dot(norm, norm);
+    let warped_global = clamp(center + rel * scale, vec2<f32>(0.0), full_extent);
+    return clamp(warped_global - origin, vec2<f32>(0.0), local_extent);
+}
+
+/// Unnormalised 1-4-6-4-1 binomial weight for a tap at `offset` in [-2, 2].
+fn binomial5_weight(offset: i32) -> f32 {
+    let a = abs(offset);
+    if a == 0 { return 6.0; }
+    if a == 1 { return 4.0; }
+    return 1.0;
 }
 
 fn safe_luma(rgb: vec3<f32>) -> f32 {

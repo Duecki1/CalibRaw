@@ -226,26 +226,6 @@ pub fn save_android(
     )
 }
 
-pub fn save_android_with_review(
-    app: &AndroidApp,
-    raw_uri: &str,
-    display_name: &str,
-    edits: calibraw_core::sidecar::EditState,
-    review: calibraw_core::sidecar::PhotoReview,
-) -> Result<String, calibraw_core::sidecar::SidecarError> {
-    let editing_time_ms = load_android_sidecar_metadata(app, raw_uri, display_name)?
-        .map(|metadata| metadata.editing_time_ms)
-        .unwrap_or(0);
-    save_android_with_review_and_editing_time(
-        app,
-        raw_uri,
-        display_name,
-        edits,
-        review,
-        editing_time_ms,
-    )
-}
-
 pub fn save_android_with_review_and_editing_time(
     app: &AndroidApp,
     raw_uri: &str,

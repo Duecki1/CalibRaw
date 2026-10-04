@@ -33,11 +33,6 @@ fn apply_exposure(rgb: vec3<f32>) -> vec3<f32> {
     return rgb * exp2(Common::scene_tone_uniforms.exposure);
 }
 
-fn circular_hue_distance(a: f32, b: f32) -> f32 {
-    let d = abs(a - b);
-    return min(d, 1.0 - d);
-}
-
 fn perceptual_control(value: f32) -> f32 {
     let normalized = clamp(value / 100.0, -1.0, 1.0);
     let magnitude = abs(normalized);
@@ -58,7 +53,7 @@ fn apply_saturation_vibrance(rgb: vec3<f32>) -> vec3<f32> {
     }
 
     let hue = fract(atan2(lab.z, lab.y) / (2.0 * 3.14159265359) + 1.0);
-    let skin_distance = circular_hue_distance(hue, 0.12);
+    let skin_distance = Color::circular_hue_distance(hue, 0.12);
     let skin_protection = 1.0 - smoothstep(0.032, 0.145, skin_distance);
     let relative_chroma = chroma / max(0.030 + 0.40 * max(lab.x, 0.0), 0.045);
     let content_saturation = clamp(relative_chroma, 0.0, 1.0);

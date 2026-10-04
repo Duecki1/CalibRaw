@@ -549,62 +549,61 @@ fn upload_rgba_texture_chunks(
     pixel_f16: impl Fn(usize) -> [u16; 3],
     pixel_f32: impl Fn(usize) -> [f32; 3],
 ) -> Result<()> {
-    let bytes_per_texel = match format {
-        wgpu::TextureFormat::Rgba16Float => 8,
-        wgpu::TextureFormat::Rgba32Float => 16,
-        _ => return Err(anyhow!("unsupported scene texture format {format:?}")),
-    };
+    match format {
+        wgpu::TextureFormat::Rgba16Float => write_packed_rows(queue, texture, raw, 8, |source| {
+            pack_rgba16_pixel(pixel_f16(source))
+        }),
+        wgpu::TextureFormat::Rgba32Float => write_packed_rows(queue, texture, raw, 16, |source| {
+            pack_rgba32_pixel(pixel_f32(source))
+        }),
+        _ => Err(anyhow!("unsupported scene texture format {format:?}")),
+    }
+}
+
+/// Uploads all rows of `raw` in chunks of at most `MAX_UPLOAD_SCRATCH_BYTES`,
+/// packing each texel with `pixel(source)`, where `source` is the row-major
+/// pixel index in `raw`.
+fn write_packed_rows<T: bytemuck::Pod + Default>(
+    queue: &wgpu::Queue,
+    texture: &wgpu::Texture,
+    raw: &LoadedRaw,
+    bytes_per_texel: u32,
+    pixel: impl Fn(usize) -> [T; 4],
+) -> Result<()> {
     let bytes_per_row = raw
         .width
         .checked_mul(bytes_per_texel)
         .ok_or_else(|| anyhow!("scene texture upload row byte count overflows"))?;
     let rows_per_chunk = (MAX_UPLOAD_SCRATCH_BYTES / bytes_per_row as usize).max(1) as u32;
-    let row_elements = raw.width as usize * 4;
-
     for first_row in (0..raw.height).step_by(rows_per_chunk as usize) {
         let row_count = rows_per_chunk.min(raw.height - first_row);
         let pixels = row_count as usize * raw.width as usize;
-        match format {
-            wgpu::TextureFormat::Rgba16Float => {
-                let mut rgba = vec![0u16; row_count as usize * row_elements];
-                for pixel_index in 0..pixels {
-                    let source = first_row as usize * raw.width as usize + pixel_index;
-                    let destination = pixel_index * 4;
-                    rgba[destination..destination + 4]
-                        .copy_from_slice(&pack_rgba16_pixel(pixel_f16(source)));
-                }
-                write_texture_chunk(
-                    queue,
-                    texture,
-                    first_row,
-                    row_count,
-                    raw.width,
-                    bytes_per_row,
-                    &rgba,
-                );
-            }
-            wgpu::TextureFormat::Rgba32Float => {
-                let mut rgba = vec![0.0f32; row_count as usize * row_elements];
-                for pixel_index in 0..pixels {
-                    let source = first_row as usize * raw.width as usize + pixel_index;
-                    let destination = pixel_index * 4;
-                    rgba[destination..destination + 4]
-                        .copy_from_slice(&pack_rgba32_pixel(pixel_f32(source)));
-                }
-                write_texture_chunk(
-                    queue,
-                    texture,
-                    first_row,
-                    row_count,
-                    raw.width,
-                    bytes_per_row,
-                    &rgba,
-                );
-            }
-            _ => unreachable!(),
+        let mut rgba = vec![T::default(); pixels * 4];
+        for pixel_index in 0..pixels {
+            let source = first_row as usize * raw.width as usize + pixel_index;
+            let destination = pixel_index * 4;
+            rgba[destination..destination + 4].copy_from_slice(&pixel(source));
         }
+        write_texture_chunk(
+            queue,
+            texture,
+            first_row,
+            row_count,
+            raw.width,
+            bytes_per_row,
+            &rgba,
+        );
     }
     Ok(())
+}
+
+/// Decodes the `index`th RGB triplet of packed IEEE half-float bits to `f32`.
+pub(super) fn decode_f16_rgb(rgb16f: &[u16], index: usize) -> [f32; 3] {
+    [
+        half::f16::from_bits(rgb16f[index * 3]).to_f32(),
+        half::f16::from_bits(rgb16f[index * 3 + 1]).to_f32(),
+        half::f16::from_bits(rgb16f[index * 3 + 2]).to_f32(),
+    ]
 }
 
 fn pack_rgba16_pixel([red, green, blue]: [u16; 3]) -> [u16; 4] {
@@ -702,13 +701,7 @@ pub(super) fn upload_ai_scene_texture(
                 rgb16f[index * 3 + 2],
             ]
         },
-        |index| {
-            [
-                half::f16::from_bits(rgb16f[index * 3]).to_f32(),
-                half::f16::from_bits(rgb16f[index * 3 + 1]).to_f32(),
-                half::f16::from_bits(rgb16f[index * 3 + 2]).to_f32(),
-            ]
-        },
+        |index| decode_f16_rgb(rgb16f, index),
     )?;
     Ok(true)
 }

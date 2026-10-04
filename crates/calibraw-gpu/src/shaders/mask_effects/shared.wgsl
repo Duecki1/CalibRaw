@@ -16,6 +16,15 @@ const MASK_EFFECT_GRAIN_ID: u32 = 13u;
 const MASK_EFFECT_HALATION_ID: u32 = 14u;
 const MASK_EFFECT_VIGNETTE_ID: u32 = 15u;
 
+// Integer hash finalizer shared by the procedural effects: mixes `seed` and
+// maps its low 24 bits to [0, 1].
+fn mask_effect_hash_unit(seed: u32) -> f32 {
+    var h = (seed ^ (seed >> 16u)) * 2246822519u;
+    h = (h ^ (h >> 13u)) * 3266489917u;
+    h = h ^ (h >> 16u);
+    return f32(h & 0x00ffffffu) / 16777215.0;
+}
+
 fn mask_effect_srgb_component_to_linear(value: f32) -> f32 {
     let encoded = clamp(value, 0.0, 1.0);
     if encoded <= 0.04045 {

@@ -42,53 +42,22 @@ pub(super) fn read_rgba8_texture_region_blocking(
     region: TextureReadbackRegion,
 ) -> Result<Vec<u8>> {
     region.validate("RGBA8")?;
-    let [x, y] = region.origin;
     let [width, height] = region.extent;
     let label = region.label;
 
-    let unpadded_bytes_per_row = width
-        .checked_mul(4)
-        .ok_or_else(|| anyhow!("GPU RGBA8 row byte count overflows"))?;
-    let padded_bytes_per_row = unpadded_bytes_per_row
-        .checked_add(255)
-        .map(|value| value / 256 * 256)
-        .ok_or_else(|| anyhow!("GPU RGBA8 padded row byte count overflows"))?;
-    let readback = device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some(label),
-        size: u64::from(padded_bytes_per_row)
-            .checked_mul(u64::from(height))
-            .ok_or_else(|| anyhow!("GPU RGBA8 readback buffer size overflows"))?,
-        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
-        mapped_at_creation: false,
-    });
-    let mut encoder =
-        device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some(label) });
-    encoder.copy_texture_to_buffer(
-        wgpu::TexelCopyTextureInfo {
-            texture,
-            mip_level: 0,
-            origin: wgpu::Origin3d { x, y, z: 0 },
-            aspect: wgpu::TextureAspect::All,
-        },
-        wgpu::TexelCopyBufferInfo {
-            buffer: &readback,
-            layout: wgpu::TexelCopyBufferLayout {
-                offset: 0,
-                bytes_per_row: Some(padded_bytes_per_row),
-                rows_per_image: Some(height),
-            },
-        },
-        wgpu::Extent3d {
-            width,
-            height,
-            depth_or_array_layers: 1,
-        },
+    let (readback, unpadded_bytes_per_row, padded_bytes_per_row) =
+        create_readback_buffer(device, width, height, 4, "RGBA8", label)?;
+    let submission = submit_texture_to_buffer_copy(
+        device,
+        queue,
+        texture,
+        region.origin,
+        region.extent,
+        &readback,
+        padded_bytes_per_row,
+        label,
     );
-    let submission = queue.submit(Some(encoder.finish()));
-    let (sender, receiver) = std::sync::mpsc::sync_channel(1);
-    readback.map_async(wgpu::MapMode::Read, .., move |result| {
-        let _ = sender.send(result);
-    });
+    let receiver = map_read_async(&readback);
     wait_for_mapping(device, submission, receiver, "thumbnail", "thumbnail")?;
 
     let mapped = readback.get_mapped_range(..);
@@ -212,40 +181,22 @@ pub(super) fn begin_rgba32_texture_region_rgb_readback(
     region: TextureReadbackRegion,
 ) -> Result<PendingRgba32Readback> {
     region.validate("RGBA32F")?;
-    let [x, y] = region.origin;
     let [width, height] = region.extent;
     let label = region.label;
 
-    let (readback, padded_bytes_per_row) =
-        create_rgba32_readback_buffer(device, width, height, label)?;
-    let mut encoder =
-        device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some(label) });
-    encoder.copy_texture_to_buffer(
-        wgpu::TexelCopyTextureInfo {
-            texture,
-            mip_level: 0,
-            origin: wgpu::Origin3d { x, y, z: 0 },
-            aspect: wgpu::TextureAspect::All,
-        },
-        wgpu::TexelCopyBufferInfo {
-            buffer: &readback,
-            layout: wgpu::TexelCopyBufferLayout {
-                offset: 0,
-                bytes_per_row: Some(padded_bytes_per_row),
-                rows_per_image: Some(height),
-            },
-        },
-        wgpu::Extent3d {
-            width,
-            height,
-            depth_or_array_layers: 1,
-        },
+    let (readback, _, padded_bytes_per_row) =
+        create_readback_buffer(device, width, height, 16, "RGBA32F", label)?;
+    let submission = submit_texture_to_buffer_copy(
+        device,
+        queue,
+        texture,
+        region.origin,
+        region.extent,
+        &readback,
+        padded_bytes_per_row,
+        label,
     );
-    let submission = queue.submit(Some(encoder.finish()));
-    let (sender, receiver) = std::sync::mpsc::channel();
-    readback.map_async(wgpu::MapMode::Read, .., move |result| {
-        let _ = sender.send(result);
-    });
+    let receiver = map_read_async(&readback);
     Ok(PendingRgba32Readback {
         readback,
         submission,
@@ -262,13 +213,7 @@ fn rgba32_readback_rows_per_chunk(width: u32) -> Result<u32> {
     if width == 0 {
         return Err(anyhow!("GPU RGBA32F readback width is zero"));
     }
-    let unpadded_bytes_per_row = width
-        .checked_mul(16)
-        .ok_or_else(|| anyhow!("GPU RGBA32F row byte count overflows"))?;
-    let padded_bytes_per_row = unpadded_bytes_per_row
-        .checked_add(255)
-        .map(|value| value / 256 * 256)
-        .ok_or_else(|| anyhow!("GPU RGBA32F padded row byte count overflows"))?;
+    let (_, padded_bytes_per_row) = padded_bytes_per_row(width, 16, "RGBA32F")?;
     let rows = MAX_RGBA32_READBACK_CHUNK_BYTES / u64::from(padded_bytes_per_row);
     if rows == 0 {
         return Err(anyhow!(
@@ -363,35 +308,17 @@ pub(super) fn read_float_texture_pixel_blocking(
         usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
         mapped_at_creation: false,
     });
-    let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-        label: Some("calibraw float pixel readback"),
-    });
-    encoder.copy_texture_to_buffer(
-        wgpu::TexelCopyTextureInfo {
-            texture,
-            mip_level: 0,
-            origin: wgpu::Origin3d { x, y, z: 0 },
-            aspect: wgpu::TextureAspect::All,
-        },
-        wgpu::TexelCopyBufferInfo {
-            buffer: &readback,
-            layout: wgpu::TexelCopyBufferLayout {
-                offset: 0,
-                bytes_per_row: Some(padded_bytes_per_row),
-                rows_per_image: Some(1),
-            },
-        },
-        wgpu::Extent3d {
-            width: 1,
-            height: 1,
-            depth_or_array_layers: 1,
-        },
+    let submission = submit_texture_to_buffer_copy(
+        device,
+        queue,
+        texture,
+        [x, y],
+        [1, 1],
+        &readback,
+        padded_bytes_per_row,
+        "calibraw float pixel readback",
     );
-    let submission = queue.submit(Some(encoder.finish()));
-    let (sender, receiver) = std::sync::mpsc::sync_channel(1);
-    readback.map_async(wgpu::MapMode::Read, .., move |result| {
-        let _ = sender.send(result);
-    });
+    let receiver = map_read_async(&readback);
     wait_for_mapping(device, submission, receiver, "float pixel", "float pixel")?;
 
     let mapped = readback.get_mapped_range(..);
@@ -424,32 +351,96 @@ pub(super) fn read_float_texture_pixel_blocking(
     Ok(rgb)
 }
 
-pub(super) fn create_rgba32_readback_buffer(
-    device: &wgpu::Device,
-    width: u32,
-    height: u32,
-    label: &'static str,
-) -> Result<(wgpu::Buffer, u32)> {
-    if width == 0 || height == 0 {
-        return Err(anyhow!("GPU RGBA32F readback dimensions must be non-zero"));
-    }
+/// Returns `(unpadded, padded)` bytes per row for a texture-to-buffer copy of
+/// `width` texels, padded to wgpu's 256-byte `COPY_BYTES_PER_ROW_ALIGNMENT`.
+/// `format` names the texel format in overflow errors.
+fn padded_bytes_per_row(width: u32, bytes_per_pixel: u32, format: &str) -> Result<(u32, u32)> {
     let unpadded_bytes_per_row = width
-        .checked_mul(16)
-        .ok_or_else(|| anyhow!("GPU RGBA32F row byte count overflows"))?;
+        .checked_mul(bytes_per_pixel)
+        .ok_or_else(|| anyhow!("GPU {format} row byte count overflows"))?;
     let padded_bytes_per_row = unpadded_bytes_per_row
         .checked_add(255)
         .map(|value| value / 256 * 256)
-        .ok_or_else(|| anyhow!("GPU RGBA32F padded row byte count overflows"))?;
+        .ok_or_else(|| anyhow!("GPU {format} padded row byte count overflows"))?;
+    Ok((unpadded_bytes_per_row, padded_bytes_per_row))
+}
+
+/// Creates a mappable buffer holding `height` padded rows of `width` texels.
+/// Returns the buffer with its `(unpadded, padded)` bytes per row.
+fn create_readback_buffer(
+    device: &wgpu::Device,
+    width: u32,
+    height: u32,
+    bytes_per_pixel: u32,
+    format: &str,
+    label: &'static str,
+) -> Result<(wgpu::Buffer, u32, u32)> {
+    if width == 0 || height == 0 {
+        return Err(anyhow!("GPU {format} readback dimensions must be non-zero"));
+    }
+    let (unpadded_bytes_per_row, padded_bytes_per_row) =
+        padded_bytes_per_row(width, bytes_per_pixel, format)?;
     let size = u64::from(padded_bytes_per_row)
         .checked_mul(u64::from(height))
-        .ok_or_else(|| anyhow!("GPU RGBA32F readback buffer size overflows"))?;
+        .ok_or_else(|| anyhow!("GPU {format} readback buffer size overflows"))?;
     let buffer = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some(label),
         size,
         usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
         mapped_at_creation: false,
     });
-    Ok((buffer, padded_bytes_per_row))
+    Ok((buffer, unpadded_bytes_per_row, padded_bytes_per_row))
+}
+
+/// Records and submits a copy of the `extent` texels at `origin` (mip 0, layer
+/// 0) into `buffer`, one row every `bytes_per_row` bytes.
+#[allow(clippy::too_many_arguments)]
+fn submit_texture_to_buffer_copy(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    texture: &wgpu::Texture,
+    [x, y]: [u32; 2],
+    [width, height]: [u32; 2],
+    buffer: &wgpu::Buffer,
+    bytes_per_row: u32,
+    label: &str,
+) -> wgpu::SubmissionIndex {
+    let mut encoder =
+        device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some(label) });
+    encoder.copy_texture_to_buffer(
+        wgpu::TexelCopyTextureInfo {
+            texture,
+            mip_level: 0,
+            origin: wgpu::Origin3d { x, y, z: 0 },
+            aspect: wgpu::TextureAspect::All,
+        },
+        wgpu::TexelCopyBufferInfo {
+            buffer,
+            layout: wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(bytes_per_row),
+                rows_per_image: Some(height),
+            },
+        },
+        wgpu::Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+        },
+    );
+    queue.submit(Some(encoder.finish()))
+}
+
+/// Requests a read mapping of the whole `buffer`; the result arrives on the
+/// returned channel once the device is polled (see `wait_for_mapping`).
+fn map_read_async(
+    buffer: &wgpu::Buffer,
+) -> std::sync::mpsc::Receiver<Result<(), wgpu::BufferAsyncError>> {
+    let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+    buffer.map_async(wgpu::MapMode::Read, .., move |result| {
+        let _ = sender.send(result);
+    });
+    receiver
 }
 
 fn wait_for_mapping(

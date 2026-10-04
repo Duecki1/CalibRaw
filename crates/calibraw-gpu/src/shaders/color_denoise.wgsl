@@ -16,9 +16,7 @@ fn color_denoise_kernel_weight(index: i32, compact: bool) -> f32 {
         if absolute == 0 { return 2.0; }
         return 1.0;
     }
-    if absolute == 0 { return 6.0; }
-    if absolute == 1 { return 4.0; }
-    return 1.0;
+    return Common::binomial5_weight(index);
 }
 
 fn color_denoise_scale_gain(scale: i32) -> f32 {

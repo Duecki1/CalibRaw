@@ -65,34 +65,20 @@ pub(super) fn load_shader_set(
             .create_shader_module(device, shader.label, text.as_ref(), shader.source.file_name)
             .map(Some)
     };
-    let highlight_module = load_shader(shaders::HIGHLIGHTS_ENTRY)?;
-    let bayer_rcd_p1_module = load_shader(shaders::BAYER_RCD_P1_ENTRY)?;
-    let bayer_rcd_p2_module = load_shader(shaders::BAYER_RCD_P2_ENTRY)?;
-    let bayer_rcd_p3_module = load_shader(shaders::BAYER_RCD_P3_ENTRY)?;
-    let bayer_rcd_p4_module = load_shader(shaders::BAYER_RCD_P4_ENTRY)?;
-    let dual_demosaic_module = load_shader(shaders::DUAL_DEMOSAIC_ENTRY)?;
-    let xtrans_demosaic_module = load_shader(shaders::XTRANS_DEMOSAIC_ENTRY)?;
-    let xtrans_finish_module = load_shader(shaders::XTRANS_FINISH_ENTRY)?;
-    let color_denoise_module = load_shader(shaders::COLOR_DENOISE_ENTRY)?;
-    let tone_analysis_module = load_shader(shaders::TONE_ANALYSIS_ENTRY)?;
-    let scene_adjustments_module = load_shader(shaders::SCENE_ADJUSTMENTS_ENTRY)?;
-    let creative_effects_module = load_shader(shaders::CREATIVE_EFFECTS_ENTRY)?;
-    let view_transform_module = load_shader(shaders::VIEW_TRANSFORM_ENTRY)?;
-
     Ok(ShaderSet {
-        highlight_module,
-        bayer_rcd_p1_module,
-        bayer_rcd_p2_module,
-        bayer_rcd_p3_module,
-        bayer_rcd_p4_module,
-        dual_demosaic_module,
-        xtrans_demosaic_module,
-        xtrans_finish_module,
-        color_denoise_module,
-        tone_analysis_module,
-        scene_adjustments_module,
-        creative_effects_module,
-        view_transform_module,
+        highlight_module: load_shader(shaders::HIGHLIGHTS_ENTRY)?,
+        bayer_rcd_p1_module: load_shader(shaders::BAYER_RCD_P1_ENTRY)?,
+        bayer_rcd_p2_module: load_shader(shaders::BAYER_RCD_P2_ENTRY)?,
+        bayer_rcd_p3_module: load_shader(shaders::BAYER_RCD_P3_ENTRY)?,
+        bayer_rcd_p4_module: load_shader(shaders::BAYER_RCD_P4_ENTRY)?,
+        dual_demosaic_module: load_shader(shaders::DUAL_DEMOSAIC_ENTRY)?,
+        xtrans_demosaic_module: load_shader(shaders::XTRANS_DEMOSAIC_ENTRY)?,
+        xtrans_finish_module: load_shader(shaders::XTRANS_FINISH_ENTRY)?,
+        color_denoise_module: load_shader(shaders::COLOR_DENOISE_ENTRY)?,
+        tone_analysis_module: load_shader(shaders::TONE_ANALYSIS_ENTRY)?,
+        scene_adjustments_module: load_shader(shaders::SCENE_ADJUSTMENTS_ENTRY)?,
+        creative_effects_module: load_shader(shaders::CREATIVE_EFFECTS_ENTRY)?,
+        view_transform_module: load_shader(shaders::VIEW_TRANSFORM_ENTRY)?,
     })
 }
 

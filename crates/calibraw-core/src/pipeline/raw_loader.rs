@@ -323,6 +323,52 @@ pub struct LoadedRaw {
 }
 
 impl LoadedRaw {
+    /// Builds a sensor-mosaic view of the same capture with new pixels (a crop, proxy, tile or
+    /// corrected mosaic). Capture metadata, colour calibration and the noise profile are copied
+    /// from `self`. The view has no scene-linear raster, no lens geometry and a fresh, empty
+    /// AI-denoise slot. It shares `self`'s opposed-chroma cache and source identity as a
+    /// non-reference consumer. Callers override per-view fields with struct update syntax.
+    pub fn derive_with(
+        &self,
+        width: u32,
+        height: u32,
+        raw_pixels: Vec<u16>,
+        color_indices: CompactPixelMap<u8>,
+        black_levels_per_pixel: CompactPixelMap<f32>,
+    ) -> Self {
+        Self {
+            width,
+            height,
+            camera_make: self.camera_make.clone(),
+            camera_model: self.camera_model.clone(),
+            lens_make: self.lens_make.clone(),
+            lens_model: self.lens_model.clone(),
+            focal_length: self.focal_length,
+            aperture: self.aperture,
+            focus_distance: self.focus_distance,
+            capture_metadata: self.capture_metadata.clone(),
+            cfa_kind: self.cfa_kind,
+            raw_pixels,
+            scene_linear_raster: None,
+            color_indices,
+            wb_coeffs: self.wb_coeffs,
+            cam_to_srgb: self.cam_to_srgb,
+            black_levels: self.black_levels,
+            black_levels_per_pixel,
+            white_levels: self.white_levels,
+            noise_profile: self.noise_profile,
+            camera_profile: self.camera_profile.clone(),
+            camera_profile_source: self.camera_profile_source.clone(),
+            available_camera_profiles: self.available_camera_profiles.clone(),
+            white_balance_model: self.white_balance_model.clone(),
+            lens_geometry: None,
+            ai_denoised: Arc::new(RwLock::new(None)),
+            opposed_chroma_cache: Arc::clone(&self.opposed_chroma_cache),
+            opposed_chroma_source_identity: Arc::clone(&self.opposed_chroma_source_identity),
+            opposed_chroma_reference_source: false,
+        }
+    }
+
     pub fn from_scene_linear_rec2020(width: u32, height: u32, rgb: Vec<f32>) -> Result<Self> {
         let pixels = validate_raw_dimensions(width, height)?;
         let expected = pixels

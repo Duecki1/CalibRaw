@@ -166,47 +166,13 @@ pub(super) fn reflected_raw_tile(
             blacks[destination] = raw.black_levels_per_pixel[source];
         }
     }
-    Ok(LoadedRaw {
-        width: TILE_EDGE as u32,
-        height: TILE_EDGE as u32,
-        camera_make: raw.camera_make.clone(),
-        camera_model: raw.camera_model.clone(),
-        lens_make: raw.lens_make.clone(),
-        lens_model: raw.lens_model.clone(),
-        focal_length: raw.focal_length,
-        aperture: raw.aperture,
-        focus_distance: raw.focus_distance,
-        capture_metadata: raw.capture_metadata.clone(),
-        cfa_kind: raw.cfa_kind,
+    Ok(raw.derive_with(
+        TILE_EDGE as u32,
+        TILE_EDGE as u32,
         raw_pixels,
-        scene_linear_raster: None,
-        color_indices: CompactPixelMap::compact_from_dense(
-            TILE_EDGE as u32,
-            TILE_EDGE as u32,
-            colors,
-            64,
-        ),
-        wb_coeffs: raw.wb_coeffs,
-        cam_to_srgb: raw.cam_to_srgb,
-        black_levels: raw.black_levels,
-        black_levels_per_pixel: CompactPixelMap::compact_from_dense(
-            TILE_EDGE as u32,
-            TILE_EDGE as u32,
-            blacks,
-            64,
-        ),
-        white_levels: raw.white_levels,
-        noise_profile: raw.noise_profile,
-        camera_profile: raw.camera_profile.clone(),
-        camera_profile_source: raw.camera_profile_source.clone(),
-        available_camera_profiles: raw.available_camera_profiles.clone(),
-        white_balance_model: raw.white_balance_model.clone(),
-        lens_geometry: None,
-        ai_denoised: Arc::new(RwLock::new(None)),
-        opposed_chroma_cache: Arc::clone(&raw.opposed_chroma_cache),
-        opposed_chroma_source_identity: Arc::clone(&raw.opposed_chroma_source_identity),
-        opposed_chroma_reference_source: false,
-    })
+        CompactPixelMap::compact_from_dense(TILE_EDGE as u32, TILE_EDGE as u32, colors, 64),
+        CompactPixelMap::compact_from_dense(TILE_EDGE as u32, TILE_EDGE as u32, blacks, 64),
+    ))
 }
 
 pub(super) fn rows3(rows: [[f32; 4]; 3]) -> Matrix3 {

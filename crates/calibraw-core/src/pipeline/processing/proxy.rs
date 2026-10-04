@@ -192,39 +192,19 @@ pub fn crop_raw(raw: &LoadedRaw, x: u32, y: u32, width: u32, height: u32) -> Loa
             .subregion_clamped(i64::from(x), i64::from(y), width, height);
 
     LoadedRaw {
-        width,
-        height,
-        camera_make: raw.camera_make.clone(),
-        camera_model: raw.camera_model.clone(),
-        lens_make: raw.lens_make.clone(),
-        lens_model: raw.lens_model.clone(),
-        focal_length: raw.focal_length,
-        aperture: raw.aperture,
-        focus_distance: raw.focus_distance,
-        capture_metadata: raw.capture_metadata.clone(),
-        cfa_kind: raw.cfa_kind,
-        raw_pixels,
-        scene_linear_raster: None,
-        color_indices,
-        wb_coeffs: raw.wb_coeffs,
-        cam_to_srgb: raw.cam_to_srgb,
-        black_levels: raw.black_levels,
-        black_levels_per_pixel,
-        white_levels: raw.white_levels,
-        noise_profile: raw.noise_profile,
-        camera_profile: raw.camera_profile.clone(),
-        camera_profile_source: raw.camera_profile_source.clone(),
-        available_camera_profiles: raw.available_camera_profiles.clone(),
-        white_balance_model: raw.white_balance_model.clone(),
         lens_geometry: (x == 0 && y == 0 && width == raw.width && height == raw.height)
             .then(|| raw.lens_geometry.clone())
             .flatten(),
         ai_denoised: std::sync::Arc::new(std::sync::RwLock::new(crop_ai_denoised(
             raw, x, y, width, height,
         ))),
-        opposed_chroma_cache: std::sync::Arc::clone(&raw.opposed_chroma_cache),
-        opposed_chroma_source_identity: std::sync::Arc::clone(&raw.opposed_chroma_source_identity),
-        opposed_chroma_reference_source: false,
+        ..raw.derive_with(
+            width,
+            height,
+            raw_pixels,
+            color_indices,
+            black_levels_per_pixel,
+        )
     }
 }
 
@@ -346,39 +326,12 @@ pub fn build_region_proxy(
         });
 
     LoadedRaw {
-        width,
-        height,
-        camera_make: raw.camera_make.clone(),
-        camera_model: raw.camera_model.clone(),
-        lens_make: raw.lens_make.clone(),
-        lens_model: raw.lens_model.clone(),
-        focal_length: raw.focal_length,
-        aperture: raw.aperture,
-        focus_distance: raw.focus_distance,
-        capture_metadata: raw.capture_metadata.clone(),
-        cfa_kind: raw.cfa_kind,
-        raw_pixels,
-        scene_linear_raster: None,
-        color_indices: CompactPixelMap::compact_from_dense(width, height, color_indices, 64),
-        wb_coeffs: raw.wb_coeffs,
-        cam_to_srgb: raw.cam_to_srgb,
-        black_levels: raw.black_levels,
-        black_levels_per_pixel: CompactPixelMap::compact_from_dense(
-            width,
-            height,
-            black_levels_per_pixel,
-            64,
-        ),
-        white_levels: raw.white_levels,
+        // Proxy pixels average same-colour samples, so noise variance scales with the area ratio.
         noise_profile: raw.noise_profile.scaled_variance(
             ((u64::from(width) * u64::from(height)) as f64
                 / (u64::from(region_width) * u64::from(region_height)) as f64)
                 .clamp(0.0, 1.0) as f32,
         ),
-        camera_profile: raw.camera_profile.clone(),
-        camera_profile_source: raw.camera_profile_source.clone(),
-        available_camera_profiles: raw.available_camera_profiles.clone(),
-        white_balance_model: raw.white_balance_model.clone(),
         lens_geometry: (x == 0
             && y == 0
             && region_width == raw.width
@@ -394,9 +347,13 @@ pub fn build_region_proxy(
             width,
             height,
         ))),
-        opposed_chroma_cache: std::sync::Arc::clone(&raw.opposed_chroma_cache),
-        opposed_chroma_source_identity: std::sync::Arc::clone(&raw.opposed_chroma_source_identity),
-        opposed_chroma_reference_source: false,
+        ..raw.derive_with(
+            width,
+            height,
+            raw_pixels,
+            CompactPixelMap::compact_from_dense(width, height, color_indices, 64),
+            CompactPixelMap::compact_from_dense(width, height, black_levels_per_pixel, 64),
+        )
     }
 }
 

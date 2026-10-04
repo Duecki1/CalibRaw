@@ -8,18 +8,7 @@ pub fn render_remove_scene_crop_resized(
     maximum_edge: u32,
 ) -> Result<ResizedRemoveSceneCrop> {
     anyhow::ensure!(maximum_edge > 0, "Remove working edge is zero");
-    anyhow::ensure!(
-        job.crop.width > 0 && job.crop.height > 0,
-        "Remove crop is empty"
-    );
-    anyhow::ensure!(
-        job.crop.right() <= job.raw.width && job.crop.bottom() <= job.raw.height,
-        "Remove crop lies outside the native source image"
-    );
-
-    if job.raw.uses_opposed_chroma(&job.exposure) {
-        job.raw.inpaint_opposed_chroma_for_exposure(&job.exposure);
-    }
+    prepare_crop_source(&job)?;
     let working_raw = build_region_proxy(
         &job.raw,
         job.crop.x,
@@ -90,18 +79,8 @@ pub fn render_remove_scene_crop_resized(
 }
 
 pub fn render_remove_scene_crop(job: DevelopedCropJob) -> Result<Vec<f32>> {
-    anyhow::ensure!(
-        job.crop.width > 0 && job.crop.height > 0,
-        "Remove crop is empty"
-    );
-    anyhow::ensure!(
-        job.crop.right() <= job.raw.width && job.crop.bottom() <= job.raw.height,
-        "Remove crop lies outside the native source image"
-    );
+    prepare_crop_source(&job)?;
     let empty_masks = MaskStack::default();
-    if job.raw.uses_opposed_chroma(&job.exposure) {
-        job.raw.inpaint_opposed_chroma_for_exposure(&job.exposure);
-    }
     let halo = required_export_tile_halo(&job.exposure, &empty_masks);
     let tile = crate::pipeline::ExportTile {
         core_x: job.crop.x,
@@ -153,6 +132,23 @@ pub fn render_remove_scene_crop(job: DevelopedCropJob) -> Result<Vec<f32>> {
     Ok(crop)
 }
 
+/// Rejects an empty crop or one outside the RAW, then prepares the RAW's
+/// opposed-chroma highlight data for this exposure when the crop needs it.
+fn prepare_crop_source(job: &DevelopedCropJob) -> Result<()> {
+    anyhow::ensure!(
+        job.crop.width > 0 && job.crop.height > 0,
+        "Remove crop is empty"
+    );
+    anyhow::ensure!(
+        job.crop.right() <= job.raw.width && job.crop.bottom() <= job.raw.height,
+        "Remove crop lies outside the native source image"
+    );
+    if job.raw.uses_opposed_chroma(&job.exposure) {
+        job.raw.inpaint_opposed_chroma_for_exposure(&job.exposure);
+    }
+    Ok(())
+}
+
 pub struct DevelopedCropJob {
     pub device: wgpu::Device,
     pub queue: wgpu::Queue,
@@ -200,17 +196,7 @@ fn create_crop_pipeline(
 }
 
 pub fn render_developed_linear_crop(job: DevelopedCropJob) -> Result<Vec<f32>> {
-    anyhow::ensure!(
-        job.crop.width > 0 && job.crop.height > 0,
-        "Remove crop is empty"
-    );
-    anyhow::ensure!(
-        job.crop.right() <= job.raw.width && job.crop.bottom() <= job.raw.height,
-        "Remove crop lies outside the native source image"
-    );
-    if job.raw.uses_opposed_chroma(&job.exposure) {
-        job.raw.inpaint_opposed_chroma_for_exposure(&job.exposure);
-    }
+    prepare_crop_source(&job)?;
     let halo = required_export_tile_halo(&job.exposure, &job.masks);
     let tile = tone_grid_aligned_crop_tile(job.crop, halo)?;
     let tile_raw = extract_padded_tile(&job.raw, tile);
