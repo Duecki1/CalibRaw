@@ -1,21 +1,5 @@
 use super::*;
-
-/// Mask-tool state edited by the properties panel. The caller loads it from
-/// the app before drawing and applies the requests afterwards.
-pub(super) struct MaskPropertiesControls {
-    pub(super) brush_mode: BrushMode,
-    pub(super) birefnet_quality: calibraw_ai::ai_masks::BiRefNetQuality,
-    /// False while a subject, sky, or depth model is already running.
-    pub(super) generation_idle: bool,
-    pub(super) refinement_active: bool,
-    pub(super) refinement_size: f32,
-    pub(super) refinement_feather: f32,
-    pub(super) refinement_flow: f32,
-    pub(super) clear_refinement: bool,
-    /// Generate (or regenerate) the subject, sky, or depth map of the component.
-    pub(super) request_generation: bool,
-    pub(super) request_object: bool,
-}
+use crate::app::{MaskPropertiesControls, MaskPropertyAction};
 
 impl Sidebar {
     pub(crate) fn effect_creation_menu(
@@ -411,300 +395,92 @@ impl Sidebar {
             .show(ui)
     }
 
+    /// The properties of the selected component. Returns the edits, in the
+    /// order they apply; `controls` is the tool state at the start of the frame.
     pub(super) fn show_vertical_mask_properties(
         ui: &mut Ui,
-        mask: &mut crate::pipeline::LocalMask,
+        mask: &LocalMask,
         component_index: usize,
-        controls: &mut MaskPropertiesControls,
-    ) -> bool {
+        controls: &MaskPropertiesControls,
+    ) -> Vec<MaskPropertyAction> {
+        let mut edits = PropertyEdits {
+            actions: Vec::new(),
+            controls: *controls,
+        };
         let mut opacity = mask.opacity;
-        let mut geometry_changed = AdjustmentSlider::new("Mask opacity", &mut opacity, 0.0..=1.0)
+        if AdjustmentSlider::new("Mask opacity", &mut opacity, 0.0..=1.0)
             .decimals(2)
             .step(0.01)
             .hover_text(
                 "Controls the strength of the entire mask before its selected type is applied.",
             )
             .reset_to(1.0)
-            .show(ui);
-        if geometry_changed {
-            mask.set_opacity(opacity);
+            .show(ui)
+        {
+            edits.push(MaskPropertyAction::SetOpacity(opacity));
         }
 
-        let Some(component) = mask.components.get_mut(component_index) else {
-            return geometry_changed;
+        let Some(component) = mask.components.get(component_index) else {
+            return edits.actions;
         };
 
         ui.add_space(moduwu_design::SPACE_XS);
         ui.scope(|ui| {
-            let is_fullscreen = matches!(&component.geometry, MaskGeometry::Fullscreen);
-            ui.horizontal_wrapped(|ui| {
-                let component_name = ui.strong(component.name.as_str());
-                if is_fullscreen {
-                    component_name
-                        .on_hover_text("Covers the complete image with uniform mask strength.");
-                }
-                if moduwu_design::toggle_button(ui, "Invert", component.invert).clicked() {
-                    component.common.toggle_invert();
-                    geometry_changed = true;
-                }
-                if component_index > 0 {
-                    let mut combine = component.combine;
-                    egui::ComboBox::from_id_salt("vertical-mask-combine")
-                        .selected_text(combine.label())
-                        .show_ui(ui, |ui| {
-                            for mode in [
-                                MaskCombineMode::Add,
-                                MaskCombineMode::Subtract,
-                                MaskCombineMode::Intersect,
-                            ] {
-                                ui.selectable_value(&mut combine, mode, mode.label());
-                            }
-                        });
-                    geometry_changed |= component.set_combine(combine);
-                }
-            });
-
+            Self::component_header(ui, component, component_index, &mut edits);
             let is_sky = component.kind == MaskKind::Sky;
-            match &mut component.geometry {
+            match &component.geometry {
                 MaskGeometry::Fullscreen => {}
-                MaskGeometry::Brush {
-                    size,
-                    feather,
-                    opacity_enabled,
-                    opacity,
-                    overlap_enabled,
-                    stroke_starts,
-                    dabs,
-                } => {
-                    Self::brush_mode_selector(ui, &mut controls.brush_mode, "Brush", "Eraser");
-                    geometry_changed |= AdjustmentSlider::new("Size", size, 0.0025..=0.25)
-                        .decimals(3)
-                        .step(0.0025)
-                        .hover_text(SCREEN_SIZED_BRUSH_HELP)
-                        .reset_to(0.055)
-                        .show(ui);
-                    let feather_changed = Self::mask_feather_slider(
-                        ui,
-                        "Feather",
-                        feather,
-                        0.0..=1.0,
-                        "Softness from the brush core to its edge.",
-                        0.55,
-                    );
-                    if feather_changed {
-                        for dab in dabs.iter_mut() {
-                            dab.feather = *feather;
-                        }
-                        geometry_changed = true;
-                    }
-                    ui.horizontal(|ui| {
-                        if moduwu_design::toggle_button(ui, "Opacity", *opacity_enabled)
-                            .on_hover_text(
-                                "Use the opacity setting for newly drawn brush and eraser strokes. \
-                                 Disabled strokes always use 100% opacity.",
-                            )
-                            .clicked()
-                        {
-                            *opacity_enabled = !*opacity_enabled;
-                            geometry_changed = true;
-                        }
-                        if moduwu_design::toggle_button(ui, "Overlapping", *overlap_enabled)
-                            .on_hover_text(
-                                "Allow separate brush strokes to build opacity where they overlap. \
-                                 For example, 10% over 10% produces about 19% coverage.",
-                            )
-                            .clicked()
-                        {
-                            *overlap_enabled = !*overlap_enabled;
-                            geometry_changed = true;
-                        }
-                    });
-                    ui.add_enabled_ui(*opacity_enabled, |ui| {
-                        geometry_changed |=
-                            AdjustmentSlider::new("Stroke opacity", opacity, 0.0..=1.0)
-                                .decimals(2)
-                                .step(0.01)
-                                .hover_text(
-                                    "Controls only newly drawn brush and eraser strokes. Existing \
-                                 strokes and the whole-mask opacity are unchanged.",
-                                )
-                                .reset_to(1.0)
-                                .show(ui);
-                    });
-                    if moduwu_design::icon_button(
-                        ui,
-                        egui_phosphor::regular::ERASER,
-                        moduwu_design::toolbar_icon_size(),
-                        "Clear brush strokes",
-                    )
-                    .clicked()
-                    {
-                        dabs.clear();
-                        stroke_starts.clear();
-                        geometry_changed = true;
-                    }
+                MaskGeometry::Brush { .. } => {
+                    Self::brush_properties(ui, &component.geometry, &mut edits);
                 }
                 MaskGeometry::Radial { feather, .. } => {
-                    geometry_changed |= Self::mask_feather_slider(
+                    edits.feather(Self::mask_feather_edit(
                         ui,
                         "Feather",
-                        feather,
+                        *feather,
                         0.0..=1.0,
                         "Soft transition from the ellipse interior to its edge.",
                         0.55,
-                    );
+                    ));
                 }
                 MaskGeometry::Linear { feather, .. } => {
-                    geometry_changed |= Self::mask_feather_slider(
+                    edits.feather(Self::mask_feather_edit(
                         ui,
                         "Feather",
-                        feather,
+                        *feather,
                         0.02..=1.0,
                         "Controls the width of the gradient transition.",
                         1.0,
-                    );
+                    ));
                 }
                 MaskGeometry::Path {
                     points,
                     grow,
                     feather,
-                } => {
-                    ui.label(concat!(
-                        "Click to add polygon points. Click-drag while adding a point to create a ",
-                        "smooth Bézier point. Drag anchors or handles to edit the path; ",
-                        "Alt/Option-drag an anchor to create symmetric handles."
-                    ));
-                    geometry_changed |= Self::mask_grow_slider(ui, grow);
-                    geometry_changed |= Self::mask_feather_slider(
-                        ui,
-                        "Feather",
-                        feather,
-                        0.0..=1.0,
-                        "Softens only the inside of the freeform path edge.",
-                        0.0,
-                    );
-                    ui.horizontal_wrapped(|ui| {
-                        if ui
-                            .small_button("Straighten")
-                            .on_hover_text("Convert all path points to straight corners")
-                            .clicked()
-                        {
-                            for point in points.iter_mut() {
-                                point.handle_in = [0.0, 0.0];
-                                point.handle_out = [0.0, 0.0];
-                            }
-                            geometry_changed = true;
-                        }
-                        if ui
-                            .small_button("Undo point")
-                            .on_hover_text("Remove the last path point")
-                            .clicked()
-                        {
-                            geometry_changed |= points.pop().is_some();
-                        }
-                        if ui
-                            .small_button("Clear")
-                            .on_hover_text("Clear path")
-                            .clicked()
-                            && !points.is_empty()
-                        {
-                            points.clear();
-                            geometry_changed = true;
-                        }
-                    });
-                    ui.small(format!("{} point(s)", points.len()));
-                }
+                } => Self::path_properties(ui, points.len(), *grow, *feather, &mut edits),
                 MaskGeometry::Ai {
                     mask: generated_mask,
                     grow,
                     feather,
                 } => {
                     if !is_sky {
-                        Self::subject_refinement_controls(ui, controls);
+                        Self::subject_refinement_controls(ui, &mut edits);
                     }
                     if generated_mask.is_none() {
-                        Self::generate_mask_row(ui, is_sky, controls);
+                        Self::generate_mask_row(ui, is_sky, &mut edits);
                     }
-                    geometry_changed |= Self::mask_grow_slider(ui, grow);
-                    geometry_changed |= Self::mask_feather_slider(
+                    edits.grow(Self::mask_grow_edit(ui, *grow));
+                    edits.feather(Self::mask_feather_edit(
                         ui,
                         "Feather",
-                        feather,
+                        *feather,
                         0.0..=1.0,
                         "Softens the selection edge while keeping the selected interior solid.",
                         0.0,
-                    );
+                    ));
                 }
-                MaskGeometry::Object {
-                    mask: generated_mask,
-                    grow,
-                    feather,
-                    brush_size,
-                    edge_refine,
-                    strokes,
-                } => {
-                    controls.brush_mode = BrushMode::Paint;
-                    ui.label(if generated_mask.is_some() {
-                        "Draw again on the image to replace this object selection from scratch."
-                    } else {
-                        "Paint through the middle of the object part you want to select."
-                    });
-                    ui.strong("Selection brush");
-                    geometry_changed |= AdjustmentSlider::new("Size", brush_size, 0.0025..=0.25)
-                        .decimals(3)
-                        .step(0.0025)
-                        .hover_text(
-                            "Controls the hard-edged selection brush. Its on-screen size stays \
-                             constant while zooming for finer detail.",
-                        )
-                        .reset_to(0.055)
-                        .show(ui);
-                    ui.add_space(moduwu_design::SPACE_XS);
-                    geometry_changed |= Self::mask_grow_slider(ui, grow);
-                    geometry_changed |= Self::mask_feather_slider(
-                        ui,
-                        "Mask feather",
-                        feather,
-                        0.0..=1.0,
-                        "Softens the final object mask after SAM selection.",
-                        0.0,
-                    );
-                    let refine_changed =
-                        AdjustmentSlider::new("Edge refine", edge_refine, 0.0..=1.0)
-                            .decimals(2)
-                            .step(0.01)
-                            .hover_text("Aligns uncertain SAM boundaries to local image edges.")
-                            .reset_to(0.55)
-                            .show(ui);
-                    geometry_changed |= refine_changed;
-                    if refine_changed && !strokes.is_empty() {
-                        controls.request_object = true;
-                    }
-                    ui.horizontal_wrapped(|ui| {
-                        if moduwu_design::icon_button(
-                            ui,
-                            egui_phosphor::regular::ARROW_CLOCKWISE,
-                            moduwu_design::toolbar_icon_size(),
-                            "Recalculate object selection",
-                        )
-                        .clicked()
-                        {
-                            controls.request_object = true;
-                        }
-                        if moduwu_design::icon_button(
-                            ui,
-                            egui_phosphor::regular::X,
-                            moduwu_design::toolbar_icon_size(),
-                            "Clear object selection",
-                        )
-                        .clicked()
-                        {
-                            strokes.clear();
-                            *generated_mask = None;
-                            geometry_changed = true;
-                        }
-                    });
-                    ui.small(format!("{} selection stroke(s)", strokes.len()));
+                MaskGeometry::Object { .. } => {
+                    Self::object_properties(ui, &component.geometry, &mut edits);
                 }
                 MaskGeometry::LuminanceRange {
                     low,
@@ -713,27 +489,7 @@ impl Sidebar {
                     feather,
                     ..
                 } => {
-                    geometry_changed |= AdjustmentSlider::new("Range low", low, 0.0..=1.0)
-                        .decimals(2)
-                        .step(0.01)
-                        .hover_text("Lowest included scene luminance.")
-                        .reset_to(0.2)
-                        .show(ui);
-                    geometry_changed |= AdjustmentSlider::new("Range high", high, 0.0..=1.0)
-                        .decimals(2)
-                        .step(0.01)
-                        .hover_text("Highest included scene luminance.")
-                        .reset_to(0.8)
-                        .show(ui);
-                    geometry_changed |= Self::mask_grow_slider(ui, grow);
-                    geometry_changed |= Self::mask_feather_slider(
-                        ui,
-                        "Range feather",
-                        feather,
-                        0.0..=1.0,
-                        "Softens both luminance-range boundaries.",
-                        0.15,
-                    );
+                    Self::luminance_range_properties(ui, [*low, *high], *grow, *feather, &mut edits)
                 }
                 MaskGeometry::ColorRange {
                     tolerance,
@@ -741,44 +497,11 @@ impl Sidebar {
                     feather,
                     sampled,
                     ..
-                } => {
-                    ui.label(if *sampled {
-                        "Drag on the image to choose another color."
-                    } else {
-                        "Drag on the image to sample a color."
-                    });
-                    geometry_changed |= AdjustmentSlider::new("Tolerance", tolerance, 0.005..=1.0)
-                        .decimals(3)
-                        .step(0.005)
-                        .hover_text("Expands the selected color region in perceptual OkLab space.")
-                        .reset_to(0.18)
-                        .show(ui);
-                    geometry_changed |= Self::mask_grow_slider(ui, grow);
-                    geometry_changed |= Self::mask_feather_slider(
-                        ui,
-                        "Color feather",
-                        feather,
-                        0.0..=1.0,
-                        "Softens the color-distance cutoff.",
-                        0.12,
-                    );
-                }
+                } => Self::color_range_properties(
+                    ui, *sampled, *tolerance, *grow, *feather, &mut edits,
+                ),
                 MaskGeometry::DepthRange { depth, range } => {
-                    ui.label(if depth.is_some() {
-                        "Select a range of relative depth, from near (0) to far (1)."
-                    } else {
-                        "Generate a depth map to select by distance."
-                    });
-                    let label = if depth.is_some() {
-                        "Regenerate depth map"
-                    } else {
-                        "Generate depth map"
-                    };
-                    if ui.button(label).clicked() {
-                        controls.request_generation = true;
-                    }
-                    geometry_changed |=
-                        crate::ui::components::depth_range_slider::depth_range_slider(ui, range);
+                    Self::depth_range_properties(ui, depth.is_some(), *range, &mut edits);
                 }
                 MaskGeometry::Placeholder => {
                     ui.label("This mask type is not implemented yet.");
@@ -786,12 +509,381 @@ impl Sidebar {
             }
         });
 
-        geometry_changed
+        edits.actions
+    }
+
+    /// The component name, its Invert toggle and, after the base, its combine mode.
+    fn component_header(
+        ui: &mut Ui,
+        component: &MaskComponent,
+        component_index: usize,
+        edits: &mut PropertyEdits,
+    ) {
+        let is_fullscreen = matches!(&component.geometry, MaskGeometry::Fullscreen);
+        ui.horizontal_wrapped(|ui| {
+            let component_name = ui.strong(component.name.as_str());
+            if is_fullscreen {
+                component_name
+                    .on_hover_text("Covers the complete image with uniform mask strength.");
+            }
+            if moduwu_design::toggle_button(ui, "Invert", component.invert).clicked() {
+                edits.push(MaskPropertyAction::ToggleInvert);
+            }
+            if component_index > 0 {
+                let mut combine = component.combine;
+                egui::ComboBox::from_id_salt("vertical-mask-combine")
+                    .selected_text(combine.label())
+                    .show_ui(ui, |ui| {
+                        for mode in [
+                            MaskCombineMode::Add,
+                            MaskCombineMode::Subtract,
+                            MaskCombineMode::Intersect,
+                        ] {
+                            ui.selectable_value(&mut combine, mode, mode.label());
+                        }
+                    });
+                if combine != component.combine {
+                    edits.push(MaskPropertyAction::SetCombine(combine));
+                }
+            }
+        });
+    }
+
+    fn brush_properties(ui: &mut Ui, geometry: &MaskGeometry, edits: &mut PropertyEdits) {
+        let MaskGeometry::Brush {
+            size,
+            feather,
+            opacity_enabled,
+            opacity,
+            overlap_enabled,
+            ..
+        } = geometry
+        else {
+            return;
+        };
+        Self::brush_mode_selector(ui, edits, "Brush", "Eraser");
+        let mut size = *size;
+        if AdjustmentSlider::new("Size", &mut size, 0.0025..=0.25)
+            .decimals(3)
+            .step(0.0025)
+            .hover_text(SCREEN_SIZED_BRUSH_HELP)
+            .reset_to(0.055)
+            .show(ui)
+        {
+            edits.push(MaskPropertyAction::SetBrushSize(size));
+        }
+        if let Some(feather) = Self::mask_feather_edit(
+            ui,
+            "Feather",
+            *feather,
+            0.0..=1.0,
+            "Softness from the brush core to its edge.",
+            0.55,
+        ) {
+            edits.push(MaskPropertyAction::SetBrushFeather(feather));
+        }
+        // Toggling opacity enables the stroke opacity slider in the same frame.
+        let mut opacity_enabled = *opacity_enabled;
+        ui.horizontal(|ui| {
+            if moduwu_design::toggle_button(ui, "Opacity", opacity_enabled)
+                .on_hover_text(
+                    "Use the opacity setting for newly drawn brush and eraser strokes. \
+                     Disabled strokes always use 100% opacity.",
+                )
+                .clicked()
+            {
+                opacity_enabled = !opacity_enabled;
+                edits.push(MaskPropertyAction::ToggleBrushOpacity);
+            }
+            if moduwu_design::toggle_button(ui, "Overlapping", *overlap_enabled)
+                .on_hover_text(
+                    "Allow separate brush strokes to build opacity where they overlap. \
+                     For example, 10% over 10% produces about 19% coverage.",
+                )
+                .clicked()
+            {
+                edits.push(MaskPropertyAction::ToggleBrushOverlap);
+            }
+        });
+        ui.add_enabled_ui(opacity_enabled, |ui| {
+            let mut opacity = *opacity;
+            if AdjustmentSlider::new("Stroke opacity", &mut opacity, 0.0..=1.0)
+                .decimals(2)
+                .step(0.01)
+                .hover_text(
+                    "Controls only newly drawn brush and eraser strokes. Existing \
+                 strokes and the whole-mask opacity are unchanged.",
+                )
+                .reset_to(1.0)
+                .show(ui)
+            {
+                edits.push(MaskPropertyAction::SetBrushStrokeOpacity(opacity));
+            }
+        });
+        if moduwu_design::icon_button(
+            ui,
+            egui_phosphor::regular::ERASER,
+            moduwu_design::toolbar_icon_size(),
+            "Clear brush strokes",
+        )
+        .clicked()
+        {
+            edits.push(MaskPropertyAction::ClearBrushStrokes);
+        }
+    }
+
+    fn path_properties(
+        ui: &mut Ui,
+        point_count: usize,
+        grow: f32,
+        feather: f32,
+        edits: &mut PropertyEdits,
+    ) {
+        ui.label(concat!(
+            "Click to add polygon points. Click-drag while adding a point to create a ",
+            "smooth Bézier point. Drag anchors or handles to edit the path; ",
+            "Alt/Option-drag an anchor to create symmetric handles."
+        ));
+        edits.grow(Self::mask_grow_edit(ui, grow));
+        edits.feather(Self::mask_feather_edit(
+            ui,
+            "Feather",
+            feather,
+            0.0..=1.0,
+            "Softens only the inside of the freeform path edge.",
+            0.0,
+        ));
+        // The count below reflects this frame's edits.
+        let mut point_count = point_count;
+        ui.horizontal_wrapped(|ui| {
+            if ui
+                .small_button("Straighten")
+                .on_hover_text("Convert all path points to straight corners")
+                .clicked()
+            {
+                edits.push(MaskPropertyAction::StraightenPath);
+            }
+            if ui
+                .small_button("Undo point")
+                .on_hover_text("Remove the last path point")
+                .clicked()
+            {
+                edits.push(MaskPropertyAction::RemoveLastPathPoint);
+                point_count = point_count.saturating_sub(1);
+            }
+            if ui
+                .small_button("Clear")
+                .on_hover_text("Clear path")
+                .clicked()
+                && point_count > 0
+            {
+                edits.push(MaskPropertyAction::ClearPath);
+                point_count = 0;
+            }
+        });
+        ui.small(format!("{point_count} point(s)"));
+    }
+
+    fn object_properties(ui: &mut Ui, geometry: &MaskGeometry, edits: &mut PropertyEdits) {
+        let MaskGeometry::Object {
+            mask: generated_mask,
+            grow,
+            feather,
+            brush_size,
+            edge_refine,
+            strokes,
+        } = geometry
+        else {
+            return;
+        };
+        edits.set_brush_mode(BrushMode::Paint);
+        ui.label(if generated_mask.is_some() {
+            "Draw again on the image to replace this object selection from scratch."
+        } else {
+            "Paint through the middle of the object part you want to select."
+        });
+        ui.strong("Selection brush");
+        let mut brush_size = *brush_size;
+        if AdjustmentSlider::new("Size", &mut brush_size, 0.0025..=0.25)
+            .decimals(3)
+            .step(0.0025)
+            .hover_text(
+                "Controls the hard-edged selection brush. Its on-screen size stays \
+                 constant while zooming for finer detail.",
+            )
+            .reset_to(0.055)
+            .show(ui)
+        {
+            edits.push(MaskPropertyAction::SetObjectBrushSize(brush_size));
+        }
+        ui.add_space(moduwu_design::SPACE_XS);
+        edits.grow(Self::mask_grow_edit(ui, *grow));
+        edits.feather(Self::mask_feather_edit(
+            ui,
+            "Mask feather",
+            *feather,
+            0.0..=1.0,
+            "Softens the final object mask after SAM selection.",
+            0.0,
+        ));
+        let mut edge_refine = *edge_refine;
+        if AdjustmentSlider::new("Edge refine", &mut edge_refine, 0.0..=1.0)
+            .decimals(2)
+            .step(0.01)
+            .hover_text("Aligns uncertain SAM boundaries to local image edges.")
+            .reset_to(0.55)
+            .show(ui)
+        {
+            edits.push(MaskPropertyAction::SetEdgeRefine(edge_refine));
+            if !strokes.is_empty() {
+                edits.push(MaskPropertyAction::RequestObject);
+            }
+        }
+        // The count below reflects a clear in this frame.
+        let mut stroke_count = strokes.len();
+        ui.horizontal_wrapped(|ui| {
+            if moduwu_design::icon_button(
+                ui,
+                egui_phosphor::regular::ARROW_CLOCKWISE,
+                moduwu_design::toolbar_icon_size(),
+                "Recalculate object selection",
+            )
+            .clicked()
+            {
+                edits.push(MaskPropertyAction::RequestObject);
+            }
+            if moduwu_design::icon_button(
+                ui,
+                egui_phosphor::regular::X,
+                moduwu_design::toolbar_icon_size(),
+                "Clear object selection",
+            )
+            .clicked()
+            {
+                edits.push(MaskPropertyAction::ClearObjectSelection);
+                stroke_count = 0;
+            }
+        });
+        ui.small(format!("{stroke_count} selection stroke(s)"));
+    }
+
+    fn luminance_range_properties(
+        ui: &mut Ui,
+        [low, high]: [f32; 2],
+        grow: f32,
+        feather: f32,
+        edits: &mut PropertyEdits,
+    ) {
+        let mut low = low;
+        if AdjustmentSlider::new("Range low", &mut low, 0.0..=1.0)
+            .decimals(2)
+            .step(0.01)
+            .hover_text("Lowest included scene luminance.")
+            .reset_to(0.2)
+            .show(ui)
+        {
+            edits.push(MaskPropertyAction::SetLuminanceLow(low));
+        }
+        let mut high = high;
+        if AdjustmentSlider::new("Range high", &mut high, 0.0..=1.0)
+            .decimals(2)
+            .step(0.01)
+            .hover_text("Highest included scene luminance.")
+            .reset_to(0.8)
+            .show(ui)
+        {
+            edits.push(MaskPropertyAction::SetLuminanceHigh(high));
+        }
+        edits.grow(Self::mask_grow_edit(ui, grow));
+        edits.feather(Self::mask_feather_edit(
+            ui,
+            "Range feather",
+            feather,
+            0.0..=1.0,
+            "Softens both luminance-range boundaries.",
+            0.15,
+        ));
+    }
+
+    fn color_range_properties(
+        ui: &mut Ui,
+        sampled: bool,
+        tolerance: f32,
+        grow: f32,
+        feather: f32,
+        edits: &mut PropertyEdits,
+    ) {
+        ui.label(if sampled {
+            "Drag on the image to choose another color."
+        } else {
+            "Drag on the image to sample a color."
+        });
+        let mut tolerance = tolerance;
+        if AdjustmentSlider::new("Tolerance", &mut tolerance, 0.005..=1.0)
+            .decimals(3)
+            .step(0.005)
+            .hover_text("Expands the selected color region in perceptual OkLab space.")
+            .reset_to(0.18)
+            .show(ui)
+        {
+            edits.push(MaskPropertyAction::SetColorTolerance(tolerance));
+        }
+        edits.grow(Self::mask_grow_edit(ui, grow));
+        edits.feather(Self::mask_feather_edit(
+            ui,
+            "Color feather",
+            feather,
+            0.0..=1.0,
+            "Softens the color-distance cutoff.",
+            0.12,
+        ));
+    }
+
+    fn depth_range_properties(
+        ui: &mut Ui,
+        has_depth: bool,
+        range: crate::pipeline::DepthRangeSettings,
+        edits: &mut PropertyEdits,
+    ) {
+        ui.label(if has_depth {
+            "Select a range of relative depth, from near (0) to far (1)."
+        } else {
+            "Generate a depth map to select by distance."
+        });
+        let label = if has_depth {
+            "Regenerate depth map"
+        } else {
+            "Generate depth map"
+        };
+        if ui.button(label).clicked() {
+            edits.push(MaskPropertyAction::RequestGeneration);
+        }
+        let mut range = range;
+        if crate::ui::components::depth_range_slider::depth_range_slider(ui, &mut range) {
+            edits.push(MaskPropertyAction::SetDepthRange(range));
+        }
+    }
+
+    fn mask_grow_edit(ui: &mut Ui, grow: f32) -> Option<f32> {
+        let mut grow = grow;
+        Self::mask_grow_slider(ui, &mut grow).then_some(grow)
+    }
+
+    fn mask_feather_edit(
+        ui: &mut Ui,
+        label: &str,
+        feather: f32,
+        range: std::ops::RangeInclusive<f32>,
+        help: &str,
+        reset: f32,
+    ) -> Option<f32> {
+        let mut feather = feather;
+        Self::mask_feather_slider(ui, label, &mut feather, range, help, reset).then_some(feather)
     }
 
     fn brush_mode_selector(
         ui: &mut Ui,
-        brush_mode: &mut BrushMode,
+        edits: &mut PropertyEdits,
         paint_label: &str,
         erase_label: &str,
     ) {
@@ -801,9 +893,15 @@ impl Sidebar {
                 (BrushMode::Paint, paint_label),
                 (BrushMode::Erase, erase_label),
             ] {
-                if moduwu_design::segmented_button(ui, label, *brush_mode == mode, width).clicked()
+                if moduwu_design::segmented_button(
+                    ui,
+                    label,
+                    edits.controls.brush_mode == mode,
+                    width,
+                )
+                .clicked()
                 {
-                    *brush_mode = mode;
+                    edits.set_brush_mode(mode);
                 }
             }
         });
@@ -811,48 +909,52 @@ impl Sidebar {
 
     /// The Refine toggle and, while active, the brush settings for editing the
     /// boundary shared by Subject and Background masks.
-    fn subject_refinement_controls(ui: &mut Ui, controls: &mut MaskPropertiesControls) {
-        let toggle_label = if controls.refinement_active {
-            "Done"
-        } else {
-            "Refine"
-        };
-        if moduwu_design::toggle_button(ui, toggle_label, controls.refinement_active)
+    fn subject_refinement_controls(ui: &mut Ui, edits: &mut PropertyEdits) {
+        let active = edits.controls.refinement_active;
+        let toggle_label = if active { "Done" } else { "Refine" };
+        if moduwu_design::toggle_button(ui, toggle_label, active)
             .on_hover_text("Fine-tune the shared Subject / Background boundary with a brush.")
             .clicked()
         {
-            controls.refinement_active = !controls.refinement_active;
+            edits.controls.refinement_active = !active;
+            edits.push(MaskPropertyAction::SetRefinementActive(!active));
         }
-        if !controls.refinement_active {
+        if !edits.controls.refinement_active {
             return;
         }
         let action = Self::adjustment_card(ui, "Subject refinement", true, false, true, |ui| {
-            Self::brush_mode_selector(
-                ui,
-                &mut controls.brush_mode,
-                "Add subject",
-                "Subtract subject",
-            );
-            AdjustmentSlider::new("Size", &mut controls.refinement_size, 0.0025..=0.25)
+            Self::brush_mode_selector(ui, edits, "Add subject", "Subtract subject");
+            let mut size = edits.controls.refinement_size;
+            if AdjustmentSlider::new("Size", &mut size, 0.0025..=0.25)
                 .decimals(3)
                 .step(0.0025)
                 .hover_text(SCREEN_SIZED_BRUSH_HELP)
                 .reset_to(0.035)
-                .show(ui);
-            Self::mask_feather_slider(
+                .show(ui)
+            {
+                edits.set_refinement_size(size);
+            }
+            let mut feather = edits.controls.refinement_feather;
+            if Self::mask_feather_slider(
                 ui,
                 "Feather",
-                &mut controls.refinement_feather,
+                &mut feather,
                 0.0..=1.0,
                 "Softness of newly painted refinement strokes.",
                 0.55,
-            );
-            AdjustmentSlider::new("Flow / opacity", &mut controls.refinement_flow, 0.01..=1.0)
+            ) {
+                edits.set_refinement_feather(feather);
+            }
+            let mut flow = edits.controls.refinement_flow;
+            if AdjustmentSlider::new("Flow / opacity", &mut flow, 0.01..=1.0)
                 .decimals(2)
                 .step(0.01)
                 .hover_text("Strength captured by newly painted add/subtract strokes.")
                 .reset_to(1.0)
-                .show(ui);
+                .show(ui)
+            {
+                edits.set_refinement_flow(flow);
+            }
             if moduwu_design::icon_button(
                 ui,
                 egui_phosphor::regular::ERASER,
@@ -861,19 +963,20 @@ impl Sidebar {
             )
             .clicked()
             {
-                controls.clear_refinement = true;
+                edits.push(MaskPropertyAction::ClearRefinement);
             }
         });
         if matches!(action, super::super::adjustment_cards::CardAction::Reset) {
             let defaults = crate::pipeline::SubjectRefinement::default();
-            controls.refinement_size = defaults.size;
-            controls.refinement_feather = defaults.feather;
-            controls.refinement_flow = defaults.flow;
-            controls.clear_refinement = true;
+            edits.set_refinement_size(defaults.size);
+            edits.set_refinement_feather(defaults.feather);
+            edits.set_refinement_flow(defaults.flow);
+            edits.push(MaskPropertyAction::ClearRefinement);
         }
     }
 
-    fn generate_mask_row(ui: &mut Ui, is_sky: bool, controls: &mut MaskPropertiesControls) {
+    fn generate_mask_row(ui: &mut Ui, is_sky: bool, edits: &mut PropertyEdits) {
+        let controls = edits.controls;
         ui.horizontal_wrapped(|ui| {
             if is_sky {
                 ui.label("Generate with SkySeg U2Net");
@@ -892,12 +995,59 @@ impl Sidebar {
                 .add_enabled(controls.generation_idle, egui::Button::new(label))
                 .clicked()
             {
-                controls.request_generation = true;
+                edits.push(MaskPropertyAction::RequestGeneration);
             }
             if !controls.generation_idle {
                 ui.spinner();
             }
         });
+    }
+}
+
+/// The panel's edits, plus a draft of the tool state so controls drawn later
+/// in the frame show earlier edits.
+struct PropertyEdits {
+    actions: Vec<MaskPropertyAction>,
+    controls: MaskPropertiesControls,
+}
+
+impl PropertyEdits {
+    fn push(&mut self, action: MaskPropertyAction) {
+        self.actions.push(action);
+    }
+
+    fn feather(&mut self, feather: Option<f32>) {
+        if let Some(feather) = feather {
+            self.push(MaskPropertyAction::SetFeather(feather));
+        }
+    }
+
+    fn grow(&mut self, grow: Option<f32>) {
+        if let Some(grow) = grow {
+            self.push(MaskPropertyAction::SetGrow(grow));
+        }
+    }
+
+    fn set_brush_mode(&mut self, mode: BrushMode) {
+        if self.controls.brush_mode != mode {
+            self.controls.brush_mode = mode;
+            self.push(MaskPropertyAction::SetBrushMode(mode));
+        }
+    }
+
+    fn set_refinement_size(&mut self, size: f32) {
+        self.controls.refinement_size = size;
+        self.push(MaskPropertyAction::SetRefinementSize(size));
+    }
+
+    fn set_refinement_feather(&mut self, feather: f32) {
+        self.controls.refinement_feather = feather;
+        self.push(MaskPropertyAction::SetRefinementFeather(feather));
+    }
+
+    fn set_refinement_flow(&mut self, flow: f32) {
+        self.controls.refinement_flow = flow;
+        self.push(MaskPropertyAction::SetRefinementFlow(flow));
     }
 }
 

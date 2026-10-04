@@ -1,6 +1,6 @@
 use super::adjustments::LocalAdjustmentTabs;
-use super::properties::MaskPropertiesControls;
 use super::*;
+use crate::app::{apply_mask_property_actions, MaskPropertiesControls};
 
 fn mask_creation_menu_button<R>(
     ui: &mut Ui,
@@ -310,14 +310,21 @@ impl Sidebar {
             }
             match orientation {
                 MaskStripOrientation::Horizontal => {
+                    let mut property_actions = Vec::new();
                     let action = Self::mask_properties_card(ui, true, true, true, |ui| {
-                        geometry_changed |= Self::show_vertical_mask_properties(
+                        property_actions = Self::show_vertical_mask_properties(
                             ui,
                             mask,
                             component_index,
-                            &mut controls,
+                            &controls,
                         );
                     });
+                    geometry_changed |= apply_mask_property_actions(
+                        mask,
+                        component_index,
+                        &mut controls,
+                        property_actions,
+                    );
                     geometry_changed |=
                         Self::apply_mask_properties_action(mask, component_index, action);
 
@@ -367,14 +374,21 @@ impl Sidebar {
                     };
                     match mask_section {
                         MaskSection::Properties => {
+                            let mut property_actions = Vec::new();
                             let action = Self::mask_properties_card(ui, true, false, true, |ui| {
-                                geometry_changed |= Self::show_vertical_mask_properties(
+                                property_actions = Self::show_vertical_mask_properties(
                                     ui,
                                     mask,
                                     component_index,
-                                    &mut controls,
+                                    &controls,
                                 );
                             });
+                            geometry_changed |= apply_mask_property_actions(
+                                mask,
+                                component_index,
+                                &mut controls,
+                                property_actions,
+                            );
                             geometry_changed |=
                                 Self::apply_mask_properties_action(mask, component_index, action);
                         }
