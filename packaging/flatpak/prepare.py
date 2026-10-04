@@ -18,6 +18,48 @@ def git(*args: str) -> bytes:
     return subprocess.check_output(["git", "-C", str(ROOT), *args], stderr=subprocess.PIPE)
 
 
+def public_origin_url() -> str:
+    """Return the repository origin as a public HTTPS URL for Flatpak sources."""
+    try:
+        url = git("remote", "get-url", "origin").decode().strip()
+    except subprocess.CalledProcessError:
+        raise SystemExit("Git remote 'origin' is not configured") from None
+
+    if url.startswith("https://"):
+        return url
+    if url.startswith("git@github.com:"):
+        return "https://github.com/" + url.removeprefix("git@github.com:")
+    if url.startswith("ssh://git@github.com/"):
+        return "https://github.com/" + url.removeprefix("ssh://git@github.com/")
+
+    raise SystemExit(
+        "The origin remote must be publicly fetchable over HTTPS, or be a GitHub SSH URL "
+        "that can be converted to HTTPS"
+    )
+
+
+def validate_staged_manifest(manifest: dict) -> None:
+    """Reject local-only source paths before writing a Flathub submission."""
+    if "default-branch" in manifest:
+        raise SystemExit("Staged Flathub manifest must not set default-branch")
+
+    def walk(value: object) -> None:
+        if isinstance(value, dict):
+            if value.get("type") == "dir":
+                raise SystemExit("Staged Flathub manifest contains a local type=dir source")
+            if "path" in value and isinstance(value["path"], str):
+                path = value["path"]
+                if path.startswith(("/home/", "/Users/", "../", "./")):
+                    raise SystemExit(f"Staged Flathub manifest contains a local path: {path}")
+            for child in value.values():
+                walk(child)
+        elif isinstance(value, list):
+            for child in value:
+                walk(child)
+
+    walk(manifest)
+
+
 def check_sources() -> None:
     lock = tomllib.loads((ROOT / "Cargo.lock").read_text())
     sources = json.loads((PACKAGING / "cargo-sources.json").read_text())
@@ -113,9 +155,10 @@ def stage_release(revision: str) -> None:
     manifest["build-options"]["env"]["CALIBRAW_SOURCE_REVISION"] = commit
     manifest["build-options"]["env"]["SOURCE_DATE_EPOCH"] = git("show", "-s", "--format=%ct", commit).decode().strip()
     manifest["modules"][-1]["sources"] = [
-        {"type": "git", "url": "https://github.com/Duecki1/CalibRaw.git", "commit": commit},
+        {"type": "git", "url": public_origin_url(), "commit": commit},
         "cargo-sources.json",
     ]
+    validate_staged_manifest(manifest)
     (output / f"{APP_ID}.json").write_text(json.dumps(manifest, indent=4) + "\n")
     for filename in ("cargo-sources.json", "onnxruntime-module.json", "onnxruntime-sources.json", "generate-onnx-sources.py"):
         shutil.copy2(PACKAGING / filename, output / filename)

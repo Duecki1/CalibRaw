@@ -116,7 +116,7 @@ Usage: scripts/flatpak.sh COMMAND
   bundle                 Create dist/flatpak/de.dueckis.CalibRaw-local.flatpak
   smoke                  Test offline runtime loading and a synthetic RAW GPU export
   validate               Check sources, metadata, manifest, and any existing build
-  stage-release COMMIT   Stage unpublished files pinned to a tested commit
+  stage-release COMMIT   Stage top-level Flathub files pinned to a tested commit; origin is detected from Git
 
 Nothing is pushed, uploaded, or submitted to Flathub.
 EOF
