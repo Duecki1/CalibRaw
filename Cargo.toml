@@ -19,6 +19,9 @@ default-members = [
 ]
 
 [workspace.metadata]
+# F-Droid reads this committed value when checking release tags. Increase it
+# for every release; GitHub APKs keep their existing Git-history version codes.
+fdroid_version_code = 1000707
 android_ndk_version = "28.2.13676358"
 android_build_tools_version = "35.0.0"
 android_compile_sdk = 36
