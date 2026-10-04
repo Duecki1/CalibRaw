@@ -2,7 +2,7 @@ use super::*;
 
 impl Preview {
     #[cfg(target_os = "android")]
-    pub(super) fn handle_android_original_hold(
+    pub(crate) fn handle_android_original_hold(
         ui: &Ui,
         app: &mut CalibRawApp,
         preview_rect: Rect,

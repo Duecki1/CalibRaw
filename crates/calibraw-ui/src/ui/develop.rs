@@ -4,7 +4,6 @@ use crate::ui::library::library_image_context_menu;
 use crate::ui::library::{
     apply_library_action, load_desktop_reference_preview, DesktopFilmstripItem,
 };
-use crate::ui::preview::Preview;
 use eframe::egui::{self, Align2, Color32, FontId, Sense, Stroke, StrokeKind, Ui};
 use std::collections::HashSet;
 use std::sync::{mpsc, Mutex, OnceLock};
@@ -78,7 +77,7 @@ impl Develop {
 
     pub(crate) fn show_preview(ui: &mut Ui, app: &mut CalibRawApp, frame: &eframe::Frame) {
         if app.develop_ui.reference.path.is_none() {
-            Preview::show(ui, app, frame);
+            app.show_preview(ui, frame, None);
             return;
         }
 
@@ -158,7 +157,7 @@ impl Develop {
 
         let mut develop_ui = ui.new_child(egui::UiBuilder::new().max_rect(right_rect));
         develop_ui.shrink_clip_rect(right_rect);
-        Preview::show(&mut develop_ui, app, frame);
+        app.show_preview(&mut develop_ui, frame, None);
     }
 }
 

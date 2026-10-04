@@ -19,8 +19,6 @@ use crate::sidecar::{
 #[cfg(not(target_os = "android"))]
 use crate::ui::develop::Develop;
 use crate::ui::library::{AdjustmentClipboard, Library, LibraryState};
-#[cfg(target_os = "android")]
-use crate::ui::preview::Preview;
 use crate::ui::settings::Settings;
 use crate::ui::sidebar::Sidebar;
 use crate::ui::top_bar::TopBar;
@@ -286,7 +284,9 @@ mod preview_histogram;
 #[cfg(all(test, not(target_os = "android")))]
 mod preview_tests;
 mod preview_texture;
+mod preview_viewport;
 pub(crate) use preview_texture::{PreviewPipeline, TextureRetirement};
+pub(crate) use preview_viewport::PreviewViewportAction;
 mod processing_export;
 mod sidecar_persistence;
 #[cfg(all(test, not(target_os = "android")))]
