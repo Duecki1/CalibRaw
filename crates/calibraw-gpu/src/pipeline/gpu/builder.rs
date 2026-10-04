@@ -342,7 +342,7 @@ pub(super) fn create_pipeline_buffers(
     let tone_histogram_buffer = create_gpu_buffer(
         device,
         "calibraw tone histogram",
-        256 * std::mem::size_of::<u32>() as u64,
+        u64::from(TONE_HISTOGRAM_BIN_COUNT) * std::mem::size_of::<u32>() as u64,
         wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
     );
     let tone_stats_buffer = create_gpu_buffer(
@@ -1512,107 +1512,36 @@ pub(super) fn load_shader_set(
     }
     let mut shader_manager =
         ShaderManager::new(work_format, cfa_kind).context("initialize WGSL shader composer")?;
-    let mut load_shader = |label: &'static str,
-                           source: &str,
-                           file_name: &str,
-                           format: Option<wgpu::TextureFormat>| {
-        let other_sensor = match cfa_kind {
-            CfaKind::Bayer => matches!(file_name, "xtrans_demosaic.wgsl" | "xtrans_finish.wgsl"),
-            CfaKind::XTrans => matches!(
-                file_name,
-                "pass1.wgsl" | "pass2.wgsl" | "pass3.wgsl" | "pass4.wgsl"
-            ),
-        };
-        if other_sensor {
+    let mut load_shader = |shader: shaders::EntryShader| {
+        if !shader.applies_to(cfa_kind) {
             return Ok(None);
         }
-        let source = match format {
-            Some(format) => work_shader_source(source, format)
-                .with_context(|| format!("specialize {label} work format"))?,
-            None => Cow::Borrowed(source),
+        let module_text = shader.source.module_text();
+        let text = if shader.work_format {
+            // The demosaic and work formats are the same texture format.
+            debug_assert_eq!(demosaic_format, work_format);
+            work_shader_source(&module_text, work_format)
+                .with_context(|| format!("specialize {} work format", shader.label))?
+        } else {
+            Cow::Borrowed(module_text.as_ref())
         };
         shader_manager
-            .create_shader_module(device, label, source.as_ref(), file_name)
+            .create_shader_module(device, shader.label, text.as_ref(), shader.source.file_name)
             .map(Some)
     };
-    let highlight_module = load_shader(
-        "calibraw highlight module",
-        SHADER_HIGHLIGHTS,
-        "highlights.wgsl",
-        None,
-    )?;
-    let bayer_rcd_p1_module = load_shader(
-        "calibraw Bayer RCD pass 1",
-        SHADER_BAYER_RCD_P1,
-        "pass1.wgsl",
-        Some(demosaic_format),
-    )?;
-    let bayer_rcd_p2_module = load_shader(
-        "calibraw Bayer RCD pass 2",
-        SHADER_BAYER_RCD_P2,
-        "pass2.wgsl",
-        Some(demosaic_format),
-    )?;
-    let bayer_rcd_p3_module = load_shader(
-        "calibraw Bayer RCD pass 3",
-        SHADER_BAYER_RCD_P3,
-        "pass3.wgsl",
-        Some(demosaic_format),
-    )?;
-    let bayer_rcd_p4_module = load_shader(
-        "calibraw Bayer RCD pass 4",
-        SHADER_BAYER_RCD_P4,
-        "pass4.wgsl",
-        Some(demosaic_format),
-    )?;
-    let dual_demosaic_module = load_shader(
-        "calibraw robust dual demosaic",
-        SHADER_DUAL_DEMOSAIC,
-        "dual_demosaic.wgsl",
-        Some(demosaic_format),
-    )?;
-    let xtrans_demosaic_module = load_shader(
-        "calibraw grouped X-Trans demosaic",
-        SHADER_XTRANS_DEMOSAIC,
-        "xtrans_demosaic.wgsl",
-        Some(demosaic_format),
-    )?;
-    let xtrans_finish_module = load_shader(
-        "calibraw X-Trans finish",
-        SHADER_XTRANS_FINISH,
-        "xtrans_finish.wgsl",
-        Some(demosaic_format),
-    )?;
-    let color_denoise_module = load_shader(
-        "calibraw multiscale color denoise",
-        SHADER_COLOR_DENOISE,
-        "color_denoise.wgsl",
-        Some(demosaic_format),
-    )?;
-    let tone_analysis_module = load_shader(
-        "calibraw tone analysis",
-        SHADER_TONE_ANALYSIS,
-        "tone_analysis.wgsl",
-        None,
-    )?;
-    let scene_adjustments_module = load_shader(
-        "calibraw scene adjustments",
-        SHADER_SCENE_ADJUSTMENTS,
-        "scene_adjustments.wgsl",
-        Some(work_format),
-    )?;
-    let creative_effects_module = load_shader(
-        "calibraw creative effects",
-        SHADER_CREATIVE_EFFECTS,
-        "creative_effects.wgsl",
-        None,
-    )?;
-    let view_transform_module = load_shader(
-        "calibraw view transform",
-        SHADER_VIEW_TRANSFORM,
-        "view_transform.wgsl",
-        None,
-    )?;
+    let highlight_module = load_shader(shaders::HIGHLIGHTS_ENTRY)?;
+    let bayer_rcd_p1_module = load_shader(shaders::BAYER_RCD_P1_ENTRY)?;
+    let bayer_rcd_p2_module = load_shader(shaders::BAYER_RCD_P2_ENTRY)?;
+    let bayer_rcd_p3_module = load_shader(shaders::BAYER_RCD_P3_ENTRY)?;
+    let bayer_rcd_p4_module = load_shader(shaders::BAYER_RCD_P4_ENTRY)?;
+    let dual_demosaic_module = load_shader(shaders::DUAL_DEMOSAIC_ENTRY)?;
+    let xtrans_demosaic_module = load_shader(shaders::XTRANS_DEMOSAIC_ENTRY)?;
+    let xtrans_finish_module = load_shader(shaders::XTRANS_FINISH_ENTRY)?;
+    let color_denoise_module = load_shader(shaders::COLOR_DENOISE_ENTRY)?;
+    let tone_analysis_module = load_shader(shaders::TONE_ANALYSIS_ENTRY)?;
+    let scene_adjustments_module = load_shader(shaders::SCENE_ADJUSTMENTS_ENTRY)?;
+    let creative_effects_module = load_shader(shaders::CREATIVE_EFFECTS_ENTRY)?;
+    let view_transform_module = load_shader(shaders::VIEW_TRANSFORM_ENTRY)?;
 
     Ok(ShaderSet {
         highlight_module,

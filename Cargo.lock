@@ -684,7 +684,6 @@ version = "1.1.1"
 dependencies = [
  "android-activity",
  "calibraw-core",
- "egui",
  "jni",
  "log",
 ]
@@ -696,9 +695,6 @@ dependencies = [
  "anyhow",
  "bytemuck",
  "calibraw-core",
- "calibraw-ffi",
- "egui",
- "egui-wgpu",
  "half",
  "image",
  "jpeg-encoder",
@@ -5539,6 +5535,7 @@ version = "1.1.1"
 dependencies = [
  "csv",
  "image",
+ "ring",
  "serde",
  "serde_json",
  "tempfile",

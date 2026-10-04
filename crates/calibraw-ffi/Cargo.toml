@@ -18,6 +18,5 @@ calibraw-core.workspace = true
 
 [target.'cfg(target_os = "android")'.dependencies]
 android-activity.workspace = true
-egui.workspace = true
 jni.workspace = true
 log.workspace = true

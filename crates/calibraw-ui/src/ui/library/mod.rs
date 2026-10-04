@@ -38,6 +38,7 @@ mod local;
 mod platform;
 mod review;
 mod state;
+pub(crate) use state::LibraryPreferences;
 mod storage;
 mod thumbnails;
 mod view;

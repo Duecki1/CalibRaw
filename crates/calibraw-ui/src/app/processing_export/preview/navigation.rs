@@ -19,15 +19,7 @@ impl CalibRawApp {
         let should_update = self.preview.navigation_pending_stage.is_some();
         let should_exist = zoomed && (self.preview.navigation.is_some() || should_update);
         if !should_exist && !should_update {
-            if frame.wgpu_render_state().is_some() {
-                if let Some(old) = self.preview.navigation.take() {
-                    if let Some(texture_id) = old.pipeline.egui_texture_id {
-                        self.retire_egui_texture(texture_id);
-                    }
-                }
-            } else {
-                self.preview.navigation = None;
-            }
+            self.preview.navigation = None;
             return;
         }
         let Some(full_raw) = preview_source.as_ref().map(Arc::clone) else {
@@ -39,14 +31,10 @@ impl CalibRawApp {
         };
 
         let navigation_capacity_stale = self.preview.navigation.as_ref().is_some_and(|preview| {
-            preview.pipeline.mask_layer_capacity() < preview_masks.masks.len().max(1)
+            preview.pipeline.gpu().mask_layer_capacity() < preview_masks.masks.len().max(1)
         });
         if navigation_capacity_stale {
-            if let Some(old) = self.preview.navigation.take() {
-                if let Some(texture_id) = old.pipeline.egui_texture_id {
-                    self.retire_egui_texture(texture_id);
-                }
-            }
+            self.preview.navigation = None;
         }
 
         if self.preview.navigation.is_none() {
@@ -69,10 +57,10 @@ impl CalibRawApp {
             };
             let params = GpuParams::new(&self.develop.target_exposure, &preview_masks, &raw)
                 .with_vignette_geometry(self.develop.geometry);
-            let Some(template) = self.preview.gpu_pipeline.as_ref() else {
+            let Some(template) = self.preview.pipeline() else {
                 return;
             };
-            let mut pipeline = match RawGpuPipeline::new_headless_reusing_programs_with_mask_edge(
+            let pipeline = match RawGpuPipeline::new_headless_reusing_programs_with_mask_edge(
                 &render_state.device,
                 &render_state.queue,
                 &raw,
@@ -115,9 +103,7 @@ impl CalibRawApp {
                 self.preview.navigation_pending_stage = None;
                 return;
             }
-            let mut renderer = render_state.renderer.write();
-            pipeline.register_egui_texture(&render_state.device, &mut renderer);
-            drop(renderer);
+            let pipeline = self.present_pipeline(pipeline, render_state);
             self.preview.navigation = Some(PreviewNavigation { pipeline, raw });
             self.preview.navigation_pending_stage = None;
             self.masks.navigation_dirty_layers.fill(false);
@@ -138,7 +124,7 @@ impl CalibRawApp {
             .any(|dirty| *dirty)
         {
             if let Err(error) = Self::upload_dirty_preview_masks(
-                &preview.pipeline,
+                preview.pipeline.gpu(),
                 &render_state.queue,
                 &preview_masks,
                 &preview.raw,
@@ -167,7 +153,7 @@ impl CalibRawApp {
             ProcessingStage::Output => &[ProcessingStage::Output][..],
         };
         for stage in stages {
-            if let Err(error) = preview.pipeline.dispatch_stage_with_remove(
+            if let Err(error) = preview.pipeline.gpu().dispatch_stage_with_remove(
                 &render_state.queue,
                 &render_state.device,
                 &params,
