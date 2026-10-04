@@ -120,7 +120,13 @@ impl Harness {
                     source_width: WIDTH,
                     source_height: HEIGHT,
                 };
-                Preview::handle_mask_interaction(ui, app, layout, &response);
+                let actions = Preview::mask_tool_actions(
+                    ui,
+                    &tools::MaskToolInput::of(app),
+                    layout,
+                    &response,
+                );
+                app.apply_mask_tool_actions(ui.ctx(), actions);
                 match paint {
                     Paint::None => {}
                     Paint::Guides => Preview::paint_mask_overlay(ui, app, layout),
