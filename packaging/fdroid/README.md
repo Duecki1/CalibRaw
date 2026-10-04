@@ -7,6 +7,23 @@ It builds the existing `v1.1.1` release, commit
 
 ## Submit using GitLab's website
 
+For the [existing merge request, !51073](https://gitlab.com/fdroid/fdroiddata/-/merge_requests/51073):
+
+1. Open its source branch in your fdroiddata fork and replace
+   `metadata/de.duecki.calibraw.yml` with the fixed local
+   [de.duecki.calibraw.yml](de.duecki.calibraw.yml).
+2. Commit the replacement to that same branch and update the MR description
+   from [merge-request.md](merge-request.md).
+3. Rerun CI for the new commit and address any remaining failures.
+
+Before uploading, use F-Droid's canonical formatter in a fdroiddata checkout:
+`fdroid rewritemeta de.duecki.calibraw`. Copy the formatted metadata back to
+the local recipe. Valid YAML alone is insufficient: preserve the formatter's
+line wraps and final newline when replacing the file through GitLab.
+See the [metadata formatting reference](https://f-droid.org/en/docs/Build_Metadata_Reference/).
+
+For a new submission:
+
 1. Open your [fdroiddata fork](https://gitlab.com/dueei12/uw-u-data-calib-raw).
 2. Create a branch named `de.duecki.calibraw` from `master`.
 3. Open the `metadata` directory on that branch and upload
@@ -33,11 +50,15 @@ containing `fastlane` use the listing supplied by that release.
 
 ## Release updates
 
-Before your next release, commit the new `fdroid_version_code` field from
-CalibRaw's `Cargo.toml` to the upstream CalibRaw repository. Existing release
-tags do not contain it; the initial build is pinned explicitly in the recipe.
-Automatic update detection starts with the first new release tag containing
-this field.
+The initial `v1.1.1` recipe temporarily uses `AutoUpdateMode: None` and
+`UpdateCheckMode: Static`. Every published matching tag lacks
+`fdroid_version_code` in `Cargo.toml`; `Tags` skips them all and then errors
+because it found no version information. Pinning the build does not prevent
+that update-check failure.
+
+Before restoring automatic updates, commit the field and publish a new tagged
+release containing it. A change on the default branch alone is insufficient:
+the updater reads the tagged source. Do not move existing release tags.
 
 For each subsequent release:
 
@@ -53,6 +74,27 @@ For each subsequent release:
 4. Commit and push those changes, then tag that commit `v1.1.2` and push the
    tag. The tag version must match the workspace package version. Only tag
    stable versions matching `vMAJOR.MINOR.PATCH` for this update stream.
+
+Once that new tag is published, replace the temporary update settings in both
+the local recipe and fdroiddata's existing `metadata/de.duecki.calibraw.yml`
+with:
+
+```yaml
+AutoUpdateMode: Version
+UpdateCheckMode: Tags ^v[0-9]+\.[0-9]+\.[0-9]+$
+UpdateCheckData: Cargo.toml|(?m)^fdroid_version_code = (\d+)|.|(?m)^version = "([\d.]+)"
+```
+
+In the fdroiddata checkout, run:
+
+```sh
+fdroid rewritemeta de.duecki.calibraw
+fdroid checkupdates --auto de.duecki.calibraw
+```
+
+Review the generated build entry, copy the resulting metadata back to the
+local recipe, and submit the fdroiddata changes via MR (update !51073 if still
+open, otherwise open a follow-up MR). Commit and rerun CI.
 
 F-Droid's updater reads the committed version code and version name from
 `Cargo.toml`, selects a newer matching tag, and generates the next build entry.

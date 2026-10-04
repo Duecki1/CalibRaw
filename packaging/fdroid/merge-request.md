@@ -36,7 +36,7 @@ I am the app author. The fork is public; please confirm the uploaded source bran
 - [x] Metadata must be a valid YAML file.
 - [x] Metadata must use LF as line ending.
 - [x] Don't add summary/description/changelog/images or anything that should be provided in upstream repo. Please check the Changes tab to make sure there is no other unrelated files added in the MR.
-- [x] Releases are tagged and auto update is enabled unless there is a special reason.
+- [x] Releases are tagged; exception for initial static updates: `AutoUpdateMode: None` and `UpdateCheckMode: Static` until a new release tag contains `fdroid_version_code` (see below).
 - [x] There is an issue tracker and contact info of the author so that we can report bugs and contact the author.
 - [x] An AuthorName must be added. It doesn't need to be the real name.
 - [x] External repos are added as git submodules instead of srclibs. No srclibs are used. Native dependencies are fetched from immutable, hash-verified upstream source archives by the upstream CMake build.
@@ -54,11 +54,17 @@ I am the app author. The fork is public; please confirm the uploaded source bran
 
 ## Packaging notes
 
-The initial release is pinned explicitly. Upcoming upstream tags expose
-`fdroid_version_code` in `Cargo.toml`, which enables F-Droid to read the version
-code without executing Gradle or deriving it from Git history. The upstream
-field must be committed before tagging the next release. Existing tags without
-that field are skipped by update checks.
+The initial `v1.1.1` release is pinned explicitly, with `AutoUpdateMode: None`
+and `UpdateCheckMode: Static` temporarily. Every published matching tag lacks
+`fdroid_version_code` in `Cargo.toml`; `Tags` skips them all and then errors
+because no version information remains. Pinning the build does not avoid this.
+
+Automatic updates require a new published release tag containing the committed
+field; adding it only to the default branch is insufficient. Do not move old
+tags. After publishing that release, restore `AutoUpdateMode: Version`, the
+stable-tag filter and `UpdateCheckData` in both the local recipe and existing
+fdroiddata metadata via MR. The exact YAML and `fdroid rewritemeta` /
+`fdroid checkupdates --auto` steps are in upstream `packaging/fdroid/README.md`.
 
 The initial tag predates the Fastlane listing, so the recipe imports only the
 `fastlane` directory from upstream commit
@@ -77,11 +83,22 @@ statically link ONNX Runtime, while this recipe links the Maven Central shared
 runtime. F-Droid will sign the resulting APK. Only ARM64 is supported upstream,
 so there is no multi-ABI APK to split.
 
-Validation: `fdroid lint` and a full local `fdroid build` passed, with source
-scanning and APK scanning enabled. The resulting APK passes the 16 KB ELF and
-ZIP alignment checks. F-Droid's `check_tags` routine detected simulated future
-release tags and selected the highest committed Android version code.
+Prior local validation: `fdroid lint` and a full local `fdroid build` passed,
+with source scanning and APK scanning enabled. The resulting APK passed the
+16 KB ELF and ZIP alignment checks. F-Droid's `check_tags` routine detected
+simulated future release tags and selected the highest committed Android
+version code; those tests did not cover the published tags missing that field.
 
-The local build used the developer workstation's toolchains. The GitLab
-build-server pipeline and inclusion review still need to run. Runtime behavior
-has not been tested on an Android device.
+The prior local build used the developer workstation's toolchains. The latest
+[GitLab pipeline](https://gitlab.com/dueei12/uw-u-data-calib-raw/-/pipelines/2910143849)
+passed its build. The corrected recipe preserves all build commands and now
+passes local `fdroid lint`, schema validation and `fdroid checkupdates --auto`.
+Canonical `fdroid rewritemeta` output is stable on a second formatting pass;
+the local formatter also reproduces the failed job's formatting artifact
+exactly. CI on the replacement metadata remains to run.
+
+Replace `metadata/de.duecki.calibraw.yml` on the source branch of
+[!51073](https://gitlab.com/fdroid/fdroiddata/-/merge_requests/51073) with the
+fixed, formatted local YAML, commit to that branch and rerun CI. The pipeline
+checklist remains open pending those results. Inclusion review is still
+pending; runtime behavior has not been tested on an Android device.
