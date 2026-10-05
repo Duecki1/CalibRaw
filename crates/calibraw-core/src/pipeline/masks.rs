@@ -29,8 +29,8 @@ mod raster;
 mod shapes;
 pub use brush::*;
 use probability::*;
-pub use raster::luminance_range_weight;
 use raster::*;
+pub use raster::{luminance_range_weight, LUMINANCE_FEATHER_MAX, LUMINANCE_FEATHER_WIDTH};
 pub use shapes::*;
 
 mod adjustments;

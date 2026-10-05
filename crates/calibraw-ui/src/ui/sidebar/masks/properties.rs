@@ -488,10 +488,19 @@ impl Sidebar {
                     high,
                     grow,
                     feather,
+                    high_feather,
                     ..
-                } => {
-                    Self::luminance_range_properties(ui, [*low, *high], *grow, *feather, &mut edits)
-                }
+                } => Self::luminance_range_properties(
+                    ui,
+                    LuminanceRange {
+                        low: *low,
+                        high: *high,
+                        low_feather: *feather,
+                        high_feather: high_feather.unwrap_or(*feather),
+                    },
+                    *grow,
+                    &mut edits,
+                ),
                 MaskGeometry::ColorRange {
                     tolerance,
                     grow,
@@ -770,33 +779,28 @@ impl Sidebar {
 
     fn luminance_range_properties(
         ui: &mut Ui,
-        [low, high]: [f32; 2],
+        range: LuminanceRange,
         grow: f32,
-        feather: f32,
         edits: &mut PropertyEdits,
     ) {
-        let before = LuminanceRange { low, high, feather };
-        let mut range = before;
-        if luminance_range_slider(ui, &mut range) {
-            if range.low != before.low {
-                edits.push(MaskPropertyAction::SetLuminanceLow(range.low));
+        let mut edited = range;
+        if luminance_range_slider(ui, &mut edited) {
+            if edited.low != range.low {
+                edits.push(MaskPropertyAction::SetLuminanceLow(edited.low));
             }
-            if range.high != before.high {
-                edits.push(MaskPropertyAction::SetLuminanceHigh(range.high));
+            if edited.high != range.high {
+                edits.push(MaskPropertyAction::SetLuminanceHigh(edited.high));
             }
-            if range.feather != before.feather {
-                edits.feather(Some(range.feather));
+            if edited.low_feather != range.low_feather {
+                edits.feather(Some(edited.low_feather));
+            }
+            if edited.high_feather != range.high_feather {
+                edits.push(MaskPropertyAction::SetLuminanceHighFeather(
+                    edited.high_feather,
+                ));
             }
         }
         edits.grow(Self::mask_grow_edit(ui, grow));
-        edits.feather(Self::mask_feather_edit(
-            ui,
-            "Range feather",
-            feather,
-            0.0..=1.0,
-            "Softens both luminance-range boundaries.",
-            0.15,
-        ));
     }
 
     fn color_range_properties(

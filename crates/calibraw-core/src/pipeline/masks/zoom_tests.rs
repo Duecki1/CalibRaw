@@ -109,6 +109,7 @@ fn fixture(kind: MaskKind, image: [u32; 2], grow: f32, feather: f32, diagonal: b
             high: 0.95,
             grow,
             feather,
+            high_feather: None,
         },
         MaskKind::ColorRange => MaskGeometry::ColorRange {
             source: MaskRgbImage::new(width, height, rgba),
@@ -260,6 +261,7 @@ fn range_masks_keep_their_sampling_when_grow_leaves_zero() {
                     high: 0.9,
                     grow: 0.0,
                     feather: 0.0,
+                    high_feather: None,
                 },
                 MaskKind::ColorRange => MaskGeometry::ColorRange {
                     source: Some(source.clone()),

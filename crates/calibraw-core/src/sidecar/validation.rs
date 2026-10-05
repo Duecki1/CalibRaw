@@ -339,8 +339,13 @@ pub(super) fn validate_edit_state(edits: &EditState) -> Result<(), SidecarError>
                     high,
                     grow,
                     feather,
+                    high_feather,
                 } => {
                     finite("luminance range mask", &[*low, *high, *grow, *feather])?;
+                    if let Some(high_feather) = high_feather {
+                        finite("luminance range mask", &[*high_feather])?;
+                        bounded("luminance high feather", *high_feather, 0.0, 16.0)?;
+                    }
                     bounded("luminance low", *low, -16.0, 16.0)?;
                     bounded("luminance high", *high, -16.0, 16.0)?;
                     bounded("luminance grow", *grow, -1.0, 1.0)?;

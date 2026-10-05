@@ -64,7 +64,12 @@ pub enum MaskGeometry {
         high: f32,
         #[serde(default)]
         grow: f32,
+        /// Softness below `low`; also the mask's shared shape feather.
         feather: f32,
+        /// Softness above `high`. Absent in sidecars written before the two
+        /// edges could differ, where `feather` softened both.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        high_feather: Option<f32>,
     },
     ColorRange {
         #[serde(default, skip_serializing)]
@@ -236,6 +241,7 @@ impl MaskGeometry {
                 high: 0.8,
                 grow: 0.0,
                 feather: 0.15,
+                high_feather: None,
             },
             MaskKind::ColorRange => Self::ColorRange {
                 source: None,

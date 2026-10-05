@@ -48,6 +48,8 @@ pub(crate) enum MaskPropertyAction {
     ClearObjectSelection,
     SetLuminanceLow(f32),
     SetLuminanceHigh(f32),
+    /// Fade above the high bound; `SetFeather` sets the one below `low`.
+    SetLuminanceHighFeather(f32),
     SetColorTolerance(f32),
     SetDepthRange(DepthRangeSettings),
     SetBrushMode(BrushMode),
@@ -255,6 +257,13 @@ fn apply_geometry_action(geometry: &mut MaskGeometry, action: MaskPropertyAction
             MaskPropertyAction::SetLuminanceHigh(value),
         ) => {
             *high = value;
+            true
+        }
+        (
+            MaskGeometry::LuminanceRange { high_feather, .. },
+            MaskPropertyAction::SetLuminanceHighFeather(value),
+        ) => {
+            *high_feather = Some(value);
             true
         }
         (
