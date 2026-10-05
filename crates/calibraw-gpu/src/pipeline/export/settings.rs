@@ -118,10 +118,9 @@ impl Default for ExportSettings {
 }
 
 pub const MAX_EXPORT_EDGE: u32 = 32_768;
-#[cfg(target_os = "android")]
-pub const MAX_EXPORT_PIXELS: u64 = 50_000_000;
-#[cfg(not(target_os = "android"))]
-pub const MAX_EXPORT_PIXELS: u64 = 120_000_000;
+/// Every image that opens can be exported at its original size. Output is
+/// streamed in bands, so the limit bounds file size, not memory.
+pub const MAX_EXPORT_PIXELS: u64 = crate::pipeline::raw_loader::MAX_RAW_PIXELS;
 #[cfg(target_os = "android")]
 pub(super) const MAX_EXPORT_BAND_BYTES: u64 = 64 * 1024 * 1024;
 #[cfg(not(target_os = "android"))]

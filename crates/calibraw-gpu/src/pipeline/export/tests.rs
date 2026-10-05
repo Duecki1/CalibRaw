@@ -456,6 +456,20 @@ fn export_dimension_limits_reject_oversized_images() {
 }
 
 #[test]
+fn every_openable_image_exports_at_original_size() {
+    assert_eq!(
+        crate::pipeline::MAX_EXPORT_PIXELS,
+        crate::pipeline::raw_loader::MAX_RAW_PIXELS
+    );
+    #[cfg(not(target_os = "android"))]
+    {
+        // A 16k panorama (144 MP) opens and exports on desktop.
+        assert!(crate::pipeline::raw_loader::validate_raw_dimensions(16_000, 9_000).is_ok());
+        assert!(validate_export_dimensions(16_000, 9_000).is_ok());
+    }
+}
+
+#[test]
 fn wide_sources_reduce_band_height_to_stay_within_budget() {
     let requested = crate::pipeline::TileSpec {
         core_edge: if cfg!(target_os = "android") {
