@@ -158,7 +158,7 @@ fn prepare_desktop_library_export_item(
 
     let (mut edits, requested_camera_profile, use_adaptive_detail_defaults) =
         match crate::sidecar::load_desktop(&job.source) {
-            Ok(Some(loaded)) => {
+            Ok(Some(loaded)) if crate::sidecar::edit_state_has_adjustments(&loaded.edits) => {
                 let requested = loaded
                     .edits
                     .camera_profile
@@ -167,7 +167,8 @@ fn prepare_desktop_library_export_item(
                 let use_adaptive = false;
                 (loaded.edits, requested, use_adaptive)
             }
-            Ok(None) => {
+            // No sidecar, or one without adjustments: export like a first import.
+            Ok(_) => {
                 let mut edits = crate::sidecar::default_edit_state();
                 edits.exposure = default_exposure;
                 let requested = last_camera_profile
