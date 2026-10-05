@@ -541,6 +541,21 @@ impl GpuParams {
             .any(|mask| mask.metadata[0] != 0 && mask.film_effects[0] > 1e-6)
     }
 
+    /// Whether an active Pixelate effect reads the block cache. Mirrors
+    /// `pixelate_is_active` in `pixelate.wgsl`; block sizes too small to be
+    /// cached still run the pass, which then writes nothing.
+    pub(super) fn needs_pixelate_block_pass(&self) -> bool {
+        let local_count = (self.scene_tone.mask_counts[0] as usize).min(MAX_RENDER_MASK_SLOTS);
+        self.mask_data[..local_count].iter().any(|mask| {
+            let [amount, block_size, ..] = mask.adjust_0;
+            mask.metadata[0] != 0
+                && mask.metadata[1] != 0
+                && mask.metadata[3] >> MASK_EFFECT_ID_SHIFT == MaskEffect::Pixelate.shader_id()
+                && (amount / 100.0).clamp(0.0, 1.0) > 1e-6
+                && block_size > 1.0
+        })
+    }
+
     pub(super) fn needs_blur_passes(&self) -> bool {
         let local_count = (self.scene_tone.mask_counts[0] as usize).min(MAX_RENDER_MASK_SLOTS);
         self.mask_data[..local_count].iter().any(|mask| {

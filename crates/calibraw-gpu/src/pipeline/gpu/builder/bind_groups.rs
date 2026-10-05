@@ -31,6 +31,8 @@ pub(in crate::pipeline::gpu) struct BindGroups {
     pub(in crate::pipeline::gpu) bg_glow_blur: [wgpu::BindGroup; 5],
     pub(in crate::pipeline::gpu) bg_glow_prepare_after_blur: wgpu::BindGroup,
     pub(in crate::pipeline::gpu) bg_glow_blur_after_blur: [wgpu::BindGroup; 5],
+    pub(in crate::pipeline::gpu) bg_pixelate_blocks: wgpu::BindGroup,
+    pub(in crate::pipeline::gpu) bg_pixelate_blocks_after_blur: wgpu::BindGroup,
     pub(in crate::pipeline::gpu) bg_adjust_creative: wgpu::BindGroup,
     pub(in crate::pipeline::gpu) bg_adjust_creative_after_blur: wgpu::BindGroup,
     pub(in crate::pipeline::gpu) bg_adjust_render: wgpu::BindGroup,
@@ -477,6 +479,28 @@ pub(in crate::pipeline::gpu) fn create_bind_groups(
         )
     });
 
+    // The Pixelate block cache reuses highlight work A: highlight reconstruction
+    // and demosaicing only use it while producing the scene texture, before the
+    // output stage runs.
+    let pixelate_blocks_view = highlight_work_a_view;
+    let make_pixelate_blocks_bind_group = |label: &str, source: &wgpu::TextureView| {
+        create_bind_group(
+            device,
+            label,
+            &layouts.bgl_pixelate_blocks,
+            &[
+                buffer_binding(0, camera_uniforms_buffer),
+                texture_binding(24, source),
+                texture_binding(37, pixelate_blocks_view),
+                buffer_binding(33, mask_data_buffer),
+            ],
+        )
+    };
+    let bg_pixelate_blocks =
+        make_pixelate_blocks_bind_group("bg Pixelate block averages", tex1_view);
+    let bg_pixelate_blocks_after_blur =
+        make_pixelate_blocks_bind_group("bg Pixelate block averages after mask Blur", tex2_view);
+
     let make_adjust_creative_bind_group =
         |label: &str, input: &wgpu::TextureView, output: &wgpu::TextureView| {
             create_bind_group(
@@ -494,6 +518,7 @@ pub(in crate::pipeline::gpu) fn create_bind_groups(
                     texture_binding(34, light_rays_mask_view),
                     texture_binding(35, scene_depth_view),
                     buffer_binding(16, tone_stats_buffer),
+                    texture_binding(36, pixelate_blocks_view),
                 ],
             )
         };
@@ -557,6 +582,8 @@ pub(in crate::pipeline::gpu) fn create_bind_groups(
         bg_glow_blur,
         bg_glow_prepare_after_blur,
         bg_glow_blur_after_blur,
+        bg_pixelate_blocks,
+        bg_pixelate_blocks_after_blur,
         bg_adjust_creative,
         bg_adjust_creative_after_blur,
         bg_adjust_render,

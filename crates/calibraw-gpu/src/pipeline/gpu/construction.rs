@@ -265,6 +265,7 @@ impl RawGpuPipeline {
         let AssembledPasses {
             passes,
             post_blur_glow_passes,
+            post_blur_pixelate_blocks_pass,
             post_blur_creative_pass,
             post_blur_render_pass,
             indices,
@@ -307,6 +308,7 @@ impl RawGpuPipeline {
             tone_stats_buffer: buffers.tone_stats_buffer,
             indices,
             post_blur_glow_passes,
+            post_blur_pixelate_blocks_pass,
             post_blur_creative_pass,
             post_blur_render_pass,
             passes,

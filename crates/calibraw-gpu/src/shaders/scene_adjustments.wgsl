@@ -19,6 +19,9 @@
 @group(0) @binding(30) var glow_work_tex: texture_2d<f32>;
 @group(0) @binding(31) var glow_work_out: texture_storage_2d<rgba16float /* CALIBRAW_WORK_FORMAT */, write>;
 @group(0) @binding(34) var light_rays_mask_tex: texture_2d_array<f32>;
+// Pixelate block cache (layout in mask_effects/pixelate.wgsl).
+@group(0) @binding(36) var pixelate_blocks_tex: texture_2d<f32>;
+@group(0) @binding(37) var pixelate_blocks_out: texture_storage_2d<rgba16float /* CALIBRAW_WORK_FORMAT */, write>;
 
 fn local_mask_uv(pos: vec2<i32>) -> vec2<f32> {
     let full_size = vec2<f32>(

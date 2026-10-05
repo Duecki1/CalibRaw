@@ -26,6 +26,7 @@ pub(in crate::pipeline::gpu) struct BindGroupLayouts {
     pub(in crate::pipeline::gpu) bgl_mask_blur: wgpu::BindGroupLayout,
     pub(in crate::pipeline::gpu) bgl_glow_prepare: wgpu::BindGroupLayout,
     pub(in crate::pipeline::gpu) bgl_glow_blur: wgpu::BindGroupLayout,
+    pub(in crate::pipeline::gpu) bgl_pixelate_blocks: wgpu::BindGroupLayout,
     pub(in crate::pipeline::gpu) bgl_adjust_creative: wgpu::BindGroupLayout,
     pub(in crate::pipeline::gpu) bgl_adjust_render: wgpu::BindGroupLayout,
 }
@@ -418,8 +419,22 @@ pub(in crate::pipeline::gpu) fn create_bind_group_layouts(
         )
     });
 
-    let bgl_adjust_creative =
+    let bgl_pixelate_blocks =
         reused_layout(adjustment_prepare_for_programs + 16).unwrap_or_else(|| {
+            create_bind_group_layout(
+                device,
+                "bgl Pixelate block averages",
+                &[
+                    buffer_entry(0),
+                    texture_entry(24, wgpu::TextureSampleType::Float { filterable: false }),
+                    storage_texture_entry(37, work_format, wgpu::StorageTextureAccess::WriteOnly),
+                    storage_buffer_entry(33, true),
+                ],
+            )
+        });
+
+    let bgl_adjust_creative =
+        reused_layout(adjustment_prepare_for_programs + 17).unwrap_or_else(|| {
             create_bind_group_layout(
                 device,
                 "bgl creative glow",
@@ -434,6 +449,7 @@ pub(in crate::pipeline::gpu) fn create_bind_group_layouts(
                     texture_array_entry(34, wgpu::TextureSampleType::Float { filterable: true }),
                     texture_entry(35, wgpu::TextureSampleType::Float { filterable: false }),
                     storage_buffer_entry(16, true),
+                    texture_entry(36, wgpu::TextureSampleType::Float { filterable: false }),
                 ],
             )
         });
@@ -458,7 +474,7 @@ pub(in crate::pipeline::gpu) fn create_bind_group_layouts(
         ],
     );
     let bgl_adjust_render =
-        reused_layout(adjustment_prepare_for_programs + 17).unwrap_or(bgl_adjust_render);
+        reused_layout(adjustment_prepare_for_programs + 18).unwrap_or(bgl_adjust_render);
 
     BindGroupLayouts {
         bgl_scene_tone,
@@ -484,6 +500,7 @@ pub(in crate::pipeline::gpu) fn create_bind_group_layouts(
         bgl_mask_blur,
         bgl_glow_prepare,
         bgl_glow_blur,
+        bgl_pixelate_blocks,
         bgl_adjust_creative,
         bgl_adjust_render,
     }

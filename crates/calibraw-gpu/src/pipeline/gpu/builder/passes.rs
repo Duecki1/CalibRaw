@@ -21,6 +21,7 @@ pub(in crate::pipeline::gpu) struct StageIndices {
     pub(in crate::pipeline::gpu) glow_prepare_pass_index: usize,
     pub(in crate::pipeline::gpu) glow_blur_start_index: usize,
     pub(in crate::pipeline::gpu) glow_blur_end_index: usize,
+    pub(in crate::pipeline::gpu) pixelate_blocks_pass_index: usize,
     pub(in crate::pipeline::gpu) adjustment_creative_pass_index: usize,
     pub(in crate::pipeline::gpu) adjustment_render_pass_index: usize,
 }
@@ -28,6 +29,7 @@ pub(in crate::pipeline::gpu) struct StageIndices {
 pub(in crate::pipeline::gpu) struct AssembledPasses {
     pub(in crate::pipeline::gpu) passes: Vec<Pass>,
     pub(in crate::pipeline::gpu) post_blur_glow_passes: Vec<Pass>,
+    pub(in crate::pipeline::gpu) post_blur_pixelate_blocks_pass: Pass,
     pub(in crate::pipeline::gpu) post_blur_creative_pass: Pass,
     pub(in crate::pipeline::gpu) post_blur_render_pass: Pass,
     pub(in crate::pipeline::gpu) indices: StageIndices,
@@ -283,7 +285,8 @@ pub(in crate::pipeline::gpu) fn assemble_passes(
     let glow_prepare_pass_index = mask_blur_end_index;
     let glow_blur_start_index = glow_prepare_pass_index + 1;
     let glow_blur_end_index = glow_blur_start_index + 5;
-    let adjustment_creative_pass_index = glow_blur_end_index;
+    let pixelate_blocks_pass_index = glow_blur_end_index;
+    let adjustment_creative_pass_index = pixelate_blocks_pass_index + 1;
     let adjustment_render_pass_index = adjustment_creative_pass_index + 1;
 
     passes.extend([
@@ -351,6 +354,13 @@ pub(in crate::pipeline::gpu) fn assemble_passes(
     passes.extend([
         assembler.make_pass(
             shaders.creative_effects_module.as_ref(),
+            "prepare_pixelate_blocks",
+            &layouts.bgl_pixelate_blocks,
+            groups.bg_pixelate_blocks.clone(),
+            image_workgroups,
+        ),
+        assembler.make_pass(
+            shaders.creative_effects_module.as_ref(),
             "apply_creative_effects",
             &layouts.bgl_adjust_creative,
             groups.bg_adjust_creative.clone(),
@@ -379,6 +389,11 @@ pub(in crate::pipeline::gpu) fn assemble_passes(
             workgroups: image_workgroups,
         },
     ));
+    let post_blur_pixelate_blocks_pass = Pass {
+        pipeline: passes[pixelate_blocks_pass_index].pipeline.clone(),
+        bind_group: groups.bg_pixelate_blocks_after_blur.clone(),
+        workgroups: image_workgroups,
+    };
     let post_blur_creative_pass = Pass {
         pipeline: passes[adjustment_creative_pass_index].pipeline.clone(),
         bind_group: groups.bg_adjust_creative_after_blur.clone(),
@@ -404,6 +419,7 @@ pub(in crate::pipeline::gpu) fn assemble_passes(
     Ok(AssembledPasses {
         passes,
         post_blur_glow_passes,
+        post_blur_pixelate_blocks_pass,
         post_blur_creative_pass,
         post_blur_render_pass,
         indices: StageIndices {
@@ -424,6 +440,7 @@ pub(in crate::pipeline::gpu) fn assemble_passes(
             glow_prepare_pass_index,
             glow_blur_start_index,
             glow_blur_end_index,
+            pixelate_blocks_pass_index,
             adjustment_creative_pass_index,
             adjustment_render_pass_index,
         },
