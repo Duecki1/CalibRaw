@@ -20,13 +20,14 @@ pub(crate) enum UiDesign {
 }
 
 impl UiDesign {
+    /// Dropdown order: the default Plain Grey designs first.
     pub(crate) const ALL: [Self; 6] = [
+        Self::PlainGreyDark,
+        Self::PlainGreyLight,
         Self::ObsidianBlue,
         Self::ObsidianRed,
-        Self::PlainGreyDark,
         Self::Porcelain,
         Self::DaylightBlue,
-        Self::PlainGreyLight,
     ];
 
     /// The Moduwu preset this setting selects.
@@ -105,6 +106,7 @@ mod tests {
     #[test]
     fn plain_grey_dark_is_the_default_and_dark_accents_are_distinct() {
         assert_eq!(UiDesign::default(), UiDesign::PlainGreyDark);
+        assert_eq!(UiDesign::ALL[0], UiDesign::PlainGreyDark);
         assert_eq!(
             serde_json::from_str::<UiDesign>(r#""midnight_pink""#).unwrap(),
             UiDesign::ObsidianBlue

@@ -158,6 +158,12 @@ canvases, mask cards, and colour controls in their existing components.
   layouts; `AdjustmentSlider` adapts it to `FloatParamSpec` and adds the
   photographic track gradients. Scroll areas that contain sliders consult
   `moduwu_design::slider_scroll_locked`.
+- Pick the control from what the value means: `moduwu_design::toggle` or
+  `toggle_with_help` for on/off options, `segmented_button` for one choice among
+  a few, `AngleDial` (via `float_param_angle`) for directions, the shared
+  feathered range (`components::feathered_range`) for ranges with soft edges
+  such as depth, luminance and Point Color, and `pattern_seed` (Shuffle) for
+  random pattern seeds.
 - Use `dialog_window`, dialog action rows, and keyboard helpers for existing
   window dialogs. Keep initial focus requests one-time, and run keyboard fallback
   after controls process input. Modal surfaces use themed egui frames; preserve
@@ -172,7 +178,7 @@ and `cargo test -p calibraw-ui --lib --locked` for headless UI integration regre
 The ignored `portrait_gpu_layout_and_input` test additionally checks rendered
 preview geometry and pointer/touch behavior; it needs a GPU adapter and an
 isolated `XDG_CONFIG_HOME`. `CALIBRAW_PREVIEW_TEST_SCREENSHOT` optionally captures
-its rendered fixture. Review desktop and Android layouts in all four themes
+its rendered fixture. Review desktop and Android layouts in all six themes
 when a change affects appearance.
 
 ## Diagnostics and release helpers

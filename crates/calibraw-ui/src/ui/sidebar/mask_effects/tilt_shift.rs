@@ -1,5 +1,6 @@
 use super::{
-    effect_card, effect_details, effect_position, float_param_slider, EffectFrame, PositionSpace,
+    effect_card, effect_details, effect_position, float_param_angle, float_param_slider,
+    EffectFrame, PositionSpace,
 };
 use crate::pipeline::{effect_params::tilt_shift, MaskEffect, TiltShiftEffectSettings};
 use eframe::egui::Ui;
@@ -36,7 +37,7 @@ pub(crate) fn show(
                     frame,
                     PositionSpace::Source,
                 );
-                changed |= float_param_slider(ui, &mut settings.angle, tilt_shift::ANGLE);
+                changed |= float_param_angle(ui, &mut settings.angle, tilt_shift::ANGLE);
                 changed |= float_param_slider(ui, &mut settings.feather, tilt_shift::FEATHER);
                 changed
             });

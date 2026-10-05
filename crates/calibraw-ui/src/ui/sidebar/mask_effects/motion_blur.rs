@@ -1,4 +1,4 @@
-use super::{effect_card, float_param_slider};
+use super::{effect_card, float_param_angle, float_param_slider};
 use crate::pipeline::{effect_params::motion_blur, MaskEffect, MotionBlurEffectSettings};
 use eframe::egui::Ui;
 
@@ -18,7 +18,7 @@ pub(crate) fn show(
             let mut changed = false;
             changed |= float_param_slider(ui, &mut settings.amount, motion_blur::AMOUNT);
             changed |= float_param_slider(ui, &mut settings.distance, motion_blur::DISTANCE);
-            changed |= float_param_slider(ui, &mut settings.angle, motion_blur::ANGLE);
+            changed |= float_param_angle(ui, &mut settings.angle, motion_blur::ANGLE);
             changed
         },
     )

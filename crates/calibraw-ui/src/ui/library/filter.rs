@@ -121,17 +121,18 @@ pub(super) fn show_sort_filter_options(
     }
     ui.horizontal(|ui| {
         for (order, label) in SORT_GROUPS[group].1 {
-            ui.selectable_value(sort, order, label);
+            if moduwu_design::toggle_button(ui, label, *sort == order).clicked() {
+                *sort = order;
+            }
         }
     });
 
     ui.separator();
     ui.strong("RAW + JPEG");
-    ui.checkbox(stack_raw_companions, "Show only the RAW")
-        .on_hover_text(
-            "Cameras shooting RAW+JPEG or RAW+HEIC save both files. Show each pair once, \
+    moduwu_design::toggle(ui, stack_raw_companions, "Show only the RAW").on_hover_text(
+        "Cameras shooting RAW+JPEG or RAW+HEIC save both files. Show each pair once, \
              as the RAW, and hide the JPEG or HEIC with the same name.",
-        );
+    );
 
     #[cfg(not(target_os = "android"))]
     {
@@ -139,14 +140,15 @@ pub(super) fn show_sort_filter_options(
         ui.strong("Show ratings");
         let had_ratings = filter.ratings.iter().any(|selected| *selected);
         ui.horizontal(|ui| {
-            if ui.selectable_label(!had_ratings, "All ratings").clicked() {
+            if moduwu_design::toggle_button(ui, "All ratings", !had_ratings).clicked() {
                 filter.ratings = [false; 6];
             }
-            ui.toggle_value(&mut filter.ratings[0], "Unrated");
+            moduwu_design::toggle(ui, &mut filter.ratings[0], "Unrated");
         });
         ui.horizontal(|ui| {
             for rating in (1..=5).rev() {
-                ui.toggle_value(
+                moduwu_design::toggle(
+                    ui,
                     &mut filter.ratings[rating],
                     format!("{rating} {}", egui_phosphor::regular::STAR),
                 );
@@ -166,17 +168,19 @@ pub(super) fn show_sort_filter_options(
         ui.separator();
         ui.strong("Show flags");
         let had_flags = filter.flags.iter().any(|selected| *selected);
-        if ui.selectable_label(!had_flags, "All flags").clicked() {
+        if moduwu_design::toggle_button(ui, "All flags", !had_flags).clicked() {
             filter.flags = [false; 3];
         }
         ui.horizontal(|ui| {
-            ui.toggle_value(
+            moduwu_design::toggle(
+                ui,
                 &mut filter.flags[0],
                 egui::RichText::new(format!("{} Pick", egui_phosphor::regular::FLAG))
                     .color(crate::ui::theme::CHANNEL_GREEN),
             );
-            ui.toggle_value(&mut filter.flags[1], "Unflagged");
-            ui.toggle_value(
+            moduwu_design::toggle(ui, &mut filter.flags[1], "Unflagged");
+            moduwu_design::toggle(
+                ui,
                 &mut filter.flags[2],
                 egui::RichText::new(format!("{} Reject", egui_phosphor::regular::FLAG))
                     .color(crate::ui::theme::CHANNEL_RED),

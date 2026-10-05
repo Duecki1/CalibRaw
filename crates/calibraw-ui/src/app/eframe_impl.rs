@@ -249,7 +249,16 @@ impl CalibRawApp {
                 ui.label("CalibRaw ran out of GPU memory while processing the image. The current operation could not finish.");
                 ui.add_space(6.0);
                 ui.label("Optional previews were released. Close other GPU-heavy apps or lower Preview Quality, then try again.");
-                if ui.button("Close").clicked() {
+                moduwu_design::dialog_button_row(ui, |ui| {
+                    close |= moduwu_design::secondary_button(ui, "Close").clicked();
+                });
+                if !close
+                    && moduwu_design::dialog_keyboard_action(
+                        ui,
+                        moduwu_design::DialogKeyboard::CLOSE_ONLY,
+                        false,
+                    ) == moduwu_design::DialogAction::Cancel
+                {
                     close = true;
                 }
             });

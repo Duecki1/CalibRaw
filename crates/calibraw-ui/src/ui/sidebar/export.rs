@@ -214,7 +214,7 @@ pub(crate) fn export_settings_controls(
 
             if settings.resize_mode != ExportResizeMode::Original {
                 ui.small("Aspect ratio is preserved.");
-                moduwu_design::checkbox_with_help(
+                moduwu_design::toggle_with_help(
                     ui,
                     &mut settings.allow_upscale,
                     "Allow upscaling",
@@ -226,7 +226,7 @@ pub(crate) fn export_settings_controls(
     moduwu_design::card_gap(ui);
 
     moduwu_design::section_card(ui, "Metadata", |ui| {
-        moduwu_design::checkbox_with_help(
+        moduwu_design::toggle_with_help(
             ui,
             &mut settings.keep_metadata,
             "Keep metadata",

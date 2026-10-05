@@ -1,5 +1,6 @@
 use super::*;
 use crate::app::{MaskPropertiesControls, MaskPropertyAction};
+use crate::ui::components::luminance_range_slider::{luminance_range_slider, LuminanceRange};
 
 impl Sidebar {
     pub(crate) fn effect_creation_menu(
@@ -22,7 +23,7 @@ impl Sidebar {
                         && !components
                             .iter()
                             .any(|component| component.effect == effect)
-                        && ui.button(effect.label()).clicked()
+                        && moduwu_design::menu_item(ui, true, effect.label()).clicked()
                     {
                         selected = Some(effect);
                         ui.close();
@@ -774,25 +775,18 @@ impl Sidebar {
         feather: f32,
         edits: &mut PropertyEdits,
     ) {
-        let mut low = low;
-        if AdjustmentSlider::new("Range low", &mut low, 0.0..=1.0)
-            .decimals(2)
-            .step(0.01)
-            .hover_text("Lowest included scene luminance.")
-            .reset_to(0.2)
-            .show(ui)
-        {
-            edits.push(MaskPropertyAction::SetLuminanceLow(low));
-        }
-        let mut high = high;
-        if AdjustmentSlider::new("Range high", &mut high, 0.0..=1.0)
-            .decimals(2)
-            .step(0.01)
-            .hover_text("Highest included scene luminance.")
-            .reset_to(0.8)
-            .show(ui)
-        {
-            edits.push(MaskPropertyAction::SetLuminanceHigh(high));
+        let before = LuminanceRange { low, high, feather };
+        let mut range = before;
+        if luminance_range_slider(ui, &mut range) {
+            if range.low != before.low {
+                edits.push(MaskPropertyAction::SetLuminanceLow(range.low));
+            }
+            if range.high != before.high {
+                edits.push(MaskPropertyAction::SetLuminanceHigh(range.high));
+            }
+            if range.feather != before.feather {
+                edits.feather(Some(range.feather));
+            }
         }
         edits.grow(Self::mask_grow_edit(ui, grow));
         edits.feather(Self::mask_feather_edit(
@@ -855,7 +849,7 @@ impl Sidebar {
         } else {
             "Generate depth map"
         };
-        if ui.button(label).clicked() {
+        if moduwu_design::secondary_button(ui, label).clicked() {
             edits.push(MaskPropertyAction::RequestGeneration);
         }
         let mut range = range;
@@ -991,8 +985,7 @@ impl Sidebar {
             } else {
                 "Generate subject mask"
             };
-            if ui
-                .add_enabled(controls.generation_idle, egui::Button::new(label))
+            if moduwu_design::secondary_button_enabled(ui, controls.generation_idle, label)
                 .clicked()
             {
                 edits.push(MaskPropertyAction::RequestGeneration);

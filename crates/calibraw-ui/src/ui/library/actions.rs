@@ -440,12 +440,8 @@ pub(super) fn selection_bar_action_button(
             label,
         )
     } else {
-        ui.add_enabled(
-            enabled,
-            egui::Button::new(format!("{glyph}  {label}"))
-                .min_size(egui::vec2(0.0, moduwu_design::CONTROL_HEIGHT)),
-        )
-        .on_hover_text(label)
+        moduwu_design::secondary_button_enabled(ui, enabled, format!("{glyph}  {label}"))
+            .on_hover_text(label)
     }
 }
 

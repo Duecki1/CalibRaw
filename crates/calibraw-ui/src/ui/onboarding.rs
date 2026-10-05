@@ -210,42 +210,42 @@ fn show_preview(ui: &mut egui::Ui, app: &mut CalibRawApp) {
 fn show_copy_paste(ui: &mut egui::Ui, app: &mut CalibRawApp) {
     let mut settings = app.preferences.adjustment_copy_settings;
     let mut changed = false;
-    changed |= moduwu_design::checkbox_with_help(
+    changed |= moduwu_design::toggle_with_help(
         ui,
         &mut settings.adjustments,
         "Adjustments",
         "Exposure, color, tone, detail, effects, and other Develop adjustments.",
     )
     .changed();
-    changed |= moduwu_design::checkbox_with_help(
+    changed |= moduwu_design::toggle_with_help(
         ui,
         &mut settings.geometry,
         "Crop & geometry",
         "Crop, rotation, transforms, and flips.",
     )
     .changed();
-    changed |= moduwu_design::checkbox_with_help(
+    changed |= moduwu_design::toggle_with_help(
         ui,
         &mut settings.camera_profile,
         "Camera profile",
         "The selected camera profile, when it is available for the destination image.",
     )
     .changed();
-    changed |= moduwu_design::checkbox_with_help(
+    changed |= moduwu_design::toggle_with_help(
         ui,
         &mut settings.masks,
         "Manual masks",
         "Brush, linear, radial, and fullscreen mask components with their local edits.",
     )
     .changed();
-    changed |= moduwu_design::checkbox_with_help(
+    changed |= moduwu_design::toggle_with_help(
         ui,
         &mut settings.ai_masks,
         "Content-aware masks",
         "Subject, background, sky, object, luminance-range, and color-range components. They are regenerated for the destination image when needed.",
     )
     .changed();
-    changed |= moduwu_design::checkbox_with_help(
+    changed |= moduwu_design::toggle_with_help(
         ui,
         &mut settings.lens_correction,
         "Lens correction",
@@ -264,7 +264,7 @@ fn show_export_names(ui: &mut egui::Ui, app: &mut CalibRawApp) {
 #[cfg(not(target_os = "android"))]
 fn show_ai(ui: &mut egui::Ui, app: &mut CalibRawApp) {
     let mut acceleration = app.ai.gpu_acceleration;
-    if moduwu_design::checkbox_with_help(
+    if moduwu_design::toggle_with_help(
         ui,
         &mut acceleration,
         "Use GPU acceleration when available",
@@ -303,7 +303,7 @@ fn show_ai(ui: &mut egui::Ui, app: &mut CalibRawApp) {
 #[cfg(not(target_os = "android"))]
 fn show_discord(ui: &mut egui::Ui, app: &mut CalibRawApp) {
     let mut enabled = app.preferences.discord_rich_presence;
-    if moduwu_design::checkbox_with_help(
+    if moduwu_design::toggle_with_help(
         ui,
         &mut enabled,
         "Enable Discord Rich Presence",

@@ -307,7 +307,7 @@ impl Settings {
         );
 
         moduwu_design::section_separator(ui);
-        if moduwu_design::checkbox_with_help(
+        if moduwu_design::toggle_with_help(
             ui,
             &mut app.preferences.show_develop_navigation_labels,
             "Show Develop navigation labels",
@@ -322,7 +322,7 @@ impl Settings {
         {
             moduwu_design::section_separator(ui);
             let mut enabled = app.preferences.discord_rich_presence;
-            if moduwu_design::checkbox_with_help(
+            if moduwu_design::toggle_with_help(
                 ui,
                 &mut enabled,
                 "Discord Rich Presence",
@@ -361,7 +361,7 @@ impl Settings {
         }
 
         moduwu_design::section_separator(ui);
-        if moduwu_design::checkbox_with_help(
+        if moduwu_design::toggle_with_help(
             ui,
             &mut app.preferences.image_relative_brush_size,
             "Keep brush size fixed to the image",
@@ -382,7 +382,7 @@ impl Settings {
         {
             let mut render_edited_thumbnails =
                 app.library.renders_edited_thumbnails_during_indexing();
-            if moduwu_design::checkbox_with_help(
+            if moduwu_design::toggle_with_help(
                 ui,
                 &mut render_edited_thumbnails,
                 "Render edited thumbnails while indexing",
@@ -448,42 +448,42 @@ impl Settings {
 
         let mut settings = app.preferences.adjustment_copy_settings;
         let mut changed = false;
-        changed |= moduwu_design::checkbox_with_help(
+        changed |= moduwu_design::toggle_with_help(
             ui,
             &mut settings.adjustments,
             "Adjustments",
             "Global light, color, white-balance temperature/tint, tone curve, effects, color mixer, and RAW adjustment values.",
         )
             .changed();
-        changed |= moduwu_design::checkbox_with_help(
+        changed |= moduwu_design::toggle_with_help(
             ui,
             &mut settings.geometry,
             "Geometry",
             "Crop, rotation, straighten, perspective, flips, and geometry transforms. Disabled by default.",
         )
             .changed();
-        changed |= moduwu_design::checkbox_with_help(
+        changed |= moduwu_design::toggle_with_help(
             ui,
             &mut settings.camera_profile,
             "Camera profile",
             "The per-image camera/DCP profile selection. Enabled by default.",
         )
         .changed();
-        changed |= moduwu_design::checkbox_with_help(
+        changed |= moduwu_design::toggle_with_help(
             ui,
             &mut settings.masks,
             "Normal masks",
             "Brush, radial-gradient, and linear-gradient mask components, including local adjustments. Mixed groups are split so disabling this never copies their manual components.",
         )
             .changed();
-        changed |= moduwu_design::checkbox_with_help(
+        changed |= moduwu_design::toggle_with_help(
             ui,
             &mut settings.ai_masks,
             "AI masks",
             "Subject, background, sky, object, luminance-range, and color-range components. Source-dependent results are marked for regeneration on the destination image.",
         )
             .changed();
-        changed |= moduwu_design::checkbox_with_help(
+        changed |= moduwu_design::toggle_with_help(
             ui,
             &mut settings.lens_correction,
             "Lens correction",
@@ -643,7 +643,7 @@ impl Settings {
             "Configure local inference acceleration, Subject mask quality, and the trusted ONNX Runtime library used by AI tools.",
         );
         let mut acceleration = app.ai.gpu_acceleration;
-        if moduwu_design::checkbox_with_help(
+        if moduwu_design::toggle_with_help(
             ui,
             &mut acceleration,
             "Use GPU acceleration when available",
@@ -688,7 +688,7 @@ impl Settings {
 
         let mut crop_refinement = app.ai.subject_crop_refinement;
         ui.add_enabled_ui(app.birefnet_quality_change_enabled(), |ui| {
-            if moduwu_design::checkbox_with_help(
+            if moduwu_design::toggle_with_help(
                 ui,
                 &mut crop_refinement,
                 "Refine subject edges with a cropped pass",
@@ -794,7 +794,7 @@ impl Settings {
         let mut auto_check = app.preferences.auto_check_updates;
         let permission_denied = app.version_check_permission_denied();
         ui.add_enabled_ui(!permission_denied, |ui| {
-            if moduwu_design::checkbox_with_help(
+            if moduwu_design::toggle_with_help(
                 ui,
                 &mut auto_check,
                 "Automatically check for updates via GitHub",

@@ -370,16 +370,23 @@ pub(super) fn rasterize_luminance_range(
     high: f32,
     feather: f32,
 ) -> Vec<f32> {
-    let low = low.min(high).clamp(0.0, 1.0);
-    let high = high.max(low).clamp(0.0, 1.0);
-    let transition = feather.clamp(0.0, 1.0) * 0.35;
     sample_rgb_mask(width, height, source, |rgb| {
         let linear = rgb.map(srgb_decode_signed);
         let luminance = 0.2126 * linear[0] + 0.7152 * linear[1] + 0.0722 * linear[2];
-        let enter = smoothstep(low - transition, low, luminance);
-        let leave = 1.0 - smoothstep(high, high + transition, luminance);
-        enter * leave
+        luminance_range_weight(luminance, low, high, feather)
     })
+}
+
+/// Selection weight (0–1) of linear `luminance` in a luminance-range mask:
+/// full between `low` and `high`, with a smooth ramp of `feather × 0.35`
+/// outside each bound. The UI draws its range curve with the same function.
+pub fn luminance_range_weight(luminance: f32, low: f32, high: f32, feather: f32) -> f32 {
+    let low = low.min(high).clamp(0.0, 1.0);
+    let high = high.max(low).clamp(0.0, 1.0);
+    let transition = feather.clamp(0.0, 1.0) * 0.35;
+    let enter = smoothstep(low - transition, low, luminance);
+    let leave = 1.0 - smoothstep(high, high + transition, luminance);
+    enter * leave
 }
 
 pub(super) fn rasterize_color_range(

@@ -71,7 +71,7 @@ impl Sidebar {
         }
         ui.separator();
         let mut enabled = mask.enabled;
-        if ui.checkbox(&mut enabled, "Enabled").changed() {
+        if moduwu_design::toggle(ui, &mut enabled, "Enabled").changed() {
             requests.edits.push(MaskStripEdit::SetGroupEnabled {
                 mask_index,
                 enabled,
@@ -81,7 +81,7 @@ impl Sidebar {
             requests.duplicate_mask = Some((mask_index, false));
             ui.close();
         }
-        if ui.selectable_label(mask.invert, "Invert").clicked() {
+        if moduwu_design::toggle_button(ui, "Invert", mask.invert).clicked() {
             requests
                 .edits
                 .push(MaskStripEdit::ToggleGroupInvert(mask_index));
@@ -147,7 +147,7 @@ impl Sidebar {
         }
         ui.separator();
         let mut enabled = component.enabled;
-        if ui.checkbox(&mut enabled, "Enabled").changed() {
+        if moduwu_design::toggle(ui, &mut enabled, "Enabled").changed() {
             requests.edits.push(MaskStripEdit::SetComponentEnabled {
                 mask_index,
                 component_index,
@@ -158,7 +158,7 @@ impl Sidebar {
             requests.duplicate_component = Some((mask_index, component_index, false));
             ui.close();
         }
-        if ui.selectable_label(component.invert, "Invert").clicked() {
+        if moduwu_design::toggle_button(ui, "Invert", component.invert).clicked() {
             requests.edits.push(MaskStripEdit::ToggleComponentInvert {
                 mask_index,
                 component_index,

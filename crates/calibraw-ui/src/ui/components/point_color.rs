@@ -1,6 +1,7 @@
 use crate::pipeline::{PointColor, PointColorRange, PointColors, MAX_POINT_COLORS};
 use crate::ui::components::adjustment_slider::{AdjustmentSlider, SliderGradient};
 use crate::ui::components::color_picker::sidebar_color_picker;
+use crate::ui::components::feathered_range::{self, FeatheredRange, RangeHandle};
 use eframe::egui::{self, Color32, Mesh, Rect, Sense, Shape, Stroke, StrokeKind, Ui};
 use egui_phosphor::regular;
 use moduwu_design::NumberField;
@@ -88,17 +89,17 @@ pub(crate) fn point_color(
                     state.selected = index;
                 }
                 response.context_menu(|ui| {
-                    if ui.button("Reset color").clicked() {
+                    if moduwu_design::menu_item(ui, true, "Reset color").clicked() {
                         state.selected = index;
                         reset = true;
                         ui.close();
                     }
-                    if ui.button("Delete color").clicked() {
+                    if moduwu_design::destructive_menu_item(ui, "Delete color").clicked() {
                         state.selected = index;
                         delete = true;
                         ui.close();
                     }
-                    if ui.button("Delete all colors").clicked() {
+                    if moduwu_design::destructive_menu_item(ui, "Delete all colors").clicked() {
                         delete_all = true;
                         ui.close();
                     }
@@ -192,7 +193,7 @@ pub(crate) fn point_color(
             set_point_color_feather(point, feather);
         }
         egui::CollapsingHeader::new("Refine range").show(ui, |ui| {
-            ui.weak("Inner handles set the full-strength core; outer handles set how far the feathered selection extends.");
+            ui.weak("Circles move each soft edge of the selection; diamonds set where it reaches full strength.");
             let sample = point.sample_hsl;
             range_editor(ui, "Hue range", &mut point.hue_range, sample, 0);
             range_editor(ui, "Saturation range", &mut point.saturation_range, sample, 1);
@@ -256,7 +257,13 @@ fn adjusted_color_readout(ui: &mut Ui, point: &PointColor) {
     });
 }
 
-fn gradient(ui: &Ui, rect: Rect, columns: usize, rows: usize, color: impl Fn(f32, f32) -> Color32) {
+fn gradient(
+    painter: &egui::Painter,
+    rect: Rect,
+    columns: usize,
+    rows: usize,
+    color: impl Fn(f32, f32) -> Color32,
+) {
     let mut mesh = Mesh::default();
     for y in 0..=rows {
         for x in 0..=columns {
@@ -276,7 +283,7 @@ fn gradient(ui: &Ui, rect: Rect, columns: usize, rows: usize, color: impl Fn(f32
             mesh.add_triangle(a + 1, b + 1, b);
         }
     }
-    ui.painter().add(Shape::mesh(mesh));
+    painter.add(Shape::mesh(mesh));
 }
 
 fn range_feather(range: PointColorRange) -> f32 {
@@ -322,27 +329,114 @@ fn set_range_handle(range: &mut PointColorRange, index: usize, value: f32, limit
     *range = PointColorRange::new(values[0], values[1], values[2], values[3]);
 }
 
-/// The range handle nearest `pointer`. Handles at the same spot (a collapsed
-/// core or feather) resolve toward the drag direction, since only the one on
-/// that side can move: each handle is clamped between its neighbors.
-fn nearest_range_handle(
-    values: [f32; 4],
-    pointer: egui::Pos2,
-    moving_right: bool,
-    position: impl Fn(usize, f32) -> egui::Pos2,
-) -> usize {
-    (0..values.len())
-        .min_by(|&a, &b| {
-            let distance = |index: usize| position(index, values[index]).distance_sq(pointer);
-            distance(a).total_cmp(&distance(b)).then_with(|| {
-                if moving_right {
-                    b.cmp(&a)
-                } else {
-                    a.cmp(&b)
-                }
-            })
+/// `value` limited to `low..=high` without panicking on an inverted or
+/// non-finite bound, which an unsanitized saved range could produce.
+fn limit_to(value: f32, low: f32, high: f32) -> f32 {
+    value.max(low).min(high)
+}
+
+/// A Point Color channel range on the shared feathered-range track. The
+/// track spans `-limit..=limit` around the sampled value. Like the depth
+/// range, each soft edge is shown by its centre (circle) and the point where
+/// it reaches full strength (diamond); moving a diamond widens or narrows
+/// that edge symmetrically about its centre.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct RangeTrack {
+    range: PointColorRange,
+    limit: f32,
+    default: PointColorRange,
+}
+
+impl RangeTrack {
+    fn to_track(self, value: f32) -> f32 {
+        (value / self.limit + 1.0) * 0.5
+    }
+
+    fn start_center(self) -> f32 {
+        (self.range.min + self.range.inner_min) * 0.5
+    }
+
+    fn end_center(self) -> f32 {
+        (self.range.inner_max + self.range.max) * 0.5
+    }
+}
+
+impl FeatheredRange for RangeTrack {
+    fn handle_value(&self, handle: RangeHandle) -> f32 {
+        self.to_track(match handle {
+            RangeHandle::Start => self.start_center(),
+            RangeHandle::End => self.end_center(),
+            RangeHandle::StartFeather => self.range.inner_min,
+            RangeHandle::EndFeather => self.range.inner_max,
         })
-        .unwrap_or(0)
+    }
+
+    /// An edge centred on the end of the domain has no room to soften.
+    fn handle_active(&self, handle: RangeHandle) -> bool {
+        match handle {
+            RangeHandle::Start | RangeHandle::End => true,
+            RangeHandle::StartFeather => self.start_center() > -self.limit,
+            RangeHandle::EndFeather => self.end_center() < self.limit,
+        }
+    }
+
+    /// Keeps `min <= inner_min <= inner_max <= max` within the domain. An edge
+    /// moved toward the domain end or the core narrows instead of crossing it.
+    fn drag(&mut self, start: &Self, handle: RangeHandle, delta: f32) {
+        let limit = start.limit;
+        let shift = delta * 2.0 * limit;
+        let r = start.range;
+        let mut next = r;
+        match handle {
+            RangeHandle::Start => {
+                let center = limit_to(start.start_center() + shift, -limit, r.inner_max);
+                let half = ((r.inner_min - r.min) * 0.5)
+                    .min(center + limit)
+                    .min(r.inner_max - center)
+                    .max(0.0);
+                next.min = center - half;
+                next.inner_min = center + half;
+            }
+            RangeHandle::End => {
+                let center = limit_to(start.end_center() + shift, r.inner_min, limit);
+                let half = ((r.max - r.inner_max) * 0.5)
+                    .min(limit - center)
+                    .min(center - r.inner_min)
+                    .max(0.0);
+                next.inner_max = center - half;
+                next.max = center + half;
+            }
+            RangeHandle::StartFeather => {
+                let center = start.start_center();
+                let full = limit_to(
+                    r.inner_min + shift,
+                    center,
+                    r.inner_max.min(2.0 * center + limit),
+                );
+                next.inner_min = full;
+                next.min = 2.0 * center - full;
+            }
+            RangeHandle::EndFeather => {
+                let center = start.end_center();
+                let full = limit_to(
+                    r.inner_max + shift,
+                    r.inner_min.max(2.0 * center - limit),
+                    center,
+                );
+                next.inner_max = full;
+                next.max = 2.0 * center - full;
+            }
+        }
+        self.range = next;
+    }
+
+    fn weight(&self, t: f32) -> f32 {
+        self.range.weight((t * 2.0 - 1.0) * self.limit)
+    }
+
+    fn reset(&mut self) {
+        self.range = self.default;
+    }
 }
 
 fn range_editor(
@@ -355,88 +449,46 @@ fn range_editor(
     ui.push_id(label, |ui| {
         ui.label(label);
         let limit = if axis == 0 { 0.5 } else { 1.0 };
-        let (rect, response) = ui.allocate_exact_size(
-            egui::vec2(ui.available_width(), 42.0),
-            Sense::click_and_drag(),
+        let defaults = PointColor::default();
+        let default = [
+            defaults.hue_range,
+            defaults.saturation_range,
+            defaults.luminance_range,
+        ][axis];
+        let mut track = RangeTrack {
+            range: *range,
+            limit,
+            default,
+        };
+        let value_text = format!(
+            "fade in {:.1}, full from {:.1}, full to {:.1}, fade out {:.1}",
+            range.min * 100.0,
+            range.inner_min * 100.0,
+            range.inner_max * 100.0,
+            range.max * 100.0
         );
-        let bar = rect.shrink2(egui::vec2(7.0, 10.0));
-        let values = [range.min, range.inner_min, range.inner_max, range.max];
-        let handle_pos = |value: f32| egui::lerp(bar.x_range(), (value / limit + 1.0) * 0.5);
-        let drag_id = ui.id().with("active-range-handle");
-        if response.drag_started() || response.clicked() {
-            let origin = ui.input(|input| input.pointer.press_origin());
-            if let Some(pos) = origin.or(response.interact_pointer_pos()) {
-                let moving_right = response
-                    .interact_pointer_pos()
-                    .is_some_and(|current| current.x > pos.x);
-                let index = nearest_range_handle(values, pos, moving_right, |index, value| {
-                    let y = if index == 0 || index == 3 {
-                        bar.bottom() + 4.0
+        let outline = ui.visuals().widgets.noninteractive.bg_stroke;
+        feathered_range::feathered_range_track(
+            ui,
+            &mut track,
+            label,
+            value_text,
+            "Drag the lower circles to move where the selection softens. Drag the upper diamonds to set where it reaches full strength. Double-click to reset.",
+            move |painter, bar| {
+                gradient(painter, bar, 80, 1, |x, _| {
+                    let offset = (x * 2.0 - 1.0) * limit;
+                    let mut hsl = sample;
+                    hsl[axis] = if axis == 0 {
+                        (sample[axis] + offset).rem_euclid(1.0)
                     } else {
-                        bar.top() - 4.0
+                        (sample[axis] + offset).clamp(0.0, 1.0)
                     };
-                    egui::pos2(handle_pos(value), y)
+                    hsl_color(hsl)
                 });
-                ui.ctx().data_mut(|data| data.insert_temp(drag_id, index));
-            }
-        }
-        if response.dragged() || response.clicked() {
-            if let Some(pos) = response.interact_pointer_pos() {
-                let index = ui
-                    .ctx()
-                    .data(|data| data.get_temp::<usize>(drag_id))
-                    .unwrap_or(0);
-                set_range_handle(
-                    range,
-                    index,
-                    ((pos.x - bar.left()) / bar.width() * 2.0 - 1.0) * limit,
-                    limit,
-                );
-            }
-        }
-        gradient(ui, bar, 80, 1, |x, _| {
-            let offset = (x * 2.0 - 1.0) * limit;
-            let mut hsl = sample;
-            hsl[axis] = if axis == 0 {
-                (sample[axis] + offset).rem_euclid(1.0)
-            } else {
-                (sample[axis] + offset).clamp(0.0, 1.0)
-            };
-            let color = hsl_color(hsl);
-            color.gamma_multiply(0.25 + 0.75 * range.weight(offset))
-        });
-        ui.painter().rect_stroke(
-            bar,
-            2.0,
-            ui.visuals().widgets.noninteractive.bg_stroke,
-            StrokeKind::Inside,
+                painter.rect_stroke(bar, 2.0, outline, StrokeKind::Inside);
+            },
         );
-        for (index, value) in [range.min, range.inner_min, range.inner_max, range.max]
-            .into_iter()
-            .enumerate()
-        {
-            let x = handle_pos(value);
-            let y = if index == 0 || index == 3 {
-                bar.bottom() + 4.0
-            } else {
-                bar.top() - 4.0
-            };
-            ui.painter().line_segment(
-                [egui::pos2(x, bar.top()), egui::pos2(x, bar.bottom())],
-                Stroke::new(1.0, Color32::WHITE),
-            );
-            ui.painter().circle_filled(
-                egui::pos2(x, y),
-                4.0,
-                ui.visuals().widgets.inactive.bg_fill,
-            );
-            ui.painter()
-                .circle_stroke(egui::pos2(x, y), 4.0, ui.visuals().selection.stroke);
-        }
-        response.on_hover_text(
-            "Drag the lower outer handles for feathering and the upper inner handles for \
-             full strength.",
-        );
+        *range = track.range;
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 3.0;
             for (index, name) in ["Fade in", "Full from", "Full to", "Fade out"]
@@ -485,18 +537,95 @@ mod tests {
         }
     }
 
+    fn track(range: PointColorRange, limit: f32) -> RangeTrack {
+        RangeTrack {
+            range,
+            limit,
+            default: range,
+        }
+    }
+
+    fn assert_ordered_in_domain(range: PointColorRange, limit: f32, context: &str) {
+        assert!(-limit - 1e-6 <= range.min, "{context}: {range:?}");
+        assert!(range.min <= range.inner_min + 1e-6, "{context}: {range:?}");
+        assert!(
+            range.inner_min <= range.inner_max + 1e-6,
+            "{context}: {range:?}"
+        );
+        assert!(range.inner_max <= range.max + 1e-6, "{context}: {range:?}");
+        assert!(range.max <= limit + 1e-6, "{context}: {range:?}");
+    }
+
     #[test]
-    fn collapsed_core_opens_in_the_drag_direction() {
-        let values = [-0.2, 0.1, 0.1, 0.3];
-        let position = |index: usize, value: f32| {
-            egui::pos2(
-                value * 100.0,
-                if index == 0 || index == 3 { 10.0 } else { 0.0 },
-            )
+    fn track_handles_sit_at_edge_centres_and_full_strength_points() {
+        let t = track(PointColorRange::new(-0.4, -0.2, 0.1, 0.3), 0.5);
+        let at = |value: f32| (value / 0.5 + 1.0) * 0.5;
+        assert!((t.handle_value(RangeHandle::Start) - at(-0.3)).abs() < 1e-6);
+        assert!((t.handle_value(RangeHandle::End) - at(0.2)).abs() < 1e-6);
+        assert!((t.handle_value(RangeHandle::StartFeather) - at(-0.2)).abs() < 1e-6);
+        assert!((t.handle_value(RangeHandle::EndFeather) - at(0.1)).abs() < 1e-6);
+        for x in 0..=20 {
+            let offset = x as f32 / 20.0 - 0.5;
+            assert_eq!(t.weight(at(offset)), t.range.weight(offset));
+        }
+    }
+
+    #[test]
+    fn dragging_keeps_the_range_ordered_and_in_its_domain() {
+        for limit in [0.5, 1.0] {
+            for start in [
+                PointColorRange::new(-0.4, -0.2, 0.2, 0.4),
+                PointColorRange::new(-0.2, 0.1, 0.1, 0.3),
+                PointColorRange::new(-limit, -limit, limit, limit),
+                PointColorRange::new(0.0, 0.0, 0.0, 0.0),
+            ] {
+                let start = track(start, limit);
+                for handle in RangeHandle::ALL {
+                    for delta in [-2.0, -0.3, -0.05, 0.0, 0.05, 0.3, 2.0] {
+                        let mut moved = start;
+                        moved.drag(&start, handle, delta);
+                        assert_ordered_in_domain(
+                            moved.range,
+                            limit,
+                            &format!("{handle:?} {delta} from {:?}", start.range),
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn edge_drags_keep_their_width_and_diamonds_change_only_their_edge() {
+        let start = track(PointColorRange::new(-0.4, -0.2, 0.2, 0.4), 1.0);
+        let mut moved = start;
+        moved.drag(&start, RangeHandle::Start, -0.05);
+        assert!((moved.range.min - -0.5).abs() < 1e-6);
+        assert!((moved.range.inner_min - -0.3).abs() < 1e-6);
+        assert_eq!(
+            (moved.range.inner_max, moved.range.max),
+            (start.range.inner_max, start.range.max)
+        );
+
+        let mut moved = start;
+        moved.drag(&start, RangeHandle::EndFeather, -0.025);
+        assert!((moved.range.inner_max - 0.15).abs() < 1e-6);
+        assert!((moved.range.max - 0.45).abs() < 1e-6);
+        assert_eq!(
+            (moved.range.min, moved.range.inner_min),
+            (start.range.min, start.range.inner_min)
+        );
+    }
+
+    #[test]
+    fn double_click_reset_restores_the_channel_default() {
+        let mut t = RangeTrack {
+            range: PointColorRange::new(-0.1, 0.0, 0.0, 0.1),
+            limit: 1.0,
+            default: PointColor::default().saturation_range,
         };
-        let core = egui::pos2(10.0, 0.0);
-        assert_eq!(nearest_range_handle(values, core, true, position), 2);
-        assert_eq!(nearest_range_handle(values, core, false, position), 1);
+        t.reset();
+        assert_eq!(t.range, PointColor::default().saturation_range);
     }
 
     #[test]

@@ -2,7 +2,9 @@ pub(crate) mod adjustment_slider;
 pub(crate) mod color_grading;
 pub(crate) mod color_picker;
 pub(crate) mod depth_range_slider;
+pub(crate) mod feathered_range;
 pub(crate) mod hsl_mixer;
+pub(crate) mod luminance_range_slider;
 pub(crate) mod point_color;
 pub(crate) mod tone_curve_editor;
 

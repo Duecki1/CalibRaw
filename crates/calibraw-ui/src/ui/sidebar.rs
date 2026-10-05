@@ -191,10 +191,7 @@ mod tests {
                     |ui| {
                         let viewport = ui.available_rect_before_wrap();
                         let button = super::export::show_export_action_panel(ui, |ui| {
-                            ui.add_sized(
-                                [ui.available_width(), moduwu_design::CONTROL_HEIGHT],
-                                egui::Button::new("Export…"),
-                            )
+                            moduwu_design::full_width_button(ui, "Export…")
                         })
                         .inner
                         .rect;
