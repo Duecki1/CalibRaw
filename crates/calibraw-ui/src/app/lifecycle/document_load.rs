@@ -336,7 +336,7 @@ impl CameraProfileRequest {
             };
         }
         match sidecar {
-            Ok(Some(loaded)) => Self {
+            Ok(Some(loaded)) if crate::sidecar::edit_state_has_adjustments(&loaded.edits) => Self {
                 // Sidecars store profiles relative to the profile folder; "." is the
                 // folder itself, which selects the embedded camera matrix.
                 path: loaded.edits.camera_profile.as_ref().and_then(|relative| {
@@ -350,7 +350,8 @@ impl CameraProfileRequest {
                 }),
                 from_sidecar: loaded.edits.camera_profile.is_some(),
             },
-            Ok(None) => Self {
+            // No sidecar, or one without adjustments: start like a first import.
+            Ok(_) => Self {
                 path: settings
                     .last_used
                     .as_ref()
@@ -442,6 +443,15 @@ impl InitialEdits {
             return Self::from_edits(edits, editing_time_override_ms.unwrap_or(0), None, true);
         }
         match sidecar {
+            // A sidecar without adjustments (written by a rating or a reset)
+            // opens like a first import, so per-camera defaults still apply.
+            Ok(Some(loaded)) if !crate::sidecar::edit_state_has_adjustments(&loaded.edits) => {
+                Self {
+                    editing_time_ms: loaded.editing_time_ms,
+                    sidecar_needs_rewrite: loaded.migrated,
+                    ..Self::defaults(default_exposure, None)
+                }
+            }
             Ok(Some(loaded)) => {
                 let warning = loaded.migrated.then(|| {
                     "Loaded edits were migrated to the current sidecar format.".to_owned()
@@ -866,6 +876,12 @@ mod tests {
         assert_eq!(unsaved.path, Some(PathBuf::from("/profiles/Last.dcp")));
         assert!(!unsaved.from_sidecar);
 
+        // A sidecar without adjustments selects a profile like a first import.
+        let unadjusted =
+            CameraProfileRequest::resolve(None, &sidecar_with_profile(None), &settings);
+        assert_eq!(unadjusted.path, Some(PathBuf::from("/profiles/Last.dcp")));
+        assert!(!unadjusted.from_sidecar);
+
         let unreadable = CameraProfileRequest::resolve(
             None,
             &Err(SidecarError::Invalid("corrupt".to_owned())),
@@ -884,11 +900,27 @@ mod tests {
         assert_eq!(reloaded.editing_time_ms, 7);
         assert!(!reloaded.use_adaptive_detail_defaults);
 
-        let saved = InitialEdits::resolve(None, None, sidecar_with_profile(None), defaults);
+        let mut edited = sidecar_with_profile(None);
+        if let Ok(Some(loaded)) = &mut edited {
+            loaded.edits.exposure.exposure = 0.5;
+        }
+        let saved = InitialEdits::resolve(None, None, edited, defaults);
         assert!(!saved.sidecar_needs_rewrite);
         assert_eq!(saved.editing_time_ms, 42);
         assert!(saved.saved_lens.is_some());
+        assert_eq!(saved.exposure.exposure, 0.5);
         assert!(!saved.use_adaptive_detail_defaults);
+
+        // A rating or a reset leaves a sidecar without adjustments; it opens like
+        // a first import (camera defaults apply) and keeps its editing time.
+        let mut sticky = defaults;
+        sticky.demosaic_mode = crate::pipeline::DemosaicMode::Dual;
+        let unadjusted = InitialEdits::resolve(None, None, sidecar_with_profile(None), sticky);
+        assert!(unadjusted.use_adaptive_detail_defaults);
+        assert_eq!(unadjusted.editing_time_ms, 42);
+        assert!(unadjusted.saved_lens.is_none());
+        assert_eq!(unadjusted.exposure, sticky);
+        assert!(unadjusted.sidecar_warning.is_none());
 
         let fresh = InitialEdits::resolve(None, None, Ok(None), defaults);
         assert!(fresh.use_adaptive_detail_defaults);
