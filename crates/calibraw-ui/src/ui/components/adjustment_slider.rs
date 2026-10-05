@@ -130,6 +130,18 @@ pub(crate) fn float_param_slider(ui: &mut Ui, value: &mut f32, spec: FloatParamS
     AdjustmentSlider::from_spec(value, spec).show(ui)
 }
 
+/// A direction parameter in degrees (0° right, clockwise positive, as the
+/// effect shaders use) on a [`moduwu_design::AngleDial`].
+pub(crate) fn float_param_angle(ui: &mut Ui, value: &mut f32, spec: FloatParamSpec) -> bool {
+    moduwu_design::AngleDial::new(spec.label, value)
+        .range(spec.range())
+        .decimals(spec.decimals)
+        .step(spec.step as f32)
+        .reset_to(spec.default)
+        .hover_text(spec.tooltip)
+        .show(ui)
+}
+
 pub(crate) fn gradient_float_param_slider(
     ui: &mut Ui,
     value: &mut f32,

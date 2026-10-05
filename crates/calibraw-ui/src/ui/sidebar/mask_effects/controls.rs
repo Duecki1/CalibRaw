@@ -15,6 +15,53 @@ pub(super) fn effect_details(ui: &mut Ui, label: &str, body: impl FnOnce(&mut Ui
         .unwrap_or(false)
 }
 
+/// A random-pattern seed: a Shuffle button and the exact number, so a look
+/// can be reproduced. Neighbouring seeds give unrelated patterns, so a slider
+/// position would mean nothing.
+pub(super) fn pattern_seed(ui: &mut Ui, value: &mut f32, spec: FloatParamSpec) -> bool {
+    let mut changed = false;
+    moduwu_design::property_row(ui, spec.label, |ui| {
+        changed |= ui
+            .add(
+                moduwu_design::NumberField::new(value, spec.range())
+                    .speed(spec.step)
+                    .decimals(spec.decimals),
+            )
+            .changed();
+        let shuffle = moduwu_design::secondary_button(
+            ui,
+            format!("{}  Shuffle", egui_phosphor::regular::SHUFFLE),
+        );
+        if shuffle
+            .on_hover_text(spec.tooltip.unwrap_or("Choose a different random pattern."))
+            .clicked()
+        {
+            *value = shuffled_pattern(*value, spec, shuffle_entropy());
+            changed = true;
+        }
+    });
+    changed
+}
+
+fn shuffle_entropy() -> u64 {
+    use std::hash::BuildHasher;
+    // Each RandomState is seeded randomly; hashing the time adds variation.
+    std::collections::hash_map::RandomState::new().hash_one(std::time::SystemTime::now())
+}
+
+/// A whole-number seed in the spec's range chosen from `entropy`, never the
+/// current one, so every Shuffle visibly changes the pattern.
+fn shuffled_pattern(current: f32, spec: FloatParamSpec, entropy: u64) -> f32 {
+    let count = ((spec.max - spec.min).round().max(0.0) as u64) + 1;
+    let first = entropy % count;
+    let candidate = |index: u64| spec.min + index as f32;
+    if count > 1 && candidate(first) == current.round() {
+        candidate((first + 1) % count)
+    } else {
+        candidate(first)
+    }
+}
+
 /// Which frame an effect's 0–100% position is measured in.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum PositionSpace {
@@ -261,4 +308,22 @@ pub(super) fn position_pad(
         position[0], position[1],
     ));
     (response, changed)
+}
+
+#[cfg(test)]
+mod pattern_tests {
+    use super::*;
+    use crate::pipeline::effect_params::fog;
+
+    #[test]
+    fn shuffled_patterns_are_whole_numbers_in_range_and_always_change() {
+        for entropy in [0, 1, 7, 999, 1_000, 1_001, u64::MAX] {
+            for current in [0.0, 1.0, 500.0, 1_000.0] {
+                let next = shuffled_pattern(current, fog::SEED, entropy);
+                assert!(fog::SEED.range().contains(&next), "{next}");
+                assert_eq!(next, next.round());
+                assert_ne!(next, current, "entropy {entropy}");
+            }
+        }
+    }
 }

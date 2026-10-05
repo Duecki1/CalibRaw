@@ -70,7 +70,7 @@ impl CalibRawApp {
             if self.persistence.sidecar_recovery.is_some() {
                 ui.add_space(8.0);
                 ui.label("This sidecar uses an unsupported format or version. You can back up its exact contents and create a new sidecar with the edits currently in memory. Its previous review rating will not be carried over.");
-                if ui.add_enabled(can_recover, egui::Button::new("Back up sidecar and create new one")).clicked() {
+                if moduwu_design::secondary_button_enabled(ui, can_recover, "Back up sidecar and create new one").clicked() {
                     recover = true;
                 }
             }

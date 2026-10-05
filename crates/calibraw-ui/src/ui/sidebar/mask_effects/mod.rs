@@ -16,12 +16,12 @@ pub(super) mod tilt_shift;
 pub(super) mod vignette;
 
 pub(crate) use controls::EffectFrame;
-use controls::{effect_details, effect_position, PositionSpace};
+use controls::{effect_details, effect_position, pattern_seed, PositionSpace};
 
 use super::{egui, MaskEffect, Ui};
 use crate::pipeline::effect_params::ColorParamSpec;
 
-pub(super) use crate::ui::components::adjustment_slider::float_param_slider;
+pub(super) use crate::ui::components::adjustment_slider::{float_param_angle, float_param_slider};
 
 fn effect_card<Settings>(
     ui: &mut Ui,

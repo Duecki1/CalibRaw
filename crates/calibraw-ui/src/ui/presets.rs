@@ -632,15 +632,7 @@ fn show_group_delete_confirmation(ctx: &egui::Context, app: &mut CalibRawApp) {
                 } else {
                     "Delete with presets"
                 };
-                if ui
-                    .add(
-                        egui::Button::new(
-                            egui::RichText::new(delete_label).color(ui.visuals().error_fg_color),
-                        )
-                        .min_size(egui::vec2(0.0, moduwu_design::CONTROL_HEIGHT)),
-                    )
-                    .clicked()
-                {
+                if moduwu_design::destructive_button(ui, delete_label).clicked() {
                     choice = Some(DeletedGroupPresets::Delete);
                 }
                 if count > 0

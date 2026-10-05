@@ -19,10 +19,12 @@ impl Sidebar {
             let lens_correction_busy = app.lens_correction_busy();
             let state = &mut app.develop.lens_correction;
             let has_selection = state.selected_lens().is_some();
-            let enabled_response = ui.add_enabled(
-                state.catalog.available && has_selection && !lens_correction_busy,
-                egui::Checkbox::new(&mut state.enabled, "Enabled"),
-            );
+            let enabled_response = ui
+                .add_enabled_ui(
+                    state.catalog.available && has_selection && !lens_correction_busy,
+                    |ui| moduwu_design::toggle(ui, &mut state.enabled, "Enabled"),
+                )
+                .inner;
             if enabled_response.changed() {
                 rebuild = true;
             }
@@ -486,7 +488,8 @@ impl Sidebar {
         let ai_before = exposure.ai_denoise_enabled;
         let action = Self::adjustment_card(ui, "Detail", false, foldable, true, |ui| {
             let mut ai_enabled = exposure.ai_denoise_enabled;
-            let ai_response = ui.checkbox(&mut ai_enabled, "AI Denoise — RawNIND UtNet2");
+            let ai_response =
+                moduwu_design::toggle(ui, &mut ai_enabled, "AI Denoise — RawNIND UtNet2");
             if ai_response.changed() {
                 ai_request = Some(ai_enabled);
             }
