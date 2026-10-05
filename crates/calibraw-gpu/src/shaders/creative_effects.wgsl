@@ -255,7 +255,7 @@ fn apply_halation(pos: vec2<i32>, rgb: vec3<f32>) -> vec3<f32> {
 
 fn apply_glow(pos: vec2<i32>, rgb: vec3<f32>) -> vec3<f32> {
     let global_amount = clamp(Common::effects_uniforms.creative_effects.x / 100.0, 0.0, 1.0);
-    if global_amount < 1e-6 {
+    if global_amount < 1e-6 && !mask_glow_self_illuminating_active() {
         return rgb;
     }
 
@@ -508,7 +508,8 @@ fn prepare_glow_source(@builtin(global_invocation_id) gid: vec3<u32>) {
     let pos = vec2<i32>(i32(gid.x), i32(gid.y));
     let global_amount = clamp(Common::effects_uniforms.creative_effects.x / 100.0, 0.0, 1.0);
     let emission = glow_emission(SceneAdjustments::local_effects_at(pos), glow_cutoff())
-        * global_amount;
+        * global_amount
+        + mask_glow_source_at(pos);
     textureStore(SceneAdjustments::glow_work_out, pos, vec4<f32>(emission, halation_emission(SceneAdjustments::local_effects_at(pos))));
 }
 

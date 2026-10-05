@@ -268,11 +268,18 @@ pub(super) fn pack_effect_params(
     } else {
         0.0
     };
+    // Self-illuminating Glow masks emit into the shared Glow diffusion, which
+    // spreads as far as the widest of them or the global Glow.
+    let self_illuminating_glow_radius = mask_data
+        .iter()
+        .filter(|mask| is_self_illuminating_glow(mask))
+        .map(|mask| mask.adjust_0[1])
+        .fold(0.0_f32, f32::max);
     EffectsUniforms {
         presence: [exposure.texture, exposure.clarity, exposure.dehaze, 0.0],
         creative_effects: [
             exposure.glow_amount.clamp(0.0, 100.0),
-            global_glow_radius,
+            global_glow_radius.max(self_illuminating_glow_radius),
             exposure.glow_threshold.clamp(0.0, 100.0),
             exposure.sharpen_amount.clamp(0.0, 150.0),
         ],

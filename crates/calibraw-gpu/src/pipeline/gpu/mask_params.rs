@@ -143,7 +143,7 @@ pub(super) fn pack_effect_mask(
                     effect_params::glow::AMOUNT.clamp(config.amount),
                     effect_params::glow::RADIUS.clamp(config.radius),
                     effect_params::glow::CORE.clamp(config.core),
-                    0.0,
+                    if config.self_illuminating { 1.0 } else { 0.0 },
                 ],
                 [color[0], color[1], color[2], 0.0],
                 zero,

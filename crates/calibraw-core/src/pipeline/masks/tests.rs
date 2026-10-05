@@ -529,6 +529,7 @@ fn glow_settings_round_trip_without_touching_local_adjustments() {
     mask.effect_settings.glow.radius = 84.0;
     mask.effect_settings.glow.core = 55.0;
     mask.effect_settings.glow.color = [0.2, 0.8, 1.0];
+    mask.effect_settings.glow.self_illuminating = false;
     mask.adjustments.exposure = 1.25;
 
     let encoded = serde_json::to_string(&mask).expect("serialize Glow mask");
@@ -538,7 +539,17 @@ fn glow_settings_round_trip_without_touching_local_adjustments() {
     assert_eq!(decoded.effect_settings.glow.radius, 84.0);
     assert_eq!(decoded.effect_settings.glow.core, 55.0);
     assert_eq!(decoded.effect_settings.glow.color, [0.2, 0.8, 1.0]);
+    assert!(!decoded.effect_settings.glow.self_illuminating);
     assert_eq!(decoded.adjustments.exposure, 1.25);
+}
+
+#[test]
+fn glow_saved_without_a_mode_stays_self_illuminating() {
+    // Edits saved before the mode existed were made with self-illuminating Glow.
+    let legacy: GlowEffectSettings =
+        serde_json::from_str(r#"{"amount":60.0,"radius":40.0,"core":50.0}"#).unwrap();
+    assert!(legacy.self_illuminating);
+    assert_eq!(legacy.amount, 60.0);
 }
 
 #[test]
