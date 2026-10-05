@@ -238,6 +238,9 @@ fn existing_luminous_edges_reject_flat_fields_and_glow_rejects_shadows() -> anyh
         component.settings.neon.background = 100.0;
         component.settings.glow.amount = 100.0;
         component.settings.glow.color = [1.0; 3];
+        // Highlight Glow follows bright pixels; self-illuminating Glow lights
+        // dark surfaces by design.
+        component.settings.glow.self_illuminating = false;
         let actual = scene.render(Some(component))?;
         for x in [16, 176] {
             let i = (32 * 192 + x) * 3;
@@ -327,6 +330,8 @@ fn glow_radius_is_independent_of_another_masked_glow() -> anyhow::Result<()> {
     tight.settings.glow.amount = 85.0;
     tight.settings.glow.radius = 12.0;
     tight.settings.glow.core = 0.0;
+    // Self-illuminating Glow shares one diffusion radius by design.
+    tight.settings.glow.self_illuminating = false;
     let baseline = scene.render(Some(tight.clone()))?;
     let mut wide = tight.clone();
     wide.settings.glow.radius = 100.0;
@@ -406,5 +411,76 @@ fn render_effect_review() -> anyhow::Result<()> {
         }
     }
     sheet.save(std::path::Path::new(&output).join("effects.png"))?;
+    Ok(())
+}
+
+#[test]
+fn self_illuminating_glow_lights_dark_surfaces_in_its_color() -> anyhow::Result<()> {
+    const WIDTH: u32 = 192;
+    let Some(scene) = Fixture::new(WIDTH, 128, |_, _| [0.03; 3])? else {
+        return Ok(());
+    };
+    // A vertical stripe in the middle of the mask atlas: x in [84, 108).
+    let stripe: Vec<u16> = (0..MASK_EDGE * MASK_EDGE)
+        .map(|i| {
+            if (28..36).contains(&(i % MASK_EDGE)) {
+                half::f16::ONE.to_bits()
+            } else {
+                0
+            }
+        })
+        .collect();
+    scene.pipeline.update_mask_layer(&scene.queue, 0, &stripe)?;
+    let render = |self_illuminating| {
+        let mut component = EffectComponent::new(MaskEffect::Glow);
+        component.settings.glow.amount = 80.0;
+        component.settings.glow.radius = 100.0;
+        component.settings.glow.color = [1.0, 0.25, 0.1];
+        component.settings.glow.self_illuminating = self_illuminating;
+        let mut mask = LocalMask::new(MaskKind::Fullscreen, 1);
+        mask.effect_components.push(component);
+        scene.render_masks(&MaskStack {
+            masks: vec![mask],
+            ..Default::default()
+        })
+    };
+    let baseline = scene.render_masks(&MaskStack {
+        masks: vec![LocalMask::new(MaskKind::Fullscreen, 1)],
+        ..Default::default()
+    })?;
+    let rgb = |image: &[f32], x: u32| {
+        let i = ((64 * WIDTH + x) * 3) as usize;
+        [image[i], image[i + 1], image[i + 2]]
+    };
+
+    let highlight = render(false)?;
+    assert!(
+        difference(&highlight, &baseline) < EPSILON,
+        "highlight Glow lit a flat dark surface"
+    );
+
+    let lit = render(true)?;
+    let gain = |x| {
+        let (lit, base) = (rgb(&lit, x), rgb(&baseline, x));
+        [lit[0] - base[0], lit[1] - base[1], lit[2] - base[2]]
+    };
+    let core = gain(96);
+    assert!(
+        core[0] > 0.1,
+        "self-illuminating Glow did not light the mask: {core:?}"
+    );
+    assert!(
+        core[0] > 2.0 * core[2],
+        "core is not tinted toward the Glow color: {core:?}"
+    );
+    let halo = gain(81);
+    assert!(
+        halo[0] > 0.005 && halo[0] < core[0],
+        "no halo spreads beyond the mask: halo {halo:?}, core {core:?}"
+    );
+    assert!(
+        gain(8)[0] < halo[0],
+        "the halo does not fall off with distance"
+    );
     Ok(())
 }

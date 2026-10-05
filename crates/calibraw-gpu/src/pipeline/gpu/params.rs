@@ -192,6 +192,15 @@ impl GpuParams {
     }
 }
 
+/// An enabled Glow slot that emits into the shared Glow diffusion. Mirrors
+/// `mask_glow_self_illuminating` in `mask_effects/glow.wgsl`.
+pub(super) fn is_self_illuminating_glow(mask: &MaskData) -> bool {
+    mask.metadata[0] != 0
+        && mask.metadata[1] != 0
+        && mask.metadata[3] >> MASK_EFFECT_ID_SHIFT == MaskEffect::Glow.shader_id()
+        && mask.adjust_0[3] > 0.5
+}
+
 pub(super) fn split_eight(values: [f32; 8]) -> ([f32; 4], [f32; 4]) {
     (
         [values[0], values[1], values[2], values[3]],
@@ -536,9 +545,10 @@ impl GpuParams {
             return true;
         }
         let local_count = (self.scene_tone.mask_counts[0] as usize).min(MAX_RENDER_MASK_SLOTS);
-        self.mask_data[..local_count]
-            .iter()
-            .any(|mask| mask.metadata[0] != 0 && mask.film_effects[0] > 1e-6)
+        self.mask_data[..local_count].iter().any(|mask| {
+            (mask.metadata[0] != 0 && mask.film_effects[0] > 1e-6)
+                || is_self_illuminating_glow(mask)
+        })
     }
 
     /// Whether an active Pixelate effect reads the block cache. Mirrors
