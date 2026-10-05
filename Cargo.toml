@@ -110,3 +110,6 @@ panic = "unwind"
 
 [profile.dev]
 opt-level = 1
+
+[patch."https://github.com/Duecki1/Moduwu"]
+moduwu-design = { path = "../moduwu-design" }

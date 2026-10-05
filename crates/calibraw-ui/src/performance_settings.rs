@@ -433,7 +433,7 @@ mod tests {
         assert_eq!(settings.export_format, ExportFormat::Jpeg);
         assert_eq!(
             settings.ui_design,
-            crate::appearance::UiDesign::ObsidianBlue
+            crate::appearance::UiDesign::PlainGreyDark
         );
         assert_eq!(
             settings.preview_backdrop,

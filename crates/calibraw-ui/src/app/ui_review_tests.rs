@@ -24,11 +24,13 @@ const CAPTURE_TIMEOUT: Duration = Duration::from_secs(600);
 const GPU_TIMEOUT: Duration = Duration::from_secs(30);
 const SETTLE_FRAMES: usize = 4;
 
-const THEMES: [(UiDesign, &str); 4] = [
+const THEMES: [(UiDesign, &str); 6] = [
     (UiDesign::ObsidianBlue, "obsidian-blue"),
     (UiDesign::ObsidianRed, "obsidian-red"),
+    (UiDesign::PlainGreyDark, "plain-grey-dark"),
     (UiDesign::Porcelain, "porcelain"),
     (UiDesign::DaylightBlue, "daylight-blue"),
+    (UiDesign::PlainGreyLight, "plain-grey-light"),
 ];
 const SIZES: [(&str, [u32; 2]); 3] = [
     ("desktop-1280x800", [1280, 800]),
