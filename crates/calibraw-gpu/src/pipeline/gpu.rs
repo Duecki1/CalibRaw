@@ -53,6 +53,8 @@ mod light_rays_tests;
 #[cfg(test)]
 mod photographic_modules_tests;
 #[cfg(test)]
+mod pixelate_tests;
+#[cfg(test)]
 mod point_color_tests;
 #[cfg(test)]
 mod tests;
@@ -113,7 +115,7 @@ fn expected_pass_count(cfa_kind: CfaKind) -> usize {
         CfaKind::Bayer => 6,
         CfaKind::XTrans => 10,
     };
-    1 + demosaic_passes + COLOR_DENOISE_ENTRY_POINTS.len() + 4 + 18
+    1 + demosaic_passes + COLOR_DENOISE_ENTRY_POINTS.len() + 4 + 19
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -329,6 +331,7 @@ pub struct RawGpuPipeline {
     /// Where each processing stage starts and ends in `passes`.
     indices: StageIndices,
     post_blur_glow_passes: Vec<Pass>,
+    post_blur_pixelate_blocks_pass: Pass,
     post_blur_creative_pass: Pass,
     post_blur_render_pass: Pass,
     passes: Vec<Pass>,
@@ -804,6 +807,17 @@ impl RawGpuPipeline {
                         self.indices.glow_blur_start_index,
                         self.indices.glow_blur_end_index,
                     );
+                }
+            }
+            if params.needs_pixelate_block_pass() {
+                if blur_active {
+                    self.encode_bound_pass(
+                        encoder,
+                        &self.post_blur_pixelate_blocks_pass,
+                        "post-Blur Pixelate block pass",
+                    );
+                } else {
+                    self.encode_pass(encoder, self.indices.pixelate_blocks_pass_index);
                 }
             }
             if blur_active {
