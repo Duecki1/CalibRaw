@@ -8,21 +8,25 @@ use serde::{Deserialize, Serialize};
 /// The application colour theme. Serde names are persisted in settings files;
 /// the first two keep the names of retired themes they replaced.
 pub(crate) enum UiDesign {
-    #[default]
     #[serde(rename = "midnight_pink")]
     ObsidianBlue,
     #[serde(rename = "graphite_mint")]
     ObsidianRed,
+    #[default]
+    PlainGreyDark,
     Porcelain,
     DaylightBlue,
+    PlainGreyLight,
 }
 
 impl UiDesign {
-    pub(crate) const ALL: [Self; 4] = [
+    pub(crate) const ALL: [Self; 6] = [
         Self::ObsidianBlue,
         Self::ObsidianRed,
+        Self::PlainGreyDark,
         Self::Porcelain,
         Self::DaylightBlue,
+        Self::PlainGreyLight,
     ];
 
     /// The Moduwu preset this setting selects.
@@ -31,8 +35,10 @@ impl UiDesign {
         match self {
             Self::ObsidianBlue => Design::ObsidianBlue,
             Self::ObsidianRed => Design::ObsidianRed,
+            Self::PlainGreyDark => Design::PlainGreyDark,
             Self::Porcelain => Design::Porcelain,
             Self::DaylightBlue => Design::DaylightBlue,
+            Self::PlainGreyLight => Design::PlainGreyLight,
         }
     }
 
@@ -97,8 +103,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn obsidian_blue_is_the_default_and_dark_accents_are_distinct() {
-        assert_eq!(UiDesign::default(), UiDesign::ObsidianBlue);
+    fn plain_grey_dark_is_the_default_and_dark_accents_are_distinct() {
+        assert_eq!(UiDesign::default(), UiDesign::PlainGreyDark);
         assert_eq!(
             serde_json::from_str::<UiDesign>(r#""midnight_pink""#).unwrap(),
             UiDesign::ObsidianBlue
@@ -136,6 +142,14 @@ mod tests {
         assert_eq!(
             serde_json::to_string(&UiDesign::DaylightBlue).unwrap(),
             r#""daylight_blue""#
+        );
+        assert_eq!(
+            serde_json::to_string(&UiDesign::PlainGreyDark).unwrap(),
+            r#""plain_grey_dark""#
+        );
+        assert_eq!(
+            serde_json::to_string(&UiDesign::PlainGreyLight).unwrap(),
+            r#""plain_grey_light""#
         );
     }
 }

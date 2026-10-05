@@ -138,7 +138,7 @@ disabled and keyboard-focus states; its test renders every combination.
 
 ## UI conventions
 
-`moduwu-design` owns reusable UI styling: the four built-in presets,
+`moduwu-design` owns reusable UI styling: the six built-in presets,
 palette-driven egui themes, control/layout metrics, cards, toolbar rows, form
 controls, `NumberField`, `Slider`, buttons, menus, dialogs and responsive
 helpers. Import them from `moduwu_design` directly; CalibRaw does not re-export
