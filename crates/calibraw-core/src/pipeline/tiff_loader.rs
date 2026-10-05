@@ -12,8 +12,12 @@ use super::display_raster::{
 
 #[cfg(target_os = "android")]
 const MAX_TIFF_DECODE_BYTES: u64 = 768 * 1024 * 1024;
+// The image crate holds the decoded image twice while decoding (its output and
+// the TIFF decoder's buffer) plus one compressed strip or tile. Budget for the
+// largest accepted image at 16 bytes per pixel (32-bit float RGBA) and strips
+// of up to 256 MiB.
 #[cfg(not(target_os = "android"))]
-const MAX_TIFF_DECODE_BYTES: u64 = 2 * 1024 * 1024 * 1024;
+const MAX_TIFF_DECODE_BYTES: u64 = super::raw_loader::MAX_RAW_PIXELS * 16 * 2 + 256 * 1024 * 1024;
 const MAX_TIFF_IFDS: usize = 32;
 const MAX_TIFF_IFD_ENTRIES: u64 = 4096;
 const MAX_TIFF_SUBIFDS: usize = 64;
