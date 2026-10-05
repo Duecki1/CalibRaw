@@ -1447,8 +1447,8 @@ fn luminance_and_color_ranges_use_the_cached_preview() {
 #[test]
 fn zero_luminance_feather_has_a_hard_range_boundary() {
     let source = MaskRgbImage::new(1, 1, vec![120, 120, 120, 255]).unwrap();
-    let hard = rasterize_luminance_range(1, 1, &source, 0.2, 0.8, 0.0);
-    let soft = rasterize_luminance_range(1, 1, &source, 0.2, 0.8, 1.0);
+    let hard = rasterize_luminance_range(1, 1, &source, 0.2, 0.8, [0.0; 2]);
+    let soft = rasterize_luminance_range(1, 1, &source, 0.2, 0.8, [1.0; 2]);
     assert_eq!(hard[0], 0.0);
     assert!(soft[0] > 0.0);
 }
@@ -1478,6 +1478,7 @@ fn grow_expands_luminance_and_color_range_masks() {
         high,
         grow,
         feather,
+        ..
     } = &mut stack.selected_component_mut().unwrap().geometry
     {
         *target = Some(source.clone());
@@ -1903,4 +1904,50 @@ fn light_rays_mask_source_tracks_component_enablement() {
     assert!(mask.has_light_rays_effect());
     mask.effect_components[0].enabled = false;
     assert!(!mask.has_light_rays_effect());
+}
+
+#[test]
+fn luminance_range_edges_feather_independently_and_old_masks_share_one_feather() {
+    let shared = MaskGeometry::LuminanceRange {
+        source: None,
+        low: 0.2,
+        high: 0.8,
+        grow: 0.0,
+        feather: 0.5,
+        high_feather: None,
+    };
+    // Masks saved before the edges could differ carry one feather and no key.
+    let encoded = serde_json::to_string(&shared).unwrap();
+    assert!(!encoded.contains("high_feather"), "{encoded}");
+    let decoded: MaskGeometry = serde_json::from_str(&encoded).unwrap();
+    assert!(matches!(
+        decoded,
+        MaskGeometry::LuminanceRange {
+            high_feather: None,
+            ..
+        }
+    ));
+
+    let split = MaskGeometry::LuminanceRange {
+        source: None,
+        low: 0.2,
+        high: 0.8,
+        grow: 0.0,
+        feather: 0.5,
+        high_feather: Some(0.0),
+    };
+    let decoded: MaskGeometry =
+        serde_json::from_str(&serde_json::to_string(&split).unwrap()).unwrap();
+    assert!(matches!(
+        decoded,
+        MaskGeometry::LuminanceRange {
+            high_feather: Some(0.0),
+            ..
+        }
+    ));
+
+    // A soft dark edge and a hard bright edge.
+    assert!(luminance_range_weight(0.15, 0.2, 0.8, [0.5, 0.0]) > 0.0);
+    assert_eq!(luminance_range_weight(0.81, 0.2, 0.8, [0.5, 0.0]), 0.0);
+    assert!(luminance_range_weight(0.81, 0.2, 0.8, [0.5, 0.5]) > 0.0);
 }

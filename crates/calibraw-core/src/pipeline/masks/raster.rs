@@ -271,9 +271,16 @@ fn rasterize_component_internal(
             high,
             grow,
             feather,
+            high_feather,
         } => {
-            let mut coverage =
-                rasterize_luminance_range(width, height, source, *low, *high, *feather);
+            let mut coverage = rasterize_luminance_range(
+                width,
+                height,
+                source,
+                *low,
+                *high,
+                [*feather, high_feather.unwrap_or(*feather)],
+            );
             if grow.abs() > 1e-5 {
                 shape_probability_mask(&mut coverage, width, height, *grow, 0.0);
             }
@@ -368,24 +375,32 @@ pub(super) fn rasterize_luminance_range(
     source: &MaskRgbImage,
     low: f32,
     high: f32,
-    feather: f32,
+    feathers: [f32; 2],
 ) -> Vec<f32> {
     sample_rgb_mask(width, height, source, |rgb| {
         let linear = rgb.map(srgb_decode_signed);
         let luminance = 0.2126 * linear[0] + 0.7152 * linear[1] + 0.0722 * linear[2];
-        luminance_range_weight(luminance, low, high, feather)
+        luminance_range_weight(luminance, low, high, feathers)
     })
 }
 
+/// Luminance ramp width of a feather of 1.
+pub const LUMINANCE_FEATHER_WIDTH: f32 = 0.35;
+/// Largest luminance feather: a ramp across the whole 0–1 range. Feathers up to
+/// 1 render as they always have.
+pub const LUMINANCE_FEATHER_MAX: f32 = 1.0 / LUMINANCE_FEATHER_WIDTH;
+
 /// Selection weight (0–1) of linear `luminance` in a luminance-range mask:
-/// full between `low` and `high`, with a smooth ramp of `feather × 0.35`
-/// outside each bound. The UI draws its range curve with the same function.
-pub fn luminance_range_weight(luminance: f32, low: f32, high: f32, feather: f32) -> f32 {
+/// full between `low` and `high`, with a smooth ramp of
+/// `feather × LUMINANCE_FEATHER_WIDTH` below `low` (`feathers[0]`) and above
+/// `high` (`feathers[1]`). The UI draws its range curve with this function.
+pub fn luminance_range_weight(luminance: f32, low: f32, high: f32, feathers: [f32; 2]) -> f32 {
     let low = low.min(high).clamp(0.0, 1.0);
     let high = high.max(low).clamp(0.0, 1.0);
-    let transition = feather.clamp(0.0, 1.0) * 0.35;
-    let enter = smoothstep(low - transition, low, luminance);
-    let leave = 1.0 - smoothstep(high, high + transition, luminance);
+    let [below, above] =
+        feathers.map(|feather| feather.clamp(0.0, LUMINANCE_FEATHER_MAX) * LUMINANCE_FEATHER_WIDTH);
+    let enter = smoothstep(low - below, low, luminance);
+    let leave = 1.0 - smoothstep(high, high + above, luminance);
     enter * leave
 }
 

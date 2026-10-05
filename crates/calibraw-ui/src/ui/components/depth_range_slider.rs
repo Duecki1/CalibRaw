@@ -1,43 +1,58 @@
-use super::feathered_range::{self, FeatheredRange, RangeHandle};
+use super::feathered_range::{self, round_to, FeatheredRange, RangeField, RangePoints};
 use crate::pipeline::DepthRangeSettings;
 use eframe::egui::{Response, Ui};
-use moduwu_design::NumberField;
+
+/// Stored precision of dragged values; the fields show two decimals.
+const DECIMALS: i32 = 3;
 
 impl FeatheredRange for DepthRangeSettings {
-    /// A feather handle marks where its ramp reaches full strength and never
-    /// leaves the track, even when the numeric feather is wider than the room
-    /// left.
-    fn handle_value(&self, handle: RangeHandle) -> f32 {
-        let value = match handle {
-            RangeHandle::Start => self.near,
-            RangeHandle::End => self.far,
-            RangeHandle::StartFeather => self.near + self.near_feather * 0.5,
-            RangeHandle::EndFeather => self.far - self.far_feather * 0.5,
+    /// `near` and `far` are ramp centres and the feathers ramp widths. An end
+    /// at 0 or 1 has no ramp (the weight is a step), so its fade sits on it.
+    fn points(&self) -> RangePoints {
+        let near_half = if self.near > 0.0 {
+            self.near_feather.clamp(0.0, 1.0) * 0.5
+        } else {
+            0.0
         };
-        value.clamp(0.0, 1.0)
-    }
-
-    /// A feather does nothing at the track end its endpoint sits on (there is
-    /// no depth beyond it to fade into), so its handle is hidden there.
-    fn handle_active(&self, handle: RangeHandle) -> bool {
-        match handle {
-            RangeHandle::Start | RangeHandle::End => true,
-            RangeHandle::StartFeather => self.near > 0.0,
-            RangeHandle::EndFeather => self.far < 1.0,
+        let far_half = if self.far < 1.0 {
+            self.far_feather.clamp(0.0, 1.0) * 0.5
+        } else {
+            0.0
+        };
+        RangePoints {
+            fade_in: (self.near - near_half).clamp(0.0, 1.0),
+            full_from: (self.near + near_half).clamp(0.0, 1.0),
+            full_to: (self.far - far_half).clamp(0.0, 1.0),
+            fade_out: (self.far + far_half).clamp(0.0, 1.0),
         }
     }
 
-    fn drag(&mut self, start: &Self, handle: RangeHandle, delta: f32) {
-        let target = start.handle_value(handle) + delta;
-        match handle {
-            RangeHandle::Start => self.near = target.clamp(0.0, start.far),
-            RangeHandle::End => self.far = target.clamp(start.near, 1.0),
-            RangeHandle::StartFeather => {
-                self.near_feather = (2.0 * (target - start.near)).clamp(0.0, 1.0);
+    /// Any ordered points on the track are a valid depth range. Only the end
+    /// that moved is rewritten, so the other keeps its exact values.
+    fn set_points(&mut self, points: RangePoints) {
+        // Round the handle places; centres and widths follow exactly from
+        // them, so a handle dragged into a corner stays exactly there.
+        // Only points that moved are rounded, so a handle that was not touched
+        // keeps its exact place.
+        let before = self.points();
+        let place = |now: f32, was: f32| {
+            if now == was {
+                was
+            } else {
+                round_to(now, DECIMALS)
             }
-            RangeHandle::EndFeather => {
-                self.far_feather = (2.0 * (start.far - target)).clamp(0.0, 1.0);
-            }
+        };
+        if points.fade_in != before.fade_in || points.full_from != before.full_from {
+            let fade_in = place(points.fade_in, before.fade_in);
+            let full_from = place(points.full_from, before.full_from);
+            self.near = (fade_in + full_from) * 0.5;
+            self.near_feather = full_from - fade_in;
+        }
+        if points.full_to != before.full_to || points.fade_out != before.fade_out {
+            let full_to = place(points.full_to, before.full_to);
+            let fade_out = place(points.fade_out, before.fade_out);
+            self.far = (full_to + fade_out) * 0.5;
+            self.far_feather = fade_out - full_to;
         }
     }
 
@@ -61,67 +76,65 @@ fn range_track(ui: &mut Ui, range: &mut DepthRangeSettings) -> Response {
         range,
         "Depth range",
         value_text,
-        "Drag the lower circles to select near and far depth. Drag each upper diamond to change that end’s feather independently; an end at 0 or 1 has no feather. Double-click to reset.",
+        "Near is on the left. Solid handles set where the selection is at full strength; hollow handles set where each end's fade begins.",
         background,
     )
 }
 
 pub(crate) fn depth_range_slider(ui: &mut Ui, range: &mut DepthRangeSettings) -> bool {
     let before = *range;
-    ui.horizontal(|ui| {
-        ui.strong("Depth range");
-        if ui.small_button("Reset").clicked() {
-            *range = DepthRangeSettings::default();
-        }
-    });
+    ui.label("Depth range");
     range_track(ui, range);
-    // Numeric entry also keeps every handle reachable when endpoints overlap,
-    // and exposes the full feather width even when its ramp extends off-track.
-    ui.columns(2, |columns| {
-        columns[0].horizontal(|ui| {
-            ui.label("Near");
-            ui.add(
-                NumberField::new(&mut range.near, 0.0..=range.far)
-                    .speed(0.005)
-                    .decimals(2),
-            );
-        });
-        columns[1].horizontal(|ui| {
-            ui.label("Far");
-            ui.add(
-                NumberField::new(&mut range.far, range.near..=1.0)
-                    .speed(0.005)
-                    .decimals(2),
-            );
-        });
-        let near_feather_active = range.handle_active(RangeHandle::StartFeather);
-        let far_feather_active = range.handle_active(RangeHandle::EndFeather);
-        columns[0].label("Near feather");
-        columns[0]
-            .add_enabled(
-                near_feather_active,
-                NumberField::new(&mut range.near_feather, 0.0..=1.0)
-                    .speed(0.005)
-                    .decimals(2),
-            )
-            .on_disabled_hover_text("Raise Near above 0 to feather the near end.");
-        columns[1].label("Far feather");
-        columns[1]
-            .add_enabled(
-                far_feather_active,
-                NumberField::new(&mut range.far_feather, 0.0..=1.0)
-                    .speed(0.005)
-                    .decimals(2),
-            )
-            .on_disabled_hover_text("Lower Far below 1 to feather the far end.");
-    });
+    let (near, far) = (range.near, range.far);
+    feathered_range::range_fields(
+        ui,
+        vec![
+            RangeField {
+                label: "Near",
+                value: &mut range.near,
+                range: 0.0..=far,
+                decimals: 2,
+                speed: 0.005,
+                disabled_reason: None,
+            },
+            RangeField {
+                label: "Far",
+                value: &mut range.far,
+                range: near..=1.0,
+                decimals: 2,
+                speed: 0.005,
+                disabled_reason: None,
+            },
+            RangeField {
+                label: "Near feather",
+                value: &mut range.near_feather,
+                range: 0.0..=1.0,
+                decimals: 2,
+                speed: 0.005,
+                disabled_reason: (near <= 0.0)
+                    .then_some("Raise Near above 0 to feather the near end."),
+            },
+            RangeField {
+                label: "Far feather",
+                value: &mut range.far_feather,
+                range: 0.0..=1.0,
+                decimals: 2,
+                speed: 0.005,
+                disabled_reason: (far >= 1.0)
+                    .then_some("Lower Far below 1 to feather the far end."),
+            },
+        ],
+    );
     *range != before
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ui::components::feathered_range::{handle_position, nearest_handle, TRACK_INSET};
+    use crate::ui::components::feathered_range::RangeHandle;
+    use crate::ui::components::feathered_range::{
+        drag_range, handle_position, nearest_handle, track_rect,
+    };
     use eframe::egui::{self, pos2, vec2, Pos2, Rect};
 
     fn show(
@@ -129,8 +142,8 @@ mod tests {
         range: &mut DepthRangeSettings,
         events: Vec<egui::Event>,
         enabled: bool,
-    ) -> Response {
-        let mut response = None;
+    ) -> (Response, Rect) {
+        let mut result = None;
         let _ = ctx.run_ui(
             egui::RawInput {
                 screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(360.0, 240.0))),
@@ -139,10 +152,14 @@ mod tests {
             },
             |ui| {
                 ui.set_width(320.0);
-                ui.add_enabled_ui(enabled, |ui| response = Some(range_track(ui, range)));
+                ui.add_enabled_ui(enabled, |ui| {
+                    let response = range_track(ui, range);
+                    let track = track_rect(ui, response.rect);
+                    result = Some((response, track));
+                });
             },
         );
-        response.unwrap()
+        result.unwrap()
     }
 
     fn button(pos: Pos2, pressed: bool) -> egui::Event {
@@ -154,19 +171,93 @@ mod tests {
         }
     }
 
+    fn close(actual: DepthRangeSettings, expected: DepthRangeSettings, context: &str) {
+        for (a, b) in [
+            (actual.near, expected.near),
+            (actual.far, expected.far),
+            (actual.near_feather, expected.near_feather),
+            (actual.far_feather, expected.far_feather),
+        ] {
+            assert!(
+                (a - b).abs() < 2e-3,
+                "{context}: {actual:?} != {expected:?}"
+            );
+        }
+    }
+
     #[test]
-    fn dragging_each_handle_changes_only_its_own_value() {
-        for handle in RangeHandle::ALL {
+    fn solid_handles_sit_on_the_top_line_and_hollow_ones_on_the_bottom() {
+        let range = DepthRangeSettings {
+            near: 0.25,
+            far: 0.75,
+            near_feather: 0.1,
+            far_feather: 0.3,
+        };
+        let track = Rect::from_min_size(Pos2::ZERO, vec2(100.0, 50.0));
+        for (handle, x, y) in [
+            (RangeHandle::Start, 0.30, 0.0),
+            (RangeHandle::StartFeather, 0.20, 50.0),
+            (RangeHandle::End, 0.60, 0.0),
+            (RangeHandle::EndFeather, 0.90, 50.0),
+        ] {
+            let position = handle_position(track, &range, handle);
+            assert!((position.x - x * 100.0).abs() < 1e-3, "{handle:?}");
+            assert_eq!(position.y, y, "{handle:?}");
+            // The curve passes through each handle.
+            let weight = if y == 0.0 { 1.0 } else { 0.0 };
+            assert!((range.weight(x) - weight).abs() < 1e-4, "{handle:?}");
+        }
+    }
+
+    #[test]
+    fn dragging_each_handle_changes_only_its_own_end() {
+        let initial = DepthRangeSettings {
+            near: 0.25,
+            far: 0.75,
+            near_feather: 0.1,
+            far_feather: 0.3,
+        };
+        for (handle, expected) in [
+            // Full strength from 0.35; the fade still begins at 0.20.
+            (
+                RangeHandle::Start,
+                DepthRangeSettings {
+                    near: 0.275,
+                    near_feather: 0.15,
+                    ..initial
+                },
+            ),
+            // Full strength to 0.65; the fade still ends at 0.90.
+            (
+                RangeHandle::End,
+                DepthRangeSettings {
+                    far: 0.775,
+                    far_feather: 0.25,
+                    ..initial
+                },
+            ),
+            // The full-strength point (0.30) stays; the fade starts at 0.25.
+            (
+                RangeHandle::StartFeather,
+                DepthRangeSettings {
+                    near: 0.275,
+                    near_feather: 0.05,
+                    ..initial
+                },
+            ),
+            // The full-strength point (0.60) stays; the fade ends at 0.95.
+            (
+                RangeHandle::EndFeather,
+                DepthRangeSettings {
+                    far: 0.775,
+                    far_feather: 0.35,
+                    ..initial
+                },
+            ),
+        ] {
             let ctx = egui::Context::default();
-            let mut range = DepthRangeSettings {
-                near: 0.25,
-                far: 0.75,
-                near_feather: 0.1,
-                far_feather: 0.3,
-            };
-            let initial = range;
-            let response = show(&ctx, &mut range, vec![], true);
-            let track = response.rect.shrink2(TRACK_INSET);
+            let mut range = initial;
+            let (_, track) = show(&ctx, &mut range, vec![], true);
             let start = handle_position(track, &range, handle);
             show(
                 &ctx,
@@ -175,72 +266,85 @@ mod tests {
                 true,
             );
             let end = start + vec2(track.width() * 0.05, 0.0);
-            let response = show(&ctx, &mut range, vec![egui::Event::PointerMoved(end)], true);
+            let (response, _) = show(&ctx, &mut range, vec![egui::Event::PointerMoved(end)], true);
             assert!(response.changed(), "{handle:?}");
-            let expected = match handle {
-                RangeHandle::Start => DepthRangeSettings {
-                    near: 0.3,
-                    ..initial
-                },
-                RangeHandle::End => DepthRangeSettings {
-                    far: 0.8,
-                    ..initial
-                },
-                RangeHandle::StartFeather => DepthRangeSettings {
-                    near_feather: 0.2,
-                    ..initial
-                },
-                RangeHandle::EndFeather => DepthRangeSettings {
-                    far_feather: 0.2,
-                    ..initial
-                },
-            };
-            assert!((range.near - expected.near).abs() < 1e-5, "{handle:?}");
-            assert!((range.far - expected.far).abs() < 1e-5, "{handle:?}");
-            assert!(
-                (range.near_feather - expected.near_feather).abs() < 1e-5,
-                "{handle:?}"
-            );
-            assert!(
-                (range.far_feather - expected.far_feather).abs() < 1e-5,
-                "{handle:?}"
-            );
+            close(range, expected, &format!("{handle:?}"));
             show(&ctx, &mut range, vec![button(end, false)], true);
         }
     }
 
     #[test]
-    fn handles_cannot_cross_and_collapsed_ranges_can_reopen() {
-        let track = Rect::from_min_size(Pos2::ZERO, vec2(300.0, 54.0));
-        for value in [0.0, 0.5, 1.0] {
-            let initial = DepthRangeSettings {
-                near: value,
-                far: value,
-                ..Default::default()
-            };
-            let mut range = initial;
-            let pointer = pos2(track.width() * value, track.bottom());
-            let handle = nearest_handle(track, &range, pointer);
-            range.drag(&initial, handle, if value < 1.0 { 0.2 } else { -0.2 });
-            assert!(range.near < range.far);
-        }
+    fn crossing_handles_push_the_others_along() {
         let initial = DepthRangeSettings {
             near: 0.2,
             far: 0.8,
             ..Default::default()
         };
         let mut range = initial;
-        range.drag(&initial, RangeHandle::Start, 2.0);
-        assert_eq!(range.near, range.far);
-        range = initial;
-        range.drag(&initial, RangeHandle::End, -2.0);
-        assert_eq!(range.near, range.far);
-        assert_eq!(range.near_feather, initial.near_feather);
-        assert_eq!(range.far_feather, initial.far_feather);
+        drag_range(&mut range, &initial, RangeHandle::Start, 2.0);
+        let points = range.points();
+        assert_eq!(points.full_from, 1.0);
+        assert!(points.full_to >= points.full_from && range.near <= range.far);
     }
 
     #[test]
-    fn feathers_at_the_track_ends_cannot_be_grabbed() {
+    fn every_drag_keeps_the_range_valid_and_follows_the_pointer() {
+        for start in [
+            DepthRangeSettings::default(),
+            DepthRangeSettings {
+                near: 0.3,
+                far: 0.7,
+                near_feather: 0.4,
+                far_feather: 0.4,
+            },
+            DepthRangeSettings {
+                near: 0.0,
+                far: 1.0,
+                near_feather: 0.5,
+                far_feather: 0.5,
+            },
+            DepthRangeSettings {
+                near: 0.5,
+                far: 0.5,
+                near_feather: 0.0,
+                far_feather: 0.0,
+            },
+        ] {
+            for handle in RangeHandle::ALL {
+                for delta in [-2.0, -0.2, -0.01, 0.01, 0.2, 2.0] {
+                    let mut range = start;
+                    drag_range(&mut range, &start, handle, delta);
+                    let context = format!("{handle:?} {delta} from {start:?}: {range:?}");
+                    assert!(0.0 <= range.near && range.near <= range.far, "{context}");
+                    assert!(range.far <= 1.0, "{context}");
+                    assert!((0.0..=1.0).contains(&range.near_feather), "{context}");
+                    assert!((0.0..=1.0).contains(&range.far_feather), "{context}");
+                    // The dragged handle follows the pointer; a fade handle
+                    // stops at its solid handle and moves nothing else.
+                    let before = start.points();
+                    let (low, high) = match handle {
+                        RangeHandle::StartFeather => (0.0, before.full_from),
+                        RangeHandle::EndFeather => (before.full_to, 1.0),
+                        _ => (0.0, 1.0),
+                    };
+                    let target = (before.get(handle) + delta).clamp(low, high);
+                    let after = range.points();
+                    assert!((after.get(handle) - target).abs() < 2e-3, "{context}");
+                    if matches!(handle, RangeHandle::StartFeather | RangeHandle::EndFeather) {
+                        for other in RangeHandle::ALL.into_iter().filter(|h| *h != handle) {
+                            assert!(
+                                (after.get(other) - before.get(other)).abs() < 1e-6,
+                                "{context}: {other:?} moved"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn both_handles_in_a_corner_can_be_grabbed() {
         let track = Rect::from_min_size(Pos2::ZERO, vec2(300.0, 54.0));
         let range = DepthRangeSettings {
             near: 0.0,
@@ -248,31 +352,44 @@ mod tests {
             near_feather: 0.2,
             far_feather: 0.2,
         };
-        for pointer in [pos2(30.0, track.top()), pos2(270.0, track.top())] {
-            let handle = nearest_handle(track, &range, pointer);
-            assert!(
-                matches!(handle, RangeHandle::Start | RangeHandle::End),
-                "{handle:?}"
-            );
+        for (pointer, expected) in [
+            (pos2(2.0, track.top()), RangeHandle::Start),
+            (pos2(2.0, track.bottom()), RangeHandle::StartFeather),
+            (pos2(298.0, track.top()), RangeHandle::End),
+            (pos2(298.0, track.bottom()), RangeHandle::EndFeather),
+        ] {
+            assert_eq!(nearest_handle(track, &range, pointer), expected);
         }
+        // Dragging the solid handle out of the corner opens a fade from the
+        // hollow one, which stays in the corner.
+        let mut opened = range;
+        drag_range(&mut opened, &range, RangeHandle::Start, 0.2);
+        let points = opened.points();
+        assert!((points.full_from - 0.2).abs() < 2e-3, "{opened:?}");
+        assert_eq!(points.fade_in, 0.0);
     }
 
     #[test]
-    fn feather_handle_follows_the_pointer_from_the_track_end() {
-        // The near feather is wider than the room left, so its handle sits
-        // at the right end. Dragging it left moves it at once, with no dead
-        // zone while the hidden excess is used up.
+    fn fade_handle_follows_the_pointer_from_the_track_end() {
+        // The near fade starts off the track (at -0.2), so its handle sits at
+        // 0. Dragging it right moves it at once, with no dead zone while the
+        // hidden excess is used up.
         let initial = DepthRangeSettings {
-            near: 0.8,
-            far: 1.0,
-            near_feather: 1.0,
+            near: 0.1,
+            far: 0.9,
+            near_feather: 0.6,
             far_feather: 0.1,
         };
-        assert_eq!(initial.handle_value(RangeHandle::StartFeather), 1.0);
+        assert_eq!(initial.points().fade_in, 0.0);
         let mut range = initial;
-        range.drag(&initial, RangeHandle::StartFeather, -0.05);
-        assert!((range.handle_value(RangeHandle::StartFeather) - 0.95).abs() < 1e-5);
-        assert!((range.near_feather - 0.3).abs() < 1e-5);
+        drag_range(&mut range, &initial, RangeHandle::StartFeather, 0.05);
+        assert!((range.points().fade_in - 0.05).abs() < 2e-3);
+        assert!((range.points().full_from - 0.4).abs() < 2e-3);
+        // The far end was not touched and keeps its exact values.
+        assert_eq!(
+            (range.far, range.far_feather),
+            (initial.far, initial.far_feather)
+        );
     }
 
     #[test]
@@ -280,8 +397,8 @@ mod tests {
         let ctx = egui::Context::default();
         let mut range = DepthRangeSettings::default();
         let initial = range;
-        let rect = show(&ctx, &mut range, vec![], true).rect;
-        let start = handle_position(rect.shrink2(TRACK_INSET), &range, RangeHandle::End);
+        let (_, track) = show(&ctx, &mut range, vec![], true);
+        let start = handle_position(track, &range, RangeHandle::End);
         show(
             &ctx,
             &mut range,
@@ -303,8 +420,8 @@ mod tests {
         let ctx = egui::Context::default();
         let mut range = DepthRangeSettings::default();
         let initial = range;
-        let rect = show(&ctx, &mut range, vec![], false).rect;
-        let start = handle_position(rect.shrink2(TRACK_INSET), &range, RangeHandle::End);
+        let (_, track) = show(&ctx, &mut range, vec![], false);
+        let start = handle_position(track, &range, RangeHandle::End);
         show(
             &ctx,
             &mut range,
@@ -318,5 +435,104 @@ mod tests {
             false,
         );
         assert_eq!(range, initial);
+    }
+
+    #[test]
+    fn arrow_keys_move_the_selected_handle_and_up_down_choose_another() {
+        let ctx = egui::Context::default();
+        let mut range = DepthRangeSettings::default();
+        let initial = range;
+        let (_, track) = show(&ctx, &mut range, vec![], true);
+        let far = handle_position(track, &range, RangeHandle::End);
+        for pressed in [true, false] {
+            show(
+                &ctx,
+                &mut range,
+                vec![egui::Event::PointerMoved(far), button(far, pressed)],
+                true,
+            );
+        }
+        // egui applies the arrow-key focus lock from the frame after focus.
+        show(&ctx, &mut range, vec![], true);
+        let key = |key, pressed| egui::Event::Key {
+            key,
+            physical_key: None,
+            pressed,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        };
+        show(
+            &ctx,
+            &mut range,
+            vec![key(egui::Key::ArrowRight, true)],
+            true,
+        );
+        let points = range.points();
+        assert!((points.full_to - (initial.points().full_to + 0.01)).abs() < 1e-4);
+        assert_eq!(points.fade_out, initial.points().fade_out);
+        assert_eq!(range.near, initial.near);
+        show(
+            &ctx,
+            &mut range,
+            vec![
+                key(egui::Key::ArrowRight, false),
+                key(egui::Key::ArrowUp, true),
+            ],
+            true,
+        );
+        show(
+            &ctx,
+            &mut range,
+            vec![
+                key(egui::Key::ArrowUp, false),
+                key(egui::Key::ArrowRight, true),
+            ],
+            true,
+        );
+        // Up selects the near solid handle (in the corner at 0); moving it
+        // right opens the near end of the range.
+        assert!(range.near > 0.0, "{range:?}");
+    }
+
+    #[test]
+    fn pointer_drag_that_pushes_a_handle_leaves_it_there_when_reversed() {
+        let ctx = egui::Context::default();
+        let mut range = DepthRangeSettings {
+            near: 0.2,
+            far: 0.5,
+            near_feather: 0.0,
+            far_feather: 0.0,
+        };
+        let (_, track) = show(&ctx, &mut range, vec![], true);
+        let start = handle_position(track, &range, RangeHandle::Start);
+        show(
+            &ctx,
+            &mut range,
+            vec![egui::Event::PointerMoved(start), button(start, true)],
+            true,
+        );
+        // Past the far end at 0.8: it is pushed along.
+        for t in [0.3, 0.6, 0.8] {
+            let pointer = pos2(egui::lerp(track.x_range(), t), start.y);
+            show(
+                &ctx,
+                &mut range,
+                vec![egui::Event::PointerMoved(pointer)],
+                true,
+            );
+        }
+        assert!((range.far - 0.8).abs() < 2e-3, "{range:?}");
+        // Back to 0.3: the far end stays at 0.8.
+        for t in [0.6, 0.3] {
+            let pointer = pos2(egui::lerp(track.x_range(), t), start.y);
+            show(
+                &ctx,
+                &mut range,
+                vec![egui::Event::PointerMoved(pointer)],
+                true,
+            );
+        }
+        assert!((range.points().full_from - 0.3).abs() < 2e-3, "{range:?}");
+        assert!((range.far - 0.8).abs() < 2e-3, "{range:?}");
     }
 }

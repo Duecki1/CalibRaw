@@ -1540,6 +1540,7 @@ fn reconstructible_range_source_is_not_persisted() {
             high: 0.8,
             grow: 0.0,
             feather: 0.15,
+            high_feather: None,
         },
     };
     let encoded = encode(edits).unwrap();
@@ -1610,6 +1611,7 @@ fn repeated_shared_range_sources_stay_small() {
             high: 0.8,
             grow: 0.0,
             feather: 0.15,
+            high_feather: None,
         },
     };
     Arc::make_mut(&mut edits.masks).masks[0].components = vec![component; 3];
