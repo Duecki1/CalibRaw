@@ -20,15 +20,15 @@ pub(super) fn mask_creation_icon() -> &'static str {
     egui_phosphor::regular::PLUS
 }
 
-/// Touch drags scroll the strip on Android, except while they carry a
-/// group: then the drag moves the group and the strip scrolls at its ends.
-fn mask_strip_scroll_source(dragging_group: bool) -> egui::scroll_area::ScrollSource {
+/// Touch drags scroll the strip on Android, except while they carry a card:
+/// then the drag moves the card and the strip scrolls at its ends.
+fn mask_strip_scroll_source(dragging_card: bool) -> egui::scroll_area::ScrollSource {
     let source = if cfg!(target_os = "android") {
         egui::scroll_area::ScrollSource::ALL
     } else {
         egui::scroll_area::ScrollSource::default()
     };
-    if dragging_group {
+    if dragging_card {
         egui::scroll_area::ScrollSource {
             drag: egui::scroll_area::DragScroll::Never,
             ..source
