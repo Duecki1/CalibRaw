@@ -1,5 +1,6 @@
 use super::segments::{detect_line_segments, detect_line_segments_multiscale};
 use super::*;
+use crate::pipeline::geometry::LensGeometryMap;
 use crate::pipeline::raw_loader::{CompactPixelMap, LoadedRaw};
 
 /// Axis-aligned rectangles (centre x, centre y, half width, half height) in a frame centred on
@@ -414,4 +415,50 @@ fn pillars_outrank_a_tilted_horizontal() {
         "estimated {}",
         estimate.rotation_degrees
     );
+}
+
+/// A lens map that mirrors the frame horizontally, as a stand-in for a real correction.
+fn mirroring_lens(width: u32, height: u32) -> LensGeometryMap {
+    let (grid_width, grid_height) = (9u32, 7u32);
+    let coordinates = (0..grid_height)
+        .flat_map(|row| {
+            (0..grid_width).map(move |column| {
+                let x = column as f32 / (grid_width - 1) as f32 * (width - 1) as f32;
+                let y = row as f32 / (grid_height - 1) as f32 * (height - 1) as f32;
+                [(width - 1) as f32 - x, y]
+            })
+        })
+        .collect();
+    LensGeometryMap::new(width, height, grid_width, grid_height, coordinates).unwrap()
+}
+
+#[test]
+fn lens_geometry_is_resampled_before_detection() {
+    let mut raw = raster_raw(1200, 800, &render_scene(1200, 800, 4.0));
+    let plain = estimate(&raw, GeometryTransform::default()).unwrap();
+    raw.lens_geometry = Some(std::sync::Arc::new(mirroring_lens(1200, 800)));
+    let corrected = estimate(&raw, GeometryTransform::default()).unwrap();
+    assert!(
+        (corrected.rotation_degrees + plain.rotation_degrees).abs() < 0.1,
+        "plain {}, corrected {}",
+        plain.rotation_degrees,
+        corrected.rotation_degrees
+    );
+}
+
+#[test]
+fn quarter_turns_do_not_change_the_estimate() {
+    let raw = raster_raw(1200, 800, &render_scene(1200, 800, -3.0));
+    let plain = estimate(&raw, GeometryTransform::default()).unwrap();
+    for quarter_turns in 1..4 {
+        let turned = estimate(
+            &raw,
+            GeometryTransform {
+                quarter_turns,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(plain, turned);
+    }
 }

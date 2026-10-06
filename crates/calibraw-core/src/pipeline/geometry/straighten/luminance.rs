@@ -7,7 +7,7 @@ use anyhow::{ensure, Context, Result};
 use rayon::prelude::*;
 
 /// Longest edge the raster aims for. Bins are whole CFA periods, so the result may be smaller;
-/// at 1000 px a line spanning half the frame still resolves its angle to about 0.1°.
+/// at 2048 px a line spanning half the frame still resolves its angle to about 0.06°.
 const TARGET_EDGE: u32 = 2048;
 /// Smallest raster edge on which line detection is meaningful.
 const MIN_EDGE: usize = 16;
