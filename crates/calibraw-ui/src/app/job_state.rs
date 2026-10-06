@@ -7,6 +7,7 @@ pub(crate) enum ForegroundOperationKind {
     /// A local-AI job; Remove runs in its own worker and never appears here.
     Ai(calibraw_ai::AiFeature),
     LensCorrection,
+    AutoStraighten,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -63,6 +64,7 @@ pub(super) enum ForegroundOperationReceiver {
     Object(mpsc::Receiver<ObjectMaskEvent>),
     AiDenoise(mpsc::Receiver<calibraw_ai::ai_denoise::AiDenoiseEvent>),
     LensCorrection(mpsc::Receiver<LensCorrectionEvent>),
+    AutoStraighten(mpsc::Receiver<AutoStraightenResult>),
 }
 
 pub(super) enum ForegroundOperationContext {
@@ -73,6 +75,10 @@ pub(super) enum ForegroundOperationContext {
     },
     AiDenoise,
     LensCorrection,
+    /// The geometry the estimate was made for; flips and perspective change its meaning.
+    AutoStraighten {
+        geometry: GeometryTransform,
+    },
 }
 
 pub(crate) struct ForegroundOperation {

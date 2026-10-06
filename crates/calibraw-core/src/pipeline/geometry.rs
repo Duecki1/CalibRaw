@@ -5,10 +5,12 @@ use std::sync::Arc;
 mod crop_fit;
 mod inverse_map;
 mod lens_map;
+mod straighten;
 mod thumbnail;
 use crop_fit::*;
 pub use inverse_map::*;
 pub use lens_map::*;
+pub use straighten::{estimate_straighten_rotation, LineAnalysisImage, StraightenEstimate};
 pub use thumbnail::*;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
