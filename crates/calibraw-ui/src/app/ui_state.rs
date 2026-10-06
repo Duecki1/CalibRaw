@@ -22,6 +22,7 @@ pub(crate) enum AppTab {
 pub(crate) struct PreferencesState {
     pub(crate) image_relative_brush_size: bool,
     pub(crate) show_develop_navigation_labels: bool,
+    pub(crate) automatic_lens_correction: AutomaticLensCorrection,
     pub(crate) export_name_template: String,
     #[cfg(not(target_os = "android"))]
     pub(crate) discord_rich_presence: bool,

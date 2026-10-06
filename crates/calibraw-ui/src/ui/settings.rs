@@ -214,6 +214,9 @@ impl Settings {
         moduwu_design::content_card(ui, |ui| Self::show_export_names_card(ui, app));
 
         moduwu_design::card_gap(ui);
+        moduwu_design::content_card(ui, |ui| Self::show_lens_correction_card(ui, app));
+
+        moduwu_design::card_gap(ui);
         moduwu_design::content_card(ui, |ui| Self::show_raw_color_profiles_card(ui, app));
 
         #[cfg(not(target_os = "android"))]
@@ -493,6 +496,42 @@ impl Settings {
         if changed {
             app.set_adjustment_copy_settings(settings);
         }
+    }
+
+    fn show_lens_correction_card(ui: &mut Ui, app: &mut CalibRawApp) {
+        moduwu_design::heading_with_help(
+            ui,
+            "Lens correction",
+            "Choose what happens when you open a photo that has no saved edits. Photos you have already edited keep their own lens settings, and you can always change them in the Lens Corrections card.",
+        );
+
+        let previous = app.preferences.automatic_lens_correction;
+        let mut automatic = previous;
+        moduwu_design::toggle_with_help(
+            ui,
+            &mut automatic.enabled,
+            "Automatic lens correction",
+            "Applies the Lensfun profile matched from the photo's RAW metadata when you open it. Enabled by default.",
+        );
+        ui.add_enabled_ui(automatic.enabled, |ui| {
+            moduwu_design::toggle_with_help(
+                ui,
+                &mut automatic.corrections.geometry,
+                "Geometry",
+                "Corrects distortion and colour fringing (lateral chromatic aberration) automatically.",
+            );
+            moduwu_design::toggle_with_help(
+                ui,
+                &mut automatic.corrections.vignetting,
+                "Vignetting",
+                "Brightens the corners the lens darkens automatically.",
+            );
+        });
+        // At least one correction must stay selected.
+        if !automatic.corrections.geometry && !automatic.corrections.vignetting {
+            automatic.corrections = previous.corrections;
+        }
+        app.set_automatic_lens_correction(automatic);
     }
 
     fn show_export_names_card(ui: &mut Ui, app: &mut CalibRawApp) {

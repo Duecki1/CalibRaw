@@ -273,6 +273,13 @@ impl CalibRawApp {
             preferences: PreferencesState {
                 image_relative_brush_size: performance.image_relative_brush_size,
                 show_develop_navigation_labels: performance.show_develop_navigation_labels,
+                automatic_lens_correction: AutomaticLensCorrection {
+                    enabled: performance.automatic_lens_correction,
+                    corrections: LensfunCorrections {
+                        geometry: performance.automatic_lens_geometry,
+                        vignetting: performance.automatic_lens_vignetting,
+                    },
+                },
                 export_name_template: performance.export_name_template.clone(),
                 #[cfg(not(target_os = "android"))]
                 discord_rich_presence: performance.discord_rich_presence,

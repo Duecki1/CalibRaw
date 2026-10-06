@@ -50,6 +50,10 @@ pub(crate) struct PerformanceSettings {
     pub camera_profile_auto_detect: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_camera_profile: Option<PathBuf>,
+    /// Apply the matched Lensfun profile when a photo without saved edits opens.
+    pub automatic_lens_correction: bool,
+    pub automatic_lens_geometry: bool,
+    pub automatic_lens_vignetting: bool,
     pub adjustment_copy_settings: crate::sidecar::AdjustmentCopySettings,
     #[cfg(target_os = "android")]
     pub(crate) last_android_library_folder: String,
@@ -160,6 +164,9 @@ impl Default for PerformanceSettings {
             camera_profile_folder_label: None,
             camera_profile_auto_detect: !cfg!(target_os = "android"),
             last_camera_profile: None,
+            automatic_lens_correction: true,
+            automatic_lens_geometry: true,
+            automatic_lens_vignetting: true,
             adjustment_copy_settings: crate::sidecar::AdjustmentCopySettings::default(),
             #[cfg(target_os = "android")]
             last_android_library_folder: String::new(),
@@ -188,6 +195,10 @@ impl PerformanceSettings {
             .clamp(1, crate::ui::library::maximum_thumbnail_worker_count());
         self.birefnet_quality =
             subject_quality_for_platform(self.birefnet_quality, cfg!(target_os = "android"));
+        if !self.automatic_lens_geometry && !self.automatic_lens_vignetting {
+            self.automatic_lens_geometry = true;
+            self.automatic_lens_vignetting = true;
+        }
         if self.github_update_check_allowed == Some(false) {
             self.auto_check_updates = false;
         }
@@ -416,6 +427,12 @@ mod tests {
             serde_json::to_value(PerformanceSettings::default()).unwrap()
         );
 
+        assert!(
+            empty.automatic_lens_correction
+                && empty.automatic_lens_geometry
+                && empty.automatic_lens_vignetting
+        );
+
         let settings: PerformanceSettings =
             serde_json::from_str(r#"{"version":1,"raw_cache_files":1,"thumbnail_workers":1}"#)
                 .expect("baseline settings should remain readable");
@@ -490,6 +507,8 @@ mod tests {
             ui_design: crate::appearance::UiDesign::Porcelain,
             preview_backdrop: crate::appearance::PreviewBackdrop::MatchPhoto,
             render_edited_thumbnails_during_indexing: true,
+            automatic_lens_correction: false,
+            automatic_lens_vignetting: false,
             ..Default::default()
         };
         #[cfg(not(target_os = "android"))]
@@ -522,6 +541,8 @@ mod tests {
         );
         assert!(restored.image_relative_brush_size);
         assert!(restored.show_develop_navigation_labels);
+        assert!(!restored.automatic_lens_correction);
+        assert!(restored.automatic_lens_geometry && !restored.automatic_lens_vignetting);
         assert!(restored.develop_histogram_open);
         assert_eq!(
             restored.export_name_template,

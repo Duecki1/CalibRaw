@@ -76,6 +76,7 @@ pub(super) struct DocumentLoadJob {
     pub(super) preview_quality: PreviewQuality,
     pub(super) viewport_pixels: [u32; 2],
     pub(super) camera_profiles: CameraProfileSettings,
+    pub(super) automatic_lens: AutomaticLensCorrection,
     pub(super) ai_denoise_result_path: Option<PathBuf>,
     pub(super) device: wgpu::Device,
     pub(super) queue: wgpu::Queue,
@@ -102,6 +103,7 @@ pub(super) fn run_document_load(job: DocumentLoadJob) -> Result<LoadedPreview, L
         preview_quality,
         viewport_pixels,
         camera_profiles,
+        automatic_lens,
         ai_denoise_result_path,
         device,
         queue,
@@ -222,8 +224,12 @@ pub(super) fn run_document_load(job: DocumentLoadJob) -> Result<LoadedPreview, L
             );
         }
 
-        let (lens_correction, full_raw) =
-            apply_saved_lens_correction(&original_raw, saved_lens, &mut sidecar_warning);
+        let (lens_correction, full_raw) = apply_saved_lens_correction(
+            &original_raw,
+            saved_lens,
+            automatic_lens,
+            &mut sidecar_warning,
+        );
         restore_ai_denoise_result(&full_raw, &exposure, ai_denoise_result_path.as_deref())?;
         if full_raw.uses_opposed_chroma(&exposure) {
             let highlight_started = Instant::now();
@@ -527,15 +533,18 @@ fn record_edit_state(exposure: &ExposureParams, masks: &MaskStack) {
 }
 
 /// Restores the sidecar's lens selection and applies it at full resolution.
+/// Photos without a saved lens state follow the automatic-correction setting.
 /// Returns the lens state and the RAW to develop, which is the original when
 /// correction is off or fails.
 fn apply_saved_lens_correction(
     original_raw: &Arc<LoadedRaw>,
     saved_lens: Option<crate::sidecar::LensEditState>,
+    automatic_lens: AutomaticLensCorrection,
     sidecar_warning: &mut Option<String>,
 ) -> (LensCorrectionState, Arc<LoadedRaw>) {
     let lens_started = Instant::now();
-    let mut lens_correction = LensCorrectionState::from_catalog(lensfun_catalog(original_raw));
+    let mut lens_correction =
+        LensCorrectionState::automatic(lensfun_catalog(original_raw), automatic_lens);
     calibraw_core::diagnostics::record(format!(
         "Lensfun catalog lookup finished in {:.3}s",
         lens_started.elapsed().as_secs_f64()
