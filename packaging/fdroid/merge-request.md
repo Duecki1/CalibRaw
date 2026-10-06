@@ -1,7 +1,7 @@
 Adds CalibRaw, a GPL-3.0-or-later RAW photo editor with GPU rendering,
 non-destructive editing and optional on-device AI tools. Builds the ARM64
-Android app from release `v1.1.1`, commit
-`60cc0005cc6cc0479bb2c8db8a7b963554f7a393`.
+Android app from release `v1.2.0`, commit
+`TODO-full-hash-of-v1.2.0`.
 
 Related packaging request: https://gitlab.com/fdroid/rfp/-/work_items/4487
 
@@ -54,22 +54,12 @@ I am the app author. The fork is public; please confirm the uploaded source bran
 
 ## Packaging notes
 
-The initial `v1.1.1` release is pinned explicitly, with `AutoUpdateMode: None`
-and `UpdateCheckMode: Static` temporarily. Every published matching tag lacks
-`fdroid_version_code` in `Cargo.toml`; `Tags` skips them all and then errors
-because no version information remains. Pinning the build does not avoid this.
-
-Automatic updates require a new published release tag containing the committed
-field; adding it only to the default branch is insufficient. Do not move old
-tags. After publishing that release, restore `AutoUpdateMode: Version`, the
-stable-tag filter and `UpdateCheckData` in both the local recipe and existing
-fdroiddata metadata via MR. The exact YAML and `fdroid rewritemeta` /
-`fdroid checkupdates --auto` steps are in upstream `packaging/fdroid/README.md`.
-
-The initial tag predates the Fastlane listing, so the recipe imports only the
-`fastlane` directory from upstream commit
-`7bde63b1861bf40e00e1009fed1cc8f51bcd6c49`. Future tags that already provide
-the listing retain their own assets.
+The recipe builds the pinned `v1.2.0` commit and uses `AutoUpdateMode: Version`
+with `UpdateCheckMode: Tags` for stable `vMAJOR.MINOR.PATCH` tags. `v1.2.0` is
+the first tag containing both `fdroid_version_code` in `Cargo.toml` and the
+Fastlane listing, so no listing import is needed. Older tags lack the field and
+are skipped. The exact YAML and `fdroid rewritemeta` / `fdroid checkupdates
+--auto` steps are in upstream `packaging/fdroid/README.md`.
 
 LibRaw, Lensfun and the native support libraries build from pinned source.
 ONNX Runtime uses Microsoft's official MIT-licensed Android AAR from Maven

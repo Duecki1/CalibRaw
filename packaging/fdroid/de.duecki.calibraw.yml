@@ -13,9 +13,9 @@ RepoType: git
 Repo: https://github.com/Duecki1/CalibRaw.git
 
 Builds:
-  - versionName: 1.1.1
-    versionCode: 1000707
-    commit: 60cc0005cc6cc0479bb2c8db8a7b963554f7a393
+  - versionName: 1.2.0
+    versionCode: 1000708
+    commit: TODO-full-hash-of-v1.2.0
     subdir: android
     sudo:
       - apt-get update
@@ -24,8 +24,6 @@ Builds:
       - yes
     output: app/build/outputs/apk/release/app-release-unsigned.apk
     prebuild:
-      - if [ ! -d ../fastlane ]; then git -C .. checkout 7bde63b1861bf40e00e1009fed1cc8f51bcd6c49
-        -- fastlane; fi
       - echo 'calibrawVersionCode=$$VERCODE$$' >> gradle.properties
       - export PATH="$HOME/.cargo/bin:$PATH"
       - rustup toolchain install 1.92.0 --profile minimal
@@ -60,19 +58,9 @@ Builds:
       - calibrawBuildRust=false
 
 MaintainerNotes: |-
-  Initial inclusion builds the existing v1.1.1 release. Update checks are
-  temporarily Static because no published release tag contains the
-  fdroid_version_code field in Cargo.toml. Tags mode fails if every matching
-  tag lacks version information; pinning the build does not prevent this.
-  After the first release with that field is tagged, enable AutoUpdateMode:
-  Version and UpdateCheckMode: Tags ^v[0-9]+\.[0-9]+\.[0-9]+$, with
-  UpdateCheckData reading the committed code and workspace version from
-  Cargo.toml. Increase the code for every release. See packaging/fdroid/README.md
-  upstream for the exact configuration. Do not move existing release tags.
-
-  v1.1.1 predates the upstream Fastlane listing. For that release only, import
-  the listing from its upstream commit 7bde63b1861bf40e00e1009fed1cc8f51bcd6c49.
-  Tags that already contain fastlane keep their own listing unchanged.
+  Update checks read fdroid_version_code and the workspace version from
+  Cargo.toml in each stable vMAJOR.MINOR.PATCH tag. Increase the code for
+  every release. See packaging/fdroid/README.md upstream.
 
   ONNX Runtime is the official MIT-licensed Microsoft Android AAR from Maven
   Central, pinned by SHA-256. Only libonnxruntime.so is used, with the ort crate's
@@ -82,7 +70,8 @@ MaintainerNotes: |-
   Optional AI models are downloaded only after user consent; their license and
   source information is documented upstream in THIRD_PARTY_NOTICES.md.
 
-AutoUpdateMode: None
-UpdateCheckMode: Static
-CurrentVersion: 1.1.1
-CurrentVersionCode: 1000707
+AutoUpdateMode: Version
+UpdateCheckMode: Tags ^v[0-9]+\.[0-9]+\.[0-9]+$
+UpdateCheckData: Cargo.toml|(?m)^fdroid_version_code = (\d+)|.|(?m)^version = "([\d.]+)"
+CurrentVersion: 1.2.0
+CurrentVersionCode: 1000708
