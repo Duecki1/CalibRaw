@@ -41,10 +41,30 @@ fn sample_edits() -> EditState {
             enabled: true,
             maker: "Test Optics".to_owned(),
             model: "35 mm f/2".to_owned(),
+            ..LensEditState::default()
         },
         remove: Arc::new(crate::pipeline::RemoveEditState::default()),
         ai_masks_need_update: false,
     }
+}
+
+#[test]
+fn lens_edit_state_defaults_apply_every_correction_and_stay_out_of_the_file() {
+    let legacy: LensEditState =
+        serde_json::from_str(r#"{"enabled":true,"maker":"Test Optics","model":"35 mm f/2"}"#)
+            .unwrap();
+    assert!(legacy.geometry && legacy.vignetting);
+    let json = serde_json::to_string(&legacy).unwrap();
+    assert!(!json.contains("geometry") && !json.contains("vignetting"));
+
+    let geometry_only = LensEditState {
+        vignetting: false,
+        ..legacy
+    };
+    let restored: LensEditState =
+        serde_json::from_str(&serde_json::to_string(&geometry_only).unwrap()).unwrap();
+    assert_eq!(restored, geometry_only);
+    assert!(restored.geometry && !restored.vignetting);
 }
 
 #[test]

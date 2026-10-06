@@ -1,4 +1,7 @@
-use super::{needs_canonical_mask_source, AppAction, AppTab, CalibRawApp, LensCorrectionState};
+use super::{
+    needs_canonical_mask_source, AppAction, AppTab, CalibRawApp, LensCorrectionState,
+    LensfunCorrections,
+};
 use crate::pipeline::{ExposureParams, MaskGeometry, MaskStack, ProcessingStage, RemoveEditState};
 use eframe::egui;
 use std::collections::VecDeque;
@@ -28,6 +31,7 @@ fn edit_history_interaction_active(ctx: &egui::Context) -> bool {
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct LensEditState {
     enabled: bool,
+    corrections: LensfunCorrections,
     selected_maker: String,
     selected_model: String,
 }
@@ -36,6 +40,7 @@ impl LensEditState {
     fn capture(lens: &LensCorrectionState) -> Self {
         Self {
             enabled: lens.enabled,
+            corrections: lens.corrections,
             selected_maker: lens.selected_maker.clone(),
             selected_model: lens.selected_model.clone(),
         }
@@ -43,12 +48,14 @@ impl LensEditState {
 
     fn matches(&self, lens: &LensCorrectionState) -> bool {
         self.enabled == lens.enabled
+            && self.corrections == lens.corrections
             && self.selected_maker == lens.selected_maker
             && self.selected_model == lens.selected_model
     }
 
     fn apply_to(&self, lens: &mut LensCorrectionState) {
         lens.enabled = self.enabled;
+        lens.corrections = self.corrections;
         lens.selected_maker.clone_from(&self.selected_maker);
         lens.selected_model.clone_from(&self.selected_model);
     }

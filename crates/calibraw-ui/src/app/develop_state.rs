@@ -254,6 +254,7 @@ impl HslMixerColor {
 pub(crate) struct LensCorrectionState {
     pub enabled: bool,
     pub applied: bool,
+    pub corrections: LensfunCorrections,
     pub catalog: LensfunCatalog,
     pub selected_maker: String,
     pub selected_model: String,
@@ -265,6 +266,7 @@ impl LensCorrectionState {
         Self {
             enabled: catalog.available && selected.is_some(),
             applied: false,
+            corrections: LensfunCorrections::default(),
             selected_maker: selected
                 .as_ref()
                 .map(|lens| lens.maker.clone())
@@ -281,6 +283,7 @@ impl LensCorrectionState {
         (!self.selected_model.trim().is_empty()).then(|| LensfunLens {
             maker: self.selected_maker.clone(),
             model: self.selected_model.clone(),
+            corrections: self.corrections,
         })
     }
 

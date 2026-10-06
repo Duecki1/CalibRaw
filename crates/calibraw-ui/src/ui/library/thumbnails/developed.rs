@@ -146,10 +146,15 @@ pub(in crate::ui::library) fn render_uncached_developed_thumbnail(
                     LensfunLens {
                         maker: edits.lens.maker.clone(),
                         model: edits.lens.model.clone(),
+                        ..LensfunLens::default()
                     }
                 })
             })
-            .or(catalog.auto_match);
+            .or(catalog.auto_match)
+            .map(|lens| LensfunLens {
+                corrections: edits.lens.corrections(),
+                ..lens
+            });
         if let Some(selected) = selected {
             match apply_lensfun_correction(&preview_raw, &selected) {
                 Ok(corrected) => preview_raw = corrected,

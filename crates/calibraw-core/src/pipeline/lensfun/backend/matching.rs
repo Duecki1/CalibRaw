@@ -440,7 +440,11 @@ pub(super) fn lens_name(pointer: *const lfLens) -> Option<LensfunLens> {
     if maker.is_empty() && model.is_empty() {
         None
     } else {
-        Some(LensfunLens { maker, model })
+        Some(LensfunLens {
+            maker,
+            model,
+            ..LensfunLens::default()
+        })
     }
 }
 

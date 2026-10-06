@@ -98,7 +98,8 @@ impl CalibRawApp {
         let lens_changed = lens_category_changed
             && (self.develop.lens_correction.enabled != merged.lens.enabled
                 || self.develop.lens_correction.selected_maker != merged.lens.maker
-                || self.develop.lens_correction.selected_model != merged.lens.model);
+                || self.develop.lens_correction.selected_model != merged.lens.model
+                || self.develop.lens_correction.corrections != merged.lens.corrections());
 
         if masks_changed {
             crate::sidecar::preflight_mask_change(&merged.masks).map_err(|error| {
@@ -140,6 +141,7 @@ impl CalibRawApp {
 
         if lens_category_changed {
             self.develop.lens_correction.enabled = merged.lens.enabled;
+            self.develop.lens_correction.corrections = merged.lens.corrections();
             self.develop.lens_correction.selected_maker = merged.lens.maker;
             self.develop.lens_correction.selected_model = merged.lens.model;
             if lens_changed {

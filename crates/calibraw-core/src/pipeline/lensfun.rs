@@ -3,10 +3,30 @@ use super::LoadedRaw;
 use super::{CompactPixelMap, LensGeometryMap};
 use anyhow::{anyhow, Result};
 
+/// Which parts of a Lensfun profile an application request uses.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct LensfunCorrections {
+    /// Distortion, auto-scale and lateral chromatic aberration.
+    pub geometry: bool,
+    pub vignetting: bool,
+}
+
+impl Default for LensfunCorrections {
+    fn default() -> Self {
+        Self {
+            geometry: true,
+            vignetting: true,
+        }
+    }
+}
+
+/// A Lensfun profile identity. `corrections` only matters for
+/// `apply_lensfun_correction` requests; catalog entries keep the default.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct LensfunLens {
     pub maker: String,
     pub model: String,
+    pub corrections: LensfunCorrections,
 }
 
 impl LensfunLens {

@@ -1,9 +1,9 @@
 use crate::file_ops::write_atomically;
 use crate::pipeline::remove::RemovePatchSidecarCache;
 use crate::pipeline::{
-    ExposureParams, GeometryTransform, MaskGeometry, MaskImage, MaskKind, MaskStack,
-    RemoveEditState, SubjectRefinement, MAX_LOCAL_MASKS, MAX_MASK_COMPONENTS, MAX_PATH_POINTS,
-    REMOVE_MAX_PATCHES_PER_STROKE, REMOVE_MAX_STROKES,
+    ExposureParams, GeometryTransform, LensfunCorrections, MaskGeometry, MaskImage, MaskKind,
+    MaskStack, RemoveEditState, SubjectRefinement, MAX_LOCAL_MASKS, MAX_MASK_COMPONENTS,
+    MAX_PATH_POINTS, REMOVE_MAX_PATCHES_PER_STROKE, REMOVE_MAX_STROKES,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
@@ -73,11 +73,47 @@ pub enum SidecarTarget {
     },
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
 pub struct LensEditState {
     pub enabled: bool,
     pub maker: String,
     pub model: String,
+    /// Apply the profile's distortion, scale and lateral chromatic aberration
+    /// data. Sidecars written before this option existed apply everything.
+    #[serde(default = "default_true", skip_serializing_if = "is_true")]
+    pub geometry: bool,
+    /// Apply the profile's vignetting data.
+    #[serde(default = "default_true", skip_serializing_if = "is_true")]
+    pub vignetting: bool,
+}
+
+impl Default for LensEditState {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            maker: String::new(),
+            model: String::new(),
+            geometry: true,
+            vignetting: true,
+        }
+    }
+}
+
+impl LensEditState {
+    pub fn corrections(&self) -> LensfunCorrections {
+        LensfunCorrections {
+            geometry: self.geometry,
+            vignetting: self.vignetting,
+        }
+    }
+}
+
+fn default_true() -> bool {
+    true
+}
+
+fn is_true(value: &bool) -> bool {
+    *value
 }
 
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
