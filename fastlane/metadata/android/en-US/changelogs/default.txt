@@ -1,3 +1,8 @@
-Improved mask overlay rendering.
-Added depth mask
-Added support for depth aware fog
+Added presets with hover preview.
+Edit JPG, PNG and more besides RAW.
+Added automatic straightening.
+Added lens correction setting.
+Mask groups can be reordered; Android sub-masks support drag and drop.
+Added depth masks and depth-aware fog.
+Reworked AI denoise and models; improved Clone & Heal.
+Added grey theme, geometry and vignette buttons.

@@ -1,9 +1,9 @@
 # F-Droid submission and updates
 
 The submission recipe is [de.duecki.calibraw.yml](de.duecki.calibraw.yml).
-It builds the existing `v1.1.1` release, commit
-`60cc0005cc6cc0479bb2c8db8a7b963554f7a393`, with Android version code
-`1000707`. This is a source build, not an upload of the GitHub release APK.
+It builds the `v1.2.0` release, whose commit hash goes in the recipe's
+`commit` field (replace the `TODO-full-hash-of-v1.2.0` placeholder after
+tagging: `git rev-parse v1.2.0`), with Android version code `1000708`. This is a source build, not an upload of the GitHub release APK.
 
 ## Submit using GitLab's website
 
@@ -43,41 +43,32 @@ The `metadata/de.duecki.calibraw/` directory would hold listing assets and
 translations, not the build YAML. CalibRaw already provides its listing under
   `fastlane/metadata/android/en-US/`, so those assets are not copied into the fork.
 
-The `v1.1.1` tag predates the listing. The recipe imports only its `fastlane`
-directory from the pinned upstream commit
-`7bde63b1861bf40e00e1009fed1cc8f51bcd6c49` for this initial build. Future tags
-containing `fastlane` use the listing supplied by that release.
+The `v1.2.0` tag contains the `fastlane` listing, so the recipe needs no
+import of it. Earlier tags (up to `v1.1.1`) predate it; never build them.
 
 ## Release updates
 
-The initial `v1.1.1` recipe temporarily uses `AutoUpdateMode: None` and
-`UpdateCheckMode: Static`. Every published matching tag lacks
-`fdroid_version_code` in `Cargo.toml`; `Tags` skips them all and then errors
-because it found no version information. Pinning the build does not prevent
-that update-check failure.
-
-Before restoring automatic updates, commit the field and publish a new tagged
-release containing it. A change on the default branch alone is insufficient:
-the updater reads the tagged source. Do not move existing release tags.
+The recipe uses `AutoUpdateMode: Version` and `UpdateCheckMode: Tags`. The
+updater reads `fdroid_version_code` and the workspace version from `Cargo.toml`
+in each matching tag, so it skips tags that lack the field (`v1.1.1` and
+earlier). Do not move existing release tags.
 
 For each subsequent release:
 
-1. Bump `[workspace.package].version` in `Cargo.toml`, for example to `1.1.2`,
+1. Bump `[workspace.package].version` in `Cargo.toml`, for example to `1.2.1`,
    and update the workspace package entries in `Cargo.lock` as usual.
 2. Increase `[workspace.metadata].fdroid_version_code`, for example from
-   `1000707` to `1000708`. This must increase even when a patch number resets
+   `1000708` to `1000709`. This must increase even when a patch number resets
    during a minor or major version bump.
 3. Add release notes to
-   `fastlane/metadata/android/en-US/changelogs/1000708.txt` (maximum 500
+   `fastlane/metadata/android/en-US/changelogs/1000709.txt` (maximum 500
    characters), using the F-Droid version code. Continue updating `default.txt`
    for the existing GitHub release workflow.
-4. Commit and push those changes, then tag that commit `v1.1.2` and push the
+4. Commit and push those changes, then tag that commit `v1.2.1` and push the
    tag. The tag version must match the workspace package version. Only tag
    stable versions matching `vMAJOR.MINOR.PATCH` for this update stream.
 
-Once that new tag is published, replace the temporary update settings in both
-the local recipe and fdroiddata's existing `metadata/de.duecki.calibraw.yml`
-with:
+The update settings in the recipe are:
 
 ```yaml
 AutoUpdateMode: Version
