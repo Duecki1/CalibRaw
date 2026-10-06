@@ -76,10 +76,10 @@ impl Sidebar {
             released: input.pointer.primary_released(),
         });
         let mut drag = StripDrag::load(ui.ctx());
-        let scroll_source = mask_strip_scroll_source(drag.dragged_group().is_some());
+        let scroll_source = mask_strip_scroll_source(drag.state.is_some());
         let mut requests = MaskStripRequests::default();
         let mut show_cards = |ui: &mut Ui| {
-            if let (Some(_), Some(position)) = (drag.dragged_group(), pointer.position) {
+            if let (Some(_), Some(position)) = (&drag.state, pointer.position) {
                 Self::scroll_strip_near_edge(ui, orientation, position);
             }
             Self::show_mask_cards(ui, input, orientation, pointer, &mut drag, &mut requests);
@@ -151,8 +151,8 @@ impl Sidebar {
         }
     }
 
-    /// Scroll toward the end of the strip a dragged group nears, because
-    /// touch drags move the group instead of the strip.
+    /// Scroll toward the end of the strip a dragged card nears, because
+    /// touch drags move the card instead of the strip.
     fn scroll_strip_near_edge(ui: &Ui, orientation: MaskStripOrientation, pointer: egui::Pos2) {
         /// Distance from an end, in points, over which the speed ramps up.
         const EDGE: f32 = 40.0;
@@ -221,7 +221,7 @@ impl Sidebar {
         if response.clicked() && !overflow_clicked {
             requests.select_mask = Some(index);
         }
-        if group_can_drag && drag.state.is_none() && group_drag_started(ui, &response) {
+        if group_can_drag && drag.state.is_none() && card_drag_started(ui, &response) {
             drag.state = Some(StripDragState {
                 source: StripDragSource::Group(index),
                 source_texture: input.group_textures.get(index).cloned(),
@@ -380,7 +380,7 @@ impl Sidebar {
         if response.clicked() && !overflow_clicked {
             requests.select_component = Some(component_index);
         }
-        if response.drag_started() && component_can_drag {
+        if component_can_drag && drag.state.is_none() && card_drag_started(ui, &response) {
             drag.state = Some(StripDragState {
                 source: StripDragSource::Component {
                     mask_index,
@@ -619,9 +619,9 @@ fn in_leading_half(
     }
 }
 
-/// Desktop drags a group like a sub-mask. On Android a touch drag scrolls the
-/// strip, so a group is picked up by resting a touch on it instead.
-fn group_drag_started(ui: &Ui, response: &egui::Response) -> bool {
+/// Whether a card drag starts. On Android a touch drag scrolls the strip, so a
+/// card is picked up by resting a touch on it instead.
+fn card_drag_started(ui: &Ui, response: &egui::Response) -> bool {
     /// Matches the hold that shows the original preview.
     const HOLD_SECONDS: f64 = 0.35;
 
