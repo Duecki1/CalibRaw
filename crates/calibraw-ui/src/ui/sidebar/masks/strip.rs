@@ -2,8 +2,8 @@ use super::*;
 use crate::app::{MaskStripActions, MaskStripCommand};
 
 impl Sidebar {
-    fn submask_drag_id() -> egui::Id {
-        egui::Id::new("submask-component-drag")
+    fn strip_drag_id() -> egui::Id {
+        egui::Id::new("mask-strip-drag")
     }
 
     pub(in crate::ui::sidebar) fn show_masks(
@@ -76,15 +76,19 @@ impl Sidebar {
             released: input.pointer.primary_released(),
         });
         let mut drag = StripDrag::load(ui.ctx());
+        let scroll_source = mask_strip_scroll_source(drag.dragged_group().is_some());
         let mut requests = MaskStripRequests::default();
         let mut show_cards = |ui: &mut Ui| {
+            if let (Some(_), Some(position)) = (drag.dragged_group(), pointer.position) {
+                Self::scroll_strip_near_edge(ui, orientation, position);
+            }
             Self::show_mask_cards(ui, input, orientation, pointer, &mut drag, &mut requests);
         };
         match orientation {
             MaskStripOrientation::Horizontal => {
                 egui::ScrollArea::horizontal()
                     .id_salt("vertical-mask-card-strip")
-                    .scroll_source(mask_strip_scroll_source())
+                    .scroll_source(scroll_source)
                     .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
                     .auto_shrink([false, false])
                     .show(ui, |ui| {
@@ -94,7 +98,7 @@ impl Sidebar {
             MaskStripOrientation::Vertical => {
                 egui::ScrollArea::vertical()
                     .id_salt("horizontal-mask-card-strip")
-                    .scroll_source(mask_strip_scroll_source())
+                    .scroll_source(scroll_source)
                     .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
                     .auto_shrink([false, false])
                     .show(ui, |ui| {
@@ -103,9 +107,9 @@ impl Sidebar {
             }
         }
 
-        let component_drop = drag.finish(ui, pointer);
+        let drop = drag.finish(ui, pointer);
         MaskStripActions {
-            command: requests.command(ui.ctx(), component_drop),
+            command: requests.command(ui.ctx(), drop),
             edits: requests.edits,
             open_group: drag.open_group,
         }
@@ -124,21 +128,66 @@ impl Sidebar {
         });
         ui.add_space(moduwu_design::SPACE_XXS);
 
+        // The strip lists the stack top-down, so the last group comes first.
+        // A group drag collapses the sub-masks so only group gaps remain.
+        let dragged_group = drag.dragged_group();
         for index in (0..input.masks.len()).rev() {
-            Self::show_mask_group_card(ui, input, index, pointer, drag, requests);
-            if input.selected_mask == Some(index) {
+            if drag.displayed_drop_target == Some(StripDropTarget::Group(index + 1)) {
+                Self::show_drop_placeholder(ui, pointer, drag, MaskCardSize::Group);
+            }
+            if dragged_group == Some(index) {
+                continue;
+            }
+            Self::show_mask_group_card(ui, input, index, orientation, pointer, drag, requests);
+            if dragged_group.is_none() && input.selected_mask == Some(index) {
                 ui.add_space(1.0);
                 Self::show_submask_cards(ui, input, index, orientation, pointer, drag, requests);
                 Self::create_submask_card(ui, &mut requests.add_component, orientation);
                 ui.add_space(moduwu_design::SPACE_XXS);
             }
         }
+        if drag.displayed_drop_target == Some(StripDropTarget::Group(0)) {
+            Self::show_drop_placeholder(ui, pointer, drag, MaskCardSize::Group);
+        }
+    }
+
+    /// Scroll toward the end of the strip a dragged group nears, because
+    /// touch drags move the group instead of the strip.
+    fn scroll_strip_near_edge(ui: &Ui, orientation: MaskStripOrientation, pointer: egui::Pos2) {
+        /// Distance from an end, in points, over which the speed ramps up.
+        const EDGE: f32 = 40.0;
+        /// Points per second with the pointer at or past an end.
+        const MAX_SPEED: f32 = 600.0;
+
+        let visible = ui.clip_rect();
+        if !visible.expand(EDGE).contains(pointer) {
+            return;
+        }
+        let axis = match orientation {
+            MaskStripOrientation::Horizontal => 0,
+            MaskStripOrientation::Vertical => 1,
+        };
+        let (start, end, position) = (visible.min[axis], visible.max[axis], pointer[axis]);
+        // Positive moves the content toward the end, revealing the start.
+        let push = if position < start + EDGE {
+            (start + EDGE - position) / EDGE
+        } else if position > end - EDGE {
+            (end - EDGE - position) / EDGE
+        } else {
+            return;
+        };
+        let dt = ui.input(|input| input.stable_dt).min(0.1);
+        let mut delta = egui::Vec2::ZERO;
+        delta[axis] = push.clamp(-1.0, 1.0) * MAX_SPEED * dt;
+        ui.scroll_with_delta_animation(delta, egui::style::ScrollAnimation::none());
+        ui.ctx().request_repaint();
     }
 
     fn show_mask_group_card(
         ui: &mut Ui,
         input: &MaskStripInput<'_>,
         index: usize,
+        orientation: MaskStripOrientation,
         pointer: StripPointer,
         drag: &mut StripDrag,
         requests: &mut MaskStripRequests,
@@ -154,6 +203,10 @@ impl Sidebar {
             mask.enabled,
             MaskCardSize::Group,
         );
+        let group_can_drag = input.masks.len() > 1;
+        if group_can_drag && response.is_pointer_button_down_on() {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
+        }
         let can_add_group = input.can_add_group();
         #[cfg(target_os = "android")]
         let overflow_clicked = {
@@ -168,19 +221,45 @@ impl Sidebar {
         if response.clicked() && !overflow_clicked {
             requests.select_mask = Some(index);
         }
+        if group_can_drag && drag.state.is_none() && group_drag_started(ui, &response) {
+            drag.state = Some(StripDragState {
+                source: StripDragSource::Group(index),
+                source_texture: input.group_textures.get(index).cloned(),
+                source_name: mask.name.clone(),
+                source_badge: badge,
+                source_enabled: mask.enabled,
+                hover_group: None,
+                drop_target: Some(StripDropTarget::Group(index)),
+                target_loss_started: None,
+            });
+        }
         if let (Some(state), Some(position)) = (&mut drag.state, pointer.position) {
             if response.rect.contains(position) {
-                paint_drop_highlight(ui, response.rect);
-                drag.hovered_group = Some(index);
-                state.drop_target = Some((index, mask.components.len()));
-                match state.hover_group {
-                    Some((hovered, started)) if hovered == index => {
-                        if started.elapsed() >= std::time::Duration::from_millis(650) {
-                            drag.open_group = Some(index);
-                        }
+                match state.source {
+                    StripDragSource::Group(_) => {
+                        // The leading half shows the group before this card,
+                        // which is above it in the stack.
+                        let above = in_leading_half(orientation, response.rect, position);
+                        state.drop_target =
+                            Some(StripDropTarget::Group(index + usize::from(above)));
                     }
-                    _ => {
-                        state.hover_group = Some((index, std::time::Instant::now()));
+                    StripDragSource::Component { .. } => {
+                        paint_drop_highlight(ui, response.rect);
+                        drag.hovered_group = Some(index);
+                        state.drop_target = Some(StripDropTarget::Component {
+                            mask_index: index,
+                            insert: mask.components.len(),
+                        });
+                        match state.hover_group {
+                            Some((hovered, started)) if hovered == index => {
+                                if started.elapsed() >= std::time::Duration::from_millis(650) {
+                                    drag.open_group = Some(index);
+                                }
+                            }
+                            _ => {
+                                state.hover_group = Some((index, std::time::Instant::now()));
+                            }
+                        }
                     }
                 }
             }
@@ -201,11 +280,19 @@ impl Sidebar {
     ) {
         let component_count = input.masks[mask_index].components.len();
         for component_index in 0..component_count {
-            if drag.displayed_drop_target == Some((mask_index, component_index)) {
-                Self::show_submask_drop_placeholder(ui, pointer, drag);
+            let target = StripDropTarget::Component {
+                mask_index,
+                insert: component_index,
+            };
+            if drag.displayed_drop_target == Some(target) {
+                Self::show_drop_placeholder(ui, pointer, drag, MaskCardSize::Submask);
             }
             let source_is_dragging = drag.state.as_ref().is_some_and(|state| {
-                state.source_mask == mask_index && state.source_component == component_index
+                state.source
+                    == StripDragSource::Component {
+                        mask_index,
+                        component_index,
+                    }
             });
             if source_is_dragging {
                 continue;
@@ -220,17 +307,23 @@ impl Sidebar {
                 requests,
             );
         }
-        if drag
-            .displayed_drop_target
-            .is_some_and(|(mask, insert)| mask == mask_index && insert >= component_count)
-        {
-            Self::show_submask_drop_placeholder(ui, pointer, drag);
+        if matches!(
+            drag.displayed_drop_target,
+            Some(StripDropTarget::Component { mask_index: mask, insert })
+                if mask == mask_index && insert >= component_count
+        ) {
+            Self::show_drop_placeholder(ui, pointer, drag, MaskCardSize::Submask);
         }
     }
 
     /// Keep last frame's drop target while the pointer is over its placeholder.
-    fn show_submask_drop_placeholder(ui: &mut Ui, pointer: StripPointer, drag: &mut StripDrag) {
-        let placeholder = Self::submask_drop_placeholder(ui);
+    fn show_drop_placeholder(
+        ui: &mut Ui,
+        pointer: StripPointer,
+        drag: &mut StripDrag,
+        card_size: MaskCardSize,
+    ) {
+        let placeholder = Self::drop_placeholder(ui, card_size);
         if pointer
             .position
             .is_some_and(|position| placeholder.rect.contains(position))
@@ -288,26 +381,31 @@ impl Sidebar {
             requests.select_component = Some(component_index);
         }
         if response.drag_started() && component_can_drag {
-            drag.state = Some(SubmaskDragState {
-                source_mask: mask_index,
-                source_component: component_index,
+            drag.state = Some(StripDragState {
+                source: StripDragSource::Component {
+                    mask_index,
+                    component_index,
+                },
                 source_texture: input.component_textures.get(component_index).cloned(),
                 source_name: component.name.clone(),
                 source_badge: component_badge.to_owned(),
                 source_enabled: component.enabled,
                 hover_group: None,
-                drop_target: Some((mask_index, component_index)),
+                drop_target: Some(StripDropTarget::Component {
+                    mask_index,
+                    insert: component_index,
+                }),
                 target_loss_started: None,
             });
         }
         if let (Some(state), Some(position)) = (&mut drag.state, pointer.position) {
             if response.rect.contains(position) {
                 paint_drop_highlight(ui, response.rect);
-                let before = match orientation {
-                    MaskStripOrientation::Horizontal => position.x < response.rect.center().x,
-                    MaskStripOrientation::Vertical => position.y < response.rect.center().y,
-                };
-                state.drop_target = Some((mask_index, component_index + usize::from(!before)));
+                let before = in_leading_half(orientation, response.rect, position);
+                state.drop_target = Some(StripDropTarget::Component {
+                    mask_index,
+                    insert: component_index + usize::from(!before),
+                });
                 state.hover_group = None;
             }
         }
@@ -350,19 +448,18 @@ struct StripPointer {
     released: bool,
 }
 
-/// A sub-mask drag across frames, kept in egui memory.
+/// A group or sub-mask drag across frames, kept in egui memory.
 struct StripDrag {
-    state: Option<SubmaskDragState>,
+    state: Option<StripDragState>,
     /// Where last frame showed the drop placeholder.
-    displayed_drop_target: Option<(usize, usize)>,
+    displayed_drop_target: Option<StripDropTarget>,
     hovered_group: Option<usize>,
     open_group: Option<usize>,
 }
 
 impl StripDrag {
     fn load(ctx: &egui::Context) -> Self {
-        let mut state =
-            ctx.data(|data| data.get_temp::<SubmaskDragState>(Sidebar::submask_drag_id()));
+        let mut state = ctx.data(|data| data.get_temp::<StripDragState>(Sidebar::strip_drag_id()));
         let displayed_drop_target = state.as_ref().and_then(|drag| drag.drop_target);
         if let Some(drag) = &mut state {
             drag.drop_target = None;
@@ -375,13 +472,21 @@ impl StripDrag {
         }
     }
 
+    fn dragged_group(&self) -> Option<usize> {
+        match self.state.as_ref()?.source {
+            StripDragSource::Group(index) => Some(index),
+            StripDragSource::Component { .. } => None,
+        }
+    }
+
     /// Keep a briefly lost drop target, paint the floating card, and store
-    /// the drag. Returns the drag and its target when the pointer is released.
+    /// the drag. Returns the drag source and its target when the pointer is
+    /// released.
     fn finish(
         &mut self,
         ui: &Ui,
         pointer: StripPointer,
-    ) -> Option<(SubmaskDragState, (usize, usize))> {
+    ) -> Option<(StripDragSource, StripDropTarget)> {
         if let Some(drag) = &mut self.state {
             if drag.drop_target.is_some() {
                 drag.target_loss_started = None;
@@ -400,7 +505,7 @@ impl StripDrag {
             }
             if drag.drop_target.is_none() {
                 if let Some(position) = pointer.position {
-                    Sidebar::paint_floating_submask(ui, drag, position);
+                    Sidebar::paint_floating_card(ui, drag, position);
                 }
             }
             ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
@@ -408,10 +513,10 @@ impl StripDrag {
                 .request_repaint_after(std::time::Duration::from_millis(50));
         }
 
-        let component_drop = if pointer.released {
+        let drop = if pointer.released {
             self.state
                 .take()
-                .and_then(|drag| drag.drop_target.map(|target| (drag, target)))
+                .and_then(|drag| drag.drop_target.map(|target| (drag.source, target)))
         } else {
             None
         };
@@ -420,12 +525,12 @@ impl StripDrag {
         }
         ui.ctx().data_mut(|data| {
             if let Some(drag) = self.state.clone() {
-                data.insert_temp(Sidebar::submask_drag_id(), drag);
+                data.insert_temp(Sidebar::strip_drag_id(), drag);
             } else {
-                data.remove::<SubmaskDragState>(Sidebar::submask_drag_id());
+                data.remove::<StripDragState>(Sidebar::strip_drag_id());
             }
         });
-        component_drop
+        drop
     }
 }
 
@@ -435,15 +540,34 @@ impl MaskStripRequests {
     fn command(
         &self,
         ctx: &egui::Context,
-        component_drop: Option<(SubmaskDragState, (usize, usize))>,
+        drop: Option<(StripDragSource, StripDropTarget)>,
     ) -> Option<MaskStripCommand> {
-        if let Some((drag, (target_mask, target_insert))) = component_drop {
-            return Some(MaskStripCommand::MoveComponent {
-                source_mask: drag.source_mask,
-                source_component: drag.source_component,
-                target_mask,
-                target_insert,
-            });
+        match drop {
+            Some((StripDragSource::Group(source_mask), StripDropTarget::Group(target_insert))) => {
+                return Some(MaskStripCommand::MoveGroup {
+                    source_mask,
+                    target_insert,
+                });
+            }
+            Some((
+                StripDragSource::Component {
+                    mask_index: source_mask,
+                    component_index: source_component,
+                },
+                StripDropTarget::Component {
+                    mask_index: target_mask,
+                    insert: target_insert,
+                },
+            )) => {
+                return Some(MaskStripCommand::MoveComponent {
+                    source_mask,
+                    source_component,
+                    target_mask,
+                    target_insert,
+                });
+            }
+            // A drag only ever targets cards of its own kind.
+            Some(_) | None => {}
         }
         if let Some((mask_index, invert)) = self.duplicate_mask {
             return Some(MaskStripCommand::DuplicateGroup { mask_index, invert });
@@ -483,6 +607,50 @@ impl MaskStripRequests {
     }
 }
 
+/// Whether `position` lies in the half of `rect` that comes first along the strip.
+fn in_leading_half(
+    orientation: MaskStripOrientation,
+    rect: egui::Rect,
+    position: egui::Pos2,
+) -> bool {
+    match orientation {
+        MaskStripOrientation::Horizontal => position.x < rect.center().x,
+        MaskStripOrientation::Vertical => position.y < rect.center().y,
+    }
+}
+
+/// Desktop drags a group like a sub-mask. On Android a touch drag scrolls the
+/// strip, so a group is picked up by resting a touch on it instead.
+fn group_drag_started(ui: &Ui, response: &egui::Response) -> bool {
+    /// Matches the hold that shows the original preview.
+    const HOLD_SECONDS: f64 = 0.35;
+
+    if !cfg!(target_os = "android") {
+        return response.drag_started();
+    }
+    if !response.is_pointer_button_down_on() {
+        return false;
+    }
+    // A touch that moved first, or rested past a click, is no hold: the
+    // strip scroll or the long-touch context menu owns it.
+    let held = ui.input(|input| {
+        let pointer = &input.pointer;
+        pointer
+            .could_any_button_be_click()
+            .then(|| pointer.press_start_time().map(|start| input.time - start))
+            .flatten()
+    });
+    match held {
+        Some(held) if held >= HOLD_SECONDS => true,
+        Some(held) => {
+            ui.ctx()
+                .request_repaint_after_secs((HOLD_SECONDS - held) as f32);
+            false
+        }
+        None => false,
+    }
+}
+
 fn paint_drop_highlight(ui: &Ui, rect: egui::Rect) {
     ui.painter().rect_stroke(
         rect.shrink(1.0),
@@ -496,20 +664,6 @@ fn paint_drop_highlight(ui: &Ui, rect: egui::Rect) {
 mod tests {
     use super::*;
 
-    fn drag_state() -> SubmaskDragState {
-        SubmaskDragState {
-            source_mask: 1,
-            source_component: 2,
-            source_texture: None,
-            source_name: String::new(),
-            source_badge: String::new(),
-            source_enabled: true,
-            hover_group: None,
-            drop_target: None,
-            target_loss_started: None,
-        }
-    }
-
     #[test]
     fn a_drop_wins_over_copies_and_copies_over_selection() {
         let ctx = egui::Context::default();
@@ -519,7 +673,19 @@ mod tests {
             ..Default::default()
         };
         assert!(matches!(
-            requests.command(&ctx, Some((drag_state(), (0, 1)))),
+            requests.command(
+                &ctx,
+                Some((
+                    StripDragSource::Component {
+                        mask_index: 1,
+                        component_index: 2,
+                    },
+                    StripDropTarget::Component {
+                        mask_index: 0,
+                        insert: 1,
+                    },
+                )),
+            ),
             Some(MaskStripCommand::MoveComponent {
                 source_mask: 1,
                 source_component: 2,
@@ -532,6 +698,16 @@ mod tests {
             Some(MaskStripCommand::DuplicateGroup {
                 mask_index: 0,
                 invert: true,
+            })
+        ));
+        assert!(matches!(
+            requests.command(
+                &ctx,
+                Some((StripDragSource::Group(2), StripDropTarget::Group(0))),
+            ),
+            Some(MaskStripCommand::MoveGroup {
+                source_mask: 2,
+                target_insert: 0,
             })
         ));
         // A paste with an empty clipboard does nothing, and nothing after it runs.

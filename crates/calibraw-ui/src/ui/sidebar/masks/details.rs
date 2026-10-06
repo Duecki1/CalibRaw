@@ -85,11 +85,10 @@ impl Sidebar {
         );
     }
 
-    pub(super) fn submask_drop_placeholder(ui: &mut Ui) -> egui::Response {
+    pub(super) fn drop_placeholder(ui: &mut Ui, card_size: MaskCardSize) -> egui::Response {
         use eframe::egui::{Align2, FontId, Stroke, StrokeKind};
 
-        let (rect, response) =
-            ui.allocate_exact_size(MaskCardSize::Submask.card_size(), egui::Sense::hover());
+        let (rect, response) = ui.allocate_exact_size(card_size.card_size(), egui::Sense::hover());
         let red = crate::ui::theme::DROP_TARGET;
         let painter = ui.painter_at(rect);
         painter.rect_filled(rect, 5.0, red.gamma_multiply(0.18));
@@ -104,15 +103,15 @@ impl Sidebar {
         response
     }
 
-    pub(super) fn paint_floating_submask(ui: &Ui, drag: &SubmaskDragState, pointer: egui::Pos2) {
+    pub(super) fn paint_floating_card(ui: &Ui, drag: &StripDragState, pointer: egui::Pos2) {
         use eframe::egui::{Align2, Color32, FontId, LayerId, Order, Stroke, StrokeKind};
 
-        let card_size = MaskCardSize::Submask;
+        let card_size = drag.card_size();
         let rect =
             egui::Rect::from_center_size(pointer + egui::vec2(12.0, 12.0), card_size.card_size());
         let painter = ui.ctx().layer_painter(LayerId::new(
             Order::Tooltip,
-            egui::Id::new("floating-submask-drag-card"),
+            egui::Id::new("floating-mask-drag-card"),
         ));
         let visuals = ui.visuals();
         painter.rect_filled(rect, 5.0, visuals.widgets.active.bg_fill);
@@ -142,9 +141,10 @@ impl Sidebar {
             );
         }
 
-        let badge_height = 16.0;
+        let (font_size, badge_height, horizontal_padding) = card_size.badge_metrics();
         let badge_size = egui::vec2(
-            (drag.source_badge.chars().count() as f32 * 9.0 * 0.62 + 8.0).max(badge_height + 2.0),
+            (drag.source_badge.chars().count() as f32 * font_size * 0.62 + horizontal_padding)
+                .max(badge_height + 2.0),
             badge_height,
         );
         let badge_rect =
@@ -154,11 +154,15 @@ impl Sidebar {
             badge_rect.center(),
             Align2::CENTER_CENTER,
             &drag.source_badge,
-            FontId::proportional(9.0),
+            FontId::proportional(font_size),
             Color32::WHITE,
         );
 
-        let display_label: String = drag.source_name.chars().take(10).collect();
+        let display_label: String = drag
+            .source_name
+            .chars()
+            .take(card_size.max_label_chars())
+            .collect();
         painter.text(
             egui::pos2(rect.center().x, rect.bottom() - 9.0),
             Align2::CENTER_CENTER,

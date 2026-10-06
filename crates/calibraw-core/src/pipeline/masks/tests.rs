@@ -1820,6 +1820,55 @@ fn submask_components_can_move_between_nonempty_groups() {
 }
 
 #[test]
+fn mask_groups_can_be_reordered_with_insertion_indices() {
+    let mut stack = MaskStack::default();
+    stack.add_mask(MaskKind::Brush);
+    stack.add_mask(MaskKind::Radial);
+    stack.add_mask(MaskKind::Linear);
+    let kinds = |stack: &MaskStack| {
+        stack
+            .masks
+            .iter()
+            .map(|mask| mask.components[0].kind)
+            .collect::<Vec<_>>()
+    };
+
+    // Both insertion points around a group leave it in place, and
+    // out-of-range indices are rejected.
+    assert_eq!(stack.move_mask(1, 1), None);
+    assert_eq!(stack.move_mask(1, 2), None);
+    assert_eq!(stack.move_mask(0, 4), None);
+    assert_eq!(stack.move_mask(3, 0), None);
+
+    assert_eq!(stack.move_mask(0, 3), Some(2));
+    assert_eq!(
+        kinds(&stack),
+        [MaskKind::Radial, MaskKind::Linear, MaskKind::Brush]
+    );
+    assert_eq!(stack.selected_mask, Some(2));
+    assert_eq!(stack.selected_component, Some(0));
+
+    assert_eq!(stack.move_mask(2, 0), Some(0));
+    assert_eq!(
+        kinds(&stack),
+        [MaskKind::Brush, MaskKind::Radial, MaskKind::Linear]
+    );
+}
+
+#[test]
+fn moving_the_selected_group_keeps_its_selected_submask() {
+    let mut stack = MaskStack::default();
+    stack.add_mask(MaskKind::Brush);
+    stack.add_mask(MaskKind::Radial);
+    stack.add_component(MaskKind::Linear, MaskCombineMode::Subtract);
+    assert_eq!(stack.selected_component, Some(1));
+
+    assert_eq!(stack.move_mask(1, 0), Some(0));
+    assert_eq!(stack.selected_mask, Some(0));
+    assert_eq!(stack.selected_component, Some(1));
+}
+
+#[test]
 fn mask_image_dimensions_are_checked_before_buffer_comparison() {
     assert!(MaskImage::new(0, 0, Vec::new()).is_some());
     assert!(MaskImage::new(2, 3, vec![0; 6]).is_some());

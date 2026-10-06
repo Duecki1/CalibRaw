@@ -275,4 +275,34 @@ impl MaskStack {
         self.selected_component = Some(insert_at);
         Some((target_mask, insert_at))
     }
+
+    /// Move a group to `target_insert`, an insertion index in `masks` before
+    /// the move. Groups apply in index order, so this changes how overlapping
+    /// groups combine. Selects the moved group, keeping its selected sub-mask
+    /// when it was already selected. Returns the new index, or `None` when
+    /// the group stays where it is.
+    pub fn move_mask(&mut self, source_mask: usize, target_insert: usize) -> Option<usize> {
+        if source_mask >= self.masks.len() || target_insert > self.masks.len() {
+            return None;
+        }
+        let insert_at = if target_insert > source_mask {
+            target_insert - 1
+        } else {
+            target_insert
+        };
+        if insert_at == source_mask {
+            return None;
+        }
+
+        let selected_component = (self.selected_mask == Some(source_mask))
+            .then_some(self.selected_component)
+            .flatten();
+        let mask = self.masks.remove(source_mask);
+        self.masks.insert(insert_at, mask);
+        self.select_mask(insert_at);
+        if selected_component.is_some() {
+            self.selected_component = selected_component;
+        }
+        Some(insert_at)
+    }
 }

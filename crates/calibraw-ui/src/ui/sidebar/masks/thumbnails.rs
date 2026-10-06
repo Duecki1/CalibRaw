@@ -221,10 +221,7 @@ impl Sidebar {
         }
 
         if let Some(badge) = badge {
-            let (font_size, badge_height, horizontal_padding) = match card_size {
-                MaskCardSize::Group => (10.5, 18.0, 10.0),
-                MaskCardSize::Submask => (9.0, 16.0, 8.0),
-            };
+            let (font_size, badge_height, horizontal_padding) = card_size.badge_metrics();
             let badge_size = egui::vec2(
                 (badge.chars().count() as f32 * font_size * 0.62 + horizontal_padding)
                     .max(badge_height + 2.0),
@@ -246,11 +243,7 @@ impl Sidebar {
             );
         }
 
-        let max_label_chars = match card_size {
-            MaskCardSize::Group => 13,
-            MaskCardSize::Submask => 10,
-        };
-        let display_label: String = label.chars().take(max_label_chars).collect();
+        let display_label: String = label.chars().take(card_size.max_label_chars()).collect();
         let label_center_y = (image_rect.bottom() + rect.bottom()) * 0.5;
         painter.text(
             egui::pos2(rect.center().x, label_center_y),
