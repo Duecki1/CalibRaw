@@ -18,11 +18,12 @@ pub(super) struct ExportOutput<'a> {
 /// Name prefix of staged files for descriptor targets, whose paths carry no name.
 const DESCRIPTOR_STAGING_NAME: &str = "calibraw-direct-export";
 
+/// Runs `export` for `target` and returns the path of the finished file.
 pub(super) fn export_to_destination<F>(
     target: &ExportTarget,
     cancellation: &AtomicBool,
     export: F,
-) -> Result<()>
+) -> Result<PathBuf>
 where
     F: FnOnce(ExportOutput<'_>) -> Result<()>,
 {
@@ -35,26 +36,57 @@ where
                 staging_dir,
                 staging_name: DESCRIPTOR_STAGING_NAME,
             })?;
-            ensure_export_not_cancelled(cancellation)
+            ensure_export_not_cancelled(cancellation)?;
+            Ok(path.clone())
         }
         ExportTarget::File(destination) => {
             let staging_dir = parent_directory(destination);
             let name = file_name(destination)?;
-            let temporary = temporary_export_path(staging_dir, name)?;
-            let result = (|| {
-                export(ExportOutput {
-                    path: &temporary,
-                    truncate_existing: false,
-                    staging_dir,
-                    staging_name: file_name(&temporary)?,
-                })?;
-                ensure_export_not_cancelled(cancellation)?;
-                publish_completed_export(&temporary, destination)
-            })();
-            let _ = fs::remove_file(&temporary);
-            result
+            export_through_staging_file(staging_dir, name, cancellation, export, |temporary| {
+                publish_completed_export(temporary, destination)?;
+                Ok(destination.clone())
+            })
+        }
+        ExportTarget::NewFile {
+            directory,
+            stem,
+            extension,
+        } => {
+            let name = format!("{stem}.{extension}");
+            export_through_staging_file(directory, &name, cancellation, export, |temporary| {
+                publish_completed_export_to_free_name(temporary, directory, stem, extension)
+            })
         }
     }
+}
+
+/// Writes the export to a staging file in `staging_dir` and hands the
+/// complete file to `publish`. The staging file is removed afterwards whatever
+/// the outcome.
+fn export_through_staging_file<F, P>(
+    staging_dir: &Path,
+    name: &str,
+    cancellation: &AtomicBool,
+    export: F,
+    publish: P,
+) -> Result<PathBuf>
+where
+    F: FnOnce(ExportOutput<'_>) -> Result<()>,
+    P: FnOnce(&Path) -> Result<PathBuf>,
+{
+    let temporary = temporary_export_path(staging_dir, name)?;
+    let result = (|| {
+        export(ExportOutput {
+            path: &temporary,
+            truncate_existing: false,
+            staging_dir,
+            staging_name: file_name(&temporary)?,
+        })?;
+        ensure_export_not_cancelled(cancellation)?;
+        publish(&temporary)
+    })();
+    let _ = fs::remove_file(&temporary);
+    result
 }
 
 pub(super) fn open_export_destination(output: ExportOutput<'_>) -> Result<fs::File> {
@@ -144,13 +176,7 @@ fn cleanup_stale_export_parts(parent: &Path, destination_name: &str) {
 }
 
 pub(super) fn publish_completed_export(temporary: &Path, destination: &Path) -> Result<()> {
-    OpenOptions::new()
-        .write(true)
-        .open(temporary)
-        .with_context(|| format!("open completed export {}", temporary.display()))?
-        .sync_all()
-        .with_context(|| format!("flush completed export {}", temporary.display()))?;
-
+    flush_completed_export(temporary)?;
     replace_file(temporary, destination).with_context(|| {
         format!(
             "publish completed export {} to {}",
@@ -158,8 +184,40 @@ pub(super) fn publish_completed_export(temporary: &Path, destination: &Path) -> 
             destination.display()
         )
     })?;
+    sync_export_directory(parent_directory(destination))
+}
 
-    let parent = parent_directory(destination);
-    sync_parent_directory(parent)
-        .with_context(|| format!("flush export directory {}", parent.display()))
+/// Moves the completed export to the first free `{stem}[-N].{extension}` in
+/// `directory` without replacing any existing file, and returns its path.
+pub(super) fn publish_completed_export_to_free_name(
+    temporary: &Path,
+    directory: &Path,
+    stem: &str,
+    extension: &str,
+) -> Result<PathBuf> {
+    flush_completed_export(temporary)?;
+    let destination =
+        move_file_to_free_name(temporary, directory, stem, extension).with_context(|| {
+            format!(
+                "publish completed export {} as {stem}.{extension} in {}",
+                temporary.display(),
+                directory.display()
+            )
+        })?;
+    sync_export_directory(directory)?;
+    Ok(destination)
+}
+
+fn flush_completed_export(temporary: &Path) -> Result<()> {
+    OpenOptions::new()
+        .write(true)
+        .open(temporary)
+        .with_context(|| format!("open completed export {}", temporary.display()))?
+        .sync_all()
+        .with_context(|| format!("flush completed export {}", temporary.display()))
+}
+
+fn sync_export_directory(directory: &Path) -> Result<()> {
+    sync_parent_directory(directory)
+        .with_context(|| format!("flush export directory {}", directory.display()))
 }

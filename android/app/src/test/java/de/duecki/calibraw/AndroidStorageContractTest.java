@@ -31,6 +31,19 @@ public final class AndroidStorageContractTest {
     }
 
     @Test
+    public void mediaStoreLocationsUseTheNameMediaStoreChose() {
+        assertEquals(
+                "Pictures/CalibRaw/photo (1).jpg",
+                AndroidStorageContract.mediaStoreLocation("Pictures/CalibRaw/", "photo (1).jpg"));
+        assertEquals(
+                "Pictures/CalibRaw/photo.jpg",
+                AndroidStorageContract.mediaStoreLocation("Pictures/CalibRaw", "photo.jpg"));
+        assertEquals("photo.jpg", AndroidStorageContract.mediaStoreLocation("", "photo.jpg"));
+        assertEquals("", AndroidStorageContract.mediaStoreLocation(null, "photo.jpg"));
+        assertEquals("", AndroidStorageContract.mediaStoreLocation("Pictures/CalibRaw/", null));
+    }
+
+    @Test
     public void namesAndRawFileIdentityFollowTheStorageContract() throws Exception {
         File root = temporaryFolder.getRoot();
         File media = new File(root, "media");

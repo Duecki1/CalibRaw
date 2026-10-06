@@ -6,7 +6,18 @@ use super::*;
 #[derive(Clone, Debug)]
 pub(super) struct LibraryBatchExportJob {
     pub(super) source: PathBuf,
-    pub(super) destination: PathBuf,
+    pub(super) destination: LibraryExportDestination,
+}
+
+/// Where a desktop library export of one photo goes.
+#[cfg(not(target_os = "android"))]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum LibraryExportDestination {
+    /// A path from a save dialog, which already asked before replacing a file.
+    Chosen(PathBuf),
+    /// `{stem}.{extension}` in `folder`, numbered on when the name is taken.
+    /// Nobody confirmed this name, so it never replaces an existing file.
+    InFolder { folder: PathBuf, stem: String },
 }
 
 #[cfg(target_os = "android")]
@@ -76,8 +87,6 @@ pub(crate) struct LibraryBatchExportState {
     pub(super) format: ExportFormat,
     #[cfg(target_os = "android")]
     pub(super) settings: ExportSettings,
-    #[cfg(target_os = "android")]
-    pub(super) reserved_names: std::collections::HashSet<String>,
 }
 
 #[cfg(not(target_os = "android"))]
@@ -121,6 +130,13 @@ pub(super) enum ReplayExportEvent {
 pub(super) enum ExportDestination {
     #[cfg(not(target_os = "android"))]
     File(PathBuf),
+    /// A new file in `directory`; see [`crate::pipeline::ExportTarget::NewFile`].
+    #[cfg(not(target_os = "android"))]
+    NewFile {
+        directory: PathBuf,
+        stem: String,
+        extension: String,
+    },
     /// A MediaStore descriptor written in place; intermediates are staged in
     /// `staging_dir`.
     #[cfg(target_os = "android")]
@@ -139,6 +155,16 @@ impl ExportDestination {
         match self {
             #[cfg(not(target_os = "android"))]
             Self::File(path) => ExportTarget::File(path.clone()),
+            #[cfg(not(target_os = "android"))]
+            Self::NewFile {
+                directory,
+                stem,
+                extension,
+            } => ExportTarget::NewFile {
+                directory: directory.clone(),
+                stem: stem.clone(),
+                extension: extension.clone(),
+            },
             #[cfg(target_os = "android")]
             Self::AndroidDirect { path, staging_dir } => ExportTarget::Descriptor {
                 path: path.clone(),

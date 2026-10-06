@@ -9,7 +9,7 @@ use super::{
     MIN_EXPORT_TILE_HALO, TONE_GUIDE_CELL_SIZE,
 };
 use anyhow::{Context, Result};
-use calibraw_core::file_ops::{replace_file, sync_parent_directory};
+use calibraw_core::file_ops::{move_file_to_free_name, replace_file, sync_parent_directory};
 use rayon::prelude::*;
 use std::borrow::Cow;
 use std::fs::{self, OpenOptions};

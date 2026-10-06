@@ -130,23 +130,6 @@ pub(crate) fn render_export_stem_or_default(template: &str, context: &ExportName
     })
 }
 
-/// `{stem}.{extension}`, or the first of `{stem}-2.{extension}`,
-/// `{stem}-3.{extension}`, … that `is_taken` accepts, so an export never
-/// proposes the name of an earlier one.
-pub(crate) fn first_free_file_name(
-    stem: &str,
-    extension: &str,
-    mut is_taken: impl FnMut(&str) -> bool,
-) -> String {
-    let mut name = format!("{stem}.{extension}");
-    let mut index = 2usize;
-    while is_taken(&name) {
-        name = format!("{stem}-{index}.{extension}");
-        index += 1;
-    }
-    name
-}
-
 /// The first free export file name in `directory`, for a save dialog that
 /// opens there. Without a directory the dialog's folder is unknown, so the
 /// plain name is returned.
@@ -157,7 +140,7 @@ pub(crate) fn free_export_file_name(
     extension: &str,
 ) -> String {
     let directory = directory.filter(|directory| !directory.as_os_str().is_empty());
-    first_free_file_name(stem, extension, |name| {
+    calibraw_core::file_ops::first_free_file_name(stem, extension, |name| {
         directory.is_some_and(|directory| directory.join(name).exists())
     })
 }
@@ -333,16 +316,6 @@ mod tests {
         );
         values.shutter_seconds = 2.0;
         assert_eq!(render_export_stem("{ShutterSpeed}", &values).unwrap(), "2s");
-    }
-
-    #[test]
-    fn free_file_names_count_from_two_past_taken_names() {
-        assert_eq!(first_free_file_name("IMG", "jpg", |_| false), "IMG.jpg");
-        let taken = ["IMG.jpg", "IMG-2.jpg"];
-        assert_eq!(
-            first_free_file_name("IMG", "jpg", |name| taken.contains(&name)),
-            "IMG-3.jpg"
-        );
     }
 
     #[cfg(not(target_os = "android"))]

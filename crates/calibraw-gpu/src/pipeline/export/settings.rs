@@ -241,20 +241,21 @@ pub enum ExportTarget {
     /// directory and renamed into place on success, so a failed or cancelled
     /// export never leaves a partial file at the path.
     File(PathBuf),
+    /// A new file in `directory` named `{stem}.{extension}`, or the first free
+    /// `{stem}-2.{extension}`, `{stem}-3.{extension}`, … at the moment the
+    /// finished export is moved into place. Unlike [`Self::File`] an existing
+    /// file is never replaced, so it suits names nobody confirmed, such as
+    /// those of a batch export.
+    NewFile {
+        directory: PathBuf,
+        stem: String,
+        extension: String,
+    },
     /// A writable descriptor path the platform handed out (an Android
     /// MediaStore `/proc/self/fd/N`), which cannot be renamed into. The export
     /// writes into it directly and stages intermediate files in `staging_dir`;
     /// the caller publishes or cancels the descriptor afterwards.
     Descriptor { path: PathBuf, staging_dir: PathBuf },
-}
-
-impl ExportTarget {
-    /// The final output path.
-    pub fn path(&self) -> &Path {
-        match self {
-            Self::File(path) | Self::Descriptor { path, .. } => path,
-        }
-    }
 }
 
 impl ExportFormat {

@@ -180,6 +180,21 @@ final class AndroidStorageContract {
         return exportRelativePath(picturesDirectory) + "/" + displayName;
     }
 
+    /**
+     * "{relativePath}/{displayName}" for a MediaStore item, or "" when either column is missing.
+     * MediaStore reports relative paths with a trailing slash.
+     */
+    static String mediaStoreLocation(String relativePath, String displayName) {
+        if (relativePath == null || displayName == null || displayName.isEmpty()) {
+            return "";
+        }
+        int end = relativePath.length();
+        while (end > 0 && relativePath.charAt(end - 1) == '/') {
+            end--;
+        }
+        return end == 0 ? displayName : relativePath.substring(0, end) + "/" + displayName;
+    }
+
     static String normalizeExportMimeType(String mimeType) {
         if ("video/mp4".equalsIgnoreCase(mimeType)) {
             return "video/mp4";

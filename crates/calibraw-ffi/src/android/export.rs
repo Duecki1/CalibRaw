@@ -6,6 +6,8 @@ use super::*;
 pub(super) struct DirectExportTarget {
     pub(super) descriptor: TransferredFileDescriptor,
     pub(super) uri: String,
+    /// Where the export goes under its requested name. MediaStore numbers a
+    /// taken name, so publishing reports the final location when it can.
     location: String,
 }
 
@@ -109,6 +111,8 @@ pub fn prepare_direct_export(
     Ok(Some(path))
 }
 
+/// Publishes a finished direct export and returns where it is, under the name
+/// MediaStore gave it.
 pub fn finalize_direct_export(app: &AndroidApp, path: &Path) -> Result<String, String> {
     let target = direct_exports()
         .lock()
@@ -122,11 +126,14 @@ pub fn finalize_direct_export(app: &AndroidApp, path: &Path) -> Result<String, S
         ..
     } = target;
     drop(descriptor);
-    if let Err(error) = finish_pending_export(app, &uri, true) {
-        let _ = finish_pending_export(app, &uri, false);
-        return Err(error);
+    match finish_pending_export(app, &uri, true) {
+        Ok(published) if !published.is_empty() => Ok(published),
+        Ok(_) => Ok(location),
+        Err(error) => {
+            let _ = finish_pending_export(app, &uri, false);
+            Err(error)
+        }
     }
-    Ok(location)
 }
 
 pub fn cancel_direct_export(app: &AndroidApp, path: &Path) {
@@ -166,19 +173,22 @@ pub fn cancel_all_direct_exports(app: &AndroidApp) {
     }
 }
 
-fn finish_pending_export(app: &AndroidApp, uri: &str, success: bool) -> Result<(), String> {
+/// Publishes (`success`) or deletes a pending MediaStore export. A published
+/// export returns its final location, or an empty string when MediaStore
+/// cannot report it.
+fn finish_pending_export(app: &AndroidApp, uri: &str, success: bool) -> Result<String, String> {
     with_export_publisher(app, |env, export_publisher| {
         let uri = env.new_string(uri)?;
-        env.call_method(
+        let value = env.call_method(
             export_publisher,
             jni::jni_str!("finishPendingExport"),
-            jni::jni_sig!((JString, i32) -> void),
+            jni::jni_sig!((JString, i32) -> JString),
             &[
                 JValue::Object(&uri),
                 JValue::Int(if success { 1 } else { 0 }),
             ],
         )?;
-        Ok(())
+        java_string(env, value)
     })
     .map_err(|error| format!("could not finalize Android MediaStore export: {error:#}"))
 }
