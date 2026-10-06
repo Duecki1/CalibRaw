@@ -97,26 +97,80 @@ pub struct AutomaticOnnxRuntimeInfo {
     pub download_bytes: u64,
 }
 
+/// The runtime included by the packager, fixed when CalibRaw is compiled.
+/// This remains `Some` if the file is missing so automatic mode cannot silently
+/// replace a broken bundled installation with a download.
+pub fn bundled_onnx_runtime_path() -> Option<&'static Path> {
+    option_env!("CALIBRAW_BUNDLED_ONNX_RUNTIME").map(Path::new)
+}
+
+enum AutomaticRuntime<'a> {
+    Bundled {
+        path: &'a Path,
+        version: &'static str,
+    },
+    Download(RuntimePackage),
+}
+
+fn automatic_runtime<'a>(
+    bundled_path: Option<&'a Path>,
+    bundled_version: Option<&'static str>,
+) -> Result<AutomaticRuntime<'a>> {
+    if let Some(path) = bundled_path {
+        return Ok(AutomaticRuntime::Bundled {
+            path,
+            version: bundled_version.unwrap_or("unknown"),
+        });
+    }
+    Ok(AutomaticRuntime::Download(runtime_package()?))
+}
+
+fn configured_automatic_runtime() -> Result<AutomaticRuntime<'static>> {
+    automatic_runtime(
+        bundled_onnx_runtime_path(),
+        option_env!("CALIBRAW_BUNDLED_ONNX_RUNTIME_VERSION"),
+    )
+}
+
+impl AutomaticRuntime<'_> {
+    fn info(&self) -> AutomaticOnnxRuntimeInfo {
+        match self {
+            Self::Bundled { version, .. } => AutomaticOnnxRuntimeInfo {
+                platform: runtime_package()
+                    .map(|package| package.platform)
+                    .unwrap_or(std::env::consts::OS),
+                version,
+                download_bytes: 0,
+            },
+            Self::Download(package) => AutomaticOnnxRuntimeInfo {
+                platform: package.platform,
+                version: package.version,
+                download_bytes: package.bytes,
+            },
+        }
+    }
+
+    fn is_installed(&self) -> bool {
+        let package = match self {
+            Self::Bundled { path, .. } => return path.is_file(),
+            Self::Download(package) => package,
+        };
+        let install_dir = crate::desktop_model_cache_root()
+            .join("onnxruntime")
+            .join(package.platform);
+        matches!(
+            load_verified_install(&install_dir, package.sha256),
+            Ok(Some(_))
+        )
+    }
+}
+
 pub fn automatic_onnx_runtime_info() -> Option<AutomaticOnnxRuntimeInfo> {
-    let package = runtime_package().ok()?;
-    Some(AutomaticOnnxRuntimeInfo {
-        platform: package.platform,
-        version: package.version,
-        download_bytes: package.bytes,
-    })
+    Some(configured_automatic_runtime().ok()?.info())
 }
 
 pub fn automatic_onnx_runtime_is_installed() -> bool {
-    let Ok(package) = runtime_package() else {
-        return false;
-    };
-    let install_dir = crate::desktop_model_cache_root()
-        .join("onnxruntime")
-        .join(package.platform);
-    matches!(
-        load_verified_install(&install_dir, package.sha256),
-        Ok(Some(_))
-    )
+    configured_automatic_runtime().is_ok_and(|runtime| runtime.is_installed())
 }
 
 fn install_lock() -> MutexGuard<'static, ()> {
@@ -137,8 +191,26 @@ fn runtime_download_options() -> DownloadOptions {
 }
 
 pub fn ensure_automatic_onnx_runtime() -> Result<(PathBuf, String)> {
+    ensure_automatic_runtime(configured_automatic_runtime()?)
+}
+
+fn ensure_automatic_runtime(runtime: AutomaticRuntime<'_>) -> Result<(PathBuf, String)> {
     let _guard = install_lock();
-    let package = runtime_package()?;
+    let package = match runtime {
+        AutomaticRuntime::Bundled { path, .. } => {
+            anyhow::ensure!(
+                path.is_file(),
+                "bundled ONNX Runtime library is missing or is not a regular file: {}; repair the CalibRaw installation or select a trusted runtime manually in Settings",
+                path.display()
+            );
+            // Flatpak strips libraries after Cargo builds the application. Hash
+            // the installed bytes here and retain the normal pre-load checks.
+            let sha256 = sha256_file_hex(path)
+                .with_context(|| format!("hash bundled ONNX Runtime {}", path.display()))?;
+            return Ok((path.to_path_buf(), sha256));
+        }
+        AutomaticRuntime::Download(package) => package,
+    };
     let root = crate::desktop_model_cache_root().join("onnxruntime");
     let install_dir = root.join(package.platform);
     if let Some(runtime) = load_verified_install(&install_dir, package.sha256)? {
@@ -316,6 +388,93 @@ fn find_runtime_library(root: &Path) -> Result<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn automatic_runtime_metadata_matches_build_configuration() {
+        let info = automatic_onnx_runtime_info().unwrap();
+        if let Some(path) = option_env!("CALIBRAW_BUNDLED_ONNX_RUNTIME") {
+            assert_eq!(bundled_onnx_runtime_path(), Some(Path::new(path)));
+            assert_eq!(
+                info.version,
+                option_env!("CALIBRAW_BUNDLED_ONNX_RUNTIME_VERSION").unwrap_or("unknown")
+            );
+            assert_eq!(info.download_bytes, 0);
+            assert_eq!(
+                automatic_onnx_runtime_is_installed(),
+                Path::new(path).is_file()
+            );
+            if !Path::new(path).is_file() {
+                assert!(ensure_automatic_onnx_runtime()
+                    .unwrap_err()
+                    .to_string()
+                    .contains("bundled ONNX Runtime library is missing"));
+            }
+        } else {
+            assert!(bundled_onnx_runtime_path().is_none());
+            assert_eq!(info.version, runtime_package().unwrap().version);
+            assert_eq!(info.download_bytes, runtime_package().unwrap().bytes);
+        }
+    }
+
+    #[test]
+    fn bundled_runtime_hashes_the_installed_bytes() {
+        let directory = tempfile::tempdir().unwrap();
+        let library = directory.path().join("libonnxruntime.so");
+        fs::write(&library, b"runtime before packaging").unwrap();
+        let resolve = || automatic_runtime(Some(&library), Some("1.30.0")).unwrap();
+        assert!(resolve().is_installed());
+        let (path, original_hash) = ensure_automatic_runtime(resolve()).unwrap();
+        assert_eq!(path, library);
+        assert_eq!(original_hash, sha256_file_hex(&library).unwrap());
+
+        // Model flatpak-builder changing the library after Cargo has built it.
+        fs::write(&library, b"stripped runtime").unwrap();
+        let (path, installed_hash) = ensure_automatic_runtime(resolve()).unwrap();
+        assert_eq!(path, library);
+        assert_eq!(installed_hash, sha256_file_hex(&library).unwrap());
+        assert_ne!(installed_hash, original_hash);
+    }
+
+    #[test]
+    fn missing_bundled_runtime_fails_without_falling_back_to_download() {
+        let directory = tempfile::tempdir().unwrap();
+        let library = directory.path().join("missing-libonnxruntime.so");
+        let runtime = automatic_runtime(Some(&library), Some("bundled-test-version")).unwrap();
+        assert_eq!(runtime.info().version, "bundled-test-version");
+        assert_eq!(runtime.info().download_bytes, 0);
+        assert!(!runtime.is_installed());
+        let error = ensure_automatic_runtime(runtime).unwrap_err().to_string();
+        assert!(error.contains("bundled ONNX Runtime library is missing"));
+        assert!(error.contains(library.to_str().unwrap()));
+        assert!(error.contains("repair the CalibRaw installation"));
+    }
+
+    #[test]
+    fn bundled_runtime_rejects_a_directory() {
+        let directory = tempfile::tempdir().unwrap();
+        let runtime = automatic_runtime(Some(directory.path()), Some("1.30.0")).unwrap();
+        assert!(!runtime.is_installed());
+        assert!(ensure_automatic_runtime(runtime)
+            .unwrap_err()
+            .to_string()
+            .contains("not a regular file"));
+    }
+
+    #[test]
+    fn desktop_without_a_bundle_keeps_the_pinned_download_package() {
+        let runtime = automatic_runtime(None, Some("unused-bundled-version")).unwrap();
+        let package = runtime_package().unwrap();
+        assert!(matches!(runtime, AutomaticRuntime::Download(_)));
+        assert_eq!(
+            runtime.info(),
+            AutomaticOnnxRuntimeInfo {
+                platform: package.platform,
+                version: package.version,
+                download_bytes: package.bytes,
+            }
+        );
+        assert!(runtime.info().download_bytes > 0);
+    }
 
     #[test]
     fn runtime_upgrade_invalidates_the_previous_install() {

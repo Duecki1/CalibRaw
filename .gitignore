@@ -40,3 +40,7 @@ __pycache__/
 STATIC_CHECKS_CAMERA_PROFILE.txt
 STATIC_CHECKS.txt
 CLAUDE.md
+
+# Local Flatpak source snapshots, SDK tooling, build cache, and OSTree repository
+/.flatpak/
+/.flatpak-builder/
