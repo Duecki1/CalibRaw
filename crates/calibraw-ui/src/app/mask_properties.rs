@@ -134,9 +134,22 @@ fn apply_component_action(component: &mut MaskComponent, action: MaskPropertyAct
             true
         }
         MaskPropertyAction::SetCombine(combine) => component.set_combine(combine),
-        MaskPropertyAction::SetFeather(value) => shape_feather(&mut component.geometry)
-            .map(|feather| *feather = value)
-            .is_some(),
+        MaskPropertyAction::SetFeather(value) => {
+            // A luminance range without its own high feather softens its
+            // bright edge with `feather`. Keep that edge as it is before
+            // `feather` becomes the dark edge's alone.
+            if let MaskGeometry::LuminanceRange {
+                feather,
+                high_feather: high_feather @ None,
+                ..
+            } = &mut component.geometry
+            {
+                *high_feather = Some(*feather);
+            }
+            shape_feather(&mut component.geometry)
+                .map(|feather| *feather = value)
+                .is_some()
+        }
         MaskPropertyAction::SetGrow(value) => grow(&mut component.geometry)
             .map(|grow| *grow = value)
             .is_some(),
@@ -360,5 +373,35 @@ mod tests {
         );
         assert!(!changed);
         assert_eq!(mask, before);
+    }
+
+    #[test]
+    fn changing_the_dark_feather_of_an_older_luminance_range_keeps_its_bright_edge() {
+        let mut mask = LocalMask::new(MaskKind::LuminanceRange, 1);
+        let MaskGeometry::LuminanceRange { high_feather, .. } = &mask.components[0].geometry else {
+            panic!("luminance range geometry");
+        };
+        assert_eq!(*high_feather, None, "new masks share one feather");
+        let mut controls = controls();
+        assert!(apply_mask_property_actions(
+            &mut mask,
+            0,
+            &mut controls,
+            vec![MaskPropertyAction::SetFeather(0.6)],
+        ));
+        let MaskGeometry::LuminanceRange {
+            feather,
+            high_feather,
+            ..
+        } = &mask.components[0].geometry
+        else {
+            panic!("luminance range geometry changed type");
+        };
+        assert_eq!(*feather, 0.6);
+        assert_eq!(
+            *high_feather,
+            Some(0.15),
+            "the bright edge kept its feather"
+        );
     }
 }

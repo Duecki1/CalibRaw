@@ -2,11 +2,11 @@
 //! black-to-white backdrop. Solid handles sit at `low` and `high`, where
 //! selection is full; hollow handles where each edge's own fade begins.
 
-use super::feathered_range::{self, round_to, FeatheredRange, RangeField, RangePoints};
+use super::feathered_range::{self, round_to, FeatheredRange, RangeEdit, RangeHandle, RangePoints};
 use crate::pipeline::{luminance_range_weight, LUMINANCE_FEATHER_MAX, LUMINANCE_FEATHER_WIDTH};
 use eframe::egui::{self, Color32, Ui};
 
-/// Stored precision of dragged values; the fields show two decimals.
+/// Stored precision of dragged values.
 const DECIMALS: i32 = 3;
 const DEFAULT: LuminanceRange = LuminanceRange {
     low: 0.2,
@@ -26,46 +26,42 @@ pub(crate) struct LuminanceRange {
 }
 
 impl FeatheredRange for LuminanceRange {
-    /// A fade running past black or white is drawn at the track end.
+    /// A fade may run past black or white; it is drawn at the track end.
     fn points(&self) -> RangePoints {
         let ramp =
             |feather: f32| feather.clamp(0.0, LUMINANCE_FEATHER_MAX) * LUMINANCE_FEATHER_WIDTH;
         RangePoints {
-            fade_in: (self.low - ramp(self.low_feather)).clamp(0.0, 1.0),
-            full_from: self.low.clamp(0.0, 1.0),
-            full_to: self.high.clamp(0.0, 1.0),
-            fade_out: (self.high + ramp(self.high_feather)).clamp(0.0, 1.0),
+            fade_in: self.low - ramp(self.low_feather),
+            full_from: self.low,
+            full_to: self.high,
+            fade_out: self.high + ramp(self.high_feather),
         }
     }
 
-    /// Only the edge that moved is rewritten, so the other keeps its exact
-    /// values even where its fade runs past black or white.
-    fn set_points(&mut self, points: RangePoints) {
-        // Round the handle places; the feathers follow exactly from them, so
-        // a handle dragged into a corner stays exactly there.
-        // Only points that moved are rounded, so a handle that was not touched
-        // keeps its exact place.
-        let before = self.points();
-        let place = |now: f32, was: f32| {
-            if now == was {
-                was
-            } else {
-                round_to(now, DECIMALS)
+    fn set_points(&mut self, edit: RangeEdit) {
+        let round = |value| round_to(value, DECIMALS);
+        if let Some(edit) = edit.start {
+            let (low, fade) = edit.resolve(self.low, round);
+            self.low = low;
+            if let Some(fade) = fade {
+                self.low_feather = (low - fade) / LUMINANCE_FEATHER_WIDTH;
             }
-        };
-        if points.fade_in != before.fade_in || points.full_from != before.full_from {
-            if points.full_from != before.full_from {
-                self.low = round_to(points.full_from, DECIMALS);
-            }
-            let fade_in = place(points.fade_in, before.fade_in);
-            self.low_feather = (self.low - fade_in) / LUMINANCE_FEATHER_WIDTH;
         }
-        if points.full_to != before.full_to || points.fade_out != before.fade_out {
-            if points.full_to != before.full_to {
-                self.high = round_to(points.full_to, DECIMALS);
+        if let Some(edit) = edit.end {
+            let (high, fade) = edit.resolve(self.high, round);
+            self.high = high;
+            if let Some(fade) = fade {
+                self.high_feather = (fade - high) / LUMINANCE_FEATHER_WIDTH;
             }
-            let fade_out = place(points.fade_out, before.fade_out);
-            self.high_feather = (fade_out - self.high) / LUMINANCE_FEATHER_WIDTH;
+        }
+    }
+
+    fn handle_text(&self, handle: RangeHandle) -> String {
+        match handle {
+            RangeHandle::Start => format!("Low {:.2}", self.low),
+            RangeHandle::End => format!("High {:.2}", self.high),
+            RangeHandle::StartFeather => format!("Low feather {:.2}", self.low_feather),
+            RangeHandle::EndFeather => format!("High feather {:.2}", self.high_feather),
         }
     }
 
@@ -87,15 +83,10 @@ impl FeatheredRange for LuminanceRange {
 pub(crate) fn luminance_range_slider(ui: &mut Ui, range: &mut LuminanceRange) -> bool {
     let before = *range;
     ui.label("Luminance range");
-    let value_text = format!(
-        "low {:.2}, high {:.2}, low feather {:.2}, high feather {:.2}",
-        range.low, range.high, range.low_feather, range.high_feather
-    );
     feathered_range::feathered_range_track(
         ui,
         range,
         "Luminance range",
-        value_text,
         "Shadows are on the left. Solid handles set the darkest and brightest fully selected tones; hollow handles set where each edge's fade begins.",
         |painter, track| {
             const COLUMNS: usize = 64;
@@ -116,41 +107,12 @@ pub(crate) fn luminance_range_slider(ui: &mut Ui, range: &mut LuminanceRange) ->
             painter.add(egui::Shape::mesh(mesh));
         },
     );
-    let (low, high) = (range.low, range.high);
-    let field = |label, value, range, disabled_reason| RangeField {
-        label,
-        value,
-        range,
-        decimals: 2,
-        speed: 0.005,
-        disabled_reason,
-    };
-    feathered_range::range_fields(
-        ui,
-        vec![
-            field("Low", &mut range.low, 0.0..=high, None),
-            field("High", &mut range.high, low..=1.0, None),
-            field(
-                "Low feather",
-                &mut range.low_feather,
-                0.0..=LUMINANCE_FEATHER_MAX,
-                (low <= 0.0).then_some("Raise Low above 0 to soften the dark edge."),
-            ),
-            field(
-                "High feather",
-                &mut range.high_feather,
-                0.0..=LUMINANCE_FEATHER_MAX,
-                (high >= 1.0).then_some("Lower High below 1 to soften the bright edge."),
-            ),
-        ],
-    );
     *range != before
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ui::components::feathered_range::RangeHandle;
     use crate::ui::components::feathered_range::{drag_range, HandleDrag};
 
     #[test]
@@ -185,37 +147,78 @@ mod tests {
     }
 
     #[test]
-    fn handles_reach_every_corner_and_fades_can_span_the_whole_range() {
-        // The dark fade can open all the way to black.
+    fn solid_handles_keep_their_feather_until_the_fade_meets_black_then_squeeze_it() {
+        let ramp = DEFAULT.low_feather * LUMINANCE_FEATHER_WIDTH;
         let mut range = DEFAULT;
-        drag_range(&mut range, &DEFAULT, RangeHandle::StartFeather, -1.0);
+        let mut drag = HandleDrag::new(&range, RangeHandle::Start);
+        // While the fade fits, it is carried unchanged.
+        drag.move_to(&mut range, ramp);
+        assert!((range.low - ramp).abs() < 1e-3, "{range:?}");
+        assert_eq!(range.low_feather, DEFAULT.low_feather);
+        // Past that, the fade stays at black and the feather narrows.
+        drag.move_to(&mut range, 0.02);
+        assert_eq!(range.low, 0.02);
         assert!(range.points().fade_in.abs() < 1e-6, "{range:?}");
-        assert!(range.weight(0.1) > 0.0 && range.weight(0.1) < 1.0);
-
-        // A solid handle follows the pointer into the corner, squeezing its
-        // fade, and the hollow handle stays reachable there.
-        let mut range = DEFAULT;
-        drag_range(&mut range, &DEFAULT, RangeHandle::Start, -1.0);
-        assert_eq!(range.low, 0.0);
-        assert!(range.points().fade_in.abs() < 1e-6);
-        let mut reopened = range;
-        drag_range(&mut reopened, &range, RangeHandle::Start, 0.3);
-        assert!((reopened.low - 0.3).abs() < 1e-6);
-
-        let mut range = DEFAULT;
-        drag_range(&mut range, &DEFAULT, RangeHandle::EndFeather, 1.0);
-        assert!((range.points().fade_out - 1.0).abs() < 1e-6);
-        drag_range(&mut range, &DEFAULT, RangeHandle::End, 1.0);
-        assert_eq!(range.high, 1.0);
+        assert!(range.low_feather < DEFAULT.low_feather, "{range:?}");
+        // The bound reaches black.
+        drag.move_to(&mut range, 0.0);
+        assert_eq!((range.low, range.low_feather), (0.0, 0.0));
+        // Back again, the narrowed feather is carried unchanged.
+        drag.move_to(&mut range, 0.3);
+        assert_eq!((range.low, range.low_feather), (0.3, 0.0));
+        // The other edge was never touched.
+        assert_eq!(
+            (range.high, range.high_feather),
+            (DEFAULT.high, DEFAULT.high_feather)
+        );
+        // A fade can open all the way to black.
+        let mut wide = DEFAULT;
+        drag_range(&mut wide, &DEFAULT, RangeHandle::StartFeather, -1.0);
+        assert!(wide.points().fade_in.abs() < 1e-6, "{wide:?}");
+        assert_eq!(wide.low, DEFAULT.low);
     }
 
     #[test]
-    fn crossing_handles_push_the_others_along() {
+    fn a_fade_already_past_black_stays_draggable() {
+        // Older settings: the dark fade starts below black, at -0.11.
+        let start = LuminanceRange {
+            low: 0.1,
+            low_feather: 0.6,
+            ..DEFAULT
+        };
+        assert!(start.points().fade_in < 0.0);
+        // Moving right carries it unchanged.
+        let mut range = start;
+        drag_range(&mut range, &start, RangeHandle::Start, 0.05);
+        assert!((range.low - 0.15).abs() < 1e-6, "{range:?}");
+        assert_eq!(range.low_feather, start.low_feather);
+        // Moving left keeps the fade where it is rather than carrying it
+        // further off, and the bound still reaches black.
+        let mut range = start;
+        drag_range(&mut range, &start, RangeHandle::Start, -0.05);
+        assert!((range.low - 0.05).abs() < 1e-6, "{range:?}");
+        assert!((range.points().fade_in - start.points().fade_in).abs() < 1e-3);
+        drag_range(&mut range, &start, RangeHandle::Start, -1.0);
+        assert_eq!(range.low, 0.0);
+        assert!(range.low_feather <= start.low_feather, "{range:?}");
+    }
+
+    #[test]
+    fn crossing_handles_push_the_other_edge_with_its_feather() {
         let mut range = DEFAULT;
-        drag_range(&mut range, &DEFAULT, RangeHandle::Start, 0.9);
-        let points = range.points();
-        assert!((points.full_from - 1.0).abs() < 1e-6, "{range:?}");
-        assert!(points.full_from <= points.full_to && points.full_to <= points.fade_out);
+        let mut drag = HandleDrag::new(&range, RangeHandle::Start);
+        // The pushed edge keeps its feather while its fade fits.
+        drag.move_to(&mut range, 0.9);
+        assert!((range.high - 0.9).abs() < 1e-6, "{range:?}");
+        assert_eq!(
+            (range.low_feather, range.high_feather),
+            (DEFAULT.low_feather, DEFAULT.high_feather)
+        );
+        // Both handles reach white; only the pushed fade is squeezed.
+        drag.move_to(&mut range, 1.0);
+        assert_eq!((range.low, range.high), (1.0, 1.0));
+        assert_eq!(range.low_feather, DEFAULT.low_feather);
+        assert_eq!(range.high_feather, 0.0);
     }
 
     #[test]

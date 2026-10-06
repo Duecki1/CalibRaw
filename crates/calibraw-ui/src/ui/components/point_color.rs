@@ -1,7 +1,9 @@
 use crate::pipeline::{PointColor, PointColorRange, PointColors, MAX_POINT_COLORS};
 use crate::ui::components::adjustment_slider::{AdjustmentSlider, SliderGradient};
 use crate::ui::components::color_picker::sidebar_color_picker;
-use crate::ui::components::feathered_range::{self, FeatheredRange, RangeField, RangePoints};
+use crate::ui::components::feathered_range::{
+    self, FeatheredRange, RangeEdit, RangeHandle, RangePoints,
+};
 use eframe::egui::{self, Color32, Mesh, Rect, Sense, Shape, Stroke, StrokeKind, Ui};
 use egui_phosphor::regular;
 
@@ -347,23 +349,32 @@ impl FeatheredRange for RangeTrack {
         }
     }
 
-    /// The track is the channel's whole domain, so every point is storable.
-    /// Points that did not move keep their exact values.
-    fn set_points(&mut self, points: RangePoints) {
-        let before = self.points();
-        let keep = |now: f32, was: f32, value: f32| {
-            if now == was {
-                value
-            } else {
-                self.offset_at(now)
-            }
+    fn set_points(&mut self, edit: RangeEdit) {
+        let mut range = self.range;
+        let offset_at = |t| self.offset_at(t);
+        if let Some(edit) = edit.start {
+            let fade = range.inner_min - range.min;
+            let (inner_min, min) = edit.resolve(range.inner_min, offset_at);
+            range.inner_min = inner_min;
+            range.min = min.unwrap_or(inner_min - fade);
+        }
+        if let Some(edit) = edit.end {
+            let fade = range.max - range.inner_max;
+            let (inner_max, max) = edit.resolve(range.inner_max, offset_at);
+            range.inner_max = inner_max;
+            range.max = max.unwrap_or(inner_max + fade);
+        }
+        self.range = valid_range(range, self.limit, edit.end.is_some());
+    }
+
+    fn handle_text(&self, handle: RangeHandle) -> String {
+        let (name, value) = match handle {
+            RangeHandle::StartFeather => ("Fade in", self.range.min),
+            RangeHandle::Start => ("Full from", self.range.inner_min),
+            RangeHandle::End => ("Full to", self.range.inner_max),
+            RangeHandle::EndFeather => ("Fade out", self.range.max),
         };
-        self.range = PointColorRange::new(
-            keep(points.fade_in, before.fade_in, self.range.min),
-            keep(points.full_from, before.full_from, self.range.inner_min),
-            keep(points.full_to, before.full_to, self.range.inner_max),
-            keep(points.fade_out, before.fade_out, self.range.max),
-        );
+        format!("{name} {:.1}", value * 100.0)
     }
 
     fn weight(&self, t: f32) -> f32 {
@@ -373,6 +384,25 @@ impl FeatheredRange for RangeTrack {
     fn reset(&mut self) {
         self.range = self.default;
     }
+}
+
+/// `range` as sidecar validation requires it: every value within
+/// `-limit..=limit` and `min <= inner_min <= inner_max <= max`, exactly.
+/// `PointColorRange::new` checks neither, and rounding a moved edge to the
+/// stored precision, or carrying a fade from an unrounded edge of older
+/// settings, can leave a value a hair outside. The edge this step changed
+/// yields (`end_changed`: the inner max), so an untouched edge stays exact.
+fn valid_range(range: PointColorRange, limit: f32, end_changed: bool) -> PointColorRange {
+    let [min, mut inner_min, mut inner_max, max] =
+        [range.min, range.inner_min, range.inner_max, range.max].map(|v| v.clamp(-limit, limit));
+    if inner_min > inner_max {
+        if end_changed {
+            inner_max = inner_min;
+        } else {
+            inner_min = inner_max;
+        }
+    }
+    PointColorRange::new(min.min(inner_min), inner_min, inner_max, max.max(inner_max))
 }
 
 fn range_editor(
@@ -396,19 +426,11 @@ fn range_editor(
             limit,
             default,
         };
-        let value_text = format!(
-            "fade in {:.1}, full from {:.1}, full to {:.1}, fade out {:.1}",
-            range.min * 100.0,
-            range.inner_min * 100.0,
-            range.inner_max * 100.0,
-            range.max * 100.0
-        );
         let outline = ui.visuals().widgets.noninteractive.bg_stroke;
         feathered_range::feathered_range_track(
             ui,
             &mut track,
             label,
-            value_text,
             "Drag a solid handle to move where the selection reaches full strength; drag a hollow handle to move where it starts to fade in or out.",
             move |painter, bar| {
                 gradient(painter, bar, 80, 1, |x, _| {
@@ -425,30 +447,6 @@ fn range_editor(
             },
         );
         *range = track.range;
-        let mut values = [range.min, range.inner_min, range.inner_max, range.max].map(|v| v * 100.0);
-        let [min, inner_min, inner_max, max] = values;
-        let edge = limit * 100.0;
-        let [fade_in, full_from, full_to, fade_out] = &mut values;
-        let field = |label, value, range| RangeField {
-            label,
-            value,
-            range,
-            decimals: 1,
-            speed: 0.5,
-            disabled_reason: None,
-        };
-        if feathered_range::range_fields(
-            ui,
-            vec![
-                field("Fade in", fade_in, -edge..=inner_min),
-                field("Fade out", fade_out, inner_max..=edge),
-                field("Full from", full_from, min..=inner_max),
-                field("Full to", full_to, inner_min..=max),
-            ],
-        ) {
-            let [min, inner_min, inner_max, max] = values.map(|v| v / 100.0);
-            *range = PointColorRange::new(min, inner_min, inner_max, max);
-        }
     });
 }
 
@@ -463,7 +461,6 @@ fn rgb_color(rgb: [f32; 3]) -> Color32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ui::components::feathered_range::RangeHandle;
 
     fn track(range: PointColorRange, limit: f32) -> RangeTrack {
         RangeTrack {
@@ -473,65 +470,101 @@ mod tests {
         }
     }
 
+    /// Exactly the bounds `validate_point_color_range` checks before a
+    /// sidecar is written, with no tolerance.
     fn assert_ordered_in_domain(range: PointColorRange, limit: f32, context: &str) {
-        assert!(-limit - 1e-6 <= range.min, "{context}: {range:?}");
-        assert!(range.min <= range.inner_min + 1e-6, "{context}: {range:?}");
+        let values = [range.min, range.inner_min, range.inner_max, range.max];
         assert!(
-            range.inner_min <= range.inner_max + 1e-6,
+            values.iter().all(|value| (-limit..=limit).contains(value)),
             "{context}: {range:?}"
         );
-        assert!(range.inner_max <= range.max + 1e-6, "{context}: {range:?}");
-        assert!(range.max <= limit + 1e-6, "{context}: {range:?}");
+        assert!(
+            values.windows(2).all(|pair| pair[0] <= pair[1]),
+            "{context}: {range:?}"
+        );
     }
 
-    #[test]
-    fn track_handles_sit_at_full_strength_and_fade_points() {
-        let t = track(PointColorRange::new(-0.4, -0.2, 0.1, 0.3), 0.5);
-        let at = |value: f32| (value / 0.5 + 1.0) * 0.5;
-        assert!((t.points().get(RangeHandle::Start) - at(-0.2)).abs() < 1e-6);
-        assert!((t.points().get(RangeHandle::StartFeather) - at(-0.4)).abs() < 1e-6);
-        assert!((t.points().get(RangeHandle::End) - at(0.1)).abs() < 1e-6);
-        assert!((t.points().get(RangeHandle::EndFeather) - at(0.3)).abs() < 1e-6);
-        for x in 0..=20 {
-            let offset = x as f32 / 20.0 - 0.5;
-            assert_eq!(t.weight(at(offset)), t.range.weight(offset));
+    /// Ranges to drag from: rounded ones, ones at the domain edges, and
+    /// unrounded ones as the simple Feather slider and older settings leave.
+    fn drag_starts(limit: f32) -> Vec<PointColorRange> {
+        let mut feathered = PointColorRange::new(0.0, -0.123_456_7, 0.234_567_8, 0.0);
+        set_range_feather(&mut feathered, 37.3, limit);
+        vec![
+            PointColorRange::new(-0.4, -0.2, 0.2, 0.4),
+            PointColorRange::new(-0.2, 0.1, 0.1, 0.3),
+            PointColorRange::new(-limit, -limit, limit, limit),
+            PointColorRange::new(0.0, 0.0, 0.0, 0.0),
+            PointColorRange::new(-0.333_333_3, -0.111_111_1, 0.111_111_1, 0.333_333_3),
+            PointColorRange::new(-limit, -0.000_049_9, 0.000_049_9, limit),
+            feathered,
+        ]
+    }
+
+    /// Every handle dragged by `delta` from each start, for one channel.
+    fn dragged_ranges(limit: f32) -> Vec<(String, PointColorRange)> {
+        let mut ranges = Vec::new();
+        for start in drag_starts(limit) {
+            let start = track(start, limit);
+            for handle in RangeHandle::ALL {
+                for delta in [-2.0, -0.3, -0.05, -0.000_03, 0.0, 0.000_03, 0.05, 0.3, 2.0] {
+                    let mut moved = start;
+                    feathered_range::drag_range(&mut moved, &start, handle, delta);
+                    let context = format!("{handle:?} {delta} from {:?}", start.range);
+                    ranges.push((context, moved.range));
+                }
+                // Onto the other edge's exact place, where only one side is
+                // rounded.
+                let other = match handle {
+                    RangeHandle::Start => RangeHandle::End,
+                    RangeHandle::End => RangeHandle::Start,
+                    _ => continue,
+                };
+                let mut moved = start;
+                let mut drag = feathered_range::HandleDrag::new(&start, handle);
+                drag.move_to(&mut moved, start.points().get(other));
+                ranges.push((format!("{handle:?} onto {other:?}"), moved.range));
+            }
         }
+        ranges
     }
 
     #[test]
     fn dragging_keeps_the_range_ordered_and_in_its_domain() {
         for limit in [0.5, 1.0] {
-            for start in [
-                PointColorRange::new(-0.4, -0.2, 0.2, 0.4),
-                PointColorRange::new(-0.2, 0.1, 0.1, 0.3),
-                PointColorRange::new(-limit, -limit, limit, limit),
-                PointColorRange::new(0.0, 0.0, 0.0, 0.0),
-            ] {
-                let start = track(start, limit);
-                for handle in RangeHandle::ALL {
-                    for delta in [-2.0, -0.3, -0.05, 0.0, 0.05, 0.3, 2.0] {
-                        let mut moved = start;
-                        feathered_range::drag_range(&mut moved, &start, handle, delta);
-                        assert_ordered_in_domain(
-                            moved.range,
-                            limit,
-                            &format!("{handle:?} {delta} from {:?}", start.range),
-                        );
-                    }
-                }
+            for (context, range) in dragged_ranges(limit) {
+                assert_ordered_in_domain(range, limit, &context);
             }
         }
     }
 
     #[test]
-    fn each_handle_moves_only_its_own_value() {
+    fn dragged_ranges_pass_sidecar_validation() {
+        let hue = dragged_ranges(0.5);
+        let channel = dragged_ranges(1.0);
+        for (index, ((context, hue), (_, channel))) in hue.iter().zip(&channel).enumerate() {
+            let mut point = PointColor::from_srgb([0.8, 0.3, 0.2]);
+            point.hue_range = *hue;
+            point.saturation_range = *channel;
+            point.luminance_range = *channel;
+            let mut edits = crate::sidecar::default_edit_state();
+            assert!(edits.exposure.point_colors.push(point));
+            if let Err(error) = crate::sidecar::encode(edits) {
+                panic!("{index} {context}: {error:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn solid_handles_move_their_edge_and_fade_handles_only_the_fade() {
         let start = track(PointColorRange::new(-0.4, -0.2, 0.2, 0.4), 1.0);
         let mut moved = start;
         feathered_range::drag_range(&mut moved, &start, RangeHandle::Start, -0.05);
+        // The edge moves with its fade.
         assert!((moved.range.inner_min - -0.3).abs() < 1e-6);
+        assert!((moved.range.min - -0.5).abs() < 1e-6);
         assert_eq!(
-            (moved.range.min, moved.range.inner_max, moved.range.max),
-            (start.range.min, start.range.inner_max, start.range.max)
+            (moved.range.inner_max, moved.range.max),
+            (start.range.inner_max, start.range.max)
         );
 
         let mut moved = start;
