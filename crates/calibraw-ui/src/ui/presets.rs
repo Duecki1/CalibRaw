@@ -128,6 +128,7 @@ fn selection_summary(selection: EditSelection) -> String {
         (selection.ai_masks, "AI masks"),
         (selection.geometry, "Crop & geometry"),
         (selection.lens_correction, "Lens correction"),
+        (selection.color_lut, "Colour LUT"),
     ] {
         if included {
             extras.push(label);
@@ -155,7 +156,7 @@ pub(crate) fn show_header_actions(ui: &mut Ui, app: &mut CalibRawApp) {
         app.presets.is_available(),
         egui_phosphor::regular::DOWNLOAD_SIMPLE,
         moduwu_design::toolbar_icon_size(),
-        "Import presets",
+        "Import presets (CalibRaw or Lightroom .xmp)",
     )
     .clicked()
     {
@@ -694,6 +695,7 @@ fn show_selection_controls(
             selection.ai_masks,
             selection.geometry,
             selection.lens_correction,
+            selection.color_lut,
         ]
         .into_iter()
         .filter(|included| *included)
@@ -814,6 +816,11 @@ fn show_additional_selection(ui: &mut Ui, selection: &mut EditSelection) {
                     &mut selection.lens_correction,
                     "Lens correction",
                     "Lens correction state and the selected lens profile.",
+                ),
+                (
+                    &mut selection.color_lut,
+                    "Colour LUT",
+                    "The colour lookup table (a film or creative look) and how much of it is applied.",
                 ),
             ] {
                 if moduwu_design::toggle_button(ui, label, *included)

@@ -116,7 +116,7 @@ const _: () =
 pub(super) struct EffectsUniforms {
     pub(super) presence: [f32; 4],
     pub(super) creative_effects: [f32; 4],
-    // Halation amount, grain amount, any active halation, reserved.
+    // Halation amount, grain amount, any active halation, colour LUT mix (0..1).
     pub(super) film_effects: [f32; 4],
     pub(super) vignette: [f32; 4],
     pub(super) vignette_options: [f32; 4],
@@ -172,6 +172,8 @@ pub struct GpuParams {
     pub(super) effects: EffectsUniforms,
     mask_data: Box<[MaskData]>,
     pub(super) scene_depth: Option<MaskImage>,
+    /// The colour look's table. Its mix is `effects.film_effects[3]`.
+    pub(super) color_lut: Option<Arc<ColorLut>>,
 }
 
 impl GpuParams {
@@ -376,7 +378,17 @@ impl GpuParams {
             effects: pack_effect_params(&context, &mask_data),
             mask_data,
             scene_depth: masks.scene_depth_image().cloned(),
+            color_lut: None,
         }
+    }
+
+    /// Applies `look` after the view transform, before vignette and grain.
+    pub fn with_color_lut(mut self, look: Option<&ColorLutEdit>) -> Self {
+        let mix = look.map_or(0.0, ColorLutEdit::mix);
+        // A look at 0% is off; keep the texture out of the shader entirely.
+        self.color_lut = look.filter(|_| mix > 0.0).map(|look| Arc::clone(&look.lut));
+        self.effects.film_effects[3] = mix;
+        self
     }
 
     pub fn with_vignette_geometry(mut self, geometry: GeometryTransform) -> Self {

@@ -10,7 +10,9 @@
 //! files and a damaged file never hides the others.
 
 use crate::file_ops::write_bytes_atomically;
-use crate::pipeline::{ExposureParams, MaskGeometry, MaskKind, MaskStack, MAX_LOCAL_MASKS};
+use crate::pipeline::{
+    ColorLutEdit, ExposureParams, MaskGeometry, MaskKind, MaskStack, MAX_LOCAL_MASKS,
+};
 use crate::sidecar::{
     default_edit_state, transfer_edits, validate_edit_state, AdjustmentPasteMode, EditSelection,
     EditState,
@@ -180,7 +182,7 @@ impl Preset {
 
     // A quick preview shows the part of a preset that renders without reloading
     // the photo or running AI models: the adjustment groups, plus masks and
-    // effects placed by hand. Camera profile, lens correction, geometry, RAW
+    // effects placed by hand, and the colour look. Camera profile, lens correction, geometry, RAW
     // processing, AI denoise and AI masks only take effect when the preset is
     // applied.
 
@@ -191,6 +193,15 @@ impl Preset {
             exposure.copy_group_from(&self.edits.exposure, group);
         }
         exposure.ai_denoise_enabled = ai_denoise_enabled;
+    }
+
+    /// The colour look a quick preview shows. `None` leaves the photo's own
+    /// look in place; `Some(look)` replaces it, and `Some(None)` shows the photo
+    /// without one, as applying the preset would.
+    pub fn preview_color_lut(&self) -> Option<Option<&ColorLutEdit>> {
+        self.selection
+            .color_lut
+            .then_some(self.edits.color_lut.as_ref())
     }
 
     /// Adds the preset's hand-placed masks and global effects to `masks` for a
@@ -397,6 +408,7 @@ pub fn suggested_selection(edits: &EditState) -> EditSelection {
         camera_profile: edits.camera_profile.is_some(),
         masks: has_manual,
         ai_masks: has_ai,
+        color_lut: edits.color_lut.is_some(),
         ..EditSelection::default()
     }
 }
@@ -690,6 +702,12 @@ fn preset_file_stem(preset: &Preset) -> String {
         stem.to_owned()
     }
 }
+
+mod lightroom;
+pub use lightroom::{
+    is_lightroom_preset_file, read_lightroom_preset_file, LightroomPresetImport,
+    LIGHTROOM_PRESET_SUFFIX,
+};
 
 #[cfg(test)]
 mod tests;

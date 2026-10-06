@@ -9,6 +9,8 @@ pub(crate) enum DesktopPickerEvent {
     CameraProfileFolder(Option<PathBuf>),
     OnnxRuntime(Result<Option<(PathBuf, String)>, String>),
     PresetFiles(Option<Vec<PathBuf>>),
+    /// The `.cube` file chosen for the colour look, already read.
+    ColorLut(Option<Result<ColorLutEdit, String>>),
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

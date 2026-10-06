@@ -1,8 +1,8 @@
 //! Which edit categories a replay shows, in order, and the edit state after each.
 
 use crate::pipeline::{
-    EffectComponent, ExposureParams, GeometryTransform, LocalMask, MaskEffect, MaskStack,
-    RemoveEditState,
+    ColorLutEdit, EffectComponent, ExposureParams, GeometryTransform, LocalMask, MaskEffect,
+    MaskStack, RemoveEditState,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -36,6 +36,7 @@ pub(super) struct ReplayRenderState {
     pub(super) geometry: GeometryTransform,
     pub(super) masks: MaskStack,
     pub(super) remove: RemoveEditState,
+    pub(super) color_lut: Option<ColorLutEdit>,
 }
 
 impl ReplayRenderState {
@@ -45,6 +46,7 @@ impl ReplayRenderState {
             geometry: GeometryTransform::default(),
             masks: MaskStack::default(),
             remove: RemoveEditState::default(),
+            color_lut: None,
         }
     }
 }
@@ -131,6 +133,29 @@ pub(super) fn replay_stage_plan(
     }
 
     stages
+}
+
+/// Shows the colour look with the last stage, which is the finished edit. A
+/// photo whose only edit is the look gets its own Effects stage.
+pub(super) fn add_color_lut(
+    stages: &mut Vec<ReplayStage>,
+    original_exposure: ExposureParams,
+    look: Option<&ColorLutEdit>,
+) {
+    let Some(look) = look else {
+        return;
+    };
+    match stages.last_mut() {
+        Some(last) => last.state.color_lut = Some(look.clone()),
+        None => {
+            let mut state = ReplayRenderState::original(original_exposure);
+            state.color_lut = Some(look.clone());
+            stages.push(ReplayStage {
+                kind: ReplayStageKind::Effects,
+                state,
+            });
+        }
+    }
 }
 
 // Legacy photographic controls live in ExposureParams, but belong to Effects.

@@ -443,3 +443,63 @@ fn groups_persist_until_deleted_and_move_their_presets() {
 
     std::fs::remove_dir_all(folder).unwrap();
 }
+
+fn sample_look() -> crate::pipeline::ColorLutEdit {
+    crate::pipeline::ColorLutEdit::new(
+        "Warm film",
+        crate::pipeline::ColorLut::from_function(3, |[r, g, b]| [r, g * 0.9, b * 0.8]).unwrap(),
+    )
+}
+
+#[test]
+fn presets_carry_and_apply_a_colour_look() {
+    let mut photo = default_edit_state();
+    photo.color_lut = Some(sample_look());
+    let selection = EditSelection {
+        color_lut: true,
+        ..EditSelection::default()
+    };
+    assert!(suggested_selection(&photo).color_lut);
+
+    let preset = Preset::new("Warm", "", selection, &photo).unwrap();
+    assert_eq!(preset.edits().color_lut, photo.color_lut);
+    let reloaded = Preset::decode(&preset.encode().unwrap()).unwrap();
+    assert_eq!(reloaded, preset);
+
+    let mut destination = default_edit_state();
+    reloaded.apply_to(&mut destination);
+    assert_eq!(destination.color_lut, photo.color_lut);
+
+    // A preset without the look leaves the destination's look alone.
+    let without = Preset::new(
+        "Plain",
+        "",
+        self::selection(&[AdjustmentGroup::Light]),
+        &photo,
+    )
+    .unwrap();
+    assert!(without.edits().color_lut.is_none());
+    let mut destination = default_edit_state();
+    destination.color_lut = Some(sample_look());
+    without.apply_to(&mut destination);
+    assert_eq!(destination.color_lut, Some(sample_look()));
+}
+
+#[test]
+fn quick_previews_show_the_look_only_when_the_preset_includes_it() {
+    let mut photo = default_edit_state();
+    photo.color_lut = Some(sample_look());
+    let include_look = EditSelection {
+        color_lut: true,
+        ..EditSelection::default()
+    };
+    let with_look = Preset::new("With", "", include_look, &photo).unwrap();
+    assert_eq!(with_look.preview_color_lut(), Some(Some(&sample_look())));
+
+    // Including an empty look means "no look", as applying it would.
+    let empty = Preset::new("Empty", "", include_look, &default_edit_state()).unwrap();
+    assert_eq!(empty.preview_color_lut(), Some(None));
+
+    let without = Preset::new("Without", "", selection(&[AdjustmentGroup::Light]), &photo).unwrap();
+    assert_eq!(without.preview_color_lut(), None);
+}

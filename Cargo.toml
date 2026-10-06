@@ -67,6 +67,8 @@ log = "0.4"
 memmap2 = "0.9"
 png = "0.18"
 pollster = "0.4"
+# Reads Lightroom XMP presets; already in the tree through the Wayland scanner.
+quick-xml = "0.41"
 rayon = "1.10"
 rawler = "=0.8.0"
 ring = "0.17.14"

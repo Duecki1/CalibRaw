@@ -100,6 +100,7 @@ pub(in crate::app) fn spawn_export_item(
         exposure,
         masks,
         remove,
+        color_lut,
         source_file_name,
         gpu_export_prewarm,
     } = source;
@@ -115,6 +116,7 @@ pub(in crate::app) fn spawn_export_item(
             exposure,
             masks,
             remove,
+            color_lut,
             target,
             tile_spec: TileSpec::default(),
             settings,
@@ -363,6 +365,7 @@ impl CalibRawApp {
                 exposure: self.develop.exposure,
                 masks: self.masks.stack.clone(),
                 remove: self.inpaint.edits.as_ref().clone(),
+                color_lut: self.develop.color_lut.clone(),
                 source_file_name,
                 gpu_export_prewarm: self.export.gpu_prewarm.as_ref().map(Arc::clone),
             },

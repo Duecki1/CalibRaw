@@ -183,6 +183,76 @@ impl Sidebar {
         rebuild
     }
 
+    /// The colour look: a `.cube` lookup table applied after tone mapping.
+    /// Importing is desktop-only, so Android shows the card only for a look
+    /// that came with a preset or sidecar.
+    pub(super) fn show_color_lut(ui: &mut Ui, app: &mut CalibRawApp, foldable: bool) {
+        #[cfg(target_os = "android")]
+        if app.develop.color_lut.is_none() {
+            return;
+        }
+        let can_edit = app.can_edit_color_lut();
+        let mut amount_changed = false;
+        #[cfg(not(target_os = "android"))]
+        let mut import_requested = false;
+        let mut remove_requested = false;
+        let action = Self::tool_card(ui, "Look (LUT)", false, foldable, can_edit, |ui| {
+            match app.develop.color_lut.as_mut() {
+                Some(look) => {
+                    ui.strong(&look.name);
+                    ui.small(format!("{0}×{0}×{0} colour lookup table", look.lut.edge()));
+                    amount_changed |=
+                        AdjustmentSlider::new("Amount", &mut look.amount, 0.0..=100.0)
+                            .decimals(0)
+                            .step(1.0)
+                            .hover_text("How much of the look is mixed into the image.")
+                            .reset_to(crate::pipeline::FULL_COLOR_LUT_AMOUNT)
+                            .show(ui);
+                }
+                None => {
+                    ui.small(
+                        "Apply a film or creative look from a .cube lookup table after tone mapping.",
+                    );
+                }
+            }
+            #[cfg(not(target_os = "android"))]
+            ui.horizontal_wrapped(|ui| {
+                let label = if app.develop.color_lut.is_some() {
+                    "Replace…"
+                } else {
+                    "Import .cube…"
+                };
+                import_requested = moduwu_design::secondary_button_enabled(ui, can_edit, label)
+                    .on_hover_text("Choose a 3D .cube lookup table. 1D tables are not supported.")
+                    .clicked();
+                if app.develop.color_lut.is_some() {
+                    remove_requested =
+                        moduwu_design::secondary_button_enabled(ui, can_edit, "Remove")
+                            .on_hover_text("Remove the look from this photo.")
+                            .clicked();
+                }
+            });
+            #[cfg(target_os = "android")]
+            {
+                remove_requested = moduwu_design::secondary_button_enabled(ui, can_edit, "Remove")
+                    .on_hover_text("Remove the look from this photo.")
+                    .clicked();
+            }
+        });
+        if matches!(action, adjustment_cards::CardAction::Reset) {
+            remove_requested = true;
+        }
+        #[cfg(not(target_os = "android"))]
+        if import_requested {
+            app.choose_color_lut_to_import();
+        }
+        if remove_requested && app.develop.color_lut.is_some() {
+            app.set_color_lut(None);
+        } else if amount_changed {
+            app.mark_color_lut_dirty();
+        }
+    }
+
     pub(super) fn show_basic(ui: &mut Ui, exposure: &mut ExposureParams, foldable: bool) -> bool {
         let mut changed = false;
         let action = Self::adjustment_card(ui, "Light", true, foldable, true, |ui| {

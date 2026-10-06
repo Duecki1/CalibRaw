@@ -332,6 +332,8 @@ impl RawGpuPipeline {
             light_rays_mask_texture: surfaces.light_rays_mask_texture,
             scene_depth_texture: surfaces.scene_depth_texture,
             uploaded_scene_depth: Mutex::new(None),
+            color_lut_texture: surfaces.color_lut_texture,
+            uploaded_color_lut: Mutex::new(None),
             mask_layer_capacity: geometry.mask_layer_capacity,
             mask_atlas_edge: geometry.mask_atlas_edge,
             out_texture: surfaces.out_texture,

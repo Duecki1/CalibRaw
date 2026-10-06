@@ -305,6 +305,7 @@ fn prepare_desktop_library_export_item(
             exposure: edits.exposure,
             masks,
             remove,
+            color_lut: edits.color_lut.clone(),
             source_file_name,
             gpu_export_prewarm: None,
         },

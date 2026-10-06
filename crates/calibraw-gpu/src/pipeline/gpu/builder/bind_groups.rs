@@ -73,6 +73,7 @@ pub(in crate::pipeline::gpu) fn create_bind_groups(
         mask_view,
         light_rays_mask_view,
         scene_depth_view,
+        color_lut_view,
         mask_sampler,
         ..
     } = surfaces;
@@ -545,6 +546,7 @@ pub(in crate::pipeline::gpu) fn create_bind_groups(
                 sampler_binding(28, mask_sampler),
                 texture_binding(29, display_linear_view),
                 buffer_binding(33, mask_data_buffer),
+                texture_binding(38, color_lut_view),
             ],
         )
     };

@@ -37,6 +37,11 @@ pub(super) fn validate_edit_state(edits: &EditState) -> Result<(), SidecarError>
         return invalid("lens name is unreasonably long");
     }
 
+    if let Some(look) = &edits.color_lut {
+        look.validate()
+            .map_err(|error| SidecarError::Invalid(error.to_string()))?;
+    }
+
     if edits.remove.strokes.len() > crate::pipeline::REMOVE_MAX_STROKES {
         return invalid("sidecar contains too many Remove strokes");
     }

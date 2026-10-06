@@ -125,7 +125,7 @@ struct PointColor {
 struct EffectsUniforms {
     presence: vec4<f32>,
     creative_effects: vec4<f32>,
-    // Halation amount, grain amount, any active halation, reserved.
+    // Halation amount, grain amount, any active halation, colour LUT mix (0..1).
     film_effects: vec4<f32>,
     vignette: vec4<f32>,
     vignette_options: vec4<f32>,

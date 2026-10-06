@@ -470,6 +470,30 @@ impl Sidebar {
         )
     }
 
+    /// A card with fold and reset for a setting that is not an adjustment
+    /// group, so it has no preview-visibility eye.
+    pub(super) fn tool_card(
+        ui: &mut Ui,
+        title: &'static str,
+        default_open: bool,
+        foldable: bool,
+        controls_enabled: bool,
+        contents: impl FnOnce(&mut Ui),
+    ) -> CardAction {
+        Self::adjustment_card_controls(
+            ui,
+            title,
+            default_open,
+            foldable,
+            controls_enabled,
+            CardHeaderControls {
+                show_visibility: false,
+                show_mask_overlay_toggle: false,
+            },
+            contents,
+        )
+    }
+
     pub(super) fn mask_properties_card(
         ui: &mut Ui,
         default_open: bool,

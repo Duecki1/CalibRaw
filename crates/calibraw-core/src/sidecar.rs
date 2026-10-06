@@ -1,8 +1,8 @@
 use crate::file_ops::write_atomically;
 use crate::pipeline::remove::RemovePatchSidecarCache;
 use crate::pipeline::{
-    ExposureParams, GeometryTransform, LensfunCorrections, MaskGeometry, MaskImage, MaskKind,
-    MaskStack, RemoveEditState, SubjectRefinement, MAX_LOCAL_MASKS, MAX_MASK_COMPONENTS,
+    ColorLutEdit, ExposureParams, GeometryTransform, LensfunCorrections, MaskGeometry, MaskImage,
+    MaskKind, MaskStack, RemoveEditState, SubjectRefinement, MAX_LOCAL_MASKS, MAX_MASK_COMPONENTS,
     MAX_PATH_POINTS, REMOVE_MAX_PATCHES_PER_STROKE, REMOVE_MAX_STROKES,
 };
 use serde::{Deserialize, Serialize};
@@ -127,6 +127,9 @@ pub struct EditState {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub subject_refinement: Option<SubjectRefinement>,
     pub lens: LensEditState,
+    /// A creative colour lookup table applied to the finished image.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub color_lut: Option<ColorLutEdit>,
     #[serde(default, skip_serializing_if = "arc_remove_is_empty")]
     pub remove: Arc<RemoveEditState>,
     #[serde(default)]
@@ -145,6 +148,7 @@ pub fn default_edit_state() -> EditState {
         masks: Arc::new(MaskStack::default()),
         subject_refinement: None,
         lens: LensEditState::default(),
+        color_lut: None,
         remove: Arc::new(RemoveEditState::default()),
         ai_masks_need_update: false,
     }
@@ -158,6 +162,7 @@ pub fn edit_state_has_adjustments(edits: &EditState) -> bool {
         || edits.masks != default.masks
         || edits.subject_refinement != default.subject_refinement
         || edits.lens != default.lens
+        || edits.color_lut != default.color_lut
         || edits.remove != default.remove
 }
 

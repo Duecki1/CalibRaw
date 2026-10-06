@@ -68,6 +68,7 @@ impl CalibRawApp {
             final_geometry: self.develop.geometry,
             final_masks: self.masks.stack.clone(),
             final_remove: self.inpaint.edits.as_ref().clone(),
+            final_color_lut: self.develop.color_lut.clone(),
             gpu_export_prewarm: self.export.gpu_prewarm.as_ref().map(Arc::clone),
             #[cfg(target_os = "android")]
             android_app: self.android.android_app.clone(),

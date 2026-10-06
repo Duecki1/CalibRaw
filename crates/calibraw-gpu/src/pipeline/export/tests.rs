@@ -921,6 +921,7 @@ fn tiff_header_preserves_create_date_at_relocated_exif_offset() {
                 exposure: &ExposureParams::default(),
                 masks: &MaskStack::default(),
                 remove: &crate::pipeline::RemoveEditState::default(),
+                color_lut: None,
                 output: ExportOutput {
                     path: std::path::Path::new("test.tif"),
                     truncate_existing: false,

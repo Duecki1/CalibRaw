@@ -275,6 +275,14 @@ fn map_negative_gamut(rgb: vec3<f32>) -> vec3<f32> {
     return gamut_project_nonnegative_rec2020(rgb);
 }
 
+fn srgb_eotf(c: vec3<f32>) -> vec3<f32> {
+    let magnitude = abs(c);
+    let lo = c / 12.92;
+    let hi = sign(c) * pow((magnitude + 0.055) / 1.055, vec3<f32>(2.4));
+    let cutoff = step(vec3<f32>(0.04045), magnitude);
+    return mix(lo, hi, cutoff);
+}
+
 fn srgb_oetf(c: vec3<f32>) -> vec3<f32> {
     let magnitude = abs(c);
     let lo = c * 12.92;

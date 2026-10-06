@@ -18,7 +18,7 @@ mod android;
 use android::ReplayFrameWriter;
 
 use crate::pipeline::{
-    spawn_tiled_export, ExportBitDepth, ExportEvent, ExportFormat, ExportMetadata,
+    spawn_tiled_export, ColorLutEdit, ExportBitDepth, ExportEvent, ExportFormat, ExportMetadata,
     ExportResizeMode, ExportSettings, ExportTarget, ExposureParams, GeometryTransform,
     GpuProgramPrewarm, LoadedRaw, MaskStack, RemoveEditState, TileSpec, TiledExportJob,
 };
@@ -27,7 +27,7 @@ use frames::{
     brand_outro_frame, crossfade, draw_stage_title, fit_to_canvas, replay_canvas_dimensions,
     smootherstep, split_frame, stage_title_alpha, RenderedStill,
 };
-use plan::{replay_stage_plan, ReplayRenderState};
+use plan::{add_color_lut, replay_stage_plan, ReplayRenderState};
 use std::fmt;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -65,6 +65,7 @@ pub(crate) struct ReplayRequest {
     pub(crate) final_geometry: GeometryTransform,
     pub(crate) final_masks: MaskStack,
     pub(crate) final_remove: RemoveEditState,
+    pub(crate) final_color_lut: Option<ColorLutEdit>,
     pub(crate) gpu_export_prewarm: Option<Arc<GpuProgramPrewarm>>,
     #[cfg(target_os = "android")]
     pub(crate) android_app: calibraw_ffi::AndroidApp,
@@ -138,6 +139,7 @@ fn render_still(
             exposure: state.exposure,
             masks: state.masks.clone(),
             remove: state.remove.clone(),
+            color_lut: state.color_lut.clone(),
             target: ExportTarget::File(path.to_path_buf()),
             tile_spec: TileSpec::default(),
             settings,
@@ -184,6 +186,7 @@ fn final_render_state(request: &ReplayRequest) -> ReplayRenderState {
         geometry: request.final_geometry.sanitized(),
         masks: request.final_masks.clone(),
         remove: request.final_remove.clone(),
+        color_lut: request.final_color_lut.clone(),
     }
 }
 
@@ -221,12 +224,17 @@ pub(crate) fn render_edit_replay(
 ) -> Result<PathBuf, ReplayError> {
     #[cfg(not(target_os = "android"))]
     ensure_ffmpeg_available()?;
-    let stages = replay_stage_plan(
+    let mut stages = replay_stage_plan(
         request.original_exposure,
         request.final_exposure,
         request.final_geometry,
         &request.final_masks,
         &request.final_remove,
+    );
+    add_color_lut(
+        &mut stages,
+        request.original_exposure,
+        request.final_color_lut.as_ref(),
     );
     let render_count = stages.len() + 2;
     let render_dir = tempfile::Builder::new()
@@ -525,6 +533,7 @@ mod tests {
             },
             final_masks: MaskStack::default(),
             final_remove: RemoveEditState::default(),
+            final_color_lut: None,
             gpu_export_prewarm: None,
         })
     }

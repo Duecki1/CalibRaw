@@ -102,6 +102,16 @@ impl CalibRawApp {
             crate::app::DesktopPickerEvent::PresetFiles(Some(paths)) => {
                 self.import_preset_files(&paths);
             }
+            crate::app::DesktopPickerEvent::ColorLut(Some(Ok(look))) => {
+                // The photo may have been closed while the dialog was open.
+                if self.can_edit_color_lut() {
+                    self.ui.notice = Some(format!("Applied the look “{}”.", look.name));
+                    self.set_color_lut(Some(look));
+                }
+            }
+            crate::app::DesktopPickerEvent::ColorLut(Some(Err(error))) => {
+                self.ui.notice = Some(error);
+            }
             _ => {}
         }
     }

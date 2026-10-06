@@ -124,6 +124,7 @@ fn run_export_worker(
             exposure: &job.exposure,
             masks: &job.masks,
             remove: &job.remove,
+            color_lut: job.color_lut.as_ref(),
             output,
             tile_spec,
             output_width,

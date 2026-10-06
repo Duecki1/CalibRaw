@@ -3,12 +3,12 @@ use super::gpu_cache::PersistentGpuPipelineCache;
 use super::sigmoid::coefficients as sigmoid_coefficients;
 use crate::pipeline::{
     canonical_remove_scene_to_pipeline_scene, effect_params, export_mask_atlas_edge_limit,
-    mask_atlas_edge, pipeline_scene_to_working_rec2020, AiDenoisedImage, CfaKind, ExposureParams,
-    GeometryTransform, HighlightReconstructionMethod, LensGeometryMap, LoadedRaw, LocalMask,
-    MaskEffect, MaskImage, MaskStack, PointColor, PointCurve, ProcessingStage, RawThumbnail,
-    RemoveEditState, RemovePatch, SigmoidParams, GLOBAL_TEMPERATURE_LIMIT,
-    GLOBAL_TINT_OFFSET_LIMIT, MAX_EFFECT_COMPONENTS, MAX_LOCAL_MASKS, MAX_POINT_COLORS,
-    MAX_POINT_CURVE_POINTS,
+    mask_atlas_edge, pipeline_scene_to_working_rec2020, AiDenoisedImage, CfaKind, ColorLut,
+    ColorLutEdit, ExposureParams, GeometryTransform, HighlightReconstructionMethod,
+    LensGeometryMap, LoadedRaw, LocalMask, MaskEffect, MaskImage, MaskStack, PointColor,
+    PointCurve, ProcessingStage, RawThumbnail, RemoveEditState, RemovePatch, SigmoidParams,
+    GLOBAL_TEMPERATURE_LIMIT, GLOBAL_TINT_OFFSET_LIMIT, MAX_EFFECT_COMPONENTS, MAX_LOCAL_MASKS,
+    MAX_POINT_COLORS, MAX_POINT_CURVE_POINTS,
 };
 use anyhow::{anyhow, Context, Result};
 use bytemuck::{Pod, Zeroable};
@@ -41,6 +41,8 @@ mod black_tone_tests;
 #[cfg(test)]
 mod blacks_pipeline_tests;
 #[cfg(test)]
+mod color_lut_tests;
+#[cfg(test)]
 mod existing_effects_tests;
 #[cfg(test)]
 mod film_effects_tests;
@@ -59,6 +61,7 @@ mod point_color_tests;
 #[cfg(test)]
 mod tests;
 
+mod color_lut;
 mod mask_params;
 mod params;
 mod remove_scene;
@@ -355,6 +358,8 @@ pub struct RawGpuPipeline {
     light_rays_mask_texture: wgpu::Texture,
     scene_depth_texture: wgpu::Texture,
     uploaded_scene_depth: Mutex<Option<MaskImage>>,
+    color_lut_texture: wgpu::Texture,
+    uploaded_color_lut: Mutex<Option<Arc<ColorLut>>>,
     mask_layer_capacity: usize,
     mask_atlas_edge: u32,
     out_texture: wgpu::Texture,
@@ -420,6 +425,7 @@ struct RawGpuPipelineBuild<'a> {
 impl RawGpuPipeline {
     fn upload_params(&self, queue: &wgpu::Queue, params: &GpuParams) {
         self.upload_scene_depth(queue, params.scene_depth.as_ref());
+        self.upload_color_lut(queue, params.color_lut.as_ref());
         match self.uploaded_stage_uniforms.lock() {
             Ok(mut uploaded) => {
                 if bytemuck::bytes_of(&uploaded.camera) != params.camera_bytes() {

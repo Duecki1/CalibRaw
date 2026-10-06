@@ -43,6 +43,10 @@ fn sample_edits() -> EditState {
             model: "35 mm f/2".to_owned(),
             ..LensEditState::default()
         },
+        color_lut: Some(crate::pipeline::ColorLutEdit::new(
+            "Test look",
+            crate::pipeline::ColorLut::from_function(3, |[r, g, b]| [g, b, 1.0 - r]).unwrap(),
+        )),
         remove: Arc::new(crate::pipeline::RemoveEditState::default()),
         ai_masks_need_update: false,
     }
@@ -1834,4 +1838,34 @@ fn ai_denoise_result_lives_only_while_the_saved_edit_uses_it() {
     assert!(remove_desktop_edits(&raw).unwrap());
     assert!(!companion.exists());
     fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn a_colour_look_counts_as_an_adjustment_and_copies_with_adjustments() {
+    let look = crate::pipeline::ColorLutEdit::new(
+        "Look",
+        crate::pipeline::ColorLut::from_function(2, |rgb| rgb.map(|value| 1.0 - value)).unwrap(),
+    );
+    let mut source = default_edit_state();
+    assert!(!edit_state_has_adjustments(&source));
+    source.color_lut = Some(look.clone());
+    assert!(edit_state_has_adjustments(&source));
+
+    let copy_settings = |adjustments: bool| AdjustmentCopySettings {
+        adjustments,
+        geometry: false,
+        camera_profile: false,
+        masks: false,
+        ai_masks: false,
+        lens_correction: false,
+    };
+    let mut destination = default_edit_state();
+    paste(&mut destination, &source, copy_settings(false));
+    assert!(destination.color_lut.is_none());
+    paste(&mut destination, &source, copy_settings(true));
+    assert_eq!(destination.color_lut, Some(look));
+
+    // Pasting onto a photo that has a look replaces it, and an empty source clears it.
+    paste(&mut destination, &default_edit_state(), copy_settings(true));
+    assert!(destination.color_lut.is_none());
 }

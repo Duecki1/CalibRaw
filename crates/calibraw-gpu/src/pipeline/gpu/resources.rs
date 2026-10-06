@@ -6,6 +6,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use wgpu::util::DeviceExt;
 
 pub(super) const SCENE_DEPTH_EDGE: u32 = 1024;
+/// Points per axis of the colour look's GPU cube. A 17- or 33-point table lands
+/// exactly on this grid; others are interpolated onto it.
+pub(super) const COLOR_LUT_EDGE: u32 = 65;
 
 const MAX_UPLOAD_SCRATCH_BYTES: usize = 8 * 1024 * 1024;
 
@@ -277,6 +280,18 @@ pub(super) fn build_gpu_resource_plan(input: GpuResourcePlanInput) -> Result<Gpu
             1,
             1,
             wgpu::TextureFormat::R16Float,
+        )?,
+    );
+    push_entry(
+        &mut entries,
+        "colour LUT texture",
+        GpuResourceResidency::Persistent,
+        texture_allocation_bytes(
+            COLOR_LUT_EDGE,
+            COLOR_LUT_EDGE,
+            COLOR_LUT_EDGE,
+            1,
+            wgpu::TextureFormat::Rgba16Float,
         )?,
     );
     let mask_bytes = texture_allocation_bytes(
@@ -1063,6 +1078,22 @@ pub(super) fn texture_array_entry(
         ty: wgpu::BindingType::Texture {
             sample_type,
             view_dimension: wgpu::TextureViewDimension::D2Array,
+            multisampled: false,
+        },
+        count: None,
+    }
+}
+
+pub(super) fn texture_3d_entry(
+    binding: u32,
+    sample_type: wgpu::TextureSampleType,
+) -> wgpu::BindGroupLayoutEntry {
+    wgpu::BindGroupLayoutEntry {
+        binding,
+        visibility: wgpu::ShaderStages::COMPUTE,
+        ty: wgpu::BindingType::Texture {
+            sample_type,
+            view_dimension: wgpu::TextureViewDimension::D3,
             multisampled: false,
         },
         count: None,

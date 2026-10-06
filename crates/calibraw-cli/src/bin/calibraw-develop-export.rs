@@ -165,6 +165,7 @@ impl ExportHarness<'_> {
                 exposure,
                 masks: MaskStack::default(),
                 remove: calibraw_cli::pipeline::RemoveEditState::default(),
+                color_lut: None,
                 target: ExportTarget::File(output.to_owned()),
                 tile_spec: TileSpec::default(),
                 settings: self.settings.clone(),

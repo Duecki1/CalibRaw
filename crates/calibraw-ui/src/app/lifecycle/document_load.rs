@@ -198,6 +198,7 @@ pub(super) fn run_document_load(job: DocumentLoadJob) -> Result<LoadedPreview, L
             mut masks,
             remove,
             saved_lens,
+            color_lut,
             ai_masks_need_update,
             geometry,
             editing_time_ms,
@@ -242,8 +243,9 @@ pub(super) fn run_document_load(job: DocumentLoadJob) -> Result<LoadedPreview, L
 
         let preview_raw =
             build_preview_proxy(&full_raw, preview_quality, viewport_pixels, geometry);
-        let initial_params =
-            GpuParams::new(&exposure, &masks, &preview_raw).with_vignette_geometry(geometry);
+        let initial_params = GpuParams::new(&exposure, &masks, &preview_raw)
+            .with_vignette_geometry(geometry)
+            .with_color_lut(color_lut.as_ref());
         let pipeline =
             create_preview_pipeline(&device, &queue, &preview_raw, &initial_params, programs)?;
         let mask_source = if needs_canonical_mask_source(&masks) {
@@ -264,8 +266,9 @@ pub(super) fn run_document_load(job: DocumentLoadJob) -> Result<LoadedPreview, L
             "Preview masks rasterized/uploaded in {:.3}s",
             mask_upload_started.elapsed().as_secs_f64()
         ));
-        let params =
-            GpuParams::new(&exposure, &masks, &preview_raw).with_vignette_geometry(geometry);
+        let params = GpuParams::new(&exposure, &masks, &preview_raw)
+            .with_vignette_geometry(geometry)
+            .with_color_lut(color_lut.as_ref());
         let render_started = Instant::now();
         pipeline
             .recompute_with_remove(
@@ -299,6 +302,7 @@ pub(super) fn run_document_load(job: DocumentLoadJob) -> Result<LoadedPreview, L
             ai_masks_need_update,
             mask_source,
             lens_correction,
+            color_lut,
             sidecar_target,
             document_generation,
             sidecar_warning,
@@ -429,6 +433,7 @@ struct InitialEdits {
     masks: MaskStack,
     remove: RemoveEditState,
     saved_lens: Option<crate::sidecar::LensEditState>,
+    color_lut: Option<ColorLutEdit>,
     ai_masks_need_update: bool,
     geometry: GeometryTransform,
     editing_time_ms: u64,
@@ -490,6 +495,7 @@ impl InitialEdits {
             masks: Arc::unwrap_or_clone(edits.masks),
             remove: Arc::unwrap_or_clone(edits.remove),
             saved_lens: Some(edits.lens),
+            color_lut: edits.color_lut,
             ai_masks_need_update: edits.ai_masks_need_update,
             geometry: edits.geometry.sanitized(),
             editing_time_ms,
@@ -505,6 +511,7 @@ impl InitialEdits {
             masks: MaskStack::default(),
             remove: RemoveEditState::default(),
             saved_lens: None,
+            color_lut: None,
             ai_masks_need_update: false,
             geometry: GeometryTransform::default(),
             editing_time_ms: 0,

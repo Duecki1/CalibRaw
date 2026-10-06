@@ -61,6 +61,7 @@ impl CalibRawApp {
                 geometry: self.develop.lens_correction.corrections.geometry,
                 vignetting: self.develop.lens_correction.corrections.vignetting,
             },
+            color_lut: self.develop.color_lut.clone(),
             remove: self.committed_remove_state_for_persistence(),
             ai_masks_need_update: self.ai.update_needed,
         }

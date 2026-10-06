@@ -276,7 +276,8 @@ impl CalibRawApp {
                 &self.preview_mask_stack(),
                 &prepared.preview_raw,
             )
-            .with_vignette_geometry(self.develop.geometry);
+            .with_vignette_geometry(self.develop.geometry)
+            .with_color_lut(self.preview_color_lut().as_ref());
             if let Err(error) = pipeline.recompute_with_remove(
                 &render_state.queue,
                 &render_state.device,
@@ -316,7 +317,8 @@ impl CalibRawApp {
                 &preview_masks,
                 &prepared.preview_raw,
             )
-            .with_vignette_geometry(self.develop.geometry);
+            .with_vignette_geometry(self.develop.geometry)
+            .with_color_lut(self.preview_color_lut().as_ref());
             let pipeline = match RawGpuPipeline::new(
                 &render_state.device,
                 &render_state.queue,

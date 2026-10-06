@@ -91,8 +91,11 @@ impl CalibRawApp {
         let adjustments_changed = selection.includes_exposure() || replacing;
         let geometry_changed = selection.geometry || replacing;
         let camera_profile_category_changed = selection.camera_profile || replacing;
-        let pipeline_adjustments_changed =
-            adjustments_changed || geometry_changed || camera_profile_category_changed;
+        let color_lut_category_changed = selection.color_lut || replacing;
+        let pipeline_adjustments_changed = adjustments_changed
+            || geometry_changed
+            || camera_profile_category_changed
+            || color_lut_category_changed;
         let masks_changed = selection.includes_masks() || replacing;
         let lens_category_changed = selection.lens_correction || replacing;
         let lens_changed = lens_category_changed
@@ -126,6 +129,9 @@ impl CalibRawApp {
         if camera_profile_category_changed {
             self.develop.selected_camera_profile = pasted_camera_profile.clone();
         }
+        if color_lut_category_changed {
+            self.develop.color_lut.clone_from(&merged.color_lut);
+        }
         if pipeline_adjustments_changed {
             self.note_edit_changed();
             self.ai.update_needed |= merged.ai_masks_need_update;
@@ -153,6 +159,9 @@ impl CalibRawApp {
 
         if pipeline_adjustments_changed && !lens_changed {
             self.mark_pipeline_dirty();
+            if color_lut_category_changed {
+                self.mark_color_lut_dirty();
+            }
         }
 
         self.commit_edit_history_now();

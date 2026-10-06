@@ -2,10 +2,10 @@ use super::geometry::GeometryInverseMap;
 use super::{
     build_region_proxy, export_mask_atlas_edge, extract_padded_tile, extract_padded_tile_into,
     mask_atlas_edge, mask_region_texture_extent, mask_source_region_uv, required_export_tile_halo,
-    CfaKind, ExposureParams, GeometryTransform, GpuParams, GpuProgramPrewarm, LensGeometryMap,
-    LoadedRaw, MaskStack, NativeRect, PipelineOptions, ProcessingQuality, ProcessingStage,
-    ProxySpec, RawGpuPipeline, RawGpuProgramTemplate, RemoveEditState, RemoveSceneContext,
-    SrgbOutputTransform, TilePlan, TileSpec, EXPORT_TILE_HALO, MAX_LOCAL_MASKS,
+    CfaKind, ColorLutEdit, ExposureParams, GeometryTransform, GpuParams, GpuProgramPrewarm,
+    LensGeometryMap, LoadedRaw, MaskStack, NativeRect, PipelineOptions, ProcessingQuality,
+    ProcessingStage, ProxySpec, RawGpuPipeline, RawGpuProgramTemplate, RemoveEditState,
+    RemoveSceneContext, SrgbOutputTransform, TilePlan, TileSpec, EXPORT_TILE_HALO, MAX_LOCAL_MASKS,
     MIN_EXPORT_TILE_HALO, TONE_GUIDE_CELL_SIZE,
 };
 use anyhow::{Context, Result};
@@ -73,6 +73,8 @@ pub struct TiledExportJob {
     pub exposure: ExposureParams,
     pub masks: MaskStack,
     pub remove: RemoveEditState,
+    /// A colour look applied after the view transform.
+    pub color_lut: Option<ColorLutEdit>,
     pub target: ExportTarget,
     pub tile_spec: TileSpec,
     pub settings: ExportSettings,
@@ -131,6 +133,7 @@ struct ExportRequest<'a> {
     exposure: &'a ExposureParams,
     masks: &'a MaskStack,
     remove: &'a RemoveEditState,
+    color_lut: Option<&'a ColorLutEdit>,
     output: ExportOutput<'a>,
     tile_spec: TileSpec,
     output_width: u32,
