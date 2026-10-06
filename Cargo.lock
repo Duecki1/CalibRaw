@@ -737,6 +737,7 @@ dependencies = [
  "tempfile",
  "trash",
  "ureq",
+ "zbus",
 ]
 
 [[package]]

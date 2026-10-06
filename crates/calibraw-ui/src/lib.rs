@@ -1,4 +1,15 @@
 pub(crate) mod appearance;
+
+pub mod diagnostics {
+    pub use calibraw_core::diagnostics::*;
+}
+
+pub mod file_ops {
+    pub use calibraw_core::file_ops::*;
+}
+
+#[cfg(not(target_os = "android"))]
+pub(crate) mod desktop_portal;
 pub(crate) mod export_naming;
 pub(crate) mod performance_settings;
 pub(crate) use calibraw_core::presets;
@@ -145,7 +156,11 @@ pub fn run_desktop() -> eframe::Result {
 
     let mut options = native_options();
     options.viewport = eframe::egui::ViewportBuilder::default()
-        .with_app_id("de.duecki.calibraw")
+        .with_app_id(if cfg!(target_os = "linux") {
+            "de.dueckis.CalibRaw"
+        } else {
+            "de.duecki.calibraw"
+        })
         .with_inner_size([1280.0, 720.0])
         .with_min_inner_size([480.0, 480.0])
         .with_icon(desktop_icon());

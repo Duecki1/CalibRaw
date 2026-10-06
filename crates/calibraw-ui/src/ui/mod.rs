@@ -13,10 +13,8 @@ pub(crate) mod sidebar;
 pub(crate) mod theme;
 pub(crate) mod top_bar;
 
-/// Desktop-only “save as” picker. The returned path always carries one of `extensions`
-/// (`extensions[0]` when the user typed none), so the encoder downstream of it never sees a
-/// file it cannot open. Adding the extension never silently replaces an existing file: the
-/// picker reopens with the completed name instead.
+/// Desktop-only “save as” picker. Native paths receive a supported extension when needed;
+/// Flatpak paths keep the exact filename granted by the document portal.
 #[cfg(not(target_os = "android"))]
 pub(crate) fn choose_save_path(
     filter: String,
@@ -24,7 +22,8 @@ pub(crate) fn choose_save_path(
     default_name: &str,
     initial_directory: Option<&std::path::Path>,
 ) -> Option<std::path::PathBuf> {
-    let fallback_extension = extensions.first()?;
+    extensions.first()?;
+    let is_flatpak = crate::desktop_portal::is_flatpak();
     let mut file_name = default_name.to_owned();
     let mut directory = initial_directory
         .filter(|path| !path.as_os_str().is_empty())
@@ -36,20 +35,9 @@ pub(crate) fn choose_save_path(
         if let Some(directory) = &directory {
             dialog = dialog.set_directory(directory);
         }
-        let mut path = dialog.save_file()?;
-        let valid_extension = path
-            .extension()
-            .and_then(|extension| extension.to_str())
-            .is_some_and(|extension| {
-                extensions
-                    .iter()
-                    .any(|candidate| extension.eq_ignore_ascii_case(candidate))
-            });
-        if valid_extension {
-            return Some(path);
-        }
-        path.set_extension(fallback_extension);
-        if !path.exists() {
+        let selected_path = dialog.save_file()?;
+        let path = save_path_with_extension(selected_path.clone(), extensions, is_flatpak)?;
+        if is_flatpak || path == selected_path || !path.exists() {
             return Some(path);
         }
         // The dialog only checked the name without the extension. Offer the
@@ -57,6 +45,31 @@ pub(crate) fn choose_save_path(
         file_name = path.file_name()?.to_string_lossy().into_owned();
         directory = path.parent().map(std::path::Path::to_path_buf);
     }
+}
+
+/// Apply native extension defaults without changing Flatpak document grants.
+#[cfg(not(target_os = "android"))]
+fn save_path_with_extension(
+    mut path: std::path::PathBuf,
+    extensions: &[&str],
+    is_flatpak: bool,
+) -> Option<std::path::PathBuf> {
+    let fallback_extension = extensions.first()?;
+    if is_flatpak {
+        return Some(path);
+    }
+    let valid_extension = path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| {
+            extensions
+                .iter()
+                .any(|candidate| extension.eq_ignore_ascii_case(candidate))
+        });
+    if !valid_extension {
+        path.set_extension(fallback_extension);
+    }
+    Some(path)
 }
 
 /// Save picker for a developed-image export.
@@ -91,6 +104,71 @@ pub(crate) fn choose_edit_replay_file_path(
 /// Extension list for [`choose_edit_replay_file_path`]; also the container FFmpeg is asked for.
 #[cfg(not(target_os = "android"))]
 const MP4_EXTENSIONS: &[&str] = &["mp4"];
+
+#[cfg(all(test, not(target_os = "android")))]
+mod save_path_tests {
+    use super::save_path_with_extension;
+    use std::path::PathBuf;
+
+    #[test]
+    fn flatpak_preserves_exact_granted_filename_for_every_extension() {
+        for name in [
+            "export",
+            "export.png",
+            "export.JPEG",
+            "export.",
+            "my.photo.txt",
+        ] {
+            let granted = PathBuf::from("/run/user/1000/doc/grant").join(name);
+            assert_eq!(
+                save_path_with_extension(granted.clone(), &["jpg", "jpeg"], true),
+                Some(granted)
+            );
+        }
+        let granted = PathBuf::from("/run/user/1000/doc/grant/replay.wrong");
+        assert_eq!(
+            save_path_with_extension(granted.clone(), super::MP4_EXTENSIONS, true),
+            Some(granted)
+        );
+    }
+
+    #[test]
+    fn native_corrects_missing_or_wrong_extensions_and_preserves_valid_aliases() {
+        for (name, expected) in [
+            ("export", "export.jpg"),
+            ("export.png", "export.jpg"),
+            ("export.", "export.jpg"),
+            ("my.photo.txt", "my.photo.jpg"),
+            ("export.jpg", "export.jpg"),
+            ("export.JPEG", "export.JPEG"),
+        ] {
+            assert_eq!(
+                save_path_with_extension(PathBuf::from(name), &["jpg", "jpeg"], false),
+                Some(PathBuf::from(expected))
+            );
+        }
+        assert_eq!(
+            save_path_with_extension(PathBuf::from("replay.wrong"), super::MP4_EXTENSIONS, false,),
+            Some(PathBuf::from("replay.mp4"))
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn flatpak_preserves_non_utf8_filenames_while_native_replaces_invalid_extension() {
+        use std::os::unix::ffi::OsStringExt;
+
+        let granted = PathBuf::from(std::ffi::OsString::from_vec(b"export.\xff".to_vec()));
+        assert_eq!(
+            save_path_with_extension(granted.clone(), &["jpg"], true),
+            Some(granted.clone())
+        );
+        assert_eq!(
+            save_path_with_extension(granted, &["jpg"], false),
+            Some(PathBuf::from("export.jpg"))
+        );
+    }
+}
 
 #[cfg(target_os = "android")]
 pub(crate) fn android_overflow_menu<R>(
