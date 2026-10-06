@@ -135,7 +135,9 @@ impl CalibRawApp {
                     .as_ref()
                     .map(|raw| (raw.width, raw.height))
                 {
-                    self.set_straighten_rotation(estimate.rotation_degrees, width, height);
+                    if !self.set_straighten_rotation(estimate.rotation_degrees, width, height) {
+                        self.ui.notice = Some("The photo is already level.".to_owned());
+                    }
                 }
             }
             Ok(None) => {

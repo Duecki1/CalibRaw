@@ -75,26 +75,35 @@ pub(super) fn detect_line_segments_multiscale(
     min_length: f32,
 ) -> Vec<LineSegment> {
     let mut segments = detect_line_segments(width, height, values, min_length);
-    let mut level_width = width;
-    let mut level_height = height;
-    let mut level_values = values.to_vec();
+    // The previous level; `None` while it is still the caller's full-size raster.
+    let mut previous: Option<(usize, usize, Vec<f32>)> = None;
     let mut scale = 1.0f32;
     for _ in 1..PYRAMID_LEVELS {
-        if level_width.min(level_height) / 2 < MIN_LEVEL_EDGE {
+        let (previous_width, previous_height, previous_values) = match &previous {
+            Some((w, h, v)) => (*w, *h, v.as_slice()),
+            None => (width, height, values),
+        };
+        if previous_width.min(previous_height) / 2 < MIN_LEVEL_EDGE {
             break;
         }
-        (level_width, level_height, level_values) = halve(level_width, level_height, &level_values);
+        let halved = halve(previous_width, previous_height, previous_values);
+        let (level_width, level_height, level_values) = previous.insert(halved);
         scale *= 2.0;
         // A coarse pixel centre i lies at fine position `scale * i + (scale - 1) / 2`.
         let offset = (scale - 1.0) * 0.5;
         let map = |[x, y]: [f32; 2]| [x * scale + offset, y * scale + offset];
         segments.extend(
-            detect_line_segments(level_width, level_height, &level_values, min_length / scale)
-                .into_iter()
-                .map(|segment| LineSegment {
-                    start: map(segment.start),
-                    end: map(segment.end),
-                }),
+            detect_line_segments(
+                *level_width,
+                *level_height,
+                level_values,
+                min_length / scale,
+            )
+            .into_iter()
+            .map(|segment| LineSegment {
+                start: map(segment.start),
+                end: map(segment.end),
+            }),
         );
     }
     segments
