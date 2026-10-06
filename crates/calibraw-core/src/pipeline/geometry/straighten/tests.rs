@@ -379,47 +379,39 @@ fn heavy_roll_beats_receding_courses() {
     );
 }
 
-/// TEMPORARY debug harness.
 #[test]
-#[ignore]
-fn debug_dump() {
-    let path = std::env::var("STRAIGHTEN_RAW").unwrap();
-    let out = std::env::var("STRAIGHTEN_OUT").unwrap();
-    let raw = crate::pipeline::load_raw_file(std::path::Path::new(&path)).unwrap();
-    let image = LineAnalysisImage::from_raw(&raw).unwrap();
-    let longest = image.width.max(image.height) as f32;
-    let segments = detect_line_segments_multiscale(image.width, image.height, &image.values, longest * MIN_SEGMENT_FRACTION);
-    let kept = distinct_structures(segments, longest * STRUCTURE_DISTANCE_FRACTION);
-    let mut rgb = image::RgbImage::new(image.width as u32, image.height as u32);
-    for (i, v) in image.values.iter().enumerate() {
-        let g = (*v * 0.6) as u8;
-        rgb.put_pixel((i % image.width) as u32, (i / image.width) as u32, image::Rgb([g, g, g]));
-    }
-    for s in &kept {
-        let [dx, dy] = s.delta();
-        let a = dy.atan2(dx).to_degrees();
-        let q = (a / 90.0).round();
-        let tilt = a - q * 90.0;
-        let vertical = (q as i32).rem_euclid(2) == 1;
-        if tilt.abs() > 25.0 { continue; }
-        if vertical {
-            let m = s.midpoint();
-            println!("V tilt {tilt:6.1} len {:5.0} mid ({:4.0},{:4.0})", s.length(), m[0], m[1]);
-        }
-        let c = if vertical { [255, 60, 60] } else { [60, 160, 255] };
-        let n = s.length().ceil() as usize + 1;
-        for k in 0..=n {
-            let t = k as f32 / n as f32;
-            let x = s.start[0] + dx * t;
-            let y = s.start[1] + dy * t;
-            if x >= 0.0 && y >= 0.0 && (x as u32) < rgb.width() && (y as u32) < rgb.height() {
-                for (ox, oy) in [(0, 0), (1, 0), (0, 1)] {
-                    if ((x as u32 + ox) < rgb.width()) && ((y as u32 + oy) < rgb.height()) {
-                        rgb.put_pixel(x as u32 + ox, y as u32 + oy, image::Rgb(c));
-                    }
-                }
-            }
-        }
-    }
-    rgb.save(out).unwrap();
+fn pillars_outrank_a_tilted_horizontal() {
+    // A wall seen slightly from the side: its impost line recedes at 6°, while three pillars
+    // spread across the frame lean by the camera's 14° roll. Horizontals converge under yaw, so
+    // the verticals decide the roll.
+    let (width, height) = (1200usize, 800usize);
+    let (roll_sin, roll_cos) = 14.0f32.to_radians().sin_cos();
+    let (impost_sin, impost_cos) = 6.0f32.to_radians().sin_cos();
+    let pillars = [-420.0f32, 20.0, 400.0];
+    let values: Vec<f32> = (0..width * height)
+        .map(|index| {
+            let x = (index % width) as f32 + 0.5 - width as f32 * 0.5;
+            let y = (index / width) as f32 + 0.5 - height as f32 * 0.5;
+            let scene_x = roll_cos * x + roll_sin * y;
+            let scene_y = -roll_sin * x + roll_cos * y;
+            let pillar = pillars
+                .iter()
+                .map(|&pillar_x| {
+                    ((scene_x - pillar_x).abs() - 5.0).max((scene_y - 40.0).abs() - 110.0)
+                })
+                .fold(f32::MAX, f32::min);
+            let impost_across = -impost_sin * x + impost_cos * (y + 150.0);
+            let impost = (impost_across.abs() - 2.0)
+                .max((impost_cos * x + impost_sin * (y + 150.0)).abs() - 380.0);
+            let coverage = (0.5 - pillar.min(impost)).clamp(0.0, 1.0);
+            0.7 - 0.5 * coverage
+        })
+        .collect();
+    let raw = raster_raw(width, height, &values);
+    let estimate = estimate(&raw, GeometryTransform::default()).unwrap();
+    assert!(
+        (estimate.rotation_degrees + 14.0).abs() < 0.3,
+        "estimated {}",
+        estimate.rotation_degrees
+    );
 }

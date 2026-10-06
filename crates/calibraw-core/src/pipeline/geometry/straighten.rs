@@ -16,14 +16,18 @@ const MIN_SEGMENT_FRACTION: f32 = 0.03;
 /// length of agreeing structures, each scaled by its orientation weight. A level vertical counts
 /// fully; a horizontal needs to be much longer.
 const MIN_EVIDENCE_FRACTION: f32 = 0.12;
-/// Correction at which the required evidence doubles. Most photos are within a few degrees of
-/// level, while edges receding in depth (rails, wires, rooflines) sit at arbitrary angles, so a
-/// large correction needs proportionally more agreement.
-const TILT_DOUBLE_EVIDENCE_DEGREES: f32 = 5.5;
-/// Tilt at which a vote's weight halves when locating the peak. This is deliberately gentle: it
-/// only breaks ties between clusters, so that a photo rolled by 6° still finds its verticals and
-/// impost lines instead of a larger but scattered set of receding courses at 14°.
-const TILT_HALF_WEIGHT_DEGREES: f32 = 12.0;
+/// Correction at which the required evidence doubles, so a large correction needs more
+/// agreement than a small one.
+const TILT_DOUBLE_EVIDENCE_DEGREES: f32 = 20.0;
+/// Tilt at which a near-horizontal edge's evidence halves. Horizontals converge under yaw, so
+/// rails, wires, rooflines and masonry courses receding in depth sit at arbitrary angles, and a
+/// tilted one says little about roll. Verticals are barely affected by the usual camera pitch
+/// and, since a rolled photo is common, are not penalised for tilt at all.
+const HORIZONTAL_TILT_HALF_EVIDENCE_DEGREES: f32 = 6.0;
+/// Angular width of the first, coarse peak search. Perspective fans parallel verticals out over
+/// a few degrees, so the pillars of one wall only form a single peak at this width; the
+/// estimate is then refined at each segment's own precision within that peak.
+const COARSE_SIGMA_DEGREES: f32 = 1.5;
 /// A clear estimate needs at least one straight edge this long among its supporters, as a share
 /// of the longest edge. A few short segments (grass, twigs, brickwork) agree by accident.
 const MIN_ANCHOR_FRACTION: f32 = 0.10;
@@ -195,9 +199,13 @@ fn votes(
             let centrality = 1.0 / (1.0 + 3.0 * relative * relative);
 
             let orientation = if vertical { 1.0 } else { HORIZONTAL_WEIGHT };
-            let evidence = segment.length() * orientation;
-            let relative_tilt = tilt / TILT_HALF_WEIGHT_DEGREES;
-            let prior = 1.0 / (1.0 + relative_tilt * relative_tilt);
+            let relative_tilt = tilt / HORIZONTAL_TILT_HALF_EVIDENCE_DEGREES;
+            let tilt_penalty = if vertical {
+                1.0
+            } else {
+                1.0 / (1.0 + relative_tilt * relative_tilt)
+            };
+            let evidence = segment.length() * orientation * tilt_penalty;
 
             Some(Vote {
                 rotation: -tilt,
@@ -205,7 +213,9 @@ fn votes(
                     .atan()
                     .to_degrees()
                     .max(MIN_ANGLE_SIGMA_DEGREES),
-                weight: evidence * centrality * prior,
+                // The penalty counts twice here: once in the evidence and once more so that a
+                // tilted horizontal cannot pull the peak away from verticals.
+                weight: evidence * centrality * tilt_penalty,
                 length: segment.length(),
                 evidence,
             })
@@ -218,11 +228,19 @@ fn density_peak(votes: &[Vote]) -> Option<f32> {
     if votes.is_empty() {
         return None;
     }
+    let centre = peak_of(votes, COARSE_SIGMA_DEGREES, None)?;
+    let reach = 2.0 * COARSE_SIGMA_DEGREES;
+    peak_of(votes, 0.0, Some((centre - reach, centre + reach)))
+}
+
+/// Peak of the density with every vote's sigma at least `min_sigma`, optionally within a window.
+fn peak_of(votes: &[Vote], min_sigma: f32, window: Option<(f32, f32)>) -> Option<f32> {
     let steps = (2.0 * MAX_TILT_DEGREES / DENSITY_STEP_DEGREES).round() as usize;
     let mut density = vec![0.0f32; steps + 1];
     let position = |step: usize| -MAX_TILT_DEGREES + step as f32 * DENSITY_STEP_DEGREES;
     for vote in votes {
-        let reach = 4.0 * vote.sigma;
+        let sigma = vote.sigma.max(min_sigma);
+        let reach = 4.0 * sigma;
         let first = ((vote.rotation - reach + MAX_TILT_DEGREES) / DENSITY_STEP_DEGREES)
             .floor()
             .max(0.0) as usize;
@@ -230,13 +248,14 @@ fn density_peak(votes: &[Vote]) -> Option<f32> {
             as usize)
             .min(steps);
         for (step, value) in density.iter_mut().enumerate().take(last + 1).skip(first) {
-            let z = (position(step) - vote.rotation) / vote.sigma;
+            let z = (position(step) - vote.rotation) / sigma;
             *value += vote.weight * (-0.5 * z * z).exp();
         }
     }
     density
         .iter()
         .enumerate()
+        .filter(|(step, _)| window.is_none_or(|(lo, hi)| (lo..=hi).contains(&position(*step))))
         .max_by(|a, b| a.1.total_cmp(b.1))
         .filter(|(_, &value)| value > 0.0)
         .map(|(step, _)| position(step))
