@@ -50,7 +50,9 @@ change that establishes a boundary, not in advance.
 - The Android bridge wakes the UI through a plain callback (`attach_ui`), not
   an `egui::Context`.
 - Export destinations are explicit: `ExportTarget::File` is written beside the
-  path and renamed into place; `ExportTarget::Descriptor` (Android MediaStore)
+  path and renamed into place; `ExportTarget::NewFile` (desktop batch export)
+  is moved into place without replacing anything, taking the next free
+  `{stem}-N` name; `ExportTarget::Descriptor` (Android MediaStore)
   is written in place with intermediates in a caller-chosen staging directory.
   The exporter no longer asks the platform bridge which kind a path is.
 

@@ -8,7 +8,6 @@ pub fn spawn_tiled_export(
 ) -> mpsc::Receiver<ExportEvent> {
     let (sender, receiver) = mpsc::channel();
     let worker_sender = sender.clone();
-    let worker_path = job.target.path().to_path_buf();
     let worker_name = format.worker_name();
 
     let spawn_result = std::thread::Builder::new()
@@ -19,9 +18,7 @@ pub fn spawn_tiled_export(
             let result = run_export_worker(format, &job, &worker_sender);
             record_export_worker_finished(format, worker_started, &result);
             let _ = worker_sender.send(ExportEvent::Finished(
-                result
-                    .map(|_| worker_path)
-                    .map_err(|error| format!("{error:#}")),
+                result.map_err(|error| format!("{error:#}")),
             ));
         });
 
@@ -62,14 +59,14 @@ fn record_export_worker_started(format: ExportFormat, job: &TiledExportJob) {
     }
 }
 
-fn record_export_worker_finished(format: ExportFormat, started: Instant, result: &Result<()>) {
+fn record_export_worker_finished(format: ExportFormat, started: Instant, result: &Result<PathBuf>) {
     let format_name = match format {
         ExportFormat::Png => "PNG",
         ExportFormat::Jpeg => "JPEG",
         ExportFormat::Tiff | ExportFormat::JpegXl => return,
     };
     match result {
-        Ok(()) => calibraw_core::diagnostics::record(format!(
+        Ok(_) => calibraw_core::diagnostics::record(format!(
             "{format_name} export worker finished successfully in {:.3}s",
             started.elapsed().as_secs_f64()
         )),
@@ -84,7 +81,7 @@ fn run_export_worker(
     format: ExportFormat,
     job: &TiledExportJob,
     events: &mpsc::Sender<ExportEvent>,
-) -> Result<()> {
+) -> Result<PathBuf> {
     let program_template = (job.raw.cfa_kind == CfaKind::Bayer)
         .then(|| await_export_program_template(job.program_prewarm.as_deref()))
         .flatten();

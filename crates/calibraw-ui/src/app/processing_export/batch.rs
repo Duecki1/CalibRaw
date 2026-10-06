@@ -303,7 +303,14 @@ fn prepare_desktop_library_export_item(
             source_file_name,
             gpu_export_prewarm: None,
         },
-        destination: ExportDestination::File(job.destination.clone()),
+        destination: match &job.destination {
+            LibraryExportDestination::Chosen(path) => ExportDestination::File(path.clone()),
+            LibraryExportDestination::InFolder { folder, stem } => ExportDestination::NewFile {
+                directory: folder.clone(),
+                stem: stem.clone(),
+                extension: format.extension().to_owned(),
+            },
+        },
         format,
         settings: settings.clone(),
     })
@@ -374,7 +381,6 @@ impl CalibRawApp {
             cancel_requested: false,
             format,
             settings,
-            reserved_names: std::collections::HashSet::new(),
         });
         self.export.task = Some(ExportTask::new(
             ExportTaskKind::LibraryBatch,
@@ -508,17 +514,9 @@ impl CalibRawApp {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_millis();
-        let gallery_name = {
-            let Some(batch) = self.export.batch.as_mut() else {
-                return;
-            };
-            let name =
-                crate::export_naming::first_free_file_name(&stem, format.extension(), |name| {
-                    batch.reserved_names.contains(name)
-                });
-            batch.reserved_names.insert(name.clone());
-            name
-        };
+        // MediaStore numbers a name that is already taken when it creates the
+        // item, so the batch asks for the plain name every time.
+        let gallery_name = format!("{stem}.{}", format.extension());
         let cache_file_name = format!("{stem}-{timestamp}.{}", format.extension());
         let destination =
             match self.prepare_android_export_destination(gallery_name, cache_file_name, format) {
@@ -670,7 +668,7 @@ impl CalibRawApp {
     #[cfg(not(target_os = "android"))]
     pub(crate) fn start_library_exports(
         &mut self,
-        jobs: Vec<(PathBuf, PathBuf)>,
+        jobs: Vec<(PathBuf, LibraryExportDestination)>,
         settings: ExportSettings,
         format: ExportFormat,
         frame: &eframe::Frame,

@@ -347,7 +347,9 @@ is absent or invalid. Its artifact is named
 Imports use Android's document picker and are copied to
 `Android/media/de.duecki.calibraw/.library`; matching `.calibraw` sidecars remain next
 to each RAW. Legacy layouts are migrated only after a successful copy. Exports
-are published to `Pictures/CalibRaw` through MediaStore where available.
+are published to `Pictures/CalibRaw` through MediaStore where available;
+MediaStore numbers a name that is already taken, and the reported location is
+read back from it.
 
 
 Long-running operations require the app to remain open. Android 13 and newer

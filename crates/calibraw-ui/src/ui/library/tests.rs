@@ -19,24 +19,17 @@ fn unique_temp_dir(label: &str) -> PathBuf {
 
 #[cfg(not(target_os = "android"))]
 #[test]
-fn library_export_naming_preserves_format_and_avoids_collisions() {
+fn library_export_stems_follow_the_name_template() {
     let root = unique_temp_dir("library-export-name-test");
     let source = root.join("photo.CR3");
-    let existing = root.join("photo-CalibRaw.jpg");
     fs::write(&source, b"raw").unwrap();
-    fs::write(&existing, b"existing").unwrap();
-    let mut reserved = HashSet::new();
 
-    let destination = super::export::unique_library_export_path(
-        &root,
+    let stem = super::export::library_export_stem(
         &source,
-        ExportFormat::Jpeg,
         crate::export_naming::DEFAULT_EXPORT_NAME_TEMPLATE,
-        &mut reserved,
     );
 
-    assert_eq!(destination, root.join("photo-CalibRaw-2.jpg"));
-    assert!(reserved.contains(&destination));
+    assert_eq!(stem, "photo-CalibRaw");
     fs::remove_dir_all(root).unwrap();
 }
 

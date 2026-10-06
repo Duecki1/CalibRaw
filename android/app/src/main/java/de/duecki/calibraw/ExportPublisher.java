@@ -4,6 +4,7 @@ import android.Manifest;
 import android.content.ContentResolver;
 import android.content.ContentValues;
 import android.content.pm.PackageManager;
+import android.database.Cursor;
 import android.media.MediaScannerConnection;
 import android.net.Uri;
 import android.os.Build;
@@ -66,22 +67,48 @@ final class ExportPublisher {
         }
     }
 
-    void finishPendingExport(String uriText, int successFlag) throws Exception {
+    /**
+     * Publishes or deletes a pending export. A published export returns where MediaStore put it,
+     * which carries a numbered name when the requested one was taken, or "" when MediaStore
+     * cannot tell.
+     */
+    String finishPendingExport(String uriText, int successFlag) throws Exception {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q || uriText == null || uriText.isEmpty()) {
-            return;
+            return "";
         }
         ContentResolver resolver = activity.getContentResolver();
         Uri uri = Uri.parse(uriText);
         boolean success = successFlag != 0;
         if (!success) {
             resolver.delete(uri, null, null);
-            return;
+            return "";
         }
         ContentValues values = new ContentValues();
         values.put(MediaStore.Images.Media.IS_PENDING, 0);
         if (resolver.update(uri, values, null, null) <= 0) {
             resolver.delete(uri, null, null);
             throw new IllegalStateException("Android MediaStore could not publish the export");
+        }
+        return publishedLocation(uri);
+    }
+
+    /**
+     * The folder and name MediaStore gave a published item, or "" when it cannot be read.
+     * MediaStore numbers a name that is already taken, so this can differ from the requested one.
+     */
+    private String publishedLocation(Uri uri) {
+        String[] projection = {
+                MediaStore.MediaColumns.RELATIVE_PATH, MediaStore.MediaColumns.DISPLAY_NAME};
+        try (Cursor cursor = activity.getContentResolver().query(
+                uri, projection, null, null, null)) {
+            if (cursor == null || !cursor.moveToFirst()) {
+                return "";
+            }
+            return AndroidStorageContract.mediaStoreLocation(
+                    cursor.getString(0), cursor.getString(1));
+        } catch (RuntimeException error) {
+            Log.w(LOG_TAG, "Could not read the published export name", error);
+            return "";
         }
     }
 
@@ -178,8 +205,10 @@ final class ExportPublisher {
                 throw new IllegalStateException("Android MediaStore could not publish the export");
             }
             published = true;
-            return AndroidStorageContract.exportLocation(
-                    exportDirectory(mimeType), displayName);
+            String location = publishedLocation(uri);
+            return location.isEmpty()
+                    ? AndroidStorageContract.exportLocation(exportDirectory(mimeType), displayName)
+                    : location;
         } finally {
             if (!published) {
                 resolver.delete(uri, null, null);

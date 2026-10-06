@@ -75,12 +75,110 @@ pub fn replace_file(source: &Path, destination: &Path) -> std::io::Result<()> {
     std::fs::rename(source, destination)
 }
 
+/// `{stem}.{extension}`, or the first of `{stem}-2.{extension}`,
+/// `{stem}-3.{extension}`, … that `is_taken` accepts, so an export never
+/// proposes the name of an earlier one.
+pub fn first_free_file_name(
+    stem: &str,
+    extension: &str,
+    mut is_taken: impl FnMut(&str) -> bool,
+) -> String {
+    let mut name = format!("{stem}.{extension}");
+    let mut index = 2usize;
+    while is_taken(&name) {
+        name = format!("{stem}-{index}.{extension}");
+        index += 1;
+    }
+    name
+}
+
+/// Moves `source` into `directory` under the first name of
+/// [`first_free_file_name`] that is still free at the moment of the move, and
+/// returns the path it now has. An existing file is never replaced, even one
+/// another program creates while the names are tried.
+pub fn move_file_to_free_name(
+    source: &Path,
+    directory: &Path,
+    stem: &str,
+    extension: &str,
+) -> io::Result<PathBuf> {
+    let mut failure = None;
+    let name = first_free_file_name(stem, extension, |name| {
+        match move_file_without_replacing(source, &directory.join(name)) {
+            Ok(()) => false,
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => true,
+            Err(error) => {
+                failure = Some(error);
+                false
+            }
+        }
+    });
+    match failure {
+        Some(error) => Err(error),
+        None => Ok(directory.join(name)),
+    }
+}
+
+/// Moves `source` to `destination` in the same directory, failing with
+/// [`io::ErrorKind::AlreadyExists`] instead of replacing an existing entry.
+///
+/// Linking the new name fails atomically when the name is taken; removing the
+/// source name then completes the move. File systems without hard links (FAT,
+/// exFAT, some network shares) fall back to checking the name just before
+/// the rename, which a writer racing in between can still beat.
+#[cfg(not(windows))]
+pub fn move_file_without_replacing(source: &Path, destination: &Path) -> io::Result<()> {
+    match fs::hard_link(source, destination) {
+        Ok(()) => {
+            // Both names refer to the complete file now. A leftover source
+            // name is harmless; callers remove their staging file anyway.
+            let _ = fs::remove_file(source);
+            Ok(())
+        }
+        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => Err(error),
+        Err(_) => match fs::symlink_metadata(destination) {
+            Ok(_) => Err(io::Error::new(
+                io::ErrorKind::AlreadyExists,
+                format!("{} already exists", destination.display()),
+            )),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                fs::rename(source, destination)
+            }
+            Err(error) => Err(error),
+        },
+    }
+}
+
 #[cfg(windows)]
 pub fn replace_file(source: &Path, destination: &Path) -> std::io::Result<()> {
-    use std::os::windows::ffi::OsStrExt;
     use windows_sys::Win32::Storage::FileSystem::{
-        MoveFileExW, MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH,
+        MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH,
     };
+    move_file_ex(
+        source,
+        destination,
+        MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
+    )
+}
+
+/// Moves `source` to `destination`, failing with
+/// [`io::ErrorKind::AlreadyExists`] instead of replacing an existing entry.
+/// Without `MOVEFILE_REPLACE_EXISTING` Windows checks and moves atomically on
+/// every file system.
+#[cfg(windows)]
+pub fn move_file_without_replacing(source: &Path, destination: &Path) -> io::Result<()> {
+    use windows_sys::Win32::Storage::FileSystem::MOVEFILE_WRITE_THROUGH;
+    move_file_ex(source, destination, MOVEFILE_WRITE_THROUGH)
+}
+
+#[cfg(windows)]
+fn move_file_ex(
+    source: &Path,
+    destination: &Path,
+    flags: windows_sys::Win32::Storage::FileSystem::MOVE_FILE_FLAGS,
+) -> io::Result<()> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Storage::FileSystem::MoveFileExW;
 
     let source = source
         .as_os_str()
@@ -93,15 +191,11 @@ pub fn replace_file(source: &Path, destination: &Path) -> std::io::Result<()> {
         .chain(std::iter::once(0))
         .collect::<Vec<_>>();
 
-    let moved = unsafe {
-        MoveFileExW(
-            source.as_ptr(),
-            destination.as_ptr(),
-            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
-        )
-    };
+    // SAFETY: both buffers are NUL-terminated UTF-16 strings that outlive
+    // the call, which only reads them.
+    let moved = unsafe { MoveFileExW(source.as_ptr(), destination.as_ptr(), flags) };
     if moved == 0 {
-        Err(std::io::Error::last_os_error())
+        Err(io::Error::last_os_error())
     } else {
         Ok(())
     }
@@ -164,6 +258,68 @@ mod tests {
         assert!(result.is_err());
         assert_eq!(fs::read(&path).unwrap(), b"original");
         assert_eq!(directory_entries(&directory), ["sidecar.json"]);
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn free_file_names_count_from_two_past_taken_names() {
+        assert_eq!(first_free_file_name("IMG", "jpg", |_| false), "IMG.jpg");
+        let taken = ["IMG.jpg", "IMG-2.jpg"];
+        assert_eq!(
+            first_free_file_name("IMG", "jpg", |name| taken.contains(&name)),
+            "IMG-3.jpg"
+        );
+    }
+
+    #[test]
+    fn moving_without_replacing_keeps_the_existing_file() {
+        let directory = test_directory("no-replace");
+        fs::create_dir_all(&directory).unwrap();
+        let source = directory.join("staged");
+        let destination = directory.join("photo.jpg");
+        fs::write(&source, b"new").unwrap();
+        fs::write(&destination, b"earlier export").unwrap();
+
+        let error = move_file_without_replacing(&source, &destination).unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::AlreadyExists);
+        assert_eq!(fs::read(&destination).unwrap(), b"earlier export");
+        assert_eq!(fs::read(&source).unwrap(), b"new");
+
+        fs::remove_file(&destination).unwrap();
+        move_file_without_replacing(&source, &destination).unwrap();
+        assert_eq!(fs::read(&destination).unwrap(), b"new");
+        assert_eq!(directory_entries(&directory), ["photo.jpg"]);
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn moving_to_a_free_name_takes_the_next_number() {
+        let directory = test_directory("free-name");
+        fs::create_dir_all(&directory).unwrap();
+        fs::write(directory.join("IMG.jpg"), b"first").unwrap();
+        fs::write(directory.join("IMG-2.jpg"), b"second").unwrap();
+        let source = directory.join("staged");
+        fs::write(&source, b"third").unwrap();
+
+        let moved = move_file_to_free_name(&source, &directory, "IMG", "jpg").unwrap();
+        assert_eq!(moved, directory.join("IMG-3.jpg"));
+        assert_eq!(fs::read(&moved).unwrap(), b"third");
+        assert_eq!(fs::read(directory.join("IMG.jpg")).unwrap(), b"first");
+        assert_eq!(
+            directory_entries(&directory),
+            ["IMG-2.jpg", "IMG-3.jpg", "IMG.jpg"]
+        );
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn moving_a_missing_file_reports_the_failure() {
+        let directory = test_directory("missing-source");
+        fs::create_dir_all(&directory).unwrap();
+        let error = move_file_to_free_name(&directory.join("staged"), &directory, "IMG", "jpg")
+            .unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::NotFound);
+        assert!(directory_entries(&directory).is_empty());
         fs::remove_dir_all(directory).unwrap();
     }
 

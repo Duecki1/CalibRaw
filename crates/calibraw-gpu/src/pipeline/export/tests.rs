@@ -588,7 +588,7 @@ fn successful_export_atomically_replaces_existing_destination() {
     let cancellation = AtomicBool::new(false);
 
     let target = ExportTarget::File(destination.clone());
-    export_to_destination(&target, &cancellation, |output| {
+    let published = export_to_destination(&target, &cancellation, |output| {
         assert_ne!(
             output.path, destination,
             "files are written beside the target"
@@ -598,8 +598,45 @@ fn successful_export_atomically_replaces_existing_destination() {
     })
     .unwrap();
 
+    assert_eq!(published, destination);
     assert_eq!(std::fs::read(&destination).unwrap(), b"new export");
     assert_eq!(std::fs::read_dir(&directory).unwrap().count(), 1);
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn new_file_exports_take_the_next_free_name_instead_of_replacing() {
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let directory = std::env::temp_dir().join(format!(
+        "calibraw-export-new-file-{}-{nonce}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&directory).unwrap();
+    let target = ExportTarget::NewFile {
+        directory: directory.clone(),
+        stem: "photo".to_owned(),
+        extension: "png".to_owned(),
+    };
+    let cancellation = AtomicBool::new(false);
+
+    let published = export_to_destination(&target, &cancellation, |output| {
+        // Another export claims the name while this one is still rendering.
+        std::fs::write(directory.join("photo.png"), b"concurrent export")?;
+        std::fs::write(output.path, b"new export")?;
+        Ok(())
+    })
+    .unwrap();
+
+    assert_eq!(published, directory.join("photo-2.png"));
+    assert_eq!(std::fs::read(&published).unwrap(), b"new export");
+    assert_eq!(
+        std::fs::read(directory.join("photo.png")).unwrap(),
+        b"concurrent export"
+    );
+    assert_eq!(std::fs::read_dir(&directory).unwrap().count(), 2);
     std::fs::remove_dir_all(directory).unwrap();
 }
 
@@ -624,7 +661,7 @@ fn descriptor_targets_are_written_in_place_and_stage_elsewhere() {
     };
     let cancellation = AtomicBool::new(false);
 
-    export_to_destination(&target, &cancellation, |output| {
+    let published = export_to_destination(&target, &cancellation, |output| {
         assert_eq!(output.path, descriptor);
         assert!(output.truncate_existing);
         with_staging_file(output, |staged| {
@@ -640,7 +677,7 @@ fn descriptor_targets_are_written_in_place_and_stage_elsewhere() {
 
     assert_eq!(std::fs::read(&descriptor).unwrap(), b"export");
     assert!(std::fs::read_dir(&staging_dir).unwrap().next().is_none());
-    assert_eq!(target.path(), descriptor);
+    assert_eq!(published, descriptor);
     std::fs::remove_dir_all(root).unwrap();
 }
 

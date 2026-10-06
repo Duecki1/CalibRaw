@@ -1,5 +1,7 @@
 use crate::app::CalibRawApp;
 #[cfg(not(target_os = "android"))]
+use crate::app::LibraryExportDestination;
+#[cfg(not(target_os = "android"))]
 use crate::pipeline::{
     apply_lensfun_correction, build_proxy, is_supported_image_path, lensfun_catalog,
     load_raw_display_metadata, load_raw_file_with_profile_selection, load_raw_thumbnail,
