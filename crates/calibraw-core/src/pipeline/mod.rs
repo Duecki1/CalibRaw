@@ -36,7 +36,9 @@ pub use geometry::{
     transform_thumbnail_geometry_with_lens, CropAspectRatio, GeometryTransform, LensGeometryMap,
     LineAnalysisImage, StraightenEstimate,
 };
-pub use lensfun::{apply_lensfun_correction, lensfun_catalog, LensfunCatalog, LensfunLens};
+pub use lensfun::{
+    apply_lensfun_correction, lensfun_catalog, LensfunCatalog, LensfunCorrections, LensfunLens,
+};
 pub use mask_region::{mask_region_texture_extent, mask_source_region_uv};
 pub use masks::{
     effect_params, ellipse_outline_points, export_mask_atlas_edge, export_mask_atlas_edge_limit,

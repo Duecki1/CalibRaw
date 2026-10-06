@@ -14,6 +14,7 @@ fn edited_photo() -> EditState {
         enabled: true,
         maker: "Test Optics".to_owned(),
         model: "35 mm f/2".to_owned(),
+        ..LensEditState::default()
     };
     let masks = Arc::make_mut(&mut edits.masks);
     masks.add_mask(MaskKind::Linear).unwrap();

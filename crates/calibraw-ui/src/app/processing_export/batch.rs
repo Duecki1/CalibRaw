@@ -221,10 +221,15 @@ fn prepare_desktop_library_export_item(
                     LensfunLens {
                         maker: edits.lens.maker.clone(),
                         model: edits.lens.model.clone(),
+                        ..LensfunLens::default()
                     }
                 })
             })
-            .or(catalog.auto_match);
+            .or(catalog.auto_match)
+            .map(|lens| LensfunLens {
+                corrections: edits.lens.corrections(),
+                ..lens
+            });
         if let Some(selected) = selected {
             Arc::new(
                 apply_lensfun_correction(&original_raw, &selected).map_err(|error| {

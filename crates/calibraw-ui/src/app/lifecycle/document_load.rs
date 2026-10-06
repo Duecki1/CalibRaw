@@ -541,6 +541,7 @@ fn apply_saved_lens_correction(
         lens_started.elapsed().as_secs_f64()
     ));
     if let Some(saved) = saved_lens {
+        lens_correction.corrections = saved.corrections();
         lens_correction.selected_maker = saved.maker;
         lens_correction.selected_model = saved.model;
         lens_correction.enabled = saved.enabled && lens_correction.catalog.available;

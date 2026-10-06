@@ -134,6 +134,24 @@ impl Sidebar {
                 },
             );
             selection_changed |= state.selected_model != previous_model;
+
+            ui.add_space(moduwu_design::SPACE_XS);
+            let previous_corrections = state.corrections;
+            ui.add_enabled_ui(state.catalog.available && !lens_correction_busy, |ui| {
+                ui.horizontal_wrapped(|ui| {
+                    moduwu_design::toggle(ui, &mut state.corrections.geometry, "Geometry")
+                        .on_hover_text(
+                            "Correct lens distortion and colour fringing (lateral chromatic aberration).",
+                        );
+                    moduwu_design::toggle(ui, &mut state.corrections.vignetting, "Vignetting")
+                        .on_hover_text("Brighten the corners the lens darkens.");
+                });
+            });
+            // At least one correction must stay selected.
+            if !state.corrections.geometry && !state.corrections.vignetting {
+                state.corrections = previous_corrections;
+            }
+            selection_changed |= state.corrections != previous_corrections;
             if selection_changed {
                 state.applied = false;
                 if let Some(selection) = state.selected_lens() {

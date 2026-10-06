@@ -58,6 +58,8 @@ impl CalibRawApp {
                 enabled: self.develop.lens_correction.enabled,
                 maker: self.develop.lens_correction.selected_maker.clone(),
                 model: self.develop.lens_correction.selected_model.clone(),
+                geometry: self.develop.lens_correction.corrections.geometry,
+                vignetting: self.develop.lens_correction.corrections.vignetting,
             },
             remove: self.committed_remove_state_for_persistence(),
             ai_masks_need_update: self.ai.update_needed,
