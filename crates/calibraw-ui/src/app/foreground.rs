@@ -214,6 +214,7 @@ impl CalibRawApp {
             Some(ForegroundOperationKind::LensCorrection) => {
                 self.poll_lens_correction_worker(frame)
             }
+            Some(ForegroundOperationKind::AutoStraighten) => self.poll_auto_straighten_worker(),
             Some(ForegroundOperationKind::Ai(AiFeature::Remove)) | None => {}
         }
     }

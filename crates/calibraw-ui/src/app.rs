@@ -294,6 +294,8 @@ mod preview_viewport;
 pub(crate) use preview_texture::{PreviewPipeline, TextureRetirement};
 pub(crate) use preview_viewport::PreviewViewportAction;
 mod processing_export;
+mod straighten;
+use straighten::AutoStraightenResult;
 mod sidecar_persistence;
 #[cfg(all(test, not(target_os = "android")))]
 mod ui_review_tests;

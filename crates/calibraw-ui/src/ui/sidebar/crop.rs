@@ -110,6 +110,18 @@ impl Sidebar {
                     "Drag along a horizon or vertical edge in the preview to level the image.",
                 );
             }
+            if moduwu_design::secondary_button_enabled(
+                ui,
+                app.auto_straighten_available(),
+                "Auto straighten",
+            )
+            .on_hover_text("Level the image using its horizon and vertical edges.")
+            .clicked()
+            {
+                app.develop_ui.straighten_tool_active = false;
+                app.develop_ui.straighten_drag = None;
+                app.start_auto_straighten();
+            }
         });
 
         moduwu_design::card_gap(ui);
