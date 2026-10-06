@@ -20,11 +20,21 @@ pub(super) fn mask_creation_icon() -> &'static str {
     egui_phosphor::regular::PLUS
 }
 
-fn mask_strip_scroll_source() -> egui::scroll_area::ScrollSource {
-    if cfg!(target_os = "android") {
+/// Touch drags scroll the strip on Android, except while they carry a
+/// group: then the drag moves the group and the strip scrolls at its ends.
+fn mask_strip_scroll_source(dragging_group: bool) -> egui::scroll_area::ScrollSource {
+    let source = if cfg!(target_os = "android") {
         egui::scroll_area::ScrollSource::ALL
     } else {
         egui::scroll_area::ScrollSource::default()
+    };
+    if dragging_group {
+        egui::scroll_area::ScrollSource {
+            drag: egui::scroll_area::DragScroll::Never,
+            ..source
+        }
+    } else {
+        source
     }
 }
 
@@ -59,17 +69,48 @@ struct MaskDeleteDialog {
     name: String,
 }
 
+/// The card a strip drag carries. A drag moves either a group or a sub-mask.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum StripDragSource {
+    Group(usize),
+    Component {
+        mask_index: usize,
+        component_index: usize,
+    },
+}
+
+/// Where a released drag lands, as insertion indices before the move. A
+/// group drag only targets groups and a sub-mask drag only sub-masks.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum StripDropTarget {
+    /// Insertion index in the stack.
+    Group(usize),
+    Component {
+        mask_index: usize,
+        insert: usize,
+    },
+}
+
 #[derive(Clone)]
-struct SubmaskDragState {
-    source_mask: usize,
-    source_component: usize,
+struct StripDragState {
+    source: StripDragSource,
     source_texture: Option<egui::TextureHandle>,
     source_name: String,
     source_badge: String,
     source_enabled: bool,
+    /// The group a dragged sub-mask rests on, to open it after a delay.
     hover_group: Option<(usize, std::time::Instant)>,
-    drop_target: Option<(usize, usize)>,
+    drop_target: Option<StripDropTarget>,
     target_loss_started: Option<std::time::Instant>,
+}
+
+impl StripDragState {
+    fn card_size(&self) -> MaskCardSize {
+        match self.source {
+            StripDragSource::Group(_) => MaskCardSize::Group,
+            StripDragSource::Component { .. } => MaskCardSize::Submask,
+        }
+    }
 }
 
 /// Requests collected while drawing the mask strip; the strip turns them

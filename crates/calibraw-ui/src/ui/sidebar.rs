@@ -58,6 +58,22 @@ impl MaskCardSize {
         }
     }
 
+    /// Characters of the name a card shows.
+    fn max_label_chars(self) -> usize {
+        match self {
+            Self::Group => 13,
+            Self::Submask => 10,
+        }
+    }
+
+    /// Font size, height and horizontal padding of the thumbnail badge.
+    fn badge_metrics(self) -> (f32, f32, f32) {
+        match self {
+            Self::Group => (10.5, 18.0, 10.0),
+            Self::Submask => (9.0, 16.0, 8.0),
+        }
+    }
+
     fn create_button_size(self, orientation: MaskStripOrientation) -> egui::Vec2 {
         const THIN_EDGE: f32 = moduwu_design::CONTROL_HEIGHT;
         let card = self.card_size();

@@ -1,6 +1,6 @@
 //! Edits from the mask strip (`ui::sidebar::masks::strip`): context-menu
-//! toggles, group and sub-mask creation, selection, copies and sub-mask
-//! moves. The strip returns `MaskStripActions` after drawing;
+//! toggles, group and sub-mask creation, selection, copies and group and
+//! sub-mask moves. The strip returns `MaskStripActions` after drawing;
 //! `apply_mask_strip_actions` applies them within the same frame.
 
 use super::*;
@@ -35,6 +35,11 @@ pub(crate) enum MaskStripEdit {
 }
 
 pub(crate) enum MaskStripCommand {
+    MoveGroup {
+        source_mask: usize,
+        /// Insertion index in the stack, before the move.
+        target_insert: usize,
+    },
     MoveComponent {
         source_mask: usize,
         source_component: usize,
@@ -169,6 +174,21 @@ impl CalibRawApp {
         command: MaskStripCommand,
     ) -> bool {
         match command {
+            MaskStripCommand::MoveGroup {
+                source_mask,
+                target_insert,
+            } => {
+                let moved = self
+                    .masks
+                    .stack
+                    .move_mask(source_mask, target_insert)
+                    .is_some();
+                if moved {
+                    self.mark_all_mask_layers_dirty();
+                    self.sync_selected_mask_tool();
+                }
+                moved
+            }
             MaskStripCommand::MoveComponent {
                 source_mask,
                 source_component,
@@ -406,5 +426,28 @@ mod tests {
             command(MaskStripCommand::SelectComponent(1)),
         ));
         assert_eq!(app.masks.stack.selected_component, Some(1));
+    }
+
+    #[test]
+    fn moving_a_group_reorders_the_stack_and_marks_every_layer() {
+        let ctx = egui::Context::default();
+        let frame = eframe::Frame::_new_kittest();
+        let mut app = app_with_masks(&ctx);
+        let move_group = |target_insert| MaskStripActions {
+            command: Some(MaskStripCommand::MoveGroup {
+                source_mask: 1,
+                target_insert,
+            }),
+            ..Default::default()
+        };
+
+        // Dropping a group next to itself changes nothing.
+        assert!(!app.apply_mask_strip_actions(&ctx, &frame, move_group(2)));
+        assert!(!app.masks.dirty_layers.iter().any(|&dirty| dirty));
+
+        assert!(app.apply_mask_strip_actions(&ctx, &frame, move_group(0)));
+        assert_eq!(app.masks.stack.masks[0].components.len(), 2);
+        assert_eq!(app.masks.stack.selected_mask, Some(0));
+        assert!(app.masks.dirty_layers[0] && app.masks.dirty_layers[1]);
     }
 }
