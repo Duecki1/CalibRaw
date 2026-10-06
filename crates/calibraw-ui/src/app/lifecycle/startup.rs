@@ -140,7 +140,6 @@ impl CalibRawApp {
                 filmstrip_open: performance.develop_filmstrip_open,
                 #[cfg(not(target_os = "android"))]
                 filmstrip_centered_path: None,
-                #[cfg(not(target_os = "android"))]
                 sidebar_open: true,
                 crop_constraint_reference: None,
                 crop_drag: None,

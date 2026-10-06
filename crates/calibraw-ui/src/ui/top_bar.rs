@@ -9,6 +9,10 @@ pub(crate) struct TopBar;
 const LIBRARY_SIDEBAR_ALIGNMENT_ID: &str = "library-sidebar-toolbar-alignment-x";
 #[cfg(not(target_os = "android"))]
 const DEVELOP_DOCK_MIN_WIDTH: f32 = 220.0;
+/// Widest the review and zoom group grows when no sidebar dock bounds it,
+/// the narrowest open dock (320 px sidebar plus the 60 px tool rail).
+#[cfg(not(target_os = "android"))]
+const DEVELOP_UNDOCKED_CONTROLS_MAX_WIDTH: f32 = 380.0;
 #[cfg(not(target_os = "android"))]
 const TOOLBAR_COMPACT_WIDTH: f32 = 620.0;
 #[cfg(not(target_os = "android"))]
@@ -436,7 +440,18 @@ impl TopBar {
                         stroke,
                     );
                 } else {
-                    Self::show_develop_review_and_zoom(ui, app, compact_review, true);
+                    // Without a dock (closed sidebar or a narrow window) nothing
+                    // bounds the zoom track, so give the group a capped width.
+                    let width = ui
+                        .available_width()
+                        .min(DEVELOP_UNDOCKED_CONTROLS_MAX_WIDTH);
+                    ui.allocate_ui_with_layout(
+                        egui::vec2(width, moduwu_design::TOOLBAR_HEIGHT),
+                        egui::Layout::right_to_left(egui::Align::Center),
+                        |ui| {
+                            Self::show_develop_review_and_zoom(ui, app, compact_review, true);
+                        },
+                    );
                 }
                 if !center_brand {
                     Self::show_toolbar_brand(ui, app);

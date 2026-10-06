@@ -75,8 +75,10 @@ impl CalibRawApp {
     fn select_sidebar_tab_action(&mut self, tab: SidebarTab) {
         let previous = self.ui.sidebar_tab;
         if previous == tab {
+            self.develop_ui.sidebar_open = !self.develop_ui.sidebar_open;
             return;
         }
+        self.develop_ui.sidebar_open = true;
         self.ui.sidebar_tab = tab;
         if previous == SidebarTab::Crop && tab != SidebarTab::Crop {
             self.develop_ui.crop_drag = None;
@@ -272,6 +274,35 @@ mod tests {
             app.develop_ui.white_balance_picker_drag,
             Some([[0.1, 0.2], [0.3, 0.4]])
         );
+    }
+
+    #[test]
+    fn selecting_active_sidebar_tab_toggles_sidebar() {
+        let ctx = egui::Context::default();
+        crate::ui::theme::install(&ctx);
+        let mut app = CalibRawApp::empty(&ctx);
+        app.ui.sidebar_tab = SidebarTab::Adjustments;
+        app.develop_ui.sidebar_open = true;
+
+        app.dispatch_action(AppAction::SelectSidebarTab(SidebarTab::Adjustments));
+        assert!(!app.develop_ui.sidebar_open);
+
+        app.dispatch_action(AppAction::SelectSidebarTab(SidebarTab::Adjustments));
+        assert!(app.develop_ui.sidebar_open);
+    }
+
+    #[test]
+    fn selecting_other_sidebar_tab_opens_closed_sidebar() {
+        let ctx = egui::Context::default();
+        crate::ui::theme::install(&ctx);
+        let mut app = CalibRawApp::empty(&ctx);
+        app.ui.sidebar_tab = SidebarTab::Adjustments;
+        app.develop_ui.sidebar_open = false;
+
+        app.dispatch_action(AppAction::SelectSidebarTab(SidebarTab::Crop));
+
+        assert_eq!(app.ui.sidebar_tab, SidebarTab::Crop);
+        assert!(app.develop_ui.sidebar_open);
     }
 
     #[test]

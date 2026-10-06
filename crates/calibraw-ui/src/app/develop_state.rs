@@ -390,7 +390,8 @@ pub(crate) struct DevelopUiState {
     pub(crate) filmstrip_open: bool,
     #[cfg(not(target_os = "android"))]
     pub(crate) filmstrip_centered_path: Option<PathBuf>,
-    #[cfg(not(target_os = "android"))]
+    /// Whether the Develop tool surface is shown. Selecting the active sidebar
+    /// tab again toggles it; selecting another tab opens it.
     pub(crate) sidebar_open: bool,
     pub(crate) crop_constraint_reference: Option<[f32; 4]>,
     pub(crate) crop_drag: Option<CropDragState>,
