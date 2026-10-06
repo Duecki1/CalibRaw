@@ -95,11 +95,7 @@ public final class CalibRawActivity extends NativeActivity {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             getOnBackInvokedDispatcher().registerOnBackInvokedCallback(
                     OnBackInvokedDispatcher.PRIORITY_DEFAULT,
-                    () -> {
-                        if (!nativeOnBackRequested()) {
-                            finish();
-                        }
-                    });
+                    this::handleBack);
         }
     }
 
@@ -197,8 +193,15 @@ public final class CalibRawActivity extends NativeActivity {
             super.onBackPressed();
             return;
         }
+        handleBack();
+    }
+
+    // winit creates its event loop once per process, so a finished activity cannot be relaunched
+    // in a surviving process. Unhandled back therefore backgrounds the task, matching the
+    // Android 12+ default for root launcher activities, instead of finishing it.
+    private void handleBack() {
         if (!nativeOnBackRequested()) {
-            super.onBackPressed();
+            moveTaskToBack(true);
         }
     }
 
