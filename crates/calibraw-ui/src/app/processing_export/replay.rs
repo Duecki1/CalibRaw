@@ -21,13 +21,18 @@ impl CalibRawApp {
         let Some(stem) = self.templated_export_stem() else {
             return;
         };
-        let default_name = format!("{stem}-edit-replay.mp4");
+        let stem = format!("{stem}-edit-replay");
         #[cfg(not(target_os = "android"))]
         let initial_directory = self
             .develop
             .current_path
             .as_deref()
             .and_then(|path| path.parent());
+        #[cfg(not(target_os = "android"))]
+        let default_name =
+            crate::export_naming::free_export_file_name(initial_directory, &stem, "mp4");
+        #[cfg(target_os = "android")]
+        let default_name = format!("{stem}.mp4");
         #[cfg(not(target_os = "android"))]
         let Some(destination) =
             crate::ui::choose_edit_replay_file_path(&default_name, initial_directory)

@@ -30,19 +30,13 @@ pub(super) fn unique_library_export_path(
         edited_at,
     );
     let base = crate::export_naming::render_export_stem_or_default(name_template, &context);
-    let mut index = 1usize;
-    loop {
-        let name = if index == 1 {
-            format!("{base}.{}", format.extension())
-        } else {
-            format!("{base}-{index}.{}", format.extension())
-        };
+    let name = crate::export_naming::first_free_file_name(&base, format.extension(), |name| {
         let candidate = folder.join(name);
-        if !candidate.exists() && reserved.insert(candidate.clone()) {
-            return candidate;
-        }
-        index += 1;
-    }
+        candidate.exists() || reserved.contains(&candidate)
+    });
+    let destination = folder.join(name);
+    reserved.insert(destination.clone());
+    destination
 }
 
 #[cfg(not(target_os = "android"))]
@@ -67,7 +61,8 @@ pub(super) fn library_export_jobs(
             crate::export_naming::edited_time_for_path(source),
         );
         let stem = crate::export_naming::render_export_stem_or_default(name_template, &context);
-        let default_name = format!("{stem}.{}", format.extension());
+        let default_name =
+            crate::export_naming::free_export_file_name(source.parent(), &stem, format.extension());
         let destination =
             crate::ui::choose_export_file_path(format, &default_name, source.parent())?;
         return Some(vec![(source.clone(), destination)]);

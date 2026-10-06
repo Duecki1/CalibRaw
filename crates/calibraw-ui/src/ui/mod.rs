@@ -13,8 +13,10 @@ pub(crate) mod sidebar;
 pub(crate) mod theme;
 pub(crate) mod top_bar;
 
-/// Desktop-only “save as” picker. The returned path always carries `extensions[0]`, so the
-/// encoder downstream of it never sees a file it cannot open.
+/// Desktop-only “save as” picker. The returned path always carries one of `extensions`
+/// (`extensions[0]` when the user typed none), so the encoder downstream of it never sees a
+/// file it cannot open. Adding the extension never silently replaces an existing file: the
+/// picker reopens with the completed name instead.
 #[cfg(not(target_os = "android"))]
 pub(crate) fn choose_save_path(
     filter: String,
@@ -22,26 +24,39 @@ pub(crate) fn choose_save_path(
     default_name: &str,
     initial_directory: Option<&std::path::Path>,
 ) -> Option<std::path::PathBuf> {
-    let mut dialog = rfd::FileDialog::new()
-        .add_filter(filter, extensions)
-        .set_file_name(default_name);
-    if let Some(directory) = initial_directory.filter(|path| !path.as_os_str().is_empty()) {
-        dialog = dialog.set_directory(directory);
-    }
     let fallback_extension = extensions.first()?;
-    let mut path = dialog.save_file()?;
-    let valid_extension = path
-        .extension()
-        .and_then(|extension| extension.to_str())
-        .is_some_and(|extension| {
-            extensions
-                .iter()
-                .any(|candidate| extension.eq_ignore_ascii_case(candidate))
-        });
-    if !valid_extension {
+    let mut file_name = default_name.to_owned();
+    let mut directory = initial_directory
+        .filter(|path| !path.as_os_str().is_empty())
+        .map(std::path::Path::to_path_buf);
+    loop {
+        let mut dialog = rfd::FileDialog::new()
+            .add_filter(filter.clone(), extensions)
+            .set_file_name(&file_name);
+        if let Some(directory) = &directory {
+            dialog = dialog.set_directory(directory);
+        }
+        let mut path = dialog.save_file()?;
+        let valid_extension = path
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .is_some_and(|extension| {
+                extensions
+                    .iter()
+                    .any(|candidate| extension.eq_ignore_ascii_case(candidate))
+            });
+        if valid_extension {
+            return Some(path);
+        }
         path.set_extension(fallback_extension);
+        if !path.exists() {
+            return Some(path);
+        }
+        // The dialog only checked the name without the extension. Offer the
+        // completed name again so the platform asks before replacing it.
+        file_name = path.file_name()?.to_string_lossy().into_owned();
+        directory = path.parent().map(std::path::Path::to_path_buf);
     }
-    Some(path)
 }
 
 /// Save picker for a developed-image export.
