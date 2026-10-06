@@ -167,8 +167,9 @@ impl CalibRawApp {
             self.preview.pipeline(),
             &preview_source,
         ) {
-            let params =
-                GpuParams::new(exposure, masks, raw).with_vignette_geometry(self.develop.geometry);
+            let params = GpuParams::new(exposure, masks, raw)
+                .with_vignette_geometry(self.develop.geometry)
+                .with_color_lut(self.preview_color_lut().as_ref());
             if self.preview.original_requested {
                 pipeline.recompute(&render_state.queue, &render_state.device, &params);
             } else if let Err(error) = pipeline.recompute_with_remove(
@@ -184,7 +185,8 @@ impl CalibRawApp {
             (self.preview.navigation.as_ref(), preview_source.as_ref())
         {
             let params = GpuParams::new(exposure, masks, &navigation.raw)
-                .with_vignette_geometry(self.develop.geometry);
+                .with_vignette_geometry(self.develop.geometry)
+                .with_color_lut(self.preview_color_lut().as_ref());
             if self.preview.original_requested {
                 navigation.pipeline.gpu().recompute(
                     &render_state.queue,
@@ -217,7 +219,8 @@ impl CalibRawApp {
                 detail.virtual_full_size[0],
                 detail.virtual_full_size[1],
             )
-            .with_vignette_geometry(self.develop.geometry);
+            .with_vignette_geometry(self.develop.geometry)
+            .with_color_lut(self.preview_color_lut().as_ref());
             if let Some(full_raw) = preview_source.as_ref() {
                 params = params.with_mask_uv_rect_and_extent(
                     mask_source_region_uv(

@@ -610,6 +610,30 @@ fn apply_local_display_blacks(pos: vec2<i32>, input_rgb: vec3<f32>) -> vec3<f32>
     return rgb;
 }
 
+// A creative colour look: a 3D table indexed by the sRGB-encoded image, mixed
+// in by `film_effects.w` (0 = off, 1 = full). The texture always spans the
+// table's input range at a fixed resolution; its first and last points sit at
+// the centres of the end texels, so inputs 0 and 1 map exactly onto them.
+// Out-of-gamut input is compressed to sRGB first, as it is for display, and the
+// table's output is converted back to linear Rec.2020 for the later effects.
+@group(0) @binding(38) var color_lut_tex: texture_3d<f32>;
+
+fn apply_color_lut(display_linear: vec3<f32>) -> vec3<f32> {
+    let amount = Common::effects_uniforms.film_effects.w;
+    if amount <= 0.0 { return display_linear; }
+    let encoded = Profile::apply_output_encoding(display_linear);
+    let edge = f32(textureDimensions(color_lut_tex).x);
+    let coordinate = encoded * ((edge - 1.0) / edge) + vec3<f32>(0.5 / edge);
+    let graded = textureSampleLevel(
+        color_lut_tex,
+        SceneAdjustments::local_mask_sampler,
+        coordinate,
+        0.0,
+    ).rgb;
+    let graded_linear = Common::SRGB_TO_REC2020 * Color::srgb_eotf(graded);
+    return mix(display_linear, graded_linear, clamp(amount, 0.0, 1.0));
+}
+
 @compute @workgroup_size(8, 8, 1)
 fn apply_view_node(@builtin(global_invocation_id) gid: vec3<u32>) {
     if gid.x >= Common::camera_uniforms.width || gid.y >= Common::camera_uniforms.height { return; }
@@ -653,6 +677,7 @@ fn apply_view_node(@builtin(global_invocation_id) gid: vec3<u32>) {
     let local_point_color_sample = point_color_hsl(max(display_linear + point_color_delta, vec3<f32>(0.0)));
     let local_selection = local_point_color_visualization(pos, local_point_color_sample);
     display_linear = apply_local_point_colors(pos, display_linear, point_color_delta);
+    display_linear = apply_color_lut(display_linear);
     display_linear = CreativeEffects::apply_vignette(pos, display_linear);
     display_linear = CreativeEffects::apply_grain(pos, display_linear);
     display_linear = CreativeEffects::apply_film_finish_modules(pos, display_linear);

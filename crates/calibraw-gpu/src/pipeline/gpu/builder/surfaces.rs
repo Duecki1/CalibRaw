@@ -75,6 +75,7 @@ pub(in crate::pipeline::gpu) struct PipelineSurfaces {
     pub(in crate::pipeline::gpu) mask_texture: wgpu::Texture,
     pub(in crate::pipeline::gpu) light_rays_mask_texture: wgpu::Texture,
     pub(in crate::pipeline::gpu) scene_depth_texture: wgpu::Texture,
+    pub(in crate::pipeline::gpu) color_lut_texture: wgpu::Texture,
     pub(in crate::pipeline::gpu) out_view: wgpu::TextureView,
     pub(in crate::pipeline::gpu) display_linear_view: wgpu::TextureView,
     pub(in crate::pipeline::gpu) reconstructed_raw_view: wgpu::TextureView,
@@ -91,6 +92,7 @@ pub(in crate::pipeline::gpu) struct PipelineSurfaces {
     pub(in crate::pipeline::gpu) mask_view: wgpu::TextureView,
     pub(in crate::pipeline::gpu) light_rays_mask_view: wgpu::TextureView,
     pub(in crate::pipeline::gpu) scene_depth_view: wgpu::TextureView,
+    pub(in crate::pipeline::gpu) color_lut_view: wgpu::TextureView,
     pub(in crate::pipeline::gpu) mask_sampler: wgpu::Sampler,
 }
 
@@ -210,6 +212,28 @@ pub(in crate::pipeline::gpu) fn create_pipeline_surfaces(
     );
     let scene_depth_view = default_texture_view(&scene_depth_texture);
 
+    // Filled by `upload_color_lut`. Rgba16Float is filterable everywhere, so
+    // the shader gets hardware trilinear interpolation.
+    let color_lut_texture = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("calibraw colour LUT"),
+        size: wgpu::Extent3d {
+            width: COLOR_LUT_EDGE,
+            height: COLOR_LUT_EDGE,
+            depth_or_array_layers: COLOR_LUT_EDGE,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D3,
+        format: wgpu::TextureFormat::Rgba16Float,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        view_formats: &[],
+    });
+    let color_lut_view = color_lut_texture.create_view(&wgpu::TextureViewDescriptor {
+        label: Some("calibraw colour LUT view"),
+        dimension: Some(wgpu::TextureViewDimension::D3),
+        ..Default::default()
+    });
+
     let out_view = default_texture_view(&out_texture);
     let display_linear_view = default_texture_view(&display_linear_texture);
     let reconstructed_raw_view = default_texture_view(&reconstructed_raw_texture);
@@ -262,6 +286,7 @@ pub(in crate::pipeline::gpu) fn create_pipeline_surfaces(
             mask_texture,
             light_rays_mask_texture,
             scene_depth_texture,
+            color_lut_texture,
             out_view,
             display_linear_view,
             reconstructed_raw_view,
@@ -278,6 +303,7 @@ pub(in crate::pipeline::gpu) fn create_pipeline_surfaces(
             mask_view,
             light_rays_mask_view,
             scene_depth_view,
+            color_lut_view,
             mask_sampler,
         },
         has_ai_scene,

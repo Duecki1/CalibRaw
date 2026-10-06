@@ -232,6 +232,7 @@ impl CalibRawApp {
             virtual_full_height,
         )
         .with_vignette_geometry(self.develop.geometry)
+        .with_color_lut(self.preview_color_lut().as_ref())
         .with_mask_uv_rect_and_extent(
             mask_source_region_uv(mask_region, full_raw.width, full_raw.height),
             mask_extent,

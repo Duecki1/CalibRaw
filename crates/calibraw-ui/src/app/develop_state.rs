@@ -397,6 +397,8 @@ pub(crate) struct DevelopState {
     pub(crate) geometry_revision: u64,
     pub(crate) lens_correction: LensCorrectionState,
     pub(crate) lens_correction_dirty: bool,
+    /// A creative colour lookup table applied after the view transform.
+    pub(crate) color_lut: Option<ColorLutEdit>,
     pub(crate) selected_camera_profile: Option<PathBuf>,
     pub(crate) load_receiver: Option<mpsc::Receiver<LoadEvent>>,
     pub(crate) loading_label: Option<String>,

@@ -1,6 +1,7 @@
 pub mod adjustment_groups;
 pub use adjustment_groups::{AdjustmentGroup, AdjustmentGroupSet};
 pub mod basicadj;
+pub mod color_lut;
 pub mod color_profile;
 mod display_raster;
 mod exif_metadata;
@@ -26,6 +27,10 @@ pub use basicadj::{
     HighlightReconstructionMethod, PointCurve, GLOBAL_TEMPERATURE_LIMIT, GLOBAL_TINT_OFFSET_LIMIT,
     HSL_HUE_LIMIT, HUE_ROTATION_LIMIT_DEGREES, MAX_POINT_CURVE_POINTS, MAX_TEMPERATURE_KELVIN,
     MAX_WHITE_BALANCE_TINT, MIN_TEMPERATURE_KELVIN, MIN_WHITE_BALANCE_TINT,
+};
+pub use color_lut::{
+    ColorLut, ColorLutEdit, ColorLutError, CubeFile, FULL_COLOR_LUT_AMOUNT, MAX_COLOR_LUT_EDGE,
+    MAX_COLOR_LUT_NAME_CHARS, MIN_COLOR_LUT_EDGE,
 };
 pub use color_profile::{
     CameraProfile, DcpMatrixSet, DcpProfile, HsvMap, ProfileEncoding, SrgbOutputTransform,

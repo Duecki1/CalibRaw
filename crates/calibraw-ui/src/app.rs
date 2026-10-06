@@ -4,13 +4,13 @@ use crate::pipeline::RawThumbnail;
 use crate::pipeline::{
     affected_stage, apply_lensfun_correction, build_proxy, build_region_proxy,
     is_unsupported_raw_error, lensfun_catalog, load_raw_file_with_profile_selection,
-    spawn_tiled_export, BrushMode, CameraProfileMode, ExportEvent, ExportFormat, ExportMetadata,
-    ExportSettings, ExposureParams, GeometryTransform, GpuParams, GpuProgramPrewarm,
-    LensfunCatalog, LensfunCorrections, LensfunLens, LoadedRaw, MaskGeometry, MaskImage, MaskKind,
-    MaskRgbImage, MaskStack, PipelineOptions, ProcessingQuality, ProcessingStage, ProxySpec,
-    RawGpuPipeline, RawGpuProgramTemplate, RemoveBrushPoint, RemoveBrushStroke, RemoveEditState,
-    RemoveSceneContext, RetouchAlignment, RetouchStroke, RetouchTool, SubjectRefinement, TileSpec,
-    TiledExportJob, MAX_LOCAL_MASKS,
+    spawn_tiled_export, BrushMode, CameraProfileMode, ColorLutEdit, ExportEvent, ExportFormat,
+    ExportMetadata, ExportSettings, ExposureParams, GeometryTransform, GpuParams,
+    GpuProgramPrewarm, LensfunCatalog, LensfunCorrections, LensfunLens, LoadedRaw, MaskGeometry,
+    MaskImage, MaskKind, MaskRgbImage, MaskStack, PipelineOptions, ProcessingQuality,
+    ProcessingStage, ProxySpec, RawGpuPipeline, RawGpuProgramTemplate, RemoveBrushPoint,
+    RemoveBrushStroke, RemoveEditState, RemoveSceneContext, RetouchAlignment, RetouchStroke,
+    RetouchTool, SubjectRefinement, TileSpec, TiledExportJob, MAX_LOCAL_MASKS,
 };
 use crate::sidecar::{
     AdjustmentCopySettings, AdjustmentPasteMode, EditSelection, EditState as SidecarEditState,
@@ -275,6 +275,7 @@ pub(crate) fn format_usage_duration(duration: Duration) -> String {
 }
 
 mod ai;
+mod color_lut;
 mod eframe_impl;
 mod foreground;
 mod inpainting;

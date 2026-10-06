@@ -198,6 +198,7 @@ pub(super) struct PreparedExportSource {
     pub(super) exposure: ExposureParams,
     pub(super) masks: MaskStack,
     pub(super) remove: RemoveEditState,
+    pub(super) color_lut: Option<ColorLutEdit>,
     pub(super) source_file_name: Option<String>,
     pub(super) gpu_export_prewarm: Option<Arc<GpuProgramPrewarm>>,
 }

@@ -335,6 +335,7 @@ impl CalibRawApp {
         self.preview.revision = self.preview.revision.wrapping_add(1);
         self.develop.lens_correction = LensCorrectionState::default();
         self.develop.lens_correction_dirty = false;
+        self.develop.color_lut = None;
         #[cfg(target_os = "android")]
         {
             self.preview.lens_original_cache = None;
@@ -462,6 +463,7 @@ impl CalibRawApp {
                 self.masks.dirty_layers.fill(false);
                 self.develop.lens_correction = loaded.lens_correction;
                 self.develop.lens_correction_dirty = false;
+                self.develop.color_lut = loaded.color_lut;
                 #[cfg(target_os = "android")]
                 {
                     if self.develop.lens_correction.applied {

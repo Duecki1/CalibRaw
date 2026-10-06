@@ -137,6 +137,7 @@ impl CalibRawApp {
             virtual_full_size[1],
         )
         .with_vignette_geometry(self.develop.geometry)
+        .with_color_lut(self.preview_color_lut().as_ref())
         .with_mask_uv_rect_and_extent(
             mask_source_region_uv(mask_region, full_raw.width, full_raw.height),
             mask_extent,
@@ -363,7 +364,8 @@ impl CalibRawApp {
         }
 
         let params = GpuParams::new(&self.develop.target_exposure, preview_masks, raw)
-            .with_vignette_geometry(self.develop.geometry);
+            .with_vignette_geometry(self.develop.geometry)
+            .with_color_lut(self.preview_color_lut().as_ref());
         let Some(full_raw) = preview_source.as_ref() else {
             self.preview.pending_stage = None;
             return;

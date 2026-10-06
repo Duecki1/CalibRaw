@@ -471,6 +471,7 @@ pub(in crate::pipeline::gpu) fn create_bind_group_layouts(
             sampler_entry(28),
             storage_texture_entry(29, work_format, wgpu::StorageTextureAccess::WriteOnly),
             storage_buffer_entry(33, true),
+            texture_3d_entry(38, wgpu::TextureSampleType::Float { filterable: true }),
         ],
     );
     let bgl_adjust_render =

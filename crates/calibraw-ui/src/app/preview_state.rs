@@ -181,6 +181,7 @@ pub(crate) struct LoadedPreview {
     pub(super) ai_masks_need_update: bool,
     pub(super) mask_source: Option<MaskRgbImage>,
     pub(super) lens_correction: LensCorrectionState,
+    pub(super) color_lut: Option<ColorLutEdit>,
     pub(super) sidecar_target: crate::sidecar::SidecarTarget,
     pub(super) document_generation: u64,
     pub(super) sidecar_warning: Option<String>,

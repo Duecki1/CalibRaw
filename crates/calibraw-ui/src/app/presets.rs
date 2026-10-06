@@ -370,8 +370,9 @@ impl CalibRawApp {
     }
 
     #[cfg(not(target_os = "android"))]
-    /// Copies preset files into the preset folder. Imported presets whose
-    /// name is taken in their group get a numbered name.
+    /// Copies CalibRaw presets into the preset folder and converts Lightroom
+    /// `.xmp` presets into it. Imported presets whose name is taken in their
+    /// group get a numbered name.
     pub(crate) fn import_preset_files(&mut self, paths: &[PathBuf]) {
         let folder = match self.presets.folder() {
             Ok(folder) => folder.to_owned(),
@@ -381,6 +382,9 @@ impl CalibRawApp {
             }
         };
         let mut imported = 0usize;
+        let mut converted = false;
+        // What Lightroom presets left out, then the files that failed.
+        let mut notes = Vec::new();
         let mut failures = Vec::new();
         for path in paths {
             let label = path
@@ -388,14 +392,30 @@ impl CalibRawApp {
                 .unwrap_or_default()
                 .to_string_lossy()
                 .into_owned();
-            let result = crate::presets::read_preset_file(path).and_then(|preset| {
+            let loaded = if crate::presets::is_lightroom_preset_file(path) {
+                crate::presets::read_lightroom_preset_file(path).map(|lightroom| {
+                    converted = true;
+                    let note = (!lightroom.skipped.is_empty()).then(|| {
+                        format!(
+                            "“{}” was imported without {}.",
+                            lightroom.preset.name(),
+                            lightroom.skipped.join(", ")
+                        )
+                    });
+                    (lightroom.preset, note)
+                })
+            } else {
+                crate::presets::read_preset_file(path).map(|preset| (preset, None))
+            };
+            let result = loaded.and_then(|(preset, note)| {
                 let name = self.presets.unique_name(&preset);
                 let preset = preset.renamed(&name, preset.group())?;
-                crate::presets::save_new_preset(&folder, &preset)
+                crate::presets::save_new_preset(&folder, &preset).map(|_| note)
             });
             match result {
-                Ok(_) => {
+                Ok(note) => {
                     imported += 1;
+                    notes.extend(note);
                     // Later files in this import must see the new names.
                     if let Err(error) = self.presets.reload() {
                         failures.push(error);
@@ -404,14 +424,18 @@ impl CalibRawApp {
                 Err(error) => failures.push(format!("{label}: {error}")),
             }
         }
-        let summary = format!(
+        let mut summary = format!(
             "Imported {imported} {}.",
             if imported == 1 { "preset" } else { "presets" }
         );
-        self.ui.notice = Some(if failures.is_empty() {
+        if converted {
+            summary.push_str(" Lightroom presets are converted approximately.");
+        }
+        notes.extend(failures);
+        self.ui.notice = Some(if notes.is_empty() {
             summary
         } else {
-            format!("{summary} {}", failures.join(" · "))
+            format!("{summary} {}", notes.join(" · "))
         });
     }
 
@@ -420,8 +444,8 @@ impl CalibRawApp {
         if self.ui.desktop_picker_receiver.is_some() || !self.presets.is_available() {
             return;
         }
-        let extension = PRESET_FILE_EXTENSIONS[0];
-        let dialog = rfd::AsyncFileDialog::new().add_filter("CalibRaw presets", &[extension]);
+        let dialog = rfd::AsyncFileDialog::new()
+            .add_filter("CalibRaw and Lightroom presets", PRESET_IMPORT_EXTENSIONS);
         self.ui.desktop_picker_receiver = Some(spawn_ui_worker(&self.egui_ctx, move || {
             let paths = pollster::block_on(dialog.pick_files()).map(|handles| {
                 handles
@@ -471,6 +495,10 @@ impl CalibRawApp {
 #[cfg(not(target_os = "android"))]
 const PRESET_FILE_EXTENSIONS: &[&str] = &["calibraw-preset"];
 
+/// What the import picker accepts: CalibRaw presets and Lightroom `.xmp` presets.
+#[cfg(not(target_os = "android"))]
+const PRESET_IMPORT_EXTENSIONS: &[&str] = &["calibraw-preset", "xmp"];
+
 pub(crate) fn sentence_case(message: &str) -> String {
     let mut characters = message.chars();
     match characters.next() {
@@ -494,6 +522,19 @@ mod tests {
             preset_folder_for_settings(Path::new("/config/calibraw/performance.json")),
             Some(PathBuf::from("/config/calibraw/presets"))
         );
+    }
+
+    #[test]
+    #[cfg(not(target_os = "android"))]
+    fn import_picker_accepts_calibraw_and_lightroom_presets() {
+        let suffixes = [
+            crate::presets::PRESET_SUFFIX,
+            crate::presets::LIGHTROOM_PRESET_SUFFIX,
+        ];
+        assert_eq!(PRESET_IMPORT_EXTENSIONS.len(), suffixes.len());
+        for (extension, suffix) in PRESET_IMPORT_EXTENSIONS.iter().zip(suffixes) {
+            assert_eq!(format!(".{extension}"), suffix);
+        }
     }
 
     #[test]

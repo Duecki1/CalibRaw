@@ -167,6 +167,17 @@ impl CalibRawApp {
         .then_some(self.develop_ui.point_color.selected);
         exposure
     }
+    /// The colour look the preview renders: the previewed preset's when it
+    /// includes one, otherwise the photo's own.
+    pub(in crate::app) fn preview_color_lut(&self) -> Option<ColorLutEdit> {
+        match self
+            .previewed_preset()
+            .and_then(|preset| preset.preview_color_lut())
+        {
+            Some(preset_look) => preset_look.cloned(),
+            None => self.develop.color_lut.clone(),
+        }
+    }
     pub(crate) fn preview_mask_stack(&self) -> Arc<MaskStack> {
         let mut state = PreviewVisibility::read(&self.egui_ctx);
         if let Some(masks) = state.masks {
@@ -401,7 +412,7 @@ mod tests {
         let bytes = crate::sidecar::encode(saved.clone()).unwrap();
         let lens = LensCorrectionState::default();
         let mut history =
-            crate::app::edit_history::EditHistory::new(&saved.exposure, &saved.masks, &lens);
+            crate::app::edit_history::EditHistory::new(&saved.exposure, &saved.masks, &lens, None);
         assert!(!history.can_undo());
         for title in [
             "Light",
@@ -438,7 +449,7 @@ mod tests {
         assert_eq!(masks.masks[1], saved.masks.masks[1]);
         assert_eq!(saved.exposure.exposure, 1.75);
         assert_eq!(saved.masks.masks[0].adjustments.exposure, 1.5);
-        history.observe(&saved.exposure, &saved.masks, &lens, false);
+        history.observe(&saved.exposure, &saved.masks, &lens, None, false);
         assert!(!history.can_undo());
         assert_eq!(crate::sidecar::encode(saved.clone()).unwrap(), bytes);
 

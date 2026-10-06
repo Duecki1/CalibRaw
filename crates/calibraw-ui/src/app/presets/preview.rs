@@ -240,6 +240,57 @@ mod tests {
         std::fs::remove_dir_all(folder).unwrap();
     }
 
+    #[test]
+    fn hover_previews_show_the_presets_colour_look_without_saving_it() {
+        let folder = std::env::temp_dir().join(format!(
+            "calibraw-preset-hover-look-{}-{}",
+            std::process::id(),
+            start_nanos()
+        ));
+        let look = crate::pipeline::ColorLutEdit::new(
+            "Film",
+            crate::pipeline::ColorLut::from_function(2, |rgb| rgb.map(|v| v * 0.5)).unwrap(),
+        );
+        let mut source = crate::sidecar::default_edit_state();
+        source.color_lut = Some(look.clone());
+        let selection = EditSelection {
+            color_lut: true,
+            ..EditSelection::default()
+        };
+        let preset = Preset::new("Film", "", selection, &source).unwrap();
+        let preset_path = crate::presets::save_new_preset(&folder, &preset).unwrap();
+
+        let ctx = egui::Context::default();
+        let mut app = CalibRawApp::empty(&ctx);
+        app.presets = PresetState::load(Some(folder.clone()));
+        app.reset_edit_history();
+        let saved = app.capture_sidecar_edit_state();
+        assert!(app.preview_color_lut().is_none());
+
+        let start = Instant::now();
+        app.presets.hover.request(preset_path.clone());
+        app.sync_preset_hover_preview_at(start);
+        app.presets.hover.request(preset_path);
+        app.sync_preset_hover_preview_at(start + HOVER_PREVIEW_DELAY);
+        assert_eq!(app.preview_color_lut(), Some(look));
+        assert!(app.develop.color_lut.is_none());
+        assert_eq!(app.capture_sidecar_edit_state(), saved);
+
+        // When the preview ends, the photo's own look is back.
+        app.develop.color_lut = Some(crate::pipeline::ColorLutEdit::new(
+            "Own",
+            crate::pipeline::ColorLut::from_function(2, |rgb| rgb).unwrap(),
+        ));
+        assert!(app.preview_color_lut().is_some());
+
+        app.sync_preset_hover_preview_at(start + HOVER_PREVIEW_DELAY * 2);
+        assert_eq!(
+            app.preview_color_lut().map(|look| look.name),
+            Some("Own".to_owned())
+        );
+        std::fs::remove_dir_all(folder).unwrap();
+    }
+
     fn start_nanos() -> u128 {
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)

@@ -167,8 +167,9 @@ pub(in crate::ui::library) fn render_uncached_developed_thumbnail(
     }
 
     let mut masks = Arc::unwrap_or_clone(edits.masks);
-    let initial_params =
-        GpuParams::new(&edits.exposure, &masks, &preview_raw).with_vignette_geometry(geometry);
+    let initial_params = GpuParams::new(&edits.exposure, &masks, &preview_raw)
+        .with_vignette_geometry(geometry)
+        .with_color_lut(edits.color_lut.as_ref());
     let gpu = developed_thumbnail_gpu()?;
     let gpu = gpu
         .lock()
@@ -223,8 +224,9 @@ pub(in crate::ui::library) fn render_uncached_developed_thumbnail(
             preview_raw.lens_geometry.as_deref(),
         )
         .map_err(|error| format!("could not apply thumbnail Light Rays mask: {error:#}"))?;
-    let params =
-        GpuParams::new(&edits.exposure, &masks, &preview_raw).with_vignette_geometry(geometry);
+    let params = GpuParams::new(&edits.exposure, &masks, &preview_raw)
+        .with_vignette_geometry(geometry)
+        .with_color_lut(edits.color_lut.as_ref());
     pipeline.recompute(&gpu.queue, &gpu.device, &params);
     let thumbnail = pipeline
         .output_snapshot(&gpu.device, &gpu.queue)

@@ -65,6 +65,8 @@ pub struct EditSelection {
     /// Subject, background, sky, object and range components.
     pub ai_masks: bool,
     pub lens_correction: bool,
+    /// The colour lookup table and how much of it is applied.
+    pub color_lut: bool,
 }
 
 impl EditSelection {
@@ -96,6 +98,8 @@ impl From<AdjustmentCopySettings> for EditSelection {
             masks: settings.masks,
             ai_masks: settings.ai_masks,
             lens_correction: settings.lens_correction,
+            // A look is part of a photo's adjustments.
+            color_lut: settings.adjustments,
         }
     }
 }
@@ -250,6 +254,9 @@ pub fn transfer_edits(
         };
         // Pasted depth fog or depth masks need this image's own scene depth.
         destination.ai_masks_need_update |= destination.masks.scene_depth_missing();
+    }
+    if selection.color_lut {
+        destination.color_lut = source.color_lut.clone();
     }
     if selection.lens_correction {
         let lens_changed = destination.lens != source.lens;

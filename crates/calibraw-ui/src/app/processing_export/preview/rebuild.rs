@@ -328,7 +328,8 @@ impl CalibRawApp {
             &preview_masks,
             &prepared.preview_raw,
         )
-        .with_vignette_geometry(self.develop.geometry);
+        .with_vignette_geometry(self.develop.geometry)
+        .with_color_lut(self.preview_color_lut().as_ref());
         let program_template = self
             .preview
             .pipeline()

@@ -54,7 +54,7 @@ impl CalibRawApp {
         let exposure = ExposureParams::scene_referred_default();
         let masks = MaskStack::default();
         let lens_correction = LensCorrectionState::default();
-        let edit_history = EditHistory::new(&exposure, &masks, &lens_correction);
+        let edit_history = EditHistory::new(&exposure, &masks, &lens_correction, None);
         #[cfg(not(target_os = "android"))]
         let runtime_selection = Self::load_onnx_runtime_selection();
         #[cfg(not(target_os = "android"))]
@@ -85,6 +85,7 @@ impl CalibRawApp {
                 lens_correction,
                 target_exposure: exposure,
                 lens_correction_dirty: false,
+                color_lut: None,
                 load_receiver: None,
                 loading_label: None,
                 image_status: "Open a RAW, TIFF, JPEG, PNG or HEIC photo to get started."

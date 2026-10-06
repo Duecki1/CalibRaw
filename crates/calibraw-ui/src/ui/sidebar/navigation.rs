@@ -370,6 +370,7 @@ impl Sidebar {
                 }
                 AdjustmentSection::Optics => {
                     lens_changed |= Self::show_optics(ui, app, false);
+                    Self::show_color_lut(ui, app, false);
                 }
             }
         } else {
@@ -406,6 +407,7 @@ impl Sidebar {
                 true,
             );
             lens_changed |= Self::show_optics(ui, app, true);
+            Self::show_color_lut(ui, app, true);
         }
 
         let effect_frame = mask_effects::EffectFrame::of(app);

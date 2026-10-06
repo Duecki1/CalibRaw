@@ -48,6 +48,7 @@ where
         exposure,
         masks,
         remove,
+        color_lut,
         output: _,
         tile_spec,
         output_width,
@@ -106,6 +107,7 @@ where
         raw.height,
     )
     .with_vignette_geometry(geometry)
+    .with_color_lut(color_lut)
     .with_mask_uv_rect(mask_source_region_uv(
         first_mask_region,
         raw.width,
@@ -200,6 +202,7 @@ where
             raw.height,
         )
         .with_vignette_geometry(geometry)
+        .with_color_lut(color_lut)
         .with_global_tone_histogram_bounds(
             tile.core_x,
             tile.core_y,
@@ -290,6 +293,7 @@ where
                 raw.height,
             )
             .with_vignette_geometry(geometry)
+            .with_color_lut(color_lut)
             .with_mask_uv_rect_and_extent(
                 mask_source_region_uv(mask_region, raw.width, raw.height),
                 mask_extent,
