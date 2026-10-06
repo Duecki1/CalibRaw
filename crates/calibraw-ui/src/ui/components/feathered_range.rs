@@ -1,22 +1,20 @@
 //! A range on a 0–1 track with a soft fade at each end, drawn as its weight
 //! curve. The control works on four ordered points: where the selection
 //! starts to fade in, where it is full, where it starts to fade out and where
-//! it ends. Solid handles on the top line mark full strength; hollow handles
-//! on the bottom line mark where each fade begins. Every handle moves only its
-//! own point: a hollow handle stops at its solid one, and a solid handle
-//! pushes only the handles it crosses. Models only convert the points to and
-//! from what they store.
-
-use std::ops::RangeInclusive;
+//! it ends. Solid handles on the top line mark full strength and move their
+//! end with its feather unchanged; hollow handles on the bottom line mark
+//! where each fade begins and change its feather. The handles are the only
+//! editor: the keyboard and screen-reader actions move the selected one.
+//! Models only convert the points to and from what they store.
 
 use eframe::egui::{self, pos2, vec2, Pos2, Rect, Response, Sense, Stroke, Ui};
-use moduwu_design::{NumberField, SliderMetrics};
+use moduwu_design::SliderMetrics;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum RangeHandle {
-    /// Where the start reaches full strength.
+    /// Where the start reaches full strength; moves the start with its fade.
     Start,
-    /// Where the end leaves full strength.
+    /// Where the end leaves full strength; moves the end with its fade.
     End,
     /// Where the start fades in; moves only that point.
     StartFeather,
@@ -46,6 +44,96 @@ pub(crate) struct RangePoints {
     pub(crate) fade_out: f32,
 }
 
+/// How one drag step changed an end of the range.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum EndChange {
+    /// The full-strength point moved and carried its fade unchanged.
+    Carried,
+    /// Only the fade point moved.
+    Faded,
+    /// The full-strength point moved and its carried fade was squeezed so
+    /// it stays on the track.
+    Squeezed,
+}
+
+/// What a drag step did to one end, for its model to store. `full` is the
+/// end's full-strength point and `fade` where its fade begins, as the drag
+/// holds them (exact track places).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum EndEdit {
+    /// The full-strength point moved with its feather unchanged: the stored
+    /// feather is kept exactly.
+    Moved { full: f32 },
+    /// Only the fade point moved: the full-strength point keeps its stored
+    /// place and the feather changes.
+    Faded { full: f32, fade: f32 },
+    /// The full-strength point moved and its fade was squeezed at a track
+    /// end: both are stored and the feather narrows.
+    Squeezed { full: f32, fade: f32 },
+}
+
+impl EndEdit {
+    /// The end's full-strength point and, when the feather changed, its fade
+    /// point, in stored units. `stored_full` is the full-strength point as
+    /// stored now; `store` converts a track place to stored units, rounding
+    /// it to the stored precision. A point that did not move is not rounded.
+    pub(crate) fn resolve(
+        self,
+        stored_full: f32,
+        store: impl Fn(f32) -> f32,
+    ) -> (f32, Option<f32>) {
+        match self {
+            Self::Moved { full } => (store(full), None),
+            Self::Faded { fade, .. } => (stored_full, Some(store(fade))),
+            Self::Squeezed { full, fade } => (store(full), Some(store(fade))),
+        }
+    }
+}
+
+/// The ends one drag step changed. An end that is `None` keeps its exact
+/// stored values.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub(crate) struct RangeEdit {
+    pub(crate) start: Option<EndEdit>,
+    pub(crate) end: Option<EndEdit>,
+}
+
+impl RangeEdit {
+    fn new(points: RangePoints, changes: [Option<EndChange>; 2]) -> Self {
+        let edit = |change, full, fade| match change {
+            EndChange::Carried => EndEdit::Moved { full },
+            EndChange::Faded => EndEdit::Faded { full, fade },
+            EndChange::Squeezed => EndEdit::Squeezed { full, fade },
+        };
+        Self {
+            start: changes[0].map(|change| edit(change, points.full_from, points.fade_in)),
+            end: changes[1].map(|change| edit(change, points.full_to, points.fade_out)),
+        }
+    }
+}
+
+/// A fade point carried from `was` to `moved` by its full-strength point,
+/// stopped at the near track end, or where it already is if it was off the
+/// track (older settings). Returns the place and how the end changed.
+fn carry_left(was: f32, moved: f32) -> (f32, EndChange) {
+    let floor = was.min(0.0);
+    if moved < floor {
+        (floor, EndChange::Squeezed)
+    } else {
+        (moved, EndChange::Carried)
+    }
+}
+
+/// [`carry_left`] at the far track end.
+fn carry_right(was: f32, moved: f32) -> (f32, EndChange) {
+    let ceiling = was.max(1.0);
+    if moved > ceiling {
+        (ceiling, EndChange::Squeezed)
+    } else {
+        (moved, EndChange::Carried)
+    }
+}
+
 impl RangePoints {
     pub(crate) fn get(self, handle: RangeHandle) -> f32 {
         match handle {
@@ -56,45 +144,81 @@ impl RangePoints {
         }
     }
 
-    /// The points on the track and in order, keeping each one's place where
-    /// it can.
+    /// The points on the track, each fade on the outer side of its
+    /// full-strength point. The two ends are not ordered against each other:
+    /// a model may let their fades overlap (depth does), and such a range is
+    /// edited as it is rather than silently reordered.
     fn clamped(self) -> Self {
         let fade_in = self.fade_in.clamp(0.0, 1.0);
-        let full_from = self.full_from.clamp(fade_in, 1.0);
-        let full_to = self.full_to.clamp(full_from, 1.0);
+        let full_to = self.full_to.clamp(0.0, 1.0);
         Self {
             fade_in,
-            full_from,
+            full_from: self.full_from.clamp(fade_in, 1.0),
             full_to,
             fade_out: self.fade_out.clamp(full_to, 1.0),
         }
     }
 
-    /// `handle` moved by `delta` from these points. A hollow (fade) handle
-    /// moves alone and stops at its own solid handle, so the full-strength
-    /// points never move with it. A solid handle moves its full-strength point
-    /// and pushes any handle it crosses, including its own fade.
-    pub(crate) fn dragged(self, handle: RangeHandle, delta: f32) -> Self {
-        let p = self.clamped();
-        let target = (p.get(handle) + delta).clamp(0.0, 1.0);
-        let mut next = p;
+    /// The handles moved so that `handle` is at track place `target`, and
+    /// how each end changed (`None`: untouched).
+    ///
+    /// | Handle                 | Moves                          | Feathers             |
+    /// |------------------------|--------------------------------|----------------------|
+    /// | `Start`, `End` (solid) | its end, and the other end it  | kept; squeezed only  |
+    /// |                        | pushes in an ordered range     | at a track end       |
+    /// | `StartFeather`,        | its fade point alone, up to    | sets its own         |
+    /// | `EndFeather` (hollow)  | its solid handle               |                      |
+    ///
+    /// A solid handle reaches both track ends. It carries its fade, and a
+    /// pushed end's fade, unchanged while they fit on the track; a fade that
+    /// would leave the track stops at its end instead, squeezing that
+    /// feather. A fade already off the track (older settings) stays where it
+    /// is rather than being carried further off. Ends whose fades overlap
+    /// (`full_from > full_to`, as depth allows) do not push each other.
+    fn dragged(self, handle: RangeHandle, target: f32) -> (Self, [Option<EndChange>; 2]) {
+        let target = target.clamp(0.0, 1.0);
+        let ordered = self.full_from <= self.full_to;
+        let mut next = self;
+        let mut changes = [None, None];
         match handle {
-            RangeHandle::StartFeather => next.fade_in = target.min(p.full_from),
-            RangeHandle::EndFeather => next.fade_out = target.max(p.full_to),
+            RangeHandle::StartFeather => {
+                next.fade_in = target.min(self.full_from);
+                changes[0] = Some(EndChange::Faded);
+            }
+            RangeHandle::EndFeather => {
+                next.fade_out = target.max(self.full_to);
+                changes[1] = Some(EndChange::Faded);
+            }
             RangeHandle::Start => {
+                let shift = target - self.full_from;
                 next.full_from = target;
-                next.fade_in = p.fade_in.min(target);
-                next.full_to = p.full_to.max(target);
-                next.fade_out = p.fade_out.max(next.full_to);
+                let (fade_in, change) = carry_left(self.fade_in, self.fade_in + shift);
+                next.fade_in = fade_in.min(target);
+                changes[0] = Some(change);
+                if ordered && target > self.full_to {
+                    let push = target - self.full_to;
+                    next.full_to = target;
+                    let (fade_out, change) = carry_right(self.fade_out, self.fade_out + push);
+                    next.fade_out = fade_out.max(target);
+                    changes[1] = Some(change);
+                }
             }
             RangeHandle::End => {
+                let shift = target - self.full_to;
                 next.full_to = target;
-                next.fade_out = p.fade_out.max(target);
-                next.full_from = p.full_from.min(target);
-                next.fade_in = p.fade_in.min(next.full_from);
+                let (fade_out, change) = carry_right(self.fade_out, self.fade_out + shift);
+                next.fade_out = fade_out.max(target);
+                changes[1] = Some(change);
+                if ordered && target < self.full_from {
+                    let push = target - self.full_from;
+                    next.full_from = target;
+                    let (fade_in, change) = carry_left(self.fade_in, self.fade_in + push);
+                    next.fade_in = fade_in.min(target);
+                    changes[0] = Some(change);
+                }
             }
         }
-        next
+        (next, changes)
     }
 }
 
@@ -107,13 +231,19 @@ pub(crate) trait FeatheredRange: Copy + PartialEq + Send + Sync + 'static {
     fn points(&self) -> RangePoints;
     /// The points this model can hold, given that `moved` was dragged to its
     /// place in `points`. A model with limits on a fade's width stops a
-    /// dragged fade handle at them, and moves the fade handle along with a
-    /// dragged solid one. Exact: storage rounding belongs in `set_points`.
+    /// dragged fade handle at them. A constrained solid handle keeps its fade
+    /// width unless the drag squeezed it. Exact: storage rounding belongs in
+    /// `set_points`.
     fn constrain(&self, points: RangePoints, _moved: RangeHandle) -> RangePoints {
         points
     }
-    /// Stores `points`, which are ordered, on the track and constrained.
-    fn set_points(&mut self, points: RangePoints);
+    /// Stores one drag step. The drag decides which ends changed and how
+    /// ([`EndEdit`]); the model only converts to its stored values, for
+    /// example with [`EndEdit::resolve`].
+    fn set_points(&mut self, edit: RangeEdit);
+    /// What `handle` sets and its stored value, such as "High feather 0.15",
+    /// for screen readers.
+    fn handle_text(&self, handle: RangeHandle) -> String;
     /// Selection weight (0–1) at track position `t`, drawn as the curve.
     fn weight(&self, t: f32) -> f32;
     /// Restores the default range (double-click).
@@ -141,8 +271,10 @@ pub(crate) fn track_rect(ui: &Ui, rect: Rect) -> Rect {
 }
 
 /// Where `handle` is drawn: solid handles on the full-strength (top) line,
-/// hollow ones on the zero (bottom) line, so two handles at the same place can
-/// still be told apart and grabbed.
+/// hollow ones on the zero (bottom) line, so no two handles of different
+/// kinds ever share a place and each stays grabbable. Where overlapping fades
+/// keep the curve below full strength, a connector from the solid handle down
+/// to the curve shows the weight actually reached.
 pub(crate) fn handle_position<R: FeatheredRange>(
     track: Rect,
     range: &R,
@@ -155,6 +287,19 @@ pub(crate) fn handle_position<R: FeatheredRange>(
         track.top()
     };
     pos2(egui::lerp(track.x_range(), t), y)
+}
+
+/// The weight curve's height under a solid handle, when it is visibly below
+/// full strength.
+fn curve_below<R: FeatheredRange>(track: Rect, range: &R, handle: RangeHandle) -> Option<Pos2> {
+    let t = range.points().clamped().get(handle);
+    let weight = range.weight(t);
+    (weight.is_finite() && weight < 0.99).then(|| {
+        pos2(
+            egui::lerp(track.x_range(), t),
+            track.bottom() - weight.clamp(0.0, 1.0) * track.height(),
+        )
+    })
 }
 
 pub(crate) fn nearest_handle<R: FeatheredRange>(
@@ -192,26 +337,26 @@ impl HandleDrag {
     pub(crate) fn new<R: FeatheredRange>(range: &R, handle: RangeHandle) -> Self {
         Self {
             handle,
-            points: range.points().clamped(),
+            points: range.points(),
         }
     }
 
-    /// The dragged handle's track place.
+    /// The dragged handle's place as drawn (fades off the track are drawn at
+    /// its end).
     pub(crate) fn place(&self) -> f32 {
-        self.points.get(self.handle)
+        self.points.clamped().get(self.handle)
     }
 
     /// Moves the handle to `target` (0–1) and stores the result in `range`.
     pub(crate) fn move_to<R: FeatheredRange>(&mut self, range: &mut R, target: f32) {
-        let mut points = self
-            .points
-            .dragged(self.handle, target.clamp(0.0, 1.0) - self.place());
+        let (mut points, mut changes) = self.points.dragged(self.handle, target);
         if !R::HAS_END {
             points.full_to = 1.0;
             points.fade_out = 1.0;
+            changes[1] = None;
         }
         self.points = range.constrain(points, self.handle);
-        range.set_points(self.points);
+        range.set_points(RangeEdit::new(self.points, changes));
     }
 }
 
@@ -236,12 +381,13 @@ struct RangeDrag {
 }
 
 /// Shows the curve. `background` paints the track behind it; `label` names
-/// the control for accessibility and `value_text` reports its value.
+/// the control for accessibility. The control is one focus stop: its value
+/// is the selected handle's, which the arrow keys and the screen-reader
+/// increment, decrement and set-value actions move.
 pub(crate) fn feathered_range_track<R: FeatheredRange>(
     ui: &mut Ui,
     range: &mut R,
     label: &str,
-    value_text: String,
     hover_text: &str,
     background: impl FnOnce(&egui::Painter, Rect),
 ) -> Response {
@@ -346,6 +492,31 @@ pub(crate) fn feathered_range_track<R: FeatheredRange>(
             }
         }
     }
+    if enabled {
+        // Screen-reader actions move the selected handle like the arrow keys.
+        let (steps, set_to) = ui.input(|input| {
+            use egui::accesskit::{Action, ActionData};
+            let steps = input.num_accesskit_action_requests(response.id, Action::Increment) as f32
+                - input.num_accesskit_action_requests(response.id, Action::Decrement) as f32;
+            let set_to = input
+                .accesskit_action_requests(response.id, Action::SetValue)
+                .filter_map(|request| match request.data {
+                    Some(ActionData::NumericValue(value)) => Some(value as f32),
+                    _ => None,
+                })
+                .last();
+            (steps, set_to)
+        });
+        if steps != 0.0 {
+            let current = *range;
+            drag_range(range, &current, selected, steps * KEY_STEP);
+        }
+        if let Some(target) = set_to.filter(|target| target.is_finite()) {
+            let current = *range;
+            let place = current.points().clamped().get(selected);
+            drag_range(range, &current, selected, target - place);
+        }
+    }
     ui.data_mut(|data| data.insert_temp(selected_id, selected));
     if *range != before {
         response.mark_changed();
@@ -398,6 +569,16 @@ pub(crate) fn feathered_range_track<R: FeatheredRange>(
         .filter(|_| enabled && dragged.is_none())
         .map(|pointer| nearest_handle(track, range, pointer));
     let foreground = visuals.widgets.active.fg_stroke.color;
+    for handle in handles::<R>().filter(|handle| !handle.is_feather()) {
+        if let Some(on_curve) = curve_below(track, range, handle) {
+            let center = handle_position(track, range, handle);
+            painter.line_segment(
+                [center, on_curve],
+                Stroke::new(1.0, accent.gamma_multiply(0.7)),
+            );
+            painter.circle_filled(on_curve, 2.5, accent);
+        }
+    }
     for handle in handles::<R>() {
         let center = handle_position(track, range, handle);
         let mut radius = if handle.is_feather() {
@@ -420,10 +601,34 @@ pub(crate) fn feathered_range_track<R: FeatheredRange>(
         }
     }
 
+    // The selected handle is the slider's value; every handle is described.
+    let place = range.points().clamped().get(selected);
+    let selected_text = range.handle_text(selected);
     response.widget_info(|| {
         let mut info = egui::WidgetInfo::labeled(egui::WidgetType::Slider, enabled, label);
-        info.current_text_value = Some(value_text.clone());
+        info.value = Some(f64::from(place));
+        info.current_text_value = Some(selected_text.clone());
         info
+    });
+    let description = handles::<R>()
+        .map(|handle| range.handle_text(handle))
+        .collect::<Vec<_>>()
+        .join(", ");
+    ui.ctx().accesskit_node_builder(response.id, |builder| {
+        use egui::accesskit::Action;
+        builder.set_description(description);
+        builder.set_min_numeric_value(0.0);
+        builder.set_max_numeric_value(1.0);
+        builder.set_numeric_value_step(f64::from(KEY_STEP));
+        if enabled {
+            builder.add_action(Action::SetValue);
+            if place < 1.0 {
+                builder.add_action(Action::Increment);
+            }
+            if place > 0.0 {
+                builder.add_action(Action::Decrement);
+            }
+        }
     });
     response
         .on_hover_cursor(egui::CursorIcon::ResizeHorizontal)
@@ -450,49 +655,7 @@ pub(crate) fn plain_track_background(
     }
 }
 
-/// A numeric entry shown under a range.
-pub(crate) struct RangeField<'a> {
-    pub(crate) label: &'a str,
-    pub(crate) value: &'a mut f32,
-    pub(crate) range: RangeInclusive<f32>,
-    pub(crate) decimals: usize,
-    pub(crate) speed: f64,
-    /// Why the field is disabled, or `None` when it is enabled.
-    pub(crate) disabled_reason: Option<&'a str>,
-}
-
-/// Numeric fields under a range, two per row in label–value pairs. They keep
-/// every value reachable when handles overlap or a ramp runs off the track.
-pub(crate) fn range_fields(ui: &mut Ui, mut fields: Vec<RangeField<'_>>) -> bool {
-    let mut changed = false;
-    let value_width = SliderMetrics::of(ui.ctx()).value_field_width;
-    for pair in fields.chunks_mut(2) {
-        ui.columns(2, |columns| {
-            for (column, field) in columns.iter_mut().zip(pair.iter_mut()) {
-                moduwu_design::property_row(column, field.label, |ui| {
-                    let response = ui
-                        .add_enabled_ui(field.disabled_reason.is_none(), |ui| {
-                            ui.add_sized(
-                                [value_width, moduwu_design::CONTROL_HEIGHT],
-                                NumberField::new(&mut *field.value, field.range.clone())
-                                    .speed(field.speed)
-                                    .decimals(field.decimals),
-                            )
-                        })
-                        .inner;
-                    let response = match field.disabled_reason {
-                        Some(reason) => response.on_disabled_hover_text(reason),
-                        None => response,
-                    };
-                    changed |= response.changed();
-                });
-            }
-        });
-    }
-    changed
-}
-
-/// `value` rounded to `decimals` places, so drags store what fields show.
+/// `value` rounded to `decimals` places, the precision models store.
 pub(crate) fn round_to(value: f32, decimals: i32) -> f32 {
     let scale = 10_f32.powi(decimals);
     (value * scale).round() / scale
