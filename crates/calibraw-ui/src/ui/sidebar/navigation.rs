@@ -261,7 +261,6 @@ impl Sidebar {
                 .clicked()
                 {
                     app.dispatch_action(AppAction::SelectSidebarTab(tab));
-                    app.develop_ui.sidebar_open = true;
                 }
             }
         });
