@@ -512,18 +512,12 @@ impl CalibRawApp {
             let Some(batch) = self.export.batch.as_mut() else {
                 return;
             };
-            let mut index = 1usize;
-            loop {
-                let name = if index == 1 {
-                    format!("{stem}.{}", format.extension())
-                } else {
-                    format!("{stem}-{index}.{}", format.extension())
-                };
-                if batch.reserved_names.insert(name.clone()) {
-                    break name;
-                }
-                index += 1;
-            }
+            let name =
+                crate::export_naming::first_free_file_name(&stem, format.extension(), |name| {
+                    batch.reserved_names.contains(name)
+                });
+            batch.reserved_names.insert(name.clone());
+            name
         };
         let cache_file_name = format!("{stem}-{timestamp}.{}", format.extension());
         let destination =

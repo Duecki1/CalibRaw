@@ -188,12 +188,16 @@ impl CalibRawApp {
         let Some(stem) = self.templated_export_stem() else {
             return;
         };
-        let default_name = format!("{stem}.{}", format.extension());
         let initial_directory = self
             .develop
             .current_path
             .as_deref()
             .and_then(|path| path.parent());
+        let default_name = crate::export_naming::free_export_file_name(
+            initial_directory,
+            &stem,
+            format.extension(),
+        );
         let Some(path) =
             crate::ui::choose_export_file_path(format, &default_name, initial_directory)
         else {
