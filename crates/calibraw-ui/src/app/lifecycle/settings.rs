@@ -215,6 +215,14 @@ impl CalibRawApp {
         self.persist_performance_settings();
     }
 
+    pub(crate) fn set_automatic_lens_correction(&mut self, automatic: AutomaticLensCorrection) {
+        if self.preferences.automatic_lens_correction == automatic {
+            return;
+        }
+        self.preferences.automatic_lens_correction = automatic;
+        self.persist_performance_settings();
+    }
+
     pub(crate) fn set_library_thumbnail_size(
         &mut self,
         thumbnail_size: crate::ui::library::LibraryThumbnailSize,
@@ -314,6 +322,17 @@ impl CalibRawApp {
             camera_profile_folder_label: self.preferences.camera_profile_folder_label.clone(),
             camera_profile_auto_detect: self.preferences.camera_profile_auto_detect,
             last_camera_profile: self.preferences.last_camera_profile.clone(),
+            automatic_lens_correction: self.preferences.automatic_lens_correction.enabled,
+            automatic_lens_geometry: self
+                .preferences
+                .automatic_lens_correction
+                .corrections
+                .geometry,
+            automatic_lens_vignetting: self
+                .preferences
+                .automatic_lens_correction
+                .corrections
+                .vignetting,
             adjustment_copy_settings: self.preferences.adjustment_copy_settings,
             #[cfg(target_os = "android")]
             last_android_library_folder: self.library.android_folder().to_owned(),

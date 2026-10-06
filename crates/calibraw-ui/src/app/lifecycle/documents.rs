@@ -206,6 +206,7 @@ impl CalibRawApp {
                 folder: self.preferences.camera_profile_folder.clone(),
                 last_used: self.preferences.last_camera_profile.clone(),
             },
+            automatic_lens: self.preferences.automatic_lens_correction,
             ai_denoise_result_path: self.ai_denoise_result_path_for_target(&source.sidecar_target),
             device: render_state.device.clone(),
             queue: render_state.queue.clone(),

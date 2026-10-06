@@ -173,8 +173,10 @@ impl Sidebar {
             adjustment_cards::CardAction::None => {}
             adjustment_cards::CardAction::Toggle => {}
             adjustment_cards::CardAction::Reset => {
+                let automatic = app.preferences.automatic_lens_correction;
                 let state = &mut app.develop.lens_correction;
-                *state = crate::app::LensCorrectionState::from_catalog(state.catalog.clone());
+                *state =
+                    crate::app::LensCorrectionState::automatic(state.catalog.clone(), automatic);
                 rebuild = true;
             }
         }

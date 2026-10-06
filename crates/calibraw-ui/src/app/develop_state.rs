@@ -260,13 +260,35 @@ pub(crate) struct LensCorrectionState {
     pub selected_model: String,
 }
 
+/// The Settings choice for lens correction on photos with no saved edits.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct AutomaticLensCorrection {
+    /// Apply the profile matched from the RAW metadata when a photo opens.
+    pub enabled: bool,
+    /// Which parts of that profile the automatic correction (and a card
+    /// reset) uses.
+    pub corrections: LensfunCorrections,
+}
+
+impl Default for AutomaticLensCorrection {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            corrections: LensfunCorrections::default(),
+        }
+    }
+}
+
 impl LensCorrectionState {
-    pub(crate) fn from_catalog(catalog: LensfunCatalog) -> Self {
+    /// The state of a photo with no saved lens edits: the auto-matched profile,
+    /// applied only when `automatic` allows it. The match is still selected
+    /// when it is not applied so the user can enable it from the card.
+    pub(crate) fn automatic(catalog: LensfunCatalog, automatic: AutomaticLensCorrection) -> Self {
         let selected = catalog.auto_match.as_ref();
         Self {
-            enabled: catalog.available && selected.is_some(),
+            enabled: automatic.enabled && catalog.available && selected.is_some(),
             applied: false,
-            corrections: LensfunCorrections::default(),
+            corrections: automatic.corrections,
             selected_maker: selected
                 .as_ref()
                 .map(|lens| lens.maker.clone())
@@ -427,5 +449,65 @@ impl DevelopUiState {
     pub(crate) fn cancel_point_color_preview(&mut self) {
         self.point_color.picker_active = false;
         self.point_color.visualize_range = false;
+    }
+}
+
+#[cfg(test)]
+mod lens_correction_tests {
+    use super::*;
+
+    fn catalog_with_match() -> LensfunCatalog {
+        let lens = LensfunLens {
+            maker: "Test Optics".to_owned(),
+            model: "35 mm f/2".to_owned(),
+            ..LensfunLens::default()
+        };
+        LensfunCatalog {
+            available: true,
+            lenses: vec![lens.clone()],
+            auto_match: Some(lens),
+            ..LensfunCatalog::default()
+        }
+    }
+
+    #[test]
+    fn automatic_correction_is_on_with_every_correction_by_default() {
+        let state = LensCorrectionState::automatic(
+            catalog_with_match(),
+            AutomaticLensCorrection::default(),
+        );
+        assert!(state.enabled);
+        assert_eq!(state.corrections, LensfunCorrections::default());
+        assert_eq!(state.selected_model, "35 mm f/2");
+    }
+
+    #[test]
+    fn disabled_automatic_correction_keeps_the_match_selected_but_off() {
+        let state = LensCorrectionState::automatic(
+            catalog_with_match(),
+            AutomaticLensCorrection {
+                enabled: false,
+                ..AutomaticLensCorrection::default()
+            },
+        );
+        assert!(!state.enabled);
+        assert_eq!(state.selected_model, "35 mm f/2");
+    }
+
+    #[test]
+    fn automatic_correction_uses_the_chosen_corrections() {
+        let corrections = LensfunCorrections {
+            geometry: true,
+            vignetting: false,
+        };
+        let state = LensCorrectionState::automatic(
+            catalog_with_match(),
+            AutomaticLensCorrection {
+                enabled: true,
+                corrections,
+            },
+        );
+        assert!(state.enabled);
+        assert_eq!(state.selected_lens().unwrap().corrections, corrections);
     }
 }
