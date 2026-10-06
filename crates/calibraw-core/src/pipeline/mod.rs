@@ -32,8 +32,9 @@ pub use color_profile::{
     ToneCurve,
 };
 pub use geometry::{
-    transform_thumbnail_geometry, transform_thumbnail_geometry_with_lens, CropAspectRatio,
-    GeometryTransform, LensGeometryMap,
+    estimate_straighten_rotation, transform_thumbnail_geometry,
+    transform_thumbnail_geometry_with_lens, CropAspectRatio, GeometryTransform, LensGeometryMap,
+    LineAnalysisImage, StraightenEstimate,
 };
 pub use lensfun::{apply_lensfun_correction, lensfun_catalog, LensfunCatalog, LensfunLens};
 pub use mask_region::{mask_region_texture_extent, mask_source_region_uv};

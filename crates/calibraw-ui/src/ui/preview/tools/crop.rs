@@ -63,24 +63,8 @@ impl Preview {
                         let angle = delta.y.atan2(delta.x).to_degrees();
                         let target = nearest_straight_axis_degrees(angle);
                         let correction = normalize_degrees(target - angle);
-                        let previous = app.develop.geometry.rotation_degrees;
-                        app.develop.geometry.rotation_degrees =
-                            (previous + correction).clamp(-45.0, 45.0);
-                        if (app.develop.geometry.rotation_degrees - previous).abs() > 1e-4 {
-                            let reference =
-                                if let Some(reference) = app.develop_ui.crop_constraint_reference {
-                                    reference
-                                } else {
-                                    let reference = app.develop.geometry.crop;
-                                    app.develop_ui.crop_constraint_reference = Some(reference);
-                                    reference
-                                };
-                            app.develop.geometry.crop = reference;
-                            app.develop
-                                .geometry
-                                .fit_crop_inside_transformed_source(source_width, source_height);
-                            app.note_geometry_changed();
-                        }
+                        let rotation = app.develop.geometry.rotation_degrees + correction;
+                        app.set_straighten_rotation(rotation, source_width, source_height);
                     }
                 }
             } else if !primary_down {

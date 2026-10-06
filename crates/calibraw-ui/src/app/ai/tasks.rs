@@ -38,7 +38,7 @@ impl ForegroundOperationKind {
     pub(crate) const fn ai_feature(self) -> Option<AiFeature> {
         match self {
             Self::Ai(feature) => Some(feature),
-            Self::LensCorrection => None,
+            Self::LensCorrection | Self::AutoStraighten => None,
         }
     }
 
@@ -51,6 +51,7 @@ impl ForegroundOperationKind {
             Self::Ai(AiFeature::Remove) => "Applying Remove",
             Self::Ai(AiFeature::Denoise) => "Applying AI denoise",
             Self::LensCorrection => "Applying lens correction",
+            Self::AutoStraighten => "Straightening",
         }
     }
 }
