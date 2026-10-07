@@ -273,7 +273,7 @@ pub(super) fn pack_effect_mask(
                     } else {
                         0.0
                     },
-                    0.0,
+                    effect_params::fog::LIGHT_GLOW.clamp(config.light_glow),
                 ],
             )
         }
@@ -298,7 +298,7 @@ pub(super) fn pack_effect_mask(
                 [
                     effect_params::smoke::SOFTNESS.clamp(config.softness),
                     effect_params::smoke::SEED.clamp(config.seed),
-                    0.0,
+                    effect_params::smoke::LIGHT_GLOW.clamp(config.light_glow),
                     0.0,
                 ],
             )

@@ -949,6 +949,16 @@ pub mod fog {
         0,
         Some("Chooses a different fog pattern that stays fixed between preview and export."),
     );
+    float_param!(
+        LIGHT_GLOW,
+        "Light glow",
+        0.0,
+        100.0,
+        50.0,
+        0.5,
+        0,
+        Some("Makes the fog glow around Relight and Light Rays lights, brightest when looking toward a light through the fog."),
+    );
     color_param!(
         COLOR,
         "Color",
@@ -1030,6 +1040,16 @@ pub mod smoke {
         1.0,
         0,
         Some("Chooses a different smoke pattern that stays fixed between preview and export."),
+    );
+    float_param!(
+        LIGHT_GLOW,
+        "Light glow",
+        0.0,
+        100.0,
+        50.0,
+        0.5,
+        0,
+        Some("Makes the smoke glow where Relight and Light Rays lights reach it."),
     );
     color_param!(
         COLOR,

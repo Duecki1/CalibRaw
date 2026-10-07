@@ -13,6 +13,10 @@ pub struct FogEffectSettings {
     pub start: f32,
     pub depth_influence: f32,
     pub color: [f32; 3],
+    /// How strongly scene lights (Relight, Light Rays) glow in it. Edits
+    /// saved before it existed load with 0, so they render as before.
+    #[serde(default = "no_light_glow")]
+    pub light_glow: f32,
 }
 
 impl Default for FogEffectSettings {
@@ -28,8 +32,13 @@ impl Default for FogEffectSettings {
             start: START.default,
             depth_influence: DEPTH_INFLUENCE.default,
             color: COLOR.default,
+            light_glow: LIGHT_GLOW.default,
         }
     }
+}
+
+fn no_light_glow() -> f32 {
+    0.0
 }
 
 impl FogEffectSettings {

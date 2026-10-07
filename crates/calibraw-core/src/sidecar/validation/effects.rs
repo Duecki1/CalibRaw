@@ -198,6 +198,7 @@ fn validate_fog_effect(fog: &crate::pipeline::FogEffectSettings) -> Result<(), S
             (fog::SEED, fog.seed),
             (fog::START, fog.start),
             (fog::DEPTH_INFLUENCE, fog.depth_influence),
+            (fog::LIGHT_GLOW, fog.light_glow),
         ],
         &fog.color,
     )?;
@@ -216,6 +217,7 @@ fn validate_smoke_effect(smoke: &crate::pipeline::SmokeEffectSettings) -> Result
             (smoke::SOFTNESS, smoke.softness),
             (smoke::ANGLE, smoke.angle),
             (smoke::SEED, smoke.seed),
+            (smoke::LIGHT_GLOW, smoke.light_glow),
         ],
         &smoke.color,
     )?;

@@ -183,6 +183,7 @@ pub(crate) fn show(
                 changed |= fog_onset(ui, settings);
             }
             changed |= effect_color(ui, "fog-color-picker", &mut settings.color, fog::COLOR);
+            changed |= float_param_slider(ui, &mut settings.light_glow, fog::LIGHT_GLOW);
             changed |= effect_details(ui, "Atmosphere details", |ui| {
                 let mut changed = false;
                 if settings.depth_enabled {

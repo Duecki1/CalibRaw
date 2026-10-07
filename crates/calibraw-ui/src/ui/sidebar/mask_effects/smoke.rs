@@ -21,6 +21,7 @@ pub(crate) fn show(
             changed |= float_param_slider(ui, &mut settings.density, smoke::DENSITY);
             changed |= float_param_slider(ui, &mut settings.scale, smoke::SCALE);
             changed |= effect_color(ui, "smoke-color-picker", &mut settings.color, smoke::COLOR);
+            changed |= float_param_slider(ui, &mut settings.light_glow, smoke::LIGHT_GLOW);
             changed |= effect_details(ui, "Texture details", |ui| {
                 float_param_slider(ui, &mut settings.turbulence, smoke::TURBULENCE)
                     | float_param_slider(ui, &mut settings.softness, smoke::SOFTNESS)
