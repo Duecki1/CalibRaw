@@ -15,6 +15,9 @@ pub struct SmokeEffectSettings {
     /// saved before it existed load with 0, so they render as before.
     #[serde(default = "no_light_glow")]
     pub light_glow: f32,
+    /// Whether light sources in the photograph (lamps, lit windows) also glow
+    /// in the smoke, in their own colours, at the Light glow strength.
+    pub image_lights: bool,
 }
 
 impl Default for SmokeEffectSettings {
@@ -29,6 +32,7 @@ impl Default for SmokeEffectSettings {
             seed: SEED.default,
             color: COLOR.default,
             light_glow: LIGHT_GLOW.default,
+            image_lights: false,
         }
     }
 }

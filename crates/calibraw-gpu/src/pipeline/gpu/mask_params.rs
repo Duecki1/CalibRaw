@@ -23,6 +23,25 @@ fn effect_mask_data(
     }
 }
 
+// Media that scatter light (Fog, Smoke) carry their options in the last
+// component of `film_effects`, read by `medium_image_lights_enabled` in
+// atmosphere.wgsl. Effect slots leave `film_effects` unused otherwise; its
+// first component marks adjustment Halation in every slot (`needs_glow_passes`).
+const MEDIUM_OPTIONS: usize = 3;
+
+fn set_medium_options(data: &mut MaskData, image_lights: bool) {
+    data.film_effects[MEDIUM_OPTIONS] = f32::from(u8::from(image_lights));
+}
+
+/// Whether an active Fog or Smoke slot scatters the photograph's own lights.
+pub(super) fn medium_uses_image_lights(data: &MaskData) -> bool {
+    let id = data.metadata[3] >> MASK_EFFECT_ID_SHIFT;
+    data.metadata[0] != 0
+        && data.metadata[1] != 0
+        && (id == MaskEffect::Fog.shader_id() || id == MaskEffect::Smoke.shader_id())
+        && data.film_effects[MEDIUM_OPTIONS] > 0.5
+}
+
 pub(super) fn pack_effect_mask(
     effect: MaskEffect,
     settings: &crate::pipeline::MaskEffectSettings,
@@ -246,9 +265,6 @@ pub(super) fn pack_effect_mask(
         MaskEffect::Fog => {
             let config = settings.fog;
             let color = effect_params::fog::COLOR.clamp(config.color);
-            // Fog's options go in the last component of `film_effects`: effect
-            // slots leave it unused, while its first component marks adjustment
-            // Halation for every slot (`needs_glow_passes`).
             let mut data = effect_mask_data(
                 effect,
                 enabled && config.is_active(),
@@ -279,13 +295,13 @@ pub(super) fn pack_effect_mask(
                     effect_params::fog::LIGHT_GLOW.clamp(config.light_glow),
                 ],
             );
-            data.film_effects[3] = f32::from(u8::from(config.image_lights));
+            set_medium_options(&mut data, config.image_lights);
             data
         }
         MaskEffect::Smoke => {
             let config = settings.smoke;
             let color = effect_params::smoke::COLOR.clamp(config.color);
-            effect_mask_data(
+            let mut data = effect_mask_data(
                 effect,
                 enabled && config.is_active(),
                 [
@@ -306,7 +322,9 @@ pub(super) fn pack_effect_mask(
                     effect_params::smoke::LIGHT_GLOW.clamp(config.light_glow),
                     0.0,
                 ],
-            )
+            );
+            set_medium_options(&mut data, config.image_lights);
+            data
         }
         MaskEffect::Grain => {
             let config = settings.grain;

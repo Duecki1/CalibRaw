@@ -188,37 +188,62 @@ fn dark_with_red_lamp(width: u32, height: u32, x: u32, y: u32) -> anyhow::Result
     LoadedRaw::from_scene_linear_rec2020(width, height, pixels)
 }
 
-fn fog_with_image_lights(image_lights: bool) -> MaskStack {
-    let mut component = fog(100.0);
+fn with_image_lights(mut component: EffectComponent, image_lights: bool) -> EffectComponent {
     component.settings.fog.image_lights = image_lights;
-    global(vec![component])
+    component.settings.smoke.image_lights = image_lights;
+    component
+}
+
+fn fog_with_image_lights(image_lights: bool) -> MaskStack {
+    global(vec![with_image_lights(fog(100.0), image_lights)])
 }
 
 #[test]
-fn fog_glows_in_the_colour_of_lights_in_the_photo() -> anyhow::Result<()> {
+fn media_glow_in_the_colour_of_lights_in_the_photo() -> anyhow::Result<()> {
+    let lamp = [WIDTH / 4, HEIGHT / 2];
     let Some(scene) = FogScene::with_source(
-        dark_with_red_lamp(WIDTH, HEIGHT, WIDTH / 4, HEIGHT / 2)?,
+        dark_with_red_lamp(WIDTH, HEIGHT, lamp[0], lamp[1])?,
         ProcessingQuality::High,
     )?
     else {
         return Ok(());
     };
-    let unlit = scene.render(&fog_with_image_lights(false))?;
-    let lit = scene.render(&fog_with_image_lights(true))?;
-    // Beside the lamp, not on it.
-    let near = ((HEIGHT / 2 * WIDTH + WIDTH / 4 + 6) * 3) as usize;
-    let far = ((HEIGHT / 2 * WIDTH + WIDTH - 4) * 3) as usize;
-    let red_gain = lit[near] - unlit[near];
-    let green_gain = lit[near + 1] - unlit[near + 1];
-    assert!(red_gain > 0.005, "no glow beside the lamp: {red_gain}");
-    assert!(
-        red_gain > 2.0 * green_gain,
-        "the glow is not red: {red_gain} vs {green_gain}"
-    );
-    assert!(
-        red_gain > 2.0 * (lit[far] - unlit[far]),
-        "the glow does not fall off away from the lamp"
-    );
+    for (name, medium) in [("Fog", fog as fn(f32) -> EffectComponent), ("Smoke", smoke)] {
+        let render = |image_lights| {
+            scene.render(&global(vec![with_image_lights(
+                medium(100.0),
+                image_lights,
+            )]))
+        };
+        let unlit = render(false)?;
+        let lit = render(true)?;
+        // Mean gain of one channel in a square around `x`, leaving out the lamp.
+        let gain = |channel: usize, x: u32| {
+            let mut sum = 0.0;
+            let mut count = 0.0;
+            for py in lamp[1] - 6..lamp[1] + 6 {
+                for px in x - 6..x + 6 {
+                    if px.abs_diff(lamp[0]) < 4 && py.abs_diff(lamp[1]) < 4 {
+                        continue;
+                    }
+                    let i = ((py * WIDTH + px) * 3) as usize + channel;
+                    sum += lit[i] - unlit[i];
+                    count += 1.0;
+                }
+            }
+            sum / count
+        };
+        let (red, green) = (gain(0, lamp[0]), gain(1, lamp[0]));
+        assert!(red > 0.002, "{name} does not glow beside the lamp: {red}");
+        assert!(
+            red > 2.0 * green,
+            "{name} glow is not red: {red} vs {green}"
+        );
+        assert!(
+            red > 2.0 * gain(0, WIDTH - 8),
+            "{name} glow does not fall off away from the lamp"
+        );
+    }
     Ok(())
 }
 

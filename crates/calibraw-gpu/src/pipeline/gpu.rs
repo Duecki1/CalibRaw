@@ -725,8 +725,11 @@ impl RawGpuPipeline {
             self.indices.tone_prepare_pass_index,
             self.indices.tone_prepare_pass_index + 1,
         );
-        // Each tile adds its core to the shared image-light grid.
-        self.encode_pass(&mut encoder, self.indices.image_light_accumulate_pass_index);
+        // Each tile adds its core to the shared image-light grid. Without a
+        // receiver the grid stays empty and the tiles skip reading it all again.
+        if params.needs_image_lights() {
+            self.encode_pass(&mut encoder, self.indices.image_light_accumulate_pass_index);
+        }
         queue.submit(Some(encoder.finish()));
         Ok(())
     }
