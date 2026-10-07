@@ -17,7 +17,7 @@ pub(super) mod tilt_shift;
 pub(super) mod vignette;
 
 pub(crate) use controls::EffectFrame;
-use controls::{effect_details, effect_position, pattern_seed, PositionSpace};
+use controls::{effect_details, effect_position, image_lights_toggle, pattern_seed, PositionSpace};
 
 use super::{egui, MaskEffect, Ui};
 use crate::pipeline::effect_params::ColorParamSpec;

@@ -1,5 +1,6 @@
 use super::{
-    effect_card, effect_color, effect_details, float_param_angle, float_param_slider, pattern_seed,
+    effect_card, effect_color, effect_details, float_param_angle, float_param_slider,
+    image_lights_toggle, pattern_seed,
 };
 use crate::pipeline::{effect_params::smoke, MaskEffect, SmokeEffectSettings};
 use eframe::egui::Ui;
@@ -22,6 +23,7 @@ pub(crate) fn show(
             changed |= float_param_slider(ui, &mut settings.scale, smoke::SCALE);
             changed |= effect_color(ui, "smoke-color-picker", &mut settings.color, smoke::COLOR);
             changed |= float_param_slider(ui, &mut settings.light_glow, smoke::LIGHT_GLOW);
+            changed |= image_lights_toggle(ui, &mut settings.image_lights);
             changed |= effect_details(ui, "Texture details", |ui| {
                 float_param_slider(ui, &mut settings.turbulence, smoke::TURBULENCE)
                     | float_param_slider(ui, &mut settings.softness, smoke::SOFTNESS)

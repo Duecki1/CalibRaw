@@ -567,6 +567,15 @@ impl GpuParams {
         })
     }
 
+    /// Whether an effect samples the image-light map (Image lights on Fog or
+    /// Smoke), so the export tone prepass must build it.
+    pub(super) fn needs_image_lights(&self) -> bool {
+        let local_count = (self.scene_tone.mask_counts[0] as usize).min(MAX_RENDER_MASK_SLOTS);
+        self.mask_data[..local_count]
+            .iter()
+            .any(medium_uses_image_lights)
+    }
+
     /// Whether an active Relight effect reads the relighting surface derived
     /// from scene depth.
     pub(super) fn needs_relight_surface(&self) -> bool {

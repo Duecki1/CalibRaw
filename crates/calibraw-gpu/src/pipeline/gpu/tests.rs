@@ -61,6 +61,27 @@ fn local_point_colors_pack_with_mask_adjustments() {
     assert!((packed.point_colors[0].shifts[0] - 0.125).abs() < 1e-6);
 }
 
+#[test]
+fn only_active_media_with_image_lights_request_the_image_light_map() {
+    let packed = |effect: MaskEffect, image_lights: bool, enabled: bool| {
+        let mut settings = crate::pipeline::MaskEffectSettings::default();
+        settings.fog.image_lights = image_lights;
+        settings.smoke.image_lights = image_lights;
+        let data = pack_effect_mask(effect, &settings, enabled).expect("effect slot");
+        super::medium_uses_image_lights(&data)
+    };
+    for effect in [MaskEffect::Fog, MaskEffect::Smoke] {
+        assert!(packed(effect, true, true), "{effect:?}");
+        assert!(
+            !packed(effect, false, true),
+            "{effect:?} without Image lights"
+        );
+        assert!(!packed(effect, true, false), "disabled {effect:?}");
+    }
+    // Other effects leave the options slot empty.
+    assert!(!packed(MaskEffect::Relight, true, true));
+}
+
 /// Composes `shader` the way production does for `quality` and validates it.
 fn validate_shader(shader: shaders::EntryShader, quality: ProcessingQuality) {
     let format = processing_work_format(quality);

@@ -162,9 +162,9 @@ const SMOKE_LIGHT_ANISOTROPY: f32 = 0.4;
 // Scattered scene light at Light glow 100, relative to the single-scattering
 // estimate: lights in photographs read brighter in haze than their surfaces.
 const FOG_LIGHT_GLOW_GAIN: f32 = 4.0;
-// Image light scattered by the fog at Light glow 100, relative to the halo's
+// Image light a medium scatters at Light glow 100, relative to the halo's
 // mean light: a lamp's halo outshines its share of the spread light.
-const FOG_IMAGE_LIGHT_GAIN: f32 = 4.0;
+const IMAGE_LIGHT_SCATTER_GAIN: f32 = 4.0;
 // Fog cells along the view ray: fixed intervals of normalized depth, so rays
 // share prefixes and density never jumps with surface distance.
 const FOG_CELLS: u32 = 12u;
@@ -262,7 +262,29 @@ fn image_light_at(pos: vec2<i32>) -> vec3<f32> {
     return max(light, vec3<f32>(0.0)) * exp2(Common::scene_tone_uniforms.exposure);
 }
 
-// `options.w` > 0.5 turns on Image lights (packed in mask_params.rs).
+// Media that scatter light (Fog, Smoke) carry their options in the last
+// component of `film_effects` (`set_medium_options` in mask_params.rs).
+fn medium_image_lights_enabled(options: vec4<f32>) -> bool {
+    return options.w > 0.5;
+}
+
+// Image lights: light from the photograph's light sources that a medium
+// scatters toward the camera, in their own colours. `strength` is the
+// medium's Light glow (with any gain for a dark albedo), `albedo` its
+// brightness and `scattering` the share of light it scatters along the view
+// ray (one minus its transmission), so near surfaces with little of the
+// medium in front of them receive little of the halo.
+fn medium_image_light(
+    pos: vec2<i32>,
+    options: vec4<f32>,
+    strength: f32,
+    albedo: f32,
+    scattering: f32,
+) -> vec3<f32> {
+    if !medium_image_lights_enabled(options) { return vec3<f32>(0.0); }
+    return image_light_at(pos) * (strength * IMAGE_LIGHT_SCATTER_GAIN * albedo * scattering);
+}
+
 fn apply_fog(
     pos: vec2<i32>,
     input_rgb: vec3<f32>,
@@ -336,14 +358,8 @@ fn apply_fog(
     let albedo = Common::safe_luma(color);
     let extinction = 6.0 * density * density * amount * length(ray);
     let scattered = fog_light_scattering(pos, volume, distance, extinction);
-    var glowing = fogged + scattered * (glow * FOG_LIGHT_GLOW_GAIN * ambient * albedo);
-    // Image lights: light sources in the photograph glow in the fog in their
-    // own colours, as much as the fog in front of the pixel scatters.
-    if options.w > 0.5 {
-        glowing += image_light_at(pos)
-            * (glow * FOG_IMAGE_LIGHT_GAIN * albedo * (1.0 - transmission));
-    }
-    return glowing;
+    return fogged + scattered * (glow * FOG_LIGHT_GLOW_GAIN * ambient * albedo)
+        + medium_image_light(pos, options, glow, albedo, 1.0 - transmission);
 }
 
 // Smoke is darker than fog by default (its colour is its albedo); this lets
@@ -381,6 +397,7 @@ fn apply_smoke(
     primary: vec4<f32>,
     secondary: vec4<f32>,
     tertiary: vec4<f32>,
+    options: vec4<f32>,
 ) -> vec3<f32> {
     let amount = clamp(primary.x / 100.0, 0.0, 1.0);
     let density = clamp(primary.y / 100.0, 0.0, 1.0);
@@ -435,9 +452,14 @@ fn apply_smoke(
     let albedo = mask_effect_picker_color_to_working(secondary.xyz);
     let color = albedo * ambient;
     let smoked = input_rgb * transmission + color * (1.0 - transmission);
-    // Light glow: the smoke also scatters scene lights (Relight, Light Rays).
+    // Light glow: the smoke also scatters scene lights (Relight, Light Rays)
+    // and, with Image lights, the photograph's own light sources.
     let glow = clamp(tertiary.z / 100.0, 0.0, 1.0);
     if glow <= 1e-6 { return smoked; }
+    let strength = glow * SMOKE_LIGHT_GLOW_GAIN;
+    let brightness = Common::safe_luma(albedo);
+    let scattering = 1.0 - transmission;
     let lit = smoke_light_scattering(pos);
-    return smoked + lit * (glow * SMOKE_LIGHT_GLOW_GAIN * ambient * Common::safe_luma(albedo) * (1.0 - transmission));
+    return smoked + lit * (strength * ambient * brightness * scattering)
+        + medium_image_light(pos, options, strength, brightness, scattering);
 }
