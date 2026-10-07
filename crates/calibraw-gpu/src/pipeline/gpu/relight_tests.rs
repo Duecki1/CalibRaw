@@ -206,6 +206,16 @@ fn relight_gpu_near_occluder_casts_a_shadow_on_the_wall_behind_it() -> anyhow::R
     };
     let unshadowed = render(0.0)?;
     let shadowed = render(100.0)?;
+    // Turning shadows off keeps the strength but casts nothing.
+    let switched_off = scene.render(&global_relight(
+        RelightEffectSettings {
+            shadows_enabled: false,
+            shadows: 100.0,
+            ..settings
+        },
+        Some(bar_before_wall()),
+    ))?;
+    assert_close(&switched_off, &unshadowed, RGB_TOLERANCE, "shadows off");
     // The bar's shadow falls on the wall to its right, away from the light.
     let behind = |render: &[f32]| added_light(render, &baseline, 60..72);
     assert!(

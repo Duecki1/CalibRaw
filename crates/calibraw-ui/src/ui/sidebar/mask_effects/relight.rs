@@ -36,10 +36,19 @@ pub(crate) fn show(
                 &mut settings.color,
                 relight::COLOR,
             );
+            if moduwu_design::toggle_button(ui, "Cast shadows", settings.shadows_enabled)
+                .on_hover_text("Let nearer objects block the light. Turn off for light without shadows; the Shadows strength is preserved.")
+                .clicked()
+            {
+                settings.shadows_enabled = !settings.shadows_enabled;
+                changed = true;
+            }
             changed |= effect_details(ui, "Light details", |ui| {
                 let mut changed = float_param_slider(ui, &mut settings.reach, relight::REACH);
                 changed |= float_param_slider(ui, &mut settings.size, relight::SIZE);
-                changed |= float_param_slider(ui, &mut settings.shadows, relight::SHADOWS);
+                if settings.shadows_enabled {
+                    changed |= float_param_slider(ui, &mut settings.shadows, relight::SHADOWS);
+                }
                 changed |= float_param_slider(ui, &mut settings.relief, relight::RELIEF);
                 changed
             });

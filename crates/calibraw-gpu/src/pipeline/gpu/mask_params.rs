@@ -218,7 +218,11 @@ pub(super) fn pack_effect_mask(
                 ],
                 [
                     params::SIZE.clamp(config.size),
-                    params::SHADOWS.clamp(config.shadows),
+                    if config.shadows_enabled {
+                        params::SHADOWS.clamp(config.shadows)
+                    } else {
+                        0.0
+                    },
                     params::RELIEF.clamp(config.relief),
                     params::AMBIENT.clamp(config.ambient),
                 ],
