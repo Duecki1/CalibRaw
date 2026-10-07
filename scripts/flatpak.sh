@@ -3,7 +3,7 @@ set -euo pipefail
 
 root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$root"
-app_id=de.dueckis.CalibRaw
+app_id=io.github.Duecki1.CalibRaw
 manifest="$root/.flatpak/$app_id.json"
 build_dir="$root/.flatpak/build"
 repo="$root/.flatpak/repo"
@@ -113,7 +113,7 @@ Usage: scripts/flatpak.sh COMMAND
   shell                  Open a shell with the SDK and local application
   debug                  Start the local application under GDB
   install                Install the local branch for the current user
-  bundle                 Create dist/flatpak/de.dueckis.CalibRaw-local.flatpak
+  bundle                 Create dist/flatpak/io.github.Duecki1.CalibRaw-local.flatpak
   smoke                  Test offline runtime loading and a synthetic RAW GPU export
   validate               Check sources, metadata, manifest, and any existing build
   stage-release COMMIT   Stage top-level Flathub files pinned to a tested commit; origin is detected from Git

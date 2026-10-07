@@ -26,7 +26,7 @@ install -m 0644 COPYING THIRD_PARTY_NOTICES.md THIRD_PARTY_LICENSES.md \
 cp -a "$LENSFUN_DB"/. AppDir/usr/share/calibraw/lensfun/
 test -n "$(find AppDir/usr/share/calibraw/lensfun -name '*.xml' -print -quit)"
 
-APP_ID=de.dueckis.CalibRaw
+APP_ID=de.duecki.calibraw
 DESKTOP_FILE="$PWD/packaging/linux/$APP_ID.desktop"
 APPIMAGE_ICON="$PWD/appimage-packaging/$APP_ID.png"
 test -s "$DESKTOP_FILE"

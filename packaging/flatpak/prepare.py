@@ -11,7 +11,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 PACKAGING = ROOT / "packaging/flatpak"
-APP_ID = "de.dueckis.CalibRaw"
+APP_ID = "io.github.Duecki1.CalibRaw"
 
 
 def git(*args: str) -> bytes:
@@ -36,6 +36,20 @@ def public_origin_url() -> str:
         "The origin remote must be publicly fetchable over HTTPS, or be a GitHub SSH URL "
         "that can be converted to HTTPS"
     )
+
+
+def add_discord_application_id(environment: dict) -> None:
+    """Embed the Discord application ID from the environment in the build.
+
+    The ID is read at compile time (`option_env!`). Discord application IDs are
+    public identifiers, so it is fine for the staged Flathub manifest to carry
+    it. Without it the build still works but Discord Rich Presence is disabled.
+    """
+    value = os.environ.get("CALIBRAW_DISCORD_APPLICATION_ID", "").strip()
+    if value:
+        environment["CALIBRAW_DISCORD_APPLICATION_ID"] = value
+    else:
+        print("CALIBRAW_DISCORD_APPLICATION_ID is not set: Discord Rich Presence will be unavailable in this build.")
 
 
 def validate_staged_manifest(manifest: dict) -> None:
@@ -104,6 +118,7 @@ def snapshot(profile: str) -> None:
     ]
     environment = manifest["build-options"]["env"]
     environment["CALIBRAW_SOURCE_REVISION"] = git("rev-parse", "HEAD").decode().strip() + "-local"
+    add_discord_application_id(environment)
     # Preserve compilation results when flatpak-builder replaces the app's
     # source directory after an edit. This mount exists only in local builds.
     target = ROOT / ".flatpak/cargo-target" / profile
@@ -134,7 +149,7 @@ def stage_release(revision: str) -> None:
     except subprocess.CalledProcessError:
         raise SystemExit(f"Not a valid committed revision: {revision}") from None
     required = [
-        "Cargo.toml", "Cargo.lock", "packaging/linux/de.dueckis.CalibRaw.metainfo.xml",
+        "Cargo.toml", "Cargo.lock", "packaging/linux/io.github.Duecki1.CalibRaw.metainfo.xml",
         "packaging/flatpak/generate-licenses.py", "crates/calibraw-ai/src/onnx_runtime_artifact.rs",
     ]
     for filename in required:
@@ -153,6 +168,7 @@ def stage_release(revision: str) -> None:
     manifest = json.loads((PACKAGING / f"{APP_ID}.json").read_text())
     manifest.pop("default-branch", None)
     manifest["build-options"]["env"]["CALIBRAW_SOURCE_REVISION"] = commit
+    add_discord_application_id(manifest["build-options"]["env"])
     manifest["build-options"]["env"]["SOURCE_DATE_EPOCH"] = git("show", "-s", "--format=%ct", commit).decode().strip()
     manifest["modules"][-1]["sources"] = [
         {"type": "git", "url": public_origin_url(), "commit": commit},
