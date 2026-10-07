@@ -1,7 +1,7 @@
 Adds CalibRaw, a GPL-3.0-or-later RAW photo editor with GPU rendering,
 non-destructive editing and optional on-device AI tools. Builds the ARM64
 Android app from release `v1.2.0`, commit
-`TODO-full-hash-of-v1.2.0`.
+`c4be2257330d72239a759efaba6b60e11b1b1a4c`.
 
 Related packaging request: https://gitlab.com/fdroid/rfp/-/work_items/4487
 
