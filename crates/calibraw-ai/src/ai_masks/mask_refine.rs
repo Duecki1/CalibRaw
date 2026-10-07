@@ -1,4 +1,5 @@
 use anyhow::Result;
+use rayon::prelude::*;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct MaskCrop {
@@ -106,9 +107,7 @@ pub(super) fn merge_crop_pass(
     }
 }
 
-/// Color-guided local linear filtering. The RGB image is reduced to its perceptual
-/// luminance for the linear model, which retains color edges without allocating a
-/// prohibitively large three-channel covariance image for full-resolution photos.
+/// Color-guided local linear filtering of an 8-bit mask (`guided_filter`).
 pub(super) fn guided_filter_color(
     rgba: &[u8],
     alpha: &mut [u8],
@@ -117,14 +116,42 @@ pub(super) fn guided_filter_color(
     radius: u32,
     epsilon: f32,
 ) -> Result<()> {
+    let mut values = alpha
+        .iter()
+        .map(|&value| value as f32 / 255.0)
+        .collect::<Vec<_>>();
+    guided_filter(rgba, &mut values, width, height, radius, epsilon)?;
+    for (alpha, value) in alpha.iter_mut().zip(values) {
+        *alpha = (value.clamp(0.0, 1.0) * 255.0 + 0.5) as u8;
+    }
+    Ok(())
+}
+
+/// Color-guided local linear filtering (He et al., "Guided Image Filtering"):
+/// within each window of `radius` pixels, `values` are modelled as a linear
+/// function of the guide, so their edges move onto the photo's edges while
+/// regions of even colour are averaged. The RGB image is reduced to its
+/// perceptual luminance for the linear model, which retains color edges
+/// without allocating a prohibitively large three-channel covariance image for
+/// full-resolution photos. `epsilon` regularizes the model against guide
+/// texture, in squared luminance units. The result is not clamped.
+pub(super) fn guided_filter(
+    rgba: &[u8],
+    values: &mut [f32],
+    width: u32,
+    height: u32,
+    radius: u32,
+    epsilon: f32,
+) -> Result<()> {
     let pixels = width as usize * height as usize;
     anyhow::ensure!(
-        rgba.len() == pixels * 4 && alpha.len() == pixels,
+        rgba.len() == pixels * 4 && values.len() == pixels,
         "guided-filter image dimensions mismatch"
     );
     if pixels == 0 {
         return Ok(());
     }
+    let (width, height, radius) = (width as usize, height as usize, radius as usize);
     let mut guide = Vec::with_capacity(pixels);
     for pixel in rgba.chunks_exact(4) {
         guide.push(
@@ -132,71 +159,42 @@ pub(super) fn guided_filter_color(
                 / 255.0,
         );
     }
-    let mut mean_alpha = alpha
-        .iter()
-        .map(|&value| value as f32 / 255.0)
-        .collect::<Vec<_>>();
     let mut workspace = vec![0.0; pixels];
-    box_mean_in_place(
-        &mut mean_alpha,
-        &mut workspace,
-        width as usize,
-        height as usize,
-        radius as usize,
-    );
+    let mut mean_values = values.to_vec();
+    box_mean_in_place(&mut mean_values, &mut workspace, width, height, radius);
     let mut mean_guide = guide.clone();
-    box_mean_in_place(
-        &mut mean_guide,
-        &mut workspace,
-        width as usize,
-        height as usize,
-        radius as usize,
-    );
+    box_mean_in_place(&mut mean_guide, &mut workspace, width, height, radius);
     let mut corr_guide = guide.iter().map(|value| value * value).collect::<Vec<_>>();
-    box_mean_in_place(
-        &mut corr_guide,
-        &mut workspace,
-        width as usize,
-        height as usize,
-        radius as usize,
-    );
-    let mut corr_guide_alpha = guide
+    box_mean_in_place(&mut corr_guide, &mut workspace, width, height, radius);
+    let mut corr_guide_values = guide
         .iter()
-        .zip(alpha.iter())
-        .map(|(guide, alpha)| guide * (*alpha as f32 / 255.0))
+        .zip(values.iter())
+        .map(|(guide, value)| guide * value)
         .collect::<Vec<_>>();
     box_mean_in_place(
-        &mut corr_guide_alpha,
+        &mut corr_guide_values,
         &mut workspace,
-        width as usize,
-        height as usize,
-        radius as usize,
+        width,
+        height,
+        radius,
     );
     for index in 0..pixels {
         let variance = (corr_guide[index] - mean_guide[index] * mean_guide[index]).max(0.0);
-        let a = (corr_guide_alpha[index] - mean_guide[index] * mean_alpha[index])
+        let a = (corr_guide_values[index] - mean_guide[index] * mean_values[index])
             / (variance + epsilon.max(1e-8));
         corr_guide[index] = a;
-        corr_guide_alpha[index] = mean_alpha[index] - a * mean_guide[index];
+        corr_guide_values[index] = mean_values[index] - a * mean_guide[index];
     }
+    box_mean_in_place(&mut corr_guide, &mut workspace, width, height, radius);
     box_mean_in_place(
-        &mut corr_guide,
+        &mut corr_guide_values,
         &mut workspace,
-        width as usize,
-        height as usize,
-        radius as usize,
+        width,
+        height,
+        radius,
     );
-    box_mean_in_place(
-        &mut corr_guide_alpha,
-        &mut workspace,
-        width as usize,
-        height as usize,
-        radius as usize,
-    );
-    for (index, value) in alpha.iter_mut().enumerate() {
-        *value = ((corr_guide[index] * guide[index] + corr_guide_alpha[index]).clamp(0.0, 1.0)
-            * 255.0
-            + 0.5) as u8;
+    for (index, value) in values.iter_mut().enumerate() {
+        *value = corr_guide[index] * guide[index] + corr_guide_values[index];
     }
     Ok(())
 }
@@ -217,6 +215,9 @@ fn smoothstep(edge0: f32, edge1: f32, value: f32) -> f32 {
     t * t * (3.0 - 2.0 * t)
 }
 
+/// Mean over a (2 × `radius` + 1)² box, shrunk at the image's borders.
+/// Rows run in parallel; the vertical pass keeps one running sum per column
+/// and walks the image row by row, which reads memory in order.
 fn box_mean_in_place(
     values: &mut [f32],
     workspace: &mut [f32],
@@ -225,35 +226,46 @@ fn box_mean_in_place(
     radius: usize,
 ) {
     debug_assert_eq!(values.len(), width * height);
-    for y in 0..height {
-        let mut sum = values[y * width..y * width + radius.min(width - 1) + 1]
-            .iter()
-            .sum::<f32>();
-        for x in 0..width {
-            let left = x.saturating_sub(radius);
-            let right = (x + radius).min(width - 1);
-            workspace[y * width + x] = sum / (right - left + 1) as f32;
-            if x >= radius {
-                sum -= values[y * width + x - radius];
+    values
+        .par_chunks(width)
+        .zip(workspace.par_chunks_mut(width))
+        .for_each(|(row, means)| {
+            let mut sum = row[..radius.min(width - 1) + 1].iter().sum::<f32>();
+            for x in 0..width {
+                let left = x.saturating_sub(radius);
+                let right = (x + radius).min(width - 1);
+                means[x] = sum / (right - left + 1) as f32;
+                if x >= radius {
+                    sum -= row[x - radius];
+                }
+                if x + radius + 1 < width {
+                    sum += row[x + radius + 1];
+                }
             }
-            if x + radius + 1 < width {
-                sum += values[y * width + x + radius + 1];
-            }
+        });
+    let mut sums = vec![0.0f32; width];
+    for y in 0..=radius.min(height - 1) {
+        for (sum, value) in sums.iter_mut().zip(&workspace[y * width..(y + 1) * width]) {
+            *sum += value;
         }
     }
-    for x in 0..width {
-        let mut sum = (0..=radius.min(height - 1))
-            .map(|y| workspace[y * width + x])
-            .sum::<f32>();
-        for y in 0..height {
-            let top = y.saturating_sub(radius);
-            let bottom = (y + radius).min(height - 1);
-            values[y * width + x] = sum / (bottom - top + 1) as f32;
-            if y >= radius {
-                sum -= workspace[(y - radius) * width + x];
+    for y in 0..height {
+        let top = y.saturating_sub(radius);
+        let bottom = (y + radius).min(height - 1);
+        let count = (bottom - top + 1) as f32;
+        for (mean, sum) in values[y * width..(y + 1) * width].iter_mut().zip(&sums) {
+            *mean = sum / count;
+        }
+        if y >= radius {
+            let leaving = &workspace[(y - radius) * width..(y - radius + 1) * width];
+            for (sum, value) in sums.iter_mut().zip(leaving) {
+                *sum -= value;
             }
-            if y + radius + 1 < height {
-                sum += workspace[(y + radius + 1) * width + x];
+        }
+        if y + radius + 1 < height {
+            let entering = &workspace[(y + radius + 1) * width..(y + radius + 2) * width];
+            for (sum, value) in sums.iter_mut().zip(entering) {
+                *sum += value;
             }
         }
     }
@@ -262,6 +274,59 @@ fn box_mean_in_place(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The box mean as it walked the image column by column, kept to show
+    /// the row-ordered version changes no mask.
+    fn column_walking_box_mean(values: &mut [f32], width: usize, height: usize, radius: usize) {
+        let mut workspace = vec![0.0; values.len()];
+        for y in 0..height {
+            let mut sum = values[y * width..y * width + radius.min(width - 1) + 1]
+                .iter()
+                .sum::<f32>();
+            for x in 0..width {
+                let left = x.saturating_sub(radius);
+                let right = (x + radius).min(width - 1);
+                workspace[y * width + x] = sum / (right - left + 1) as f32;
+                if x >= radius {
+                    sum -= values[y * width + x - radius];
+                }
+                if x + radius + 1 < width {
+                    sum += values[y * width + x + radius + 1];
+                }
+            }
+        }
+        for x in 0..width {
+            let mut sum = (0..=radius.min(height - 1))
+                .map(|y| workspace[y * width + x])
+                .sum::<f32>();
+            for y in 0..height {
+                let top = y.saturating_sub(radius);
+                let bottom = (y + radius).min(height - 1);
+                values[y * width + x] = sum / (bottom - top + 1) as f32;
+                if y >= radius {
+                    sum -= workspace[(y - radius) * width + x];
+                }
+                if y + radius + 1 < height {
+                    sum += workspace[(y + radius + 1) * width + x];
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn box_mean_matches_the_column_walking_mean_exactly() {
+        for (width, height, radius) in [(37, 23, 4), (5, 9, 8), (64, 1, 3), (1, 17, 2)] {
+            let values = (0..width * height)
+                .map(|i| ((i * 7919) % 1013) as f32 / 1013.0)
+                .collect::<Vec<_>>();
+            let mut expected = values.clone();
+            column_walking_box_mean(&mut expected, width, height, radius);
+            let mut actual = values;
+            let mut workspace = vec![0.0; actual.len()];
+            box_mean_in_place(&mut actual, &mut workspace, width, height, radius);
+            assert_eq!(actual, expected, "{width}x{height}, radius {radius}");
+        }
+    }
 
     #[test]
     fn crop_expands_without_leaving_the_image() {

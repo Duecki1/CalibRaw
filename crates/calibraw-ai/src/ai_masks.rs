@@ -871,6 +871,7 @@ mod tests {
     }
 }
 
+mod depth_refine;
 mod mask_refine;
 mod object;
 mod sky;
