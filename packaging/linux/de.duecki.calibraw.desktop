@@ -1,11 +1,9 @@
 [Desktop Entry]
 Type=Application
 Name=CalibRaw
-GenericName=RAW Photo Editor
 Comment=GPU-first RAW image editor
 Exec=calibraw
-Icon=de.dueckis.CalibRaw
-StartupWMClass=de.dueckis.CalibRaw
+Icon=de.duecki.calibraw
+StartupWMClass=de.duecki.calibraw
 Categories=Graphics;Photography;
-Keywords=RAW;Photo;Photography;Editor;Color grading;
 Terminal=false

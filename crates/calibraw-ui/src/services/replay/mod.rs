@@ -210,6 +210,29 @@ fn write_video_frame(
     Ok(writer.write_frame(frame)?)
 }
 
+/// The folder that holds the replay's full-size render stills.
+///
+/// This is the destination's folder, on the same volume as the output. A
+/// Flatpak save dialog instead returns a document-portal path, where the app
+/// may create and rename files but not directories, so the stills go to the
+/// app's own cache folder.
+fn render_cache_parent(destination: &Path) -> PathBuf {
+    #[cfg(not(target_os = "android"))]
+    if crate::desktop_portal::is_flatpak() {
+        if let Some(cache) = std::env::var_os("XDG_CACHE_HOME").map(PathBuf::from) {
+            let cache = cache.join("calibraw");
+            if std::fs::create_dir_all(&cache).is_ok() {
+                return cache;
+            }
+        }
+    }
+    destination
+        .parent()
+        .filter(|path| !path.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."))
+        .to_path_buf()
+}
+
 /// Renders and encodes the replay of `request` and publishes it at
 /// `destination`, replacing an existing file only once encoding succeeded.
 /// Blocks; call it from a worker thread.
@@ -231,7 +254,7 @@ pub(crate) fn render_edit_replay(
     let render_count = stages.len() + 2;
     let render_dir = tempfile::Builder::new()
         .prefix("calibraw-edit-replay-")
-        .tempdir_in(destination.parent().unwrap_or_else(|| Path::new(".")))
+        .tempdir_in(render_cache_parent(&destination))
         .map_err(|error| format!("Could not create replay render cache: {error}"))?;
 
     let original_state = ReplayRenderState::original(request.original_exposure);

@@ -1,11 +1,11 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <component type="desktop-application">
-  <id>de.dueckis.CalibRaw</id>
+  <id>io.github.Duecki1.CalibRaw</id>
   <metadata_license>CC0-1.0</metadata_license>
   <project_license>GPL-3.0-or-later</project_license>
   <name>CalibRaw</name>
   <summary>Develop RAW photos with non-destructive editing</summary>
-  <developer id="de.dueckis">
+  <developer id="io.github.duecki1">
     <name>Duecki</name>
   </developer>
   <description>
@@ -31,7 +31,7 @@
       <li>Export finished photos, including lossless JPEG XL images</li>
     </ul>
   </description>
-  <launchable type="desktop-id">de.dueckis.CalibRaw.desktop</launchable>
+  <launchable type="desktop-id">io.github.Duecki1.CalibRaw.desktop</launchable>
   <provides>
     <binary>calibraw</binary>
   </provides>
@@ -66,6 +66,21 @@
     <control>keyboard</control>
   </supports>
   <releases>
+    <release version="1.2.0" date="2026-10-06" type="stable">
+      <url>https://github.com/Duecki1/CalibRaw/releases/tag/v1.2.0</url>
+      <description>
+        <p>This release adds presets, depth masks, and support for JPEG, PNG, HEIC and TIFF editing.</p>
+        <ul>
+          <li>Save, preview and share presets, and apply them to a Library selection</li>
+          <li>Edit JPEG, PNG, HEIC and TIFF files with the same tools as RAW files</li>
+          <li>Add depth range masks and a depth-based fog effect</li>
+          <li>Improve AI Remove and AI Denoise quality</li>
+          <li>Add automatic straightening and a lens correction setting</li>
+          <li>Reorder mask groups and add a grey theme</li>
+          <li>Suggest a free file name on export instead of an existing one</li>
+        </ul>
+      </description>
+    </release>
     <!-- GitHub release published_at: 2026-09-28T01:53:19Z. -->
     <release version="1.1.1" date="2026-09-28" type="stable">
       <url>https://github.com/Duecki1/CalibRaw/releases/tag/v1.1.1</url>

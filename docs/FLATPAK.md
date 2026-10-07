@@ -1,6 +1,6 @@
 # Flatpak
 
-The Linux Flatpak app ID is `de.dueckis.CalibRaw`. Run the commands below from
+The Linux Flatpak app ID is `io.github.Duecki1.CalibRaw`. Run the commands below from
 the repository root. This workflow is local: nothing has been published to
 Flathub, and none of these helpers push, upload, or submit anything.
 
@@ -50,7 +50,7 @@ assets, and packaging files into `.flatpak/source`, including uncommitted edits
 and eligible untracked, non-ignored files. It does not require a commit or
 credentials. Credential/config directories such as `.aws`, `.git`, and your
 home configuration are outside the snapshot's allowlist. The generated
-manifest is `.flatpak/de.dueckis.CalibRaw.json`; build output, caches, and the
+manifest is `.flatpak/io.github.Duecki1.CalibRaw.json`; build output, caches, and the
 local OSTree repository also live under `.flatpak/`.
 Each local profile keeps a Cargo target cache under `.flatpak/cargo-target/`
 so editing the app does not discard dependency compilation. This cache mount
@@ -83,14 +83,20 @@ release. The package includes both `calibraw` and `calibraw-develop-export`.
 ## Sandbox and AI
 
 Flatpak gives the app its own XDG config, data, and cache state under
-`~/.var/app/de.dueckis.CalibRaw/`, separate from the native application's state.
+`~/.var/app/io.github.Duecki1.CalibRaw/`, separate from the native application's state.
 Pictures has read/write access so `.calibraw` sidecars can be saved beside
 their RAW files. Select other library folders through the folder portal to
 grant access, and check sidecar saving in those locations too.
 
 The manifest allows network access, Wayland with fallback X11, IPC sharing,
-and DRI graphics devices for GPU rendering. It grants no general home access,
-host CUDA access, or Discord IPC access by default.
+and DRI graphics devices for GPU rendering. It grants no general home access or
+host CUDA access. Optional Discord Rich Presence can reach Discord's local IPC
+socket, either `discord-ipc-0` for a native Discord or the socket in
+`xdg-run/app/com.discordapp.Discord` for Flatpak Discord; nothing is sent
+unless the user enables it. A build needs `CALIBRAW_DISCORD_APPLICATION_ID` in
+the environment (for example `env CALIBRAW_DISCORD_APPLICATION_ID=<id>
+scripts/flatpak.sh build release`), otherwise the option is shown as
+unavailable.
 
 CPU ONNX Runtime is bundled in `/app/lib`; the Flatpak does not need a runtime
 download for AI. AI models remain optional downloads after user consent, and
@@ -108,23 +114,23 @@ After building, install the current local branch or create a portable bundle:
 
 ```sh
 scripts/flatpak.sh install
-flatpak run de.dueckis.CalibRaw//local
+flatpak run io.github.Duecki1.CalibRaw//local
 scripts/flatpak.sh bundle
 ```
 
 Installation is user-scoped and comes directly from `.flatpak/repo` through
 its local `file://` origin. Run `install` again after rebuilding to update the installed
-copy. The bundle is `dist/flatpak/de.dueckis.CalibRaw-local.flatpak` and can be
+copy. The bundle is `dist/flatpak/io.github.Duecki1.CalibRaw-local.flatpak` and can be
 installed with:
 
 ```sh
-flatpak install --user ./dist/flatpak/de.dueckis.CalibRaw-local.flatpak
+flatpak install --user ./dist/flatpak/io.github.Duecki1.CalibRaw-local.flatpak
 ```
 
 Uninstall exactly the local branch with:
 
 ```sh
-flatpak uninstall --user de.dueckis.CalibRaw//local
+flatpak uninstall --user io.github.Duecki1.CalibRaw//local
 ```
 
 This command retains the application's state directory.
@@ -144,10 +150,10 @@ establish that validation or interactive checks passed.
 Builds use Flathub's AppStream screenshot mirroring flags. The mirrored files
 remain in the local build/repository; the helper does not upload them.
 
-Known submission blocker: `dueckis.de` currently returns HTTP 525 from
-Cloudflare, causing `appid-url-not-reachable`. The domain owner must fix its
-HTTPS/origin configuration and rerun validation before future submission.
-Keep the app ID `de.dueckis.CalibRaw`.
+The Flatpak uses the GitHub-based app ID `io.github.Duecki1.CalibRaw`, which
+Flathub verifies through the GitHub account, so no website is required. The
+native Linux AppImage keeps its original ID `de.duecki.calibraw`; the app picks
+the window ID at runtime from whether it runs inside Flatpak.
 
 `smoke` runs on the actual Platform runtime with networking disabled. It probes
 the bundled ONNX Runtime and renders a generated Bayer DNG through the packaged
@@ -187,6 +193,6 @@ entire tested tree matches the commit; the helper compares application sources,
 assets, and required metadata with the requested commit.
 
 Staging remains unpublished. The pinned commit must be publicly fetchable for
-others to build it. Resolve the domain/linter blocker, validate and build the
+others to build it. Validate and build the
 staged manifest, and complete the manual checks before a separate future
 Flathub submission.

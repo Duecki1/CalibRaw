@@ -37,7 +37,7 @@
     "-Donnxruntime_USE_TELEMETRY=OFF"
   ],
   "post-install": [
-    "python3 /run/build/onnxruntime/generate-onnx-sources.py --install-licenses /run/build/onnxruntime /app/share/licenses/de.dueckis.CalibRaw/onnxruntime",
+    "python3 /run/build/onnxruntime/generate-onnx-sources.py --install-licenses /run/build/onnxruntime /app/share/licenses/io.github.Duecki1.CalibRaw/onnxruntime",
     "strip --strip-unneeded /app/lib/libonnxruntime.so.1.30.0 /app/lib/libonnxruntime_providers_shared.so",
     "test -L /app/lib/libonnxruntime.so && test -f /app/lib/libonnxruntime.so.1.30.0"
   ],

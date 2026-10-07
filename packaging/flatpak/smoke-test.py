@@ -80,11 +80,11 @@ def main() -> None:
     ]
     runtime_hash = hashlib.sha256(library.read_bytes()).hexdigest()
     subprocess.run(base + [
-        "--command=calibraw", "de.dueckis.CalibRaw", "--calibraw-onnx-runtime-probe",
+        "--command=calibraw", "io.github.Duecki1.CalibRaw", "--calibraw-onnx-runtime-probe",
         "/app/lib/libonnxruntime.so", runtime_hash,
     ], check=True)
     subprocess.run(base + [
-        "--command=calibraw-develop-export", "de.dueckis.CalibRaw",
+        "--command=calibraw-develop-export", "io.github.Duecki1.CalibRaw",
         "--input", str(raw), "--output", str(output),
     ], check=True)
     png = output.read_bytes()

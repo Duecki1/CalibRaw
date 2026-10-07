@@ -156,8 +156,8 @@ pub fn run_desktop() -> eframe::Result {
 
     let mut options = native_options();
     options.viewport = eframe::egui::ViewportBuilder::default()
-        .with_app_id(if cfg!(target_os = "linux") {
-            "de.dueckis.CalibRaw"
+        .with_app_id(if desktop_portal::is_flatpak() {
+            "io.github.Duecki1.CalibRaw"
         } else {
             "de.duecki.calibraw"
         })
