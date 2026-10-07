@@ -184,6 +184,13 @@ pub(crate) fn show(
             }
             changed |= effect_color(ui, "fog-color-picker", &mut settings.color, fog::COLOR);
             changed |= float_param_slider(ui, &mut settings.light_glow, fog::LIGHT_GLOW);
+            if moduwu_design::toggle_button(ui, "Image lights", settings.image_lights)
+                .on_hover_text("Let light sources in the photo, such as lamps, lit windows and signs, glow in the fog in their own colours. Light glow sets their strength.")
+                .clicked()
+            {
+                settings.image_lights = !settings.image_lights;
+                changed = true;
+            }
             changed |= effect_details(ui, "Atmosphere details", |ui| {
                 let mut changed = false;
                 if settings.depth_enabled {

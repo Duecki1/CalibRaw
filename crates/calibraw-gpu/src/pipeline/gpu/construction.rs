@@ -306,6 +306,10 @@ impl RawGpuPipeline {
             mask_data_buffer: buffers.mask_data_buffer,
             tone_histogram_buffer: buffers.tone_histogram_buffer,
             tone_stats_buffer: buffers.tone_stats_buffer,
+            image_light_cells_buffer: buffers.image_light_cells_buffer,
+            image_light_texture: surfaces.image_light_texture,
+            _image_light_core_texture: surfaces.image_light_core_texture,
+            _image_light_tail_texture: surfaces.image_light_tail_texture,
             indices,
             post_blur_glow_passes,
             post_blur_pixelate_blocks_pass,
@@ -350,6 +354,7 @@ impl RawGpuPipeline {
             pipeline.indices.tone_prepare_pass_index,
             pipeline.indices.tone_stage_end,
         );
+        pipeline.encode_image_lights(&mut warmup);
         pipeline.encode_output_stage(&mut warmup, params);
         drop(warmup);
         gpu_error_scopes.finish("create RAW GPU pipeline")?;

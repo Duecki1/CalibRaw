@@ -24,6 +24,10 @@ pub(in crate::pipeline::gpu) struct StageIndices {
     pub(in crate::pipeline::gpu) pixelate_blocks_pass_index: usize,
     pub(in crate::pipeline::gpu) adjustment_creative_pass_index: usize,
     pub(in crate::pipeline::gpu) adjustment_render_pass_index: usize,
+    /// Accumulation into the image-light grid; resolve and the two blurs follow.
+    pub(in crate::pipeline::gpu) image_light_accumulate_pass_index: usize,
+    pub(in crate::pipeline::gpu) image_light_resolve_pass_index: usize,
+    pub(in crate::pipeline::gpu) image_light_end_index: usize,
 }
 
 pub(in crate::pipeline::gpu) struct AssembledPasses {
@@ -375,6 +379,47 @@ pub(in crate::pipeline::gpu) fn assemble_passes(
         ),
     ]);
 
+    // Image lights run with the tone stage (or the export tone prepass), but
+    // follow every other pass so the earlier pass indices stay put.
+    let image_light_workgroups = [
+        IMAGE_LIGHT_GRID_LONG.div_ceil(8),
+        IMAGE_LIGHT_GRID_LONG.div_ceil(8),
+        1,
+    ];
+    let image_light_accumulate_pass_index = passes.len();
+    let image_light_resolve_pass_index = image_light_accumulate_pass_index + 1;
+    passes.extend([
+        assembler.make_pass(
+            shaders.tone_analysis_module.as_ref(),
+            "accumulate_image_lights",
+            &layouts.bgl_image_light_accumulate,
+            groups.bg_image_light_accumulate.clone(),
+            image_light_workgroups,
+        ),
+        assembler.make_pass(
+            shaders.tone_analysis_module.as_ref(),
+            "resolve_image_lights",
+            &layouts.bgl_image_light_resolve,
+            groups.bg_image_light_resolve.clone(),
+            image_light_workgroups,
+        ),
+        assembler.make_pass(
+            shaders.tone_analysis_module.as_ref(),
+            "blur_image_lights_horizontal",
+            &layouts.bgl_image_light_blur_horizontal,
+            groups.bg_image_light_blur_horizontal.clone(),
+            image_light_workgroups,
+        ),
+        assembler.make_pass(
+            shaders.tone_analysis_module.as_ref(),
+            "blur_image_lights_vertical",
+            &layouts.bgl_image_light_blur_vertical,
+            groups.bg_image_light_blur_vertical.clone(),
+            image_light_workgroups,
+        ),
+    ]);
+    let image_light_end_index = passes.len();
+
     // The post-blur variants reuse the programs above with bind groups that
     // read the mask-blurred scene.
     let mut post_blur_glow_passes = vec![Pass {
@@ -443,6 +488,9 @@ pub(in crate::pipeline::gpu) fn assemble_passes(
             pixelate_blocks_pass_index,
             adjustment_creative_pass_index,
             adjustment_render_pass_index,
+            image_light_accumulate_pass_index,
+            image_light_resolve_pass_index,
+            image_light_end_index,
         },
     })
 }

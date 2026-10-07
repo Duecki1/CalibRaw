@@ -178,6 +178,21 @@ fn full_image_max() -> vec2<i32> {
     return vec2<i32>(i32(camera_uniforms.full_width) - 1, i32(camera_uniforms.full_height) - 1);
 }
 
+// Image lights (tone_analysis.wgsl): a coarse grid over the full image with
+// IMAGE_LIGHT_GRID_LONG cells along its longer edge, stored in textures and
+// a buffer sized for a square grid. Matches IMAGE_LIGHT_GRID_LONG in Rust.
+const IMAGE_LIGHT_GRID_LONG: u32 = 160u;
+
+// Cells of the image-light grid across and down the full image.
+fn image_light_grid() -> vec2<u32> {
+    let full = vec2<f32>(
+        f32(max(camera_uniforms.full_width, 1u)),
+        f32(max(camera_uniforms.full_height, 1u)),
+    );
+    let cells = round(f32(IMAGE_LIGHT_GRID_LONG) * full / max(full.x, full.y));
+    return clamp(vec2<u32>(cells), vec2<u32>(1u), vec2<u32>(IMAGE_LIGHT_GRID_LONG));
+}
+
 fn clamp_pos(pos: vec2<i32>) -> vec2<i32> {
     return clamp(pos, vec2<i32>(0, 0), image_max());
 }

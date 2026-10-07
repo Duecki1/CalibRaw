@@ -75,6 +75,10 @@ pub(in crate::pipeline::gpu) struct PipelineSurfaces {
     pub(in crate::pipeline::gpu) mask_texture: wgpu::Texture,
     pub(in crate::pipeline::gpu) light_rays_mask_texture: wgpu::Texture,
     pub(in crate::pipeline::gpu) scene_depth_texture: wgpu::Texture,
+    /// The resolved and finally blurred image-light map (tone_analysis.wgsl).
+    pub(in crate::pipeline::gpu) image_light_texture: wgpu::Texture,
+    pub(in crate::pipeline::gpu) image_light_core_texture: wgpu::Texture,
+    pub(in crate::pipeline::gpu) image_light_tail_texture: wgpu::Texture,
     pub(in crate::pipeline::gpu) out_view: wgpu::TextureView,
     pub(in crate::pipeline::gpu) display_linear_view: wgpu::TextureView,
     pub(in crate::pipeline::gpu) reconstructed_raw_view: wgpu::TextureView,
@@ -91,6 +95,9 @@ pub(in crate::pipeline::gpu) struct PipelineSurfaces {
     pub(in crate::pipeline::gpu) mask_view: wgpu::TextureView,
     pub(in crate::pipeline::gpu) light_rays_mask_view: wgpu::TextureView,
     pub(in crate::pipeline::gpu) scene_depth_view: wgpu::TextureView,
+    pub(in crate::pipeline::gpu) image_light_view: wgpu::TextureView,
+    pub(in crate::pipeline::gpu) image_light_core_view: wgpu::TextureView,
+    pub(in crate::pipeline::gpu) image_light_tail_view: wgpu::TextureView,
     pub(in crate::pipeline::gpu) mask_sampler: wgpu::Sampler,
 }
 
@@ -215,6 +222,35 @@ pub(in crate::pipeline::gpu) fn create_pipeline_surfaces(
     });
     let scene_depth_view = default_texture_view(&scene_depth_texture);
 
+    let image_light_size = texture_size(IMAGE_LIGHT_GRID_LONG, IMAGE_LIGHT_GRID_LONG);
+    let image_light_usage =
+        wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING;
+    // Cropped and zoomed views copy the full frame's map.
+    let image_light_texture = create_processing_texture(
+        device,
+        image_light_size,
+        IMAGE_LIGHT_FORMAT,
+        image_light_usage | wgpu::TextureUsages::COPY_SRC | wgpu::TextureUsages::COPY_DST,
+        "calibraw full-image image-light map",
+    );
+    let image_light_core_texture = create_processing_texture(
+        device,
+        image_light_size,
+        IMAGE_LIGHT_FORMAT,
+        image_light_usage,
+        "calibraw image-light halo core",
+    );
+    let image_light_tail_texture = create_processing_texture(
+        device,
+        image_light_size,
+        IMAGE_LIGHT_FORMAT,
+        image_light_usage,
+        "calibraw image-light halo tail",
+    );
+    let image_light_view = default_texture_view(&image_light_texture);
+    let image_light_core_view = default_texture_view(&image_light_core_texture);
+    let image_light_tail_view = default_texture_view(&image_light_tail_texture);
+
     let out_view = default_texture_view(&out_texture);
     let display_linear_view = default_texture_view(&display_linear_texture);
     let reconstructed_raw_view = default_texture_view(&reconstructed_raw_texture);
@@ -269,6 +305,9 @@ pub(in crate::pipeline::gpu) fn create_pipeline_surfaces(
             mask_texture,
             light_rays_mask_texture,
             scene_depth_texture,
+            image_light_texture,
+            image_light_core_texture,
+            image_light_tail_texture,
             out_view,
             display_linear_view,
             reconstructed_raw_view,
@@ -285,6 +324,9 @@ pub(in crate::pipeline::gpu) fn create_pipeline_surfaces(
             mask_view,
             light_rays_mask_view,
             scene_depth_view,
+            image_light_view,
+            image_light_core_view,
+            image_light_tail_view,
             mask_sampler,
         },
         has_ai_scene,
@@ -299,6 +341,7 @@ pub(in crate::pipeline::gpu) struct PipelineBuffers {
     pub(in crate::pipeline::gpu) mask_data_buffer: wgpu::Buffer,
     pub(in crate::pipeline::gpu) tone_histogram_buffer: wgpu::Buffer,
     pub(in crate::pipeline::gpu) tone_stats_buffer: wgpu::Buffer,
+    pub(in crate::pipeline::gpu) image_light_cells_buffer: wgpu::Buffer,
 }
 
 pub(in crate::pipeline::gpu) fn create_pipeline_buffers(
@@ -351,6 +394,13 @@ pub(in crate::pipeline::gpu) fn create_pipeline_buffers(
         wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST,
     );
 
+    let image_light_cells_buffer = create_gpu_buffer(
+        device,
+        "calibraw image-light grid",
+        image_light_cells_bytes(),
+        wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+    );
+
     PipelineBuffers {
         profile_buffer,
         camera_uniforms_buffer,
@@ -359,5 +409,6 @@ pub(in crate::pipeline::gpu) fn create_pipeline_buffers(
         mask_data_buffer,
         tone_histogram_buffer,
         tone_stats_buffer,
+        image_light_cells_buffer,
     }
 }

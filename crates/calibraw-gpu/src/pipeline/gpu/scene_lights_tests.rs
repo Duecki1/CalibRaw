@@ -1,11 +1,12 @@
 //! Scene lights: effects that scatter light (Fog, Smoke) receive the lights
 //! other effects place (Relight, Light Rays), whatever their order.
 
-use super::fog_tests::{assert_close, FogScene, MASK_EDGE, RGB_TOLERANCE};
-use super::ProcessingQuality;
+use super::fog_tests::{assert_close, mean_difference, FogScene, MASK_EDGE, RGB_TOLERANCE};
+use super::{GpuParams, PipelineOptions, ProcessingQuality, RawGpuPipeline, RemoveSceneContext};
 use crate::pipeline::{
-    EffectComponent, FogEffectSettings, LoadedRaw, LocalMask, MaskEffect, MaskImage, MaskKind,
-    MaskStack, RelightEffectSettings, SmokeEffectSettings,
+    extract_padded_tile, EffectComponent, FogEffectSettings, LoadedRaw, LocalMask, MaskEffect,
+    MaskImage, MaskKind, MaskStack, RelightEffectSettings, RemoveEditState, SmokeEffectSettings,
+    TilePlan, TileSpec,
 };
 
 const WIDTH: u32 = 96;
@@ -169,5 +170,163 @@ fn fog_glows_around_the_light_rays_source() -> anyhow::Result<()> {
     let far = gain_around(&lit, &unlit, WIDTH - 6, HEIGHT / 2, 6);
     assert!(near > 0.005, "fog does not glow around the source: {near}");
     assert!(near > far * 1.5, "near {near}, far {far}");
+    Ok(())
+}
+
+/// A dark street with one small red lamp centred at (`x`, `y`).
+fn dark_with_red_lamp(width: u32, height: u32, x: u32, y: u32) -> anyhow::Result<LoadedRaw> {
+    let pixels = (0..width * height)
+        .flat_map(|i| {
+            let (px, py) = (i % width, i / width);
+            if px.abs_diff(x) < 3 && py.abs_diff(y) < 3 {
+                [40.0, 3.0, 2.0]
+            } else {
+                [0.02; 3]
+            }
+        })
+        .collect();
+    LoadedRaw::from_scene_linear_rec2020(width, height, pixels)
+}
+
+fn fog_with_image_lights(image_lights: bool) -> MaskStack {
+    let mut component = fog(100.0);
+    component.settings.fog.image_lights = image_lights;
+    global(vec![component])
+}
+
+#[test]
+fn fog_glows_in_the_colour_of_lights_in_the_photo() -> anyhow::Result<()> {
+    let Some(scene) = FogScene::with_source(
+        dark_with_red_lamp(WIDTH, HEIGHT, WIDTH / 4, HEIGHT / 2)?,
+        ProcessingQuality::High,
+    )?
+    else {
+        return Ok(());
+    };
+    let unlit = scene.render(&fog_with_image_lights(false))?;
+    let lit = scene.render(&fog_with_image_lights(true))?;
+    // Beside the lamp, not on it.
+    let near = ((HEIGHT / 2 * WIDTH + WIDTH / 4 + 6) * 3) as usize;
+    let far = ((HEIGHT / 2 * WIDTH + WIDTH - 4) * 3) as usize;
+    let red_gain = lit[near] - unlit[near];
+    let green_gain = lit[near + 1] - unlit[near + 1];
+    assert!(red_gain > 0.005, "no glow beside the lamp: {red_gain}");
+    assert!(
+        red_gain > 2.0 * green_gain,
+        "the glow is not red: {red_gain} vs {green_gain}"
+    );
+    assert!(
+        red_gain > 2.0 * (lit[far] - unlit[far]),
+        "the glow does not fall off away from the lamp"
+    );
+    Ok(())
+}
+
+#[test]
+fn fog_image_lights_from_export_tiles_match_the_full_frame() -> anyhow::Result<()> {
+    const SIZE: [u32; 2] = [320, 240];
+    let source = dark_with_red_lamp(SIZE[0], SIZE[1], 150, 110)?;
+    let Some(scene) = FogScene::with_source(source.clone(), ProcessingQuality::High)? else {
+        return Ok(());
+    };
+    let masks = fog_with_image_lights(true);
+    let full = scene.render(&masks)?;
+    assert!(
+        mean_difference(&full, &scene.render(&fog_with_image_lights(false))?) > 1e-4,
+        "the fixture's lamp does not light the fog"
+    );
+
+    // The export prepass: every tile adds its core to the shared light map.
+    let plan = TilePlan::new(
+        SIZE[0],
+        SIZE[1],
+        TileSpec {
+            core_edge: 96,
+            halo: 64,
+        },
+    );
+    let first = extract_padded_tile(&source, plan.tiles[0]);
+    let tile_params = |raw: &LoadedRaw, tile: crate::pipeline::ExportTile| {
+        GpuParams::new_for_tile(
+            &scene.exposure,
+            &masks,
+            raw,
+            tile.global_origin_x,
+            tile.global_origin_y,
+            SIZE[0],
+            SIZE[1],
+        )
+    };
+    let pipeline = RawGpuPipeline::new(
+        &scene.device,
+        &scene.queue,
+        &first,
+        &tile_params(&first, plan.tiles[0]),
+        PipelineOptions::new(ProcessingQuality::High)
+            .mask_atlas_edge(MASK_EDGE)
+            .programs(&scene.pipeline.program_template()),
+    )?;
+    let remove = RemoveEditState::default();
+    let context = |tile: crate::pipeline::ExportTile| {
+        RemoveSceneContext::new(
+            &remove,
+            &source,
+            &scene.exposure,
+            [tile.global_origin_x as f32, tile.global_origin_y as f32],
+            [tile.padded_width as f32, tile.padded_height as f32],
+        )
+    };
+    pipeline.begin_export_tone_analysis(&scene.queue, &scene.device);
+    for &tile in &plan.tiles {
+        let raw = extract_padded_tile(&source, tile);
+        pipeline.upload_raw_tile(&scene.queue, &raw)?;
+        let params = tile_params(&raw, tile).with_global_tone_histogram_bounds(
+            tile.core_x,
+            tile.core_y,
+            tile.core_width,
+            tile.core_height,
+        );
+        pipeline.accumulate_export_tone_tile_with_remove(
+            &scene.queue,
+            &scene.device,
+            &params,
+            context(tile),
+        )?;
+    }
+    pipeline.finish_export_tone_analysis(&scene.queue, &scene.device);
+
+    // Every tile renders as in the full frame.
+    for &tile in &plan.tiles {
+        let raw = extract_padded_tile(&source, tile);
+        pipeline.upload_raw_tile(&scene.queue, &raw)?;
+        pipeline.dispatch_export_tile_with_remove(
+            &scene.queue,
+            &scene.device,
+            &tile_params(&raw, tile),
+            context(tile),
+        )?;
+        let actual = pipeline.read_display_linear_region_blocking(
+            &scene.device,
+            &scene.queue,
+            tile.local_core_x,
+            tile.local_core_y,
+            tile.core_width,
+            tile.core_height,
+        )?;
+        let expected: Vec<_> = (tile.core_y..tile.core_y + tile.core_height)
+            .flat_map(|row| {
+                let start = ((row * SIZE[0] + tile.core_x) * 3) as usize;
+                full[start..start + (tile.core_width * 3) as usize]
+                    .iter()
+                    .copied()
+            })
+            .collect();
+        assert_close(
+            &actual,
+            &expected,
+            1e-3,
+            &format!("tile at {},{}", tile.core_x, tile.core_y),
+        );
+    }
     Ok(())
 }

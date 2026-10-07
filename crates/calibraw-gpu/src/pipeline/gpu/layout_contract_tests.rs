@@ -10,8 +10,8 @@
 use super::{
     processing_work_format, shader_manager::ShaderManager, shaders, work_shader_source,
     CameraUniforms, CfaKind, EffectsUniforms, MaskData, PackedPointColor, ProcessingQuality,
-    RemoveCompositeParams, SceneToneUniforms, MASK_EFFECT_ID_SHIFT, MAX_RENDER_MASK_SLOTS,
-    TONE_HISTOGRAM_BIN_COUNT, TONE_STATS_SIZE_BYTES,
+    RemoveCompositeParams, SceneToneUniforms, IMAGE_LIGHT_BANDS, IMAGE_LIGHT_GRID_LONG,
+    MASK_EFFECT_ID_SHIFT, MAX_RENDER_MASK_SLOTS, TONE_HISTOGRAM_BIN_COUNT, TONE_STATS_SIZE_BYTES,
 };
 use crate::pipeline::MaskEffect;
 use naga::proc::Layouter;
@@ -363,6 +363,9 @@ fn shared_constants_and_effect_ids_match_rust() {
         constant("TONE_HISTOGRAM_BIN_COUNT"),
         TONE_HISTOGRAM_BIN_COUNT
     );
+    // The image-light grid buffer and textures are sized from these.
+    assert_eq!(constant("IMAGE_LIGHT_GRID_LONG"), IMAGE_LIGHT_GRID_LONG);
+    assert_eq!(constant("IMAGE_LIGHT_BANDS"), IMAGE_LIGHT_BANDS);
     for effect in MaskEffect::ALL {
         if effect == MaskEffect::Adjustment {
             assert_eq!(effect.shader_id(), 0, "adjustment masks use shader ID 0");

@@ -29,6 +29,10 @@ pub(in crate::pipeline::gpu) struct BindGroupLayouts {
     pub(in crate::pipeline::gpu) bgl_pixelate_blocks: wgpu::BindGroupLayout,
     pub(in crate::pipeline::gpu) bgl_adjust_creative: wgpu::BindGroupLayout,
     pub(in crate::pipeline::gpu) bgl_adjust_render: wgpu::BindGroupLayout,
+    pub(in crate::pipeline::gpu) bgl_image_light_accumulate: wgpu::BindGroupLayout,
+    pub(in crate::pipeline::gpu) bgl_image_light_resolve: wgpu::BindGroupLayout,
+    pub(in crate::pipeline::gpu) bgl_image_light_blur_horizontal: wgpu::BindGroupLayout,
+    pub(in crate::pipeline::gpu) bgl_image_light_blur_vertical: wgpu::BindGroupLayout,
 }
 
 pub(in crate::pipeline::gpu) fn create_bind_group_layouts(
@@ -450,6 +454,7 @@ pub(in crate::pipeline::gpu) fn create_bind_group_layouts(
                     texture_entry(35, wgpu::TextureSampleType::Float { filterable: true }),
                     storage_buffer_entry(16, true),
                     texture_entry(36, wgpu::TextureSampleType::Float { filterable: false }),
+                    texture_entry(45, wgpu::TextureSampleType::Float { filterable: true }),
                 ],
             )
         });
@@ -475,6 +480,73 @@ pub(in crate::pipeline::gpu) fn create_bind_group_layouts(
     );
     let bgl_adjust_render =
         reused_layout(adjustment_prepare_for_programs + 18).unwrap_or(bgl_adjust_render);
+
+    // Image-light passes follow every other pass (`assemble_passes`).
+    let image_light_for_programs = adjustment_prepare_for_programs + 19;
+    let image_light_write = |binding| {
+        storage_texture_entry(
+            binding,
+            IMAGE_LIGHT_FORMAT,
+            wgpu::StorageTextureAccess::WriteOnly,
+        )
+    };
+    let image_light_read = |binding| {
+        texture_entry(
+            binding,
+            wgpu::TextureSampleType::Float { filterable: false },
+        )
+    };
+    let bgl_image_light_accumulate = reused_layout(image_light_for_programs).unwrap_or_else(|| {
+        create_bind_group_layout(
+            device,
+            "bgl image-light accumulation",
+            &[
+                buffer_entry(0),
+                texture_entry(11, wgpu::TextureSampleType::Float { filterable: false }),
+                storage_buffer_entry(20, true),
+                storage_buffer_entry(38, false),
+            ],
+        )
+    });
+    let bgl_image_light_resolve =
+        reused_layout(image_light_for_programs + 1).unwrap_or_else(|| {
+            create_bind_group_layout(
+                device,
+                "bgl image-light resolve",
+                &[
+                    buffer_entry(0),
+                    storage_buffer_entry(16, false),
+                    storage_buffer_entry(38, false),
+                    image_light_write(39),
+                ],
+            )
+        });
+    let bgl_image_light_blur_horizontal = reused_layout(image_light_for_programs + 2)
+        .unwrap_or_else(|| {
+            create_bind_group_layout(
+                device,
+                "bgl image-light horizontal blur",
+                &[
+                    buffer_entry(0),
+                    image_light_read(40),
+                    image_light_write(41),
+                    image_light_write(42),
+                ],
+            )
+        });
+    let bgl_image_light_blur_vertical =
+        reused_layout(image_light_for_programs + 3).unwrap_or_else(|| {
+            create_bind_group_layout(
+                device,
+                "bgl image-light vertical blur",
+                &[
+                    buffer_entry(0),
+                    image_light_read(43),
+                    image_light_read(44),
+                    image_light_write(39),
+                ],
+            )
+        });
 
     BindGroupLayouts {
         bgl_scene_tone,
@@ -503,5 +575,9 @@ pub(in crate::pipeline::gpu) fn create_bind_group_layouts(
         bgl_pixelate_blocks,
         bgl_adjust_creative,
         bgl_adjust_render,
+        bgl_image_light_accumulate,
+        bgl_image_light_resolve,
+        bgl_image_light_blur_horizontal,
+        bgl_image_light_blur_vertical,
     }
 }

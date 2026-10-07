@@ -162,6 +162,9 @@ const SMOKE_LIGHT_ANISOTROPY: f32 = 0.4;
 // Scattered scene light at Light glow 100, relative to the single-scattering
 // estimate: lights in photographs read brighter in haze than their surfaces.
 const FOG_LIGHT_GLOW_GAIN: f32 = 4.0;
+// Image light scattered by the fog at Light glow 100, relative to the halo's
+// mean light: a lamp's halo outshines its share of the spread light.
+const FOG_IMAGE_LIGHT_GAIN: f32 = 4.0;
 // Fog cells along the view ray: fixed intervals of normalized depth, so rays
 // share prefixes and density never jumps with surface distance.
 const FOG_CELLS: u32 = 12u;
@@ -245,12 +248,28 @@ fn fog_light_scattering(
     return scattered;
 }
 
+// Light from light sources in the photograph (tone_analysis.wgsl) arriving
+// around image pixel `pos`, spread into a halo, at the current exposure.
+@group(0) @binding(45) var image_light_tex: texture_2d<f32>;
+
+fn image_light_at(pos: vec2<i32>) -> vec3<f32> {
+    let grid = vec2<f32>(Common::image_light_grid());
+    let edge = f32(Common::IMAGE_LIGHT_GRID_LONG);
+    let cell = clamp(full_image_uv(pos) * grid, vec2<f32>(0.5), grid - vec2<f32>(0.5));
+    let light = textureSampleLevel(
+        image_light_tex, SceneAdjustments::local_mask_sampler, cell / edge, 0.0,
+    ).xyz;
+    return max(light, vec3<f32>(0.0)) * exp2(Common::scene_tone_uniforms.exposure);
+}
+
+// `options.w` > 0.5 turns on Image lights (packed in mask_params.rs).
 fn apply_fog(
     pos: vec2<i32>,
     input_rgb: vec3<f32>,
     primary: vec4<f32>,
     secondary: vec4<f32>,
     tertiary: vec4<f32>,
+    options: vec4<f32>,
 ) -> vec3<f32> {
     let amount = clamp(primary.x / 100.0, 0.0, 1.0);
     let density = clamp(primary.y / 100.0, 0.0, 1.0);
@@ -314,9 +333,17 @@ fn apply_fog(
     // so the glow keeps the light's colour.
     let glow = clamp(tertiary.w / 100.0, 0.0, 1.0);
     if glow <= 1e-6 { return fogged; }
+    let albedo = Common::safe_luma(color);
     let extinction = 6.0 * density * density * amount * length(ray);
     let scattered = fog_light_scattering(pos, volume, distance, extinction);
-    return fogged + scattered * (glow * FOG_LIGHT_GLOW_GAIN * ambient * Common::safe_luma(color));
+    var glowing = fogged + scattered * (glow * FOG_LIGHT_GLOW_GAIN * ambient * albedo);
+    // Image lights: light sources in the photograph glow in the fog in their
+    // own colours, as much as the fog in front of the pixel scatters.
+    if options.w > 0.5 {
+        glowing += image_light_at(pos)
+            * (glow * FOG_IMAGE_LIGHT_GAIN * albedo * (1.0 - transmission));
+    }
+    return glowing;
 }
 
 // Smoke is darker than fog by default (its colour is its albedo); this lets

@@ -121,7 +121,8 @@ fn expected_pass_count(cfa_kind: CfaKind) -> usize {
         CfaKind::Bayer => 6,
         CfaKind::XTrans => 10,
     };
-    1 + demosaic_passes + COLOR_DENOISE_ENTRY_POINTS.len() + 4 + 19
+    // Highlights, demosaic, colour denoise, tone, adjustments, image lights.
+    1 + demosaic_passes + COLOR_DENOISE_ENTRY_POINTS.len() + 4 + 19 + 4
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -334,6 +335,12 @@ pub struct RawGpuPipeline {
     mask_data_buffer: wgpu::Buffer,
     tone_histogram_buffer: wgpu::Buffer,
     tone_stats_buffer: wgpu::Buffer,
+    image_light_cells_buffer: wgpu::Buffer,
+    /// The full-image image-light map Fog samples; cropped and zoomed views
+    /// copy it from the full frame like the tone statistics.
+    image_light_texture: wgpu::Texture,
+    _image_light_core_texture: wgpu::Texture,
+    _image_light_tail_texture: wgpu::Texture,
     /// Where each processing stage starts and ends in `passes`.
     indices: StageIndices,
     post_blur_glow_passes: Vec<Pass>,
@@ -505,6 +512,7 @@ impl RawGpuPipeline {
             self.indices.tone_prepare_pass_index,
             self.indices.tone_stage_end,
         );
+        self.encode_image_lights(&mut encoder);
         self.encode_output_stage(&mut encoder, params);
         queue.submit(Some(encoder.finish()));
     }
@@ -530,6 +538,7 @@ impl RawGpuPipeline {
                     self.indices.tone_prepare_pass_index,
                     self.indices.tone_stage_end,
                 );
+                self.encode_image_lights(&mut encoder);
             }
             ProcessingStage::Output => self.encode_output_stage(&mut encoder, params),
         }
@@ -596,7 +605,27 @@ impl RawGpuPipeline {
             label: Some("calibraw export tone histogram clear"),
         });
         encoder.clear_buffer(&self.tone_histogram_buffer, 0, None);
+        encoder.clear_buffer(&self.image_light_cells_buffer, 0, None);
         queue.submit(Some(encoder.finish()));
+    }
+
+    /// Builds the image-light map from this pipeline's whole image, after the
+    /// tone statistics it is resolved against.
+    fn encode_image_lights(&self, encoder: &mut wgpu::CommandEncoder) {
+        encoder.clear_buffer(&self.image_light_cells_buffer, 0, None);
+        self.encode_pass_range(
+            encoder,
+            self.indices.image_light_accumulate_pass_index,
+            self.indices.image_light_end_index,
+        );
+    }
+
+    fn copy_image_lights_from(&self, encoder: &mut wgpu::CommandEncoder, full_frame: &Self) {
+        encoder.copy_texture_to_texture(
+            full_frame.image_light_texture.as_image_copy(),
+            self.image_light_texture.as_image_copy(),
+            self.image_light_texture.size(),
+        );
     }
 
     pub fn dispatch_stage_with_remove(
@@ -650,6 +679,7 @@ impl RawGpuPipeline {
             0,
             TONE_STATS_SIZE_BYTES,
         );
+        self.copy_image_lights_from(&mut encoder, full_frame);
         self.encode_pass_range(
             &mut encoder,
             self.indices.tone_prepare_pass_index,
@@ -674,6 +704,7 @@ impl RawGpuPipeline {
             0,
             TONE_STATS_SIZE_BYTES,
         );
+        self.copy_image_lights_from(&mut encoder, full_frame);
         queue.submit(Some(encoder.finish()));
     }
 
@@ -694,6 +725,8 @@ impl RawGpuPipeline {
             self.indices.tone_prepare_pass_index,
             self.indices.tone_prepare_pass_index + 1,
         );
+        // Each tile adds its core to the shared image-light grid.
+        self.encode_pass(&mut encoder, self.indices.image_light_accumulate_pass_index);
         queue.submit(Some(encoder.finish()));
         Ok(())
     }
@@ -706,6 +739,11 @@ impl RawGpuPipeline {
             &mut encoder,
             self.indices.tone_reduce_pass_index,
             self.indices.tone_reduce_pass_index + 1,
+        );
+        self.encode_pass_range(
+            &mut encoder,
+            self.indices.image_light_resolve_pass_index,
+            self.indices.image_light_end_index,
         );
         queue.submit(Some(encoder.finish()));
     }

@@ -246,7 +246,10 @@ pub(super) fn pack_effect_mask(
         MaskEffect::Fog => {
             let config = settings.fog;
             let color = effect_params::fog::COLOR.clamp(config.color);
-            effect_mask_data(
+            // Fog's options go in the last component of `film_effects`: effect
+            // slots leave it unused, while its first component marks adjustment
+            // Halation for every slot (`needs_glow_passes`).
+            let mut data = effect_mask_data(
                 effect,
                 enabled && config.is_active(),
                 [
@@ -275,7 +278,9 @@ pub(super) fn pack_effect_mask(
                     },
                     effect_params::fog::LIGHT_GLOW.clamp(config.light_glow),
                 ],
-            )
+            );
+            data.film_effects[3] = f32::from(u8::from(config.image_lights));
+            data
         }
         MaskEffect::Smoke => {
             let config = settings.smoke;
