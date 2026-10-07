@@ -1,5 +1,5 @@
 //! The look and pointer reach of handles drawn over the photo, shared by the
-//! mask shapes, the crop frame and effect lights. Every handle carries a
+//! mask shapes, the crop frame and effect controls. Every handle carries a
 //! light outline and a dark halo so it stays visible on any part of an image.
 
 use eframe::egui::{self, Color32, Pos2, Rect, Stroke};
@@ -40,6 +40,15 @@ pub(super) fn paint_point(painter: &egui::Painter, center: Pos2, radius: f32, fi
 pub(super) fn paint_ring(painter: &egui::Painter, center: Pos2, radius: f32, stroke: Stroke) {
     painter.circle_stroke(center, radius, Stroke::new(stroke.width + 2.0, halo()));
     painter.circle_stroke(center, radius, stroke);
+}
+
+/// A guide line over the photo, such as a band edge, with a dark halo.
+pub(super) fn paint_guide(painter: &egui::Painter, points: Vec<Pos2>, stroke: Stroke) {
+    painter.add(egui::Shape::line(
+        points.clone(),
+        Stroke::new(stroke.width + 2.0, Color32::from_black_alpha(90)),
+    ));
+    painter.add(egui::Shape::line(points, stroke));
 }
 
 /// A thin connector from a shape to one of its handles.
