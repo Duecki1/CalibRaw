@@ -43,6 +43,40 @@ fn mask_effect_picker_color_to_working(color: vec3<f32>) -> vec3<f32> {
     return max(Common::SRGB_TO_REC2020 * linear_srgb, vec3<f32>(0.0));
 }
 
+// The mask a blur is confined to: its slot and its coverage at the pixel being
+// blurred, which is above zero.
+struct MaskBlurCoverage {
+    index: u32,
+    coverage: f32,
+}
+
+// How much a blur tap at `pos` (tile pixels, as for
+// `mask_effect_source_linear_at`) may contribute: fully where the mask covers
+// it at least as much as the blurred pixel, in proportion where it covers it
+// less. A masked blur then gathers only what it blurs itself (normalized
+// convolution), so blurring a background around a masked-out subject leaves
+// no halo of the subject's colours, while a feathered edge still blends.
+// Without a mask layer, or where the mask is full, every tap weighs exactly 1.
+fn mask_blur_tap_weight(mask: MaskBlurCoverage, pos: vec2<f32>) -> f32 {
+    let tap = SceneAdjustments::local_mask_weight_at(pos, mask.index);
+    return min(tap / mask.coverage, 1.0);
+}
+
+// Mean of coverage-weighted taps: `weight` sums the weights including
+// coverage and `kernel_weight` without it. Where hardly any tap is covered (a
+// mask much thinner than the blur), the result fades back to `center`.
+fn mask_blur_masked_mean(
+    sum: vec3<f32>,
+    weight: f32,
+    kernel_weight: f32,
+    center: vec3<f32>,
+) -> vec3<f32> {
+    let mean = sum / max(weight, 1e-6);
+    let covered = weight / max(kernel_weight, 1e-6);
+    if covered >= 0.01 { return mean; }
+    return mix(center, mean, covered / 0.01);
+}
+
 fn mask_effect_source_linear_at(pos: vec2<f32>) -> vec3<f32> {
     // Manual bilinear filtering also works with the non-filterable 32-bit
     // working texture used for high-quality processing.

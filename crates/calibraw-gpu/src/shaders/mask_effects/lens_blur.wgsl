@@ -15,6 +15,7 @@ fn mask_lens_blur_at(
     pos: vec2<i32>,
     primary: vec4<f32>,
     secondary: vec4<f32>,
+    mask: MaskBlurCoverage,
 ) -> vec3<f32> {
     let radius = mask_focus_blur_radius(primary.y, 144.0);
     let center = SceneAdjustments::local_effects_at(pos);
@@ -30,6 +31,7 @@ fn mask_lens_blur_at(
     let rings = u32(clamp(ceil(radius), 2.0, 16.0));
     var sum = vec3<f32>(0.0);
     var total_weight = 0.0;
+    var kernel_weight = 0.0;
     for (var ring = 0u; ring < 16u; ring += 1u) {
         if ring >= rings { break; }
         let ring_inner = f32(ring) / f32(rings);
@@ -46,16 +48,19 @@ fn mask_lens_blur_at(
                 let aperture_angle = (fract((theta - rotation) / sector + 0.5) - 0.5) * sector;
                 let polygon_radius = apothem / max(cos(aperture_angle), 0.25);
                 let offset = vec2<f32>(cos(theta), sin(theta)) * (radius * radial * polygon_radius);
-                let sample = mask_effect_source_linear_at(vec2<f32>(pos) + offset);
+                let tap = vec2<f32>(pos) + offset;
+                let sample = mask_effect_source_linear_at(tap);
                 let bright = smoothstep(0.25, 2.0, Common::safe_luma(sample));
                 // Include the polar Jacobian so polygon corners receive their
                 // proper area instead of concentrating energy at the center.
                 let weight = area * polygon_radius * polygon_radius
                     * (1.0 + highlight_boost * 1.5 * bright);
-                sum += sample * weight;
-                total_weight += weight;
+                let masked = weight * mask_blur_tap_weight(mask, tap);
+                sum += sample * masked;
+                total_weight += masked;
+                kernel_weight += weight;
             }
         }
     }
-    return sum / max(total_weight, 1e-6);
+    return mask_blur_masked_mean(sum, total_weight, kernel_weight, center);
 }
