@@ -166,3 +166,15 @@ fn relight_settings_saved_before_the_shadow_switch_cast_shadows() {
     assert!(settings.relight.shadows_enabled);
     assert_eq!(settings.relight.shadows, 25.0);
 }
+
+#[test]
+fn fog_and_smoke_saved_before_light_glow_ignore_scene_lights() {
+    use crate::pipeline::effect_params::{fog, smoke};
+    let settings: MaskEffectSettings =
+        serde_json::from_value(json!({"fog":{"amount":40.0},"smoke":{"amount":30.0}})).unwrap();
+    assert_eq!(settings.fog.light_glow, 0.0);
+    assert_eq!(settings.smoke.light_glow, 0.0);
+    let fresh = MaskEffectSettings::default();
+    assert_eq!(fresh.fog.light_glow, fog::LIGHT_GLOW.default);
+    assert_eq!(fresh.smoke.light_glow, smoke::LIGHT_GLOW.default);
+}

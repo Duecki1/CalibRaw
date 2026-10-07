@@ -386,14 +386,18 @@ mod tests {
             MIN_EXPORT_TILE_HALO
         );
 
+        // Depth-guided effects read image colours a few depth texels away.
         let mut atmosphere_masks = MaskStack::default();
         atmosphere_masks.add_mask(crate::pipeline::MaskKind::Fullscreen);
-        atmosphere_masks.masks[0].effect = MaskEffect::Fog;
-        assert_eq!(
-            required_export_tile_halo(&exposure, &atmosphere_masks),
-            MIN_EXPORT_TILE_HALO
-        );
-        atmosphere_masks.masks[0].effect = MaskEffect::Smoke;
+        for effect in [MaskEffect::Fog, MaskEffect::Smoke, MaskEffect::Relight] {
+            atmosphere_masks.masks[0].effect = effect;
+            assert_eq!(
+                required_export_tile_halo(&exposure, &atmosphere_masks),
+                (MIN_EXPORT_TILE_HALO + super::tiles::SCENE_DEPTH_GUIDE_SUPPORT).div_ceil(8) * 8,
+                "{effect:?}"
+            );
+        }
+        atmosphere_masks.masks[0].effect_settings.relight.amount = 0.0;
         assert_eq!(
             required_export_tile_halo(&exposure, &atmosphere_masks),
             MIN_EXPORT_TILE_HALO
@@ -487,11 +491,11 @@ mod tests {
                 MaskEffect::EdgeGlow => super::EDGE_GLOW_SUPPORT,
                 MaskEffect::Pixelate => super::PIXELATE_SUPPORT,
                 MaskEffect::Glow | MaskEffect::Halation => GLOW_SUPPORT,
+                MaskEffect::Relight | MaskEffect::Fog | MaskEffect::Smoke => {
+                    super::SCENE_DEPTH_GUIDE_SUPPORT
+                }
                 MaskEffect::Adjustment
                 | MaskEffect::LightRays
-                | MaskEffect::Relight
-                | MaskEffect::Fog
-                | MaskEffect::Smoke
                 | MaskEffect::Grain
                 | MaskEffect::Vignette => 0,
             };

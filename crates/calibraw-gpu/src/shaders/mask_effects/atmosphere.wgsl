@@ -58,8 +58,42 @@ fn atmosphere_image_point(pos: vec2<i32>) -> vec2<f32> {
 // relighting surface (scene_surface.rs, relight.wgsl).
 @group(0) @binding(35) var scene_depth_tex: texture_2d<f32>;
 
+// Fog depth at an image pixel: stored depth (channel x), upsampled jointly
+// with the image over 6×6 texels. Fog and its light glow change steeply
+// across depth edges, and the depth model's edges are blocky and can lie a
+// few texels off the image's: within a tent three texels wide, samples whose
+// image colour differs from the pixel's are rejected, so an edge follows the
+// image's edge where colours differ and blends smoothly where they do not,
+// instead of tracing the texel grid as a staircase. Guide colours lie up to
+// 3.5 texels away (SCENE_DEPTH_GUIDE_SUPPORT in tiles.rs).
 fn fog_depth_at(pos: vec2<i32>) -> f32 {
-    return clamp(scene_depth_texels_at(pos).x, 0.0, 1.0);
+    let size = vec2<i32>(textureDimensions(scene_depth_tex));
+    let p = full_image_uv(pos) * vec2<f32>(size) - vec2<f32>(0.5);
+    let base = vec2<i32>(floor(p)) - vec2<i32>(2);
+    let full_size = vec2<f32>(
+        f32(Common::camera_uniforms.full_width),
+        f32(Common::camera_uniforms.full_height),
+    );
+    let center = sqrt(max(SceneAdjustments::local_effects_at(pos), vec3<f32>(0.0)));
+    var total = 0.0;
+    var weights = 0.0;
+    for (var y = 0; y < 6; y = y + 1) {
+        for (var x = 0; x < 6; x = x + 1) {
+            let texel = base + vec2<i32>(x, y);
+            let offset = abs(vec2<f32>(texel) - p);
+            let tent = max(1.0 - offset.x / 3.0, 0.0) * max(1.0 - offset.y / 3.0, 0.0);
+            if tent <= 0.0 { continue; }
+            let cell = clamp(texel, vec2<i32>(0), size - vec2<i32>(1));
+            let uv = (vec2<f32>(cell) + vec2<f32>(0.5)) / vec2<f32>(size);
+            let guide_pos = uv * full_size - vec2<f32>(0.5) - vec2<f32>(Common::tile_origin());
+            let guide = sqrt(max(mask_effect_source_linear_at(guide_pos), vec3<f32>(0.0)));
+            let delta = (guide - center) / max(length(center), 0.15);
+            let weight = tent * max(exp(-dot(delta, delta) * 64.0), 0.0001);
+            total += textureLoad(scene_depth_tex, cell, 0).x * weight;
+            weights += weight;
+        }
+    }
+    return clamp(total / max(weights, 1e-6), 0.0, 1.0);
 }
 
 // Level-0 scene-depth texels at an image pixel. Channel x is the stored depth;
@@ -87,7 +121,7 @@ fn scene_depth_texels_at(pos: vec2<i32>) -> vec4<f32> {
             let guide = sqrt(max(mask_effect_source_linear_at(guide_pos), vec3<f32>(0.0)));
             let delta = (guide - center) / max(length(center), 0.15);
             let spatial = select(1.0 - f.x, f.x, x == 1) * select(1.0 - f.y, f.y, y == 1);
-            let weight = spatial * max(exp(-dot(delta, delta) * 24.0), 0.0001);
+            let weight = spatial * max(exp(-dot(delta, delta) * 64.0), 0.0001);
             total += textureLoad(scene_depth_tex, cell, 0) * weight;
             weights += weight;
         }
@@ -119,6 +153,96 @@ fn fog_onset_integral(distance: f32, start: f32, width: f32) -> f32 {
     let travel = max(distance - start, 0.0);
     let u = clamp(travel / width, 0.0, 1.0);
     return width * (u * u * u - 0.5 * u * u * u * u) + max(travel - width, 0.0);
+}
+
+// Forward scattering of fog droplets toward the camera (Henyey–Greenstein g).
+const FOG_LIGHT_ANISOTROPY: f32 = 0.6;
+// Smoke particles scatter less strongly forward than fog droplets.
+const SMOKE_LIGHT_ANISOTROPY: f32 = 0.4;
+// Scattered scene light at Light glow 100, relative to the single-scattering
+// estimate: lights in photographs read brighter in haze than their surfaces.
+const FOG_LIGHT_GLOW_GAIN: f32 = 4.0;
+// Fog cells along the view ray: fixed intervals of normalized depth, so rays
+// share prefixes and density never jumps with surface distance.
+const FOG_CELLS: u32 = 12u;
+
+// The fog volume along one pixel's view ray.
+struct FogVolume {
+    ray: vec3<f32>,
+    start: f32,
+    onset_width: f32,
+    frequency: f32,
+    offset: vec3<f32>,
+    variation: f32,
+    softness: f32,
+}
+
+// Relative density of the fog bank in the cell from `lo` to `cell_end`.
+fn fog_bank_density(volume: FogVolume, lo: f32, cell_end: f32) -> f32 {
+    let t = 0.5 * (lo + cell_end);
+    let point = volume.ray * t * volume.frequency + volume.offset;
+    let broad = fog_noise3(point);
+    let detail = fog_noise3(point * 2.03 + vec3<f32>(7.1, -3.4, 13.8));
+    let field = mix(broad, detail, mix(0.28, 0.08, volume.softness));
+    return exp2((field - 0.5) * volume.variation * mix(5.0, 2.5, volume.softness));
+}
+
+// Light from scene lights that the fog scatters toward the camera, relative
+// to the ambient level, before the fog's albedo and Light glow. Single
+// scattering: each cell scatters what its extinction removes from the light,
+// attenuated by the fog between it and the camera. Light reaching the fog is
+// not shadowed.
+fn fog_light_scattering(
+    pos: vec2<i32>,
+    volume: FogVolume,
+    distance: f32,
+    extinction: f32,
+) -> vec3<f32> {
+    // Per cell: near and far depth, extinction per unit depth, and the
+    // transmission from the camera to the cell's middle.
+    var cells: array<vec4<f32>, FOG_CELLS>;
+    var through = 0.0;
+    let step = 1.0 / f32(FOG_CELLS);
+    for (var i = 0u; i < FOG_CELLS; i = i + 1u) {
+        let lo = max(f32(i) * step, volume.start);
+        let cell_end = f32(i + 1u) * step;
+        let hi = min(cell_end, distance);
+        if hi <= lo {
+            cells[i] = vec4<f32>(0.0);
+            continue;
+        }
+        var bank_density = 1.0;
+        if volume.variation > 1e-6 {
+            bank_density = fog_bank_density(volume, lo, cell_end);
+        }
+        let segment = fog_onset_integral(hi, volume.start, volume.onset_width)
+            - fog_onset_integral(lo, volume.start, volume.onset_width);
+        let optical_depth = extinction * segment * bank_density;
+        cells[i] = vec4<f32>(lo, hi, optical_depth / (hi - lo), exp(-(through + 0.5 * optical_depth)));
+        through += optical_depth;
+    }
+
+    let uv = full_image_uv(pos);
+    var scattered = vec3<f32>(0.0);
+    for (var index = 0u; index < scene_light_slots(); index = index + 1u) {
+        let light = scene_light_at(index);
+        if !light.emits { continue; }
+        let coverage = scene_light_coverage(light, pos);
+        if coverage <= 1e-6 { continue; }
+        let point = uv * light.camera.image_size;
+        var received = 0.0;
+        for (var i = 0u; i < FOG_CELLS; i = i + 1u) {
+            let cell = cells[i];
+            if cell.z <= 0.0 { continue; }
+            let middle = scene_camera_point(
+                light.camera, point, scene_depth_z(light.camera, 0.5 * (cell.x + cell.y)),
+            );
+            received += cell.z * cell.w * scene_light_phase_at(light, middle, FOG_LIGHT_ANISOTROPY)
+                * scene_light_falloff_along(light, point, cell.x, cell.y);
+        }
+        scattered += light.intensity * (received * coverage);
+    }
+    return scattered;
 }
 
 fn apply_fog(
@@ -155,24 +279,20 @@ fn apply_fog(
     // visible surface; foreground objects truncate the same volume as the
     // background. Fixed world-space intervals preserve shared ray prefixes.
     let ray = vec3<f32>(image_point * 1.25, 1.0);
-    let step = 1.0 / 12.0;
+    let step = 1.0 / f32(FOG_CELLS);
     let onset_width = mix(0.025, 0.18, softness);
+    let volume = FogVolume(ray, start, onset_width, frequency, offset, variation, softness);
     var optical_length = fog_onset_integral(distance, start, onset_width);
     if variation > 1e-6 {
         optical_length = 0.0;
-        for (var i = 0u; i < 12u; i = i + 1u) {
+        for (var i = 0u; i < FOG_CELLS; i = i + 1u) {
             let lo = max(f32(i) * step, start);
             let cell_end = f32(i + 1u) * step;
             let hi = min(cell_end, distance);
             if hi <= lo { continue; }
             // A partial last interval uses the same density as the full interval,
             // so increasing surface distance can never remove accumulated fog.
-            let t = 0.5 * (lo + cell_end);
-            let point = ray * t * frequency + offset;
-            let broad = fog_noise3(point);
-            let detail = fog_noise3(point * 2.03 + vec3<f32>(7.1, -3.4, 13.8));
-            let field = mix(broad, detail, mix(0.28, 0.08, softness));
-            let bank_density = exp2((field - 0.5) * variation * mix(5.0, 2.5, softness));
+            let bank_density = fog_bank_density(volume, lo, cell_end);
             let segment = fog_onset_integral(hi, start, onset_width)
                 - fog_onset_integral(lo, start, onset_width);
             optical_length += segment * bank_density;
@@ -183,12 +303,49 @@ fn apply_fog(
     // https://pbr-book.org/4ed/Volume_Scattering/Transmittance
     let optical_depth = 6.0 * density * density * amount * optical_length * length(ray);
     let transmission = exp(-optical_depth);
-    // Global tone statistics are shared by export tiles. Match airlight to
-    // scene illumination, avoiding white self-luminous fog in dark photographs.
-    let ambient_ev = Tonemap::tone_stats.percentiles_0_field.w + Common::scene_tone_uniforms.exposure;
-    let ambient = ToneCommon::SCENE_MIDDLE_GREY * exp2(clamp(ambient_ev, -12.0, 6.0)) * 1.15;
-    let airlight = mask_effect_picker_color_to_working(secondary.xyz) * ambient;
-    return input_rgb * transmission + airlight * (1.0 - transmission);
+    // Match airlight to scene illumination, avoiding white self-luminous fog
+    // in dark photographs.
+    let ambient = scene_ambient_level() * 1.15;
+    let color = mask_effect_picker_color_to_working(secondary.xyz);
+    let airlight = color * ambient;
+    let fogged = input_rgb * transmission + airlight * (1.0 - transmission);
+    // Light glow: the fog also scatters scene lights (Relight, Light Rays),
+    // brightest looking toward a light. The fog's brightness is its albedo,
+    // so the glow keeps the light's colour.
+    let glow = clamp(tertiary.w / 100.0, 0.0, 1.0);
+    if glow <= 1e-6 { return fogged; }
+    let extinction = 6.0 * density * density * amount * length(ray);
+    let scattered = fog_light_scattering(pos, volume, distance, extinction);
+    return fogged + scattered * (glow * FOG_LIGHT_GLOW_GAIN * ambient * Common::safe_luma(color));
+}
+
+// Smoke is darker than fog by default (its colour is its albedo); this lets
+// Light glow show on it at a similar strength.
+const SMOKE_LIGHT_GLOW_GAIN: f32 = 4.0;
+
+// Light from scene lights at the smoke, relative to the ambient level, before
+// the smoke's albedo and Light glow. Smoke drifts over the scene's surfaces,
+// so it is lit where it lies over them: at the pixel's scene depth, or at the
+// nearest surface without depth.
+fn smoke_light_scattering(pos: vec2<i32>) -> vec3<f32> {
+    var depth = 0.0;
+    if Common::scene_tone_uniforms.scene_depth_present != 0u {
+        depth = fog_depth_at(pos);
+    }
+    let uv = full_image_uv(pos);
+    var lit = vec3<f32>(0.0);
+    for (var index = 0u; index < scene_light_slots(); index = index + 1u) {
+        let light = scene_light_at(index);
+        if !light.emits { continue; }
+        let coverage = scene_light_coverage(light, pos);
+        if coverage <= 1e-6 { continue; }
+        let position = scene_camera_point(
+            light.camera, uv * light.camera.image_size, scene_depth_z(light.camera, depth),
+        );
+        lit += light.intensity * (scene_light_falloff(light, position)
+            * scene_light_phase_at(light, position, SMOKE_LIGHT_ANISOTROPY) * coverage);
+    }
+    return lit;
 }
 
 fn apply_smoke(
@@ -247,8 +404,13 @@ fn apply_smoke(
     let transmission = exp(-optical_depth * density * density * amount * 2.8);
     // Match smoke illumination to scene ambience, just as fog does; bright
     // picker colors therefore do not turn dark photographs into white paint.
-    let ambient_ev = Tonemap::tone_stats.percentiles_0_field.w + Common::scene_tone_uniforms.exposure;
-    let ambient = ToneCommon::SCENE_MIDDLE_GREY * exp2(clamp(ambient_ev, -12.0, 6.0));
-    let color = mask_effect_picker_color_to_working(secondary.xyz) * ambient;
-    return input_rgb * transmission + color * (1.0 - transmission);
+    let ambient = scene_ambient_level();
+    let albedo = mask_effect_picker_color_to_working(secondary.xyz);
+    let color = albedo * ambient;
+    let smoked = input_rgb * transmission + color * (1.0 - transmission);
+    // Light glow: the smoke also scatters scene lights (Relight, Light Rays).
+    let glow = clamp(tertiary.z / 100.0, 0.0, 1.0);
+    if glow <= 1e-6 { return smoked; }
+    let lit = smoke_light_scattering(pos);
+    return smoked + lit * (glow * SMOKE_LIGHT_GLOW_GAIN * ambient * Common::safe_luma(albedo) * (1.0 - transmission));
 }
