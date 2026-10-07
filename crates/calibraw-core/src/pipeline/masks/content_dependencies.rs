@@ -13,7 +13,7 @@ pub struct ContentDependencies {
     pub subject: bool,
     /// Sky masks share one sky segmentation.
     pub sky: bool,
-    /// Depth-range masks and depth fog share one scene depth estimate.
+    /// Depth-range masks, depth fog and Relight share one scene depth estimate.
     pub scene_depth: bool,
     /// `(mask, component)` of each object mask with a positive stroke; every
     /// object needs its own segmentation.
@@ -44,7 +44,7 @@ impl ContentDependencies {
 impl MaskStack {
     pub fn content_dependencies(&self) -> ContentDependencies {
         let mut dependencies = ContentDependencies {
-            scene_depth: self.has_depth_fog_effect(),
+            scene_depth: self.has_scene_depth_effect(),
             ..ContentDependencies::default()
         };
         for (mask_index, mask) in self.masks.iter().enumerate() {
@@ -75,7 +75,7 @@ impl MaskStack {
         dependencies
     }
 
-    /// Scene depth is required by a depth-range mask or depth fog but absent.
+    /// Scene depth is required by a depth-range mask, depth fog or Relight but absent.
     pub fn scene_depth_missing(&self) -> bool {
         self.scene_depth_image().is_none() && self.content_dependencies().scene_depth
     }
@@ -131,6 +131,32 @@ mod tests {
         stack.scene_depth = None;
         assert!(!stack.content_dependencies().scene_depth);
         assert!(!stack.scene_depth_missing());
+    }
+
+    #[test]
+    fn active_relight_needs_scene_depth_globally_and_in_visible_masks() {
+        let mut stack = MaskStack::default();
+        stack
+            .global_effects
+            .push(EffectComponent::new(MaskEffect::Relight));
+        assert!(stack.content_dependencies().scene_depth);
+        assert!(stack.scene_depth_missing());
+        stack.global_effects[0].enabled = false;
+        assert!(!stack.content_dependencies().scene_depth);
+
+        stack.global_effects.clear();
+        stack.add_mask(MaskKind::Brush).unwrap();
+        stack.masks[0]
+            .effect_components
+            .push(EffectComponent::new(MaskEffect::Relight));
+        assert!(stack.content_dependencies().scene_depth);
+        stack.masks[0].opacity = 0.0;
+        assert!(!stack.content_dependencies().scene_depth);
+        stack.masks[0].opacity = 1.0;
+        stack.masks[0].effect_components[0].settings.relight.amount = 0.0;
+        assert!(!stack.content_dependencies().scene_depth);
+        stack.masks[0].effect_components[0].settings.relight.ambient = 80.0;
+        assert!(stack.content_dependencies().scene_depth);
     }
 
     #[test]

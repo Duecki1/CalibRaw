@@ -196,6 +196,34 @@ pub(super) fn pack_effect_mask(
                 ],
             )
         }
+        MaskEffect::Relight => {
+            let config = settings.relight;
+            use effect_params::relight as params;
+            let color = params::COLOR.clamp(config.color);
+            // Layout read by `apply_relight` in relight.wgsl.
+            effect_mask_data(
+                effect,
+                enabled && config.is_active(),
+                [
+                    params::AMOUNT.clamp(config.amount),
+                    params::REACH.clamp(config.reach),
+                    params::SOURCE_X.clamp(config.source[0]),
+                    params::SOURCE_Y.clamp(config.source[1]),
+                ],
+                [
+                    color[0],
+                    color[1],
+                    color[2],
+                    params::DEPTH.clamp(config.depth),
+                ],
+                [
+                    params::SIZE.clamp(config.size),
+                    params::SHADOWS.clamp(config.shadows),
+                    params::RELIEF.clamp(config.relief),
+                    params::AMBIENT.clamp(config.ambient),
+                ],
+            )
+        }
         MaskEffect::Pixelate => {
             let config = settings.pixelate;
             effect_mask_data(

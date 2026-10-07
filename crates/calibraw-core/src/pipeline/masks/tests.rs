@@ -487,7 +487,7 @@ fn mask_effect_picker_catalog_is_grouped_and_alphabetized() {
         );
         assert!(labels.iter().all(|label| !label.is_empty()));
     }
-    assert_eq!(MaskEffect::ALL.len(), 16);
+    assert_eq!(MaskEffect::ALL.len(), 17);
 }
 
 #[test]

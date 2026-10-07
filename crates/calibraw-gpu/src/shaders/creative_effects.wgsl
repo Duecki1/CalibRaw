@@ -457,7 +457,8 @@ fn apply_local_creative_mask_effect_nodes(pos: vec2<i32>, input_rgb: vec3<f32>) 
             && effect_id != MASK_EFFECT_PIXELATE_ID
             && effect_id != MASK_EFFECT_FOG_ID
             && effect_id != MASK_EFFECT_SMOKE_ID
-            && effect_id != MASK_EFFECT_HALATION_ID {
+            && effect_id != MASK_EFFECT_HALATION_ID
+            && effect_id != MASK_EFFECT_RELIGHT_ID {
             continue;
         }
         let weight = SceneAdjustments::local_mask_weight(pos, index);
@@ -476,6 +477,8 @@ fn apply_local_creative_mask_effect_nodes(pos: vec2<i32>, input_rgb: vec3<f32>) 
             adjusted = apply_smoke(pos, rgb, primary, secondary, Common::mask_data[index].adjust_2_field);
         } else if effect_id == MASK_EFFECT_HALATION_ID {
             adjusted = apply_mask_halation(pos, rgb, primary);
+        } else if effect_id == MASK_EFFECT_RELIGHT_ID {
+            adjusted = apply_relight(pos, rgb, primary, secondary, Common::mask_data[index].adjust_2_field);
         }
         rgb = mix(rgb, adjusted, weight);
     }

@@ -25,6 +25,7 @@ mod histogram;
 mod mask_layers;
 mod readback;
 mod resources;
+mod scene_surface;
 mod shader_manager;
 mod shaders;
 
@@ -34,6 +35,7 @@ use fog::valid_scene_depth;
 pub use histogram::{PreviewHistogram, PreviewHistogramGpu};
 use readback::*;
 use resources::*;
+use scene_surface::SCENE_DEPTH_MIP_LEVELS;
 use shader_manager::ShaderManager;
 
 #[cfg(test)]
@@ -56,6 +58,8 @@ mod photographic_modules_tests;
 mod pixelate_tests;
 #[cfg(test)]
 mod point_color_tests;
+#[cfg(test)]
+mod relight_tests;
 #[cfg(test)]
 mod tests;
 
@@ -354,7 +358,7 @@ pub struct RawGpuPipeline {
     mask_texture: wgpu::Texture,
     light_rays_mask_texture: wgpu::Texture,
     scene_depth_texture: wgpu::Texture,
-    uploaded_scene_depth: Mutex<Option<MaskImage>>,
+    uploaded_scene_depth: Mutex<Option<fog::UploadedSceneDepth>>,
     mask_layer_capacity: usize,
     mask_atlas_edge: u32,
     out_texture: wgpu::Texture,
@@ -419,7 +423,11 @@ struct RawGpuPipelineBuild<'a> {
 
 impl RawGpuPipeline {
     fn upload_params(&self, queue: &wgpu::Queue, params: &GpuParams) {
-        self.upload_scene_depth(queue, params.scene_depth.as_ref());
+        self.upload_scene_depth(
+            queue,
+            params.scene_depth.as_ref(),
+            params.needs_relight_surface(),
+        );
         match self.uploaded_stage_uniforms.lock() {
             Ok(mut uploaded) => {
                 if bytemuck::bytes_of(&uploaded.camera) != params.camera_bytes() {

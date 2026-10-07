@@ -507,6 +507,7 @@ impl GpuParams {
             if effect_id == MaskEffect::Neon.shader_id()
                 || effect_id == MaskEffect::Glow.shader_id()
                 || effect_id == MaskEffect::LightRays.shader_id()
+                || effect_id == MaskEffect::Relight.shader_id()
                 || effect_id == MaskEffect::Blur.shader_id()
                 || effect_id == MaskEffect::LensBlur.shader_id()
                 || effect_id == MaskEffect::MotionBlur.shader_id()
@@ -563,6 +564,16 @@ impl GpuParams {
                 && mask.metadata[3] >> MASK_EFFECT_ID_SHIFT == MaskEffect::Pixelate.shader_id()
                 && (amount / 100.0).clamp(0.0, 1.0) > 1e-6
                 && block_size > 1.0
+        })
+    }
+
+    /// Whether an active Relight effect reads the relighting surface derived
+    /// from scene depth.
+    pub(super) fn needs_relight_surface(&self) -> bool {
+        let local_count = (self.scene_tone.mask_counts[0] as usize).min(MAX_RENDER_MASK_SLOTS);
+        self.mask_data[..local_count].iter().any(|mask| {
+            mask.metadata[0] != 0
+                && mask.metadata[3] >> MASK_EFFECT_ID_SHIFT == MaskEffect::Relight.shader_id()
         })
     }
 

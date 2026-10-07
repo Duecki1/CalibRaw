@@ -64,7 +64,7 @@ AI models are downloaded once, on first use and only after you agree; they are v
 - **Offline AI:** Subject, sky, depth and click-to-select object masks, AI Remove (Big-LaMa) that blends its fill into your photo's grain, and RawNIND denoise for Bayer and X-Trans RAWs.
 - **Native interface and GPU processing:** Written in Rust with `wgpu`, WGSL compute shaders and an `egui` interface.
 - **Android support:** The Android app uses the same engine and `.calibraw` sidecars as the desktop app, with layouts for touch controls.
-- **Effects with masks:** Apply depth-based fog, smoke, light rays, glow, halation, edge glow, neon and lens, motion, radial or tilt-shift blur to the whole photo or inside a mask.
+- **Effects with masks:** Apply depth-based fog and relighting, smoke, light rays, glow, halation, edge glow, neon and lens, motion, radial or tilt-shift blur to the whole photo or inside a mask.
 - **Edit Replay:** Export a 30 FPS MP4 showing your edit step by step for Reels, Shorts or before/after posts.
 
 ---
@@ -115,6 +115,7 @@ Apply effects to the whole photo or stack them on a local mask. Each card keeps 
 
 - **Blur & Movement:** Soften distractions with Blur, shape bokeh with Lens Blur, add directional trails with Motion Blur, zoom or spin with Radial Blur, or keep a band in focus with Tilt Shift. Feather the mask for a smooth transition.
 - **Glow & Light Rays:** Glow spreads colored light from bright pixels selected by the mask. Light Rays uses the mask to shape light shafts. Both can spread beyond the selection. Drag position pads to place a center or source; Precise position also lets you place a ray source beyond the image.
+- **Relight:** Add a light that shapes the scene in depth. Place it with the same position pad as Light Rays, set its depth in front of or behind the subject, and let nearer objects cast soft shadows. Surfaces facing the light brighten most; Ambient light dims the existing light for a stronger key light. Scene depth is generated automatically.
 - **Edge Glow & Neon:** Trace image contours with colored outlines and halos. Both effects stay inside the mask; Neon's Original image control retains the photo behind the lines.
 - **Fog & Smoke:** Add atmospheric haze or textured plumes. Fog's Scene depth control builds haze with distance; turn it off for an even-distance veil.
 - **Grain:** Add photographic texture with adjustable size, roughness, color, and seed. Use a local mask for selective grain or Fullscreen for a film finish.

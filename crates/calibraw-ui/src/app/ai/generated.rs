@@ -343,6 +343,25 @@ mod tests {
     }
 
     #[test]
+    fn adding_relight_requests_scene_depth_like_depth_fog() {
+        let mut app = app_with_depth_fog();
+        app.masks.stack.global_effects.clear();
+        let before = app.masks.stack.content_dependencies();
+        app.masks
+            .stack
+            .global_effects
+            .push(crate::pipeline::EffectComponent::new(
+                crate::pipeline::MaskEffect::Relight,
+            ));
+
+        app.request_new_content_dependencies(&before, &eframe::Frame::_new_kittest());
+        assert_eq!(
+            app.ui.notice.as_deref(),
+            Some("The GPU preview is not available.")
+        );
+    }
+
+    #[test]
     fn adding_depth_fog_reuses_cached_depth_without_inference() {
         let mut app = app_with_depth_fog();
         let fog = app.masks.stack.global_effects.pop().unwrap();

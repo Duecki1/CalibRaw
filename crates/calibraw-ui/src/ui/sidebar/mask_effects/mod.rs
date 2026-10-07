@@ -11,6 +11,7 @@ pub(super) mod motion_blur;
 pub(super) mod neon;
 pub(super) mod pixelate;
 pub(super) mod radial_blur;
+pub(super) mod relight;
 pub(super) mod smoke;
 pub(super) mod tilt_shift;
 pub(super) mod vignette;
@@ -182,6 +183,9 @@ pub(super) fn effect_description(effect: MaskEffect) -> Option<&'static str> {
         ),
         MaskEffect::LightRays => Some(
             "Place the source relative to the full image, then paint its openings. The mask shapes emitting regions; light shafts extend beyond them.",
+        ),
+        MaskEffect::Relight => Some(
+            "Add a light that shapes the scene in depth. Position it like Light Rays; scene depth is generated automatically, and nearer objects cast shadows. The sky and anything the depth map places at its far limit stay unlit. The mask controls where the light falls.",
         ),
         MaskEffect::Neon => Some(
             "Trace image edges with colored light inside the mask. Original image keeps the photo visible behind the lines; the glow also stays inside the mask.",
@@ -493,6 +497,7 @@ mod tests {
         check!(edge_glow);
         check!(glow);
         check!(light_rays);
+        check!(relight);
         check!(neon);
         check!(pixelate);
         check!(fog);

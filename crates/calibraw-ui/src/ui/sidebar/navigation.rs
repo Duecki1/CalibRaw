@@ -411,7 +411,7 @@ impl Sidebar {
         let effect_frame = mask_effects::EffectFrame::of(app);
         let effects_shown = layout != ScreenLayout::Vertical
             || app.develop_ui.adjustment_section == AdjustmentSection::Effects;
-        if effects_shown && app.masks.stack.has_depth_fog_effect() {
+        if effects_shown && app.masks.stack.has_scene_depth_effect() {
             Self::show_ai_update_card(ui, app, frame);
         }
         if layout == ScreenLayout::Vertical {
