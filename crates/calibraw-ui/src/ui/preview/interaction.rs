@@ -96,7 +96,7 @@ pub(super) fn begin_mask_drag(
                 return Some(MaskDragState::Create(uv));
             }
             let rotation_handle = projection.radial_rotation_handle(*center, *radius, *rotation);
-            if rotation_handle.distance(pointer) <= 24.0 {
+            if rotation_handle.distance(pointer) <= handles::ROTATION_REACH {
                 return Some(MaskDragState::RotateRadial {
                     pointer_angle: source_angle_from(*center, uv, source_width, source_height),
                     rotation: *rotation,
@@ -107,7 +107,7 @@ pub(super) fn begin_mask_drag(
                 .into_iter()
                 .enumerate()
             {
-                if handle.distance(pointer) <= 22.0 {
+                if handle.distance(pointer) <= handles::POINT_REACH {
                     return Some(MaskDragState::ResizeRadial { axis: index / 2 });
                 }
             }
@@ -141,22 +141,23 @@ pub(super) fn begin_mask_drag(
             let a = projection.to_screen(*start);
             let b = projection.to_screen(*end);
             let (_, rotation_handle) = projection.linear_rotation_handle(*start, *end);
-            if rotation_handle.distance(pointer) <= 24.0 {
+            if rotation_handle.distance(pointer) <= handles::ROTATION_REACH {
                 let midpoint = [(start[0] + end[0]) * 0.5, (start[1] + end[1]) * 0.5];
                 Some(MaskDragState::RotateLinear {
                     pointer_angle: source_angle_from(midpoint, uv, source_width, source_height),
                     start: *start,
                     end: *end,
                 })
-            } else if a.distance(pointer) <= 22.0 {
+            } else if a.distance(pointer) <= handles::POINT_REACH {
                 Some(MaskDragState::LinearStart)
-            } else if b.distance(pointer) <= 22.0 {
+            } else if b.distance(pointer) <= handles::POINT_REACH {
                 Some(MaskDragState::LinearEnd)
             } else if distance_to_polyline(
                 pointer,
                 &projection.linear_isoline(*start, *end, 0.5, 32),
-            ) <= 18.0
-                || distance_to_polyline(pointer, &projection.linear_axis(*start, *end, 32)) <= 18.0
+            ) <= handles::GUIDE_REACH
+                || distance_to_polyline(pointer, &projection.linear_axis(*start, *end, 32))
+                    <= handles::GUIDE_REACH
             {
                 Some(MaskDragState::MoveLinear {
                     pointer: uv,
@@ -176,14 +177,14 @@ pub(super) fn begin_mask_drag(
                         continue;
                     }
                     let screen = projection.to_screen(handle);
-                    if screen.distance(pointer) <= 18.0 {
+                    if screen.distance(pointer) <= handles::GUIDE_REACH {
                         return Some(MaskDragState::MovePathHandle { index, outgoing });
                     }
                 }
             }
             for (index, point) in points.iter().enumerate() {
                 let screen = projection.to_screen(point.position);
-                if screen.distance(pointer) <= 20.0 {
+                if screen.distance(pointer) <= handles::PATH_POINT_REACH {
                     return Some(if path_curve_modifier {
                         MaskDragState::CreatePathHandles { index }
                     } else {

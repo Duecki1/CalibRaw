@@ -137,19 +137,26 @@ impl Preview {
                         Stroke::new(1.0, color.gamma_multiply(0.65)),
                     ));
                     let center_screen = corrected_projection.to_screen(*center);
-                    painter.circle_filled(center_screen, 5.0, color);
-                    for handle in corrected_projection.radial_handles(*center, *radius, *rotation) {
-                        painter.circle_filled(handle, 4.0, color);
-                    }
-                    let major_handle =
-                        corrected_projection.radial_handles(*center, *radius, *rotation)[0];
+                    let axis_handles =
+                        corrected_projection.radial_handles(*center, *radius, *rotation);
                     let rotation_handle =
                         corrected_projection.radial_rotation_handle(*center, *radius, *rotation);
-                    painter.line_segment(
-                        [major_handle, rotation_handle],
-                        Stroke::new(1.0, color.gamma_multiply(0.72)),
+                    handles::paint_stem(&painter, axis_handles[0], rotation_handle, color);
+                    handles::paint_point(&painter, center_screen, handles::POINT_RADIUS, color);
+                    for handle in axis_handles {
+                        handles::paint_point(
+                            &painter,
+                            handle,
+                            handles::SECONDARY_POINT_RADIUS,
+                            color,
+                        );
+                    }
+                    handles::paint_ring(
+                        &painter,
+                        rotation_handle,
+                        handles::ROTATION_RADIUS,
+                        Stroke::new(2.0, color),
                     );
-                    painter.circle_stroke(rotation_handle, 6.0, Stroke::new(2.0, color));
                 }
                 MaskGeometry::Linear {
                     start,
@@ -164,15 +171,8 @@ impl Preview {
                     ));
                     let a = corrected_projection.to_screen(*start);
                     let b = corrected_projection.to_screen(*end);
-                    painter.circle_filled(a, 5.0, color);
-                    painter.circle_filled(b, 5.0, color);
                     let (middle, rotation_handle) =
                         corrected_projection.linear_rotation_handle(*start, *end);
-                    painter.line_segment(
-                        [middle, rotation_handle],
-                        Stroke::new(1.0, color.gamma_multiply(0.72)),
-                    );
-                    painter.circle_stroke(rotation_handle, 6.0, Stroke::new(2.0, color));
 
                     let width_factor = feather.clamp(0.02, 1.0);
                     let center_line = corrected_projection.linear_isoline(*start, *end, 0.5, 64);
@@ -184,6 +184,16 @@ impl Preview {
                             Stroke::new(1.0, color.gamma_multiply(0.65)),
                         ));
                     }
+                    // Handles go over the guide lines they sit on.
+                    handles::paint_stem(&painter, middle, rotation_handle, color);
+                    handles::paint_point(&painter, a, handles::POINT_RADIUS, color);
+                    handles::paint_point(&painter, b, handles::POINT_RADIUS, color);
+                    handles::paint_ring(
+                        &painter,
+                        rotation_handle,
+                        handles::ROTATION_RADIUS,
+                        Stroke::new(2.0, color),
+                    );
                 }
                 MaskGeometry::Path { points, .. } => {
                     if points.len() >= 3 {
@@ -208,13 +218,15 @@ impl Preview {
                                 continue;
                             }
                             let handle_screen = projection.to_screen(handle);
-                            painter.line_segment(
-                                [anchor, handle_screen],
-                                Stroke::new(1.0, color.gamma_multiply(0.65)),
+                            handles::paint_stem(&painter, anchor, handle_screen, color);
+                            handles::paint_ring(
+                                &painter,
+                                handle_screen,
+                                handles::SECONDARY_POINT_RADIUS + 0.5,
+                                Stroke::new(1.5, color),
                             );
-                            painter.circle_stroke(handle_screen, 4.5, Stroke::new(1.5, color));
                         }
-                        painter.circle_filled(anchor, 5.0, color);
+                        handles::paint_point(&painter, anchor, handles::POINT_RADIUS, color);
                     }
                 }
                 _ => {}

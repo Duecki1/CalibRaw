@@ -8,8 +8,8 @@ use crate::pipeline::effect_params::relight as params;
 use moduwu_design::ScreenLayout;
 
 const CORE_RADIUS: f32 = 6.0;
-/// Pointer reach of a handle, in points; also its margin from the viewport edge.
-const HIT_RADIUS: f32 = 18.0;
+/// A handle's margin from the viewport edge: its full pointer reach.
+const HIT_RADIUS: f32 = handles::POINT_REACH;
 /// Depth ring radius for a light at the camera and at the farthest surface:
 /// the nearer the light, the larger it looks.
 const RING_RADIUS: [f32; 2] = [20.0, 9.0];
@@ -206,23 +206,18 @@ fn paint_light_handle(
     active: bool,
 ) {
     let center = placement.drawn;
-    let shadow = Color32::from_black_alpha(130);
-    let outline = if placement.in_view() {
-        Color32::WHITE
-    } else {
-        Color32::from_white_alpha(170)
-    };
     let nearness =
         ((params::DEPTH.max - depth) / (params::DEPTH.max - params::DEPTH.min)).clamp(0.0, 1.0);
     let ring = egui::lerp(RING_RADIUS[1]..=RING_RADIUS[0], nearness);
     let ring_width = if active { 2.0 } else { 1.25 };
-    painter.circle_stroke(center, ring, Stroke::new(ring_width + 2.0, shadow));
-    painter.circle_stroke(center, ring, Stroke::new(ring_width, outline));
-
+    handles::paint_ring(
+        painter,
+        center,
+        ring,
+        Stroke::new(ring_width, Color32::WHITE),
+    );
     let [r, g, b] = color.map(|channel| (channel.clamp(0.0, 1.0) * 255.0).round() as u8);
-    painter.circle_filled(center, CORE_RADIUS + 1.5, shadow);
-    painter.circle_filled(center, CORE_RADIUS, Color32::from_rgb(r, g, b));
-    painter.circle_stroke(center, CORE_RADIUS, Stroke::new(1.5, outline));
+    handles::paint_point(painter, center, CORE_RADIUS, Color32::from_rgb(r, g, b));
 
     if !placement.in_view() {
         // Point toward a light placed beyond the view.
@@ -232,23 +227,18 @@ fn paint_light_handle(
         let side = direction.rot90() * 4.0;
         painter.add(Shape::convex_polygon(
             vec![tip, base + side, base - side],
-            outline,
-            Stroke::new(1.0, shadow),
+            Color32::WHITE,
+            Stroke::new(1.0, Color32::from_black_alpha(130)),
         ));
     }
 
     if active {
-        let text = painter.layout_no_wrap(
+        handles::paint_value_label(
+            painter,
+            center,
+            ring + 14.0,
             format!("Depth {}", format_depth(depth)),
-            egui::FontId::proportional(11.5),
-            Color32::WHITE,
         );
-        let pill = Rect::from_center_size(
-            center + egui::vec2(0.0, ring + 14.0),
-            text.size() + egui::vec2(12.0, 6.0),
-        );
-        painter.rect_filled(pill, pill.height() * 0.5, Color32::from_black_alpha(190));
-        painter.galley(pill.center() - text.size() * 0.5, text, Color32::WHITE);
     }
 }
 
