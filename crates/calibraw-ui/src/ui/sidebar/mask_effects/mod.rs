@@ -64,6 +64,7 @@ where
                 }
             } else {
                 let mut header_clicked = false;
+                let ctx = ui.ctx().clone();
                 let mut header = egui::collapsing_header::CollapsingState::load_with_default_open(
                     ui.ctx(),
                     ui.make_persistent_id("expanded"),
@@ -122,6 +123,9 @@ where
                 if header_clicked {
                     header.toggle();
                 }
+                if header.is_open() {
+                    note_open_effect_card(&ctx, effect);
+                }
                 header.body_unindented(|ui| {
                     ui.add_enabled_ui(*enabled, |ui| changed |= body(ui, settings));
                 });
@@ -138,6 +142,25 @@ where
             },
             settings,
         )
+}
+
+fn open_effect_card_id(effect: MaskEffect) -> egui::Id {
+    egui::Id::new("calibraw-open-effect-card").with(effect.shader_id())
+}
+
+/// Records that `effect`'s card is drawn expanded in this pass. Each effect
+/// has at most one card in the effect list the sidebar shows.
+fn note_open_effect_card(ctx: &egui::Context, effect: MaskEffect) {
+    let pass = ctx.cumulative_pass_nr();
+    ctx.data_mut(|data| data.insert_temp(open_effect_card_id(effect), pass));
+}
+
+/// Whether the sidebar drew `effect`'s card expanded earlier in this pass.
+/// The desktop sidebar panel is drawn before the preview, so on-canvas
+/// controls can follow the card without a frame of lag.
+pub(crate) fn effect_card_open(ctx: &egui::Context, effect: MaskEffect) -> bool {
+    ctx.data(|data| data.get_temp::<u64>(open_effect_card_id(effect)))
+        == Some(ctx.cumulative_pass_nr())
 }
 
 fn apply_card_action<Settings>(
@@ -456,6 +479,65 @@ mod tests {
         render(click(title.center(), false));
         let (_, body_shown, _) = render(Vec::new());
         assert!(body_shown);
+    }
+
+    #[test]
+    fn expanded_cards_report_open_in_the_same_pass_until_folded() {
+        let ctx = egui::Context::default();
+        crate::ui::theme::install(&ctx);
+        let mut settings = crate::pipeline::RelightEffectSettings::default();
+        let mut time = 0.0;
+        let mut render = |events| {
+            time += 0.25;
+            let mut open = false;
+            let output = ctx.run_ui(
+                egui::RawInput {
+                    time: Some(time),
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(400.0, 300.0),
+                    )),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    let (mut enabled, mut remove) = (true, false);
+                    effect_card(
+                        ui,
+                        MaskEffect::Relight,
+                        &mut settings,
+                        &mut enabled,
+                        &mut remove,
+                        |ui, _| {
+                            ui.label("Amount");
+                            false
+                        },
+                    );
+                    open = effect_card_open(ui.ctx(), MaskEffect::Relight);
+                    assert!(!effect_card_open(ui.ctx(), MaskEffect::Fog));
+                },
+            );
+            (output.shapes, open)
+        };
+        let (shapes, open) = render(Vec::new());
+        assert!(open);
+        let title = icon_rect(&shapes, "Relight").center();
+        let click = |pressed| {
+            vec![
+                egui::Event::PointerMoved(title),
+                egui::Event::PointerButton {
+                    pos: title,
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ]
+        };
+        render(click(true));
+        let (_, open) = render(click(false));
+        assert!(!open, "a folded card is not open");
+        let (_, open) = render(Vec::new());
+        assert!(!open);
     }
 
     #[test]

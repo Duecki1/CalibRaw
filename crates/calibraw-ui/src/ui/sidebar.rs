@@ -105,6 +105,7 @@ mod masks;
 mod navigation;
 
 pub(crate) use export::export_settings_controls;
+pub(crate) use mask_effects::effect_card_open;
 
 #[cfg(test)]
 mod tests {
