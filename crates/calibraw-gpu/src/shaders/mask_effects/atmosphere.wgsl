@@ -54,9 +54,17 @@ fn atmosphere_image_point(pos: vec2<i32>) -> vec2<f32> {
 
 // Full-image depth is shared by all fog components; mask coverage remains a
 // separate final blend. Scene depth is normalized relative distance (near=0, far=1).
+// Level 0 channel x holds it; the other channels and mip levels hold the
+// relighting surface (scene_surface.rs, relight.wgsl).
 @group(0) @binding(35) var scene_depth_tex: texture_2d<f32>;
 
 fn fog_depth_at(pos: vec2<i32>) -> f32 {
+    return clamp(scene_depth_texels_at(pos).x, 0.0, 1.0);
+}
+
+// Level-0 scene-depth texels at an image pixel. Channel x is the stored depth;
+// relighting reads the surface in the other channels (relight.wgsl).
+fn scene_depth_texels_at(pos: vec2<i32>) -> vec4<f32> {
     let size = vec2<i32>(textureDimensions(scene_depth_tex));
     let p = full_image_uv(pos) * vec2<f32>(size) - vec2<f32>(0.5);
     let base = vec2<i32>(floor(p));
@@ -66,7 +74,7 @@ fn fog_depth_at(pos: vec2<i32>) -> f32 {
         f32(Common::camera_uniforms.full_height),
     );
     let center = sqrt(max(SceneAdjustments::local_effects_at(pos), vec3<f32>(0.0)));
-    var total = 0.0;
+    var total = vec4<f32>(0.0);
     var weights = 0.0;
     // Joint upsampling rejects samples across image edges instead of blurring
     // background depth into foreground silhouettes. No depth-range mask curve
@@ -80,11 +88,11 @@ fn fog_depth_at(pos: vec2<i32>) -> f32 {
             let delta = (guide - center) / max(length(center), 0.15);
             let spatial = select(1.0 - f.x, f.x, x == 1) * select(1.0 - f.y, f.y, y == 1);
             let weight = spatial * max(exp(-dot(delta, delta) * 24.0), 0.0001);
-            total += textureLoad(scene_depth_tex, cell, 0).x * weight;
+            total += textureLoad(scene_depth_tex, cell, 0) * weight;
             weights += weight;
         }
     }
-    return clamp(total / max(weights, 1e-6), 0.0, 1.0);
+    return total / max(weights, 1e-6);
 }
 
 fn fog_hash3(cell: vec3<i32>) -> f32 {

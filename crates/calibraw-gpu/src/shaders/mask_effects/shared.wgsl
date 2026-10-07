@@ -15,6 +15,7 @@ const MASK_EFFECT_SMOKE_ID: u32 = 12u;
 const MASK_EFFECT_GRAIN_ID: u32 = 13u;
 const MASK_EFFECT_HALATION_ID: u32 = 14u;
 const MASK_EFFECT_VIGNETTE_ID: u32 = 15u;
+const MASK_EFFECT_RELIGHT_ID: u32 = 16u;
 
 // Integer hash finalizer shared by the procedural effects: mixes `seed` and
 // maps its low 24 bits to [0, 1].

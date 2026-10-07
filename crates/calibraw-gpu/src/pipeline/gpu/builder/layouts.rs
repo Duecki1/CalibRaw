@@ -447,7 +447,7 @@ pub(in crate::pipeline::gpu) fn create_bind_group_layouts(
                     sampler_entry(28),
                     storage_buffer_entry(33, true),
                     texture_array_entry(34, wgpu::TextureSampleType::Float { filterable: true }),
-                    texture_entry(35, wgpu::TextureSampleType::Float { filterable: false }),
+                    texture_entry(35, wgpu::TextureSampleType::Float { filterable: true }),
                     storage_buffer_entry(16, true),
                     texture_entry(36, wgpu::TextureSampleType::Float { filterable: false }),
                 ],

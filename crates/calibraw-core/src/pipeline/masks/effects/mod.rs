@@ -11,6 +11,7 @@ mod neon;
 pub mod params;
 mod pixelate;
 mod radial_blur;
+mod relight;
 mod smoke;
 mod tilt_shift;
 mod vignette;
@@ -30,6 +31,7 @@ pub use motion_blur::MotionBlurEffectSettings;
 pub use neon::NeonEffectSettings;
 pub use pixelate::PixelateEffectSettings;
 pub use radial_blur::{RadialBlurEffectSettings, RadialBlurMode};
+pub use relight::RelightEffectSettings;
 pub use smoke::SmokeEffectSettings;
 pub use tilt_shift::TiltShiftEffectSettings;
 pub use vignette::VignetteEffectSettings;
@@ -50,6 +52,7 @@ pub enum MaskEffect {
     Glow,
     LightRays,
     Neon,
+    Relight,
     EdgeGlow,
     Pixelate,
     Fog,
@@ -60,7 +63,7 @@ pub enum MaskEffect {
 }
 
 impl MaskEffect {
-    pub const ALL: [Self; 16] = [
+    pub const ALL: [Self; 17] = [
         Self::Adjustment,
         Self::Blur,
         Self::LensBlur,
@@ -70,6 +73,7 @@ impl MaskEffect {
         Self::Glow,
         Self::LightRays,
         Self::Neon,
+        Self::Relight,
         Self::EdgeGlow,
         Self::Pixelate,
         Self::Fog,
@@ -89,6 +93,7 @@ impl MaskEffect {
             Self::TiltShift => "Tilt-Shift",
             Self::Glow => "Glow",
             Self::LightRays => "Light Rays",
+            Self::Relight => "Relight",
             Self::Neon => "Neon",
             Self::EdgeGlow => "Edge Glow",
             Self::Pixelate => "Pixelate",
@@ -106,7 +111,9 @@ impl MaskEffect {
             Self::Blur | Self::LensBlur | Self::MotionBlur | Self::RadialBlur | Self::TiltShift => {
                 Some(MaskEffectCategory::BlurAndFocus)
             }
-            Self::Glow | Self::LightRays | Self::Neon => Some(MaskEffectCategory::GlowAndLight),
+            Self::Glow | Self::LightRays | Self::Neon | Self::Relight => {
+                Some(MaskEffectCategory::GlowAndLight)
+            }
             Self::EdgeGlow | Self::Pixelate => Some(MaskEffectCategory::Stylize),
             Self::Fog | Self::Smoke => Some(MaskEffectCategory::Texture),
             Self::Grain | Self::Halation | Self::Vignette => {
@@ -137,6 +144,7 @@ impl MaskEffect {
             Self::Grain => 13,
             Self::Halation => 14,
             Self::Vignette => 15,
+            Self::Relight => 16,
         }
     }
 }
@@ -188,6 +196,8 @@ pub struct MaskEffectSettings {
     pub glow: GlowEffectSettings,
     #[serde(default, skip_serializing_if = "is_default")]
     pub light_rays: LightRaysEffectSettings,
+    #[serde(default, skip_serializing_if = "is_default")]
+    pub relight: RelightEffectSettings,
     #[serde(default, skip_serializing_if = "is_default")]
     pub neon: NeonEffectSettings,
     #[serde(default, skip_serializing_if = "is_default")]

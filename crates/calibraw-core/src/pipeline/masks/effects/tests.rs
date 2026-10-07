@@ -23,6 +23,7 @@ fn effect_names_and_shader_ids_remain_compatible() {
         (MaskEffect::Grain, "Grain", 13),
         (MaskEffect::Halation, "Halation", 14),
         (MaskEffect::Vignette, "Vignette", 15),
+        (MaskEffect::Relight, "Relight", 16),
     ];
     assert_eq!(MaskEffect::ALL.len(), effects.len());
     for (effect, serialized, shader_id) in effects {

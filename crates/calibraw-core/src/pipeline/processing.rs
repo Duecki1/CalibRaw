@@ -489,6 +489,7 @@ mod tests {
                 MaskEffect::Glow | MaskEffect::Halation => GLOW_SUPPORT,
                 MaskEffect::Adjustment
                 | MaskEffect::LightRays
+                | MaskEffect::Relight
                 | MaskEffect::Fog
                 | MaskEffect::Smoke
                 | MaskEffect::Grain

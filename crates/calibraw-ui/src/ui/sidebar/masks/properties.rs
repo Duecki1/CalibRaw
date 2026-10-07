@@ -298,6 +298,13 @@ impl Sidebar {
                 remove,
                 frame,
             ),
+            MaskEffect::Relight => mask_effects::relight::show(
+                ui,
+                &mut component.settings.relight,
+                &mut component.enabled,
+                remove,
+                frame,
+            ),
             MaskEffect::Neon => mask_effects::neon::show(
                 ui,
                 &mut component.settings.neon,

@@ -199,6 +199,22 @@ fn primary_controls_are_visible_and_details_expand_without_editing() {
             ],
         ),
         (
+            MaskEffect::Relight,
+            &[
+                params::relight::AMOUNT.label,
+                "Light position",
+                params::relight::DEPTH.label,
+                params::relight::AMBIENT.label,
+            ],
+            "Light details",
+            &[
+                params::relight::REACH.label,
+                params::relight::SIZE.label,
+                params::relight::SHADOWS.label,
+                params::relight::RELIEF.label,
+            ],
+        ),
+        (
             MaskEffect::Fog,
             &[
                 params::fog::AMOUNT.label,

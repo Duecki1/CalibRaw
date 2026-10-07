@@ -8,8 +8,8 @@ use crate::pipeline::{
 
 const WIDTH: u32 = 96;
 const HEIGHT: u32 = 64;
-const MASK_EDGE: u32 = 64;
-const RGB_TOLERANCE: f32 = 2.0e-4;
+pub(super) const MASK_EDGE: u32 = 64;
+pub(super) const RGB_TOLERANCE: f32 = 2.0e-4;
 
 fn is_dark(x: u32, y: u32) -> bool {
     (x / 8 + y / 8).is_multiple_of(2)
@@ -28,7 +28,7 @@ fn checkerboard(width: u32, height: u32) -> anyhow::Result<LoadedRaw> {
     LoadedRaw::from_scene_linear_rec2020(width, height, pixels)
 }
 
-fn neutral_exposure() -> ExposureParams {
+pub(super) fn neutral_exposure() -> ExposureParams {
     ExposureParams {
         sharpen_amount: 0.0,
         texture: 0.0,
@@ -196,21 +196,28 @@ fn fog_params_depth_presence_preserves_rust_and_wgsl_uniform_layout() {
     }
 }
 
-struct FogScene {
-    device: wgpu::Device,
-    queue: wgpu::Queue,
-    source: LoadedRaw,
-    exposure: ExposureParams,
-    pipeline: RawGpuPipeline,
+/// A reusable pipeline for depth-effect renders (also used by Relight tests).
+pub(super) struct FogScene {
+    pub(super) device: wgpu::Device,
+    pub(super) queue: wgpu::Queue,
+    pub(super) source: LoadedRaw,
+    pub(super) exposure: ExposureParams,
+    pub(super) pipeline: RawGpuPipeline,
 }
 
 impl FogScene {
     fn new(width: u32, height: u32, quality: ProcessingQuality) -> anyhow::Result<Option<Self>> {
+        Self::with_source(checkerboard(width, height)?, quality)
+    }
+
+    pub(super) fn with_source(
+        source: LoadedRaw,
+        quality: ProcessingQuality,
+    ) -> anyhow::Result<Option<Self>> {
         let Some((device, queue)) = request_test_device() else {
-            eprintln!("fog GPU regression skipped: no headless wgpu adapter");
+            eprintln!("depth-effect GPU regression skipped: no headless wgpu adapter");
             return Ok(None);
         };
-        let source = checkerboard(width, height)?;
         let exposure = neutral_exposure();
         // Reserve a real atlas layer for tests that switch from global to local fog.
         let initial = MaskStack {
@@ -233,7 +240,7 @@ impl FogScene {
         }))
     }
 
-    fn render(&self, masks: &MaskStack) -> anyhow::Result<Vec<f32>> {
+    pub(super) fn render(&self, masks: &MaskStack) -> anyhow::Result<Vec<f32>> {
         self.render_params(&GpuParams::new(&self.exposure, masks, &self.source))
     }
 
@@ -257,7 +264,7 @@ impl FogScene {
         );
         assert!(
             rgb.iter().all(|v| v.is_finite()),
-            "fog produced non-finite RGB"
+            "depth effect produced non-finite RGB"
         );
         Ok(rgb)
     }
@@ -338,7 +345,7 @@ impl FogScene {
     }
 }
 
-fn assert_close(actual: &[f32], expected: &[f32], tolerance: f32, context: &str) {
+pub(super) fn assert_close(actual: &[f32], expected: &[f32], tolerance: f32, context: &str) {
     assert_eq!(actual.len(), expected.len(), "{context}");
     assert!(!actual.is_empty(), "{context}: empty render");
     let mut max_error = 0.0_f32;
@@ -361,7 +368,7 @@ fn assert_close(actual: &[f32], expected: &[f32], tolerance: f32, context: &str)
     );
 }
 
-fn mean_difference(a: &[f32], b: &[f32]) -> f32 {
+pub(super) fn mean_difference(a: &[f32], b: &[f32]) -> f32 {
     assert_eq!(a.len(), b.len());
     a.iter().zip(b).map(|(a, b)| (a - b).abs()).sum::<f32>() / a.len() as f32
 }

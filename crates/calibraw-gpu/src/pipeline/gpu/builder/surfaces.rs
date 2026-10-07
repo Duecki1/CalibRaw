@@ -201,13 +201,18 @@ pub(in crate::pipeline::gpu) fn create_pipeline_surfaces(
         "calibraw full-image Light Rays emission atlas",
     );
 
-    let scene_depth_texture = create_processing_texture(
-        device,
-        texture_size(SCENE_DEPTH_EDGE, SCENE_DEPTH_EDGE),
-        wgpu::TextureFormat::R16Float,
-        wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-        "calibraw full-image scene depth",
-    );
+    // Stored depth for fog plus the relighting surface and its mip chain
+    // (`scene_surface`).
+    let scene_depth_texture = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("calibraw full-image scene depth and surface"),
+        size: texture_size(SCENE_DEPTH_EDGE, SCENE_DEPTH_EDGE),
+        mip_level_count: SCENE_DEPTH_MIP_LEVELS,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: SCENE_DEPTH_FORMAT,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        view_formats: &[SCENE_DEPTH_FORMAT],
+    });
     let scene_depth_view = default_texture_view(&scene_depth_texture);
 
     let out_view = default_texture_view(&out_texture);
@@ -240,7 +245,9 @@ pub(in crate::pipeline::gpu) fn create_pipeline_surfaces(
         address_mode_w: wgpu::AddressMode::ClampToEdge,
         mag_filter: wgpu::FilterMode::Linear,
         min_filter: wgpu::FilterMode::Linear,
-        mipmap_filter: wgpu::MipmapFilterMode::Nearest,
+        // Single-level mask atlases are unaffected; the scene-depth surface
+        // blends its mip levels for broad light sizes.
+        mipmap_filter: wgpu::MipmapFilterMode::Linear,
         ..Default::default()
     });
 

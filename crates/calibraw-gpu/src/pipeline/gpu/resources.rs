@@ -6,6 +6,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use wgpu::util::DeviceExt;
 
 pub(super) const SCENE_DEPTH_EDGE: u32 = 1024;
+/// Stored depth, smooth depth and its two gradients (`scene_surface`).
+pub(super) const SCENE_DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 
 const MAX_UPLOAD_SCRATCH_BYTES: usize = 8 * 1024 * 1024;
 
@@ -275,8 +277,8 @@ pub(super) fn build_gpu_resource_plan(input: GpuResourcePlanInput) -> Result<Gpu
             SCENE_DEPTH_EDGE,
             SCENE_DEPTH_EDGE,
             1,
-            1,
-            wgpu::TextureFormat::R16Float,
+            SCENE_DEPTH_MIP_LEVELS,
+            SCENE_DEPTH_FORMAT,
         )?,
     );
     let mask_bytes = texture_allocation_bytes(
