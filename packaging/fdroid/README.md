@@ -2,8 +2,9 @@
 
 The submission recipe is [de.duecki.calibraw.yml](de.duecki.calibraw.yml).
 It builds the `v1.2.0` release, whose commit hash goes in the recipe's
-`commit` field (replace the `TODO-full-hash-of-v1.2.0` placeholder after
-tagging: `git rev-parse v1.2.0`), with Android version code `1000708`. This is a source build, not an upload of the GitHub release APK.
+`commit` field (`c4be2257330d72239a759efaba6b60e11b1b1a4c`), with Android
+version code `1000708`. This is a source build, not an upload of the GitHub
+release APK.
 
 ## Submit using GitLab's website
 
