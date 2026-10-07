@@ -12,6 +12,8 @@ pub struct RelightEffectSettings {
     pub depth: f32,
     pub reach: f32,
     pub size: f32,
+    /// Whether nearer objects cast shadows; off keeps the Shadows strength.
+    pub shadows_enabled: bool,
     pub shadows: f32,
     pub relief: f32,
     pub ambient: f32,
@@ -26,6 +28,7 @@ impl Default for RelightEffectSettings {
             depth: DEPTH.default,
             reach: REACH.default,
             size: SIZE.default,
+            shadows_enabled: true,
             shadows: SHADOWS.default,
             relief: RELIEF.default,
             ambient: AMBIENT.default,

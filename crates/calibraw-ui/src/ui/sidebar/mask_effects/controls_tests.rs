@@ -205,6 +205,7 @@ fn primary_controls_are_visible_and_details_expand_without_editing() {
                 "Light position",
                 params::relight::DEPTH.label,
                 params::relight::AMBIENT.label,
+                "Cast shadows",
             ],
             "Light details",
             &[
@@ -344,6 +345,23 @@ fn every_effect_card_fits_narrow_and_wide_layouts() {
             }
         }
     }
+}
+
+#[test]
+fn relight_shadow_toggle_hides_the_strength_and_preserves_it() {
+    let mut card = CardUi::new(MaskEffect::Relight, 320.0, true);
+    card.components[0].settings.relight.shadows = 35.0;
+    card.frame(Vec::new());
+    assert!(!card.click("Light details"));
+    assert!(card.has(params::relight::SHADOWS.label));
+    assert!(card.click("Cast shadows"));
+    assert!(!card.components[0].settings.relight.shadows_enabled);
+    assert!(!card.has(params::relight::SHADOWS.label));
+    assert!(card.has(params::relight::SIZE.label));
+    assert!(card.click("Cast shadows"));
+    assert!(card.components[0].settings.relight.shadows_enabled);
+    assert_eq!(card.components[0].settings.relight.shadows, 35.0);
+    assert!(card.has(params::relight::SHADOWS.label));
 }
 
 #[test]
