@@ -472,7 +472,10 @@ fn apply_local_creative_mask_effect_nodes(pos: vec2<i32>, input_rgb: vec3<f32>) 
         } else if effect_id == MASK_EFFECT_PIXELATE_ID {
             adjusted = apply_pixelate(pos, rgb, primary);
         } else if effect_id == MASK_EFFECT_FOG_ID {
-            adjusted = apply_fog(pos, rgb, primary, secondary, Common::mask_data[index].adjust_2_field);
+            adjusted = apply_fog(
+                pos, rgb, primary, secondary,
+                Common::mask_data[index].adjust_2_field, Common::mask_data[index].film_effects,
+            );
         } else if effect_id == MASK_EFFECT_SMOKE_ID {
             adjusted = apply_smoke(pos, rgb, primary, secondary, Common::mask_data[index].adjust_2_field);
         } else if effect_id == MASK_EFFECT_HALATION_ID {

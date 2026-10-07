@@ -9,6 +9,19 @@ pub(super) const SCENE_DEPTH_EDGE: u32 = 1024;
 /// Stored depth, smooth depth and its two gradients (`scene_surface`).
 pub(super) const SCENE_DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 
+/// Image lights (tone_analysis.wgsl): grid cells along the full image's
+/// longer edge. Textures and the cell buffer are sized for a square grid.
+pub(super) const IMAGE_LIGHT_GRID_LONG: u32 = 160;
+/// One-stop brightness bands summed per image-light grid cell.
+pub(super) const IMAGE_LIGHT_BANDS: u32 = 16;
+/// Bytes of one grid cell: an RGBA f32 sum per band.
+pub(super) const IMAGE_LIGHT_CELL_BYTES: u64 = IMAGE_LIGHT_BANDS as u64 * 16;
+pub(super) const IMAGE_LIGHT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
+
+pub(super) const fn image_light_cells_bytes() -> u64 {
+    IMAGE_LIGHT_GRID_LONG as u64 * IMAGE_LIGHT_GRID_LONG as u64 * IMAGE_LIGHT_CELL_BYTES
+}
+
 const MAX_UPLOAD_SCRATCH_BYTES: usize = 8 * 1024 * 1024;
 
 std::thread_local! {
@@ -339,6 +352,24 @@ pub(super) fn build_gpu_resource_plan(input: GpuResourcePlanInput) -> Result<Gpu
         "tone statistics buffer",
         GpuResourceResidency::Persistent,
         aligned_buffer_bytes(TONE_STATS_SIZE_BYTES)?,
+    );
+    push_entry(
+        &mut entries,
+        "image-light grid buffer",
+        GpuResourceResidency::Persistent,
+        aligned_buffer_bytes(image_light_cells_bytes())?,
+    );
+    push_entry(
+        &mut entries,
+        "image-light textures",
+        GpuResourceResidency::Persistent,
+        3 * texture_allocation_bytes(
+            IMAGE_LIGHT_GRID_LONG,
+            IMAGE_LIGHT_GRID_LONG,
+            1,
+            1,
+            IMAGE_LIGHT_FORMAT,
+        )?,
     );
 
     let rgba32_readback = aligned_copy_buffer_bytes(input.width, input.height, 16)?

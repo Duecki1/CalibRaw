@@ -37,6 +37,10 @@ pub(in crate::pipeline::gpu) struct BindGroups {
     pub(in crate::pipeline::gpu) bg_adjust_creative_after_blur: wgpu::BindGroup,
     pub(in crate::pipeline::gpu) bg_adjust_render: wgpu::BindGroup,
     pub(in crate::pipeline::gpu) bg_adjust_render_after_blur: wgpu::BindGroup,
+    pub(in crate::pipeline::gpu) bg_image_light_accumulate: wgpu::BindGroup,
+    pub(in crate::pipeline::gpu) bg_image_light_resolve: wgpu::BindGroup,
+    pub(in crate::pipeline::gpu) bg_image_light_blur_horizontal: wgpu::BindGroup,
+    pub(in crate::pipeline::gpu) bg_image_light_blur_vertical: wgpu::BindGroup,
 }
 
 pub(in crate::pipeline::gpu) fn create_bind_groups(
@@ -54,6 +58,7 @@ pub(in crate::pipeline::gpu) fn create_bind_groups(
         tone_histogram_buffer,
         tone_stats_buffer,
         profile_buffer,
+        image_light_cells_buffer,
         ..
     } = buffers;
     let PipelineSurfaces {
@@ -73,6 +78,9 @@ pub(in crate::pipeline::gpu) fn create_bind_groups(
         mask_view,
         light_rays_mask_view,
         scene_depth_view,
+        image_light_view,
+        image_light_core_view,
+        image_light_tail_view,
         mask_sampler,
         ..
     } = surfaces;
@@ -519,6 +527,7 @@ pub(in crate::pipeline::gpu) fn create_bind_groups(
                     texture_binding(35, scene_depth_view),
                     buffer_binding(16, tone_stats_buffer),
                     texture_binding(36, pixelate_blocks_view),
+                    texture_binding(45, image_light_view),
                 ],
             )
         };
@@ -552,6 +561,51 @@ pub(in crate::pipeline::gpu) fn create_bind_groups(
         make_adjust_render_bind_group("bg scene look view and output", tex2_view);
     let bg_adjust_render_after_blur =
         make_adjust_render_bind_group("bg scene look view and output after mask Blur", tex1_view);
+
+    let bg_image_light_accumulate = create_bind_group(
+        device,
+        "bg image-light accumulation",
+        &layouts.bgl_image_light_accumulate,
+        &[
+            buffer_binding(0, camera_uniforms_buffer),
+            texture_binding(11, scene_view),
+            buffer_binding(20, profile_buffer),
+            buffer_binding(38, image_light_cells_buffer),
+        ],
+    );
+    let bg_image_light_resolve = create_bind_group(
+        device,
+        "bg image-light resolve",
+        &layouts.bgl_image_light_resolve,
+        &[
+            buffer_binding(0, camera_uniforms_buffer),
+            buffer_binding(16, tone_stats_buffer),
+            buffer_binding(38, image_light_cells_buffer),
+            texture_binding(39, image_light_view),
+        ],
+    );
+    let bg_image_light_blur_horizontal = create_bind_group(
+        device,
+        "bg image-light horizontal blur",
+        &layouts.bgl_image_light_blur_horizontal,
+        &[
+            buffer_binding(0, camera_uniforms_buffer),
+            texture_binding(40, image_light_view),
+            texture_binding(41, image_light_core_view),
+            texture_binding(42, image_light_tail_view),
+        ],
+    );
+    let bg_image_light_blur_vertical = create_bind_group(
+        device,
+        "bg image-light vertical blur",
+        &layouts.bgl_image_light_blur_vertical,
+        &[
+            buffer_binding(0, camera_uniforms_buffer),
+            texture_binding(43, image_light_core_view),
+            texture_binding(44, image_light_tail_view),
+            texture_binding(39, image_light_view),
+        ],
+    );
 
     BindGroups {
         scene_tone_bind_group,
@@ -588,6 +642,10 @@ pub(in crate::pipeline::gpu) fn create_bind_groups(
         bg_adjust_creative_after_blur,
         bg_adjust_render,
         bg_adjust_render_after_blur,
+        bg_image_light_accumulate,
+        bg_image_light_resolve,
+        bg_image_light_blur_horizontal,
+        bg_image_light_blur_vertical,
     }
 }
 
