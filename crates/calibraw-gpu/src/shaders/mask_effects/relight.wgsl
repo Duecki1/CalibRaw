@@ -18,7 +18,12 @@
 // full frame. Monocular depth carries no focal length.
 const RELIGHT_FOCAL_TAN: f32 = 0.4;
 const RELIGHT_NORMAL_TAPS: u32 = 12u;
-const RELIGHT_SHADOW_STEPS: u32 = 40u;
+// Shadow-march steps: one per few depth texels of the ray's image path, within
+// these bounds. Too few steps skip over a silhouette between them and leave
+// banded copies of its shadow.
+const RELIGHT_MIN_SHADOW_STEPS: f32 = 24.0;
+const RELIGHT_MAX_SHADOW_STEPS: f32 = 96.0;
+const RELIGHT_TEXELS_PER_SHADOW_STEP: f32 = 4.0;
 // Narrowest shadow-sample footprint in level-0 texels: about one pixel of the
 // depth model (roughly 700 across the image), whose silhouettes are blocky.
 const RELIGHT_MIN_SHADOW_FOOTPRINT: f32 = 4.0;
@@ -142,16 +147,20 @@ fn relight_blocked(
 //
 // Each step is a cone section toward the light: its footprint widens with the
 // distance from the receiver and with light size, as a real penumbra does, and
-// is never narrower than the step spacing or a depth-model pixel. The step reads
-// the mip level whose texels are half that footprint, filters the occlusion
-// test over it and averages three taps across the ray, so silhouettes in the
-// low-resolution depth map give soft shadow edges instead of texel staircases,
-// and thin structures fade instead of striping.
+// is never narrower than twice the step spacing or a depth-model pixel, so
+// consecutive steps cover the path without gaps. The step reads the mip level
+// whose texels are half that footprint, filters the occlusion test over it and
+// averages three taps across the ray, so silhouettes in the low-resolution
+// depth map give soft shadow edges instead of texel staircases, and thin
+// structures fade instead of striping. `jitter` in [0, 1) offsets the steps
+// per pixel, so what aliasing remains becomes fine dither rather than
+// contour-like copies of a silhouette's shadow.
 fn relight_visibility(
     camera: RelightCamera,
     surface: vec3<f32>,
     light: vec3<f32>,
     size: f32,
+    jitter: f32,
 ) -> f32 {
     let path = light - surface;
     let path_length = length(path);
@@ -166,9 +175,14 @@ fn relight_visibility(
     let first = min(1.5 / path_texels, 0.5);
     let penumbra_rate = mix(0.01, 0.25, size);
     let top_level = f32(textureNumLevels(scene_depth_tex)) - 1.0;
+    let steps = clamp(
+        ceil(path_texels / RELIGHT_TEXELS_PER_SHADOW_STEP),
+        RELIGHT_MIN_SHADOW_STEPS,
+        RELIGHT_MAX_SHADOW_STEPS,
+    );
     var visibility = 1.0;
-    for (var index = 0u; index < RELIGHT_SHADOW_STEPS; index = index + 1u) {
-        let fraction = (f32(index) + 1.0) / f32(RELIGHT_SHADOW_STEPS);
+    for (var index = 0.0; index < steps; index = index + 1.0) {
+        let fraction = (index + jitter) / steps;
         // Denser near the receiver, where contact shadows are narrow.
         let t = mix(first, 1.0, fraction * fraction);
         let position = surface + path * t;
@@ -180,8 +194,8 @@ fn relight_visibility(
         let travel = path_length * t;
         // Penumbra radius in the image at this step's distance.
         let cone = travel * penumbra_rate / (2.0 * RELIGHT_FOCAL_TAN * position.z);
-        let spacing = path_texels * (1.0 - first) * 2.0 * fraction / f32(RELIGHT_SHADOW_STEPS);
-        let footprint = max(max(cone / texel, spacing), RELIGHT_MIN_SHADOW_FOOTPRINT);
+        let spacing = path_texels * (1.0 - first) * 2.0 * fraction / steps;
+        let footprint = max(max(cone / texel, 2.0 * spacing), RELIGHT_MIN_SHADOW_FOOTPRINT);
         // The filtered test ramps over one texel of the level, half the footprint.
         let level = i32(clamp(round(log2(footprint) - 1.0), 0.0, top_level));
         let width = 0.01 * position.z + travel * penumbra_rate;
@@ -193,6 +207,13 @@ fn relight_visibility(
         if visibility <= 0.0 { break; }
     }
     return visibility;
+}
+
+// Interleaved gradient noise in [0, 1) per full-image pixel, so export tiles
+// and the preview dither alike.
+fn relight_jitter(pixel: vec2<f32>) -> f32 {
+    let p = floor(pixel);
+    return fract(52.9829189 * fract(dot(p, vec2<f32>(0.06711056, 0.00583715))));
 }
 
 fn apply_relight(
@@ -262,7 +283,8 @@ fn apply_relight(
     var visibility = 1.0;
     let shadows = clamp(tertiary.y / 100.0, 0.0, 1.0);
     if has_depth && shadows > 1e-6 {
-        visibility = mix(1.0, relight_visibility(camera, surface, light, size), shadows);
+        let jitter = relight_jitter(uv * full_size);
+        visibility = mix(1.0, relight_visibility(camera, surface, light, size, jitter), shadows);
     }
     let irradiance = diffuse * falloff * visibility;
 

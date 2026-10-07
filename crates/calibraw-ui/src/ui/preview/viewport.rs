@@ -696,8 +696,9 @@ impl Preview {
             Self::paint_tool_hint(ui, app, layout.visible_rect);
         }
 
-        // Lights go last: drawn over the mask overlay, and their handles sit
-        // above the canvas response, so they take the pointer and scroll.
+        // Effect controls go last: drawn over the mask overlay, and their
+        // handles sit above the canvas response, so they take the pointer and
+        // scroll.
         if gesture_free
             && !viewport.crop_preview
             && !viewport.white_balance_canvas
@@ -705,10 +706,10 @@ impl Preview {
         {
             let screen_layout =
                 moduwu_design::ScreenLayout::from_size(ui.ctx().content_rect().size());
-            let input = tools::LightHandleInput::of(ui.ctx(), app, screen_layout);
+            let input = tools::EffectHandleInput::of(ui.ctx(), app, screen_layout);
             if !input.is_empty() {
-                let actions = Self::light_handle_actions(ui, &input, layout);
-                app.apply_light_handle_actions(actions);
+                let actions = Self::effect_handle_actions(ui, &input, layout);
+                app.apply_effect_handle_actions(actions);
             }
         }
     }

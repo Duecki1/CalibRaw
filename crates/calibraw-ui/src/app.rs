@@ -56,9 +56,9 @@ use worker::drain_worker_events;
 use worker::spawn_ui_worker;
 
 mod develop_state;
+mod effect_handles;
 mod export_state;
 mod job_state;
-mod light_handles;
 mod mask_properties;
 mod mask_state;
 mod mask_strip;
@@ -67,9 +67,11 @@ mod persistence_state;
 mod preview_state;
 mod ui_state;
 pub(crate) use develop_state::*;
+pub(crate) use effect_handles::{
+    EffectComponentRef, EffectHandle, EffectHandleAction, EffectHandleEdit,
+};
 pub(crate) use export_state::*;
 pub(crate) use job_state::*;
-pub(crate) use light_handles::{EffectComponentRef, LightHandle, LightHandleAction};
 pub(crate) use mask_properties::{
     apply_mask_property_actions, MaskPropertiesControls, MaskPropertyAction,
 };

@@ -111,7 +111,7 @@ AI models are downloaded once, on first use and only after you agree; they are v
 
 ### Creative Effects
 
-Apply effects to the whole photo or stack them on a local mask. Each card keeps its main controls visible, with optional details collapsed. Hide a card to compare, reset its settings, or remove it independently.
+Apply effects to the whole photo or stack them on a local mask. Each card keeps its main controls visible, with optional details collapsed. Hide a card to compare, reset its settings, or remove it independently. While their card is open, Relight, Light Rays, Radial Blur, Tilt-Shift and Vignette also show controls on the photo: drag a light or center into place, and rotate or widen the Tilt-Shift focus band directly.
 
 - **Blur & Movement:** Soften distractions with Blur, shape bokeh with Lens Blur, add directional trails with Motion Blur, zoom or spin with Radial Blur, or keep a band in focus with Tilt Shift. Feather the mask for a smooth transition.
 - **Glow & Light Rays:** Glow spreads colored light from bright pixels selected by the mask. Light Rays uses the mask to shape light shafts. Both can spread beyond the selection. Drag position pads to place a center or source; Precise position also lets you place a ray source beyond the image.
