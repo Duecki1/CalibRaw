@@ -23,12 +23,14 @@
 @group(0) @binding(36) var pixelate_blocks_tex: texture_2d<f32>;
 @group(0) @binding(37) var pixelate_blocks_out: texture_storage_2d<rgba16float /* CALIBRAW_WORK_FORMAT */, write>;
 
-fn local_mask_uv(pos: vec2<i32>) -> vec2<f32> {
+// `pos` is in tile pixels with integers at pixel centers, as `local_effects_at`
+// reads them; fractional positions address the mask between pixel centers.
+fn local_mask_uv(pos: vec2<f32>) -> vec2<f32> {
     let full_size = vec2<f32>(
         f32(max(Common::camera_uniforms.full_width, 1u)),
         f32(max(Common::camera_uniforms.full_height, 1u)),
     );
-    let global_pos = vec2<f32>(pos + Common::tile_origin()) + vec2<f32>(0.5);
+    let global_pos = pos + vec2<f32>(Common::tile_origin()) + vec2<f32>(0.5);
     let full_uv = clamp(global_pos / full_size, vec2<f32>(0.0), vec2<f32>(1.0));
     if Common::scene_tone_uniforms.mask_counts.w == 0u {
         return full_uv;
@@ -66,6 +68,12 @@ fn local_mask_texture_uv(region_uv: vec2<f32>) -> vec2<f32> {
 }
 
 fn local_mask_weight(pos: vec2<i32>, index: u32) -> f32 {
+    return local_mask_weight_at(vec2<f32>(pos), index);
+}
+
+// Mask coverage at a tile pixel position that may lie between pixel centers.
+// Effects without a mask layer (global effects) cover every position fully.
+fn local_mask_weight_at(pos: vec2<f32>, index: u32) -> f32 {
     let layer = Common::mask_data[index].point_color_meta.z;
     if layer == 0xffffffffu { return 1.0; }
     let uv = local_mask_uv(pos);
