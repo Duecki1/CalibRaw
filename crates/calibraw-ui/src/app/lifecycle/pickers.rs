@@ -175,149 +175,187 @@ impl CalibRawApp {
 
         while let Some(result) = calibraw_ffi::take_picker_result() {
             self.android.picker_pending = false;
-            match result {
-                calibraw_ffi::PickerResult::Picked(document) => {
-                    self.library.refresh(&self.egui_ctx);
-                    let batch_owned_open = self.export.android_batch_load_pending;
-                    let profile_reload_owned_open =
-                        self.android.pending_android_profile_reload.is_some();
-                    let reset_reload_owned_open =
-                        std::mem::take(&mut self.android.pending_android_library_reset_reload);
-                    let library_refresh_owned_open = !batch_owned_open
-                        && !profile_reload_owned_open
-                        && !reset_reload_owned_open
-                        && self.ai.library_mask_refresh.is_some();
-                    let keep_library_for_profile_reload =
-                        profile_reload_owned_open && self.ui.active_tab == AppTab::Library;
-                    let keep_library_for_reset =
-                        reset_reload_owned_open && self.ui.active_tab == AppTab::Library;
-                    // Picker completion is owned by the background reload/batch
-                    // workflow, so avoid interactive tab-exit cancellation hooks.
-                    self.ui.active_tab = if batch_owned_open
-                        || library_refresh_owned_open
-                        || keep_library_for_profile_reload
-                        || keep_library_for_reset
-                    {
-                        AppTab::Library
-                    } else {
-                        AppTab::Develop
-                    };
-                    let sidecar_target = crate::sidecar::SidecarTarget::Android {
-                        raw_uri: document.library_uri,
-                        display_name: document.display_name.clone(),
-                    };
-                    let source = DocumentSource {
-                        path: document.path,
-                        label: document.display_name,
-                        sidecar_target,
-                        delete_after_decode: document.delete_after_decode,
-                        raw_fd_guard: document.raw_fd_guard,
-                    };
-                    match self.android.pending_android_profile_reload.take() {
-                        Some(reload) => self.reopen_with_camera_profile(source, reload, frame),
-                        None => self.open_document(source, frame),
-                    }
+            self.handle_android_picker_result(result, frame);
+        }
+        self.poll_android_external_open(frame);
+    }
 
-                    if self.develop.load_receiver.is_none() {
-                        let error = self.ui.notice.clone().unwrap_or_else(|| {
-                            "The photo decode worker could not be started.".to_owned()
-                        });
-                        if batch_owned_open {
-                            self.export.android_batch_load_pending = false;
-                            self.complete_android_library_batch_export_item(Err(error));
-                        } else if library_refresh_owned_open {
-                            self.complete_android_library_ai_mask_open_failure(error, frame);
-                        }
-                    }
+    /// Opens photos other apps sent ("Open with", Share) once no open that
+    /// CalibRaw requested is in flight. The picker-result handling below
+    /// attributes a result to whichever workflow is pending, so an external
+    /// photo must never arrive while one is.
+    #[cfg(target_os = "android")]
+    fn poll_android_external_open(&mut self, frame: &eframe::Frame) {
+        if !calibraw_ffi::has_external_open_result() {
+            return;
+        }
+        let requested_open_in_flight = self.android.picker_pending
+            || self.export.android_batch_load_pending
+            || self.android.pending_android_profile_reload.is_some()
+            || self.android.pending_android_library_reset_reload
+            || self.ai.library_mask_refresh.is_some();
+        if requested_open_in_flight {
+            // Those workflows finish without user input; check again shortly.
+            self.egui_ctx
+                .request_repaint_after(std::time::Duration::from_millis(250));
+            return;
+        }
+        if let Some(result) = calibraw_ffi::take_external_open_result() {
+            self.handle_android_picker_result(result, frame);
+        }
+        if calibraw_ffi::has_external_open_result() {
+            self.egui_ctx.request_repaint();
+        }
+    }
+
+    #[cfg(target_os = "android")]
+    fn handle_android_picker_result(
+        &mut self,
+        result: calibraw_ffi::PickerResult,
+        frame: &eframe::Frame,
+    ) {
+        match result {
+            calibraw_ffi::PickerResult::Picked(document) => {
+                self.library.refresh(&self.egui_ctx);
+                let batch_owned_open = self.export.android_batch_load_pending;
+                let profile_reload_owned_open =
+                    self.android.pending_android_profile_reload.is_some();
+                let reset_reload_owned_open =
+                    std::mem::take(&mut self.android.pending_android_library_reset_reload);
+                let library_refresh_owned_open = !batch_owned_open
+                    && !profile_reload_owned_open
+                    && !reset_reload_owned_open
+                    && self.ai.library_mask_refresh.is_some();
+                let keep_library_for_profile_reload =
+                    profile_reload_owned_open && self.ui.active_tab == AppTab::Library;
+                let keep_library_for_reset =
+                    reset_reload_owned_open && self.ui.active_tab == AppTab::Library;
+                // Picker completion is owned by the background reload/batch
+                // workflow, so avoid interactive tab-exit cancellation hooks.
+                self.ui.active_tab = if batch_owned_open
+                    || library_refresh_owned_open
+                    || keep_library_for_profile_reload
+                    || keep_library_for_reset
+                {
+                    AppTab::Library
+                } else {
+                    AppTab::Develop
+                };
+                let sidecar_target = crate::sidecar::SidecarTarget::Android {
+                    raw_uri: document.library_uri,
+                    display_name: document.display_name.clone(),
+                };
+                let source = DocumentSource {
+                    path: document.path,
+                    label: document.display_name,
+                    sidecar_target,
+                    delete_after_decode: document.delete_after_decode,
+                    raw_fd_guard: document.raw_fd_guard,
+                };
+                match self.android.pending_android_profile_reload.take() {
+                    Some(reload) => self.reopen_with_camera_profile(source, reload, frame),
+                    None => self.open_document(source, frame),
                 }
-                calibraw_ffi::PickerResult::BatchImported {
-                    imported,
-                    failed,
-                    errors,
-                } => {
-                    self.develop_ui.loading_thumbnail.clear();
-                    self.android.pending_android_library_reset_reload = false;
-                    // Batch import completion updates the visible tab directly;
-                    // no interactive operation should be cancelled here.
-                    self.ui.active_tab = AppTab::Library;
-                    self.library.refresh(&self.egui_ctx);
-                    self.ui.status = match (imported, failed) {
-                        (0, 0) => "No photos were imported.".to_owned(),
-                        (_, 0) => format!(
-                            "Imported {imported} {}.",
-                            if imported == 1 { "photo" } else { "photos" }
-                        ),
-                        _ => format!(
-                            "Imported {imported} {}; {failed} failed.",
-                            if imported == 1 { "photo" } else { "photos" }
-                        ),
-                    };
-                    if failed > 0 {
-                        self.report_error(
-                            ErrorKind::Import,
-                            if errors.is_empty() {
-                                format!("{failed} selected photo imports failed.")
-                            } else {
-                                format!("Some photos could not be imported:\n{errors}")
-                            },
-                        );
-                    } else {
-                        self.ui.notice = None;
-                    }
-                }
-                calibraw_ffi::PickerResult::Cancelled => {
-                    self.develop_ui.loading_thumbnail.clear();
-                    self.android.pending_android_profile_reload = None;
-                    let was_reset_reload =
-                        std::mem::take(&mut self.android.pending_android_library_reset_reload);
-                    if self.export.android_batch_load_pending {
-                        self.export.android_batch_load_pending = false;
-                        self.complete_android_library_batch_export_item(Err(
-                            "RAW open was canceled".to_owned(),
-                        ));
-                    } else if self.ai.library_mask_refresh.is_some() {
-                        self.complete_android_library_ai_mask_open_failure(
-                            "RAW open was canceled".to_owned(),
-                            frame,
-                        );
-                    } else if was_reset_reload {
-                        self.report_error(ErrorKind::OpenPhoto, "The photo could not be reloaded after resetting adjustments. Reopen it from the Library before continuing in Develop."
-                                .to_owned(),);
-                    } else {
-                        self.ui.notice = Some("No photos selected.".to_owned());
-                    }
-                }
-                calibraw_ffi::PickerResult::Failed(error) => {
-                    self.develop_ui.loading_thumbnail.clear();
-                    let was_profile_reload =
-                        self.android.pending_android_profile_reload.take().is_some();
-                    let was_reset_reload =
-                        std::mem::take(&mut self.android.pending_android_library_reset_reload);
-                    if self.export.android_batch_load_pending
-                        && !was_profile_reload
-                        && !was_reset_reload
-                    {
+
+                if self.develop.load_receiver.is_none() {
+                    let error = self.ui.notice.clone().unwrap_or_else(|| {
+                        "The photo decode worker could not be started.".to_owned()
+                    });
+                    if batch_owned_open {
                         self.export.android_batch_load_pending = false;
                         self.complete_android_library_batch_export_item(Err(error));
-                    } else if self.ai.library_mask_refresh.is_some()
-                        && !was_profile_reload
-                        && !was_reset_reload
-                    {
+                    } else if library_refresh_owned_open {
                         self.complete_android_library_ai_mask_open_failure(error, frame);
-                    } else {
-                        self.report_error(
-                            ErrorKind::OpenPhoto,
-                            if was_profile_reload {
-                                format!("Could not reload RAW for camera profile: {error}")
-                            } else if was_reset_reload {
-                                format!(
+                    }
+                }
+            }
+            calibraw_ffi::PickerResult::BatchImported {
+                imported,
+                failed,
+                errors,
+            } => {
+                self.develop_ui.loading_thumbnail.clear();
+                self.android.pending_android_library_reset_reload = false;
+                // Batch import completion updates the visible tab directly;
+                // no interactive operation should be cancelled here.
+                self.ui.active_tab = AppTab::Library;
+                self.library.refresh(&self.egui_ctx);
+                self.ui.status = match (imported, failed) {
+                    (0, 0) => "No photos were imported.".to_owned(),
+                    (_, 0) => format!(
+                        "Imported {imported} {}.",
+                        if imported == 1 { "photo" } else { "photos" }
+                    ),
+                    _ => format!(
+                        "Imported {imported} {}; {failed} failed.",
+                        if imported == 1 { "photo" } else { "photos" }
+                    ),
+                };
+                if failed > 0 {
+                    self.report_error(
+                        ErrorKind::Import,
+                        if errors.is_empty() {
+                            format!("{failed} selected photo imports failed.")
+                        } else {
+                            format!("Some photos could not be imported:\n{errors}")
+                        },
+                    );
+                } else {
+                    self.ui.notice = None;
+                }
+            }
+            calibraw_ffi::PickerResult::Cancelled => {
+                self.develop_ui.loading_thumbnail.clear();
+                self.android.pending_android_profile_reload = None;
+                let was_reset_reload =
+                    std::mem::take(&mut self.android.pending_android_library_reset_reload);
+                if self.export.android_batch_load_pending {
+                    self.export.android_batch_load_pending = false;
+                    self.complete_android_library_batch_export_item(Err(
+                        "RAW open was canceled".to_owned()
+                    ));
+                } else if self.ai.library_mask_refresh.is_some() {
+                    self.complete_android_library_ai_mask_open_failure(
+                        "RAW open was canceled".to_owned(),
+                        frame,
+                    );
+                } else if was_reset_reload {
+                    self.report_error(ErrorKind::OpenPhoto, "The photo could not be reloaded after resetting adjustments. Reopen it from the Library before continuing in Develop."
+                            .to_owned(),);
+                } else {
+                    self.ui.notice = Some("No photos selected.".to_owned());
+                }
+            }
+            calibraw_ffi::PickerResult::Failed(error) => {
+                self.develop_ui.loading_thumbnail.clear();
+                let was_profile_reload =
+                    self.android.pending_android_profile_reload.take().is_some();
+                let was_reset_reload =
+                    std::mem::take(&mut self.android.pending_android_library_reset_reload);
+                if self.export.android_batch_load_pending
+                    && !was_profile_reload
+                    && !was_reset_reload
+                {
+                    self.export.android_batch_load_pending = false;
+                    self.complete_android_library_batch_export_item(Err(error));
+                } else if self.ai.library_mask_refresh.is_some()
+                    && !was_profile_reload
+                    && !was_reset_reload
+                {
+                    self.complete_android_library_ai_mask_open_failure(error, frame);
+                } else {
+                    self.report_error(
+                        ErrorKind::OpenPhoto,
+                        if was_profile_reload {
+                            format!("Could not reload RAW for camera profile: {error}")
+                        } else if was_reset_reload {
+                            format!(
                                 "Could not reload the photo after resetting adjustments: {error}"
                             )
-                            } else {
-                                format!("Could not import the selected file: {error}")
-                            },
-                        );
-                    }
+                        } else {
+                            format!("Could not import the selected file: {error}")
+                        },
+                    );
                 }
             }
         }

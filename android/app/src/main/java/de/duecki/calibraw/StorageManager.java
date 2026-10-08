@@ -32,29 +32,38 @@ final class StorageManager {
     private static final long STALE_TEMP_FILE_AGE_MS = 24L * 60L * 60L * 1000L;
     private static final String RAW_PICKER_URI_KEY = "raw-document-uri";
 
-    interface Callbacks {
+    /** Receives the outcome of copying documents into the library. */
+    interface ImportCallbacks {
+        void onFilePickedFd(int fd, String displayName, String libraryUri, String error);
+
+        void onImportBatchFinished(int importedCount, int failedCount, String errors);
+    }
+
+    interface Callbacks extends ImportCallbacks {
         void onFilePicked(
                 String cachedPath,
                 String displayName,
                 String libraryUri,
                 String error,
                 boolean temporary);
-
-        void onFilePickedFd(int fd, String displayName, String libraryUri, String error);
-
-        void onImportBatchFinished(int importedCount, int failedCount, String errors);
-
     }
 
     private final Activity storage;
     private final Callbacks callbacks;
+    private final ImportCallbacks externalCallbacks;
     private final ThumbnailCache thumbnailCache;
     private final PickerLocationStore pickerLocations;
     private volatile String selectedRawLibraryFolder = "";
 
-    StorageManager(Activity storage, Callbacks callbacks) {
+    /**
+     * @param externalCallbacks receives photos other apps sent through "Open with" or Share.
+     *     They are kept apart from {@code callbacks} because Rust matches those results to the
+     *     open it requested.
+     */
+    StorageManager(Activity storage, Callbacks callbacks, ImportCallbacks externalCallbacks) {
         this.storage = storage;
         this.callbacks = callbacks;
+        this.externalCallbacks = externalCallbacks;
         this.thumbnailCache = new ThumbnailCache(storage);
         this.pickerLocations = new PickerLocationStore(storage);
     }
@@ -83,9 +92,52 @@ final class StorageManager {
             return;
         }
         new Thread(
-                () -> importDocuments(uris),
+                () -> importDocuments(uris, callbacks, true),
                 uris.size() == 1 ? "CalibRaw document import" : "CalibRaw document batch import")
                 .start();
+    }
+
+    /**
+     * Imports photos another app sent with ACTION_VIEW, ACTION_SEND or ACTION_SEND_MULTIPLE.
+     * Returns false when the intent carries no photo, for example a launcher start.
+     */
+    boolean openExternalDocuments(Intent intent) {
+        ArrayList<Uri> uris = externalDocumentUris(intent);
+        if (uris.isEmpty()) {
+            return false;
+        }
+        // The sender's URI is not a DocumentsContract location, so it must not become the
+        // picker's initial folder.
+        new Thread(
+                () -> importDocuments(uris, externalCallbacks, false),
+                "CalibRaw shared photo import").start();
+        return true;
+    }
+
+    @SuppressWarnings("deprecation") // The typed getParcelableExtra overloads need API 33.
+    private static ArrayList<Uri> externalDocumentUris(Intent intent) {
+        String action = intent.getAction();
+        if (Intent.ACTION_VIEW.equals(action)) {
+            return selectedDocumentUris(intent);
+        }
+        ArrayList<Uri> uris = new ArrayList<>();
+        HashSet<String> seen = new HashSet<>();
+        if (Intent.ACTION_SEND.equals(action)) {
+            Object stream = intent.getParcelableExtra(Intent.EXTRA_STREAM);
+            if (stream instanceof Uri && seen.add(stream.toString())) {
+                uris.add((Uri) stream);
+            }
+        } else if (Intent.ACTION_SEND_MULTIPLE.equals(action)) {
+            ArrayList<?> streams = intent.getParcelableArrayListExtra(Intent.EXTRA_STREAM);
+            if (streams != null) {
+                for (Object stream : streams) {
+                    if (stream instanceof Uri && seen.add(stream.toString())) {
+                        uris.add((Uri) stream);
+                    }
+                }
+            }
+        }
+        return uris;
     }
 
     void scavengeTemporaryRawFiles() {
@@ -191,10 +243,11 @@ final class StorageManager {
         return uris;
     }
 
-    private void importDocuments(ArrayList<Uri> uris) {
+    private void importDocuments(
+            ArrayList<Uri> uris, ImportCallbacks target, boolean rememberPickerLocation) {
         if (uris.size() == 1) {
             Uri uri = uris.get(0);
-            importSingleDocument(uri, queryDisplayName(uri));
+            importSingleDocument(uri, queryDisplayName(uri), target, rememberPickerLocation);
             return;
         }
 
@@ -206,7 +259,7 @@ final class StorageManager {
             StoredRaw stored = null;
             try {
                 stored = importDocumentIntoLibrary(uri, displayName);
-                if (imported == 0) {
+                if (imported == 0 && rememberPickerLocation) {
                     pickerLocations.writeContentUri(RAW_PICKER_URI_KEY, uri);
                 }
                 imported++;
@@ -223,20 +276,26 @@ final class StorageManager {
         if (failed > errors.size()) {
             errors.add((failed - errors.size()) + " additional import(s) failed");
         }
-        callbacks.onImportBatchFinished(imported, failed, String.join("\n", errors));
+        target.onImportBatchFinished(imported, failed, String.join("\n", errors));
     }
 
-    private void importSingleDocument(Uri uri, String displayName) {
+    private void importSingleDocument(
+            Uri uri,
+            String displayName,
+            ImportCallbacks target,
+            boolean rememberPickerLocation) {
         StoredRaw stored = null;
         try {
             stored = importDocumentIntoLibrary(uri, displayName);
-            pickerLocations.writeContentUri(RAW_PICKER_URI_KEY, uri);
-            deliverLibraryRawFd(stored.uri, stored.displayName);
+            if (rememberPickerLocation) {
+                pickerLocations.writeContentUri(RAW_PICKER_URI_KEY, uri);
+            }
+            deliverLibraryRawFd(stored.uri, stored.displayName, target);
         } catch (Exception error) {
             if (stored != null) {
                 deleteStoredRaw(stored.uri);
             }
-            callbacks.onFilePicked("", displayName, "", error.toString(), false);
+            target.onFilePickedFd(-1, displayName, "", error.toString());
         }
     }
 
@@ -384,7 +443,7 @@ final class StorageManager {
         new Thread(
                 () -> {
                     try {
-                        deliverLibraryRawFd(Uri.parse(uriText), displayName);
+                        deliverLibraryRawFd(Uri.parse(uriText), displayName, callbacks);
                     } catch (Exception error) {
                         callbacks.onFilePickedFd(-1, displayName, uriText, error.toString());
                     }
@@ -621,12 +680,13 @@ final class StorageManager {
         }
     }
 
-    private void deliverLibraryRawFd(Uri source, String displayName) throws Exception {
+    private void deliverLibraryRawFd(Uri source, String displayName, ImportCallbacks target)
+            throws Exception {
         verifyFileRawLibraryIdentity(source, displayName);
         int fd = openRawLibraryFd(source.toString());
         boolean handedOff = false;
         try {
-            callbacks.onFilePickedFd(fd, displayName, source.toString(), "");
+            target.onFilePickedFd(fd, displayName, source.toString(), "");
             handedOff = true;
         } finally {
             if (!handedOff) {

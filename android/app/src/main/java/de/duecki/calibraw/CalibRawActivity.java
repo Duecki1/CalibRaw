@@ -75,6 +75,16 @@ public final class CalibRawActivity extends NativeActivity {
                 nativeOnImportBatchFinished(importedCount, failedCount, errors);
             }
 
+        }, new StorageManager.ImportCallbacks() {
+            @Override
+            public void onFilePickedFd(int fd, String displayName, String libraryUri, String error) {
+                nativeOnExternalFilePickedFd(fd, displayName, libraryUri, error);
+            }
+
+            @Override
+            public void onImportBatchFinished(int importedCount, int failedCount, String errors) {
+                nativeOnExternalImportBatchFinished(importedCount, failedCount, errors);
+            }
         });
         profileImporter = new ProfileImporter(this, new ProfileImporter.Callbacks() {
             @Override
@@ -97,6 +107,27 @@ public final class CalibRawActivity extends NativeActivity {
                     OnBackInvokedDispatcher.PRIORITY_DEFAULT,
                     this::handleBack);
         }
+        // A restored activity already handled its launch intent before it was recreated.
+        if (savedInstanceState == null) {
+            openExternalDocuments(getIntent());
+        }
+    }
+
+    // singleTask delivers "Open with" and Share to the running activity here.
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        openExternalDocuments(intent);
+    }
+
+    private void openExternalDocuments(Intent intent) {
+        // Recents relaunches the task with its original intent; that photo was already imported.
+        if (intent == null
+                || (intent.getFlags() & Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY) != 0) {
+            return;
+        }
+        storageManager.openExternalDocuments(intent);
     }
 
     @Override
@@ -216,6 +247,10 @@ public final class CalibRawActivity extends NativeActivity {
     private static native void nativeOnFilePickedFd(
             int fd, String displayName, String libraryUri, String error);
     private static native void nativeOnImportBatchFinished(
+            int importedCount, int failedCount, String errors);
+    private static native void nativeOnExternalFilePickedFd(
+            int fd, String displayName, String libraryUri, String error);
+    private static native void nativeOnExternalImportBatchFinished(
             int importedCount, int failedCount, String errors);
     private static native void nativeOnCameraProfileFolderImportStarted(String displayName);
     private static native void nativeOnCameraProfileFolderPicked(
