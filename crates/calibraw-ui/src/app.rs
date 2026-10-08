@@ -50,7 +50,7 @@ use discord_presence::DiscordPresence;
 mod edit_history;
 use edit_history::EditHistory;
 mod version_update;
-pub(crate) use version_update::GITHUB_UPDATE_CHECKS_AVAILABLE;
+pub(crate) use version_update::{GITHUB_UPDATE_CHECKS_AVAILABLE, UPDATE_STORE_NAME};
 mod worker;
 use worker::drain_worker_events;
 #[cfg(not(target_os = "android"))]

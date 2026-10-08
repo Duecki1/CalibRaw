@@ -2,7 +2,7 @@
 use crate::app::maximum_raw_cache_limit;
 #[cfg(not(target_os = "android"))]
 use crate::app::OnnxRuntimeMode;
-use crate::app::{CalibRawApp, PreviewQuality, GITHUB_UPDATE_CHECKS_AVAILABLE};
+use crate::app::{CalibRawApp, PreviewQuality, GITHUB_UPDATE_CHECKS_AVAILABLE, UPDATE_STORE_NAME};
 use crate::pipeline::CameraProfileMode;
 #[cfg(not(target_os = "android"))]
 use crate::ui::library::maximum_thumbnail_worker_count;
@@ -865,7 +865,9 @@ impl Settings {
         );
         ui.strong(format!("CalibRaw {}", env!("CARGO_PKG_VERSION")));
         if !GITHUB_UPDATE_CHECKS_AVAILABLE {
-            ui.small("Updates are delivered through F-Droid.");
+            ui.small(format!(
+                "Updates are delivered through {UPDATE_STORE_NAME}."
+            ));
             return;
         }
 

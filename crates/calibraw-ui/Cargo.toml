@@ -20,9 +20,10 @@ name = "calibraw"
 path = "src/main.rs"
 
 [features]
-# F-Droid builds deliver updates through F-Droid, so the GitHub release check is
+# Store builds are updated by their store, so the GitHub release check is
 # compiled out of use: no network request, consent dialog or update settings.
 fdroid = []
+flathub = []
 
 [dependencies]
 calibraw-ai.workspace = true
