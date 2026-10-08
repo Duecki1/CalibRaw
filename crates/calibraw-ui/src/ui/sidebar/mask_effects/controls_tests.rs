@@ -208,10 +208,11 @@ fn primary_controls_are_visible_and_details_expand_without_editing() {
                 "Cast shadows",
             ],
             "Light details",
+            // Shadows strength appears once shadows are on; see
+            // relight_shadow_toggle_hides_the_strength_and_preserves_it.
             &[
                 params::relight::REACH.label,
                 params::relight::SIZE.label,
-                params::relight::SHADOWS.label,
                 params::relight::RELIEF.label,
             ],
         ),
@@ -353,15 +354,17 @@ fn relight_shadow_toggle_hides_the_strength_and_preserves_it() {
     card.components[0].settings.relight.shadows = 35.0;
     card.frame(Vec::new());
     assert!(!card.click("Light details"));
-    assert!(card.has(params::relight::SHADOWS.label));
-    assert!(card.click("Cast shadows"));
+    // A new light starts without shadows.
     assert!(!card.components[0].settings.relight.shadows_enabled);
     assert!(!card.has(params::relight::SHADOWS.label));
     assert!(card.has(params::relight::SIZE.label));
     assert!(card.click("Cast shadows"));
     assert!(card.components[0].settings.relight.shadows_enabled);
-    assert_eq!(card.components[0].settings.relight.shadows, 35.0);
     assert!(card.has(params::relight::SHADOWS.label));
+    assert!(card.click("Cast shadows"));
+    assert!(!card.components[0].settings.relight.shadows_enabled);
+    assert!(!card.has(params::relight::SHADOWS.label));
+    assert_eq!(card.components[0].settings.relight.shadows, 35.0);
 }
 
 #[test]

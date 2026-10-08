@@ -165,6 +165,14 @@ pub(super) struct MaskData {
 
 const _: () = assert!(std::mem::size_of::<MaskData>() == 1_488);
 
+/// Inputs of the relight shadow map besides scene depth
+/// (`GpuParams::relight_shadow_map_key`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) struct RelightShadowMapKey {
+    full_size: [u32; 2],
+    lights: [Option<[f32; 5]>; RELIGHT_SHADOW_MAP_CHANNELS],
+}
+
 #[derive(Clone, Debug)]
 pub struct GpuParams {
     pub(super) camera: CameraUniforms,
@@ -584,6 +592,39 @@ impl GpuParams {
             mask.metadata[0] != 0
                 && mask.metadata[3] >> MASK_EFFECT_ID_SHIFT == MaskEffect::Relight.shader_id()
         })
+    }
+
+    /// What the relight shadow map depends on besides scene depth: the frame
+    /// and, per channel, the light's position, depth, size and relief. `None`
+    /// when no light uses the map. Amount, reach, colour, ambient and shadow
+    /// strength are applied per pixel and leave the map valid.
+    pub(super) fn relight_shadow_map_key(&self) -> Option<RelightShadowMapKey> {
+        if self.scene_tone.scene_depth_present == 0 {
+            return None;
+        }
+        let local_count = (self.scene_tone.mask_counts[0] as usize).min(MAX_RENDER_MASK_SLOTS);
+        let mut lights = [None; RELIGHT_SHADOW_MAP_CHANNELS];
+        for mask in &self.mask_data[..local_count] {
+            if let Some(channel) = relight_shadow_channel(mask) {
+                let [_, _, source_x, source_y] = mask.adjust_0;
+                let [size, _, relief, _] = mask.adjust_2;
+                lights[channel] = Some([source_x, source_y, mask.adjust_1[3], size, relief]);
+            }
+        }
+        lights
+            .iter()
+            .any(Option::is_some)
+            .then_some(RelightShadowMapKey {
+                full_size: [self.camera.full_width, self.camera.full_height],
+                lights,
+            })
+    }
+
+    /// Traces every Relight shadow per pixel instead of reading the shadow map.
+    #[cfg(test)]
+    pub(super) fn with_relight_shadows_traced_per_pixel(mut self) -> Self {
+        clear_relight_shadow_channels(&mut self.mask_data);
+        self
     }
 
     pub(super) fn needs_blur_passes(&self) -> bool {

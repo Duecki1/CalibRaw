@@ -18,6 +18,11 @@
 //! coordinate frame of the square scene-depth texture. Gradients are depth per
 //! length of the image's shorter edge, so they are isotropic in the image even
 //! though the texture stretches the image to a square.
+//!
+//! Every step computes each texel from the previous step alone, so rows are
+//! processed in parallel with results identical to a serial pass.
+
+use rayon::prelude::*;
 
 /// Mip levels of the scene-depth texture; the smallest is 16×16 at 1024.
 pub(super) const SCENE_DEPTH_MIP_LEVELS: u32 = 7;
@@ -75,21 +80,24 @@ pub(super) fn derive_scene_surface(stored: &[f32], edge: u32, aspect: f32) -> Ve
     let smooth = dequantize(stored, side);
 
     let at = |x: usize, y: usize| smooth[y * side + x];
-    let mut texels = Vec::with_capacity(side * side);
-    for y in 0..side {
-        for x in 0..side {
-            let center = at(x, y);
-            let gx = edge_aware_difference(
-                (x > 0).then(|| center - at(x - 1, y)),
-                (x + 1 < side).then(|| at(x + 1, y) - center),
-            ) / extent[0];
-            let gy = edge_aware_difference(
-                (y > 0).then(|| center - at(x, y - 1)),
-                (y + 1 < side).then(|| at(x, y + 1) - center),
-            ) / extent[1];
-            texels.push([stored[y * side + x], center, gx, gy]);
-        }
-    }
+    let mut texels = vec![[0.0; 4]; side * side];
+    texels
+        .par_chunks_mut(side)
+        .enumerate()
+        .for_each(|(y, row)| {
+            for (x, texel) in row.iter_mut().enumerate() {
+                let center = at(x, y);
+                let gx = edge_aware_difference(
+                    (x > 0).then(|| center - at(x - 1, y)),
+                    (x + 1 < side).then(|| at(x + 1, y) - center),
+                ) / extent[0];
+                let gy = edge_aware_difference(
+                    (y > 0).then(|| center - at(x, y - 1)),
+                    (y + 1 < side).then(|| at(x, y + 1) - center),
+                ) / extent[1];
+                *texel = [stored[y * side + x], center, gx, gy];
+            }
+        });
 
     let mut levels = vec![SurfaceLevel {
         width: edge,
@@ -244,17 +252,21 @@ impl NeighbourWeights {
         };
         let mut right = vec![0.0; side * side];
         let mut down = vec![0.0; side * side];
-        for y in 0..side {
-            for x in 0..side {
-                let index = y * side + x;
-                if x + 1 < side {
-                    right[index] = weight(stored[index], stored[index + 1]);
+        right
+            .par_chunks_mut(side)
+            .zip(down.par_chunks_mut(side))
+            .enumerate()
+            .for_each(|(y, (right, down))| {
+                for x in 0..side {
+                    let index = y * side + x;
+                    if x + 1 < side {
+                        right[x] = weight(stored[index], stored[index + 1]);
+                    }
+                    if y + 1 < side {
+                        down[x] = weight(stored[index], stored[index + side]);
+                    }
                 }
-                if y + 1 < side {
-                    down[index] = weight(stored[index], stored[index + side]);
-                }
-            }
-        }
+            });
         Self { side, right, down }
     }
 
@@ -263,42 +275,72 @@ impl NeighbourWeights {
     /// opposite one, so slopes are not flattened toward the edges.
     fn diffuse(&self, values: &[f32]) -> Vec<f32> {
         let side = self.side;
-        let mut diffused = Vec::with_capacity(values.len());
-        for y in 0..side {
-            for x in 0..side {
-                let index = y * side + x;
-                let center = values[index];
-                let mut sum = center;
-                let mut weights = 1.0;
-                // (weight, value) toward lower and higher coordinates per axis.
-                let axes = [
-                    (
-                        (x > 0).then(|| (self.right[index - 1], values[index - 1])),
-                        (x + 1 < side).then(|| (self.right[index], values[index + 1])),
-                    ),
-                    (
-                        (y > 0).then(|| (self.down[index - side], values[index - side])),
-                        (y + 1 < side).then(|| (self.down[index], values[index + side])),
-                    ),
-                ];
-                for axis in axes {
-                    let (lower, higher) = match axis {
-                        (Some(lower), Some(higher)) => (lower, higher),
-                        (Some((weight, value)), None) => {
-                            ((weight, value), (weight, 2.0 * center - value))
-                        }
-                        (None, Some((weight, value))) => {
-                            ((weight, 2.0 * center - value), (weight, value))
-                        }
-                        (None, None) => continue,
-                    };
-                    sum += lower.0 * lower.1 + higher.0 * higher.1;
-                    weights += lower.0 + higher.0;
-                }
-                diffused.push(sum / weights);
-            }
-        }
+        let mut diffused = vec![0.0; values.len()];
         diffused
+            .par_chunks_mut(side)
+            .enumerate()
+            .for_each(|(y, row)| self.diffuse_row(values, y, row));
+        diffused
+    }
+
+    /// One row of `diffuse`. Interior texels have all four neighbours and
+    /// take the same sums in the same order as `diffuse_texel`, without its
+    /// border cases.
+    fn diffuse_row(&self, values: &[f32], y: usize, row: &mut [f32]) {
+        let side = self.side;
+        if y == 0 || y + 1 == side || side < 3 {
+            for (x, diffused) in row.iter_mut().enumerate() {
+                *diffused = self.diffuse_texel(values, x, y);
+            }
+            return;
+        }
+        row[0] = self.diffuse_texel(values, 0, y);
+        row[side - 1] = self.diffuse_texel(values, side - 1, y);
+        let start = y * side;
+        for (x, diffused) in row.iter_mut().enumerate().take(side - 1).skip(1) {
+            let index = start + x;
+            let center = values[index];
+            let mut sum = center;
+            let mut weights = 1.0;
+            let (left, right) = (self.right[index - 1], self.right[index]);
+            sum += left * values[index - 1] + right * values[index + 1];
+            weights += left + right;
+            let (up, down) = (self.down[index - side], self.down[index]);
+            sum += up * values[index - side] + down * values[index + side];
+            weights += up + down;
+            *diffused = sum / weights;
+        }
+    }
+
+    /// One texel of `diffuse`, at any position.
+    fn diffuse_texel(&self, values: &[f32], x: usize, y: usize) -> f32 {
+        let side = self.side;
+        let index = y * side + x;
+        let center = values[index];
+        let mut sum = center;
+        let mut weights = 1.0;
+        // (weight, value) toward lower and higher coordinates per axis.
+        let axes = [
+            (
+                (x > 0).then(|| (self.right[index - 1], values[index - 1])),
+                (x + 1 < side).then(|| (self.right[index], values[index + 1])),
+            ),
+            (
+                (y > 0).then(|| (self.down[index - side], values[index - side])),
+                (y + 1 < side).then(|| (self.down[index], values[index + side])),
+            ),
+        ];
+        for axis in axes {
+            let (lower, higher) = match axis {
+                (Some(lower), Some(higher)) => (lower, higher),
+                (Some((weight, value)), None) => ((weight, value), (weight, 2.0 * center - value)),
+                (None, Some((weight, value))) => ((weight, 2.0 * center - value), (weight, value)),
+                (None, None) => continue,
+            };
+            sum += lower.0 * lower.1 + higher.0 * higher.1;
+            weights += lower.0 + higher.0;
+        }
+        sum / weights
     }
 }
 
@@ -428,6 +470,28 @@ mod tests {
             let level = &derive_scene_surface(&stored, EDGE, aspect)[0];
             let center = level.texels[(EDGE / 2 * EDGE + EDGE / 2) as usize];
             assert!((center[2] - expected).abs() < 0.01 * expected, "{center:?}");
+        }
+    }
+
+    #[test]
+    fn interior_diffusion_matches_the_general_texel_rule() {
+        let side = 37;
+        let stored = quantized(side as u32, |x, y| {
+            0.5 + 0.3 * (9.0 * x).sin() * (7.0 * y).cos() + if x > 0.6 { 0.2 } else { 0.0 }
+        });
+        let weights = NeighbourWeights::new(&stored, side);
+        let values: Vec<f32> = (0..side * side)
+            .map(|i| ((i * 7919) % 101) as f32 / 101.0)
+            .collect();
+        let diffused = weights.diffuse(&values);
+        for y in 0..side {
+            for x in 0..side {
+                assert_eq!(
+                    diffused[y * side + x].to_bits(),
+                    weights.diffuse_texel(&values, x, y).to_bits(),
+                    "texel ({x}, {y})"
+                );
+            }
         }
     }
 

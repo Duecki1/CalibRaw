@@ -18,6 +18,9 @@ pub(super) const IMAGE_LIGHT_BANDS: u32 = 16;
 pub(super) const IMAGE_LIGHT_CELL_BYTES: u64 = IMAGE_LIGHT_BANDS as u64 * 16;
 pub(super) const IMAGE_LIGHT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 
+/// Relight shadows of up to four lights per scene-depth texel (relight.wgsl).
+pub(super) const RELIGHT_SHADOW_MAP_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
+
 pub(super) const fn image_light_cells_bytes() -> u64 {
     IMAGE_LIGHT_GRID_LONG as u64 * IMAGE_LIGHT_GRID_LONG as u64 * IMAGE_LIGHT_CELL_BYTES
 }
@@ -352,6 +355,18 @@ pub(super) fn build_gpu_resource_plan(input: GpuResourcePlanInput) -> Result<Gpu
         "tone statistics buffer",
         GpuResourceResidency::Persistent,
         aligned_buffer_bytes(TONE_STATS_SIZE_BYTES)?,
+    );
+    push_entry(
+        &mut entries,
+        "relight shadow map",
+        GpuResourceResidency::Persistent,
+        texture_allocation_bytes(
+            SCENE_DEPTH_EDGE,
+            SCENE_DEPTH_EDGE,
+            1,
+            1,
+            RELIGHT_SHADOW_MAP_FORMAT,
+        )?,
     );
     push_entry(
         &mut entries,

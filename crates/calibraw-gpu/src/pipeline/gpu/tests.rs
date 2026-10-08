@@ -4,9 +4,9 @@ use super::{
     ProcessingQuality, RawGpuPipeline,
 };
 use crate::pipeline::{
-    extract_padded_tile, CameraProfile, CfaKind, CompactPixelMap, ExportTile, ExposureParams,
-    HighlightReconstructionMethod, LoadedRaw, LocalMask, MaskEffect, MaskKind, MaskStack,
-    NativeRect, PointCurve, ProcessingStage, TONE_GUIDE_CELL_SIZE,
+    extract_padded_tile, CameraProfile, CfaKind, CompactPixelMap, EffectComponent, ExportTile,
+    ExposureParams, HighlightReconstructionMethod, LoadedRaw, LocalMask, MaskEffect, MaskKind,
+    MaskStack, NativeRect, PointCurve, ProcessingStage, TONE_GUIDE_CELL_SIZE,
 };
 
 #[test]
@@ -59,6 +59,34 @@ fn local_point_colors_pack_with_mask_adjustments() {
     assert_eq!(packed.metadata[1], 1);
     assert_eq!(packed.point_color_meta[0..2], [1, 1]);
     assert!((packed.point_colors[0].shifts[0] - 0.125).abs() < 1e-6);
+}
+
+#[test]
+fn the_first_four_shadowed_relights_take_shadow_map_channels() {
+    let relight = |shadows: f32| {
+        let mut component = EffectComponent::new(MaskEffect::Relight);
+        component.settings.relight.shadows_enabled = true;
+        component.settings.relight.shadows = shadows;
+        component
+    };
+    let mut global_effects = vec![relight(0.0)];
+    global_effects.extend((0..5).map(|_| relight(100.0)));
+    let masks = MaskStack {
+        global_effects,
+        ..Default::default()
+    };
+    let packed = super::pack_mask_params(&masks);
+    let channels: Vec<_> = packed[..6]
+        .iter()
+        .map(super::relight_shadow_channel)
+        .collect();
+    // Without shadows a light needs no channel; the fifth shadowed light
+    // traces per pixel.
+    assert_eq!(
+        channels,
+        [None, Some(0), Some(1), Some(2), Some(3), None],
+        "{channels:?}"
+    );
 }
 
 #[test]

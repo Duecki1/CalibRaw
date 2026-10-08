@@ -193,6 +193,7 @@ fn relight_gpu_near_occluder_casts_a_shadow_on_the_wall_behind_it() -> anyhow::R
         source: [20.0, 50.0],
         depth: -50.0,
         size: 10.0,
+        shadows_enabled: true,
         ..Default::default()
     };
     let render = |shadows: f32| {
@@ -330,6 +331,7 @@ fn relight_gpu_matches_the_full_frame_in_overlapping_tiles() -> anyhow::Result<(
         RelightEffectSettings {
             source: [15.0, 20.0],
             depth: -40.0,
+            shadows_enabled: true,
             shadows: 100.0,
             ambient: 80.0,
             ..Default::default()
@@ -410,6 +412,87 @@ fn relight_gpu_matches_the_full_frame_in_overlapping_tiles() -> anyhow::Result<(
             &expected,
             RGB_TOLERANCE,
             &format!("relight tile at {x},{y} must match the full frame"),
+        );
+    }
+    Ok(())
+}
+
+/// Light beside the bar, which shadows the wall to its right.
+fn beside_bar(size: f32) -> RelightEffectSettings {
+    RelightEffectSettings {
+        source: [20.0, 50.0],
+        depth: -50.0,
+        size,
+        shadows_enabled: true,
+        ..Default::default()
+    }
+}
+
+#[test]
+fn relight_gpu_shadow_map_matches_tracing_every_pixel() -> anyhow::Result<()> {
+    let Some(scene) = FogScene::with_source(grey(WIDTH, HEIGHT)?, ProcessingQuality::High)? else {
+        return Ok(());
+    };
+    let baseline = scene.render(&MaskStack::default())?;
+    for size in [0.0, 35.0, 100.0] {
+        let masks = global_relight(beside_bar(size), Some(bar_before_wall()));
+        let mapped = scene.render(&masks)?;
+        let params = GpuParams::new(&scene.exposure, &masks, &scene.source)
+            .with_relight_shadows_traced_per_pixel();
+        let traced = scene.render_params(&params)?;
+        // The map traces from depth texels instead of pixels: shadows agree
+        // apart from dither and pixels straddling a silhouette.
+        let added = mean_difference(&traced, &baseline);
+        let difference = mean_difference(&mapped, &traced);
+        assert!(
+            difference < 0.05 * added,
+            "size {size}: {difference} vs added {added}"
+        );
+        let behind = |render: &[f32]| added_light(render, &baseline, 60..72);
+        assert!(
+            (behind(&mapped) - behind(&traced)).abs() < 0.1 * behind(&traced).max(1e-3),
+            "size {size}: shadow {} vs {}",
+            behind(&mapped),
+            behind(&traced)
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn relight_gpu_shadow_map_follows_the_light_and_depth() -> anyhow::Result<()> {
+    let Some(scene) = FogScene::with_source(grey(WIDTH, HEIGHT)?, ProcessingQuality::High)? else {
+        return Ok(());
+    };
+    let Some(fresh) = FogScene::with_source(grey(WIDTH, HEIGHT)?, ProcessingQuality::High)? else {
+        return Ok(());
+    };
+    let moved = RelightEffectSettings {
+        source: [80.0, 30.0],
+        ..beside_bar(35.0)
+    };
+    let brighter = RelightEffectSettings {
+        amount: 100.0,
+        ..moved
+    };
+    // Each render reuses the map built for the one before it where valid.
+    scene.render(&global_relight(beside_bar(35.0), Some(bar_before_wall())))?;
+    for (name, masks) in [
+        (
+            "moved light",
+            global_relight(moved, Some(bar_before_wall())),
+        ),
+        (
+            "amount only",
+            global_relight(brighter, Some(bar_before_wall())),
+        ),
+        ("new depth", global_relight(brighter, Some(ridge()))),
+    ] {
+        assert_close(
+            &scene.render(&masks)?,
+            &fresh.render(&masks)?,
+            RGB_TOLERANCE,
+            name,
         );
     }
     Ok(())

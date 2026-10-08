@@ -248,6 +248,51 @@ fn media_glow_in_the_colour_of_lights_in_the_photo() -> anyhow::Result<()> {
 }
 
 #[test]
+fn image_lights_switched_on_by_an_output_edit_match_a_full_render() -> anyhow::Result<()> {
+    let Some(scene) = FogScene::with_source(
+        dark_with_red_lamp(WIDTH, HEIGHT, WIDTH / 4, HEIGHT / 2)?,
+        ProcessingQuality::High,
+    )?
+    else {
+        return Ok(());
+    };
+    let Some(fresh) = FogScene::with_source(scene.source.clone(), ProcessingQuality::High)? else {
+        return Ok(());
+    };
+    // The tone stage skips the map while no effect reads it; an edit that
+    // only reruns the output stage must still build it.
+    scene.render(&fog_with_image_lights(false))?;
+    let lit = fog_with_image_lights(true);
+    let params = GpuParams::new(&scene.exposure, &lit, &scene.source);
+    scene.pipeline.dispatch_stage(
+        &scene.queue,
+        &scene.device,
+        &params,
+        crate::pipeline::ProcessingStage::Output,
+    );
+    let output_only = scene.pipeline.read_display_linear_region_blocking(
+        &scene.device,
+        &scene.queue,
+        0,
+        0,
+        WIDTH,
+        HEIGHT,
+    )?;
+    let full = fresh.render(&lit)?;
+    assert!(
+        mean_difference(&full, &fresh.render(&fog_with_image_lights(false))?) > 1e-4,
+        "the fixture's lamp does not light the fog"
+    );
+    assert_close(
+        &output_only,
+        &full,
+        RGB_TOLERANCE,
+        "output-only Image lights",
+    );
+    Ok(())
+}
+
+#[test]
 fn fog_image_lights_from_export_tiles_match_the_full_frame() -> anyhow::Result<()> {
     const SIZE: [u32; 2] = [320, 240];
     let source = dark_with_red_lamp(SIZE[0], SIZE[1], 150, 110)?;

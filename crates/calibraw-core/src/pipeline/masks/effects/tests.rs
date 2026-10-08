@@ -160,6 +160,15 @@ fn cropping_preserves_global_and_masked_photographic_coordinates_and_seed() {
 }
 
 #[test]
+fn new_relights_start_without_shadows_and_save_that_choice() {
+    let settings = MaskEffectSettings::default();
+    assert!(!settings.relight.shadows_enabled);
+    let saved = serde_json::to_value(settings).unwrap();
+    let loaded: MaskEffectSettings = serde_json::from_value(saved).unwrap();
+    assert!(!loaded.relight.shadows_enabled);
+}
+
+#[test]
 fn relight_settings_saved_before_the_shadow_switch_cast_shadows() {
     let settings: MaskEffectSettings =
         serde_json::from_value(json!({"relight":{"amount":40.0,"shadows":25.0}})).unwrap();

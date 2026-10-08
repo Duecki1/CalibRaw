@@ -166,6 +166,16 @@ fn scene_light_at(index: u32) -> SceneLight {
     return scene_light_inactive();
 }
 
+// Whether any effect slot emits a scene light. It is the same for every
+// pixel, so receivers skip their per-pixel setup (depth reads, volume cells)
+// when there is nothing to receive.
+fn scene_lights_present() -> bool {
+    for (var index = 0u; index < scene_light_slots(); index = index + 1u) {
+        if scene_light_at(index).emits { return true; }
+    }
+    return false;
+}
+
 // How much of a light acts at an image pixel: its mask's coverage when the
 // light is confined to one.
 fn scene_light_coverage(light: SceneLight, pos: vec2<i32>) -> f32 {

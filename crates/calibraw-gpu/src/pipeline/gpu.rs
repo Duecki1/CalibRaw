@@ -13,6 +13,7 @@ use crate::pipeline::{
 use anyhow::{anyhow, Context, Result};
 use bytemuck::{Pod, Zeroable};
 use calibraw_core::color_math::{linear_srgb_to_oklab, srgb_decode};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex, OnceLock};
 
 use crate::gpu_errors::GpuErrorScopes;
@@ -121,8 +122,9 @@ fn expected_pass_count(cfa_kind: CfaKind) -> usize {
         CfaKind::Bayer => 6,
         CfaKind::XTrans => 10,
     };
-    // Highlights, demosaic, colour denoise, tone, adjustments, image lights.
-    1 + demosaic_passes + COLOR_DENOISE_ENTRY_POINTS.len() + 4 + 19 + 4
+    // Highlights, demosaic, colour denoise, tone, adjustments, image lights,
+    // relight shadow map.
+    1 + demosaic_passes + COLOR_DENOISE_ENTRY_POINTS.len() + 4 + 19 + 4 + 1
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -341,6 +343,10 @@ pub struct RawGpuPipeline {
     image_light_texture: wgpu::Texture,
     _image_light_core_texture: wgpu::Texture,
     _image_light_tail_texture: wgpu::Texture,
+    /// Whether the image-light map matches the current tone result. The tone
+    /// stage builds it only when an effect reads it; otherwise the output
+    /// stage builds it once one does (`ensure_image_lights`).
+    image_lights_current: AtomicBool,
     /// Where each processing stage starts and ends in `passes`.
     indices: StageIndices,
     post_blur_glow_passes: Vec<Pass>,
@@ -368,6 +374,11 @@ pub struct RawGpuPipeline {
     light_rays_mask_texture: wgpu::Texture,
     scene_depth_texture: wgpu::Texture,
     uploaded_scene_depth: Mutex<Option<fog::UploadedSceneDepth>>,
+    /// Relight shadows per scene-depth texel (relight.wgsl), bound by view.
+    _relight_shadow_map: wgpu::Texture,
+    /// What the shadow map was last built for; `None` after scene depth
+    /// changes, so the next output stage rebuilds it.
+    relight_shadow_map_key: Mutex<Option<RelightShadowMapKey>>,
     mask_layer_capacity: usize,
     mask_atlas_edge: u32,
     out_texture: wgpu::Texture,
@@ -512,7 +523,7 @@ impl RawGpuPipeline {
             self.indices.tone_prepare_pass_index,
             self.indices.tone_stage_end,
         );
-        self.encode_image_lights(&mut encoder);
+        self.encode_tone_image_lights(&mut encoder, params);
         self.encode_output_stage(&mut encoder, params);
         queue.submit(Some(encoder.finish()));
     }
@@ -538,7 +549,7 @@ impl RawGpuPipeline {
                     self.indices.tone_prepare_pass_index,
                     self.indices.tone_stage_end,
                 );
-                self.encode_image_lights(&mut encoder);
+                self.encode_tone_image_lights(&mut encoder, params);
             }
             ProcessingStage::Output => self.encode_output_stage(&mut encoder, params),
         }
@@ -607,6 +618,7 @@ impl RawGpuPipeline {
         encoder.clear_buffer(&self.tone_histogram_buffer, 0, None);
         encoder.clear_buffer(&self.image_light_cells_buffer, 0, None);
         queue.submit(Some(encoder.finish()));
+        self.image_lights_current.store(false, Ordering::Release);
     }
 
     /// Builds the image-light map from this pipeline's whole image, after the
@@ -618,14 +630,47 @@ impl RawGpuPipeline {
             self.indices.image_light_accumulate_pass_index,
             self.indices.image_light_end_index,
         );
+        self.image_lights_current.store(true, Ordering::Release);
     }
 
-    fn copy_image_lights_from(&self, encoder: &mut wgpu::CommandEncoder, full_frame: &Self) {
+    /// Image lights for a new tone result: built when an effect reads them,
+    /// otherwise left for `ensure_image_lights`, which most edits never need.
+    fn encode_tone_image_lights(&self, encoder: &mut wgpu::CommandEncoder, params: &GpuParams) {
+        if params.needs_image_lights() {
+            self.encode_image_lights(encoder);
+        } else {
+            self.image_lights_current.store(false, Ordering::Release);
+        }
+    }
+
+    /// Builds the image-light map if the current tone result has none yet.
+    /// The scene and tone statistics it reads stay valid until the next raw or
+    /// tone stage.
+    fn ensure_image_lights(&self, encoder: &mut wgpu::CommandEncoder) {
+        if !self.image_lights_current.load(Ordering::Acquire) {
+            self.encode_image_lights(encoder);
+        }
+    }
+
+    /// Takes the full frame's image-light map when `params` reads it, so a
+    /// cropped or zoomed view sees lights outside its region.
+    fn inherit_image_lights(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        full_frame: &Self,
+        params: &GpuParams,
+    ) {
+        if !params.needs_image_lights() {
+            self.image_lights_current.store(false, Ordering::Release);
+            return;
+        }
+        full_frame.ensure_image_lights(encoder);
         encoder.copy_texture_to_texture(
             full_frame.image_light_texture.as_image_copy(),
             self.image_light_texture.as_image_copy(),
             self.image_light_texture.size(),
         );
+        self.image_lights_current.store(true, Ordering::Release);
     }
 
     pub fn dispatch_stage_with_remove(
@@ -679,7 +724,7 @@ impl RawGpuPipeline {
             0,
             TONE_STATS_SIZE_BYTES,
         );
-        self.copy_image_lights_from(&mut encoder, full_frame);
+        self.inherit_image_lights(&mut encoder, full_frame, params);
         self.encode_pass_range(
             &mut encoder,
             self.indices.tone_prepare_pass_index,
@@ -692,6 +737,7 @@ impl RawGpuPipeline {
         &self,
         queue: &wgpu::Queue,
         device: &wgpu::Device,
+        params: &GpuParams,
         full_frame: &Self,
     ) {
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
@@ -704,7 +750,7 @@ impl RawGpuPipeline {
             0,
             TONE_STATS_SIZE_BYTES,
         );
-        self.copy_image_lights_from(&mut encoder, full_frame);
+        self.inherit_image_lights(&mut encoder, full_frame, params);
         queue.submit(Some(encoder.finish()));
     }
 
@@ -749,6 +795,9 @@ impl RawGpuPipeline {
             self.indices.image_light_end_index,
         );
         queue.submit(Some(encoder.finish()));
+        // Resolved from every tile's accumulation; tiles must not rebuild it
+        // from their own region.
+        self.image_lights_current.store(true, Ordering::Release);
     }
 
     pub fn dispatch_export_tile_with_remove(
@@ -824,6 +873,10 @@ impl RawGpuPipeline {
     fn encode_output_stage(&self, encoder: &mut wgpu::CommandEncoder, params: &GpuParams) {
         self.output_revision
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        if params.needs_image_lights() {
+            self.ensure_image_lights(encoder);
+        }
+        self.encode_relight_shadow_map(encoder, params);
         self.encode_pass(encoder, self.indices.adjustment_prepare_pass_index);
         self.encode_pass(encoder, self.indices.adjustment_tone_pass_index);
         let blur_active = params.needs_blur_passes();
@@ -890,6 +943,24 @@ impl RawGpuPipeline {
         } else {
             self.encode_pass(encoder, self.indices.adjustment_render_pass_index);
         }
+    }
+
+    /// Rebuilds the relight shadow map when a shadowed light or the scene
+    /// depth changed since it was last built. Edits that leave both alone,
+    /// such as tone or colour changes, reuse it.
+    fn encode_relight_shadow_map(&self, encoder: &mut wgpu::CommandEncoder, params: &GpuParams) {
+        let Some(key) = params.relight_shadow_map_key() else {
+            return;
+        };
+        let mut built = self
+            .relight_shadow_map_key
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if *built == Some(key) {
+            return;
+        }
+        self.encode_pass(encoder, self.indices.relight_shadow_map_pass_index);
+        *built = Some(key);
     }
 
     fn encode_pass(&self, encoder: &mut wgpu::CommandEncoder, index: usize) {

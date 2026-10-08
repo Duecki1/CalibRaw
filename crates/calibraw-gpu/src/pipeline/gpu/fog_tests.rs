@@ -244,7 +244,7 @@ impl FogScene {
         self.render_params(&GpuParams::new(&self.exposure, masks, &self.source))
     }
 
-    fn render_params(&self, params: &GpuParams) -> anyhow::Result<Vec<f32>> {
+    pub(super) fn render_params(&self, params: &GpuParams) -> anyhow::Result<Vec<f32>> {
         // Exercise the public upload path, including Arc-backed depth cache invalidation.
         self.pipeline.recompute(&self.queue, &self.device, params);
         let rgb = match self.pipeline.processing_quality {

@@ -79,6 +79,7 @@ pub(in crate::pipeline::gpu) struct PipelineSurfaces {
     pub(in crate::pipeline::gpu) image_light_texture: wgpu::Texture,
     pub(in crate::pipeline::gpu) image_light_core_texture: wgpu::Texture,
     pub(in crate::pipeline::gpu) image_light_tail_texture: wgpu::Texture,
+    pub(in crate::pipeline::gpu) relight_shadow_map: wgpu::Texture,
     pub(in crate::pipeline::gpu) out_view: wgpu::TextureView,
     pub(in crate::pipeline::gpu) display_linear_view: wgpu::TextureView,
     pub(in crate::pipeline::gpu) reconstructed_raw_view: wgpu::TextureView,
@@ -98,6 +99,7 @@ pub(in crate::pipeline::gpu) struct PipelineSurfaces {
     pub(in crate::pipeline::gpu) image_light_view: wgpu::TextureView,
     pub(in crate::pipeline::gpu) image_light_core_view: wgpu::TextureView,
     pub(in crate::pipeline::gpu) image_light_tail_view: wgpu::TextureView,
+    pub(in crate::pipeline::gpu) relight_shadow_map_view: wgpu::TextureView,
     pub(in crate::pipeline::gpu) mask_sampler: wgpu::Sampler,
 }
 
@@ -247,6 +249,15 @@ pub(in crate::pipeline::gpu) fn create_pipeline_surfaces(
         image_light_usage,
         "calibraw image-light halo tail",
     );
+    // Relight shadows on the level-0 scene-depth grid (relight.wgsl).
+    let relight_shadow_map = create_processing_texture(
+        device,
+        texture_size(SCENE_DEPTH_EDGE, SCENE_DEPTH_EDGE),
+        RELIGHT_SHADOW_MAP_FORMAT,
+        wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING,
+        "calibraw full-image relight shadow map",
+    );
+    let relight_shadow_map_view = default_texture_view(&relight_shadow_map);
     let image_light_view = default_texture_view(&image_light_texture);
     let image_light_core_view = default_texture_view(&image_light_core_texture);
     let image_light_tail_view = default_texture_view(&image_light_tail_texture);
@@ -308,6 +319,7 @@ pub(in crate::pipeline::gpu) fn create_pipeline_surfaces(
             image_light_texture,
             image_light_core_texture,
             image_light_tail_texture,
+            relight_shadow_map,
             out_view,
             display_linear_view,
             reconstructed_raw_view,
@@ -327,6 +339,7 @@ pub(in crate::pipeline::gpu) fn create_pipeline_surfaces(
             image_light_view,
             image_light_core_view,
             image_light_tail_view,
+            relight_shadow_map_view,
             mask_sampler,
         },
         has_ai_scene,
