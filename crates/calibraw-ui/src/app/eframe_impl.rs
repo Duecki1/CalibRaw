@@ -72,18 +72,16 @@ impl CalibRawApp {
     fn handle_gpu_memory_failures(&mut self) {
         if calibraw_ai::take_ai_gpu_memory_failure() {
             self.stop_ai_after_gpu_memory_failure();
-            self.ui.gpu_memory_error_dialog = true;
-            self.ui.notice = Some(
-                "An AI model ran out of GPU memory. Its job was stopped, GPU AI was disabled, and optional preview textures were released. You can re-enable GPU AI in Settings after reducing Subject mask quality."
-                    .to_owned(),
+            self.report_error(
+                ErrorKind::GpuMemory,
+                "An AI model ran out of GPU memory. Its job was stopped, GPU AI was disabled, and optional preview textures were released. You can re-enable GPU AI in Settings after reducing Subject mask quality.",
             );
         }
         if calibraw_gpu::take_gpu_out_of_memory() {
             self.stop_ai_after_gpu_memory_failure();
-            self.ui.gpu_memory_error_dialog = true;
-            self.ui.notice = Some(
-                "GPU memory was exhausted. CalibRaw stopped AI work, disabled GPU AI, and released optional preview textures. Close other GPU-heavy apps or lower Preview Quality before retrying."
-                    .to_owned(),
+            self.report_error(
+                ErrorKind::GpuMemory,
+                "GPU memory was exhausted. CalibRaw stopped AI work, disabled GPU AI, and released optional preview textures. Close other GPU-heavy apps or lower Preview Quality before retrying.",
             );
         }
     }
@@ -237,38 +235,9 @@ impl CalibRawApp {
         self.show_version_check_consent_dialog(ctx);
         self.show_version_update_dialog(ctx);
         self.show_ai_consent_dialog(ctx, frame);
-        self.show_ai_error_dialog(ctx);
         self.show_sidecar_save_error_dialog(ctx);
         crate::ui::presets::show_dialogs(ctx, self);
         self.show_error_dialog(ctx);
-        if self.ui.gpu_memory_error_dialog {
-            let mut close = false;
-            moduwu_design::dialog_window(
-                "GPU memory exhausted",
-                ctx,
-                moduwu_design::DIALOG_WIDTH_WIDE,
-            )
-            .show(ctx, |ui| {
-                ui.label("CalibRaw ran out of GPU memory while processing the image. The current operation could not finish.");
-                ui.add_space(6.0);
-                ui.label("Optional previews were released. Close other GPU-heavy apps or lower Preview Quality, then try again.");
-                moduwu_design::dialog_button_row(ui, |ui| {
-                    close |= moduwu_design::secondary_button(ui, "Close").clicked();
-                });
-                if !close
-                    && moduwu_design::dialog_keyboard_action(
-                        ui,
-                        moduwu_design::DialogKeyboard::CLOSE_ONLY,
-                        false,
-                    ) == moduwu_design::DialogAction::Cancel
-                {
-                    close = true;
-                }
-            });
-            if close {
-                self.ui.gpu_memory_error_dialog = false;
-            }
-        }
         self.show_foreground_operation_dialog(ctx);
         self.show_remove_progress_dialog(ctx);
         self.show_export_task_dialog(ctx);

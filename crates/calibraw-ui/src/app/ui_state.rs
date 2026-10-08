@@ -65,7 +65,6 @@ pub(crate) struct UiState {
     pub(crate) status: String,
     pub(crate) adaptive_preview_backdrop: egui::Color32,
     pub(crate) notice: Option<String>,
-    pub(crate) gpu_memory_error_dialog: bool,
     pub(crate) error_dialogs: ErrorDialogQueue,
     pub(crate) unsupported_file_dialog: Option<UnsupportedFileDialog>,
     pub(crate) onboarding_step: Option<OnboardingStep>,

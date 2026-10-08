@@ -217,31 +217,4 @@ impl CalibRawApp {
             moduwu_design::DialogAction::None => {}
         }
     }
-
-    pub(in crate::app) fn show_ai_error_dialog(&mut self, ctx: &egui::Context) {
-        let Some(message) = self.ai.object_error_dialog.clone() else {
-            return;
-        };
-        let mut close = false;
-        moduwu_design::dialog_window("AI mask failed", ctx, moduwu_design::DIALOG_WIDTH_DEFAULT)
-            .resizable(true)
-            .show(ctx, |ui| {
-                ui.label(message);
-                moduwu_design::dialog_button_row(ui, |ui| {
-                    close |= moduwu_design::secondary_button(ui, "Close").clicked();
-                });
-                if !close
-                    && moduwu_design::dialog_keyboard_action(
-                        ui,
-                        moduwu_design::DialogKeyboard::CLOSE_ONLY,
-                        false,
-                    ) == moduwu_design::DialogAction::Cancel
-                {
-                    close = true;
-                }
-            });
-        if close {
-            self.ai.object_error_dialog = None;
-        }
-    }
 }

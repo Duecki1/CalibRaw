@@ -177,7 +177,7 @@ impl CalibRawApp {
         self.invalidate_generated_mask_sources();
         self.reset_ai_update_state();
         self.ai.update_needed = false;
-        self.ai.object_error_dialog = None;
+        self.ui.error_dialogs.dismiss_kind(ErrorKind::AiMask);
 
         if masks_changed {
             self.mark_all_mask_layers_dirty();
@@ -430,14 +430,14 @@ impl CalibRawApp {
         let (Some(runtime_path), Some(runtime_sha256)) =
             (self.ai.runtime_path.clone(), self.ai.runtime_sha256.clone())
         else {
-            self.report_error("AI unavailable", "Manual ONNX Runtime mode requires a shared library under Settings. Select one or switch to Automatic."
+            self.report_error(ErrorKind::AiRuntime, "Manual ONNX Runtime mode requires a shared library under Settings. Select one or switch to Automatic."
                     .to_owned(),);
             return false;
         };
         match calibraw_ai::ai_masks::probe_runtime_subprocess(&runtime_path, &runtime_sha256) {
             Ok(()) => true,
             Err(error) => {
-                self.report_error("AI unavailable", format!(
+                self.report_error(ErrorKind::AiRuntime, format!(
                     "ONNX Runtime validation failed: {error:#}. Select a different onnxruntime.dll in Settings."
                 ));
                 false

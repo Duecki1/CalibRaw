@@ -171,6 +171,13 @@ canvases, mask cards, and colour controls in their existing components.
   window dialogs. Keep initial focus requests one-time, and run keyboard fallback
   after controls process input. Modal surfaces use themed egui frames; preserve
   their existing dismissal and backdrop policies.
+- Report every failure the user should know about with
+  `CalibRawApp::report_error(ErrorKind, message)` (`app/error_dialogs.rs`). It
+  queues the shared error dialog, keeps the message in the status line and logs
+  it, so no failure is visible only in the logs. Add an `ErrorKind` when no
+  existing title fits. `ui.notice` alone is for successes, cancellations and
+  precondition hints such as "Open a photo first". Only errors that offer
+  recovery actions, such as the sidecar save failure, keep their own dialog.
 - Route user tab navigation through `activate_tab`, and sidebar/tool changes
   through `AppAction`. Background document loading and batch operations contain
   documented exceptions: interactive tab activation can cancel their AI work.

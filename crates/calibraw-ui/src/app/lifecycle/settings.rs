@@ -92,7 +92,7 @@ impl CalibRawApp {
             return;
         }
         if let Err(error) = self.discord_presence.set_enabled(enabled) {
-            self.report_error("Settings error", error);
+            self.report_error(ErrorKind::Settings, error);
             return;
         }
 
@@ -204,7 +204,7 @@ impl CalibRawApp {
             }
             Err(error) => {
                 self.report_error(
-                    "Settings error",
+                    ErrorKind::Settings,
                     format!("Could not clear thumbnail cache: {error}"),
                 );
                 self.library

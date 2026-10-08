@@ -21,7 +21,7 @@ impl CalibRawApp {
     }
 
     pub(crate) fn request_object_mask(&mut self, mask_index: usize, component_index: usize) {
-        self.ai.object_error_dialog = None;
+        self.ui.error_dialogs.dismiss_kind(ErrorKind::AiMask);
         let Some(component) = self
             .masks
             .stack
@@ -81,7 +81,7 @@ impl CalibRawApp {
 
         let Some(source) = self.masks.source_cache.clone() else {
             self.report_error(
-                "Object selection failed",
+                ErrorKind::AiMask,
                 "The original image source is unavailable for object selection.".to_owned(),
             );
             return;
@@ -136,7 +136,7 @@ impl CalibRawApp {
         };
         let Some(target) = self.masks.capture_ai_target(mask_index, component_index) else {
             self.report_error(
-                "Object selection failed",
+                ErrorKind::AiMask,
                 "The selected object mask is no longer available.".to_owned(),
             );
             return;
@@ -237,12 +237,9 @@ impl CalibRawApp {
             return;
         };
 
-        let (target, failed_during_inference) = match &operation.context {
-            ForegroundOperationContext::Object {
-                target,
-                inference_started,
-            } => (Some(target.clone()), *inference_started),
-            _ => (None, false),
+        let target = match &operation.context {
+            ForegroundOperationContext::Object { target, .. } => Some(target.clone()),
+            _ => None,
         };
         let updating_all = self.ai.update.is_some() && target.is_some();
         let cancelled = operation.is_cancelled();
@@ -332,12 +329,7 @@ impl CalibRawApp {
                     "Object selection did not produce a mask.".to_owned()
                 }
             });
-            if failed_during_inference {
-                self.ui.notice = Some(message.clone());
-                self.ai.object_error_dialog = Some(message);
-            } else {
-                self.report_error("Object selection failed", message);
-            }
+            self.report_error(ErrorKind::AiMask, message);
         }
         self.egui_ctx.request_repaint();
     }

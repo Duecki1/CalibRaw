@@ -54,7 +54,7 @@ impl CalibRawApp {
         });
         self.develop_ui.cancel_white_balance_picker();
         let Some((temperature, tint)) = result else {
-            self.report_error("White balance", "Could not estimate white balance there. Choose a brighter, unclipped neutral area."
+            self.report_error(ErrorKind::Sampling, "Could not estimate white balance there. Choose a brighter, unclipped neutral area."
                     .to_owned(),);
             self.egui_ctx.request_repaint();
             return false;
@@ -161,7 +161,7 @@ impl CalibRawApp {
                 mask_extent,
                 (!mapping_changed).then_some(&self.masks.detail_dirty_layers),
             ) {
-                self.report_error("Preview failed", error);
+                self.report_error(ErrorKind::Preview, error);
                 self.preview.detail_pending_stage = None;
                 return;
             }
@@ -216,7 +216,7 @@ impl CalibRawApp {
                 ),
             ) {
                 self.report_error(
-                    "Preview failed",
+                    ErrorKind::Preview,
                     format!("Could not apply Remove to zoomed preview: {error:#}"),
                 );
                 self.preview.detail_pending_stage = None;
@@ -355,7 +355,7 @@ impl CalibRawApp {
                 raw,
                 &mut self.masks.dirty_layers,
             ) {
-                self.report_error("Preview failed", error);
+                self.report_error(ErrorKind::Preview, error);
                 self.preview.pending_stage = None;
                 return;
             }
@@ -379,7 +379,7 @@ impl CalibRawApp {
             ),
         ) {
             self.report_error(
-                "Preview failed",
+                ErrorKind::Preview,
                 format!("Could not apply Remove to preview: {error:#}"),
             );
             self.preview.pending_stage = None;

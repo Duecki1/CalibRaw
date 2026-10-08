@@ -258,7 +258,7 @@ impl CalibRawApp {
             }
         }
         for error in remove_errors {
-            self.report_error("Preview failed", error);
+            self.report_error(ErrorKind::Preview, error);
         }
         self.preview.original_rendered_state = Some(requested_state);
         self.egui_ctx.request_repaint();

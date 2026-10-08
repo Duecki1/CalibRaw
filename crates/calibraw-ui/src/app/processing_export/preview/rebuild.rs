@@ -296,7 +296,7 @@ impl CalibRawApp {
                 self.preview.rebuild_receiver = None;
                 self.preview.quality_dirty = false;
                 self.report_error(
-                    "Preview failed",
+                    ErrorKind::Preview,
                     "Preview rebuild worker stopped unexpectedly.".to_owned(),
                 );
                 None
@@ -312,7 +312,7 @@ impl CalibRawApp {
             Err(error) => {
                 self.preview.quality_dirty = false;
                 self.report_error(
-                    "Preview failed",
+                    ErrorKind::Preview,
                     format!("Could not prepare the preview proxy: {error}"),
                 );
                 return;
@@ -383,7 +383,7 @@ impl CalibRawApp {
             Err(error) => {
                 self.preview.quality_dirty = false;
                 self.report_error(
-                    "Preview failed",
+                    ErrorKind::Preview,
                     format!("Could not rebuild the GPU preview: {error:#}"),
                 );
                 return;
@@ -399,7 +399,7 @@ impl CalibRawApp {
             &preview_masks,
             &prepared.preview_raw,
         ) {
-            self.report_error("Preview failed", error);
+            self.report_error(ErrorKind::Preview, error);
             self.preview.quality_dirty = false;
             return;
         }
@@ -417,7 +417,7 @@ impl CalibRawApp {
                 ),
             ) {
                 self.report_error(
-                    "Preview failed",
+                    ErrorKind::Preview,
                     format!("Could not apply Remove to rebuilt preview: {error:#}"),
                 );
                 self.preview.quality_dirty = false;
@@ -590,7 +590,7 @@ impl CalibRawApp {
             }
             Err(error) => {
                 self.report_error(
-                    "Preview failed",
+                    ErrorKind::Preview,
                     format!("Could not start preview rebuild: {error}"),
                 );
             }

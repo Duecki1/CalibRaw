@@ -278,7 +278,7 @@ pub(crate) fn format_usage_duration(duration: Duration) -> String {
 mod ai;
 mod eframe_impl;
 mod error_dialogs;
-pub(crate) use error_dialogs::ErrorDialogQueue;
+pub(crate) use error_dialogs::{ErrorDialogQueue, ErrorKind};
 mod foreground;
 mod inpainting;
 mod library_adjustments;

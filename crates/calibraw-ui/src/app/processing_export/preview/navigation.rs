@@ -72,7 +72,7 @@ impl CalibRawApp {
                 Ok(pipeline) => pipeline,
                 Err(error) => {
                     self.report_error(
-                        "Preview failed",
+                        ErrorKind::Preview,
                         format!("Could not prepare the adjusted navigation preview: {error:#}"),
                     );
                     self.preview.navigation_pending_stage = None;
@@ -82,7 +82,7 @@ impl CalibRawApp {
             if let Err(error) =
                 Self::upload_preview_masks(&pipeline, &render_state.queue, &preview_masks, &raw)
             {
-                self.report_error("Preview failed", error);
+                self.report_error(ErrorKind::Preview, error);
                 self.preview.navigation_pending_stage = None;
                 return;
             }
@@ -97,7 +97,7 @@ impl CalibRawApp {
                 ),
             ) {
                 self.report_error(
-                    "Preview failed",
+                    ErrorKind::Preview,
                     format!("Could not apply Remove to navigation preview: {error:#}"),
                 );
                 self.preview.navigation_pending_stage = None;
@@ -130,7 +130,7 @@ impl CalibRawApp {
                 &preview.raw,
                 &mut self.masks.navigation_dirty_layers,
             ) {
-                self.report_error("Preview failed", error);
+                self.report_error(ErrorKind::Preview, error);
                 self.preview.navigation_pending_stage = None;
                 return;
             }
@@ -165,7 +165,7 @@ impl CalibRawApp {
                 ),
             ) {
                 self.report_error(
-                    "Preview failed",
+                    ErrorKind::Preview,
                     format!("Could not apply Remove to navigation preview: {error:#}"),
                 );
                 self.preview.navigation_pending_stage = None;

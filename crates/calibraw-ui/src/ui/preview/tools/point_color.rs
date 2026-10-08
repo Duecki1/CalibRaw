@@ -114,7 +114,7 @@ impl Preview {
             Ok(rgb) => rgb,
             Err(error) => {
                 app.report_error(
-                    "Point color failed",
+                    crate::app::ErrorKind::Sampling,
                     format!("Could not sample point color: {error:#}"),
                 );
                 return;

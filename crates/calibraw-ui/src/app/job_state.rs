@@ -139,7 +139,6 @@ pub(crate) struct AiState {
     pub(crate) library_mask_refresh: Option<LibraryAiMaskRefreshState>,
     pub(crate) consent: Option<AiConsent>,
     pub(crate) object_pending_target: Option<(usize, usize)>,
-    pub(crate) object_error_dialog: Option<String>,
     pub(crate) object_cache: Option<((usize, usize), ObjectInferenceCache)>,
     pub(crate) denoise_resume_pending: bool,
 }

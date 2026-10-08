@@ -205,7 +205,6 @@ impl CalibRawApp {
                 library_mask_refresh: None,
                 consent: None,
                 object_pending_target: None,
-                object_error_dialog: None,
                 object_cache: None,
                 denoise_resume_pending: false,
             },
@@ -309,7 +308,6 @@ impl CalibRawApp {
                 status: "Open a RAW, TIFF, JPEG, PNG or HEIC photo to get started.".to_owned(),
                 adaptive_preview_backdrop: crate::ui::theme::CANVAS_BACKDROP,
                 notice: None,
-                gpu_memory_error_dialog: false,
                 error_dialogs: ErrorDialogQueue::default(),
                 unsupported_file_dialog: None,
                 onboarding_step: (!performance.onboarding_completed)

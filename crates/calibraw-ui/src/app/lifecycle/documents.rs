@@ -10,7 +10,7 @@ impl CalibRawApp {
     #[cfg(target_os = "android")]
     pub fn open_android_library_document(&mut self, uri: &str, display_name: &str) {
         if self.android_foreground_task_active() {
-            self.report_error("Could not open photo", format!(
+            self.report_error(ErrorKind::OpenPhoto, format!(
                 "{display_name} cannot be opened while an export or another foreground operation is running. Wait for it to finish or cancel it first."
             ));
             self.egui_ctx.request_repaint();
@@ -49,7 +49,7 @@ impl CalibRawApp {
             }
             Err(error) => {
                 self.develop_ui.loading_thumbnail.clear();
-                self.report_error("Could not open photo", error);
+                self.report_error(ErrorKind::OpenPhoto, error);
             }
         }
     }
@@ -61,7 +61,7 @@ impl CalibRawApp {
         display_name: &str,
     ) {
         if self.android.picker_pending {
-            self.report_error("Could not open photo", format!(
+            self.report_error(ErrorKind::OpenPhoto, format!(
                 "Could not reload {display_name} after resetting adjustments because another Android document operation is still pending."
             ));
             return;
@@ -77,7 +77,7 @@ impl CalibRawApp {
             Err(error) => {
                 self.android.pending_android_library_reset_reload = false;
                 self.report_error(
-                    "Could not open photo",
+                    ErrorKind::OpenPhoto,
                     format!("Could not reload {display_name} after resetting adjustments: {error}"),
                 );
             }
@@ -154,7 +154,7 @@ impl CalibRawApp {
                 remove_temporary_raw(copy);
             }
             self.report_error(
-                "Could not open photo",
+                ErrorKind::OpenPhoto,
                 "eframe is not running with the wgpu backend.".to_owned(),
             );
             self.refresh_status();
@@ -246,7 +246,7 @@ impl CalibRawApp {
             self.develop.loading_label = None;
             self.develop_ui.loading_thumbnail.clear();
             self.report_error(
-                "Could not open photo",
+                ErrorKind::OpenPhoto,
                 format!("could not start the photo decode worker: {error}"),
             );
             self.refresh_status();
@@ -363,7 +363,7 @@ impl CalibRawApp {
                 self.develop.loading_label = None;
                 self.develop_ui.loading_thumbnail.clear();
                 self.report_error(
-                    "Could not open photo",
+                    ErrorKind::OpenPhoto,
                     "The photo decode worker stopped unexpectedly.".to_owned(),
                 );
                 self.on_library_ai_mask_refresh_load_finished(false, frame);
@@ -391,7 +391,7 @@ impl CalibRawApp {
             Ok(loaded) => {
                 let Some(render_state) = frame.wgpu_render_state() else {
                     self.report_error(
-                        "Could not open photo",
+                        ErrorKind::OpenPhoto,
                         "eframe is not running with the wgpu backend.".to_owned(),
                     );
                     self.on_library_ai_mask_refresh_load_finished(false, frame);
@@ -504,7 +504,7 @@ impl CalibRawApp {
                 self.preview.pending_stage = None;
                 match loaded.sidecar_warning {
                     Some(warning) if warning != SIDECAR_MIGRATED_NOTICE => {
-                        self.report_error("Photo opened with problems", warning);
+                        self.report_error(ErrorKind::PhotoOpenedWithProblems, warning);
                     }
                     warning => self.ui.notice = warning,
                 }
@@ -531,7 +531,7 @@ impl CalibRawApp {
             }
             Err(error) => {
                 self.report_error(
-                    "Could not open photo",
+                    ErrorKind::OpenPhoto,
                     format!("Failed to decode or render the photo: {}", error.message),
                 );
                 let interactive_open = !self.document_load_is_background();
