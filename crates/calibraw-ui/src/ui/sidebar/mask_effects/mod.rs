@@ -22,6 +22,7 @@ use controls::{effect_details, effect_position, image_lights_toggle, pattern_see
 use super::{egui, MaskEffect, Ui};
 use crate::pipeline::effect_params::ColorParamSpec;
 use crate::pipeline::{EffectComponent, InitialEffectSettings, MAX_EFFECT_COMPONENTS};
+use crate::ui::components::scroll_into_view;
 
 pub(super) use crate::ui::components::adjustment_slider::{float_param_angle, float_param_slider};
 
@@ -45,7 +46,7 @@ where
         }
         body(ui, settings)
     };
-    moduwu_design::content_card(ui, |ui| {
+    let card = moduwu_design::content_card(ui, |ui| {
         ui.push_id(effect.label(), |ui| {
             ui.spacing_mut().interact_size.y = ui.spacing().interact_size.y.max(26.0);
             if ui.ctx().content_rect().height() > ui.ctx().content_rect().width() {
@@ -133,6 +134,7 @@ where
             }
         });
     });
+    scroll_into_view::on_draw(ui, effect_card_scroll_target(effect), card.response.rect);
     moduwu_design::card_gap(ui);
     changed
         | apply_card_action(
@@ -143,6 +145,12 @@ where
             },
             settings,
         )
+}
+
+/// The [`scroll_into_view`] target of `effect`'s card. Each effect has at most
+/// one card in the effect list the sidebar shows.
+pub(super) fn effect_card_scroll_target(effect: MaskEffect) -> egui::Id {
+    egui::Id::new("calibraw-effect-card-scroll").with(effect.shader_id())
 }
 
 fn open_effect_card_id(effect: MaskEffect) -> egui::Id {

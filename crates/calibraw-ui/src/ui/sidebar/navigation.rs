@@ -432,6 +432,11 @@ impl Sidebar {
                 // Open the new effect's tab, as adding it from the tab strip does.
                 app.develop_ui.effect_component = Some(effect);
             }
+            crate::ui::components::scroll_into_view::request(
+                ui.ctx(),
+                mask_effects::effect_card_scroll_target(effect),
+                None,
+            );
             app.mark_mask_adjustments_dirty();
         }
 
