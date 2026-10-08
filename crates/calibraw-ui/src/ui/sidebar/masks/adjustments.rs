@@ -61,7 +61,7 @@ pub(super) fn apply_local_adjustment_response(
     if let Some(effect) = response.added_effect {
         mask.effect_components
             .push(crate::pipeline::EffectComponent::new(effect));
-        crate::ui::components::scroll_into_view::request(
+        moduwu_design::request_scroll_into_view(
             ctx,
             mask_effects::effect_card_scroll_target(effect),
             None,
