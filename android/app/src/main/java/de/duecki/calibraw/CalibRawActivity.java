@@ -220,7 +220,7 @@ public final class CalibRawActivity extends NativeActivity {
     private static native void nativeOnCameraProfileFolderImportStarted(String displayName);
     private static native void nativeOnCameraProfileFolderPicked(
             String cachedPath, String displayName, int profileCount, String error);
-    private static native void nativeOnExportPublished(String location, String error);
+    private static native void nativeOnExportPublished(String location, String uri, String error);
 
     public void openRawDocument() {
         runOnUiThread(() -> startActivityForResult(

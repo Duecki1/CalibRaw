@@ -251,6 +251,39 @@ impl Sidebar {
         });
         let export_enabled = app.can_export() && dimensions_valid;
 
+        #[cfg(target_os = "android")]
+        let response = ui
+            .horizontal(|ui| {
+                // Square share action at the standard control height, beside a shortened Export.
+                let share_edge = moduwu_design::Metrics::of(ui.ctx()).control_height;
+                let export_width =
+                    (ui.available_width() - share_edge - ui.spacing().item_spacing.x).max(1.0);
+                let export = ui
+                    .add_enabled_ui(export_enabled, |ui| {
+                        ui.add_sized([export_width, share_edge], egui::Button::new("Export…"))
+                    })
+                    .inner;
+                let share = moduwu_design::icon_button_enabled(
+                    ui,
+                    export_enabled,
+                    egui_phosphor::regular::SHARE_NETWORK,
+                    egui::vec2(share_edge, share_edge),
+                    "Export and share",
+                );
+                share.widget_info(|| {
+                    egui::WidgetInfo::labeled(
+                        egui::WidgetType::Button,
+                        export_enabled,
+                        "Export and share",
+                    )
+                });
+                if share.clicked() {
+                    app.export_and_share(frame);
+                }
+                export
+            })
+            .inner;
+        #[cfg(not(target_os = "android"))]
         let response = ui
             .add_enabled_ui(export_enabled, |ui| {
                 moduwu_design::full_width_button(ui, "Export…")

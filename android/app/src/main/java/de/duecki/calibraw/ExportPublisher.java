@@ -2,7 +2,9 @@ package de.duecki.calibraw;
 
 import android.Manifest;
 import android.content.ContentResolver;
+import android.content.ClipData;
 import android.content.ContentValues;
+import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.database.Cursor;
 import android.media.MediaScannerConnection;
@@ -18,6 +20,8 @@ import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 
 final class ExportPublisher {
@@ -25,13 +29,16 @@ final class ExportPublisher {
     private static final String LOG_TAG = "CalibRaw";
     private static final int DELETE_ATTEMPTS = 3;
     private static final long STALE_EXPORT_CACHE_AGE_MS = 24L * 60L * 60L * 1000L;
+    /** How long a legacy publish waits for the media scanner to report the content URI. */
+    private static final long LEGACY_SCAN_TIMEOUT_MS = 5_000L;
     private static String exportDirectory(String mimeType) {
         return "video/mp4".equals(mimeType)
                 ? Environment.DIRECTORY_MOVIES : Environment.DIRECTORY_PICTURES;
     }
 
     interface Callbacks {
-        void onExportPublished(String location, String error);
+        /** {@code uri} is the published content URI, or "" when Android did not report one. */
+        void onExportPublished(String location, String uri, String error);
     }
 
     private final CalibRawActivity activity;
@@ -126,7 +133,7 @@ final class ExportPublisher {
             if (replaced != null) {
                 deleteCachedExport(replaced.cachedPath);
                 callbacks.onExportPublished(
-                        "", "A newer export replaced the pending permission request");
+                        "", "", "A newer export replaced the pending permission request");
             }
             activity.requestPermissions(
                     new String[]{Manifest.permission.WRITE_EXTERNAL_STORAGE},
@@ -151,15 +158,15 @@ final class ExportPublisher {
         String normalizedMime = AndroidStorageContract.normalizeExportMimeType(mimeType);
         String displayName = AndroidStorageContract.safeImageName(requestedName, normalizedMime);
         try {
-            String location;
+            Published published;
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                location = publishImageScoped(cachedFile, displayName, normalizedMime);
+                published = publishImageScoped(cachedFile, displayName, normalizedMime);
             } else {
-                location = publishImageLegacy(cachedFile, displayName, normalizedMime);
+                published = publishImageLegacy(cachedFile, displayName, normalizedMime);
             }
-            callbacks.onExportPublished(location, "");
+            callbacks.onExportPublished(published.location, published.uri, "");
         } catch (Exception error) {
-            callbacks.onExportPublished("", error.toString());
+            callbacks.onExportPublished("", "", error.toString());
         } finally {
             deleteCachedExport(cachedFile);
         }
@@ -184,7 +191,7 @@ final class ExportPublisher {
         return uri;
     }
 
-    private String publishImageScoped(
+    private Published publishImageScoped(
             File cachedFile,
             String displayName,
             String mimeType) throws Exception {
@@ -206,9 +213,12 @@ final class ExportPublisher {
             }
             published = true;
             String location = publishedLocation(uri);
-            return location.isEmpty()
-                    ? AndroidStorageContract.exportLocation(exportDirectory(mimeType), displayName)
-                    : location;
+            return new Published(
+                    location.isEmpty()
+                            ? AndroidStorageContract.exportLocation(
+                                    exportDirectory(mimeType), displayName)
+                            : location,
+                    uri.toString());
         } finally {
             if (!published) {
                 resolver.delete(uri, null, null);
@@ -217,7 +227,7 @@ final class ExportPublisher {
     }
 
     @SuppressWarnings("deprecation")
-    private String publishImageLegacy(
+    private Published publishImageLegacy(
             File cachedFile,
             String displayName,
             String mimeType) throws Exception {
@@ -233,12 +243,44 @@ final class ExportPublisher {
             BoundedStreams.copy(input, output, Long.MAX_VALUE, "Export is too large");
             output.getFD().sync();
         }
+        // The scan reports the content URI that sharing needs. This runs on the publish thread, so
+        // waiting is bounded and an unreported URI only disables sharing.
+        CountDownLatch scanned = new CountDownLatch(1);
+        AtomicReference<String> scannedUri = new AtomicReference<>("");
         MediaScannerConnection.scanFile(
                 activity,
                 new String[]{destination.getAbsolutePath()},
                 new String[]{mimeType},
-                null);
-        return destination.getAbsolutePath();
+                (path, uri) -> {
+                    if (uri != null) {
+                        scannedUri.set(uri.toString());
+                    }
+                    scanned.countDown();
+                });
+        if (!scanned.await(LEGACY_SCAN_TIMEOUT_MS, TimeUnit.MILLISECONDS)) {
+            Log.w(LOG_TAG, "Media scan did not finish for " + destination);
+        }
+        return new Published(destination.getAbsolutePath(), scannedUri.get());
+    }
+
+    /** Opens the Android share sheet for a published export's content URI. */
+    void shareExport(String uriText, String mimeType) {
+        activity.runOnUiThread(() -> {
+            try {
+                Uri uri = Uri.parse(uriText);
+                Intent send = new Intent(Intent.ACTION_SEND)
+                        .setType(AndroidStorageContract.normalizeExportMimeType(mimeType))
+                        .putExtra(Intent.EXTRA_STREAM, uri)
+                        .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                // The chooser and its targets read the grant from ClipData.
+                send.setClipData(ClipData.newRawUri("", uri));
+                Intent chooser = Intent.createChooser(send, null)
+                        .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                activity.startActivity(chooser);
+            } catch (RuntimeException error) {
+                Log.w(LOG_TAG, "Could not open the share sheet for " + uriText, error);
+            }
+        });
     }
 
     boolean onRequestPermissionsResult(
@@ -261,6 +303,7 @@ final class ExportPublisher {
                 deleteCachedExport(pending.cachedPath);
             }
             callbacks.onExportPublished(
+                    "",
                     "",
                     "Storage permission is required to export on Android 8 and 9");
         }
@@ -314,6 +357,16 @@ final class ExportPublisher {
                     "Could not delete export-cache file; "
                             + "the export-cache scavenger will retry stale files: " + cached,
                     error);
+        }
+    }
+
+    private static final class Published {
+        final String location;
+        final String uri;
+
+        Published(String location, String uri) {
+            this.location = location;
+            this.uri = uri;
         }
     }
 

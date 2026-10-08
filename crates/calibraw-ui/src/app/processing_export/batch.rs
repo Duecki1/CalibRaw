@@ -757,8 +757,9 @@ impl CalibRawApp {
                 continue;
             }
             match result {
-                calibraw_ffi::ExportPublishResult::Published(location) => {
-                    self.ui.notice = Some(format!("Exported to {location}"));
+                calibraw_ffi::ExportPublishResult::Published(published) => {
+                    self.ui.notice = Some(format!("Exported to {}", published.location));
+                    self.share_finished_export(&published);
                 }
                 calibraw_ffi::ExportPublishResult::Failed(error) => {
                     self.ui.notice = Some(format!("Export failed: {error}"));

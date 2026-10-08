@@ -213,14 +213,16 @@ pub extern "system" fn Java_de_duecki_calibraw_CalibRawActivity_nativeOnExportPu
     mut unowned_env: EnvUnowned<'local>,
     _class: JClass<'local>,
     location: JString<'local>,
+    uri: JString<'local>,
     error: JString<'local>,
 ) {
     unowned_env
         .with_env(|_env| -> jni::errors::Result<()> {
             let location = location.to_string();
+            let uri = uri.to_string();
             let error = error.to_string();
             let result = if error.is_empty() {
-                ExportPublishResult::Published(location)
+                ExportPublishResult::Published(PublishedExport { location, uri })
             } else {
                 ExportPublishResult::Failed(error)
             };
