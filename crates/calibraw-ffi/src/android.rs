@@ -99,6 +99,9 @@ pub enum CameraProfileFolderResult {
 }
 
 static RESULTS: OnceLock<Mutex<VecDeque<PickerResult>>> = OnceLock::new();
+/// Photos other apps sent ("Open with", Share). Kept apart from `RESULTS`,
+/// whose entries answer an open the UI requested.
+static EXTERNAL_OPEN_RESULTS: OnceLock<Mutex<VecDeque<PickerResult>>> = OnceLock::new();
 static CAMERA_PROFILE_FOLDER_RESULTS: OnceLock<Mutex<VecDeque<CameraProfileFolderResult>>> =
     OnceLock::new();
 static EXPORT_RESULTS: OnceLock<Mutex<VecDeque<ExportPublishResult>>> = OnceLock::new();
@@ -115,6 +118,10 @@ static SYSTEM_INSET_BOTTOM_PX: AtomicI32 = AtomicI32::new(0);
 
 fn results() -> &'static Mutex<VecDeque<PickerResult>> {
     RESULTS.get_or_init(|| Mutex::new(VecDeque::new()))
+}
+
+fn external_open_results() -> &'static Mutex<VecDeque<PickerResult>> {
+    EXTERNAL_OPEN_RESULTS.get_or_init(|| Mutex::new(VecDeque::new()))
 }
 
 fn camera_profile_folder_results() -> &'static Mutex<VecDeque<CameraProfileFolderResult>> {
@@ -187,6 +194,17 @@ pub fn system_bar_insets_points(pixels_per_point: f32) -> [f32; 4] {
 
 pub fn take_picker_result() -> Option<PickerResult> {
     take_queued(results())
+}
+
+/// Next photo another app sent. Never `Cancelled`.
+pub fn take_external_open_result() -> Option<PickerResult> {
+    take_queued(external_open_results())
+}
+
+pub fn has_external_open_result() -> bool {
+    external_open_results()
+        .lock()
+        .is_ok_and(|queue| !queue.is_empty())
 }
 
 pub fn take_camera_profile_folder_result() -> Option<CameraProfileFolderResult> {
