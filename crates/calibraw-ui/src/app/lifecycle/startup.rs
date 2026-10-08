@@ -110,6 +110,7 @@ impl CalibRawApp {
                 motion_at: None,
                 touch_navigation_active: false,
                 space_pan_active: false,
+                native_zoom: None,
                 revision: 0,
                 detail: None,
                 navigation: None,

@@ -248,6 +248,10 @@ pub(crate) struct PreviewState {
     /// Space was held over the preview, so the primary button pans instead
     /// of driving the canvas tool. Ends when that button is released.
     pub(crate) space_pan_active: bool,
+    /// The `zoom` at which one displayed photo pixel covers one physical
+    /// screen pixel (100%, 1:1). `zoom` itself is relative to the fitted view.
+    /// `None` until the preview has been laid out.
+    pub(crate) native_zoom: Option<f32>,
     pub(crate) revision: u64,
     pub(crate) detail: Option<PreviewDetail>,
     pub(crate) navigation: Option<PreviewNavigation>,

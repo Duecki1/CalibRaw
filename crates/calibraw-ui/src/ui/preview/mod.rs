@@ -16,6 +16,12 @@ pub(crate) const MIN_PREVIEW_ZOOM: f32 = if cfg!(target_os = "android") {
     0.70
 };
 pub(crate) const MAX_PREVIEW_ZOOM: f32 = 32.0;
+/// Fits the photo to the preview.
+pub(crate) const ZOOM_FIT_SHORTCUT: egui::KeyboardShortcut =
+    egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, egui::Key::Num0);
+/// 100%: one photo pixel per physical screen pixel.
+pub(crate) const ZOOM_NATIVE_SHORTCUT: egui::KeyboardShortcut =
+    egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, egui::Key::Num1);
 
 /// Borrow the active lens geometry; tools can clone the Arc before editing state.
 pub(super) fn loaded_lens_geometry(app: &CalibRawApp) -> Option<&Arc<LensGeometryMap>> {
