@@ -1212,18 +1212,6 @@ fn feather_preserves_a_thin_diagonal_subject() {
 }
 
 #[test]
-fn legacy_background_label_updates_without_overwriting_custom_names() {
-    let mut stack = MaskStack::default();
-    stack.add_mask(MaskKind::Background);
-    stack.masks[0].components[0].name = "Select Not Subject".into();
-    stack.add_mask(MaskKind::Background);
-    stack.masks[1].components[0].name = "Sky".into();
-    stack.ensure_selection();
-    assert_eq!(stack.masks[0].components[0].name, "Select Background");
-    assert_eq!(stack.masks[1].components[0].name, "Sky");
-}
-
-#[test]
 fn shared_subject_refinement_updates_subject_and_background_as_exact_inverses() {
     let raw = MaskImage::new(32, 32, vec![128; 32 * 32]).unwrap();
     let mut stack = MaskStack::default();

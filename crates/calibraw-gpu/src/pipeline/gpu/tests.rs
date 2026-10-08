@@ -915,6 +915,10 @@ fn assert_planned_programs(pipeline: &RawGpuPipeline) {
             indices.relight_shadow_map_pass_index,
             "build_relight_shadow_map",
         ),
+        (
+            indices.scene_depth_guide_pass_index,
+            "build_scene_depth_guide",
+        ),
     ] {
         assert_eq!(entry(index), expected, "pass {index}");
     }

@@ -21,6 +21,7 @@ use crate::gpu_errors::GpuErrorScopes;
 mod builder;
 mod clipping;
 mod construction;
+mod effect_inputs;
 mod histogram;
 mod mask_layers;
 mod readback;
@@ -32,6 +33,7 @@ mod shaders;
 
 use builder::*;
 pub use clipping::PreviewClippingGpu;
+use effect_inputs::{EffectInputs, InputBindingSources, InputBoundPass};
 pub use histogram::{PreviewHistogram, PreviewHistogramGpu};
 use readback::*;
 use resources::*;
@@ -43,6 +45,8 @@ use shader_manager::ShaderManager;
 mod black_tone_tests;
 #[cfg(test)]
 mod blacks_pipeline_tests;
+#[cfg(test)]
+mod effect_timing_tests;
 #[cfg(test)]
 mod existing_effects_tests;
 #[cfg(test)]
@@ -225,8 +229,27 @@ impl ComputeProgram {
 
 struct Pass {
     pipeline: Arc<ComputeProgram>,
-    bind_group: wgpu::BindGroup,
+    bindings: PassBindings,
     workgroups: [u32; 3],
+}
+
+/// Where a pass takes its group-0 bind group from.
+enum PassBindings {
+    Fixed(wgpu::BindGroup),
+    /// Bound to effect inputs that may be allocated later (`effect_inputs`).
+    Inputs(InputBoundPass),
+}
+
+impl From<wgpu::BindGroup> for PassBindings {
+    fn from(bind_group: wgpu::BindGroup) -> Self {
+        Self::Fixed(bind_group)
+    }
+}
+
+impl From<InputBoundPass> for PassBindings {
+    fn from(pass: InputBoundPass) -> Self {
+        Self::Inputs(pass)
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -332,12 +355,10 @@ pub struct RawGpuPipeline {
     mask_data_buffer: wgpu::Buffer,
     tone_histogram_buffer: wgpu::Buffer,
     tone_stats_buffer: wgpu::Buffer,
-    image_light_cells_buffer: wgpu::Buffer,
-    /// The full-image image-light map Fog samples; cropped and zoomed views
-    /// copy it from the full frame like the tone statistics.
-    image_light_texture: wgpu::Texture,
-    _image_light_core_texture: wgpu::Texture,
-    _image_light_tail_texture: wgpu::Texture,
+    /// Relight's surface and shadow map and the image-light map, allocated
+    /// when an effect first reads them. Cropped and zoomed views copy the
+    /// image-light map from the full frame like the tone statistics.
+    effect_inputs: EffectInputs,
     /// Whether the image-light map matches the current tone result. The tone
     /// stage builds it only when an effect reads it; otherwise the output
     /// stage builds it once one does (`ensure_image_lights`).
@@ -346,6 +367,7 @@ pub struct RawGpuPipeline {
     indices: StageIndices,
     post_blur_glow_passes: Vec<Pass>,
     post_blur_pixelate_blocks_pass: Pass,
+    post_blur_scene_depth_guide_pass: Pass,
     post_blur_creative_pass: Pass,
     post_blur_render_pass: Pass,
     passes: Vec<Pass>,
@@ -369,9 +391,7 @@ pub struct RawGpuPipeline {
     light_rays_mask_texture: wgpu::Texture,
     scene_depth_texture: wgpu::Texture,
     uploaded_scene_depth: Mutex<Option<scene_depth::UploadedSceneDepth>>,
-    /// Relight shadows per scene-depth texel (relight.wgsl), bound by view.
-    _relight_shadow_map: wgpu::Texture,
-    /// What the shadow map was last built for; `None` after scene depth
+    /// What the Relight shadow map (relight.wgsl) was last built for; `None` after scene depth
     /// changes, so the next output stage rebuilds it.
     relight_shadow_map_key: Mutex<Option<RelightShadowMapKey>>,
     mask_layer_capacity: usize,
@@ -438,6 +458,7 @@ struct RawGpuPipelineBuild<'a> {
 
 impl RawGpuPipeline {
     fn upload_params(&self, queue: &wgpu::Queue, params: &GpuParams) {
+        self.prepare_effect_inputs(params);
         self.upload_scene_depth(
             queue,
             params.scene_depth.as_ref(),
@@ -611,15 +632,35 @@ impl RawGpuPipeline {
             label: Some("calibraw export tone histogram clear"),
         });
         encoder.clear_buffer(&self.tone_histogram_buffer, 0, None);
-        encoder.clear_buffer(&self.image_light_cells_buffer, 0, None);
+        if let Some((cells, _)) = self.effect_inputs.image_lights() {
+            encoder.clear_buffer(&cells, 0, None);
+        }
         queue.submit(Some(encoder.finish()));
         self.image_lights_current.store(false, Ordering::Release);
+    }
+
+    /// Allocates the effect inputs `params` reads (`effect_inputs`).
+    fn prepare_effect_inputs(&self, params: &GpuParams) {
+        if params.needs_scene_depth_guide() {
+            self.effect_inputs.allocate_scene_depth_guide();
+        }
+        if params.needs_relight_surface() && self.effect_inputs.allocate_relight() {
+            // Scene depth now goes to the Relight surface, which replaced the
+            // plain depth texture in every bind group.
+            self.forget_uploaded_scene_depth();
+        }
+        if params.needs_image_lights() {
+            self.effect_inputs.allocate_image_lights();
+        }
     }
 
     /// Builds the image-light map from this pipeline's whole image, after the
     /// tone statistics it is resolved against.
     fn encode_image_lights(&self, encoder: &mut wgpu::CommandEncoder) {
-        encoder.clear_buffer(&self.image_light_cells_buffer, 0, None);
+        self.effect_inputs.allocate_image_lights();
+        if let Some((cells, _)) = self.effect_inputs.image_lights() {
+            encoder.clear_buffer(&cells, 0, None);
+        }
         self.encode_pass_range(
             encoder,
             self.indices.image_light_accumulate_pass_index,
@@ -660,10 +701,17 @@ impl RawGpuPipeline {
             return;
         }
         full_frame.ensure_image_lights(encoder);
+        self.effect_inputs.allocate_image_lights();
+        let (Some((_, source)), Some((_, destination))) = (
+            full_frame.effect_inputs.image_lights(),
+            self.effect_inputs.image_lights(),
+        ) else {
+            return;
+        };
         encoder.copy_texture_to_texture(
-            full_frame.image_light_texture.as_image_copy(),
-            self.image_light_texture.as_image_copy(),
-            self.image_light_texture.size(),
+            source.as_image_copy(),
+            destination.as_image_copy(),
+            destination.size(),
         );
         self.image_lights_current.store(true, Ordering::Release);
     }
@@ -765,6 +813,7 @@ impl RawGpuPipeline {
         // Each tile adds its core to the shared image-light grid. Without a
         // receiver the grid stays empty and the tiles skip reading it all again.
         if params.needs_image_lights() {
+            self.effect_inputs.allocate_image_lights();
             self.encode_pass(&mut encoder, self.indices.image_light_accumulate_pass_index);
         }
         queue.submit(Some(encoder.finish()));
@@ -776,15 +825,21 @@ impl RawGpuPipeline {
             label: Some("calibraw export tone histogram reduction"),
         });
         self.encode_pass(&mut encoder, self.indices.tone_reduce_pass_index);
-        self.encode_pass_range(
-            &mut encoder,
-            self.indices.image_light_resolve_pass_index,
-            self.indices.image_light_end_index,
-        );
+        // Tiles accumulated image lights only if an effect reads them, which
+        // allocated the grid.
+        let image_lights = self.effect_inputs.image_lights().is_some();
+        if image_lights {
+            self.encode_pass_range(
+                &mut encoder,
+                self.indices.image_light_resolve_pass_index,
+                self.indices.image_light_end_index,
+            );
+        }
         queue.submit(Some(encoder.finish()));
         // Resolved from every tile's accumulation; tiles must not rebuild it
         // from their own region.
-        self.image_lights_current.store(true, Ordering::Release);
+        self.image_lights_current
+            .store(image_lights, Ordering::Release);
     }
 
     pub fn dispatch_export_tile_with_remove(
@@ -842,7 +897,7 @@ impl RawGpuPipeline {
             "calibraw demosaic finish",
             finish.pipeline.for_demosaic_params(&params.camera),
             &[
-                &finish.bind_group,
+                &self.pass_bind_group(finish),
                 &self.scene_tone_bind_group,
                 &self.effects_bind_group,
             ],
@@ -911,13 +966,24 @@ impl RawGpuPipeline {
                     self.encode_pass(encoder, self.indices.pixelate_blocks_pass_index);
                 }
             }
+            let depth_guide = params.needs_scene_depth_guide();
             if blur_active {
+                if depth_guide {
+                    self.encode_bound_pass(
+                        encoder,
+                        &self.post_blur_scene_depth_guide_pass,
+                        "post-Blur scene-depth guide pass",
+                    );
+                }
                 self.encode_bound_pass(
                     encoder,
                     &self.post_blur_creative_pass,
                     "post-Blur creative pass",
                 );
             } else {
+                if depth_guide {
+                    self.encode_pass(encoder, self.indices.scene_depth_guide_pass_index);
+                }
                 self.encode_pass(encoder, self.indices.adjustment_creative_pass_index);
             }
         }
@@ -964,17 +1030,25 @@ impl RawGpuPipeline {
         pass_record: &Pass,
         label: &str,
     ) {
+        let bind_group = self.pass_bind_group(pass_record);
         dispatch_compute(
             encoder,
             label,
             pass_record.pipeline.get(),
             &[
-                &pass_record.bind_group,
+                &bind_group,
                 &self.scene_tone_bind_group,
                 &self.effects_bind_group,
             ],
             pass_record.workgroups,
         );
+    }
+
+    fn pass_bind_group(&self, pass_record: &Pass) -> wgpu::BindGroup {
+        match &pass_record.bindings {
+            PassBindings::Fixed(bind_group) => bind_group.clone(),
+            PassBindings::Inputs(pass) => self.effect_inputs.bind_group(*pass),
+        }
     }
 
     fn encode_pass_range(&self, encoder: &mut wgpu::CommandEncoder, start: usize, end: usize) {

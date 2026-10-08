@@ -2,7 +2,9 @@
 //! beyond them and the band's axis are drawn over the photo. Drag the center
 //! to move the band, the knob to rotate it (Shift snaps to 15°), an edge
 //! handle to widen the sharp band and an outer handle to widen the feather.
-//! Double-click a handle to reset what it controls.
+//! Double-click a handle to reset what it controls. A focused handle steps
+//! with the arrow keys: the center moves, and the knob and edge handles
+//! turn or widen with Right or Up; Shift makes the steps finer.
 //!
 //! Geometry follows `mask_tilt_shift_weight` in tilt_shift.wgsl: the band is a
 //! straight line in source pixels through the center at the angle, and widths
@@ -146,12 +148,29 @@ impl Part {
         }
     }
 
+    fn name(self) -> &'static str {
+        match self {
+            Self::Feather(_) => "Feather",
+            Self::Focus(_) => "Focus Width",
+            Self::Knob => "Angle",
+            Self::Center => "Focus position",
+        }
+    }
+
+    /// The label drawn beside a hovered or dragged handle.
     fn label(self, settings: &TiltShiftEffectSettings) -> String {
         match self {
-            Self::Feather(_) => format!("Feather {:.0}", settings.feather),
-            Self::Focus(_) => format!("Focus Width {:.0}", settings.focus_width),
-            Self::Knob => format!("Angle {}°", format_signed(settings.angle)),
-            Self::Center => "Focus position".to_owned(),
+            Self::Center => self.name().to_owned(),
+            _ => format!("{} {}", self.name(), self.value(settings)),
+        }
+    }
+
+    fn value(self, settings: &TiltShiftEffectSettings) -> String {
+        match self {
+            Self::Feather(_) => format!("{:.0}", settings.feather),
+            Self::Focus(_) => format!("{:.0}", settings.focus_width),
+            Self::Knob => format!("{}°", format_signed(settings.angle)),
+            Self::Center => format!("{:.0}%, {:.0}%", settings.center[0], settings.center[1]),
         }
     }
 }
@@ -212,7 +231,7 @@ pub(super) fn show(
             continue;
         }
         let id = handle_id(ui, handle.target, part.id_part());
-        let response = grab(ui, id, screen, part.label(&original));
+        let response = grab(ui, id, screen, part.name(), part.value(&original));
         if let Some(edit) = edit_for(ui, &response, id, part, screen, &layout, frames, &settings) {
             apply(&mut settings, edit);
             edits.push(edit);
@@ -254,7 +273,9 @@ fn edit_for(
             drawn: screen,
         },
     };
-    let moved = drag_to(ui, response, id, placement)?;
+    let Some(moved) = drag_to(ui, response, id, placement) else {
+        return key_edit(ui, response, part, settings);
+    };
     let position = frames.position_at(Frame::Source, moved);
     let edit = match part {
         Part::Center => EffectHandleEdit::Position([
@@ -272,6 +293,32 @@ fn edit_for(
             params::FEATHER
                 .clamp(layout.band.offset_across(position).abs() - settings.focus_width * 0.5),
         ),
+    };
+    (edit != current_value(settings, part)).then_some(edit)
+}
+
+/// The edit of arrow keys on a focused handle: the center moves, the other
+/// handles turn or widen with Right or Up and the reverse with Left or Down.
+fn key_edit(
+    ui: &Ui,
+    response: &egui::Response,
+    part: Part,
+    settings: &TiltShiftEffectSettings,
+) -> Option<EffectHandleEdit> {
+    let steps = arrow_steps(ui, response);
+    let increase = steps.x - steps.y;
+    let edit = match part {
+        Part::Center => EffectHandleEdit::Position([
+            params::CENTER_X.clamp(settings.center[0] + steps.x),
+            params::CENTER_Y.clamp(settings.center[1] + steps.y),
+        ]),
+        Part::Knob => EffectHandleEdit::Angle(wrap_degrees(settings.angle + increase)),
+        Part::Focus(_) => {
+            EffectHandleEdit::FocusWidth(params::FOCUS_WIDTH.clamp(settings.focus_width + increase))
+        }
+        Part::Feather(_) => {
+            EffectHandleEdit::Feather(params::FEATHER.clamp(settings.feather + increase))
+        }
     };
     (edit != current_value(settings, part)).then_some(edit)
 }

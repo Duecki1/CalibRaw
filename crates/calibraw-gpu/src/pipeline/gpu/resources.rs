@@ -6,8 +6,11 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use wgpu::util::DeviceExt;
 
 pub(super) const SCENE_DEPTH_EDGE: u32 = 1024;
-/// Stored depth, smooth depth and its two gradients (`scene_surface`).
-pub(super) const SCENE_DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
+/// Stored scene depth, which Fog and Smoke read.
+pub(super) const SCENE_DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R16Float;
+/// Relight's surface: stored depth, smooth depth and its two gradients, with
+/// a mip chain (`scene_surface`). It replaces the plain depth once allocated.
+pub(super) const RELIGHT_SURFACE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 
 /// Image lights (tone_analysis.wgsl): grid cells along the full image's
 /// longer edge. Textures and the cell buffer are sized for a square grid.
@@ -18,11 +21,16 @@ pub(super) const IMAGE_LIGHT_BANDS: u32 = 16;
 pub(super) const IMAGE_LIGHT_CELL_BYTES: u64 = IMAGE_LIGHT_BANDS as u64 * 16;
 pub(super) const IMAGE_LIGHT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 
+/// Per scene-depth texel, the joint-upsampling guide colour and the stored
+/// depth (scene_depth.wgsl).
+pub(super) const SCENE_DEPTH_GUIDE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
+
 /// Relight shadows of up to four lights per scene-depth texel (relight.wgsl).
 pub(super) const RELIGHT_SHADOW_MAP_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 
-pub(super) const fn image_light_cells_bytes() -> u64 {
-    IMAGE_LIGHT_GRID_LONG as u64 * IMAGE_LIGHT_GRID_LONG as u64 * IMAGE_LIGHT_CELL_BYTES
+/// Bytes of an image-light grid of `edge` × `edge` cells.
+pub(super) const fn image_light_cells_bytes(edge: u32) -> u64 {
+    edge as u64 * edge as u64 * IMAGE_LIGHT_CELL_BYTES
 }
 
 const MAX_UPLOAD_SCRATCH_BYTES: usize = 8 * 1024 * 1024;
@@ -54,6 +62,9 @@ static RESERVED_GPU_BYTES: AtomicU64 = AtomicU64::new(0);
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum GpuResourceResidency {
     Persistent,
+    /// Reserved with the pipeline like `Persistent`, but allocated only when
+    /// an effect first reads it (`effect_inputs`).
+    OnDemand,
     Transient,
     HostPeak,
 }
@@ -289,12 +300,18 @@ pub(super) fn build_gpu_resource_plan(input: GpuResourcePlanInput) -> Result<Gpu
         &mut entries,
         "scene depth texture",
         GpuResourceResidency::Persistent,
+        texture_allocation_bytes(SCENE_DEPTH_EDGE, SCENE_DEPTH_EDGE, 1, 1, SCENE_DEPTH_FORMAT)?,
+    );
+    push_entry(
+        &mut entries,
+        "Relight scene-depth surface",
+        GpuResourceResidency::OnDemand,
         texture_allocation_bytes(
             SCENE_DEPTH_EDGE,
             SCENE_DEPTH_EDGE,
             1,
             SCENE_DEPTH_MIP_LEVELS,
-            SCENE_DEPTH_FORMAT,
+            RELIGHT_SURFACE_FORMAT,
         )?,
     );
     let mask_bytes = texture_allocation_bytes(
@@ -358,8 +375,20 @@ pub(super) fn build_gpu_resource_plan(input: GpuResourcePlanInput) -> Result<Gpu
     );
     push_entry(
         &mut entries,
-        "relight shadow map",
-        GpuResourceResidency::Persistent,
+        "scene-depth guide",
+        GpuResourceResidency::OnDemand,
+        texture_allocation_bytes(
+            SCENE_DEPTH_EDGE,
+            SCENE_DEPTH_EDGE,
+            1,
+            1,
+            SCENE_DEPTH_GUIDE_FORMAT,
+        )?,
+    );
+    push_entry(
+        &mut entries,
+        "Relight shadow map",
+        GpuResourceResidency::OnDemand,
         texture_allocation_bytes(
             SCENE_DEPTH_EDGE,
             SCENE_DEPTH_EDGE,
@@ -371,13 +400,13 @@ pub(super) fn build_gpu_resource_plan(input: GpuResourcePlanInput) -> Result<Gpu
     push_entry(
         &mut entries,
         "image-light grid buffer",
-        GpuResourceResidency::Persistent,
-        aligned_buffer_bytes(image_light_cells_bytes())?,
+        GpuResourceResidency::OnDemand,
+        aligned_buffer_bytes(image_light_cells_bytes(IMAGE_LIGHT_GRID_LONG))?,
     );
     push_entry(
         &mut entries,
         "image-light textures",
-        GpuResourceResidency::Persistent,
+        GpuResourceResidency::OnDemand,
         3 * texture_allocation_bytes(
             IMAGE_LIGHT_GRID_LONG,
             IMAGE_LIGHT_GRID_LONG,
@@ -423,7 +452,11 @@ pub(super) fn build_gpu_resource_plan(input: GpuResourcePlanInput) -> Result<Gpu
                     .ok_or_else(|| anyhow!("GPU resource-plan total overflows"))
             })
     };
-    let persistent_gpu_bytes = sum(GpuResourceResidency::Persistent)?;
+    // On-demand inputs are reserved up front, so allocating them later never
+    // exceeds the budget.
+    let persistent_gpu_bytes = sum(GpuResourceResidency::Persistent)?
+        .checked_add(sum(GpuResourceResidency::OnDemand)?)
+        .ok_or_else(|| anyhow!("GPU resource-plan total overflows"))?;
     let transient_gpu_peak_bytes = sum(GpuResourceResidency::Transient)?;
     let host_peak_bytes = sum(GpuResourceResidency::HostPeak)?;
     let gpu_before_margin = persistent_gpu_bytes

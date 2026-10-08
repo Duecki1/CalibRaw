@@ -113,6 +113,12 @@ fn local_effects_at(pos: vec2<i32>) -> vec3<f32> {
     return textureLoad(local_effects_tex, Common::clamp_pos(pos), 0).xyz;
 }
 
+// The colour and alpha of the input. Only mask Blur stages give alpha a
+// meaning: each stores the next stage's blur amount there (blur.wgsl).
+fn local_effects_rgba_at(pos: vec2<i32>) -> vec4<f32> {
+    return textureLoad(local_effects_tex, Common::clamp_pos(pos), 0);
+}
+
 fn presence_step(reference_pixels: f32, maximum: i32) -> i32 {
     return clamp(
         i32(round(reference_pixels * DetailUtils::presence_reference_scale())),

@@ -203,6 +203,10 @@ impl MaskComponent {
 pub struct LocalMask {
     #[serde(flatten)]
     pub common: MaskCommon,
+    // migration: remove in v2.0.0. Masks saved before effect components, up to
+    // v1.0, carry one effect here instead of adjustments; `migrate_legacy_effect`
+    // turns it into a component when the mask is opened. Listed in
+    // `crate::migrations`.
     #[serde(default)]
     pub effect: MaskEffect,
     #[serde(default, skip_serializing_if = "MaskEffectSettings::is_default")]

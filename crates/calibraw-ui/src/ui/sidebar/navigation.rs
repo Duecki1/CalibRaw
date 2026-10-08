@@ -424,20 +424,13 @@ impl Sidebar {
         }
 
         if let Some(effect) = added_effect {
-            app.masks
-                .stack
-                .global_effects
-                .push(crate::pipeline::EffectComponent::new(effect));
-            if layout == ScreenLayout::Vertical {
-                // Open the new effect's tab, as adding it from the tab strip does.
-                app.develop_ui.effect_component = Some(effect);
+            if app.add_global_effect(effect, layout) {
+                crate::ui::components::scroll_into_view::request(
+                    ui.ctx(),
+                    mask_effects::effect_card_scroll_target(effect),
+                    None,
+                );
             }
-            crate::ui::components::scroll_into_view::request(
-                ui.ctx(),
-                mask_effects::effect_card_scroll_target(effect),
-                None,
-            );
-            app.mark_mask_adjustments_dirty();
         }
 
         let effect_frame = mask_effects::EffectFrame::of(app);

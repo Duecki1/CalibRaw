@@ -74,7 +74,7 @@ change that establishes a boundary, not in advance.
 | Document state | `DevelopState`, `MaskState::stack`, `InpaintState::edits`, `PersistenceState::history` | exposure, geometry, masks, remove/retouch edits, undo history |
 | Interaction state | `DevelopUiState`, `MaskState` drag fields, view-local `egui` memory | crop/mask drags, pickers, open sections |
 | Active work | `ForegroundOperation`, `ExportTask`, `PreviewState` receivers, `AiState::update`, `InpaintState::receiver` | AI masks, export, preview rebuilds |
-| Caches | `DevelopState::raw_cache`, `PreviewState::program_template`, `MaskState` caches, library thumbnail caches, `calibraw-ai` model runtime, `calibraw-gpu` shared relighting surface | decoded RAWs, compiled GPU programs, AI inference results, the surface derived from the current scene depth |
+| Caches | `DevelopState::raw_cache`, `PreviewState::program_template`, `MaskState` caches, library thumbnail caches, `calibraw-ai` model runtime, `calibraw-gpu` shared relighting surface | decoded RAWs, compiled GPU programs, AI inference results, the surface derived from the current scene depth while a pipeline shows it |
 
 `PersistenceState::document_generation` identifies the open document: it
 increases whenever a different document is installed, and every document-bound
@@ -125,6 +125,7 @@ GPU readbacks wait on one-slot channels.
 | model runtime slot | `calibraw_ai::model_runtime` | the running AI job | one ONNX session at a time; evicted models unload once released |
 | `RUNTIME_INIT_LOCK`, provider statuses, artifact lock | `calibraw_ai` | AI jobs | serialize ONNX Runtime initialization and probes |
 | `SHARED_SURFACE` | `calibraw_gpu` scene-depth upload | any thread uploading scene depth: preview pipelines on the UI thread, export workers | the relighting surface is derived once per depth result and shared by every pipeline; held while deriving, so a concurrent upload of the same result waits instead of repeating it |
+| effect inputs (`EffectInputs`) | each `RawGpuPipeline` | threads encoding that pipeline | allocates the depth guide, Relight surface and shadow map, or image-light map the first time an effect reads them and rebinds the passes that read them; encoding holds it only to clone a bind group, never while waiting on the GPU |
 | `SIDECAR_SAVE_LOCK` | `calibraw_core::sidecar::files` | sidecar writers | one sidecar write at a time |
 | `TextureRetirement` | `PreviewState` | any thread dropping a `PreviewPipeline`; drained by the UI thread | short pushes and one drain per frame |
 | FFI result queues, `REPAINT_NOTIFIER` | `calibraw_ffi::android` | Java callback threads push; the UI thread pops | short critical sections; no JNI call while held |

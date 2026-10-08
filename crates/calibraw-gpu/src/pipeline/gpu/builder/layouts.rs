@@ -34,6 +34,7 @@ pub(in crate::pipeline::gpu) struct BindGroupLayouts {
     pub(in crate::pipeline::gpu) bgl_image_light_blur_horizontal: wgpu::BindGroupLayout,
     pub(in crate::pipeline::gpu) bgl_image_light_blur_vertical: wgpu::BindGroupLayout,
     pub(in crate::pipeline::gpu) bgl_relight_shadow_map: wgpu::BindGroupLayout,
+    pub(in crate::pipeline::gpu) bgl_scene_depth_guide: wgpu::BindGroupLayout,
 }
 
 pub(in crate::pipeline::gpu) fn create_bind_group_layouts(
@@ -449,6 +450,7 @@ pub(in crate::pipeline::gpu) fn create_bind_group_layouts(
                     texture_entry(36, wgpu::TextureSampleType::Float { filterable: false }),
                     texture_entry(45, wgpu::TextureSampleType::Float { filterable: true }),
                     texture_entry(46, wgpu::TextureSampleType::Float { filterable: false }),
+                    texture_entry(48, wgpu::TextureSampleType::Float { filterable: false }),
                 ],
             )
         });
@@ -559,6 +561,24 @@ pub(in crate::pipeline::gpu) fn create_bind_group_layouts(
             )
         });
 
+    let bgl_scene_depth_guide =
+        reused_layout(plan.scene_depth_guide_pass_index).unwrap_or_else(|| {
+            create_bind_group_layout(
+                device,
+                "bgl scene-depth guide",
+                &[
+                    buffer_entry(0),
+                    texture_entry(24, wgpu::TextureSampleType::Float { filterable: false }),
+                    texture_entry(35, wgpu::TextureSampleType::Float { filterable: true }),
+                    storage_texture_entry(
+                        49,
+                        SCENE_DEPTH_GUIDE_FORMAT,
+                        wgpu::StorageTextureAccess::WriteOnly,
+                    ),
+                ],
+            )
+        });
+
     BindGroupLayouts {
         bgl_scene_tone,
         bgl_effects,
@@ -591,5 +611,6 @@ pub(in crate::pipeline::gpu) fn create_bind_group_layouts(
         bgl_image_light_blur_horizontal,
         bgl_image_light_blur_vertical,
         bgl_relight_shadow_map,
+        bgl_scene_depth_guide,
     }
 }

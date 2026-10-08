@@ -91,7 +91,7 @@ pub enum MaskGeometry {
 
 /// Relative-depth selection with independently softened near and far cutoffs.
 #[derive(Clone, Copy, Debug, PartialEq, serde::Deserialize, serde::Serialize)]
-#[serde(from = "DepthRangeSettingsInput")]
+#[serde(from = "crate::migrations::depth_range_feather::StoredDepthRange")]
 pub struct DepthRangeSettings {
     pub near: f32,
     pub far: f32,
@@ -109,31 +109,6 @@ impl Default for DepthRangeSettings {
             far: 0.5,
             near_feather: 0.1,
             far_feather: 0.1,
-        }
-    }
-}
-
-#[derive(serde::Deserialize)]
-struct DepthRangeSettingsInput {
-    near: f32,
-    far: f32,
-    #[serde(default)]
-    near_feather: Option<f32>,
-    #[serde(default)]
-    far_feather: Option<f32>,
-    // Sidecars written before independent end feathering used one value.
-    #[serde(default)]
-    feather: Option<f32>,
-}
-
-impl From<DepthRangeSettingsInput> for DepthRangeSettings {
-    fn from(input: DepthRangeSettingsInput) -> Self {
-        let legacy = input.feather.unwrap_or(0.1);
-        Self {
-            near: input.near,
-            far: input.far,
-            near_feather: input.near_feather.unwrap_or(legacy),
-            far_feather: input.far_feather.unwrap_or(legacy),
         }
     }
 }

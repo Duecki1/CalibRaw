@@ -85,13 +85,6 @@ impl MaskStack {
     }
 
     pub fn ensure_selection(&mut self) -> Option<(usize, usize)> {
-        // Older sidecars stored the generated default component name as text.
-        // Keep user-renamed components intact while updating that old default.
-        for component in self.masks.iter_mut().flat_map(|mask| &mut mask.components) {
-            if component.kind == MaskKind::Background && component.name == "Select Not Subject" {
-                component.name = MaskKind::Background.label().to_owned();
-            }
-        }
         if self.masks.is_empty() {
             self.selected_mask = None;
             self.selected_component = None;

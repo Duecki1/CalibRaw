@@ -15,12 +15,11 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 mod files;
-mod legacy_effects;
 mod mask_assets;
 mod remove_assets;
 mod size_limits;
+use crate::migrations::{self, LegacyEffectSliders};
 pub use files::*;
-pub(crate) use legacy_effects::LegacyEffectSliders;
 use mask_assets::*;
 use remove_assets::*;
 pub use size_limits::*;
@@ -417,7 +416,7 @@ pub fn decode(bytes: &[u8]) -> Result<LoadedSidecar, SidecarError> {
 
     let (mut document, schema_migrated) = decode_versioned_document(bytes, header.schema_version)?;
     // Mask indices still match the serialized masks here.
-    let effects_migrated = header.edits.migrate(&mut document.edits);
+    let edits_migrated = migrations::migrate_edits(&mut document.edits, header.edits);
     restore_mask_assets(
         &mut document.edits,
         &document.mask_assets,
@@ -446,7 +445,7 @@ pub fn decode(bytes: &[u8]) -> Result<LoadedSidecar, SidecarError> {
             ..document.review
         },
         editing_time_ms: document.editing_time_ms,
-        migrated: schema_migrated || effects_migrated,
+        migrated: schema_migrated || edits_migrated,
     })
 }
 

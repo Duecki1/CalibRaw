@@ -35,6 +35,12 @@ fn mask_blur_stage_mix_sum(radius: f32) -> f32 {
 // itself (see `mask_blur_tap_weight`), so a masked Blur gathers only what it
 // blurs and leaves no halo from outside its mask. Global Blurs and full masks
 // blur every tap equally, so each weighs exactly 1.
+//
+// The first stage computes each tap's amount. Every stage stores the next
+// stage's amount at its pixel in the output's alpha (`store_mask_blur_stage`),
+// so later stages read their taps' amounts with their colours; `amount` is
+// then the pixel's own stored amount, so equal amounts weigh exactly 1 at any
+// storage precision.
 fn mask_blur_diffused_at(pos: vec2<i32>, stage: u32, amount: f32, source_rgb: vec3<f32>) -> vec3<f32> {
     let step = mask_blur_stage_step(stage);
     var sum = vec3<f32>(0.0);
@@ -45,11 +51,16 @@ fn mask_blur_diffused_at(pos: vec2<i32>, stage: u32, amount: f32, source_rgb: ve
             let weight = Common::binomial5_weight(x)
                 * Common::binomial5_weight(y);
             let tap = pos + vec2<i32>(x * step, y * step);
+            let input = SceneAdjustments::local_effects_rgba_at(tap);
             var masked = weight;
             if x != 0 || y != 0 {
-                masked = weight * min(mask_blur_stage_amount(tap, stage) / amount, 1.0);
+                var tap_amount = input.w;
+                if stage == 0u {
+                    tap_amount = mask_blur_stage_amount(tap, stage);
+                }
+                masked = weight * min(tap_amount / amount, 1.0);
             }
-            sum = sum + SceneAdjustments::local_effects_at(tap) * masked;
+            sum = sum + input.xyz * masked;
             total_weight = total_weight + masked;
             kernel_weight = kernel_weight + weight;
         }
@@ -87,17 +98,24 @@ fn mask_blur_stage_amount(pos: vec2<i32>, stage: u32) -> f32 {
     return 1.0 - retained_source;
 }
 
+// `stored_amount` is the amount the previous stage stored at `pos` (unused
+// by the first stage).
 fn apply_mask_blur_stage(
     pos: vec2<i32>,
     source_rgb: vec3<f32>,
+    stored_amount: f32,
     stage: u32,
 ) -> vec3<f32> {
     let combined_amount = mask_blur_stage_amount(pos, stage);
     var rgb = source_rgb;
     if combined_amount > 1e-6 {
+        var tap_reference = combined_amount;
+        if stage != 0u {
+            tap_reference = max(stored_amount, 1e-6);
+        }
         rgb = mix(
             source_rgb,
-            mask_blur_diffused_at(pos, stage, combined_amount, source_rgb),
+            mask_blur_diffused_at(pos, stage, tap_reference, source_rgb),
             combined_amount,
         );
     }
@@ -147,11 +165,17 @@ fn apply_mask_blur_stage(
 fn store_mask_blur_stage(gid: vec3<u32>, stage: u32) {
     if gid.x >= Common::camera_uniforms.width || gid.y >= Common::camera_uniforms.height { return; }
     let pos = vec2<i32>(i32(gid.x), i32(gid.y));
-    let source = SceneAdjustments::local_effects_at(pos);
+    let source = SceneAdjustments::local_effects_rgba_at(pos);
+    // The next stage's amount here, for its taps (`mask_blur_diffused_at`).
+    // Nothing after the stages reads alpha.
+    var next_amount = 1.0;
+    if stage + 1u < MASK_BLUR_STAGE_COUNT {
+        next_amount = mask_blur_stage_amount(pos, stage + 1u);
+    }
     textureStore(
         SceneAdjustments::creative_effects_out,
         pos,
-        vec4<f32>(apply_mask_blur_stage(pos, source, stage), 1.0),
+        vec4<f32>(apply_mask_blur_stage(pos, source.xyz, source.w, stage), next_amount),
     );
 }
 

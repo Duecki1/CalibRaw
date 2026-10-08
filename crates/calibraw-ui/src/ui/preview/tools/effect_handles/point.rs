@@ -1,6 +1,8 @@
 //! Point handles: the Relight and Light Rays sources and the Radial Blur and
 //! Vignette centers. Drag a handle to place it and double-click it to reset
 //! its position; scroll over Relight's light to move it nearer or farther.
+//! A focused handle moves one percent per arrow key, and Relight's light one
+//! depth step per Page Up or Page Down; Shift makes the steps finer.
 
 use super::*;
 use crate::app::EffectHandleEdit;
@@ -88,37 +90,41 @@ pub(super) fn show(
     let mut edits = Vec::new();
     let placement = Placement::of(frames.screen_of(spec.frame, spec.position), frames.viewport);
     let id = handle_id(ui, handle.target, "point");
-    let mut label = format!(
-        "{}: {:.0}%, {:.0}%",
-        spec.name, spec.position[0], spec.position[1]
-    );
+    let mut value = format!("{:.0}%, {:.0}%", spec.position[0], spec.position[1]);
     if let Some(depth) = spec.depth {
-        label.push_str(&format!(", depth {depth:.0}"));
+        value.push_str(&format!(", depth {}", format_signed(depth)));
     }
-    let response = grab(ui, id, placement.drawn, label);
+    let response = grab(ui, id, placement.drawn, spec.name, value);
 
     let mut position = spec.position;
     if response.double_clicked() {
         position = [spec.specs[0].default, spec.specs[1].default];
-        edits.push(EffectHandleEdit::Position(position));
     } else if let Some(moved) = drag_to(ui, &response, id, placement) {
         position = spec.clamp(frames.position_at(spec.frame, moved));
-        if position != spec.position {
-            edits.push(EffectHandleEdit::Position(position));
-        }
+    } else {
+        let steps = arrow_steps(ui, &response);
+        position = spec.clamp([position[0] + steps.x, position[1] + steps.y]);
+    }
+    if position != spec.position || response.double_clicked() {
+        edits.push(EffectHandleEdit::Position(position));
     }
 
     let active = is_active(&response);
     let mut depth = spec.depth;
-    if let Some(current) = spec.depth.filter(|_| active) {
-        let (scroll, fine) = ui.input(|input| (input.smooth_scroll_delta.y, input.modifiers.shift));
-        if scroll.abs() > 0.01 {
-            let rate = DEPTH_PER_SCROLL_POINT * if fine { 0.2 } else { 1.0 };
-            // Scrolling up pushes the light away from the camera.
-            let scrolled = effect_params::relight::DEPTH.clamp(current + scroll * rate);
-            if scrolled != current {
-                edits.push(EffectHandleEdit::Depth(scrolled));
-                depth = Some(scrolled);
+    if let Some(current) = spec.depth {
+        let (scroll, fine) = if active {
+            ui.input(|input| (input.smooth_scroll_delta.y, input.modifiers.shift))
+        } else {
+            (0.0, false)
+        };
+        // Scrolling up, like Page Up, pushes the light away from the camera.
+        let rate = DEPTH_PER_SCROLL_POINT * if fine { FINE_STEP } else { 1.0 };
+        let delta = scroll * rate + page_steps(ui, &response);
+        if delta.abs() > 1e-4 {
+            let moved = effect_params::relight::DEPTH.clamp(current + delta);
+            if moved != current {
+                edits.push(EffectHandleEdit::Depth(moved));
+                depth = Some(moved);
             }
         }
     }
@@ -131,9 +137,9 @@ pub(super) fn show(
     };
     paint(painter, placement, &spec, depth, active);
     response.on_hover_text(if spec.depth.is_some() {
-        "Drag to move the light. Scroll to move it nearer or farther; Shift scrolls finely. Double-click to reset its position."
+        "Drag to move the light; arrow keys nudge it once selected. Scroll or press Page Up or Page Down to move it nearer or farther. Shift makes every step finer. Double-click to reset its position."
     } else {
-        "Drag to move. Double-click to reset the position."
+        "Drag to move; arrow keys nudge it once selected, finely with Shift. Double-click to reset the position."
     });
     edits
 }
@@ -294,5 +300,52 @@ mod tests {
             effect_params::vignette::CENTER_Y.default,
         ];
         assert_eq!(reset, Some(defaults));
+    }
+
+    fn key(key: egui::Key, modifiers: egui::Modifiers) -> egui::Event {
+        egui::Event::Key {
+            key,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers,
+        }
+    }
+
+    #[test]
+    fn a_pressed_handle_takes_focus_and_steps_with_the_keyboard() {
+        let input = input(MaskEffect::Relight, |settings| {
+            settings.relight.source = [25.0, 50.0];
+            settings.relight.depth = 10.0;
+        });
+        let mut canvas = Canvas::new();
+        let at = Pos2::new(100.0, 150.0);
+        canvas.frame(&input, pointer(at, None));
+        canvas.frame(&input, pointer(at, Some(true)));
+        canvas.frame(&input, pointer(at, Some(false)));
+
+        let (edits, _) = canvas.frame(
+            &input,
+            vec![
+                key(egui::Key::ArrowRight, egui::Modifiers::NONE),
+                key(egui::Key::ArrowUp, egui::Modifiers::SHIFT),
+                key(egui::Key::PageUp, egui::Modifiers::NONE),
+            ],
+        );
+        assert_position(&edits, [26.0, 50.0 - FINE_STEP]);
+        assert!(edits.contains(&EffectHandleEdit::Depth(11.0)), "{edits:?}");
+    }
+
+    #[test]
+    fn arrow_keys_leave_an_unfocused_handle_alone() {
+        let input = input(MaskEffect::Vignette, |settings| {
+            settings.vignette.center = [25.0, 25.0];
+        });
+        let mut canvas = Canvas::new();
+        let (edits, _) = canvas.frame(
+            &input,
+            vec![key(egui::Key::ArrowRight, egui::Modifiers::NONE)],
+        );
+        assert!(edits.is_empty(), "{edits:?}");
     }
 }

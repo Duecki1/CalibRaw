@@ -22,7 +22,9 @@ without models; "GPU" means an explicit local run with an adapter.
 
 - New versions read older settings, presets and sidecars; legacy fields are
   migrated on load (tests: legacy curves, legacy inline depth, legacy film
-  effect sliders, which load as effect components).
+  effect sliders, which load as effect components). Migrations live in
+  `crates/calibraw-core/src/migrations/`, each marked with the version that
+  may remove it (`cargo xtask migrations`).
 - A sidecar or preset with a **newer schema version** is rejected as
   `Unsupported`; it is never overwritten implicitly. Desktop offers an explicit
   backup-and-replace (`backup_and_replace_desktop_sidecar`).

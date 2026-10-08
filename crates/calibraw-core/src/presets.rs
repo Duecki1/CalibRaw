@@ -10,12 +10,13 @@
 //! files and a damaged file never hides the others.
 
 use crate::file_ops::write_bytes_atomically;
+use crate::migrations::{self, LegacyEffectSliders};
 use crate::pipeline::{
     AdjustmentGroup, ExposureParams, MaskGeometry, MaskKind, MaskStack, MAX_LOCAL_MASKS,
 };
 use crate::sidecar::{
     adjustment_group_is_edited, default_edit_state, transfer_edits, validate_edit_state,
-    AdjustmentPasteMode, EditSelection, EditState, LegacyEffectSliders,
+    AdjustmentPasteMode, EditSelection, EditState,
 };
 use serde::{Deserialize, Serialize};
 use std::fmt;
@@ -183,6 +184,9 @@ impl Preset {
     /// Global effects added next to the photo's own: those of a preset saved
     /// while global effects belonged to the masks category. A preset with the
     /// Effects group replaces the photo's global effects instead.
+    ///
+    /// migration: remove in v2.0.0, with the matching step in
+    /// [`Self::decode`]. Listed in `crate::migrations`.
     fn added_global_effects(&self) -> &[crate::pipeline::EffectComponent] {
         if self
             .selection
@@ -302,7 +306,7 @@ impl Preset {
         } else {
             header.edits.without_global()
         };
-        legacy.migrate(&mut document.edits);
+        migrations::migrate_edits(&mut document.edits, legacy);
 
         // Rebuild through `new` so a hand-edited file gets the same filtering
         // as a preset created in the app.
@@ -312,8 +316,9 @@ impl Preset {
             document.selection,
             &document.edits,
         )?;
-        // Presets saved while global effects belonged to the masks category
-        // keep them, and add them next to the photo's own.
+        // migration: remove in v2.0.0, with `added_global_effects`. Presets
+        // saved while global effects belonged to the masks category, up to
+        // v1.2, keep them and add them next to the photo's own.
         if document.selection.masks
             && !document
                 .selection

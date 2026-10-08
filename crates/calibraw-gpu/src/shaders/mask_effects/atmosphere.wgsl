@@ -59,7 +59,8 @@ fn atmosphere_image_point(pos: vec2<i32>) -> vec2<f32> {
 // image colour differs from the pixel's are rejected, so an edge follows the
 // image's edge where colours differ and blends smoothly where they do not,
 // instead of tracing the texel grid as a staircase. Guide colours lie up to
-// 3.5 texels away (SCENE_DEPTH_GUIDE_SUPPORT in tiles.rs).
+// 3.5 texels away (SCENE_DEPTH_GUIDE_SUPPORT in tiles.rs); the guide map holds
+// them (scene_depth.wgsl).
 fn fog_depth_at(pos: vec2<i32>) -> f32 {
     let size = vec2<i32>(textureDimensions(scene_depth_tex));
     let p = full_image_uv(pos) * vec2<f32>(size) - vec2<f32>(0.5);
@@ -74,8 +75,10 @@ fn fog_depth_at(pos: vec2<i32>) -> f32 {
             let tent = max(1.0 - offset.x / 3.0, 0.0) * max(1.0 - offset.y / 3.0, 0.0);
             if tent <= 0.0 { continue; }
             let cell = clamp(texel, vec2<i32>(0), size - vec2<i32>(1));
-            let weight = tent * scene_depth_guide_weight(cell, size, center);
-            total += textureLoad(scene_depth_tex, cell, 0).x * weight;
+            // Guide colour and stored depth in one load.
+            let guide = textureLoad(scene_depth_guide_tex, cell, 0);
+            let weight = tent * scene_depth_guide_weight(guide.xyz, center);
+            total += guide.w * weight;
             weights += weight;
         }
     }

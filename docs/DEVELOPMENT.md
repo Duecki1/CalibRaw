@@ -22,6 +22,7 @@ cargo test --locked --workspace --all-targets
 cargo xtask arch-check
 cargo xtask jni-contract
 cargo xtask ui-lint
+cargo xtask migrations
 cargo deny check
 ```
 
@@ -37,6 +38,10 @@ cargo deny check
   live in `xtask/ui-lint-baseline.json`, each with a reason; stale approvals
   fail too. `--suggest` prints entries for new findings, whose reasons must be
   written before they pass. Review baseline changes like code.
+- `cargo xtask migrations` lists every `migration: remove in vX.Y.Z` marker
+  under `crates/` and fails once the workspace version reaches one, or when a
+  file in `crates/calibraw-core/src/migrations/` has no marker. Bumping the
+  version for a release therefore requires deleting the migrations it retires.
 - `layout_contract_tests` in `calibraw-gpu` compare Rust uniform/storage
   structs, buffer bindings and shared constants with the WGSL modules the
   production `ShaderManager` composes. They need no GPU.
