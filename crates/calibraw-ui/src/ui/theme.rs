@@ -106,6 +106,9 @@ pub(crate) fn install(ctx: &egui::Context) {
     let mut fonts = egui::FontDefinitions::default();
     egui_phosphor::add_to_fonts(&mut fonts, egui_phosphor::Variant::Regular);
     ctx.set_fonts(fonts);
+    // Ctrl/Cmd +/- zoom the photo preview (`Preview::zoom_with_keyboard`),
+    // not the interface.
+    ctx.options_mut(|options| options.zoom_with_keyboard = false);
     apply(ctx, UiDesign::default());
 }
 

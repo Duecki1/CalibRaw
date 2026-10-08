@@ -447,6 +447,9 @@ impl Preview {
         if !viewport.touch_navigation && viewport.response.hovered() {
             Self::zoom_at_pointer(ui, viewport);
         }
+        if !viewport.touch_navigation {
+            Self::zoom_with_keyboard(ui, viewport);
+        }
         Self::pan(ui, viewport, original_hold_tracking);
         viewport.fit_gesture = !viewport.white_balance_canvas
             && !viewport.point_color_canvas
@@ -496,6 +499,19 @@ impl Preview {
             viewport.moved |=
                 viewport.transform_about(pointer, pointer, (scroll_y * 0.0018).exp() * pinch_zoom);
         }
+    }
+
+    /// Ctrl/Cmd +/- step the zoom about the pointer when it is over the
+    /// preview, otherwise about the preview's centre.
+    fn zoom_with_keyboard(ui: &Ui, viewport: &mut PreviewViewport) {
+        let Some(factor) = ui.input_mut(keyboard_zoom_factor) else {
+            return;
+        };
+        let anchor = ui
+            .input(|input| input.pointer.hover_pos())
+            .filter(|pointer| viewport.outer_rect.contains(*pointer))
+            .unwrap_or(viewport.outer_rect.center());
+        viewport.moved |= viewport.transform_about(anchor, anchor, factor);
     }
 
     fn pan(ui: &Ui, viewport: &mut PreviewViewport, original_hold_tracking: bool) {
@@ -705,6 +721,20 @@ impl Preview {
             Self::paint_mask_overlay(ui, app, layout);
             Self::paint_tool_hint(ui, app, layout.visible_rect);
         }
+    }
+}
+
+/// Consumes Ctrl/Cmd +/- (egui's interface-zoom shortcuts, which CalibRaw
+/// disables) and returns the preview zoom step.
+pub(super) fn keyboard_zoom_factor(input: &mut egui::InputState) -> Option<f32> {
+    use egui::gui_zoom::kb_shortcuts::{ZOOM_IN, ZOOM_IN_SECONDARY, ZOOM_OUT};
+    const STEP: f32 = 1.25;
+
+    let zoom_in = input.consume_shortcut(&ZOOM_IN) | input.consume_shortcut(&ZOOM_IN_SECONDARY);
+    match (zoom_in, input.consume_shortcut(&ZOOM_OUT)) {
+        (true, false) => Some(STEP),
+        (false, true) => Some(STEP.recip()),
+        _ => None,
     }
 }
 
