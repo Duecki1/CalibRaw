@@ -2,7 +2,7 @@
 use crate::app::maximum_raw_cache_limit;
 #[cfg(not(target_os = "android"))]
 use crate::app::OnnxRuntimeMode;
-use crate::app::{CalibRawApp, PreviewQuality};
+use crate::app::{CalibRawApp, PreviewQuality, GITHUB_UPDATE_CHECKS_AVAILABLE};
 use crate::pipeline::CameraProfileMode;
 #[cfg(not(target_os = "android"))]
 use crate::ui::library::maximum_thumbnail_worker_count;
@@ -864,6 +864,10 @@ impl Settings {
             "View the installed version and optionally ask GitHub for CalibRaw's latest stable release.",
         );
         ui.strong(format!("CalibRaw {}", env!("CARGO_PKG_VERSION")));
+        if !GITHUB_UPDATE_CHECKS_AVAILABLE {
+            ui.small("Updates are delivered through F-Droid.");
+            return;
+        }
 
         moduwu_design::section_separator(ui);
         let mut auto_check = app.preferences.auto_check_updates;

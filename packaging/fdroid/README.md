@@ -99,6 +99,10 @@ F-Droid passes its version code to Gradle with `calibrawVersionCode`.
 The existing GitHub release workflow keeps its Git-history-based version
 codes; it is not changed by this submission.
 
+The recipe builds with `--features fdroid`, which removes the GitHub update
+check (no network request, consent dialog or update controls). F-Droid delivers
+updates; the GitHub APK keeps the opt-in check.
+
 ## Native dependencies and signing
 
 The recipe builds LibRaw, Lensfun and their native dependencies from pinned
