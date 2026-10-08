@@ -110,7 +110,7 @@ impl CalibRawApp {
         self.masks.clear_generated_caches();
         self.ai.object_cache = None;
         if let Err(error) = self.capture_mask_source(frame) {
-            self.ui.notice = Some(error);
+            self.report_error("AI update failed", error);
             return;
         }
         self.refresh_range_mask_sources();
@@ -203,7 +203,7 @@ impl CalibRawApp {
             update.failed |= !succeeded;
         }
         if let Some(message) = error_message {
-            self.ui.notice = Some(message);
+            self.report_error("AI update failed", message);
         }
         self.continue_ai_update();
     }
@@ -223,7 +223,8 @@ impl CalibRawApp {
         };
         if update.failed {
             self.ai.update_needed = true;
-            self.ui.notice = Some(
+            self.report_error(
+                "AI update failed",
                 "Some AI results could not be updated. The update stays available.".to_owned(),
             );
         } else {

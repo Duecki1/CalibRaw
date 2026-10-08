@@ -11,10 +11,8 @@ impl CalibRawApp {
         let message = format!(
             "{action} was not applied because the resulting edit could not be saved: {error}"
         );
-        self.ui.notice = Some(message.clone());
         calibraw_core::diagnostics::record(&message);
-        log::warn!("{message}");
-        self.egui_ctx.request_repaint();
+        self.report_error("Edit not applied", message);
     }
 
     pub(in crate::app) fn report_sidecar_save_failure(

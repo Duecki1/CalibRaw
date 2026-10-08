@@ -84,7 +84,8 @@ pub(crate) fn show(ctx: &egui::Context, app: &mut CalibRawApp) {
             app.preferences.onboarding_completed = true;
             app.ui.onboarding_step = None;
             if !app.persist_performance_settings() {
-                app.ui.notice = Some(
+                app.report_error(
+                    "Settings error",
                     "Setup is complete, but CalibRaw could not save the first-run preferences."
                         .to_owned(),
                 );

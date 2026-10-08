@@ -44,18 +44,27 @@ impl CalibRawApp {
         #[cfg(target_os = "android")]
         let destination = {
             let Some(data_dir) = self.android.android_app.internal_data_path() else {
-                self.ui.notice = Some("Android did not provide an app data directory.".to_owned());
+                self.report_error(
+                    "Edit replay failed",
+                    "Android did not provide an app data directory.",
+                );
                 return;
             };
             let export_dir = data_dir.join("cache").join("exports");
             if let Err(error) = std::fs::create_dir_all(&export_dir) {
-                self.ui.notice = Some(format!("Could not prepare replay cache: {error}"));
+                self.report_error(
+                    "Edit replay failed",
+                    format!("Could not prepare replay cache: {error}"),
+                );
                 return;
             }
             export_dir.join(default_name)
         };
         let Some(render_state) = frame.wgpu_render_state() else {
-            self.ui.notice = Some("eframe is not running with the wgpu backend.".to_owned());
+            self.report_error(
+                "Edit replay failed",
+                "eframe is not running with the wgpu backend.",
+            );
             return;
         };
         let Some(raw) = self.develop.loaded_raw.as_ref().map(Arc::clone) else {
@@ -114,7 +123,10 @@ impl CalibRawApp {
                 self.egui_ctx.request_repaint();
             }
             Err(error) => {
-                self.ui.notice = Some(format!("Could not start edit replay export: {error}"));
+                self.report_error(
+                    "Edit replay failed",
+                    format!("Could not start edit replay export: {error}"),
+                );
             }
         }
     }
@@ -177,8 +189,10 @@ impl CalibRawApp {
                                     }
                                     Err(error) => {
                                         let _ = std::fs::remove_file(&path);
-                                        self.ui.notice =
-                                            Some(format!("Could not save edit replay: {error}"));
+                                        self.report_error(
+                                            "Edit replay failed",
+                                            format!("Could not save edit replay: {error}"),
+                                        );
                                     }
                                 }
                             }
@@ -190,8 +204,10 @@ impl CalibRawApp {
                             self.ui.notice = Some("Edit replay cancelled.".to_owned());
                         }
                         Err(ReplayError::Failed(error)) => {
-                            self.ui.notice = Some(format!("Edit replay failed: {error}"));
-                            log::error!("edit replay failed: {error}");
+                            self.report_error(
+                                "Edit replay failed",
+                                format!("Edit replay failed: {error}"),
+                            );
                         }
                     }
                     self.export.task = None;
@@ -199,7 +215,10 @@ impl CalibRawApp {
             }
         }
         if disconnected && !finished {
-            self.ui.notice = Some("Edit replay worker stopped unexpectedly.".to_owned());
+            self.report_error(
+                "Edit replay failed",
+                "Edit replay worker stopped unexpectedly.",
+            );
             self.export.task = None;
         }
     }

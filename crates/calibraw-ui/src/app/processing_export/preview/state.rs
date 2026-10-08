@@ -162,6 +162,8 @@ impl CalibRawApp {
                 full_raw.inpaint_opposed_chroma_for_exposure(exposure);
             }
         }
+        // Reported once the borrows of `exposure` and the pipelines end.
+        let mut remove_errors = Vec::new();
         if let (Some(raw), Some(pipeline), Some(full_raw)) = (
             &self.develop.preview_raw,
             self.preview.pipeline(),
@@ -177,7 +179,7 @@ impl CalibRawApp {
                 &params,
                 RemoveSceneContext::full_frame(&self.inpaint.edits, full_raw, exposure),
             ) {
-                self.ui.notice = Some(format!("Could not apply Remove to preview: {error:#}"));
+                remove_errors.push(format!("Could not apply Remove to preview: {error:#}"));
             }
         }
         if let (Some(navigation), Some(full_raw)) =
@@ -197,7 +199,7 @@ impl CalibRawApp {
                 &params,
                 RemoveSceneContext::full_frame(&self.inpaint.edits, full_raw, exposure),
             ) {
-                self.ui.notice = Some(format!(
+                remove_errors.push(format!(
                     "Could not apply Remove to navigation preview: {error:#}"
                 ));
             }
@@ -249,11 +251,14 @@ impl CalibRawApp {
                         [detail.source_size[0] as f32, detail.source_size[1] as f32],
                     ),
                 ) {
-                    self.ui.notice = Some(format!(
+                    remove_errors.push(format!(
                         "Could not apply Remove to zoomed preview: {error:#}"
                     ));
                 }
             }
+        }
+        for error in remove_errors {
+            self.report_error("Preview failed", error);
         }
         self.preview.original_rendered_state = Some(requested_state);
         self.egui_ctx.request_repaint();

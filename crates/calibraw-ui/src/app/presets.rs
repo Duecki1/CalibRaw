@@ -194,7 +194,7 @@ impl CalibRawApp {
             Ok(message) => {
                 self.ui.notice = Some(message);
                 if let Err(error) = self.presets.reload() {
-                    self.ui.notice = Some(error);
+                    self.report_error("Presets failed", error);
                 }
             }
             Err(error) => {
@@ -309,7 +309,7 @@ impl CalibRawApp {
             }
         }
         if let Err(error) = self.presets.reload() {
-            self.ui.notice = Some(error);
+            self.report_error("Presets failed", error);
         }
     }
 
@@ -322,12 +322,15 @@ impl CalibRawApp {
             crate::presets::delete_group(folder, group, presets)
                 .map_err(|error| sentence_case(&error.to_string()))
         });
-        self.ui.notice = Some(match result {
-            Ok(()) => format!("Deleted group “{group}”."),
-            Err(error) => format!("Could not delete group “{group}”: {error}"),
-        });
+        match result {
+            Ok(()) => self.ui.notice = Some(format!("Deleted group “{group}”.")),
+            Err(error) => self.report_error(
+                "Presets failed",
+                format!("Could not delete group “{group}”: {error}"),
+            ),
+        }
         if let Err(error) = self.presets.reload() {
-            self.ui.notice = Some(error);
+            self.report_error("Presets failed", error);
         }
     }
 
@@ -337,12 +340,15 @@ impl CalibRawApp {
             .get(path)
             .map(|preset| preset.name().to_owned())
             .unwrap_or_default();
-        self.ui.notice = Some(match std::fs::remove_file(path) {
-            Ok(()) => format!("Deleted preset “{name}”."),
-            Err(error) => format!("Could not delete preset “{name}”: {error}"),
-        });
+        match std::fs::remove_file(path) {
+            Ok(()) => self.ui.notice = Some(format!("Deleted preset “{name}”.")),
+            Err(error) => self.report_error(
+                "Presets failed",
+                format!("Could not delete preset “{name}”: {error}"),
+            ),
+        }
         if let Err(error) = self.presets.reload() {
-            self.ui.notice = Some(error);
+            self.report_error("Presets failed", error);
         }
     }
 
@@ -376,7 +382,7 @@ impl CalibRawApp {
         let folder = match self.presets.folder() {
             Ok(folder) => folder.to_owned(),
             Err(error) => {
-                self.ui.notice = Some(error);
+                self.report_error("Preset import failed", error);
                 return;
             }
         };
@@ -408,11 +414,14 @@ impl CalibRawApp {
             "Imported {imported} {}.",
             if imported == 1 { "preset" } else { "presets" }
         );
-        self.ui.notice = Some(if failures.is_empty() {
-            summary
+        if failures.is_empty() {
+            self.ui.notice = Some(summary);
         } else {
-            format!("{summary} {}", failures.join(" · "))
-        });
+            self.report_error(
+                "Preset import failed",
+                format!("{summary} {}", failures.join(" · ")),
+            );
+        }
     }
 
     #[cfg(not(target_os = "android"))]
@@ -454,16 +463,19 @@ impl CalibRawApp {
         ) else {
             return;
         };
-        self.ui.notice = Some(
-            match crate::presets::write_preset_file(&destination, &preset) {
-                Ok(()) => format!(
+        match crate::presets::write_preset_file(&destination, &preset) {
+            Ok(()) => {
+                self.ui.notice = Some(format!(
                     "Exported preset “{}” to {}.",
                     preset.name(),
                     destination.display()
-                ),
-                Err(error) => format!("Could not export the preset: {error}"),
-            },
-        );
+                ));
+            }
+            Err(error) => self.report_error(
+                "Preset export failed",
+                format!("Could not export the preset: {error}"),
+            ),
+        }
     }
 }
 

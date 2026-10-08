@@ -111,7 +111,9 @@ impl CalibRawApp {
         self.poll_android_picker(frame);
         self.poll_android_export_publish();
         if calibraw_ffi::take_back_request() {
-            if self.android_foreground_task_active() {
+            if self.ui.error_dialogs.is_open() {
+                self.ui.error_dialogs.dismiss_current();
+            } else if self.android_foreground_task_active() {
                 ui.ctx().request_repaint();
             } else if self.ui.active_tab == AppTab::Library && self.library.folder_sidebar_open() {
                 self.set_library_folder_sidebar_open(false);
@@ -238,6 +240,7 @@ impl CalibRawApp {
         self.show_ai_error_dialog(ctx);
         self.show_sidecar_save_error_dialog(ctx);
         crate::ui::presets::show_dialogs(ctx, self);
+        self.show_error_dialog(ctx);
         if self.ui.gpu_memory_error_dialog {
             let mut close = false;
             moduwu_design::dialog_window(

@@ -1,6 +1,7 @@
 use super::*;
 use document_load::{
     run_document_load, CameraProfileSettings, DocumentLoadJob, PreviewProgramSources,
+    SIDECAR_MIGRATED_NOTICE,
 };
 pub(crate) use document_load::{DocumentSource, ProfileReload};
 

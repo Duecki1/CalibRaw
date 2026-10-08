@@ -113,7 +113,10 @@ impl Preview {
         ) {
             Ok(rgb) => rgb,
             Err(error) => {
-                app.ui.notice = Some(format!("Could not sample point color: {error:#}"));
+                app.report_error(
+                    "Point color failed",
+                    format!("Could not sample point color: {error:#}"),
+                );
                 return;
             }
         };

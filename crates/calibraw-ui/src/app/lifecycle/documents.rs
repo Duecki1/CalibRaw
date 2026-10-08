@@ -10,7 +10,7 @@ impl CalibRawApp {
     #[cfg(target_os = "android")]
     pub fn open_android_library_document(&mut self, uri: &str, display_name: &str) {
         if self.android_foreground_task_active() {
-            self.ui.notice = Some(format!(
+            self.report_error("Could not open photo", format!(
                 "{display_name} cannot be opened while an export or another foreground operation is running. Wait for it to finish or cancel it first."
             ));
             self.egui_ctx.request_repaint();
@@ -49,7 +49,7 @@ impl CalibRawApp {
             }
             Err(error) => {
                 self.develop_ui.loading_thumbnail.clear();
-                self.ui.notice = Some(error);
+                self.report_error("Could not open photo", error);
             }
         }
     }
@@ -61,7 +61,7 @@ impl CalibRawApp {
         display_name: &str,
     ) {
         if self.android.picker_pending {
-            self.ui.notice = Some(format!(
+            self.report_error("Could not open photo", format!(
                 "Could not reload {display_name} after resetting adjustments because another Android document operation is still pending."
             ));
             return;
@@ -76,9 +76,10 @@ impl CalibRawApp {
             }
             Err(error) => {
                 self.android.pending_android_library_reset_reload = false;
-                self.ui.notice = Some(format!(
-                    "Could not reload {display_name} after resetting adjustments: {error}"
-                ));
+                self.report_error(
+                    "Could not open photo",
+                    format!("Could not reload {display_name} after resetting adjustments: {error}"),
+                );
             }
         }
     }
@@ -152,7 +153,10 @@ impl CalibRawApp {
             if let Some(copy) = source.disposable_copy() {
                 remove_temporary_raw(copy);
             }
-            self.ui.notice = Some("eframe is not running with the wgpu backend.".to_owned());
+            self.report_error(
+                "Could not open photo",
+                "eframe is not running with the wgpu backend.".to_owned(),
+            );
             self.refresh_status();
             return;
         };
@@ -241,7 +245,10 @@ impl CalibRawApp {
             self.develop.load_receiver = None;
             self.develop.loading_label = None;
             self.develop_ui.loading_thumbnail.clear();
-            self.ui.notice = Some(format!("could not start the photo decode worker: {error}"));
+            self.report_error(
+                "Could not open photo",
+                format!("could not start the photo decode worker: {error}"),
+            );
             self.refresh_status();
         }
     }
@@ -355,7 +362,10 @@ impl CalibRawApp {
                 self.develop.load_receiver = None;
                 self.develop.loading_label = None;
                 self.develop_ui.loading_thumbnail.clear();
-                self.ui.notice = Some("The photo decode worker stopped unexpectedly.".to_owned());
+                self.report_error(
+                    "Could not open photo",
+                    "The photo decode worker stopped unexpectedly.".to_owned(),
+                );
                 self.on_library_ai_mask_refresh_load_finished(false, frame);
                 #[cfg(target_os = "android")]
                 if std::mem::take(&mut self.export.android_batch_load_pending) {
@@ -380,8 +390,10 @@ impl CalibRawApp {
         match result {
             Ok(loaded) => {
                 let Some(render_state) = frame.wgpu_render_state() else {
-                    self.ui.notice =
-                        Some("eframe is not running with the wgpu backend.".to_owned());
+                    self.report_error(
+                        "Could not open photo",
+                        "eframe is not running with the wgpu backend.".to_owned(),
+                    );
                     self.on_library_ai_mask_refresh_load_finished(false, frame);
                     #[cfg(target_os = "android")]
                     if batch_owned_load {
@@ -490,7 +502,12 @@ impl CalibRawApp {
                 }
                 self.develop.target_exposure = loaded.rendered_exposure;
                 self.preview.pending_stage = None;
-                self.ui.notice = loaded.sidecar_warning;
+                match loaded.sidecar_warning {
+                    Some(warning) if warning != SIDECAR_MIGRATED_NOTICE => {
+                        self.report_error("Photo opened with problems", warning);
+                    }
+                    warning => self.ui.notice = warning,
+                }
                 crate::app::preview_visibility::PreviewVisibility::invalidate_masks(
                     &self.egui_ctx,
                     &self.masks.stack,
@@ -513,10 +530,10 @@ impl CalibRawApp {
                 self.on_library_batch_load_finished(true, frame);
             }
             Err(error) => {
-                self.ui.notice = Some(format!(
-                    "Failed to decode or render the photo: {}",
-                    error.message
-                ));
+                self.report_error(
+                    "Could not open photo",
+                    format!("Failed to decode or render the photo: {}", error.message),
+                );
                 let interactive_open = !self.document_load_is_background();
                 if error.unsupported && interactive_open {
                     self.ui.unsupported_file_dialog = Some(UnsupportedFileDialog {

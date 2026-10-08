@@ -310,6 +310,7 @@ impl CalibRawApp {
                 adaptive_preview_backdrop: crate::ui::theme::CANVAS_BACKDROP,
                 notice: None,
                 gpu_memory_error_dialog: false,
+                error_dialogs: ErrorDialogQueue::default(),
                 unsupported_file_dialog: None,
                 onboarding_step: (!performance.onboarding_completed)
                     .then_some(OnboardingStep::Appearance),

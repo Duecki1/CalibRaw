@@ -73,7 +73,7 @@ impl CalibRawApp {
                 self.ui.notice = None;
                 self.ui.status = "Choose one or more photos…".to_owned();
             }
-            Err(error) => self.ui.notice = Some(error),
+            Err(error) => self.report_error("Could not open photo", error),
         }
     }
 
@@ -107,7 +107,7 @@ impl CalibRawApp {
                 );
             }
             crate::app::DesktopPickerEvent::OnnxRuntime(Err(error)) => {
-                self.ui.notice = Some(error);
+                self.report_error("AI runtime error", error);
             }
             crate::app::DesktopPickerEvent::PresetFiles(Some(paths)) => {
                 self.import_preset_files(&paths);
@@ -165,7 +165,10 @@ impl CalibRawApp {
                 calibraw_ffi::CameraProfileFolderResult::Failed(error) => {
                     self.android.picker_pending = false;
                     self.android.camera_profile_folder_importing_label = None;
-                    self.ui.notice = Some(format!("Could not import camera profiles: {error}"));
+                    self.report_error(
+                        "Camera profile failed",
+                        format!("Could not import camera profiles: {error}"),
+                    );
                 }
             }
         }
@@ -249,15 +252,18 @@ impl CalibRawApp {
                             if imported == 1 { "photo" } else { "photos" }
                         ),
                     };
-                    self.ui.notice = if failed > 0 {
-                        Some(if errors.is_empty() {
-                            format!("{failed} selected photo imports failed.")
-                        } else {
-                            format!("Some photos could not be imported:\n{errors}")
-                        })
+                    if failed > 0 {
+                        self.report_error(
+                            "Import failed",
+                            if errors.is_empty() {
+                                format!("{failed} selected photo imports failed.")
+                            } else {
+                                format!("Some photos could not be imported:\n{errors}")
+                            },
+                        );
                     } else {
-                        None
-                    };
+                        self.ui.notice = None;
+                    }
                 }
                 calibraw_ffi::PickerResult::Cancelled => {
                     self.develop_ui.loading_thumbnail.clear();
@@ -275,10 +281,8 @@ impl CalibRawApp {
                             frame,
                         );
                     } else if was_reset_reload {
-                        self.ui.notice = Some(
-                            "The photo could not be reloaded after resetting adjustments. Reopen it from the Library before continuing in Develop."
-                                .to_owned(),
-                        );
+                        self.report_error("Could not open photo", "The photo could not be reloaded after resetting adjustments. Reopen it from the Library before continuing in Develop."
+                                .to_owned(),);
                     } else {
                         self.ui.notice = Some("No photos selected.".to_owned());
                     }
@@ -301,15 +305,18 @@ impl CalibRawApp {
                     {
                         self.complete_android_library_ai_mask_open_failure(error, frame);
                     } else {
-                        self.ui.notice = Some(if was_profile_reload {
-                            format!("Could not reload RAW for camera profile: {error}")
-                        } else if was_reset_reload {
-                            format!(
+                        self.report_error(
+                            "Could not open photo",
+                            if was_profile_reload {
+                                format!("Could not reload RAW for camera profile: {error}")
+                            } else if was_reset_reload {
+                                format!(
                                 "Could not reload the photo after resetting adjustments: {error}"
                             )
-                        } else {
-                            format!("Could not import the selected file: {error}")
-                        });
+                            } else {
+                                format!("Could not import the selected file: {error}")
+                            },
+                        );
                     }
                 }
             }
