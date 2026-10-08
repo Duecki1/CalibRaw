@@ -186,12 +186,62 @@ fn relight_jitter(pixel: vec2<f32>) -> f32 {
     return fract(52.9829189 * fract(dot(p, vec2<f32>(0.06711056, 0.00583715))));
 }
 
+// Shadow map. Shadows depend only on scene depth and the light, so they are
+// traced once per level-0 scene-depth texel, for up to four lights (one per
+// channel), instead of per image pixel. Pixels read the map with the joint
+// upsampling weights of the depth itself (scene_depth_texels_at), so shadows
+// keep following image edges. The map covers the full image, is shared by
+// export tiles and is rebuilt only when depth or a shadowed light's position,
+// size or relief changes (encode_relight_shadow_map in gpu.rs). Each texel
+// traces from its own smooth depth and dithers with the jitter of the
+// full-image pixel at its centre.
+@group(0) @binding(46) var relight_shadow_map: texture_2d<f32>;
+@group(0) @binding(47) var relight_shadow_map_out: texture_storage_2d<rgba16float, write>;
+
+// The shadow-map channel of a Relight slot, from `film_effects.z`
+// (`RELIGHT_SHADOW_CHANNEL` in mask_params.rs): its index plus one, or zero
+// when the slot traces shadows per pixel instead.
+fn relight_shadow_channel(options: vec4<f32>) -> u32 {
+    return u32(clamp(options.z, 0.0, 4.0) + 0.5);
+}
+
+@compute @workgroup_size(8, 8, 1)
+fn build_relight_shadow_map(@builtin(global_invocation_id) gid: vec3<u32>) {
+    let size = textureDimensions(scene_depth_tex);
+    if gid.x >= size.x || gid.y >= size.y { return; }
+    let cell = vec2<i32>(gid.xy);
+    let uv = (vec2<f32>(gid.xy) + vec2<f32>(0.5)) / vec2<f32>(size);
+    let depth = textureLoad(scene_depth_tex, cell, 0).y;
+    let full_size = vec2<f32>(
+        f32(Common::camera_uniforms.full_width),
+        f32(Common::camera_uniforms.full_height),
+    );
+    let jitter = relight_jitter(uv * full_size);
+    var visibility = vec4<f32>(1.0);
+    for (var index = 0u; index < scene_light_slots(); index = index + 1u) {
+        let channel = relight_shadow_channel(Common::mask_data[index].film_effects);
+        if channel == 0u { continue; }
+        let tertiary = Common::mask_data[index].adjust_2_field;
+        let light = relight_scene_light(
+            Common::mask_data[index].adjust_0_field,
+            Common::mask_data[index].adjust_1_field,
+            tertiary,
+        );
+        let camera = light.camera;
+        let surface = scene_camera_point(camera, uv * camera.image_size, scene_depth_z(camera, depth));
+        let light_size = clamp(tertiary.x / 100.0, 0.0, 1.0);
+        visibility[channel - 1u] = relight_visibility(camera, surface, light.position, light_size, jitter);
+    }
+    textureStore(relight_shadow_map_out, cell, visibility);
+}
+
 fn apply_relight(
     pos: vec2<i32>,
     input_rgb: vec3<f32>,
     primary: vec4<f32>,
     secondary: vec4<f32>,
     tertiary: vec4<f32>,
+    options: vec4<f32>,
 ) -> vec3<f32> {
     let amount = clamp(primary.x / 100.0, 0.0, 1.0);
     let ambient = clamp(tertiary.w / 100.0, 0.0, 1.0);
@@ -207,14 +257,20 @@ fn apply_relight(
     // Without scene depth (still generating, or failed) the scene is a plane
     // facing the camera: the light keeps its falloff but casts no shadows.
     let has_depth = Common::scene_tone_uniforms.scene_depth_present != 0u;
+    let shadows = clamp(tertiary.y / 100.0, 0.0, 1.0);
+    let shadow_channel = relight_shadow_channel(options);
     var depth = 0.0;
     var gradient = vec2<f32>(0.0);
+    var mapped_visibility = 1.0;
     if has_depth {
-        let texels = scene_depth_texels_at(pos);
-        depth = texels.y;
+        let texels = scene_depth_texels_at(pos, shadow_channel != 0u && shadows > 1e-6);
+        depth = texels.surface.y;
         gradient = relight_smoothed_gradient(
-            camera, uv, depth, texels.zw, mix(0.004, 0.05, size * size),
+            camera, uv, depth, texels.surface.zw, mix(0.004, 0.05, size * size),
         );
+        if shadow_channel != 0u {
+            mapped_visibility = texels.shadows[shadow_channel - 1u];
+        }
     }
     let z = scene_depth_z(camera, depth);
     let surface = scene_camera_point(camera, point, z);
@@ -234,14 +290,18 @@ fn apply_relight(
     // Inverse-square falloff with a finite core (scene_light_falloff).
     let falloff = 1.0 / (1.0 + distance * distance / (light.reach * light.reach));
     var visibility = 1.0;
-    let shadows = clamp(tertiary.y / 100.0, 0.0, 1.0);
     if has_depth && shadows > 1e-6 {
-        let full_size = vec2<f32>(
-            f32(Common::camera_uniforms.full_width),
-            f32(Common::camera_uniforms.full_height),
-        );
-        let jitter = relight_jitter(uv * full_size);
-        visibility = mix(1.0, relight_visibility(camera, surface, light.position, size, jitter), shadows);
+        var traced = mapped_visibility;
+        if shadow_channel == 0u {
+            // Beyond the shadow map's channels: trace this pixel.
+            let full_size = vec2<f32>(
+                f32(Common::camera_uniforms.full_width),
+                f32(Common::camera_uniforms.full_height),
+            );
+            let jitter = relight_jitter(uv * full_size);
+            traced = relight_visibility(camera, surface, light.position, size, jitter);
+        }
+        visibility = mix(1.0, traced, shadows);
     }
     let irradiance = diffuse * falloff * visibility;
 

@@ -28,6 +28,8 @@ pub(in crate::pipeline::gpu) struct StageIndices {
     pub(in crate::pipeline::gpu) image_light_accumulate_pass_index: usize,
     pub(in crate::pipeline::gpu) image_light_resolve_pass_index: usize,
     pub(in crate::pipeline::gpu) image_light_end_index: usize,
+    /// Relight shadows per scene-depth texel, built in the output stage.
+    pub(in crate::pipeline::gpu) relight_shadow_map_pass_index: usize,
 }
 
 pub(in crate::pipeline::gpu) struct AssembledPasses {
@@ -420,6 +422,19 @@ pub(in crate::pipeline::gpu) fn assemble_passes(
     ]);
     let image_light_end_index = passes.len();
 
+    let relight_shadow_map_pass_index = passes.len();
+    passes.push(assembler.make_pass(
+        shaders.creative_effects_module.as_ref(),
+        "build_relight_shadow_map",
+        &layouts.bgl_relight_shadow_map,
+        groups.bg_relight_shadow_map.clone(),
+        [
+            SCENE_DEPTH_EDGE.div_ceil(WORKGROUP_EDGE),
+            SCENE_DEPTH_EDGE.div_ceil(WORKGROUP_EDGE),
+            1,
+        ],
+    ));
+
     // The post-blur variants reuse the programs above with bind groups that
     // read the mask-blurred scene.
     let mut post_blur_glow_passes = vec![Pass {
@@ -491,6 +506,7 @@ pub(in crate::pipeline::gpu) fn assemble_passes(
             image_light_accumulate_pass_index,
             image_light_resolve_pass_index,
             image_light_end_index,
+            relight_shadow_map_pass_index,
         },
     })
 }

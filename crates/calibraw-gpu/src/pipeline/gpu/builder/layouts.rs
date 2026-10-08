@@ -33,6 +33,7 @@ pub(in crate::pipeline::gpu) struct BindGroupLayouts {
     pub(in crate::pipeline::gpu) bgl_image_light_resolve: wgpu::BindGroupLayout,
     pub(in crate::pipeline::gpu) bgl_image_light_blur_horizontal: wgpu::BindGroupLayout,
     pub(in crate::pipeline::gpu) bgl_image_light_blur_vertical: wgpu::BindGroupLayout,
+    pub(in crate::pipeline::gpu) bgl_relight_shadow_map: wgpu::BindGroupLayout,
 }
 
 pub(in crate::pipeline::gpu) fn create_bind_group_layouts(
@@ -455,6 +456,7 @@ pub(in crate::pipeline::gpu) fn create_bind_group_layouts(
                     storage_buffer_entry(16, true),
                     texture_entry(36, wgpu::TextureSampleType::Float { filterable: false }),
                     texture_entry(45, wgpu::TextureSampleType::Float { filterable: true }),
+                    texture_entry(46, wgpu::TextureSampleType::Float { filterable: false }),
                 ],
             )
         });
@@ -548,6 +550,24 @@ pub(in crate::pipeline::gpu) fn create_bind_group_layouts(
             )
         });
 
+    // The shadow map pass follows the image-light passes.
+    let bgl_relight_shadow_map = reused_layout(image_light_for_programs + 4).unwrap_or_else(|| {
+        create_bind_group_layout(
+            device,
+            "bgl relight shadow map",
+            &[
+                buffer_entry(0),
+                storage_buffer_entry(33, true),
+                texture_entry(35, wgpu::TextureSampleType::Float { filterable: true }),
+                storage_texture_entry(
+                    47,
+                    RELIGHT_SHADOW_MAP_FORMAT,
+                    wgpu::StorageTextureAccess::WriteOnly,
+                ),
+            ],
+        )
+    });
+
     BindGroupLayouts {
         bgl_scene_tone,
         bgl_effects,
@@ -579,5 +599,6 @@ pub(in crate::pipeline::gpu) fn create_bind_group_layouts(
         bgl_image_light_resolve,
         bgl_image_light_blur_horizontal,
         bgl_image_light_blur_vertical,
+        bgl_relight_shadow_map,
     }
 }

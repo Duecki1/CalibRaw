@@ -42,6 +42,51 @@ pub(super) fn medium_uses_image_lights(data: &MaskData) -> bool {
         && data.film_effects[MEDIUM_OPTIONS] > 0.5
 }
 
+// Relight slots carry their shadow-map channel plus one in this lane of
+// `film_effects` (`relight_shadow_channel` in relight.wgsl); zero traces the
+// slot's shadows per pixel. Like `MEDIUM_OPTIONS`, the lane is otherwise
+// unused by effect slots.
+const RELIGHT_SHADOW_CHANNEL: usize = 2;
+/// Lights whose shadows the shadow map holds, one per RGBA channel.
+pub(super) const RELIGHT_SHADOW_MAP_CHANNELS: usize = 4;
+
+/// Whether an active Relight slot casts shadows. Mirrors the amount and
+/// shadow-strength checks of `apply_relight`.
+pub(super) fn relight_casts_shadows(data: &MaskData) -> bool {
+    data.metadata[0] != 0
+        && data.metadata[1] != 0
+        && data.metadata[3] >> MASK_EFFECT_ID_SHIFT == MaskEffect::Relight.shader_id()
+        && (data.adjust_0[0] / 100.0).clamp(0.0, 1.0) > 1e-6
+        && (data.adjust_2[1] / 100.0).clamp(0.0, 1.0) > 1e-6
+}
+
+/// The shadow-map channel of a Relight slot, if it has one.
+pub(super) fn relight_shadow_channel(data: &MaskData) -> Option<usize> {
+    let lane = data.film_effects[RELIGHT_SHADOW_CHANNEL];
+    (lane > 0.5).then(|| lane.round() as usize - 1)
+}
+
+/// Gives the first shadow-casting Relight slots, in slot order, a channel of
+/// the shadow map each.
+fn assign_relight_shadow_channels(packed: &mut [MaskData]) {
+    let shadowed = packed
+        .iter_mut()
+        .filter(|data| relight_casts_shadows(data))
+        .take(RELIGHT_SHADOW_MAP_CHANNELS);
+    for (channel, data) in shadowed.enumerate() {
+        data.film_effects[RELIGHT_SHADOW_CHANNEL] = (channel + 1) as f32;
+    }
+}
+
+/// Takes every Relight slot off the shadow map, so each traces its shadows
+/// per pixel: the reference the map is compared with.
+#[cfg(test)]
+pub(super) fn clear_relight_shadow_channels(packed: &mut [MaskData]) {
+    for data in packed {
+        data.film_effects[RELIGHT_SHADOW_CHANNEL] = 0.0;
+    }
+}
+
 pub(super) fn pack_effect_mask(
     effect: MaskEffect,
     settings: &crate::pipeline::MaskEffectSettings,
@@ -502,5 +547,6 @@ pub(super) fn pack_mask_params(masks: &MaskStack) -> Box<[MaskData]> {
             slot += 1;
         }
     }
+    assign_relight_shadow_channels(&mut packed[..slot]);
     packed
 }

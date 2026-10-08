@@ -41,6 +41,7 @@ pub(in crate::pipeline::gpu) struct BindGroups {
     pub(in crate::pipeline::gpu) bg_image_light_resolve: wgpu::BindGroup,
     pub(in crate::pipeline::gpu) bg_image_light_blur_horizontal: wgpu::BindGroup,
     pub(in crate::pipeline::gpu) bg_image_light_blur_vertical: wgpu::BindGroup,
+    pub(in crate::pipeline::gpu) bg_relight_shadow_map: wgpu::BindGroup,
 }
 
 pub(in crate::pipeline::gpu) fn create_bind_groups(
@@ -81,6 +82,7 @@ pub(in crate::pipeline::gpu) fn create_bind_groups(
         image_light_view,
         image_light_core_view,
         image_light_tail_view,
+        relight_shadow_map_view,
         mask_sampler,
         ..
     } = surfaces;
@@ -528,6 +530,7 @@ pub(in crate::pipeline::gpu) fn create_bind_groups(
                     buffer_binding(16, tone_stats_buffer),
                     texture_binding(36, pixelate_blocks_view),
                     texture_binding(45, image_light_view),
+                    texture_binding(46, relight_shadow_map_view),
                 ],
             )
         };
@@ -607,6 +610,18 @@ pub(in crate::pipeline::gpu) fn create_bind_groups(
         ],
     );
 
+    let bg_relight_shadow_map = create_bind_group(
+        device,
+        "bg relight shadow map",
+        &layouts.bgl_relight_shadow_map,
+        &[
+            buffer_binding(0, camera_uniforms_buffer),
+            buffer_binding(33, mask_data_buffer),
+            texture_binding(35, scene_depth_view),
+            texture_binding(47, relight_shadow_map_view),
+        ],
+    );
+
     BindGroups {
         scene_tone_bind_group,
         effects_bind_group,
@@ -646,6 +661,7 @@ pub(in crate::pipeline::gpu) fn create_bind_groups(
         bg_image_light_resolve,
         bg_image_light_blur_horizontal,
         bg_image_light_blur_vertical,
+        bg_relight_shadow_map,
     }
 }
 

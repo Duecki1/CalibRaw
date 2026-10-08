@@ -197,6 +197,7 @@ impl CalibRawApp {
                     detail.pipeline.gpu().inherit_tone_statistics(
                         &render_state.queue,
                         &render_state.device,
+                        &params,
                         full_frame,
                     );
                 }

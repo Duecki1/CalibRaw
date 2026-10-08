@@ -96,9 +96,16 @@ fn fog_depth_at(pos: vec2<i32>) -> f32 {
     return clamp(total / max(weights, 1e-6), 0.0, 1.0);
 }
 
-// Level-0 scene-depth texels at an image pixel. Channel x is the stored depth;
-// relighting reads the surface in the other channels (relight.wgsl).
-fn scene_depth_texels_at(pos: vec2<i32>) -> vec4<f32> {
+// Level-0 scene-depth texels at an image pixel, and with `with_shadows` the
+// relight shadow map's texels (relight.wgsl), which share their grid and
+// therefore their weights. Channel x of `surface` is the stored depth;
+// relighting reads the surface in the other channels.
+struct SceneDepthTexels {
+    surface: vec4<f32>,
+    shadows: vec4<f32>,
+}
+
+fn scene_depth_texels_at(pos: vec2<i32>, with_shadows: bool) -> SceneDepthTexels {
     let size = vec2<i32>(textureDimensions(scene_depth_tex));
     let p = full_image_uv(pos) * vec2<f32>(size) - vec2<f32>(0.5);
     let base = vec2<i32>(floor(p));
@@ -109,6 +116,7 @@ fn scene_depth_texels_at(pos: vec2<i32>) -> vec4<f32> {
     );
     let center = sqrt(max(SceneAdjustments::local_effects_at(pos), vec3<f32>(0.0)));
     var total = vec4<f32>(0.0);
+    var shadows = vec4<f32>(0.0);
     var weights = 0.0;
     // Joint upsampling rejects samples across image edges instead of blurring
     // background depth into foreground silhouettes. No depth-range mask curve
@@ -123,10 +131,14 @@ fn scene_depth_texels_at(pos: vec2<i32>) -> vec4<f32> {
             let spatial = select(1.0 - f.x, f.x, x == 1) * select(1.0 - f.y, f.y, y == 1);
             let weight = spatial * max(exp(-dot(delta, delta) * 64.0), 0.0001);
             total += textureLoad(scene_depth_tex, cell, 0) * weight;
+            if with_shadows {
+                shadows += textureLoad(relight_shadow_map, cell, 0) * weight;
+            }
             weights += weight;
         }
     }
-    return total / max(weights, 1e-6);
+    let normalization = max(weights, 1e-6);
+    return SceneDepthTexels(total / normalization, shadows / normalization);
 }
 
 fn fog_hash3(cell: vec3<i32>) -> f32 {
@@ -201,6 +213,7 @@ fn fog_light_scattering(
     distance: f32,
     extinction: f32,
 ) -> vec3<f32> {
+    if !scene_lights_present() { return vec3<f32>(0.0); }
     // Per cell: near and far depth, extinction per unit depth, and the
     // transmission from the camera to the cell's middle.
     var cells: array<vec4<f32>, FOG_CELLS>;
@@ -371,6 +384,7 @@ const SMOKE_LIGHT_GLOW_GAIN: f32 = 4.0;
 // so it is lit where it lies over them: at the pixel's scene depth, or at the
 // nearest surface without depth.
 fn smoke_light_scattering(pos: vec2<i32>) -> vec3<f32> {
+    if !scene_lights_present() { return vec3<f32>(0.0); }
     var depth = 0.0;
     if Common::scene_tone_uniforms.scene_depth_present != 0u {
         depth = fog_depth_at(pos);
