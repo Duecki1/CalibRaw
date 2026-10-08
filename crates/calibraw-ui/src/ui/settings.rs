@@ -5,6 +5,8 @@ use crate::app::OnnxRuntimeMode;
 use crate::app::{CalibRawApp, PreviewQuality, GITHUB_UPDATE_CHECKS_AVAILABLE, UPDATE_STORE_NAME};
 use crate::pipeline::CameraProfileMode;
 #[cfg(not(target_os = "android"))]
+use crate::ui::components::adjustment_slider::AdjustmentSlider;
+#[cfg(not(target_os = "android"))]
 use crate::ui::library::maximum_thumbnail_worker_count;
 use eframe::egui::{self, Ui};
 use moduwu_design::ScreenLayout;
@@ -18,6 +20,10 @@ const RUST_DEPENDENCY_LICENSES: &str =
 
 pub(crate) struct Settings;
 
+/// A count setting as a standard slider. Dragging or typing edits a draft that
+/// is applied once the pointer is released and the value field loses focus,
+/// because applying a change restarts work such as the thumbnail queue.
+/// Returns whether the value was applied.
 #[cfg(not(target_os = "android"))]
 fn count_setting(
     ui: &mut Ui,
@@ -25,45 +31,33 @@ fn count_setting(
     value: &mut usize,
     range: std::ops::RangeInclusive<usize>,
     default: usize,
-    unit: &str,
     help: &str,
 ) -> bool {
-    let before = *value;
-    ui.push_id(label, |ui| {
-        moduwu_design::form_row(ui, label, 220.0, |ui, width| {
-            ui.allocate_ui_with_layout(
-                egui::vec2(width, moduwu_design::CONTROL_HEIGHT),
-                egui::Layout::right_to_left(egui::Align::Center),
-                |ui| {
-                    let reset = moduwu_design::secondary_button_enabled(
-                        ui,
-                        *value != default,
-                        format!("Default: {default}"),
-                    )
-                    .on_hover_text("Restore the default for this device.")
-                    .clicked();
-                    ui.allocate_ui_with_layout(
-                        egui::vec2(ui.available_width().max(1.0), moduwu_design::CONTROL_HEIGHT),
-                        egui::Layout::centered_and_justified(egui::Direction::LeftToRight),
-                        |ui| {
-                            let suffix = format!(" {unit}{}", if *value == 1 { "" } else { "s" });
-                            ui.add(
-                                moduwu_design::NumberField::new(value, range)
-                                    .suffix(suffix)
-                                    .commit_on_finish(true),
-                            )
-                            .on_hover_text(help);
-                        },
-                    );
-                    if reset {
-                        *value = default;
-                    }
-                },
-            );
-        });
-        ui.small(help);
-    });
-    *value != before
+    let draft_id = ui.make_persistent_id(("count-setting-draft", label));
+    let mut draft = ui
+        .data(|data| data.get_temp::<usize>(draft_id))
+        .unwrap_or(*value);
+    AdjustmentSlider::new(label, &mut draft, range)
+        .reset_to(default)
+        .hover_text(help)
+        .show(ui);
+    ui.small(format!("{help} Default: {default}."));
+
+    // Only an edited draft is kept, so a value changed elsewhere is not
+    // overwritten by a stale copy.
+    if draft == *value {
+        ui.data_mut(|data| data.remove::<usize>(draft_id));
+        return false;
+    }
+    let editing =
+        ui.input(|input| input.pointer.any_down()) || ui.ctx().egui_wants_keyboard_input();
+    if editing {
+        ui.data_mut(|data| data.insert_temp(draft_id, draft));
+        return false;
+    }
+    ui.data_mut(|data| data.remove::<usize>(draft_id));
+    *value = draft;
+    true
 }
 
 fn diagnostics_snapshot_with_ai_backends() -> String {
@@ -406,11 +400,10 @@ impl Settings {
             let mut raw_cache_files = app.develop.raw_cache_limit;
             if count_setting(
                 ui,
-                "Decoded RAW cache",
+                "Decoded RAW cache (files)",
                 &mut raw_cache_files,
                 0..=maximum_raw_cache_limit(),
                 crate::app::default_raw_cache_limit(),
-                "file",
                 "Keeps decoded RAW files in memory for faster switching, including the current image. Set to 0 to disable reuse; the current edit stays loaded.",
             ) {
                 app.set_raw_cache_limit(raw_cache_files);
@@ -424,7 +417,6 @@ impl Settings {
                 &mut thumbnail_workers,
                 1..=maximum_thumbnail_worker_count(),
                 crate::ui::library::default_thumbnail_worker_count(),
-                "job",
                 "Concurrent thumbnail jobs. More workers can fill the library faster but use more memory, especially for edited RAW files or files without embedded previews. Changing this restarts the queue.",
             ) {
                 app.set_thumbnail_worker_count(thumbnail_workers);
@@ -1048,5 +1040,68 @@ impl Settings {
                 .desired_rows(rows)
                 .desired_width(f32::INFINITY),
         );
+    }
+}
+
+#[cfg(all(test, not(target_os = "android")))]
+mod tests {
+    use super::count_setting;
+    use eframe::egui;
+
+    /// Renders one frame with `pointer` (`Some(pressed)` sends a button event)
+    /// and returns whether the setting was applied.
+    fn render(ctx: &egui::Context, value: &mut usize, pointer: Option<bool>) -> bool {
+        let events = pointer
+            .map(|pressed| egui::Event::PointerButton {
+                pos: egui::pos2(500.0, 500.0),
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: egui::Modifiers::NONE,
+            })
+            .into_iter()
+            .collect();
+        let mut applied = false;
+        let _ = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(600.0, 600.0),
+                )),
+                events,
+                ..Default::default()
+            },
+            |ui| applied = count_setting(ui, "Workers", value, 1..=8, 2, "Help."),
+        );
+        applied
+    }
+
+    /// Stores an edited draft as a drag on the slider would.
+    fn set_draft(ctx: &egui::Context, draft: usize) {
+        let _ = ctx.run_ui(Default::default(), |ui| {
+            let id = ui.make_persistent_id(("count-setting-draft", "Workers"));
+            ui.data_mut(|data| data.insert_temp(id, draft));
+        });
+    }
+
+    #[test]
+    fn a_count_draft_applies_only_after_the_pointer_is_released() {
+        let ctx = egui::Context::default();
+        let mut value = 2;
+        set_draft(&ctx, 5);
+        assert!(!render(&ctx, &mut value, Some(true)));
+        assert!(!render(&ctx, &mut value, None));
+        assert_eq!(value, 2);
+        assert!(render(&ctx, &mut value, Some(false)));
+        assert_eq!(value, 5);
+    }
+
+    #[test]
+    fn an_unedited_count_never_overwrites_the_setting() {
+        let ctx = egui::Context::default();
+        let mut value = 3;
+        assert!(!render(&ctx, &mut value, Some(true)));
+        value = 6;
+        assert!(!render(&ctx, &mut value, Some(false)));
+        assert_eq!(value, 6);
     }
 }

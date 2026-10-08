@@ -87,15 +87,13 @@ pub(crate) fn export_settings_controls(
         moduwu_design::section_separator(ui);
 
         if *format == ExportFormat::Jpeg {
-            export_number_row(
-                ui,
-                "JPEG quality",
-                &mut settings.jpeg_quality,
-                1..=100,
-                " / 100",
-                "Enter any quality from 1 to 100. Higher quality keeps more detail and produces a larger JPEG file.",
-            );
             let default_quality = crate::pipeline::ExportSettings::default().jpeg_quality;
+            AdjustmentSlider::new("JPEG quality", &mut settings.jpeg_quality, 1..=100)
+                .reset_to(default_quality)
+                .hover_text(
+                    "Quality from 1 to 100. Higher quality keeps more detail and produces a larger JPEG file.",
+                )
+                .show(ui);
             ui.horizontal(|ui| {
                 let spacing = ui.spacing().item_spacing.x;
                 let choice_width = ((ui.available_width() - spacing * 2.0) / 3.0).max(1.0);
@@ -188,14 +186,14 @@ pub(crate) fn export_settings_controls(
                     ui.small("Use the full dimensions after cropping and transforms.");
                 }
                 ExportResizeMode::Percentage => {
-                    export_number_row(
-                        ui,
-                        "Scale",
-                        &mut settings.percentage,
-                        1.0..=400.0,
-                        "%",
-                        "Percentage of the image dimensions after cropping and transforms. Accepts decimal values from 1 to 400%.",
-                    );
+                    AdjustmentSlider::new("Scale (%)", &mut settings.percentage, 1.0..=400.0)
+                        .decimals(1)
+                        .step(0.1)
+                        .reset_to(crate::pipeline::ExportSettings::default().percentage)
+                        .hover_text(
+                            "Percentage of the image dimensions after cropping and transforms, from 1 to 400%.",
+                        )
+                        .show(ui);
                 }
                 ExportResizeMode::LongEdge
                 | ExportResizeMode::ShortEdge
