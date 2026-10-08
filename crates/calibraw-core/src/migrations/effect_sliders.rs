@@ -1,5 +1,7 @@
-//! Glow, Halation, Grain and Vignette sliders of edits saved before these
-//! effects became effect components.
+//! Glow, Halation, Grain and Vignette sliders of edits saved up to v1.2,
+//! before these effects became effect components.
+//!
+//! migration: remove in v2.0.0
 //!
 //! They were sliders on the Effects card, and Halation was also a slider in
 //! every mask's adjustments. Edits now hold them only as effect components.
@@ -12,12 +14,12 @@
 //! the saved one rather than matching it. Glow keeps its amount and radius as
 //! a neutral highlight Glow; its threshold has no component equivalent.
 
-use super::EditState;
 use crate::pipeline::{
     effect_params, EffectComponent, GlowEffectSettings, GrainEffectSettings,
     HalationEffectSettings, InitialEffectSettings, MaskEffect, MaskEffectSettings,
     VignetteEffectSettings, MAX_EFFECT_COMPONENTS,
 };
+use crate::sidecar::EditState;
 use serde::Deserialize;
 use std::sync::Arc;
 

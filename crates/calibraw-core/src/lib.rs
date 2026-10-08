@@ -3,6 +3,7 @@ pub mod color_math;
 pub mod diagnostics;
 pub mod file_ops;
 pub mod matrix;
+mod migrations;
 pub mod pipeline;
 pub mod presets;
 pub mod sidecar;

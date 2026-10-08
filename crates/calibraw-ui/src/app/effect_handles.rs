@@ -1,12 +1,18 @@
+//! Edits of effect components made outside their own cards.
+//!
 //! On-canvas controls for effects with a place in the photo: Relight and
 //! Light Rays sources, the Radial Blur and Vignette centers and the
 //! Tilt-Shift focus band. The preview (`ui::preview::tools::effect_handles`)
 //! draws them for each such effect whose card is on screen and returns these
 //! actions; `apply_effect_handle_actions` edits the settings exactly as the
 //! card's position pad and sliders do, within the same parameter ranges.
+//!
+//! The Effects card's add buttons (`add_global_effect`).
 
 use super::*;
-use crate::pipeline::{effect_params, EffectComponent, MaskEffect, MaskEffectSettings};
+use crate::pipeline::{
+    effect_params, EffectComponent, MaskEffect, MaskEffectSettings, MAX_EFFECT_COMPONENTS,
+};
 
 /// One effect component of the edit: a global effect or one stacked on a mask.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -143,6 +149,25 @@ impl CalibRawApp {
         let before = component.settings;
         apply_edit(component.effect, &mut component.settings, action.edit);
         component.settings != before
+    }
+
+    /// Adds `effect` to the global effects, as the Effects card's buttons do.
+    /// A vertical layout opens the new effect's tab, as adding it from the
+    /// tab strip does. Returns whether it was added: an effect already
+    /// present, or a full list, is left as it is.
+    pub(crate) fn add_global_effect(&mut self, effect: MaskEffect, layout: ScreenLayout) -> bool {
+        let effects = &mut self.masks.stack.global_effects;
+        if effects.len() >= MAX_EFFECT_COMPONENTS
+            || effects.iter().any(|component| component.effect == effect)
+        {
+            return false;
+        }
+        effects.push(EffectComponent::new(effect));
+        if layout == ScreenLayout::Vertical {
+            self.develop_ui.effect_component = Some(effect);
+        }
+        self.mark_mask_adjustments_dirty();
+        true
     }
 
     fn effect_component_mut(&mut self, target: EffectComponentRef) -> Option<&mut EffectComponent> {
@@ -289,6 +314,44 @@ mod tests {
     }
 
     #[test]
+    fn global_effects_are_added_once_and_open_their_tab_on_vertical_layouts() {
+        let mut app = app_with_effects();
+        assert!(app.add_global_effect(MaskEffect::Grain, ScreenLayout::Horizontal));
+        assert_eq!(app.develop_ui.effect_component, None);
+        // Already present.
+        assert!(!app.add_global_effect(MaskEffect::Grain, ScreenLayout::Vertical));
+        assert!(app.add_global_effect(MaskEffect::Vignette, ScreenLayout::Vertical));
+        assert_eq!(app.develop_ui.effect_component, Some(MaskEffect::Vignette));
+        let effects: Vec<_> = app
+            .masks
+            .stack
+            .global_effects
+            .iter()
+            .map(|component| component.effect)
+            .collect();
+        assert_eq!(
+            effects,
+            [
+                MaskEffect::Fog,
+                MaskEffect::Relight,
+                MaskEffect::TiltShift,
+                MaskEffect::Grain,
+                MaskEffect::Vignette
+            ]
+        );
+
+        // A full list takes no more.
+        let stack = &mut app.masks.stack;
+        while stack.global_effects.len() < MAX_EFFECT_COMPONENTS {
+            stack
+                .global_effects
+                .push(EffectComponent::new(MaskEffect::Blur));
+        }
+        assert!(!app.add_global_effect(MaskEffect::Halation, ScreenLayout::Horizontal));
+        assert_eq!(app.masks.stack.global_effects.len(), MAX_EFFECT_COMPONENTS);
+    }
+
+    #[test]
     fn edits_apply_within_parameter_ranges_and_only_where_they_belong() {
         let mut app = app_with_effects();
         let action = |target, edit| EffectHandleAction { target, edit };
@@ -355,7 +418,7 @@ mod tests {
         );
         assert_eq!(
             stack.global_effects[0].settings,
-            MaskEffectSettings::default()
+            MaskEffectSettings::initial(MaskEffect::Fog)
         );
     }
 }

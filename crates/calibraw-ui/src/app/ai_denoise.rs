@@ -64,6 +64,8 @@ impl CalibRawApp {
 
     /// Results used to live in an app-data cache keyed by the RAW's path;
     /// they now live next to the RAW. Removes that old folder and nothing else.
+    ///
+    /// migration: remove in v1.4.0. Listed in `calibraw_core`'s `migrations`.
     pub(in crate::app) fn remove_legacy_ai_denoise_cache(&self) {
         #[cfg(target_os = "android")]
         let root = self

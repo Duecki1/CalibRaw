@@ -576,12 +576,33 @@ impl GpuParams {
             .any(medium_uses_image_lights)
     }
 
-    /// Whether an active Relight effect reads the relighting surface derived
-    /// from scene depth.
+    /// Whether an effect upsamples scene depth with the image as its guide:
+    /// active Fog, Smoke or Relight in a visible slot while scene depth is
+    /// present. The creative pass then reads the guide map, so it is built
+    /// right before it.
+    pub(super) fn needs_scene_depth_guide(&self) -> bool {
+        if self.scene_tone.scene_depth_present == 0 {
+            return false;
+        }
+        let local_count = (self.scene_tone.mask_counts[0] as usize).min(MAX_RENDER_MASK_SLOTS);
+        self.mask_data[..local_count].iter().any(|mask| {
+            let id = mask.metadata[3] >> MASK_EFFECT_ID_SHIFT;
+            mask.metadata[0] != 0
+                && mask.metadata[1] != 0
+                && [MaskEffect::Fog, MaskEffect::Smoke, MaskEffect::Relight]
+                    .iter()
+                    .any(|effect| effect.shader_id() == id)
+        })
+    }
+
+    /// Whether an active Relight effect in a visible slot reads the
+    /// relighting surface derived from scene depth. Mirrors the slot checks
+    /// of `scene_light_at` in scene_lights.wgsl.
     pub(super) fn needs_relight_surface(&self) -> bool {
         let local_count = (self.scene_tone.mask_counts[0] as usize).min(MAX_RENDER_MASK_SLOTS);
         self.mask_data[..local_count].iter().any(|mask| {
             mask.metadata[0] != 0
+                && mask.metadata[1] != 0
                 && mask.metadata[3] >> MASK_EFFECT_ID_SHIFT == MaskEffect::Relight.shader_id()
         })
     }

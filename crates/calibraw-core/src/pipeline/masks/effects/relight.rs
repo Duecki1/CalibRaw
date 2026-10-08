@@ -13,9 +13,7 @@ pub struct RelightEffectSettings {
     pub reach: f32,
     pub size: f32,
     /// Whether nearer objects cast shadows; off keeps the Shadows strength.
-    /// New lights start without shadows; edits saved before the switch
-    /// existed load with it on, so they render as before.
-    #[serde(default = "shadows_before_the_switch")]
+    /// New lights start without shadows.
     pub shadows_enabled: bool,
     pub shadows: f32,
     pub relief: f32,
@@ -38,10 +36,6 @@ impl Default for RelightEffectSettings {
             color: COLOR.default,
         }
     }
-}
-
-fn shadows_before_the_switch() -> bool {
-    true
 }
 
 impl RelightEffectSettings {

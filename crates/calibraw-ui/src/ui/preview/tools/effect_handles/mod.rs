@@ -122,17 +122,67 @@ fn handle_id(ui: &Ui, target: EffectComponentRef, part: &'static str) -> egui::I
     ui.id().with(("effect-handle", target, part))
 }
 
-/// The handle's widget: a square of its pointer reach around `center`.
-fn grab(ui: &Ui, id: egui::Id, center: Pos2, label: String) -> egui::Response {
+/// Keyboard steps of a handle: one step per arrow press, a fifth of a step
+/// with Shift, as Shift scrolls finely.
+const FINE_STEP: f32 = 0.2;
+
+/// The handle's widget: a square of its pointer reach around `center`. It
+/// takes keyboard focus when pressed, so arrow keys can nudge it afterwards,
+/// and tells assistive technology its `name` and current `value`.
+fn grab(ui: &Ui, id: egui::Id, center: Pos2, name: &str, value: String) -> egui::Response {
     let response = ui.interact(
         Rect::from_center_size(center, egui::Vec2::splat(2.0 * handles::POINT_REACH)),
         id,
         Sense::click_and_drag(),
     );
+    if response.drag_started() || response.clicked() {
+        response.request_focus();
+    }
     response.widget_info(|| {
-        egui::WidgetInfo::labeled(egui::WidgetType::Other, ui.is_enabled(), &label)
+        let mut info = egui::WidgetInfo::labeled(egui::WidgetType::Other, ui.is_enabled(), name);
+        info.current_text_value = Some(value.clone());
+        info
     });
     response
+}
+
+/// Arrow presses on a focused handle this frame, as steps right and down.
+/// The keys are consumed so they do not also browse photos.
+fn arrow_steps(ui: &Ui, response: &egui::Response) -> egui::Vec2 {
+    use egui::{Key, Modifiers};
+    if !response.has_focus() {
+        return egui::Vec2::ZERO;
+    }
+    ui.input_mut(|input| {
+        let mut steps = egui::Vec2::ZERO;
+        // Shift first: an unmodified key also matches presses with Shift.
+        for (modifiers, scale) in [(Modifiers::SHIFT, FINE_STEP), (Modifiers::NONE, 1.0)] {
+            let mut presses = |key| input.count_and_consume_key(modifiers, key) as f32 * scale;
+            steps.x += presses(Key::ArrowRight);
+            steps.x -= presses(Key::ArrowLeft);
+            steps.y += presses(Key::ArrowDown);
+            steps.y -= presses(Key::ArrowUp);
+        }
+        steps
+    })
+}
+
+/// Page Up presses minus Page Down presses on a focused handle this frame,
+/// Shift for fine steps.
+fn page_steps(ui: &Ui, response: &egui::Response) -> f32 {
+    use egui::{Key, Modifiers};
+    if !response.has_focus() {
+        return 0.0;
+    }
+    ui.input_mut(|input| {
+        let mut steps = 0.0;
+        // Shift first: an unmodified key also matches presses with Shift.
+        for (modifiers, scale) in [(Modifiers::SHIFT, FINE_STEP), (Modifiers::NONE, 1.0)] {
+            steps += input.count_and_consume_key(modifiers, Key::PageUp) as f32 * scale;
+            steps -= input.count_and_consume_key(modifiers, Key::PageDown) as f32 * scale;
+        }
+        steps
+    })
 }
 
 fn is_active(response: &egui::Response) -> bool {

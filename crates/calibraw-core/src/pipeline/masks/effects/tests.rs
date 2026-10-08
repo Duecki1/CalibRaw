@@ -169,23 +169,36 @@ fn new_relights_start_without_shadows_and_save_that_choice() {
 }
 
 #[test]
-fn relight_settings_saved_before_the_shadow_switch_cast_shadows() {
-    let settings: MaskEffectSettings =
-        serde_json::from_value(json!({"relight":{"amount":40.0,"shadows":25.0}})).unwrap();
-    assert!(settings.relight.shadows_enabled);
-    assert_eq!(settings.relight.shadows, 25.0);
+fn fog_and_smoke_saved_before_light_glow_ignore_scene_lights() {
+    // Changed settings are saved in full; untouched ones are omitted.
+    for saved in [
+        json!({"fog":{"amount":40.0},"smoke":{"amount":30.0}}),
+        json!({}),
+    ] {
+        let settings: MaskEffectSettings = serde_json::from_value(saved.clone()).unwrap();
+        assert_eq!(settings.fog.light_glow, 0.0, "{saved}");
+        assert_eq!(settings.smoke.light_glow, 0.0, "{saved}");
+        assert!(!settings.fog.image_lights);
+        assert!(!settings.smoke.image_lights);
+    }
 }
 
 #[test]
-fn fog_and_smoke_saved_before_light_glow_ignore_scene_lights() {
+fn new_fog_and_smoke_glow_around_scene_lights_and_save_that_choice() {
     use crate::pipeline::effect_params::{fog, smoke};
-    let settings: MaskEffectSettings =
-        serde_json::from_value(json!({"fog":{"amount":40.0},"smoke":{"amount":30.0}})).unwrap();
-    assert_eq!(settings.fog.light_glow, 0.0);
-    assert_eq!(settings.smoke.light_glow, 0.0);
-    assert!(!settings.fog.image_lights);
-    assert!(!settings.smoke.image_lights);
-    let fresh = MaskEffectSettings::default();
-    assert_eq!(fresh.fog.light_glow, fog::LIGHT_GLOW.default);
-    assert_eq!(fresh.smoke.light_glow, smoke::LIGHT_GLOW.default);
+    for (effect, expected) in [
+        (MaskEffect::Fog, fog::LIGHT_GLOW.default),
+        (MaskEffect::Smoke, smoke::LIGHT_GLOW.default),
+    ] {
+        let fresh = EffectComponent::new(effect).settings;
+        let saved = serde_json::to_value(fresh).unwrap();
+        let loaded: MaskEffectSettings = serde_json::from_value(saved).unwrap();
+        for settings in [fresh, loaded] {
+            let glow = match effect {
+                MaskEffect::Fog => settings.fog.light_glow,
+                _ => settings.smoke.light_glow,
+            };
+            assert_eq!(glow, expected, "{effect:?}");
+        }
+    }
 }

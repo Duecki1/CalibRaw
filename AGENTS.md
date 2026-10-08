@@ -20,6 +20,12 @@ Commands, platform setup and UI conventions: [docs/DEVELOPMENT.md](docs/DEVELOPM
 - Keep imports explicit in production modules. Document units, ownership and numerical contracts; explain unusual choices, not obvious code.
 - State the safety assumptions of every `unsafe` block. Wrap JNI references, file descriptors and GPU reservations in RAII types.
 
+## Migrations
+
+- Code that reads sidecars, presets or settings saved in an older layout lives in `crates/calibraw-core/src/migrations/`, one file per layout change, and runs when the file is decoded, so the current model keeps no legacy fields or branches. Compatibility code that cannot be separated stays next to the code it adapts and is listed in `migrations/mod.rs`.
+- Mark every migration with a comment `migration: remove in vX.Y.Z`, the first version allowed to drop it. User files (sidecars, presets, settings): the next major version after the release that ships it. App-data cleanup: two minor versions later. Deleting a migration deletes its tests and is noted in the release notes.
+- Report a migrated sidecar through `LoadedSidecar::migrated`, so it is saved again in the current layout.
+
 ## WGSL and GPU
 
 - Production shaders live in `.wgsl` files. Document colour spaces, coordinate systems, boundary handling and precision.
@@ -42,5 +48,8 @@ cargo fmt --all -- --check
 cargo clippy --locked --workspace --all-targets --all-features -- -D warnings -W clippy::perf -W clippy::large_stack_arrays -W clippy::redundant_clone -W unreachable-pub
 cargo test --locked --workspace --all-targets
 cargo xtask arch-check
+cargo xtask migrations
 cargo deny check
 ```
+
+Before a commit, merge or release, delete every migration that `cargo xtask migrations` reports as due, with its tests. The check fails once the workspace version reaches a marker, so a version bump retires them.

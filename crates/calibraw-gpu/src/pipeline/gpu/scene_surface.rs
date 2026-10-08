@@ -12,7 +12,9 @@
 //! high, cannot move by more than half a level.
 //! Gradients are then taken one-sidedly across depth edges so a silhouette
 //! never becomes a steep wall, and a mip chain averages them for broader
-//! light sizes.
+//! light sizes. Above level 0, the mip chain's first channel holds the
+//! nearest smooth depth of its footprint instead, so a shadow ray that passes
+//! in front of every surface near it can skip testing them (relight.wgsl).
 //!
 //! All values are normalized relative depth (near 0, far 1) in the full-image
 //! coordinate frame of the square scene-depth texture. Gradients are depth per
@@ -48,7 +50,10 @@ const COARSEST_SIDE: usize = 8;
 /// A per-texel depth change above this is an occlusion edge, not a slope.
 const DEPTH_EDGE_STEP: f32 = 0.02;
 
-/// One mip level: per texel `[stored depth, smooth depth, ∂depth/∂x, ∂depth/∂y]`.
+/// One mip level: per texel `[stored depth, smooth depth, ∂depth/∂x, ∂depth/∂y]`
+/// on level 0, and `[nearest smooth depth, smooth depth, ∂depth/∂x, ∂depth/∂y]`
+/// above it, where the nearest depth is the minimum over the texel's level-0
+/// footprint and the others are means.
 pub(super) struct SurfaceLevel {
     pub(super) width: u32,
     pub(super) height: u32,
@@ -105,11 +110,23 @@ pub(super) fn derive_scene_surface(stored: &[f32], edge: u32, aspect: f32) -> Ve
         texels,
     }];
     while levels.len() < SCENE_DEPTH_MIP_LEVELS as usize {
-        let next = downsample(levels.last().expect("level 0 exists"));
+        let finer = levels.last().expect("level 0 exists");
+        // Level 0 holds stored depth first; above it, the nearest depth.
+        let nearest = if levels.len() == 1 {
+            SMOOTH_DEPTH
+        } else {
+            NEAREST_DEPTH
+        };
+        let next = downsample(finer, nearest);
         levels.push(next);
     }
     levels
 }
+
+/// Channel of the stored depth on level 0 and of the nearest depth above it.
+const NEAREST_DEPTH: usize = 0;
+/// Channel of the smooth depth.
+const SMOOTH_DEPTH: usize = 1;
 
 /// A per-texel depth difference that ignores occlusion edges: the mean of the
 /// one-sided differences on a continuous surface, the side that stays on the
@@ -125,8 +142,9 @@ fn edge_aware_difference(backward: Option<f32>, forward: Option<f32>) -> f32 {
 }
 
 /// Box-averages 2×2 texels. Gradients average to the mean slope of the larger
-/// footprint, which is the shading a broader light integrates.
-fn downsample(level: &SurfaceLevel) -> SurfaceLevel {
+/// footprint, which is the shading a broader light integrates. The first
+/// channel takes the minimum of the finer level's channel `nearest`.
+fn downsample(level: &SurfaceLevel, nearest: usize) -> SurfaceLevel {
     let width = (level.width / 2).max(1);
     let height = (level.height / 2).max(1);
     let source_width = level.width as usize;
@@ -144,9 +162,14 @@ fn downsample(level: &SurfaceLevel) -> SurfaceLevel {
                 at(2 * x, 2 * y + 1),
                 at(2 * x + 1, 2 * y + 1),
             ];
-            texels.push(std::array::from_fn(|channel| {
+            let mut texel: [f32; 4] = std::array::from_fn(|channel| {
                 quad.iter().map(|texel| texel[channel]).sum::<f32>() * 0.25
-            }));
+            });
+            texel[NEAREST_DEPTH] = quad
+                .iter()
+                .map(|texel| texel[nearest])
+                .fold(f32::INFINITY, f32::min);
+            texels.push(texel);
         }
     }
     SurfaceLevel {
@@ -491,6 +514,25 @@ mod tests {
                     weights.diffuse_texel(&values, x, y).to_bits(),
                     "texel ({x}, {y})"
                 );
+            }
+        }
+    }
+
+    #[test]
+    fn mips_hold_the_nearest_smooth_depth_of_their_footprint() {
+        let stored = quantized(EDGE, |x, y| 0.5 + 0.3 * (9.0 * x).sin() * (5.0 * y).cos());
+        let levels = derive_scene_surface(&stored, EDGE, 1.0);
+        let smooth = channel(&levels[0], SMOOTH_DEPTH);
+        for (index, level) in levels.iter().enumerate().skip(1) {
+            let scale = 1 << index;
+            for (x, y) in [(0, 0), (3, 5), (level.width - 1, level.height - 1)] {
+                let nearest = (0..scale)
+                    .flat_map(|dy| (0..scale).map(move |dx| (dx, dy)))
+                    .map(|(dx, dy)| smooth[((y * scale + dy) * EDGE + x * scale + dx) as usize])
+                    .fold(f32::INFINITY, f32::min);
+                let texel = level.texels[(y * level.width + x) as usize];
+                assert_eq!(texel[NEAREST_DEPTH], nearest, "level {index} ({x}, {y})");
+                assert!(texel[NEAREST_DEPTH] <= texel[SMOOTH_DEPTH]);
             }
         }
     }

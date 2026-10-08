@@ -266,8 +266,6 @@ impl InitialEffectSettings for NeonEffectSettings {}
 impl InitialEffectSettings for RelightEffectSettings {}
 impl InitialEffectSettings for EdgeGlowEffectSettings {}
 impl InitialEffectSettings for PixelateEffectSettings {}
-impl InitialEffectSettings for FogEffectSettings {}
-impl InitialEffectSettings for SmokeEffectSettings {}
 impl InitialEffectSettings for GrainEffectSettings {}
 impl InitialEffectSettings for HalationEffectSettings {}
 impl InitialEffectSettings for VignetteEffectSettings {}

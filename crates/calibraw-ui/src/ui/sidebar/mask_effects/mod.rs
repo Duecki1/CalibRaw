@@ -265,7 +265,7 @@ pub(super) fn effect_description(effect: MaskEffect) -> Option<&'static str> {
             "Place the source relative to the full image, then paint its openings. The mask shapes emitting regions; light shafts extend beyond them.",
         ),
         MaskEffect::Relight => Some(
-            "Add a light that shapes the scene in depth. Position it like Light Rays; scene depth is generated automatically, and nearer objects cast shadows. The sky and anything the depth map places at its far limit stay unlit. The mask controls where the light falls.",
+            "Add a light that shapes the scene in depth. Position it like Light Rays; scene depth is generated automatically. Turn on Shadows to let nearer objects block the light. The sky and anything the depth map places at its far limit stay unlit. The mask controls where the light falls.",
         ),
         MaskEffect::Neon => Some(
             "Trace image edges with colored light inside the mask. Original image keeps the photo visible behind the lines; the glow also stays inside the mask.",

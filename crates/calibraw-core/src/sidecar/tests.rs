@@ -445,7 +445,6 @@ fn legacy_inline_depth_loads_and_is_compressed_on_next_save() {
         .unwrap()
         .as_object_mut()
         .unwrap();
-    geometry.remove("near_feather");
     geometry.remove("far_feather");
     geometry.insert("feather".into(), 0.1.into());
     geometry.insert("grow".into(), 0.4.into());

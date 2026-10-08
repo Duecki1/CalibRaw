@@ -39,6 +39,14 @@ const RELIGHT_TEXELS_PER_SHADOW_STEP: f32 = 4.0;
 // depth model (roughly 700 across the image), whose silhouettes are blocky.
 const RELIGHT_MIN_SHADOW_FOOTPRINT: f32 = 4.0;
 const RELIGHT_GOLDEN_ANGLE: f32 = 2.399963229728653;
+// Normalized depths where the light fades out and beyond which nothing is lit
+// (`apply_relight`).
+const RELIGHT_REACH_FADE_START: f32 = 0.92;
+const RELIGHT_REACH_LIMIT: f32 = 0.96;
+// A shadow-map texel whose 3×3 neighbourhood lies at least this deep is read
+// only by unlit pixels: its resolve taps are four of those texels, so their
+// weighted mean is beyond the reach limit too. The margin absorbs rounding.
+const RELIGHT_UNLIT_TEXEL_DEPTH: f32 = RELIGHT_REACH_LIMIT + 0.001;
 fn relight_surface(uv: vec2<f32>, level: f32) -> vec4<f32> {
     return textureSampleLevel(scene_depth_tex, SceneAdjustments::local_mask_sampler, uv, level);
 }
@@ -125,6 +133,62 @@ fn relight_blocked(
     return blocked;
 }
 
+// Whether a shadow ray at depth `z` passes in front of every surface that
+// one march step's occlusion tests read (`relight_blocked` around `uv` and
+// `uv ± side` on `level`) by at least the test's ramp, so that every test
+// reports exactly zero and the step can be skipped. Above level 0, channel x
+// of the surface holds the nearest depth of each texel's footprint
+// (scene_surface.rs), never farther than the depth any test reads there; the
+// check reads 2×2 texels of the finest such level covering the tested cells.
+fn relight_step_unoccluded(
+    camera: SceneCamera,
+    z: f32,
+    width: f32,
+    uv: vec2<f32>,
+    side: vec2<f32>,
+    level: i32,
+) -> bool {
+    let size = vec2<i32>(textureDimensions(scene_depth_tex, level));
+    let last = size - vec2<i32>(1);
+    let extent = vec2<f32>(size);
+    // The cells `relight_blocked` reads for all three taps.
+    let lo = clamp(
+        vec2<i32>(floor(min(uv - side, uv + side) * extent - vec2<f32>(0.5))),
+        vec2<i32>(0),
+        last,
+    );
+    let hi = clamp(
+        vec2<i32>(floor(max(uv - side, uv + side) * extent - vec2<f32>(0.5))) + vec2<i32>(1),
+        vec2<i32>(0),
+        last,
+    );
+    let top = i32(textureNumLevels(scene_depth_tex)) - 1;
+    // Level 0 holds stored depth in channel x, not the nearest depth.
+    var shift = select(0u, 1u, level == 0);
+    while level + i32(shift) < top
+        && any((hi >> vec2<u32>(shift)) - (lo >> vec2<u32>(shift)) > vec2<i32>(1)) {
+        shift = shift + 1u;
+    }
+    let a = lo >> vec2<u32>(shift);
+    let b = hi >> vec2<u32>(shift);
+    if any(b - a > vec2<i32>(1)) { return false; }
+    let coarse = level + i32(shift);
+    let nearest = min(
+        min(
+            textureLoad(scene_depth_tex, a, coarse).x,
+            textureLoad(scene_depth_tex, vec2<i32>(b.x, a.y), coarse).x,
+        ),
+        min(
+            textureLoad(scene_depth_tex, vec2<i32>(a.x, b.y), coarse).x,
+            textureLoad(scene_depth_tex, b, coarse).x,
+        ),
+    );
+    let occluder_z = scene_depth_z(camera, nearest);
+    // The largest penetration any test can see; at or below the ramp's start
+    // its smoothstep is zero.
+    return z - occluder_z - 0.006 * occluder_z <= -0.5 * width;
+}
+
 // Screen-space shadow: marches from the surface toward the light through the
 // depth map. Depth maps hold only front surfaces, so an occluder is assumed to
 // be solid for a thickness proportional to its distance; a ray passing farther
@@ -139,7 +203,9 @@ fn relight_blocked(
 // depth map give soft shadow edges instead of texel staircases, and thin
 // structures fade instead of striping. `jitter` in [0, 1) offsets the steps
 // per pixel, so what aliasing remains becomes fine dither rather than
-// contour-like copies of a silhouette's shadow.
+// contour-like copies of a silhouette's shadow. Steps where the ray provably
+// passes in front of everything nearby are skipped
+// (`relight_step_unoccluded`); they would leave the visibility unchanged.
 fn relight_visibility(
     camera: SceneCamera,
     surface: vec3<f32>,
@@ -185,6 +251,7 @@ fn relight_visibility(
         let level = i32(clamp(round(log2(footprint) - 1.0), 0.0, top_level));
         let width = 0.01 * position.z + travel * penumbra_rate;
         let side = across * (0.5 * footprint * texel) / camera.image_size;
+        if relight_step_unoccluded(camera, position.z, width, uv, side, level) { continue; }
         let blocked = 0.5 * relight_blocked(camera, position, uv, level, width)
             + 0.25 * relight_blocked(camera, position, uv - side, level, width)
             + 0.25 * relight_blocked(camera, position, uv + side, level, width);
@@ -228,11 +295,31 @@ fn relight_size(params: MaskEffectParams) -> f32 {
     return clamp(mask_effect_lane(params, RELIGHT_SIZE_LANE) / 100.0, 0.0, 1.0);
 }
 
+// Whether no lit pixel reads the shadow-map texel `cell`: its whole 3×3
+// neighbourhood, clamped to the grid as the resolve taps are, lies beyond the
+// reach limit (RELIGHT_UNLIT_TEXEL_DEPTH). Sky is often a large share of a
+// photo, and its shadows would otherwise be traced for nothing.
+fn relight_texel_unlit(cell: vec2<i32>, size: vec2<i32>) -> bool {
+    for (var y = -1; y <= 1; y = y + 1) {
+        for (var x = -1; x <= 1; x = x + 1) {
+            let neighbour = clamp(cell + vec2<i32>(x, y), vec2<i32>(0), size - vec2<i32>(1));
+            if textureLoad(scene_depth_tex, neighbour, 0).y < RELIGHT_UNLIT_TEXEL_DEPTH {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
 @compute @workgroup_size(8, 8, 1)
 fn build_relight_shadow_map(@builtin(global_invocation_id) gid: vec3<u32>) {
     let size = textureDimensions(scene_depth_tex);
     if gid.x >= size.x || gid.y >= size.y { return; }
     let cell = vec2<i32>(gid.xy);
+    if relight_texel_unlit(cell, vec2<i32>(size)) {
+        textureStore(relight_shadow_map_out, cell, vec4<f32>(1.0));
+        return;
+    }
     let uv = (vec2<f32>(gid.xy) + vec2<f32>(0.5)) / vec2<f32>(size);
     let depth = textureLoad(scene_depth_tex, cell, 0).y;
     let jitter = relight_jitter(uv);
@@ -294,7 +381,7 @@ fn apply_relight(pos: vec2<i32>, input_rgb: vec3<f32>, params: MaskEffectParams)
     // The far end of normalized depth is where the depth model clips the sky
     // and distant scenery (typically 245–255 of 255, often with a gap below):
     // beyond any local light, it receives neither light nor shadows.
-    let reachable = 1.0 - smoothstep(0.92, 0.96, depth);
+    let reachable = 1.0 - smoothstep(RELIGHT_REACH_FADE_START, RELIGHT_REACH_LIMIT, depth);
     let diffuse = clamp((dot(normal, to_light / distance) + wrap) / (1.0 + wrap), 0.0, 1.0)
         * reachable;
     if diffuse <= 1e-6 { return ambient_rgb; }

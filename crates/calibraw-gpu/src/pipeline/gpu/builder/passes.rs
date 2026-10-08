@@ -51,6 +51,9 @@ pub(in crate::pipeline::gpu) struct StageIndices {
     pub(in crate::pipeline::gpu) image_light_end_index: usize,
     /// Relight shadows per scene-depth texel, built in the output stage.
     pub(in crate::pipeline::gpu) relight_shadow_map_pass_index: usize,
+    /// The joint-upsampling guide of scene depth, built right before the
+    /// creative pass that reads it.
+    pub(in crate::pipeline::gpu) scene_depth_guide_pass_index: usize,
     pub(in crate::pipeline::gpu) pass_count: usize,
 }
 
@@ -89,6 +92,7 @@ impl StageIndices {
         let image_light_resolve_pass_index = take(1);
         let image_light_blur_pass_index = take(2);
         let relight_shadow_map_pass_index = take(1);
+        let scene_depth_guide_pass_index = take(1);
         let pass_count = next;
         Self {
             highlight_pass_index,
@@ -120,6 +124,7 @@ impl StageIndices {
             image_light_blur_pass_index,
             image_light_end_index: relight_shadow_map_pass_index,
             relight_shadow_map_pass_index,
+            scene_depth_guide_pass_index,
             pass_count,
         }
     }
@@ -139,6 +144,7 @@ pub(in crate::pipeline::gpu) struct AssembledPasses {
     pub(in crate::pipeline::gpu) passes: Vec<Pass>,
     pub(in crate::pipeline::gpu) post_blur_glow_passes: Vec<Pass>,
     pub(in crate::pipeline::gpu) post_blur_pixelate_blocks_pass: Pass,
+    pub(in crate::pipeline::gpu) post_blur_scene_depth_guide_pass: Pass,
     pub(in crate::pipeline::gpu) post_blur_creative_pass: Pass,
     pub(in crate::pipeline::gpu) post_blur_render_pass: Pass,
     pub(in crate::pipeline::gpu) indices: StageIndices,
@@ -159,7 +165,7 @@ impl PassAssembler<'_> {
         shader: Option<&wgpu::ShaderModule>,
         entry: &str,
         bgl: &wgpu::BindGroupLayout,
-        bind_group: wgpu::BindGroup,
+        bindings: impl Into<PassBindings>,
         workgroups: [u32; 3],
     ) -> Pass {
         let program_index = self.next_program_index;
@@ -184,7 +190,7 @@ impl PassAssembler<'_> {
         };
         Pass {
             pipeline,
-            bind_group,
+            bindings: bindings.into(),
             workgroups,
         }
     }
@@ -471,7 +477,7 @@ pub(in crate::pipeline::gpu) fn assemble_passes(
             shaders.creative_effects_module.as_ref(),
             "apply_creative_effects",
             &layouts.bgl_adjust_creative,
-            groups.bg_adjust_creative.clone(),
+            InputBoundPass::Creative,
             image_workgroups,
         ),
         assembler.make_pass(
@@ -498,28 +504,28 @@ pub(in crate::pipeline::gpu) fn assemble_passes(
             shaders.tone_analysis_module.as_ref(),
             "accumulate_image_lights",
             &layouts.bgl_image_light_accumulate,
-            groups.bg_image_light_accumulate.clone(),
+            InputBoundPass::ImageLights(0),
             image_light_workgroups,
         ),
         assembler.make_pass(
             shaders.tone_analysis_module.as_ref(),
             "resolve_image_lights",
             &layouts.bgl_image_light_resolve,
-            groups.bg_image_light_resolve.clone(),
+            InputBoundPass::ImageLights(1),
             image_light_workgroups,
         ),
         assembler.make_pass(
             shaders.tone_analysis_module.as_ref(),
             "blur_image_lights_horizontal",
             &layouts.bgl_image_light_blur_horizontal,
-            groups.bg_image_light_blur_horizontal.clone(),
+            InputBoundPass::ImageLights(2),
             image_light_workgroups,
         ),
         assembler.make_pass(
             shaders.tone_analysis_module.as_ref(),
             "blur_image_lights_vertical",
             &layouts.bgl_image_light_blur_vertical,
-            groups.bg_image_light_blur_vertical.clone(),
+            InputBoundPass::ImageLights(3),
             image_light_workgroups,
         ),
     ]);
@@ -532,7 +538,7 @@ pub(in crate::pipeline::gpu) fn assemble_passes(
         shaders.creative_effects_module.as_ref(),
         "build_relight_shadow_map",
         &layouts.bgl_relight_shadow_map,
-        groups.bg_relight_shadow_map.clone(),
+        InputBoundPass::RelightShadowMap,
         [
             SCENE_DEPTH_EDGE.div_ceil(WORKGROUP_EDGE),
             SCENE_DEPTH_EDGE.div_ceil(WORKGROUP_EDGE),
@@ -540,11 +546,29 @@ pub(in crate::pipeline::gpu) fn assemble_passes(
         ],
     ));
 
+    let scene_depth_workgroups = [
+        SCENE_DEPTH_EDGE.div_ceil(WORKGROUP_EDGE),
+        SCENE_DEPTH_EDGE.div_ceil(WORKGROUP_EDGE),
+        1,
+    ];
+    ensure_planned(
+        &passes,
+        indices.scene_depth_guide_pass_index,
+        "scene-depth guide",
+    )?;
+    passes.push(assembler.make_pass(
+        shaders.creative_effects_module.as_ref(),
+        "build_scene_depth_guide",
+        &layouts.bgl_scene_depth_guide,
+        InputBoundPass::SceneDepthGuide,
+        scene_depth_workgroups,
+    ));
+
     // The post-blur variants reuse the programs above with bind groups that
     // read the mask-blurred scene.
     let mut post_blur_glow_passes = vec![Pass {
         pipeline: passes[indices.glow_prepare_pass_index].pipeline.clone(),
-        bind_group: groups.bg_glow_prepare_after_blur.clone(),
+        bindings: groups.bg_glow_prepare_after_blur.clone().into(),
         workgroups: image_workgroups,
     }];
     post_blur_glow_passes.extend(groups.bg_glow_blur_after_blur.iter().enumerate().map(
@@ -553,28 +577,35 @@ pub(in crate::pipeline::gpu) fn assemble_passes(
                 pipeline: passes[indices.glow_blur_start_index + step]
                     .pipeline
                     .clone(),
-                bind_group: bind_group.clone(),
+                bindings: bind_group.clone().into(),
                 workgroups: image_workgroups,
             }
         },
     ));
     let post_blur_pixelate_blocks_pass = Pass {
         pipeline: passes[indices.pixelate_blocks_pass_index].pipeline.clone(),
-        bind_group: groups.bg_pixelate_blocks_after_blur.clone(),
+        bindings: groups.bg_pixelate_blocks_after_blur.clone().into(),
         workgroups: image_workgroups,
+    };
+    let post_blur_scene_depth_guide_pass = Pass {
+        pipeline: passes[indices.scene_depth_guide_pass_index]
+            .pipeline
+            .clone(),
+        bindings: InputBoundPass::SceneDepthGuideAfterBlur.into(),
+        workgroups: scene_depth_workgroups,
     };
     let post_blur_creative_pass = Pass {
         pipeline: passes[indices.adjustment_creative_pass_index]
             .pipeline
             .clone(),
-        bind_group: groups.bg_adjust_creative_after_blur.clone(),
+        bindings: InputBoundPass::CreativeAfterBlur.into(),
         workgroups: image_workgroups,
     };
     let post_blur_render_pass = Pass {
         pipeline: passes[indices.adjustment_render_pass_index]
             .pipeline
             .clone(),
-        bind_group: groups.bg_adjust_render_after_blur.clone(),
+        bindings: groups.bg_adjust_render_after_blur.clone().into(),
         workgroups: image_workgroups,
     };
 
@@ -592,6 +623,7 @@ pub(in crate::pipeline::gpu) fn assemble_passes(
         passes,
         post_blur_glow_passes,
         post_blur_pixelate_blocks_pass,
+        post_blur_scene_depth_guide_pass,
         post_blur_creative_pass,
         post_blur_render_pass,
         indices,

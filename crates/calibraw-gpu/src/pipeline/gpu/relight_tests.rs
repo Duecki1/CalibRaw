@@ -497,3 +497,45 @@ fn relight_gpu_shadow_map_follows_the_light_and_depth() -> anyhow::Result<()> {
     }
     Ok(())
 }
+
+#[test]
+fn effect_inputs_are_allocated_on_first_use() -> anyhow::Result<()> {
+    let Some(scene) = FogScene::with_source(grey(WIDTH, HEIGHT)?, ProcessingQuality::High)? else {
+        return Ok(());
+    };
+    let inputs = &scene.pipeline.effect_inputs;
+    assert!(inputs.relight_surface().is_none());
+    assert!(inputs.image_lights().is_none());
+    assert!(!inputs.scene_depth_guide_allocated());
+
+    let mut fog = EffectComponent::new(MaskEffect::Fog);
+    fog.settings.fog.variation = 0.0;
+    let depth_fog = MaskStack {
+        global_effects: vec![fog],
+        scene_depth: Some(ridge()),
+        ..Default::default()
+    };
+    // Depth fog reads the plain depth texture through the guide.
+    let before = scene.render(&depth_fog)?;
+    assert!(inputs.scene_depth_guide_allocated());
+    assert!(inputs.relight_surface().is_none());
+
+    scene.render(&global_relight(
+        RelightEffectSettings {
+            shadows_enabled: true,
+            ..Default::default()
+        },
+        Some(ridge()),
+    ))?;
+    assert!(inputs.relight_surface().is_some());
+    assert!(inputs.image_lights().is_none());
+    // The surface holds the same stored depth, so fog renders as before.
+    let after = scene.render(&depth_fog)?;
+    assert_close(&after, &before, 0.0, "depth fog after the Relight surface");
+
+    let mut lit_fog = depth_fog;
+    lit_fog.global_effects[0].settings.fog.image_lights = true;
+    scene.render(&lit_fog)?;
+    assert!(inputs.image_lights().is_some());
+    Ok(())
+}
