@@ -66,6 +66,7 @@ pub(crate) struct PreviewViewportInput {
     zoom: f32,
     center: [f32; 2],
     touch_navigation_active: bool,
+    space_pan_active: bool,
 }
 
 impl PreviewViewportInput {
@@ -89,6 +90,7 @@ impl PreviewViewportInput {
             zoom: app.preview.zoom,
             center: app.preview.center,
             touch_navigation_active: app.preview.touch_navigation_active,
+            space_pan_active: app.preview.space_pan_active,
         }
     }
 }
@@ -116,6 +118,8 @@ pub(crate) struct PreviewViewport {
     point_color_canvas: bool,
     brush_canvas: bool,
     touch_navigation: bool,
+    /// Space-drag navigation owns the primary button; see `space_pan`.
+    space_pan: bool,
     fit_gesture: bool,
     moved: bool,
     response: egui::Response,
@@ -341,6 +345,8 @@ impl Preview {
             input.touch_navigation_active
         };
         actions.push(PreviewViewportAction::SetTouchNavigation(touch_navigation));
+        let space_pan = Self::space_pan(ui, &response, input.space_pan_active);
+        actions.push(PreviewViewportAction::SetSpacePan(space_pan));
 
         let mut viewport = PreviewViewport {
             canvas_rect,
@@ -360,6 +366,7 @@ impl Preview {
             point_color_canvas,
             brush_canvas,
             touch_navigation,
+            space_pan,
             fit_gesture: false,
             moved: false,
             response,
@@ -382,6 +389,39 @@ impl Preview {
             ));
         }
         Some((viewport, actions))
+    }
+
+    /// Holding Space over the preview turns the primary button into a pan
+    /// in every tab, as on laptops without a middle button. It arms only
+    /// while the button is up, so pressing Space mid-stroke does not cut a
+    /// stroke short, and a pan lasts until the button is released.
+    pub(super) fn space_pan(ui: &Ui, response: &egui::Response, active: bool) -> bool {
+        let text_input = ui.ctx().egui_wants_keyboard_input();
+        let (space_down, primary_down, primary_released) = ui.input(|input| {
+            (
+                input.key_down(egui::Key::Space),
+                input.pointer.primary_down(),
+                input.pointer.primary_released(),
+            )
+        });
+        let space_held = space_down && !text_input;
+        let active = if active {
+            // Through the release frame too, so no tool sees the release.
+            space_held || primary_down || primary_released
+        } else {
+            // Never on a release frame: that release ends a tool stroke.
+            space_held && !primary_down && !primary_released && response.hovered()
+        };
+        if active {
+            // Keep Space from also activating a focused button.
+            ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Space));
+            ui.ctx().set_cursor_icon(if primary_down {
+                egui::CursorIcon::Grabbing
+            } else {
+                egui::CursorIcon::Grab
+            });
+        }
+        active
     }
 
     fn canvas_response(
@@ -524,7 +564,9 @@ impl Preview {
             && response.dragged_by(egui::PointerButton::Primary);
         let pan_with_middle =
             !viewport.touch_navigation && response.dragged_by(egui::PointerButton::Middle);
-        if pan_with_primary || pan_with_middle {
+        let pan_with_space =
+            viewport.space_pan && response.dragged_by(egui::PointerButton::Primary);
+        if pan_with_primary || pan_with_middle || pan_with_space {
             let delta = ui.input(|input| input.pointer.delta());
             let image_size = viewport.base_size * viewport.zoom;
             viewport.center[0] -= delta.x / image_size.x.max(1.0);
@@ -673,6 +715,7 @@ impl Preview {
     ) {
         let layout = viewport.layout();
         let gesture_free = !viewport.touch_navigation
+            && !viewport.space_pan
             && !viewport.fit_gesture
             && !app.preview.original_hold_owns_touch();
         if viewport.crop_preview {
@@ -699,14 +742,14 @@ impl Preview {
         Self::paint_inpaint_overlay(ui, app, layout);
 
         if viewport.white_balance_canvas {
-            if !viewport.touch_navigation {
+            if !viewport.touch_navigation && !viewport.space_pan {
                 Self::handle_white_balance_picker(ui, app, layout, response);
             }
             Self::paint_white_balance_picker(ui, app, layout);
         }
 
         if viewport.point_color_canvas {
-            if !viewport.touch_navigation {
+            if !viewport.touch_navigation && !viewport.space_pan {
                 Self::handle_point_color_picker(ui, app, frame, layout, response);
             }
             Self::paint_point_color_picker(ui, app, layout.visible_rect, response);

@@ -245,6 +245,9 @@ pub(crate) struct PreviewState {
     pub(crate) source_axes_swapped: bool,
     pub(crate) motion_at: Option<Instant>,
     pub(crate) touch_navigation_active: bool,
+    /// Space was held over the preview, so the primary button pans instead
+    /// of driving the canvas tool. Ends when that button is released.
+    pub(crate) space_pan_active: bool,
     pub(crate) revision: u64,
     pub(crate) detail: Option<PreviewDetail>,
     pub(crate) navigation: Option<PreviewNavigation>,
