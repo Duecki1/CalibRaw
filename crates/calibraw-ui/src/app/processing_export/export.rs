@@ -30,6 +30,8 @@ impl ExportTask {
             total_tiles: 0,
             minimized: false,
             cancelling: false,
+            #[cfg(target_os = "android")]
+            share_mime_type: None,
         }
     }
 
@@ -246,8 +248,20 @@ impl CalibRawApp {
         self.export_android(frame, ExportFormat::JpegXl);
     }
 
+    /// Exports in the selected format, then opens the Android share sheet.
+    #[cfg(target_os = "android")]
+    pub(crate) fn export_and_share(&mut self, frame: &eframe::Frame) {
+        let format = self.export.format;
+        self.start_android_export(frame, format, true);
+    }
+
     #[cfg(target_os = "android")]
     pub(in crate::app) fn export_android(&mut self, frame: &eframe::Frame, format: ExportFormat) {
+        self.start_android_export(frame, format, false);
+    }
+
+    #[cfg(target_os = "android")]
+    fn start_android_export(&mut self, frame: &eframe::Frame, format: ExportFormat, share: bool) {
         if !self.can_export() {
             return;
         }
@@ -275,6 +289,45 @@ impl CalibRawApp {
             .is_none()
         {
             self.cancel_android_export_destination(&cleanup);
+            return;
+        }
+        if share {
+            if let Some(task) = self.export.task.as_mut() {
+                task.share_mime_type = Some(format.mime_type());
+            }
+        }
+    }
+
+    /// Opens the share sheet when the finished single export asked for it.
+    /// Call before the task is cleared.
+    #[cfg(target_os = "android")]
+    pub(in crate::app) fn share_finished_export(
+        &mut self,
+        published: &calibraw_ffi::PublishedExport,
+    ) {
+        let Some(mime_type) = self
+            .export
+            .task
+            .as_ref()
+            .and_then(|task| task.share_mime_type)
+        else {
+            return;
+        };
+        if published.uri.is_empty() {
+            self.ui.notice = Some(format!(
+                "Exported to {}, but Android did not provide a link to share it.",
+                published.location
+            ));
+            return;
+        }
+        if let Err(error) =
+            calibraw_ffi::share_export(&self.android.android_app, &published.uri, mime_type)
+        {
+            self.ui.notice = Some(format!(
+                "Exported to {}, but sharing failed: {error}",
+                published.location
+            ));
+            log::error!("Android export share failed: {error}");
         }
     }
 
@@ -576,12 +629,15 @@ impl CalibRawApp {
                                             &self.android.android_app,
                                             &direct_path,
                                         ) {
-                                            Ok(location) => {
+                                            Ok(published) => {
                                                 if is_batch {
                                                     android_batch_result = Some(Ok(()));
                                                 } else {
-                                                    self.ui.notice =
-                                                        Some(format!("Exported to {location}"));
+                                                    self.ui.notice = Some(format!(
+                                                        "Exported to {}",
+                                                        published.location
+                                                    ));
+                                                    self.share_finished_export(&published);
                                                     self.export.task = None;
                                                 }
                                             }

@@ -69,9 +69,18 @@ pub enum PickerResult {
     Failed(String),
 }
 
+/// A finished export in MediaStore.
+#[derive(Debug)]
+pub struct PublishedExport {
+    /// Human-readable folder and name, for notices.
+    pub location: String,
+    /// Content URI other apps can be granted, or empty when Android did not report one.
+    pub uri: String,
+}
+
 #[derive(Debug)]
 pub enum ExportPublishResult {
-    Published(String),
+    Published(PublishedExport),
     Failed(String),
 }
 

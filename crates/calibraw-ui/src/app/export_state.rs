@@ -190,6 +190,9 @@ pub(crate) struct ExportTask {
     pub(super) total_tiles: usize,
     pub(super) minimized: bool,
     pub(super) cancelling: bool,
+    /// MIME type to share the finished export as; `None` exports without sharing.
+    #[cfg(target_os = "android")]
+    pub(super) share_mime_type: Option<&'static str>,
 }
 
 pub(super) struct PreparedExportSource {

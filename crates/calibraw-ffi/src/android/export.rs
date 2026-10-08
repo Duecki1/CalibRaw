@@ -113,7 +113,7 @@ pub fn prepare_direct_export(
 
 /// Publishes a finished direct export and returns where it is, under the name
 /// MediaStore gave it.
-pub fn finalize_direct_export(app: &AndroidApp, path: &Path) -> Result<String, String> {
+pub fn finalize_direct_export(app: &AndroidApp, path: &Path) -> Result<PublishedExport, String> {
     let target = direct_exports()
         .lock()
         .map_err(|_| "Android direct-export state is poisoned".to_owned())?
@@ -127,8 +127,11 @@ pub fn finalize_direct_export(app: &AndroidApp, path: &Path) -> Result<String, S
     } = target;
     drop(descriptor);
     match finish_pending_export(app, &uri, true) {
-        Ok(published) if !published.is_empty() => Ok(published),
-        Ok(_) => Ok(location),
+        Ok(published) if !published.is_empty() => Ok(PublishedExport {
+            location: published,
+            uri,
+        }),
+        Ok(_) => Ok(PublishedExport { location, uri }),
         Err(error) => {
             let _ = finish_pending_export(app, &uri, false);
             Err(error)
@@ -191,6 +194,23 @@ fn finish_pending_export(app: &AndroidApp, uri: &str, success: bool) -> Result<S
         java_string(env, value)
     })
     .map_err(|error| format!("could not finalize Android MediaStore export: {error:#}"))
+}
+
+/// Opens the Android share sheet for a published export. The sheet opens
+/// asynchronously on the Android UI thread.
+pub fn share_export(app: &AndroidApp, uri: &str, mime_type: &str) -> Result<(), String> {
+    with_export_publisher(app, |env, export_publisher| {
+        let uri = env.new_string(uri)?;
+        let mime_type = env.new_string(mime_type)?;
+        env.call_method(
+            export_publisher,
+            jni::jni_str!("shareExport"),
+            jni::jni_sig!((JString, JString) -> void),
+            &[JValue::Object(&uri), JValue::Object(&mime_type)],
+        )?;
+        Ok(())
+    })
+    .map_err(|error| format!("could not open the Android share sheet: {error:#}"))
 }
 
 pub fn publish_image(
