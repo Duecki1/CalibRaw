@@ -1,0 +1,6 @@
+Open photos in CalibRaw from other apps with Open with or Share.
+Export and share a photo in one step, and replay your edits from the Export panel.
+RAWs from cameras LibRaw does not support yet, such as the Nikon Z 5 II, open through Rawler.
+Long-press to see the original also works in the Masks and Remove tabs.
+Errors now open in a dialog.
+Lower memory use and a smaller app.

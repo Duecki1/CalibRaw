@@ -1,8 +1,6 @@
-Added presets with hover preview.
-Edit JPG, PNG and more besides RAW.
-Added automatic straightening.
-Added lens correction setting.
-Mask groups can be reordered; Android sub-masks support drag and drop.
-Added depth masks and depth-aware fog.
-Reworked AI denoise and models; improved Clone & Heal.
-Added grey theme, geometry and vignette buttons.
+Open photos in CalibRaw from other apps with Open with or Share.
+Export and share a photo in one step, and replay your edits from the Export panel.
+RAWs from cameras LibRaw does not support yet, such as the Nikon Z 5 II, open through Rawler.
+Long-press to see the original also works in the Masks and Remove tabs.
+Errors now open in a dialog.
+Lower memory use and a smaller app.

@@ -66,6 +66,17 @@
     <control>keyboard</control>
   </supports>
   <releases>
+    <release version="1.2.1" date="2026-10-08" type="stable">
+      <url>https://github.com/Duecki1/CalibRaw/releases/tag/v1.2.1</url>
+      <description>
+        <p>This release adds sharing and opens RAW files from cameras that LibRaw does not support yet.</p>
+        <ul>
+          <li>Export and share a photo in one step</li>
+          <li>Open RAW files from newer cameras, such as the Nikon Z 5 II, through Rawler</li>
+          <li>Show errors in a dialog</li>
+        </ul>
+      </description>
+    </release>
     <release version="1.2.0" date="2026-10-06" type="stable">
       <url>https://github.com/Duecki1/CalibRaw/releases/tag/v1.2.0</url>
       <description>
