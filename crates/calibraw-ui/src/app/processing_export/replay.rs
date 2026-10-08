@@ -14,6 +14,8 @@ impl CalibRawApp {
         })
     }
 
+    /// Renders the edit replay MP4. On Android it is saved to the gallery and
+    /// then opened in the share sheet.
     pub(crate) fn create_edit_replay(&mut self, frame: &eframe::Frame) {
         if !self.can_export() || self.inpaint_processing() {
             return;
@@ -103,6 +105,10 @@ impl CalibRawApp {
                 ));
                 if let Some(task) = self.export.task.as_mut() {
                     task.phase = "Preparing edit replay…".to_owned();
+                }
+                #[cfg(target_os = "android")]
+                {
+                    self.export.share_mime_type = Some("video/mp4");
                 }
                 self.ui.notice = None;
                 self.egui_ctx.request_repaint();
