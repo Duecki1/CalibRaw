@@ -59,7 +59,9 @@ export LDAI_OUTPUT="CalibRaw-${LINUXDEPLOY_ARCH}.AppImage"
 # The AppImage must run on the oldest supported Ubuntu LTS (22.04, glibc 2.35).
 # Fail if any bundled ELF file needs a newer glibc, e.g. after a runner upgrade.
 MAX_GLIBC=2.35
-newest_glibc="$(find AppDir -type f -exec objdump -T {} + 2>/dev/null \
+# linuxdeploy puts every ELF file under usr/bin and usr/lib; other AppDir files
+# (Lensfun XML, icons, copyright notes) would make objdump fail under pipefail.
+newest_glibc="$(find AppDir/usr/bin AppDir/usr/lib -type f -exec objdump -T {} + \
   | grep -o 'GLIBC_[0-9.]*' | sed 's/GLIBC_//' | sort -Vu | tail -n 1)"
 echo "Newest glibc symbol required: ${newest_glibc:-none}"
 test "$(printf '%s\n%s\n' "$MAX_GLIBC" "${newest_glibc:-0}" | sort -V | tail -n 1)" = "$MAX_GLIBC"
