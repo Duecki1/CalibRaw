@@ -73,7 +73,7 @@ impl CalibRawApp {
                 self.ui.notice = None;
                 self.ui.status = "Choose one or more photos…".to_owned();
             }
-            Err(error) => self.report_error("Could not open photo", error),
+            Err(error) => self.report_error(ErrorKind::OpenPhoto, error),
         }
     }
 
@@ -107,7 +107,7 @@ impl CalibRawApp {
                 );
             }
             crate::app::DesktopPickerEvent::OnnxRuntime(Err(error)) => {
-                self.report_error("AI runtime error", error);
+                self.report_error(ErrorKind::AiRuntime, error);
             }
             crate::app::DesktopPickerEvent::PresetFiles(Some(paths)) => {
                 self.import_preset_files(&paths);
@@ -166,7 +166,7 @@ impl CalibRawApp {
                     self.android.picker_pending = false;
                     self.android.camera_profile_folder_importing_label = None;
                     self.report_error(
-                        "Camera profile failed",
+                        ErrorKind::CameraProfile,
                         format!("Could not import camera profiles: {error}"),
                     );
                 }
@@ -254,7 +254,7 @@ impl CalibRawApp {
                     };
                     if failed > 0 {
                         self.report_error(
-                            "Import failed",
+                            ErrorKind::Import,
                             if errors.is_empty() {
                                 format!("{failed} selected photo imports failed.")
                             } else {
@@ -281,7 +281,7 @@ impl CalibRawApp {
                             frame,
                         );
                     } else if was_reset_reload {
-                        self.report_error("Could not open photo", "The photo could not be reloaded after resetting adjustments. Reopen it from the Library before continuing in Develop."
+                        self.report_error(ErrorKind::OpenPhoto, "The photo could not be reloaded after resetting adjustments. Reopen it from the Library before continuing in Develop."
                                 .to_owned(),);
                     } else {
                         self.ui.notice = Some("No photos selected.".to_owned());
@@ -306,7 +306,7 @@ impl CalibRawApp {
                         self.complete_android_library_ai_mask_open_failure(error, frame);
                     } else {
                         self.report_error(
-                            "Could not open photo",
+                            ErrorKind::OpenPhoto,
                             if was_profile_reload {
                                 format!("Could not reload RAW for camera profile: {error}")
                             } else if was_reset_reload {

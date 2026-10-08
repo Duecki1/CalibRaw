@@ -45,7 +45,7 @@ impl CalibRawApp {
         let destination = {
             let Some(data_dir) = self.android.android_app.internal_data_path() else {
                 self.report_error(
-                    "Edit replay failed",
+                    ErrorKind::EditReplay,
                     "Android did not provide an app data directory.",
                 );
                 return;
@@ -53,7 +53,7 @@ impl CalibRawApp {
             let export_dir = data_dir.join("cache").join("exports");
             if let Err(error) = std::fs::create_dir_all(&export_dir) {
                 self.report_error(
-                    "Edit replay failed",
+                    ErrorKind::EditReplay,
                     format!("Could not prepare replay cache: {error}"),
                 );
                 return;
@@ -62,7 +62,7 @@ impl CalibRawApp {
         };
         let Some(render_state) = frame.wgpu_render_state() else {
             self.report_error(
-                "Edit replay failed",
+                ErrorKind::EditReplay,
                 "eframe is not running with the wgpu backend.",
             );
             return;
@@ -124,7 +124,7 @@ impl CalibRawApp {
             }
             Err(error) => {
                 self.report_error(
-                    "Edit replay failed",
+                    ErrorKind::EditReplay,
                     format!("Could not start edit replay export: {error}"),
                 );
             }
@@ -190,7 +190,7 @@ impl CalibRawApp {
                                     Err(error) => {
                                         let _ = std::fs::remove_file(&path);
                                         self.report_error(
-                                            "Edit replay failed",
+                                            ErrorKind::EditReplay,
                                             format!("Could not save edit replay: {error}"),
                                         );
                                     }
@@ -205,7 +205,7 @@ impl CalibRawApp {
                         }
                         Err(ReplayError::Failed(error)) => {
                             self.report_error(
-                                "Edit replay failed",
+                                ErrorKind::EditReplay,
                                 format!("Edit replay failed: {error}"),
                             );
                         }
@@ -216,7 +216,7 @@ impl CalibRawApp {
         }
         if disconnected && !finished {
             self.report_error(
-                "Edit replay failed",
+                ErrorKind::EditReplay,
                 "Edit replay worker stopped unexpectedly.",
             );
             self.export.task = None;

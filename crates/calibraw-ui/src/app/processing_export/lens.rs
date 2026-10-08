@@ -184,7 +184,7 @@ impl CalibRawApp {
                 self.develop.lens_correction.catalog.status =
                     format!("Could not start lens correction: {error}");
                 self.report_error(
-                    "Lens correction failed",
+                    ErrorKind::LensCorrection,
                     self.develop.lens_correction.catalog.status.clone(),
                 );
             }
@@ -241,7 +241,7 @@ impl CalibRawApp {
                     self.develop.lens_correction.enabled = self.develop.lens_correction.applied;
                     self.develop.lens_correction.catalog.status = error;
                     self.report_error(
-                        "Lens correction failed",
+                        ErrorKind::LensCorrection,
                         "Lens correction failed; restored the previous preview.".to_owned(),
                     );
                 }
@@ -252,7 +252,7 @@ impl CalibRawApp {
 
         let Some(render_state) = frame.wgpu_render_state() else {
             self.report_error(
-                "Lens correction failed",
+                ErrorKind::LensCorrection,
                 "eframe is not running with the wgpu backend.".to_owned(),
             );
             return;
@@ -270,7 +270,7 @@ impl CalibRawApp {
         {
             let Some(pipeline) = self.preview.pipeline() else {
                 self.report_error(
-                    "Lens correction failed",
+                    ErrorKind::LensCorrection,
                     "The preview pipeline is unavailable.".to_owned(),
                 );
                 return;
@@ -278,7 +278,7 @@ impl CalibRawApp {
             if let Err(error) = pipeline.upload_raw_tile(&render_state.queue, &prepared.preview_raw)
             {
                 self.report_error(
-                    "Lens correction failed",
+                    ErrorKind::LensCorrection,
                     format!("Could not update the lens-corrected preview pixels: {error:#}"),
                 );
                 return;
@@ -305,7 +305,7 @@ impl CalibRawApp {
                 ),
             ) {
                 self.report_error(
-                    "Lens correction failed",
+                    ErrorKind::LensCorrection,
                     format!("Could not apply Remove to lens preview: {error:#}"),
                 );
                 return;
@@ -342,7 +342,7 @@ impl CalibRawApp {
                 Ok(pipeline) => pipeline,
                 Err(error) => {
                     self.report_error(
-                        "Lens correction failed",
+                        ErrorKind::LensCorrection,
                         format!("Could not rebuild the corrected GPU preview: {error:#}"),
                     );
                     return;
@@ -354,7 +354,7 @@ impl CalibRawApp {
                 &preview_masks,
                 &prepared.preview_raw,
             ) {
-                self.report_error("Lens correction failed", error);
+                self.report_error(ErrorKind::LensCorrection, error);
                 return;
             }
             if let Err(error) = pipeline.recompute_with_remove(
@@ -373,7 +373,7 @@ impl CalibRawApp {
                 ),
             ) {
                 self.report_error(
-                    "Lens correction failed",
+                    ErrorKind::LensCorrection,
                     format!("Could not apply Remove to corrected preview: {error:#}"),
                 );
                 return;

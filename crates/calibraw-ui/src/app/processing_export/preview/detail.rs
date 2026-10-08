@@ -84,7 +84,7 @@ impl CalibRawApp {
             Err(error) => {
                 self.retry_preview_detail_later();
                 self.report_error(
-                    "Preview failed",
+                    ErrorKind::Preview,
                     format!("Could not start zoom-preview preparation: {error}"),
                 );
             }
@@ -104,7 +104,7 @@ impl CalibRawApp {
                 self.preview.detail_rebuild_receiver = None;
                 self.retry_preview_detail_later();
                 self.report_error(
-                    "Preview failed",
+                    ErrorKind::Preview,
                     "Zoom-preview worker stopped unexpectedly.".to_owned(),
                 );
                 None
@@ -120,7 +120,7 @@ impl CalibRawApp {
             Err(error) => {
                 self.retry_preview_detail_later();
                 self.report_error(
-                    "Preview failed",
+                    ErrorKind::Preview,
                     format!("Could not prepare the zoomed preview: {error}"),
                 );
                 return;
@@ -266,7 +266,7 @@ impl CalibRawApp {
                 .upload_raw_tile(&render_state.queue, &detail_raw)
             {
                 self.report_error(
-                    "Preview failed",
+                    ErrorKind::Preview,
                     format!("Could not update the zoomed preview crop: {error:#}"),
                 );
                 return false;
@@ -280,7 +280,7 @@ impl CalibRawApp {
                 mask_extent,
                 None,
             ) {
-                self.report_error("Preview failed", error);
+                self.report_error(ErrorKind::Preview, error);
                 return false;
             }
             if let Err(error) = detail.pipeline.gpu().dispatch_stage_with_remove(
@@ -297,7 +297,7 @@ impl CalibRawApp {
                 ),
             ) {
                 self.report_error(
-                    "Preview failed",
+                    ErrorKind::Preview,
                     format!("Could not apply Remove to zoomed preview: {error:#}"),
                 );
                 return false;
@@ -365,7 +365,7 @@ impl CalibRawApp {
             Ok(pipeline) => pipeline,
             Err(error) => {
                 self.report_error(
-                    "Preview failed",
+                    ErrorKind::Preview,
                     format!("Could not render the zoomed preview: {error:#}"),
                 );
                 return false;
@@ -380,7 +380,7 @@ impl CalibRawApp {
             mask_extent,
             None,
         ) {
-            self.report_error("Preview failed", error);
+            self.report_error(ErrorKind::Preview, error);
             return false;
         }
         if let Err(error) = pipeline.dispatch_stage_with_remove(
@@ -397,7 +397,7 @@ impl CalibRawApp {
             ),
         ) {
             self.report_error(
-                "Preview failed",
+                ErrorKind::Preview,
                 format!("Could not apply Remove to zoomed preview: {error:#}"),
             );
             return false;

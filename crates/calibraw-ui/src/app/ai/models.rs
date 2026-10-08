@@ -356,7 +356,7 @@ impl CalibRawApp {
                         .to_owned(),
                 );
             }
-            Err(error) => self.report_error("AI runtime error", error),
+            Err(error) => self.report_error(ErrorKind::AiRuntime, error),
         }
     }
 }

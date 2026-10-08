@@ -194,7 +194,7 @@ impl CalibRawApp {
             Ok(message) => {
                 self.ui.notice = Some(message);
                 if let Err(error) = self.presets.reload() {
-                    self.report_error("Presets failed", error);
+                    self.report_error(ErrorKind::Presets, error);
                 }
             }
             Err(error) => {
@@ -309,7 +309,7 @@ impl CalibRawApp {
             }
         }
         if let Err(error) = self.presets.reload() {
-            self.report_error("Presets failed", error);
+            self.report_error(ErrorKind::Presets, error);
         }
     }
 
@@ -325,12 +325,12 @@ impl CalibRawApp {
         match result {
             Ok(()) => self.ui.notice = Some(format!("Deleted group “{group}”.")),
             Err(error) => self.report_error(
-                "Presets failed",
+                ErrorKind::Presets,
                 format!("Could not delete group “{group}”: {error}"),
             ),
         }
         if let Err(error) = self.presets.reload() {
-            self.report_error("Presets failed", error);
+            self.report_error(ErrorKind::Presets, error);
         }
     }
 
@@ -343,12 +343,12 @@ impl CalibRawApp {
         match std::fs::remove_file(path) {
             Ok(()) => self.ui.notice = Some(format!("Deleted preset “{name}”.")),
             Err(error) => self.report_error(
-                "Presets failed",
+                ErrorKind::Presets,
                 format!("Could not delete preset “{name}”: {error}"),
             ),
         }
         if let Err(error) = self.presets.reload() {
-            self.report_error("Presets failed", error);
+            self.report_error(ErrorKind::Presets, error);
         }
     }
 
@@ -382,7 +382,7 @@ impl CalibRawApp {
         let folder = match self.presets.folder() {
             Ok(folder) => folder.to_owned(),
             Err(error) => {
-                self.report_error("Preset import failed", error);
+                self.report_error(ErrorKind::Presets, error);
                 return;
             }
         };
@@ -418,7 +418,7 @@ impl CalibRawApp {
             self.ui.notice = Some(summary);
         } else {
             self.report_error(
-                "Preset import failed",
+                ErrorKind::Presets,
                 format!("{summary} {}", failures.join(" · ")),
             );
         }
@@ -472,7 +472,7 @@ impl CalibRawApp {
                 ));
             }
             Err(error) => self.report_error(
-                "Preset export failed",
+                ErrorKind::Presets,
                 format!("Could not export the preset: {error}"),
             ),
         }

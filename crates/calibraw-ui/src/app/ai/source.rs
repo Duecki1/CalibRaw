@@ -193,8 +193,6 @@ impl CalibRawApp {
     }
 
     pub(crate) fn report_ai_mask_error(&mut self, error: String) {
-        self.ui.notice = Some(error.clone());
-        self.ai.object_error_dialog = Some(error);
-        self.egui_ctx.request_repaint();
+        self.report_error(ErrorKind::AiMask, error);
     }
 }

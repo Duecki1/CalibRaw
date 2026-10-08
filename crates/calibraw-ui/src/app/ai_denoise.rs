@@ -188,7 +188,7 @@ impl CalibRawApp {
                 self.develop.exposure.ai_denoise_enabled = false;
                 self.develop.target_exposure.ai_denoise_enabled = false;
                 self.report_error(
-                    "AI denoise failed",
+                    ErrorKind::AiDenoise,
                     format!("Could not initialize Android AI denoise: {error:#}"),
                 );
                 calibraw_core::diagnostics::record(format!(
@@ -200,7 +200,7 @@ impl CalibRawApp {
         }
         let Some(render_state) = frame.wgpu_render_state() else {
             self.report_error(
-                "AI denoise failed",
+                ErrorKind::AiDenoise,
                 "AI denoise requires CalibRaw's wgpu renderer.".to_owned(),
             );
             self.develop.exposure.ai_denoise_enabled = false;
@@ -373,7 +373,7 @@ impl CalibRawApp {
                     Ok(()) => {
                         match save_error {
                             Some(error) => self.report_error(
-                                "AI denoise not saved",
+                                ErrorKind::AiDenoiseNotSaved,
                                 format!(
                                     "AI denoise applied, but its result could not be saved next to the photo ({error}). It will need to run again the next time the photo is opened."
                                 ),
@@ -393,7 +393,7 @@ impl CalibRawApp {
                         if changed {
                             self.note_edit_changed();
                         }
-                        self.report_error("AI denoise failed", format!("Could not install AI denoise: {error:#}"));
+                        self.report_error(ErrorKind::AiDenoise, format!("Could not install AI denoise: {error:#}"));
                     }
                 }
             }
@@ -414,7 +414,7 @@ impl CalibRawApp {
                     self.note_edit_changed();
                 }
                 if !error.contains("cancelled") {
-                    self.report_error("AI denoise failed", format!("AI denoise failed: {error}"));
+                    self.report_error(ErrorKind::AiDenoise, format!("AI denoise failed: {error}"));
                 }
             }
         }

@@ -29,7 +29,7 @@ impl CalibRawApp {
     }
 
     pub(crate) fn request_subject_mask(&mut self, frame: &eframe::Frame) {
-        self.ai.object_error_dialog = None;
+        self.ui.error_dialogs.dismiss_kind(ErrorKind::AiMask);
         let _ = self.request_generated_mask(AiMaskModel::Subject, frame);
     }
 
@@ -122,7 +122,7 @@ impl CalibRawApp {
         }
         let Some(source) = self.masks.source_cache.clone() else {
             self.report_error(
-                "AI mask failed",
+                ErrorKind::AiMask,
                 format!(
                     "The preview could not be prepared for {} selection.",
                     model.noun()
@@ -286,7 +286,7 @@ impl CalibRawApp {
                     format!("{} selection did not produce a mask.", model.label())
                 }
             });
-            self.report_error("AI mask failed", message);
+            self.report_error(ErrorKind::AiMask, message);
         }
         self.egui_ctx.request_repaint();
     }

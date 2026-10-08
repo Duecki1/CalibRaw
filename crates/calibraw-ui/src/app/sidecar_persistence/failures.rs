@@ -12,7 +12,7 @@ impl CalibRawApp {
             "{action} was not applied because the resulting edit could not be saved: {error}"
         );
         calibraw_core::diagnostics::record(&message);
-        self.report_error("Edit not applied", message);
+        self.report_error(ErrorKind::EditNotApplied, message);
     }
 
     pub(in crate::app) fn report_sidecar_save_failure(

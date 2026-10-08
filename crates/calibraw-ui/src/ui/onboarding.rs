@@ -1,4 +1,4 @@
-use crate::app::{CalibRawApp, OnboardingStep, PreviewQuality};
+use crate::app::{CalibRawApp, ErrorKind, OnboardingStep, PreviewQuality};
 use eframe::egui;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -85,7 +85,7 @@ pub(crate) fn show(ctx: &egui::Context, app: &mut CalibRawApp) {
             app.ui.onboarding_step = None;
             if !app.persist_performance_settings() {
                 app.report_error(
-                    "Settings error",
+                    ErrorKind::Settings,
                     "Setup is complete, but CalibRaw could not save the first-run preferences."
                         .to_owned(),
                 );

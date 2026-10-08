@@ -136,7 +136,7 @@ impl CalibRawApp {
         };
         let Some(render_state) = frame.wgpu_render_state() else {
             self.report_error(
-                "Retouch failed",
+                ErrorKind::Retouch,
                 "GPU rendering is unavailable for Remove.".to_owned(),
             );
             return false;
@@ -203,7 +203,7 @@ impl CalibRawApp {
         };
         let Some(render_state) = frame.wgpu_render_state() else {
             self.report_error(
-                "Retouch failed",
+                ErrorKind::Retouch,
                 "GPU rendering is unavailable for retouch brushes.".to_owned(),
             );
             return;
@@ -333,7 +333,7 @@ impl CalibRawApp {
                                     .map(|retouch| retouch.tool.label())
                                     .unwrap_or("Remove");
                                 self.report_error(
-                                    "Retouch failed",
+                                    ErrorKind::Retouch,
                                     format!("{tool} failed: {error}"),
                                 );
                                 calibraw_core::diagnostics::record(format!(

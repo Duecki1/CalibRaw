@@ -48,7 +48,7 @@ impl CalibRawApp {
                 self.ui.notice = None;
                 self.ui.status = "Choose a CameraProfiles folder…".to_owned();
             }
-            Err(error) => self.report_error("Camera profile failed", error),
+            Err(error) => self.report_error(ErrorKind::CameraProfile, error),
         }
     }
 
@@ -168,7 +168,7 @@ impl CalibRawApp {
                     .any(|candidate| candidate.path == *selected)
             });
             if !embedded_matrix && !is_available {
-                self.report_error("Camera profile failed", "That DCP is no longer available for the current camera. Refresh the profile folder and reopen the RAW."
+                self.report_error(ErrorKind::CameraProfile, "That DCP is no longer available for the current camera. Refresh the profile folder and reopen the RAW."
                         .to_owned(),);
                 return;
             }
@@ -204,7 +204,7 @@ impl CalibRawApp {
                 } => (raw_uri, display_name),
                 crate::sidecar::SidecarTarget::Desktop { .. } => {
                     self.report_error(
-                        "Camera profile failed",
+                        ErrorKind::CameraProfile,
                         "The current Android RAW does not have a reloadable library target."
                             .to_owned(),
                     );
@@ -227,7 +227,7 @@ impl CalibRawApp {
                 }
                 Err(error) => {
                     self.report_error(
-                        "Camera profile failed",
+                        ErrorKind::CameraProfile,
                         format!("Could not reload RAW for camera profile: {error}"),
                     );
                 }

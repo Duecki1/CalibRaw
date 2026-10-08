@@ -59,9 +59,7 @@ impl CalibRawApp {
             || self.library.transient_dialog_open()
             || self.presets.dialog_open()
             || self.ai.consent.is_some()
-            || self.ai.object_error_dialog.is_some()
             || self.persistence.sidecar_save_error_dialog.is_some()
-            || self.ui.gpu_memory_error_dialog
             || self.ui.error_dialogs.is_open()
             || self.foreground_operation.is_some()
             || self.ai.library_mask_refresh.is_some()

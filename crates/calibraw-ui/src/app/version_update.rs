@@ -271,7 +271,7 @@ impl CalibRawApp {
         if self.persist_performance_settings() {
             true
         } else {
-            self.report_error("Settings error", "Could not save the GitHub version-check preference. The choice will only apply until CalibRaw closes."
+            self.report_error(ErrorKind::Settings, "Could not save the GitHub version-check preference. The choice will only apply until CalibRaw closes."
                     .to_owned(),);
             false
         }

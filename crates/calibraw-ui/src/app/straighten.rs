@@ -85,7 +85,7 @@ impl CalibRawApp {
             }
             Err(error) => {
                 self.report_error(
-                    "Straightening failed",
+                    ErrorKind::Straighten,
                     format!("Could not start straightening: {error}"),
                 );
             }
@@ -147,7 +147,7 @@ impl CalibRawApp {
                 self.ui.notice =
                     Some("No clear horizon or vertical edges to straighten by.".to_owned());
             }
-            Err(error) => self.report_error("Straightening failed", error),
+            Err(error) => self.report_error(ErrorKind::Straighten, error),
         }
         self.egui_ctx.request_repaint();
     }
