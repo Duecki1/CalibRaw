@@ -1,7 +1,7 @@
 use super::{
     pack_effect_mask, pack_local_point_curve, pack_point_curve, processing_work_format,
     shader_manager::ShaderManager, shaders, work_shader_source, GpuParams, PipelineOptions,
-    ProcessingQuality, RawGpuPipeline,
+    ProcessingQuality, RawGpuPipeline, COLOR_DENOISE_ENTRY_POINTS,
 };
 use crate::pipeline::{
     extract_padded_tile, CameraProfile, CfaKind, CompactPixelMap, EffectComponent, ExportTile,
@@ -858,6 +858,69 @@ fn opposed_highlight_consistency_raw(width: u32, height: u32) -> LoadedRaw {
     }
 }
 
+/// Every named pass position holds the program it is named after; layouts
+/// reused from program templates are taken from these positions.
+fn assert_planned_programs(pipeline: &RawGpuPipeline) {
+    let indices = &pipeline.indices;
+    let entry = |index: usize| pipeline.passes[index].pipeline.entry.as_str();
+    for (index, expected) in [
+        (indices.highlight_pass_index, "highlight_reconstruct"),
+        (indices.demosaic_dual_start_index, "dual_green_reconstruct"),
+        (
+            indices.color_denoise_start_index,
+            COLOR_DENOISE_ENTRY_POINTS[0],
+        ),
+        (indices.tone_prepare_pass_index, "tone_guide_prepare"),
+        (indices.tone_blur_pass_index, "tone_guide_horizontal"),
+        (indices.tone_reduce_pass_index, "tone_reduce_histogram"),
+        (indices.adjustment_prepare_pass_index, "prepare_scene_node"),
+        (indices.adjustment_tone_pass_index, "apply_scene_tone_node"),
+        (
+            indices.adjustment_local_tone_pass_index,
+            "apply_local_scene_tone_node",
+        ),
+        (
+            indices.adjustment_effects_pass_index,
+            "apply_scene_effects_node",
+        ),
+        (
+            indices.adjustment_effects_copy_pass_index,
+            "copy_scene_effects_node",
+        ),
+        (indices.mask_blur_start_index, "diffuse_mask_blur_0"),
+        (indices.glow_prepare_pass_index, "prepare_glow_source"),
+        (indices.glow_blur_start_index, "diffuse_glow_0"),
+        (
+            indices.pixelate_blocks_pass_index,
+            "prepare_pixelate_blocks",
+        ),
+        (
+            indices.adjustment_creative_pass_index,
+            "apply_creative_effects",
+        ),
+        (indices.adjustment_render_pass_index, "apply_view_node"),
+        (
+            indices.image_light_accumulate_pass_index,
+            "accumulate_image_lights",
+        ),
+        (
+            indices.image_light_resolve_pass_index,
+            "resolve_image_lights",
+        ),
+        (
+            indices.image_light_blur_pass_index,
+            "blur_image_lights_horizontal",
+        ),
+        (
+            indices.relight_shadow_map_pass_index,
+            "build_relight_shadow_map",
+        ),
+    ] {
+        assert_eq!(entry(index), expected, "pass {index}");
+    }
+    assert_eq!(pipeline.passes.len(), indices.pass_count);
+}
+
 /// Builds and runs the whole graph for each sensor layout and quality, so
 /// wgpu checks every entry shader against the Rust bind group layouts it is
 /// given. Naga validation alone checks each shader in isolation.
@@ -892,6 +955,7 @@ fn pipelines_build_and_render_for_every_sensor_layout_and_quality() -> anyhow::R
         for quality in [ProcessingQuality::Preview, ProcessingQuality::High] {
             let pipeline =
                 RawGpuPipeline::new(&device, &queue, raw, &params, PipelineOptions::new(quality))?;
+            assert_planned_programs(&pipeline);
             pipeline.recompute(&queue, &device, &params);
             let rgba = pipeline.read_output_region_blocking(&device, &queue, 0, 0, EDGE, EDGE)?;
             assert_eq!(

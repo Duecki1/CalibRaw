@@ -98,25 +98,28 @@ fn scene_light_inactive() -> SceneLight {
     );
 }
 
-// Relight's light from its packed parameters (layout in mask_params.rs).
-fn relight_scene_light(primary: vec4<f32>, secondary: vec4<f32>, tertiary: vec4<f32>) -> SceneLight {
-    let camera = scene_camera(tertiary.z / 100.0);
+// Relight's light from its packed parameters.
+fn relight_scene_light(params: MaskEffectParams) -> SceneLight {
+    let camera = scene_camera(mask_effect_lane(params, RELIGHT_RELIEF_LANE) / 100.0);
     // Light depth: -1 at the camera, 0 at the nearest surface, 1 at the farthest.
-    let light_depth = clamp(secondary.w / 100.0, -1.0, 1.0);
+    let light_depth = clamp(mask_effect_lane(params, RELIGHT_DEPTH_LANE) / 100.0, -1.0, 1.0);
     let z = select(
         scene_depth_z(camera, light_depth),
         1.0 + 0.9 * light_depth,
         light_depth < 0.0,
     );
     // Reach is in shorter-edge widths at the nearest surface.
-    let reach = clamp(primary.y / 100.0, 0.1, 4.0) * 2.0 * SCENE_FOCAL_TAN;
-    let amount = clamp(primary.x / 100.0, 0.0, 1.0);
+    let reach = clamp(mask_effect_lane(params, RELIGHT_REACH_LANE) / 100.0, 0.1, 4.0)
+        * 2.0 * SCENE_FOCAL_TAN;
+    let amount = clamp(mask_effect_lane(params, RELIGHT_AMOUNT_LANE) / 100.0, 0.0, 1.0);
+    let source = mask_effect_lane_pair(params, RELIGHT_SOURCE_X_LANE);
     return SceneLight(
         amount > 1e-6,
         camera,
-        scene_camera_point(camera, primary.zw / 100.0 * camera.image_size, z),
+        scene_camera_point(camera, source / 100.0 * camera.image_size, z),
         reach,
-        mask_effect_picker_color_to_working(secondary.xyz) * (amount * SCENE_LIGHT_GAIN),
+        mask_effect_picker_color_to_working(mask_effect_color(params, RELIGHT_COLOR_LANE))
+            * (amount * SCENE_LIGHT_GAIN),
         SCENE_LIGHT_UNCONFINED,
     );
 }
@@ -124,18 +127,19 @@ fn relight_scene_light(primary: vec4<f32>, secondary: vec4<f32>, tertiary: vec4<
 // The Light Rays source as a light just beyond the farthest surface, where
 // rays come from. Its mask marks where rays are emitted, not where the light
 // acts, so the light is never confined.
-fn light_rays_scene_light(primary: vec4<f32>, secondary: vec4<f32>) -> SceneLight {
+fn light_rays_scene_light(params: MaskEffectParams) -> SceneLight {
     let camera = scene_camera(SCENE_DEFAULT_RELIEF_CONTROL);
     let z = scene_depth_z(camera, 1.0);
-    let amount = clamp(primary.x / 100.0, 0.0, 1.0);
+    let amount = clamp(mask_effect_lane(params, LIGHT_RAYS_AMOUNT_LANE) / 100.0, 0.0, 1.0);
     // Length is in shorter-edge widths in the image, measured at the source.
-    let rays_length = clamp(primary.y / 100.0, 0.0, 2.0);
+    let rays_length = clamp(mask_effect_lane(params, LIGHT_RAYS_LENGTH_LANE) / 100.0, 0.0, 2.0);
+    let source = mask_effect_lane_pair(params, LIGHT_RAYS_SOURCE_X_LANE);
     return SceneLight(
         amount > 1e-6 && rays_length > 1e-6,
         camera,
-        scene_camera_point(camera, primary.zw / 100.0 * camera.image_size, z),
+        scene_camera_point(camera, source / 100.0 * camera.image_size, z),
         max(rays_length * LIGHT_RAYS_LIGHT_REACH * 2.0 * SCENE_FOCAL_TAN * z, 1e-3),
-        mask_effect_picker_color_to_working(secondary.xyz)
+        mask_effect_picker_color_to_working(mask_effect_color(params, LIGHT_RAYS_COLOR_LANE))
             * (amount * SCENE_LIGHT_GAIN * LIGHT_RAYS_LIGHT_INTENSITY),
         SCENE_LIGHT_UNCONFINED,
     );
@@ -149,11 +153,10 @@ fn scene_light_slots() -> u32 {
 fn scene_light_at(index: u32) -> SceneLight {
     let state = Common::mask_data[index].metadata;
     if state.x == 0u || state.y == 0u { return scene_light_inactive(); }
-    let primary = Common::mask_data[index].adjust_0_field;
-    let secondary = Common::mask_data[index].adjust_1_field;
+    let params = mask_effect_params(index);
     let effect_id = Common::mask_effect_id(state);
     if effect_id == MASK_EFFECT_RELIGHT_ID {
-        var light = relight_scene_light(primary, secondary, Common::mask_data[index].adjust_2_field);
+        var light = relight_scene_light(params);
         // A masked Relight lights only its mask.
         if Common::mask_data[index].point_color_meta.z != 0xffffffffu {
             light.confined_to = index;
@@ -161,7 +164,7 @@ fn scene_light_at(index: u32) -> SceneLight {
         return light;
     }
     if effect_id == MASK_EFFECT_LIGHT_RAYS_ID {
-        return light_rays_scene_light(primary, secondary);
+        return light_rays_scene_light(params);
     }
     return scene_light_inactive();
 }

@@ -1,3 +1,6 @@
+//! Uploading full-image scene depth and the relighting surface derived from
+//! it (`scene_surface`), shared by Fog, Smoke and Relight.
+
 use super::scene_surface::{derive_scene_surface, SurfaceLevel};
 use super::*;
 use rayon::prelude::*;

@@ -1,5 +1,6 @@
 //! Packing of local adjustment masks and mask effects into `MaskData` slots.
 
+use super::effect_lanes::{fog, light_rays, options, relight, smoke};
 use super::*;
 
 fn effect_mask_data(
@@ -23,14 +24,13 @@ fn effect_mask_data(
     }
 }
 
-// Media that scatter light (Fog, Smoke) carry their options in the last
-// component of `film_effects`, read by `medium_image_lights_enabled` in
-// atmosphere.wgsl. Effect slots leave `film_effects` unused otherwise; its
-// first component marks adjustment Halation in every slot (`needs_glow_passes`).
-const MEDIUM_OPTIONS: usize = 3;
+/// An effect slot with every parameter lane zero, for packing by name.
+fn effect_slot(effect: MaskEffect, active: bool) -> MaskData {
+    effect_mask_data(effect, active, [0.0; 4], [0.0; 4], [0.0; 4])
+}
 
 fn set_medium_options(data: &mut MaskData, image_lights: bool) {
-    data.film_effects[MEDIUM_OPTIONS] = f32::from(u8::from(image_lights));
+    data.film_effects[options::MEDIUM_IMAGE_LIGHTS] = f32::from(u8::from(image_lights));
 }
 
 /// Whether an active Fog or Smoke slot scatters the photograph's own lights.
@@ -39,14 +39,9 @@ pub(super) fn medium_uses_image_lights(data: &MaskData) -> bool {
     data.metadata[0] != 0
         && data.metadata[1] != 0
         && (id == MaskEffect::Fog.shader_id() || id == MaskEffect::Smoke.shader_id())
-        && data.film_effects[MEDIUM_OPTIONS] > 0.5
+        && data.film_effects[options::MEDIUM_IMAGE_LIGHTS] > 0.5
 }
 
-// Relight slots carry their shadow-map channel plus one in this lane of
-// `film_effects` (`relight_shadow_channel` in relight.wgsl); zero traces the
-// slot's shadows per pixel. Like `MEDIUM_OPTIONS`, the lane is otherwise
-// unused by effect slots.
-const RELIGHT_SHADOW_CHANNEL: usize = 2;
 /// Lights whose shadows the shadow map holds, one per RGBA channel.
 pub(super) const RELIGHT_SHADOW_MAP_CHANNELS: usize = 4;
 
@@ -56,13 +51,13 @@ pub(super) fn relight_casts_shadows(data: &MaskData) -> bool {
     data.metadata[0] != 0
         && data.metadata[1] != 0
         && data.metadata[3] >> MASK_EFFECT_ID_SHIFT == MaskEffect::Relight.shader_id()
-        && (data.adjust_0[0] / 100.0).clamp(0.0, 1.0) > 1e-6
-        && (data.adjust_2[1] / 100.0).clamp(0.0, 1.0) > 1e-6
+        && (data.lane(relight::AMOUNT) / 100.0).clamp(0.0, 1.0) > 1e-6
+        && (data.lane(relight::SHADOWS) / 100.0).clamp(0.0, 1.0) > 1e-6
 }
 
 /// The shadow-map channel of a Relight slot, if it has one.
 pub(super) fn relight_shadow_channel(data: &MaskData) -> Option<usize> {
-    let lane = data.film_effects[RELIGHT_SHADOW_CHANNEL];
+    let lane = data.film_effects[options::RELIGHT_SHADOW_CHANNEL];
     (lane > 0.5).then(|| lane.round() as usize - 1)
 }
 
@@ -74,7 +69,7 @@ fn assign_relight_shadow_channels(packed: &mut [MaskData]) {
         .filter(|data| relight_casts_shadows(data))
         .take(RELIGHT_SHADOW_MAP_CHANNELS);
     for (channel, data) in shadowed.enumerate() {
-        data.film_effects[RELIGHT_SHADOW_CHANNEL] = (channel + 1) as f32;
+        data.film_effects[options::RELIGHT_SHADOW_CHANNEL] = (channel + 1) as f32;
     }
 }
 
@@ -83,7 +78,7 @@ fn assign_relight_shadow_channels(packed: &mut [MaskData]) {
 #[cfg(test)]
 pub(super) fn clear_relight_shadow_channels(packed: &mut [MaskData]) {
     for data in packed {
-        data.film_effects[RELIGHT_SHADOW_CHANNEL] = 0.0;
+        data.film_effects[options::RELIGHT_SHADOW_CHANNEL] = 0.0;
     }
 }
 
@@ -236,61 +231,56 @@ pub(super) fn pack_effect_mask(
         }
         MaskEffect::LightRays => {
             let config = settings.light_rays;
-            let color = effect_params::light_rays::COLOR.clamp(config.color);
-            effect_mask_data(
-                effect,
-                enabled && config.is_active(),
-                [
-                    effect_params::light_rays::AMOUNT.clamp(config.amount),
-                    effect_params::light_rays::LENGTH.clamp(config.length),
-                    effect_params::light_rays::SOURCE_X.clamp(config.source[0]),
-                    effect_params::light_rays::SOURCE_Y.clamp(config.source[1]),
-                ],
-                [
-                    color[0],
-                    color[1],
-                    color[2],
-                    effect_params::light_rays::FADE.clamp(config.fade),
-                ],
-                [
-                    effect_params::light_rays::SPREAD.clamp(config.spread),
-                    effect_params::light_rays::RAY_COUNT.clamp(config.ray_count),
-                    effect_params::light_rays::VARIATION.clamp(config.variation),
-                    effect_params::light_rays::SOFTNESS.clamp(config.softness),
-                ],
-            )
+            use effect_params::light_rays as params;
+            let mut data = effect_slot(effect, enabled && config.is_active());
+            data.set_lane(light_rays::AMOUNT, params::AMOUNT.clamp(config.amount));
+            data.set_lane(light_rays::LENGTH, params::LENGTH.clamp(config.length));
+            data.set_lane(
+                light_rays::SOURCE_X,
+                params::SOURCE_X.clamp(config.source[0]),
+            );
+            data.set_lane(
+                light_rays::SOURCE_Y,
+                params::SOURCE_Y.clamp(config.source[1]),
+            );
+            data.set_color_lanes(light_rays::COLOR, params::COLOR.clamp(config.color));
+            data.set_lane(light_rays::FADE, params::FADE.clamp(config.fade));
+            data.set_lane(light_rays::SPREAD, params::SPREAD.clamp(config.spread));
+            data.set_lane(
+                light_rays::RAY_COUNT,
+                params::RAY_COUNT.clamp(config.ray_count),
+            );
+            data.set_lane(
+                light_rays::VARIATION,
+                params::VARIATION.clamp(config.variation),
+            );
+            data.set_lane(
+                light_rays::SOFTNESS,
+                params::SOFTNESS.clamp(config.softness),
+            );
+            data
         }
         MaskEffect::Relight => {
             let config = settings.relight;
             use effect_params::relight as params;
-            let color = params::COLOR.clamp(config.color);
-            // Layout read by `apply_relight` in relight.wgsl.
-            effect_mask_data(
-                effect,
-                enabled && config.is_active(),
-                [
-                    params::AMOUNT.clamp(config.amount),
-                    params::REACH.clamp(config.reach),
-                    params::SOURCE_X.clamp(config.source[0]),
-                    params::SOURCE_Y.clamp(config.source[1]),
-                ],
-                [
-                    color[0],
-                    color[1],
-                    color[2],
-                    params::DEPTH.clamp(config.depth),
-                ],
-                [
-                    params::SIZE.clamp(config.size),
-                    if config.shadows_enabled {
-                        params::SHADOWS.clamp(config.shadows)
-                    } else {
-                        0.0
-                    },
-                    params::RELIEF.clamp(config.relief),
-                    params::AMBIENT.clamp(config.ambient),
-                ],
-            )
+            let mut data = effect_slot(effect, enabled && config.is_active());
+            data.set_lane(relight::AMOUNT, params::AMOUNT.clamp(config.amount));
+            data.set_lane(relight::REACH, params::REACH.clamp(config.reach));
+            data.set_lane(relight::SOURCE_X, params::SOURCE_X.clamp(config.source[0]));
+            data.set_lane(relight::SOURCE_Y, params::SOURCE_Y.clamp(config.source[1]));
+            data.set_color_lanes(relight::COLOR, params::COLOR.clamp(config.color));
+            data.set_lane(relight::DEPTH, params::DEPTH.clamp(config.depth));
+            data.set_lane(relight::SIZE, params::SIZE.clamp(config.size));
+            // Switched-off shadows keep their strength in the settings only.
+            let shadows = if config.shadows_enabled {
+                params::SHADOWS.clamp(config.shadows)
+            } else {
+                0.0
+            };
+            data.set_lane(relight::SHADOWS, shadows);
+            data.set_lane(relight::RELIEF, params::RELIEF.clamp(config.relief));
+            data.set_lane(relight::AMBIENT, params::AMBIENT.clamp(config.ambient));
+            data
         }
         MaskEffect::Pixelate => {
             let config = settings.pixelate;
@@ -309,64 +299,45 @@ pub(super) fn pack_effect_mask(
         }
         MaskEffect::Fog => {
             let config = settings.fog;
-            let color = effect_params::fog::COLOR.clamp(config.color);
-            let mut data = effect_mask_data(
-                effect,
-                enabled && config.is_active(),
-                [
-                    effect_params::fog::AMOUNT.clamp(config.amount),
-                    effect_params::fog::DENSITY.clamp(config.density),
-                    effect_params::fog::SCALE.clamp(config.scale),
-                    effect_params::fog::SOFTNESS.clamp(config.softness),
-                ],
-                [
-                    color[0],
-                    color[1],
-                    color[2],
-                    effect_params::fog::VARIATION.clamp(config.variation),
-                ],
-                [
-                    effect_params::fog::SEED.clamp(config.seed),
-                    if config.depth_enabled {
-                        effect_params::fog::START.clamp(config.start)
-                    } else {
-                        0.0
-                    },
-                    if config.depth_enabled {
-                        effect_params::fog::DEPTH_INFLUENCE.clamp(config.depth_influence)
-                    } else {
-                        0.0
-                    },
-                    effect_params::fog::LIGHT_GLOW.clamp(config.light_glow),
-                ],
-            );
+            use effect_params::fog as params;
+            let mut data = effect_slot(effect, enabled && config.is_active());
+            data.set_lane(fog::AMOUNT, params::AMOUNT.clamp(config.amount));
+            data.set_lane(fog::DENSITY, params::DENSITY.clamp(config.density));
+            data.set_lane(fog::SCALE, params::SCALE.clamp(config.scale));
+            data.set_lane(fog::SOFTNESS, params::SOFTNESS.clamp(config.softness));
+            data.set_color_lanes(fog::COLOR, params::COLOR.clamp(config.color));
+            data.set_lane(fog::VARIATION, params::VARIATION.clamp(config.variation));
+            data.set_lane(fog::SEED, params::SEED.clamp(config.seed));
+            // Without scene depth the fog is an even veil from the camera on.
+            if config.depth_enabled {
+                data.set_lane(fog::START, params::START.clamp(config.start));
+                data.set_lane(
+                    fog::DEPTH_INFLUENCE,
+                    params::DEPTH_INFLUENCE.clamp(config.depth_influence),
+                );
+            }
+            data.set_lane(fog::LIGHT_GLOW, params::LIGHT_GLOW.clamp(config.light_glow));
             set_medium_options(&mut data, config.image_lights);
             data
         }
         MaskEffect::Smoke => {
             let config = settings.smoke;
-            let color = effect_params::smoke::COLOR.clamp(config.color);
-            let mut data = effect_mask_data(
-                effect,
-                enabled && config.is_active(),
-                [
-                    effect_params::smoke::AMOUNT.clamp(config.amount),
-                    effect_params::smoke::DENSITY.clamp(config.density),
-                    effect_params::smoke::SCALE.clamp(config.scale),
-                    effect_params::smoke::TURBULENCE.clamp(config.turbulence),
-                ],
-                [
-                    color[0],
-                    color[1],
-                    color[2],
-                    effect_params::smoke::ANGLE.clamp(config.angle),
-                ],
-                [
-                    effect_params::smoke::SOFTNESS.clamp(config.softness),
-                    effect_params::smoke::SEED.clamp(config.seed),
-                    effect_params::smoke::LIGHT_GLOW.clamp(config.light_glow),
-                    0.0,
-                ],
+            use effect_params::smoke as params;
+            let mut data = effect_slot(effect, enabled && config.is_active());
+            data.set_lane(smoke::AMOUNT, params::AMOUNT.clamp(config.amount));
+            data.set_lane(smoke::DENSITY, params::DENSITY.clamp(config.density));
+            data.set_lane(smoke::SCALE, params::SCALE.clamp(config.scale));
+            data.set_lane(
+                smoke::TURBULENCE,
+                params::TURBULENCE.clamp(config.turbulence),
+            );
+            data.set_color_lanes(smoke::COLOR, params::COLOR.clamp(config.color));
+            data.set_lane(smoke::ANGLE, params::ANGLE.clamp(config.angle));
+            data.set_lane(smoke::SOFTNESS, params::SOFTNESS.clamp(config.softness));
+            data.set_lane(smoke::SEED, params::SEED.clamp(config.seed));
+            data.set_lane(
+                smoke::LIGHT_GLOW,
+                params::LIGHT_GLOW.clamp(config.light_glow),
             );
             set_medium_options(&mut data, config.image_lights);
             data

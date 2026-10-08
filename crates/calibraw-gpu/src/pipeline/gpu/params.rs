@@ -606,9 +606,17 @@ impl GpuParams {
         let mut lights = [None; RELIGHT_SHADOW_MAP_CHANNELS];
         for mask in &self.mask_data[..local_count] {
             if let Some(channel) = relight_shadow_channel(mask) {
-                let [_, _, source_x, source_y] = mask.adjust_0;
-                let [size, _, relief, _] = mask.adjust_2;
-                lights[channel] = Some([source_x, source_y, mask.adjust_1[3], size, relief]);
+                use super::effect_lanes::relight;
+                lights[channel] = Some(
+                    [
+                        relight::SOURCE_X,
+                        relight::SOURCE_Y,
+                        relight::DEPTH,
+                        relight::SIZE,
+                        relight::RELIEF,
+                    ]
+                    .map(|lane| mask.lane(lane)),
+                );
             }
         }
         lights

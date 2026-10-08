@@ -8,10 +8,11 @@
 //! offset and size are therefore compared explicitly.
 
 use super::{
-    processing_work_format, shader_manager::ShaderManager, shaders, work_shader_source,
-    CameraUniforms, CfaKind, EffectsUniforms, MaskData, PackedPointColor, ProcessingQuality,
-    RemoveCompositeParams, SceneToneUniforms, IMAGE_LIGHT_BANDS, IMAGE_LIGHT_GRID_LONG,
-    MASK_EFFECT_ID_SHIFT, MAX_RENDER_MASK_SLOTS, TONE_HISTOGRAM_BIN_COUNT, TONE_STATS_SIZE_BYTES,
+    effect_lanes, processing_work_format, shader_manager::ShaderManager, shaders,
+    work_shader_source, CameraUniforms, CfaKind, EffectsUniforms, MaskData, PackedPointColor,
+    ProcessingQuality, RemoveCompositeParams, SceneToneUniforms, IMAGE_LIGHT_BANDS,
+    IMAGE_LIGHT_GRID_LONG, MASK_EFFECT_ID_SHIFT, MAX_RENDER_MASK_SLOTS,
+    RELIGHT_SHADOW_MAP_CHANNELS, TONE_HISTOGRAM_BIN_COUNT, TONE_STATS_SIZE_BYTES,
 };
 use crate::pipeline::MaskEffect;
 use naga::proc::Layouter;
@@ -377,6 +378,52 @@ fn shared_constants_and_effect_ids_match_rust() {
         );
         assert_eq!(constant(&name), effect.shader_id(), "{name}");
     }
+}
+
+#[test]
+fn effect_parameter_lanes_match_their_wgsl_names() {
+    let modules = production_modules();
+    let (_, creative) = modules
+        .iter()
+        .find(|(name, _)| name.starts_with(shaders::CREATIVE_EFFECTS_ENTRY.label))
+        .expect("creative effects module");
+    let constant = |name: &str| {
+        u32_constant(creative, name).unwrap_or_else(|| panic!("WGSL declares {name}")) as usize
+    };
+    let mut expected = BTreeSet::new();
+    let mut occupied = BTreeSet::new();
+    for (effect, name, lane) in effect_lanes::named_lanes() {
+        let wgsl_name = format!("{}_{name}_LANE", effect.to_uppercase());
+        assert_eq!(constant(&wgsl_name), lane, "{wgsl_name}");
+        for lane in lane..lane + effect_lanes::lane_width(name) {
+            assert!(lane < 12, "{wgsl_name} reaches past adjust_2");
+            assert!(
+                occupied.insert((effect, lane)),
+                "{wgsl_name} overlaps lane {lane}"
+            );
+        }
+        expected.insert(wgsl_name);
+    }
+    for (name, lane) in effect_lanes::options::named_options() {
+        let wgsl_name = format!("{name}_OPTION");
+        assert_eq!(constant(&wgsl_name), lane, "{wgsl_name}");
+        // Lane 0 is local Halation in every slot.
+        assert!((1..4).contains(&lane), "{wgsl_name}");
+        expected.insert(wgsl_name);
+    }
+    assert_eq!(
+        constant("RELIGHT_SHADOW_MAP_CHANNELS"),
+        RELIGHT_SHADOW_MAP_CHANNELS
+    );
+    // Every lane the shaders name is packed by name in Rust too.
+    let declared: BTreeSet<_> = creative
+        .constants
+        .iter()
+        .filter_map(|(_, constant)| constant.name.as_deref().map(undecorated))
+        .filter(|name| name.ends_with("_LANE") || name.ends_with("_OPTION"))
+        .map(str::to_owned)
+        .collect();
+    assert_eq!(declared, expected);
 }
 
 #[test]

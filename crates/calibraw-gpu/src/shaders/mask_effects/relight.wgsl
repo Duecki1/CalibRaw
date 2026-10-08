@@ -1,6 +1,6 @@
 // Relight: a virtual point light shading the scene that scene depth describes.
 //
-// Geometry. `scene_depth_tex` (atmosphere.wgsl) covers the full source image.
+// Geometry. `scene_depth_tex` (scene_depth.wgsl) covers the full source image.
 // Channel y is dequantized smooth depth and z/w its edge-aware gradient per
 // shorter-edge length; mip levels average them (scene_surface.rs). Positions
 // are in the scene frame (scene_lights.wgsl), where the light is also a scene
@@ -12,6 +12,21 @@
 // proportional to an estimate of surface reflectance (the pixel with part of
 // its existing shading divided out), so lit shadows recover their texture and
 // colour instead of receiving a flat wash.
+
+// Packed parameter lanes and options (effect_lanes.rs).
+const RELIGHT_AMOUNT_LANE: u32 = 0u;
+const RELIGHT_REACH_LANE: u32 = 1u;
+const RELIGHT_SOURCE_X_LANE: u32 = 2u;
+const RELIGHT_SOURCE_Y_LANE: u32 = 3u;
+const RELIGHT_COLOR_LANE: u32 = 4u;
+const RELIGHT_DEPTH_LANE: u32 = 7u;
+const RELIGHT_SIZE_LANE: u32 = 8u;
+const RELIGHT_SHADOWS_LANE: u32 = 9u;
+const RELIGHT_RELIEF_LANE: u32 = 10u;
+const RELIGHT_AMBIENT_LANE: u32 = 11u;
+const RELIGHT_SHADOW_CHANNEL_OPTION: u32 = 2u;
+// Lights the shadow map holds, one per channel (RELIGHT_SHADOW_MAP_CHANNELS).
+const RELIGHT_SHADOW_MAP_CHANNELS: u32 = 4u;
 
 const RELIGHT_NORMAL_TAPS: u32 = 12u;
 // Shadow-march steps: one per few depth texels of the ray's image path, within
@@ -179,17 +194,21 @@ fn relight_visibility(
     return visibility;
 }
 
-// Interleaved gradient noise in [0, 1) per full-image pixel, so export tiles
-// and the preview dither alike.
-fn relight_jitter(pixel: vec2<f32>) -> f32 {
-    let p = floor(pixel);
+// Interleaved gradient noise in [0, 1) per full-image pixel at full-image
+// `uv`, so export tiles and the preview dither alike.
+fn relight_jitter(uv: vec2<f32>) -> f32 {
+    let full_size = vec2<f32>(
+        f32(Common::camera_uniforms.full_width),
+        f32(Common::camera_uniforms.full_height),
+    );
+    let p = floor(uv * full_size);
     return fract(52.9829189 * fract(dot(p, vec2<f32>(0.06711056, 0.00583715))));
 }
 
 // Shadow map. Shadows depend only on scene depth and the light, so they are
 // traced once per level-0 scene-depth texel, for up to four lights (one per
 // channel), instead of per image pixel. Pixels read the map with the joint
-// upsampling weights of the depth itself (scene_depth_texels_at), so shadows
+// upsampling taps of the depth itself (scene_depth.wgsl), so shadows
 // keep following image edges. The map covers the full image, is shared by
 // export tiles and is rebuilt only when depth or a shadowed light's position,
 // size or relief changes (encode_relight_shadow_map in gpu.rs). Each texel
@@ -198,11 +217,15 @@ fn relight_jitter(pixel: vec2<f32>) -> f32 {
 @group(0) @binding(46) var relight_shadow_map: texture_2d<f32>;
 @group(0) @binding(47) var relight_shadow_map_out: texture_storage_2d<rgba16float, write>;
 
-// The shadow-map channel of a Relight slot, from `film_effects.z`
-// (`RELIGHT_SHADOW_CHANNEL` in mask_params.rs): its index plus one, or zero
-// when the slot traces shadows per pixel instead.
-fn relight_shadow_channel(options: vec4<f32>) -> u32 {
-    return u32(clamp(options.z, 0.0, 4.0) + 0.5);
+// The shadow-map channel of a Relight slot plus one, or zero when the slot
+// traces its shadows per pixel instead (`assign_relight_shadow_channels`).
+fn relight_shadow_channel(params: MaskEffectParams) -> u32 {
+    let option = params.options[RELIGHT_SHADOW_CHANNEL_OPTION];
+    return u32(clamp(option, 0.0, f32(RELIGHT_SHADOW_MAP_CHANNELS)) + 0.5);
+}
+
+fn relight_size(params: MaskEffectParams) -> f32 {
+    return clamp(mask_effect_lane(params, RELIGHT_SIZE_LANE) / 100.0, 0.0, 1.0);
 }
 
 @compute @workgroup_size(8, 8, 1)
@@ -212,64 +235,52 @@ fn build_relight_shadow_map(@builtin(global_invocation_id) gid: vec3<u32>) {
     let cell = vec2<i32>(gid.xy);
     let uv = (vec2<f32>(gid.xy) + vec2<f32>(0.5)) / vec2<f32>(size);
     let depth = textureLoad(scene_depth_tex, cell, 0).y;
-    let full_size = vec2<f32>(
-        f32(Common::camera_uniforms.full_width),
-        f32(Common::camera_uniforms.full_height),
-    );
-    let jitter = relight_jitter(uv * full_size);
+    let jitter = relight_jitter(uv);
     var visibility = vec4<f32>(1.0);
     for (var index = 0u; index < scene_light_slots(); index = index + 1u) {
-        let channel = relight_shadow_channel(Common::mask_data[index].film_effects);
+        let params = mask_effect_params(index);
+        let channel = relight_shadow_channel(params);
         if channel == 0u { continue; }
-        let tertiary = Common::mask_data[index].adjust_2_field;
-        let light = relight_scene_light(
-            Common::mask_data[index].adjust_0_field,
-            Common::mask_data[index].adjust_1_field,
-            tertiary,
-        );
+        let light = relight_scene_light(params);
         let camera = light.camera;
         let surface = scene_camera_point(camera, uv * camera.image_size, scene_depth_z(camera, depth));
-        let light_size = clamp(tertiary.x / 100.0, 0.0, 1.0);
-        visibility[channel - 1u] = relight_visibility(camera, surface, light.position, light_size, jitter);
+        visibility[channel - 1u] = relight_visibility(
+            camera, surface, light.position, relight_size(params), jitter,
+        );
     }
     textureStore(relight_shadow_map_out, cell, visibility);
 }
 
-fn apply_relight(
-    pos: vec2<i32>,
-    input_rgb: vec3<f32>,
-    primary: vec4<f32>,
-    secondary: vec4<f32>,
-    tertiary: vec4<f32>,
-    options: vec4<f32>,
-) -> vec3<f32> {
-    let amount = clamp(primary.x / 100.0, 0.0, 1.0);
-    let ambient = clamp(tertiary.w / 100.0, 0.0, 1.0);
+fn apply_relight(pos: vec2<i32>, input_rgb: vec3<f32>, params: MaskEffectParams) -> vec3<f32> {
+    let amount = clamp(mask_effect_lane(params, RELIGHT_AMOUNT_LANE) / 100.0, 0.0, 1.0);
+    let ambient = clamp(mask_effect_lane(params, RELIGHT_AMBIENT_LANE) / 100.0, 0.0, 1.0);
     let ambient_rgb = input_rgb * ambient;
     if amount <= 1e-6 { return ambient_rgb; }
 
-    let light = relight_scene_light(primary, secondary, tertiary);
+    let light = relight_scene_light(params);
     let camera = light.camera;
-    let size = clamp(tertiary.x / 100.0, 0.0, 1.0);
+    let size = relight_size(params);
     let uv = full_image_uv(pos);
     let point = uv * camera.image_size;
 
     // Without scene depth (still generating, or failed) the scene is a plane
     // facing the camera: the light keeps its falloff but casts no shadows.
     let has_depth = Common::scene_tone_uniforms.scene_depth_present != 0u;
-    let shadows = clamp(tertiary.y / 100.0, 0.0, 1.0);
-    let shadow_channel = relight_shadow_channel(options);
+    let shadows = clamp(mask_effect_lane(params, RELIGHT_SHADOWS_LANE) / 100.0, 0.0, 1.0);
+    let shadow_channel = relight_shadow_channel(params);
     var depth = 0.0;
     var gradient = vec2<f32>(0.0);
     var mapped_visibility = 1.0;
     if has_depth {
-        let texels = scene_depth_texels_at(pos, shadow_channel != 0u && shadows > 1e-6);
-        depth = texels.surface.y;
+        // The shadow map shares the depth's grid, so it takes the same taps.
+        let taps = scene_depth_taps_at(pos);
+        let texels = scene_depth_resolve(scene_depth_tex, taps);
+        depth = texels.y;
         gradient = relight_smoothed_gradient(
-            camera, uv, depth, texels.surface.zw, mix(0.004, 0.05, size * size),
+            camera, uv, depth, texels.zw, mix(0.004, 0.05, size * size),
         );
-        if shadow_channel != 0u {
-            mapped_visibility = texels.shadows[shadow_channel - 1u];
+        if shadow_channel != 0u && shadows > 1e-6 {
+            mapped_visibility = scene_depth_resolve(relight_shadow_map, taps)[shadow_channel - 1u];
         }
     }
     let z = scene_depth_z(camera, depth);
@@ -294,12 +305,7 @@ fn apply_relight(
         var traced = mapped_visibility;
         if shadow_channel == 0u {
             // Beyond the shadow map's channels: trace this pixel.
-            let full_size = vec2<f32>(
-                f32(Common::camera_uniforms.full_width),
-                f32(Common::camera_uniforms.full_height),
-            );
-            let jitter = relight_jitter(uv * full_size);
-            traced = relight_visibility(camera, surface, light.position, size, jitter);
+            traced = relight_visibility(camera, surface, light.position, size, relight_jitter(uv));
         }
         visibility = mix(1.0, traced, shadows);
     }
