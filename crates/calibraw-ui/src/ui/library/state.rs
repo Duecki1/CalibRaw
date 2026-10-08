@@ -372,6 +372,7 @@ impl LibraryState {
         self.raw_companions = RawCompanions::index(self.entries.iter().map(|entry| &entry.asset));
     }
 
+    #[cfg(not(target_os = "android"))]
     pub(crate) fn set_thumbnail_worker_count(&mut self, workers: usize, context: &egui::Context) {
         let workers = workers.clamp(1, maximum_thumbnail_worker_count());
         if self.thumbnail_workers == workers {

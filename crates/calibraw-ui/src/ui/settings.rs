@@ -1,7 +1,10 @@
 #[cfg(not(target_os = "android"))]
+use crate::app::maximum_raw_cache_limit;
+#[cfg(not(target_os = "android"))]
 use crate::app::OnnxRuntimeMode;
-use crate::app::{maximum_raw_cache_limit, CalibRawApp, PreviewQuality};
+use crate::app::{CalibRawApp, PreviewQuality};
 use crate::pipeline::CameraProfileMode;
+#[cfg(not(target_os = "android"))]
 use crate::ui::library::maximum_thumbnail_worker_count;
 use eframe::egui::{self, Ui};
 use moduwu_design::ScreenLayout;
@@ -15,6 +18,7 @@ const RUST_DEPENDENCY_LICENSES: &str =
 
 pub(crate) struct Settings;
 
+#[cfg(not(target_os = "android"))]
 fn count_setting(
     ui: &mut Ui,
     label: &str,
@@ -397,31 +401,34 @@ impl Settings {
             }
         }
 
-        let mut raw_cache_files = app.develop.raw_cache_limit;
-        if count_setting(
-            ui,
-            "Decoded RAW cache",
-            &mut raw_cache_files,
-            0..=maximum_raw_cache_limit(),
-            crate::app::default_raw_cache_limit(),
-            "file",
-            "Keeps decoded RAW files in memory for faster switching, including the current image. Set to 0 to disable reuse; the current edit stays loaded.",
-        ) {
-            app.set_raw_cache_limit(raw_cache_files);
-        }
+        #[cfg(not(target_os = "android"))]
+        {
+            let mut raw_cache_files = app.develop.raw_cache_limit;
+            if count_setting(
+                ui,
+                "Decoded RAW cache",
+                &mut raw_cache_files,
+                0..=maximum_raw_cache_limit(),
+                crate::app::default_raw_cache_limit(),
+                "file",
+                "Keeps decoded RAW files in memory for faster switching, including the current image. Set to 0 to disable reuse; the current edit stays loaded.",
+            ) {
+                app.set_raw_cache_limit(raw_cache_files);
+            }
 
-        ui.add_space(moduwu_design::SPACE_SM);
-        let mut thumbnail_workers = app.thumbnail_worker_count();
-        if count_setting(
-            ui,
-            "Thumbnail workers",
-            &mut thumbnail_workers,
-            1..=maximum_thumbnail_worker_count(),
-            crate::ui::library::default_thumbnail_worker_count(),
-            "job",
-            "Concurrent thumbnail jobs. More workers can fill the library faster but use more memory, especially for edited RAW files or files without embedded previews. Changing this restarts the queue.",
-        ) {
-            app.set_thumbnail_worker_count(thumbnail_workers);
+            ui.add_space(moduwu_design::SPACE_SM);
+            let mut thumbnail_workers = app.thumbnail_worker_count();
+            if count_setting(
+                ui,
+                "Thumbnail workers",
+                &mut thumbnail_workers,
+                1..=maximum_thumbnail_worker_count(),
+                crate::ui::library::default_thumbnail_worker_count(),
+                "job",
+                "Concurrent thumbnail jobs. More workers can fill the library faster but use more memory, especially for edited RAW files or files without embedded previews. Changing this restarts the queue.",
+            ) {
+                app.set_thumbnail_worker_count(thumbnail_workers);
+            }
         }
 
         moduwu_design::section_separator(ui);

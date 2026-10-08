@@ -31,6 +31,7 @@ impl CalibRawApp {
             .color(self.ui.adaptive_preview_backdrop)
     }
 
+    #[cfg(not(target_os = "android"))]
     pub(crate) fn set_raw_cache_limit(&mut self, limit: usize) {
         let limit = limit.min(maximum_raw_cache_limit());
         if self.develop.raw_cache_limit == limit {
@@ -41,10 +42,12 @@ impl CalibRawApp {
         self.persist_performance_settings();
     }
 
+    #[cfg(not(target_os = "android"))]
     pub(crate) fn thumbnail_worker_count(&self) -> usize {
         self.library.thumbnail_worker_count()
     }
 
+    #[cfg(not(target_os = "android"))]
     pub(crate) fn set_thumbnail_worker_count(&mut self, workers: usize) {
         let context = self.egui_ctx.clone();
         let previous = self.library.thumbnail_worker_count();
