@@ -2,7 +2,7 @@
 //!
 //! An effect slot packs up to twelve parameters into `adjust_0`..`adjust_2`:
 //! lane `n` is component `n % 4` of `adjust_{n / 4}`. A colour takes three
-//! consecutive lanes. Per-slot switches live in `film_effects` (`options`).
+//! consecutive lanes. Per-slot switches live in `effect_options` (`options`).
 //!
 //! The shaders read the same lanes by name: `<EFFECT>_<NAME>_LANE` and
 //! `<NAME>_OPTION` constants with `mask_effect_lane` and friends
@@ -78,8 +78,7 @@ effect_lanes! {
     }
 }
 
-/// `film_effects` lanes of effect slots. Lane 0 is local Halation in every
-/// slot (`needs_glow_passes`), so options use the others.
+/// `effect_options` lanes of effect slots.
 pub(super) mod options {
     /// Fog and Smoke: 1 when Image lights is on.
     pub(in crate::pipeline::gpu) const MEDIUM_IMAGE_LIGHTS: usize = 3;

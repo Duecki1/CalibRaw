@@ -1,4 +1,6 @@
-use super::adjustments::LocalAdjustmentTabs;
+use super::adjustments::{
+    apply_local_adjustment_response, LocalAdjustmentTabs, LocalAdjustmentTarget,
+};
 use super::*;
 use crate::app::{apply_mask_property_actions, MaskPropertiesControls};
 
@@ -350,19 +352,16 @@ impl Sidebar {
                         (MaskSection::Effects, "Effects", false),
                         (MaskSection::ColorMixer, "Color Mixer", false),
                     ] {
-                        let changed = Self::show_local_adjustment_card(
+                        let response = Self::show_local_adjustment_card(
                             ui,
-                            &mut mask.adjustments,
+                            LocalAdjustmentTarget::of(mask),
                             section,
                             label,
                             default_open,
                             true,
                             LocalAdjustmentTabs::for_masks(&mut app.develop_ui),
                         );
-                        if changed {
-                            mask.adjustments_enabled = true;
-                            adjustments_changed = true;
-                        }
+                        adjustments_changed |= apply_local_adjustment_response(mask, response);
                     }
                 }
                 MaskStripOrientation::Vertical => {
@@ -407,18 +406,19 @@ impl Sidebar {
                             );
                         }
                         section => {
-                            let changed = Self::show_local_adjustment_card(
+                            let response = Self::show_local_adjustment_card(
                                 ui,
-                                &mut mask.adjustments,
+                                LocalAdjustmentTarget::of(mask),
                                 section,
                                 section_title,
                                 true,
                                 false,
                                 LocalAdjustmentTabs::for_masks(&mut app.develop_ui),
                             );
-                            if changed {
-                                mask.adjustments_enabled = true;
-                                adjustments_changed = true;
+                            adjustments_changed |= apply_local_adjustment_response(mask, response);
+                            if let Some(effect) = response.added_effect {
+                                // Open the new effect's tab, as adding it from the tab strip does.
+                                app.develop_ui.mask_effect_component = Some(effect);
                             }
                         }
                     }

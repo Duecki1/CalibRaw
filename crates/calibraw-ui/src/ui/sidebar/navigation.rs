@@ -315,6 +315,7 @@ impl Sidebar {
         let mut changed = false;
         let mut lens_changed = false;
         let mut ai_denoise_request = None;
+        let mut added_effect = None;
         let white_balance_raw = app.develop.loaded_raw.clone();
         let white_balance_was_active = app.develop_ui.white_balance_picker_active;
         if layout == ScreenLayout::Vertical {
@@ -355,7 +356,14 @@ impl Sidebar {
                 }
                 AdjustmentSection::Effects => {
                     if app.develop_ui.effect_component.is_none() {
-                        changed |= Self::show_presence(ui, &mut app.develop.exposure, false);
+                        let (presence_changed, added) = Self::show_presence(
+                            ui,
+                            &mut app.develop.exposure,
+                            &app.masks.stack.global_effects,
+                            false,
+                        );
+                        changed |= presence_changed;
+                        added_effect = added;
                     }
                 }
                 AdjustmentSection::ColorMixer => {
@@ -396,7 +404,14 @@ impl Sidebar {
             let (detail_changed, request) = Self::show_detail(ui, &mut app.develop.exposure, true);
             changed |= detail_changed;
             ai_denoise_request = request;
-            changed |= Self::show_presence(ui, &mut app.develop.exposure, true);
+            let (presence_changed, added) = Self::show_presence(
+                ui,
+                &mut app.develop.exposure,
+                &app.masks.stack.global_effects,
+                true,
+            );
+            changed |= presence_changed;
+            added_effect = added;
             changed |= Self::show_hsl(
                 ui,
                 &mut app.develop.exposure,
@@ -406,6 +421,18 @@ impl Sidebar {
                 true,
             );
             lens_changed |= Self::show_optics(ui, app, true);
+        }
+
+        if let Some(effect) = added_effect {
+            app.masks
+                .stack
+                .global_effects
+                .push(crate::pipeline::EffectComponent::new(effect));
+            if layout == ScreenLayout::Vertical {
+                // Open the new effect's tab, as adding it from the tab strip does.
+                app.develop_ui.effect_component = Some(effect);
+            }
+            app.mark_mask_adjustments_dirty();
         }
 
         let effect_frame = mask_effects::EffectFrame::of(app);

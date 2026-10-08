@@ -275,19 +275,6 @@ pub struct ExposureParams {
     #[serde(default)]
     pub sharpen_masking: f32,
 
-    #[serde(default)]
-    pub halation_amount: f32,
-    #[serde(default)]
-    pub grain_amount: f32,
-    pub glow_amount: f32,
-    pub glow_radius: f32,
-    pub glow_threshold: f32,
-    pub vignette_amount: f32,
-    pub vignette_midpoint: f32,
-    pub vignette_roundness: f32,
-    pub vignette_feather: f32,
-    pub vignette_highlights: f32,
-
     pub hsl_hue: [f32; 8],
     pub hsl_saturation: [f32; 8],
     pub hsl_luminance: [f32; 8],
@@ -367,16 +354,6 @@ impl Default for ExposureParams {
             sharpen_radius: default_sharpen_radius(),
             sharpen_detail: default_sharpen_detail(),
             sharpen_masking: 0.0,
-            halation_amount: 0.0,
-            grain_amount: 0.0,
-            glow_amount: 0.0,
-            glow_radius: 50.0,
-            glow_threshold: 60.0,
-            vignette_amount: 0.0,
-            vignette_midpoint: 50.0,
-            vignette_roundness: 0.0,
-            vignette_feather: 50.0,
-            vignette_highlights: 0.0,
             hsl_hue: [0.0; 8],
             hsl_saturation: [0.0; 8],
             hsl_luminance: [0.0; 8],

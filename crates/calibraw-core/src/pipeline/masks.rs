@@ -15,11 +15,11 @@ pub use content_dependencies::ContentDependencies;
 
 pub use effects::{
     params as effect_params, BlurEffectSettings, EdgeGlowEffectSettings, FogEffectSettings,
-    GlowEffectSettings, GrainEffectSettings, HalationEffectSettings, LensBlurEffectSettings,
-    LightRaysEffectSettings, MaskEffect, MaskEffectCategory, MaskEffectSettings,
-    MotionBlurEffectSettings, NeonEffectSettings, PixelateEffectSettings, RadialBlurEffectSettings,
-    RadialBlurMode, RelightEffectSettings, SmokeEffectSettings, TiltShiftEffectSettings,
-    VignetteEffectSettings,
+    GlowEffectSettings, GrainEffectSettings, HalationEffectSettings, InitialEffectSettings,
+    LensBlurEffectSettings, LightRaysEffectSettings, MaskEffect, MaskEffectCategory,
+    MaskEffectSettings, MotionBlurEffectSettings, NeonEffectSettings, PixelateEffectSettings,
+    RadialBlurEffectSettings, RadialBlurMode, RelightEffectSettings, SmokeEffectSettings,
+    TiltShiftEffectSettings, VignetteEffectSettings,
 };
 
 mod brush;
@@ -309,7 +309,7 @@ impl EffectComponent {
         Self {
             effect,
             enabled: true,
-            settings: MaskEffectSettings::default(),
+            settings: MaskEffectSettings::initial(effect),
         }
     }
 

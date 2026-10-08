@@ -23,16 +23,57 @@ impl<'a> LocalAdjustmentTabs<'a> {
     }
 }
 
+/// The part of a mask the local adjustment cards edit: its adjustments, and
+/// the effect components the Effects card can add to.
+pub(super) struct LocalAdjustmentTarget<'a> {
+    pub(super) adjustments: &'a mut crate::pipeline::LocalAdjustments,
+    pub(super) effect_components: &'a [crate::pipeline::EffectComponent],
+}
+
+impl<'a> LocalAdjustmentTarget<'a> {
+    pub(super) fn of(mask: &'a mut LocalMask) -> Self {
+        Self {
+            adjustments: &mut mask.adjustments,
+            effect_components: &mask.effect_components,
+        }
+    }
+}
+
+/// What a local adjustment card asks of its handler.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(super) struct LocalAdjustmentResponse {
+    /// An adjustment changed.
+    pub(super) changed: bool,
+    /// An effect to add to the mask's effect components.
+    pub(super) added_effect: Option<MaskEffect>,
+}
+
+/// Applies a local adjustment card's response to its mask and returns whether
+/// the mask changed.
+pub(super) fn apply_local_adjustment_response(
+    mask: &mut LocalMask,
+    response: LocalAdjustmentResponse,
+) -> bool {
+    if response.changed {
+        mask.adjustments_enabled = true;
+    }
+    if let Some(effect) = response.added_effect {
+        mask.effect_components
+            .push(crate::pipeline::EffectComponent::new(effect));
+    }
+    response.changed || response.added_effect.is_some()
+}
+
 impl Sidebar {
     pub(super) fn show_local_adjustment_card(
         ui: &mut Ui,
-        adjustment: &mut crate::pipeline::LocalAdjustments,
+        target: LocalAdjustmentTarget<'_>,
         section: MaskSection,
         title: &'static str,
         default_open: bool,
         foldable: bool,
         tabs: LocalAdjustmentTabs<'_>,
-    ) -> bool {
+    ) -> LocalAdjustmentResponse {
         let group = match section {
             MaskSection::Light => AdjustmentGroup::Light,
             MaskSection::ToneCurve => AdjustmentGroup::ToneCurve,
@@ -40,23 +81,34 @@ impl Sidebar {
             MaskSection::ColorGrading => AdjustmentGroup::ColorGrading,
             MaskSection::Effects => AdjustmentGroup::Effects,
             MaskSection::ColorMixer => AdjustmentGroup::ColorMixer,
-            MaskSection::Properties => return false,
+            MaskSection::Properties => return LocalAdjustmentResponse::default(),
         };
-        let mut changed = false;
+        let LocalAdjustmentTarget {
+            adjustments,
+            effect_components,
+        } = target;
+        let mut response = LocalAdjustmentResponse::default();
         let action = Self::adjustment_card(ui, title, default_open, foldable, true, |ui| {
-            changed |= Self::show_local_mask_adjustment_section(ui, adjustment, section, tabs);
+            if section == MaskSection::Effects {
+                response = Self::show_local_mask_effects(ui, adjustments, effect_components);
+            } else {
+                response.changed =
+                    Self::show_local_mask_adjustment_section(ui, adjustments, section, tabs);
+            }
         });
-        changed | action.apply_local(adjustment, group)
+        response.changed |= action.apply_local(adjustments, group);
+        response
     }
 
-    pub(super) fn show_local_mask_adjustment_section(
+    fn show_local_mask_adjustment_section(
         ui: &mut Ui,
         adjustment: &mut crate::pipeline::LocalAdjustments,
         section: MaskSection,
         tabs: LocalAdjustmentTabs<'_>,
     ) -> bool {
         match section {
-            MaskSection::Properties => false,
+            // The Effects card also adds effects (`show_local_mask_effects`).
+            MaskSection::Properties | MaskSection::Effects => false,
             MaskSection::Light => Self::show_local_mask_light(ui, adjustment),
             MaskSection::ToneCurve => {
                 Self::show_local_mask_tone_curve(ui, adjustment, tabs.tone_curve)
@@ -65,7 +117,6 @@ impl Sidebar {
             MaskSection::ColorGrading => {
                 Self::show_local_mask_color_grading(ui, adjustment, tabs.color_grade)
             }
-            MaskSection::Effects => Self::show_local_mask_effects(ui, adjustment),
             MaskSection::ColorMixer => Self::show_local_mask_color_mixer(
                 ui,
                 adjustment,
@@ -154,15 +205,21 @@ impl Sidebar {
     fn show_local_mask_effects(
         ui: &mut Ui,
         adjustment: &mut crate::pipeline::LocalAdjustments,
-    ) -> bool {
+        effect_components: &[crate::pipeline::EffectComponent],
+    ) -> LocalAdjustmentResponse {
         use crate::pipeline::effect_params::adjustment as params;
 
         let mut changed = false;
         changed |= float_param_slider(ui, &mut adjustment.texture, params::TEXTURE);
         changed |= float_param_slider(ui, &mut adjustment.clarity, params::CLARITY);
         changed |= float_param_slider(ui, &mut adjustment.dehaze, params::DEHAZE);
-        changed |= float_param_slider(ui, &mut adjustment.halation_amount, params::HALATION);
-        changed
+        moduwu_design::section_separator(ui);
+        let added_effect =
+            mask_effects::add_effect_buttons(ui, &[MaskEffect::Halation], effect_components);
+        LocalAdjustmentResponse {
+            changed,
+            added_effect,
+        }
     }
 
     fn show_local_mask_color_grading(

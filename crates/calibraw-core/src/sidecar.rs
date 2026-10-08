@@ -15,10 +15,12 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 mod files;
+mod legacy_effects;
 mod mask_assets;
 mod remove_assets;
 mod size_limits;
 pub use files::*;
+pub(crate) use legacy_effects::LegacyEffectSliders;
 use mask_assets::*;
 use remove_assets::*;
 pub use size_limits::*;
@@ -222,6 +224,9 @@ const fn is_zero_u64(value: &u64) -> bool {
 struct SidecarHeader {
     format: String,
     schema_version: u32,
+    /// Collected in the same pass that reads the header.
+    #[serde(default)]
+    edits: LegacyEffectSliders,
 }
 
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
@@ -320,7 +325,10 @@ mod desktop;
 mod transfer;
 
 pub(crate) use transfer::is_manual_mask_kind;
-pub use transfer::{transfer_edits, AdjustmentCopySettings, AdjustmentPasteMode, EditSelection};
+pub use transfer::{
+    adjustment_group_is_edited, transfer_edits, AdjustmentCopySettings, AdjustmentPasteMode,
+    EditSelection,
+};
 
 pub use desktop::sidecar_path_for_raw;
 #[cfg(not(target_os = "android"))]
@@ -407,7 +415,9 @@ pub fn decode(bytes: &[u8]) -> Result<LoadedSidecar, SidecarError> {
         ));
     }
 
-    let (mut document, migrated) = decode_versioned_document(bytes, header.schema_version)?;
+    let (mut document, schema_migrated) = decode_versioned_document(bytes, header.schema_version)?;
+    // Mask indices still match the serialized masks here.
+    let effects_migrated = header.edits.migrate(&mut document.edits);
     restore_mask_assets(
         &mut document.edits,
         &document.mask_assets,
@@ -436,7 +446,7 @@ pub fn decode(bytes: &[u8]) -> Result<LoadedSidecar, SidecarError> {
             ..document.review
         },
         editing_time_ms: document.editing_time_ms,
-        migrated,
+        migrated: schema_migrated || effects_migrated,
     })
 }
 

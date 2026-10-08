@@ -171,16 +171,6 @@ impl ExposureParams {
             sharpen_radius,
             sharpen_detail,
             sharpen_masking,
-            halation_amount,
-            grain_amount,
-            glow_amount,
-            glow_radius,
-            glow_threshold,
-            vignette_amount,
-            vignette_midpoint,
-            vignette_roundness,
-            vignette_feather,
-            vignette_highlights,
             hsl_hue,
             hsl_saturation,
             hsl_luminance,
@@ -230,16 +220,6 @@ impl ExposureParams {
                 self.texture = texture;
                 self.clarity = clarity;
                 self.dehaze = dehaze;
-                self.halation_amount = halation_amount;
-                self.grain_amount = grain_amount;
-                self.glow_amount = glow_amount;
-                self.glow_radius = glow_radius;
-                self.glow_threshold = glow_threshold;
-                self.vignette_amount = vignette_amount;
-                self.vignette_midpoint = vignette_midpoint;
-                self.vignette_roundness = vignette_roundness;
-                self.vignette_feather = vignette_feather;
-                self.vignette_highlights = vignette_highlights;
             }
             ExposureSection::Group(AdjustmentGroup::ColorMixer) => {
                 self.hsl_hue = hsl_hue;
@@ -303,7 +283,6 @@ impl LocalAdjustments {
                 self.texture = defaults.texture;
                 self.clarity = defaults.clarity;
                 self.dehaze = defaults.dehaze;
-                self.halation_amount = defaults.halation_amount;
             }
             AdjustmentGroup::ColorMixer => {
                 self.hsl_hue = defaults.hsl_hue;
@@ -340,7 +319,7 @@ mod tests {
             (AdjustmentGroup::Color, "temperature tint hue saturation vibrance"),
             (AdjustmentGroup::ColorGrading, "color_grading"),
             (AdjustmentGroup::Detail, "luminance_denoise chroma_denoise denoise_detail denoise_quality ai_denoise_enabled sharpen_amount sharpen_radius sharpen_detail sharpen_masking"),
-            (AdjustmentGroup::Effects, "texture clarity dehaze halation_amount grain_amount glow_amount glow_radius glow_threshold vignette_amount vignette_midpoint vignette_roundness vignette_feather vignette_highlights"),
+            (AdjustmentGroup::Effects, "texture clarity dehaze"),
             (AdjustmentGroup::ColorMixer, "hsl_hue hsl_saturation hsl_luminance point_colors"),
         ];
         for local in [false, true] {

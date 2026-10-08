@@ -45,14 +45,14 @@ pub use masks::{
     luminance_range_weight, mask_atlas_edge, path_outline_points, rasterize_brush_dabs,
     BlurEffectSettings, BrushDab, BrushMode, ContentDependencies, DepthRangeSettings,
     EdgeGlowEffectSettings, EffectComponent, FogEffectSettings, GlowEffectSettings,
-    GrainEffectSettings, HalationEffectSettings, LensBlurEffectSettings, LightRaysEffectSettings,
-    LocalAdjustments, LocalMask, MaskCombineMode, MaskCommon, MaskComponent, MaskEffect,
-    MaskEffectCategory, MaskEffectSettings, MaskGeometry, MaskImage, MaskKind, MaskRgbImage,
-    MaskStack, MotionBlurEffectSettings, NeonEffectSettings, ObjectStroke, PathPoint,
-    PixelateEffectSettings, RadialBlurEffectSettings, RadialBlurMode, RelightEffectSettings,
-    SmokeEffectSettings, SubjectRefinement, TiltShiftEffectSettings, VignetteEffectSettings,
-    LUMINANCE_FEATHER_MAX, LUMINANCE_FEATHER_WIDTH, MAX_EFFECT_COMPONENTS, MAX_LOCAL_MASKS,
-    MAX_MASK_COMPONENTS, MAX_PATH_POINTS,
+    GrainEffectSettings, HalationEffectSettings, InitialEffectSettings, LensBlurEffectSettings,
+    LightRaysEffectSettings, LocalAdjustments, LocalMask, MaskCombineMode, MaskCommon,
+    MaskComponent, MaskEffect, MaskEffectCategory, MaskEffectSettings, MaskGeometry, MaskImage,
+    MaskKind, MaskRgbImage, MaskStack, MotionBlurEffectSettings, NeonEffectSettings, ObjectStroke,
+    PathPoint, PixelateEffectSettings, RadialBlurEffectSettings, RadialBlurMode,
+    RelightEffectSettings, SmokeEffectSettings, SubjectRefinement, TiltShiftEffectSettings,
+    VignetteEffectSettings, LUMINANCE_FEATHER_MAX, LUMINANCE_FEATHER_WIDTH, MAX_EFFECT_COMPONENTS,
+    MAX_LOCAL_MASKS, MAX_MASK_COMPONENTS, MAX_PATH_POINTS,
 };
 pub use noise::{AdaptiveDetailDefaults, DenoiseQuality, NoiseProfile};
 pub use point_color::{PointColor, PointColorRange, PointColors, MAX_POINT_COLORS};

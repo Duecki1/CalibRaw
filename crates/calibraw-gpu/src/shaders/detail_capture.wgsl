@@ -102,14 +102,14 @@ fn apply_capture_sharpening(
     pos: vec2<i32>,
     rgb: vec3<f32>,
 ) -> vec3<f32> {
-    let amount = clamp(Common::effects_uniforms.creative_effects.w / 150.0, 0.0, 1.0);
+    let amount = clamp(Common::effects_uniforms.sharpen.x / 150.0, 0.0, 1.0);
     if amount < 1e-6 {
         return rgb;
     }
 
-    let radius = clamp(Common::effects_uniforms.vignette_options.y, 0.5, 3.0);
-    let detail = clamp(Common::effects_uniforms.vignette_options.z / 100.0, 0.0, 1.0);
-    let masking = clamp(Common::effects_uniforms.vignette_options.w / 100.0, 0.0, 1.0);
+    let radius = clamp(Common::effects_uniforms.sharpen.y, 0.5, 3.0);
+    let detail = clamp(Common::effects_uniforms.sharpen.z / 100.0, 0.0, 1.0);
+    let masking = clamp(Common::effects_uniforms.sharpen.w / 100.0, 0.0, 1.0);
     let radius_pixels = radius * capture_detail_scale();
     let step = clamp(i32(round(max(radius_pixels * 0.48, 1.0))), 1, 3);
 

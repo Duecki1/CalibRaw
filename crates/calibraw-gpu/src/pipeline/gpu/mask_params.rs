@@ -30,7 +30,7 @@ fn effect_slot(effect: MaskEffect, active: bool) -> MaskData {
 }
 
 fn set_medium_options(data: &mut MaskData, image_lights: bool) {
-    data.film_effects[options::MEDIUM_IMAGE_LIGHTS] = f32::from(u8::from(image_lights));
+    data.effect_options[options::MEDIUM_IMAGE_LIGHTS] = f32::from(u8::from(image_lights));
 }
 
 /// Whether an active Fog or Smoke slot scatters the photograph's own lights.
@@ -39,7 +39,7 @@ pub(super) fn medium_uses_image_lights(data: &MaskData) -> bool {
     data.metadata[0] != 0
         && data.metadata[1] != 0
         && (id == MaskEffect::Fog.shader_id() || id == MaskEffect::Smoke.shader_id())
-        && data.film_effects[options::MEDIUM_IMAGE_LIGHTS] > 0.5
+        && data.effect_options[options::MEDIUM_IMAGE_LIGHTS] > 0.5
 }
 
 /// Lights whose shadows the shadow map holds, one per RGBA channel.
@@ -57,7 +57,7 @@ pub(super) fn relight_casts_shadows(data: &MaskData) -> bool {
 
 /// The shadow-map channel of a Relight slot, if it has one.
 pub(super) fn relight_shadow_channel(data: &MaskData) -> Option<usize> {
-    let lane = data.film_effects[options::RELIGHT_SHADOW_CHANNEL];
+    let lane = data.effect_options[options::RELIGHT_SHADOW_CHANNEL];
     (lane > 0.5).then(|| lane.round() as usize - 1)
 }
 
@@ -69,7 +69,7 @@ fn assign_relight_shadow_channels(packed: &mut [MaskData]) {
         .filter(|data| relight_casts_shadows(data))
         .take(RELIGHT_SHADOW_MAP_CHANNELS);
     for (channel, data) in shadowed.enumerate() {
-        data.film_effects[options::RELIGHT_SHADOW_CHANNEL] = (channel + 1) as f32;
+        data.effect_options[options::RELIGHT_SHADOW_CHANNEL] = (channel + 1) as f32;
     }
 }
 
@@ -78,7 +78,7 @@ fn assign_relight_shadow_channels(packed: &mut [MaskData]) {
 #[cfg(test)]
 pub(super) fn clear_relight_shadow_channels(packed: &mut [MaskData]) {
     for data in packed {
-        data.film_effects[options::RELIGHT_SHADOW_CHANNEL] = 0.0;
+        data.effect_options[options::RELIGHT_SHADOW_CHANNEL] = 0.0;
     }
 }
 
@@ -440,12 +440,7 @@ pub(super) fn pack_adjustment_mask(mask: &LocalMask) -> MaskData {
             effect_params::adjustment::CLARITY.clamp(adjustment.clarity),
             effect_params::adjustment::DEHAZE.clamp(adjustment.dehaze),
         ],
-        film_effects: [
-            effect_params::adjustment::HALATION.clamp(adjustment.halation_amount),
-            0.0,
-            0.0,
-            0.0,
-        ],
+        effect_options: [0.0; 4],
         curves: pack_local_point_curve(&adjustment.tone_curve),
         grade_shadows: pack_color_grade_wheel(adjustment.color_grading.shadows),
         grade_midtones: pack_color_grade_wheel(adjustment.color_grading.midtones),

@@ -34,7 +34,7 @@ fn mask_effect_params(index: u32) -> MaskEffectParams {
         Common::mask_data[index].adjust_0_field,
         Common::mask_data[index].adjust_1_field,
         Common::mask_data[index].adjust_2_field,
-        Common::mask_data[index].film_effects,
+        Common::mask_data[index].effect_options,
     );
 }
 

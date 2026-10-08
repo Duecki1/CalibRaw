@@ -616,12 +616,16 @@ impl Sidebar {
         (changed, ai_request)
     }
 
+    /// The Effects card. Returns whether a slider changed and the effect a
+    /// button asked to add to `global_effects`.
     pub(super) fn show_presence(
         ui: &mut Ui,
         exposure: &mut ExposureParams,
+        global_effects: &[crate::pipeline::EffectComponent],
         foldable: bool,
-    ) -> bool {
+    ) -> (bool, Option<MaskEffect>) {
         let mut changed = false;
+        let mut added = None;
         let action = Self::adjustment_card(ui, "Effects", false, foldable, true, |ui| {
             changed |= AdjustmentSlider::new("Texture", &mut exposure.texture, -100.0..=100.0)
                 .decimals(0)
@@ -644,92 +648,11 @@ impl Sidebar {
                 .show(ui);
 
             moduwu_design::section_separator(ui);
-            ui.push_id("glow", |ui| {
-                ui.strong("Glow");
-                changed |= AdjustmentSlider::new("Amount", &mut exposure.glow_amount, 0.0..=100.0)
-                    .decimals(0)
-                    .step(1.0)
-                    .hover_text(
-                        "Softens and blooms bright light sources without lifting the entire image.",
-                    )
-                    .show(ui);
-            });
-
-            moduwu_design::section_separator(ui);
-            changed |= AdjustmentSlider::new(
-                "Halation",
-                &mut exposure.halation_amount,
-                0.0..=100.0,
-            )
-            .decimals(0)
-            .step(1.0)
-            .hover_text(
-                "Adds a warm film halo around bright edges while preserving highlight cores.",
-            )
-            .show(ui);
-            changed |= AdjustmentSlider::new("Grain", &mut exposure.grain_amount, 0.0..=100.0)
-                .decimals(0)
-                .step(1.0)
-                .hover_text("Adds fine monochrome film grain, strongest in midtones.")
-                .show(ui);
-
-            moduwu_design::section_separator(ui);
-            ui.push_id("vignette", |ui| {
-                ui.strong("Vignette");
-                changed |= AdjustmentSlider::new(
-                    "Amount",
-                    &mut exposure.vignette_amount,
-                    -100.0..=100.0,
-                )
-                .decimals(0)
-                .step(1.0)
-                .hover_text(
-                    "Darkens negative values or brightens positive values toward the image edges.",
-                )
-                .gradient(SliderGradient::Brightness)
-                .show(ui);
-                changed |= AdjustmentSlider::new(
-                    "Midpoint",
-                    &mut exposure.vignette_midpoint,
-                    0.0..=100.0,
-                )
-                .decimals(0)
-                .step(1.0)
-                .hover_text(
-                    "Moves the vignette transition inward or confines it to the outermost edge.",
-                )
-                .reset_to(ExposureParams::default().vignette_midpoint)
-                .show(ui);
-                changed |= AdjustmentSlider::new(
-                    "Roundness",
-                    &mut exposure.vignette_roundness,
-                    -100.0..=100.0,
-                )
-                .decimals(0)
-                .step(1.0)
-                .hover_text("Changes the vignette shape from frame-like to circular.")
-                .show(ui);
-                changed |=
-                    AdjustmentSlider::new("Feather", &mut exposure.vignette_feather, 0.0..=100.0)
-                        .decimals(0)
-                        .step(1.0)
-                        .hover_text("Controls the softness of the vignette transition.")
-                        .reset_to(ExposureParams::default().vignette_feather)
-                        .show(ui);
-                changed |= AdjustmentSlider::new(
-                    "Highlights",
-                    &mut exposure.vignette_highlights,
-                    0.0..=100.0,
-                )
-                .decimals(0)
-                .step(1.0)
-                .hover_text("Restores bright edge highlights when using a dark vignette.")
-                .gradient(SliderGradient::Brightness)
-                .show(ui);
-            });
+            added =
+                mask_effects::add_effect_buttons(ui, &mask_effects::FINISH_EFFECTS, global_effects);
         });
         changed |= action.apply(exposure, AdjustmentGroup::Effects);
-        changed
+        (changed, added)
     }
 
     pub(super) fn show_hsl(
