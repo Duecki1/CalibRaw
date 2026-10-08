@@ -2,7 +2,8 @@ use super::*;
 
 impl Preview {
     /// Long press on the canvas shows the unedited original until the finger
-    /// lifts or moves. Works in every sidebar tab; the caller cancels the
+    /// lifts or moves. Works in every sidebar tab except Crop, whose handles
+    /// are often pressed and held before dragging; the caller cancels the
     /// tool gesture the press started when `original_started` is set.
     #[cfg(target_os = "android")]
     pub(crate) fn handle_android_original_hold(
@@ -27,7 +28,10 @@ impl Preview {
             )
         });
 
-        let allowed = !touch_navigation && !multi_touch && any_touches;
+        let allowed = app.ui.sidebar_tab != SidebarTab::Crop
+            && !touch_navigation
+            && !multi_touch
+            && any_touches;
         if !allowed {
             app.preview.original_hold = None;
             app.set_original_preview_requested(false);
