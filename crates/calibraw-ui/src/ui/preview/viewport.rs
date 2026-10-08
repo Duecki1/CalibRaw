@@ -418,11 +418,19 @@ impl Preview {
         sidebar_tab: SidebarTab,
         white_balance_canvas: bool,
     ) -> Option<PreviewViewportAction> {
+        Self::tool_gesture_cancellation(sidebar_tab).or_else(|| {
+            white_balance_canvas.then_some(PreviewViewportAction::EndWhiteBalancePickerDrag)
+        })
+    }
+
+    /// Reverts the stroke or drag a press started with the tab's canvas tool.
+    pub(crate) fn tool_gesture_cancellation(
+        sidebar_tab: SidebarTab,
+    ) -> Option<PreviewViewportAction> {
         match sidebar_tab {
             SidebarTab::Masks => Some(PreviewViewportAction::CancelMaskGesture),
             SidebarTab::Crop => Some(PreviewViewportAction::CancelCropDrag),
             SidebarTab::Inpainting => Some(PreviewViewportAction::CancelInpaintStroke),
-            _ if white_balance_canvas => Some(PreviewViewportAction::EndWhiteBalancePickerDrag),
             _ => None,
         }
     }
@@ -648,7 +656,9 @@ impl Preview {
         viewport: &PreviewViewport,
     ) {
         let layout = viewport.layout();
-        let gesture_free = !viewport.touch_navigation && !viewport.fit_gesture;
+        let gesture_free = !viewport.touch_navigation
+            && !viewport.fit_gesture
+            && !app.preview.original_hold_owns_touch();
         if viewport.crop_preview {
             if gesture_free {
                 Self::handle_crop_interaction(ui, app, layout);

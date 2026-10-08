@@ -7,7 +7,19 @@ use super::*;
 pub(crate) struct AndroidOriginalHold {
     pub start: egui::Pos2,
     pub started_at: Instant,
-    pub showing_original: bool,
+    pub phase: AndroidOriginalHoldPhase,
+}
+
+#[cfg(target_os = "android")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum AndroidOriginalHoldPhase {
+    /// The finger is down and still; the original shows once the hold time passes.
+    Waiting,
+    ShowingOriginal,
+    /// The original was shown and the finger then moved. The touch stays
+    /// with the hold until it lifts, so the cancelled tool gesture cannot
+    /// resume mid-press.
+    Moved,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]

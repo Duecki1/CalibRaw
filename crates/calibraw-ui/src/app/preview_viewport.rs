@@ -61,13 +61,22 @@ impl CalibRawApp {
         self.apply_preview_viewport_actions(actions);
 
         #[cfg(target_os = "android")]
-        let original_hold_tracking = !viewport.point_color_canvas()
-            && Preview::handle_android_original_hold(
+        let original_hold_tracking = !viewport.point_color_canvas() && {
+            let hold = Preview::handle_android_original_hold(
                 ui,
                 self,
                 viewport.interaction_rect(),
                 viewport.touch_navigation(),
             );
+            if hold.original_started {
+                // The press began as a brush stroke, mask/crop drag or retouch;
+                // holding still turns it into the comparison instead.
+                if let Some(action) = Preview::tool_gesture_cancellation(self.ui.sidebar_tab) {
+                    self.apply_preview_viewport_action(action);
+                }
+            }
+            hold.tracking
+        };
         #[cfg(not(target_os = "android"))]
         let original_hold_tracking = false;
 

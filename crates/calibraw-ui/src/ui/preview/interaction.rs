@@ -1,13 +1,18 @@
 use super::*;
 
 impl Preview {
+    /// Long press on the canvas shows the unedited original until the finger
+    /// lifts or moves. Works in every sidebar tab; the caller cancels the
+    /// tool gesture the press started when `original_started` is set.
     #[cfg(target_os = "android")]
     pub(crate) fn handle_android_original_hold(
         ui: &Ui,
         app: &mut CalibRawApp,
         preview_rect: Rect,
         touch_navigation: bool,
-    ) -> bool {
+    ) -> AndroidOriginalHoldUpdate {
+        use crate::app::AndroidOriginalHoldPhase;
+
         const HOLD_TIME: std::time::Duration = std::time::Duration::from_millis(350);
         const MAX_STATIONARY_DISTANCE: f32 = 12.0;
 
@@ -22,16 +27,11 @@ impl Preview {
             )
         });
 
-        let allowed = !matches!(
-            app.ui.sidebar_tab,
-            SidebarTab::Crop | SidebarTab::Masks | SidebarTab::Inpainting
-        ) && !touch_navigation
-            && !multi_touch
-            && any_touches;
+        let allowed = !touch_navigation && !multi_touch && any_touches;
         if !allowed {
             app.preview.original_hold = None;
             app.set_original_preview_requested(false);
-            return false;
+            return AndroidOriginalHoldUpdate::default();
         }
 
         if pressed {
@@ -42,38 +42,65 @@ impl Preview {
                 app.preview.original_hold = Some(crate::app::AndroidOriginalHold {
                     start: position,
                     started_at: std::time::Instant::now(),
-                    showing_original: false,
+                    phase: AndroidOriginalHoldPhase::Waiting,
                 });
             }
         }
 
-        let Some(hold) = app.preview.original_hold else {
-            return false;
+        let Some(mut hold) = app.preview.original_hold else {
+            return AndroidOriginalHoldUpdate::default();
         };
+        if released || !down {
+            app.preview.original_hold = None;
+            app.set_original_preview_requested(false);
+            return AndroidOriginalHoldUpdate::default();
+        }
+        if hold.phase == AndroidOriginalHoldPhase::Moved {
+            return AndroidOriginalHoldUpdate::default();
+        }
 
         let moved_too_far = pointer
             .map(|position| position.distance(hold.start) > MAX_STATIONARY_DISTANCE)
             .unwrap_or(false);
-        if moved_too_far || released || !down {
-            app.preview.original_hold = None;
+        if moved_too_far {
+            // Before the original showed, the press stays an ordinary tool
+            // gesture; afterwards the hold keeps it until the finger lifts.
+            app.preview.original_hold = (hold.phase == AndroidOriginalHoldPhase::ShowingOriginal)
+                .then_some(crate::app::AndroidOriginalHold {
+                    phase: AndroidOriginalHoldPhase::Moved,
+                    ..hold
+                });
             app.set_original_preview_requested(false);
-            return false;
+            return AndroidOriginalHoldUpdate::default();
         }
 
-        if !hold.showing_original {
+        let mut original_started = false;
+        if hold.phase == AndroidOriginalHoldPhase::Waiting {
             let elapsed = hold.started_at.elapsed();
             if elapsed >= HOLD_TIME {
-                if let Some(active_hold) = app.preview.original_hold.as_mut() {
-                    active_hold.showing_original = true;
-                }
+                hold.phase = AndroidOriginalHoldPhase::ShowingOriginal;
+                app.preview.original_hold = Some(hold);
                 app.set_original_preview_requested(true);
+                original_started = true;
             } else {
                 ui.ctx().request_repaint_after(HOLD_TIME - elapsed);
             }
         }
 
-        true
+        AndroidOriginalHoldUpdate {
+            tracking: true,
+            original_started,
+        }
     }
+}
+
+#[cfg(target_os = "android")]
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct AndroidOriginalHoldUpdate {
+    /// The press may still become a hold, so primary-drag panning waits.
+    pub(crate) tracking: bool,
+    /// The original appeared this frame.
+    pub(crate) original_started: bool,
 }
 
 pub(super) fn begin_mask_drag(

@@ -23,6 +23,20 @@ impl PreviewState {
     pub(crate) fn original_visible(&self) -> bool {
         self.original_requested
     }
+
+    /// Whether a long press showed the original during the current touch.
+    /// Canvas tools ignore that touch until it lifts.
+    pub(crate) fn original_hold_owns_touch(&self) -> bool {
+        #[cfg(target_os = "android")]
+        {
+            self.original_hold
+                .is_some_and(|hold| hold.phase != crate::app::AndroidOriginalHoldPhase::Waiting)
+        }
+        #[cfg(not(target_os = "android"))]
+        {
+            false
+        }
+    }
 }
 
 /// The full-frame pipeline whose tone statistics a zoomed detail crop
