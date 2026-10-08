@@ -52,12 +52,6 @@ fn atmosphere_image_point(pos: vec2<i32>) -> vec2<f32> {
     return point;
 }
 
-// Full-image depth is shared by all fog components; mask coverage remains a
-// separate final blend. Scene depth is normalized relative distance (near=0, far=1).
-// Level 0 channel x holds it; the other channels and mip levels hold the
-// relighting surface (scene_surface.rs, relight.wgsl).
-@group(0) @binding(35) var scene_depth_tex: texture_2d<f32>;
-
 // Fog depth at an image pixel: stored depth (channel x), upsampled jointly
 // with the image over 6×6 texels. Fog and its light glow change steeply
 // across depth edges, and the depth model's edges are blocky and can lie a
@@ -70,11 +64,7 @@ fn fog_depth_at(pos: vec2<i32>) -> f32 {
     let size = vec2<i32>(textureDimensions(scene_depth_tex));
     let p = full_image_uv(pos) * vec2<f32>(size) - vec2<f32>(0.5);
     let base = vec2<i32>(floor(p)) - vec2<i32>(2);
-    let full_size = vec2<f32>(
-        f32(Common::camera_uniforms.full_width),
-        f32(Common::camera_uniforms.full_height),
-    );
-    let center = sqrt(max(SceneAdjustments::local_effects_at(pos), vec3<f32>(0.0)));
+    let center = scene_depth_guide_center(pos);
     var total = 0.0;
     var weights = 0.0;
     for (var y = 0; y < 6; y = y + 1) {
@@ -84,61 +74,12 @@ fn fog_depth_at(pos: vec2<i32>) -> f32 {
             let tent = max(1.0 - offset.x / 3.0, 0.0) * max(1.0 - offset.y / 3.0, 0.0);
             if tent <= 0.0 { continue; }
             let cell = clamp(texel, vec2<i32>(0), size - vec2<i32>(1));
-            let uv = (vec2<f32>(cell) + vec2<f32>(0.5)) / vec2<f32>(size);
-            let guide_pos = uv * full_size - vec2<f32>(0.5) - vec2<f32>(Common::tile_origin());
-            let guide = sqrt(max(mask_effect_source_linear_at(guide_pos), vec3<f32>(0.0)));
-            let delta = (guide - center) / max(length(center), 0.15);
-            let weight = tent * max(exp(-dot(delta, delta) * 64.0), 0.0001);
+            let weight = tent * scene_depth_guide_weight(cell, size, center);
             total += textureLoad(scene_depth_tex, cell, 0).x * weight;
             weights += weight;
         }
     }
     return clamp(total / max(weights, 1e-6), 0.0, 1.0);
-}
-
-// Level-0 scene-depth texels at an image pixel, and with `with_shadows` the
-// relight shadow map's texels (relight.wgsl), which share their grid and
-// therefore their weights. Channel x of `surface` is the stored depth;
-// relighting reads the surface in the other channels.
-struct SceneDepthTexels {
-    surface: vec4<f32>,
-    shadows: vec4<f32>,
-}
-
-fn scene_depth_texels_at(pos: vec2<i32>, with_shadows: bool) -> SceneDepthTexels {
-    let size = vec2<i32>(textureDimensions(scene_depth_tex));
-    let p = full_image_uv(pos) * vec2<f32>(size) - vec2<f32>(0.5);
-    let base = vec2<i32>(floor(p));
-    let f = fract(p);
-    let full_size = vec2<f32>(
-        f32(Common::camera_uniforms.full_width),
-        f32(Common::camera_uniforms.full_height),
-    );
-    let center = sqrt(max(SceneAdjustments::local_effects_at(pos), vec3<f32>(0.0)));
-    var total = vec4<f32>(0.0);
-    var shadows = vec4<f32>(0.0);
-    var weights = 0.0;
-    // Joint upsampling rejects samples across image edges instead of blurring
-    // background depth into foreground silhouettes. No depth-range mask curve
-    // is applied here: a selection is not a measurement of distance.
-    for (var y = 0; y < 2; y = y + 1) {
-        for (var x = 0; x < 2; x = x + 1) {
-            let cell = clamp(base + vec2<i32>(x, y), vec2<i32>(0), size - vec2<i32>(1));
-            let uv = (vec2<f32>(cell) + vec2<f32>(0.5)) / vec2<f32>(size);
-            let guide_pos = uv * full_size - vec2<f32>(0.5) - vec2<f32>(Common::tile_origin());
-            let guide = sqrt(max(mask_effect_source_linear_at(guide_pos), vec3<f32>(0.0)));
-            let delta = (guide - center) / max(length(center), 0.15);
-            let spatial = select(1.0 - f.x, f.x, x == 1) * select(1.0 - f.y, f.y, y == 1);
-            let weight = spatial * max(exp(-dot(delta, delta) * 64.0), 0.0001);
-            total += textureLoad(scene_depth_tex, cell, 0) * weight;
-            if with_shadows {
-                shadows += textureLoad(relight_shadow_map, cell, 0) * weight;
-            }
-            weights += weight;
-        }
-    }
-    let normalization = max(weights, 1e-6);
-    return SceneDepthTexels(total / normalization, shadows / normalization);
 }
 
 fn fog_hash3(cell: vec3<i32>) -> f32 {
@@ -275,10 +216,30 @@ fn image_light_at(pos: vec2<i32>) -> vec3<f32> {
     return max(light, vec3<f32>(0.0)) * exp2(Common::scene_tone_uniforms.exposure);
 }
 
-// Media that scatter light (Fog, Smoke) carry their options in the last
-// component of `film_effects` (`set_medium_options` in mask_params.rs).
-fn medium_image_lights_enabled(options: vec4<f32>) -> bool {
-    return options.w > 0.5;
+// Packed parameter lanes and options of Fog and Smoke (effect_lanes.rs).
+const FOG_AMOUNT_LANE: u32 = 0u;
+const FOG_DENSITY_LANE: u32 = 1u;
+const FOG_SCALE_LANE: u32 = 2u;
+const FOG_SOFTNESS_LANE: u32 = 3u;
+const FOG_COLOR_LANE: u32 = 4u;
+const FOG_VARIATION_LANE: u32 = 7u;
+const FOG_SEED_LANE: u32 = 8u;
+const FOG_START_LANE: u32 = 9u;
+const FOG_DEPTH_INFLUENCE_LANE: u32 = 10u;
+const FOG_LIGHT_GLOW_LANE: u32 = 11u;
+const SMOKE_AMOUNT_LANE: u32 = 0u;
+const SMOKE_DENSITY_LANE: u32 = 1u;
+const SMOKE_SCALE_LANE: u32 = 2u;
+const SMOKE_TURBULENCE_LANE: u32 = 3u;
+const SMOKE_COLOR_LANE: u32 = 4u;
+const SMOKE_ANGLE_LANE: u32 = 7u;
+const SMOKE_SOFTNESS_LANE: u32 = 8u;
+const SMOKE_SEED_LANE: u32 = 9u;
+const SMOKE_LIGHT_GLOW_LANE: u32 = 10u;
+const MEDIUM_IMAGE_LIGHTS_OPTION: u32 = 3u;
+
+fn medium_image_lights_enabled(params: MaskEffectParams) -> bool {
+    return params.options[MEDIUM_IMAGE_LIGHTS_OPTION] > 0.5;
 }
 
 // Image lights: light from the photograph's light sources that a medium
@@ -289,29 +250,22 @@ fn medium_image_lights_enabled(options: vec4<f32>) -> bool {
 // medium in front of them receive little of the halo.
 fn medium_image_light(
     pos: vec2<i32>,
-    options: vec4<f32>,
+    params: MaskEffectParams,
     strength: f32,
     albedo: f32,
     scattering: f32,
 ) -> vec3<f32> {
-    if !medium_image_lights_enabled(options) { return vec3<f32>(0.0); }
+    if !medium_image_lights_enabled(params) { return vec3<f32>(0.0); }
     return image_light_at(pos) * (strength * IMAGE_LIGHT_SCATTER_GAIN * albedo * scattering);
 }
 
-fn apply_fog(
-    pos: vec2<i32>,
-    input_rgb: vec3<f32>,
-    primary: vec4<f32>,
-    secondary: vec4<f32>,
-    tertiary: vec4<f32>,
-    options: vec4<f32>,
-) -> vec3<f32> {
-    let amount = clamp(primary.x / 100.0, 0.0, 1.0);
-    let density = clamp(primary.y / 100.0, 0.0, 1.0);
+fn apply_fog(pos: vec2<i32>, input_rgb: vec3<f32>, params: MaskEffectParams) -> vec3<f32> {
+    let amount = clamp(mask_effect_lane(params, FOG_AMOUNT_LANE) / 100.0, 0.0, 1.0);
+    let density = clamp(mask_effect_lane(params, FOG_DENSITY_LANE) / 100.0, 0.0, 1.0);
     if amount <= 1e-6 || density <= 1e-6 {
         return input_rgb;
     }
-    let influence = clamp(tertiary.z / 100.0, 0.0, 1.0);
+    let influence = clamp(mask_effect_lane(params, FOG_DEPTH_INFLUENCE_LANE) / 100.0, 0.0, 1.0);
     // Until depth is generated, use a restrained constant-distance preview.
     // No screen-height or luminance heuristic pretends to know scene geometry.
     var distance = 0.35;
@@ -319,13 +273,13 @@ fn apply_fog(
         distance = fog_depth_at(pos);
     }
     distance = mix(1.0, distance, influence);
-    let start = clamp(tertiary.y / 100.0, 0.0, 0.95);
+    let start = clamp(mask_effect_lane(params, FOG_START_LANE) / 100.0, 0.0, 0.95);
     if distance <= start { return input_rgb; }
 
-    let scale = clamp(primary.z / 100.0, 0.01, 1.0);
-    let softness = clamp(primary.w / 100.0, 0.0, 1.0);
-    let variation = clamp(secondary.w / 100.0, 0.0, 1.0);
-    let seed = clamp(tertiary.x, 0.0, 1000.0);
+    let scale = clamp(mask_effect_lane(params, FOG_SCALE_LANE) / 100.0, 0.01, 1.0);
+    let softness = clamp(mask_effect_lane(params, FOG_SOFTNESS_LANE) / 100.0, 0.0, 1.0);
+    let variation = clamp(mask_effect_lane(params, FOG_VARIATION_LANE) / 100.0, 0.0, 1.0);
+    let seed = clamp(mask_effect_lane(params, FOG_SEED_LANE), 0.0, 1000.0);
     let offset = vec3<f32>(seed * 0.071 + 19.3, seed * -0.113 + 47.1, seed * 0.053 + 11.7);
     let frequency = mix(7.0, 1.6, scale);
     let image_point = atmosphere_image_point(pos);
@@ -360,19 +314,19 @@ fn apply_fog(
     // Match airlight to scene illumination, avoiding white self-luminous fog
     // in dark photographs.
     let ambient = scene_ambient_level() * 1.15;
-    let color = mask_effect_picker_color_to_working(secondary.xyz);
+    let color = mask_effect_picker_color_to_working(mask_effect_color(params, FOG_COLOR_LANE));
     let airlight = color * ambient;
     let fogged = input_rgb * transmission + airlight * (1.0 - transmission);
     // Light glow: the fog also scatters scene lights (Relight, Light Rays),
     // brightest looking toward a light. The fog's brightness is its albedo,
     // so the glow keeps the light's colour.
-    let glow = clamp(tertiary.w / 100.0, 0.0, 1.0);
+    let glow = clamp(mask_effect_lane(params, FOG_LIGHT_GLOW_LANE) / 100.0, 0.0, 1.0);
     if glow <= 1e-6 { return fogged; }
     let albedo = Common::safe_luma(color);
     let extinction = 6.0 * density * density * amount * length(ray);
     let scattered = fog_light_scattering(pos, volume, distance, extinction);
     return fogged + scattered * (glow * FOG_LIGHT_GLOW_GAIN * ambient * albedo)
-        + medium_image_light(pos, options, glow, albedo, 1.0 - transmission);
+        + medium_image_light(pos, params, glow, albedo, 1.0 - transmission);
 }
 
 // Smoke is darker than fog by default (its colour is its albedo); this lets
@@ -405,21 +359,14 @@ fn smoke_light_scattering(pos: vec2<i32>) -> vec3<f32> {
     return lit;
 }
 
-fn apply_smoke(
-    pos: vec2<i32>,
-    input_rgb: vec3<f32>,
-    primary: vec4<f32>,
-    secondary: vec4<f32>,
-    tertiary: vec4<f32>,
-    options: vec4<f32>,
-) -> vec3<f32> {
-    let amount = clamp(primary.x / 100.0, 0.0, 1.0);
-    let density = clamp(primary.y / 100.0, 0.0, 1.0);
+fn apply_smoke(pos: vec2<i32>, input_rgb: vec3<f32>, params: MaskEffectParams) -> vec3<f32> {
+    let amount = clamp(mask_effect_lane(params, SMOKE_AMOUNT_LANE) / 100.0, 0.0, 1.0);
+    let density = clamp(mask_effect_lane(params, SMOKE_DENSITY_LANE) / 100.0, 0.0, 1.0);
     if amount <= 1e-6 || density <= 1e-6 {
         return input_rgb;
     }
 
-    let angle = radians(clamp(secondary.w, -180.0, 180.0));
+    let angle = radians(clamp(mask_effect_lane(params, SMOKE_ANGLE_LANE), -180.0, 180.0));
     let cosine = cos(angle);
     let sine = sin(angle);
     let image_point = atmosphere_image_point(pos);
@@ -429,11 +376,11 @@ fn apply_smoke(
     );
     point = point * vec2<f32>(0.78, 1.18);
 
-    let scale = clamp(primary.z / 100.0, 0.01, 1.0);
+    let scale = clamp(mask_effect_lane(params, SMOKE_SCALE_LANE) / 100.0, 0.01, 1.0);
     let frequency = mix(11.0, 2.4, scale);
-    let turbulence = clamp(primary.w / 100.0, 0.0, 1.0);
-    let softness = clamp(tertiary.x / 100.0, 0.0, 1.0);
-    let seed = clamp(tertiary.y, 0.0, 1000.0);
+    let turbulence = clamp(mask_effect_lane(params, SMOKE_TURBULENCE_LANE) / 100.0, 0.0, 1.0);
+    let softness = clamp(mask_effect_lane(params, SMOKE_SOFTNESS_LANE) / 100.0, 0.0, 1.0);
+    let seed = clamp(mask_effect_lane(params, SMOKE_SEED_LANE), 0.0, 1000.0);
     let offset = vec2<f32>(seed * 0.097 + 31.6, seed * -0.067 + 8.9);
 
     // Three translucent layers carry stretched, warped density sheets.
@@ -463,17 +410,17 @@ fn apply_smoke(
     // Match smoke illumination to scene ambience, just as fog does; bright
     // picker colors therefore do not turn dark photographs into white paint.
     let ambient = scene_ambient_level();
-    let albedo = mask_effect_picker_color_to_working(secondary.xyz);
+    let albedo = mask_effect_picker_color_to_working(mask_effect_color(params, SMOKE_COLOR_LANE));
     let color = albedo * ambient;
     let smoked = input_rgb * transmission + color * (1.0 - transmission);
     // Light glow: the smoke also scatters scene lights (Relight, Light Rays)
     // and, with Image lights, the photograph's own light sources.
-    let glow = clamp(tertiary.z / 100.0, 0.0, 1.0);
+    let glow = clamp(mask_effect_lane(params, SMOKE_LIGHT_GLOW_LANE) / 100.0, 0.0, 1.0);
     if glow <= 1e-6 { return smoked; }
     let strength = glow * SMOKE_LIGHT_GLOW_GAIN;
     let brightness = Common::safe_luma(albedo);
     let scattering = 1.0 - transmission;
     let lit = smoke_light_scattering(pos);
     return smoked + lit * (strength * ambient * brightness * scattering)
-        + medium_image_light(pos, options, strength, brightness, scattering);
+        + medium_image_light(pos, params, strength, brightness, scattering);
 }

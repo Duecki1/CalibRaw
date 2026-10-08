@@ -94,6 +94,7 @@ pub(super) const MASK_GLOW: ShaderSource = wgsl!("mask_effects/glow.wgsl");
 pub(super) const MASK_NEON: ShaderSource = wgsl!("mask_effects/neon.wgsl");
 pub(super) const MASK_PIXELATE: ShaderSource = wgsl!("mask_effects/pixelate.wgsl");
 pub(super) const MASK_LIGHT_RAYS: ShaderSource = wgsl!("mask_effects/light_rays.wgsl");
+pub(super) const MASK_SCENE_DEPTH: ShaderSource = wgsl!("mask_effects/scene_depth.wgsl");
 pub(super) const MASK_ATMOSPHERE: ShaderSource = wgsl!("mask_effects/atmosphere.wgsl");
 pub(super) const MASK_SCENE_LIGHTS: ShaderSource = wgsl!("mask_effects/scene_lights.wgsl");
 pub(super) const MASK_RELIGHT: ShaderSource = wgsl!("mask_effects/relight.wgsl");
@@ -115,6 +116,7 @@ pub(super) const CREATIVE_EFFECTS: ShaderSource = wgsl!(
         MASK_NEON,
         MASK_PIXELATE,
         MASK_LIGHT_RAYS,
+        MASK_SCENE_DEPTH,
         MASK_ATMOSPHERE,
         MASK_SCENE_LIGHTS,
         MASK_RELIGHT,

@@ -21,21 +21,21 @@ use crate::gpu_errors::GpuErrorScopes;
 mod builder;
 mod clipping;
 mod construction;
-mod fog;
 mod histogram;
 mod mask_layers;
 mod readback;
 mod resources;
+mod scene_depth;
 mod scene_surface;
 mod shader_manager;
 mod shaders;
 
 use builder::*;
 pub use clipping::PreviewClippingGpu;
-use fog::valid_scene_depth;
 pub use histogram::{PreviewHistogram, PreviewHistogramGpu};
 use readback::*;
 use resources::*;
+use scene_depth::valid_scene_depth;
 use scene_surface::SCENE_DEPTH_MIP_LEVELS;
 use shader_manager::ShaderManager;
 
@@ -66,6 +66,7 @@ mod scene_lights_tests;
 #[cfg(test)]
 mod tests;
 
+mod effect_lanes;
 mod mask_params;
 mod params;
 mod remove_scene;
@@ -118,13 +119,7 @@ pub enum ProcessingQuality {
 }
 
 fn expected_pass_count(cfa_kind: CfaKind) -> usize {
-    let demosaic_passes = match cfa_kind {
-        CfaKind::Bayer => 6,
-        CfaKind::XTrans => 10,
-    };
-    // Highlights, demosaic, colour denoise, tone, adjustments, image lights,
-    // relight shadow map.
-    1 + demosaic_passes + COLOR_DENOISE_ENTRY_POINTS.len() + 4 + 19 + 4 + 1
+    StageIndices::plan(cfa_kind).pass_count
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -373,7 +368,7 @@ pub struct RawGpuPipeline {
     mask_texture: wgpu::Texture,
     light_rays_mask_texture: wgpu::Texture,
     scene_depth_texture: wgpu::Texture,
-    uploaded_scene_depth: Mutex<Option<fog::UploadedSceneDepth>>,
+    uploaded_scene_depth: Mutex<Option<scene_depth::UploadedSceneDepth>>,
     /// Relight shadows per scene-depth texel (relight.wgsl), bound by view.
     _relight_shadow_map: wgpu::Texture,
     /// What the shadow map was last built for; `None` after scene depth
@@ -766,11 +761,7 @@ impl RawGpuPipeline {
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("calibraw Remove-aware export tone tile"),
         });
-        self.encode_pass_range(
-            &mut encoder,
-            self.indices.tone_prepare_pass_index,
-            self.indices.tone_prepare_pass_index + 1,
-        );
+        self.encode_pass(&mut encoder, self.indices.tone_prepare_pass_index);
         // Each tile adds its core to the shared image-light grid. Without a
         // receiver the grid stays empty and the tiles skip reading it all again.
         if params.needs_image_lights() {
@@ -784,11 +775,7 @@ impl RawGpuPipeline {
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("calibraw export tone histogram reduction"),
         });
-        self.encode_pass_range(
-            &mut encoder,
-            self.indices.tone_reduce_pass_index,
-            self.indices.tone_reduce_pass_index + 1,
-        );
+        self.encode_pass(&mut encoder, self.indices.tone_reduce_pass_index);
         self.encode_pass_range(
             &mut encoder,
             self.indices.image_light_resolve_pass_index,
@@ -836,7 +823,7 @@ impl RawGpuPipeline {
         if self.has_ai_scene && params.uses_ai_denoise() {
             return;
         }
-        self.encode_pass(encoder, 0);
+        self.encode_pass(encoder, self.indices.highlight_pass_index);
         self.encode_pass_range(
             encoder,
             self.indices.demosaic_start_index,
@@ -881,9 +868,9 @@ impl RawGpuPipeline {
         self.encode_pass(encoder, self.indices.adjustment_tone_pass_index);
         let blur_active = params.needs_blur_passes();
         if params.needs_intermediate_adjustment_passes() {
-            self.encode_pass(encoder, self.indices.adjustment_effects_pass_index - 1);
+            self.encode_pass(encoder, self.indices.adjustment_local_tone_pass_index);
             self.encode_pass(encoder, self.indices.adjustment_effects_pass_index);
-            self.encode_pass(encoder, self.indices.adjustment_effects_pass_index + 1);
+            self.encode_pass(encoder, self.indices.adjustment_effects_copy_pass_index);
             if blur_active {
                 if params.needs_progressive_blur_passes() {
                     self.encode_pass_range(

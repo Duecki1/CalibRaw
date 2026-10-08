@@ -2,20 +2,37 @@
 
 use super::*;
 
+/// Diffusion steps of mask Blur, one program each (`diffuse_mask_blur_*`).
+pub(in crate::pipeline::gpu) const MASK_BLUR_STEPS: usize = 5;
+/// Diffusion steps of Glow, one program each (`diffuse_glow_*`).
+pub(in crate::pipeline::gpu) const GLOW_BLUR_STEPS: usize = 5;
+
+/// Where every program sits in the pass list. Program templates share
+/// compiled programs by position, so bind group layouts, pass assembly and
+/// stage encoding all take positions from `StageIndices::plan`; assembly
+/// fails if it builds the passes in any other order. `*_end_index` values are
+/// exclusive.
 #[derive(Clone, Copy, Debug)]
 pub(in crate::pipeline::gpu) struct StageIndices {
-    pub(in crate::pipeline::gpu) tone_prepare_pass_index: usize,
-    pub(in crate::pipeline::gpu) tone_reduce_pass_index: usize,
-    pub(in crate::pipeline::gpu) tone_stage_end: usize,
+    pub(in crate::pipeline::gpu) highlight_pass_index: usize,
+    /// The CFA's own demosaic passes, in the order `assemble_passes` lists them.
     pub(in crate::pipeline::gpu) demosaic_start_index: usize,
     pub(in crate::pipeline::gpu) demosaic_dual_start_index: usize,
     pub(in crate::pipeline::gpu) demosaic_dual_end_index: usize,
     pub(in crate::pipeline::gpu) demosaic_finish_index: usize,
     pub(in crate::pipeline::gpu) color_denoise_start_index: usize,
     pub(in crate::pipeline::gpu) color_denoise_end_index: usize,
+    pub(in crate::pipeline::gpu) tone_prepare_pass_index: usize,
+    /// The horizontal tone-guide blur; the vertical one follows.
+    pub(in crate::pipeline::gpu) tone_blur_pass_index: usize,
+    pub(in crate::pipeline::gpu) tone_reduce_pass_index: usize,
+    pub(in crate::pipeline::gpu) tone_stage_end: usize,
     pub(in crate::pipeline::gpu) adjustment_prepare_pass_index: usize,
     pub(in crate::pipeline::gpu) adjustment_tone_pass_index: usize,
+    pub(in crate::pipeline::gpu) adjustment_local_tone_pass_index: usize,
     pub(in crate::pipeline::gpu) adjustment_effects_pass_index: usize,
+    /// Copies the scene unchanged when no scene effect applies.
+    pub(in crate::pipeline::gpu) adjustment_effects_copy_pass_index: usize,
     pub(in crate::pipeline::gpu) mask_blur_start_index: usize,
     pub(in crate::pipeline::gpu) mask_blur_end_index: usize,
     pub(in crate::pipeline::gpu) glow_prepare_pass_index: usize,
@@ -24,12 +41,98 @@ pub(in crate::pipeline::gpu) struct StageIndices {
     pub(in crate::pipeline::gpu) pixelate_blocks_pass_index: usize,
     pub(in crate::pipeline::gpu) adjustment_creative_pass_index: usize,
     pub(in crate::pipeline::gpu) adjustment_render_pass_index: usize,
-    /// Accumulation into the image-light grid; resolve and the two blurs follow.
+    /// Accumulation into the image-light grid; resolve and the two blurs
+    /// follow. They run with the tone stage but come after the output passes
+    /// so that adding them kept earlier positions.
     pub(in crate::pipeline::gpu) image_light_accumulate_pass_index: usize,
     pub(in crate::pipeline::gpu) image_light_resolve_pass_index: usize,
+    /// The horizontal image-light blur; the vertical one follows.
+    pub(in crate::pipeline::gpu) image_light_blur_pass_index: usize,
     pub(in crate::pipeline::gpu) image_light_end_index: usize,
     /// Relight shadows per scene-depth texel, built in the output stage.
     pub(in crate::pipeline::gpu) relight_shadow_map_pass_index: usize,
+    pub(in crate::pipeline::gpu) pass_count: usize,
+}
+
+impl StageIndices {
+    /// Positions of the passes for `cfa_kind`, in assembly order.
+    pub(in crate::pipeline::gpu) fn plan(cfa_kind: CfaKind) -> Self {
+        let mut next = 0;
+        let mut take = |count: usize| {
+            let start = next;
+            next += count;
+            start
+        };
+        let highlight_pass_index = take(1);
+        let demosaic_start_index = take(match cfa_kind {
+            CfaKind::Bayer => 3,
+            CfaKind::XTrans => 7,
+        });
+        let demosaic_dual_start_index = take(2);
+        let demosaic_finish_index = take(1);
+        let color_denoise_start_index = take(COLOR_DENOISE_ENTRY_POINTS.len());
+        let tone_prepare_pass_index = take(1);
+        let tone_blur_pass_index = take(2);
+        let tone_reduce_pass_index = take(1);
+        let adjustment_prepare_pass_index = take(1);
+        let adjustment_tone_pass_index = take(1);
+        let adjustment_local_tone_pass_index = take(1);
+        let adjustment_effects_pass_index = take(1);
+        let adjustment_effects_copy_pass_index = take(1);
+        let mask_blur_start_index = take(MASK_BLUR_STEPS);
+        let glow_prepare_pass_index = take(1);
+        let glow_blur_start_index = take(GLOW_BLUR_STEPS);
+        let pixelate_blocks_pass_index = take(1);
+        let adjustment_creative_pass_index = take(1);
+        let adjustment_render_pass_index = take(1);
+        let image_light_accumulate_pass_index = take(1);
+        let image_light_resolve_pass_index = take(1);
+        let image_light_blur_pass_index = take(2);
+        let relight_shadow_map_pass_index = take(1);
+        let pass_count = next;
+        Self {
+            highlight_pass_index,
+            demosaic_start_index,
+            demosaic_dual_start_index,
+            demosaic_dual_end_index: demosaic_finish_index,
+            demosaic_finish_index,
+            color_denoise_start_index,
+            color_denoise_end_index: tone_prepare_pass_index,
+            tone_prepare_pass_index,
+            tone_blur_pass_index,
+            tone_reduce_pass_index,
+            tone_stage_end: adjustment_prepare_pass_index,
+            adjustment_prepare_pass_index,
+            adjustment_tone_pass_index,
+            adjustment_local_tone_pass_index,
+            adjustment_effects_pass_index,
+            adjustment_effects_copy_pass_index,
+            mask_blur_start_index,
+            mask_blur_end_index: glow_prepare_pass_index,
+            glow_prepare_pass_index,
+            glow_blur_start_index,
+            glow_blur_end_index: pixelate_blocks_pass_index,
+            pixelate_blocks_pass_index,
+            adjustment_creative_pass_index,
+            adjustment_render_pass_index,
+            image_light_accumulate_pass_index,
+            image_light_resolve_pass_index,
+            image_light_blur_pass_index,
+            image_light_end_index: relight_shadow_map_pass_index,
+            relight_shadow_map_pass_index,
+            pass_count,
+        }
+    }
+}
+
+/// Fails unless the next assembled pass is the one `plan` puts at `planned`.
+fn ensure_planned(passes: &[Pass], planned: usize, what: &str) -> Result<()> {
+    anyhow::ensure!(
+        passes.len() == planned,
+        "GPU pass plan places {what} at {planned}, but assembly reached it at {}",
+        passes.len()
+    );
+    Ok(())
 }
 
 pub(in crate::pipeline::gpu) struct AssembledPasses {
@@ -108,9 +211,10 @@ pub(in crate::pipeline::gpu) fn assemble_passes(
         next_program_index: 0,
     };
     let single_workgroup = [1, 1, 1];
+    let indices = StageIndices::plan(cfa_kind);
+    let mut passes = Vec::with_capacity(indices.pass_count);
 
-    let mut passes = Vec::with_capacity(expected_pass_count(cfa_kind));
-
+    ensure_planned(&passes, indices.highlight_pass_index, "highlights")?;
     passes.push(assembler.make_pass(
         shaders.highlight_module.as_ref(),
         "highlight_reconstruct",
@@ -119,7 +223,7 @@ pub(in crate::pipeline::gpu) fn assemble_passes(
         image_workgroups,
     ));
 
-    let demosaic_start_index = passes.len();
+    ensure_planned(&passes, indices.demosaic_start_index, "demosaicing")?;
     match cfa_kind {
         CfaKind::Bayer => passes.extend([
             assembler.make_pass(
@@ -197,7 +301,11 @@ pub(in crate::pipeline::gpu) fn assemble_passes(
         ]),
     }
 
-    let demosaic_dual_start_index = passes.len();
+    ensure_planned(
+        &passes,
+        indices.demosaic_dual_start_index,
+        "dual demosaicing",
+    )?;
     passes.extend([
         assembler.make_pass(
             shaders.dual_demosaic_module.as_ref(),
@@ -214,9 +322,7 @@ pub(in crate::pipeline::gpu) fn assemble_passes(
             image_workgroups,
         ),
     ]);
-    let demosaic_dual_end_index = passes.len();
-
-    let demosaic_finish_index = passes.len();
+    ensure_planned(&passes, indices.demosaic_finish_index, "demosaic finish")?;
     match cfa_kind {
         CfaKind::Bayer => passes.push(assembler.make_pass(
             shaders.bayer_rcd_p4_module.as_ref(),
@@ -234,7 +340,7 @@ pub(in crate::pipeline::gpu) fn assemble_passes(
         )),
     }
 
-    let color_denoise_start_index = passes.len();
+    ensure_planned(&passes, indices.color_denoise_start_index, "colour denoise")?;
     for (entry, bind_group) in COLOR_DENOISE_ENTRY_POINTS
         .iter()
         .zip(groups.bg_color_denoise.iter())
@@ -247,9 +353,7 @@ pub(in crate::pipeline::gpu) fn assemble_passes(
             image_workgroups,
         ));
     }
-    let color_denoise_end_index = passes.len();
-
-    let tone_prepare_pass_index = passes.len();
+    ensure_planned(&passes, indices.tone_prepare_pass_index, "tone analysis")?;
     passes.extend([
         assembler.make_pass(
             shaders.tone_analysis_module.as_ref(),
@@ -281,20 +385,11 @@ pub(in crate::pipeline::gpu) fn assemble_passes(
         ),
     ]);
 
-    let tone_reduce_pass_index = tone_prepare_pass_index + 3;
-    let tone_stage_end = passes.len();
-    let adjustment_prepare_pass_index = passes.len();
-    let adjustment_tone_pass_index = adjustment_prepare_pass_index + 1;
-    let adjustment_effects_pass_index = adjustment_prepare_pass_index + 3;
-    let mask_blur_start_index = adjustment_prepare_pass_index + 5;
-    let mask_blur_end_index = mask_blur_start_index + 5;
-    let glow_prepare_pass_index = mask_blur_end_index;
-    let glow_blur_start_index = glow_prepare_pass_index + 1;
-    let glow_blur_end_index = glow_blur_start_index + 5;
-    let pixelate_blocks_pass_index = glow_blur_end_index;
-    let adjustment_creative_pass_index = pixelate_blocks_pass_index + 1;
-    let adjustment_render_pass_index = adjustment_creative_pass_index + 1;
-
+    ensure_planned(
+        &passes,
+        indices.adjustment_prepare_pass_index,
+        "adjustments",
+    )?;
     passes.extend([
         assembler.make_pass(
             shaders.scene_adjustments_module.as_ref(),
@@ -332,6 +427,7 @@ pub(in crate::pipeline::gpu) fn assemble_passes(
             image_workgroups,
         ),
     ]);
+    ensure_planned(&passes, indices.mask_blur_start_index, "mask Blur")?;
     for (step, bind_group) in groups.bg_mask_blur.iter().enumerate() {
         passes.push(assembler.make_pass(
             shaders.creative_effects_module.as_ref(),
@@ -341,6 +437,7 @@ pub(in crate::pipeline::gpu) fn assemble_passes(
             image_workgroups,
         ));
     }
+    ensure_planned(&passes, indices.glow_prepare_pass_index, "Glow")?;
     passes.push(assembler.make_pass(
         shaders.creative_effects_module.as_ref(),
         "prepare_glow_source",
@@ -357,6 +454,11 @@ pub(in crate::pipeline::gpu) fn assemble_passes(
             image_workgroups,
         ));
     }
+    ensure_planned(
+        &passes,
+        indices.pixelate_blocks_pass_index,
+        "Pixelate blocks",
+    )?;
     passes.extend([
         assembler.make_pass(
             shaders.creative_effects_module.as_ref(),
@@ -381,15 +483,16 @@ pub(in crate::pipeline::gpu) fn assemble_passes(
         ),
     ]);
 
-    // Image lights run with the tone stage (or the export tone prepass), but
-    // follow every other pass so the earlier pass indices stay put.
     let image_light_workgroups = [
         IMAGE_LIGHT_GRID_LONG.div_ceil(8),
         IMAGE_LIGHT_GRID_LONG.div_ceil(8),
         1,
     ];
-    let image_light_accumulate_pass_index = passes.len();
-    let image_light_resolve_pass_index = image_light_accumulate_pass_index + 1;
+    ensure_planned(
+        &passes,
+        indices.image_light_accumulate_pass_index,
+        "image lights",
+    )?;
     passes.extend([
         assembler.make_pass(
             shaders.tone_analysis_module.as_ref(),
@@ -420,9 +523,11 @@ pub(in crate::pipeline::gpu) fn assemble_passes(
             image_light_workgroups,
         ),
     ]);
-    let image_light_end_index = passes.len();
-
-    let relight_shadow_map_pass_index = passes.len();
+    ensure_planned(
+        &passes,
+        indices.relight_shadow_map_pass_index,
+        "relight shadow map",
+    )?;
     passes.push(assembler.make_pass(
         shaders.creative_effects_module.as_ref(),
         "build_relight_shadow_map",
@@ -438,41 +543,48 @@ pub(in crate::pipeline::gpu) fn assemble_passes(
     // The post-blur variants reuse the programs above with bind groups that
     // read the mask-blurred scene.
     let mut post_blur_glow_passes = vec![Pass {
-        pipeline: passes[glow_prepare_pass_index].pipeline.clone(),
+        pipeline: passes[indices.glow_prepare_pass_index].pipeline.clone(),
         bind_group: groups.bg_glow_prepare_after_blur.clone(),
         workgroups: image_workgroups,
     }];
     post_blur_glow_passes.extend(groups.bg_glow_blur_after_blur.iter().enumerate().map(
-        |(step, bind_group)| Pass {
-            pipeline: passes[glow_blur_start_index + step].pipeline.clone(),
-            bind_group: bind_group.clone(),
-            workgroups: image_workgroups,
+        |(step, bind_group)| {
+            Pass {
+                pipeline: passes[indices.glow_blur_start_index + step]
+                    .pipeline
+                    .clone(),
+                bind_group: bind_group.clone(),
+                workgroups: image_workgroups,
+            }
         },
     ));
     let post_blur_pixelate_blocks_pass = Pass {
-        pipeline: passes[pixelate_blocks_pass_index].pipeline.clone(),
+        pipeline: passes[indices.pixelate_blocks_pass_index].pipeline.clone(),
         bind_group: groups.bg_pixelate_blocks_after_blur.clone(),
         workgroups: image_workgroups,
     };
     let post_blur_creative_pass = Pass {
-        pipeline: passes[adjustment_creative_pass_index].pipeline.clone(),
+        pipeline: passes[indices.adjustment_creative_pass_index]
+            .pipeline
+            .clone(),
         bind_group: groups.bg_adjust_creative_after_blur.clone(),
         workgroups: image_workgroups,
     };
     let post_blur_render_pass = Pass {
-        pipeline: passes[adjustment_render_pass_index].pipeline.clone(),
+        pipeline: passes[indices.adjustment_render_pass_index]
+            .pipeline
+            .clone(),
         bind_group: groups.bg_adjust_render_after_blur.clone(),
         workgroups: image_workgroups,
     };
 
-    let expected_programs = expected_pass_count(cfa_kind);
-    if assembler.next_program_index != expected_programs || passes.len() != expected_programs {
+    if assembler.next_program_index != indices.pass_count || passes.len() != indices.pass_count {
         return Err(anyhow!(
             "GPU render-plan mismatch for {:?}: built {} passes and consumed {} programs; expected {}",
             cfa_kind,
             passes.len(),
             assembler.next_program_index,
-            expected_programs,
+            indices.pass_count,
         ));
     }
 
@@ -482,31 +594,6 @@ pub(in crate::pipeline::gpu) fn assemble_passes(
         post_blur_pixelate_blocks_pass,
         post_blur_creative_pass,
         post_blur_render_pass,
-        indices: StageIndices {
-            tone_prepare_pass_index,
-            tone_reduce_pass_index,
-            tone_stage_end,
-            demosaic_start_index,
-            demosaic_dual_start_index,
-            demosaic_dual_end_index,
-            demosaic_finish_index,
-            color_denoise_start_index,
-            color_denoise_end_index,
-            adjustment_prepare_pass_index,
-            adjustment_tone_pass_index,
-            adjustment_effects_pass_index,
-            mask_blur_start_index,
-            mask_blur_end_index,
-            glow_prepare_pass_index,
-            glow_blur_start_index,
-            glow_blur_end_index,
-            pixelate_blocks_pass_index,
-            adjustment_creative_pass_index,
-            adjustment_render_pass_index,
-            image_light_accumulate_pass_index,
-            image_light_resolve_pass_index,
-            image_light_end_index,
-            relight_shadow_map_pass_index,
-        },
+        indices,
     })
 }

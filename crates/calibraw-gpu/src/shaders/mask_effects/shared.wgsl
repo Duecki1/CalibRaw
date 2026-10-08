@@ -17,6 +17,50 @@ const MASK_EFFECT_HALATION_ID: u32 = 14u;
 const MASK_EFFECT_VIGNETTE_ID: u32 = 15u;
 const MASK_EFFECT_RELIGHT_ID: u32 = 16u;
 
+// An effect slot's packed parameters (effect_lanes.rs). Lane n is component
+// n % 4 of `primary`, `secondary` or `tertiary` for n / 4 = 0, 1, 2; effects
+// name their lanes `<EFFECT>_<NAME>_LANE`, and a colour takes three lanes.
+// `options` holds per-slot switches, named `<NAME>_OPTION`. The names match
+// the Rust packing (layout_contract_tests).
+struct MaskEffectParams {
+    primary: vec4<f32>,
+    secondary: vec4<f32>,
+    tertiary: vec4<f32>,
+    options: vec4<f32>,
+}
+
+fn mask_effect_params(index: u32) -> MaskEffectParams {
+    return MaskEffectParams(
+        Common::mask_data[index].adjust_0_field,
+        Common::mask_data[index].adjust_1_field,
+        Common::mask_data[index].adjust_2_field,
+        Common::mask_data[index].film_effects,
+    );
+}
+
+fn mask_effect_lane(params: MaskEffectParams, lane: u32) -> f32 {
+    let row = select(
+        select(params.tertiary, params.secondary, lane < 8u),
+        params.primary,
+        lane < 4u,
+    );
+    return row[lane % 4u];
+}
+
+// Two consecutive lanes, such as a position's x and y.
+fn mask_effect_lane_pair(params: MaskEffectParams, lane: u32) -> vec2<f32> {
+    return vec2<f32>(mask_effect_lane(params, lane), mask_effect_lane(params, lane + 1u));
+}
+
+// The three lanes of a colour.
+fn mask_effect_color(params: MaskEffectParams, lane: u32) -> vec3<f32> {
+    return vec3<f32>(
+        mask_effect_lane(params, lane),
+        mask_effect_lane(params, lane + 1u),
+        mask_effect_lane(params, lane + 2u),
+    );
+}
+
 // Integer hash finalizer shared by the procedural effects: mixes `seed` and
 // maps its low 24 bits to [0, 1].
 fn mask_effect_hash_unit(seed: u32) -> f32 {

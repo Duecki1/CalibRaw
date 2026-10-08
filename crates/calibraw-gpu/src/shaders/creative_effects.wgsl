@@ -472,22 +472,13 @@ fn apply_local_creative_mask_effect_nodes(pos: vec2<i32>, input_rgb: vec3<f32>) 
         } else if effect_id == MASK_EFFECT_PIXELATE_ID {
             adjusted = apply_pixelate(pos, rgb, primary);
         } else if effect_id == MASK_EFFECT_FOG_ID {
-            adjusted = apply_fog(
-                pos, rgb, primary, secondary,
-                Common::mask_data[index].adjust_2_field, Common::mask_data[index].film_effects,
-            );
+            adjusted = apply_fog(pos, rgb, mask_effect_params(index));
         } else if effect_id == MASK_EFFECT_SMOKE_ID {
-            adjusted = apply_smoke(
-                pos, rgb, primary, secondary,
-                Common::mask_data[index].adjust_2_field, Common::mask_data[index].film_effects,
-            );
+            adjusted = apply_smoke(pos, rgb, mask_effect_params(index));
         } else if effect_id == MASK_EFFECT_HALATION_ID {
             adjusted = apply_mask_halation(pos, rgb, primary);
         } else if effect_id == MASK_EFFECT_RELIGHT_ID {
-            adjusted = apply_relight(
-                pos, rgb, primary, secondary,
-                Common::mask_data[index].adjust_2_field, Common::mask_data[index].film_effects,
-            );
+            adjusted = apply_relight(pos, rgb, mask_effect_params(index));
         }
         rgb = mix(rgb, adjusted, weight);
     }
