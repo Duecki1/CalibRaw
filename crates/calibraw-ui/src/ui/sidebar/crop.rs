@@ -105,11 +105,6 @@ impl Sidebar {
                 app.develop_ui.straighten_drag = None;
                 app.develop_ui.crop_drag = None;
             }
-            if app.develop_ui.straighten_tool_active {
-                ui.small(
-                    "Drag along a horizon or vertical edge in the preview to level the image.",
-                );
-            }
             if moduwu_design::secondary_button_enabled(
                 ui,
                 app.auto_straighten_available(),

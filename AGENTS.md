@@ -32,6 +32,7 @@ Commands, platform setup and UI conventions: [docs/DEVELOPMENT.md](docs/DEVELOPM
 - Views take narrow inputs and return actions. Application handlers own mutation, persistence and background work.
 - Shared controls keep role, label, value, focus, disabled state and actions for accessibility; custom-painted controls supply them explicitly.
 - Keep serialized names stable and preserve dismissal, focus and navigation behavior ([UI conventions](docs/DEVELOPMENT.md#ui-conventions)).
+- No explanatory text in panels, cards or tool rows. Help goes in a tooltip, and only when a control is not self-explanatory. Settings may keep descriptions.
 
 ## Verification
 

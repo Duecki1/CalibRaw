@@ -182,6 +182,13 @@ canvases, mask cards, and colour controls in their existing components.
   through `AppAction`. Background document loading and batch operations contain
   documented exceptions: interactive tab activation can cancel their AI work.
 - Keep serialized preference names stable when changing UI labels or helpers.
+- Do not add descriptive text to editing panels, cards, tool rows or the
+  toolbar: no explanatory paragraphs under headings and no hint lines below
+  controls. When a control needs explaining, use a tooltip
+  (`on_hover_text`, `*_with_help`, a slider's `hover_text`), and only if its
+  label, icon and behavior do not already make it clear. Settings and the
+  first-run setup may keep descriptions. Status lines (progress, empty states,
+  "source set") and dialog text that explains a choice are not descriptions.
 
 Run the independent library checks above for reusable design-system regressions
 and `cargo test -p calibraw-ui --lib --locked` for headless UI integration regressions.

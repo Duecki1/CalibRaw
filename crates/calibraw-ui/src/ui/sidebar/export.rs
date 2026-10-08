@@ -120,7 +120,6 @@ pub(crate) fn export_settings_controls(
                     }
                 }
             });
-            ui.small("8-bit output. Higher quality produces larger files.");
         } else {
             moduwu_design::form_combo_with_help(
                 ui,
@@ -147,11 +146,6 @@ pub(crate) fn export_settings_controls(
                     }
                 },
             );
-            ui.small(if settings.bit_depth.is_float() {
-                "Scene-linear TIFF master for further editing."
-            } else {
-                "Higher precision preserves finer tonal detail for further editing."
-            });
         }
     });
     moduwu_design::card_gap(ui);
@@ -159,7 +153,7 @@ pub(crate) fn export_settings_controls(
     moduwu_design::section_card_with_help(
         ui,
         "Resize",
-        "Choose how the exported image is sized. Edge and dimension modes preserve the aspect ratio.",
+        "Choose how the exported image is sized. Original uses the full dimensions after cropping and transforms; edge and dimension modes preserve the aspect ratio.",
         |ui| {
             moduwu_design::form_combo(
                 ui,
@@ -182,9 +176,7 @@ pub(crate) fn export_settings_controls(
             );
 
             match settings.resize_mode {
-                ExportResizeMode::Original => {
-                    ui.small("Use the full dimensions after cropping and transforms.");
-                }
+                ExportResizeMode::Original => {}
                 ExportResizeMode::Percentage => {
                     AdjustmentSlider::new("Scale (%)", &mut settings.percentage, 1.0..=400.0)
                         .decimals(1)
@@ -211,7 +203,6 @@ pub(crate) fn export_settings_controls(
             }
 
             if settings.resize_mode != ExportResizeMode::Original {
-                ui.small("Aspect ratio is preserved.");
                 moduwu_design::toggle_with_help(
                     ui,
                     &mut settings.allow_upscale,
