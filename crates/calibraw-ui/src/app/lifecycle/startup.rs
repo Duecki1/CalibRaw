@@ -240,6 +240,8 @@ impl CalibRawApp {
                 publish_pending: false,
                 #[cfg(target_os = "android")]
                 android_batch_load_pending: false,
+                #[cfg(target_os = "android")]
+                share_mime_type: None,
             },
             persistence: PersistenceState {
                 history: edit_history,

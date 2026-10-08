@@ -190,9 +190,6 @@ pub(crate) struct ExportTask {
     pub(super) total_tiles: usize,
     pub(super) minimized: bool,
     pub(super) cancelling: bool,
-    /// MIME type to share the finished export as; `None` exports without sharing.
-    #[cfg(target_os = "android")]
-    pub(super) share_mime_type: Option<&'static str>,
 }
 
 pub(super) struct PreparedExportSource {
@@ -232,4 +229,9 @@ pub(crate) struct ExportState {
     pub(crate) publish_pending: bool,
     #[cfg(target_os = "android")]
     pub(crate) android_batch_load_pending: bool,
+    /// MIME type to share the next finished single export or replay as; `None`
+    /// publishes without sharing. Kept outside the task because a replay's task
+    /// ends before its gallery publish does.
+    #[cfg(target_os = "android")]
+    pub(crate) share_mime_type: Option<&'static str>,
 }

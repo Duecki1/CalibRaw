@@ -237,6 +237,42 @@ pub(crate) fn export_settings_controls(
     *format != previous_format
 }
 
+/// A square, glyph-only touch action filling `rect` exactly.
+#[cfg(target_os = "android")]
+fn square_icon_action(
+    ui: &mut Ui,
+    rect: egui::Rect,
+    enabled: bool,
+    glyph: &str,
+    label: &str,
+) -> egui::Response {
+    let response = ui
+        .scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
+            ui.add_enabled_ui(enabled, |ui| {
+                // The touch button padding would widen the square past `rect`.
+                ui.spacing_mut().button_padding = egui::Vec2::ZERO;
+                let response = ui.add(egui::Button::new("").min_size(rect.size()));
+                // Painted rather than laid out by the button, which does not
+                // centre a lone glyph in a fixed-size button. The disabled
+                // painter fades it with the frame.
+                let color = ui.style().interact(&response).text_color();
+                ui.painter().text(
+                    response.rect.center(),
+                    egui::Align2::CENTER_CENTER,
+                    glyph,
+                    egui::FontId::proportional(rect.height() * 0.55),
+                    color,
+                );
+                response
+            })
+            .inner
+        })
+        .inner
+        .on_hover_text(label);
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, label));
+    response
+}
+
 impl Sidebar {
     pub(super) fn show_export_action(ui: &mut Ui, app: &mut CalibRawApp, frame: &eframe::Frame) {
         let dimensions_valid = app.develop.loaded_raw.as_ref().is_some_and(|raw| {
@@ -251,38 +287,62 @@ impl Sidebar {
         });
         let export_enabled = app.can_export() && dimensions_valid;
 
+        // Android row: square replay and share actions flank a shortened Export.
+        // Each control gets an exact rect so the touch button padding cannot
+        // push the row past the panel edge.
         #[cfg(target_os = "android")]
-        let response = ui
-            .horizontal(|ui| {
-                // Square share action at the standard control height, beside a shortened Export.
-                let share_edge = moduwu_design::Metrics::of(ui.ctx()).control_height;
-                let export_width =
-                    (ui.available_width() - share_edge - ui.spacing().item_spacing.x).max(1.0);
-                let export = ui
-                    .add_enabled_ui(export_enabled, |ui| {
-                        ui.add_sized([export_width, share_edge], egui::Button::new("Export…"))
-                    })
-                    .inner;
-                let share = moduwu_design::icon_button_enabled(
-                    ui,
-                    export_enabled,
-                    egui_phosphor::regular::SHARE_NETWORK,
-                    egui::vec2(share_edge, share_edge),
-                    "Export and share",
-                );
-                share.widget_info(|| {
-                    egui::WidgetInfo::labeled(
-                        egui::WidgetType::Button,
+        let response = {
+            let edge = moduwu_design::Metrics::of(ui.ctx()).control_height;
+            let gap = ui.spacing().item_spacing.x;
+            let (row, _) = ui.allocate_exact_size(
+                egui::vec2(ui.available_width().max(3.0 * edge), edge),
+                egui::Sense::hover(),
+            );
+            let replay_rect = egui::Rect::from_min_size(row.min, egui::vec2(edge, edge));
+            let share_rect = egui::Rect::from_min_size(
+                egui::pos2(row.right() - edge, row.top()),
+                egui::vec2(edge, edge),
+            );
+            let export_rect = egui::Rect::from_min_max(
+                egui::pos2(replay_rect.right() + gap, row.top()),
+                egui::pos2(
+                    (share_rect.left() - gap).max(replay_rect.right() + gap),
+                    row.bottom(),
+                ),
+            );
+
+            if square_icon_action(
+                ui,
+                replay_rect,
+                app.can_export(),
+                egui_phosphor::regular::FILM_STRIP,
+                "Create and share edit replay",
+            )
+            .clicked()
+            {
+                app.create_edit_replay(frame);
+            }
+            let export = ui
+                .scope_builder(egui::UiBuilder::new().max_rect(export_rect), |ui| {
+                    ui.add_enabled(
                         export_enabled,
-                        "Export and share",
+                        egui::Button::new("Export…").min_size(export_rect.size()),
                     )
-                });
-                if share.clicked() {
-                    app.export_and_share(frame);
-                }
-                export
-            })
-            .inner;
+                })
+                .inner;
+            if square_icon_action(
+                ui,
+                share_rect,
+                export_enabled,
+                egui_phosphor::regular::SHARE_NETWORK,
+                "Export and share",
+            )
+            .clicked()
+            {
+                app.export_and_share(frame);
+            }
+            export
+        };
         #[cfg(not(target_os = "android"))]
         let response = ui
             .add_enabled_ui(export_enabled, |ui| {
@@ -363,8 +423,10 @@ impl Sidebar {
                 }
 
                 ui.add_space(moduwu_design::SPACE_SM);
-                let export_enabled = app.can_export();
+                // Android offers the replay as an icon beside Export.
+                #[cfg(not(target_os = "android"))]
                 {
+                    let export_enabled = app.can_export();
                     moduwu_design::section_separator(ui);
                     let replay_response = ui
                         .add_enabled_ui(export_enabled, |ui| {

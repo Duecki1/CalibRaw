@@ -762,6 +762,7 @@ impl CalibRawApp {
                     self.share_finished_export(&published);
                 }
                 calibraw_ffi::ExportPublishResult::Failed(error) => {
+                    self.export.share_mime_type = None;
                     self.ui.notice = Some(format!("Export failed: {error}"));
                     log::error!("Android export publish failed: {error}");
                 }

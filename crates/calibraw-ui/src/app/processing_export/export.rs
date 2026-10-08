@@ -30,8 +30,6 @@ impl ExportTask {
             total_tiles: 0,
             minimized: false,
             cancelling: false,
-            #[cfg(target_os = "android")]
-            share_mime_type: None,
         }
     }
 
@@ -291,26 +289,16 @@ impl CalibRawApp {
             self.cancel_android_export_destination(&cleanup);
             return;
         }
-        if share {
-            if let Some(task) = self.export.task.as_mut() {
-                task.share_mime_type = Some(format.mime_type());
-            }
-        }
+        self.export.share_mime_type = share.then_some(format.mime_type());
     }
 
-    /// Opens the share sheet when the finished single export asked for it.
-    /// Call before the task is cleared.
+    /// Opens the share sheet when the finished single export or replay asked for it.
     #[cfg(target_os = "android")]
     pub(in crate::app) fn share_finished_export(
         &mut self,
         published: &calibraw_ffi::PublishedExport,
     ) {
-        let Some(mime_type) = self
-            .export
-            .task
-            .as_ref()
-            .and_then(|task| task.share_mime_type)
-        else {
+        let Some(mime_type) = self.export.share_mime_type.take() else {
             return;
         };
         if published.uri.is_empty() {
