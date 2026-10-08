@@ -85,8 +85,17 @@ const fn should_show_update(requested_manually: bool, auto_check: bool, ignored:
     !ignored && (requested_manually || auto_check)
 }
 
-/// False in F-Droid builds (`fdroid` feature), which are updated by F-Droid.
-pub(crate) const GITHUB_UPDATE_CHECKS_AVAILABLE: bool = !cfg!(feature = "fdroid");
+/// False in F-Droid and Flathub builds (`fdroid`/`flathub` features), which are
+/// updated by their store.
+pub(crate) const GITHUB_UPDATE_CHECKS_AVAILABLE: bool =
+    !cfg!(any(feature = "fdroid", feature = "flathub"));
+
+/// Store that delivers updates when the GitHub check is unavailable.
+pub(crate) const UPDATE_STORE_NAME: &str = if cfg!(feature = "flathub") {
+    "Flathub"
+} else {
+    "F-Droid"
+};
 
 const fn github_version_check_permitted(permission: Option<bool>) -> bool {
     GITHUB_UPDATE_CHECKS_AVAILABLE && matches!(permission, Some(true))

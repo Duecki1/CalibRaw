@@ -99,7 +99,7 @@
             "buildsystem": "simple",
             "build-commands": [
                 "python3 packaging/flatpak/generate-licenses.py",
-                "cargo build --offline --locked --release -p calibraw-ui --bin calibraw -p calibraw-cli --bin calibraw-develop-export",
+                "cargo build --offline --locked --release --features calibraw-ui/flathub -p calibraw-ui --bin calibraw -p calibraw-cli --bin calibraw-develop-export",
                 "install -Dm755 \"${CARGO_TARGET_DIR:-target}/release/calibraw\" /app/bin/calibraw",
                 "install -Dm755 \"${CARGO_TARGET_DIR:-target}/release/calibraw-develop-export\" /app/bin/calibraw-develop-export",
                 "install -Dm644 packaging/linux/io.github.Duecki1.CalibRaw.desktop /app/share/applications/io.github.Duecki1.CalibRaw.desktop",
