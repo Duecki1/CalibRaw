@@ -165,17 +165,16 @@ pub(super) fn effect_position(
     space: PositionSpace,
 ) -> bool {
     ui.push_id(label, |ui| {
-        ui.label(label);
+        ui.label(label).on_hover_text(match space {
+            PositionSpace::Source => {
+                "Percent of the full, uncropped image: left/top is 0, right/bottom is 100."
+            }
+            PositionSpace::Output => {
+                "Percent of the cropped image: left/top is 0, right/bottom is 100."
+            }
+        });
         let (_, mut changed) = position_pad(ui, label, position, specs, frame, space);
         changed |= effect_details(ui, "Precise position", |ui| {
-            ui.small(match space {
-                PositionSpace::Source => {
-                    "Percent of the full, uncropped image: left/top is 0, right/bottom is 100."
-                }
-                PositionSpace::Output => {
-                    "Percent of the cropped image: left/top is 0, right/bottom is 100."
-                }
-            });
             float_param_slider(ui, &mut position[0], specs[0])
                 | float_param_slider(ui, &mut position[1], specs[1])
         });

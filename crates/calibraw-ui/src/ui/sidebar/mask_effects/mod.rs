@@ -36,13 +36,6 @@ where
 {
     let mut changed = false;
     let mut reset = false;
-    let body = |ui: &mut Ui, settings: &mut Settings| {
-        if let Some(description) = effect_description(effect) {
-            ui.add(egui::Label::new(egui::RichText::new(description).small().weak()).wrap());
-            ui.add_space(moduwu_design::SPACE_XS);
-        }
-        body(ui, settings)
-    };
     moduwu_design::content_card(ui, |ui| {
         ui.push_id(effect.label(), |ui| {
             ui.spacing_mut().interact_size.y = ui.spacing().interact_size.y.max(26.0);
@@ -157,6 +150,7 @@ where
     }
 }
 
+/// Tooltip for an effect card's title.
 pub(super) fn effect_description(effect: MaskEffect) -> Option<&'static str> {
     match effect {
         MaskEffect::Blur => Some(

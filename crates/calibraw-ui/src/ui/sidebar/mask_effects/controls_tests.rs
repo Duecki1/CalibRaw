@@ -674,7 +674,8 @@ fn simple_effects_expose_all_controls_without_extra_sections() {
         for label in labels {
             assert!(card.has(label));
         }
-        assert!(card.has(effect_description(effect).unwrap()));
+        // The description is the title's tooltip, not text in the card.
+        assert!(!card.has(effect_description(effect).unwrap()));
         assert_eq!(card.components[0].settings, MaskEffectSettings::default());
     }
 }
