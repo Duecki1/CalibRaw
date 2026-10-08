@@ -92,7 +92,17 @@ const TONE_STATS_SIZE_BYTES: u64 = 2 * std::mem::size_of::<[f32; 4]>() as u64;
 const TONE_HISTOGRAM_BIN_COUNT: u32 = 256;
 #[cfg(test)]
 const DESKTOP_GPU_WORKING_SET_LIMIT_BYTES: u64 = 1_500 * 1024 * 1024;
+/// Android budget that previews are sized against, and the floor of the
+/// Android admission cap (see `gpu_working_set_limit_bytes`).
 const ANDROID_GPU_WORKING_SET_LIMIT_BYTES: u64 = 384 * 1024 * 1024;
+/// Upper bound of the RAM-scaled Android admission cap.
+#[cfg(any(target_os = "android", test))]
+const ANDROID_GPU_WORKING_SET_CEILING_BYTES: u64 = 1_536 * 1024 * 1024;
+/// Share of device RAM, as a divisor, the Android admission cap allows GPU
+/// pipelines to reserve. Android GPUs share system memory, and drivers may
+/// let the low-memory killer end the app instead of reporting OOM.
+#[cfg(any(target_os = "android", test))]
+const ANDROID_GPU_WORKING_SET_RAM_DIVISOR: u64 = 8;
 
 const COLOR_DENOISE_ENTRY_POINTS: [&str; 6] = [
     "color_denoise_scale_1",
