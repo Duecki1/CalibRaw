@@ -21,13 +21,13 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - runner: ubuntu-latest
+          - runner: ubuntu-22.04
             artifact_arch: x86_64
             rustup_arch: x86_64
             linuxdeploy_arch: x86_64
             linuxdeploy_sha256: c20cd71e3a4e3b80c3483cef793cda3f4e990aca14014d23c544ca3ce1270b4d
             artifact_name: calibraw-linux-appimage
-          - runner: ubuntu-24.04-arm
+          - runner: ubuntu-22.04-arm
             artifact_arch: arm64
             rustup_arch: aarch64
             linuxdeploy_arch: aarch64
@@ -54,9 +54,9 @@ jobs:
             target
             /tmp/calibraw-libraw
             /tmp/linuxdeploy-${{ matrix.linuxdeploy_arch }}.AppImage
-          key: calibraw-linux-native-v2-${{ runner.os }}-${{ runner.arch }}-rust-${{ hashFiles('rust-toolchain.toml') }}-libraw-823f25d-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'crates/**/Cargo.toml', 'crates/**/build.rs', 'crates/**/build_support/**') }}
+          key: calibraw-linux-native-v3-${{ runner.os }}-${{ runner.arch }}-rust-${{ hashFiles('rust-toolchain.toml') }}-libraw-823f25d-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'crates/**/Cargo.toml', 'crates/**/build.rs', 'crates/**/build_support/**') }}
           restore-keys: |
-            calibraw-linux-native-v2-${{ runner.os }}-${{ runner.arch }}-rust-${{ hashFiles('rust-toolchain.toml') }}-libraw-823f25d-
+            calibraw-linux-native-v3-${{ runner.os }}-${{ runner.arch }}-rust-${{ hashFiles('rust-toolchain.toml') }}-libraw-823f25d-
 
       - name: Install Linux build dependencies
         shell: bash
