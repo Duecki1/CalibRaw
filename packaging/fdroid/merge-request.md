@@ -1,7 +1,7 @@
 Adds CalibRaw, a GPL-3.0-or-later RAW photo editor with GPU rendering,
 non-destructive editing and optional on-device AI tools. Builds the ARM64
-Android app from release `v1.2.0`, commit
-`c4be2257330d72239a759efaba6b60e11b1b1a4c`.
+Android app from release `v1.2.1`, commit
+`<full hash of v1.2.1>`.
 
 Related packaging request: https://gitlab.com/fdroid/rfp/-/work_items/4487
 
@@ -54,11 +54,13 @@ I am the app author. The fork is public; please confirm the uploaded source bran
 
 ## Packaging notes
 
-The recipe builds the pinned `v1.2.0` commit and uses `AutoUpdateMode: Version`
+The recipe builds the pinned `v1.2.1` commit and uses `AutoUpdateMode: Version`
 with `UpdateCheckMode: Tags` for stable `vMAJOR.MINOR.PATCH` tags. `v1.2.0` is
 the first tag containing both `fdroid_version_code` in `Cargo.toml` and the
 Fastlane listing, so no listing import is needed. Older tags lack the field and
-are skipped. The exact YAML and `fdroid rewritemeta` / `fdroid checkupdates
+are skipped. An earlier revision of this recipe built an untagged commit after
+`v1.2.0` under version `1.2.0`; it now builds the `v1.2.1` tag, which includes
+that code (including the R8 change) under a new version name and code. The exact YAML and `fdroid rewritemeta` / `fdroid checkupdates
 --auto` steps are in upstream `packaging/fdroid/README.md`.
 
 LibRaw, Lensfun and the native support libraries build from pinned source.
