@@ -251,7 +251,7 @@ mod preview_overlay_tests {
 }
 
 #[test]
-fn ctrl_plus_and_minus_zoom_the_preview_not_the_interface() {
+fn zoom_shortcuts_drive_the_preview_not_the_interface() {
     let ctx = egui::Context::default();
     crate::ui::theme::install(&ctx);
     let mut factors = Vec::new();
@@ -263,7 +263,10 @@ fn ctrl_plus_and_minus_zoom_the_preview_not_the_interface() {
         ),
         (egui::Key::Equals, egui::Modifiers::COMMAND),
         (egui::Key::Minus, egui::Modifiers::COMMAND),
+        (egui::Key::Num0, egui::Modifiers::COMMAND),
+        (egui::Key::Num1, egui::Modifiers::COMMAND),
         (egui::Key::Minus, egui::Modifiers::NONE),
+        (egui::Key::Num1, egui::Modifiers::NONE),
     ] {
         let input = egui::RawInput {
             events: vec![egui::Event::Key {
@@ -277,12 +280,22 @@ fn ctrl_plus_and_minus_zoom_the_preview_not_the_interface() {
             ..Default::default()
         };
         let _ = ctx.run_ui(input, |ui| {
-            factors.push(ui.input_mut(viewport::keyboard_zoom_factor));
+            factors.push(ui.input_mut(viewport::keyboard_zoom));
         });
     }
+    use viewport::KeyboardZoom::{Fit, Native, Step};
     assert_eq!(
         factors,
-        [Some(1.25), Some(1.25), Some(1.25), Some(0.8), None]
+        [
+            Some(Step(1.25)),
+            Some(Step(1.25)),
+            Some(Step(1.25)),
+            Some(Step(0.8)),
+            Some(Fit),
+            Some(Native),
+            None,
+            None
+        ]
     );
     assert_eq!(ctx.zoom_factor(), 1.0);
 }

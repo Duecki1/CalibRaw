@@ -10,6 +10,7 @@ pub(crate) enum PreviewViewportAction {
     SetSourceAxesSwapped(bool),
     SetTouchNavigation(bool),
     SetSpacePan(bool),
+    SetNativeZoom(f32),
     SetNavigation {
         zoom: f32,
         center: [f32; 2],
@@ -114,6 +115,9 @@ impl CalibRawApp {
             }
             PreviewViewportAction::SetSpacePan(active) => {
                 self.preview.space_pan_active = active;
+            }
+            PreviewViewportAction::SetNativeZoom(native_zoom) => {
+                self.preview.native_zoom = Some(native_zoom);
             }
             PreviewViewportAction::SetNavigation { zoom, center } => {
                 self.preview.zoom = zoom;

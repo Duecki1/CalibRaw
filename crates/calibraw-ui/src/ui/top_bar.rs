@@ -38,6 +38,28 @@ fn develop_zoom_to_slider(zoom: f32) -> f32 {
     }
 }
 
+/// Zoom presets as photo-pixel scales; `None` fits the photo to the window.
+#[cfg(not(target_os = "android"))]
+const DEVELOP_ZOOM_PRESETS: [(&str, Option<f32>); 4] = [
+    ("Fit", None),
+    ("50%", Some(0.5)),
+    ("100% (1:1)", Some(1.0)),
+    ("200%", Some(2.0)),
+];
+
+/// The readout for a fit-relative `zoom`: "Fit", or the photo-pixel scale,
+/// where 100% shows one photo pixel per screen pixel.
+#[cfg(not(target_os = "android"))]
+fn develop_zoom_readout(zoom: f32, native_zoom: Option<f32>) -> String {
+    if (zoom - 1.0).abs() <= 0.0005 {
+        return "Fit".to_owned();
+    }
+    match native_zoom.filter(|native| native.is_finite() && *native > 0.0) {
+        Some(native) => format!("{:.0}%", zoom / native * 100.0),
+        None => "–".to_owned(),
+    }
+}
+
 #[cfg(not(target_os = "android"))]
 fn develop_slider_to_zoom(position: f32) -> f32 {
     let min = crate::ui::preview::MIN_PREVIEW_ZOOM;
@@ -319,6 +341,7 @@ impl TopBar {
             (available_width - readout_width - icon_width - item_spacing * 2.0).max(1.0);
         let reset_position = develop_zoom_to_slider(1.0);
         let mut slider_position = develop_zoom_to_slider(app.preview.zoom);
+        let native_zoom = app.preview.native_zoom;
         let mut requested_zoom = None;
         let mut reset_requested = false;
 
@@ -353,19 +376,32 @@ impl TopBar {
             } else {
                 requested_zoom.unwrap_or(app.preview.zoom)
             };
-            let zoom_text = format!("{:.0}%", displayed_zoom * 100.0);
+            let zoom_text = develop_zoom_readout(displayed_zoom, native_zoom);
             let readout_response = ui.add_sized(
                 [readout_width, moduwu_design::CONTROL_HEIGHT],
                 egui::Label::new(egui::RichText::new(zoom_text).monospace())
                     .sense(egui::Sense::click()),
             );
-            if readout_response.double_clicked() {
-                reset_requested = true;
-            }
+            egui::Popup::menu(&readout_response).show(|ui| {
+                for (label, scale) in DEVELOP_ZOOM_PRESETS {
+                    let available = scale.is_none() || native_zoom.is_some();
+                    if moduwu_design::menu_item(ui, available, label).clicked() {
+                        match scale.zip(native_zoom) {
+                            Some((scale, native)) => requested_zoom = Some(scale * native),
+                            None => reset_requested = true,
+                        }
+                        ui.close();
+                    }
+                }
+            });
 
-            icon_response
-                .union(readout_response)
-                .on_hover_text("Preview zoom. Double-click to reset to 100%.");
+            let ctx = ui.ctx().clone();
+            icon_response.union(readout_response).on_hover_text(format!(
+                "Preview zoom. 100% shows one photo pixel per screen pixel. Click the value for \
+                 Fit and 100%, or press {} and {}. Double-click the photo to switch between them.",
+                ctx.format_shortcut(&crate::ui::preview::ZOOM_FIT_SHORTCUT),
+                ctx.format_shortcut(&crate::ui::preview::ZOOM_NATIVE_SHORTCUT),
+            ));
         });
 
         if reset_requested {
@@ -593,6 +629,15 @@ mod tests {
             TopBar::library_sidebar_default_width(&ctx, 70.0),
             Some(341.0)
         );
+    }
+
+    #[test]
+    fn develop_zoom_readout_shows_fit_and_photo_pixel_scale() {
+        assert_eq!(develop_zoom_readout(1.0, Some(4.0)), "Fit");
+        assert_eq!(develop_zoom_readout(4.0, Some(4.0)), "100%");
+        assert_eq!(develop_zoom_readout(2.0, Some(4.0)), "50%");
+        assert_eq!(develop_zoom_readout(8.0, Some(4.0)), "200%");
+        assert_eq!(develop_zoom_readout(2.0, None), "–");
     }
 
     #[test]

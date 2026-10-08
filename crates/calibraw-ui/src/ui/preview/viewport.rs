@@ -158,6 +158,12 @@ impl PreviewViewport {
         }
     }
 
+    /// The zoom at which one displayed photo pixel covers one physical screen
+    /// pixel. Unclamped; callers clamp to the zoom range.
+    fn native_zoom(&self, ctx: &egui::Context) -> f32 {
+        self.geometry_width as f32 / (self.base_size.x * physical_pixels_per_point(ctx)).max(1.0)
+    }
+
     fn update_image_rect(&mut self) {
         self.image_rect =
             zoomed_image_rect(self.outer_rect, self.base_size, self.zoom, self.center);
@@ -380,6 +386,9 @@ impl Preview {
             );
             viewport.update_image_rect();
         }
+        actions.push(PreviewViewportAction::SetNativeZoom(
+            viewport.native_zoom(ui.ctx()),
+        ));
         // Cancelling a tool gesture reprocesses at the new zoom.
         actions.push(viewport.navigation());
         if multi_touch.is_some() {
@@ -541,16 +550,32 @@ impl Preview {
         }
     }
 
-    /// Ctrl/Cmd +/- step the zoom about the pointer when it is over the
-    /// preview, otherwise about the preview's centre.
+    /// Ctrl/Cmd +/- step the zoom, Ctrl/Cmd 1 shows 100% (1:1) and Ctrl/Cmd 0
+    /// fits. Steps and 100% keep the pointer's pixel in place when the pointer
+    /// is over the preview, otherwise the preview's centre.
     fn zoom_with_keyboard(ui: &Ui, viewport: &mut PreviewViewport) {
-        let Some(factor) = ui.input_mut(keyboard_zoom_factor) else {
+        let Some(zoom) = ui.input_mut(keyboard_zoom) else {
             return;
         };
         let anchor = ui
             .input(|input| input.pointer.hover_pos())
             .filter(|pointer| viewport.outer_rect.contains(*pointer))
             .unwrap_or(viewport.outer_rect.center());
+        let factor = match zoom {
+            KeyboardZoom::Step(factor) => factor,
+            KeyboardZoom::Native => {
+                viewport
+                    .native_zoom(ui.ctx())
+                    .clamp(MIN_PREVIEW_ZOOM, MAX_PREVIEW_ZOOM)
+                    / viewport.zoom
+            }
+            KeyboardZoom::Fit => {
+                viewport.zoom = 1.0;
+                viewport.center = [0.5, 0.5];
+                viewport.moved = true;
+                return;
+            }
+        };
         viewport.moved |= viewport.transform_about(anchor, anchor, factor);
     }
 
@@ -582,9 +607,7 @@ impl Preview {
             viewport.zoom = 1.0;
             viewport.center = [0.5, 0.5];
         } else {
-            let native_zoom = (viewport.geometry_width as f32
-                / (viewport.base_size.x * physical_pixels_per_point(ui.ctx())).max(1.0))
-            .clamp(1.0, MAX_PREVIEW_ZOOM);
+            let native_zoom = viewport.native_zoom(ui.ctx()).clamp(1.0, MAX_PREVIEW_ZOOM);
             let pointer = viewport
                 .response
                 .interact_pointer_pos()
@@ -767,16 +790,31 @@ impl Preview {
     }
 }
 
-/// Consumes Ctrl/Cmd +/- (egui's interface-zoom shortcuts, which CalibRaw
-/// disables) and returns the preview zoom step.
-pub(super) fn keyboard_zoom_factor(input: &mut egui::InputState) -> Option<f32> {
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) enum KeyboardZoom {
+    /// Multiply the zoom by this factor.
+    Step(f32),
+    Fit,
+    /// 100%: one photo pixel per physical screen pixel.
+    Native,
+}
+
+/// Consumes the preview zoom shortcuts: Ctrl/Cmd +/- (egui's interface-zoom
+/// shortcuts, which CalibRaw disables), Ctrl/Cmd 0 and Ctrl/Cmd 1.
+pub(super) fn keyboard_zoom(input: &mut egui::InputState) -> Option<KeyboardZoom> {
     use egui::gui_zoom::kb_shortcuts::{ZOOM_IN, ZOOM_IN_SECONDARY, ZOOM_OUT};
     const STEP: f32 = 1.25;
 
+    if input.consume_shortcut(&ZOOM_FIT_SHORTCUT) {
+        return Some(KeyboardZoom::Fit);
+    }
+    if input.consume_shortcut(&ZOOM_NATIVE_SHORTCUT) {
+        return Some(KeyboardZoom::Native);
+    }
     let zoom_in = input.consume_shortcut(&ZOOM_IN) | input.consume_shortcut(&ZOOM_IN_SECONDARY);
     match (zoom_in, input.consume_shortcut(&ZOOM_OUT)) {
-        (true, false) => Some(STEP),
-        (false, true) => Some(STEP.recip()),
+        (true, false) => Some(KeyboardZoom::Step(STEP)),
+        (false, true) => Some(KeyboardZoom::Step(STEP.recip())),
         _ => None,
     }
 }
