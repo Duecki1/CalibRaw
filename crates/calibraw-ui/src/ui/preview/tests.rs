@@ -249,3 +249,40 @@ mod preview_overlay_tests {
         assert!((zoom_scaled_brush_size(0.08, 4.0, true) - 0.08).abs() < 1e-6);
     }
 }
+
+#[test]
+fn ctrl_plus_and_minus_zoom_the_preview_not_the_interface() {
+    let ctx = egui::Context::default();
+    crate::ui::theme::install(&ctx);
+    let mut factors = Vec::new();
+    for (key, modifiers) in [
+        (egui::Key::Plus, egui::Modifiers::COMMAND),
+        (
+            egui::Key::Plus,
+            egui::Modifiers::COMMAND | egui::Modifiers::SHIFT,
+        ),
+        (egui::Key::Equals, egui::Modifiers::COMMAND),
+        (egui::Key::Minus, egui::Modifiers::COMMAND),
+        (egui::Key::Minus, egui::Modifiers::NONE),
+    ] {
+        let input = egui::RawInput {
+            events: vec![egui::Event::Key {
+                key,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers,
+            }],
+            modifiers,
+            ..Default::default()
+        };
+        let _ = ctx.run_ui(input, |ui| {
+            factors.push(ui.input_mut(viewport::keyboard_zoom_factor));
+        });
+    }
+    assert_eq!(
+        factors,
+        [Some(1.25), Some(1.25), Some(1.25), Some(0.8), None]
+    );
+    assert_eq!(ctx.zoom_factor(), 1.0);
+}
