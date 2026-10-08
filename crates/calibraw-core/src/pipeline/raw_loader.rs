@@ -647,6 +647,35 @@ fn path_is_dng(path: &Path) -> bool {
     }
 }
 
+/// Runs `primary`, and `fallback` only when it fails. Both failures are kept
+/// in the returned error so the user sees why each backend refused the file.
+#[cfg(libraw_available)]
+fn try_with_fallback<T>(
+    path: &Path,
+    operation: &str,
+    (primary_name, primary): (&str, impl FnOnce() -> Result<T>),
+    (fallback_name, fallback): (&str, impl FnOnce() -> Result<T>),
+) -> Result<T> {
+    match primary() {
+        Ok(value) => Ok(value),
+        Err(primary_error) => {
+            let primary_detail = format!("{primary_error:#}");
+            log::warn!(
+                "{primary_name} {operation} failed for {}; falling back to {fallback_name}: {primary_detail}",
+                path.display()
+            );
+            crate::diagnostics::record(format!(
+                "{primary_name} {operation} failed; retrying through {fallback_name}: {primary_detail}"
+            ));
+            fallback().with_context(|| {
+                format!(
+                    "{primary_name} {operation} failed first ({primary_detail}); {fallback_name} fallback also failed"
+                )
+            })
+        }
+    }
+}
+
 #[cfg(libraw_available)]
 fn try_rawler_then_libraw<T>(
     path: &Path,
@@ -654,24 +683,19 @@ fn try_rawler_then_libraw<T>(
     rawler: impl FnOnce() -> Result<T>,
     libraw: impl FnOnce() -> Result<T>,
 ) -> Result<T> {
-    match rawler() {
-        Ok(value) => Ok(value),
-        Err(rawler_error) => {
-            let rawler_detail = format!("{rawler_error:#}");
-            log::warn!(
-                "Rawler {operation} failed for {}; falling back to LibRaw: {rawler_detail}",
-                path.display()
-            );
-            crate::diagnostics::record(format!(
-                "Rawler {operation} failed; retrying through LibRaw: {rawler_detail}"
-            ));
-            libraw().with_context(|| {
-                format!(
-                    "Rawler {operation} failed first ({rawler_detail}); LibRaw fallback also failed"
-                )
-            })
-        }
-    }
+    try_with_fallback(path, operation, ("Rawler", rawler), ("LibRaw", libraw))
+}
+
+/// Proprietary RAWs stay on LibRaw; Rawler only covers files LibRaw rejects,
+/// such as cameras newer than its colour tables.
+#[cfg(libraw_available)]
+fn try_libraw_then_rawler<T>(
+    path: &Path,
+    operation: &str,
+    libraw: impl FnOnce() -> Result<T>,
+    rawler: impl FnOnce() -> Result<T>,
+) -> Result<T> {
+    try_with_fallback(path, operation, ("LibRaw", libraw), ("Rawler", rawler))
 }
 
 /// Decodes any supported photo: camera RAW, TIFF, JPEG, PNG or HEIF.
@@ -720,11 +744,25 @@ pub fn load_raw_file_with_profile_selection(
             },
         )
     } else {
-        libraw_loader::load_raw_file_with_profile_selection(
+        try_libraw_then_rawler(
             path,
-            mode,
-            profile_folder,
-            selected_profile,
+            "RAW decode",
+            || {
+                libraw_loader::load_raw_file_with_profile_selection(
+                    path,
+                    mode,
+                    profile_folder,
+                    selected_profile,
+                )
+            },
+            || {
+                rawler_loader::load_proprietary_raw_file_with_profile_selection(
+                    path,
+                    mode,
+                    profile_folder,
+                    selected_profile,
+                )
+            },
         )
     }
 }
@@ -912,6 +950,58 @@ mod routing_tests {
 
         assert!(message.contains("Rawler reason"));
         assert!(message.contains("LibRaw reason"));
+    }
+
+    #[cfg(libraw_available)]
+    #[test]
+    fn proprietary_libraw_failure_falls_back_to_rawler() {
+        let value = super::try_libraw_then_rawler(
+            Path::new("new-camera.nef"),
+            "test decode",
+            || Err::<u32, _>(anyhow::anyhow!("LibRaw has no colour matrix")),
+            || Ok(42),
+        )
+        .expect("Rawler fallback should recover the decode");
+
+        assert_eq!(value, 42);
+    }
+
+    #[cfg(libraw_available)]
+    #[test]
+    fn proprietary_libraw_success_does_not_call_rawler() {
+        use std::cell::Cell;
+
+        let fallback_called = Cell::new(false);
+        let value = super::try_libraw_then_rawler(
+            Path::new("supported.nef"),
+            "test decode",
+            || Ok(7_u32),
+            || {
+                fallback_called.set(true);
+                Ok(42)
+            },
+        )
+        .expect("LibRaw success should be returned directly");
+
+        assert_eq!(value, 7);
+        assert!(!fallback_called.get());
+    }
+
+    #[cfg(libraw_available)]
+    #[test]
+    fn proprietary_double_failure_preserves_libraw_context() {
+        let error = super::try_libraw_then_rawler::<u32>(
+            Path::new("broken.nef"),
+            "test decode",
+            || Err(anyhow::anyhow!("LibRaw reason")),
+            || Err(anyhow::anyhow!("Rawler reason")),
+        )
+        .expect_err("both decoders should fail");
+        let message = format!("{error:#}");
+
+        assert!(message.contains("LibRaw test decode failed first"));
+        assert!(message.contains("LibRaw reason"));
+        assert!(message.contains("Rawler reason"));
     }
 }
 
