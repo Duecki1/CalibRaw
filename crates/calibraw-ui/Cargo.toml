@@ -19,6 +19,11 @@ crate-type = ["rlib", "cdylib"]
 name = "calibraw"
 path = "src/main.rs"
 
+[features]
+# F-Droid builds deliver updates through F-Droid, so the GitHub release check is
+# compiled out of use: no network request, consent dialog or update settings.
+fdroid = []
+
 [dependencies]
 calibraw-ai.workspace = true
 calibraw-core.workspace = true

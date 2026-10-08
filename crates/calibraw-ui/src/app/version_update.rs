@@ -85,8 +85,11 @@ const fn should_show_update(requested_manually: bool, auto_check: bool, ignored:
     !ignored && (requested_manually || auto_check)
 }
 
+/// False in F-Droid builds (`fdroid` feature), which are updated by F-Droid.
+pub(crate) const GITHUB_UPDATE_CHECKS_AVAILABLE: bool = !cfg!(feature = "fdroid");
+
 const fn github_version_check_permitted(permission: Option<bool>) -> bool {
-    matches!(permission, Some(true))
+    GITHUB_UPDATE_CHECKS_AVAILABLE && matches!(permission, Some(true))
 }
 
 fn fetch_latest_release(permission: Option<bool>) -> Result<Option<AvailableUpdate>, String> {
@@ -179,7 +182,7 @@ impl CalibRawApp {
     }
 
     pub(crate) fn check_for_updates(&mut self, requested_manually: bool) {
-        if self.ui.version_check.receiver.is_some() {
+        if !GITHUB_UPDATE_CHECKS_AVAILABLE || self.ui.version_check.receiver.is_some() {
             return;
         }
         if github_version_check_permitted(self.preferences.github_update_check_allowed) {
@@ -197,6 +200,9 @@ impl CalibRawApp {
     }
 
     pub(crate) fn set_auto_check_updates(&mut self, enabled: bool) {
+        if !GITHUB_UPDATE_CHECKS_AVAILABLE {
+            return;
+        }
         if !enabled {
             if !self.preferences.auto_check_updates {
                 return;
@@ -246,6 +252,9 @@ impl CalibRawApp {
     }
 
     pub(crate) fn review_version_check_privacy(&mut self) {
+        if !GITHUB_UPDATE_CHECKS_AVAILABLE {
+            return;
+        }
         self.ui.version_check.consent_dialog = Some(VersionCheckConsentRequest::Settings);
     }
 
