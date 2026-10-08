@@ -377,3 +377,66 @@ fn explicit_dcp_selection_is_applied() {
     assert_eq!(raw.camera_profile.name.as_deref(), Some("Selected profile"));
     assert!((raw.camera_profile.default_exposure_ev - 0.75).abs() < 1e-6);
 }
+
+#[test]
+fn proprietary_geometry_applies_crop_and_exif_orientation() {
+    let geometry =
+        Geometry::from_sensor_crop(6064, 4040, Some((8, 4, 6048, 4032)), Some(6)).unwrap();
+    assert_eq!(geometry.dimensions(), [4032, 6048]);
+    let (x, y) = geometry.source(0, 0);
+    assert!((8..6056).contains(&x) && (4..4036).contains(&y));
+
+    // Missing or invalid EXIF orientation keeps the sensor upright.
+    for orientation in [None, Some(0), Some(9)] {
+        let geometry = Geometry::from_sensor_crop(64, 40, None, orientation).unwrap();
+        assert_eq!(geometry.dimensions(), [64, 40]);
+        assert_eq!(geometry.source(3, 2), (3, 2));
+    }
+    assert!(Geometry::from_sensor_crop(64, 40, Some((8, 4, 57, 36)), None).is_err());
+    assert!(Geometry::from_sensor_crop(64, 40, Some((8, 4, 56, 37)), None).is_err());
+}
+
+#[test]
+fn camera_database_profile_prefers_a_and_d65_endpoints() {
+    let matrix = |seed: f32| (0..9).map(|i| seed + i as f32).collect::<Vec<_>>();
+    let matrices = HashMap::from([
+        (Illuminant::Daylight, matrix(100.0)),
+        (Illuminant::D65, matrix(20.0)),
+        (Illuminant::A, matrix(10.0)),
+        (Illuminant::D50, vec![1.0; 12]),
+    ]);
+    let color = CameraColor::from_camera_database(&matrices).unwrap();
+    let [first, second] = &color.embedded.matrices;
+    assert_eq!(first.illuminant, Some(17));
+    assert_eq!(second.illuminant, Some(21));
+    assert_eq!(
+        first.color_matrix,
+        Some([
+            [10.0, 11.0, 12.0],
+            [13.0, 14.0, 15.0],
+            [16.0, 17.0, 18.0],
+            [0.0; 3]
+        ])
+    );
+    assert!(!color.declares_as_shot_neutral);
+    assert_eq!(color.baseline_exposure, None);
+
+    let unusable = HashMap::from([
+        (Illuminant::D65, vec![1.0; 12]),
+        (Illuminant::A, vec![f32::NAN; 9]),
+    ]);
+    assert!(CameraColor::from_camera_database(&unusable).is_err());
+}
+
+#[test]
+fn proprietary_loader_leaves_dngs_to_the_dng_backend() {
+    let file = fixture(false, false, false, |_| {});
+    let error = load_proprietary_raw_file_with_profile_selection(
+        file.path(),
+        CameraProfileMode::Automatic,
+        None,
+        None,
+    )
+    .unwrap_err();
+    assert!(format!("{error:#}").contains("Rawler DNG backend"));
+}

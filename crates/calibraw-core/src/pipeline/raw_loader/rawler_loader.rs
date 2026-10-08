@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! Isolated DNG backend. Rawler owns container and pixel decoding;
-//! CalibRaw owns validation and adapts the result to its existing colour pipeline.
+//! Rawler backend. DNGs decode here first; proprietary RAWs reach it only as
+//! a fallback when LibRaw cannot load them (for example a camera LibRaw has no
+//! colour matrix for). Rawler owns container and pixel decoding; CalibRaw owns
+//! validation and adapts the result to its existing colour pipeline.
 
 use super::libraw_loader as shared;
 use super::{
@@ -15,10 +17,12 @@ use rawler::decoders::{
 };
 use rawler::formats::tiff::{Entry, IFD};
 use rawler::imgop::develop::RawDevelop;
+use rawler::imgop::xyz::{FlatColorMatrix, Illuminant};
 use rawler::rawimage::{RawImage, RawImageData, RawPhotometricInterpretation};
 use rawler::rawsource::RawSource;
 use rawler::tags::{DngTag, TiffCommonTag};
 use std::{
+    collections::HashMap,
     panic::{catch_unwind, AssertUnwindSafe},
     path::Path,
     rc::Rc,
@@ -156,6 +160,37 @@ impl Geometry {
             width,
             height,
             orientation: Orientation::from_u16(orientation as u16),
+        })
+    }
+
+    /// Geometry of a proprietary RAW from Rawler's header-only decode. `crop`
+    /// is `(x, y, width, height)` in sensor pixels; `orientation` is the EXIF
+    /// tag, because proprietary decoders leave `RawImage::orientation` unset.
+    fn from_sensor_crop(
+        sensor_width: usize,
+        sensor_height: usize,
+        crop: Option<(usize, usize, usize, usize)>,
+        orientation: Option<u16>,
+    ) -> Result<Self> {
+        sensor_dimensions(sensor_width, sensor_height)?;
+        let (x, y, width, height) = crop.unwrap_or((0, 0, sensor_width, sensor_height));
+        ensure!(
+            x.checked_add(width).is_some_and(|v| v <= sensor_width)
+                && y.checked_add(height).is_some_and(|v| v <= sensor_height),
+            "Rawler crop is outside the sensor bounds"
+        );
+        validate_raw_dimensions(width as u32, height as u32)?;
+        let orientation = orientation
+            .filter(|value| (1..=8).contains(value))
+            .unwrap_or(1);
+        Ok(Self {
+            sensor_width,
+            sensor_height,
+            x,
+            y,
+            width,
+            height,
+            orientation: Orientation::from_u16(orientation),
         })
     }
 
@@ -376,6 +411,76 @@ fn embedded_profile(path: &Path, input: &Input) -> Result<DcpProfile> {
     Ok(profile)
 }
 
+/// Colour metadata consumed by [`adapt`]. DNGs carry it in tags; proprietary
+/// RAWs take it from Rawler's camera database.
+struct CameraColor {
+    embedded: DcpProfile,
+    analog_balance: [[f32; 4]; 4],
+    baseline_exposure: Option<f32>,
+    /// A DNG that declares AsShotNeutral must not fall back to a derived
+    /// white balance when the declared one is unusable.
+    declares_as_shot_neutral: bool,
+}
+
+impl CameraColor {
+    fn from_dng(path: &Path, input: &Input) -> Result<Self> {
+        let embedded = embedded_profile(path, input)?;
+        let mut analog_balance = identity();
+        if let Some(v) = values::<3>(&input.raw, &input.root, DngTag::AnalogBalance)? {
+            ensure!(v.iter().all(|v| *v > 0.0), "invalid DNG analog balance");
+            for c in 0..3 {
+                analog_balance[c][c] = v[c];
+            }
+        }
+        Ok(Self {
+            embedded,
+            analog_balance,
+            baseline_exposure: values::<1>(&input.raw, &input.root, DngTag::BaselineExposure)?
+                .map(|v| v[0]),
+            declares_as_shot_neutral: entry(&input.root, DngTag::AsShotNeutral as u16)
+                .or_else(|| entry(&input.raw, DngTag::AsShotNeutral as u16))
+                .is_some(),
+        })
+    }
+
+    /// Builds a two-illuminant profile from Rawler's XYZ-to-camera matrices
+    /// (Adobe ColorMatrix convention). The A/D65 pair is preferred because the
+    /// DNG interpolation is calibrated for it; other illuminants follow in
+    /// code order so the selection does not depend on `HashMap` iteration.
+    fn from_camera_database(matrices: &HashMap<Illuminant, FlatColorMatrix>) -> Result<Self> {
+        let mut usable = matrices
+            .iter()
+            .filter(|(_, matrix)| matrix.len() == 9 && matrix.iter().all(|v| v.is_finite()))
+            .collect::<Vec<_>>();
+        usable.sort_by_key(|(illuminant, _)| {
+            (
+                !matches!(illuminant, Illuminant::A | Illuminant::D65),
+                u16::from(**illuminant),
+            )
+        });
+        let mut embedded = DcpProfile::default();
+        for (set, (illuminant, m)) in embedded.matrices.iter_mut().zip(usable) {
+            set.illuminant = Some(u16::from(*illuminant));
+            set.color_matrix = Some([
+                [m[0], m[1], m[2]],
+                [m[3], m[4], m[5]],
+                [m[6], m[7], m[8]],
+                [0.0; 3],
+            ]);
+        }
+        ensure!(
+            embedded.matrices[0].color_matrix.is_some(),
+            "Rawler has no RGB colour matrix for this camera"
+        );
+        Ok(Self {
+            embedded,
+            analog_balance: identity(),
+            baseline_exposure: None,
+            declares_as_shot_neutral: false,
+        })
+    }
+}
+
 fn identity() -> [[f32; 4]; 4] {
     std::array::from_fn(|r| std::array::from_fn(|c| if r == c { 1.0 } else { 0.0 }))
 }
@@ -409,13 +514,23 @@ fn capture_metadata(path: &Path, md: &RawMetadata) -> CaptureMetadata {
     capture
 }
 
+fn metadata(decoder: &dyn Decoder, source: &RawSource) -> RawMetadata {
+    decoder
+        .raw_metadata(source, &RawDecodeParams::default())
+        .unwrap_or_else(|error| {
+            log::warn!("Rawler capture metadata unavailable: {error}");
+            RawMetadata::default()
+        })
+}
+
 fn adapt(
     image: RawImage,
-    input: &Input,
+    geometry: Geometry,
+    color: CameraColor,
+    md: RawMetadata,
     path: &Path,
     selected: Option<DcpProfile>,
 ) -> Result<LoadedRaw> {
-    let geometry = input.geometry;
     ensure!(
         image.width == geometry.sensor_width && image.height == geometry.sensor_height,
         "Rawler decoded dimensions differ from the validated header"
@@ -473,7 +588,7 @@ fn adapt(
         black_values[((y % black.height) * black.width + x % black.width) * image.cpp + channel]
     };
 
-    let embedded = embedded_profile(path, input)?;
+    let embedded = color.embedded;
     let xyz_to_cam = embedded
         .matrices
         .iter()
@@ -483,9 +598,7 @@ fn adapt(
     if !wb[..3].iter().all(|v| v.is_finite() && *v > 0.0) {
         // Missing as-shot WB uses the embedded matrix's daylight neutral.
         ensure!(
-            entry(&input.root, DngTag::AsShotNeutral as u16)
-                .or_else(|| entry(&input.raw, DngTag::AsShotNeutral as u16))
-                .is_none(),
+            !color.declares_as_shot_neutral,
             "invalid DNG as-shot neutral"
         );
         for c in 0..3 {
@@ -499,13 +612,6 @@ fn adapt(
     }
     let wb = shared::white_balance(wb, *b"RGB\0");
     let wb_coeffs = [wb[0], wb[1], wb[2], wb[1]];
-    let mut analog = identity();
-    if let Some(v) = values::<3>(&input.raw, &input.root, DngTag::AnalogBalance)? {
-        ensure!(v.iter().all(|v| *v > 0.0), "invalid DNG analog balance");
-        for c in 0..3 {
-            analog[c][c] = v[c];
-        }
-    }
     let (cam_to_srgb, weight, white_balance_model) =
         shared::camera_to_working_matrix_from_profiles(
             xyz_to_cam,
@@ -513,20 +619,12 @@ fn adapt(
             *b"RGB\0",
             Some(&embedded),
             selected.as_ref(),
-            analog,
+            color.analog_balance,
         )?;
     let mut camera_profile = selected
         .map(|p| CameraProfile::from_dcp(p, weight))
         .unwrap_or_default();
-    let baseline = values::<1>(&input.raw, &input.root, DngTag::BaselineExposure)?.map(|v| v[0]);
-    shared::apply_resolved_default_exposure(&mut camera_profile, baseline);
-    let md = input
-        .decoder
-        .raw_metadata(&input.source, &RawDecodeParams::default())
-        .unwrap_or_else(|error| {
-            log::warn!("Rawler capture metadata unavailable: {error}");
-            RawMetadata::default()
-        });
+    shared::apply_resolved_default_exposure(&mut camera_profile, color.baseline_exposure);
     let capture_metadata = capture_metadata(path, &md);
     let [width, height] = geometry.dimensions();
     let pixels = validate_raw_dimensions(width, height)?;
@@ -720,10 +818,62 @@ pub(super) fn load_raw_file_with_profile_selection(
             &image.make,
             &image.model,
         )?;
-        let mut loaded = adapt(image, &input, path, profile)?;
+        let color = CameraColor::from_dng(path, &input)?;
+        let md = metadata(&*input.decoder, &input.source);
+        let mut loaded = adapt(image, input.geometry, color, md, path, profile)?;
         loaded.camera_profile_source = source;
         loaded.available_camera_profiles = candidates;
         crate::diagnostics::record("RAW decode completed through Rawler backend");
+        Ok(loaded)
+    })
+}
+
+/// Decodes a proprietary (non-DNG) RAW through Rawler and its camera
+/// database. The router calls this only after LibRaw has failed.
+pub(super) fn load_proprietary_raw_file_with_profile_selection(
+    path: &Path,
+    mode: CameraProfileMode,
+    folder: Option<&Path>,
+    selected: Option<&Path>,
+) -> Result<LoadedRaw> {
+    guarded(|| {
+        shared::validate_input_file(path, MAX_RAW_FILE_BYTES, "Rawler input")?;
+        let source = RawSource::new(path).context("open Rawler source")?;
+        let decoder = rawler::get_decoder(&source).context("identify Rawler input")?;
+        ensure!(
+            decoder.format_hint() != FormatHint::DNG,
+            "DNG containers use the Rawler DNG backend"
+        );
+        let params = RawDecodeParams::default();
+        // Proprietary decoders expose no sensor bounds through IFDs. A dummy
+        // decode parses the headers without allocating pixels, so the sensor
+        // limits are enforced before the real decode.
+        let header = decoder
+            .raw_image(&source, &params, true)
+            .context("read RAW header with Rawler")?;
+        let md = metadata(&*decoder, &source);
+        let crop = header
+            .crop_area
+            .or(header.active_area)
+            .map(|area| (area.x(), area.y(), area.width(), area.height()));
+        let geometry =
+            Geometry::from_sensor_crop(header.width, header.height, crop, md.exif.orientation)?;
+        let image = decoder
+            .raw_image(&source, &params, false)
+            .context("decode RAW with Rawler")?;
+        let color = CameraColor::from_camera_database(&image.color_matrix)?;
+        let (profile, profile_source, candidates) = shared::resolve_camera_profiles(
+            path,
+            mode,
+            folder,
+            selected,
+            &image.make,
+            &image.model,
+        )?;
+        let mut loaded = adapt(image, geometry, color, md, path, profile)?;
+        loaded.camera_profile_source = profile_source;
+        loaded.available_camera_profiles = candidates;
+        crate::diagnostics::record("RAW decode completed through Rawler fallback backend");
         Ok(loaded)
     })
 }
@@ -735,8 +885,8 @@ pub(super) fn load_raw_file_with_dcp(path: &Path, profile_path: &Path) -> Result
             DcpProfile::from_path(profile_path)?.context("not a DNG camera profile")?;
         let input = open(path)?;
         validate_layout(&input)?;
-        profile.camera_calibration_signature =
-            embedded_profile(path, &input)?.camera_calibration_signature;
+        let color = CameraColor::from_dng(path, &input)?;
+        profile.camera_calibration_signature = color.embedded.camera_calibration_signature.clone();
         let name = profile.name.clone().unwrap_or_else(|| {
             profile_path
                 .file_stem()
@@ -747,7 +897,8 @@ pub(super) fn load_raw_file_with_dcp(path: &Path, profile_path: &Path) -> Result
         let image = input
             .decoder
             .raw_image(&input.source, &RawDecodeParams::default(), false)?;
-        let mut loaded = adapt(image, &input, path, Some(profile))?;
+        let md = metadata(&*input.decoder, &input.source);
+        let mut loaded = adapt(image, input.geometry, color, md, path, Some(profile))?;
         loaded.camera_profile_source = Some(profile_path.to_owned());
         loaded.available_camera_profiles = vec![CameraProfileCandidate {
             path: profile_path.to_owned(),
