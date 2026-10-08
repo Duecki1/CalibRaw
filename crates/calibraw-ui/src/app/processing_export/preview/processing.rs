@@ -54,10 +54,8 @@ impl CalibRawApp {
         });
         self.develop_ui.cancel_white_balance_picker();
         let Some((temperature, tint)) = result else {
-            self.ui.notice = Some(
-                "Could not estimate white balance there. Choose a brighter, unclipped neutral area."
-                    .to_owned(),
-            );
+            self.report_error("White balance", "Could not estimate white balance there. Choose a brighter, unclipped neutral area."
+                    .to_owned(),);
             self.egui_ctx.request_repaint();
             return false;
         };
@@ -163,7 +161,7 @@ impl CalibRawApp {
                 mask_extent,
                 (!mapping_changed).then_some(&self.masks.detail_dirty_layers),
             ) {
-                self.ui.notice = Some(error);
+                self.report_error("Preview failed", error);
                 self.preview.detail_pending_stage = None;
                 return;
             }
@@ -217,9 +215,10 @@ impl CalibRawApp {
                     [detail.source_size[0] as f32, detail.source_size[1] as f32],
                 ),
             ) {
-                self.ui.notice = Some(format!(
-                    "Could not apply Remove to zoomed preview: {error:#}"
-                ));
+                self.report_error(
+                    "Preview failed",
+                    format!("Could not apply Remove to zoomed preview: {error:#}"),
+                );
                 self.preview.detail_pending_stage = None;
                 return;
             }
@@ -356,7 +355,7 @@ impl CalibRawApp {
                 raw,
                 &mut self.masks.dirty_layers,
             ) {
-                self.ui.notice = Some(error);
+                self.report_error("Preview failed", error);
                 self.preview.pending_stage = None;
                 return;
             }
@@ -379,7 +378,10 @@ impl CalibRawApp {
                 &self.develop.target_exposure,
             ),
         ) {
-            self.ui.notice = Some(format!("Could not apply Remove to preview: {error:#}"));
+            self.report_error(
+                "Preview failed",
+                format!("Could not apply Remove to preview: {error:#}"),
+            );
             self.preview.pending_stage = None;
             return;
         }

@@ -71,9 +71,10 @@ impl CalibRawApp {
             ) {
                 Ok(pipeline) => pipeline,
                 Err(error) => {
-                    self.ui.notice = Some(format!(
-                        "Could not prepare the adjusted navigation preview: {error:#}"
-                    ));
+                    self.report_error(
+                        "Preview failed",
+                        format!("Could not prepare the adjusted navigation preview: {error:#}"),
+                    );
                     self.preview.navigation_pending_stage = None;
                     return;
                 }
@@ -81,7 +82,7 @@ impl CalibRawApp {
             if let Err(error) =
                 Self::upload_preview_masks(&pipeline, &render_state.queue, &preview_masks, &raw)
             {
-                self.ui.notice = Some(error);
+                self.report_error("Preview failed", error);
                 self.preview.navigation_pending_stage = None;
                 return;
             }
@@ -95,9 +96,10 @@ impl CalibRawApp {
                     &self.develop.target_exposure,
                 ),
             ) {
-                self.ui.notice = Some(format!(
-                    "Could not apply Remove to navigation preview: {error:#}"
-                ));
+                self.report_error(
+                    "Preview failed",
+                    format!("Could not apply Remove to navigation preview: {error:#}"),
+                );
                 self.preview.navigation_pending_stage = None;
                 return;
             }
@@ -128,7 +130,7 @@ impl CalibRawApp {
                 &preview.raw,
                 &mut self.masks.navigation_dirty_layers,
             ) {
-                self.ui.notice = Some(error);
+                self.report_error("Preview failed", error);
                 self.preview.navigation_pending_stage = None;
                 return;
             }
@@ -162,9 +164,10 @@ impl CalibRawApp {
                     &self.develop.target_exposure,
                 ),
             ) {
-                self.ui.notice = Some(format!(
-                    "Could not apply Remove to navigation preview: {error:#}"
-                ));
+                self.report_error(
+                    "Preview failed",
+                    format!("Could not apply Remove to navigation preview: {error:#}"),
+                );
                 self.preview.navigation_pending_stage = None;
                 return;
             }

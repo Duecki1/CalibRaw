@@ -135,7 +135,10 @@ impl CalibRawApp {
             return false;
         };
         let Some(render_state) = frame.wgpu_render_state() else {
-            self.ui.notice = Some("GPU rendering is unavailable for Remove.".to_owned());
+            self.report_error(
+                "Retouch failed",
+                "GPU rendering is unavailable for Remove.".to_owned(),
+            );
             return false;
         };
         #[cfg(not(target_os = "android"))]
@@ -199,7 +202,10 @@ impl CalibRawApp {
             return;
         };
         let Some(render_state) = frame.wgpu_render_state() else {
-            self.ui.notice = Some("GPU rendering is unavailable for retouch brushes.".to_owned());
+            self.report_error(
+                "Retouch failed",
+                "GPU rendering is unavailable for retouch brushes.".to_owned(),
+            );
             return;
         };
         let cancellation = Arc::new(AtomicBool::new(false));
@@ -326,7 +332,10 @@ impl CalibRawApp {
                                 let tool = pending_retouch
                                     .map(|retouch| retouch.tool.label())
                                     .unwrap_or("Remove");
-                                self.ui.notice = Some(format!("{tool} failed: {error}"));
+                                self.report_error(
+                                    "Retouch failed",
+                                    format!("{tool} failed: {error}"),
+                                );
                                 calibraw_core::diagnostics::record(format!(
                                     "{tool} failed: {error}"
                                 ));

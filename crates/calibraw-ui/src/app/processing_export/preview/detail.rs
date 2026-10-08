@@ -83,7 +83,10 @@ impl CalibRawApp {
             }
             Err(error) => {
                 self.retry_preview_detail_later();
-                self.ui.notice = Some(format!("Could not start zoom-preview preparation: {error}"));
+                self.report_error(
+                    "Preview failed",
+                    format!("Could not start zoom-preview preparation: {error}"),
+                );
             }
         }
     }
@@ -100,7 +103,10 @@ impl CalibRawApp {
             Some(Err(std::sync::mpsc::TryRecvError::Disconnected)) => {
                 self.preview.detail_rebuild_receiver = None;
                 self.retry_preview_detail_later();
-                self.ui.notice = Some("Zoom-preview worker stopped unexpectedly.".to_owned());
+                self.report_error(
+                    "Preview failed",
+                    "Zoom-preview worker stopped unexpectedly.".to_owned(),
+                );
                 None
             }
             Some(Err(std::sync::mpsc::TryRecvError::Empty)) | None => None,
@@ -113,7 +119,10 @@ impl CalibRawApp {
             Ok(prepared) => prepared,
             Err(error) => {
                 self.retry_preview_detail_later();
-                self.ui.notice = Some(format!("Could not prepare the zoomed preview: {error}"));
+                self.report_error(
+                    "Preview failed",
+                    format!("Could not prepare the zoomed preview: {error}"),
+                );
                 return;
             }
         };
@@ -256,9 +265,10 @@ impl CalibRawApp {
                 .gpu()
                 .upload_raw_tile(&render_state.queue, &detail_raw)
             {
-                self.ui.notice = Some(format!(
-                    "Could not update the zoomed preview crop: {error:#}"
-                ));
+                self.report_error(
+                    "Preview failed",
+                    format!("Could not update the zoomed preview crop: {error:#}"),
+                );
                 return false;
             }
             if let Err(error) = Self::upload_detail_masks(
@@ -270,7 +280,7 @@ impl CalibRawApp {
                 mask_extent,
                 None,
             ) {
-                self.ui.notice = Some(error);
+                self.report_error("Preview failed", error);
                 return false;
             }
             if let Err(error) = detail.pipeline.gpu().dispatch_stage_with_remove(
@@ -286,9 +296,10 @@ impl CalibRawApp {
                     [crop_width as f32, crop_height as f32],
                 ),
             ) {
-                self.ui.notice = Some(format!(
-                    "Could not apply Remove to zoomed preview: {error:#}"
-                ));
+                self.report_error(
+                    "Preview failed",
+                    format!("Could not apply Remove to zoomed preview: {error:#}"),
+                );
                 return false;
             }
             if let Some(full_frame) = full_frame_tone_pipeline {
@@ -353,7 +364,10 @@ impl CalibRawApp {
         ) {
             Ok(pipeline) => pipeline,
             Err(error) => {
-                self.ui.notice = Some(format!("Could not render the zoomed preview: {error:#}"));
+                self.report_error(
+                    "Preview failed",
+                    format!("Could not render the zoomed preview: {error:#}"),
+                );
                 return false;
             }
         };
@@ -366,7 +380,7 @@ impl CalibRawApp {
             mask_extent,
             None,
         ) {
-            self.ui.notice = Some(error);
+            self.report_error("Preview failed", error);
             return false;
         }
         if let Err(error) = pipeline.dispatch_stage_with_remove(
@@ -382,9 +396,10 @@ impl CalibRawApp {
                 [crop_width as f32, crop_height as f32],
             ),
         ) {
-            self.ui.notice = Some(format!(
-                "Could not apply Remove to zoomed preview: {error:#}"
-            ));
+            self.report_error(
+                "Preview failed",
+                format!("Could not apply Remove to zoomed preview: {error:#}"),
+            );
             return false;
         }
         if let Some(full_frame) = full_frame_tone_pipeline {

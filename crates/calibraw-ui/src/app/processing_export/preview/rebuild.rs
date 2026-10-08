@@ -295,7 +295,10 @@ impl CalibRawApp {
             Some(Err(std::sync::mpsc::TryRecvError::Disconnected)) => {
                 self.preview.rebuild_receiver = None;
                 self.preview.quality_dirty = false;
-                self.ui.notice = Some("Preview rebuild worker stopped unexpectedly.".to_owned());
+                self.report_error(
+                    "Preview failed",
+                    "Preview rebuild worker stopped unexpectedly.".to_owned(),
+                );
                 None
             }
             Some(Err(std::sync::mpsc::TryRecvError::Empty)) | None => None,
@@ -308,7 +311,10 @@ impl CalibRawApp {
             Ok(prepared) => prepared,
             Err(error) => {
                 self.preview.quality_dirty = false;
-                self.ui.notice = Some(format!("Could not prepare the preview proxy: {error}"));
+                self.report_error(
+                    "Preview failed",
+                    format!("Could not prepare the preview proxy: {error}"),
+                );
                 return;
             }
         };
@@ -376,7 +382,10 @@ impl CalibRawApp {
             Ok(pipeline) => pipeline,
             Err(error) => {
                 self.preview.quality_dirty = false;
-                self.ui.notice = Some(format!("Could not rebuild the GPU preview: {error:#}"));
+                self.report_error(
+                    "Preview failed",
+                    format!("Could not rebuild the GPU preview: {error:#}"),
+                );
                 return;
             }
         };
@@ -390,7 +399,7 @@ impl CalibRawApp {
             &preview_masks,
             &prepared.preview_raw,
         ) {
-            self.ui.notice = Some(error);
+            self.report_error("Preview failed", error);
             self.preview.quality_dirty = false;
             return;
         }
@@ -407,9 +416,10 @@ impl CalibRawApp {
                     [full_raw.width as f32, full_raw.height as f32],
                 ),
             ) {
-                self.ui.notice = Some(format!(
-                    "Could not apply Remove to rebuilt preview: {error:#}"
-                ));
+                self.report_error(
+                    "Preview failed",
+                    format!("Could not apply Remove to rebuilt preview: {error:#}"),
+                );
                 self.preview.quality_dirty = false;
                 return;
             }
@@ -579,7 +589,10 @@ impl CalibRawApp {
                     .request_repaint_after(Duration::from_millis(50));
             }
             Err(error) => {
-                self.ui.notice = Some(format!("Could not start preview rebuild: {error}"));
+                self.report_error(
+                    "Preview failed",
+                    format!("Could not start preview rebuild: {error}"),
+                );
             }
         }
     }

@@ -277,7 +277,7 @@ impl CalibRawApp {
             match self.prepare_android_export_destination(display_name, cache_file_name, format) {
                 Ok(destination) => destination,
                 Err(error) => {
-                    self.ui.notice = Some(error);
+                    self.report_error("Export failed", error);
                     return;
                 }
             };
@@ -302,20 +302,25 @@ impl CalibRawApp {
             return;
         };
         if published.uri.is_empty() {
-            self.ui.notice = Some(format!(
-                "Exported to {}, but Android did not provide a link to share it.",
-                published.location
-            ));
+            self.report_error(
+                "Sharing failed",
+                format!(
+                    "Exported to {}, but Android did not provide a link to share it.",
+                    published.location
+                ),
+            );
             return;
         }
         if let Err(error) =
             calibraw_ffi::share_export(&self.android.android_app, &published.uri, mime_type)
         {
-            self.ui.notice = Some(format!(
-                "Exported to {}, but sharing failed: {error}",
-                published.location
-            ));
-            log::error!("Android export share failed: {error}");
+            self.report_error(
+                "Sharing failed",
+                format!(
+                    "Exported to {}, but sharing failed: {error}",
+                    published.location
+                ),
+            );
         }
     }
 
@@ -384,7 +389,10 @@ impl CalibRawApp {
 
         let raw = self.develop.loaded_raw.as_ref().map(Arc::clone)?;
         let Some(render_state) = frame.wgpu_render_state() else {
-            self.ui.notice = Some("eframe is not running with the wgpu backend.".to_owned());
+            self.report_error(
+                "Export failed",
+                "eframe is not running with the wgpu backend.",
+            );
             return None;
         };
         let source_file_name = self
@@ -434,7 +442,7 @@ impl CalibRawApp {
         }
         let request = self.capture_export_task_request(destination, frame, format)?;
         if let Err(error) = self.start_export_task(request, ExportTaskKind::Single) {
-            self.ui.notice = Some(format!("Export failed: {error}"));
+            self.report_error("Export failed", format!("Export failed: {error}"));
             return None;
         }
         Some(())
@@ -635,9 +643,10 @@ impl CalibRawApp {
                                                 } else {
                                                     self.export.task = None;
                                                 }
-                                                self.ui.notice =
-                                                    Some(format!("Export failed: {error}"));
-                                                log::error!("Android direct export finalize failed: {error}");
+                                                self.report_error(
+                                                    "Export failed",
+                                                    format!("Export failed: {error}"),
+                                                );
                                             }
                                         }
                                     }
@@ -672,8 +681,10 @@ impl CalibRawApp {
                                                 } else {
                                                     self.export.task = None;
                                                 }
-                                                self.ui.notice =
-                                                    Some(format!("Export failed: {error}"));
+                                                self.report_error(
+                                                    "Export failed",
+                                                    format!("Export failed: {error}"),
+                                                );
                                             }
                                         }
                                     }
@@ -684,8 +695,10 @@ impl CalibRawApp {
                                         } else {
                                             self.export.task = None;
                                         }
-                                        self.ui.notice = Some(format!("Export failed: {error}"));
-                                        log::error!("Android export finalization failed: {error}");
+                                        self.report_error(
+                                            "Export failed",
+                                            format!("Export failed: {error}"),
+                                        );
                                     }
                                 }
                             }
@@ -708,8 +721,10 @@ impl CalibRawApp {
                                 self.ui.notice = Some("Export cancelled.".to_owned());
                                 log::info!("export cancelled");
                             } else {
-                                self.ui.notice = Some(format!("Export failed: {error}"));
-                                log::error!("export failed: {error}");
+                                self.report_error(
+                                    "Export failed",
+                                    format!("Export failed: {error}"),
+                                );
                             }
                         }
                     }
@@ -721,7 +736,7 @@ impl CalibRawApp {
             if let Some(task) = self.export.task.as_mut() {
                 task.receiver = None;
             }
-            self.ui.notice = Some("Export worker stopped unexpectedly.".to_owned());
+            self.report_error("Export failed", "Export worker stopped unexpectedly.");
             #[cfg(target_os = "android")]
             {
                 calibraw_ffi::cancel_all_direct_exports(&self.android.android_app);

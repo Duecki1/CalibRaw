@@ -80,8 +80,10 @@ impl CalibRawApp {
         }
 
         let Some(source) = self.masks.source_cache.clone() else {
-            self.ui.notice =
-                Some("The original image source is unavailable for object selection.".to_owned());
+            self.report_error(
+                "Object selection failed",
+                "The original image source is unavailable for object selection.".to_owned(),
+            );
             return;
         };
         let (strokes, brush_size, edge_refine) = {
@@ -133,7 +135,10 @@ impl CalibRawApp {
             cache,
         };
         let Some(target) = self.masks.capture_ai_target(mask_index, component_index) else {
-            self.ui.notice = Some("The selected object mask is no longer available.".to_owned());
+            self.report_error(
+                "Object selection failed",
+                "The selected object mask is no longer available.".to_owned(),
+            );
             return;
         };
         self.ai.object_pending_target = None;
@@ -327,9 +332,11 @@ impl CalibRawApp {
                     "Object selection did not produce a mask.".to_owned()
                 }
             });
-            self.ui.notice = Some(message.clone());
             if failed_during_inference {
+                self.ui.notice = Some(message.clone());
                 self.ai.object_error_dialog = Some(message);
+            } else {
+                self.report_error("Object selection failed", message);
             }
         }
         self.egui_ctx.request_repaint();

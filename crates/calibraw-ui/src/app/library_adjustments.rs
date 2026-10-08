@@ -209,7 +209,7 @@ impl CalibRawApp {
                     self.android.picker_pending = true;
                 }
                 Err(error) => {
-                    self.ui.notice = Some(format!(
+                    self.report_error("Library adjustment failed", format!(
                         "The adjustments were applied, but the camera profile could not be reloaded: {error}"
                     ));
                     return;
@@ -895,7 +895,11 @@ impl CalibRawApp {
             )
         };
         self.library.set_status(summary.clone());
-        self.ui.notice = Some(summary);
+        if state.failures.is_empty() {
+            self.ui.notice = Some(summary);
+        } else {
+            self.report_error("AI mask refresh failed", summary);
+        }
         self.egui_ctx.request_repaint();
     }
 }

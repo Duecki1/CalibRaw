@@ -92,7 +92,7 @@ impl CalibRawApp {
             return;
         }
         if let Err(error) = self.discord_presence.set_enabled(enabled) {
-            self.ui.notice = Some(error);
+            self.report_error("Settings error", error);
             return;
         }
 
@@ -203,7 +203,10 @@ impl CalibRawApp {
                 self.library.refresh(&self.egui_ctx);
             }
             Err(error) => {
-                self.ui.notice = Some(format!("Could not clear thumbnail cache: {error}"));
+                self.report_error(
+                    "Settings error",
+                    format!("Could not clear thumbnail cache: {error}"),
+                );
                 self.library
                     .set_status("Could not clear the thumbnail cache.");
             }

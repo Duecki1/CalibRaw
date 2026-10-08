@@ -430,16 +430,14 @@ impl CalibRawApp {
         let (Some(runtime_path), Some(runtime_sha256)) =
             (self.ai.runtime_path.clone(), self.ai.runtime_sha256.clone())
         else {
-            self.ui.notice = Some(
-                "Manual ONNX Runtime mode requires a shared library under Settings. Select one or switch to Automatic."
-                    .to_owned(),
-            );
+            self.report_error("AI unavailable", "Manual ONNX Runtime mode requires a shared library under Settings. Select one or switch to Automatic."
+                    .to_owned(),);
             return false;
         };
         match calibraw_ai::ai_masks::probe_runtime_subprocess(&runtime_path, &runtime_sha256) {
             Ok(()) => true,
             Err(error) => {
-                self.ui.notice = Some(format!(
+                self.report_error("AI unavailable", format!(
                     "ONNX Runtime validation failed: {error:#}. Select a different onnxruntime.dll in Settings."
                 ));
                 false

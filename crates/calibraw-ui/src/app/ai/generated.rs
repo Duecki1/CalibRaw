@@ -121,10 +121,13 @@ impl CalibRawApp {
             return;
         }
         let Some(source) = self.masks.source_cache.clone() else {
-            self.ui.notice = Some(format!(
-                "The preview could not be prepared for {} selection.",
-                model.noun()
-            ));
+            self.report_error(
+                "AI mask failed",
+                format!(
+                    "The preview could not be prepared for {} selection.",
+                    model.noun()
+                ),
+            );
             return;
         };
         let model_path = self.generated_model_path(model);
@@ -283,7 +286,7 @@ impl CalibRawApp {
                     format!("{} selection did not produce a mask.", model.label())
                 }
             });
-            self.ui.notice = Some(message);
+            self.report_error("AI mask failed", message);
         }
         self.egui_ctx.request_repaint();
     }

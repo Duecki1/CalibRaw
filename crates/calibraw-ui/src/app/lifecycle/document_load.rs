@@ -5,6 +5,11 @@
 use super::*;
 use std::sync::RwLock;
 
+/// The load notice for edits migrated to the current sidecar format. It is
+/// informational; every other load warning reports a problem.
+pub(super) const SIDECAR_MIGRATED_NOTICE: &str =
+    "Loaded edits were migrated to the current sidecar format.";
+
 /// A RAW file to open in Develop.
 pub(crate) struct DocumentSource {
     pub(crate) path: PathBuf,
@@ -459,9 +464,7 @@ impl InitialEdits {
                 }
             }
             Ok(Some(loaded)) => {
-                let warning = loaded.migrated.then(|| {
-                    "Loaded edits were migrated to the current sidecar format.".to_owned()
-                });
+                let warning = loaded.migrated.then(|| SIDECAR_MIGRATED_NOTICE.to_owned());
                 Self::from_edits(
                     loaded.edits,
                     loaded.editing_time_ms,

@@ -187,9 +187,10 @@ impl CalibRawApp {
             if let Err(error) = calibraw_ai::ai_masks::initialize_runtime(None, None) {
                 self.develop.exposure.ai_denoise_enabled = false;
                 self.develop.target_exposure.ai_denoise_enabled = false;
-                self.ui.notice = Some(format!(
-                    "Could not initialize Android AI denoise: {error:#}"
-                ));
+                self.report_error(
+                    "AI denoise failed",
+                    format!("Could not initialize Android AI denoise: {error:#}"),
+                );
                 calibraw_core::diagnostics::record(format!(
                     "Android RawNIND runtime initialization failed before worker start: {error:#}"
                 ));
@@ -198,7 +199,10 @@ impl CalibRawApp {
             }
         }
         let Some(render_state) = frame.wgpu_render_state() else {
-            self.ui.notice = Some("AI denoise requires CalibRaw's wgpu renderer.".to_owned());
+            self.report_error(
+                "AI denoise failed",
+                "AI denoise requires CalibRaw's wgpu renderer.".to_owned(),
+            );
             self.develop.exposure.ai_denoise_enabled = false;
             self.develop.target_exposure.ai_denoise_enabled = false;
             return;
@@ -367,13 +371,20 @@ impl CalibRawApp {
                     .and_then(|raw| raw.set_ai_denoised_image(image));
                 match install {
                     Ok(()) => {
-                        self.ui.notice = Some(match save_error {
-                            Some(error) => format!(
-                                "AI denoise applied, but its result could not be saved next to the photo ({error}). It will need to run again the next time the photo is opened."
+                        match save_error {
+                            Some(error) => self.report_error(
+                                "AI denoise not saved",
+                                format!(
+                                    "AI denoise applied, but its result could not be saved next to the photo ({error}). It will need to run again the next time the photo is opened."
+                                ),
                             ),
-                            None => "AI denoise applied locally. Standard denoise values were preserved."
-                                .to_owned(),
-                        });
+                            None => {
+                                self.ui.notice = Some(
+                                    "AI denoise applied locally. Standard denoise values were preserved."
+                                        .to_owned(),
+                                );
+                            }
+                        }
                     }
                     Err(error) => {
                         let changed = self.develop.exposure.ai_denoise_enabled;
@@ -382,7 +393,7 @@ impl CalibRawApp {
                         if changed {
                             self.note_edit_changed();
                         }
-                        self.ui.notice = Some(format!("Could not install AI denoise: {error:#}"));
+                        self.report_error("AI denoise failed", format!("Could not install AI denoise: {error:#}"));
                     }
                 }
             }
@@ -403,7 +414,7 @@ impl CalibRawApp {
                     self.note_edit_changed();
                 }
                 if !error.contains("cancelled") {
-                    self.ui.notice = Some(format!("AI denoise failed: {error}"));
+                    self.report_error("AI denoise failed", format!("AI denoise failed: {error}"));
                 }
             }
         }

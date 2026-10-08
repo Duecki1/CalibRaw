@@ -366,7 +366,10 @@ impl CalibRawApp {
     ) {
         if targets.is_empty() || self.export.task.is_some() {
             if self.export.task.is_some() {
-                self.ui.notice = Some("An export is already running.".to_owned());
+                self.report_error(
+                    "Export unavailable",
+                    "An export is already running.".to_owned(),
+                );
             }
             return;
         }
@@ -665,7 +668,11 @@ impl CalibRawApp {
                 batch.failures.join(" · ")
             ));
         }
-        self.ui.notice = Some(message);
+        if batch.failures.is_empty() {
+            self.ui.notice = Some(message);
+        } else {
+            self.report_error("Batch export failed", message);
+        }
         self.export.task = None;
         self.egui_ctx.request_repaint();
     }
@@ -680,12 +687,15 @@ impl CalibRawApp {
     ) {
         if jobs.is_empty() || self.export.task.is_some() {
             if self.export.task.is_some() {
-                self.ui.notice = Some("An export is already running.".to_owned());
+                self.report_error(
+                    "Export unavailable",
+                    "An export is already running.".to_owned(),
+                );
             }
             return;
         }
         let Some(render_state) = frame.wgpu_render_state() else {
-            self.ui.notice = Some("Export requires the wgpu renderer.".to_owned());
+            self.report_error("Batch export failed", "Export requires the wgpu renderer.");
             return;
         };
         let pending = jobs
@@ -763,8 +773,7 @@ impl CalibRawApp {
                 }
                 calibraw_ffi::ExportPublishResult::Failed(error) => {
                     self.export.share_mime_type = None;
-                    self.ui.notice = Some(format!("Export failed: {error}"));
-                    log::error!("Android export publish failed: {error}");
+                    self.report_error("Export failed", format!("Export failed: {error}"));
                 }
             }
             self.export.task = None;
