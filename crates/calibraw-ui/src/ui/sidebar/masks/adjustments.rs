@@ -49,8 +49,9 @@ pub(super) struct LocalAdjustmentResponse {
 }
 
 /// Applies a local adjustment card's response to its mask and returns whether
-/// the mask changed.
+/// the mask changed. An added effect's card scrolls into view.
 pub(super) fn apply_local_adjustment_response(
+    ctx: &egui::Context,
     mask: &mut LocalMask,
     response: LocalAdjustmentResponse,
 ) -> bool {
@@ -60,6 +61,11 @@ pub(super) fn apply_local_adjustment_response(
     if let Some(effect) = response.added_effect {
         mask.effect_components
             .push(crate::pipeline::EffectComponent::new(effect));
+        crate::ui::components::scroll_into_view::request(
+            ctx,
+            mask_effects::effect_card_scroll_target(effect),
+            None,
+        );
     }
     response.changed || response.added_effect.is_some()
 }
