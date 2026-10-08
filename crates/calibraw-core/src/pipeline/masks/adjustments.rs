@@ -18,8 +18,6 @@ pub struct LocalAdjustments {
     pub texture: f32,
     pub clarity: f32,
     pub dehaze: f32,
-    #[serde(default)]
-    pub halation_amount: f32,
     pub tone_curve: crate::pipeline::PointCurve,
     pub tone_curve_red: crate::pipeline::PointCurve,
     pub tone_curve_green: crate::pipeline::PointCurve,
@@ -52,7 +50,6 @@ impl Default for LocalAdjustments {
             texture: adjustment::TEXTURE.default,
             clarity: adjustment::CLARITY.default,
             dehaze: adjustment::DEHAZE.default,
-            halation_amount: adjustment::HALATION.default,
             tone_curve: crate::pipeline::PointCurve::linear(),
             tone_curve_red: crate::pipeline::PointCurve::linear(),
             tone_curve_green: crate::pipeline::PointCurve::linear(),

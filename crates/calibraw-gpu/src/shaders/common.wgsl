@@ -8,7 +8,7 @@ struct MaskData {
     adjust_0_field: vec4<f32>,
     adjust_1_field: vec4<f32>,
     adjust_2_field: vec4<f32>,
-    film_effects: vec4<f32>,
+    effect_options: vec4<f32>,
     curves: array<vec4<f32>, 9>,
     grade_shadows: vec4<f32>,
     grade_midtones: vec4<f32>,
@@ -123,12 +123,13 @@ struct PointColor {
 }
 
 struct EffectsUniforms {
+    // Texture, clarity, dehaze, reserved.
     presence: vec4<f32>,
-    creative_effects: vec4<f32>,
-    // Halation amount, grain amount, any active halation, reserved.
-    film_effects: vec4<f32>,
-    vignette: vec4<f32>,
-    vignette_options: vec4<f32>,
+    // Sharpening amount, radius, detail, masking.
+    sharpen: vec4<f32>,
+    // Radius of the shared Glow diffusion, reserved, reserved, reserved.
+    glow_diffusion: vec4<f32>,
+    // The frame and calibration of Vignette effects.
     vignette_frame: vec4<f32>,
     vignette_transform: vec4<f32>,
     vignette_dark_half_fit: vec4<f32>,

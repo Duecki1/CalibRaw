@@ -114,12 +114,13 @@ const _: () =
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
 pub(super) struct EffectsUniforms {
+    // Texture, clarity, dehaze, reserved.
     pub(super) presence: [f32; 4],
-    pub(super) creative_effects: [f32; 4],
-    // Halation amount, grain amount, any active halation, reserved.
-    pub(super) film_effects: [f32; 4],
-    pub(super) vignette: [f32; 4],
-    pub(super) vignette_options: [f32; 4],
+    // Sharpening amount, radius, detail, masking.
+    pub(super) sharpen: [f32; 4],
+    // Radius of the shared Glow diffusion, reserved, reserved, reserved.
+    pub(super) glow_diffusion: [f32; 4],
+    // The frame and calibration of Vignette effects.
     pub(super) vignette_frame: [f32; 4],
     pub(super) vignette_transform: [f32; 4],
     pub(super) vignette_dark_half_fit: [f32; 4],
@@ -133,7 +134,7 @@ pub(super) struct EffectsUniforms {
 
 const _: () =
     assert!(std::mem::size_of::<EffectsUniforms>() == EFFECTS_UNIFORMS_SIZE_BYTES as usize);
-const _: () = assert!(GPU_STAGE_UNIFORM_SIZE_BYTES == 2_256);
+const _: () = assert!(GPU_STAGE_UNIFORM_SIZE_BYTES == 2_224);
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
@@ -142,8 +143,8 @@ pub(super) struct MaskData {
     pub(super) adjust_0: [f32; 4],
     pub(super) adjust_1: [f32; 4],
     pub(super) adjust_2: [f32; 4],
-    // Local halation amount; remaining lanes reserved (grain is global only).
-    pub(super) film_effects: [f32; 4],
+    // Per-slot switches of effect slots (`effect_lanes::options`).
+    pub(super) effect_options: [f32; 4],
     pub(super) curves: [[f32; 4]; LOCAL_POINT_CURVE_BLOCKS],
     pub(super) grade_shadows: [f32; 4],
     pub(super) grade_midtones: [f32; 4],
@@ -502,8 +503,6 @@ impl GpuParams {
             || self.effects.presence[..3]
                 .iter()
                 .any(|value| value.abs() > 1e-6);
-        let creative =
-            self.effects.creative_effects[0].abs() > 1e-6 || self.effects.film_effects[0] > 1e-6;
         let local_count = (self.scene_tone.mask_counts[0] as usize).min(MAX_RENDER_MASK_SLOTS);
         let local_effects = (0..local_count).any(|index| {
             let local = self.mask_data[index];
@@ -541,23 +540,16 @@ impl GpuParams {
                 || local.adjust_1[3].abs() > 1e-6;
             let curves = state[2] != 0;
             let presence_or_saturation = local.adjust_2.iter().any(|value| value.abs() > 1e-6);
-            tone || white_balance
-                || curves
-                || presence_or_saturation
-                || local.film_effects[0] > 1e-6
+            tone || white_balance || curves || presence_or_saturation
         });
-        global_effects || creative || local_effects
+        global_effects || local_effects
     }
 
     pub(super) fn needs_glow_passes(&self) -> bool {
-        if self.effects.creative_effects[0].abs() > 1e-6 || self.effects.film_effects[0] > 1e-6 {
-            return true;
-        }
         let local_count = (self.scene_tone.mask_counts[0] as usize).min(MAX_RENDER_MASK_SLOTS);
-        self.mask_data[..local_count].iter().any(|mask| {
-            (mask.metadata[0] != 0 && mask.film_effects[0] > 1e-6)
-                || is_self_illuminating_glow(mask)
-        })
+        self.mask_data[..local_count]
+            .iter()
+            .any(is_self_illuminating_glow)
     }
 
     /// Whether an active Pixelate effect reads the block cache. Mirrors

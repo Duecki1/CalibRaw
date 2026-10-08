@@ -425,30 +425,27 @@ mod tests {
             MIN_EXPORT_TILE_HALO
         );
 
-        exposure.grain_amount = 100.0;
+        let mut film_masks = MaskStack::default();
+        for effect in [MaskEffect::Grain, MaskEffect::Vignette] {
+            film_masks
+                .global_effects
+                .push(crate::pipeline::EffectComponent::new(effect));
+        }
         assert_eq!(
-            required_export_tile_halo(&exposure, &masks),
+            required_export_tile_halo(&exposure, &film_masks),
             MIN_EXPORT_TILE_HALO
         );
-        exposure.halation_amount = 100.0;
-        let halation_halo = required_export_tile_halo(&exposure, &masks);
+        film_masks
+            .global_effects
+            .push(crate::pipeline::EffectComponent::new(MaskEffect::Halation));
+        let halation_halo = required_export_tile_halo(&exposure, &film_masks);
         assert!(halation_halo > MIN_EXPORT_TILE_HALO);
-        exposure.halation_amount = 0.0;
-        let mut halation_masks = MaskStack::default();
-        halation_masks.add_mask(crate::pipeline::MaskKind::Fullscreen);
-        halation_masks.masks[0].adjustments.halation_amount = 100.0;
+        film_masks.global_effects[2].enabled = false;
         assert_eq!(
-            required_export_tile_halo(&exposure, &halation_masks),
-            halation_halo
-        );
-        halation_masks.masks[0].enabled = false;
-        assert_eq!(
-            required_export_tile_halo(&exposure, &halation_masks),
+            required_export_tile_halo(&exposure, &film_masks),
             MIN_EXPORT_TILE_HALO
         );
 
-        exposure.glow_amount = 1.0;
-        assert!(required_export_tile_halo(&exposure, &masks) > MIN_EXPORT_TILE_HALO);
         exposure.clarity = 1.0;
         exposure.chroma_denoise = 1.0;
         exposure.denoise_quality = DenoiseQuality::High;
@@ -459,6 +456,9 @@ mod tests {
         neon_masks.masks[2].effect = MaskEffect::Blur;
         neon_masks.add_mask(crate::pipeline::MaskKind::Fullscreen);
         neon_masks.masks[3].effect = MaskEffect::LensBlur;
+        neon_masks
+            .global_effects
+            .push(crate::pipeline::EffectComponent::new(MaskEffect::Glow));
         assert_eq!(
             required_export_tile_halo(&exposure, &neon_masks),
             EXPORT_TILE_HALO
@@ -611,14 +611,8 @@ mod tests {
         stack.masks[0]
             .effect_components
             .push(EffectComponent::new(MaskEffect::Halation));
-        stack.masks[0].adjustments.halation_amount = 50.0;
-        let legacy_exposure = ExposureParams {
-            halation_amount: 50.0,
-            glow_amount: 50.0,
-            ..exposure
-        };
         assert_eq!(
-            required_export_tile_halo(&legacy_exposure, &stack),
+            required_export_tile_halo(&exposure, &stack),
             neighborhood_halo
         );
 
@@ -635,7 +629,7 @@ mod tests {
             component.settings.glow.radius = crate::pipeline::effect_params::glow::RADIUS.max;
         }
         assert_eq!(
-            required_export_tile_halo(&legacy_exposure, &stack),
+            required_export_tile_halo(&exposure, &stack),
             neighborhood_halo
         );
     }
@@ -649,11 +643,10 @@ mod tests {
             ..Default::default()
         };
         type AdjustmentCase = (fn(&mut LocalAdjustments) -> &mut f32, u32);
-        let cases: [AdjustmentCase; 4] = [
+        let cases: [AdjustmentCase; 3] = [
             (|a| &mut a.texture, super::LOCAL_EFFECTS_SUPPORT),
             (|a| &mut a.clarity, super::LOCAL_EFFECTS_SUPPORT),
             (|a| &mut a.dehaze, super::LOCAL_EFFECTS_SUPPORT),
-            (|a| &mut a.halation_amount, GLOW_SUPPORT),
         ];
         for (field, support) in cases {
             let mut stack = MaskStack::default();

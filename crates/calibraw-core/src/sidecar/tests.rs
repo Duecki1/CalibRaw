@@ -4,8 +4,8 @@ use super::*;
 #[cfg(not(target_os = "android"))]
 use crate::pipeline::RawThumbnail;
 use crate::pipeline::{
-    MaskKind, NativeRect, RemoveBrushPoint, RemoveBrushStroke, RemovePatch, RemoveStroke,
-    RetouchAlignment, RetouchStroke, RetouchTool,
+    AdjustmentGroup, EffectComponent, MaskEffect, MaskKind, NativeRect, RemoveBrushPoint,
+    RemoveBrushStroke, RemovePatch, RemoveStroke, RetouchAlignment, RetouchStroke, RetouchTool,
 };
 use std::fs;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -23,14 +23,27 @@ fn paste_with_mode(
     transfer_edits(destination, source, settings.into(), mode);
 }
 
+fn halation_effect(amount: f32) -> EffectComponent {
+    let mut component = EffectComponent::new(MaskEffect::Halation);
+    component.settings.halation.amount = amount;
+    component
+}
+
+fn grain_effect(amount: f32) -> EffectComponent {
+    let mut component = EffectComponent::new(MaskEffect::Grain);
+    component.settings.grain.amount = amount;
+    component
+}
+
 fn sample_edits() -> EditState {
     let mut exposure = ExposureParams::scene_referred_default();
     exposure.dehaze = 27.0;
-    exposure.halation_amount = 42.0;
-    exposure.grain_amount = 31.0;
-    let mut masks = MaskStack::default();
+    let mut masks = MaskStack {
+        global_effects: vec![halation_effect(42.0), grain_effect(31.0)],
+        ..MaskStack::default()
+    };
     masks.add_mask(MaskKind::Radial);
-    masks.masks[0].adjustments.halation_amount = 63.0;
+    masks.masks[0].effect_components.push(halation_effect(63.0));
     EditState {
         exposure,
         geometry: GeometryTransform::default(),
@@ -243,6 +256,48 @@ fn scene_depth_shares_the_decoded_memory_limit_with_mask_assets() {
 }
 
 #[test]
+fn global_effects_paste_with_the_effects_group_and_masks_keep_them() {
+    let source = sample_edits();
+    let mut own = default_edit_state();
+    Arc::make_mut(&mut own.masks)
+        .global_effects
+        .push(EffectComponent::new(MaskEffect::Vignette));
+
+    for (masks, ai_masks) in [(true, false), (false, true), (true, true)] {
+        let mut destination = own.clone();
+        paste(
+            &mut destination,
+            &source,
+            AdjustmentCopySettings {
+                adjustments: false,
+                masks,
+                ai_masks,
+                ..Default::default()
+            },
+        );
+        assert_eq!(destination.masks.global_effects, own.masks.global_effects);
+    }
+
+    let mut destination = own.clone();
+    transfer_edits(
+        &mut destination,
+        &source,
+        EditSelection {
+            adjustment_groups: [AdjustmentGroup::Effects].into_iter().collect(),
+            ..EditSelection::default()
+        },
+        AdjustmentPasteMode::Merge,
+    );
+    assert_eq!(
+        destination.masks.global_effects,
+        source.masks.global_effects
+    );
+    assert_eq!(destination.masks.masks, own.masks.masks);
+    assert!(adjustment_group_is_edited(&own, AdjustmentGroup::Effects));
+    assert!(!own.exposure.group_is_edited(AdjustmentGroup::Effects));
+}
+
+#[test]
 fn copied_fog_uses_only_destination_scene_depth_in_merge_and_replace_modes() {
     let mut source = default_edit_state();
     let masks = Arc::make_mut(&mut source.masks);
@@ -256,8 +311,15 @@ fn copied_fog_uses_only_destination_scene_depth_in_merge_and_replace_modes() {
     masks.global_effects.push(fog.clone());
     let original_source = source.clone();
 
+    let categories = [false, true]
+        .into_iter()
+        .flat_map(|adjustments| {
+            [(true, true), (true, false), (false, true), (false, false)]
+                .map(|(manual, ai)| (adjustments, manual, ai))
+        })
+        .collect::<Vec<_>>();
     for mode in [AdjustmentPasteMode::Merge, AdjustmentPasteMode::Replace] {
-        for (manual, ai) in [(true, true), (true, false), (false, true), (false, false)] {
+        for &(adjustments, manual, ai) in &categories {
             for cached in [false, true] {
                 let mut destination = default_edit_state();
                 let own_depth = cached.then(|| MaskImage::new(1, 2, vec![32, 160]).unwrap());
@@ -266,6 +328,7 @@ fn copied_fog_uses_only_destination_scene_depth_in_merge_and_replace_modes() {
                     &mut destination,
                     &source,
                     AdjustmentCopySettings {
+                        adjustments,
                         masks: manual,
                         ai_masks: ai,
                         ..Default::default()
@@ -273,8 +336,9 @@ fn copied_fog_uses_only_destination_scene_depth_in_merge_and_replace_modes() {
                     mode,
                 );
                 assert_eq!(destination.masks.scene_depth_image(), own_depth.as_ref());
-                assert_eq!(destination.masks.has_depth_fog_effect(), manual);
-                if manual {
+                // Global effects belong to the Effects group, not to masks.
+                assert_eq!(destination.masks.has_depth_fog_effect(), adjustments);
+                if adjustments {
                     assert_eq!(destination.masks.global_effects, vec![fog.clone()]);
                     // Depth fog without this image's depth must ask for an update
                     // instead of being regenerated behind the user's back.
@@ -1799,17 +1863,36 @@ fn invalid_review_updates_leave_existing_sidecar_untouched() {
 }
 
 #[test]
-fn legacy_edits_default_film_effects_to_zero() {
-    let mut global = serde_json::to_value(ExposureParams::default()).unwrap();
-    global.as_object_mut().unwrap().remove("halation_amount");
-    global.as_object_mut().unwrap().remove("grain_amount");
-    let restored: ExposureParams = serde_json::from_value(global).unwrap();
-    assert_eq!(restored.halation_amount, 0.0);
-    assert_eq!(restored.grain_amount, 0.0);
-    let mut local = serde_json::to_value(crate::pipeline::LocalAdjustments::default()).unwrap();
-    local.as_object_mut().unwrap().remove("halation_amount");
-    let restored: crate::pipeline::LocalAdjustments = serde_json::from_value(local).unwrap();
-    assert!(restored.is_neutral());
+fn legacy_effect_sliders_load_as_components_and_are_not_saved_again() {
+    let mut edits = default_edit_state();
+    Arc::make_mut(&mut edits.masks).add_mask(MaskKind::Radial);
+    let mut document: serde_json::Value = serde_json::from_slice(&encode(edits).unwrap()).unwrap();
+    let saved = &mut document["edits"];
+    saved["exposure"]["grain_amount"] = 31.0.into();
+    saved["exposure"]["vignette_amount"] = (-20.0).into();
+    saved["masks"]["masks"][0]["adjustments"]["halation_amount"] = 63.0.into();
+
+    let loaded = decode(&serde_json::to_vec(&document).unwrap()).unwrap();
+    assert!(loaded.migrated);
+    let global: Vec<_> = loaded
+        .edits
+        .masks
+        .global_effects
+        .iter()
+        .map(|component| component.effect)
+        .collect();
+    assert_eq!(global, [MaskEffect::Grain, MaskEffect::Vignette]);
+    assert_eq!(
+        loaded.edits.masks.masks[0].effect_components,
+        [halation_effect(63.0)]
+    );
+
+    let resaved = encode(loaded.edits.clone()).unwrap();
+    let text = String::from_utf8(resaved.clone()).unwrap();
+    assert!(!text.contains("grain_amount") && !text.contains("halation_amount"));
+    let reloaded = decode(&resaved).unwrap();
+    assert!(!reloaded.migrated);
+    assert_eq!(reloaded.edits, loaded.edits);
 }
 
 #[cfg(not(target_os = "android"))]

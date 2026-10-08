@@ -137,24 +137,12 @@ pub fn required_export_tile_halo(exposure: &ExposureParams, masks: &MaskStack) -
     .unwrap_or(0);
     support += post_blur_creative_support;
 
-    // Legacy adjustment Halation shares the Glow diffusion passes. The Halation
-    // module samples the scene neighborhood independently; a Glow module may
-    // likewise sample with its own radius. All read the same local_effects input
-    // with at most GLOW_SUPPORT pixels of support, so reserve the maximum once,
-    // not the sum of their footprints or the number of active components.
-    let mask_halation_active = masks.masks.iter().any(|mask| {
-        mask.enabled
-            && mask.opacity > 0.0
-            && mask.adjustments_enabled
-            && mask.effect.uses_adjustments()
-            && mask.adjustments.halation_amount > 1e-6
-    });
-    if exposure.glow_amount.abs() > 1e-6
-        || effect_active(MaskEffect::Glow)
-        || effect_active(MaskEffect::Halation)
-        || exposure.halation_amount > 1e-6
-        || mask_halation_active
-    {
+    // Self-illuminating Glow shares the Glow diffusion passes. Highlight Glow
+    // and Halation sample the scene neighborhood with their own radius. All read
+    // the same local_effects input with at most GLOW_SUPPORT pixels of support,
+    // so reserve the maximum once, not the sum of their footprints or the number
+    // of active components.
+    if effect_active(MaskEffect::Glow) || effect_active(MaskEffect::Halation) {
         support += GLOW_SUPPORT;
     }
 

@@ -218,4 +218,56 @@ impl MaskEffectSettings {
     pub fn is_default(&self) -> bool {
         *self == Self::default()
     }
+
+    /// The settings a newly added `effect` starts with.
+    pub fn initial(effect: MaskEffect) -> Self {
+        let mut settings = Self::default();
+        match effect {
+            MaskEffect::Adjustment => {}
+            MaskEffect::Blur => settings.blur = InitialEffectSettings::initial(),
+            MaskEffect::LensBlur => settings.lens_blur = InitialEffectSettings::initial(),
+            MaskEffect::MotionBlur => settings.motion_blur = InitialEffectSettings::initial(),
+            MaskEffect::RadialBlur => settings.radial_blur = InitialEffectSettings::initial(),
+            MaskEffect::TiltShift => settings.tilt_shift = InitialEffectSettings::initial(),
+            MaskEffect::Glow => settings.glow = InitialEffectSettings::initial(),
+            MaskEffect::LightRays => settings.light_rays = InitialEffectSettings::initial(),
+            MaskEffect::Neon => settings.neon = InitialEffectSettings::initial(),
+            MaskEffect::Relight => settings.relight = InitialEffectSettings::initial(),
+            MaskEffect::EdgeGlow => settings.edge_glow = InitialEffectSettings::initial(),
+            MaskEffect::Pixelate => settings.pixelate = InitialEffectSettings::initial(),
+            MaskEffect::Fog => settings.fog = InitialEffectSettings::initial(),
+            MaskEffect::Smoke => settings.smoke = InitialEffectSettings::initial(),
+            MaskEffect::Grain => settings.grain = InitialEffectSettings::initial(),
+            MaskEffect::Halation => settings.halation = InitialEffectSettings::initial(),
+            MaskEffect::Vignette => settings.vignette = InitialEffectSettings::initial(),
+        }
+        settings
+    }
 }
+
+/// The settings an effect starts with when it is added or its card is reset.
+///
+/// `Default` is the serialized baseline: omitted fields and omitted settings
+/// decode to it, so changing it would change saved edits. An effect whose
+/// starting point differs from that baseline overrides [`Self::initial`].
+pub trait InitialEffectSettings: Default {
+    fn initial() -> Self {
+        Self::default()
+    }
+}
+
+impl InitialEffectSettings for BlurEffectSettings {}
+impl InitialEffectSettings for LensBlurEffectSettings {}
+impl InitialEffectSettings for MotionBlurEffectSettings {}
+impl InitialEffectSettings for RadialBlurEffectSettings {}
+impl InitialEffectSettings for TiltShiftEffectSettings {}
+impl InitialEffectSettings for LightRaysEffectSettings {}
+impl InitialEffectSettings for NeonEffectSettings {}
+impl InitialEffectSettings for RelightEffectSettings {}
+impl InitialEffectSettings for EdgeGlowEffectSettings {}
+impl InitialEffectSettings for PixelateEffectSettings {}
+impl InitialEffectSettings for FogEffectSettings {}
+impl InitialEffectSettings for SmokeEffectSettings {}
+impl InitialEffectSettings for GrainEffectSettings {}
+impl InitialEffectSettings for HalationEffectSettings {}
+impl InitialEffectSettings for VignetteEffectSettings {}

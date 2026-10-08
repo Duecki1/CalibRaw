@@ -21,6 +21,7 @@ use controls::{effect_details, effect_position, image_lights_toggle, pattern_see
 
 use super::{egui, MaskEffect, Ui};
 use crate::pipeline::effect_params::ColorParamSpec;
+use crate::pipeline::{EffectComponent, InitialEffectSettings, MAX_EFFECT_COMPONENTS};
 
 pub(super) use crate::ui::components::adjustment_slider::{float_param_angle, float_param_slider};
 
@@ -33,7 +34,7 @@ fn effect_card<Settings>(
     body: impl FnOnce(&mut Ui, &mut Settings) -> bool,
 ) -> bool
 where
-    Settings: Default,
+    Settings: InitialEffectSettings,
 {
     let mut changed = false;
     let mut reset = false;
@@ -168,17 +169,65 @@ fn apply_card_action<Settings>(
     settings: &mut Settings,
 ) -> bool
 where
-    Settings: Default,
+    Settings: InitialEffectSettings,
 {
     use super::adjustment_cards::CardAction;
 
     match action {
         CardAction::None | CardAction::Toggle => false,
         CardAction::Reset => {
-            *settings = Settings::default();
+            *settings = Settings::initial();
             true
         }
     }
+}
+
+/// Effects that once were Effects-card sliders. The cards offer them as
+/// buttons that add the effect component.
+pub(super) const FINISH_EFFECTS: [MaskEffect; 4] = [
+    MaskEffect::Glow,
+    MaskEffect::Halation,
+    MaskEffect::Grain,
+    MaskEffect::Vignette,
+];
+
+/// One button per effect in `effects`, in a grid of up to two columns, that
+/// adds the effect to `components`. Returns the effect whose button was
+/// clicked. An effect already in `components`, or any effect once
+/// `components` is full, has its button disabled.
+pub(super) fn add_effect_buttons(
+    ui: &mut Ui,
+    effects: &[MaskEffect],
+    components: &[EffectComponent],
+) -> Option<MaskEffect> {
+    const COLUMNS: usize = 2;
+    let full = components.len() >= MAX_EFFECT_COMPONENTS;
+    let mut added = None;
+    ui.columns(effects.len().clamp(1, COLUMNS), |columns| {
+        let column_count = columns.len();
+        for (index, &effect) in effects.iter().enumerate() {
+            let ui = &mut columns[index % column_count];
+            let present = components
+                .iter()
+                .any(|component| component.effect == effect);
+            let label = format!("{}  {}", egui_phosphor::regular::PLUS, effect.label());
+            let response = ui
+                .add_enabled_ui(!present && !full, |ui| {
+                    moduwu_design::full_width_button(ui, label)
+                })
+                .inner
+                .on_hover_text(format!("Add {}", effect.label()))
+                .on_disabled_hover_text(if present {
+                    format!("{} is already added", effect.label())
+                } else {
+                    format!("At most {MAX_EFFECT_COMPONENTS} effects can be added")
+                });
+            if response.clicked() {
+                added = Some(effect);
+            }
+        }
+    });
+    added
 }
 
 pub(super) fn effect_description(effect: MaskEffect) -> Option<&'static str> {
@@ -482,6 +531,64 @@ mod tests {
     }
 
     #[test]
+    fn add_effect_buttons_add_only_missing_effects_and_fit_narrow_sidebars() {
+        let ctx = egui::Context::default();
+        crate::ui::theme::install(&ctx);
+        let components = [EffectComponent::new(MaskEffect::Grain)];
+        let width = 280.0;
+        let mut time = 0.0;
+        let mut render = |events| {
+            time += 0.25;
+            let mut added = None;
+            let mut used_width = 0.0;
+            let output = ctx.run_ui(
+                egui::RawInput {
+                    time: Some(time),
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(width, 240.0),
+                    )),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    added = add_effect_buttons(ui, &FINISH_EFFECTS, &components);
+                    used_width = ui.min_rect().width();
+                },
+            );
+            (output.shapes, added, used_width)
+        };
+        let click = |position, pressed| {
+            vec![
+                egui::Event::PointerMoved(position),
+                egui::Event::PointerButton {
+                    pos: position,
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ]
+        };
+        let label =
+            |effect: MaskEffect| format!("{}  {}", egui_phosphor::regular::PLUS, effect.label());
+
+        let (shapes, added, used_width) = render(Vec::new());
+        assert_eq!(added, None);
+        assert!(used_width <= width, "buttons overflow: {used_width}");
+        let glow = icon_rect(&shapes, &label(MaskEffect::Glow));
+        let grain = icon_rect(&shapes, &label(MaskEffect::Grain));
+
+        render(click(glow.center(), true));
+        assert_eq!(
+            render(click(glow.center(), false)).1,
+            Some(MaskEffect::Glow)
+        );
+        // Grain is already added.
+        render(click(grain.center(), true));
+        assert_eq!(render(click(grain.center(), false)).1, None);
+    }
+
+    #[test]
     fn expanded_cards_report_open_in_the_same_pass_until_folded() {
         let ctx = egui::Context::default();
         crate::ui::theme::install(&ctx);
@@ -567,7 +674,7 @@ mod tests {
                     &mut mask.effect_settings.$field,
                 ));
                 let mut expected = before.clone();
-                expected.effect_settings.$field = Default::default();
+                expected.effect_settings.$field = InitialEffectSettings::initial();
                 assert_eq!(mask, expected, stringify!($field));
             }};
         }
@@ -587,6 +694,12 @@ mod tests {
         check!(grain);
         check!(halation);
         check!(vignette);
+
+        // Reset Glow returns to highlight mode, as a newly added Glow starts.
+        let mut glow = before.effect_settings.glow;
+        glow.self_illuminating = true;
+        apply_card_action(super::super::adjustment_cards::CardAction::Reset, &mut glow);
+        assert!(!glow.self_illuminating);
     }
 }
 

@@ -2,8 +2,7 @@
 // - Self-illuminating (w > 0.5): the mask itself emits the picked color, so
 //   the glow shows on dark surfaces too. Emission joins the shared Glow
 //   diffusion (`mask_glow_source_at`), whose radius is the widest active
-//   self-illuminating radius or the global Glow radius, and a hot core is added
-//   inside the mask.
+//   self-illuminating radius, and a hot core is added inside the mask.
 // - Highlight (w <= 0.5): bright source pixels inside the mask bloom with their
 //   own color tinted toward the picked color, over this component's own radius.
 
@@ -84,7 +83,7 @@ fn apply_mask_glow_cores(pos: vec2<i32>, input_rgb: vec3<f32>) -> vec3<f32> {
         let p = vec2<f32>(pos);
         let source = mask_glow_emitter(p, index, tint);
         // Each component integrates its own source and radius. A second Glow
-        // card cannot broaden the first card or the global adjustment's bloom.
+        // card cannot broaden the first card or the shared diffusion.
         // Truncated Gaussian support stays within the 96-pixel export halo.
         let radius = clamp(primary.y / 100.0, 0.0, 1.0) * 32.0 * scale;
         var bloom = source;

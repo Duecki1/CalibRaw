@@ -263,52 +263,22 @@ pub(super) fn pack_effect_params(
         full_height,
         ..
     } = ctx.tile;
-    let global_glow_radius = if exposure.glow_amount.abs() > 1e-6 {
-        exposure.glow_radius.clamp(0.0, 100.0)
-    } else {
-        0.0
-    };
     // Self-illuminating Glow masks emit into the shared Glow diffusion, which
-    // spreads as far as the widest of them or the global Glow.
-    let self_illuminating_glow_radius = mask_data
+    // spreads as far as the widest of them.
+    let glow_diffusion_radius = mask_data
         .iter()
         .filter(|mask| is_self_illuminating_glow(mask))
         .map(|mask| mask.adjust_0[1])
         .fold(0.0_f32, f32::max);
     EffectsUniforms {
         presence: [exposure.texture, exposure.clarity, exposure.dehaze, 0.0],
-        creative_effects: [
-            exposure.glow_amount.clamp(0.0, 100.0),
-            global_glow_radius.max(self_illuminating_glow_radius),
-            exposure.glow_threshold.clamp(0.0, 100.0),
+        sharpen: [
             exposure.sharpen_amount.clamp(0.0, 150.0),
-        ],
-        film_effects: [
-            exposure.halation_amount.clamp(0.0, 100.0),
-            exposure.grain_amount.clamp(0.0, 100.0),
-            if exposure.halation_amount > 1e-6
-                || mask_data
-                    .iter()
-                    .any(|mask| mask.metadata[0] != 0 && mask.film_effects[0] > 1e-6)
-            {
-                1.0
-            } else {
-                0.0
-            },
-            0.0,
-        ],
-        vignette: [
-            exposure.vignette_amount.clamp(-100.0, 100.0),
-            exposure.vignette_midpoint.clamp(0.0, 100.0),
-            exposure.vignette_roundness.clamp(-100.0, 100.0),
-            exposure.vignette_feather.clamp(0.0, 100.0),
-        ],
-        vignette_options: [
-            exposure.vignette_highlights.clamp(0.0, 100.0),
             exposure.sharpen_radius.clamp(0.5, 3.0),
             exposure.sharpen_detail.clamp(0.0, 100.0),
             exposure.sharpen_masking.clamp(0.0, 100.0),
         ],
+        glow_diffusion: [glow_diffusion_radius, 0.0, 0.0, 0.0],
         vignette_frame: [
             0.5,
             0.5,

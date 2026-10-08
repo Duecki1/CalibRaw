@@ -455,7 +455,7 @@ impl Settings {
             ui,
             &mut settings.adjustments,
             "Adjustments",
-            "Global light, color, white-balance temperature/tint, tone curve, effects, color mixer, and RAW adjustment values.",
+            "Global light, color, white-balance temperature/tint, tone curve, effects (including the effects added on the Adjustments tab), color mixer, and RAW adjustment values.",
         )
             .changed();
         changed |= moduwu_design::toggle_with_help(

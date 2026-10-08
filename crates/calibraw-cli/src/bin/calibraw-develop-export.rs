@@ -1,9 +1,9 @@
 use anyhow::{anyhow, bail, Context, Result};
 use calibraw_cli::pipeline::{
-    crop_raw, export_mask_atlas_edge, load_raw_file, load_raw_file_with_dcp, spawn_tiled_export,
-    DenoiseQuality, ExportEvent, ExportFormat, ExportMetadata, ExportSettings, ExportTarget,
-    ExposureParams, GeometryTransform, MaskStack, TileSpec, TiledExportJob,
-    GLOBAL_TINT_OFFSET_LIMIT, HUE_ROTATION_LIMIT_DEGREES,
+    crop_raw, effect_params, export_mask_atlas_edge, load_raw_file, load_raw_file_with_dcp,
+    spawn_tiled_export, DenoiseQuality, EffectComponent, ExportEvent, ExportFormat, ExportMetadata,
+    ExportSettings, ExportTarget, ExposureParams, GeometryTransform, MaskEffect, MaskStack,
+    TileSpec, TiledExportJob, GLOBAL_TINT_OFFSET_LIMIT, HUE_ROTATION_LIMIT_DEGREES,
 };
 use calibraw_gpu::{
     request_headless_device, wgpu, HeadlessDevice, HeadlessDeviceError, HeadlessDeviceRequest,
@@ -119,21 +119,24 @@ fn run() -> Result<()> {
                 continue;
             }
             let mut exposure = adaptive_exposure;
+            let mut masks = MaskStack::default();
             if let Some((name, value)) = adjustment {
-                set_adjustment(&mut exposure, name, *value)?;
+                set_adjustment(&mut exposure, &mut masks, name, *value)?;
             }
-            exporter.export_one(Arc::clone(&raw), exposure, &output)?;
+            exporter.export_one(Arc::clone(&raw), exposure, masks, &output)?;
         }
         return Ok(());
     }
 
     let mut exposure = adaptive_exposure;
+    let mut masks = MaskStack::default();
     for (name, value) in &args.adjustments {
-        set_adjustment(&mut exposure, name, *value)?;
+        set_adjustment(&mut exposure, &mut masks, name, *value)?;
     }
     exporter.export_one(
         raw,
         exposure,
+        masks,
         args.output.as_deref().context("missing output path")?,
     )
 }
@@ -151,6 +154,7 @@ impl ExportHarness<'_> {
         &self,
         raw: Arc<calibraw_cli::pipeline::LoadedRaw>,
         exposure: ExposureParams,
+        masks: MaskStack,
         output: &Path,
     ) -> Result<()> {
         let source_dimensions = (self.metadata.source_width, self.metadata.source_height);
@@ -163,7 +167,7 @@ impl ExportHarness<'_> {
                 raw,
                 geometry: GeometryTransform::default(),
                 exposure,
-                masks: MaskStack::default(),
+                masks,
                 remove: calibraw_cli::pipeline::RemoveEditState::default(),
                 target: ExportTarget::File(output.to_owned()),
                 tile_spec: TileSpec::default(),
@@ -234,7 +238,12 @@ const REFERENCE_CONTRAST_SUITE: &[(&str, Option<(&str, f32)>)] = &[
     ("saturation_minus100", Some(("saturation", -100.0))),
 ];
 
-fn set_adjustment(exposure: &mut ExposureParams, name: &str, value: f32) -> Result<()> {
+fn set_adjustment(
+    exposure: &mut ExposureParams,
+    masks: &mut MaskStack,
+    name: &str,
+    value: f32,
+) -> Result<()> {
     if !value.is_finite() {
         bail!("adjustment {name:?} must be finite");
     }
@@ -248,7 +257,7 @@ fn set_adjustment(exposure: &mut ExposureParams, name: &str, value: f32) -> Resu
         "texture" => exposure.texture = value.clamp(-100.0, 100.0),
         "clarity" => exposure.clarity = value.clamp(-100.0, 100.0),
         "dehaze" => exposure.dehaze = value.clamp(-100.0, 100.0),
-        "vignette" | "vignette_amount" => exposure.vignette_amount = value.clamp(-100.0, 100.0),
+        "vignette" | "vignette_amount" => set_vignette_amount(masks, value),
         "vibrance" => exposure.vibrance = value.clamp(-100.0, 100.0),
         "saturation" => exposure.saturation = value.clamp(-100.0, 100.0),
         "hue" => {
@@ -275,6 +284,24 @@ fn set_adjustment(exposure: &mut ExposureParams, name: &str, value: f32) -> Resu
         other => bail!("unsupported adjustment {other:?}"),
     }
     Ok(())
+}
+
+/// Sets the amount of the global Vignette effect, adding one with default
+/// settings if there is none.
+fn set_vignette_amount(masks: &mut MaskStack, amount: f32) {
+    let amount = effect_params::vignette::AMOUNT.clamp(amount);
+    let existing = masks
+        .global_effects
+        .iter_mut()
+        .find(|component| component.effect == MaskEffect::Vignette);
+    match existing {
+        Some(vignette) => vignette.settings.vignette.amount = amount,
+        None => {
+            let mut vignette = EffectComponent::new(MaskEffect::Vignette);
+            vignette.settings.vignette.amount = amount;
+            masks.global_effects.push(vignette);
+        }
+    }
 }
 
 fn parse_args() -> Result<Args> {

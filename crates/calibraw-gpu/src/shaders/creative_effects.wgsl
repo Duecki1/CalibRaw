@@ -116,34 +116,6 @@ fn apply_dehaze_value(pos: vec2<i32>, rgb: vec3<f32>, value: f32) -> vec3<f32> {
     );
 }
 
-fn extended_perceptual_luminance(linear_luma: f32) -> f32 {
-    if linear_luma <= 1.0 {
-        return pow(max(linear_luma, 0.0), 1.0 / 2.2);
-    }
-    return 1.0 + (1.0 / 2.2) * log(linear_luma);
-}
-
-fn glow_emission(rgb: vec3<f32>, cutoff: f32) -> vec3<f32> {
-    let glow_rgb = Color::gamut_project_nonnegative_rec2020(rgb);
-    let linear_luma = Common::safe_luma(glow_rgb);
-    let perceptual_luma = extended_perceptual_luminance(linear_luma);
-    let cutoff_fade = smoothstep(cutoff, cutoff + 0.16, perceptual_luma);
-    let excess = max(perceptual_luma - cutoff, 0.0);
-    let range = max(2.25 - cutoff, 0.25);
-    let intensity = pow(smoothstep(0.0, range, excess), 0.48);
-    let black_gate = pow(smoothstep(0.0, 0.42, linear_luma), 0.5);
-
-    let colour_ratio = clamp(glow_rgb / max(linear_luma, 1e-6), vec3<f32>(0.0), vec3<f32>(3.5));
-    let warm_tint = vec3<f32>(1.025, 1.0, 0.975);
-    return colour_ratio * warm_tint
-        * intensity * pow(linear_luma, 0.62) * cutoff_fade * black_gate;
-}
-
-fn glow_cutoff() -> f32 {
-    let threshold = clamp(Common::effects_uniforms.creative_effects.z / 100.0, 0.0, 1.0);
-    return mix(0.06, 0.92, pow(threshold, 1.12));
-}
-
 fn glow_work_at(pos: vec2<i32>) -> vec3<f32> {
     return textureLoad(SceneAdjustments::glow_work_tex, Common::clamp_pos(pos), 0).xyz;
 }
@@ -166,7 +138,7 @@ fn glow_stage_step(stage: u32) -> i32 {
 }
 
 fn glow_stage_mix(stage: u32) -> f32 {
-    let radius = clamp(Common::effects_uniforms.creative_effects.y / 100.0, 0.0, 1.0);
+    let radius = clamp(Common::effects_uniforms.glow_diffusion.x / 100.0, 0.0, 1.0);
     switch stage {
         case 0u: { return 1.0; }
         case 1u: { return smoothstep(0.0, 0.20, radius); }
@@ -176,20 +148,11 @@ fn glow_stage_mix(stage: u32) -> f32 {
     }
 }
 
-// RGB carries glow; alpha independently carries halation highlight energy.
-// Both use normalized diffusion, but halation stays tighter than glow.
+// Normalized diffusion of self-illuminating Glow emission. Alpha is unused.
 fn glow_diffuse_at(pos: vec2<i32>, stage: u32) -> vec4<f32> {
     let center = textureLoad(SceneAdjustments::glow_work_tex, Common::clamp_pos(pos), 0);
-    let glow_mix = glow_stage_mix(stage);
-    var halation_mix = 1.0;
-    // Halation needs a visibly broader shoulder than three stages give. Keep it
-    // tighter than glow, but retain some energy in the two widest stages
-    // so the fringe survives normal preview scaling and display tone mapping.
-    if stage == 3u { halation_mix = 0.90; }
-    if stage == 4u { halation_mix = 0.45; }
-    if Common::effects_uniforms.film_effects.z == 0.0 { halation_mix = 0.0; }
-    let stage_mix = vec4<f32>(vec3<f32>(glow_mix), halation_mix);
-    if max(glow_mix, halation_mix) < 1e-6 {
+    let stage_mix = glow_stage_mix(stage);
+    if stage_mix < 1e-6 {
         return center;
     }
 
@@ -207,55 +170,9 @@ fn glow_diffuse_at(pos: vec2<i32>, stage: u32) -> vec4<f32> {
     return mix(center, sum / max(sum_weight, 1e-6), stage_mix);
 }
 
-// Independently implemented highlight-only approximation of film-base scatter.
-// Reference: https://github.com/hotgluebanjo/halation-dctl (blur / frequency separation).
-// Work in scene-linear light, before the display transform, and preserve cores.
-fn halation_emission(rgb: vec3<f32>) -> f32 {
-    if Common::effects_uniforms.film_effects.z == 0.0 { return 0.0; }
-    let luminance = Common::safe_luma(Color::gamut_project_nonnegative_rec2020(rgb));
-
-    // Let common bright detail contribute, then roll the source energy off smoothly
-    // so strong speculars produce a pronounced fringe without exploding.
-    let threshold = ToneCommon::SCENE_MIDDLE_GREY * 1.20;
-    let gate_end = max(threshold * 2.25, 0.55);
-    let gate = smoothstep(threshold, gate_end, luminance);
-    let excess = max(luminance - threshold, 0.0);
-    let compressed_excess = excess / (0.20 + excess);
-    return 0.65 * gate * compressed_excess;
-}
-
-fn halation_amount_at(pos: vec2<i32>) -> f32 {
-    if Common::effects_uniforms.film_effects.z == 0.0 { return 0.0; }
-    var amount = Common::effects_uniforms.film_effects.x / 100.0;
-    let count = min(Common::scene_tone_uniforms.mask_counts.x, Common::MAX_RENDER_MASK_SLOTS);
-    for (var index = 0u; index < count; index = index + 1u) {
-        let state = Common::mask_data[index].metadata;
-        let local_amount = Common::mask_data[index].film_effects.x;
-        if state.x == 0u || Common::mask_effect_id(state) != 0u
-            || local_amount <= 0.0 { continue; }
-        // Apply the mask to the result, retaining natural halos from nearby lights.
-        amount = amount + local_amount / 100.0 * SceneAdjustments::local_mask_weight(pos, index);
-    }
-    return clamp(amount, 0.0, 1.0);
-}
-
-fn apply_halation(pos: vec2<i32>, rgb: vec3<f32>) -> vec3<f32> {
-    let amount = halation_amount_at(pos);
-    if amount <= 1e-6 { return rgb; }
-    let scattered = textureLoad(SceneAdjustments::glow_work_tex, Common::clamp_pos(pos), 0).w;
-    let source = halation_emission(SceneAdjustments::local_effects_at(pos));
-    // Remove the unscattered core: uniform fields do not acquire a red cast.
-    let halo = max(scattered - source, 0.0);
-    let warm_rec2020 = Common::SRGB_TO_REC2020 * vec3<f32>(1.0, 0.20, 0.025);
-    // Halation is added before tone mapping, which strongly compresses the fringe.
-    // Give the effect enough scene-linear energy for the full slider range to read
-    // clearly while preserving the unscattered highlight core above.
-    return rgb + warm_rec2020 * (2.25 * amount * halo);
-}
-
+// Adds the diffused halo of self-illuminating Glow masks.
 fn apply_glow(pos: vec2<i32>, rgb: vec3<f32>) -> vec3<f32> {
-    let global_amount = clamp(Common::effects_uniforms.creative_effects.x / 100.0, 0.0, 1.0);
-    if global_amount < 1e-6 && !mask_glow_self_illuminating_active() {
+    if !mask_glow_self_illuminating_active() {
         return rgb;
     }
 
@@ -273,10 +190,6 @@ fn full_image_uv(pos: vec2<i32>) -> vec2<f32> {
     );
     let global_pos = clamp(pos + Common::tile_origin(), vec2<i32>(0), Common::full_image_max());
     return (vec2<f32>(global_pos) + vec2<f32>(0.5)) / dimensions;
-}
-
-fn vignette_distance(pos: vec2<i32>, roundness: f32) -> f32 {
-    return vignette_distance_from_center(pos, roundness, vec2<f32>(0.5));
 }
 
 fn vignette_distance_from_center(pos: vec2<i32>, roundness: f32, center: vec2<f32>) -> f32 {
@@ -379,31 +292,6 @@ fn calibrated_vignette_opacity(
     }
     let feather_power = exp2((0.5 - feather) * 1.3);
     return pow(clamp(opacity, 0.0, 1.0), feather_power);
-}
-
-fn apply_vignette(pos: vec2<i32>, rgb: vec3<f32>) -> vec3<f32> {
-    let amount = clamp(Common::effects_uniforms.vignette.x / 100.0, -1.0, 1.0);
-    if abs(amount) < 1e-6 {
-        return rgb;
-    }
-
-    let midpoint = clamp(Common::effects_uniforms.vignette.y / 100.0, 0.0, 1.0);
-    let roundness = clamp(Common::effects_uniforms.vignette.z / 100.0, -1.0, 1.0);
-    let feather = clamp(Common::effects_uniforms.vignette.w / 100.0, 0.0, 1.0);
-    var opacity = calibrated_vignette_opacity(
-        vignette_distance(pos, roundness),
-        amount,
-        midpoint,
-        feather,
-    );
-    if amount < 0.0 {
-        let highlights = clamp(Common::effects_uniforms.vignette_options.x / 100.0, 0.0, 1.0);
-        let highlight_protection = 1.0
-            - highlights * smoothstep(0.35, 1.0, Common::safe_luma(rgb));
-        opacity = opacity * highlight_protection;
-        return rgb * (1.0 - opacity);
-    }
-    return mix(rgb, vec3<f32>(1.0), opacity);
 }
 
 fn apply_local_scene_effect_nodes(pos: vec2<i32>, input_rgb: vec3<f32>) -> vec3<f32> {
@@ -509,11 +397,7 @@ fn copy_scene_effects_node(@builtin(global_invocation_id) gid: vec3<u32>) {
 fn prepare_glow_source(@builtin(global_invocation_id) gid: vec3<u32>) {
     if gid.x >= Common::camera_uniforms.width || gid.y >= Common::camera_uniforms.height { return; }
     let pos = vec2<i32>(i32(gid.x), i32(gid.y));
-    let global_amount = clamp(Common::effects_uniforms.creative_effects.x / 100.0, 0.0, 1.0);
-    let emission = glow_emission(SceneAdjustments::local_effects_at(pos), glow_cutoff())
-        * global_amount
-        + mask_glow_source_at(pos);
-    textureStore(SceneAdjustments::glow_work_out, pos, vec4<f32>(emission, halation_emission(SceneAdjustments::local_effects_at(pos))));
+    textureStore(SceneAdjustments::glow_work_out, pos, vec4<f32>(mask_glow_source_at(pos), 0.0));
 }
 
 fn store_glow_stage(gid: vec3<u32>, stage: u32) {
@@ -553,7 +437,6 @@ fn apply_creative_effects(@builtin(global_invocation_id) gid: vec3<u32>) {
     let pos = vec2<i32>(i32(gid.x), i32(gid.y));
     var rgb = SceneAdjustments::local_effects_at(pos);
     rgb = apply_local_creative_mask_effect_nodes(pos, rgb);
-    rgb = apply_halation(pos, rgb);
     rgb = apply_glow(pos, rgb);
     rgb = apply_mask_glow_cores(pos, rgb);
     rgb = apply_light_rays(pos, rgb);
@@ -589,26 +472,4 @@ fn grain_field(point: vec2<f32>) -> f32 {
     // Normalize variance so grid intersections don't appear as heavier grain.
     let variance = (blend * blend + (1.0 - blend) * (1.0 - blend));
     return mix(top, bottom, blend.y) * inverseSqrt(variance.x * variance.y);
-}
-
-fn apply_grain(pos: vec2<i32>, rgb: vec3<f32>) -> vec3<f32> {
-    let amount = Common::effects_uniforms.film_effects.y / 100.0;
-    if amount <= 1e-6 { return rgb; }
-    let luminance = max(dot(rgb, vec3<f32>(0.2627, 0.6780, 0.0593)), 0.0);
-    if luminance <= 1e-8 || luminance >= 1.0 { return rgb; }
-    // A fixed film-plane scale keeps grain size consistent across image sizes.
-    let short_edge = f32(min(Common::camera_uniforms.full_width, Common::camera_uniforms.full_height));
-    let global_pos = clamp(pos + Common::tile_origin(), vec2<i32>(0), Common::full_image_max());
-    let point = (vec2<f32>(global_pos) + vec2<f32>(0.5)) * (2160.0 / max(short_edge, 1.0));
-    let rotated = vec2<f32>(0.8 * point.x - 0.6 * point.y, 0.6 * point.x + 0.8 * point.y);
-    let noise = (0.8 * grain_field(rotated / 1.35)
-        + 0.35 * grain_field(rotated / 2.7 + vec2<f32>(37.1, 91.7))) / 0.873212;
-    let lightness = pow(luminance, 1.0 / 3.0);
-    let envelope = 4.0 * lightness * (1.0 - lightness);
-    // Reduce unresolved grain in small previews instead of aliasing full-strength noise.
-    let footprint = min(short_edge / 2160.0, 1.0);
-    let delta = 0.035 * amount * envelope * noise * footprint;
-    let grained = clamp(lightness + delta, 0.0, 1.0);
-    // A shared gain retains chromaticity and creates no chroma speckles.
-    return rgb * (grained * grained * grained / luminance);
 }
