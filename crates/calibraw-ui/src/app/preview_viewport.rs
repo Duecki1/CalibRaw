@@ -9,6 +9,7 @@ use crate::ui::preview::{Preview, PreviewDetailImage, PreviewPlaceholder, Previe
 pub(crate) enum PreviewViewportAction {
     SetSourceAxesSwapped(bool),
     SetTouchNavigation(bool),
+    SetSpacePan(bool),
     SetNavigation {
         zoom: f32,
         center: [f32; 2],
@@ -110,6 +111,9 @@ impl CalibRawApp {
             }
             PreviewViewportAction::SetTouchNavigation(active) => {
                 self.preview.touch_navigation_active = active;
+            }
+            PreviewViewportAction::SetSpacePan(active) => {
+                self.preview.space_pan_active = active;
             }
             PreviewViewportAction::SetNavigation { zoom, center } => {
                 self.preview.zoom = zoom;

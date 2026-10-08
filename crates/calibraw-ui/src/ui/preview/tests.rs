@@ -286,3 +286,53 @@ fn ctrl_plus_and_minus_zoom_the_preview_not_the_interface() {
     );
     assert_eq!(ctx.zoom_factor(), 1.0);
 }
+
+#[test]
+fn space_pans_only_when_held_before_the_press_and_lasts_until_release() {
+    let ctx = egui::Context::default();
+    let canvas = Rect::from_min_size(Pos2::ZERO, egui::vec2(400.0, 300.0));
+    let inside = egui::pos2(200.0, 150.0);
+    let space = |pressed| egui::Event::Key {
+        key: egui::Key::Space,
+        physical_key: None,
+        pressed,
+        repeat: false,
+        modifiers: egui::Modifiers::NONE,
+    };
+    let button = |pressed| egui::Event::PointerButton {
+        pos: inside,
+        button: egui::PointerButton::Primary,
+        pressed,
+        modifiers: egui::Modifiers::NONE,
+    };
+    let mut active = false;
+    let mut frame = |events: Vec<egui::Event>| {
+        let input = egui::RawInput {
+            screen_rect: Some(canvas),
+            events,
+            ..Default::default()
+        };
+        let _ = ctx.run_ui(input, |ui| {
+            let response = ui.interact(
+                canvas,
+                ui.id().with("canvas"),
+                egui::Sense::click_and_drag(),
+            );
+            active = Preview::space_pan(ui, &response, active);
+        });
+        active
+    };
+
+    assert!(!frame(vec![egui::Event::PointerMoved(inside)]));
+    // Space mid-stroke leaves the stroke with its tool.
+    assert!(!frame(vec![button(true)]));
+    assert!(!frame(vec![space(true)]));
+    assert!(!frame(vec![button(false)]));
+    // Held before the press: arms, then lasts through the drag after Space
+    // is released, including the release frame.
+    assert!(frame(Vec::new()));
+    assert!(frame(vec![button(true)]));
+    assert!(frame(vec![space(false)]));
+    assert!(frame(vec![button(false)]));
+    assert!(!frame(Vec::new()));
+}
