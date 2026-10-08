@@ -417,14 +417,61 @@ pub(super) fn validate_gpu_resource_plan(plan: &GpuResourcePlan, limit: u64) -> 
     Ok(())
 }
 
+#[cfg(target_os = "android")]
 pub(super) fn gpu_working_set_limit_bytes() -> u64 {
-    if cfg!(target_os = "android") {
-        ANDROID_GPU_WORKING_SET_LIMIT_BYTES
-    } else {
-        // Desktop VRAM varies widely. The fixed estimate is useful in tests, but
-        // must not reject a valid allocation before the driver has a chance to
-        // allocate it. Real OOM is reported by the GPU error scopes.
-        u64::MAX
+    // Previews are sized against the fixed 384 MiB budget and together reserve
+    // up to about 262 MiB; a full-quality export tile needs about 168 MiB more.
+    // Scaling with device RAM lets the export coexist with open previews.
+    static LIMIT: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
+    *LIMIT.get_or_init(|| {
+        let total_ram = std::fs::read_to_string("/proc/meminfo")
+            .ok()
+            .and_then(|meminfo| parse_mem_total_bytes(&meminfo));
+        let limit = android_working_set_limit_bytes(total_ram);
+        log::info!(
+            "GPU working-set budget {:.1} MiB (device RAM {})",
+            limit as f64 / (1024.0 * 1024.0),
+            total_ram.map_or_else(
+                || "unknown".to_owned(),
+                |bytes| format!("{:.1} MiB", bytes as f64 / (1024.0 * 1024.0))
+            ),
+        );
+        limit
+    })
+}
+
+#[cfg(not(target_os = "android"))]
+pub(super) fn gpu_working_set_limit_bytes() -> u64 {
+    // Desktop VRAM varies widely. The fixed estimate is useful in tests, but
+    // must not reject a valid allocation before the driver has a chance to
+    // allocate it. Real OOM is reported by the GPU error scopes.
+    u64::MAX
+}
+
+/// The Android admission cap for `total_ram_bytes` of device RAM: a fixed
+/// share, never below the preview budget or above the ceiling. Unknown RAM
+/// keeps the preview budget.
+#[cfg(any(target_os = "android", test))]
+fn android_working_set_limit_bytes(total_ram_bytes: Option<u64>) -> u64 {
+    total_ram_bytes.map_or(ANDROID_GPU_WORKING_SET_LIMIT_BYTES, |ram| {
+        (ram / ANDROID_GPU_WORKING_SET_RAM_DIVISOR).clamp(
+            ANDROID_GPU_WORKING_SET_LIMIT_BYTES,
+            ANDROID_GPU_WORKING_SET_CEILING_BYTES,
+        )
+    })
+}
+
+/// Total RAM in bytes from `/proc/meminfo` (`MemTotal:  7812345 kB`).
+#[cfg(any(target_os = "android", test))]
+fn parse_mem_total_bytes(meminfo: &str) -> Option<u64> {
+    let mut fields = meminfo
+        .lines()
+        .find_map(|line| line.strip_prefix("MemTotal:"))?
+        .split_whitespace();
+    let value = fields.next()?.parse::<u64>().ok()?;
+    match fields.next() {
+        Some("kB") => value.checked_mul(1024),
+        _ => None,
     }
 }
 
@@ -1432,6 +1479,37 @@ mod resource_plan_tests {
         let mut plan = build_gpu_resource_plan(input()).unwrap();
         plan.admitted_gpu_bytes = DESKTOP_GPU_WORKING_SET_LIMIT_BYTES + 1;
         assert!(validate_gpu_resource_plan(&plan, gpu_working_set_limit_bytes()).is_ok());
+    }
+
+    #[test]
+    fn android_budget_scales_with_device_ram_within_bounds() {
+        const GIB: u64 = 1024 * 1024 * 1024;
+        assert_eq!(
+            android_working_set_limit_bytes(None),
+            ANDROID_GPU_WORKING_SET_LIMIT_BYTES
+        );
+        assert_eq!(
+            android_working_set_limit_bytes(Some(2 * GIB)),
+            ANDROID_GPU_WORKING_SET_LIMIT_BYTES
+        );
+        assert_eq!(android_working_set_limit_bytes(Some(8 * GIB)), GIB);
+        assert_eq!(
+            android_working_set_limit_bytes(Some(64 * GIB)),
+            ANDROID_GPU_WORKING_SET_CEILING_BYTES
+        );
+        // Regression: open previews (262.4 MiB) plus a 752 px export tile
+        // (167.7 MiB) exceeded the fixed 384 MiB cap on a phone with RAM to spare.
+        let reported_need = (262.4 + 167.7) * 1024.0 * 1024.0;
+        assert!(android_working_set_limit_bytes(Some(4 * GIB)) as f64 > reported_need);
+    }
+
+    #[test]
+    fn mem_total_is_parsed_from_meminfo() {
+        let meminfo = "MemTotal:        7812344 kB\nMemFree:          123456 kB\n";
+        assert_eq!(parse_mem_total_bytes(meminfo), Some(7_812_344 * 1024));
+        assert_eq!(parse_mem_total_bytes("MemFree: 1 kB\n"), None);
+        assert_eq!(parse_mem_total_bytes("MemTotal: x kB\n"), None);
+        assert_eq!(parse_mem_total_bytes("MemTotal: 12 MB\n"), None);
     }
 
     #[test]
