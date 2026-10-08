@@ -6,7 +6,6 @@ pub(crate) mod feathered_range;
 pub(crate) mod hsl_mixer;
 pub(crate) mod luminance_range_slider;
 pub(crate) mod point_color;
-pub(crate) mod scroll_into_view;
 pub(crate) mod tone_curve_editor;
 
 use eframe::egui::{Align2, Color32, FontId, Painter, Pos2};

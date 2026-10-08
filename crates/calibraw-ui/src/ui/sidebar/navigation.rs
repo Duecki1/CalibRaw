@@ -425,7 +425,7 @@ impl Sidebar {
 
         if let Some(effect) = added_effect {
             if app.add_global_effect(effect, layout) {
-                crate::ui::components::scroll_into_view::request(
+                moduwu_design::request_scroll_into_view(
                     ui.ctx(),
                     mask_effects::effect_card_scroll_target(effect),
                     None,
