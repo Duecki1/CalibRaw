@@ -15,7 +15,7 @@ Repo: https://github.com/Duecki1/CalibRaw.git
 Builds:
   - versionName: 1.2.1
     versionCode: 1000709
-    commit: v1.2.1
+    commit: 2ffab153dc7a5342620681e161c23da1dd801341
     subdir: android
     sudo:
       - apt-get update
