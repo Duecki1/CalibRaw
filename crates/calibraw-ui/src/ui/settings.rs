@@ -397,14 +397,14 @@ impl Settings {
 
         #[cfg(not(target_os = "android"))]
         {
-            let mut raw_cache_files = app.develop.raw_cache_limit;
+            let mut raw_cache_files = app.develop.decoded_raws.limit();
             if count_setting(
                 ui,
                 "Decoded RAW cache (files)",
                 &mut raw_cache_files,
                 0..=maximum_raw_cache_limit(),
                 crate::app::default_raw_cache_limit(),
-                "Keeps decoded RAW files in memory for faster switching, including the current image. Set to 0 to disable reuse; the current edit stays loaded.",
+                "Keeps decoded RAW files in memory for faster switching, including the current image. Files beyond the current one are used to prepare the next and previous photos in advance. Set to 0 to disable reuse; the current edit stays loaded.",
             ) {
                 app.set_raw_cache_limit(raw_cache_files);
             }

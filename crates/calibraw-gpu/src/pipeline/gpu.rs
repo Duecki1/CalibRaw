@@ -142,6 +142,33 @@ struct RemoveCompositeParams {
     extent: [u32; 2],
 }
 
+/// Specializations of `bayer_rcd_output`: demosaic mode (3) × sensor denoise
+/// (2) × chromatic aberration (2), indexed `mode * 4 + denoise * 2 + ca`.
+const DEMOSAIC_VARIANT_COUNT: usize = 12;
+
+/// Sensor denoise, chromatic aberration, and both, with the reference demosaic:
+/// the variants ordinary edits switch to, most common first.
+const COMMON_DEMOSAIC_VARIANTS: [usize; 3] = [2, 1, 3];
+
+fn demosaic_variant_for(camera: &CameraUniforms) -> usize {
+    let mode = if camera.demosaic_mode >= 1.5 {
+        2
+    } else {
+        usize::from(camera.demosaic_mode >= 0.5)
+    };
+    let denoise = usize::from(camera.noise_options[0] > 0.0);
+    let ca = usize::from(camera.ca_red.abs() > 1e-6 || camera.ca_blue.abs() > 1e-6);
+    mode * 4 + denoise * 2 + ca
+}
+
+fn demosaic_variant_constants(variant: usize) -> [(&'static str, f64); 3] {
+    [
+        ("BAYER_DEMOSAIC_MODE", (variant / 4) as f64),
+        ("BAYER_SENSOR_DENOISE", (variant / 2 % 2) as f64),
+        ("BAYER_CA", (variant % 2) as f64),
+    ]
+}
+
 // Templates share both compiled programs and deferred programs. Keep the explicit
 // layouts so reusing a template never compiles an inactive effect just to get its layout.
 struct ComputeProgram {
@@ -151,7 +178,7 @@ struct ComputeProgram {
     entry: String,
     cache: Option<Arc<PersistentGpuPipelineCache>>,
     compiled: OnceLock<wgpu::ComputePipeline>,
-    demosaic_variants: [OnceLock<wgpu::ComputePipeline>; 11],
+    demosaic_variants: [OnceLock<wgpu::ComputePipeline>; DEMOSAIC_VARIANT_COUNT - 1],
 }
 
 impl ComputeProgram {
@@ -161,41 +188,31 @@ impl ComputeProgram {
 
     fn get(&self) -> &wgpu::ComputePipeline {
         self.compiled.get_or_init(|| {
-            let constants = if self.entry == "bayer_rcd_output" {
-                &[
-                    ("BAYER_DEMOSAIC_MODE", 0.0),
-                    ("BAYER_SENSOR_DENOISE", 0.0),
-                    ("BAYER_CA", 0.0),
-                ][..]
+            if self.is_bayer_demosaic() {
+                self.compile(&demosaic_variant_constants(0))
             } else {
-                &[][..]
-            };
-            self.compile(constants)
+                self.compile(&[])
+            }
         })
     }
 
+    fn is_bayer_demosaic(&self) -> bool {
+        self.entry == "bayer_rcd_output"
+    }
+
     fn for_demosaic_params(&self, camera: &CameraUniforms) -> &wgpu::ComputePipeline {
-        if self.entry != "bayer_rcd_output" {
+        if !self.is_bayer_demosaic() {
             return self.get();
         }
-        let mode = if camera.demosaic_mode >= 1.5 {
-            2
-        } else {
-            usize::from(camera.demosaic_mode >= 0.5)
-        };
-        let denoise = usize::from(camera.noise_options[0] > 0.0);
-        let ca = usize::from(camera.ca_red.abs() > 1e-6 || camera.ca_blue.abs() > 1e-6);
-        let variant = mode * 4 + denoise * 2 + ca;
+        self.demosaic_variant(demosaic_variant_for(camera))
+    }
+
+    fn demosaic_variant(&self, variant: usize) -> &wgpu::ComputePipeline {
         if variant == 0 {
             return self.get();
         }
-        self.demosaic_variants[variant - 1].get_or_init(|| {
-            self.compile(&[
-                ("BAYER_DEMOSAIC_MODE", mode as f64),
-                ("BAYER_SENSOR_DENOISE", denoise as f64),
-                ("BAYER_CA", ca as f64),
-            ])
-        })
+        self.demosaic_variants[variant - 1]
+            .get_or_init(|| self.compile(&demosaic_variant_constants(variant)))
     }
 
     fn compile(&self, constants: &[(&str, f64)]) -> wgpu::ComputePipeline {
@@ -279,6 +296,41 @@ pub struct RawGpuProgramTemplate {
     processing_quality: ProcessingQuality,
     pipelines: Vec<Arc<ComputeProgram>>,
     pipeline_cache: Option<Arc<PersistentGpuPipelineCache>>,
+}
+
+/// Programs compile on first use, which stalls the edit that first needs one
+/// for up to seconds. These calls compile ahead of time. They block, so call
+/// them off the UI thread; pipelines built from the template share the results.
+impl RawGpuProgramTemplate {
+    /// Compiles the programs ordinary edits switch on: every effect pass, and
+    /// the sensor-denoise and chromatic-aberration variants of the reference
+    /// demosaic. The other demosaic variants take seconds each and are left to
+    /// [`Self::compile_for_params`].
+    pub fn compile_common_programs(&self) {
+        for program in &self.pipelines {
+            program.get();
+        }
+        for variant in COMMON_DEMOSAIC_VARIANTS {
+            for program in self
+                .pipelines
+                .iter()
+                .filter(|program| program.is_bayer_demosaic())
+            {
+                program.demosaic_variant(variant);
+            }
+        }
+    }
+
+    /// Compiles the demosaic variant that rendering `params` selects.
+    pub fn compile_for_params(&self, params: &GpuParams) {
+        for program in self
+            .pipelines
+            .iter()
+            .filter(|program| program.is_bayer_demosaic())
+        {
+            program.for_demosaic_params(&params.camera);
+        }
+    }
 }
 
 #[derive(Default)]

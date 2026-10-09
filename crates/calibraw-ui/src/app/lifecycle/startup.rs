@@ -80,8 +80,9 @@ impl CalibRawApp {
                 loaded_raw: None,
                 preview_raw: None,
                 exposure,
-                raw_cache: VecDeque::new(),
-                raw_cache_limit: performance.raw_cache_files,
+                decoded_raws: DecodedRawCache::new(performance.raw_cache_files),
+                #[cfg(not(target_os = "android"))]
+                neighbour_prefetch: Default::default(),
                 selected_camera_profile: None,
                 geometry: GeometryTransform::default(),
                 geometry_revision: 0,
