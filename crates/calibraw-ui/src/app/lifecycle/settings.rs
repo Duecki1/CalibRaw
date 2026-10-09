@@ -87,6 +87,16 @@ impl CalibRawApp {
     }
 
     #[cfg(not(target_os = "android"))]
+    pub(crate) fn set_hdd_mode(&mut self, enabled: bool) {
+        if self.preferences.hdd_mode == enabled {
+            return;
+        }
+        self.preferences.hdd_mode = enabled;
+        calibraw_core::serialized_reads::set_enabled(enabled);
+        self.persist_performance_settings();
+    }
+
+    #[cfg(not(target_os = "android"))]
     pub(crate) fn set_discord_rich_presence(&mut self, enabled: bool) {
         if self.preferences.discord_rich_presence == enabled {
             return;
@@ -323,6 +333,8 @@ impl CalibRawApp {
             onnx_runtime_mode: self.ai.runtime_mode,
             #[cfg(not(target_os = "android"))]
             discord_rich_presence: self.preferences.discord_rich_presence,
+            #[cfg(not(target_os = "android"))]
+            hdd_mode: self.preferences.hdd_mode,
             camera_profile_mode: self.preferences.camera_profile_mode,
             camera_profile_folder: self.preferences.camera_profile_folder.clone(),
             camera_profile_folder_label: self.preferences.camera_profile_folder_label.clone(),

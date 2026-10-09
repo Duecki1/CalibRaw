@@ -41,17 +41,23 @@ pub(in crate::pipeline::raw_loader) fn load_raw_thumbnail(
 }
 
 fn load_embedded_thumbnail(path: &Path, maximum_edge: u32) -> Result<RawThumbnail> {
-    let ctx = open_libraw(path)?;
-    validate_embedded_thumbnail_header(&ctx)?;
-    check_libraw(
-        unsafe { ffi::libraw_unpack_thumb(ctx.raw) },
-        "unpack RAW thumbnail",
-    )?;
-    let orientation = embedded_thumbnail_orientation(&ctx);
+    // File reads end with the in-memory copy; decoding runs outside the read gate.
+    let (image, orientation) = crate::serialized_reads::run(|| -> Result<_> {
+        let ctx = open_libraw(path)?;
+        validate_embedded_thumbnail_header(&ctx)?;
+        check_libraw(
+            unsafe { ffi::libraw_unpack_thumb(ctx.raw) },
+            "unpack RAW thumbnail",
+        )?;
+        let orientation = embedded_thumbnail_orientation(&ctx);
 
-    let mut error = 0;
-    let image = unsafe { ffi::libraw_dcraw_make_mem_thumb(ctx.raw, &mut error) };
-    let image = ProcessedImage::new(image, error, "make in-memory RAW thumbnail")?;
+        let mut error = 0;
+        let image = unsafe { ffi::libraw_dcraw_make_mem_thumb(ctx.raw, &mut error) };
+        // The copy is malloc'd independently of the context and freed by the
+        // context-free `libraw_dcraw_clear_mem`, so it outlives `ctx`.
+        let image = ProcessedImage::new(image, error, "make in-memory RAW thumbnail")?;
+        Ok((image, orientation))
+    })?;
     unsafe { thumbnail_from_processed(&image, maximum_edge, orientation) }
 }
 
@@ -122,29 +128,33 @@ pub(super) fn validate_embedded_thumbnail_metadata(
 
 fn load_processed_thumbnail(path: &Path, maximum_edge: u32) -> Result<RawThumbnail> {
     let _render_permit = crate::thumbnail_cache::acquire_rendered_thumbnail_worker();
-    let ctx = open_libraw(path)?;
-    #[cfg(target_os = "android")]
-    {
-        let sizes = unsafe { &(*ctx.raw).rawdata.sizes };
-        let sensor_pixels = u64::from(sizes.raw_width)
-            .checked_mul(u64::from(sizes.raw_height))
-            .context("RAW thumbnail fallback sensor dimensions overflow")?;
-        anyhow::ensure!(
-            sensor_pixels <= MAX_ANDROID_THUMBNAIL_FALLBACK_SENSOR_PIXELS,
-            "embedded preview is unavailable and the {sensor_pixels}-pixel sensor exceeds the Android sensor safety limit"
-        );
-    }
-    unsafe {
-        (*ctx.raw).params.half_size = 1;
-        (*ctx.raw).params.use_camera_wb = 1;
-        (*ctx.raw).params.output_color = 1;
-        (*ctx.raw).params.output_bps = 8;
-        (*ctx.raw).params.user_flip = -1;
-    }
-    check_libraw(
-        unsafe { ffi::libraw_unpack(ctx.raw) },
-        "unpack RAW thumbnail fallback",
-    )?;
+    // Unpacking reads the sensor payload; processing runs outside the read gate.
+    let ctx = crate::serialized_reads::run(|| -> Result<_> {
+        let ctx = open_libraw(path)?;
+        #[cfg(target_os = "android")]
+        {
+            let sizes = unsafe { &(*ctx.raw).rawdata.sizes };
+            let sensor_pixels = u64::from(sizes.raw_width)
+                .checked_mul(u64::from(sizes.raw_height))
+                .context("RAW thumbnail fallback sensor dimensions overflow")?;
+            anyhow::ensure!(
+                sensor_pixels <= MAX_ANDROID_THUMBNAIL_FALLBACK_SENSOR_PIXELS,
+                "embedded preview is unavailable and the {sensor_pixels}-pixel sensor exceeds the Android sensor safety limit"
+            );
+        }
+        unsafe {
+            (*ctx.raw).params.half_size = 1;
+            (*ctx.raw).params.use_camera_wb = 1;
+            (*ctx.raw).params.output_color = 1;
+            (*ctx.raw).params.output_bps = 8;
+            (*ctx.raw).params.user_flip = -1;
+        }
+        check_libraw(
+            unsafe { ffi::libraw_unpack(ctx.raw) },
+            "unpack RAW thumbnail fallback",
+        )?;
+        Ok(ctx)
+    })?;
     check_libraw(
         unsafe { ffi::libraw_dcraw_process(ctx.raw) },
         "process RAW thumbnail fallback",

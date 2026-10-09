@@ -1,18 +1,23 @@
 use super::super::*;
+use calibraw_core::display_metadata_cache::{FileStamp, FolderDisplayMetadataCache};
+use calibraw_core::pipeline::RawDisplayMetadata;
 use std::collections::BinaryHeap;
 use std::time::UNIX_EPOCH;
 
 pub(in crate::ui::library) struct RankedLibraryAsset {
     asset: LibraryAsset,
     lowercase_name: String,
+    /// Validates the folder's display-metadata cache; not part of the ranking.
+    stamp: Option<FileStamp>,
 }
 
 impl RankedLibraryAsset {
-    fn new(asset: LibraryAsset) -> Self {
+    fn new(asset: LibraryAsset, stamp: Option<FileStamp>) -> Self {
         let lowercase_name = asset.display_name.to_lowercase();
         Self {
             asset,
             lowercase_name,
+            stamp,
         }
     }
 }
@@ -170,7 +175,8 @@ pub(in crate::ui::library) fn scan_folder_with_limit(
             modified_seconds,
             None,
         );
-        let candidate = RankedLibraryAsset::new(asset);
+        let stamp = file_metadata.as_ref().map(FileStamp::from_metadata);
+        let candidate = RankedLibraryAsset::new(asset, stamp);
         if ranked_assets.len() < maximum_files {
             ranked_assets.push(candidate);
         } else {
@@ -184,27 +190,51 @@ pub(in crate::ui::library) fn scan_folder_with_limit(
             }
         }
     }
-    let mut assets = ranked_assets.into_vec();
-    assets.sort();
-    let mut assets = assets
-        .into_iter()
-        .map(|ranked| ranked.asset)
-        .collect::<Vec<_>>();
+    let mut ranked_assets = ranked_assets.into_vec();
+    ranked_assets.sort();
 
-    for asset in &mut assets {
+    let mut metadata_cache = FolderDisplayMetadataCache::load(folder);
+    let mut assets = Vec::with_capacity(ranked_assets.len());
+    for RankedLibraryAsset {
+        mut asset, stamp, ..
+    } in ranked_assets
+    {
         if is_cancelled() {
             return Ok(None);
         }
-        if let Some(path) = asset.desktop_path() {
-            if let Ok(metadata) = load_raw_display_metadata(path) {
-                asset.metadata.dimensions_hint = Some(metadata.dimensions);
-                asset.metadata.iso_speed = metadata.iso_speed;
-                asset.metadata.shutter_seconds = metadata.shutter_seconds;
-                asset.metadata.focal_length = metadata.focal_length;
-                asset.metadata.aperture = metadata.aperture;
-            }
+        if let Some(metadata) = asset
+            .desktop_path()
+            .and_then(|path| cached_display_metadata(&mut metadata_cache, path, stamp))
+        {
+            asset.metadata.dimensions_hint = Some(metadata.dimensions);
+            asset.metadata.iso_speed = metadata.iso_speed;
+            asset.metadata.shutter_seconds = metadata.shutter_seconds;
+            asset.metadata.focal_length = metadata.focal_length;
+            asset.metadata.aperture = metadata.aperture;
         }
+        assets.push(asset);
+    }
+    if let Err(error) = metadata_cache.save() {
+        log::warn!("{error}");
     }
 
     Ok(Some((assets, warning_count, truncated)))
+}
+
+/// Reads a photo's display metadata from the folder cache, or from the file on
+/// a miss. Files without a stamp are read every scan.
+fn cached_display_metadata(
+    cache: &mut FolderDisplayMetadataCache,
+    path: &Path,
+    stamp: Option<FileStamp>,
+) -> Option<RawDisplayMetadata> {
+    let file_name = path.file_name()?;
+    if let Some(cached) = stamp.and_then(|stamp| cache.get(file_name, stamp)) {
+        return Some(cached);
+    }
+    let metadata = calibraw_core::serialized_reads::run(|| load_raw_display_metadata(path)).ok()?;
+    if let Some(stamp) = stamp {
+        cache.insert(file_name, stamp, metadata);
+    }
+    Some(metadata)
 }

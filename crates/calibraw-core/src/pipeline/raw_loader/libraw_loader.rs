@@ -294,13 +294,17 @@ fn load_raw_file_with_selected_profile(
     dcp_profile: Option<DcpProfile>,
 ) -> Result<LoadedRaw> {
     validate_input_file(path, MAX_RAW_FILE_BYTES, "RAW input")?;
-    let source_metadata = read_exif_capture_metadata_or_default(path);
+    // Every file read happens here; unpacking ends with the payload in memory.
+    let (source_metadata, ctx) = crate::serialized_reads::run(|| -> Result<_> {
+        let source_metadata = read_exif_capture_metadata_or_default(path);
 
-    let ctx = LibRawContext::new()?;
+        let ctx = LibRawContext::new()?;
 
-    open_libraw_file(&ctx, path, "open RAW file")?;
-    unsafe { validate_opened_raw_geometry(&ctx) }?;
-    check_libraw(unsafe { ffi::libraw_unpack(ctx.raw) }, "unpack RAW file")?;
+        open_libraw_file(&ctx, path, "open RAW file")?;
+        unsafe { validate_opened_raw_geometry(&ctx) }?;
+        check_libraw(unsafe { ffi::libraw_unpack(ctx.raw) }, "unpack RAW file")?;
+        Ok((source_metadata, ctx))
+    })?;
 
     let mut loaded = unsafe { loaded_raw_from_context(&ctx, dcp_profile) }?;
     loaded.capture_metadata.flash = source_metadata.flash.or(loaded.capture_metadata.flash);

@@ -410,6 +410,19 @@ impl Settings {
             }
 
             ui.add_space(moduwu_design::SPACE_SM);
+            let mut hdd_mode = app.preferences.hdd_mode;
+            if moduwu_design::toggle_with_help(
+                ui,
+                &mut hdd_mode,
+                "HDD mode",
+                "Reads one photo file at a time, which is faster for libraries on spinning hard drives. Thumbnail workers still decode in parallel. Leave it off for SSDs and memory cards.",
+            )
+                .changed()
+            {
+                app.set_hdd_mode(hdd_mode);
+            }
+
+            ui.add_space(moduwu_design::SPACE_SM);
             let mut thumbnail_workers = app.thumbnail_worker_count();
             if count_setting(
                 ui,
