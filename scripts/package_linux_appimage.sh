@@ -6,9 +6,6 @@ set -euxo pipefail
 
 source "$HOME/.cargo/env"
 
-VERSION="$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -n 1)"
-test -n "$VERSION"
-
 LIBRAW_SO="$(ldd target/release/calibraw | awk '/libraw(_r)?\.so/{print $3; exit}')"
 LENSFUN_SO="$(ldd target/release/calibraw | awk '/liblensfun\.so/{print $3; exit}')"
 test -f "$LIBRAW_SO"
@@ -50,7 +47,7 @@ python3 scripts/bootstrap_download.py \
 chmod +x "$LINUXDEPLOY"
 
 export APPIMAGE_EXTRACT_AND_RUN=1
-export LDAI_OUTPUT="CalibRaw-${VERSION}-${LINUXDEPLOY_ARCH}.AppImage"
+export LDAI_OUTPUT="CalibRaw-${LINUXDEPLOY_ARCH}.AppImage"
 "$LINUXDEPLOY" \
   --appdir AppDir \
   --executable "$PWD/target/release/calibraw" \
