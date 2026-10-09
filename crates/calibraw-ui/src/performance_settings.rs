@@ -407,12 +407,13 @@ mod tests {
             .sanitized()
             .raw_cache_files
         };
-        let old_default = if cfg!(target_os = "android") {
+        // Android never had the desktop default, so its stored 2 is a choice.
+        let expected = if cfg!(target_os = "android") {
             2
         } else {
             crate::app::default_raw_cache_limit()
         };
-        assert_eq!(migrated(1, 2), old_default);
+        assert_eq!(migrated(1, 2), expected);
         // Other stored sizes were chosen, and version 2 files are kept as saved.
         assert_eq!(migrated(1, 1), 1);
         assert_eq!(migrated(SETTINGS_VERSION, 2), 2);

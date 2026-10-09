@@ -140,8 +140,9 @@ for reading; and a decode that owns a decoded-RAW cache entry takes the decode
 gate without holding the cache lock, so waiting for an entry never holds the
 gate. No code takes the decode gate while holding any other lock in this
 table. The serialized-read gate may be taken while holding any of them, but none
-of them is taken while holding it. Poisoned locks are recovered (`PoisonError::into_inner`) where the protected data stays
-valid, and reported as errors where it may not.
+of them is taken while holding it. Poisoned locks are recovered
+(`PoisonError::into_inner`) where the protected data stays valid, and reported
+as errors where it may not.
 
 ### Shutdown
 

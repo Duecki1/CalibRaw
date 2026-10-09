@@ -485,11 +485,11 @@ mod tests {
 
     #[test]
     fn manual_limit_allows_every_core_and_the_previous_maximum() {
+        assert!(maximum_thumbnail_worker_count() >= MIN_DESKTOP_THUMBNAIL_WORKER_LIMIT);
         assert!(
             maximum_thumbnail_worker_count()
-                >= super::super::super::MIN_DESKTOP_THUMBNAIL_WORKER_LIMIT
+                >= logical_core_count().min(MAX_DESKTOP_THUMBNAIL_WORKER_LIMIT)
         );
-        assert!(maximum_thumbnail_worker_count() >= logical_core_count().min(64));
         assert!(automatic_thumbnail_worker_count() <= maximum_thumbnail_worker_count());
     }
 }
