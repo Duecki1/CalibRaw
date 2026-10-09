@@ -42,27 +42,131 @@ pub(in crate::pipeline::raw_loader) fn load_raw_thumbnail(
 
 fn load_embedded_thumbnail(path: &Path, maximum_edge: u32) -> Result<RawThumbnail> {
     // File reads end with the in-memory copy; decoding runs outside the read gate.
-    let (image, orientation) = crate::serialized_reads::run(|| -> Result<_> {
-        let ctx = open_libraw(path)?;
-        // LibRaw 0.22 reports the preview's format and channel count only once
-        // it is unpacked; its declared length is known after open and bounds the
-        // allocation that unpacking makes.
-        validate_embedded_thumbnail_length(unsafe { (*ctx.raw).thumbnail.tlength })?;
-        check_libraw(
-            unsafe { ffi::libraw_unpack_thumb(ctx.raw) },
-            "unpack RAW thumbnail",
-        )?;
-        validate_embedded_thumbnail_header(&ctx)?;
-        let orientation = embedded_thumbnail_orientation(&ctx);
-
-        let mut error = 0;
-        let image = unsafe { ffi::libraw_dcraw_make_mem_thumb(ctx.raw, &mut error) };
-        // The copy is malloc'd independently of the context and freed by the
-        // context-free `libraw_dcraw_clear_mem`, so it outlives `ctx`.
-        let image = ProcessedImage::new(image, error, "make in-memory RAW thumbnail")?;
-        Ok((image, orientation))
-    })?;
+    let (image, orientation) =
+        crate::serialized_reads::run(|| unpack_embedded_preview(path, maximum_edge))?;
     unsafe { thumbnail_from_processed(&image, maximum_edge, orientation) }
+}
+
+/// Unpacks the smallest embedded preview that still covers `maximum_edge`, or
+/// LibRaw's default (usually the largest) when no smaller one qualifies.
+fn unpack_embedded_preview(path: &Path, maximum_edge: u32) -> Result<(ProcessedImage, i32)> {
+    let ctx = open_libraw(path)?;
+    let Some(index) = smaller_covering_preview(&ctx, maximum_edge) else {
+        return unpack_preview(&ctx, None);
+    };
+    match unpack_preview(&ctx, Some(index)) {
+        Ok(unpacked) => Ok(unpacked),
+        Err(error) => {
+            log::debug!(
+                "smaller embedded preview {index} of {} failed, using the default: {error:#}",
+                path.display()
+            );
+            // A failed unpack leaves the context describing that preview.
+            let ctx = open_libraw(path)?;
+            unpack_preview(&ctx, None)
+        }
+    }
+}
+
+/// Unpacks `thumbs_list[index]`, or LibRaw's default preview for `None`, and
+/// copies it out of the context.
+fn unpack_preview(ctx: &LibRawContext, index: Option<usize>) -> Result<(ProcessedImage, i32)> {
+    // LibRaw 0.22 reports the preview's format and channel count only once it
+    // is unpacked; its declared length is known after open and bounds the
+    // allocation that unpacking makes.
+    let declared_length = unsafe {
+        match index {
+            Some(index) => (*ctx.raw).thumbs_list.thumblist[index].tlength,
+            None => (*ctx.raw).thumbnail.tlength,
+        }
+    };
+    validate_embedded_thumbnail_length(declared_length)?;
+    let status = match index {
+        Some(index) => {
+            let index = i32::try_from(index).context("embedded preview index overflow")?;
+            unsafe { ffi::libraw_unpack_thumb_ex(ctx.raw, index) }
+        }
+        None => unsafe { ffi::libraw_unpack_thumb(ctx.raw) },
+    };
+    check_libraw(status, "unpack RAW thumbnail")?;
+    validate_embedded_thumbnail_header(ctx)?;
+    let orientation = embedded_thumbnail_orientation(ctx);
+
+    let mut error = 0;
+    let image = unsafe { ffi::libraw_dcraw_make_mem_thumb(ctx.raw, &mut error) };
+    // The copy is malloc'd independently of the context and freed by the
+    // context-free `libraw_dcraw_clear_mem`, so it outlives `ctx`.
+    let image = ProcessedImage::new(image, error, "make in-memory RAW thumbnail")?;
+    Ok((image, orientation))
+}
+
+fn smaller_covering_preview(ctx: &LibRawContext, maximum_edge: u32) -> Option<usize> {
+    unsafe {
+        let raw = &*ctx.raw;
+        let list = &raw.thumbs_list;
+        let count = usize::try_from(list.thumbcount)
+            .unwrap_or(0)
+            .min(list.thumblist.len());
+        smaller_covering_preview_index(
+            [raw.thumbnail.twidth, raw.thumbnail.theight],
+            list.thumblist[..count].iter().map(|item| EmbeddedPreview {
+                jpeg: item.tformat
+                    == ffi::LibRaw_internal_thumbnail_formats_LIBRAW_INTERNAL_THUMBNAIL_JPEG,
+                dimensions: [item.twidth, item.theight],
+                length: item.tlength,
+            }),
+            maximum_edge,
+        )
+    }
+}
+
+/// One entry of LibRaw's embedded preview list, before unpacking.
+#[derive(Clone, Copy, Debug)]
+pub(super) struct EmbeddedPreview {
+    pub(super) jpeg: bool,
+    pub(super) dimensions: [u16; 2],
+    pub(super) length: u32,
+}
+
+/// Previews whose long/short edge ratio differs from the default preview's by
+/// more than this are treated as letterboxed or cropped and never chosen.
+const PREVIEW_ASPECT_TOLERANCE: f64 = 0.02;
+
+/// The index of the smallest JPEG preview whose long edge covers
+/// `maximum_edge`, has the default preview's aspect ratio and is smaller than
+/// the default. `None` keeps LibRaw's default choice, including when the
+/// default's dimensions are unknown.
+pub(super) fn smaller_covering_preview_index(
+    default_dimensions: [u16; 2],
+    previews: impl IntoIterator<Item = EmbeddedPreview>,
+    maximum_edge: u32,
+) -> Option<usize> {
+    let default_pixels = pixel_count(default_dimensions)?;
+    let default_aspect = aspect_ratio(default_dimensions)?;
+    previews
+        .into_iter()
+        .enumerate()
+        .filter(|(_, preview)| {
+            let [width, height] = preview.dimensions;
+            preview.jpeg
+                && preview.length > 0
+                && u32::from(width.max(height)) >= maximum_edge
+                && pixel_count(preview.dimensions).is_some_and(|pixels| pixels < default_pixels)
+                && aspect_ratio(preview.dimensions).is_some_and(|aspect| {
+                    (aspect - default_aspect).abs() <= default_aspect * PREVIEW_ASPECT_TOLERANCE
+                })
+        })
+        .min_by_key(|(_, preview)| pixel_count(preview.dimensions))
+        .map(|(index, _)| index)
+}
+
+fn pixel_count([width, height]: [u16; 2]) -> Option<u32> {
+    (width > 0 && height > 0).then(|| u32::from(width) * u32::from(height))
+}
+
+/// Long edge over short edge, so rotated previews compare equal.
+fn aspect_ratio([width, height]: [u16; 2]) -> Option<f64> {
+    (width > 0 && height > 0).then(|| f64::from(width.max(height)) / f64::from(width.min(height)))
 }
 
 fn validate_embedded_thumbnail_length(length: u32) -> Result<usize> {
