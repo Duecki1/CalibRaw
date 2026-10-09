@@ -202,6 +202,7 @@ fn capture_review(root: &Path, output_dir: &Path) {
                 github_update_check_allowed: Some(false),
                 camera_profile_auto_detect: false,
                 thumbnail_workers: 1,
+                thumbnail_workers_automatic: false,
                 develop_filmstrip_open: false,
                 ..PerformanceSettings::default()
             };

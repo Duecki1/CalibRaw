@@ -423,16 +423,35 @@ impl Settings {
             }
 
             ui.add_space(moduwu_design::SPACE_SM);
-            let mut thumbnail_workers = app.thumbnail_worker_count();
-            if count_setting(
+            let mut automatic_workers = app.library.automatic_thumbnail_workers();
+            let automatic_help = format!(
+                "Uses {} concurrent thumbnail jobs on this computer, sized from its processor cores and memory. Turn off to set the number yourself. Changing this restarts the queue.",
+                crate::ui::library::automatic_thumbnail_worker_count()
+            );
+            if moduwu_design::toggle_with_help(
                 ui,
-                "Thumbnail workers",
-                &mut thumbnail_workers,
-                1..=maximum_thumbnail_worker_count(),
-                crate::ui::library::default_thumbnail_worker_count(),
-                "Concurrent thumbnail jobs. More workers can fill the library faster but use more memory, especially for edited RAW files or files without embedded previews. Changing this restarts the queue.",
-            ) {
-                app.set_thumbnail_worker_count(thumbnail_workers);
+                &mut automatic_workers,
+                "Automatic thumbnail workers",
+                &automatic_help,
+            )
+            .changed()
+            {
+                app.set_automatic_thumbnail_workers(automatic_workers);
+            }
+
+            if !app.library.automatic_thumbnail_workers() {
+                ui.add_space(moduwu_design::SPACE_SM);
+                let mut thumbnail_workers = app.thumbnail_worker_count();
+                if count_setting(
+                    ui,
+                    "Thumbnail workers",
+                    &mut thumbnail_workers,
+                    1..=maximum_thumbnail_worker_count(),
+                    crate::ui::library::default_thumbnail_worker_count(),
+                    "Concurrent thumbnail jobs. More workers can fill the library faster but use more memory, especially for edited RAW files or files without embedded previews. Changing this restarts the queue.",
+                ) {
+                    app.set_thumbnail_worker_count(thumbnail_workers);
+                }
             }
         }
 

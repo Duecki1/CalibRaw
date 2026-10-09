@@ -9,6 +9,7 @@ pub mod pipeline;
 pub mod presets;
 pub mod serialized_reads;
 pub mod sidecar;
+pub mod system_memory;
 pub mod thumbnail_cache;
 
 #[used]

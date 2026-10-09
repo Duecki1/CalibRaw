@@ -13,7 +13,11 @@ pub(crate) struct PerformanceSettings {
     pub app_usage_ms: u64,
     pub version: u32,
     pub raw_cache_files: usize,
+    /// The manual thumbnail worker limit, used while `thumbnail_workers_automatic` is off.
     pub thumbnail_workers: usize,
+    /// Size the thumbnail worker pool from the machine's cores and memory.
+    /// Missing in files written before it existed, which therefore turn it on.
+    pub thumbnail_workers_automatic: bool,
     pub render_edited_thumbnails_during_indexing: bool,
     pub library_thumbnail_size: crate::ui::library::LibraryThumbnailSize,
     pub library_sort_order: crate::ui::library::LibrarySortOrder,
@@ -138,6 +142,7 @@ impl Default for PerformanceSettings {
             version: SETTINGS_VERSION,
             raw_cache_files: crate::app::default_raw_cache_limit(),
             thumbnail_workers: crate::ui::library::default_thumbnail_worker_count(),
+            thumbnail_workers_automatic: true,
             render_edited_thumbnails_during_indexing: false,
             library_thumbnail_size: crate::ui::library::LibraryThumbnailSize::default(),
             library_sort_order: crate::ui::library::LibrarySortOrder::default(),
@@ -443,6 +448,10 @@ mod tests {
                 .expect("baseline settings should remain readable");
 
         assert_eq!(SETTINGS_VERSION, 1);
+        // Files written before automatic workers existed switch to automatic and
+        // keep their stored count as the manual limit.
+        assert!(settings.thumbnail_workers_automatic);
+        assert_eq!(settings.thumbnail_workers, 1);
         assert_eq!(settings.preview_quality, crate::app::PreviewQuality::Medium);
         assert!(!settings.image_relative_brush_size);
         assert!(!settings.show_develop_navigation_labels);
@@ -513,6 +522,7 @@ mod tests {
             ui_design: crate::appearance::UiDesign::Porcelain,
             preview_backdrop: crate::appearance::PreviewBackdrop::MatchPhoto,
             render_edited_thumbnails_during_indexing: true,
+            thumbnail_workers_automatic: false,
             automatic_lens_correction: false,
             automatic_lens_vignetting: false,
             ..Default::default()
@@ -562,6 +572,7 @@ mod tests {
             crate::appearance::PreviewBackdrop::MatchPhoto
         );
         assert!(restored.render_edited_thumbnails_during_indexing);
+        assert!(!restored.thumbnail_workers_automatic);
         #[cfg(not(target_os = "android"))]
         {
             assert!(!restored.subject_crop_refinement);

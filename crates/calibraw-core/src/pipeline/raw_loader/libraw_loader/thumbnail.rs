@@ -44,11 +44,15 @@ fn load_embedded_thumbnail(path: &Path, maximum_edge: u32) -> Result<RawThumbnai
     // File reads end with the in-memory copy; decoding runs outside the read gate.
     let (image, orientation) = crate::serialized_reads::run(|| -> Result<_> {
         let ctx = open_libraw(path)?;
-        validate_embedded_thumbnail_header(&ctx)?;
+        // LibRaw 0.22 reports the preview's format and channel count only once
+        // it is unpacked; its declared length is known after open and bounds the
+        // allocation that unpacking makes.
+        validate_embedded_thumbnail_length(unsafe { (*ctx.raw).thumbnail.tlength })?;
         check_libraw(
             unsafe { ffi::libraw_unpack_thumb(ctx.raw) },
             "unpack RAW thumbnail",
         )?;
+        validate_embedded_thumbnail_header(&ctx)?;
         let orientation = embedded_thumbnail_orientation(&ctx);
 
         let mut error = 0;
@@ -59,6 +63,15 @@ fn load_embedded_thumbnail(path: &Path, maximum_edge: u32) -> Result<RawThumbnai
         Ok((image, orientation))
     })?;
     unsafe { thumbnail_from_processed(&image, maximum_edge, orientation) }
+}
+
+fn validate_embedded_thumbnail_length(length: u32) -> Result<usize> {
+    let length = usize::try_from(length).context("embedded RAW preview length overflow")?;
+    anyhow::ensure!(
+        length > 0 && length <= MAX_EMBEDDED_THUMBNAIL_BYTES,
+        "embedded RAW preview payload size {length} is outside the safe range"
+    );
+    Ok(length)
 }
 
 fn validate_embedded_thumbnail_header(ctx: &LibRawContext) -> Result<()> {
@@ -79,11 +92,7 @@ pub(super) fn validate_embedded_thumbnail_metadata(
     length: u32,
     colors: i32,
 ) -> Result<()> {
-    let length = usize::try_from(length).context("embedded RAW preview length overflow")?;
-    anyhow::ensure!(
-        length > 0 && length <= MAX_EMBEDDED_THUMBNAIL_BYTES,
-        "embedded RAW preview payload size {length} is outside the safe range"
-    );
+    let length = validate_embedded_thumbnail_length(length)?;
 
     match format {
         ffi::LibRaw_thumbnail_formats_LIBRAW_THUMBNAIL_JPEG => {

@@ -8,7 +8,7 @@ impl LibraryState {
         let cancellation = Arc::clone(&self.generation);
         let decoding_paused = Arc::clone(&self.decoding_paused);
         let decode_gate = Arc::clone(&self.decode_gate);
-        let thumbnail_workers = self.thumbnail_workers;
+        let thumbnail_workers = self.active_thumbnail_worker_count();
         let render_edited_thumbnails_during_indexing =
             self.render_edited_thumbnails_during_indexing;
         let repaint = context.clone();

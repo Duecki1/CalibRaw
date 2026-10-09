@@ -665,6 +665,7 @@ dependencies = [
  "heic-rs",
  "image",
  "kamadak-exif",
+ "libc",
  "log",
  "pkg-config",
  "png",
