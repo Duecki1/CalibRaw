@@ -547,6 +547,9 @@ impl RasterSource {
     }
 
     fn thumbnail(self, path: &Path, maximum_edge: u32) -> Result<RawThumbnail> {
+        // These decoders interleave small reads with decoding, so in HDD mode
+        // the file is read once up front and decoded from the page cache.
+        crate::serialized_reads::prefetch_file(path);
         match self {
             Self::Tiff => super::tiff_loader::load_raster_tiff_thumbnail(path, maximum_edge),
             Self::Rendered(format) => {

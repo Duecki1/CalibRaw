@@ -125,14 +125,16 @@ GPU readbacks wait on one-slot channels.
 | model runtime slot | `calibraw_ai::model_runtime` | the running AI job | one ONNX session at a time; evicted models unload once released |
 | `RUNTIME_INIT_LOCK`, provider statuses, artifact lock | `calibraw_ai` | AI jobs | serialize ONNX Runtime initialization and probes |
 | `SIDECAR_SAVE_LOCK` | `calibraw_core::sidecar::files` | sidecar writers | one sidecar write at a time |
+| serialized-read gate (HDD mode) | `calibraw_core::serialized_reads` | thumbnail, display-metadata and RAW loads, only while HDD mode is on | one photo file read at a time; decoding stays outside; a leaf lock, re-entered inline on the holding thread |
 | `TextureRetirement` | `PreviewState` | any thread dropping a `PreviewPipeline`; drained by the UI thread | short pushes and one drain per frame |
 | FFI result queues, `REPAINT_NOTIFIER` | `calibraw_ffi::android` | Java callback threads push; the UI thread pops | short critical sections; no JNI call while held |
 
-Only two nestings exist, both in a fixed order: the reference-preview serial
-lock is taken before the decode gate, and a thumbnail worker takes
-`DEVELOPED_THUMBNAIL_GPU` while holding the decode gate for reading. No code
-takes the decode gate while holding any other lock in this table. Poisoned
-locks are recovered (`PoisonError::into_inner`) where the protected data stays
+Apart from the serialized-read gate, only two nestings exist, both in a fixed
+order: the reference-preview serial lock is taken before the decode gate, and a
+thumbnail worker takes `DEVELOPED_THUMBNAIL_GPU` while holding the decode gate
+for reading. No code takes the decode gate while holding any other lock in this
+table. The serialized-read gate may be taken while holding any of them, but none
+of them is taken while holding it. Poisoned locks are recovered (`PoisonError::into_inner`) where the protected data stays
 valid, and reported as errors where it may not.
 
 ### Shutdown

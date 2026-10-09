@@ -224,7 +224,10 @@ struct Input {
 
 fn open(path: &Path) -> Result<Input> {
     shared::validate_input_file(path, MAX_RAW_FILE_BYTES, "Rawler input")?;
-    let source = RawSource::new(path).context("open Rawler source")?;
+    // `RawSource::new` maps the file with MAP_POPULATE, which reads it whole on
+    // Linux; elsewhere the mapping faults pages in later, outside the gate.
+    let source =
+        crate::serialized_reads::run(|| RawSource::new(path)).context("open Rawler source")?;
     let decoder = rawler::get_decoder(&source).context("identify Rawler input")?;
     // Proprietary decoders do not consistently expose pre-decode sensor bounds
     // through this API. Leave those formats to LibRaw rather than bypass limits.

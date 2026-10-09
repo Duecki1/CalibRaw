@@ -17,6 +17,8 @@ impl CalibRawApp {
         #[cfg(not(target_os = "android"))]
         calibraw_ai::set_ai_acceleration_enabled(performance.ai_gpu_acceleration);
         #[cfg(not(target_os = "android"))]
+        calibraw_core::serialized_reads::set_enabled(performance.hdd_mode);
+        #[cfg(not(target_os = "android"))]
         let discord_presence = DiscordPresence::new(performance.discord_rich_presence);
         #[cfg(not(target_os = "android"))]
         let last_library_folder = performance.last_library_folder.clone();
@@ -286,6 +288,8 @@ impl CalibRawApp {
                 export_name_template: performance.export_name_template.clone(),
                 #[cfg(not(target_os = "android"))]
                 discord_rich_presence: performance.discord_rich_presence,
+                #[cfg(not(target_os = "android"))]
+                hdd_mode: performance.hdd_mode,
                 ui_design: performance.ui_design,
                 preview_backdrop: performance.preview_backdrop,
                 onboarding_completed: performance.onboarding_completed,

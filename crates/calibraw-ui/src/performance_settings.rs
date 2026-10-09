@@ -42,6 +42,9 @@ pub(crate) struct PerformanceSettings {
     pub onnx_runtime_mode: crate::app::OnnxRuntimeMode,
     #[cfg(not(target_os = "android"))]
     pub discord_rich_presence: bool,
+    /// Serialize photo file reads for libraries on rotational disks.
+    #[cfg(not(target_os = "android"))]
+    pub hdd_mode: bool,
     pub camera_profile_mode: CameraProfileMode,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub camera_profile_folder: Option<PathBuf>,
@@ -159,6 +162,8 @@ impl Default for PerformanceSettings {
             onnx_runtime_mode: crate::app::OnnxRuntimeMode::default(),
             #[cfg(not(target_os = "android"))]
             discord_rich_presence: false,
+            #[cfg(not(target_os = "android"))]
+            hdd_mode: false,
             camera_profile_mode: CameraProfileMode::default(),
             camera_profile_folder: None,
             camera_profile_folder_label: None,
@@ -482,6 +487,7 @@ mod tests {
                 crate::app::OnnxRuntimeMode::Automatic
             );
             assert!(!settings.discord_rich_presence);
+            assert!(!settings.hdd_mode);
             assert!(settings.library_folder_sidebar_open);
             assert!(settings.develop_filmstrip_open);
         }
@@ -517,6 +523,7 @@ mod tests {
             settings.ai_gpu_acceleration = false;
             settings.onnx_runtime_mode = crate::app::OnnxRuntimeMode::Manual;
             settings.discord_rich_presence = true;
+            settings.hdd_mode = true;
             settings.last_library_folder = Some(PathBuf::from("photos"));
             settings.last_library_selected_folder = Some(PathBuf::from("photos/2026/trip"));
             settings.library_folder_sidebar_open = false;
@@ -564,6 +571,7 @@ mod tests {
                 crate::app::OnnxRuntimeMode::Manual
             );
             assert!(restored.discord_rich_presence);
+            assert!(restored.hdd_mode);
             assert_eq!(restored.last_library_folder, Some(PathBuf::from("photos")));
             assert_eq!(
                 restored.last_library_selected_folder,

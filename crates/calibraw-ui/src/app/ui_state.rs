@@ -26,6 +26,8 @@ pub(crate) struct PreferencesState {
     pub(crate) export_name_template: String,
     #[cfg(not(target_os = "android"))]
     pub(crate) discord_rich_presence: bool,
+    #[cfg(not(target_os = "android"))]
+    pub(crate) hdd_mode: bool,
     pub(crate) ui_design: UiDesign,
     pub(crate) preview_backdrop: PreviewBackdrop,
     pub(crate) onboarding_completed: bool,
