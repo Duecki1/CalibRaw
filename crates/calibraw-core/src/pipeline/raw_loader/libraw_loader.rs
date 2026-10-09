@@ -541,9 +541,13 @@ unsafe fn loaded_raw_from_context(
     )?;
     let black_levels = canonicalize_f32x4(physical_black_levels, cfa_map);
     let linear_max = color.linear_max.map(normalize_libraw_linear_max);
-    let white_levels = canonicalize_f32x4(
-        white_levels(color.maximum, linear_max, physical_black_levels),
-        cfa_map,
+    let white_levels = saturation_adjusted_white_levels(
+        canonicalize_f32x4(
+            white_levels(color.maximum, linear_max, physical_black_levels),
+            cfa_map,
+        ),
+        black_levels,
+        &raw_pixels,
     );
     let noise_profile = NoiseProfile::estimate(
         width,
@@ -707,10 +711,10 @@ mod tests {
         cam_to_working, canonical_cfa_map, canonicalize_f32x4, cfa_kind_from_filters,
         daylight_white_balance, effective_black_level, identity_4x4, identity_fallback_4x4,
         matching_thumbnail_orientation, oriented_source_pos, resolve_default_exposure_ev,
-        valid_baseline_exposure, validate_embedded_thumbnail_metadata, white_balance, white_levels,
-        CameraColorModel, CameraProfile, CameraWhiteBalanceModel, CfaKind, DcpMatrixSet,
-        DcpProfile, DngColorEndpoint, MAX_EMBEDDED_THUMBNAIL_BYTES,
-        MISSING_BASELINE_EXPOSURE_FALLBACK_EV,
+        saturation_adjusted_white_levels, valid_baseline_exposure,
+        validate_embedded_thumbnail_metadata, white_balance, white_levels, CameraColorModel,
+        CameraProfile, CameraWhiteBalanceModel, CfaKind, DcpMatrixSet, DcpProfile,
+        DngColorEndpoint, MAX_EMBEDDED_THUMBNAIL_BYTES, MISSING_BASELINE_EXPOSURE_FALLBACK_EV,
     };
     use crate::matrix;
 
@@ -1342,6 +1346,56 @@ mod tests {
         assert_eq!(
             white_levels(4095, [10, 4000, 5000, 0], [64.0; 4]),
             [4095.0, 4000.0, 4095.0, 4095.0]
+        );
+    }
+
+    /// A 12-bit mosaic with a smooth ramp up to `ramp_top` plus `piled` pixels at `pile_code`.
+    fn ramp_with_pile_up(ramp_top: u16, pile_code: u16, piled: usize) -> Vec<u16> {
+        let mut pixels: Vec<u16> = (0..200_000).map(|i| 67 + (i % 3_800) as u16).collect();
+        pixels.retain(|&value| value <= ramp_top);
+        pixels.extend(std::iter::repeat_n(pile_code, piled));
+        pixels
+    }
+
+    #[test]
+    fn saturation_pile_up_below_nominal_white_lowers_all_channels() {
+        // Olympus XZ-1: LibRaw reports 4095 but the sensor saturates at 3972.
+        let pixels = ramp_with_pile_up(3_867, 3_972, 50_000);
+        assert_eq!(
+            saturation_adjusted_white_levels([4095.0; 4], [67.0; 4], &pixels),
+            [3972.0; 4]
+        );
+    }
+
+    #[test]
+    fn natural_highlight_tail_keeps_nominal_white() {
+        let pixels = ramp_with_pile_up(3_867, 3_867, 0);
+        assert_eq!(
+            saturation_adjusted_white_levels([4095.0; 4], [67.0; 4], &pixels),
+            [4095.0; 4]
+        );
+    }
+
+    #[test]
+    fn saturation_detection_ignores_hot_pixels_and_low_pile_ups() {
+        // A few hot pixels above a real pile-up do not hide it.
+        let mut pixels = ramp_with_pile_up(3_867, 3_972, 50_000);
+        pixels.extend([4_050, 4_050, 4_090]);
+        assert_eq!(
+            saturation_adjusted_white_levels([4095.0; 4], [67.0; 4], &pixels),
+            [3972.0; 4]
+        );
+        // Data reaching the nominal white already agrees with the metadata.
+        let at_white = ramp_with_pile_up(3_867, 4_095, 50_000);
+        assert_eq!(
+            saturation_adjusted_white_levels([4095.0; 4], [67.0; 4], &at_white),
+            [4095.0; 4]
+        );
+        // A uniform bright patch in the lower part of the range is not saturation.
+        let mid = ramp_with_pile_up(2_000, 2_500, 50_000);
+        assert_eq!(
+            saturation_adjusted_white_levels([4095.0; 4], [67.0; 4], &mid),
+            [4095.0; 4]
         );
     }
 
