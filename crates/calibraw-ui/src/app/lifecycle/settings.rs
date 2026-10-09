@@ -58,6 +58,17 @@ impl CalibRawApp {
     }
 
     #[cfg(not(target_os = "android"))]
+    pub(crate) fn set_automatic_thumbnail_workers(&mut self, automatic: bool) {
+        if self.library.automatic_thumbnail_workers() == automatic {
+            return;
+        }
+        let context = self.egui_ctx.clone();
+        self.library
+            .set_automatic_thumbnail_workers(automatic, &context);
+        self.persist_performance_settings();
+    }
+
+    #[cfg(not(target_os = "android"))]
     pub(crate) fn set_render_edited_thumbnails_during_indexing(&mut self, enabled: bool) {
         let context = self.egui_ctx.clone();
         if self
@@ -307,6 +318,7 @@ impl CalibRawApp {
             app_usage_ms: crate::app::duration_millis_saturating(self.app_usage_duration()),
             raw_cache_files: self.develop.raw_cache_limit,
             thumbnail_workers: self.library.thumbnail_worker_count(),
+            thumbnail_workers_automatic: self.library.automatic_thumbnail_workers(),
             render_edited_thumbnails_during_indexing: self
                 .library
                 .renders_edited_thumbnails_during_indexing(),

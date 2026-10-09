@@ -32,6 +32,9 @@ serde_json.workspace = true
 [target.'cfg(windows)'.dependencies]
 windows-sys.workspace = true
 
+[target.'cfg(target_os = "macos")'.dependencies]
+libc = "0.2.186"
+
 [build-dependencies]
 bindgen.workspace = true
 pkg-config.workspace = true

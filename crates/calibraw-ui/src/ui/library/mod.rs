@@ -86,10 +86,30 @@ const THUMBNAIL_QUEUE_POLL_INTERVAL: Duration = Duration::from_millis(8);
 const THUMBNAIL_RETRY_MAX_DELAY: Duration = Duration::from_secs(30);
 #[cfg(not(target_os = "android"))]
 const DEVELOPED_THUMBNAIL_PROXY_EDGE: u32 = 1024;
+/// The manual worker limit always allows at least this many on desktop, even
+/// on machines with fewer cores.
 #[cfg(not(target_os = "android"))]
-pub(crate) const MAX_DESKTOP_THUMBNAIL_WORKERS: usize = 8;
+pub(crate) const MIN_DESKTOP_THUMBNAIL_WORKER_LIMIT: usize = 8;
+#[cfg(not(target_os = "android"))]
+pub(crate) const MAX_DESKTOP_THUMBNAIL_WORKER_LIMIT: usize = 64;
 #[cfg(target_os = "android")]
 pub(crate) const MAX_ANDROID_THUMBNAIL_WORKERS: usize = 2;
+/// Concurrent full RAW renders for thumbnails (files without an embedded
+/// preview, and edited thumbnails), whatever the worker count. Each one holds
+/// an unpacked sensor image, so this bounds the indexing memory peak.
+const MAX_RENDERED_THUMBNAIL_WORKERS: usize = 4;
+/// Peak memory one thumbnail job may need: a decoded full-size embedded JPEG
+/// or a half-size RAW fallback of a high-resolution sensor.
+#[cfg(not(target_os = "android"))]
+const THUMBNAIL_WORKER_MEMORY_BUDGET_BYTES: u64 = 300 * 1024 * 1024;
+/// Automatic workers together may claim this fraction of installed memory.
+#[cfg(not(target_os = "android"))]
+const THUMBNAIL_WORKER_MEMORY_SHARE_DIVISOR: u64 = 4;
+#[cfg(not(target_os = "android"))]
+const MAX_AUTOMATIC_THUMBNAIL_WORKERS: usize = 12;
+/// The automatic count when installed memory is unknown.
+#[cfg(not(target_os = "android"))]
+const UNKNOWN_MEMORY_THUMBNAIL_WORKERS: usize = 4;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -156,8 +176,14 @@ impl LibraryThumbnailSize {
     }
 }
 
+/// The manual worker setting's initial and reset value.
 pub(crate) fn default_thumbnail_worker_count() -> usize {
     platform::default_thumbnail_worker_count()
+}
+
+/// Workers used while the worker count is automatic.
+pub(crate) fn automatic_thumbnail_worker_count() -> usize {
+    platform::automatic_thumbnail_worker_count()
 }
 
 pub(crate) fn maximum_thumbnail_worker_count() -> usize {
@@ -724,7 +750,9 @@ pub(crate) struct LibraryState {
     catalog_ready: bool,
     status: String,
     usage_clock: u64,
+    /// The manual worker limit; see `automatic_thumbnail_workers`.
     thumbnail_workers: usize,
+    automatic_thumbnail_workers: bool,
     render_edited_thumbnails_during_indexing: bool,
     sort_order: LibrarySortOrder,
     thumbnail_size: LibraryThumbnailSize,

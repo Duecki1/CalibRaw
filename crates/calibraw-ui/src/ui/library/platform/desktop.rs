@@ -1,14 +1,52 @@
 use super::super::*;
 
 pub(in crate::ui::library) fn default_thumbnail_worker_count() -> usize {
-    std::thread::available_parallelism()
-        .map(usize::from)
-        .unwrap_or(2)
-        .clamp(1, 4)
+    automatic_thumbnail_worker_count()
 }
 
+/// Sized once per process from the logical cores and installed memory.
+pub(in crate::ui::library) fn automatic_thumbnail_worker_count() -> usize {
+    static COUNT: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    *COUNT.get_or_init(|| {
+        let cores = logical_core_count();
+        let memory = calibraw_core::system_memory::total_memory_bytes();
+        let count = automatic_thumbnail_worker_count_for(cores, memory);
+        log::info!(
+            "automatic thumbnail workers: {count} ({cores} logical cores, {} installed memory)",
+            memory.map_or_else(
+                || "unknown".to_owned(),
+                |bytes| format!("{:.1} GiB", bytes as f64 / (1024.0 * 1024.0 * 1024.0))
+            ),
+        );
+        count
+    })
+}
+
+/// Every logical core, but never below the previous fixed maximum.
 pub(in crate::ui::library) fn maximum_thumbnail_worker_count() -> usize {
-    super::super::MAX_DESKTOP_THUMBNAIL_WORKERS
+    logical_core_count().clamp(
+        super::super::MIN_DESKTOP_THUMBNAIL_WORKER_LIMIT,
+        super::super::MAX_DESKTOP_THUMBNAIL_WORKER_LIMIT,
+    )
+}
+
+fn logical_core_count() -> usize {
+    std::thread::available_parallelism().map_or(1, usize::from)
+}
+
+/// One worker per core except one kept for the UI thread and GPU submission,
+/// bounded by a share of installed memory at a per-worker peak budget.
+fn automatic_thumbnail_worker_count_for(cores: usize, total_memory_bytes: Option<u64>) -> usize {
+    let by_cores = cores.saturating_sub(1);
+    let by_memory =
+        total_memory_bytes.map_or(super::super::UNKNOWN_MEMORY_THUMBNAIL_WORKERS, |bytes| {
+            let share = bytes / super::super::THUMBNAIL_WORKER_MEMORY_SHARE_DIVISOR;
+            usize::try_from(share / super::super::THUMBNAIL_WORKER_MEMORY_BUDGET_BYTES)
+                .unwrap_or(usize::MAX)
+        });
+    by_cores
+        .min(by_memory)
+        .clamp(1, super::super::MAX_AUTOMATIC_THUMBNAIL_WORKERS)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -428,3 +466,30 @@ pub(in crate::ui::library) fn show_sidebar_dialogs(ui: &mut Ui, app: &mut CalibR
 }
 
 pub(in crate::ui::library) fn show_page_dialogs(_ui: &mut Ui, _app: &mut CalibRawApp) {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const GIB: u64 = 1024 * 1024 * 1024;
+
+    #[test]
+    fn automatic_workers_leave_a_core_free_and_respect_memory() {
+        assert_eq!(automatic_thumbnail_worker_count_for(8, Some(16 * GIB)), 7);
+        assert_eq!(automatic_thumbnail_worker_count_for(16, Some(8 * GIB)), 6);
+        assert_eq!(automatic_thumbnail_worker_count_for(32, Some(64 * GIB)), 12);
+        assert_eq!(automatic_thumbnail_worker_count_for(1, Some(64 * GIB)), 1);
+        assert_eq!(automatic_thumbnail_worker_count_for(4, Some(GIB)), 1);
+        assert_eq!(automatic_thumbnail_worker_count_for(16, None), 4);
+    }
+
+    #[test]
+    fn manual_limit_allows_every_core_and_the_previous_maximum() {
+        assert!(
+            maximum_thumbnail_worker_count()
+                >= super::super::super::MIN_DESKTOP_THUMBNAIL_WORKER_LIMIT
+        );
+        assert!(maximum_thumbnail_worker_count() >= logical_core_count().min(64));
+        assert!(automatic_thumbnail_worker_count() <= maximum_thumbnail_worker_count());
+    }
+}

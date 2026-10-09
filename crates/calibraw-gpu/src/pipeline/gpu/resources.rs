@@ -424,9 +424,7 @@ pub(super) fn gpu_working_set_limit_bytes() -> u64 {
     // Scaling with device RAM lets the export coexist with open previews.
     static LIMIT: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
     *LIMIT.get_or_init(|| {
-        let total_ram = std::fs::read_to_string("/proc/meminfo")
-            .ok()
-            .and_then(|meminfo| parse_mem_total_bytes(&meminfo));
+        let total_ram = calibraw_core::system_memory::total_memory_bytes();
         let limit = android_working_set_limit_bytes(total_ram);
         log::info!(
             "GPU working-set budget {:.1} MiB (device RAM {})",
@@ -459,20 +457,6 @@ fn android_working_set_limit_bytes(total_ram_bytes: Option<u64>) -> u64 {
             ANDROID_GPU_WORKING_SET_CEILING_BYTES,
         )
     })
-}
-
-/// Total RAM in bytes from `/proc/meminfo` (`MemTotal:  7812345 kB`).
-#[cfg(any(target_os = "android", test))]
-fn parse_mem_total_bytes(meminfo: &str) -> Option<u64> {
-    let mut fields = meminfo
-        .lines()
-        .find_map(|line| line.strip_prefix("MemTotal:"))?
-        .split_whitespace();
-    let value = fields.next()?.parse::<u64>().ok()?;
-    match fields.next() {
-        Some("kB") => value.checked_mul(1024),
-        _ => None,
-    }
 }
 
 impl RawGpuPipeline {
@@ -1501,15 +1485,6 @@ mod resource_plan_tests {
         // (167.7 MiB) exceeded the fixed 384 MiB cap on a phone with RAM to spare.
         let reported_need = (262.4 + 167.7) * 1024.0 * 1024.0;
         assert!(android_working_set_limit_bytes(Some(4 * GIB)) as f64 > reported_need);
-    }
-
-    #[test]
-    fn mem_total_is_parsed_from_meminfo() {
-        let meminfo = "MemTotal:        7812344 kB\nMemFree:          123456 kB\n";
-        assert_eq!(parse_mem_total_bytes(meminfo), Some(7_812_344 * 1024));
-        assert_eq!(parse_mem_total_bytes("MemFree: 1 kB\n"), None);
-        assert_eq!(parse_mem_total_bytes("MemTotal: x kB\n"), None);
-        assert_eq!(parse_mem_total_bytes("MemTotal: 12 MB\n"), None);
     }
 
     #[test]

@@ -6,7 +6,9 @@ mod selection;
 /// Library settings restored from the persisted performance settings.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct LibraryPreferences {
+    /// The manual worker limit, used while `automatic_thumbnail_workers` is off.
     pub(crate) thumbnail_workers: usize,
+    pub(crate) automatic_thumbnail_workers: bool,
     pub(crate) thumbnail_size: LibraryThumbnailSize,
     pub(crate) sort_order: LibrarySortOrder,
     pub(crate) stack_raw_companions: bool,
@@ -14,14 +16,32 @@ pub(crate) struct LibraryPreferences {
 }
 
 impl LibraryPreferences {
-    /// Clamps the worker count and applies it to the shared rendered-thumbnail limit.
+    /// Clamps the manual worker limit and applies the active worker count to
+    /// the shared rendered-thumbnail limit.
     fn thumbnail_workers(self) -> usize {
         let thumbnail_workers = self
             .thumbnail_workers
             .clamp(1, maximum_thumbnail_worker_count());
-        calibraw_core::thumbnail_cache::set_rendered_thumbnail_worker_limit(thumbnail_workers);
+        apply_rendered_thumbnail_limit(active_thumbnail_worker_count(
+            self.automatic_thumbnail_workers,
+            thumbnail_workers,
+        ));
         thumbnail_workers
     }
+}
+
+fn active_thumbnail_worker_count(automatic: bool, manual: usize) -> usize {
+    if automatic {
+        automatic_thumbnail_worker_count()
+    } else {
+        manual
+    }
+}
+
+fn apply_rendered_thumbnail_limit(active_workers: usize) {
+    calibraw_core::thumbnail_cache::set_rendered_thumbnail_worker_limit(
+        active_workers.min(MAX_RENDERED_THUMBNAIL_WORKERS),
+    );
 }
 
 impl LibraryState {
@@ -30,6 +50,7 @@ impl LibraryState {
         Self::new_desktop(
             LibraryPreferences {
                 thumbnail_workers: default_thumbnail_worker_count(),
+                automatic_thumbnail_workers: true,
                 thumbnail_size: LibraryThumbnailSize::default(),
                 sort_order: LibrarySortOrder::default(),
                 stack_raw_companions: true,
@@ -69,6 +90,7 @@ impl LibraryState {
             status: "Open a folder to build your photo library.".to_owned(),
             usage_clock: 0,
             thumbnail_workers,
+            automatic_thumbnail_workers: preferences.automatic_thumbnail_workers,
             render_edited_thumbnails_during_indexing,
             sort_order,
             thumbnail_size,
@@ -152,6 +174,7 @@ impl LibraryState {
             status: String::new(),
             usage_clock: 0,
             thumbnail_workers,
+            automatic_thumbnail_workers: preferences.automatic_thumbnail_workers,
             render_edited_thumbnails_during_indexing,
             sort_order,
             thumbnail_size,
@@ -303,8 +326,18 @@ impl LibraryState {
         }
     }
 
+    /// The manual worker limit, kept while the count is automatic.
     pub(crate) fn thumbnail_worker_count(&self) -> usize {
         self.thumbnail_workers
+    }
+
+    pub(crate) fn automatic_thumbnail_workers(&self) -> bool {
+        self.automatic_thumbnail_workers
+    }
+
+    /// Workers the next indexing pass starts.
+    pub(crate) fn active_thumbnail_worker_count(&self) -> usize {
+        active_thumbnail_worker_count(self.automatic_thumbnail_workers, self.thumbnail_workers)
     }
 
     pub(crate) fn renders_edited_thumbnails_during_indexing(&self) -> bool {
@@ -378,8 +411,36 @@ impl LibraryState {
         if self.thumbnail_workers == workers {
             return;
         }
+        let previous_active = self.active_thumbnail_worker_count();
         self.thumbnail_workers = workers;
-        calibraw_core::thumbnail_cache::set_rendered_thumbnail_worker_limit(workers);
+        self.restart_if_active_workers_changed(previous_active, context);
+    }
+
+    #[cfg(not(target_os = "android"))]
+    pub(crate) fn set_automatic_thumbnail_workers(
+        &mut self,
+        automatic: bool,
+        context: &egui::Context,
+    ) {
+        if self.automatic_thumbnail_workers == automatic {
+            return;
+        }
+        let previous_active = self.active_thumbnail_worker_count();
+        self.automatic_thumbnail_workers = automatic;
+        self.restart_if_active_workers_changed(previous_active, context);
+    }
+
+    #[cfg(not(target_os = "android"))]
+    fn restart_if_active_workers_changed(
+        &mut self,
+        previous_active: usize,
+        context: &egui::Context,
+    ) {
+        let active = self.active_thumbnail_worker_count();
+        if active == previous_active {
+            return;
+        }
+        apply_rendered_thumbnail_limit(active);
         if self.location.is_some() {
             self.refresh(context);
         }

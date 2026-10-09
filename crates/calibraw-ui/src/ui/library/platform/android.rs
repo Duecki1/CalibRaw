@@ -4,6 +4,10 @@ pub(in crate::ui::library) fn default_thumbnail_worker_count() -> usize {
     1
 }
 
+pub(in crate::ui::library) fn automatic_thumbnail_worker_count() -> usize {
+    default_thumbnail_worker_count()
+}
+
 pub(in crate::ui::library) fn maximum_thumbnail_worker_count() -> usize {
     super::super::MAX_ANDROID_THUMBNAIL_WORKERS
 }
