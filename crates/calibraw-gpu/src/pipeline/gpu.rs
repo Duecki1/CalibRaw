@@ -143,12 +143,20 @@ struct RemoveCompositeParams {
 }
 
 /// Specializations of `bayer_rcd_output`: demosaic mode (3) × sensor denoise
-/// (2) × chromatic aberration (2), indexed `mode * 4 + denoise * 2 + ca`.
+/// (2) × chromatic aberration (2), indexed by [`demosaic_variant`].
 const DEMOSAIC_VARIANT_COUNT: usize = 12;
 
-/// Sensor denoise, chromatic aberration, and both, with the reference demosaic:
-/// the variants ordinary edits switch to, most common first.
-const COMMON_DEMOSAIC_VARIANTS: [usize; 3] = [2, 1, 3];
+const fn demosaic_variant(mode: usize, denoise: bool, ca: bool) -> usize {
+    mode * 4 + denoise as usize * 2 + ca as usize
+}
+
+/// Sensor denoise, chromatic aberration, and both, with the reference demosaic
+/// (mode 0): the variants ordinary edits switch to, most common first.
+const COMMON_DEMOSAIC_VARIANTS: [usize; 3] = [
+    demosaic_variant(0, true, false),
+    demosaic_variant(0, false, true),
+    demosaic_variant(0, true, true),
+];
 
 fn demosaic_variant_for(camera: &CameraUniforms) -> usize {
     let mode = if camera.demosaic_mode >= 1.5 {
@@ -156,9 +164,11 @@ fn demosaic_variant_for(camera: &CameraUniforms) -> usize {
     } else {
         usize::from(camera.demosaic_mode >= 0.5)
     };
-    let denoise = usize::from(camera.noise_options[0] > 0.0);
-    let ca = usize::from(camera.ca_red.abs() > 1e-6 || camera.ca_blue.abs() > 1e-6);
-    mode * 4 + denoise * 2 + ca
+    demosaic_variant(
+        mode,
+        camera.noise_options[0] > 0.0,
+        camera.ca_red.abs() > 1e-6 || camera.ca_blue.abs() > 1e-6,
+    )
 }
 
 fn demosaic_variant_constants(variant: usize) -> [(&'static str, f64); 3] {

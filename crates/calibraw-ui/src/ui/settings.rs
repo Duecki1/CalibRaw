@@ -417,7 +417,7 @@ impl Settings {
                 "HDD mode",
                 "Reads one photo file at a time, which is faster for libraries on spinning hard drives. Thumbnail workers still decode in parallel. Leave it off for SSDs and memory cards.",
             )
-                .changed()
+            .changed()
             {
                 app.set_hdd_mode(hdd_mode);
             }
