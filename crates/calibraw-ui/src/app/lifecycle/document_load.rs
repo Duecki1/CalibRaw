@@ -73,8 +73,7 @@ pub(super) struct DocumentLoadJob {
     /// Editing time carried over when a profile reload replaces the sidecar
     /// edits of the document that is already open.
     pub(super) editing_time_override_ms: Option<u64>,
-    pub(super) raw_cache_key: String,
-    pub(super) cached_original_raw: Option<Arc<LoadedRaw>>,
+    pub(super) decoded_raws: DecodedRawCache,
     pub(super) decode_gate: Arc<RwLock<()>>,
     pub(super) document_generation: u64,
     pub(super) initial_exposure: ExposureParams,
@@ -100,8 +99,7 @@ pub(super) fn run_document_load(job: DocumentLoadJob) -> Result<LoadedPreview, L
         source,
         profile_reload,
         editing_time_override_ms,
-        raw_cache_key,
-        cached_original_raw,
+        decoded_raws,
         decode_gate,
         document_generation,
         initial_exposure,
@@ -155,23 +153,22 @@ pub(super) fn run_document_load(job: DocumentLoadJob) -> Result<LoadedPreview, L
     let profile_request =
         CameraProfileRequest::resolve(reload_profile, &loaded_sidecar, &camera_profiles);
 
-    let decode_was_cached = cached_original_raw.is_some();
     let decode_started = Instant::now();
-    let decoded = decode_raw(
-        &source.path,
-        cached_original_raw,
+    let decoded = decode_cached(
+        &decoded_raws,
+        &source,
+        &DecodeRequest::new(&profile_request, &camera_profiles),
         &decode_gate,
-        &profile_request,
-        &camera_profiles,
+        DecodePriority::Interactive,
     );
     let decode_is_unsupported = decoded.as_ref().err().is_some_and(is_unsupported_raw_error);
     match &decoded {
-        Ok(raw) => {
+        Ok(decoded) => {
             calibraw_core::diagnostics::record(format!(
-                "RAW decode finished in {:.3}s (cached={decode_was_cached})",
+                "RAW decode ready in {:.3}s",
                 decode_started.elapsed().as_secs_f64()
             ));
-            calibraw_core::diagnostics::record_raw("Decoded RAW", raw);
+            calibraw_core::diagnostics::record_raw("Decoded RAW", decoded.original());
         }
         Err(error) => calibraw_core::diagnostics::record(format!(
             "RAW decode failed after {:.3}s: {error:#}",
@@ -197,7 +194,8 @@ pub(super) fn run_document_load(job: DocumentLoadJob) -> Result<LoadedPreview, L
         initial_exposure,
     );
     let result = (|| {
-        let original_raw = decoded.map_err(|error| format!("{error:#}"))?;
+        let decoded = decoded.map_err(|error| format!("{error:#}"))?;
+        let original_raw = Arc::clone(decoded.original());
         let InitialEdits {
             mut exposure,
             mut masks,
@@ -229,21 +227,10 @@ pub(super) fn run_document_load(job: DocumentLoadJob) -> Result<LoadedPreview, L
             );
         }
 
-        let (lens_correction, full_raw) = apply_saved_lens_correction(
-            &original_raw,
-            saved_lens,
-            automatic_lens,
-            &mut sidecar_warning,
-        );
+        let (lens_correction, full_raw) =
+            apply_saved_lens_correction(&decoded, saved_lens, automatic_lens, &mut sidecar_warning);
         restore_ai_denoise_result(&full_raw, &exposure, ai_denoise_result_path.as_deref())?;
-        if full_raw.uses_opposed_chroma(&exposure) {
-            let highlight_started = Instant::now();
-            full_raw.inpaint_opposed_chroma_for_exposure(&exposure);
-            calibraw_core::diagnostics::record(format!(
-                "Full-resolution highlight analysis finished in {:.3}s",
-                highlight_started.elapsed().as_secs_f64()
-            ));
-        }
+        prepare_highlight_analysis(&full_raw, &exposure);
 
         let preview_raw =
             build_preview_proxy(&full_raw, preview_quality, viewport_pixels, geometry);
@@ -291,7 +278,6 @@ pub(super) fn run_document_load(job: DocumentLoadJob) -> Result<LoadedPreview, L
 
         Ok(LoadedPreview {
             source_path,
-            raw_cache_key,
             label: label.clone(),
             original_raw,
             full_raw,
@@ -325,6 +311,71 @@ pub(super) fn run_document_load(job: DocumentLoadJob) -> Result<LoadedPreview, L
             unsupported: decode_is_unsupported,
         }
     })
+}
+
+/// What preparing a document ahead of its open needs, captured on the UI thread.
+#[cfg(not(target_os = "android"))]
+pub(super) struct AheadOfOpen {
+    pub(super) decoded_raws: DecodedRawCache,
+    pub(super) decode_gate: Arc<RwLock<()>>,
+    pub(super) camera_profiles: CameraProfileSettings,
+    pub(super) automatic_lens: AutomaticLensCorrection,
+    pub(super) initial_exposure: ExposureParams,
+    pub(super) program_template: Option<RawGpuProgramTemplate>,
+}
+
+/// Runs the work opening the photo at `path` would wait for and the caches
+/// keep: the decode, lens correction, highlight analysis and the GPU program
+/// its edits select. It follows [`run_document_load`] step by step, so the
+/// later open finds exactly what it asks for. `cancelled` is checked between
+/// steps.
+#[cfg(not(target_os = "android"))]
+pub(super) fn prepare_ahead_of_open(
+    context: &AheadOfOpen,
+    path: &Path,
+    cancelled: impl Fn() -> bool,
+) -> anyhow::Result<()> {
+    let source = DocumentSource::desktop(path.to_owned(), String::new());
+    let loaded_sidecar = load_sidecar_for_target(&source.sidecar_target);
+    let profile_request =
+        CameraProfileRequest::resolve(None, &loaded_sidecar, &context.camera_profiles);
+    let decoded = decode_cached(
+        &context.decoded_raws,
+        &source,
+        &DecodeRequest::new(&profile_request, &context.camera_profiles),
+        &context.decode_gate,
+        DecodePriority::Background,
+    )?;
+    if cancelled() {
+        return Ok(());
+    }
+
+    let InitialEdits {
+        mut exposure,
+        saved_lens,
+        use_adaptive_detail_defaults,
+        ..
+    } = InitialEdits::resolve(None, None, loaded_sidecar, context.initial_exposure);
+    if use_adaptive_detail_defaults {
+        decoded
+            .original()
+            .apply_adaptive_detail_defaults(&mut exposure);
+    }
+    let (_, full_raw) =
+        apply_saved_lens_correction(&decoded, saved_lens, context.automatic_lens, &mut None);
+    if cancelled() {
+        return Ok(());
+    }
+
+    // With AI denoise the analysis reads the denoised image, which only the
+    // open installs.
+    if !exposure.ai_denoise_enabled {
+        prepare_highlight_analysis(&full_raw, &exposure);
+    }
+    if let Some(template) = &context.program_template {
+        template.compile_for_params(&GpuParams::new(&exposure, &MaskStack::default(), &full_raw));
+    }
+    Ok(())
 }
 
 /// The camera profile to request from the decoder.
@@ -399,32 +450,91 @@ impl CameraProfileRequest {
     }
 }
 
-fn decode_raw(
-    path: &Path,
-    cached: Option<Arc<LoadedRaw>>,
-    decode_gate: &RwLock<()>,
-    profile: &CameraProfileRequest,
-    settings: &CameraProfileSettings,
-) -> anyhow::Result<Arc<LoadedRaw>> {
-    if let Some(raw) = cached {
-        return Ok(raw);
+/// The decoder inputs that a camera-profile request resolves to.
+struct DecodeRequest {
+    mode: CameraProfileMode,
+    folder: Option<PathBuf>,
+    profile: Option<PathBuf>,
+}
+
+impl DecodeRequest {
+    fn new(profile: &CameraProfileRequest, settings: &CameraProfileSettings) -> Self {
+        let embedded_matrix = profile.selects_embedded_matrix(settings);
+        Self {
+            mode: if embedded_matrix {
+                CameraProfileMode::MatrixOnly
+            } else {
+                settings.mode
+            },
+            folder: settings.folder.clone(),
+            profile: profile.path.clone().filter(|_| !embedded_matrix),
+        }
     }
-    let embedded_matrix = profile.selects_embedded_matrix(settings);
-    let mode = if embedded_matrix {
-        CameraProfileMode::MatrixOnly
-    } else {
-        settings.mode
+}
+
+/// Whether a decode is the one the user waits for, or background work.
+#[derive(Clone, Copy)]
+enum DecodePriority {
+    /// Runs alone under the decode gate.
+    Interactive,
+    /// Shares the decode gate with thumbnail decodes and yields to interactive ones.
+    Background,
+}
+
+/// The decoded RAW for `source` and `request`, from the cache or decoded now.
+fn decode_cached(
+    cache: &DecodedRawCache,
+    source: &DocumentSource,
+    request: &DecodeRequest,
+    decode_gate: &RwLock<()>,
+    priority: DecodePriority,
+) -> anyhow::Result<Arc<DecodedRaw>> {
+    let key = DecodeKey {
+        source: raw_cache_key_for_target(&source.sidecar_target),
+        profile_mode: request.mode,
+        profile_folder: request.folder.clone(),
+        requested_profile: request.profile.clone(),
     };
-    let _decode_guard = decode_gate
-        .write()
-        .map_err(|_| anyhow::anyhow!("RAW decode gate was poisoned"))?;
-    load_raw_file_with_profile_selection(
-        path,
-        mode,
-        settings.folder.as_deref(),
-        profile.path.as_deref().filter(|_| !embedded_matrix),
-    )
-    .map(Arc::new)
+    cache.get_or_decode(&key, || {
+        let decode = || {
+            let started = Instant::now();
+            let raw = load_raw_file_with_profile_selection(
+                &source.path,
+                request.mode,
+                request.folder.as_deref(),
+                request.profile.as_deref(),
+            );
+            calibraw_core::diagnostics::record(format!(
+                "RAW decoded in {:.3}s",
+                started.elapsed().as_secs_f64()
+            ));
+            raw
+        };
+        let poisoned = || anyhow::anyhow!("RAW decode gate was poisoned");
+        match priority {
+            DecodePriority::Interactive => {
+                let _exclusive = decode_gate.write().map_err(|_| poisoned())?;
+                decode()
+            }
+            DecodePriority::Background => {
+                let _shared = decode_gate.read().map_err(|_| poisoned())?;
+                decode()
+            }
+        }
+    })
+}
+
+/// Runs the full-resolution highlight analysis `exposure` needs. Its result is
+/// cached in `full_raw`, so preparing it ahead of an open is reused there.
+fn prepare_highlight_analysis(full_raw: &LoadedRaw, exposure: &ExposureParams) {
+    if full_raw.uses_opposed_chroma(exposure) {
+        let highlight_started = Instant::now();
+        full_raw.inpaint_opposed_chroma_for_exposure(exposure);
+        calibraw_core::diagnostics::record(format!(
+            "Full-resolution highlight analysis finished in {:.3}s",
+            highlight_started.elapsed().as_secs_f64()
+        ));
+    }
 }
 
 /// The edit state a document opens with: a profile reload's in-memory edits,
@@ -540,14 +650,15 @@ fn record_edit_state(exposure: &ExposureParams, masks: &MaskStack) {
 /// Returns the lens state and the RAW to develop, which is the original when
 /// correction is off or fails.
 fn apply_saved_lens_correction(
-    original_raw: &Arc<LoadedRaw>,
+    decoded: &DecodedRaw,
     saved_lens: Option<crate::sidecar::LensEditState>,
     automatic_lens: AutomaticLensCorrection,
     sidecar_warning: &mut Option<String>,
 ) -> (LensCorrectionState, Arc<LoadedRaw>) {
     let lens_started = Instant::now();
+    let original_raw = decoded.original();
     let mut lens_correction =
-        LensCorrectionState::automatic(lensfun_catalog(original_raw), automatic_lens);
+        LensCorrectionState::automatic(decoded.lens_catalog(), automatic_lens);
     calibraw_core::diagnostics::record(format!(
         "Lensfun catalog lookup finished in {:.3}s",
         lens_started.elapsed().as_secs_f64()
@@ -575,10 +686,12 @@ fn apply_saved_lens_correction(
         }
         Some(selection) => {
             let apply_started = Instant::now();
-            match apply_lensfun_correction(original_raw, &selection) {
+            match decoded
+                .lens_corrected(&selection, |raw| apply_lensfun_correction(raw, &selection))
+            {
                 Ok(corrected) => {
                     calibraw_core::diagnostics::record(format!(
-                        "Lensfun full-resolution correction applied in {:.3}s",
+                        "Lensfun full-resolution correction ready in {:.3}s",
                         apply_started.elapsed().as_secs_f64()
                     ));
                     lens_correction.applied = true;
@@ -586,7 +699,7 @@ fn apply_saved_lens_correction(
                         "Automatically applied {} from RAW metadata",
                         selection.label()
                     );
-                    Arc::new(corrected)
+                    corrected
                 }
                 Err(error) => {
                     calibraw_core::diagnostics::record(format!(

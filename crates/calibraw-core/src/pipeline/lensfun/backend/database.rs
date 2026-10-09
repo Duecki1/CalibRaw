@@ -111,6 +111,14 @@ impl Drop for Database {
 
 pub(super) struct Modifier(pub(super) *mut lfModifier);
 
+// SAFETY: once `lf_modifier_initialize` has run, CalibRaw only calls Lensfun's
+// `lf_modifier_apply_*` functions through a shared `&Modifier`. They read the
+// modifier's precomputed callbacks and write only to the caller's buffer, so
+// concurrent calls on one modifier are safe (darktable applies one modifier
+// from parallel loops the same way). Configuration (`initialize`, adding
+// callbacks) takes the raw pointer before the modifier is shared.
+unsafe impl Sync for Modifier {}
+
 impl Drop for Modifier {
     fn drop(&mut self) {
         unsafe { lf_modifier_destroy(self.0) };

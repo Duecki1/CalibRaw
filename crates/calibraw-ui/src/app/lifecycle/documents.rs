@@ -163,19 +163,11 @@ impl CalibRawApp {
         self.prepare_loading_thumbnail_for(&source.sidecar_target);
         self.library.prepare_for_develop();
 
-        let raw_cache_key = self.raw_cache_key(&source.sidecar_target, profile_reload.as_ref());
-        // Without an explicit selection, the decoder may pick a DCP from the
-        // profile folder, which the cache key cannot know in advance.
-        let cache_selection_is_known = profile_reload.is_some()
-            || self.preferences.camera_profile_mode == CameraProfileMode::MatrixOnly
-            || self.preferences.camera_profile_folder.is_none();
-        let cached_original_raw = cache_selection_is_known
-            .then(|| self.cached_raw_decode(&raw_cache_key))
-            .flatten();
+        #[cfg(not(target_os = "android"))]
+        self.cancel_neighbour_prefetch();
         calibraw_core::diagnostics::record(format!(
-            "RAW open requested: label=\"{}\" cached={} preview_quality={}",
+            "RAW open requested: label=\"{}\" preview_quality={}",
             source.label,
-            cached_original_raw.is_some(),
             self.preview.quality.label()
         ));
         self.cancel_document_bound_foreground_operation();
@@ -198,18 +190,13 @@ impl CalibRawApp {
         let label = source.label.clone();
         let source_cleanup_on_spawn_failure = source.disposable_copy().map(Path::to_path_buf);
         let job = DocumentLoadJob {
-            raw_cache_key,
-            cached_original_raw,
+            decoded_raws: self.develop.decoded_raws.clone(),
             decode_gate: self.library.decode_gate(),
             document_generation,
             initial_exposure,
             preview_quality: self.preview.quality,
             viewport_pixels: self.preview.viewport_pixels,
-            camera_profiles: CameraProfileSettings {
-                mode: self.preferences.camera_profile_mode,
-                folder: self.preferences.camera_profile_folder.clone(),
-                last_used: self.preferences.last_camera_profile.clone(),
-            },
+            camera_profiles: self.camera_profile_settings(),
             automatic_lens: self.preferences.automatic_lens_correction,
             ai_denoise_result_path: self.ai_denoise_result_path_for_target(&source.sidecar_target),
             device: render_state.device.clone(),
@@ -278,29 +265,12 @@ impl CalibRawApp {
         }
     }
 
-    /// Identifies a decoded RAW together with the camera-profile settings that
-    /// shaped its decode.
-    fn raw_cache_key(
-        &self,
-        target: &crate::sidecar::SidecarTarget,
-        profile_reload: Option<&ProfileReload>,
-    ) -> String {
-        let profile_selection = match profile_reload.map(|reload| &reload.camera_profile) {
-            Some(Some(path)) => path.to_string_lossy().into_owned(),
-            Some(None) => "automatic".to_owned(),
-            None => "sidecar".to_owned(),
-        };
-        format!(
-            "{}|profile:{}|folder:{}|selection:{}",
-            raw_cache_key_for_target(target),
-            self.preferences.camera_profile_mode.cache_key(),
-            self.preferences
-                .camera_profile_folder
-                .as_deref()
-                .map(|path| path.to_string_lossy().into_owned())
-                .unwrap_or_default(),
-            profile_selection,
-        )
+    pub(super) fn camera_profile_settings(&self) -> CameraProfileSettings {
+        CameraProfileSettings {
+            mode: self.preferences.camera_profile_mode,
+            folder: self.preferences.camera_profile_folder.clone(),
+            last_used: self.preferences.last_camera_profile.clone(),
+        }
     }
 
     /// Clears everything tied to the previous document before a new one loads.
@@ -430,7 +400,6 @@ impl CalibRawApp {
                 self.develop.current_path = loaded.source_path;
                 self.develop.current_label = Some(loaded.label.clone());
                 self.develop.selected_camera_profile = loaded.selected_camera_profile.clone();
-                self.cache_raw_decode(loaded.raw_cache_key, Arc::clone(&loaded.original_raw));
                 self.develop.original_raw = Some(loaded.original_raw);
                 self.develop.loaded_raw = Some(loaded.full_raw);
                 self.develop.preview_raw = Some(loaded.preview_raw);
@@ -521,6 +490,10 @@ impl CalibRawApp {
                 self.cancel_document_bound_foreground_operation();
                 self.resume_persisted_ai_denoise(frame);
                 log::info!("loaded RAW preview for {}", loaded.label);
+                #[cfg(not(target_os = "android"))]
+                if !self.document_load_is_background() {
+                    self.prefetch_neighbour_raws();
+                }
                 self.on_library_ai_mask_refresh_load_finished(true, frame);
                 #[cfg(target_os = "android")]
                 if batch_owned_load {

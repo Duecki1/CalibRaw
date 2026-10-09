@@ -1,41 +1,12 @@
 use super::*;
 
 impl CalibRawApp {
-    pub(in crate::app) fn cached_raw_decode(&mut self, key: &str) -> Option<Arc<LoadedRaw>> {
-        let index = self
-            .develop
-            .raw_cache
-            .iter()
-            .position(|entry| entry.key == key)?;
-        let entry = self.develop.raw_cache.remove(index)?;
-        let raw = Arc::clone(&entry.raw);
-        self.develop.raw_cache.push_back(entry);
-        Some(raw)
-    }
-
-    pub(in crate::app) fn cache_raw_decode(&mut self, key: String, raw: Arc<LoadedRaw>) {
-        if self.develop.raw_cache_limit == 0 {
-            self.develop.raw_cache.clear();
-            return;
-        }
-        if let Some(index) = self
-            .develop
-            .raw_cache
-            .iter()
-            .position(|entry| entry.key == key)
-        {
-            self.develop.raw_cache.remove(index);
-        }
-        self.develop
-            .raw_cache
-            .push_back(CachedRawDecode { key, raw });
-        self.trim_raw_cache();
-    }
-
-    pub(in crate::app) fn trim_raw_cache(&mut self) {
-        while self.develop.raw_cache.len() > self.develop.raw_cache_limit {
-            self.develop.raw_cache.pop_front();
-        }
+    /// Drops every decoded RAW, for settings that change what decodes produce,
+    /// and stops a prefetch still decoding with the old settings.
+    pub(in crate::app) fn clear_decoded_raws(&mut self) {
+        #[cfg(not(target_os = "android"))]
+        self.cancel_neighbour_prefetch();
+        self.develop.decoded_raws.clear();
     }
 
     pub(in crate::app) fn new_image_exposure(&self) -> ExposureParams {

@@ -56,6 +56,7 @@ use worker::drain_worker_events;
 #[cfg(not(target_os = "android"))]
 use worker::spawn_ui_worker;
 
+mod decoded_raw_cache;
 mod develop_state;
 mod export_state;
 mod job_state;
@@ -66,6 +67,7 @@ mod mask_tool;
 mod persistence_state;
 mod preview_state;
 mod ui_state;
+pub(crate) use decoded_raw_cache::{DecodeKey, DecodedRaw, DecodedRawCache};
 pub(crate) use develop_state::*;
 pub(crate) use export_state::*;
 pub(crate) use job_state::*;

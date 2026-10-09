@@ -2,8 +2,11 @@ use crate::pipeline::{CameraProfileMode, ExportFormat};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
-// First public settings layout. Bump when a public settings change needs migration.
-const SETTINGS_VERSION: u32 = 1;
+// Bump when a public settings change needs migration; see `sanitized`.
+const SETTINGS_VERSION: u32 = 2;
+/// The desktop decoded-RAW cache default before version 2 raised it, so that
+/// Develop can prefetch both neighbours of the open photo.
+const DESKTOP_RAW_CACHE_FILES_BEFORE_V2: usize = 2;
 const MAX_SETTINGS_BYTES: u64 = 64 * 1024;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -194,8 +197,17 @@ impl Default for PerformanceSettings {
 
 impl PerformanceSettings {
     pub(crate) fn sanitized(mut self) -> Self {
-        // Version 1 is the public baseline. Apply future public-version migrations here before
-        // updating the stored version, then keep the value sanitization below version-agnostic.
+        // Version 1 is the public baseline. Apply public-version migrations here before updating
+        // the stored version, then keep the value sanitization below version-agnostic.
+        //
+        // Version 2: every save wrote the cache size, so a stored old default is almost always
+        // the default rather than a choice; move it to the new one.
+        if self.version < 2
+            && !cfg!(target_os = "android")
+            && self.raw_cache_files == DESKTOP_RAW_CACHE_FILES_BEFORE_V2
+        {
+            self.raw_cache_files = crate::app::default_raw_cache_limit();
+        }
         self.version = SETTINGS_VERSION;
         self.raw_cache_files = self
             .raw_cache_files
@@ -385,6 +397,28 @@ mod tests {
     }
 
     #[test]
+    fn version_1_raw_cache_default_moves_to_the_current_default() {
+        let migrated = |version, raw_cache_files| {
+            PerformanceSettings {
+                version,
+                raw_cache_files,
+                ..Default::default()
+            }
+            .sanitized()
+            .raw_cache_files
+        };
+        let old_default = if cfg!(target_os = "android") {
+            2
+        } else {
+            crate::app::default_raw_cache_limit()
+        };
+        assert_eq!(migrated(1, 2), old_default);
+        // Other stored sizes were chosen, and version 2 files are kept as saved.
+        assert_eq!(migrated(1, 1), 1);
+        assert_eq!(migrated(SETTINGS_VERSION, 2), 2);
+    }
+
+    #[test]
     fn denied_github_permission_disables_automatic_checks() {
         let settings = PerformanceSettings {
             auto_check_updates: true,
@@ -447,7 +481,6 @@ mod tests {
             serde_json::from_str(r#"{"version":1,"raw_cache_files":1,"thumbnail_workers":1}"#)
                 .expect("baseline settings should remain readable");
 
-        assert_eq!(SETTINGS_VERSION, 1);
         // Files written before automatic workers existed switch to automatic and
         // keep their stored count as the manual limit.
         assert!(settings.thumbnail_workers_automatic);

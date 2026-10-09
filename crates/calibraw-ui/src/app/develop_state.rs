@@ -363,11 +363,12 @@ pub(super) enum LensCorrectionEvent {
 pub(crate) const MAX_DESKTOP_RAW_CACHE_FILES: usize = 8;
 pub(crate) const MAX_ANDROID_RAW_CACHE_FILES: usize = 3;
 
+/// Desktop keeps the open photo and both prefetched neighbours.
 pub(crate) const fn default_raw_cache_limit() -> usize {
     if cfg!(target_os = "android") {
         1
     } else {
-        2
+        3
     }
 }
 
@@ -377,12 +378,6 @@ pub(crate) const fn maximum_raw_cache_limit() -> usize {
     } else {
         MAX_DESKTOP_RAW_CACHE_FILES
     }
-}
-
-#[derive(Clone)]
-pub(crate) struct CachedRawDecode {
-    pub(super) key: String,
-    pub(super) raw: Arc<LoadedRaw>,
 }
 
 pub(crate) struct DevelopState {
@@ -402,8 +397,9 @@ pub(crate) struct DevelopState {
     pub(crate) loading_label: Option<String>,
     pub(crate) image_status: String,
     pub(crate) current_label: Option<String>,
-    pub(crate) raw_cache: VecDeque<CachedRawDecode>,
-    pub(crate) raw_cache_limit: usize,
+    pub(crate) decoded_raws: DecodedRawCache,
+    #[cfg(not(target_os = "android"))]
+    pub(crate) neighbour_prefetch: crate::app::lifecycle::NeighbourPrefetch,
 }
 
 pub(crate) struct DevelopUiState {

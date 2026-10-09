@@ -159,15 +159,20 @@ pub(super) fn load_raw_file_with_profile_selection(
     selected_profile: Option<&Path>,
 ) -> Result<LoadedRaw> {
     validate_input_file(path, MAX_RAW_FILE_BYTES, "RAW input")?;
-    let source_metadata = read_exif_capture_metadata_or_default(path);
+    // The RAW is read in two gated sections, header and payload, so DCP
+    // profile resolution in between does not hold the read gate.
+    let (source_metadata, ctx) = crate::serialized_reads::run(|| -> Result<_> {
+        let source_metadata = read_exif_capture_metadata_or_default(path);
 
-    let ctx = LibRawContext::new()?;
-    let identify_started = Instant::now();
-    open_libraw_file(&ctx, path, "open RAW file")?;
-    crate::diagnostics::record(format!(
-        "LibRaw identify/open_file finished in {:.3}s",
-        identify_started.elapsed().as_secs_f64()
-    ));
+        let ctx = LibRawContext::new()?;
+        let identify_started = Instant::now();
+        open_libraw_file(&ctx, path, "open RAW file")?;
+        crate::diagnostics::record(format!(
+            "LibRaw identify/open_file finished in {:.3}s",
+            identify_started.elapsed().as_secs_f64()
+        ));
+        Ok((source_metadata, ctx))
+    })?;
     unsafe { validate_opened_raw_geometry(&ctx) }?;
 
     let (camera_make, camera_model) = unsafe {
@@ -194,7 +199,9 @@ pub(super) fn load_raw_file_with_profile_selection(
     ));
 
     let unpack_started = Instant::now();
-    check_libraw(unsafe { ffi::libraw_unpack(ctx.raw) }, "unpack RAW file")?;
+    crate::serialized_reads::run(|| {
+        check_libraw(unsafe { ffi::libraw_unpack(ctx.raw) }, "unpack RAW file")
+    })?;
     crate::diagnostics::record(format!(
         "LibRaw sensor unpack finished in {:.3}s",
         unpack_started.elapsed().as_secs_f64()

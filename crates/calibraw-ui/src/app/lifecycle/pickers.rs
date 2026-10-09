@@ -137,7 +137,7 @@ impl CalibRawApp {
                     self.preferences.camera_profile_folder_label = Some(label.clone());
                     self.preferences.camera_profile_auto_detect = false;
                     self.preferences.last_camera_profile = None;
-                    self.develop.raw_cache.clear();
+                    self.clear_decoded_raws();
                     if self.persist_performance_settings() {
                         if let Some(previous_folder) = previous_folder {
                             if self.preferences.camera_profile_folder.as_deref()

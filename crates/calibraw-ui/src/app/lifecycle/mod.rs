@@ -1,9 +1,13 @@
 use super::*;
+#[cfg(not(target_os = "android"))]
+use document_load::{prepare_ahead_of_open, AheadOfOpen};
 use document_load::{
     run_document_load, CameraProfileSettings, DocumentLoadJob, PreviewProgramSources,
     SIDECAR_MIGRATED_NOTICE,
 };
 pub(crate) use document_load::{DocumentSource, ProfileReload};
+#[cfg(not(target_os = "android"))]
+pub(crate) use prefetch::NeighbourPrefetch;
 
 pub(super) fn remove_temporary_raw(path: &std::path::Path) {
     if let Err(error) = std::fs::remove_file(path) {
@@ -160,6 +164,9 @@ pub(super) fn spawn_gpu_preview_prewarm(
                 Err(error) => calibraw_core::diagnostics::record(error),
             }
 
+            // Programs are shared, so finishing the template's compiles below also
+            // serves the pipeline handed to the first document.
+            let preview_template = result.as_ref().ok().map(RawGpuPipeline::program_template);
             let _ = sender.send(result);
             repaint.request_repaint();
 
@@ -180,6 +187,18 @@ pub(super) fn spawn_gpu_preview_prewarm(
             }
             export_prewarm_for_thread.publish(export_result);
             repaint.request_repaint();
+
+            // Effects compile on first use. Compile the common ones now so the
+            // first edit enabling one does not stall, and so they reach the
+            // persistent cache saved below.
+            if let Some(template) = preview_template {
+                let compile_started = Instant::now();
+                template.compile_common_programs();
+                calibraw_core::diagnostics::record(format!(
+                    "GPU preview common programs compiled in {:.3}s",
+                    compile_started.elapsed().as_secs_f64()
+                ));
+            }
 
             if let Some(cache) = cache_to_persist {
                 let cache_save_started = Instant::now();
@@ -263,6 +282,8 @@ mod cache;
 mod document_load;
 mod documents;
 mod pickers;
+#[cfg(not(target_os = "android"))]
+mod prefetch;
 mod profiles;
 mod settings;
 mod startup;
