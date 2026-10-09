@@ -715,10 +715,11 @@ mod tests {
         cam_to_working, canonical_cfa_map, canonicalize_f32x4, cfa_kind_from_filters,
         daylight_white_balance, effective_black_level, identity_4x4, identity_fallback_4x4,
         matching_thumbnail_orientation, oriented_source_pos, resolve_default_exposure_ev,
-        saturation_adjusted_white_levels, valid_baseline_exposure,
+        saturation_adjusted_white_levels, smaller_covering_preview_index, valid_baseline_exposure,
         validate_embedded_thumbnail_metadata, white_balance, white_levels, CameraColorModel,
         CameraProfile, CameraWhiteBalanceModel, CfaKind, DcpMatrixSet, DcpProfile,
-        DngColorEndpoint, MAX_EMBEDDED_THUMBNAIL_BYTES, MISSING_BASELINE_EXPOSURE_FALLBACK_EV,
+        DngColorEndpoint, EmbeddedPreview, MAX_EMBEDDED_THUMBNAIL_BYTES,
+        MISSING_BASELINE_EXPOSURE_FALLBACK_EV,
     };
     use crate::matrix;
 
@@ -1034,7 +1035,7 @@ mod tests {
     }
 
     #[test]
-    fn embedded_thumbnail_header_is_bounded_before_native_unpack() {
+    fn embedded_thumbnail_metadata_is_bounded() {
         assert!(validate_embedded_thumbnail_metadata(
             super::ffi::LibRaw_thumbnail_formats_LIBRAW_THUMBNAIL_JPEG,
             1600,
@@ -1059,6 +1060,58 @@ mod tests {
             3,
         )
         .is_err());
+    }
+
+    #[test]
+    fn the_smallest_matching_preview_that_covers_the_edge_is_chosen() {
+        let jpeg = |width, height| EmbeddedPreview {
+            jpeg: true,
+            dimensions: [width, height],
+            length: 100_000,
+        };
+        // Sony ARW: medium preview, tiny thumbnail and full-size JPEG.
+        let sony = [jpeg(1616, 1080), jpeg(160, 120), jpeg(7008, 4672)];
+        assert_eq!(
+            smaller_covering_preview_index([7008, 4672], sony, 512),
+            Some(0)
+        );
+        // Nothing smaller covers a larger request, so LibRaw's default stays.
+        assert_eq!(
+            smaller_covering_preview_index([7008, 4672], sony, 2048),
+            None
+        );
+        // Rotated dimensions still match the default's aspect ratio.
+        assert_eq!(
+            smaller_covering_preview_index([7008, 4672], [jpeg(1080, 1616)], 512),
+            Some(0)
+        );
+        // A letterboxed 4:3 preview of a 3:2 image is never chosen.
+        assert_eq!(
+            smaller_covering_preview_index([6000, 4000], [jpeg(1024, 768)], 512),
+            None
+        );
+        // Non-JPEG, empty and unknown-size previews are skipped.
+        let bitmap = EmbeddedPreview {
+            jpeg: false,
+            ..jpeg(1500, 1000)
+        };
+        let empty = EmbeddedPreview {
+            length: 0,
+            ..jpeg(1500, 1000)
+        };
+        assert_eq!(
+            smaller_covering_preview_index(
+                [6000, 4000],
+                [bitmap, empty, jpeg(0, 0), jpeg(900, 600)],
+                512
+            ),
+            Some(3)
+        );
+        // Unknown default dimensions keep LibRaw's choice.
+        assert_eq!(
+            smaller_covering_preview_index([0, 0], [jpeg(1500, 1000)], 512),
+            None
+        );
     }
 
     #[test]
