@@ -224,6 +224,23 @@ pub extern "system" fn Java_de_duecki_calibraw_CalibRawActivity_nativeOnCameraPr
         });
 }
 
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_de_duecki_calibraw_CalibRawActivity_nativeOnImportProgress<'local>(
+    _unowned_env: EnvUnowned<'local>,
+    _class: JClass<'local>,
+    completed_count: jni::sys::jint,
+    total_count: jni::sys::jint,
+) {
+    let progress = ImportProgress {
+        completed: usize::try_from(completed_count.max(0)).unwrap_or(0),
+        total: usize::try_from(total_count.max(0)).unwrap_or(0),
+    };
+    if let Ok(mut slot) = IMPORT_PROGRESS.lock() {
+        *slot = Some(progress);
+    }
+    request_repaint();
+}
+
 fn batch_imported_result(
     imported_count: jni::sys::jint,
     failed_count: jni::sys::jint,

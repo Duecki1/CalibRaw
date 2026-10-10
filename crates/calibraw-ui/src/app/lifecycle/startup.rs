@@ -347,6 +347,7 @@ impl CalibRawApp {
                 pending_android_library_reset_reload: false,
                 camera_profile_folder_importing_label: None,
                 pending_android_profile_reload: None,
+                photo_import: None,
             },
         };
         #[cfg(not(target_os = "android"))]

@@ -69,6 +69,13 @@ pub enum PickerResult {
     Failed(String),
 }
 
+/// How far a running multi-photo import has copied into the library.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ImportProgress {
+    pub completed: usize,
+    pub total: usize,
+}
+
 /// A finished export in MediaStore.
 #[derive(Debug)]
 pub struct PublishedExport {
@@ -105,6 +112,8 @@ static EXTERNAL_OPEN_RESULTS: OnceLock<Mutex<VecDeque<PickerResult>>> = OnceLock
 static CAMERA_PROFILE_FOLDER_RESULTS: OnceLock<Mutex<VecDeque<CameraProfileFolderResult>>> =
     OnceLock::new();
 static EXPORT_RESULTS: OnceLock<Mutex<VecDeque<ExportPublishResult>>> = OnceLock::new();
+/// Only the newest progress matters, so this is a slot rather than a queue.
+static IMPORT_PROGRESS: Mutex<Option<ImportProgress>> = Mutex::new(None);
 static DIRECT_EXPORTS: OnceLock<Mutex<HashMap<PathBuf, DirectExportTarget>>> = OnceLock::new();
 /// Wakes the UI thread after a Java callback queued a result.
 type RepaintNotifier = std::sync::Arc<dyn Fn() + Send + Sync>;
@@ -205,6 +214,12 @@ pub fn has_external_open_result() -> bool {
     external_open_results()
         .lock()
         .is_ok_and(|queue| !queue.is_empty())
+}
+
+/// The newest import progress reported since the last call. Java reports it
+/// before queueing the batch's `BatchImported` result.
+pub fn take_import_progress() -> Option<ImportProgress> {
+    IMPORT_PROGRESS.lock().ok()?.take()
 }
 
 pub fn take_camera_profile_folder_result() -> Option<CameraProfileFolderResult> {
