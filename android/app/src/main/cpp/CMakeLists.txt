@@ -139,14 +139,19 @@ add_subdirectory(
     "${CMAKE_BINARY_DIR}/calibraw-libraw"
     EXCLUDE_FROM_ALL
 )
-if(NOT TARGET raw)
-    message(FATAL_ERROR "Pinned LibRaw-cmake did not define the expected 'raw' target")
+# Thumbnail workers, the editor and exports decode on several threads at once.
+# LibRaw-cmake's 'raw' target defines LIBRAW_NOTHREADS, which turns the bit
+# readers' state (getbits, Sony decryption, ...) into process-wide statics, so
+# concurrent decodes corrupt each other's pixels. 'raw_r' is the same library
+# with that state per LibRaw instance. It is staged as libraw.a below.
+if(NOT TARGET raw_r)
+    message(FATAL_ERROR "Pinned LibRaw-cmake did not define the expected 'raw_r' target")
 endif()
-set_property(TARGET raw PROPERTY POSITION_INDEPENDENT_CODE ON)
+set_property(TARGET raw_r PROPERTY POSITION_INDEPENDENT_CODE ON)
 # RAW unpacking runs in this library, outside Rust's optimization settings.
 # Keep the third-party decoder optimized in development APKs too, matching the
 # Release-built Lensfun dependencies below. Debug symbols remain available.
-target_compile_options(raw PRIVATE "$<$<CONFIG:Debug>:-O3>")
+target_compile_options(raw_r PRIVATE "$<$<CONFIG:Debug>:-O3>")
 
 add_custom_target(calibraw_stage_libraw
     COMMAND "${CMAKE_COMMAND}" -E make_directory
@@ -156,9 +161,9 @@ add_custom_target(calibraw_stage_libraw
             "${calibraw_libraw_source_SOURCE_DIR}/libraw"
             "${CALIBRAW_LIBRAW_STAGE}/include/libraw"
     COMMAND "${CMAKE_COMMAND}" -E copy_if_different
-            "$<TARGET_FILE:raw>"
+            "$<TARGET_FILE:raw_r>"
             "${CALIBRAW_LIBRAW_STAGE}/lib/libraw.a"
-    DEPENDS raw
+    DEPENDS raw_r
     BYPRODUCTS
         "${CALIBRAW_LIBRAW_STAGE}/include/libraw/libraw.h"
         "${CALIBRAW_LIBRAW_STAGE}/lib/libraw.a"

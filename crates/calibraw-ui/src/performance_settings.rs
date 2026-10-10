@@ -2,8 +2,11 @@ use crate::pipeline::{CameraProfileMode, ExportFormat};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
-// First public settings layout. Bump when a public settings change needs migration.
-const SETTINGS_VERSION: u32 = 1;
+// Bump when a public settings change needs migration; see `sanitized`.
+const SETTINGS_VERSION: u32 = 3;
+/// The desktop decoded-RAW cache default before version 2 raised it, so that
+/// Develop can prefetch both neighbours of the open photo.
+const DESKTOP_RAW_CACHE_FILES_BEFORE_V2: usize = 2;
 const MAX_SETTINGS_BYTES: u64 = 64 * 1024;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -176,7 +179,7 @@ impl Default for PerformanceSettings {
             last_camera_profile: None,
             automatic_lens_correction: true,
             automatic_lens_geometry: true,
-            automatic_lens_vignetting: true,
+            automatic_lens_vignetting: false,
             adjustment_copy_settings: crate::sidecar::AdjustmentCopySettings::default(),
             #[cfg(target_os = "android")]
             last_android_library_folder: String::new(),
@@ -194,8 +197,22 @@ impl Default for PerformanceSettings {
 
 impl PerformanceSettings {
     pub(crate) fn sanitized(mut self) -> Self {
-        // Version 1 is the public baseline. Apply future public-version migrations here before
-        // updating the stored version, then keep the value sanitization below version-agnostic.
+        // Version 1 is the public baseline. Apply public-version migrations here before updating
+        // the stored version, then keep the value sanitization below version-agnostic.
+        //
+        // Version 2: every save wrote the cache size, so a stored old default is almost always
+        // the default rather than a choice; move it to the new one.
+        if self.version < 2
+            && !cfg!(target_os = "android")
+            && self.raw_cache_files == DESKTOP_RAW_CACHE_FILES_BEFORE_V2
+        {
+            self.raw_cache_files = crate::app::default_raw_cache_limit();
+        }
+        // Version 3: automatic vignetting correction is off by default. Every save wrote the old
+        // default, so it is turned off unless it was the only correction chosen.
+        if self.version < 3 && self.automatic_lens_geometry {
+            self.automatic_lens_vignetting = false;
+        }
         self.version = SETTINGS_VERSION;
         self.raw_cache_files = self
             .raw_cache_files
@@ -206,8 +223,9 @@ impl PerformanceSettings {
         self.birefnet_quality =
             subject_quality_for_platform(self.birefnet_quality, cfg!(target_os = "android"));
         if !self.automatic_lens_geometry && !self.automatic_lens_vignetting {
-            self.automatic_lens_geometry = true;
-            self.automatic_lens_vignetting = true;
+            let defaults = Self::default();
+            self.automatic_lens_geometry = defaults.automatic_lens_geometry;
+            self.automatic_lens_vignetting = defaults.automatic_lens_vignetting;
         }
         if self.github_update_check_allowed == Some(false) {
             self.auto_check_updates = false;
@@ -385,6 +403,52 @@ mod tests {
     }
 
     #[test]
+    fn version_1_raw_cache_default_moves_to_the_current_default() {
+        let migrated = |version, raw_cache_files| {
+            PerformanceSettings {
+                version,
+                raw_cache_files,
+                ..Default::default()
+            }
+            .sanitized()
+            .raw_cache_files
+        };
+        // Android never had the desktop default, so its stored 2 is a choice.
+        let expected = if cfg!(target_os = "android") {
+            2
+        } else {
+            crate::app::default_raw_cache_limit()
+        };
+        assert_eq!(migrated(1, 2), expected);
+        // Other stored sizes were chosen, and version 2 files are kept as saved.
+        assert_eq!(migrated(1, 1), 1);
+        assert_eq!(migrated(SETTINGS_VERSION, 2), 2);
+    }
+
+    #[test]
+    fn version_2_automatic_vignetting_turns_off_unless_it_was_the_only_correction() {
+        let migrated = |version, geometry, vignetting| {
+            let settings = PerformanceSettings {
+                version,
+                automatic_lens_geometry: geometry,
+                automatic_lens_vignetting: vignetting,
+                ..Default::default()
+            }
+            .sanitized();
+            (
+                settings.automatic_lens_geometry,
+                settings.automatic_lens_vignetting,
+            )
+        };
+        assert_eq!(migrated(2, true, true), (true, false));
+        assert_eq!(migrated(2, false, true), (false, true));
+        // Version 3 files keep vignetting as saved.
+        assert_eq!(migrated(SETTINGS_VERSION, true, true), (true, true));
+        // Turning both off restores the default selection.
+        assert_eq!(migrated(SETTINGS_VERSION, false, false), (true, false));
+    }
+
+    #[test]
     fn denied_github_permission_disables_automatic_checks() {
         let settings = PerformanceSettings {
             auto_check_updates: true,
@@ -440,14 +504,13 @@ mod tests {
         assert!(
             empty.automatic_lens_correction
                 && empty.automatic_lens_geometry
-                && empty.automatic_lens_vignetting
+                && !empty.automatic_lens_vignetting
         );
 
         let settings: PerformanceSettings =
             serde_json::from_str(r#"{"version":1,"raw_cache_files":1,"thumbnail_workers":1}"#)
                 .expect("baseline settings should remain readable");
 
-        assert_eq!(SETTINGS_VERSION, 1);
         // Files written before automatic workers existed switch to automatic and
         // keep their stored count as the manual limit.
         assert!(settings.thumbnail_workers_automatic);
@@ -524,7 +587,8 @@ mod tests {
             render_edited_thumbnails_during_indexing: true,
             thumbnail_workers_automatic: false,
             automatic_lens_correction: false,
-            automatic_lens_vignetting: false,
+            automatic_lens_geometry: false,
+            automatic_lens_vignetting: true,
             ..Default::default()
         };
         #[cfg(not(target_os = "android"))]
@@ -559,7 +623,7 @@ mod tests {
         assert!(restored.image_relative_brush_size);
         assert!(restored.show_develop_navigation_labels);
         assert!(!restored.automatic_lens_correction);
-        assert!(restored.automatic_lens_geometry && !restored.automatic_lens_vignetting);
+        assert!(!restored.automatic_lens_geometry && restored.automatic_lens_vignetting);
         assert!(restored.develop_histogram_open);
         assert_eq!(
             restored.export_name_template,

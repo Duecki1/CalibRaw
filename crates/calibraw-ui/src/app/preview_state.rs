@@ -180,7 +180,6 @@ pub(crate) struct PreviewDetail {
 
 pub(crate) struct LoadedPreview {
     pub(super) source_path: Option<PathBuf>,
-    pub(super) raw_cache_key: String,
     pub(super) label: String,
     pub(super) original_raw: Arc<LoadedRaw>,
     pub(super) full_raw: Arc<LoadedRaw>,

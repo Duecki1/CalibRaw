@@ -417,8 +417,8 @@ pub(super) fn white_levels(maximum: u32, linear_max: [u32; 4], black_levels: [f3
 /// Saturation is recognised as a pile-up: the top `window` codes hold far more pixels per code
 /// than the band directly below, which a natural highlight tail never does. Like LibRaw's
 /// `adjust_maximum` (threshold 0.75), the detected level must still lie in the top quarter of the
-/// nominal range. Levels are only ever lowered, all channels by the same raw code, so the
-/// relative channel scaling (and therefore white balance) is unchanged.
+/// nominal range. Each channel's level is only ever lowered, to at most the detected code, so
+/// channels sharing the nominal white keep equal levels and white balance is unchanged.
 pub(super) fn saturation_adjusted_white_levels(
     white_levels: [f32; 4],
     black_levels: [f32; 4],

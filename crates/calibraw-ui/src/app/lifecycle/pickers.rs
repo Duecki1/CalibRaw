@@ -118,6 +118,10 @@ impl CalibRawApp {
 
     #[cfg(target_os = "android")]
     pub(in crate::app) fn poll_android_picker(&mut self, frame: &eframe::Frame) {
+        // Before the results: a batch's progress always precedes its `BatchImported`.
+        if let Some(progress) = calibraw_ffi::take_import_progress() {
+            self.android.photo_import = Some(PhotoImportStatus::Copying(progress));
+        }
         while let Some(result) = calibraw_ffi::take_camera_profile_folder_result() {
             match result {
                 calibraw_ffi::CameraProfileFolderResult::ImportStarted { label } => {
@@ -137,7 +141,7 @@ impl CalibRawApp {
                     self.preferences.camera_profile_folder_label = Some(label.clone());
                     self.preferences.camera_profile_auto_detect = false;
                     self.preferences.last_camera_profile = None;
-                    self.develop.raw_cache.clear();
+                    self.clear_decoded_raws();
                     if self.persist_performance_settings() {
                         if let Some(previous_folder) = previous_folder {
                             if self.preferences.camera_profile_folder.as_deref()
@@ -178,6 +182,11 @@ impl CalibRawApp {
             self.handle_android_picker_result(result, frame);
         }
         self.poll_android_external_open(frame);
+        if self.android.photo_import == Some(PhotoImportStatus::Loading)
+            && !self.library.is_scanning()
+        {
+            self.android.photo_import = None;
+        }
     }
 
     /// Opens photos other apps sent ("Open with", Share) once no open that
@@ -280,6 +289,8 @@ impl CalibRawApp {
                 // no interactive operation should be cancelled here.
                 self.ui.active_tab = AppTab::Library;
                 self.library.refresh(&self.egui_ctx);
+                // Keep the import popup until the rescan shows the new photos.
+                self.android.photo_import = (imported > 0).then_some(PhotoImportStatus::Loading);
                 self.ui.status = match (imported, failed) {
                     (0, 0) => "No photos were imported.".to_owned(),
                     (_, 0) => format!(
