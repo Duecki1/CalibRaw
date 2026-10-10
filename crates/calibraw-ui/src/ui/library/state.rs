@@ -340,6 +340,12 @@ impl LibraryState {
         active_thumbnail_worker_count(self.automatic_thumbnail_workers, self.thumbnail_workers)
     }
 
+    /// Whether a folder scan is running; thumbnails load after it finishes.
+    #[cfg(target_os = "android")]
+    pub(crate) fn is_scanning(&self) -> bool {
+        self.scanning
+    }
+
     pub(crate) fn renders_edited_thumbnails_during_indexing(&self) -> bool {
         self.render_edited_thumbnails_during_indexing
     }

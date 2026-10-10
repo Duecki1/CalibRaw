@@ -34,11 +34,10 @@ impl CalibRawApp {
     #[cfg(not(target_os = "android"))]
     pub(crate) fn set_raw_cache_limit(&mut self, limit: usize) {
         let limit = limit.min(maximum_raw_cache_limit());
-        if self.develop.raw_cache_limit == limit {
+        if self.develop.decoded_raws.limit() == limit {
             return;
         }
-        self.develop.raw_cache_limit = limit;
-        self.trim_raw_cache();
+        self.develop.decoded_raws.set_limit(limit);
         self.persist_performance_settings();
     }
 
@@ -316,7 +315,7 @@ impl CalibRawApp {
         let settings = crate::performance_settings::PerformanceSettings {
             develop_histogram_open: self.develop_ui.histogram_open,
             app_usage_ms: crate::app::duration_millis_saturating(self.app_usage_duration()),
-            raw_cache_files: self.develop.raw_cache_limit,
+            raw_cache_files: self.develop.decoded_raws.limit(),
             thumbnail_workers: self.library.thumbnail_worker_count(),
             thumbnail_workers_automatic: self.library.automatic_thumbnail_workers(),
             render_edited_thumbnails_during_indexing: self

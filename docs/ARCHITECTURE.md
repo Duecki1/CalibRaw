@@ -74,7 +74,7 @@ change that establishes a boundary, not in advance.
 | Document state | `DevelopState`, `MaskState::stack`, `InpaintState::edits`, `PersistenceState::history` | exposure, geometry, masks, remove/retouch edits, undo history |
 | Interaction state | `DevelopUiState`, `MaskState` drag fields, view-local `egui` memory | crop/mask drags, pickers, open sections |
 | Active work | `ForegroundOperation`, `ExportTask`, `PreviewState` receivers, `AiState::update`, `InpaintState::receiver` | AI masks, export, preview rebuilds |
-| Caches | `DevelopState::raw_cache`, `PreviewState::program_template`, `MaskState` caches, library thumbnail caches, `calibraw-ai` model runtime | decoded RAWs, compiled GPU programs, AI inference results |
+| Caches | `DevelopState::decoded_raws` (shared with workers), `PreviewState::program_template`, `MaskState` caches, library thumbnail caches, `calibraw-ai` model runtime | decoded RAWs, compiled GPU programs, AI inference results |
 
 `PersistenceState::document_generation` identifies the open document: it
 increases whenever a different document is installed, and every document-bound
@@ -98,6 +98,7 @@ job records the value it started with.
 | Job | Queue | Cancellation | Document change | Failure / disconnect |
 |---|---|---|---|---|
 | Document load | single receiver; a new load replaces it | the replaced receiver is dropped and its result discarded | the load installs the new document and bumps `document_generation` | notice or unsupported-file dialog; a disconnected worker is reported |
+| Neighbour prefetch (desktop) | one thread after each interactive load; prepares the library neighbours into `DecodedRawCache` | `AtomicBool` checked between steps; a new load or a profile-settings change cancels it | results only fill caches; an open of a photo being prefetched waits for that decode | ignored; the open reports its own failure |
 | Preview rebuild / detail | single receiver each; latest request wins | replaced receiver discards the stale result; `PreviewState::revision` rejects outdated detail renders | receivers cleared with the preview | disconnect clears the pending state |
 | Foreground AI / lens correction / auto straighten | one `ForegroundOperation` slot; a second request is refused | shared `AtomicBool`; the worker stops at its next safe point | results are applied only if `document_id` equals the current `document_generation` | error dialog or notice; slot cleared |
 | Remove / retouch | one receiver in `InpaintState` | `AtomicBool` | `reset_for_document` sets the flag and drops the receiver, so late results are discarded | notice; the pending stroke is kept only when the user must re-consent to a download |
@@ -118,7 +119,7 @@ GPU readbacks wait on one-slot channels.
 
 | Lock | Owner | Holders | Purpose |
 |---|---|---|---|
-| decode gate (`RwLock<()>`) | `LibraryState`, shared by `decode_gate()` | write: document load and batch-export decodes, and the UI thread while clearing the thumbnail cache; read: library thumbnail and reference-preview decodes | an interactive decode runs alone; background decodes share the gate and yield; the cache is never cleared under a reader |
+| decode gate (`RwLock<()>`) | `LibraryState`, shared by `decode_gate()` | write: document load and batch-export decodes, and the UI thread while clearing the thumbnail cache; read: library thumbnail, reference-preview and neighbour-prefetch decodes | an interactive decode runs alone; background decodes share the gate and yield; the cache is never cleared under a reader |
 | `REFERENCE_PREVIEW_SERIAL` | `ui::develop` | the reference-preview worker | one reference decode at a time |
 | `DEVELOPED_THUMBNAIL_GPU` | `ui::library::thumbnails::developed` | thumbnail workers | one headless device for developed thumbnails, used by one render at a time |
 | thumbnail work queue and request receiver | `ThumbnailWorkerContext` | thumbnail workers | short critical sections; never held while decoding |
@@ -126,17 +127,22 @@ GPU readbacks wait on one-slot channels.
 | model runtime slot | `calibraw_ai::model_runtime` | the running AI job | one ONNX session at a time; evicted models unload once released |
 | `RUNTIME_INIT_LOCK`, provider statuses, artifact lock | `calibraw_ai` | AI jobs | serialize ONNX Runtime initialization and probes |
 | `SIDECAR_SAVE_LOCK` | `calibraw_core::sidecar::files` | sidecar writers | one sidecar write at a time |
+| decoded-RAW cache state and condvar | `DecodedRawCache` | document loads and the prefetch worker | short critical sections; decodes run unlocked, and a second request for a decoding entry waits on the condvar |
+| per-entry lens-correction slot | `DecodedRaw` | document loads and the prefetch worker | held while correcting, so one correction per selection runs at a time |
 | serialized-read gate (HDD mode) | `calibraw_core::serialized_reads` | thumbnail, display-metadata and RAW loads, only while HDD mode is on | one photo file read at a time; decoding stays outside; a leaf lock, re-entered inline on the holding thread |
 | `TextureRetirement` | `PreviewState` | any thread dropping a `PreviewPipeline`; drained by the UI thread | short pushes and one drain per frame |
 | FFI result queues, `REPAINT_NOTIFIER` | `calibraw_ffi::android` | Java callback threads push; the UI thread pops | short critical sections; no JNI call while held |
 
-Apart from the serialized-read gate, only two nestings exist, both in a fixed
-order: the reference-preview serial lock is taken before the decode gate, and a
+Apart from the serialized-read gate, only these nestings exist, each in a fixed
+order: the reference-preview serial lock is taken before the decode gate; a
 thumbnail worker takes `DEVELOPED_THUMBNAIL_GPU` while holding the decode gate
-for reading. No code takes the decode gate while holding any other lock in this
+for reading; and a decode that owns a decoded-RAW cache entry takes the decode
+gate without holding the cache lock, so waiting for an entry never holds the
+gate. No code takes the decode gate while holding any other lock in this
 table. The serialized-read gate may be taken while holding any of them, but none
-of them is taken while holding it. Poisoned locks are recovered (`PoisonError::into_inner`) where the protected data stays
-valid, and reported as errors where it may not.
+of them is taken while holding it. Poisoned locks are recovered
+(`PoisonError::into_inner`) where the protected data stays valid, and reported
+as errors where it may not.
 
 ### Shutdown
 

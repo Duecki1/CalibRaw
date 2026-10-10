@@ -3,6 +3,7 @@ set -euxo pipefail
 
 : "${LINUXDEPLOY_ARCH:?LINUXDEPLOY_ARCH must name the linuxdeploy architecture}"
 : "${LINUXDEPLOY_SHA256:?LINUXDEPLOY_SHA256 must contain the linuxdeploy digest}"
+: "${LENSFUN_PREFIX:?LENSFUN_PREFIX must name the pinned Lensfun install prefix}"
 
 source "$HOME/.cargo/env"
 
@@ -15,7 +16,13 @@ echo "Bundling Lensfun from $LENSFUN_SO"
 
 LENSFUN_DB="$LENSFUN_PREFIX/share/lensfun/version_1"
 test -f "$LENSFUN_DB/timestamp.txt"
-case "$LENSFUN_SO" in "$LENSFUN_PREFIX"/lib/*) ;; *) exit 1 ;; esac
+case "$LENSFUN_SO" in
+  "$LENSFUN_PREFIX"/lib/*) ;;
+  *)
+    echo "calibraw links $LENSFUN_SO instead of the pinned Lensfun in $LENSFUN_PREFIX" >&2
+    exit 1
+    ;;
+esac
 
 rm -rf AppDir dist appimage-packaging
 mkdir -p dist appimage-packaging AppDir/usr/share/calibraw/lensfun AppDir/usr/share/doc/calibraw

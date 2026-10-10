@@ -84,4 +84,16 @@ pub(crate) struct AndroidState {
     pub(crate) pending_android_library_reset_reload: bool,
     pub(crate) camera_profile_folder_importing_label: Option<String>,
     pub(crate) pending_android_profile_reload: Option<ProfileReload>,
+    /// A multi-photo import the library shows progress for, until the
+    /// imported photos appear.
+    pub(crate) photo_import: Option<PhotoImportStatus>,
+}
+
+#[cfg(target_os = "android")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum PhotoImportStatus {
+    /// Android is copying the picked photos into the library.
+    Copying(calibraw_ffi::ImportProgress),
+    /// The copy finished; the library is rescanning to show the photos.
+    Loading,
 }

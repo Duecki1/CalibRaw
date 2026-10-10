@@ -27,7 +27,7 @@ impl CalibRawApp {
         self.preferences.camera_profile_folder = Some(folder);
         self.preferences.camera_profile_auto_detect = false;
         self.preferences.last_camera_profile = None;
-        self.develop.raw_cache.clear();
+        self.clear_decoded_raws();
         self.persist_performance_settings();
         self.ui.notice = Some(
             "Camera profile folder updated. Reopen the RAW to apply the new profile selection."
@@ -59,7 +59,7 @@ impl CalibRawApp {
             self.preferences.camera_profile_folder_label = None;
             self.preferences.camera_profile_auto_detect = false;
             self.preferences.last_camera_profile = None;
-            self.develop.raw_cache.clear();
+            self.clear_decoded_raws();
             #[cfg(target_os = "android")]
             if let Err(error) =
                 calibraw_ffi::clear_camera_profile_folder_picker_location(&self.android.android_app)
@@ -94,7 +94,7 @@ impl CalibRawApp {
                 self.preferences.camera_profile_folder_label =
                     Some("DCP profiles (auto-detected)".to_owned());
                 self.preferences.last_camera_profile = None;
-                self.develop.raw_cache.clear();
+                self.clear_decoded_raws();
                 self.persist_performance_settings();
                 self.ui.notice = Some(format!(
                     "Using DCP profiles from {}. Reopen the RAW to apply them.",
@@ -105,7 +105,7 @@ impl CalibRawApp {
                 self.preferences.camera_profile_folder = None;
                 self.preferences.camera_profile_folder_label = None;
                 self.preferences.last_camera_profile = None;
-                self.develop.raw_cache.clear();
+                self.clear_decoded_raws();
                 self.persist_performance_settings();
                 self.ui.notice =
                     Some("No DCP profile folder was found in the standard locations.".to_owned());
@@ -118,7 +118,7 @@ impl CalibRawApp {
             return;
         }
         self.preferences.camera_profile_mode = mode;
-        self.develop.raw_cache.clear();
+        self.clear_decoded_raws();
         self.persist_performance_settings();
         self.ui.notice = Some(
             "RAW color profile mode changed. Reopen the RAW to apply the new profile selection."
