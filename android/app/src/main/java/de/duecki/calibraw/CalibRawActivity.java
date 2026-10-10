@@ -71,6 +71,11 @@ public final class CalibRawActivity extends NativeActivity {
             }
 
             @Override
+            public void onImportProgress(int completedCount, int totalCount) {
+                nativeOnImportProgress(completedCount, totalCount);
+            }
+
+            @Override
             public void onImportBatchFinished(int importedCount, int failedCount, String errors) {
                 nativeOnImportBatchFinished(importedCount, failedCount, errors);
             }
@@ -79,6 +84,11 @@ public final class CalibRawActivity extends NativeActivity {
             @Override
             public void onFilePickedFd(int fd, String displayName, String libraryUri, String error) {
                 nativeOnExternalFilePickedFd(fd, displayName, libraryUri, error);
+            }
+
+            @Override
+            public void onImportProgress(int completedCount, int totalCount) {
+                nativeOnImportProgress(completedCount, totalCount);
             }
 
             @Override
@@ -246,6 +256,7 @@ public final class CalibRawActivity extends NativeActivity {
             boolean temporary);
     private static native void nativeOnFilePickedFd(
             int fd, String displayName, String libraryUri, String error);
+    private static native void nativeOnImportProgress(int completedCount, int totalCount);
     private static native void nativeOnImportBatchFinished(
             int importedCount, int failedCount, String errors);
     private static native void nativeOnExternalFilePickedFd(

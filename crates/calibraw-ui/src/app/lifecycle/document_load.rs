@@ -478,6 +478,7 @@ enum DecodePriority {
     /// Runs alone under the decode gate.
     Interactive,
     /// Shares the decode gate with thumbnail decodes and yields to interactive ones.
+    #[cfg(not(target_os = "android"))]
     Background,
 }
 
@@ -516,6 +517,7 @@ fn decode_cached(
                 let _exclusive = decode_gate.write().map_err(|_| poisoned())?;
                 decode()
             }
+            #[cfg(not(target_os = "android"))]
             DecodePriority::Background => {
                 let _shared = decode_gate.read().map_err(|_| poisoned())?;
                 decode()

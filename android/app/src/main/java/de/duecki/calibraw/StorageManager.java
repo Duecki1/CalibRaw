@@ -36,6 +36,9 @@ final class StorageManager {
     interface ImportCallbacks {
         void onFilePickedFd(int fd, String displayName, String libraryUri, String error);
 
+        /** Reports a multi-photo import before each copy; always followed by a finished call. */
+        void onImportProgress(int completedCount, int totalCount);
+
         void onImportBatchFinished(int importedCount, int failedCount, String errors);
     }
 
@@ -255,6 +258,7 @@ final class StorageManager {
         int failed = 0;
         ArrayList<String> errors = new ArrayList<>();
         for (Uri uri : uris) {
+            target.onImportProgress(imported + failed, uris.size());
             String displayName = queryDisplayName(uri);
             StoredRaw stored = null;
             try {
