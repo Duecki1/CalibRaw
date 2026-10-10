@@ -270,11 +270,15 @@ pub(crate) struct AutomaticLensCorrection {
     pub corrections: LensfunCorrections,
 }
 
+/// Matches the Settings defaults: geometry on, vignetting off.
 impl Default for AutomaticLensCorrection {
     fn default() -> Self {
         Self {
             enabled: true,
-            corrections: LensfunCorrections::default(),
+            corrections: LensfunCorrections {
+                geometry: true,
+                vignetting: false,
+            },
         }
     }
 }
@@ -467,13 +471,13 @@ mod lens_correction_tests {
     }
 
     #[test]
-    fn automatic_correction_is_on_with_every_correction_by_default() {
+    fn automatic_correction_is_on_with_geometry_only_by_default() {
         let state = LensCorrectionState::automatic(
             catalog_with_match(),
             AutomaticLensCorrection::default(),
         );
         assert!(state.enabled);
-        assert_eq!(state.corrections, LensfunCorrections::default());
+        assert!(state.corrections.geometry && !state.corrections.vignetting);
         assert_eq!(state.selected_model, "35 mm f/2");
     }
 
