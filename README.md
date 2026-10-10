@@ -236,6 +236,7 @@ CalibRaw's shaders and tools draw on work from these projects:
 - **[GIMP](https://www.gimp.org/) & [Ansel](https://ansel.photos/)**: Laplace inpainting foundations and color normalization references.
 - **[LibRaw](https://github.com/LibRaw/LibRaw), [Rawler](https://github.com/dnglab/dnglab), & [Lensfun](https://github.com/lensfun/lensfun)**: RAW decoding, DNG metadata extraction, and lens profile databases.
 - **[RapidRAW](https://github.com/CyberTimon/RapidRAW)**: Interface and workflow layout inspiration.
+- **[halation-dctl](https://github.com/hotgluebanjo/halation-dctl)**: Blur and frequency-separation approach behind the Halation effect.
 
 *See [Third-Party Notices](THIRD_PARTY_NOTICES.md) for complete licensing, attributions, and model sources.*
 

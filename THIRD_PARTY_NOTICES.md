@@ -81,6 +81,14 @@ and [GIMP license](https://www.gimp.org/docs/userfaq.html#legal).
 RapidRAW influenced parts of CalibRaw's interface and workflow. No RapidRAW source
 code is included or adapted. RapidRAW itself is AGPL-3.0.
 
+### halation-dctl design reference
+
+The highlight-only halation approximation in
+`crates/calibraw-gpu/src/shaders/creative_effects.wgsl` follows the blur and
+frequency-separation approach of
+[hotgluebanjo/halation-dctl](https://github.com/hotgluebanjo/halation-dctl).
+It is an independent implementation; no halation-dctl source is included.
+
 ## Bundled data
 
 `data/wb_presets.json` is a compact snapshot derived from darktable's white
