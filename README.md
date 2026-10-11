@@ -64,6 +64,9 @@ AI models are downloaded once, on first use and only after you agree; they are v
 - **Offline AI:** Subject, sky, depth and click-to-select object masks, AI Remove (Big-LaMa) that blends its fill into your photo's grain, and RawNIND denoise for Bayer and X-Trans RAWs.
 - **Native interface and GPU processing:** Written in Rust with `wgpu`, WGSL compute shaders and an `egui` interface.
 - **Android support:** The Android app uses the same engine and `.calibraw` sidecars as the desktop app, with layouts for touch controls.
+- **Broad camera support:** Opens RAW files supported by LibRaw and Rawler, covering a wide range of camera makers and models; see the linked support lists below.
+- **Fast library browsing:** Generates proxy-based previews and caches thumbnails and display metadata for quicker browsing.
+- **Library organization:** Filter photos by rating and pick/reject flags, and sort by file modification date, filename, file size, rating or flag.
 - **Effects with masks:** Apply depth-based fog, smoke, light rays, glow, halation, edge glow, neon and lens, motion, radial or tilt-shift blur to the whole photo or inside a mask.
 - **Edit Replay:** Export a 30 FPS MP4 showing your edit step by step for Reels, Shorts or before/after posts.
 
@@ -98,7 +101,7 @@ AI models are downloaded once, on first use and only after you agree; they are v
 - **Bayer RCD:** Directional interpolation for standard Bayer sensors.
 - **Fujifilm X-Trans:** Directional derivative and homogeneity demarcation pipeline for Fuji sensors.
 - **Dual Demosaicing:** Blends edge-preserving and smoothed passes to suppress chroma noise at high ISOs.
-- **Lens Correction:** Automatic distortion, chromatic aberration, and vignette correction via the Lensfun database.
+- **Automatic Lens Correction:** Matches available camera and lens profiles through Lensfun and can automatically correct distortion, chromatic aberration and vignetting.
 - **HDR Merge:** Combine multiple bracketed RAW exposures into one extended-range image.
 
 ### Masking & AI
@@ -146,7 +149,7 @@ Anything LibRaw or Rawler supports, as well as JPEG, PNG, HEIC and TIFF; see [Su
 
 ### RAW
 
-CalibRaw uses **LibRaw (0.22.1)** for broad camera compatibility, paired with **Rawler (0.8.0)** for DNG and JPEG-XL DNG streams. When LibRaw cannot open a camera RAW (for example a camera newer than its colour tables), CalibRaw retries it with Rawler.
+CalibRaw uses **LibRaw (0.22.1)** for broad camera compatibility, paired with **Rawler (0.8.0)** for DNG and JPEG-XL DNG streams. When LibRaw cannot open a camera RAW (for example a camera newer than its colour tables), CalibRaw retries it with Rawler. Together, they support RAW files from a wide range of camera models; check their maintained lists for specific compatibility.
 
 Supported cameras: [LibRaw](https://www.libraw.org/supported-cameras) and [Rawler](https://github.com/dnglab/dnglab/blob/main/SUPPORTED_CAMERAS.md) (maintained by the dnglab project). Supported file extensions:
 
