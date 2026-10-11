@@ -1,7 +1,6 @@
 //! RAW+JPEG pairing. Cameras that shoot RAW+JPEG (or RAW+HEIF) save a
-//! rendered copy next to every RAW. Like Lightroom and Capture One, the
-//! library shows each pair once, as the RAW, unless the viewer chooses to see
-//! the rendered copies as separate photos.
+//! rendered copy next to every RAW. The library shows each pair once, as the
+//! RAW, unless the viewer chooses to see the rendered copies as separate photos.
 
 use super::*;
 use crate::pipeline::{is_camera_raw_path, RenderedImageFormat};

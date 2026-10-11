@@ -2,7 +2,7 @@
 
 # CalibRaw
 
-**A free, open-source RAW photo editor for Linux, Android, Windows and macOS, with a Lightroom-style workflow and AI tools that run locally.**
+**A free, open-source RAW photo editor for Linux, Android, Windows and macOS, with a complete photo-development workflow and AI tools that run locally.**
 
 [![Latest release](https://img.shields.io/github/v/release/Duecki1/CalibRaw?label=Download&color=brightgreen)](https://github.com/Duecki1/CalibRaw/releases/latest)
 [![License: GPL-3.0-or-later](https://img.shields.io/badge/License-GPL--3.0--or--later-blue.svg)](COPYING)
@@ -60,7 +60,7 @@ AI models are downloaded once, on first use and only after you agree; they are v
 
 ## Why CalibRaw
 
-- **Lightroom-style controls:** Light, Tone Curve, Color, Color Mixer, Color Grading, Detail, Optics, Effects and Masks panels, with a scene-referred pipeline, Sigmoid tone mapping and highlight recovery.
+- **Photo-development controls:** Light, Tone Curve, Color, Color Mixer, Color Grading, Detail, Optics, Effects and Masks panels, with a scene-referred pipeline, Sigmoid tone mapping and highlight recovery.
 - **Offline AI:** Subject, sky, depth and click-to-select object masks, AI Remove (Big-LaMa) that blends its fill into your photo's grain, and RawNIND denoise for Bayer and X-Trans RAWs.
 - **Native interface and GPU processing:** Written in Rust with `wgpu`, WGSL compute shaders and an `egui` interface.
 - **Android support:** The Android app uses the same engine and `.calibraw` sidecars as the desktop app, with layouts for touch controls.
@@ -128,7 +128,7 @@ Apply effects to the whole photo or stack them on a local mask. Each card keeps 
 
 **How is CalibRaw different from darktable or RapidRAW?**
 All three are free. darktable offers detailed module-level control and a mature
-color pipeline. RapidRAW's Lightroom-style workflow inspired CalibRaw.
+color pipeline. RapidRAW's editing workflow inspired CalibRaw.
 CalibRaw uses a native interface and GPU processing, with the same engine on desktop
 and Android. It includes offline AI, creative effects such as depth-aware fog and
 light rays, and Edit Replay videos.
@@ -245,5 +245,3 @@ CalibRaw's shaders and tools draw on work from these projects:
 ## License
 
 CalibRaw is free software licensed under the **GNU General Public License v3.0 or later** ([GPL-3.0-or-later](COPYING)).
-
-*Adobe and Lightroom are registered trademarks of Adobe Inc. CalibRaw is an independent open-source project and is not affiliated with, sponsored by, or endorsed by Adobe Inc.*
