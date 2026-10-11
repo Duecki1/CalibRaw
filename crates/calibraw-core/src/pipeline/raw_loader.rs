@@ -117,11 +117,10 @@ pub struct RawThumbnail {
 }
 
 pub const MAX_RAW_EDGE: u32 = 32_768;
-/// Largest decoded image of any kind. Desktop covers 150 MP medium-format
-/// sensors, 200 MP phone captures and 16k panoramas; a scene-linear raster
-/// costs 12 bytes per pixel in memory.
+/// Largest decoded image of any kind. The 210 MP cap covers high-resolution
+/// phone captures; a scene-linear raster costs 12 bytes per pixel in memory.
 #[cfg(target_os = "android")]
-pub const MAX_RAW_PIXELS: u64 = 50_000_000;
+pub const MAX_RAW_PIXELS: u64 = 210_000_000;
 #[cfg(not(target_os = "android"))]
 pub const MAX_RAW_PIXELS: u64 = 200_000_000;
 #[cfg(all(libraw_available, target_os = "android"))]
@@ -129,7 +128,7 @@ const MAX_RAW_FILE_BYTES: u64 = 2_000_000_000;
 #[cfg(all(libraw_available, not(target_os = "android")))]
 const MAX_RAW_FILE_BYTES: u64 = 8_000_000_000;
 #[cfg(all(libraw_available, target_os = "android"))]
-const MAX_SENSOR_PIXELS: u64 = 70_000_000;
+const MAX_SENSOR_PIXELS: u64 = 210_000_000;
 #[cfg(all(libraw_available, not(target_os = "android")))]
 const MAX_SENSOR_PIXELS: u64 = 160_000_000;
 #[cfg(libraw_available)]
