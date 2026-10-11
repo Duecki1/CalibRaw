@@ -265,7 +265,7 @@ template; driver caches were not cleared):
 
 The rotated JPEG files were byte-identical. Decoded RGBA16 PNG samples were
 identical; the fast-compressed PNG was about 5.4% larger. These are single-image
-local measurements, not a cross-platform or Lightroom comparison.
+local measurements, not a cross-platform comparison.
 
 Regression coverage is in `calibraw-gpu`: serial versus parallel export rows,
 batch boundaries, lens/rotation resampling, cancellation and writer errors,
