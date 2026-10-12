@@ -95,7 +95,7 @@ pub const SUPPORTED_RAW_EXTENSIONS: &[&str] = &[
     "3fr", "ari", "arw", "bay", "bmq", "cap", "cine", "cr2", "cr3", "crw", "cs1", "dc2", "dcr",
     "dcs", "dng", "drf", "eip", "erf", "fff", "gpr", "iiq", "k25", "kc2", "kdc", "mdc", "mef",
     "mos", "mrw", "nef", "nrw", "obm", "orf", "pef", "ptx", "pxn", "qtk", "r3d", "raf", "raw",
-    "rdc", "rw2", "rwl", "rwz", "sr2", "srf", "srw", "sti", "tif", "tiff", "x3f",
+    "rdc", "rw2", "rwl", "rwz", "sr2", "srf", "srw", "sti", "tif", "tiff",
 ];
 
 pub fn is_supported_raw_path(path: &Path) -> bool {
