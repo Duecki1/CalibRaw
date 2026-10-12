@@ -18,8 +18,10 @@ pub use model_runtime::{set_warm_ai_features, AiFeature, AiFeatureSet};
 pub use model_artifact::desktop_model_cache_root;
 #[cfg(not(target_os = "android"))]
 pub use onnx_runtime_artifact::{
-    automatic_onnx_runtime_info, automatic_onnx_runtime_is_installed, bundled_onnx_runtime_path,
-    ensure_automatic_onnx_runtime, AutomaticOnnxRuntimeInfo,
+    automatic_onnx_runtime_info, automatic_onnx_runtime_is_installed,
+    automatic_onnx_runtime_kind_selectable, bundled_onnx_runtime_path,
+    ensure_automatic_onnx_runtime, set_automatic_onnx_runtime_kind, AutomaticOnnxRuntimeInfo,
+    AutomaticOnnxRuntimeKind,
 };
 
 #[cfg(not(target_os = "android"))]

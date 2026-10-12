@@ -16,6 +16,21 @@ impl CalibRawApp {
     }
 
     #[cfg(not(target_os = "android"))]
+    pub(crate) fn set_onnx_runtime_kind(&mut self, kind: calibraw_ai::AutomaticOnnxRuntimeKind) {
+        if self.ai.runtime_kind == kind {
+            return;
+        }
+        self.ai.runtime_kind = kind;
+        calibraw_ai::set_automatic_onnx_runtime_kind(kind);
+        self.ai.consent = None;
+        self.persist_performance_settings();
+        self.ui.notice = Some(
+            "ONNX Runtime changed. Restart CalibRaw if an AI runtime was already used in this session."
+                .to_owned(),
+        );
+    }
+
+    #[cfg(not(target_os = "android"))]
     pub(in crate::app) fn onnx_runtime_for_ai(&self) -> (Option<PathBuf>, Option<String>) {
         match self.ai.runtime_mode {
             OnnxRuntimeMode::Automatic => (None, None),
@@ -42,7 +57,8 @@ impl CalibRawApp {
     pub(in crate::app) fn show_automatic_onnx_runtime_download_details(ui: &mut egui::Ui) {
         ui.separator();
         ui.strong("ONNX Runtime");
-        if let Some(runtime) = calibraw_ai::automatic_onnx_runtime_info() {
+        let runtime = calibraw_ai::automatic_onnx_runtime_info();
+        if let Some(runtime) = runtime {
             ui.label(format!(
                 "ONNX Runtime {} for {}: {:.1} MB download.",
                 runtime.version,
@@ -56,11 +72,10 @@ impl CalibRawApp {
                 std::env::consts::ARCH
             ));
         }
-        ui.label("Downloaded from CalibRaw Artifacts, SHA-256 verified, and cached locally (MIT license).");
-        ui.hyperlink_to(
-            "Runtime source",
-            "https://huggingface.co/Duecki/CalibRaw-Artifacts/tree/main/onnxruntime",
-        );
+        ui.label("SHA-256 verified and cached locally (MIT license).");
+        if let Some(url) = runtime.and_then(|runtime| runtime.download_url) {
+            ui.hyperlink_to("Runtime source", url);
+        }
     }
 
     /// Runtime details shared by every local-AI consent dialog.

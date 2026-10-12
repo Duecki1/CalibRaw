@@ -359,7 +359,7 @@ pub fn probe_runtime_subprocess(runtime_path: &Path, expected_sha256: &str) -> R
         })?;
     if !status.success() {
         return Err(anyhow::anyhow!(
-            "the selected ONNX Runtime failed CalibRaw's isolated compatibility probe ({status}). Use a matching native {} ONNX Runtime DLL; on Windows the standard CPU package is the safest choice",
+            "the selected ONNX Runtime failed CalibRaw's isolated compatibility probe ({status}). Use a matching native {} ONNX Runtime library",
             std::env::consts::ARCH
         ));
     }

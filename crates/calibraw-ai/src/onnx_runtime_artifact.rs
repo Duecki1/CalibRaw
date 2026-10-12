@@ -1,6 +1,7 @@
 use crate::model_artifact::{ensure_artifact, sha256_file_hex, DownloadOptions, ModelArtifact};
 use anyhow::{Context, Result};
 use flate2::read::GzDecoder;
+use serde::{Deserialize, Serialize};
 use std::{
     fs::{self, File},
     path::{Component, Path, PathBuf},
@@ -27,9 +28,74 @@ struct RuntimePackage {
     format: ArchiveFormat,
 }
 
+/// Which automatic runtime to download. Only Linux x86_64 has a choice: its
+/// CPU package has no GPU provider, and Microsoft's CUDA builds need the
+/// matching CUDA toolkit and cuDNN 9 installed on the system.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AutomaticOnnxRuntimeKind {
+    #[default]
+    Cpu,
+    Cuda12,
+    Cuda13,
+}
+
+impl AutomaticOnnxRuntimeKind {
+    pub const ALL: [Self; 3] = [Self::Cpu, Self::Cuda12, Self::Cuda13];
+
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Cpu => "CPU",
+            Self::Cuda12 => "NVIDIA CUDA 12",
+            Self::Cuda13 => "NVIDIA CUDA 13",
+        }
+    }
+}
+
+static AUTOMATIC_RUNTIME_KIND: Mutex<AutomaticOnnxRuntimeKind> =
+    Mutex::new(AutomaticOnnxRuntimeKind::Cpu);
+
+pub fn set_automatic_onnx_runtime_kind(kind: AutomaticOnnxRuntimeKind) {
+    *AUTOMATIC_RUNTIME_KIND
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner()) = kind;
+}
+
+fn automatic_runtime_kind() -> AutomaticOnnxRuntimeKind {
+    *AUTOMATIC_RUNTIME_KIND
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+/// Whether Automatic mode offers the CUDA runtimes. Bundled runtimes, such as
+/// the Flatpak's, are never replaced by a download.
+pub fn automatic_onnx_runtime_kind_selectable() -> bool {
+    cfg!(all(target_os = "linux", target_arch = "x86_64")) && bundled_onnx_runtime_path().is_none()
+}
+
 fn runtime_package() -> Result<RuntimePackage> {
-    let package = match (std::env::consts::OS, std::env::consts::ARCH) {
-        ("linux", "x86_64") => RuntimePackage {
+    let kind = automatic_runtime_kind();
+    let package = match (std::env::consts::OS, std::env::consts::ARCH, kind) {
+        // Unmodified copies of Microsoft's release assets.
+        ("linux", "x86_64", AutomaticOnnxRuntimeKind::Cuda12) => RuntimePackage {
+            platform: "linux-x86_64-cuda12",
+            version: "1.30.0",
+            archive_name: "onnxruntime-linux-x64-gpu_cuda12-1.30.0.tgz",
+            url: "https://huggingface.co/Duecki/CalibRaw-Artifacts/resolve/main/onnxruntime/linux-x86_64/onnxruntime-linux-x64-gpu_cuda12-1.30.0.tgz",
+            bytes: 439_354_926,
+            sha256: "f9886932ee7bb0b4d3fcab736a392d4ff5efaa0672b47f19f0cec03437cf64f1",
+            format: ArchiveFormat::TarGz,
+        },
+        ("linux", "x86_64", AutomaticOnnxRuntimeKind::Cuda13) => RuntimePackage {
+            platform: "linux-x86_64-cuda13",
+            version: "1.30.0",
+            archive_name: "onnxruntime-linux-x64-gpu_cuda13-1.30.0.tgz",
+            url: "https://huggingface.co/Duecki/CalibRaw-Artifacts/resolve/main/onnxruntime/linux-x86_64/onnxruntime-linux-x64-gpu_cuda13-1.30.0.tgz",
+            bytes: 235_697_517,
+            sha256: "382d79133112388cf94ce5855789b7c9bef12bef76a08b6b277e5a317213adcd",
+            format: ArchiveFormat::TarGz,
+        },
+        ("linux", "x86_64", AutomaticOnnxRuntimeKind::Cpu) => RuntimePackage {
             platform: "linux-x86_64",
             version: "1.30.0",
             archive_name: "onnxruntime-linux-x64-1.30.0.tgz",
@@ -38,7 +104,7 @@ fn runtime_package() -> Result<RuntimePackage> {
             sha256: "a5ed5a3cac51fbb2e90da632ae43d19212faaa20e76484e62bcb7c23ddb3b3fd",
             format: ArchiveFormat::TarGz,
         },
-        ("linux", "aarch64") => RuntimePackage {
+        ("linux", "aarch64", _) => RuntimePackage {
             platform: "linux-arm64",
             version: "1.30.0",
             archive_name: "onnxruntime-linux-aarch64-1.30.0.tgz",
@@ -47,7 +113,7 @@ fn runtime_package() -> Result<RuntimePackage> {
             sha256: "e16a27a8ed330bbc698df7330b0cf56e722f354e3bcc92118682c74ef3c3e3da",
             format: ArchiveFormat::TarGz,
         },
-        ("macos", "aarch64") => RuntimePackage {
+        ("macos", "aarch64", _) => RuntimePackage {
             platform: "macos-arm64",
             version: "1.30.0",
             archive_name: "onnxruntime-osx-arm64-1.30.0.tgz",
@@ -56,7 +122,7 @@ fn runtime_package() -> Result<RuntimePackage> {
             sha256: "6ebb5062a934537c352937821f9fe9718e7de1a2db1122a93dd363ffd53a7012",
             format: ArchiveFormat::TarGz,
         },
-        ("macos", "x86_64") => RuntimePackage {
+        ("macos", "x86_64", _) => RuntimePackage {
             platform: "macos-x86_64",
             version: "1.23.2",
             archive_name: "onnxruntime-osx-x86_64-1.23.2.tgz",
@@ -65,25 +131,27 @@ fn runtime_package() -> Result<RuntimePackage> {
             sha256: "d10359e16347b57d9959f7e80a225a5b4a66ed7d7e007274a15cae86836485a6",
             format: ArchiveFormat::TarGz,
         },
-        ("windows", "x86_64") => RuntimePackage {
+        // 1.24.4 is Microsoft's final DirectML build. DirectML.dll ships beside
+        // onnxruntime.dll, where its delay-load hook looks before System32.
+        ("windows", "x86_64", _) => RuntimePackage {
             platform: "windows-x86_64",
-            version: "1.30.0",
-            archive_name: "onnxruntime-win-x64-1.30.0.zip",
-            url: "https://huggingface.co/Duecki/CalibRaw-Artifacts/resolve/7a00e95bdf48c64d354b99b1385cfe4ccf4cecbb/onnxruntime/windows-x86_64/onnxruntime-win-x64-1.30.0.zip",
-            bytes: 82_645_522,
-            sha256: "c6ba983baf5681af108599675d2a89c2d145512d02de28aed0bff177cd0ba949",
+            version: "1.24.4",
+            archive_name: "onnxruntime-win-x64-directml-1.24.4.zip",
+            url: "https://huggingface.co/Duecki/CalibRaw-Artifacts/resolve/main/onnxruntime/windows-x86_64/onnxruntime-win-x64-directml-1.24.4.zip",
+            bytes: 15_806_028,
+            sha256: "23131eec611e9ccd5cc563679aaaf55f221d51615ff6bf5e245970a5f5218c38",
             format: ArchiveFormat::Zip,
         },
-        ("windows", "aarch64") => RuntimePackage {
+        ("windows", "aarch64", _) => RuntimePackage {
             platform: "windows-arm64",
-            version: "1.30.0",
-            archive_name: "onnxruntime-win-arm64-1.30.0.zip",
-            url: "https://huggingface.co/Duecki/CalibRaw-Artifacts/resolve/7a00e95bdf48c64d354b99b1385cfe4ccf4cecbb/onnxruntime/windows-arm64/onnxruntime-win-arm64-1.30.0.zip",
-            bytes: 83_954_906,
-            sha256: "e53db8a50b23ae35be901cc93428baf997dc8d420333b097b2eae53d3ea9f2d3",
+            version: "1.24.4",
+            archive_name: "onnxruntime-win-arm64-directml-1.24.4.zip",
+            url: "https://huggingface.co/Duecki/CalibRaw-Artifacts/resolve/main/onnxruntime/windows-arm64/onnxruntime-win-arm64-directml-1.24.4.zip",
+            bytes: 15_562_020,
+            sha256: "27385338c565cf41c2c46e613ef603e7063a358a821176b1f916902d5afa93e3",
             format: ArchiveFormat::Zip,
         },
-        (os, arch) => anyhow::bail!(
+        (os, arch, _) => anyhow::bail!(
             "automatic ONNX Runtime is unavailable for {os}/{arch}; select a compatible runtime manually in Settings"
         ),
     };
@@ -95,6 +163,8 @@ pub struct AutomaticOnnxRuntimeInfo {
     pub platform: &'static str,
     pub version: &'static str,
     pub download_bytes: u64,
+    /// `None` for a bundled runtime.
+    pub download_url: Option<&'static str>,
 }
 
 /// The runtime included by the packager, fixed when CalibRaw is compiled.
@@ -141,11 +211,13 @@ impl AutomaticRuntime<'_> {
                     .unwrap_or(std::env::consts::OS),
                 version,
                 download_bytes: 0,
+                download_url: None,
             },
             Self::Download(package) => AutomaticOnnxRuntimeInfo {
                 platform: package.platform,
                 version: package.version,
                 download_bytes: package.bytes,
+                download_url: Some(package.url),
             },
         }
     }
@@ -471,6 +543,7 @@ mod tests {
                 platform: package.platform,
                 version: package.version,
                 download_bytes: package.bytes,
+                download_url: Some(package.url),
             }
         );
         assert!(runtime.info().download_bytes > 0);
