@@ -348,12 +348,16 @@ impl TopBar {
         ui.add_enabled_ui(enabled, |ui| {
             ui.spacing_mut().item_spacing.x = item_spacing;
 
-            let icon_response = ui.add_sized(
-                [icon_width, moduwu_design::CONTROL_HEIGHT],
-                egui::Label::new(
-                    egui::RichText::new(egui_phosphor::regular::MAGNIFYING_GLASS).size(15.0),
-                )
-                .sense(egui::Sense::click()),
+            // The icon is the zoom slider's title, so it carries the tooltip.
+            let icon_response = moduwu_design::still_hover_text(
+                ui.add_sized(
+                    [icon_width, moduwu_design::CONTROL_HEIGHT],
+                    egui::Label::new(
+                        egui::RichText::new(egui_phosphor::regular::MAGNIFYING_GLASS).size(15.0),
+                    )
+                    .sense(egui::Sense::click()),
+                ),
+                "Preview zoom\nDouble-click to reset.",
             );
             if icon_response.double_clicked() {
                 reset_requested = true;
@@ -363,7 +367,6 @@ impl TopBar {
                 AdjustmentSlider::new("develop-preview-zoom", &mut slider_position, 0.0..=1.0)
                     .decimals(5)
                     .step(0.01)
-                    .hover_text("Preview zoom")
                     .reset_to(reset_position)
                     .show_inline(ui, slider_width);
             if slider_interaction.changed {

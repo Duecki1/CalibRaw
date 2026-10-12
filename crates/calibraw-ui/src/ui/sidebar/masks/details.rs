@@ -5,6 +5,7 @@ use crate::app::{apply_mask_property_actions, MaskPropertiesControls};
 fn mask_creation_menu_button<R>(
     ui: &mut Ui,
     id_salt: impl egui::AsIdSalt,
+    icon: &str,
     size: egui::Vec2,
     icon_size: f32,
     tooltip: &str,
@@ -14,12 +15,8 @@ fn mask_creation_menu_button<R>(
         .push_id(id_salt, |ui| {
             ui.add_sized(
                 size,
-                egui::Button::new(
-                    egui::RichText::new(mask_creation_icon())
-                        .size(icon_size)
-                        .strong(),
-                )
-                .corner_radius(6.0),
+                egui::Button::new(egui::RichText::new(icon).size(icon_size).strong())
+                    .corner_radius(6.0),
             )
         })
         .inner
@@ -43,6 +40,7 @@ impl Sidebar {
                 mask_creation_menu_button(
                     ui,
                     "mask-group-creation",
+                    mask_creation_icon(),
                     size,
                     20.0,
                     "Create a new mask group",
@@ -71,9 +69,10 @@ impl Sidebar {
                 mask_creation_menu_button(
                     ui,
                     "mask-submask-creation",
+                    submask_creation_icon(),
                     size,
                     18.0,
-                    "Add a sub-mask to the selected group",
+                    "Add, subtract or intersect a sub-mask in the selected group",
                     |ui| {
                         *add_component = Self::submask_creation_menu(
                             ui,
