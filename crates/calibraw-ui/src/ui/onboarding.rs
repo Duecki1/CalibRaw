@@ -104,6 +104,8 @@ fn show_step_body(ui: &mut egui::Ui, app: &mut CalibRawApp, step: OnboardingStep
         OnboardingStep::CopyPaste => show_copy_paste(ui, app),
         OnboardingStep::ExportNames => show_export_names(ui, app),
         #[cfg(not(target_os = "android"))]
+        OnboardingStep::CameraProfiles => show_camera_profiles(ui, app),
+        #[cfg(not(target_os = "android"))]
         OnboardingStep::Ai => show_ai(ui, app),
         #[cfg(not(target_os = "android"))]
         OnboardingStep::Discord => show_discord(ui, app),
@@ -263,6 +265,66 @@ fn show_export_names(ui: &mut egui::Ui, app: &mut CalibRawApp) {
 }
 
 #[cfg(not(target_os = "android"))]
+fn show_camera_profiles(ui: &mut egui::Ui, app: &mut CalibRawApp) {
+    let mut enabled = app.preferences.camera_profile_auto_detect;
+    if moduwu_design::toggle_with_help(
+        ui,
+        &mut enabled,
+        "Auto-import DCP profiles",
+        "Uses camera profiles installed by other RAW editors. Profiles are only read, never copied or changed. You can choose a different folder later in Settings › RAW color profiles.",
+    )
+    .changed()
+    {
+        if enabled {
+            app.auto_detect_camera_profile_folder();
+        } else {
+            app.clear_camera_profile_folder();
+        }
+    }
+
+    ui.add_space(moduwu_design::SPACE_SM);
+    if CAMERA_PROFILE_SEARCH_LOCATIONS.is_empty() {
+        ui.small("Linux has no standard CameraProfiles location, so nothing is found automatically. Choose a folder later in Settings › RAW color profiles.");
+        return;
+    }
+    ui.small("CalibRaw looks for a CameraProfiles folder in:");
+    for location in CAMERA_PROFILE_SEARCH_LOCATIONS {
+        ui.add(egui::Label::new(egui::RichText::new(*location).monospace().small()).wrap());
+    }
+
+    if app.preferences.camera_profile_auto_detect {
+        ui.add_space(moduwu_design::SPACE_SM);
+        if let Some(folder) = &app.preferences.camera_profile_folder {
+            ui.small("Found:");
+            ui.add(
+                egui::Label::new(egui::RichText::new(folder.display().to_string()).monospace())
+                    .wrap(),
+            );
+        } else {
+            ui.colored_label(
+                ui.visuals().warn_fg_color,
+                "No CameraProfiles folder was found.",
+            );
+        }
+    }
+}
+
+/// Human-readable form of `performance_settings::camera_profile_candidates`;
+/// keep the two in sync.
+#[cfg(target_os = "windows")]
+const CAMERA_PROFILE_SEARCH_LOCATIONS: &[&str] = &[
+    r"%ProgramData%\CameraRaw\CameraProfiles",
+    r"%ProgramData%\<vendor>\CameraRaw\CameraProfiles",
+];
+#[cfg(target_os = "macos")]
+const CAMERA_PROFILE_SEARCH_LOCATIONS: &[&str] = &[
+    "~/Library/Application Support/<vendor>/CameraRaw/CameraProfiles",
+    "/Library/Application Support/<vendor>/CameraRaw/CameraProfiles",
+];
+#[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "android")))]
+const CAMERA_PROFILE_SEARCH_LOCATIONS: &[&str] = &[];
+
+#[cfg(not(target_os = "android"))]
 fn show_ai(ui: &mut egui::Ui, app: &mut CalibRawApp) {
     let mut acceleration = app.ai.gpu_acceleration;
     if moduwu_design::toggle_with_help(
@@ -360,7 +422,9 @@ fn previous_step(step: OnboardingStep) -> Option<OnboardingStep> {
         OnboardingStep::CopyPaste => OnboardingStep::Preview,
         OnboardingStep::ExportNames => OnboardingStep::CopyPaste,
         #[cfg(not(target_os = "android"))]
-        OnboardingStep::Ai => OnboardingStep::ExportNames,
+        OnboardingStep::CameraProfiles => OnboardingStep::ExportNames,
+        #[cfg(not(target_os = "android"))]
+        OnboardingStep::Ai => OnboardingStep::CameraProfiles,
         #[cfg(not(target_os = "android"))]
         OnboardingStep::Discord => OnboardingStep::Ai,
     })
@@ -374,13 +438,15 @@ fn next_step(step: OnboardingStep) -> Option<OnboardingStep> {
         OnboardingStep::ExportNames => {
             #[cfg(not(target_os = "android"))]
             {
-                Some(OnboardingStep::Ai)
+                Some(OnboardingStep::CameraProfiles)
             }
             #[cfg(target_os = "android")]
             {
                 None
             }
         }
+        #[cfg(not(target_os = "android"))]
+        OnboardingStep::CameraProfiles => Some(OnboardingStep::Ai),
         #[cfg(not(target_os = "android"))]
         OnboardingStep::Ai => Some(OnboardingStep::Discord),
         #[cfg(not(target_os = "android"))]
@@ -407,6 +473,8 @@ impl OnboardingStep {
             Self::CopyPaste => "Copy & paste setup",
             Self::ExportNames => "Export file names",
             #[cfg(not(target_os = "android"))]
+            Self::CameraProfiles => "Camera profiles",
+            #[cfg(not(target_os = "android"))]
             Self::Ai => "AI model setup",
             #[cfg(not(target_os = "android"))]
             Self::Discord => "Discord Rich Presence",
@@ -428,6 +496,10 @@ impl OnboardingStep {
                 "Choose how CalibRaw names exported files. You can combine source details with your own text."
             }
             #[cfg(not(target_os = "android"))]
+            Self::CameraProfiles => {
+                "Choose whether CalibRaw automatically uses DCP camera profiles already installed on this computer."
+            }
+            #[cfg(not(target_os = "android"))]
             Self::Ai => {
                 "Choose how local AI models use your hardware and the quality of new Subject masks."
             }
@@ -445,9 +517,11 @@ impl OnboardingStep {
             Self::CopyPaste => 3,
             Self::ExportNames => 4,
             #[cfg(not(target_os = "android"))]
-            Self::Ai => 5,
+            Self::CameraProfiles => 5,
             #[cfg(not(target_os = "android"))]
-            Self::Discord => 6,
+            Self::Ai => 6,
+            #[cfg(not(target_os = "android"))]
+            Self::Discord => 7,
         }
     }
 
@@ -456,7 +530,7 @@ impl OnboardingStep {
         if cfg!(target_os = "android") {
             4
         } else {
-            6
+            7
         }
     }
 }
@@ -495,11 +569,19 @@ mod tests {
         {
             assert_eq!(
                 next_step(OnboardingStep::ExportNames),
+                Some(OnboardingStep::CameraProfiles)
+            );
+            assert_eq!(
+                previous_step(OnboardingStep::CameraProfiles),
+                Some(OnboardingStep::ExportNames)
+            );
+            assert_eq!(
+                next_step(OnboardingStep::CameraProfiles),
                 Some(OnboardingStep::Ai)
             );
             assert_eq!(
                 previous_step(OnboardingStep::Ai),
-                Some(OnboardingStep::ExportNames)
+                Some(OnboardingStep::CameraProfiles)
             );
             assert_eq!(next_step(OnboardingStep::Ai), Some(OnboardingStep::Discord));
             assert_eq!(
