@@ -108,11 +108,22 @@ pub(super) const MAX_MASKED_FRACTION: f32 = 0.4;
 /// Context edge of a downscaled pass relative to its target's edge.
 pub(super) const DOWNSCALED_CONTEXT_FACTOR: f32 = 1.75;
 
-/// One Big-LaMa inference within a Remove stroke.
+/// Context Remove's texture synthesis samples on every side of its target: the
+/// target's longer edge, and at least this many native pixels.
+pub(super) const FILL_MIN_CONTEXT_MARGIN: u32 = 128;
+/// Largest context Remove's texture synthesis fills at native resolution.
+/// Larger ones are synthesized at a reduced working resolution, which bounds
+/// its memory to a few hundred megabytes and its time to seconds.
+pub const FILL_MAX_NATIVE_CONTEXT_PIXELS: u64 = 4_000_000;
+/// Thin strokes whose context would be larger are filled in tiles of this
+/// edge, each with its own nearby context.
+pub(super) const FILL_TILE_EDGE: u32 = 384;
+
+/// One Big-LaMa inference or texture synthesis within a Remove stroke.
 ///
 /// `target` holds the mask pixels this pass fills. Stroke pixels inside `crop`
-/// that later passes fill stay masked, so the model never copies the object
-/// being removed, while pixels filled by earlier passes are real context.
+/// that later passes fill stay masked, so the object being removed is never
+/// copied, while pixels filled by earlier passes are real context.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RemovePass {
     pub crop: NativeRect,

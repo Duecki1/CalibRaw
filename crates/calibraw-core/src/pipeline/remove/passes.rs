@@ -105,6 +105,59 @@ fn downscaled_pass(
     }
 }
 
+/// Splits a stroke into texture synthesis passes: each separate spot with
+/// the context around it, and thin strokes too long for one native context
+/// in tiles with their own. Larger objects keep one pass, which is
+/// synthesized at a reduced resolution when its context exceeds
+/// [`FILL_MAX_NATIVE_CONTEXT_PIXELS`].
+pub fn plan_fill_passes(image_width: u32, image_height: u32, mask: &RemoveMask) -> Vec<RemovePass> {
+    if image_width == 0 || image_height == 0 || mask.is_empty() {
+        return Vec::new();
+    }
+    let whole = |target: &RemoveMask| RemovePass {
+        crop: fill_context(image_width, image_height, target.bounds),
+        target: target.clone(),
+    };
+    let components = mask.connected_components();
+    let passes = components
+        .iter()
+        .flat_map(|component| {
+            let pass = whole(component);
+            if pixel_count(pass.crop) <= FILL_MAX_NATIVE_CONTEXT_PIXELS
+                || component.max_half_width() > MAX_TILED_HALF_WIDTH
+            {
+                vec![pass]
+            } else {
+                component.tiles(FILL_TILE_EDGE).iter().map(whole).collect()
+            }
+        })
+        .collect::<Vec<_>>();
+    if passes.len() <= REMOVE_MAX_PATCHES_PER_STROKE {
+        passes
+    } else if components.len() <= REMOVE_MAX_PATCHES_PER_STROKE {
+        components.iter().map(whole).collect()
+    } else {
+        vec![whole(mask)]
+    }
+}
+
+/// `bounds` grown by the fill's context margin on every side, within the image.
+fn fill_context(image_width: u32, image_height: u32, bounds: NativeRect) -> NativeRect {
+    let margin = bounds.width.max(bounds.height).max(FILL_MIN_CONTEXT_MARGIN);
+    let x = bounds.x.saturating_sub(margin);
+    let y = bounds.y.saturating_sub(margin);
+    NativeRect {
+        x,
+        y,
+        width: bounds.right().saturating_add(margin).min(image_width) - x,
+        height: bounds.bottom().saturating_add(margin).min(image_height) - y,
+    }
+}
+
+pub(super) fn pixel_count(rect: NativeRect) -> u64 {
+    u64::from(rect.width) * u64::from(rect.height)
+}
+
 fn square_around(image_width: u32, image_height: u32, bounds: NativeRect, edge: u32) -> NativeRect {
     square_inside_image(
         image_width,

@@ -296,6 +296,22 @@ impl CalibRawApp {
                         ForegroundProgress::indeterminate("Applying Big-LaMa…")
                     });
                 }
+                RemoveEvent::Filling {
+                    area,
+                    areas,
+                    fraction,
+                } => {
+                    let percent = (fraction.clamp(0.0, 1.0) * 100.0).round() as u64;
+                    let detail = if areas > 1 {
+                        format!("Area {area} of {areas}")
+                    } else {
+                        "Matching surrounding texture".to_owned()
+                    };
+                    self.inpaint.processing_progress = Some(
+                        ForegroundProgress::units(percent, 100, None, "Filling from the photo")
+                            .with_detail(detail),
+                    );
+                }
                 RemoveEvent::Finished(result) => {
                     self.inpaint.receiver = None;
                     self.inpaint.cancellation = None;
@@ -422,5 +438,44 @@ mod tests {
                 (transition == "cancel").then_some(0)
             );
         }
+    }
+
+    #[test]
+    fn remove_reports_texture_progress_after_big_lama() {
+        let mut app = CalibRawApp::empty(&egui::Context::default());
+        let frame = eframe::Frame::_new_kittest();
+        let (sender, receiver) = mpsc::channel();
+        app.inpaint.receiver = Some(receiver);
+        app.inpaint.cancellation = Some(Arc::new(AtomicBool::new(false)));
+        app.inpaint.pending_brush = Some(RemoveBrushStroke::default());
+
+        sender
+            .send(RemoveEvent::Filling {
+                area: 2,
+                areas: 3,
+                fraction: 0.5,
+            })
+            .unwrap();
+        app.advance_remove_worker(&frame);
+        let progress = app.inpaint.processing_progress.clone().unwrap();
+        assert!(matches!(
+            progress.value,
+            ForegroundProgressValue::Units {
+                completed: 50,
+                total: 100,
+                ..
+            }
+        ));
+        assert_eq!(progress.detail.as_deref(), Some("Area 2 of 3"));
+
+        sender
+            .send(RemoveEvent::Finished(Ok(
+                crate::pipeline::RemoveStroke::default(),
+            )))
+            .unwrap();
+        app.advance_remove_worker(&frame);
+        assert!(!app.inpaint_processing());
+        assert_eq!(app.inpaint.edits.strokes.len(), 1);
+        assert_eq!(app.ui.notice.as_deref(), Some("Remove applied."));
     }
 }

@@ -682,6 +682,60 @@ mod tests {
     }
 
     #[test]
+    fn fill_spots_get_their_own_surrounding_context() {
+        let mask = disc_mask(7000, 6000, &[(800.0, 900.0, 40.0), (5200.0, 4100.0, 50.0)]);
+        let passes = plan_fill_passes(7000, 6000, &mask);
+        assert_eq!(passes.len(), 2);
+        for pass in &passes {
+            let target = pass.target.bounds;
+            let margin = target.width.max(FILL_MIN_CONTEXT_MARGIN);
+            assert_eq!(pass.crop.x, target.x - margin);
+            assert_eq!(pass.crop.right(), target.right() + margin);
+        }
+        assert_passes_partition(&mask, &passes);
+    }
+
+    #[test]
+    fn fill_context_stays_inside_the_image() {
+        let mask = disc_mask(1000, 800, &[(20.0, 780.0, 15.0)]);
+        let passes = plan_fill_passes(1000, 800, &mask);
+        assert_eq!(passes.len(), 1);
+        assert_eq!((passes[0].crop.x, passes[0].crop.bottom()), (0, 800));
+        assert_passes_partition(&mask, &passes);
+    }
+
+    #[test]
+    fn long_thin_fill_stroke_is_tiled_with_native_contexts() {
+        let wire = (0..140)
+            .map(|step| (300.0 + step as f32 * 45.0, 300.0 + step as f32 * 38.0, 5.0))
+            .collect::<Vec<_>>();
+        let mask = disc_mask(7000, 6000, &wire);
+        let passes = plan_fill_passes(7000, 6000, &mask);
+        assert!(passes.len() > 1);
+        for pass in &passes {
+            assert!(pixel_count(pass.crop) <= FILL_MAX_NATIVE_CONTEXT_PIXELS);
+        }
+        assert_passes_partition(&mask, &passes);
+    }
+
+    #[test]
+    fn large_fill_object_stays_one_pass() {
+        let mask = RemoveMask {
+            bounds: NativeRect {
+                x: 2000,
+                y: 1500,
+                width: 1800,
+                height: 2200,
+            },
+            pixels: vec![255; 1800 * 2200],
+        };
+        let passes = plan_fill_passes(7000, 6000, &mask);
+        assert_eq!(passes.len(), 1);
+        assert!(pixel_count(passes[0].crop) > FILL_MAX_NATIVE_CONTEXT_PIXELS);
+        assert_passes_partition(&mask, &passes);
+    }
+
+    #[test]
     fn components_and_restriction_keep_global_coordinates() {
         let mask = disc_mask(400, 300, &[(50.0, 50.0, 10.0), (300.0, 200.0, 12.0)]);
         let components = mask.connected_components();

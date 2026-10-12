@@ -22,6 +22,7 @@ use crate::ModelDownloadProgress;
 mod lama;
 use anyhow::{Context, Result};
 use calibraw_core::color_math::{srgb_decode_signed, srgb_encode_signed};
+use calibraw_core::patch_fill::PatchFillError;
 use image::{imageops::FilterType, ImageBuffer, Rgb32FImage};
 use ort::value::Tensor;
 use std::{
@@ -33,6 +34,7 @@ use std::{
     time::Duration,
 };
 
+mod fill;
 mod retouch;
 use retouch::*;
 
@@ -102,7 +104,17 @@ pub struct RetouchRequest {
 #[derive(Debug)]
 pub enum RemoveEvent {
     DownloadProgress(ModelDownloadProgress),
-    Processing { completed: usize, total: usize },
+    Processing {
+        completed: usize,
+        total: usize,
+    },
+    /// Texture synthesis of area `area` (1-based) of `areas`, after
+    /// Big-LaMa, is `fraction` done, in `[0, 1]`.
+    Filling {
+        area: usize,
+        areas: usize,
+        fraction: f32,
+    },
     Finished(Result<RemoveStroke, String>),
 }
 
@@ -153,7 +165,10 @@ fn ensure_not_cancelled(cancellation: &AtomicBool) -> Result<()> {
     Ok(())
 }
 
-fn run_remove(request: RemoveRequest, events: &mpsc::Sender<RemoveEvent>) -> Result<RemoveStroke> {
+fn run_remove(
+    mut request: RemoveRequest,
+    events: &mpsc::Sender<RemoveEvent>,
+) -> Result<RemoveStroke> {
     ensure_not_cancelled(&request.cancellation)?;
     crate::ai_masks::initialize_runtime(
         request.runtime_path.as_deref(),
@@ -169,26 +184,59 @@ fn run_remove(request: RemoveRequest, events: &mpsc::Sender<RemoveEvent>) -> Res
     )?;
     ensure_not_cancelled(&request.cancellation)?;
 
-    let mut brush = request.brush;
+    let mut brush = std::mem::take(&mut request.brush);
     if brush.dilation_radius == 0 {
         brush.dilation_radius = adaptive_remove_dilation(&brush.points);
     }
     let mask = rasterize_remove_brush(request.raw.width, request.raw.height, &brush)
         .context("Remove brush produced no native image mask")?;
-    let passes = plan_remove_passes(request.raw.width, request.raw.height, &mask);
+    let structure = generate_structure(&request, &mask, events)?;
+    let patches = match fill::synthesize(&request, mask, &structure, events) {
+        Ok(patches) => patches,
+        // Too little of the photo to copy texture from: keep Big-LaMa's fill.
+        Err(error) if error.downcast_ref::<PatchFillError>() == Some(&PatchFillError::NoSource) => {
+            structure.into_iter().map(|pass| pass.patch).collect()
+        }
+        Err(error) => return Err(error),
+    };
+
+    Ok(RemoveStroke {
+        brush,
+        patches,
+        retouch: None,
+        opacity: request.opacity,
+    })
+}
+
+/// One Big-LaMa pass of a stroke's structure.
+struct GeneratedPass {
+    /// The native crop the model saw at its fixed input edge.
+    crop: NativeRect,
+    patch: RemovePatch,
+}
+
+/// Fills `mask` with Big-LaMa. Its result sets the structure of the final
+/// fill (which edges cross the hole, and where), whose texture is then
+/// synthesized from the photo.
+fn generate_structure(
+    request: &RemoveRequest,
+    mask: &RemoveMask,
+    events: &mpsc::Sender<RemoveEvent>,
+) -> Result<Vec<GeneratedPass>> {
+    let passes = plan_remove_passes(request.raw.width, request.raw.height, mask);
     anyhow::ensure!(!passes.is_empty(), "Remove mask produced no inference pass");
 
     // Passes run in order: each one sees earlier fills as real context, while
     // the stroke pixels still to fill stay masked.
-    let mut unfilled = mask;
-    let mut patches = Vec::with_capacity(passes.len());
+    let mut unfilled = mask.clone();
+    let mut generated: Vec<GeneratedPass> = Vec::with_capacity(passes.len());
     for (index, pass) in passes.iter().enumerate() {
         ensure_not_cancelled(&request.cancellation)?;
         let mut context = request.existing.clone();
-        if !patches.is_empty() {
+        if !generated.is_empty() {
             context.strokes.push(RemoveStroke {
                 brush: RemoveBrushStroke::default(),
-                patches: patches.clone(),
+                patches: generated.iter().map(|pass| pass.patch.clone()).collect(),
                 retouch: None,
                 opacity: 1.0,
             });
@@ -229,7 +277,7 @@ fn run_remove(request: RemoveRequest, events: &mpsc::Sender<RemoveEvent>) -> Res
             )
         })?;
         ensure_not_cancelled(&request.cancellation)?;
-        patches.push(lama::infer_pass(
+        let patch = lama::infer_pass(
             &request.model_path,
             pass,
             &unfilled,
@@ -240,7 +288,8 @@ fn run_remove(request: RemoveRequest, events: &mpsc::Sender<RemoveEvent>) -> Res
                 bounds: surroundings_bounds,
                 scene: surroundings,
             },
-        )?);
+        )?;
+        generated.push(GeneratedPass { crop, patch });
         unfilled.subtract(&pass.target);
         let _ = events.send(RemoveEvent::Processing {
             completed: index + 1,
@@ -248,12 +297,7 @@ fn run_remove(request: RemoveRequest, events: &mpsc::Sender<RemoveEvent>) -> Res
         });
     }
 
-    Ok(RemoveStroke {
-        brush,
-        patches,
-        retouch: None,
-        opacity: request.opacity,
-    })
+    Ok(generated)
 }
 
 #[cfg(test)]

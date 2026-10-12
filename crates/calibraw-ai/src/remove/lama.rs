@@ -590,7 +590,7 @@ fn run_big_lama(
 
 /// Bicubic (Catmull-Rom) sample at continuous pixel coordinates, where pixel
 /// `i` is centred on `i`. Sharper than bilinear when the model ran downscaled.
-fn sample_catmull_rom(image: &Rgb32FImage, x: f32, y: f32) -> [f32; 3] {
+pub(super) fn sample_catmull_rom(image: &Rgb32FImage, x: f32, y: f32) -> [f32; 3] {
     fn weights(t: f32) -> [f32; 4] {
         let t2 = t * t;
         let t3 = t2 * t;

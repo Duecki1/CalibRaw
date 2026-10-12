@@ -8,7 +8,7 @@ background work follows. Update it in the change that alters a boundary.
 
 | Crate | Owns | May depend on | Must not depend on |
 |---|---|---|---|
-| `calibraw-core` | Image and edit models, colour mathematics, geometry, parameter validation, RAW/rendered loading, sidecars, presets, thumbnail cache | std, decoding and serde crates | any other CalibRaw crate, egui/eframe |
+| `calibraw-core` | Image and edit models, colour mathematics, geometry, parameter validation, RAW/rendered loading, sidecars, presets, thumbnail cache, exemplar-based hole filling (`patch_fill`) | std, decoding and serde crates | any other CalibRaw crate, egui/eframe |
 | `calibraw-gpu` | GPU resource planning, WGSL composition, processing passes, readback, tiled export and file encoding | `calibraw-core`, wgpu, naga_oil | UI crates, egui/eframe |
 | `calibraw-ai` | Model artifacts and installation, ONNX Runtime sessions, provider fallback, model-specific pre/postprocessing | `calibraw-core`, `calibraw-gpu` (denoise/remove render paths) | UI crates, egui/eframe |
 | `calibraw-ffi` | C ABI and the Android JNI bridge: storage, pickers, export publishing, notifications, replay encoder | `calibraw-core` (sidecar types), jni, android-activity | processing crates, UI crates, egui/eframe |
