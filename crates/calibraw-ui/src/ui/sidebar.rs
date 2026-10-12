@@ -108,7 +108,7 @@ pub(crate) use export::export_settings_controls;
 
 #[cfg(test)]
 mod tests {
-    use super::masks::{mask_component_badge, mask_creation_icon};
+    use super::masks::{mask_component_badge, mask_creation_icon, submask_creation_icon};
     use super::navigation::{mobile_tab_icon_geometry, mobile_tab_text_geometry};
     use super::{MaskCardSize, MaskCombineMode, MaskStripOrientation};
     use eframe::egui;
@@ -268,6 +268,7 @@ mod tests {
     #[test]
     fn mask_creation_controls_use_a_compact_plus_icon() {
         assert_eq!(mask_creation_icon(), egui_phosphor::regular::PLUS);
+        assert_eq!(submask_creation_icon(), egui_phosphor::regular::PLUS_MINUS);
     }
 
     #[test]
