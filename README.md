@@ -140,6 +140,9 @@ light rays, and Edit Replay videos.
 No. Editing, AI masks, AI Remove and AI Denoise all run locally. CalibRaw only goes online to
 download AI models or the ONNX Runtime, and only after you agree.
 
+**Where does CalibRaw get the DCP profiles?**
+On start, CalibRaw tries to automatically detect DCP files on your machine (windows, macOS only).
+
 **Which cameras and files are supported?**
 Anything LibRaw or Rawler supports, as well as JPEG, PNG, HEIC and TIFF; see [Supported Formats](#supported-formats).
 
