@@ -1,0 +1,145 @@
+name: Build Linux AppImage
+
+# Built on the oldest supported Ubuntu LTS runner so the bundled and linked
+# glibc symbols stay compatible with older distributions. Do not move these
+# runners to a newer release without raising the documented glibc baseline.
+
+on:
+  push:
+    branches:
+      - "**"
+  pull_request:
+  workflow_dispatch:
+  workflow_call:
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_NET_RETRY: "10"
+  DEBIAN_FRONTEND: noninteractive
+
+jobs:
+  linux-appimage:
+    name: Linux AppImage (${{ matrix.artifact_arch }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-22.04
+            artifact_arch: x86_64
+            rustup_arch: x86_64
+            linuxdeploy_arch: x86_64
+            linuxdeploy_sha256: c20cd71e3a4e3b80c3483cef793cda3f4e990aca14014d23c544ca3ce1270b4d
+            artifact_name: calibraw-linux-appimage
+          - runner: ubuntu-22.04-arm
+            artifact_arch: arm64
+            rustup_arch: aarch64
+            linuxdeploy_arch: aarch64
+            linuxdeploy_sha256: 620095110d693282b8ebeb244a95b5e911cf8f65f76c88b4b47d16ae6346fcff
+            artifact_name: calibraw-linux-appimage-arm64
+    env:
+      CALIBRAW_REQUIRE_LENSFUN: "1"
+      LIBRAW_PREFIX: /tmp/calibraw-libraw
+      PKG_CONFIG_PATH: /tmp/calibraw-libraw/lib/pkgconfig
+      LD_LIBRARY_PATH: /tmp/calibraw-libraw/lib
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          fetch-depth: 0
+
+      - name: Restore Linux build cache
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+            /tmp/calibraw-libraw
+            /tmp/linuxdeploy-${{ matrix.linuxdeploy_arch }}.AppImage
+          key: calibraw-linux-native-v3-${{ matrix.runner }}-rust-${{ hashFiles('rust-toolchain.toml') }}-libraw-823f25d-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'crates/**/Cargo.toml', 'crates/**/build.rs', 'crates/**/build_support/**') }}
+          restore-keys: |
+            calibraw-linux-native-v3-${{ matrix.runner }}-rust-${{ hashFiles('rust-toolchain.toml') }}-libraw-823f25d-
+
+      - name: Install Linux build dependencies
+        shell: bash
+        run: |
+          set -euxo pipefail
+
+          if [ "$(id -u)" -eq 0 ]; then
+            SUDO=""
+          else
+            SUDO="sudo"
+          fi
+
+          $SUDO apt-get update
+          $SUDO apt-get install -y --no-install-recommends \
+            build-essential \
+            autoconf \
+            automake \
+            ca-certificates \
+            clang \
+            curl \
+            file \
+            libasound2-dev \
+            libclang-dev \
+            libdbus-1-dev \
+            libegl1-mesa-dev \
+            libfontconfig1-dev \
+            libglib2.0-dev \
+            libgl1-mesa-dev \
+            libjpeg-dev \
+            liblensfun-dev \
+            liblensfun-data-v1 \
+            libtool \
+            libudev-dev \
+            libwayland-dev \
+            libx11-dev \
+            libxkbcommon-dev \
+            patchelf \
+            pkg-config \
+            python3 \
+            squashfs-tools \
+            wget \
+            zlib1g-dev
+
+      - name: Build release binary
+        env:
+          CALIBRAW_DISCORD_APPLICATION_ID: ${{ secrets.CALIBRAW_DISCORD_APPLICATION_ID }}
+          RUSTUP_ARCH: ${{ matrix.rustup_arch }}
+        shell: bash
+        run: bash scripts/build_linux_release.sh
+
+      - name: Package AppImage
+        env:
+          LINUXDEPLOY_ARCH: ${{ matrix.linuxdeploy_arch }}
+          LINUXDEPLOY_SHA256: ${{ matrix.linuxdeploy_sha256 }}
+        shell: bash
+        run: bash scripts/package_linux_appimage.sh
+
+      - name: Verify glibc baseline
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # Ubuntu 22.04 ships glibc 2.35; nothing in the AppImage may need more.
+          max_glibc="2.35"
+          highest="$(
+            find AppDir -type f \( -perm -u+x -o -name '*.so*' \) -print0 \
+              | xargs -0 -r objdump -T 2>/dev/null \
+              | grep -o 'GLIBC_[0-9.]*' \
+              | sed 's/^GLIBC_//' \
+              | sort -V -u \
+              | tail -n 1
+          )"
+          echo "Highest glibc symbol version required: ${highest:-none}"
+          test -n "$highest"
+          test "$(printf '%s\n%s\n' "$highest" "$max_glibc" | sort -V | tail -n 1)" = "$max_glibc"
+
+      - name: Upload AppImage
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: dist/*
+          if-no-files-found: error
