@@ -310,6 +310,21 @@ pub(crate) fn desktop_path() -> Option<PathBuf> {
     base.map(|base| base.join("calibraw").join("performance.json"))
 }
 
+/// Human-readable form of [`camera_profile_candidates`], shown during setup;
+/// keep the two in sync. Empty where auto-detect has no standard locations.
+#[cfg(target_os = "windows")]
+pub(crate) const CAMERA_PROFILE_SEARCH_LOCATIONS: &[&str] = &[
+    r"%ProgramData%\CameraRaw\CameraProfiles",
+    r"%ProgramData%\<vendor>\CameraRaw\CameraProfiles",
+];
+#[cfg(target_os = "macos")]
+pub(crate) const CAMERA_PROFILE_SEARCH_LOCATIONS: &[&str] = &[
+    "~/Library/Application Support/<vendor>/CameraRaw/CameraProfiles",
+    "/Library/Application Support/<vendor>/CameraRaw/CameraProfiles",
+];
+#[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "android")))]
+pub(crate) const CAMERA_PROFILE_SEARCH_LOCATIONS: &[&str] = &[];
+
 #[cfg(not(target_os = "android"))]
 pub(crate) fn detected_camera_profile_folder() -> Option<PathBuf> {
     camera_profile_candidates()

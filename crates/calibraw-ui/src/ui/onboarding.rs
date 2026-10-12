@@ -26,60 +26,29 @@ pub(crate) fn show(ctx: &egui::Context, app: &mut CalibRawApp) {
 
     let available = ctx.content_rect().size() - egui::vec2(32.0, 32.0);
     let width = available.x.clamp(1.0, 540.0);
-    let max_height = available.y.max(1.0);
     let max_body_height =
-        (max_height - moduwu_design::CONTROL_HEIGHT - ONBOARDING_FOOTER_EXTRA_HEIGHT).max(1.0);
-    let measurement = ctx.data(|data| {
-        data.get_temp::<OnboardingLayoutMeasurement>(egui::Id::new(
-            ONBOARDING_LAYOUT_MEASUREMENT_ID,
-        ))
-    });
-    let needs_scroll = measurement
-        .filter(|measurement| {
-            measurement.step == step
-                && measurement.width_bits == width.to_bits()
-                && measurement.height_bits == max_body_height.to_bits()
-        })
-        .map(|measurement| measurement.needs_scroll);
-    let mut action = None;
+        (available.y.max(1.0) - moduwu_design::CONTROL_HEIGHT - ONBOARDING_FOOTER_EXTRA_HEIGHT)
+            .max(1.0);
 
-    egui::Modal::new(egui::Id::new(("calibraw-first-run-onboarding", step))).show(ctx, |ui| {
-        ui.set_width(width);
-        ui.set_max_width(width);
-        if needs_scroll == Some(false) {
-            show_step_body(ui, app, step);
-        } else {
-            let output = egui::ScrollArea::vertical()
-                .max_height(max_body_height)
-                .auto_shrink([false, true])
-                .show(ui, |ui| show_step_body(ui, app, step));
-            if needs_scroll.is_none() {
-                let needs_scroll = output.content_size.y > output.inner_rect.height() + 1.0;
-                ctx.data_mut(|data| {
-                    data.insert_temp(
-                        egui::Id::new(ONBOARDING_LAYOUT_MEASUREMENT_ID),
-                        OnboardingLayoutMeasurement {
-                            step,
-                            width_bits: width.to_bits(),
-                            height_bits: max_body_height.to_bits(),
-                            needs_scroll,
-                        },
-                    );
-                });
-                if !needs_scroll {
-                    ctx.request_discard("onboarding content fits without scrolling");
-                }
-            }
-        }
-        ui.add_space(moduwu_design::SPACE_MD);
-        ui.separator();
-        ui.add_space(moduwu_design::SPACE_SM);
-        show_navigation(ui, step, &mut action);
-    });
+    let action = egui::Modal::new(egui::Id::new(("calibraw-first-run-onboarding", step)))
+        .show(ctx, |ui| {
+            ui.set_width(width);
+            ui.set_max_width(width);
+            show_fitted_step_body(ui, app, step, width, max_body_height);
+            ui.add_space(moduwu_design::SPACE_MD);
+            ui.separator();
+            ui.add_space(moduwu_design::SPACE_SM);
+            show_navigation(ui, step)
+        })
+        .inner;
 
     match action {
-        Some(OnboardingAction::Back) => app.ui.onboarding_step = previous_step(step),
-        Some(OnboardingAction::Next) => app.ui.onboarding_step = next_step(step),
+        Some(OnboardingAction::Back) => {
+            if let Some(previous) = step.previous() {
+                app.ui.onboarding_step = Some(previous);
+            }
+        }
+        Some(OnboardingAction::Next) => app.ui.onboarding_step = step.next(),
         Some(OnboardingAction::Finish) => {
             app.preferences.onboarding_completed = true;
             app.ui.onboarding_step = None;
@@ -92,6 +61,55 @@ pub(crate) fn show(ctx: &egui::Context, app: &mut CalibRawApp) {
             }
         }
         None => {}
+    }
+}
+
+/// Shows the step body, wrapped in a scroll area only when it does not fit.
+/// The first frame for a step and size measures inside a scroll area, caches
+/// the result and discards the frame if the scroll area was unnecessary.
+fn show_fitted_step_body(
+    ui: &mut egui::Ui,
+    app: &mut CalibRawApp,
+    step: OnboardingStep,
+    width: f32,
+    max_body_height: f32,
+) {
+    let id = egui::Id::new(ONBOARDING_LAYOUT_MEASUREMENT_ID);
+    let ctx = ui.ctx().clone();
+    let needs_scroll = ctx
+        .data(|data| data.get_temp::<OnboardingLayoutMeasurement>(id))
+        .filter(|measurement| {
+            measurement.step == step
+                && measurement.width_bits == width.to_bits()
+                && measurement.height_bits == max_body_height.to_bits()
+        })
+        .map(|measurement| measurement.needs_scroll);
+
+    if needs_scroll == Some(false) {
+        show_step_body(ui, app, step);
+        return;
+    }
+    let output = egui::ScrollArea::vertical()
+        .max_height(max_body_height)
+        .auto_shrink([false, true])
+        .show(ui, |ui| show_step_body(ui, app, step));
+    if needs_scroll.is_some() {
+        return;
+    }
+    let needs_scroll = output.content_size.y > output.inner_rect.height() + 1.0;
+    ctx.data_mut(|data| {
+        data.insert_temp(
+            id,
+            OnboardingLayoutMeasurement {
+                step,
+                width_bits: width.to_bits(),
+                height_bits: max_body_height.to_bits(),
+                needs_scroll,
+            },
+        );
+    });
+    if !needs_scroll {
+        ctx.request_discard("onboarding content fits without scrolling");
     }
 }
 
@@ -116,7 +134,11 @@ fn show_header(ui: &mut egui::Ui, step: OnboardingStep) {
     ui.horizontal(|ui| {
         ui.heading(step.title());
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            ui.weak(format!("Step {} of {}", step.number(), step.total()));
+            ui.weak(format!(
+                "Step {} of {}",
+                step.index() + 1,
+                OnboardingStep::ALL.len()
+            ));
         });
     });
     ui.label(step.introduction());
@@ -266,63 +288,57 @@ fn show_export_names(ui: &mut egui::Ui, app: &mut CalibRawApp) {
 
 #[cfg(not(target_os = "android"))]
 fn show_camera_profiles(ui: &mut egui::Ui, app: &mut CalibRawApp) {
-    let mut enabled = app.preferences.camera_profile_auto_detect;
-    if moduwu_design::toggle_with_help(
-        ui,
-        &mut enabled,
-        "Auto-import DCP profiles",
-        "Uses camera profiles installed by other RAW editors. Profiles are only read, never copied or changed. You can choose a different folder later in Settings › RAW color profiles.",
-    )
-    .changed()
-    {
-        if enabled {
+    let auto_detect_available =
+        !crate::performance_settings::CAMERA_PROFILE_SEARCH_LOCATIONS.is_empty();
+    if auto_detect_available {
+        ui.small("Auto-detect looks for a CameraProfiles folder in:");
+        for location in crate::performance_settings::CAMERA_PROFILE_SEARCH_LOCATIONS {
+            ui.add(egui::Label::new(egui::RichText::new(*location).monospace().small()).wrap());
+        }
+        ui.add_space(moduwu_design::SPACE_SM);
+    }
+
+    moduwu_design::action_row(ui, |ui| {
+        if auto_detect_available
+            && moduwu_design::primary_action_button(ui, "Auto-detect (Recommended)").clicked()
+        {
             app.auto_detect_camera_profile_folder();
-        } else {
+        }
+        if moduwu_design::secondary_button_enabled(
+            ui,
+            app.ui.desktop_picker_receiver.is_none(),
+            "Choose folder…",
+        )
+        .on_hover_text("CalibRaw searches subfolders recursively.")
+        .clicked()
+        {
+            app.choose_camera_profile_folder();
+        }
+        if moduwu_design::secondary_button(ui, "Not now").clicked() {
             app.clear_camera_profile_folder();
         }
-    }
+    });
 
     ui.add_space(moduwu_design::SPACE_SM);
-    if CAMERA_PROFILE_SEARCH_LOCATIONS.is_empty() {
-        ui.small("Linux has no standard CameraProfiles location, so nothing is found automatically. Choose a folder later in Settings › RAW color profiles.");
-        return;
-    }
-    ui.small("CalibRaw looks for a CameraProfiles folder in:");
-    for location in CAMERA_PROFILE_SEARCH_LOCATIONS {
-        ui.add(egui::Label::new(egui::RichText::new(*location).monospace().small()).wrap());
-    }
-
-    if app.preferences.camera_profile_auto_detect {
-        ui.add_space(moduwu_design::SPACE_SM);
-        if let Some(folder) = &app.preferences.camera_profile_folder {
-            ui.small("Found:");
-            ui.add(
-                egui::Label::new(egui::RichText::new(folder.display().to_string()).monospace())
-                    .wrap(),
-            );
-        } else {
-            ui.colored_label(
-                ui.visuals().warn_fg_color,
-                "No CameraProfiles folder was found.",
-            );
-        }
+    if let Some(folder) = &app.preferences.camera_profile_folder {
+        ui.small(
+            app.preferences
+                .camera_profile_folder_label
+                .as_deref()
+                .unwrap_or("DCP profiles"),
+        );
+        ui.add(
+            egui::Label::new(egui::RichText::new(folder.display().to_string()).monospace()).wrap(),
+        );
+    } else if auto_detect_available && app.preferences.camera_profile_auto_detect {
+        ui.colored_label(
+            ui.visuals().warn_fg_color,
+            "No CameraProfiles folder was found.",
+        );
+    } else {
+        ui.small("No DCP profile folder selected. You can add one later in Settings.");
     }
 }
-
-/// Human-readable form of `performance_settings::camera_profile_candidates`;
-/// keep the two in sync.
-#[cfg(target_os = "windows")]
-const CAMERA_PROFILE_SEARCH_LOCATIONS: &[&str] = &[
-    r"%ProgramData%\CameraRaw\CameraProfiles",
-    r"%ProgramData%\<vendor>\CameraRaw\CameraProfiles",
-];
-#[cfg(target_os = "macos")]
-const CAMERA_PROFILE_SEARCH_LOCATIONS: &[&str] = &[
-    "~/Library/Application Support/<vendor>/CameraRaw/CameraProfiles",
-    "/Library/Application Support/<vendor>/CameraRaw/CameraProfiles",
-];
-#[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "android")))]
-const CAMERA_PROFILE_SEARCH_LOCATIONS: &[&str] = &[];
 
 #[cfg(not(target_os = "android"))]
 fn show_ai(ui: &mut egui::Ui, app: &mut CalibRawApp) {
@@ -388,84 +404,60 @@ fn show_discord(ui: &mut egui::Ui, app: &mut CalibRawApp) {
     }
 }
 
-fn show_navigation(ui: &mut egui::Ui, step: OnboardingStep, action: &mut Option<OnboardingAction>) {
+fn show_navigation(ui: &mut egui::Ui, step: OnboardingStep) -> Option<OnboardingAction> {
+    let mut action = None;
     ui.horizontal(|ui| {
-        let back = ui
-            .add_enabled_ui(step != OnboardingStep::Appearance, |ui| {
-                moduwu_design::secondary_button(ui, "Back")
-            })
-            .inner;
-        if back.clicked() {
-            *action = Some(OnboardingAction::Back);
+        if moduwu_design::secondary_button_enabled(ui, step.previous().is_some(), "Back").clicked()
+        {
+            action = Some(OnboardingAction::Back);
         }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            let final_step = is_final_step(step);
-            let next = moduwu_design::secondary_button(
-                ui,
-                if final_step { "Finish setup" } else { "Next" },
-            );
-            if next.clicked() {
-                *action = Some(if final_step {
-                    OnboardingAction::Finish
-                } else {
-                    OnboardingAction::Next
-                });
+            let (label, next) = if step.next().is_some() {
+                ("Next", OnboardingAction::Next)
+            } else {
+                ("Finish setup", OnboardingAction::Finish)
+            };
+            if moduwu_design::secondary_button(ui, label).clicked() {
+                action = Some(next);
             }
         });
     });
-}
-
-fn previous_step(step: OnboardingStep) -> Option<OnboardingStep> {
-    Some(match step {
-        OnboardingStep::Appearance => return Some(OnboardingStep::Appearance),
-        OnboardingStep::Preview => OnboardingStep::Appearance,
-        OnboardingStep::CopyPaste => OnboardingStep::Preview,
-        OnboardingStep::ExportNames => OnboardingStep::CopyPaste,
-        #[cfg(not(target_os = "android"))]
-        OnboardingStep::CameraProfiles => OnboardingStep::ExportNames,
-        #[cfg(not(target_os = "android"))]
-        OnboardingStep::Ai => OnboardingStep::CameraProfiles,
-        #[cfg(not(target_os = "android"))]
-        OnboardingStep::Discord => OnboardingStep::Ai,
-    })
-}
-
-fn next_step(step: OnboardingStep) -> Option<OnboardingStep> {
-    match step {
-        OnboardingStep::Appearance => Some(OnboardingStep::Preview),
-        OnboardingStep::Preview => Some(OnboardingStep::CopyPaste),
-        OnboardingStep::CopyPaste => Some(OnboardingStep::ExportNames),
-        OnboardingStep::ExportNames => {
-            #[cfg(not(target_os = "android"))]
-            {
-                Some(OnboardingStep::CameraProfiles)
-            }
-            #[cfg(target_os = "android")]
-            {
-                None
-            }
-        }
-        #[cfg(not(target_os = "android"))]
-        OnboardingStep::CameraProfiles => Some(OnboardingStep::Ai),
-        #[cfg(not(target_os = "android"))]
-        OnboardingStep::Ai => Some(OnboardingStep::Discord),
-        #[cfg(not(target_os = "android"))]
-        OnboardingStep::Discord => None,
-    }
-}
-
-const fn is_final_step(step: OnboardingStep) -> bool {
-    #[cfg(not(target_os = "android"))]
-    {
-        matches!(step, OnboardingStep::Discord)
-    }
-    #[cfg(target_os = "android")]
-    {
-        matches!(step, OnboardingStep::ExportNames)
-    }
+    action
 }
 
 impl OnboardingStep {
+    /// Setup order; navigation and step numbers derive from it.
+    const ALL: &'static [Self] = &[
+        Self::Appearance,
+        Self::Preview,
+        Self::CopyPaste,
+        Self::ExportNames,
+        #[cfg(not(target_os = "android"))]
+        Self::CameraProfiles,
+        #[cfg(not(target_os = "android"))]
+        Self::Ai,
+        #[cfg(not(target_os = "android"))]
+        Self::Discord,
+    ];
+
+    fn index(self) -> usize {
+        // Every variant compiled for this platform is listed in `ALL`.
+        Self::ALL
+            .iter()
+            .position(|&step| step == self)
+            .unwrap_or_default()
+    }
+
+    fn next(self) -> Option<Self> {
+        Self::ALL.get(self.index() + 1).copied()
+    }
+
+    fn previous(self) -> Option<Self> {
+        self.index()
+            .checked_sub(1)
+            .and_then(|index| Self::ALL.get(index).copied())
+    }
+
     const fn title(self) -> &'static str {
         match self {
             Self::Appearance => "Welcome to CalibRaw",
@@ -497,7 +489,7 @@ impl OnboardingStep {
             }
             #[cfg(not(target_os = "android"))]
             Self::CameraProfiles => {
-                "Choose whether CalibRaw automatically uses DCP camera profiles already installed on this computer."
+                "Choose where CalibRaw finds DCP camera profiles for your RAW files."
             }
             #[cfg(not(target_os = "android"))]
             Self::Ai => {
@@ -509,30 +501,6 @@ impl OnboardingStep {
             }
         }
     }
-
-    const fn number(self) -> usize {
-        match self {
-            Self::Appearance => 1,
-            Self::Preview => 2,
-            Self::CopyPaste => 3,
-            Self::ExportNames => 4,
-            #[cfg(not(target_os = "android"))]
-            Self::CameraProfiles => 5,
-            #[cfg(not(target_os = "android"))]
-            Self::Ai => 6,
-            #[cfg(not(target_os = "android"))]
-            Self::Discord => 7,
-        }
-    }
-
-    const fn total(self) -> usize {
-        let _ = self;
-        if cfg!(target_os = "android") {
-            4
-        } else {
-            7
-        }
-    }
 }
 
 #[cfg(test)]
@@ -540,65 +508,21 @@ mod tests {
     use super::*;
 
     #[test]
-    fn onboarding_steps_move_forward_and_back() {
-        assert_eq!(
-            next_step(OnboardingStep::Appearance),
-            Some(OnboardingStep::Preview)
-        );
-        assert_eq!(
-            next_step(OnboardingStep::Preview),
-            Some(OnboardingStep::CopyPaste)
-        );
-        assert_eq!(
-            previous_step(OnboardingStep::Preview),
-            Some(OnboardingStep::Appearance)
-        );
-        assert_eq!(
-            previous_step(OnboardingStep::CopyPaste),
-            Some(OnboardingStep::Preview)
-        );
-        assert_eq!(
-            next_step(OnboardingStep::CopyPaste),
-            Some(OnboardingStep::ExportNames)
-        );
-        assert_eq!(
-            previous_step(OnboardingStep::ExportNames),
-            Some(OnboardingStep::CopyPaste)
-        );
-        #[cfg(not(target_os = "android"))]
-        {
-            assert_eq!(
-                next_step(OnboardingStep::ExportNames),
-                Some(OnboardingStep::CameraProfiles)
-            );
-            assert_eq!(
-                previous_step(OnboardingStep::CameraProfiles),
-                Some(OnboardingStep::ExportNames)
-            );
-            assert_eq!(
-                next_step(OnboardingStep::CameraProfiles),
-                Some(OnboardingStep::Ai)
-            );
-            assert_eq!(
-                previous_step(OnboardingStep::Ai),
-                Some(OnboardingStep::CameraProfiles)
-            );
-            assert_eq!(next_step(OnboardingStep::Ai), Some(OnboardingStep::Discord));
-            assert_eq!(
-                previous_step(OnboardingStep::Discord),
-                Some(OnboardingStep::Ai)
-            );
+    fn steps_are_unique() {
+        for (index, step) in OnboardingStep::ALL.iter().enumerate() {
+            assert_eq!(step.index(), index, "{step:?} appears more than once");
         }
     }
 
     #[test]
-    fn final_step_ends_the_sequence() {
-        #[cfg(not(target_os = "android"))]
-        let final_step = OnboardingStep::Discord;
-        #[cfg(target_os = "android")]
-        let final_step = OnboardingStep::ExportNames;
-
-        assert!(is_final_step(final_step));
-        assert_eq!(next_step(final_step), None);
+    fn next_and_previous_walk_the_step_order() {
+        let steps = OnboardingStep::ALL;
+        assert_eq!(steps.first(), Some(&OnboardingStep::Appearance));
+        assert_eq!(steps[0].previous(), None);
+        assert_eq!(steps[steps.len() - 1].next(), None);
+        for pair in steps.windows(2) {
+            assert_eq!(pair[0].next(), Some(pair[1]));
+            assert_eq!(pair[1].previous(), Some(pair[0]));
+        }
     }
 }
