@@ -50,6 +50,12 @@ impl AutomaticOnnxRuntimeKind {
             Self::Cuda13 => "NVIDIA CUDA 13",
         }
     }
+
+    /// Archive size of this kind's download, or `None` where this platform
+    /// has no automatic runtime.
+    pub fn download_bytes(self) -> Option<u64> {
+        runtime_package(self).ok().map(|package| package.bytes)
+    }
 }
 
 static AUTOMATIC_RUNTIME_KIND: Mutex<AutomaticOnnxRuntimeKind> =
@@ -73,15 +79,14 @@ pub fn automatic_onnx_runtime_kind_selectable() -> bool {
     cfg!(all(target_os = "linux", target_arch = "x86_64")) && bundled_onnx_runtime_path().is_none()
 }
 
-fn runtime_package() -> Result<RuntimePackage> {
-    let kind = automatic_runtime_kind();
+fn runtime_package(kind: AutomaticOnnxRuntimeKind) -> Result<RuntimePackage> {
     let package = match (std::env::consts::OS, std::env::consts::ARCH, kind) {
         // Unmodified copies of Microsoft's release assets.
         ("linux", "x86_64", AutomaticOnnxRuntimeKind::Cuda12) => RuntimePackage {
             platform: "linux-x86_64-cuda12",
             version: "1.30.0",
             archive_name: "onnxruntime-linux-x64-gpu_cuda12-1.30.0.tgz",
-            url: "https://huggingface.co/Duecki/CalibRaw-Artifacts/resolve/main/onnxruntime/linux-x86_64/onnxruntime-linux-x64-gpu_cuda12-1.30.0.tgz",
+            url: "https://huggingface.co/Duecki/CalibRaw-Artifacts/resolve/4932f77083731a27014f944c85593bc30d3387e0/onnxruntime/linux-x86_64/onnxruntime-linux-x64-gpu_cuda12-1.30.0.tgz",
             bytes: 439_354_926,
             sha256: "f9886932ee7bb0b4d3fcab736a392d4ff5efaa0672b47f19f0cec03437cf64f1",
             format: ArchiveFormat::TarGz,
@@ -90,7 +95,7 @@ fn runtime_package() -> Result<RuntimePackage> {
             platform: "linux-x86_64-cuda13",
             version: "1.30.0",
             archive_name: "onnxruntime-linux-x64-gpu_cuda13-1.30.0.tgz",
-            url: "https://huggingface.co/Duecki/CalibRaw-Artifacts/resolve/main/onnxruntime/linux-x86_64/onnxruntime-linux-x64-gpu_cuda13-1.30.0.tgz",
+            url: "https://huggingface.co/Duecki/CalibRaw-Artifacts/resolve/4932f77083731a27014f944c85593bc30d3387e0/onnxruntime/linux-x86_64/onnxruntime-linux-x64-gpu_cuda13-1.30.0.tgz",
             bytes: 235_697_517,
             sha256: "382d79133112388cf94ce5855789b7c9bef12bef76a08b6b277e5a317213adcd",
             format: ArchiveFormat::TarGz,
@@ -137,7 +142,7 @@ fn runtime_package() -> Result<RuntimePackage> {
             platform: "windows-x86_64",
             version: "1.24.4",
             archive_name: "onnxruntime-win-x64-directml-1.24.4.zip",
-            url: "https://huggingface.co/Duecki/CalibRaw-Artifacts/resolve/main/onnxruntime/windows-x86_64/onnxruntime-win-x64-directml-1.24.4.zip",
+            url: "https://huggingface.co/Duecki/CalibRaw-Artifacts/resolve/4932f77083731a27014f944c85593bc30d3387e0/onnxruntime/windows-x86_64/onnxruntime-win-x64-directml-1.24.4.zip",
             bytes: 15_806_028,
             sha256: "23131eec611e9ccd5cc563679aaaf55f221d51615ff6bf5e245970a5f5218c38",
             format: ArchiveFormat::Zip,
@@ -146,7 +151,7 @@ fn runtime_package() -> Result<RuntimePackage> {
             platform: "windows-arm64",
             version: "1.24.4",
             archive_name: "onnxruntime-win-arm64-directml-1.24.4.zip",
-            url: "https://huggingface.co/Duecki/CalibRaw-Artifacts/resolve/main/onnxruntime/windows-arm64/onnxruntime-win-arm64-directml-1.24.4.zip",
+            url: "https://huggingface.co/Duecki/CalibRaw-Artifacts/resolve/4932f77083731a27014f944c85593bc30d3387e0/onnxruntime/windows-arm64/onnxruntime-win-arm64-directml-1.24.4.zip",
             bytes: 15_562_020,
             sha256: "27385338c565cf41c2c46e613ef603e7063a358a821176b1f916902d5afa93e3",
             format: ArchiveFormat::Zip,
@@ -185,6 +190,7 @@ enum AutomaticRuntime<'a> {
 fn automatic_runtime<'a>(
     bundled_path: Option<&'a Path>,
     bundled_version: Option<&'static str>,
+    kind: AutomaticOnnxRuntimeKind,
 ) -> Result<AutomaticRuntime<'a>> {
     if let Some(path) = bundled_path {
         return Ok(AutomaticRuntime::Bundled {
@@ -192,21 +198,23 @@ fn automatic_runtime<'a>(
             version: bundled_version.unwrap_or("unknown"),
         });
     }
-    Ok(AutomaticRuntime::Download(runtime_package()?))
+    Ok(AutomaticRuntime::Download(runtime_package(kind)?))
 }
 
 fn configured_automatic_runtime() -> Result<AutomaticRuntime<'static>> {
     automatic_runtime(
         bundled_onnx_runtime_path(),
         option_env!("CALIBRAW_BUNDLED_ONNX_RUNTIME_VERSION"),
+        automatic_runtime_kind(),
     )
 }
 
 impl AutomaticRuntime<'_> {
     fn info(&self) -> AutomaticOnnxRuntimeInfo {
         match self {
+            // Packagers bundle a CPU build; the selected kind only picks downloads.
             Self::Bundled { version, .. } => AutomaticOnnxRuntimeInfo {
-                platform: runtime_package()
+                platform: runtime_package(AutomaticOnnxRuntimeKind::Cpu)
                     .map(|package| package.platform)
                     .unwrap_or(std::env::consts::OS),
                 version,
@@ -483,8 +491,14 @@ mod tests {
             }
         } else {
             assert!(bundled_onnx_runtime_path().is_none());
-            assert_eq!(info.version, runtime_package().unwrap().version);
-            assert_eq!(info.download_bytes, runtime_package().unwrap().bytes);
+            assert_eq!(
+                info.version,
+                runtime_package(automatic_runtime_kind()).unwrap().version
+            );
+            assert_eq!(
+                info.download_bytes,
+                runtime_package(automatic_runtime_kind()).unwrap().bytes
+            );
         }
     }
 
@@ -493,7 +507,14 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let library = directory.path().join("libonnxruntime.so");
         fs::write(&library, b"runtime before packaging").unwrap();
-        let resolve = || automatic_runtime(Some(&library), Some("1.30.0")).unwrap();
+        let resolve = || {
+            automatic_runtime(
+                Some(&library),
+                Some("1.30.0"),
+                AutomaticOnnxRuntimeKind::Cpu,
+            )
+            .unwrap()
+        };
         assert!(resolve().is_installed());
         let (path, original_hash) = ensure_automatic_runtime(resolve()).unwrap();
         assert_eq!(path, library);
@@ -511,7 +532,12 @@ mod tests {
     fn missing_bundled_runtime_fails_without_falling_back_to_download() {
         let directory = tempfile::tempdir().unwrap();
         let library = directory.path().join("missing-libonnxruntime.so");
-        let runtime = automatic_runtime(Some(&library), Some("bundled-test-version")).unwrap();
+        let runtime = automatic_runtime(
+            Some(&library),
+            Some("bundled-test-version"),
+            AutomaticOnnxRuntimeKind::Cpu,
+        )
+        .unwrap();
         assert_eq!(runtime.info().version, "bundled-test-version");
         assert_eq!(runtime.info().download_bytes, 0);
         assert!(!runtime.is_installed());
@@ -524,7 +550,12 @@ mod tests {
     #[test]
     fn bundled_runtime_rejects_a_directory() {
         let directory = tempfile::tempdir().unwrap();
-        let runtime = automatic_runtime(Some(directory.path()), Some("1.30.0")).unwrap();
+        let runtime = automatic_runtime(
+            Some(directory.path()),
+            Some("1.30.0"),
+            AutomaticOnnxRuntimeKind::Cpu,
+        )
+        .unwrap();
         assert!(!runtime.is_installed());
         assert!(ensure_automatic_runtime(runtime)
             .unwrap_err()
@@ -534,8 +565,13 @@ mod tests {
 
     #[test]
     fn desktop_without_a_bundle_keeps_the_pinned_download_package() {
-        let runtime = automatic_runtime(None, Some("unused-bundled-version")).unwrap();
-        let package = runtime_package().unwrap();
+        let runtime = automatic_runtime(
+            None,
+            Some("unused-bundled-version"),
+            AutomaticOnnxRuntimeKind::Cpu,
+        )
+        .unwrap();
+        let package = runtime_package(AutomaticOnnxRuntimeKind::Cpu).unwrap();
         assert!(matches!(runtime, AutomaticRuntime::Download(_)));
         assert_eq!(
             runtime.info(),
@@ -547,6 +583,31 @@ mod tests {
             }
         );
         assert!(runtime.info().download_bytes > 0);
+    }
+
+    #[test]
+    fn every_runtime_kind_downloads_from_a_pinned_commit() {
+        for kind in AutomaticOnnxRuntimeKind::ALL {
+            let Ok(package) = runtime_package(kind) else {
+                continue;
+            };
+            let revision = package
+                .url
+                .split("/resolve/")
+                .nth(1)
+                .and_then(|rest| rest.split('/').next())
+                .unwrap();
+            assert!(
+                revision.len() == 40 && revision.bytes().all(|byte| byte.is_ascii_hexdigit()),
+                "{kind:?} downloads from mutable revision {revision}"
+            );
+            // Kinds that select different archives need separate install directories.
+            let cpu = runtime_package(AutomaticOnnxRuntimeKind::Cpu).unwrap();
+            assert_eq!(
+                package.sha256 == cpu.sha256,
+                package.platform == cpu.platform
+            );
+        }
     }
 
     #[test]
@@ -563,11 +624,14 @@ mod tests {
         assert!(load_verified_install(directory.path(), "old-release")
             .unwrap()
             .is_some());
-        assert!(
-            load_verified_install(directory.path(), runtime_package().unwrap().sha256)
+        assert!(load_verified_install(
+            directory.path(),
+            runtime_package(AutomaticOnnxRuntimeKind::Cpu)
                 .unwrap()
-                .is_none()
-        );
+                .sha256
+        )
+        .unwrap()
+        .is_none());
     }
 
     #[test]
