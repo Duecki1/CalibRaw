@@ -43,6 +43,8 @@ def fetch(url, sha256):
 
 
 def main():
+    if len(sys.argv) != 2:
+        sys.exit(__doc__)
     output = Path(sys.argv[1])
     ort, directml = fetch(*ORT_PACKAGE), fetch(*DIRECTML_PACKAGE)
     for platform, (arch, ort_rid, directml_rid) in PLATFORMS.items():

@@ -167,9 +167,10 @@ struct ProviderCandidate {
     force_sequential: bool,
 }
 
+/// Adds `provider` if the loaded ONNX Runtime was built with it. A provider the
+/// runtime lacks is expected (CPU-only packages) and is not a degradation.
 fn push_if_runtime_available<E>(
     providers: &mut Vec<ProviderCandidate>,
-    unavailable: &mut Vec<String>,
     name: &'static str,
     provider: E,
     force_sequential: bool,
@@ -183,41 +184,30 @@ fn push_if_runtime_available<E>(
             force_sequential,
         }),
         Ok(false) => {
-            let reason = format!("{name}: not advertised by the selected ONNX Runtime");
-            log::info!("AI execution provider skipped: {reason}");
-            unavailable.push(reason);
+            log::info!("AI execution provider {name} is not built into the selected ONNX Runtime")
         }
         Err(error) => {
-            let reason = format!("{name}: could not query provider availability: {error}");
-            log::warn!("AI execution provider skipped: {reason}");
-            unavailable.push(reason);
+            log::warn!(
+                "AI execution provider {name} skipped: could not query availability: {error}"
+            )
         }
     }
 }
 
-fn preferred_execution_providers() -> (Vec<ProviderCandidate>, Vec<String>) {
+fn preferred_execution_providers() -> Vec<ProviderCandidate> {
     let mut providers = Vec::new();
-    let mut unavailable = Vec::new();
 
     #[cfg(target_os = "windows")]
     {
         push_if_runtime_available(
             &mut providers,
-            &mut unavailable,
             "DirectML",
             ort::ep::DirectML::default(),
             true,
         );
+        push_if_runtime_available(&mut providers, "CUDA", ort::ep::CUDA::default(), false);
         push_if_runtime_available(
             &mut providers,
-            &mut unavailable,
-            "CUDA",
-            ort::ep::CUDA::default(),
-            false,
-        );
-        push_if_runtime_available(
-            &mut providers,
-            &mut unavailable,
             "TensorRT",
             ort::ep::TensorRT::default(),
             false,
@@ -226,59 +216,33 @@ fn preferred_execution_providers() -> (Vec<ProviderCandidate>, Vec<String>) {
 
     #[cfg(target_os = "macos")]
     {
-        push_if_runtime_available(
-            &mut providers,
-            &mut unavailable,
-            "CoreML",
-            ort::ep::CoreML::default(),
-            false,
-        );
+        push_if_runtime_available(&mut providers, "CoreML", ort::ep::CoreML::default(), false);
     }
 
     #[cfg(target_os = "linux")]
     {
+        push_if_runtime_available(&mut providers, "CUDA", ort::ep::CUDA::default(), false);
         push_if_runtime_available(
             &mut providers,
-            &mut unavailable,
-            "CUDA",
-            ort::ep::CUDA::default(),
-            false,
-        );
-        push_if_runtime_available(
-            &mut providers,
-            &mut unavailable,
             "TensorRT",
             ort::ep::TensorRT::default(),
             false,
         );
-        push_if_runtime_available(
-            &mut providers,
-            &mut unavailable,
-            "ROCm",
-            ort::ep::ROCm::default(),
-            false,
-        );
+        push_if_runtime_available(&mut providers, "ROCm", ort::ep::ROCm::default(), false);
     }
 
     #[cfg(target_os = "android")]
     {
+        push_if_runtime_available(&mut providers, "NNAPI", ort::ep::NNAPI::default(), false);
         push_if_runtime_available(
             &mut providers,
-            &mut unavailable,
-            "NNAPI",
-            ort::ep::NNAPI::default(),
-            false,
-        );
-        push_if_runtime_available(
-            &mut providers,
-            &mut unavailable,
             "XNNPACK",
             ort::ep::XNNPACK::default(),
             false,
         );
     }
 
-    (providers, unavailable)
+    providers
 }
 
 fn configure_common_builder(mut builder: SessionBuilder) -> Result<SessionBuilder> {
@@ -440,9 +404,8 @@ pub fn create_session_with_fallback(
 
     let acceleration_enabled = options.allow_acceleration && ai_acceleration_enabled();
     if acceleration_enabled {
-        let (providers, unavailable) = preferred_execution_providers();
-        attempted_acceleration = !providers.is_empty() || !unavailable.is_empty();
-        setup_failures.extend(unavailable);
+        let providers = preferred_execution_providers();
+        attempted_acceleration = !providers.is_empty();
         for candidate in providers {
             let provider_name = candidate.name;
             match create_accelerated_session(&source, &options, candidate) {
@@ -493,7 +456,6 @@ pub fn create_session_with_fallback(
     } else {
         "CPU"
     };
-    let degraded = attempted_acceleration && !setup_failures.is_empty();
     if attempted_acceleration {
         log::info!(
             "AI {} uses CPU fallback for {} after accelerator setup failures",
@@ -505,10 +467,12 @@ pub fn create_session_with_fallback(
             options.model_name
         ));
     } else {
-        let reason = if options.allow_acceleration && !acceleration_enabled {
+        let reason = if !options.allow_acceleration {
+            "CPU-only session"
+        } else if !acceleration_enabled {
             "GPU acceleration disabled in Settings"
         } else {
-            "no accelerator configured for this target/session"
+            "the ONNX Runtime has no GPU execution provider for this target"
         };
         log::info!(
             "AI {} uses CPU for {} ({reason})",
@@ -520,7 +484,7 @@ pub fn create_session_with_fallback(
             options.model_name
         ));
     }
-    publish_status(options.model_name, active_provider, degraded);
+    publish_status(options.model_name, active_provider, attempted_acceleration);
 
     Ok(FallbackSession {
         session,

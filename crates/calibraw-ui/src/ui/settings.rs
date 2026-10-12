@@ -92,7 +92,9 @@ pub(crate) fn automatic_runtime_kind_control(
     app: &mut CalibRawApp,
     id_salt: &'static str,
 ) {
-    if !calibraw_ai::automatic_onnx_runtime_kind_selectable() {
+    if app.ai.runtime_mode != OnnxRuntimeMode::Automatic
+        || !calibraw_ai::automatic_onnx_runtime_kind_selectable()
+    {
         return;
     }
     let mut kind = app.ai.runtime_kind;
@@ -102,10 +104,16 @@ pub(crate) fn automatic_runtime_kind_control(
         id_salt,
         kind.label(),
         180.0,
-        "NVIDIA CUDA needs an NVIDIA GPU with the matching CUDA toolkit and cuDNN 9 installed. Without them, AI falls back to CPU. CUDA downloads are 236 MB (CUDA 13) or 439 MB (CUDA 12) instead of 11 MB.",
+        "NVIDIA CUDA needs an NVIDIA GPU with the matching CUDA runtime and cuDNN 9 installed; otherwise AI falls back to CPU. CUDA 13 needs a Turing (RTX 20) or newer GPU; use CUDA 12 for older GPUs.",
         |ui| {
             for option in calibraw_ai::AutomaticOnnxRuntimeKind::ALL {
-                ui.selectable_value(&mut kind, option, option.label());
+                let response = ui.selectable_value(&mut kind, option, option.label());
+                if let Some(bytes) = option.download_bytes() {
+                    response.on_hover_text(format!(
+                        "{:.0} MB download",
+                        bytes as f64 / 1_000_000.0
+                    ));
+                }
             }
         },
     );
