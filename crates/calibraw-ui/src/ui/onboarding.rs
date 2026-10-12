@@ -353,6 +353,11 @@ fn show_ai(ui: &mut egui::Ui, app: &mut CalibRawApp) {
     {
         app.set_ai_gpu_acceleration(acceleration);
     }
+    crate::ui::settings::automatic_runtime_kind_control(
+        ui,
+        app,
+        "onboarding-automatic-runtime-kind",
+    );
 
     ui.add_space(moduwu_design::SPACE_SM);
     let mut quality = app.ai.birefnet_quality;

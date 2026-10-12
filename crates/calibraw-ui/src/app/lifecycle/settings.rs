@@ -343,6 +343,8 @@ impl CalibRawApp {
             #[cfg(not(target_os = "android"))]
             onnx_runtime_mode: self.ai.runtime_mode,
             #[cfg(not(target_os = "android"))]
+            onnx_runtime_kind: self.ai.runtime_kind,
+            #[cfg(not(target_os = "android"))]
             discord_rich_presence: self.preferences.discord_rich_presence,
             #[cfg(not(target_os = "android"))]
             hdd_mode: self.preferences.hdd_mode,

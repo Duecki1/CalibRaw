@@ -84,6 +84,36 @@ fn diagnostics_snapshot_with_ai_backends() -> String {
     diagnostic_log
 }
 
+/// Linux x86_64 choice between the CPU and CUDA automatic runtimes. Hidden
+/// where Automatic mode has no choice, including bundled runtimes.
+#[cfg(not(target_os = "android"))]
+pub(crate) fn automatic_runtime_kind_control(
+    ui: &mut Ui,
+    app: &mut CalibRawApp,
+    id_salt: &'static str,
+) {
+    if !calibraw_ai::automatic_onnx_runtime_kind_selectable() {
+        return;
+    }
+    let mut kind = app.ai.runtime_kind;
+    moduwu_design::form_combo_with_help(
+        ui,
+        "AI runtime",
+        id_salt,
+        kind.label(),
+        180.0,
+        "NVIDIA CUDA needs an NVIDIA GPU with the matching CUDA toolkit and cuDNN 9 installed. Without them, AI falls back to CPU. CUDA downloads are 236 MB (CUDA 13) or 439 MB (CUDA 12) instead of 11 MB.",
+        |ui| {
+            for option in calibraw_ai::AutomaticOnnxRuntimeKind::ALL {
+                ui.selectable_value(&mut kind, option, option.label());
+            }
+        },
+    );
+    if kind != app.ai.runtime_kind {
+        app.set_onnx_runtime_kind(kind);
+    }
+}
+
 pub(crate) fn export_name_template_controls(
     ui: &mut Ui,
     app: &mut CalibRawApp,
@@ -723,6 +753,23 @@ impl Settings {
         {
             app.set_ai_gpu_acceleration(acceleration);
         }
+        let statuses = calibraw_ai::active_execution_providers();
+        let mut in_use: Vec<&str> = statuses
+            .iter()
+            .map(|status| status.active_provider.as_str())
+            .collect();
+        in_use.sort_unstable();
+        in_use.dedup();
+        if !in_use.is_empty() {
+            let text = format!("In use: {}", in_use.join(", "));
+            if statuses.iter().any(|status| status.degraded) {
+                ui.colored_label(ui.visuals().warn_fg_color, text).on_hover_text(
+                    "A GPU execution provider failed to start or run. The Diagnostics log lists the reason.",
+                );
+            } else {
+                ui.small(text);
+            }
+        }
 
         moduwu_design::section_separator(ui);
         moduwu_design::strong_with_help(
@@ -823,16 +870,18 @@ impl Settings {
                         );
                     }
                 } else {
+                    automatic_runtime_kind_control(ui, app, "settings-automatic-runtime-kind");
                     ui.label(format!(
-                        "CalibRaw will select the {} / {} runtime and download it from CalibRaw Artifacts when an AI tool first needs it.",
+                        "CalibRaw will select the {} / {} runtime and download it when an AI tool first needs it.",
                         std::env::consts::OS,
                         std::env::consts::ARCH
                     ));
                     ui.small("The archive and extracted runtime are cached locally and verified with pinned SHA-256 values.");
-                    ui.hyperlink_to(
-                        "View CalibRaw runtime artifacts",
-                        "https://huggingface.co/Duecki/CalibRaw-Artifacts/tree/main/onnxruntime",
-                    );
+                    if let Some(url) = calibraw_ai::automatic_onnx_runtime_info()
+                        .and_then(|runtime| runtime.download_url)
+                    {
+                        ui.hyperlink_to("View runtime source", url);
+                    }
                 }
             }
             OnnxRuntimeMode::Manual => {

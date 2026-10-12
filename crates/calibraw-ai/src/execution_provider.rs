@@ -82,9 +82,12 @@ fn quarantine_ai_gpu_after_memory_failure(
 
 fn is_gpu_memory_failure(error: &anyhow::Error) -> bool {
     let message = format!("{error:#}").to_ascii_lowercase();
-    (message.contains("out of memory") || message.contains("failed to allocate memory"))
+    (message.contains("out of memory")
+        || message.contains("failed to allocate memory")
+        || message.contains("not enough memory resources"))
         && (message.contains("cuda")
             || message.contains("directml")
+            || message.contains("dml")
             || message.contains("tensorrt")
             || message.contains("rocm")
             || message.contains("gpu")
@@ -305,13 +308,9 @@ fn configure_cpu_builder(
     if options.cpu_fallback_profile == CpuFallbackProfile::WindowsSamEncoder
         && cfg!(target_os = "windows")
     {
+        // Some Windows CPU builds produce non-finite Hiera features after graph
+        // fusions. Thread count does not affect this, so keep the thread pool.
         builder = builder
-            .with_parallel_execution(false)
-            .map_err(|error| {
-                anyhow::anyhow!("force sequential Windows SAM CPU execution: {error}")
-            })?
-            .with_intra_threads(1)
-            .map_err(|error| anyhow::anyhow!("limit Windows SAM CPU inference threads: {error}"))?
             .with_optimization_level(GraphOptimizationLevel::Disable)
             .map_err(|error| {
                 anyhow::anyhow!("disable Windows SAM CPU graph optimizations: {error}")
@@ -541,6 +540,9 @@ mod tests {
         let error =
             anyhow::anyhow!("BFCArena::AllocateRawInternal failed to allocate memory on CUDA GPU");
         assert!(is_gpu_memory_failure(&error));
+        assert!(is_gpu_memory_failure(&anyhow::anyhow!(
+            r"providers\dml\DmlExecutionProvider\src\DmlCommandRecorder.cpp(372) 8007000E Not enough memory resources are available to complete this operation."
+        )));
         assert!(!is_gpu_memory_failure(&anyhow::anyhow!(
             "invalid tensor shape"
         )));

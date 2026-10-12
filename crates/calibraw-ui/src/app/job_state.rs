@@ -133,6 +133,8 @@ pub(crate) struct AiState {
     #[cfg(not(target_os = "android"))]
     pub(crate) runtime_mode: OnnxRuntimeMode,
     #[cfg(not(target_os = "android"))]
+    pub(crate) runtime_kind: calibraw_ai::AutomaticOnnxRuntimeKind,
+    #[cfg(not(target_os = "android"))]
     pub(crate) runtime_path: Option<PathBuf>,
     #[cfg(not(target_os = "android"))]
     pub(crate) runtime_sha256: Option<String>,

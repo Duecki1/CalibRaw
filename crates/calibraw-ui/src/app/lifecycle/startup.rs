@@ -17,6 +17,8 @@ impl CalibRawApp {
         #[cfg(not(target_os = "android"))]
         calibraw_ai::set_ai_acceleration_enabled(performance.ai_gpu_acceleration);
         #[cfg(not(target_os = "android"))]
+        calibraw_ai::set_automatic_onnx_runtime_kind(performance.onnx_runtime_kind);
+        #[cfg(not(target_os = "android"))]
         calibraw_core::serialized_reads::set_enabled(performance.hdd_mode);
         #[cfg(not(target_os = "android"))]
         let discord_presence = DiscordPresence::new(performance.discord_rich_presence);
@@ -204,6 +206,8 @@ impl CalibRawApp {
                 update: None,
                 #[cfg(not(target_os = "android"))]
                 runtime_mode: performance.onnx_runtime_mode,
+                #[cfg(not(target_os = "android"))]
+                runtime_kind: performance.onnx_runtime_kind,
                 #[cfg(not(target_os = "android"))]
                 runtime_path: onnx_runtime_path,
                 #[cfg(not(target_os = "android"))]

@@ -48,6 +48,8 @@ pub(crate) struct PerformanceSettings {
     #[cfg(not(target_os = "android"))]
     pub onnx_runtime_mode: crate::app::OnnxRuntimeMode,
     #[cfg(not(target_os = "android"))]
+    pub onnx_runtime_kind: calibraw_ai::AutomaticOnnxRuntimeKind,
+    #[cfg(not(target_os = "android"))]
     pub discord_rich_presence: bool,
     /// Serialize photo file reads for libraries on rotational disks.
     #[cfg(not(target_os = "android"))]
@@ -168,6 +170,8 @@ impl Default for PerformanceSettings {
             ai_gpu_acceleration: true,
             #[cfg(not(target_os = "android"))]
             onnx_runtime_mode: crate::app::OnnxRuntimeMode::default(),
+            #[cfg(not(target_os = "android"))]
+            onnx_runtime_kind: calibraw_ai::AutomaticOnnxRuntimeKind::default(),
             #[cfg(not(target_os = "android"))]
             discord_rich_presence: false,
             #[cfg(not(target_os = "android"))]
@@ -573,6 +577,10 @@ mod tests {
                 settings.onnx_runtime_mode,
                 crate::app::OnnxRuntimeMode::Automatic
             );
+            assert_eq!(
+                settings.onnx_runtime_kind,
+                calibraw_ai::AutomaticOnnxRuntimeKind::Cpu
+            );
             assert!(!settings.discord_rich_presence);
             assert!(!settings.hdd_mode);
             assert!(settings.library_folder_sidebar_open);
@@ -611,6 +619,7 @@ mod tests {
             settings.subject_crop_refinement = false;
             settings.ai_gpu_acceleration = false;
             settings.onnx_runtime_mode = crate::app::OnnxRuntimeMode::Manual;
+            settings.onnx_runtime_kind = calibraw_ai::AutomaticOnnxRuntimeKind::Cuda13;
             settings.discord_rich_presence = true;
             settings.hdd_mode = true;
             settings.last_library_folder = Some(PathBuf::from("photos"));
@@ -659,6 +668,10 @@ mod tests {
             assert_eq!(
                 restored.onnx_runtime_mode,
                 crate::app::OnnxRuntimeMode::Manual
+            );
+            assert_eq!(
+                restored.onnx_runtime_kind,
+                calibraw_ai::AutomaticOnnxRuntimeKind::Cuda13
             );
             assert!(restored.discord_rich_presence);
             assert!(restored.hdd_mode);

@@ -165,6 +165,10 @@ native components:
   pinned ONNX Runtime 1.24.2 archive selected by `ort-sys`; see its
   [license](https://github.com/microsoft/onnxruntime/blob/v1.24.2/LICENSE) and
   [third-party notices](https://github.com/microsoft/onnxruntime/blob/v1.24.2/ThirdPartyNotices.txt).
+- [DirectML](https://github.com/microsoft/DirectML) 1.15.4. The Windows
+  Automatic runtime archive includes the redistributable `DirectML.dll` from the
+  `Microsoft.AI.DirectML` NuGet package under its
+  [license](https://www.nuget.org/packages/Microsoft.AI.DirectML/1.15.4/License).
 - Android native builds also statically link pinned GLib (LGPL-2.1-or-later),
   GNU libiconv (LGPL-2.1), PCRE2 (BSD-3-Clause), libffi (MIT), and zlib
   (Zlib). Their versions and source hashes are pinned in
