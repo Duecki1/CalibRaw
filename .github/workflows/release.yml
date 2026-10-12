@@ -35,10 +35,16 @@ jobs:
             exit 1
           fi
 
-  linux-android:
-    name: Build Linux and Android
+  linux:
+    name: Build Linux
     needs: validate
-    uses: ./.github/workflows/build-linux-android.yml
+    uses: ./.github/workflows/build-linux-appimage.yml
+    secrets: inherit
+
+  android:
+    name: Build Android
+    needs: validate
+    uses: ./.github/workflows/build-android.yml
     secrets: inherit
 
   windows:
@@ -56,7 +62,8 @@ jobs:
   publish:
     name: Publish GitHub Release
     needs:
-      - linux-android
+      - linux
+      - android
       - windows
       - macos
     runs-on: ubuntu-latest
