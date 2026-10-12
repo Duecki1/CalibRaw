@@ -50,6 +50,8 @@ pub(crate) enum OnboardingStep {
     CopyPaste,
     ExportNames,
     #[cfg(not(target_os = "android"))]
+    CameraProfiles,
+    #[cfg(not(target_os = "android"))]
     Ai,
     #[cfg(not(target_os = "android"))]
     Discord,
