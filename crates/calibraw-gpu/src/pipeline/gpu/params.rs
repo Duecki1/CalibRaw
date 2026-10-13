@@ -46,7 +46,10 @@ pub(super) struct CameraUniforms {
     pub(super) profile_flags: [u32; 4],
     pub(super) ai_denoise_enabled: u32,
     pub(super) user_exposure_bits: u32,
-    pub(super) _pad_camera_0: u32,
+    /// Weight in `[0, 1]` of the AI-denoised plane (G) of a packed Bayer raw
+    /// texture against the original mosaic (R). The pipeline uploads 0 when its
+    /// raw texture has no AI plane.
+    pub(super) ai_cfa_weight: f32,
     pub(super) _pad_camera_1: u32,
 }
 
@@ -175,8 +178,15 @@ pub struct GpuParams {
 }
 
 impl GpuParams {
-    pub(super) fn camera_bytes(&self) -> &[u8] {
-        bytemuck::bytes_of(&self.camera)
+    /// The camera uniforms for a pipeline whose raw texture does or does not
+    /// carry an AI-denoised plane. Without one the AI weight is forced to 0, so
+    /// the shader never blends with the zero G channel of an `R16Uint` texture.
+    pub(super) fn camera_for_raw_texture(&self, has_ai_cfa: bool) -> CameraUniforms {
+        let mut camera = self.camera;
+        if !has_ai_cfa {
+            camera.ai_cfa_weight = 0.0;
+        }
+        camera
     }
 
     pub(super) fn scene_tone_bytes(&self) -> &[u8] {

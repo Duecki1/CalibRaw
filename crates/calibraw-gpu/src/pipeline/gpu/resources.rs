@@ -68,6 +68,8 @@ pub(super) struct GpuResourcePlanInput {
     pub profile_buffer_bytes: u64,
     pub stage_uniform_buffer_bytes: u64,
     pub mask_data_buffer_bytes: u64,
+    /// Whether the raw texture also carries the AI-denoised Bayer mosaic.
+    pub ai_cfa: bool,
 }
 
 #[derive(Debug)]
@@ -128,7 +130,9 @@ fn texture_format_bytes_per_texel(format: wgpu::TextureFormat) -> Result<u64> {
     match format {
         wgpu::TextureFormat::R8Uint => Ok(1),
         wgpu::TextureFormat::R16Uint | wgpu::TextureFormat::R16Float => Ok(2),
-        wgpu::TextureFormat::R32Float | wgpu::TextureFormat::Rgba8Unorm => Ok(4),
+        wgpu::TextureFormat::R32Float
+        | wgpu::TextureFormat::Rg16Uint
+        | wgpu::TextureFormat::Rgba8Unorm => Ok(4),
         wgpu::TextureFormat::Rgba16Float => Ok(8),
         wgpu::TextureFormat::Rgba32Float => Ok(16),
         _ => Err(anyhow!("unaccounted GPU texture format {format:?}")),
@@ -209,7 +213,7 @@ pub(super) fn build_gpu_resource_plan(input: GpuResourcePlanInput) -> Result<Gpu
         &mut entries,
         "raw CFA texture",
         GpuResourceResidency::Persistent,
-        full(wgpu::TextureFormat::R16Uint)?,
+        full(raw_texture_format(input.ai_cfa))?,
     );
     push_entry(
         &mut entries,
@@ -494,6 +498,7 @@ fn mobile_preview_resource_plan(width: u32, height: u32, edge: u32) -> Result<Gp
         profile_buffer_bytes: 4 * 1024 * 1024,
         stage_uniform_buffer_bytes: GPU_STAGE_UNIFORM_ALLOCATION_BYTES,
         mask_data_buffer_bytes: MASK_DATA_SIZE_BYTES,
+        ai_cfa: false,
     })
 }
 
@@ -594,12 +599,12 @@ fn upload_rgba_texture_chunks(
 /// Uploads all rows of `raw` in chunks of at most `MAX_UPLOAD_SCRATCH_BYTES`,
 /// packing each texel with `pixel(source)`, where `source` is the row-major
 /// pixel index in `raw`.
-fn write_packed_rows<T: bytemuck::Pod + Default>(
+fn write_packed_rows<T: bytemuck::Pod + Default, const CHANNELS: usize>(
     queue: &wgpu::Queue,
     texture: &wgpu::Texture,
     raw: &LoadedRaw,
     bytes_per_texel: u32,
-    pixel: impl Fn(usize) -> [T; 4],
+    pixel: impl Fn(usize) -> [T; CHANNELS],
 ) -> Result<()> {
     let bytes_per_row = raw
         .width
@@ -609,11 +614,11 @@ fn write_packed_rows<T: bytemuck::Pod + Default>(
     for first_row in (0..raw.height).step_by(rows_per_chunk as usize) {
         let row_count = rows_per_chunk.min(raw.height - first_row);
         let pixels = row_count as usize * raw.width as usize;
-        let mut rgba = vec![T::default(); pixels * 4];
+        let mut rgba = vec![T::default(); pixels * CHANNELS];
         for pixel_index in 0..pixels {
             let source = first_row as usize * raw.width as usize + pixel_index;
-            let destination = pixel_index * 4;
-            rgba[destination..destination + 4].copy_from_slice(&pixel(source));
+            let destination = pixel_index * CHANNELS;
+            rgba[destination..destination + CHANNELS].copy_from_slice(&pixel(source));
         }
         write_texture_chunk(
             queue,
@@ -1125,32 +1130,58 @@ pub(super) fn texture_entry(
     }
 }
 
+/// The sensor mosaic format: `R16Uint` with the original mosaic, or
+/// `Rg16Uint` with the original in R and the AI-denoised mosaic in G, which
+/// `raw_sampling.wgsl` blends by `CameraUniforms::ai_cfa_weight`.
+pub(super) const fn raw_texture_format(has_ai_cfa: bool) -> wgpu::TextureFormat {
+    if has_ai_cfa {
+        wgpu::TextureFormat::Rg16Uint
+    } else {
+        wgpu::TextureFormat::R16Uint
+    }
+}
+
 pub(super) fn create_raw_texture(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     raw: &LoadedRaw,
-    raw_pixels: &[u16],
-) -> wgpu::Texture {
-    debug_assert_eq!(raw_pixels.len(), raw.raw_pixels.len());
+    ai_cfa: Option<&[u16]>,
+) -> Result<wgpu::Texture> {
     let sensor_size = if raw.is_pre_demosaiced_raster() {
         texture_size(1, 1)
     } else {
         texture_size(raw.width, raw.height)
     };
+    let format = raw_texture_format(ai_cfa.is_some());
     let texture = device.create_texture(&wgpu::TextureDescriptor {
         label: Some("calibraw raw mosaic"),
         size: sensor_size,
         mip_level_count: 1,
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
-        format: wgpu::TextureFormat::R16Uint,
+        format,
         usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-        view_formats: &[wgpu::TextureFormat::R16Uint],
+        view_formats: &[format],
     });
-    if !raw_pixels.is_empty() {
+    upload_raw_texture(queue, &texture, raw, ai_cfa)?;
+    Ok(texture)
+}
+
+/// Uploads `raw`'s mosaic into a texture made by [`create_raw_texture`] with
+/// the same `ai_cfa` presence.
+pub(super) fn upload_raw_texture(
+    queue: &wgpu::Queue,
+    texture: &wgpu::Texture,
+    raw: &LoadedRaw,
+    ai_cfa: Option<&[u16]>,
+) -> Result<()> {
+    if raw.raw_pixels.is_empty() {
+        return Ok(());
+    }
+    let Some(ai_cfa) = ai_cfa else {
         queue.write_texture(
-            copy_texture(&texture),
-            bytemuck::cast_slice(raw_pixels),
+            copy_texture(texture),
+            bytemuck::cast_slice(&raw.raw_pixels),
             wgpu::TexelCopyBufferLayout {
                 offset: 0,
                 bytes_per_row: Some(raw.width * 2),
@@ -1158,8 +1189,17 @@ pub(super) fn create_raw_texture(
             },
             texture_size(raw.width, raw.height),
         );
-    }
-    texture
+        return Ok(());
+    };
+    anyhow::ensure!(
+        ai_cfa.len() == raw.raw_pixels.len(),
+        "AI-denoised mosaic has {} values, expected {}",
+        ai_cfa.len(),
+        raw.raw_pixels.len()
+    );
+    write_packed_rows(queue, texture, raw, 4, |source| {
+        [raw.raw_pixels[source], ai_cfa[source]]
+    })
 }
 
 pub(super) fn create_black_texture(
@@ -1375,6 +1415,7 @@ mod resource_plan_tests {
             profile_buffer_bytes: 4096,
             stage_uniform_buffer_bytes: GPU_STAGE_UNIFORM_ALLOCATION_BYTES,
             mask_data_buffer_bytes: MASK_DATA_SIZE_BYTES,
+            ai_cfa: false,
         }
     }
 

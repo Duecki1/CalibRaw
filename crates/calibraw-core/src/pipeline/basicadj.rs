@@ -249,6 +249,10 @@ pub struct ExposureParams {
     pub denoise_quality: DenoiseQuality,
     #[serde(default)]
     pub ai_denoise_enabled: bool,
+    /// Share of the AI-denoised Bayer mosaic mixed with the original one, in
+    /// `[0, 1]`. Ignored unless `ai_denoise_enabled`; X-Trans always uses 1.
+    #[serde(default = "default_ai_denoise_amount")]
+    pub ai_denoise_amount: f32,
     pub demosaic_mode: DemosaicMode,
     pub dual_threshold: f32,
     pub frequency_chroma: f32,
@@ -348,6 +352,7 @@ impl Default for ExposureParams {
             denoise_detail: default_denoise_detail(),
             denoise_quality: DenoiseQuality::default(),
             ai_denoise_enabled: false,
+            ai_denoise_amount: default_ai_denoise_amount(),
             demosaic_mode: DemosaicMode::Reference,
             dual_threshold: 20.0,
             frequency_chroma: 1.0,
@@ -389,6 +394,10 @@ impl Default for ExposureParams {
 
 const fn default_denoise_detail() -> f32 {
     50.0
+}
+
+const fn default_ai_denoise_amount() -> f32 {
+    1.0
 }
 
 const fn default_sharpen_amount() -> f32 {
@@ -435,6 +444,23 @@ mod tests {
         assert_eq!(params.demosaic_mode, DemosaicMode::Reference);
         assert_eq!(params.dual_threshold, 20.0);
         assert_eq!(params.frequency_chroma, 1.0);
+    }
+
+    #[test]
+    fn edits_saved_before_ai_denoise_strength_keep_full_strength() {
+        let mut saved = serde_json::to_value(ExposureParams::default()).unwrap();
+        saved["ai_denoise_enabled"] = true.into();
+        saved["ai_denoise_amount"] = 0.4.into();
+        assert_eq!(
+            serde_json::from_value::<ExposureParams>(saved.clone())
+                .unwrap()
+                .ai_denoise_amount,
+            0.4
+        );
+        saved.as_object_mut().unwrap().remove("ai_denoise_amount");
+        let restored: ExposureParams = serde_json::from_value(saved).unwrap();
+        assert!(restored.ai_denoise_enabled);
+        assert_eq!(restored.ai_denoise_amount, 1.0);
     }
 
     #[test]

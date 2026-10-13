@@ -78,7 +78,7 @@ struct CameraUniforms {
     profile_flags: vec4<u32>,
     ai_denoise_enabled: u32,
     user_exposure_bits: u32,
-    _pad_camera_0_field: u32,
+    ai_cfa_weight: f32,
     _pad_camera_1_field: u32,
 }
 

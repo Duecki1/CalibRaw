@@ -113,12 +113,7 @@ pub(in crate::pipeline::gpu) fn create_pipeline_surfaces(
         ..
     } = *geometry;
 
-    let raw_texture = create_raw_texture(
-        device,
-        queue,
-        raw,
-        ai_cfa.unwrap_or(raw.raw_pixels.as_slice()),
-    );
+    let raw_texture = create_raw_texture(device, queue, raw, ai_cfa)?;
     let color_texture = create_color_texture(device, queue, raw);
     let black_texture = create_black_texture(device, queue, raw);
 
@@ -297,6 +292,7 @@ pub(in crate::pipeline::gpu) struct PipelineBuffers {
 pub(in crate::pipeline::gpu) fn create_pipeline_buffers(
     device: &wgpu::Device,
     params: &GpuParams,
+    camera: &CameraUniforms,
     profile_words: &[[f32; 4]],
 ) -> PipelineBuffers {
     let profile_buffer = create_initialized_buffer(
@@ -309,7 +305,7 @@ pub(in crate::pipeline::gpu) fn create_pipeline_buffers(
     let camera_uniforms_buffer = create_initialized_buffer(
         device,
         "calibraw camera uniforms",
-        params.camera_bytes(),
+        bytemuck::bytes_of(camera),
         wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
     );
     let scene_tone_uniforms_buffer = create_initialized_buffer(

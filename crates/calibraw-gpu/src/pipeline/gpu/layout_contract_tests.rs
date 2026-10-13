@@ -189,7 +189,7 @@ fn shared_uniform_and_mask_structs_match_rust_layouts() {
                 profile_flags,
                 ai_denoise_enabled,
                 user_exposure_bits,
-                _pad_camera_0,
+                ai_cfa_weight,
                 _pad_camera_1,
             }),
         ),
