@@ -467,7 +467,7 @@ impl Sidebar {
                     if !is_sky {
                         Self::subject_refinement_controls(ui, &mut edits);
                     }
-                    if generated_mask.is_none() {
+                    if generated_mask.is_none() && edits.controls.generation_idle {
                         Self::generate_mask_row(ui, is_sky, &mut edits);
                     }
                     edits.grow(Self::mask_grow_edit(ui, *grow));
@@ -975,27 +975,24 @@ impl Sidebar {
     }
 
     fn generate_mask_row(ui: &mut Ui, is_sky: bool, edits: &mut PropertyEdits) {
-        let controls = edits.controls;
-        ui.horizontal_wrapped(|ui| {
-            if is_sky {
-                ui.label("Generate with SkySeg U2Net");
-            } else {
-                ui.label("Generate with BiRefNet General-Lite");
-            }
-            let label = if is_sky {
-                "Generate sky mask"
-            } else {
-                "Generate subject mask"
-            };
-            if moduwu_design::secondary_button_enabled(ui, controls.generation_idle, label)
-                .clicked()
-            {
-                edits.push(MaskPropertyAction::RequestGeneration);
-            }
-            if !controls.generation_idle {
-                ui.spinner();
-            }
-        });
+        let (label, model) = if is_sky {
+            ("Generate sky mask", "SkySeg U2Net")
+        } else {
+            ("Generate subject mask", "BiRefNet General-Lite")
+        };
+        let clicked = ui
+            .with_layout(
+                egui::Layout::top_down_justified(egui::Align::Center),
+                |ui| {
+                    moduwu_design::secondary_button(ui, label)
+                        .on_hover_text(format!("Runs {model} locally."))
+                        .clicked()
+                },
+            )
+            .inner;
+        if clicked {
+            edits.push(MaskPropertyAction::RequestGeneration);
+        }
     }
 }
 
