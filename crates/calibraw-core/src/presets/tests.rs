@@ -182,6 +182,101 @@ fn decoding_filters_hand_edited_files_like_new_presets() {
 }
 
 #[test]
+fn legacy_effect_sliders_of_the_effects_group_load_as_global_effects() {
+    let encoded = |groups: &[AdjustmentGroup]| {
+        let preset = Preset::new("Film", "", selection(groups), &edited_photo()).unwrap();
+        let mut document: serde_json::Value =
+            serde_json::from_slice(&preset.encode().unwrap()).unwrap();
+        document["edits"]["exposure"]["grain_amount"] = 30.0.into();
+        serde_json::to_vec(&document).unwrap()
+    };
+
+    let preset = Preset::decode(&encoded(&[AdjustmentGroup::Effects])).unwrap();
+    assert!(!preset.selection().masks);
+    let effects: Vec<_> = preset
+        .edits()
+        .masks
+        .global_effects
+        .iter()
+        .map(|component| (component.effect, component.settings.grain.amount))
+        .collect();
+    assert_eq!(effects, [(crate::pipeline::MaskEffect::Grain, 30.0)]);
+    let mut destination = default_edit_state();
+    preset.apply_to(&mut destination);
+    assert_eq!(
+        destination.masks.global_effects,
+        preset.edits().masks.global_effects
+    );
+
+    // Without the Effects group, the preset never applied its sliders.
+    let preset = Preset::decode(&encoded(&[AdjustmentGroup::Light])).unwrap();
+    assert!(!preset.selection().masks);
+    assert!(preset.edits().masks.global_effects.is_empty());
+}
+
+#[test]
+fn global_effects_belong_to_the_effects_group_and_replace_the_photos_own() {
+    let mut photo = default_edit_state();
+    Arc::make_mut(&mut photo.masks)
+        .global_effects
+        .push(depth_fog());
+    let masks_only = EditSelection {
+        masks: true,
+        ..EditSelection::default()
+    };
+    assert!(Preset::new("Masks", "", masks_only, &photo)
+        .unwrap()
+        .edits()
+        .masks
+        .global_effects
+        .is_empty());
+    let effects = selection(&[AdjustmentGroup::Effects]);
+    assert_eq!(suggested_selection(&photo), effects);
+
+    let preset = Preset::new("Fog", "", effects, &photo).unwrap();
+    let mut destination = default_edit_state();
+    let grain = crate::pipeline::EffectComponent::new(crate::pipeline::MaskEffect::Grain);
+    Arc::make_mut(&mut destination.masks)
+        .global_effects
+        .push(grain);
+    preset.apply_to(&mut destination);
+    assert_eq!(destination.masks.global_effects, vec![depth_fog()]);
+    assert!(
+        destination.ai_masks_need_update,
+        "depth fog needs this photo's depth"
+    );
+}
+
+#[test]
+fn presets_saved_with_global_effects_in_the_masks_category_still_add_them() {
+    let mut photo = default_edit_state();
+    Arc::make_mut(&mut photo.masks)
+        .global_effects
+        .push(depth_fog());
+    let document = PresetDocument {
+        format: PRESET_FORMAT.to_owned(),
+        schema_version: PRESET_SCHEMA_VERSION,
+        name: "Old fog".to_owned(),
+        group: String::new(),
+        selection: EditSelection {
+            masks: true,
+            ..EditSelection::default()
+        },
+        edits: photo,
+    };
+    let preset = Preset::decode(&serde_json::to_vec(&document).unwrap()).unwrap();
+    assert_eq!(Preset::decode(&preset.encode().unwrap()).unwrap(), preset);
+
+    let mut destination = default_edit_state();
+    let grain = crate::pipeline::EffectComponent::new(crate::pipeline::MaskEffect::Grain);
+    Arc::make_mut(&mut destination.masks)
+        .global_effects
+        .push(grain.clone());
+    preset.apply_to(&mut destination);
+    assert_eq!(destination.masks.global_effects, vec![grain, depth_fog()]);
+}
+
+#[test]
 fn decoding_rejects_other_formats_and_newer_schemas() {
     let preset = Preset::new(
         "Plain",
@@ -372,16 +467,7 @@ fn previews_leave_out_effects_that_need_missing_scene_depth() {
     Arc::make_mut(&mut photo.masks)
         .global_effects
         .push(depth_fog());
-    let preset = Preset::new(
-        "Fog",
-        "",
-        EditSelection {
-            masks: true,
-            ..EditSelection::default()
-        },
-        &photo,
-    )
-    .unwrap();
+    let preset = Preset::new("Fog", "", selection(&[AdjustmentGroup::Effects]), &photo).unwrap();
 
     let mut without_depth = MaskStack::default();
     preset.preview_masks_on(&mut without_depth);

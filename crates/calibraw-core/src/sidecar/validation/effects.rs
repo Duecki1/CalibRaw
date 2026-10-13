@@ -13,6 +13,7 @@ pub(super) fn validate_effect_settings(
     validate_edge_glow_effect(&settings.edge_glow)?;
     validate_glow_effect(&settings.glow)?;
     validate_light_rays_effect(&settings.light_rays)?;
+    validate_relight_effect(&settings.relight)?;
     validate_neon_effect(&settings.neon)?;
     validate_pixelate_effect(&settings.pixelate)?;
     validate_fog_effect(&settings.fog)?;
@@ -197,6 +198,7 @@ fn validate_fog_effect(fog: &crate::pipeline::FogEffectSettings) -> Result<(), S
             (fog::SEED, fog.seed),
             (fog::START, fog.start),
             (fog::DEPTH_INFLUENCE, fog.depth_influence),
+            (fog::LIGHT_GLOW, fog.light_glow),
         ],
         &fog.color,
     )?;
@@ -215,6 +217,7 @@ fn validate_smoke_effect(smoke: &crate::pipeline::SmokeEffectSettings) -> Result
             (smoke::SOFTNESS, smoke.softness),
             (smoke::ANGLE, smoke.angle),
             (smoke::SEED, smoke.seed),
+            (smoke::LIGHT_GLOW, smoke.light_glow),
         ],
         &smoke.color,
     )?;
@@ -262,6 +265,32 @@ fn validate_light_rays_effect(
         crate::pipeline::MaskEffect::LightRays,
         light_rays::COLOR,
         light_rays.color,
+    )
+}
+
+fn validate_relight_effect(
+    relight: &crate::pipeline::RelightEffectSettings,
+) -> Result<(), SidecarError> {
+    use crate::pipeline::effect_params::relight as params;
+    validate_effect_params(
+        crate::pipeline::MaskEffect::Relight,
+        &[
+            (params::AMOUNT, relight.amount),
+            (params::SOURCE_X, relight.source[0]),
+            (params::SOURCE_Y, relight.source[1]),
+            (params::DEPTH, relight.depth),
+            (params::REACH, relight.reach),
+            (params::SIZE, relight.size),
+            (params::SHADOWS, relight.shadows),
+            (params::RELIEF, relight.relief),
+            (params::AMBIENT, relight.ambient),
+        ],
+        &relight.color,
+    )?;
+    validate_effect_color(
+        crate::pipeline::MaskEffect::Relight,
+        params::COLOR,
+        relight.color,
     )
 }
 

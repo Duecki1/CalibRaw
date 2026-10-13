@@ -181,8 +181,9 @@ pub(super) fn restore_mask_assets(
                 depth: Some(image), ..
             } = &component.geometry
             {
-                // Early depth sidecars stored inline pixels. Read them losslessly;
-                // the next save moves them into the shared PNG asset table.
+                // migration: remove in v2.0.0. Depth sidecars up to v1.1 stored
+                // inline pixels. Read them losslessly; the next save moves them
+                // into the shared PNG asset table. Listed in `crate::migrations`.
                 validate_image(image.width, image.height, image.pixels.len(), 1)?;
                 decoded_bytes = decoded_bytes
                     .checked_add(image.pixels.len() as u64)

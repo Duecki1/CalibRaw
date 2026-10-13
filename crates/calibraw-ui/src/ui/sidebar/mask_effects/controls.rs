@@ -18,6 +18,17 @@ pub(super) fn effect_details(ui: &mut Ui, label: &str, body: impl FnOnce(&mut Ui
 /// A random-pattern seed: a Shuffle button and the exact number, so a look
 /// can be reproduced. Neighbouring seeds give unrelated patterns, so a slider
 /// position would mean nothing.
+/// The Image lights switch of an effect that scatters light (Fog, Smoke).
+pub(super) fn image_lights_toggle(ui: &mut Ui, image_lights: &mut bool) -> bool {
+    let clicked = moduwu_design::toggle_button(ui, "Image lights", *image_lights)
+        .on_hover_text("Let light sources in the photo, such as lamps, lit windows and signs, glow in it in their own colours. Light glow sets their strength.")
+        .clicked();
+    if clicked {
+        *image_lights = !*image_lights;
+    }
+    clicked
+}
+
 pub(super) fn pattern_seed(ui: &mut Ui, value: &mut f32, spec: FloatParamSpec) -> bool {
     let mut changed = false;
     moduwu_design::property_row(ui, spec.label, |ui| {

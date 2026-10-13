@@ -65,10 +65,8 @@ pub(super) fn replay_stage_plan(
     let mut current = ReplayRenderState::original(original_exposure);
     let mut stages = Vec::new();
 
-    let mut edit_exposure = final_exposure;
-    copy_legacy_effects(&mut edit_exposure, original_exposure);
-    if edit_exposure != original_exposure {
-        current.exposure = edit_exposure;
+    if final_exposure != original_exposure {
+        current.exposure = final_exposure;
         stages.push(ReplayStage {
             kind: ReplayStageKind::Edit,
             state: current.clone(),
@@ -113,8 +111,7 @@ pub(super) fn replay_stage_plan(
         });
     }
 
-    if effects_used(final_masks) || legacy_effects_changed(original_exposure, final_exposure) {
-        current.exposure = final_exposure;
+    if effects_used(final_masks) {
         current.masks = final_masks.clone();
         stages.push(ReplayStage {
             kind: ReplayStageKind::Effects,
@@ -133,36 +130,6 @@ pub(super) fn replay_stage_plan(
     stages
 }
 
-// Legacy photographic controls live in ExposureParams, but belong to Effects.
-fn copy_legacy_effects(target: &mut ExposureParams, source: ExposureParams) {
-    target.halation_amount = source.halation_amount;
-    target.grain_amount = source.grain_amount;
-    target.glow_amount = source.glow_amount;
-    target.glow_radius = source.glow_radius;
-    target.glow_threshold = source.glow_threshold;
-    target.vignette_amount = source.vignette_amount;
-    target.vignette_midpoint = source.vignette_midpoint;
-    target.vignette_roundness = source.vignette_roundness;
-    target.vignette_feather = source.vignette_feather;
-    target.vignette_highlights = source.vignette_highlights;
-}
-
-fn legacy_effects_changed(original: ExposureParams, final_edit: ExposureParams) -> bool {
-    let mut effects = original;
-    copy_legacy_effects(&mut effects, final_edit);
-    if original.vignette_amount.abs() <= 1e-6 && final_edit.vignette_amount.abs() <= 1e-6 {
-        effects.vignette_midpoint = original.vignette_midpoint;
-        effects.vignette_roundness = original.vignette_roundness;
-        effects.vignette_feather = original.vignette_feather;
-        effects.vignette_highlights = original.vignette_highlights;
-    }
-    if original.glow_amount.abs() <= 1e-6 && final_edit.glow_amount.abs() <= 1e-6 {
-        effects.glow_radius = original.glow_radius;
-        effects.glow_threshold = original.glow_threshold;
-    }
-    effects != original
-}
-
 fn masks_without_effects(masks: &MaskStack) -> MaskStack {
     let mut adjustments = masks.clone();
     adjustments.global_effects.clear();
@@ -174,7 +141,6 @@ fn masks_without_effects(masks: &MaskStack) -> MaskStack {
         }
         mask.effect = MaskEffect::Adjustment;
         mask.effect_settings = Default::default();
-        mask.adjustments.halation_amount = 0.0;
     }
     adjustments
 }
@@ -205,9 +171,6 @@ fn effects_used(masks: &MaskStack) -> bool {
                             settings: mask.effect_settings,
                         }
                         .is_active())
-                    || (mask.effect == MaskEffect::Adjustment
-                        && mask.adjustments_enabled
-                        && mask.adjustments.halation_amount.abs() > 1e-6)
             })
 }
 
@@ -264,14 +227,13 @@ mod tests {
         let original = ExposureParams::scene_referred_default();
         let mut exposure = original;
         exposure.exposure = 1.0;
-        exposure.grain_amount = 0.5;
-        exposure.glow_amount = 0.3;
         let mut masks = MaskStack::default();
         let mut mask = LocalMask::new(MaskKind::Fullscreen, 1);
         mask.adjustments.exposure = 0.25;
-        mask.adjustments.halation_amount = 0.4;
         mask.effect_components
             .push(EffectComponent::new(MaskEffect::Blur));
+        mask.effect_components
+            .push(EffectComponent::new(MaskEffect::Halation));
         masks.masks.push(mask);
         masks
             .global_effects
@@ -291,12 +253,11 @@ mod tests {
                 ReplayStageKind::Effects
             ]
         );
-        assert_eq!(stages[0].state.exposure.grain_amount, original.grain_amount);
-        assert_eq!(stages[0].state.exposure.glow_amount, original.glow_amount);
+        assert_eq!(stages[0].state.exposure, exposure);
+        assert!(stages[0].state.masks.global_effects.is_empty());
         let adjustments = &stages[1].state.masks;
         assert!(adjustments.global_effects.is_empty());
         assert!(adjustments.masks[0].effect_components.is_empty());
-        assert_eq!(adjustments.masks[0].adjustments.halation_amount, 0.0);
         assert_eq!(adjustments.masks[0].adjustments.exposure, 0.25);
         assert_eq!(stages[2].state.masks, masks);
         assert_eq!(stages[2].state.exposure, exposure);
@@ -306,8 +267,6 @@ mod tests {
     fn effects_only_skip_edit_and_masks_including_legacy_masks() {
         use crate::pipeline::{EffectComponent, LocalMask, MaskEffect};
         let original = ExposureParams::scene_referred_default();
-        let mut exposure = original;
-        exposure.halation_amount = 0.4;
         let mut local = LocalMask::new(MaskKind::Fullscreen, 1);
         local
             .effect_components
@@ -319,33 +278,23 @@ mod tests {
         legacy.adjustments.exposure = 2.0;
         let mut global = EffectComponent::new(MaskEffect::Glow);
         global.settings.glow.amount = 0.6;
-        for (final_exposure, masks) in [
-            (exposure, MaskStack::default()),
-            (
-                original,
-                MaskStack {
-                    masks: vec![local],
-                    ..Default::default()
-                },
-            ),
-            (
-                original,
-                MaskStack {
-                    masks: vec![legacy],
-                    ..Default::default()
-                },
-            ),
-            (
-                original,
-                MaskStack {
-                    global_effects: vec![global],
-                    ..Default::default()
-                },
-            ),
+        for masks in [
+            MaskStack {
+                masks: vec![local],
+                ..Default::default()
+            },
+            MaskStack {
+                masks: vec![legacy],
+                ..Default::default()
+            },
+            MaskStack {
+                global_effects: vec![global],
+                ..Default::default()
+            },
         ] {
             let stages = replay_stage_plan(
                 original,
-                final_exposure,
+                original,
                 GeometryTransform::default(),
                 &masks,
                 &RemoveEditState::default(),
@@ -360,9 +309,6 @@ mod tests {
     fn invisible_effects_and_inactive_effect_settings_do_not_add_stages() {
         use crate::pipeline::{EffectComponent, LocalMask, MaskEffect};
         let original = ExposureParams::scene_referred_default();
-        let mut exposure = original;
-        exposure.vignette_midpoint = 0.7;
-        exposure.glow_radius = 0.7;
         let mut mask = LocalMask::new(MaskKind::Fullscreen, 1);
         let mut effect = EffectComponent::new(MaskEffect::Blur);
         effect.settings.blur.amount = 0.5;
@@ -382,7 +328,7 @@ mod tests {
             };
             let stages = replay_stage_plan(
                 original,
-                exposure,
+                original,
                 GeometryTransform::default(),
                 &masks,
                 &RemoveEditState::default(),

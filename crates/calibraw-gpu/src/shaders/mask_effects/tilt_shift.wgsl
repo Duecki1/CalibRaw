@@ -27,12 +27,14 @@ fn mask_tilt_shift_weight(
 // The caller scales the circle of confusion by distance from the focus band.
 // A Gaussian falloff gives a soft defocus shoulder, avoiding a sharp/blurred
 // double image in the transition. The support remains bounded by 144 pixels.
-fn mask_tilt_shift_at(pos: vec2<i32>, primary: vec4<f32>) -> vec3<f32> {
+fn mask_tilt_shift_at(pos: vec2<i32>, primary: vec4<f32>, mask: MaskBlurCoverage) -> vec3<f32> {
     let radius = mask_focus_blur_radius(primary.y, 144.0);
-    if radius <= 1e-6 { return SceneAdjustments::local_effects_at(pos); }
+    let center = SceneAdjustments::local_effects_at(pos);
+    if radius <= 1e-6 { return center; }
     let rings = u32(clamp(ceil(radius), 2.0, 12.0));
     var sum = vec3<f32>(0.0);
     var total_weight = 0.0;
+    var kernel_weight = 0.0;
     for (var ring = 0u; ring < 12u; ring += 1u) {
         if ring >= rings { break; }
         let radial = (f32(ring) + 0.5) / f32(rings);
@@ -43,10 +45,15 @@ fn mask_tilt_shift_at(pos: vec2<i32>, primary: vec4<f32>) -> vec3<f32> {
             let angle = (f32(pair) + fract(f32(ring) * 0.381966))
                 * MASK_TILT_SHIFT_PI / f32(pairs);
             let offset = vec2<f32>(cos(angle), sin(angle)) * (radius * radial);
-            sum += (mask_effect_source_linear_at(vec2<f32>(pos) + offset)
-                + mask_effect_source_linear_at(vec2<f32>(pos) - offset)) * weight;
-            total_weight += 2.0 * weight;
+            let ahead = vec2<f32>(pos) + offset;
+            let behind = vec2<f32>(pos) - offset;
+            let ahead_weight = weight * mask_blur_tap_weight(mask, ahead);
+            let behind_weight = weight * mask_blur_tap_weight(mask, behind);
+            sum += mask_effect_source_linear_at(ahead) * ahead_weight
+                + mask_effect_source_linear_at(behind) * behind_weight;
+            total_weight += ahead_weight + behind_weight;
+            kernel_weight += 2.0 * weight;
         }
     }
-    return sum / max(total_weight, 1e-6);
+    return mask_blur_masked_mean(sum, total_weight, kernel_weight, center);
 }

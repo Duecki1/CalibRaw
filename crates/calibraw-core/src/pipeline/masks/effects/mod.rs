@@ -11,6 +11,7 @@ mod neon;
 pub mod params;
 mod pixelate;
 mod radial_blur;
+mod relight;
 mod smoke;
 mod tilt_shift;
 mod vignette;
@@ -30,6 +31,7 @@ pub use motion_blur::MotionBlurEffectSettings;
 pub use neon::NeonEffectSettings;
 pub use pixelate::PixelateEffectSettings;
 pub use radial_blur::{RadialBlurEffectSettings, RadialBlurMode};
+pub use relight::RelightEffectSettings;
 pub use smoke::SmokeEffectSettings;
 pub use tilt_shift::TiltShiftEffectSettings;
 pub use vignette::VignetteEffectSettings;
@@ -50,6 +52,7 @@ pub enum MaskEffect {
     Glow,
     LightRays,
     Neon,
+    Relight,
     EdgeGlow,
     Pixelate,
     Fog,
@@ -60,7 +63,7 @@ pub enum MaskEffect {
 }
 
 impl MaskEffect {
-    pub const ALL: [Self; 16] = [
+    pub const ALL: [Self; 17] = [
         Self::Adjustment,
         Self::Blur,
         Self::LensBlur,
@@ -70,6 +73,7 @@ impl MaskEffect {
         Self::Glow,
         Self::LightRays,
         Self::Neon,
+        Self::Relight,
         Self::EdgeGlow,
         Self::Pixelate,
         Self::Fog,
@@ -89,6 +93,7 @@ impl MaskEffect {
             Self::TiltShift => "Tilt-Shift",
             Self::Glow => "Glow",
             Self::LightRays => "Light Rays",
+            Self::Relight => "Relight",
             Self::Neon => "Neon",
             Self::EdgeGlow => "Edge Glow",
             Self::Pixelate => "Pixelate",
@@ -106,7 +111,9 @@ impl MaskEffect {
             Self::Blur | Self::LensBlur | Self::MotionBlur | Self::RadialBlur | Self::TiltShift => {
                 Some(MaskEffectCategory::BlurAndFocus)
             }
-            Self::Glow | Self::LightRays | Self::Neon => Some(MaskEffectCategory::GlowAndLight),
+            Self::Glow | Self::LightRays | Self::Neon | Self::Relight => {
+                Some(MaskEffectCategory::GlowAndLight)
+            }
             Self::EdgeGlow | Self::Pixelate => Some(MaskEffectCategory::Stylize),
             Self::Fog | Self::Smoke => Some(MaskEffectCategory::Texture),
             Self::Grain | Self::Halation | Self::Vignette => {
@@ -137,6 +144,7 @@ impl MaskEffect {
             Self::Grain => 13,
             Self::Halation => 14,
             Self::Vignette => 15,
+            Self::Relight => 16,
         }
     }
 }
@@ -189,6 +197,8 @@ pub struct MaskEffectSettings {
     #[serde(default, skip_serializing_if = "is_default")]
     pub light_rays: LightRaysEffectSettings,
     #[serde(default, skip_serializing_if = "is_default")]
+    pub relight: RelightEffectSettings,
+    #[serde(default, skip_serializing_if = "is_default")]
     pub neon: NeonEffectSettings,
     #[serde(default, skip_serializing_if = "is_default")]
     pub pixelate: PixelateEffectSettings,
@@ -208,4 +218,54 @@ impl MaskEffectSettings {
     pub fn is_default(&self) -> bool {
         *self == Self::default()
     }
+
+    /// The settings a newly added `effect` starts with.
+    pub fn initial(effect: MaskEffect) -> Self {
+        let mut settings = Self::default();
+        match effect {
+            MaskEffect::Adjustment => {}
+            MaskEffect::Blur => settings.blur = InitialEffectSettings::initial(),
+            MaskEffect::LensBlur => settings.lens_blur = InitialEffectSettings::initial(),
+            MaskEffect::MotionBlur => settings.motion_blur = InitialEffectSettings::initial(),
+            MaskEffect::RadialBlur => settings.radial_blur = InitialEffectSettings::initial(),
+            MaskEffect::TiltShift => settings.tilt_shift = InitialEffectSettings::initial(),
+            MaskEffect::Glow => settings.glow = InitialEffectSettings::initial(),
+            MaskEffect::LightRays => settings.light_rays = InitialEffectSettings::initial(),
+            MaskEffect::Neon => settings.neon = InitialEffectSettings::initial(),
+            MaskEffect::Relight => settings.relight = InitialEffectSettings::initial(),
+            MaskEffect::EdgeGlow => settings.edge_glow = InitialEffectSettings::initial(),
+            MaskEffect::Pixelate => settings.pixelate = InitialEffectSettings::initial(),
+            MaskEffect::Fog => settings.fog = InitialEffectSettings::initial(),
+            MaskEffect::Smoke => settings.smoke = InitialEffectSettings::initial(),
+            MaskEffect::Grain => settings.grain = InitialEffectSettings::initial(),
+            MaskEffect::Halation => settings.halation = InitialEffectSettings::initial(),
+            MaskEffect::Vignette => settings.vignette = InitialEffectSettings::initial(),
+        }
+        settings
+    }
 }
+
+/// The settings an effect starts with when it is added or its card is reset.
+///
+/// `Default` is the serialized baseline: omitted fields and omitted settings
+/// decode to it, so changing it would change saved edits. An effect whose
+/// starting point differs from that baseline overrides [`Self::initial`].
+pub trait InitialEffectSettings: Default {
+    fn initial() -> Self {
+        Self::default()
+    }
+}
+
+impl InitialEffectSettings for BlurEffectSettings {}
+impl InitialEffectSettings for LensBlurEffectSettings {}
+impl InitialEffectSettings for MotionBlurEffectSettings {}
+impl InitialEffectSettings for RadialBlurEffectSettings {}
+impl InitialEffectSettings for TiltShiftEffectSettings {}
+impl InitialEffectSettings for LightRaysEffectSettings {}
+impl InitialEffectSettings for NeonEffectSettings {}
+impl InitialEffectSettings for RelightEffectSettings {}
+impl InitialEffectSettings for EdgeGlowEffectSettings {}
+impl InitialEffectSettings for PixelateEffectSettings {}
+impl InitialEffectSettings for GrainEffectSettings {}
+impl InitialEffectSettings for HalationEffectSettings {}
+impl InitialEffectSettings for VignetteEffectSettings {}

@@ -199,6 +199,24 @@ fn primary_controls_are_visible_and_details_expand_without_editing() {
             ],
         ),
         (
+            MaskEffect::Relight,
+            &[
+                params::relight::AMOUNT.label,
+                "Light position",
+                params::relight::DEPTH.label,
+                params::relight::AMBIENT.label,
+                "Cast shadows",
+            ],
+            "Light details",
+            // Shadows strength appears once shadows are on; see
+            // relight_shadow_toggle_hides_the_strength_and_preserves_it.
+            &[
+                params::relight::REACH.label,
+                params::relight::SIZE.label,
+                params::relight::RELIEF.label,
+            ],
+        ),
+        (
             MaskEffect::Fog,
             &[
                 params::fog::AMOUNT.label,
@@ -328,6 +346,25 @@ fn every_effect_card_fits_narrow_and_wide_layouts() {
             }
         }
     }
+}
+
+#[test]
+fn relight_shadow_toggle_hides_the_strength_and_preserves_it() {
+    let mut card = CardUi::new(MaskEffect::Relight, 320.0, true);
+    card.components[0].settings.relight.shadows = 35.0;
+    card.frame(Vec::new());
+    assert!(!card.click("Light details"));
+    // A new light starts without shadows.
+    assert!(!card.components[0].settings.relight.shadows_enabled);
+    assert!(!card.has(params::relight::SHADOWS.label));
+    assert!(card.has(params::relight::SIZE.label));
+    assert!(card.click("Cast shadows"));
+    assert!(card.components[0].settings.relight.shadows_enabled);
+    assert!(card.has(params::relight::SHADOWS.label));
+    assert!(card.click("Cast shadows"));
+    assert!(!card.components[0].settings.relight.shadows_enabled);
+    assert!(!card.has(params::relight::SHADOWS.label));
+    assert_eq!(card.components[0].settings.relight.shadows, 35.0);
 }
 
 #[test]

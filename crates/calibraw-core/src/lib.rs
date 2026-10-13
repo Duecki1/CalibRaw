@@ -5,6 +5,7 @@ pub mod diagnostics;
 pub mod display_metadata_cache;
 pub mod file_ops;
 pub mod matrix;
+mod migrations;
 pub mod pipeline;
 pub mod presets;
 pub mod serialized_reads;

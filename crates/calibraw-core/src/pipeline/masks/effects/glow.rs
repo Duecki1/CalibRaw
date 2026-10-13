@@ -12,6 +12,8 @@ pub struct GlowEffectSettings {
     pub color: [f32; 3],
 }
 
+/// The serialized baseline: a saved Glow whose settings were never changed
+/// omits them and decodes to this, so it stays self-illuminating.
 impl Default for GlowEffectSettings {
     fn default() -> Self {
         Self {
@@ -27,5 +29,15 @@ impl Default for GlowEffectSettings {
 impl GlowEffectSettings {
     pub fn is_active(&self) -> bool {
         self.amount.abs() > 1e-6
+    }
+}
+
+/// New Glow blooms the bright areas inside its mask. Self-illumination is opt-in.
+impl super::InitialEffectSettings for GlowEffectSettings {
+    fn initial() -> Self {
+        Self {
+            self_illuminating: false,
+            ..Self::default()
+        }
     }
 }

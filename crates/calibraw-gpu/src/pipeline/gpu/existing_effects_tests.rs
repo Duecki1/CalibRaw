@@ -319,6 +319,56 @@ fn existing_effects_honor_empty_masks_and_full_masks_match_global() -> anyhow::R
 }
 
 #[test]
+fn masked_blurs_gather_nothing_from_outside_their_mask() -> anyhow::Result<()> {
+    // A red subject (x < 88) beside a flat background whose mask starts at
+    // x = 93 (atlas column 31 of 64 across 192 pixels): blurring the
+    // background must not pull the subject's red into it.
+    let Some(scene) = Fixture::new(192, 96, |x, _| {
+        if x < 88 {
+            [0.9, 0.05, 0.02]
+        } else {
+            [0.1, 0.2, 0.3]
+        }
+    })?
+    else {
+        return Ok(());
+    };
+    let background = (0..MASK_EDGE * MASK_EDGE)
+        .map(|i| {
+            if i % MASK_EDGE >= 31 {
+                half::f16::ONE.to_bits()
+            } else {
+                0
+            }
+        })
+        .collect::<Vec<_>>();
+    scene
+        .pipeline
+        .update_mask_layer(&scene.queue, 0, &background)?;
+    let baseline = scene.render(None)?;
+    for effect in BLURS {
+        let mut mask = LocalMask::new(MaskKind::Fullscreen, 1);
+        mask.effect_components.push(blur(effect, 40.0));
+        let actual = scene.render_masks(&MaskStack {
+            masks: vec![mask],
+            ..Default::default()
+        })?;
+        for y in [8, 88] {
+            for x in [96, 100, 104] {
+                let i = (y * 192 + x) * 3;
+                assert!(
+                    difference(&actual[i..i + 3], &baseline[i..i + 3]) < EPSILON,
+                    "{effect:?} pulls the masked-out subject into {x},{y}: {:?} vs {:?}",
+                    &actual[i..i + 3],
+                    &baseline[i..i + 3],
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
+#[test]
 fn glow_radius_is_independent_of_another_masked_glow() -> anyhow::Result<()> {
     let Some(scene) = Fixture::new(192, 128, |x, _| {
         [if (88..104).contains(&x) { 1.0 } else { 0.03 }; 3]

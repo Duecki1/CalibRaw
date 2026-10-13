@@ -1,12 +1,12 @@
 use super::{
     pack_effect_mask, pack_local_point_curve, pack_point_curve, processing_work_format,
     shader_manager::ShaderManager, shaders, work_shader_source, GpuParams, PipelineOptions,
-    ProcessingQuality, RawGpuPipeline,
+    ProcessingQuality, RawGpuPipeline, COLOR_DENOISE_ENTRY_POINTS,
 };
 use crate::pipeline::{
-    extract_padded_tile, CameraProfile, CfaKind, CompactPixelMap, ExportTile, ExposureParams,
-    HighlightReconstructionMethod, LoadedRaw, LocalMask, MaskEffect, MaskKind, MaskStack,
-    NativeRect, PointCurve, ProcessingStage, TONE_GUIDE_CELL_SIZE,
+    extract_padded_tile, CameraProfile, CfaKind, CompactPixelMap, EffectComponent, ExportTile,
+    ExposureParams, HighlightReconstructionMethod, LoadedRaw, LocalMask, MaskEffect, MaskKind,
+    MaskStack, NativeRect, PointCurve, ProcessingStage, TONE_GUIDE_CELL_SIZE,
 };
 
 #[test]
@@ -59,6 +59,55 @@ fn local_point_colors_pack_with_mask_adjustments() {
     assert_eq!(packed.metadata[1], 1);
     assert_eq!(packed.point_color_meta[0..2], [1, 1]);
     assert!((packed.point_colors[0].shifts[0] - 0.125).abs() < 1e-6);
+}
+
+#[test]
+fn the_first_four_shadowed_relights_take_shadow_map_channels() {
+    let relight = |shadows: f32| {
+        let mut component = EffectComponent::new(MaskEffect::Relight);
+        component.settings.relight.shadows_enabled = true;
+        component.settings.relight.shadows = shadows;
+        component
+    };
+    let mut global_effects = vec![relight(0.0)];
+    global_effects.extend((0..5).map(|_| relight(100.0)));
+    let masks = MaskStack {
+        global_effects,
+        ..Default::default()
+    };
+    let packed = super::pack_mask_params(&masks);
+    let channels: Vec<_> = packed[..6]
+        .iter()
+        .map(super::relight_shadow_channel)
+        .collect();
+    // Without shadows a light needs no channel; the fifth shadowed light
+    // traces per pixel.
+    assert_eq!(
+        channels,
+        [None, Some(0), Some(1), Some(2), Some(3), None],
+        "{channels:?}"
+    );
+}
+
+#[test]
+fn only_active_media_with_image_lights_request_the_image_light_map() {
+    let packed = |effect: MaskEffect, image_lights: bool, enabled: bool| {
+        let mut settings = crate::pipeline::MaskEffectSettings::default();
+        settings.fog.image_lights = image_lights;
+        settings.smoke.image_lights = image_lights;
+        let data = pack_effect_mask(effect, &settings, enabled).expect("effect slot");
+        super::medium_uses_image_lights(&data)
+    };
+    for effect in [MaskEffect::Fog, MaskEffect::Smoke] {
+        assert!(packed(effect, true, true), "{effect:?}");
+        assert!(
+            !packed(effect, false, true),
+            "{effect:?} without Image lights"
+        );
+        assert!(!packed(effect, true, false), "disabled {effect:?}");
+    }
+    // Other effects leave the options slot empty.
+    assert!(!packed(MaskEffect::Relight, true, true));
 }
 
 /// Composes `shader` the way production does for `quality` and validates it.
@@ -809,6 +858,73 @@ fn opposed_highlight_consistency_raw(width: u32, height: u32) -> LoadedRaw {
     }
 }
 
+/// Every named pass position holds the program it is named after; layouts
+/// reused from program templates are taken from these positions.
+fn assert_planned_programs(pipeline: &RawGpuPipeline) {
+    let indices = &pipeline.indices;
+    let entry = |index: usize| pipeline.passes[index].pipeline.entry.as_str();
+    for (index, expected) in [
+        (indices.highlight_pass_index, "highlight_reconstruct"),
+        (indices.demosaic_dual_start_index, "dual_green_reconstruct"),
+        (
+            indices.color_denoise_start_index,
+            COLOR_DENOISE_ENTRY_POINTS[0],
+        ),
+        (indices.tone_prepare_pass_index, "tone_guide_prepare"),
+        (indices.tone_blur_pass_index, "tone_guide_horizontal"),
+        (indices.tone_reduce_pass_index, "tone_reduce_histogram"),
+        (indices.adjustment_prepare_pass_index, "prepare_scene_node"),
+        (indices.adjustment_tone_pass_index, "apply_scene_tone_node"),
+        (
+            indices.adjustment_local_tone_pass_index,
+            "apply_local_scene_tone_node",
+        ),
+        (
+            indices.adjustment_effects_pass_index,
+            "apply_scene_effects_node",
+        ),
+        (
+            indices.adjustment_effects_copy_pass_index,
+            "copy_scene_effects_node",
+        ),
+        (indices.mask_blur_start_index, "diffuse_mask_blur_0"),
+        (indices.glow_prepare_pass_index, "prepare_glow_source"),
+        (indices.glow_blur_start_index, "diffuse_glow_0"),
+        (
+            indices.pixelate_blocks_pass_index,
+            "prepare_pixelate_blocks",
+        ),
+        (
+            indices.adjustment_creative_pass_index,
+            "apply_creative_effects",
+        ),
+        (indices.adjustment_render_pass_index, "apply_view_node"),
+        (
+            indices.image_light_accumulate_pass_index,
+            "accumulate_image_lights",
+        ),
+        (
+            indices.image_light_resolve_pass_index,
+            "resolve_image_lights",
+        ),
+        (
+            indices.image_light_blur_pass_index,
+            "blur_image_lights_horizontal",
+        ),
+        (
+            indices.relight_shadow_map_pass_index,
+            "build_relight_shadow_map",
+        ),
+        (
+            indices.scene_depth_guide_pass_index,
+            "build_scene_depth_guide",
+        ),
+    ] {
+        assert_eq!(entry(index), expected, "pass {index}");
+    }
+    assert_eq!(pipeline.passes.len(), indices.pass_count);
+}
+
 /// Builds and runs the whole graph for each sensor layout and quality, so
 /// wgpu checks every entry shader against the Rust bind group layouts it is
 /// given. Naga validation alone checks each shader in isolation.
@@ -843,6 +959,7 @@ fn pipelines_build_and_render_for_every_sensor_layout_and_quality() -> anyhow::R
         for quality in [ProcessingQuality::Preview, ProcessingQuality::High] {
             let pipeline =
                 RawGpuPipeline::new(&device, &queue, raw, &params, PipelineOptions::new(quality))?;
+            assert_planned_programs(&pipeline);
             pipeline.recompute(&queue, &device, &params);
             let rgba = pipeline.read_output_region_blocking(&device, &queue, 0, 0, EDGE, EDGE)?;
             assert_eq!(

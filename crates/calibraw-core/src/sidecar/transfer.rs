@@ -1,7 +1,7 @@
 //! Moving selected edit categories from one edit state to another. Adjustment
 //! paste and presets both go through [`transfer_edits`].
 use super::{default_edit_state, EditState};
-use crate::pipeline::{AdjustmentGroupSet, MaskGeometry, MaskKind, MaskStack};
+use crate::pipeline::{AdjustmentGroup, AdjustmentGroupSet, MaskGeometry, MaskKind, MaskStack};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -53,14 +53,16 @@ pub enum AdjustmentPasteMode {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(default)]
 pub struct EditSelection {
-    /// Global develop settings, one group per sidebar card.
+    /// Global develop settings, one group per sidebar card. The Effects group
+    /// also holds the global effects, which the Adjustments tab lists below
+    /// the Effects card.
     pub adjustment_groups: AdjustmentGroupSet,
     /// RAW decoding settings that no sidebar card owns. See
     /// [`crate::pipeline::ExposureParams::copy_raw_processing_from`].
     pub raw_processing: bool,
     pub geometry: bool,
     pub camera_profile: bool,
-    /// Brush, path, fullscreen, radial and linear components and global effects.
+    /// Brush, path, fullscreen, radial and linear components.
     pub masks: bool,
     /// Subject, background, sky, object and range components.
     pub ai_masks: bool,
@@ -100,6 +102,13 @@ impl From<AdjustmentCopySettings> for EditSelection {
     }
 }
 
+/// Whether any setting `group` moves differs from its default: the group's
+/// develop settings, and for the Effects group also the global effects.
+pub fn adjustment_group_is_edited(edits: &EditState, group: AdjustmentGroup) -> bool {
+    edits.exposure.group_is_edited(group)
+        || (group == AdjustmentGroup::Effects && !edits.masks.global_effects.is_empty())
+}
+
 /// Mask kinds drawn by hand. Every other kind is generated from image content.
 pub(crate) fn is_manual_mask_kind(kind: MaskKind) -> bool {
     matches!(
@@ -113,18 +122,7 @@ pub(crate) fn is_manual_mask_kind(kind: MaskKind) -> bool {
 }
 
 fn filtered_mask_stack(masks: &MaskStack, include_manual: bool, include_ai: bool) -> MaskStack {
-    if include_manual && include_ai {
-        let mut selected = masks.clone();
-        selected.scene_depth = None;
-        return selected;
-    }
-
     MaskStack {
-        global_effects: if include_manual {
-            masks.global_effects.clone()
-        } else {
-            Vec::new()
-        },
         masks: masks
             .masks
             .iter()
@@ -155,27 +153,25 @@ fn replace_selected_mask_categories(
     include_manual: bool,
     include_ai: bool,
 ) {
-    // Depth is tied to the destination image, not to the transferred adjustments.
-    let scene_depth = destination.scene_depth.clone();
+    // Depth is tied to the destination image, and global effects belong to
+    // the Effects group, so both stay.
+    let scene_depth = destination.scene_depth.take();
+    let global_effects = std::mem::take(&mut destination.global_effects);
     if include_manual && include_ai {
         *destination = source.clone();
-        destination.scene_depth = scene_depth;
         clear_copied_depth_images(destination);
-        return;
+    } else {
+        let mut merged = filtered_mask_stack(destination, !include_manual, !include_ai);
+        let mut copied = filtered_mask_stack(source, include_manual, include_ai);
+        clear_copied_depth_images(&mut copied);
+        if include_ai {
+            merged.subject_refinement = copied.subject_refinement;
+        }
+        merged.masks.extend(copied.masks);
+        *destination = merged;
     }
-
-    let mut merged = filtered_mask_stack(destination, !include_manual, !include_ai);
-    let mut copied = filtered_mask_stack(source, include_manual, include_ai);
-    clear_copied_depth_images(&mut copied);
-    if include_manual {
-        merged.global_effects = copied.global_effects;
-    }
-    if include_ai {
-        merged.subject_refinement = copied.subject_refinement.clone();
-    }
-    merged.masks.extend(copied.masks);
-    merged.scene_depth = scene_depth;
-    *destination = merged;
+    destination.scene_depth = scene_depth;
+    destination.global_effects = global_effects;
 }
 
 fn clear_copied_depth_images(masks: &mut MaskStack) {
@@ -208,6 +204,15 @@ pub fn transfer_edits(
         destination
             .exposure
             .copy_group_from(&source.exposure, group);
+    }
+    if selection
+        .adjustment_groups
+        .contains(AdjustmentGroup::Effects)
+        && destination.masks.global_effects != source.masks.global_effects
+    {
+        Arc::make_mut(&mut destination.masks).global_effects = source.masks.global_effects.clone();
+        // Pasted depth fog or Relight needs this image's own scene depth.
+        destination.ai_masks_need_update |= destination.masks.scene_depth_missing();
     }
     if selection.raw_processing {
         destination

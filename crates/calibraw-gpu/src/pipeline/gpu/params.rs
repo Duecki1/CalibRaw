@@ -117,12 +117,13 @@ const _: () =
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
 pub(super) struct EffectsUniforms {
+    // Texture, clarity, dehaze, reserved.
     pub(super) presence: [f32; 4],
-    pub(super) creative_effects: [f32; 4],
-    // Halation amount, grain amount, any active halation, reserved.
-    pub(super) film_effects: [f32; 4],
-    pub(super) vignette: [f32; 4],
-    pub(super) vignette_options: [f32; 4],
+    // Sharpening amount, radius, detail, masking.
+    pub(super) sharpen: [f32; 4],
+    // Radius of the shared Glow diffusion, reserved, reserved, reserved.
+    pub(super) glow_diffusion: [f32; 4],
+    // The frame and calibration of Vignette effects.
     pub(super) vignette_frame: [f32; 4],
     pub(super) vignette_transform: [f32; 4],
     pub(super) vignette_dark_half_fit: [f32; 4],
@@ -136,7 +137,7 @@ pub(super) struct EffectsUniforms {
 
 const _: () =
     assert!(std::mem::size_of::<EffectsUniforms>() == EFFECTS_UNIFORMS_SIZE_BYTES as usize);
-const _: () = assert!(GPU_STAGE_UNIFORM_SIZE_BYTES == 2_256);
+const _: () = assert!(GPU_STAGE_UNIFORM_SIZE_BYTES == 2_224);
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
@@ -145,8 +146,8 @@ pub(super) struct MaskData {
     pub(super) adjust_0: [f32; 4],
     pub(super) adjust_1: [f32; 4],
     pub(super) adjust_2: [f32; 4],
-    // Local halation amount; remaining lanes reserved (grain is global only).
-    pub(super) film_effects: [f32; 4],
+    // Per-slot switches of effect slots (`effect_lanes::options`).
+    pub(super) effect_options: [f32; 4],
     pub(super) curves: [[f32; 4]; LOCAL_POINT_CURVE_BLOCKS],
     pub(super) grade_shadows: [f32; 4],
     pub(super) grade_midtones: [f32; 4],
@@ -167,6 +168,14 @@ pub(super) struct MaskData {
 }
 
 const _: () = assert!(std::mem::size_of::<MaskData>() == 1_488);
+
+/// Inputs of the relight shadow map besides scene depth
+/// (`GpuParams::relight_shadow_map_key`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) struct RelightShadowMapKey {
+    full_size: [u32; 2],
+    lights: [Option<[f32; 5]>; RELIGHT_SHADOW_MAP_CHANNELS],
+}
 
 #[derive(Clone, Debug)]
 pub struct GpuParams {
@@ -504,8 +513,6 @@ impl GpuParams {
             || self.effects.presence[..3]
                 .iter()
                 .any(|value| value.abs() > 1e-6);
-        let creative =
-            self.effects.creative_effects[0].abs() > 1e-6 || self.effects.film_effects[0] > 1e-6;
         let local_count = (self.scene_tone.mask_counts[0] as usize).min(MAX_RENDER_MASK_SLOTS);
         let local_effects = (0..local_count).any(|index| {
             let local = self.mask_data[index];
@@ -517,6 +524,7 @@ impl GpuParams {
             if effect_id == MaskEffect::Neon.shader_id()
                 || effect_id == MaskEffect::Glow.shader_id()
                 || effect_id == MaskEffect::LightRays.shader_id()
+                || effect_id == MaskEffect::Relight.shader_id()
                 || effect_id == MaskEffect::Blur.shader_id()
                 || effect_id == MaskEffect::LensBlur.shader_id()
                 || effect_id == MaskEffect::MotionBlur.shader_id()
@@ -542,23 +550,16 @@ impl GpuParams {
                 || local.adjust_1[3].abs() > 1e-6;
             let curves = state[2] != 0;
             let presence_or_saturation = local.adjust_2.iter().any(|value| value.abs() > 1e-6);
-            tone || white_balance
-                || curves
-                || presence_or_saturation
-                || local.film_effects[0] > 1e-6
+            tone || white_balance || curves || presence_or_saturation
         });
-        global_effects || creative || local_effects
+        global_effects || local_effects
     }
 
     pub(super) fn needs_glow_passes(&self) -> bool {
-        if self.effects.creative_effects[0].abs() > 1e-6 || self.effects.film_effects[0] > 1e-6 {
-            return true;
-        }
         let local_count = (self.scene_tone.mask_counts[0] as usize).min(MAX_RENDER_MASK_SLOTS);
-        self.mask_data[..local_count].iter().any(|mask| {
-            (mask.metadata[0] != 0 && mask.film_effects[0] > 1e-6)
-                || is_self_illuminating_glow(mask)
-        })
+        self.mask_data[..local_count]
+            .iter()
+            .any(is_self_illuminating_glow)
     }
 
     /// Whether an active Pixelate effect reads the block cache. Mirrors
@@ -574,6 +575,87 @@ impl GpuParams {
                 && (amount / 100.0).clamp(0.0, 1.0) > 1e-6
                 && block_size > 1.0
         })
+    }
+
+    /// Whether an effect samples the image-light map (Image lights on Fog or
+    /// Smoke), so the export tone prepass must build it.
+    pub(super) fn needs_image_lights(&self) -> bool {
+        let local_count = (self.scene_tone.mask_counts[0] as usize).min(MAX_RENDER_MASK_SLOTS);
+        self.mask_data[..local_count]
+            .iter()
+            .any(medium_uses_image_lights)
+    }
+
+    /// Whether an effect upsamples scene depth with the image as its guide:
+    /// active Fog, Smoke or Relight in a visible slot while scene depth is
+    /// present. The creative pass then reads the guide map, so it is built
+    /// right before it.
+    pub(super) fn needs_scene_depth_guide(&self) -> bool {
+        if self.scene_tone.scene_depth_present == 0 {
+            return false;
+        }
+        let local_count = (self.scene_tone.mask_counts[0] as usize).min(MAX_RENDER_MASK_SLOTS);
+        self.mask_data[..local_count].iter().any(|mask| {
+            let id = mask.metadata[3] >> MASK_EFFECT_ID_SHIFT;
+            mask.metadata[0] != 0
+                && mask.metadata[1] != 0
+                && [MaskEffect::Fog, MaskEffect::Smoke, MaskEffect::Relight]
+                    .iter()
+                    .any(|effect| effect.shader_id() == id)
+        })
+    }
+
+    /// Whether an active Relight effect in a visible slot reads the
+    /// relighting surface derived from scene depth. Mirrors the slot checks
+    /// of `scene_light_at` in scene_lights.wgsl.
+    pub(super) fn needs_relight_surface(&self) -> bool {
+        let local_count = (self.scene_tone.mask_counts[0] as usize).min(MAX_RENDER_MASK_SLOTS);
+        self.mask_data[..local_count].iter().any(|mask| {
+            mask.metadata[0] != 0
+                && mask.metadata[1] != 0
+                && mask.metadata[3] >> MASK_EFFECT_ID_SHIFT == MaskEffect::Relight.shader_id()
+        })
+    }
+
+    /// What the relight shadow map depends on besides scene depth: the frame
+    /// and, per channel, the light's position, depth, size and relief. `None`
+    /// when no light uses the map. Amount, reach, colour, ambient and shadow
+    /// strength are applied per pixel and leave the map valid.
+    pub(super) fn relight_shadow_map_key(&self) -> Option<RelightShadowMapKey> {
+        if self.scene_tone.scene_depth_present == 0 {
+            return None;
+        }
+        let local_count = (self.scene_tone.mask_counts[0] as usize).min(MAX_RENDER_MASK_SLOTS);
+        let mut lights = [None; RELIGHT_SHADOW_MAP_CHANNELS];
+        for mask in &self.mask_data[..local_count] {
+            if let Some(channel) = relight_shadow_channel(mask) {
+                use super::effect_lanes::relight;
+                lights[channel] = Some(
+                    [
+                        relight::SOURCE_X,
+                        relight::SOURCE_Y,
+                        relight::DEPTH,
+                        relight::SIZE,
+                        relight::RELIEF,
+                    ]
+                    .map(|lane| mask.lane(lane)),
+                );
+            }
+        }
+        lights
+            .iter()
+            .any(Option::is_some)
+            .then_some(RelightShadowMapKey {
+                full_size: [self.camera.full_width, self.camera.full_height],
+                lights,
+            })
+    }
+
+    /// Traces every Relight shadow per pixel instead of reading the shadow map.
+    #[cfg(test)]
+    pub(super) fn with_relight_shadows_traced_per_pixel(mut self) -> Self {
+        clear_relight_shadow_channels(&mut self.mask_data);
+        self
     }
 
     pub(super) fn needs_blur_passes(&self) -> bool {

@@ -244,6 +244,8 @@ impl RawGpuPipeline {
             geometry.tone_format,
         );
         let groups = create_bind_groups(device, &layouts, &buffers, &surfaces, raw.cfa_kind);
+        let effect_inputs =
+            EffectInputs::new(device, input_binding_sources(&layouts, &buffers, &surfaces));
 
         let shaders = load_shader_set(
             device,
@@ -268,6 +270,7 @@ impl RawGpuPipeline {
             passes,
             post_blur_glow_passes,
             post_blur_pixelate_blocks_pass,
+            post_blur_scene_depth_guide_pass,
             post_blur_creative_pass,
             post_blur_render_pass,
             indices,
@@ -308,9 +311,11 @@ impl RawGpuPipeline {
             mask_data_buffer: buffers.mask_data_buffer,
             tone_histogram_buffer: buffers.tone_histogram_buffer,
             tone_stats_buffer: buffers.tone_stats_buffer,
+            effect_inputs,
             indices,
             post_blur_glow_passes,
             post_blur_pixelate_blocks_pass,
+            post_blur_scene_depth_guide_pass,
             post_blur_creative_pass,
             post_blur_render_pass,
             passes,
@@ -334,6 +339,8 @@ impl RawGpuPipeline {
             light_rays_mask_texture: surfaces.light_rays_mask_texture,
             scene_depth_texture: surfaces.scene_depth_texture,
             uploaded_scene_depth: Mutex::new(None),
+            relight_shadow_map_key: Mutex::new(None),
+            image_lights_current: AtomicBool::new(false),
             mask_layer_capacity: geometry.mask_layer_capacity,
             mask_atlas_edge: geometry.mask_atlas_edge,
             out_texture: surfaces.out_texture,
@@ -341,6 +348,9 @@ impl RawGpuPipeline {
             pipeline_cache,
             _gpu_budget_reservation: gpu_budget_reservation,
         };
+        // Inputs these edits read are allocated now, within the constructor's
+        // error scopes, rather than on the first render.
+        pipeline.prepare_effect_inputs(params);
         // Compile only the programs used by these edits, within the constructor's
         // error scopes. The encoder is discarded: warming needs no GPU execution.
         let mut warmup = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
@@ -352,8 +362,17 @@ impl RawGpuPipeline {
             pipeline.indices.tone_prepare_pass_index,
             pipeline.indices.tone_stage_end,
         );
+        pipeline.encode_tone_image_lights(&mut warmup, params);
         pipeline.encode_output_stage(&mut warmup, params);
         drop(warmup);
+        // Nothing ran: the maps the warmup encoded are not built.
+        pipeline
+            .image_lights_current
+            .store(false, Ordering::Release);
+        *pipeline
+            .relight_shadow_map_key
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
         gpu_error_scopes.finish("create RAW GPU pipeline")?;
         Ok(pipeline)
     }
