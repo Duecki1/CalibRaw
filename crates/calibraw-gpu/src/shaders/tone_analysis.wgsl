@@ -336,22 +336,52 @@ fn image_light_gaussian(offset: f32, sigma: f32) -> f32 {
     return exp(-0.5 * offset * offset / (sigma * sigma)) / (sigma * 2.5066282746);
 }
 
-// One axis of both Gaussians. No light comes from beyond the frame, so taps
-// outside the grid add nothing and the kernels keep their full weight.
-fn image_light_blur(
-    source: texture_2d<f32>,
+// One axis of both Gaussians, in two helpers that each read only the textures
+// bound to their pass: a texture passed to a function crashes the Mali-G710
+// shader compiler (`no_handle_arguments` test). No light comes from beyond
+// the frame, so taps outside the grid add nothing and the kernels keep their
+// full weight.
+fn image_light_blur_reach(sigma: f32) -> i32 {
+    return i32(ceil(3.0 * sigma));
+}
+
+fn image_light_tap_inside(tap: vec2<i32>, axis: vec2<i32>, cells: i32) -> bool {
+    let along = dot(tap, axis);
+    return along >= 0 && along < cells;
+}
+
+// The horizontal pass: blurs the resolved map.
+fn image_light_blur_resolved(pos: vec2<i32>, axis: vec2<i32>, cells: i32, sigma: f32) -> vec3<f32> {
+    let reach = image_light_blur_reach(sigma);
+    var sum = vec3<f32>(0.0);
+    for (var offset = -reach; offset <= reach; offset = offset + 1) {
+        let tap = pos + axis * offset;
+        if !image_light_tap_inside(tap, axis, cells) { continue; }
+        sum += textureLoad(image_light_in, tap, 0).xyz * image_light_gaussian(f32(offset), sigma);
+    }
+    return sum;
+}
+
+// The vertical pass: blurs the tail map when `tail`, otherwise the core map.
+fn image_light_blur_split(
+    tail: bool,
     pos: vec2<i32>,
     axis: vec2<i32>,
     cells: i32,
     sigma: f32,
 ) -> vec3<f32> {
-    let reach = i32(ceil(3.0 * sigma));
+    let reach = image_light_blur_reach(sigma);
     var sum = vec3<f32>(0.0);
     for (var offset = -reach; offset <= reach; offset = offset + 1) {
         let tap = pos + axis * offset;
-        let along = dot(tap, axis);
-        if along < 0 || along >= cells { continue; }
-        sum += textureLoad(source, tap, 0).xyz * image_light_gaussian(f32(offset), sigma);
+        if !image_light_tap_inside(tap, axis, cells) { continue; }
+        var texel: vec3<f32>;
+        if tail {
+            texel = textureLoad(image_light_tail_in, tap, 0).xyz;
+        } else {
+            texel = textureLoad(image_light_core_in, tap, 0).xyz;
+        }
+        sum += texel * image_light_gaussian(f32(offset), sigma);
     }
     return sum;
 }
@@ -370,9 +400,9 @@ fn blur_image_lights_horizontal(@builtin(global_invocation_id) gid: vec3<u32>) {
     let axis = vec2<i32>(1, 0);
     let cells = i32(grid.x);
     textureStore(image_light_core_out, pos,
-        vec4<f32>(image_light_blur(image_light_in, pos, axis, cells, sigmas.x), 1.0));
+        vec4<f32>(image_light_blur_resolved(pos, axis, cells, sigmas.x), 1.0));
     textureStore(image_light_tail_out, pos,
-        vec4<f32>(image_light_blur(image_light_in, pos, axis, cells, sigmas.y), 1.0));
+        vec4<f32>(image_light_blur_resolved(pos, axis, cells, sigmas.y), 1.0));
 }
 
 @compute @workgroup_size(8, 8, 1)
@@ -383,8 +413,8 @@ fn blur_image_lights_vertical(@builtin(global_invocation_id) gid: vec3<u32>) {
     let sigmas = image_light_sigmas();
     let axis = vec2<i32>(0, 1);
     let cells = i32(grid.y);
-    let core = image_light_blur(image_light_core_in, pos, axis, cells, sigmas.x);
-    let tail = image_light_blur(image_light_tail_in, pos, axis, cells, sigmas.y);
+    let core = image_light_blur_split(false, pos, axis, cells, sigmas.x);
+    let tail = image_light_blur_split(true, pos, axis, cells, sigmas.y);
     textureStore(image_light_out, pos,
         vec4<f32>(mix(core, tail, IMAGE_LIGHT_TAIL_SHARE), 1.0));
 }
