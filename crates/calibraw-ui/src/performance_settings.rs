@@ -40,7 +40,6 @@ pub(crate) struct PerformanceSettings {
     pub github_update_check_allowed: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ignored_update_version: Option<String>,
-    pub birefnet_quality: calibraw_ai::ai_masks::BiRefNetQuality,
     #[cfg(not(target_os = "android"))]
     pub subject_crop_refinement: bool,
     #[cfg(not(target_os = "android"))]
@@ -128,17 +127,6 @@ fn jpeg_xl_export_format_setting_round_trips() {
 #[serde(transparent)]
 struct ExportFormatSetting(#[serde(with = "export_format_serde")] ExportFormat);
 
-const fn subject_quality_for_platform(
-    configured: calibraw_ai::ai_masks::BiRefNetQuality,
-    android: bool,
-) -> calibraw_ai::ai_masks::BiRefNetQuality {
-    if android {
-        calibraw_ai::ai_masks::BiRefNetQuality::Low
-    } else {
-        configured
-    }
-}
-
 impl Default for PerformanceSettings {
     fn default() -> Self {
         Self {
@@ -163,7 +151,6 @@ impl Default for PerformanceSettings {
             auto_check_updates: true,
             github_update_check_allowed: None,
             ignored_update_version: None,
-            birefnet_quality: calibraw_ai::ai_masks::BiRefNetQuality::default(),
             #[cfg(not(target_os = "android"))]
             subject_crop_refinement: true,
             #[cfg(not(target_os = "android"))]
@@ -224,8 +211,6 @@ impl PerformanceSettings {
         self.thumbnail_workers = self
             .thumbnail_workers
             .clamp(1, crate::ui::library::maximum_thumbnail_worker_count());
-        self.birefnet_quality =
-            subject_quality_for_platform(self.birefnet_quality, cfg!(target_os = "android"));
         if !self.automatic_lens_geometry && !self.automatic_lens_vignetting {
             let defaults = Self::default();
             self.automatic_lens_geometry = defaults.automatic_lens_geometry;
@@ -557,10 +542,6 @@ mod tests {
         assert!(settings.github_update_check_allowed.is_none());
         assert!(settings.ignored_update_version.is_none());
         assert_eq!(
-            settings.birefnet_quality,
-            calibraw_ai::ai_masks::BiRefNetQuality::Low
-        );
-        assert_eq!(
             settings.library_thumbnail_size,
             crate::ui::library::LibraryThumbnailSize::Large
         );
@@ -600,7 +581,6 @@ mod tests {
             library_thumbnail_size: crate::ui::library::LibraryThumbnailSize::Enormous,
             library_sort_order: crate::ui::library::LibrarySortOrder::SmallestFirst,
             library_stack_raw_companions: false,
-            birefnet_quality: calibraw_ai::ai_masks::BiRefNetQuality::High,
             image_relative_brush_size: true,
             show_develop_navigation_labels: true,
             export_name_template: "{OriginalName}-{CurrentDate}".to_owned(),
@@ -640,10 +620,6 @@ mod tests {
             crate::ui::library::LibrarySortOrder::SmallestFirst
         );
         assert!(!restored.library_stack_raw_companions);
-        assert_eq!(
-            restored.birefnet_quality,
-            calibraw_ai::ai_masks::BiRefNetQuality::High
-        );
         assert!(restored.image_relative_brush_size);
         assert!(restored.show_develop_navigation_labels);
         assert!(!restored.automatic_lens_correction);
@@ -683,17 +659,5 @@ mod tests {
             assert!(!restored.library_folder_sidebar_open);
             assert!(!restored.develop_filmstrip_open);
         }
-    }
-
-    #[test]
-    fn android_always_sanitizes_subject_quality_to_low() {
-        assert_eq!(
-            subject_quality_for_platform(calibraw_ai::ai_masks::BiRefNetQuality::High, true),
-            calibraw_ai::ai_masks::BiRefNetQuality::Low
-        );
-        assert_eq!(
-            subject_quality_for_platform(calibraw_ai::ai_masks::BiRefNetQuality::High, false),
-            calibraw_ai::ai_masks::BiRefNetQuality::High
-        );
     }
 }

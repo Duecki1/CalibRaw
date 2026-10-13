@@ -13,9 +13,7 @@ use std::{
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum AiModel {
-    BiRefNetLow,
-    BiRefNetMedium,
-    BiRefNetHigh,
+    BiRefNet,
     SkySeg,
     Depth,
     SamEncoder,
@@ -28,7 +26,7 @@ pub(crate) enum AiModel {
 impl AiModel {
     const fn feature(self) -> AiFeature {
         match self {
-            Self::BiRefNetLow | Self::BiRefNetMedium | Self::BiRefNetHigh => AiFeature::Subject,
+            Self::BiRefNet => AiFeature::Subject,
             Self::SkySeg => AiFeature::Sky,
             Self::Depth => AiFeature::SceneDepth,
             Self::SamEncoder | Self::SamDecoder => AiFeature::Object,
@@ -357,7 +355,7 @@ mod tests {
         let events = Arc::new(Mutex::new(Vec::new()));
         let mut slot = RuntimeSlot::default();
         slot.ensure_model(
-            AiModel::BiRefNetLow,
+            AiModel::BiRefNet,
             ModelRetention::WhileWarm,
             0,
             true,
@@ -371,7 +369,7 @@ mod tests {
         )
         .unwrap();
         slot.ensure_model(
-            AiModel::BiRefNetLow,
+            AiModel::BiRefNet,
             ModelRetention::WhileWarm,
             0,
             true,
@@ -384,7 +382,7 @@ mod tests {
             },
         )
         .unwrap();
-        assert_eq!(slot.active_model(), Some(AiModel::BiRefNetLow));
+        assert_eq!(slot.active_model(), Some(AiModel::BiRefNet));
         assert_eq!(&*events.lock().unwrap(), &["create low".to_owned()]);
     }
 
@@ -393,7 +391,7 @@ mod tests {
         let events = Arc::new(Mutex::new(Vec::new()));
         let mut slot = RuntimeSlot::default();
         slot.ensure_model(
-            AiModel::BiRefNetLow,
+            AiModel::BiRefNet,
             ModelRetention::WhileWarm,
             0,
             true,

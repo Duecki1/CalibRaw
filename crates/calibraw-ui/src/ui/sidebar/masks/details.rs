@@ -283,8 +283,7 @@ impl Sidebar {
         let refinement = &app.masks.stack.subject_refinement;
         let mut controls = MaskPropertiesControls {
             brush_mode: app.masks.brush_mode,
-            birefnet_quality: app.ai.birefnet_quality,
-            generation_idle: app.birefnet_quality_change_enabled(),
+            generation_idle: app.ai_mask_generation_idle(),
             refinement_active: app.masks.subject_refinement_active && selected_is_subject,
             refinement_size: refinement.size,
             refinement_feather: refinement.feather,

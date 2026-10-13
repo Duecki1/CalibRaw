@@ -220,7 +220,7 @@ impl CalibRawApp {
 
     pub(in crate::app) fn birefnet_model_path(&self) -> PathBuf {
         self.ai_model_root()
-            .join(self.ai.birefnet_quality.model().cache_filename)
+            .join(calibraw_ai::ai_masks::BIREFNET_MODEL.cache_filename)
     }
 
     pub(in crate::app) fn skyseg_model_path(&self) -> PathBuf {

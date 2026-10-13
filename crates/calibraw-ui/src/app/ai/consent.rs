@@ -33,7 +33,7 @@ impl CalibRawApp {
     fn describe_ai_job(&self, feature: AiFeature) -> AiJobDescription {
         match feature {
             AiFeature::Subject => {
-                let checkpoint = self.ai.birefnet_quality.model();
+                let checkpoint = calibraw_ai::ai_masks::BIREFNET_MODEL;
                 AiJobDescription {
                     label: "subject selection",
                     model: format!("BiRefNet (~{:.0} MB)", megabytes(checkpoint.bytes)),
@@ -44,11 +44,8 @@ impl CalibRawApp {
                         format!("{ARTIFACTS_URL}/briefnet"),
                     ),
                     details: format!(
-                        "{} quality uses {} with a {} × {} input. License: MIT.",
-                        self.ai.birefnet_quality.label(),
-                        checkpoint.checkpoint,
-                        checkpoint.input_height,
-                        checkpoint.input_width
+                        "{} runs locally with a {} × {} input. License: MIT.",
+                        checkpoint.checkpoint, checkpoint.input_height, checkpoint.input_width
                     ),
                     restore: None,
                 }
