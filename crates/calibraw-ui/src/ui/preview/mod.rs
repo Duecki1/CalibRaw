@@ -85,6 +85,7 @@ fn show_centered_preview_message(
 }
 
 mod canvas;
+mod handles;
 mod interaction;
 mod overlays;
 mod tools;

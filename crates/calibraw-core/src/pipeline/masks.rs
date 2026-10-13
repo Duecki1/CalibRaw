@@ -15,10 +15,11 @@ pub use content_dependencies::ContentDependencies;
 
 pub use effects::{
     params as effect_params, BlurEffectSettings, EdgeGlowEffectSettings, FogEffectSettings,
-    GlowEffectSettings, GrainEffectSettings, HalationEffectSettings, LensBlurEffectSettings,
-    LightRaysEffectSettings, MaskEffect, MaskEffectCategory, MaskEffectSettings,
-    MotionBlurEffectSettings, NeonEffectSettings, PixelateEffectSettings, RadialBlurEffectSettings,
-    RadialBlurMode, SmokeEffectSettings, TiltShiftEffectSettings, VignetteEffectSettings,
+    GlowEffectSettings, GrainEffectSettings, HalationEffectSettings, InitialEffectSettings,
+    LensBlurEffectSettings, LightRaysEffectSettings, MaskEffect, MaskEffectCategory,
+    MaskEffectSettings, MotionBlurEffectSettings, NeonEffectSettings, PixelateEffectSettings,
+    RadialBlurEffectSettings, RadialBlurMode, RelightEffectSettings, SmokeEffectSettings,
+    TiltShiftEffectSettings, VignetteEffectSettings,
 };
 
 mod brush;
@@ -207,6 +208,10 @@ impl MaskComponent {
 pub struct LocalMask {
     #[serde(flatten)]
     pub common: MaskCommon,
+    // migration: remove in v2.0.0. Masks saved before effect components, up to
+    // v1.0, carry one effect here instead of adjustments; `migrate_legacy_effect`
+    // turns it into a component when the mask is opened. Listed in
+    // `crate::migrations`.
     #[serde(default)]
     pub effect: MaskEffect,
     #[serde(default, skip_serializing_if = "MaskEffectSettings::is_default")]
@@ -313,7 +318,7 @@ impl EffectComponent {
         Self {
             effect,
             enabled: true,
-            settings: MaskEffectSettings::default(),
+            settings: MaskEffectSettings::initial(effect),
         }
     }
 
@@ -330,6 +335,7 @@ impl EffectComponent {
             MaskEffect::TiltShift => self.settings.tilt_shift.is_active(),
             MaskEffect::Glow => self.settings.glow.is_active(),
             MaskEffect::LightRays => self.settings.light_rays.is_active(),
+            MaskEffect::Relight => self.settings.relight.is_active(),
             MaskEffect::Neon => self.settings.neon.is_active(),
             MaskEffect::EdgeGlow => self.settings.edge_glow.is_active(),
             MaskEffect::Pixelate => self.settings.pixelate.is_active(),
@@ -381,18 +387,28 @@ impl MaskStack {
         self.has_fog_effect_matching(|settings| settings.depth_enabled)
     }
 
+    /// An active effect reads scene depth: depth fog or Relight.
+    pub fn has_scene_depth_effect(&self) -> bool {
+        self.has_depth_fog_effect()
+            || self.has_active_effect(|component| component.effect == MaskEffect::Relight)
+    }
+
     fn has_fog_effect_matching(&self, matches: impl Fn(&FogEffectSettings) -> bool) -> bool {
-        let active_fog = |component: &EffectComponent| {
-            component.effect == MaskEffect::Fog
-                && component.is_active()
-                && matches(&component.settings.fog)
-        };
-        self.global_effects.iter().any(active_fog)
+        self.has_active_effect(|component| {
+            component.effect == MaskEffect::Fog && matches(&component.settings.fog)
+        })
+    }
+
+    /// An active global effect, or an active effect of an enabled, visible mask,
+    /// including a mask's legacy single effect, satisfies `matches`.
+    fn has_active_effect(&self, matches: impl Fn(&EffectComponent) -> bool) -> bool {
+        let active = |component: &EffectComponent| component.is_active() && matches(component);
+        self.global_effects.iter().any(active)
             || self.masks.iter().any(|mask| {
                 mask.enabled
                     && mask.opacity > 0.0
-                    && (mask.effect_components.iter().any(active_fog)
-                        || active_fog(&EffectComponent {
+                    && (mask.effect_components.iter().any(active)
+                        || active(&EffectComponent {
                             effect: mask.effect,
                             enabled: true,
                             settings: mask.effect_settings,

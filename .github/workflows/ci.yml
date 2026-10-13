@@ -77,6 +77,9 @@ jobs:
       - name: Check UI code uses the shared controls
         run: cargo xtask ui-lint
 
+      - name: Check no migration of older files is due for removal
+        run: cargo xtask migrations
+
       - name: Build release artifacts
         env:
           CALIBRAW_DISCORD_APPLICATION_ID: ${{ secrets.CALIBRAW_DISCORD_APPLICATION_ID }}

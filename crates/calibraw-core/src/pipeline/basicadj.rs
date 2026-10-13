@@ -49,28 +49,9 @@ pub const MAX_POINT_CURVE_POINTS: usize = 16;
 
 #[derive(Clone, Copy, Debug, PartialEq, serde::Deserialize, serde::Serialize)]
 pub struct PointCurve {
-    #[serde(deserialize_with = "deserialize_point_curve_points")]
+    #[serde(deserialize_with = "crate::migrations::point_curve_slots::deserialize")]
     pub points: [[f32; 2]; MAX_POINT_CURVE_POINTS],
     pub len: u32,
-}
-
-// Older sidecars store eight slots, including unused points. Pad those slots
-// when loading while keeping the fixed-size representation used by the pipeline.
-fn deserialize_point_curve_points<'de, D>(
-    deserializer: D,
-) -> Result<[[f32; 2]; MAX_POINT_CURVE_POINTS], D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    let stored = <Vec<[f32; 2]> as serde::Deserialize>::deserialize(deserializer)?;
-    if stored.len() != 8 && stored.len() != MAX_POINT_CURVE_POINTS {
-        return Err(serde::de::Error::custom(
-            "expected 8 or 16 tone curve point slots",
-        ));
-    }
-    let mut points = [[1.0, 1.0]; MAX_POINT_CURVE_POINTS];
-    points[..stored.len()].copy_from_slice(&stored);
-    Ok(points)
 }
 
 impl PointCurve {
@@ -279,19 +260,6 @@ pub struct ExposureParams {
     #[serde(default)]
     pub sharpen_masking: f32,
 
-    #[serde(default)]
-    pub halation_amount: f32,
-    #[serde(default)]
-    pub grain_amount: f32,
-    pub glow_amount: f32,
-    pub glow_radius: f32,
-    pub glow_threshold: f32,
-    pub vignette_amount: f32,
-    pub vignette_midpoint: f32,
-    pub vignette_roundness: f32,
-    pub vignette_feather: f32,
-    pub vignette_highlights: f32,
-
     pub hsl_hue: [f32; 8],
     pub hsl_saturation: [f32; 8],
     pub hsl_luminance: [f32; 8],
@@ -372,16 +340,6 @@ impl Default for ExposureParams {
             sharpen_radius: default_sharpen_radius(),
             sharpen_detail: default_sharpen_detail(),
             sharpen_masking: 0.0,
-            halation_amount: 0.0,
-            grain_amount: 0.0,
-            glow_amount: 0.0,
-            glow_radius: 50.0,
-            glow_threshold: 60.0,
-            vignette_amount: 0.0,
-            vignette_midpoint: 50.0,
-            vignette_roundness: 0.0,
-            vignette_feather: 50.0,
-            vignette_highlights: 0.0,
             hsl_hue: [0.0; 8],
             hsl_saturation: [0.0; 8],
             hsl_luminance: [0.0; 8],

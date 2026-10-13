@@ -326,16 +326,21 @@ impl Preview {
                 point,
             );
             if source_uv_inside_image(uv) {
-                painter.circle_filled(point, 5.5, Color32::WHITE);
-                painter.circle_stroke(point, 7.5, Stroke::new(1.5, Color32::BLACK));
+                handles::paint_point(&painter, point, 5.5, Color32::WHITE);
             }
         }
 
         if let Some(line) = app.develop_ui.straighten_drag {
             let stroke = Stroke::new(2.0, Color32::WHITE);
             painter.line_segment([line.start, line.current], stroke);
-            painter.circle_filled(line.start, 4.0, Color32::WHITE);
-            painter.circle_filled(line.current, 4.0, Color32::WHITE);
+            for end in [line.start, line.current] {
+                handles::paint_point(
+                    &painter,
+                    end,
+                    handles::SECONDARY_POINT_RADIUS,
+                    Color32::WHITE,
+                );
+            }
         }
     }
 }

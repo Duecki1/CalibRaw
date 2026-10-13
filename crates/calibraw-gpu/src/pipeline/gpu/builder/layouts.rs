@@ -29,6 +29,12 @@ pub(in crate::pipeline::gpu) struct BindGroupLayouts {
     pub(in crate::pipeline::gpu) bgl_pixelate_blocks: wgpu::BindGroupLayout,
     pub(in crate::pipeline::gpu) bgl_adjust_creative: wgpu::BindGroupLayout,
     pub(in crate::pipeline::gpu) bgl_adjust_render: wgpu::BindGroupLayout,
+    pub(in crate::pipeline::gpu) bgl_image_light_accumulate: wgpu::BindGroupLayout,
+    pub(in crate::pipeline::gpu) bgl_image_light_resolve: wgpu::BindGroupLayout,
+    pub(in crate::pipeline::gpu) bgl_image_light_blur_horizontal: wgpu::BindGroupLayout,
+    pub(in crate::pipeline::gpu) bgl_image_light_blur_vertical: wgpu::BindGroupLayout,
+    pub(in crate::pipeline::gpu) bgl_relight_shadow_map: wgpu::BindGroupLayout,
+    pub(in crate::pipeline::gpu) bgl_scene_depth_guide: wgpu::BindGroupLayout,
 }
 
 pub(in crate::pipeline::gpu) fn create_bind_group_layouts(
@@ -57,22 +63,15 @@ pub(in crate::pipeline::gpu) fn create_bind_group_layouts(
             create_bind_group_layout(device, "bgl effects uniforms", &[buffer_entry(0)])
         });
 
-    let demosaic_start_for_programs = 1;
-    let demosaic_high_pass_count = match cfa_kind {
-        CfaKind::Bayer => 3,
-        CfaKind::XTrans => 7,
-    };
-    let dual_green_for_programs = demosaic_start_for_programs + demosaic_high_pass_count;
-    let dual_rgb_for_programs = dual_green_for_programs + 1;
-    let demosaic_finish_for_programs = dual_rgb_for_programs + 1;
-    let color_denoise_for_programs = demosaic_finish_for_programs + 1;
-    let tone_prepare_for_programs = color_denoise_for_programs + COLOR_DENOISE_ENTRY_POINTS.len();
-    let adjustment_prepare_for_programs = tone_prepare_for_programs + 4;
+    // A template's programs are in pass order; take each pass's layout from
+    // its planned position. Offsets from `demosaic_start_index` follow the
+    // CFA's own demosaic list in `assemble_passes`.
+    let plan = StageIndices::plan(cfa_kind);
     let reused_layout = |pass_index: usize| {
         program_template.map(|template| template.pipelines[pass_index].get_bind_group_layout(0))
     };
 
-    let bgl_highlights = reused_layout(0).unwrap_or_else(|| {
+    let bgl_highlights = reused_layout(plan.highlight_pass_index).unwrap_or_else(|| {
         create_bind_group_layout(
             device,
             "bgl highlights",
@@ -90,7 +89,7 @@ pub(in crate::pipeline::gpu) fn create_bind_group_layouts(
         )
     });
 
-    let bgl1 = reused_layout(demosaic_start_for_programs).unwrap_or_else(|| {
+    let bgl1 = reused_layout(plan.demosaic_start_index).unwrap_or_else(|| {
         create_bind_group_layout(
             device,
             "bgl1",
@@ -105,7 +104,7 @@ pub(in crate::pipeline::gpu) fn create_bind_group_layouts(
         )
     });
 
-    let bgl2 = reused_layout(demosaic_start_for_programs + 1).unwrap_or_else(|| {
+    let bgl2 = reused_layout(plan.demosaic_start_index + 1).unwrap_or_else(|| {
         create_bind_group_layout(
             device,
             "bgl2",
@@ -121,7 +120,7 @@ pub(in crate::pipeline::gpu) fn create_bind_group_layouts(
         )
     });
 
-    let bgl3 = reused_layout(demosaic_start_for_programs + 2).unwrap_or_else(|| {
+    let bgl3 = reused_layout(plan.demosaic_start_index + 2).unwrap_or_else(|| {
         create_bind_group_layout(
             device,
             "bgl3",
@@ -137,7 +136,7 @@ pub(in crate::pipeline::gpu) fn create_bind_group_layouts(
         )
     });
 
-    let bgl_dual_green = reused_layout(dual_green_for_programs).unwrap_or_else(|| {
+    let bgl_dual_green = reused_layout(plan.demosaic_dual_start_index).unwrap_or_else(|| {
         create_bind_group_layout(
             device,
             "bgl dual demosaic green",
@@ -152,7 +151,7 @@ pub(in crate::pipeline::gpu) fn create_bind_group_layouts(
         )
     });
 
-    let bgl_dual_rgb = reused_layout(dual_rgb_for_programs).unwrap_or_else(|| {
+    let bgl_dual_rgb = reused_layout(plan.demosaic_dual_start_index + 1).unwrap_or_else(|| {
         create_bind_group_layout(
             device,
             "bgl dual demosaic rgb",
@@ -169,7 +168,7 @@ pub(in crate::pipeline::gpu) fn create_bind_group_layouts(
     });
 
     let bgl4 = (matches!(cfa_kind, CfaKind::Bayer)
-        .then(|| reused_layout(demosaic_finish_for_programs))
+        .then(|| reused_layout(plan.demosaic_finish_index))
         .flatten())
     .unwrap_or_else(|| {
         create_bind_group_layout(
@@ -190,7 +189,7 @@ pub(in crate::pipeline::gpu) fn create_bind_group_layouts(
     });
 
     let bgl_xtrans_derivatives = (matches!(cfa_kind, CfaKind::XTrans)
-        .then(|| reused_layout(demosaic_start_for_programs + 4))
+        .then(|| reused_layout(plan.demosaic_start_index + 4))
         .flatten())
     .unwrap_or_else(|| {
         create_bind_group_layout(
@@ -210,7 +209,7 @@ pub(in crate::pipeline::gpu) fn create_bind_group_layouts(
     });
 
     let bgl_xtrans_homogeneity = (matches!(cfa_kind, CfaKind::XTrans)
-        .then(|| reused_layout(demosaic_start_for_programs + 5))
+        .then(|| reused_layout(plan.demosaic_start_index + 5))
         .flatten())
     .unwrap_or_else(|| {
         create_bind_group_layout(
@@ -231,7 +230,7 @@ pub(in crate::pipeline::gpu) fn create_bind_group_layouts(
     });
 
     let bgl_xtrans_accumulate = (matches!(cfa_kind, CfaKind::XTrans)
-        .then(|| reused_layout(demosaic_start_for_programs + 6))
+        .then(|| reused_layout(plan.demosaic_start_index + 6))
         .flatten())
     .unwrap_or_else(|| {
         create_bind_group_layout(
@@ -252,7 +251,7 @@ pub(in crate::pipeline::gpu) fn create_bind_group_layouts(
     });
 
     let bgl_xtrans_finish = (matches!(cfa_kind, CfaKind::XTrans)
-        .then(|| reused_layout(demosaic_finish_for_programs))
+        .then(|| reused_layout(plan.demosaic_finish_index))
         .flatten())
     .unwrap_or_else(|| {
         create_bind_group_layout(
@@ -271,7 +270,7 @@ pub(in crate::pipeline::gpu) fn create_bind_group_layouts(
         )
     });
 
-    let bgl_color_denoise = reused_layout(color_denoise_for_programs).unwrap_or_else(|| {
+    let bgl_color_denoise = reused_layout(plan.color_denoise_start_index).unwrap_or_else(|| {
         create_bind_group_layout(
             device,
             "bgl multiscale color denoise",
@@ -283,7 +282,7 @@ pub(in crate::pipeline::gpu) fn create_bind_group_layouts(
         )
     });
 
-    let bgl_tone_prepare = reused_layout(tone_prepare_for_programs).unwrap_or_else(|| {
+    let bgl_tone_prepare = reused_layout(plan.tone_prepare_pass_index).unwrap_or_else(|| {
         create_bind_group_layout(
             device,
             "bgl tone prepare",
@@ -297,7 +296,7 @@ pub(in crate::pipeline::gpu) fn create_bind_group_layouts(
         )
     });
 
-    let bgl_tone_blur = reused_layout(tone_prepare_for_programs + 1).unwrap_or_else(|| {
+    let bgl_tone_blur = reused_layout(plan.tone_blur_pass_index).unwrap_or_else(|| {
         create_bind_group_layout(
             device,
             "bgl tone guide blur",
@@ -309,7 +308,7 @@ pub(in crate::pipeline::gpu) fn create_bind_group_layouts(
         )
     });
 
-    let bgl_tone_reduce = reused_layout(tone_prepare_for_programs + 3).unwrap_or_else(|| {
+    let bgl_tone_reduce = reused_layout(plan.tone_reduce_pass_index).unwrap_or_else(|| {
         create_bind_group_layout(
             device,
             "bgl tone histogram reduction",
@@ -320,28 +319,29 @@ pub(in crate::pipeline::gpu) fn create_bind_group_layouts(
         )
     });
 
-    let bgl_adjust_prepare = reused_layout(adjustment_prepare_for_programs).unwrap_or_else(|| {
-        create_bind_group_layout(
-            device,
-            "bgl scene preparation",
-            &[
-                common_entries[0],
-                common_entries[1],
-                common_entries[2],
-                common_entries[3],
-                texture_entry(11, wgpu::TextureSampleType::Float { filterable: false }),
-                storage_texture_entry(21, work_format, wgpu::StorageTextureAccess::WriteOnly),
-                storage_buffer_entry(16, true),
-                texture_entry(17, wgpu::TextureSampleType::Float { filterable: false }),
-                storage_buffer_entry(20, true),
-                texture_array_entry(27, wgpu::TextureSampleType::Float { filterable: true }),
-                sampler_entry(28),
-                storage_buffer_entry(33, true),
-            ],
-        )
-    });
+    let bgl_adjust_prepare =
+        reused_layout(plan.adjustment_prepare_pass_index).unwrap_or_else(|| {
+            create_bind_group_layout(
+                device,
+                "bgl scene preparation",
+                &[
+                    common_entries[0],
+                    common_entries[1],
+                    common_entries[2],
+                    common_entries[3],
+                    texture_entry(11, wgpu::TextureSampleType::Float { filterable: false }),
+                    storage_texture_entry(21, work_format, wgpu::StorageTextureAccess::WriteOnly),
+                    storage_buffer_entry(16, true),
+                    texture_entry(17, wgpu::TextureSampleType::Float { filterable: false }),
+                    storage_buffer_entry(20, true),
+                    texture_array_entry(27, wgpu::TextureSampleType::Float { filterable: true }),
+                    sampler_entry(28),
+                    storage_buffer_entry(33, true),
+                ],
+            )
+        });
 
-    let bgl_adjust_tone = reused_layout(adjustment_prepare_for_programs + 1).unwrap_or_else(|| {
+    let bgl_adjust_tone = reused_layout(plan.adjustment_tone_pass_index).unwrap_or_else(|| {
         create_bind_group_layout(
             device,
             "bgl scene tone edits",
@@ -360,7 +360,7 @@ pub(in crate::pipeline::gpu) fn create_bind_group_layouts(
     });
 
     let bgl_adjust_effects =
-        reused_layout(adjustment_prepare_for_programs + 3).unwrap_or_else(|| {
+        reused_layout(plan.adjustment_effects_pass_index).unwrap_or_else(|| {
             create_bind_group_layout(
                 device,
                 "bgl scene presence and color",
@@ -376,7 +376,7 @@ pub(in crate::pipeline::gpu) fn create_bind_group_layouts(
             )
         });
 
-    let bgl_mask_blur = reused_layout(adjustment_prepare_for_programs + 5).unwrap_or_else(|| {
+    let bgl_mask_blur = reused_layout(plan.mask_blur_start_index).unwrap_or_else(|| {
         create_bind_group_layout(
             device,
             "bgl mask Blur diffusion",
@@ -391,23 +391,22 @@ pub(in crate::pipeline::gpu) fn create_bind_group_layouts(
         )
     });
 
-    let bgl_glow_prepare =
-        reused_layout(adjustment_prepare_for_programs + 10).unwrap_or_else(|| {
-            create_bind_group_layout(
-                device,
-                "bgl Glow source extraction",
-                &[
-                    buffer_entry(0),
-                    texture_entry(24, wgpu::TextureSampleType::Float { filterable: false }),
-                    storage_texture_entry(31, work_format, wgpu::StorageTextureAccess::WriteOnly),
-                    texture_array_entry(27, wgpu::TextureSampleType::Float { filterable: true }),
-                    sampler_entry(28),
-                    storage_buffer_entry(33, true),
-                ],
-            )
-        });
+    let bgl_glow_prepare = reused_layout(plan.glow_prepare_pass_index).unwrap_or_else(|| {
+        create_bind_group_layout(
+            device,
+            "bgl Glow source extraction",
+            &[
+                buffer_entry(0),
+                texture_entry(24, wgpu::TextureSampleType::Float { filterable: false }),
+                storage_texture_entry(31, work_format, wgpu::StorageTextureAccess::WriteOnly),
+                texture_array_entry(27, wgpu::TextureSampleType::Float { filterable: true }),
+                sampler_entry(28),
+                storage_buffer_entry(33, true),
+            ],
+        )
+    });
 
-    let bgl_glow_blur = reused_layout(adjustment_prepare_for_programs + 11).unwrap_or_else(|| {
+    let bgl_glow_blur = reused_layout(plan.glow_blur_start_index).unwrap_or_else(|| {
         create_bind_group_layout(
             device,
             "bgl Glow diffusion",
@@ -419,22 +418,21 @@ pub(in crate::pipeline::gpu) fn create_bind_group_layouts(
         )
     });
 
-    let bgl_pixelate_blocks =
-        reused_layout(adjustment_prepare_for_programs + 16).unwrap_or_else(|| {
-            create_bind_group_layout(
-                device,
-                "bgl Pixelate block averages",
-                &[
-                    buffer_entry(0),
-                    texture_entry(24, wgpu::TextureSampleType::Float { filterable: false }),
-                    storage_texture_entry(37, work_format, wgpu::StorageTextureAccess::WriteOnly),
-                    storage_buffer_entry(33, true),
-                ],
-            )
-        });
+    let bgl_pixelate_blocks = reused_layout(plan.pixelate_blocks_pass_index).unwrap_or_else(|| {
+        create_bind_group_layout(
+            device,
+            "bgl Pixelate block averages",
+            &[
+                buffer_entry(0),
+                texture_entry(24, wgpu::TextureSampleType::Float { filterable: false }),
+                storage_texture_entry(37, work_format, wgpu::StorageTextureAccess::WriteOnly),
+                storage_buffer_entry(33, true),
+            ],
+        )
+    });
 
     let bgl_adjust_creative =
-        reused_layout(adjustment_prepare_for_programs + 17).unwrap_or_else(|| {
+        reused_layout(plan.adjustment_creative_pass_index).unwrap_or_else(|| {
             create_bind_group_layout(
                 device,
                 "bgl creative glow",
@@ -447,9 +445,12 @@ pub(in crate::pipeline::gpu) fn create_bind_group_layouts(
                     sampler_entry(28),
                     storage_buffer_entry(33, true),
                     texture_array_entry(34, wgpu::TextureSampleType::Float { filterable: true }),
-                    texture_entry(35, wgpu::TextureSampleType::Float { filterable: false }),
+                    texture_entry(35, wgpu::TextureSampleType::Float { filterable: true }),
                     storage_buffer_entry(16, true),
                     texture_entry(36, wgpu::TextureSampleType::Float { filterable: false }),
+                    texture_entry(45, wgpu::TextureSampleType::Float { filterable: true }),
+                    texture_entry(46, wgpu::TextureSampleType::Float { filterable: false }),
+                    texture_entry(48, wgpu::TextureSampleType::Float { filterable: false }),
                 ],
             )
         });
@@ -474,7 +475,109 @@ pub(in crate::pipeline::gpu) fn create_bind_group_layouts(
         ],
     );
     let bgl_adjust_render =
-        reused_layout(adjustment_prepare_for_programs + 18).unwrap_or(bgl_adjust_render);
+        reused_layout(plan.adjustment_render_pass_index).unwrap_or(bgl_adjust_render);
+
+    let image_light_write = |binding| {
+        storage_texture_entry(
+            binding,
+            IMAGE_LIGHT_FORMAT,
+            wgpu::StorageTextureAccess::WriteOnly,
+        )
+    };
+    let image_light_read = |binding| {
+        texture_entry(
+            binding,
+            wgpu::TextureSampleType::Float { filterable: false },
+        )
+    };
+    let bgl_image_light_accumulate = reused_layout(plan.image_light_accumulate_pass_index)
+        .unwrap_or_else(|| {
+            create_bind_group_layout(
+                device,
+                "bgl image-light accumulation",
+                &[
+                    buffer_entry(0),
+                    texture_entry(11, wgpu::TextureSampleType::Float { filterable: false }),
+                    storage_buffer_entry(20, true),
+                    storage_buffer_entry(38, false),
+                ],
+            )
+        });
+    let bgl_image_light_resolve = reused_layout(plan.image_light_resolve_pass_index)
+        .unwrap_or_else(|| {
+            create_bind_group_layout(
+                device,
+                "bgl image-light resolve",
+                &[
+                    buffer_entry(0),
+                    storage_buffer_entry(16, false),
+                    storage_buffer_entry(38, false),
+                    image_light_write(39),
+                ],
+            )
+        });
+    let bgl_image_light_blur_horizontal = reused_layout(plan.image_light_blur_pass_index)
+        .unwrap_or_else(|| {
+            create_bind_group_layout(
+                device,
+                "bgl image-light horizontal blur",
+                &[
+                    buffer_entry(0),
+                    image_light_read(40),
+                    image_light_write(41),
+                    image_light_write(42),
+                ],
+            )
+        });
+    let bgl_image_light_blur_vertical = reused_layout(plan.image_light_blur_pass_index + 1)
+        .unwrap_or_else(|| {
+            create_bind_group_layout(
+                device,
+                "bgl image-light vertical blur",
+                &[
+                    buffer_entry(0),
+                    image_light_read(43),
+                    image_light_read(44),
+                    image_light_write(39),
+                ],
+            )
+        });
+
+    let bgl_relight_shadow_map =
+        reused_layout(plan.relight_shadow_map_pass_index).unwrap_or_else(|| {
+            create_bind_group_layout(
+                device,
+                "bgl relight shadow map",
+                &[
+                    buffer_entry(0),
+                    storage_buffer_entry(33, true),
+                    texture_entry(35, wgpu::TextureSampleType::Float { filterable: true }),
+                    storage_texture_entry(
+                        47,
+                        RELIGHT_SHADOW_MAP_FORMAT,
+                        wgpu::StorageTextureAccess::WriteOnly,
+                    ),
+                ],
+            )
+        });
+
+    let bgl_scene_depth_guide =
+        reused_layout(plan.scene_depth_guide_pass_index).unwrap_or_else(|| {
+            create_bind_group_layout(
+                device,
+                "bgl scene-depth guide",
+                &[
+                    buffer_entry(0),
+                    texture_entry(24, wgpu::TextureSampleType::Float { filterable: false }),
+                    texture_entry(35, wgpu::TextureSampleType::Float { filterable: true }),
+                    storage_texture_entry(
+                        49,
+                        SCENE_DEPTH_GUIDE_FORMAT,
+                        wgpu::StorageTextureAccess::WriteOnly,
+                    ),
+                ],
+            )
+        });
 
     BindGroupLayouts {
         bgl_scene_tone,
@@ -503,5 +606,11 @@ pub(in crate::pipeline::gpu) fn create_bind_group_layouts(
         bgl_pixelate_blocks,
         bgl_adjust_creative,
         bgl_adjust_render,
+        bgl_image_light_accumulate,
+        bgl_image_light_resolve,
+        bgl_image_light_blur_horizontal,
+        bgl_image_light_blur_vertical,
+        bgl_relight_shadow_map,
+        bgl_scene_depth_guide,
     }
 }

@@ -1,4 +1,7 @@
-use super::{effect_card, effect_color, effect_details, float_param_slider, pattern_seed};
+use super::{
+    effect_card, effect_color, effect_details, float_param_slider, image_lights_toggle,
+    pattern_seed,
+};
 use crate::pipeline::{effect_params::fog, FogEffectSettings, MaskEffect};
 use crate::ui::components::feathered_range::{
     self, EndEdit, FeatheredRange, RangeEdit, RangeHandle, RangePoints,
@@ -183,6 +186,8 @@ pub(crate) fn show(
                 changed |= fog_onset(ui, settings);
             }
             changed |= effect_color(ui, "fog-color-picker", &mut settings.color, fog::COLOR);
+            changed |= float_param_slider(ui, &mut settings.light_glow, fog::LIGHT_GLOW);
+            changed |= image_lights_toggle(ui, &mut settings.image_lights);
             changed |= effect_details(ui, "Atmosphere details", |ui| {
                 let mut changed = false;
                 if settings.depth_enabled {

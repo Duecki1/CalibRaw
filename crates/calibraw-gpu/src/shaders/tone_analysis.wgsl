@@ -187,3 +187,204 @@ fn tone_reduce_histogram(@builtin(global_invocation_id) gid: vec3<u32>) {
     tone_stats_out.percentiles_0_field = vec4<f32>(p005_field, p05_field, p50_field, p95_field);
     tone_stats_out.percentiles_1_field = vec4<f32>(p995_field, max(p995_field - p005_field, 1.0), f32(total), 0.0);
 }
+
+// Image lights: light sources in the photograph (lamps, lit windows, signs)
+// for effects that scatter light, such as Fog's Image lights.
+//
+// `accumulate_image_lights` sums each cell of a coarse full-image grid
+// (Common::image_light_grid) in one-stop brightness bands of unexposed
+// scene-linear Rec.2020, measured by the strongest channel so saturated neon
+// counts as fully as white light. Export tiles add their cores to the same
+// grid during the tone prepass, so every tile later sees the lights of the
+// whole image. Once the tone statistics are reduced, `resolve_image_lights`
+// keeps the light of bands well above both the scene's median and the median
+// of the cell's surroundings: a lamp outshines its neighbourhood, while a
+// bright sky, fog or white wall does not. What counts as a light therefore
+// depends on the scene, not on exposure, which the receiving effect applies.
+// Two separable Gaussians then spread it into a halo with a tight core and a
+// wide tail.
+
+const IMAGE_LIGHT_BANDS: u32 = 16u;
+// Band b holds EVs in [IMAGE_LIGHT_BAND_MIN_EV + b, ... + b + 1); brighter and
+// darker pixels join the top and bottom bands.
+const IMAGE_LIGHT_BAND_MIN_EV: f32 = -6.0;
+// A light is at least this far above the scene's median ...
+const IMAGE_LIGHT_ABOVE_MEDIAN_EV: f32 = 2.5;
+// ... and this far above the median of the surrounding cells.
+const IMAGE_LIGHT_ABOVE_SURROUNDINGS_EV: f32 = 3.0;
+// Surrounding cells on each side of a cell.
+const IMAGE_LIGHT_SURROUNDINGS: i32 = 3;
+// Width of the ramp from no light to full light, in stops.
+const IMAGE_LIGHT_RAMP_EV: f32 = 2.0;
+// Halo core and tail: standard deviations as fractions of the grid's longer
+// edge, and the tail's share of the light.
+const IMAGE_LIGHT_CORE_SIGMA: f32 = 0.012;
+const IMAGE_LIGHT_TAIL_SIGMA: f32 = 0.06;
+const IMAGE_LIGHT_TAIL_SHARE: f32 = 0.45;
+
+struct ImageLightCell {
+    // Summed colour (xyz) and pixel count (w) of each band.
+    bands: array<vec4<f32>, IMAGE_LIGHT_BANDS>,
+}
+
+@group(0) @binding(38) var<storage, read_write> image_light_cells: array<ImageLightCell>;
+@group(0) @binding(39) var image_light_out: texture_storage_2d<rgba16float, write>;
+@group(0) @binding(40) var image_light_in: texture_2d<f32>;
+@group(0) @binding(41) var image_light_core_out: texture_storage_2d<rgba16float, write>;
+@group(0) @binding(42) var image_light_tail_out: texture_storage_2d<rgba16float, write>;
+@group(0) @binding(43) var image_light_core_in: texture_2d<f32>;
+@group(0) @binding(44) var image_light_tail_in: texture_2d<f32>;
+
+fn image_light_cell_index(cell: vec2<u32>) -> u32 {
+    return cell.y * Common::IMAGE_LIGHT_GRID_LONG + cell.x;
+}
+
+// Global pixels whose centres fall in grid cells [cell, cell + 1) along one axis.
+fn image_light_pixel_span(cell: u32, cells: u32, full: u32) -> vec2<i32> {
+    let scale = f32(full) / f32(cells);
+    return vec2<i32>(
+        i32(ceil(f32(cell) * scale - 0.5)),
+        i32(ceil(f32(cell + 1u) * scale - 0.5)),
+    );
+}
+
+@compute @workgroup_size(8, 8, 1)
+fn accumulate_image_lights(@builtin(global_invocation_id) gid: vec3<u32>) {
+    let grid = Common::image_light_grid();
+    if gid.x >= grid.x || gid.y >= grid.y { return; }
+    let span_x = image_light_pixel_span(gid.x, grid.x, Common::camera_uniforms.full_width);
+    let span_y = image_light_pixel_span(gid.y, grid.y, Common::camera_uniforms.full_height);
+    // Only this tile's core counts, so overlapping tile halos add nothing twice.
+    let bounds = vec4<i32>(Common::camera_uniforms.tone_histogram_bounds);
+    let origin = Common::tile_origin();
+    let tile_end = origin + vec2<i32>(
+        i32(Common::camera_uniforms.width),
+        i32(Common::camera_uniforms.height),
+    );
+    let lo = max(max(vec2<i32>(span_x.x, span_y.x), bounds.xy), origin);
+    let hi = min(min(vec2<i32>(span_x.y, span_y.y), bounds.zw), tile_end);
+    if any(hi <= lo) { return; }
+
+    var bands: array<vec4<f32>, IMAGE_LIGHT_BANDS>;
+    for (var y = lo.y; y < hi.y; y = y + 1) {
+        for (var x = lo.x; x < hi.x; x = x + 1) {
+            let rgb = max(tone_unexposed_working_at(vec2<i32>(x, y) - origin), vec3<f32>(0.0));
+            let strongest = max(rgb.r, max(rgb.g, rgb.b));
+            let ev = log2(max(strongest, 1e-9) / ToneCommon::SCENE_MIDDLE_GREY);
+            let band = u32(clamp(ev - IMAGE_LIGHT_BAND_MIN_EV, 0.0, f32(IMAGE_LIGHT_BANDS - 1u)));
+            bands[band] = bands[band] + vec4<f32>(rgb, 1.0);
+        }
+    }
+    // Tiles are dispatched one after another, so each cell has one writer.
+    let index = image_light_cell_index(gid.xy);
+    for (var band = 0u; band < IMAGE_LIGHT_BANDS; band = band + 1u) {
+        image_light_cells[index].bands[band] += bands[band];
+    }
+}
+
+// Median EV of the cells around `cell`, from their band counts.
+fn image_light_surroundings_ev(cell: vec2<i32>, grid: vec2<i32>) -> f32 {
+    var counts: array<f32, IMAGE_LIGHT_BANDS>;
+    var total = 0.0;
+    for (var dy = -IMAGE_LIGHT_SURROUNDINGS; dy <= IMAGE_LIGHT_SURROUNDINGS; dy = dy + 1) {
+        for (var dx = -IMAGE_LIGHT_SURROUNDINGS; dx <= IMAGE_LIGHT_SURROUNDINGS; dx = dx + 1) {
+            let neighbour = cell + vec2<i32>(dx, dy);
+            if any(neighbour < vec2<i32>(0)) || any(neighbour >= grid) { continue; }
+            let index = image_light_cell_index(vec2<u32>(neighbour));
+            for (var band = 0u; band < IMAGE_LIGHT_BANDS; band = band + 1u) {
+                let count = image_light_cells[index].bands[band].w;
+                counts[band] = counts[band] + count;
+                total = total + count;
+            }
+        }
+    }
+    var cumulative = 0.0;
+    for (var band = 0u; band < IMAGE_LIGHT_BANDS; band = band + 1u) {
+        cumulative = cumulative + counts[band];
+        if cumulative >= 0.5 * total {
+            return IMAGE_LIGHT_BAND_MIN_EV + f32(band) + 0.5;
+        }
+    }
+    return IMAGE_LIGHT_BAND_MIN_EV + f32(IMAGE_LIGHT_BANDS) - 0.5;
+}
+
+@compute @workgroup_size(8, 8, 1)
+fn resolve_image_lights(@builtin(global_invocation_id) gid: vec3<u32>) {
+    let grid = Common::image_light_grid();
+    if gid.x >= grid.x || gid.y >= grid.y { return; }
+    let median = tone_stats_out.percentiles_0_field.z;
+    let surroundings = image_light_surroundings_ev(vec2<i32>(gid.xy), vec2<i32>(grid));
+    let threshold = max(
+        median + IMAGE_LIGHT_ABOVE_MEDIAN_EV,
+        surroundings + IMAGE_LIGHT_ABOVE_SURROUNDINGS_EV,
+    );
+    let index = image_light_cell_index(gid.xy);
+    var light = vec3<f32>(0.0);
+    var count = 0.0;
+    for (var band = 0u; band < IMAGE_LIGHT_BANDS; band = band + 1u) {
+        let ev = IMAGE_LIGHT_BAND_MIN_EV + f32(band) + 0.5;
+        let share = smoothstep(threshold, threshold + IMAGE_LIGHT_RAMP_EV, ev);
+        let sums = image_light_cells[index].bands[band];
+        light += sums.xyz * share;
+        count += sums.w;
+    }
+    // Mean emitted light over the cell.
+    textureStore(image_light_out, vec2<i32>(gid.xy), vec4<f32>(light / max(count, 1.0), 1.0));
+}
+
+fn image_light_gaussian(offset: f32, sigma: f32) -> f32 {
+    return exp(-0.5 * offset * offset / (sigma * sigma)) / (sigma * 2.5066282746);
+}
+
+// One axis of both Gaussians. No light comes from beyond the frame, so taps
+// outside the grid add nothing and the kernels keep their full weight.
+fn image_light_blur(
+    source: texture_2d<f32>,
+    pos: vec2<i32>,
+    axis: vec2<i32>,
+    cells: i32,
+    sigma: f32,
+) -> vec3<f32> {
+    let reach = i32(ceil(3.0 * sigma));
+    var sum = vec3<f32>(0.0);
+    for (var offset = -reach; offset <= reach; offset = offset + 1) {
+        let tap = pos + axis * offset;
+        let along = dot(tap, axis);
+        if along < 0 || along >= cells { continue; }
+        sum += textureLoad(source, tap, 0).xyz * image_light_gaussian(f32(offset), sigma);
+    }
+    return sum;
+}
+
+fn image_light_sigmas() -> vec2<f32> {
+    let long = f32(Common::IMAGE_LIGHT_GRID_LONG);
+    return vec2<f32>(IMAGE_LIGHT_CORE_SIGMA, IMAGE_LIGHT_TAIL_SIGMA) * long;
+}
+
+@compute @workgroup_size(8, 8, 1)
+fn blur_image_lights_horizontal(@builtin(global_invocation_id) gid: vec3<u32>) {
+    let grid = Common::image_light_grid();
+    if gid.x >= grid.x || gid.y >= grid.y { return; }
+    let pos = vec2<i32>(gid.xy);
+    let sigmas = image_light_sigmas();
+    let axis = vec2<i32>(1, 0);
+    let cells = i32(grid.x);
+    textureStore(image_light_core_out, pos,
+        vec4<f32>(image_light_blur(image_light_in, pos, axis, cells, sigmas.x), 1.0));
+    textureStore(image_light_tail_out, pos,
+        vec4<f32>(image_light_blur(image_light_in, pos, axis, cells, sigmas.y), 1.0));
+}
+
+@compute @workgroup_size(8, 8, 1)
+fn blur_image_lights_vertical(@builtin(global_invocation_id) gid: vec3<u32>) {
+    let grid = Common::image_light_grid();
+    if gid.x >= grid.x || gid.y >= grid.y { return; }
+    let pos = vec2<i32>(gid.xy);
+    let sigmas = image_light_sigmas();
+    let axis = vec2<i32>(0, 1);
+    let cells = i32(grid.y);
+    let core = image_light_blur(image_light_core_in, pos, axis, cells, sigmas.x);
+    let tail = image_light_blur(image_light_tail_in, pos, axis, cells, sigmas.y);
+    textureStore(image_light_out, pos,
+        vec4<f32>(mix(core, tail, IMAGE_LIGHT_TAIL_SHARE), 1.0));
+}

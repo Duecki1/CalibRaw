@@ -100,16 +100,6 @@ pub mod adjustment {
     float_param!(TEXTURE, "Texture", -100.0, 100.0, 0.0, 1.0, 0, None);
     float_param!(CLARITY, "Clarity", -100.0, 100.0, 0.0, 1.0, 0, None);
     float_param!(DEHAZE, "Dehaze", -100.0, 100.0, 0.0, 1.0, 0, None);
-    float_param!(
-        HALATION,
-        "Halation",
-        0.0,
-        100.0,
-        0.0,
-        1.0,
-        0,
-        Some("Adds a warm film halo around bright edges inside the mask.")
-    );
 }
 
 pub mod blur {
@@ -531,6 +521,90 @@ pub mod light_rays {
     );
 }
 
+pub mod relight {
+    use super::*;
+
+    float_param!(
+        AMOUNT,
+        "Amount",
+        0.0,
+        100.0,
+        50.0,
+        0.5,
+        0,
+        Some("Controls the brightness of the new light where it meets surfaces facing it."),
+    );
+    float_param!(
+        SOURCE_X, "Light X", -50.0, 150.0, 30.0, 1.0, 0,
+        Some("Places the light horizontally, as a percentage of the full image width. Values outside 0–100 place it beyond the frame."),
+    );
+    float_param!(
+        SOURCE_Y, "Light Y", -50.0, 150.0, 30.0, 1.0, 0,
+        Some("Places the light vertically, as a percentage of the full image height. Values outside 0–100 place it beyond the frame."),
+    );
+    float_param!(
+        DEPTH, "Light depth", -100.0, 100.0, -30.0, 1.0, 0,
+        Some("Places the light in the scene: 0 is level with the nearest surface and 100 with the farthest. Negative values move it toward the camera; positive values behind a subject create rim light."),
+    );
+    float_param!(
+        REACH,
+        "Reach",
+        10.0,
+        400.0,
+        120.0,
+        1.0,
+        0,
+        Some("Sets how far the light carries before it fades, as a percentage of the image's shorter edge."),
+    );
+    float_param!(
+        SIZE,
+        "Light size",
+        0.0,
+        100.0,
+        35.0,
+        0.5,
+        0,
+        Some("Larger lights wrap further around forms, smooth small surface detail and soften shadow edges."),
+    );
+    float_param!(
+        SHADOWS,
+        "Shadows",
+        0.0,
+        100.0,
+        60.0,
+        0.5,
+        0,
+        Some("Controls how strongly nearer objects block the light and cast shadows."),
+    );
+    float_param!(
+        RELIEF,
+        "Relief",
+        0.0,
+        100.0,
+        50.0,
+        0.5,
+        0,
+        Some("Sets how deep the scene is taken to be. Higher values let shapes read from the depth map shade more strongly."),
+    );
+    float_param!(
+        AMBIENT,
+        "Ambient light",
+        0.0,
+        100.0,
+        100.0,
+        0.5,
+        0,
+        Some("Lower values dim the photo's existing light so the new light reads as the key light. 100 keeps it unchanged."),
+    );
+    color_param!(
+        COLOR,
+        "Color",
+        "Relight color",
+        [1.0, 0.93, 0.84],
+        "Choose the color of the new light.",
+    );
+}
+
 pub mod neon {
     use super::*;
 
@@ -865,6 +939,16 @@ pub mod fog {
         0,
         Some("Chooses a different fog pattern that stays fixed between preview and export."),
     );
+    float_param!(
+        LIGHT_GLOW,
+        "Light glow",
+        0.0,
+        100.0,
+        50.0,
+        0.5,
+        0,
+        Some("Makes the fog glow around Relight and Light Rays lights, brightest when looking toward a light through the fog."),
+    );
     color_param!(
         COLOR,
         "Color",
@@ -946,6 +1030,16 @@ pub mod smoke {
         1.0,
         0,
         Some("Chooses a different smoke pattern that stays fixed between preview and export."),
+    );
+    float_param!(
+        LIGHT_GLOW,
+        "Light glow",
+        0.0,
+        100.0,
+        50.0,
+        0.5,
+        0,
+        Some("Makes the smoke glow where Relight and Light Rays lights reach it."),
     );
     color_param!(
         COLOR,

@@ -1,5 +1,17 @@
 const LIGHT_RAY_PI: f32 = 3.141592653589793;
 
+// Packed parameter lanes (effect_lanes.rs).
+const LIGHT_RAYS_AMOUNT_LANE: u32 = 0u;
+const LIGHT_RAYS_LENGTH_LANE: u32 = 1u;
+const LIGHT_RAYS_SOURCE_X_LANE: u32 = 2u;
+const LIGHT_RAYS_SOURCE_Y_LANE: u32 = 3u;
+const LIGHT_RAYS_COLOR_LANE: u32 = 4u;
+const LIGHT_RAYS_FADE_LANE: u32 = 7u;
+const LIGHT_RAYS_SPREAD_LANE: u32 = 8u;
+const LIGHT_RAYS_RAY_COUNT_LANE: u32 = 9u;
+const LIGHT_RAYS_VARIATION_LANE: u32 = 10u;
+const LIGHT_RAYS_SOFTNESS_LANE: u32 = 11u;
+
 fn light_ray_emission_at(uv: vec2<f32>, mask_index: u32) -> f32 {
     let layer = Common::mask_data[mask_index].point_color_meta.z;
     if layer == 0xffffffffu { return 1.0; }
@@ -142,32 +154,30 @@ fn apply_light_rays(pos: vec2<i32>, input_rgb: vec3<f32>) -> vec3<f32> {
         let state = Common::mask_data[index].metadata;
         if state.x == 0u || state.y == 0u
             || Common::mask_effect_id(state) != MASK_EFFECT_LIGHT_RAYS_ID { continue; }
-        let primary = Common::mask_data[index].adjust_0_field;
-        let secondary = Common::mask_data[index].adjust_1_field;
-        let tertiary = Common::mask_data[index].adjust_2_field;
-        let amount = clamp(primary.x / 100.0, 0.0, 1.0);
-        let reach = clamp(primary.y / 100.0, 0.0, 2.0);
+        let params = mask_effect_params(index);
+        let amount = clamp(mask_effect_lane(params, LIGHT_RAYS_AMOUNT_LANE) / 100.0, 0.0, 1.0);
+        let reach = clamp(mask_effect_lane(params, LIGHT_RAYS_LENGTH_LANE) / 100.0, 0.0, 2.0);
         if amount <= 1e-6 || reach <= 1e-6 { continue; }
-        let source_uv = primary.zw / 100.0;
+        let source_uv = mask_effect_lane_pair(params, LIGHT_RAYS_SOURCE_X_LANE) / 100.0;
         let radial_pixels = (output_uv - source_uv) * full_size;
         let distance = length(radial_pixels) / short_edge;
         if distance >= reach { continue; }
-        let fade = clamp(secondary.w / 100.0, 0.0, 1.0);
-        let softness = clamp(tertiary.w / 100.0, 0.0, 1.0);
-        let spread = clamp(tertiary.x, 0.0, 45.0);
+        let fade = clamp(mask_effect_lane(params, LIGHT_RAYS_FADE_LANE) / 100.0, 0.0, 1.0);
+        let softness = clamp(mask_effect_lane(params, LIGHT_RAYS_SOFTNESS_LANE) / 100.0, 0.0, 1.0);
+        let spread = clamp(mask_effect_lane(params, LIGHT_RAYS_SPREAD_LANE), 0.0, 45.0);
         let aperture = light_ray_path_energy(output_uv, source_uv, full_size, index, spread, softness);
         if aperture <= 1e-6 { continue; }
         // Placement translates the same shafts without reshuffling their
         // texture on every slider movement.
-        let variation = clamp(tertiary.z / 100.0, 0.0, 1.0);
-        let pattern = light_ray_angular_pattern(radial_pixels, 19u, tertiary.y,
-            variation, softness, spread);
+        let variation = clamp(mask_effect_lane(params, LIGHT_RAYS_VARIATION_LANE) / 100.0, 0.0, 1.0);
+        let pattern = light_ray_angular_pattern(radial_pixels, 19u,
+            mask_effect_lane(params, LIGHT_RAYS_RAY_COUNT_LANE), variation, softness, spread);
         let image_point = output_uv * full_size / short_edge;
         let density = mix(1.0, 0.80 + 0.32 * atmosphere_noise(
             image_point * 7.0 + vec2<f32>(13.1, 7.9),
         ), variation);
         let shaft = light_ray_scattering(distance, reach, 0.006, fade, pattern) * density;
-        let color = mask_effect_picker_color_to_working(secondary.xyz);
+        let color = mask_effect_picker_color_to_working(mask_effect_color(params, LIGHT_RAYS_COLOR_LANE));
         scattered += color * shaft * aperture * amount * 0.32;
     }
     // Restrained scene-linear scattering retains texture in bright areas; tone

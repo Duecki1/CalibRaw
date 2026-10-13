@@ -18,14 +18,17 @@ mod files;
 mod mask_assets;
 mod remove_assets;
 mod size_limits;
+use crate::migrations::{self, LegacyEffectSliders};
 pub use files::*;
 use mask_assets::*;
 use remove_assets::*;
 pub use size_limits::*;
 
-// First public schema for the "CalibRaw edit sidecar" format. Bump this for every incompatible
+// The newest schema of the "CalibRaw edit sidecar" format. Bump this for every incompatible
 // serialized layout change; pre-release AuRaw sidecars use a different format discriminator.
-pub const SIDECAR_SCHEMA_VERSION: u32 = 1;
+// Schema 2 shares the layout of schema 1 and adds the Relight effect; edits without it are
+// still written as schema 1 (`migrations::older_readers`).
+pub const SIDECAR_SCHEMA_VERSION: u32 = 2;
 pub const DEVELOPED_THUMBNAIL_CACHE_VERSION_SALT: u64 = 0x4155_5241_5700_0007;
 pub const SIDECAR_SUFFIX: &str = ".calibraw";
 /// The AI-denoise result saved next to a RAW. It is large derived data, so it
@@ -118,6 +121,7 @@ fn is_true(value: &bool) -> bool {
 
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct EditState {
+    #[serde(serialize_with = "migrations::older_readers::serialize_exposure")]
     pub exposure: ExposureParams,
     #[serde(default)]
     pub geometry: GeometryTransform,
@@ -222,6 +226,9 @@ const fn is_zero_u64(value: &u64) -> bool {
 struct SidecarHeader {
     format: String,
     schema_version: u32,
+    /// Collected in the same pass that reads the header.
+    #[serde(default)]
+    edits: LegacyEffectSliders,
 }
 
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
@@ -320,7 +327,10 @@ mod desktop;
 mod transfer;
 
 pub(crate) use transfer::is_manual_mask_kind;
-pub use transfer::{transfer_edits, AdjustmentCopySettings, AdjustmentPasteMode, EditSelection};
+pub use transfer::{
+    adjustment_group_is_edited, transfer_edits, AdjustmentCopySettings, AdjustmentPasteMode,
+    EditSelection,
+};
 
 pub use desktop::sidecar_path_for_raw;
 #[cfg(not(target_os = "android"))]
@@ -351,11 +361,12 @@ pub fn encode_with_review_and_editing_time(
     }
     synchronize_subject_refinement(&mut edits);
     validate_edit_state(&edits)?;
+    let schema_version = migrations::older_readers::schema_version(&edits, SIDECAR_SCHEMA_VERSION);
     let mask_assets = extract_mask_assets(&mut edits)?;
     let (remove_assets, remove_asset_refs) = extract_remove_assets(&mut edits)?;
     let document = SidecarDocument {
         format: SIDECAR_FORMAT.to_owned(),
-        schema_version: SIDECAR_SCHEMA_VERSION,
+        schema_version,
         edits,
         review,
         editing_time_ms,
@@ -381,11 +392,14 @@ fn decode_versioned_document(
     schema_version: u32,
 ) -> Result<(SidecarDocument, bool), SidecarError> {
     // Keep each future public schema's decoder and migration in its own match arm so an older
-    // layout can never be deserialized as the current schema by accident.
+    // layout can never be deserialized as the current schema by accident. Schemas 1 and 2 share
+    // one layout.
     match schema_version {
-        SIDECAR_SCHEMA_VERSION => serde_json::from_slice::<SidecarDocument>(bytes)
-            .map(|document| (document, false))
-            .map_err(|error| SidecarError::Invalid(format!("invalid sidecar JSON: {error}"))),
+        migrations::older_readers::V1_SCHEMA_VERSION | SIDECAR_SCHEMA_VERSION => {
+            serde_json::from_slice::<SidecarDocument>(bytes)
+                .map(|document| (document, false))
+                .map_err(|error| SidecarError::Invalid(format!("invalid sidecar JSON: {error}")))
+        }
         version if version > SIDECAR_SCHEMA_VERSION => Err(SidecarError::Unsupported(format!(
             "sidecar schema {version} is newer than supported schema {SIDECAR_SCHEMA_VERSION}"
         ))),
@@ -407,7 +421,9 @@ pub fn decode(bytes: &[u8]) -> Result<LoadedSidecar, SidecarError> {
         ));
     }
 
-    let (mut document, migrated) = decode_versioned_document(bytes, header.schema_version)?;
+    let (mut document, schema_migrated) = decode_versioned_document(bytes, header.schema_version)?;
+    // Mask indices still match the serialized masks here.
+    let edits_migrated = migrations::migrate_edits(&mut document.edits, header.edits);
     restore_mask_assets(
         &mut document.edits,
         &document.mask_assets,
@@ -436,7 +452,7 @@ pub fn decode(bytes: &[u8]) -> Result<LoadedSidecar, SidecarError> {
             ..document.review
         },
         editing_time_ms: document.editing_time_ms,
-        migrated,
+        migrated: schema_migrated || edits_migrated,
     })
 }
 

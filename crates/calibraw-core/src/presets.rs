@@ -10,10 +10,13 @@
 //! files and a damaged file never hides the others.
 
 use crate::file_ops::write_bytes_atomically;
-use crate::pipeline::{ExposureParams, MaskGeometry, MaskKind, MaskStack, MAX_LOCAL_MASKS};
+use crate::migrations::{self, LegacyEffectSliders};
+use crate::pipeline::{
+    AdjustmentGroup, ExposureParams, MaskGeometry, MaskKind, MaskStack, MAX_LOCAL_MASKS,
+};
 use crate::sidecar::{
-    default_edit_state, transfer_edits, validate_edit_state, AdjustmentPasteMode, EditSelection,
-    EditState,
+    adjustment_group_is_edited, default_edit_state, transfer_edits, validate_edit_state,
+    AdjustmentPasteMode, EditSelection, EditState,
 };
 use serde::{Deserialize, Serialize};
 use std::fmt;
@@ -22,8 +25,11 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 pub const PRESET_SUFFIX: &str = ".calibraw-preset";
-/// Bump for every incompatible change to the serialized layout.
-pub const PRESET_SCHEMA_VERSION: u32 = 1;
+/// The newest schema. Bump for every incompatible change to the serialized
+/// layout. Schema 2 shares the layout of schema 1 and adds the Relight effect;
+/// presets without it are still written as schema 1
+/// (`migrations::older_readers`).
+pub const PRESET_SCHEMA_VERSION: u32 = 2;
 pub const DEFAULT_PRESET_GROUP: &str = "User Presets";
 pub const MAX_PRESET_NAME_CHARS: usize = 64;
 /// Presets hold no image data, so anything larger is not a preset.
@@ -149,9 +155,10 @@ impl Preset {
 
     /// Applies the preset to `destination`.
     ///
-    /// Included settings overwrite the destination's. Masks and global
-    /// effects are added after the destination's own instead of replacing
-    /// them. Masks that depend on image content set `ai_masks_need_update`.
+    /// Included settings overwrite the destination's, the global effects of
+    /// the Effects group too. Masks are added after the destination's own
+    /// instead of replacing them. Masks that depend on image content set
+    /// `ai_masks_need_update`.
     pub fn apply_to(&self, destination: &mut EditState) {
         let without_masks = EditSelection {
             masks: false,
@@ -166,16 +173,33 @@ impl Preset {
         );
 
         let preset_masks = &self.edits.masks;
-        if preset_masks.masks.is_empty() && preset_masks.global_effects.is_empty() {
+        let added_effects = self.added_global_effects();
+        if preset_masks.masks.is_empty() && added_effects.is_empty() {
             return;
         }
         let masks = Arc::make_mut(&mut destination.masks);
         masks.masks.extend(preset_masks.masks.iter().cloned());
-        masks
-            .global_effects
-            .extend(preset_masks.global_effects.iter().cloned());
+        masks.global_effects.extend(added_effects.iter().cloned());
         destination.ai_masks_need_update |=
             !preset_masks.content_dependencies().is_empty() || masks.scene_depth_missing();
+    }
+
+    /// Global effects added next to the photo's own: those of a preset saved
+    /// while global effects belonged to the masks category. A preset with the
+    /// Effects group replaces the photo's global effects instead.
+    ///
+    /// migration: remove in v2.0.0, with the matching step in
+    /// [`Self::decode`]. Listed in `crate::migrations`.
+    fn added_global_effects(&self) -> &[crate::pipeline::EffectComponent] {
+        if self
+            .selection
+            .adjustment_groups
+            .contains(AdjustmentGroup::Effects)
+        {
+            &[]
+        } else {
+            &self.edits.masks.global_effects
+        }
     }
 
     // A quick preview shows the part of a preset that renders without reloading
@@ -193,41 +217,52 @@ impl Preset {
         exposure.ai_denoise_enabled = ai_denoise_enabled;
     }
 
-    /// Adds the preset's hand-placed masks and global effects to `masks` for a
-    /// quick preview. Masks with any AI component are left out, as are effects
-    /// that need a scene depth this photo does not have yet.
+    /// Applies the preset's hand-placed masks and global effects to `masks` for
+    /// a quick preview, as [`Self::apply_to`] would. Masks with any AI
+    /// component are left out. The photo keeps its own global effects when the
+    /// preset's need a scene depth this photo does not have yet.
     pub fn preview_masks_on(&self, masks: &mut MaskStack) {
-        if !self.selection.masks {
-            return;
-        }
         let preset_masks = &self.edits.masks;
-        masks.masks.extend(
-            preset_masks
-                .masks
-                .iter()
-                .filter(|mask| {
-                    mask.components
-                        .iter()
-                        .all(|component| crate::sidecar::is_manual_mask_kind(component.kind))
-                })
-                .cloned(),
-        );
-        masks.masks.truncate(MAX_LOCAL_MASKS);
+        if self.selection.masks {
+            masks.masks.extend(
+                preset_masks
+                    .masks
+                    .iter()
+                    .filter(|mask| {
+                        mask.components
+                            .iter()
+                            .all(|component| crate::sidecar::is_manual_mask_kind(component.kind))
+                    })
+                    .cloned(),
+            );
+            masks.masks.truncate(MAX_LOCAL_MASKS);
+        }
 
+        let mut effects = if self
+            .selection
+            .adjustment_groups
+            .contains(AdjustmentGroup::Effects)
+        {
+            preset_masks.global_effects.clone()
+        } else {
+            let mut effects = masks.global_effects.clone();
+            effects.extend(self.added_global_effects().iter().cloned());
+            effects
+        };
         let depth_was_missing = masks.scene_depth_missing();
-        let own_effects = masks.global_effects.len();
-        masks
-            .global_effects
-            .extend(preset_masks.global_effects.iter().cloned());
+        std::mem::swap(&mut masks.global_effects, &mut effects);
         if !depth_was_missing && masks.scene_depth_missing() {
-            masks.global_effects.truncate(own_effects);
+            masks.global_effects = effects;
         }
     }
 
     pub fn encode(&self) -> Result<Vec<u8>, PresetError> {
         let document = PresetDocument {
             format: PRESET_FORMAT.to_owned(),
-            schema_version: PRESET_SCHEMA_VERSION,
+            schema_version: migrations::older_readers::schema_version(
+                &self.edits,
+                PRESET_SCHEMA_VERSION,
+            ),
             name: self.name.clone(),
             group: self.group.clone(),
             selection: self.selection,
@@ -251,10 +286,14 @@ impl Preset {
             return invalid("not a CalibRaw preset");
         }
         // Keep each future schema's decoder and migration in its own arm so an
-        // older layout is never read as the current one by accident.
-        let document = match header.schema_version {
-            PRESET_SCHEMA_VERSION => serde_json::from_slice::<PresetDocument>(bytes)
-                .map_err(|error| PresetError::Invalid(format!("invalid preset JSON: {error}")))?,
+        // older layout is never read as the current one by accident. Schemas 1
+        // and 2 share one layout.
+        let mut document = match header.schema_version {
+            migrations::older_readers::V1_SCHEMA_VERSION | PRESET_SCHEMA_VERSION => {
+                serde_json::from_slice::<PresetDocument>(bytes).map_err(|error| {
+                    PresetError::Invalid(format!("invalid preset JSON: {error}"))
+                })?
+            }
             version if version > PRESET_SCHEMA_VERSION => {
                 return Err(PresetError::Unsupported(format!(
                     "preset schema {version} is newer than supported schema {PRESET_SCHEMA_VERSION}; update CalibRaw to use it"
@@ -267,6 +306,18 @@ impl Preset {
             }
         };
 
+        // Only a preset with the Effects group carried Effects-card sliders.
+        let legacy = if document
+            .selection
+            .adjustment_groups
+            .contains(AdjustmentGroup::Effects)
+        {
+            header.edits
+        } else {
+            header.edits.without_global()
+        };
+        migrations::migrate_edits(&mut document.edits, legacy);
+
         // Rebuild through `new` so a hand-edited file gets the same filtering
         // as a preset created in the app.
         let mut preset = Self::new(
@@ -275,6 +326,18 @@ impl Preset {
             document.selection,
             &document.edits,
         )?;
+        // migration: remove in v2.0.0, with `added_global_effects`. Presets
+        // saved while global effects belonged to the masks category, up to
+        // v1.2, keep them and add them next to the photo's own.
+        if document.selection.masks
+            && !document
+                .selection
+                .adjustment_groups
+                .contains(AdjustmentGroup::Effects)
+        {
+            Arc::make_mut(&mut preset.edits.masks).global_effects =
+                document.edits.masks.global_effects.clone();
+        }
         validate_edit_state(&preset.edits)
             .map_err(|error| PresetError::Invalid(error.to_string()))?;
         preset.edits.exposure.sanitize_tone_curves();
@@ -289,6 +352,9 @@ impl Preset {
 struct PresetHeader {
     format: String,
     schema_version: u32,
+    /// Collected in the same pass that reads the header.
+    #[serde(default)]
+    edits: LegacyEffectSliders,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -378,12 +444,11 @@ pub fn portable_masks(masks: &MaskStack) -> MaskStack {
 /// Geometry, lens correction and RAW processing are photo-specific and left out.
 pub fn suggested_selection(edits: &EditState) -> EditSelection {
     let portable = portable_masks(&edits.masks);
-    let has_manual = !portable.global_effects.is_empty()
-        || portable
-            .masks
-            .iter()
-            .flat_map(|mask| &mask.components)
-            .any(|component| crate::sidecar::is_manual_mask_kind(component.kind));
+    let has_manual = portable
+        .masks
+        .iter()
+        .flat_map(|mask| &mask.components)
+        .any(|component| crate::sidecar::is_manual_mask_kind(component.kind));
     let has_ai = portable
         .masks
         .iter()
@@ -392,7 +457,7 @@ pub fn suggested_selection(edits: &EditState) -> EditSelection {
     EditSelection {
         adjustment_groups: crate::pipeline::AdjustmentGroup::ALL
             .into_iter()
-            .filter(|group| edits.exposure.group_is_edited(*group))
+            .filter(|group| adjustment_group_is_edited(edits, *group))
             .collect(),
         camera_profile: edits.camera_profile.is_some(),
         masks: has_manual,

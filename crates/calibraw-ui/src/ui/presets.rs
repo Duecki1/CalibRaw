@@ -765,7 +765,7 @@ fn show_adjustment_selection(
         moduwu_design::action_row(ui, |ui| {
             for group in AdjustmentGroup::ALL {
                 let included = selection.adjustment_groups.contains(group);
-                let edited = edits.exposure.group_is_edited(group);
+                let edited = crate::sidecar::adjustment_group_is_edited(edits, group);
                 let label = egui::RichText::new(group.label());
                 let label = if edited { label.strong() } else { label };
                 let help = if edited {
@@ -798,7 +798,7 @@ fn show_additional_selection(ui: &mut Ui, selection: &mut EditSelection) {
                 (
                     &mut selection.masks,
                     "Masks",
-                    "Fullscreen, linear and radial masks with their adjustments, and global effects such as fog. They are added next to each photo's own masks.",
+                    "Fullscreen, linear and radial masks with their adjustments. They are added next to each photo's own masks.",
                 ),
                 (
                     &mut selection.ai_masks,

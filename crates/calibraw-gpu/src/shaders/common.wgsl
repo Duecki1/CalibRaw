@@ -8,7 +8,7 @@ struct MaskData {
     adjust_0_field: vec4<f32>,
     adjust_1_field: vec4<f32>,
     adjust_2_field: vec4<f32>,
-    film_effects: vec4<f32>,
+    effect_options: vec4<f32>,
     curves: array<vec4<f32>, 9>,
     grade_shadows: vec4<f32>,
     grade_midtones: vec4<f32>,
@@ -123,12 +123,13 @@ struct PointColor {
 }
 
 struct EffectsUniforms {
+    // Texture, clarity, dehaze, reserved.
     presence: vec4<f32>,
-    creative_effects: vec4<f32>,
-    // Halation amount, grain amount, any active halation, reserved.
-    film_effects: vec4<f32>,
-    vignette: vec4<f32>,
-    vignette_options: vec4<f32>,
+    // Sharpening amount, radius, detail, masking.
+    sharpen: vec4<f32>,
+    // Radius of the shared Glow diffusion, reserved, reserved, reserved.
+    glow_diffusion: vec4<f32>,
+    // The frame and calibration of Vignette effects.
     vignette_frame: vec4<f32>,
     vignette_transform: vec4<f32>,
     vignette_dark_half_fit: vec4<f32>,
@@ -176,6 +177,21 @@ fn tile_origin() -> vec2<i32> {
 
 fn full_image_max() -> vec2<i32> {
     return vec2<i32>(i32(camera_uniforms.full_width) - 1, i32(camera_uniforms.full_height) - 1);
+}
+
+// Image lights (tone_analysis.wgsl): a coarse grid over the full image with
+// IMAGE_LIGHT_GRID_LONG cells along its longer edge, stored in textures and
+// a buffer sized for a square grid. Matches IMAGE_LIGHT_GRID_LONG in Rust.
+const IMAGE_LIGHT_GRID_LONG: u32 = 160u;
+
+// Cells of the image-light grid across and down the full image.
+fn image_light_grid() -> vec2<u32> {
+    let full = vec2<f32>(
+        f32(max(camera_uniforms.full_width, 1u)),
+        f32(max(camera_uniforms.full_height, 1u)),
+    );
+    let cells = round(f32(IMAGE_LIGHT_GRID_LONG) * full / max(full.x, full.y));
+    return clamp(vec2<u32>(cells), vec2<u32>(1u), vec2<u32>(IMAGE_LIGHT_GRID_LONG));
 }
 
 fn clamp_pos(pos: vec2<i32>) -> vec2<i32> {

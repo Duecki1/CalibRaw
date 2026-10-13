@@ -21,6 +21,14 @@ pub(super) const MASK_BLUR_SUPPORT: u32 = 72;
 pub(super) const FOCUS_BLUR_SUPPORT: u32 = 144;
 pub(super) const EDGE_GLOW_SUPPORT: u32 = 48;
 pub(super) const PIXELATE_SUPPORT: u32 = 96;
+// Depth-guided effects (Fog, Smoke, Relight) upsample scene depth with image
+// colours up to 3.5 depth texels away (fog_depth_at in atmosphere.wgsl). The
+// depth texture is 1024 texels across, so this covers images up to about
+// 13,500 pixels wide.
+pub(super) const SCENE_DEPTH_GUIDE_SUPPORT: u32 = 48;
+// EXPORT_CUMULATIVE_SUPPORT reserves Pixelate's support for the whole
+// post-blur creative pass.
+const _: () = assert!(SCENE_DEPTH_GUIDE_SUPPORT <= PIXELATE_SUPPORT);
 // Maximum footprint of Glow diffusion and independent Glow/Halation modules.
 // These sample the same local_effects input, so their support is not cumulative.
 pub(super) const GLOW_SUPPORT: u32 = 96;
@@ -118,6 +126,9 @@ pub fn required_export_tile_halo(exposure: &ExposureParams, masks: &MaskStack) -
     let post_blur_creative_support = [
         (MaskEffect::EdgeGlow, EDGE_GLOW_SUPPORT),
         (MaskEffect::Pixelate, PIXELATE_SUPPORT),
+        (MaskEffect::Fog, SCENE_DEPTH_GUIDE_SUPPORT),
+        (MaskEffect::Smoke, SCENE_DEPTH_GUIDE_SUPPORT),
+        (MaskEffect::Relight, SCENE_DEPTH_GUIDE_SUPPORT),
     ]
     .into_iter()
     .filter(|(effect, _)| effect_active(*effect))
@@ -126,24 +137,12 @@ pub fn required_export_tile_halo(exposure: &ExposureParams, masks: &MaskStack) -
     .unwrap_or(0);
     support += post_blur_creative_support;
 
-    // Legacy adjustment Halation shares the Glow diffusion passes. The Halation
-    // module samples the scene neighborhood independently; a Glow module may
-    // likewise sample with its own radius. All read the same local_effects input
-    // with at most GLOW_SUPPORT pixels of support, so reserve the maximum once,
-    // not the sum of their footprints or the number of active components.
-    let mask_halation_active = masks.masks.iter().any(|mask| {
-        mask.enabled
-            && mask.opacity > 0.0
-            && mask.adjustments_enabled
-            && mask.effect.uses_adjustments()
-            && mask.adjustments.halation_amount > 1e-6
-    });
-    if exposure.glow_amount.abs() > 1e-6
-        || effect_active(MaskEffect::Glow)
-        || effect_active(MaskEffect::Halation)
-        || exposure.halation_amount > 1e-6
-        || mask_halation_active
-    {
+    // Self-illuminating Glow shares the Glow diffusion passes. Highlight Glow
+    // and Halation sample the scene neighborhood with their own radius. All read
+    // the same local_effects input with at most GLOW_SUPPORT pixels of support,
+    // so reserve the maximum once, not the sum of their footprints or the number
+    // of active components.
+    if effect_active(MaskEffect::Glow) || effect_active(MaskEffect::Halation) {
         support += GLOW_SUPPORT;
     }
 

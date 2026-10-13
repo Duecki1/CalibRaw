@@ -11,15 +11,17 @@ pub(super) mod motion_blur;
 pub(super) mod neon;
 pub(super) mod pixelate;
 pub(super) mod radial_blur;
+pub(super) mod relight;
 pub(super) mod smoke;
 pub(super) mod tilt_shift;
 pub(super) mod vignette;
 
 pub(crate) use controls::EffectFrame;
-use controls::{effect_details, effect_position, pattern_seed, PositionSpace};
+use controls::{effect_details, effect_position, image_lights_toggle, pattern_seed, PositionSpace};
 
 use super::{egui, MaskEffect, Ui};
 use crate::pipeline::effect_params::ColorParamSpec;
+use crate::pipeline::{EffectComponent, InitialEffectSettings, MAX_EFFECT_COMPONENTS};
 
 pub(super) use crate::ui::components::adjustment_slider::{float_param_angle, float_param_slider};
 
@@ -32,11 +34,11 @@ fn effect_card<Settings>(
     body: impl FnOnce(&mut Ui, &mut Settings) -> bool,
 ) -> bool
 where
-    Settings: Default,
+    Settings: InitialEffectSettings,
 {
     let mut changed = false;
     let mut reset = false;
-    moduwu_design::content_card(ui, |ui| {
+    let card = moduwu_design::content_card(ui, |ui| {
         ui.push_id(effect.label(), |ui| {
             ui.spacing_mut().interact_size.y = ui.spacing().interact_size.y.max(26.0);
             if ui.ctx().content_rect().height() > ui.ctx().content_rect().width() {
@@ -56,6 +58,7 @@ where
                 }
             } else {
                 let mut header_clicked = false;
+                let ctx = ui.ctx().clone();
                 let mut header = egui::collapsing_header::CollapsingState::load_with_default_open(
                     ui.ctx(),
                     ui.make_persistent_id("expanded"),
@@ -114,12 +117,20 @@ where
                 if header_clicked {
                     header.toggle();
                 }
+                if header.is_open() {
+                    note_open_effect_card(&ctx, effect);
+                }
                 header.body_unindented(|ui| {
                     ui.add_enabled_ui(*enabled, |ui| changed |= body(ui, settings));
                 });
             }
         });
     });
+    moduwu_design::scroll_into_view_on_draw(
+        ui,
+        effect_card_scroll_target(effect),
+        card.response.rect,
+    );
     moduwu_design::card_gap(ui);
     changed
         | apply_card_action(
@@ -132,22 +143,96 @@ where
         )
 }
 
+/// The scroll-into-view target of `effect`'s card
+/// ([`moduwu_design::scroll_into_view_on_draw`]). Each effect has at most one
+/// card in the effect list the sidebar shows.
+pub(super) fn effect_card_scroll_target(effect: MaskEffect) -> egui::Id {
+    egui::Id::new("calibraw-effect-card-scroll").with(effect.shader_id())
+}
+
+fn open_effect_card_id(effect: MaskEffect) -> egui::Id {
+    egui::Id::new("calibraw-open-effect-card").with(effect.shader_id())
+}
+
+/// Records that `effect`'s card is drawn expanded in this pass. Each effect
+/// has at most one card in the effect list the sidebar shows.
+fn note_open_effect_card(ctx: &egui::Context, effect: MaskEffect) {
+    let pass = ctx.cumulative_pass_nr();
+    ctx.data_mut(|data| data.insert_temp(open_effect_card_id(effect), pass));
+}
+
+/// Whether the sidebar drew `effect`'s card expanded earlier in this pass.
+/// The desktop sidebar panel is drawn before the preview, so on-canvas
+/// controls can follow the card without a frame of lag.
+pub(crate) fn effect_card_open(ctx: &egui::Context, effect: MaskEffect) -> bool {
+    ctx.data(|data| data.get_temp::<u64>(open_effect_card_id(effect)))
+        == Some(ctx.cumulative_pass_nr())
+}
+
 fn apply_card_action<Settings>(
     action: super::adjustment_cards::CardAction,
     settings: &mut Settings,
 ) -> bool
 where
-    Settings: Default,
+    Settings: InitialEffectSettings,
 {
     use super::adjustment_cards::CardAction;
 
     match action {
         CardAction::None | CardAction::Toggle => false,
         CardAction::Reset => {
-            *settings = Settings::default();
+            *settings = Settings::initial();
             true
         }
     }
+}
+
+/// Effects that once were Effects-card sliders. The cards offer them as
+/// buttons that add the effect component.
+pub(super) const FINISH_EFFECTS: [MaskEffect; 4] = [
+    MaskEffect::Glow,
+    MaskEffect::Halation,
+    MaskEffect::Grain,
+    MaskEffect::Vignette,
+];
+
+/// One button per effect in `effects`, in a grid of up to two columns, that
+/// adds the effect to `components`. Returns the effect whose button was
+/// clicked. An effect already in `components`, or any effect once
+/// `components` is full, has its button disabled.
+pub(super) fn add_effect_buttons(
+    ui: &mut Ui,
+    effects: &[MaskEffect],
+    components: &[EffectComponent],
+) -> Option<MaskEffect> {
+    const COLUMNS: usize = 2;
+    let full = components.len() >= MAX_EFFECT_COMPONENTS;
+    let mut added = None;
+    ui.columns(effects.len().clamp(1, COLUMNS), |columns| {
+        let column_count = columns.len();
+        for (index, &effect) in effects.iter().enumerate() {
+            let ui = &mut columns[index % column_count];
+            let present = components
+                .iter()
+                .any(|component| component.effect == effect);
+            let label = format!("{}  {}", egui_phosphor::regular::PLUS, effect.label());
+            let response = ui
+                .add_enabled_ui(!present && !full, |ui| {
+                    moduwu_design::full_width_button(ui, label)
+                })
+                .inner
+                .on_hover_text(format!("Add {}", effect.label()))
+                .on_disabled_hover_text(if present {
+                    format!("{} is already added", effect.label())
+                } else {
+                    format!("At most {MAX_EFFECT_COMPONENTS} effects can be added")
+                });
+            if response.clicked() {
+                added = Some(effect);
+            }
+        }
+    });
+    added
 }
 
 /// Tooltip for an effect card's title.
@@ -176,6 +261,9 @@ pub(super) fn effect_description(effect: MaskEffect) -> Option<&'static str> {
         ),
         MaskEffect::LightRays => Some(
             "Place the source relative to the full image, then paint its openings. The mask shapes emitting regions; light shafts extend beyond them.",
+        ),
+        MaskEffect::Relight => Some(
+            "Add a light that shapes the scene in depth. Position it like Light Rays; scene depth is generated automatically. Turn on Shadows to let nearer objects block the light. The sky and anything the depth map places at its far limit stay unlit. The mask controls where the light falls.",
         ),
         MaskEffect::Neon => Some(
             "Trace image edges with colored light inside the mask. Original image keeps the photo visible behind the lines; the glow also stays inside the mask.",
@@ -449,6 +537,123 @@ mod tests {
     }
 
     #[test]
+    fn add_effect_buttons_add_only_missing_effects_and_fit_narrow_sidebars() {
+        let ctx = egui::Context::default();
+        crate::ui::theme::install(&ctx);
+        let components = [EffectComponent::new(MaskEffect::Grain)];
+        let width = 280.0;
+        let mut time = 0.0;
+        let mut render = |events| {
+            time += 0.25;
+            let mut added = None;
+            let mut used_width = 0.0;
+            let output = ctx.run_ui(
+                egui::RawInput {
+                    time: Some(time),
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(width, 240.0),
+                    )),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    added = add_effect_buttons(ui, &FINISH_EFFECTS, &components);
+                    used_width = ui.min_rect().width();
+                },
+            );
+            (output.shapes, added, used_width)
+        };
+        let click = |position, pressed| {
+            vec![
+                egui::Event::PointerMoved(position),
+                egui::Event::PointerButton {
+                    pos: position,
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ]
+        };
+        let label =
+            |effect: MaskEffect| format!("{}  {}", egui_phosphor::regular::PLUS, effect.label());
+
+        let (shapes, added, used_width) = render(Vec::new());
+        assert_eq!(added, None);
+        assert!(used_width <= width, "buttons overflow: {used_width}");
+        let glow = icon_rect(&shapes, &label(MaskEffect::Glow));
+        let grain = icon_rect(&shapes, &label(MaskEffect::Grain));
+
+        render(click(glow.center(), true));
+        assert_eq!(
+            render(click(glow.center(), false)).1,
+            Some(MaskEffect::Glow)
+        );
+        // Grain is already added.
+        render(click(grain.center(), true));
+        assert_eq!(render(click(grain.center(), false)).1, None);
+    }
+
+    #[test]
+    fn expanded_cards_report_open_in_the_same_pass_until_folded() {
+        let ctx = egui::Context::default();
+        crate::ui::theme::install(&ctx);
+        let mut settings = crate::pipeline::RelightEffectSettings::default();
+        let mut time = 0.0;
+        let mut render = |events| {
+            time += 0.25;
+            let mut open = false;
+            let output = ctx.run_ui(
+                egui::RawInput {
+                    time: Some(time),
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(400.0, 300.0),
+                    )),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    let (mut enabled, mut remove) = (true, false);
+                    effect_card(
+                        ui,
+                        MaskEffect::Relight,
+                        &mut settings,
+                        &mut enabled,
+                        &mut remove,
+                        |ui, _| {
+                            ui.label("Amount");
+                            false
+                        },
+                    );
+                    open = effect_card_open(ui.ctx(), MaskEffect::Relight);
+                    assert!(!effect_card_open(ui.ctx(), MaskEffect::Fog));
+                },
+            );
+            (output.shapes, open)
+        };
+        let (shapes, open) = render(Vec::new());
+        assert!(open);
+        let title = icon_rect(&shapes, "Relight").center();
+        let click = |pressed| {
+            vec![
+                egui::Event::PointerMoved(title),
+                egui::Event::PointerButton {
+                    pos: title,
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ]
+        };
+        render(click(true));
+        let (_, open) = render(click(false));
+        assert!(!open, "a folded card is not open");
+        let (_, open) = render(Vec::new());
+        assert!(!open);
+    }
+
+    #[test]
     fn each_effect_reset_preserves_other_effects_adjustments_and_mask_state() {
         fn modify(value: &mut serde_json::Value) {
             match value {
@@ -475,7 +680,7 @@ mod tests {
                     &mut mask.effect_settings.$field,
                 ));
                 let mut expected = before.clone();
-                expected.effect_settings.$field = Default::default();
+                expected.effect_settings.$field = InitialEffectSettings::initial();
                 assert_eq!(mask, expected, stringify!($field));
             }};
         }
@@ -487,6 +692,7 @@ mod tests {
         check!(edge_glow);
         check!(glow);
         check!(light_rays);
+        check!(relight);
         check!(neon);
         check!(pixelate);
         check!(fog);
@@ -494,6 +700,12 @@ mod tests {
         check!(grain);
         check!(halation);
         check!(vignette);
+
+        // Reset Glow returns to highlight mode, as a newly added Glow starts.
+        let mut glow = before.effect_settings.glow;
+        glow.self_illuminating = true;
+        apply_card_action(super::super::adjustment_cards::CardAction::Reset, &mut glow);
+        assert!(!glow.self_illuminating);
     }
 }
 

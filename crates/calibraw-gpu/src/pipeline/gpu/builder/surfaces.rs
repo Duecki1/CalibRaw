@@ -196,10 +196,12 @@ pub(in crate::pipeline::gpu) fn create_pipeline_surfaces(
         "calibraw full-image Light Rays emission atlas",
     );
 
+    // Stored depth that Fog and Smoke read. Relight's surface replaces it
+    // once allocated (`effect_inputs`).
     let scene_depth_texture = create_processing_texture(
         device,
         texture_size(SCENE_DEPTH_EDGE, SCENE_DEPTH_EDGE),
-        wgpu::TextureFormat::R16Float,
+        SCENE_DEPTH_FORMAT,
         wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
         "calibraw full-image scene depth",
     );
@@ -235,7 +237,9 @@ pub(in crate::pipeline::gpu) fn create_pipeline_surfaces(
         address_mode_w: wgpu::AddressMode::ClampToEdge,
         mag_filter: wgpu::FilterMode::Linear,
         min_filter: wgpu::FilterMode::Linear,
-        mipmap_filter: wgpu::MipmapFilterMode::Nearest,
+        // Single-level mask atlases are unaffected; Relight's scene-depth
+        // surface blends its mip levels for broad light sizes.
+        mipmap_filter: wgpu::MipmapFilterMode::Linear,
         ..Default::default()
     });
 

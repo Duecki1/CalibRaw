@@ -487,7 +487,7 @@ fn mask_effect_picker_catalog_is_grouped_and_alphabetized() {
         );
         assert!(labels.iter().all(|label| !label.is_empty()));
     }
-    assert_eq!(MaskEffect::ALL.len(), 16);
+    assert_eq!(MaskEffect::ALL.len(), 17);
 }
 
 #[test]
@@ -1209,18 +1209,6 @@ fn feather_preserves_a_thin_diagonal_subject() {
     let coverage = stack.rasterize_layer(0, 128, 128, 128, 128);
     assert_eq!(coverage[64 * 128 + 64], 255);
     assert_eq!(coverage[20 * 128 + 100], 0);
-}
-
-#[test]
-fn legacy_background_label_updates_without_overwriting_custom_names() {
-    let mut stack = MaskStack::default();
-    stack.add_mask(MaskKind::Background);
-    stack.masks[0].components[0].name = "Select Not Subject".into();
-    stack.add_mask(MaskKind::Background);
-    stack.masks[1].components[0].name = "Sky".into();
-    stack.ensure_selection();
-    assert_eq!(stack.masks[0].components[0].name, "Select Background");
-    assert_eq!(stack.masks[1].components[0].name, "Sky");
 }
 
 #[test]

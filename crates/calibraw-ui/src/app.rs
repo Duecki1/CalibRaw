@@ -57,6 +57,7 @@ use worker::spawn_ui_worker;
 
 mod decoded_raw_cache;
 mod develop_state;
+mod effect_handles;
 mod export_state;
 mod job_state;
 mod mask_properties;
@@ -68,6 +69,9 @@ mod preview_state;
 mod ui_state;
 pub(crate) use decoded_raw_cache::{DecodeKey, DecodedRaw, DecodedRawCache};
 pub(crate) use develop_state::*;
+pub(crate) use effect_handles::{
+    EffectComponentRef, EffectHandle, EffectHandleAction, EffectHandleEdit,
+};
 pub(crate) use export_state::*;
 pub(crate) use job_state::*;
 pub(crate) use mask_properties::{

@@ -12,6 +12,7 @@ mod error;
 mod icons;
 mod jni_contract;
 mod loc;
+mod migrations;
 mod process;
 mod rust_source;
 mod ui_lint;
@@ -61,6 +62,10 @@ fn run() -> Result<()> {
             jni_contract::run()
         }
         "loc" => loc::run(rest),
+        "migrations" => {
+            ensure_no_extra_args(&rest, "migrations")?;
+            migrations::run()
+        }
         "ui-lint" => ui_lint::run(rest),
         "build-android" => android::build_android(rest),
         "build-android-libraw" => android::build_android_libraw(rest),
@@ -85,6 +90,7 @@ pub(crate) fn print_help() {
            arch-check                       check crate dependency boundaries\n\
            jni-contract                     check Rust JNI exports and calls against Java\n\
            loc [--json PATH] [REPO...]      count production, test and build lines\n\
+           migrations                       list migrations of older files; fail when one is due\n\
            ui-lint [--suggest]              find bypasses of shared Moduwu controls\n\
            baseline-run LABEL [--filter F]  capture UI review screenshots into\n\
                                             $CALIBRAW_BASELINE_DIR/<date>-<rev>-LABEL\n\

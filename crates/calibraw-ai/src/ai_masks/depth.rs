@@ -180,7 +180,7 @@ fn depth_mask_with_spec(
         spec.model.name,
         started.elapsed().as_secs_f64()
     ));
-    restore_depth(
+    let mut restored = restore_depth(
         &raw,
         output_width,
         output_height,
@@ -188,7 +188,14 @@ fn depth_mask_with_spec(
         width,
         height,
         spec.format,
-    )
+    )?;
+    let started = std::time::Instant::now();
+    restored.align_edges(image)?;
+    calibraw_core::diagnostics::record(format!(
+        "AI depth edges aligned to the {width}x{height} photo in {:.3}s",
+        started.elapsed().as_secs_f64()
+    ));
+    Ok(quantize_depth(&restored.depth))
 }
 
 fn depth_input(pixels: Vec<f32>, spec: DepthInferenceSpec) -> Result<Tensor<f32>> {
@@ -265,6 +272,28 @@ fn normalize_depth(pixels: &[f32]) -> Result<Vec<f32>> {
         .collect())
 }
 
+/// Normalized depth (near 0, far 1) enlarged to the photo from a prediction
+/// `model_width` pixels across, without the letterbox.
+struct RestoredDepth {
+    model_width: u32,
+    depth: Vec<f32>,
+}
+
+impl RestoredDepth {
+    /// Aligns the depth's edges with `photo`, the image it was predicted from
+    /// (`depth_refine`).
+    fn align_edges(&mut self, photo: &ImageBuffer<Rgba<u8>, Vec<u8>>) -> Result<()> {
+        let (width, height) = photo.dimensions();
+        depth_refine::align_depth_edges(
+            &mut self.depth,
+            photo.as_raw(),
+            width,
+            height,
+            self.model_width,
+        )
+    }
+}
+
 fn restore_depth(
     raw: &[f32],
     output_width: u32,
@@ -273,7 +302,7 @@ fn restore_depth(
     target_width: u32,
     target_height: u32,
     format: DepthFormat,
-) -> Result<Vec<u8>> {
+) -> Result<RestoredDepth> {
     let image = ImageBuffer::<Luma<f32>, _>::from_raw(output_width, output_height, raw.to_vec())
         .context("invalid depth image")?;
     let (x0, y0, x1, y1) = box_rect.output_rect(output_width, output_height);
@@ -292,15 +321,21 @@ fn restore_depth(
             normalized.into_iter().map(|value| 1.0 - value).collect()
         }
     };
-    let cropped = ImageBuffer::<Luma<f32>, _>::from_raw(x1 - x0, y1 - y0, normalized)
+    let model = ImageBuffer::<Luma<f32>, _>::from_raw(x1 - x0, y1 - y0, normalized)
         .context("invalid cropped depth image")?;
-    let aligned =
-        image::imageops::resize(&cropped, target_width, target_height, FilterType::Triangle);
-    Ok(aligned
-        .into_raw()
-        .into_iter()
+    let depth = image::imageops::resize(&model, target_width, target_height, FilterType::Triangle)
+        .into_raw();
+    Ok(RestoredDepth {
+        model_width: model.width(),
+        depth,
+    })
+}
+
+fn quantize_depth(depth: &[f32]) -> Vec<u8> {
+    depth
+        .iter()
         .map(|depth| (depth.clamp(0.0, 1.0) * 255.0).round() as u8)
-        .collect())
+        .collect()
 }
 
 #[cfg(test)]
@@ -308,6 +343,29 @@ mod tests {
     use super::*;
 
     const EDGE: u32 = DESKTOP.model.input_edge;
+
+    /// The enlarged depth as stored, without edge alignment.
+    fn restored_bytes(
+        raw: &[f32],
+        output_width: u32,
+        output_height: u32,
+        box_rect: Letterbox,
+        target_width: u32,
+        target_height: u32,
+        format: DepthFormat,
+    ) -> Vec<u8> {
+        let restored = restore_depth(
+            raw,
+            output_width,
+            output_height,
+            box_rect,
+            target_width,
+            target_height,
+            format,
+        )
+        .unwrap();
+        quantize_depth(&restored.depth)
+    }
 
     #[cfg(not(target_os = "android"))]
     #[test]
@@ -416,12 +474,12 @@ mod tests {
         let rect = Letterbox::new(3, 3, 518);
         let raw = [100.0, 50.0, 0.0, 100.0, 50.0, 0.0, 100.0, 50.0, 0.0];
         assert_eq!(
-            restore_depth(&raw, 3, 3, rect, 3, 3, MOBILE.format).unwrap(),
+            restored_bytes(&raw, 3, 3, rect, 3, 3, MOBILE.format),
             [0, 128, 255, 0, 128, 255, 0, 128, 255]
         );
         let scaled: Vec<_> = raw.iter().map(|v| v * 1e-9).collect();
         assert_eq!(
-            restore_depth(&scaled, 3, 3, rect, 3, 3, MOBILE.format).unwrap(),
+            restored_bytes(&scaled, 3, 3, rect, 3, 3, MOBILE.format),
             [0, 128, 255, 0, 128, 255, 0, 128, 255]
         );
     }
@@ -449,7 +507,7 @@ mod tests {
                     raw[(y * edge + x) as usize] = if width > height { x } else { y } as f32;
                 }
             }
-            let mask = restore_depth(&raw, edge, edge, rect, width, height, MOBILE.format).unwrap();
+            let mask = restored_bytes(&raw, edge, edge, rect, width, height, MOBILE.format);
             assert_eq!(mask.len(), (width * height) as usize);
             assert!(mask[0] > 191);
             assert!(mask[mask.len() - 1] < 64);
@@ -502,7 +560,7 @@ mod tests {
                 raw[(y * EDGE + x) as usize] = x as f32;
             }
         }
-        let result = restore_depth(&raw, EDGE, EDGE, rectangle, 4, 2, DepthFormat::Da3).unwrap();
+        let result = restored_bytes(&raw, EDGE, EDGE, rectangle, 4, 2, DepthFormat::Da3);
         assert_eq!(result.len(), 8);
         assert!(result[0] < result[3]);
         assert_eq!(result[0], result[4]);
@@ -567,7 +625,7 @@ mod tests {
                 raw[(y * EDGE + x) as usize] = y as f32;
             }
         }
-        let result = restore_depth(&raw, EDGE, EDGE, rectangle, 2, 4, DepthFormat::Da3).unwrap();
+        let result = restored_bytes(&raw, EDGE, EDGE, rectangle, 2, 4, DepthFormat::Da3);
         assert_eq!(result.len(), 8);
         assert!(result[0] < 64);
         assert!(result[6] > 191);
