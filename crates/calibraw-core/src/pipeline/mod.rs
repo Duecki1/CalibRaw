@@ -37,7 +37,9 @@ pub use geometry::{
     transform_thumbnail_geometry_with_lens, CropAspectRatio, GeometryTransform, LensGeometryMap,
     LineAnalysisImage, StraightenEstimate,
 };
-pub use lens_correction::{apply_lens_correction, LensCorrection, ManualLensCorrection};
+pub use lens_correction::{
+    apply_lens_correction, LensCorrection, ManualLensCorrection, ManualLensModel,
+};
 pub use lensfun::{
     apply_lensfun_correction, lensfun_catalog, LensfunCatalog, LensfunCorrections, LensfunLens,
 };

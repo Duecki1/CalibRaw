@@ -455,6 +455,7 @@ pub(crate) struct DevelopUiState {
     /// Unfold and scroll to the Lens Corrections card when the sidebar next
     /// draws it.
     pub(crate) reveal_lens_card: bool,
+    pub(crate) manual_lens_dialog: Option<ManualLensDialog>,
     pub(crate) mask_section: MaskSection,
     pub(crate) effect_component: Option<crate::pipeline::MaskEffect>,
     pub(crate) mask_effect_component: Option<crate::pipeline::MaskEffect>,
@@ -467,6 +468,16 @@ pub(crate) struct DevelopUiState {
     pub(crate) mask_point_color: crate::ui::components::point_color::PointColorUiState,
     pub(crate) mask_point_color_tab: bool,
     pub(crate) mask_point_color_mask: Option<usize>,
+}
+
+/// The open manual lens-correction dialog.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct ManualLensDialog {
+    /// The values being adjusted; nothing is corrected until they are applied.
+    pub(crate) draft: ManualLensCorrection,
+    /// The manual correction already in the preview pixels. The live preview
+    /// shows the draft relative to it.
+    pub(crate) shown: ManualLensCorrection,
 }
 
 impl DevelopUiState {

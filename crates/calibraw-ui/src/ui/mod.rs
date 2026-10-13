@@ -5,6 +5,7 @@ pub(crate) mod develop_viewport;
 pub(crate) mod icons;
 pub(crate) mod layout;
 pub(crate) mod library;
+pub(crate) mod manual_lens_dialog;
 pub(crate) mod onboarding;
 pub(crate) mod presets;
 pub(crate) mod preview;
