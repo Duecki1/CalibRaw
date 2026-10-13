@@ -427,11 +427,18 @@ impl CalibRawApp {
                 self.masks.dirty_layers.fill(false);
                 self.develop.lens_correction = loaded.lens_correction;
                 self.develop.lens_correction_dirty = false;
+                self.ui.missing_lens_profile_prompt = None;
+                self.develop_ui.manual_lens_dialog = None;
+                if loaded.lens_profile_missing && !self.document_load_is_background() {
+                    if let Some(raw) = self.develop.original_raw.clone() {
+                        self.prompt_for_missing_lens_profile(&raw);
+                    }
+                }
                 #[cfg(target_os = "android")]
                 {
                     if self.develop.lens_correction.applied {
                         self.preview.lens_corrected_cache = match (
-                            self.develop.lens_correction.selected_lens(),
+                            self.develop.lens_correction.requested_correction(),
                             self.develop.loaded_raw.as_ref(),
                             self.develop.preview_raw.as_ref(),
                         ) {

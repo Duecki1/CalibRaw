@@ -67,6 +67,8 @@ pub(crate) struct PerformanceSettings {
     pub automatic_lens_correction: bool,
     pub automatic_lens_geometry: bool,
     pub automatic_lens_vignetting: bool,
+    /// Ask about manual correction when automatic correction finds no profile.
+    pub missing_lens_profile_prompt: bool,
     pub adjustment_copy_settings: crate::sidecar::AdjustmentCopySettings,
     #[cfg(target_os = "android")]
     pub(crate) last_android_library_folder: String,
@@ -173,6 +175,7 @@ impl Default for PerformanceSettings {
             automatic_lens_correction: true,
             automatic_lens_geometry: true,
             automatic_lens_vignetting: false,
+            missing_lens_profile_prompt: true,
             adjustment_copy_settings: crate::sidecar::AdjustmentCopySettings::default(),
             #[cfg(target_os = "android")]
             last_android_library_folder: String::new(),
@@ -513,6 +516,7 @@ mod tests {
             empty.automatic_lens_correction
                 && empty.automatic_lens_geometry
                 && !empty.automatic_lens_vignetting
+                && empty.missing_lens_profile_prompt
         );
 
         let settings: PerformanceSettings =
@@ -596,6 +600,7 @@ mod tests {
             automatic_lens_correction: false,
             automatic_lens_geometry: false,
             automatic_lens_vignetting: true,
+            missing_lens_profile_prompt: false,
             ..Default::default()
         };
         #[cfg(not(target_os = "android"))]
@@ -628,6 +633,7 @@ mod tests {
         assert!(restored.show_develop_navigation_labels);
         assert!(!restored.automatic_lens_correction);
         assert!(!restored.automatic_lens_geometry && restored.automatic_lens_vignetting);
+        assert!(!restored.missing_lens_profile_prompt);
         assert!(restored.develop_histogram_open);
         assert_eq!(
             restored.export_name_template,

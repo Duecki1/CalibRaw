@@ -134,35 +134,13 @@ pub(in crate::ui::library) fn render_uncached_developed_thumbnail(
     };
 
     let geometry = edits.geometry;
-    if edits.lens.enabled {
-        let catalog = lensfun_catalog(&preview_raw);
-        let selected = catalog
-            .lenses
-            .iter()
-            .find(|lens| lens.maker == edits.lens.maker && lens.model == edits.lens.model)
-            .cloned()
-            .or_else(|| {
-                (!edits.lens.maker.is_empty() || !edits.lens.model.is_empty()).then(|| {
-                    LensfunLens {
-                        maker: edits.lens.maker.clone(),
-                        model: edits.lens.model.clone(),
-                        ..LensfunLens::default()
-                    }
-                })
-            })
-            .or(catalog.auto_match)
-            .map(|lens| LensfunLens {
-                corrections: edits.lens.corrections(),
-                ..lens
-            });
-        if let Some(selected) = selected {
-            match apply_lensfun_correction(&preview_raw, &selected) {
-                Ok(corrected) => preview_raw = corrected,
-                Err(error) => log::warn!(
-                    "could not apply saved lens correction to library thumbnail {}: {error:#}",
-                    path.display()
-                ),
-            }
+    if let Some(correction) = edits.lens.requested_correction(&preview_raw) {
+        match apply_lens_correction(&preview_raw, &correction) {
+            Ok(corrected) => preview_raw = corrected,
+            Err(error) => log::warn!(
+                "could not apply saved lens correction to library thumbnail {}: {error:#}",
+                path.display()
+            ),
         }
     }
 

@@ -153,6 +153,8 @@ impl CalibRawApp {
                 white_balance_picker_active: false,
                 white_balance_picker_drag: None,
                 adjustment_section: AdjustmentSection::default(),
+                reveal_lens_card: false,
+                manual_lens_dialog: None,
                 mask_section: MaskSection::default(),
                 effect_component: None,
                 mask_effect_component: None,
@@ -287,6 +289,7 @@ impl CalibRawApp {
                         vignetting: performance.automatic_lens_vignetting,
                     },
                 },
+                missing_lens_profile_prompt: performance.missing_lens_profile_prompt,
                 export_name_template: performance.export_name_template.clone(),
                 #[cfg(not(target_os = "android"))]
                 discord_rich_presence: performance.discord_rich_presence,
@@ -318,6 +321,7 @@ impl CalibRawApp {
                 notice: None,
                 error_dialogs: ErrorDialogQueue::default(),
                 unsupported_file_dialog: None,
+                missing_lens_profile_prompt: None,
                 onboarding_step: (!performance.onboarding_completed)
                     .then_some(OnboardingStep::Appearance),
                 version_check: Default::default(),

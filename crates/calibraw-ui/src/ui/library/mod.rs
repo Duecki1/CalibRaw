@@ -3,11 +3,10 @@ use crate::app::CalibRawApp;
 use crate::app::LibraryExportDestination;
 #[cfg(not(target_os = "android"))]
 use crate::pipeline::{
-    apply_lensfun_correction, build_proxy, is_supported_image_path, lensfun_catalog,
-    load_raw_display_metadata, load_raw_file_with_profile_selection, load_raw_thumbnail,
-    load_raw_thumbnail_with_display_metadata, mask_atlas_edge, GpuParams, LensfunLens,
-    MaskRgbImage, MaskStack, PipelineOptions, ProcessingQuality, ProxySpec, RawGpuPipeline,
-    MAX_LOCAL_MASKS,
+    apply_lens_correction, build_proxy, is_supported_image_path, load_raw_display_metadata,
+    load_raw_file_with_profile_selection, load_raw_thumbnail,
+    load_raw_thumbnail_with_display_metadata, mask_atlas_edge, GpuParams, MaskRgbImage, MaskStack,
+    PipelineOptions, ProcessingQuality, ProxySpec, RawGpuPipeline, MAX_LOCAL_MASKS,
 };
 use crate::pipeline::{ExportFormat, ExportSettings, RawThumbnail};
 use eframe::egui::{self, Align2, Color32, FontId, Sense, Stroke, StrokeKind, Ui};

@@ -227,8 +227,14 @@ pub(super) fn run_document_load(job: DocumentLoadJob) -> Result<LoadedPreview, L
             );
         }
 
+        let lens_state_saved = saved_lens.is_some();
         let (lens_correction, full_raw) =
             apply_saved_lens_correction(&decoded, saved_lens, automatic_lens, &mut sidecar_warning);
+        let lens_profile_missing = !lens_state_saved
+            && automatic_lens.enabled
+            && lens_correction.catalog.available
+            && lens_correction.catalog.auto_match.is_none()
+            && !original_raw.is_display_referred_raster();
         restore_ai_denoise_result(&full_raw, &exposure, ai_denoise_result_path.as_deref())?;
         prepare_highlight_analysis(&full_raw, &exposure);
 
@@ -290,6 +296,7 @@ pub(super) fn run_document_load(job: DocumentLoadJob) -> Result<LoadedPreview, L
             ai_masks_need_update,
             mask_source,
             lens_correction,
+            lens_profile_missing,
             sidecar_target,
             document_generation,
             sidecar_warning,
@@ -677,10 +684,7 @@ fn apply_saved_lens_correction(
             );
         }
     }
-    let selection = lens_correction
-        .enabled
-        .then(|| lens_correction.selected_lens())
-        .flatten();
+    let selection = lens_correction.requested_correction();
     let full_raw = match selection {
         None => {
             lens_correction.enabled = false;
@@ -688,9 +692,7 @@ fn apply_saved_lens_correction(
         }
         Some(selection) => {
             let apply_started = Instant::now();
-            match decoded
-                .lens_corrected(&selection, |raw| apply_lensfun_correction(raw, &selection))
-            {
+            match decoded.lens_corrected(&selection, |raw| apply_lens_correction(raw, &selection)) {
                 Ok(corrected) => {
                     calibraw_core::diagnostics::record(format!(
                         "Lensfun full-resolution correction ready in {:.3}s",

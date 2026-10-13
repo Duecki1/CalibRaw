@@ -200,6 +200,8 @@ pub(crate) struct LoadedPreview {
     pub(super) ai_masks_need_update: bool,
     pub(super) mask_source: Option<MaskRgbImage>,
     pub(super) lens_correction: LensCorrectionState,
+    /// Automatic lens correction was due, but no profile matched the RAW.
+    pub(super) lens_profile_missing: bool,
     pub(super) sidecar_target: crate::sidecar::SidecarTarget,
     pub(super) document_generation: u64,
     pub(super) sidecar_warning: Option<String>,
@@ -281,8 +283,12 @@ pub(crate) struct PreviewState {
     #[cfg(target_os = "android")]
     pub(crate) lens_original_cache: Option<(PreviewQuality, Arc<LoadedRaw>)>,
     #[cfg(target_os = "android")]
-    pub(crate) lens_corrected_cache:
-        Option<(LensfunLens, PreviewQuality, Arc<LoadedRaw>, Arc<LoadedRaw>)>,
+    pub(crate) lens_corrected_cache: Option<(
+        LensCorrection,
+        PreviewQuality,
+        Arc<LoadedRaw>,
+        Arc<LoadedRaw>,
+    )>,
 }
 
 impl PreviewState {

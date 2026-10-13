@@ -3,7 +3,7 @@ use super::*;
 impl CalibRawApp {
     pub(in crate::app) fn advance_navigation_preview(&mut self, frame: &eframe::Frame) {
         let preview_masks = self.preview_mask_stack();
-        let preview_source = self.preview_source_raw();
+        let preview_source = self.develop.loaded_raw.clone();
         if self.ai_denoise_running() {
             return;
         }

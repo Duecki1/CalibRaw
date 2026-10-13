@@ -485,7 +485,7 @@ impl Sidebar {
             app.mark_pipeline_dirty();
         }
         if lens_changed {
-            app.mark_lens_correction_dirty();
+            app.lens_correction_edited();
         }
         if let Some(enabled) = ai_denoise_request {
             app.set_ai_denoise_enabled(enabled, frame);
