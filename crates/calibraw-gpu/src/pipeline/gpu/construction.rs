@@ -204,6 +204,12 @@ impl RawGpuPipeline {
         )
         .map_err(|_| anyhow!("GPU profile buffer size does not fit in u64"))?;
 
+        let ai_image = raw.ai_denoised_image();
+        let ai_cfa = params
+            .uses_ai_denoise()
+            .then(|| ai_image.as_ref().and_then(AiDenoisedImage::bayer_cfa))
+            .flatten();
+        let has_ai_cfa = ai_cfa.is_some();
         let resource_plan = build_gpu_resource_plan(GpuResourcePlanInput {
             width: raw.width,
             height: raw.height,
@@ -215,23 +221,19 @@ impl RawGpuPipeline {
             profile_buffer_bytes: profile_buffer_size_bytes,
             stage_uniform_buffer_bytes: GPU_STAGE_UNIFORM_ALLOCATION_BYTES,
             mask_data_buffer_bytes: MASK_DATA_SIZE_BYTES,
+            ai_cfa: has_ai_cfa,
         })?;
         let gpu_budget_reservation =
             GpuBudgetReservation::acquire(&resource_plan, gpu_working_set_limit_bytes())?;
 
         let gpu_error_scopes = GpuErrorScopes::push(device);
 
-        let ai_image = raw.ai_denoised_image();
-        let ai_cfa = params
-            .uses_ai_denoise()
-            .then(|| ai_image.as_ref().and_then(AiDenoisedImage::bayer_cfa))
-            .flatten();
-        let has_ai_cfa = ai_cfa.is_some();
         let (surfaces, has_ai_scene) =
             create_pipeline_surfaces(device, queue, raw, ai_cfa, &geometry)?;
         let has_raster_scene = raw.is_pre_demosaiced_raster();
 
-        let buffers = create_pipeline_buffers(device, params, &profile_gpu_data.words);
+        let camera = params.camera_for_raw_texture(has_ai_cfa);
+        let buffers = create_pipeline_buffers(device, params, &camera, &profile_gpu_data.words);
 
         let layouts = create_bind_group_layouts(
             device,
@@ -299,7 +301,7 @@ impl RawGpuPipeline {
             remove_composite_bind_group,
             remove_composite_params_buffer,
             uploaded_stage_uniforms: Mutex::new(UploadedStageUniforms {
-                camera: params.camera,
+                camera,
                 scene_tone: params.scene_tone,
                 effects: params.effects,
             }),

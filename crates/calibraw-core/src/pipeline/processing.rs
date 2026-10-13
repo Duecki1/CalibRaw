@@ -47,6 +47,7 @@ fn raw_controls_changed(before: &ExposureParams, after: &ExposureParams) -> bool
         || before.denoise_detail != after.denoise_detail
         || before.denoise_quality != after.denoise_quality
         || before.ai_denoise_enabled != after.ai_denoise_enabled
+        || before.ai_denoise_amount != after.ai_denoise_amount
         || before.demosaic_mode != after.demosaic_mode
         || before.dual_threshold != after.dual_threshold
         || before.frequency_chroma != after.frequency_chroma

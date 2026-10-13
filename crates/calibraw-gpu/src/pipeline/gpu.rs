@@ -68,7 +68,7 @@ pub use params::*;
 pub use remove_scene::*;
 use stage_params::*;
 
-const GPU_PARAMS_ABI_VERSION: u32 = 10;
+const GPU_PARAMS_ABI_VERSION: u32 = 11;
 const MASK_EFFECT_ID_SHIFT: u32 = 8;
 pub(super) const LIGHT_RAYS_MASK_ATLAS_EDGE: u32 = if cfg!(target_os = "android") {
     256
@@ -492,11 +492,16 @@ struct RawGpuPipelineBuild<'a> {
 impl RawGpuPipeline {
     fn upload_params(&self, queue: &wgpu::Queue, params: &GpuParams) {
         self.upload_scene_depth(queue, params.scene_depth.as_ref());
+        let camera = params.camera_for_raw_texture(self.has_ai_cfa);
         match self.uploaded_stage_uniforms.lock() {
             Ok(mut uploaded) => {
-                if bytemuck::bytes_of(&uploaded.camera) != params.camera_bytes() {
-                    queue.write_buffer(&self.camera_uniforms_buffer, 0, params.camera_bytes());
-                    uploaded.camera = params.camera;
+                if bytemuck::bytes_of(&uploaded.camera) != bytemuck::bytes_of(&camera) {
+                    queue.write_buffer(
+                        &self.camera_uniforms_buffer,
+                        0,
+                        bytemuck::bytes_of(&camera),
+                    );
+                    uploaded.camera = camera;
                 }
                 if bytemuck::bytes_of(&uploaded.scene_tone) != params.scene_tone_bytes() {
                     queue.write_buffer(
@@ -512,7 +517,7 @@ impl RawGpuPipeline {
                 }
             }
             Err(_) => {
-                queue.write_buffer(&self.camera_uniforms_buffer, 0, params.camera_bytes());
+                queue.write_buffer(&self.camera_uniforms_buffer, 0, bytemuck::bytes_of(&camera));
                 queue.write_buffer(
                     &self.scene_tone_uniforms_buffer,
                     0,
@@ -624,24 +629,17 @@ impl RawGpuPipeline {
         }
 
         let ai_image = raw.ai_denoised_image();
-        let raw_pixels = if self.has_ai_cfa {
-            ai_image
-                .as_ref()
-                .and_then(AiDenoisedImage::bayer_cfa)
-                .context("reusable AI-denoise pipeline received a tile without denoised CFA")?
+        let ai_cfa = if self.has_ai_cfa {
+            Some(
+                ai_image
+                    .as_ref()
+                    .and_then(AiDenoisedImage::bayer_cfa)
+                    .context("reusable AI-denoise pipeline received a tile without denoised CFA")?,
+            )
         } else {
-            raw.raw_pixels.as_slice()
+            None
         };
-        queue.write_texture(
-            copy_texture(&self.raw_texture),
-            bytemuck::cast_slice(raw_pixels),
-            wgpu::TexelCopyBufferLayout {
-                offset: 0,
-                bytes_per_row: Some(raw.width * 2),
-                rows_per_image: Some(raw.height),
-            },
-            texture_size(raw.width, raw.height),
-        );
+        upload_raw_texture(queue, &self.raw_texture, raw, ai_cfa)?;
         upload_color_texture(queue, &self.color_texture, raw);
         upload_black_texture(queue, &self.black_texture, raw);
         if self.has_ai_scene {

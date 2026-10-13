@@ -16,10 +16,26 @@ fn wb_for_cfa_channel(channel: u32) -> f32 {
     return Common::camera_uniforms.wb[min(channel, 3u)];
 }
 
+// The raw texture holds the original mosaic in R. With AI denoise on a Bayer
+// sensor it is Rg16Uint and G holds the AI-denoised mosaic in the same sensor
+// units, blended linearly before black/white normalization. Weight 1 selects
+// G exactly so full-strength AI output does not depend on mix() rounding.
+fn raw_value_at(p: vec2<i32>) -> f32 {
+    let texel = textureLoad(Common::raw_tex, p, 0);
+    let ai_weight = Common::camera_uniforms.ai_cfa_weight;
+    if ai_weight >= 1.0 {
+        return f32(texel.g);
+    }
+    if ai_weight > 0.0 {
+        return mix(f32(texel.r), f32(texel.g), ai_weight);
+    }
+    return f32(texel.r);
+}
+
 fn raw_sensor_at(pos: vec2<i32>) -> f32 {
     let p = Common::clamp_pos(pos);
     let channel = cfa_channel_at(p);
-    let raw = f32(textureLoad(Common::raw_tex, p, 0).r);
+    let raw = raw_value_at(p);
     let metadata_black = textureLoad(Common::black_tex, p, 0).x;
     let white = max(Common::camera_uniforms.white_levels[channel], metadata_black + 1.0);
     let sensor_range = max(white - metadata_black, 1.0);

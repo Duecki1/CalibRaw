@@ -1397,3 +1397,78 @@ fn specialized_bayer_modes_match_the_dynamic_shader_when_switching_modes() -> an
     }
     Ok(())
 }
+
+/// A Bayer pipeline with AI denoise holds both mosaics, so its strength renders
+/// like a RAW whose mosaic is their linear blend, without rebuilding. 0% and
+/// 100% must match the original and the AI mosaic exactly.
+#[test]
+fn ai_denoise_strength_renders_the_linear_blend_of_both_mosaics() -> anyhow::Result<()> {
+    let Some((device, queue)) = request_test_device() else {
+        return Ok(());
+    };
+    const EDGE: u32 = 32;
+    let source = opposed_highlight_consistency_raw(EDGE, EDGE);
+    // Every value is even, so the 50% blend is an exact integer mosaic.
+    let ai_pixels: Vec<u16> = source
+        .raw_pixels
+        .iter()
+        .enumerate()
+        .map(|(index, &value)| value / 4 * 2 + (index % 5) as u16 * 40)
+        .collect();
+    source.set_ai_denoised_image(crate::pipeline::AiDenoisedImage::new_bayer_cfa(
+        EDGE,
+        EDGE,
+        ai_pixels.clone(),
+    )?)?;
+    let exposure = |ai_denoise_enabled: bool, ai_denoise_amount: f32| ExposureParams {
+        ai_denoise_enabled,
+        ai_denoise_amount,
+        // Opposed inpainting estimates chroma from the AI mosaic on the CPU.
+        highlight_method: HighlightReconstructionMethod::Off,
+        ..Default::default()
+    };
+    let render_reference = |pixels: Vec<u16>| -> anyhow::Result<Vec<f32>> {
+        let mut raw = opposed_highlight_consistency_raw(EDGE, EDGE);
+        raw.raw_pixels = pixels;
+        let params = GpuParams::new(&exposure(false, 1.0), &MaskStack::default(), &raw);
+        let pipeline = RawGpuPipeline::new(
+            &device,
+            &queue,
+            &raw,
+            &params,
+            PipelineOptions::new(ProcessingQuality::High),
+        )?;
+        pipeline.recompute(&queue, &device, &params);
+        pipeline.read_display_linear_region_blocking(&device, &queue, 0, 0, EDGE, EDGE)
+    };
+    let blended = source
+        .raw_pixels
+        .iter()
+        .zip(&ai_pixels)
+        .map(|(&original, &ai)| (original + ai) / 2)
+        .collect();
+
+    let pipeline = RawGpuPipeline::new(
+        &device,
+        &queue,
+        &source,
+        &GpuParams::new(&exposure(true, 1.0), &MaskStack::default(), &source),
+        PipelineOptions::new(ProcessingQuality::High),
+    )?;
+    let render = |amount: f32| {
+        let params = GpuParams::new(&exposure(true, amount), &MaskStack::default(), &source);
+        pipeline.recompute(&queue, &device, &params);
+        pipeline.read_display_linear_region_blocking(&device, &queue, 0, 0, EDGE, EDGE)
+    };
+    assert_eq!(render(0.0)?, render_reference(source.raw_pixels.clone())?);
+    assert_eq!(render(1.0)?, render_reference(ai_pixels)?);
+    let half = render(0.5)?;
+    let expected = render_reference(blended)?;
+    let max_error = half
+        .iter()
+        .zip(&expected)
+        .map(|(actual, expected)| (actual - expected).abs())
+        .fold(0.0_f32, f32::max);
+    assert!(max_error <= 1e-5, "error={max_error}");
+    Ok(())
+}

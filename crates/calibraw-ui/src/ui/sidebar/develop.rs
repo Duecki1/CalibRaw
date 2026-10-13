@@ -498,9 +498,12 @@ impl Sidebar {
         changed
     }
 
+    /// `ai_strength_available` is whether the photo has an AI result that can
+    /// be blended with the original: a Bayer RAW whose denoised mosaic is loaded.
     pub(super) fn show_detail(
         ui: &mut Ui,
         exposure: &mut ExposureParams,
+        ai_strength_available: bool,
         foldable: bool,
     ) -> (bool, Option<bool>) {
         let mut changed = false;
@@ -516,6 +519,19 @@ impl Sidebar {
             ai_response.on_hover_text(
                 "Runs the pinned darktable-ai RawNIND model locally. Bayer uses joint denoise/demosaic; X-Trans uses the linear Rec.2020 variant.",
             );
+            if ai_strength_available && exposure.ai_denoise_enabled {
+                let mut strength_percent = exposure.ai_denoise_amount.clamp(0.0, 1.0) * 100.0;
+                if AdjustmentSlider::new("Strength", &mut strength_percent, 0.0..=100.0)
+                    .decimals(0)
+                    .step(1.0)
+                    .hover_text("Blends the AI-denoised RAW with the original RAW.")
+                    .reset_to(ExposureParams::default().ai_denoise_amount * 100.0)
+                    .show(ui)
+                {
+                    exposure.ai_denoise_amount = strength_percent / 100.0;
+                    changed = true;
+                }
+            }
             moduwu_design::section_separator(ui);
             moduwu_design::strong_with_help(
                 ui,

@@ -143,7 +143,11 @@ pub(super) fn pack_camera_params(ctx: &GpuParamContext<'_>) -> CameraUniforms {
         profile_flags: profile_layout.flags,
         ai_denoise_enabled: u32::from(exposure.ai_denoise_enabled),
         user_exposure_bits: exposure.exposure.to_bits(),
-        _pad_camera_0: 0,
+        ai_cfa_weight: if exposure.ai_denoise_enabled {
+            exposure.ai_denoise_amount.clamp(0.0, 1.0)
+        } else {
+            0.0
+        },
         _pad_camera_1: 0,
     }
 }

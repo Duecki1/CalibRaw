@@ -152,6 +152,7 @@ impl ExposureParams {
             denoise_detail,
             denoise_quality,
             ai_denoise_enabled,
+            ai_denoise_amount,
             demosaic_mode,
             dual_threshold,
             frequency_chroma,
@@ -221,6 +222,7 @@ impl ExposureParams {
                 self.denoise_detail = denoise_detail;
                 self.denoise_quality = denoise_quality;
                 self.ai_denoise_enabled = ai_denoise_enabled;
+                self.ai_denoise_amount = ai_denoise_amount;
                 self.sharpen_amount = sharpen_amount;
                 self.sharpen_radius = sharpen_radius;
                 self.sharpen_detail = sharpen_detail;
@@ -339,7 +341,7 @@ mod tests {
             (AdjustmentGroup::ToneCurve, "tone_curve tone_curve_red tone_curve_green tone_curve_blue"),
             (AdjustmentGroup::Color, "temperature tint hue saturation vibrance"),
             (AdjustmentGroup::ColorGrading, "color_grading"),
-            (AdjustmentGroup::Detail, "luminance_denoise chroma_denoise denoise_detail denoise_quality ai_denoise_enabled sharpen_amount sharpen_radius sharpen_detail sharpen_masking"),
+            (AdjustmentGroup::Detail, "luminance_denoise chroma_denoise denoise_detail denoise_quality ai_denoise_enabled ai_denoise_amount sharpen_amount sharpen_radius sharpen_detail sharpen_masking"),
             (AdjustmentGroup::Effects, "texture clarity dehaze halation_amount grain_amount glow_amount glow_radius glow_threshold vignette_amount vignette_midpoint vignette_roundness vignette_feather vignette_highlights"),
             (AdjustmentGroup::ColorMixer, "hsl_hue hsl_saturation hsl_luminance point_colors"),
         ];

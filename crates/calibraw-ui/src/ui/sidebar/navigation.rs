@@ -317,6 +317,15 @@ impl Sidebar {
         let mut ai_denoise_request = None;
         let white_balance_raw = app.develop.loaded_raw.clone();
         let white_balance_was_active = app.develop_ui.white_balance_picker_active;
+        // Matches the GPU pipeline: only a Bayer-mosaic AI result is blended.
+        // X-Trans and raster results are demosaiced RGB and always apply fully.
+        let ai_strength_available = app.develop.loaded_raw.as_deref().is_some_and(|raw| {
+            raw.cfa_kind == crate::pipeline::CfaKind::Bayer
+                && !raw.is_pre_demosaiced_raster()
+                && raw
+                    .ai_denoised_image()
+                    .is_some_and(|image| image.bayer_cfa().is_some())
+        });
         if layout == ScreenLayout::Vertical {
             match app.develop_ui.adjustment_section {
                 AdjustmentSection::Light => {
@@ -348,8 +357,12 @@ impl Sidebar {
                     );
                 }
                 AdjustmentSection::Detail => {
-                    let (detail_changed, request) =
-                        Self::show_detail(ui, &mut app.develop.exposure, false);
+                    let (detail_changed, request) = Self::show_detail(
+                        ui,
+                        &mut app.develop.exposure,
+                        ai_strength_available,
+                        false,
+                    );
                     changed |= detail_changed;
                     ai_denoise_request = request;
                 }
@@ -393,7 +406,8 @@ impl Sidebar {
                 &mut app.develop_ui.color_grade_tab,
                 true,
             );
-            let (detail_changed, request) = Self::show_detail(ui, &mut app.develop.exposure, true);
+            let (detail_changed, request) =
+                Self::show_detail(ui, &mut app.develop.exposure, ai_strength_available, true);
             changed |= detail_changed;
             ai_denoise_request = request;
             changed |= Self::show_presence(ui, &mut app.develop.exposure, true);
