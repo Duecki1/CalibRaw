@@ -79,17 +79,8 @@ impl CalibRawApp {
             .parent()
             .and_then(std::path::Path::parent)
             .map(|cache_root| cache_root.join("ai-denoise-results-v2"));
-        let Some(root) = root.filter(|root| root.is_dir()) else {
-            return;
-        };
-        let spawned = std::thread::Builder::new()
-            .name("calibraw-legacy-denoise-cleanup".to_owned())
-            .spawn(move || match std::fs::remove_dir_all(&root) {
-                Ok(()) => log::info!("removed legacy AI-denoise cache {}", root.display()),
-                Err(error) => log::warn!("could not remove {}: {error}", root.display()),
-            });
-        if let Err(error) = spawned {
-            log::warn!("could not start legacy AI-denoise cleanup: {error}");
+        if let Some(root) = root.filter(|root| root.is_dir()) {
+            Self::remove_retired_app_data(root, "legacy AI-denoise cache");
         }
     }
 

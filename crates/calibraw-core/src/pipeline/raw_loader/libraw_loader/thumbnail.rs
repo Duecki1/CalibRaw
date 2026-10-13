@@ -71,22 +71,21 @@ fn unpack_embedded_preview(
 ) -> Result<(ProcessedImage, i32, Option<RawDisplayMetadata>)> {
     let ctx = open_libraw(path)?;
     let display_metadata = display_metadata_from_context(&ctx).ok();
-    let with_metadata = |(image, orientation)| (image, orientation, display_metadata);
-    let Some(index) = smaller_covering_preview(&ctx, maximum_edge) else {
-        return unpack_preview(&ctx, None).map(with_metadata);
+    let (image, orientation) = match smaller_covering_preview(&ctx, maximum_edge) {
+        None => unpack_preview(&ctx, None)?,
+        Some(index) => match unpack_preview(&ctx, Some(index)) {
+            Ok(unpacked) => unpacked,
+            Err(error) => {
+                log::debug!(
+                    "smaller embedded preview {index} of {} failed, using the default: {error:#}",
+                    path.display()
+                );
+                // A failed unpack leaves the context describing that preview.
+                unpack_preview(&open_libraw(path)?, None)?
+            }
+        },
     };
-    match unpack_preview(&ctx, Some(index)) {
-        Ok(unpacked) => Ok(with_metadata(unpacked)),
-        Err(error) => {
-            log::debug!(
-                "smaller embedded preview {index} of {} failed, using the default: {error:#}",
-                path.display()
-            );
-            // A failed unpack leaves the context describing that preview.
-            let ctx = open_libraw(path)?;
-            unpack_preview(&ctx, None).map(with_metadata)
-        }
-    }
+    Ok((image, orientation, display_metadata))
 }
 
 /// Unpacks `thumbs_list[index]`, or LibRaw's default preview for `None`, and

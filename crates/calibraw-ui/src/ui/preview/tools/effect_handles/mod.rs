@@ -147,41 +147,33 @@ fn grab(ui: &Ui, id: egui::Id, center: Pos2, name: &str, value: String) -> egui:
 }
 
 /// Arrow presses on a focused handle this frame, as steps right and down.
-/// The keys are consumed so they do not also browse photos.
 fn arrow_steps(ui: &Ui, response: &egui::Response) -> egui::Vec2 {
-    use egui::{Key, Modifiers};
-    if !response.has_focus() {
-        return egui::Vec2::ZERO;
-    }
-    ui.input_mut(|input| {
-        let mut steps = egui::Vec2::ZERO;
-        // Shift first: an unmodified key also matches presses with Shift.
-        for (modifiers, scale) in [(Modifiers::SHIFT, FINE_STEP), (Modifiers::NONE, 1.0)] {
-            let mut presses = |key| input.count_and_consume_key(modifiers, key) as f32 * scale;
-            steps.x += presses(Key::ArrowRight);
-            steps.x -= presses(Key::ArrowLeft);
-            steps.y += presses(Key::ArrowDown);
-            steps.y -= presses(Key::ArrowUp);
-        }
-        steps
-    })
+    use egui::Key;
+    let presses = |key| key_steps(ui, response, key);
+    egui::vec2(
+        presses(Key::ArrowRight) - presses(Key::ArrowLeft),
+        presses(Key::ArrowDown) - presses(Key::ArrowUp),
+    )
 }
 
-/// Page Up presses minus Page Down presses on a focused handle this frame,
-/// Shift for fine steps.
+/// Page Up presses minus Page Down presses on a focused handle this frame.
 fn page_steps(ui: &Ui, response: &egui::Response) -> f32 {
-    use egui::{Key, Modifiers};
+    key_steps(ui, response, egui::Key::PageUp) - key_steps(ui, response, egui::Key::PageDown)
+}
+
+/// Presses of `key` on a focused handle this frame, a fifth of a step each
+/// with Shift. They are consumed so they do not also browse photos.
+fn key_steps(ui: &Ui, response: &egui::Response, key: egui::Key) -> f32 {
+    use egui::Modifiers;
     if !response.has_focus() {
         return 0.0;
     }
     ui.input_mut(|input| {
-        let mut steps = 0.0;
         // Shift first: an unmodified key also matches presses with Shift.
-        for (modifiers, scale) in [(Modifiers::SHIFT, FINE_STEP), (Modifiers::NONE, 1.0)] {
-            steps += input.count_and_consume_key(modifiers, Key::PageUp) as f32 * scale;
-            steps -= input.count_and_consume_key(modifiers, Key::PageDown) as f32 * scale;
-        }
-        steps
+        [(Modifiers::SHIFT, FINE_STEP), (Modifiers::NONE, 1.0)]
+            .into_iter()
+            .map(|(modifiers, scale)| input.count_and_consume_key(modifiers, key) as f32 * scale)
+            .sum()
     })
 }
 

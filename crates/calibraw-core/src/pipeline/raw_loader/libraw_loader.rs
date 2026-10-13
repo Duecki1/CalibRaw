@@ -208,14 +208,7 @@ pub(super) fn load_raw_file_with_profile_selection(
     ));
     let materialize_started = Instant::now();
     let mut loaded = unsafe { loaded_raw_from_context(&ctx, selected_profile) }?;
-    loaded.capture_metadata.flash = source_metadata.flash.or(loaded.capture_metadata.flash);
-    for (tag, value) in source_metadata.exif_dates {
-        loaded
-            .capture_metadata
-            .exif_dates
-            .retain(|(existing, _)| *existing != tag);
-        loaded.capture_metadata.exif_dates.push((tag, value));
-    }
+    merge_exif_capture_metadata(&mut loaded.capture_metadata, source_metadata);
     crate::diagnostics::record(format!(
         "Decoded mosaic materialization finished in {:.3}s",
         materialize_started.elapsed().as_secs_f64()
@@ -319,14 +312,7 @@ fn load_raw_file_with_selected_profile(
     })?;
 
     let mut loaded = unsafe { loaded_raw_from_context(&ctx, dcp_profile) }?;
-    loaded.capture_metadata.flash = source_metadata.flash.or(loaded.capture_metadata.flash);
-    for (tag, value) in source_metadata.exif_dates {
-        loaded
-            .capture_metadata
-            .exif_dates
-            .retain(|(existing, _)| *existing != tag);
-        loaded.capture_metadata.exif_dates.push((tag, value));
-    }
+    merge_exif_capture_metadata(&mut loaded.capture_metadata, source_metadata);
     Ok(loaded)
 }
 
@@ -339,6 +325,16 @@ pub(super) fn read_exif_capture_metadata(path: &Path) -> Result<super::CaptureMe
         flash: capture.flash,
         ..Default::default()
     })
+}
+
+/// Lets the EXIF flash state and dates read by `read_exif_capture_metadata`
+/// take precedence over LibRaw's; an EXIF date replaces LibRaw's for its tag.
+fn merge_exif_capture_metadata(capture: &mut super::CaptureMetadata, exif: super::CaptureMetadata) {
+    capture.flash = exif.flash.or(capture.flash);
+    for (tag, value) in exif.exif_dates {
+        capture.exif_dates.retain(|(existing, _)| *existing != tag);
+        capture.exif_dates.push((tag, value));
+    }
 }
 
 pub(super) fn read_exif_capture_metadata_or_default(path: &Path) -> super::CaptureMetadata {

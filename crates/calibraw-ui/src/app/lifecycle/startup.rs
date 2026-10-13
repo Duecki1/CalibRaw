@@ -363,6 +363,30 @@ impl CalibRawApp {
         app
     }
 
+    /// Removes a file or folder an older version left in app data and nothing
+    /// reads any more, on a background thread so start-up does not wait.
+    ///
+    /// migration: remove in v1.4.0, with its callers. Listed in
+    /// `calibraw_core`'s `migrations`.
+    pub(in crate::app) fn remove_retired_app_data(path: PathBuf, description: &'static str) {
+        let spawned = std::thread::Builder::new()
+            .name("calibraw-retired-data-cleanup".to_owned())
+            .spawn(move || {
+                let removed = if path.is_dir() {
+                    std::fs::remove_dir_all(&path)
+                } else {
+                    std::fs::remove_file(&path)
+                };
+                match removed {
+                    Ok(()) => log::info!("removed {description} {}", path.display()),
+                    Err(error) => log::warn!("could not remove {}: {error}", path.display()),
+                }
+            });
+        if let Err(error) = spawned {
+            log::warn!("could not start removing the {description}: {error}");
+        }
+    }
+
     #[cfg(not(target_os = "android"))]
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
         if let Some(render_state) = cc.wgpu_render_state.as_ref() {

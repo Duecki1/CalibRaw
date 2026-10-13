@@ -9,6 +9,7 @@ use crate::file_ops::write_bytes_atomically;
 use crate::pipeline::RawDisplayMetadata;
 use crate::thumbnail_cache::desktop_cache_path_for_raw;
 use serde::{Deserialize, Serialize};
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::ffi::OsStr;
 use std::fs;
@@ -44,10 +45,11 @@ impl FileStamp {
     }
 }
 
+/// Borrows the entries when saving and owns them when loading.
 #[derive(Serialize, Deserialize)]
-struct CacheDocument {
+struct CacheDocument<'a> {
     version: u32,
-    entries: HashMap<String, CachedEntry>,
+    entries: Cow<'a, HashMap<String, CachedEntry>>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -161,7 +163,7 @@ impl FolderDisplayMetadataCache {
         }
         let document = CacheDocument {
             version: CACHE_VERSION,
-            entries: self.current.clone(),
+            entries: Cow::Borrowed(&self.current),
         };
         let bytes = serde_json::to_vec(&document)
             .map_err(|error| format!("could not encode folder metadata cache: {error}"))?;
@@ -186,10 +188,10 @@ fn read_entries(path: &Path) -> Result<HashMap<String, CachedEntry>, String> {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(HashMap::new()),
         Err(error) => return Err(error.to_string()),
     };
-    let document: CacheDocument =
+    let document: CacheDocument<'static> =
         serde_json::from_slice(&bytes).map_err(|error| error.to_string())?;
     Ok(if document.version == CACHE_VERSION {
-        document.entries
+        document.entries.into_owned()
     } else {
         HashMap::new()
     })
@@ -279,7 +281,7 @@ mod tests {
         );
         let outdated = CacheDocument {
             version: CACHE_VERSION + 1,
-            entries,
+            entries: Cow::Owned(entries),
         };
         fs::write(&path, serde_json::to_vec(&outdated).unwrap()).unwrap();
         let mut cache = FolderDisplayMetadataCache::load_from(path);

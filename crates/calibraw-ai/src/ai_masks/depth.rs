@@ -2,48 +2,33 @@ use super::*;
 
 /// Depth Anything V2 Small on every platform. It predicts inverse depth
 /// (high values near) from an NCHW image and returns `[1, height, width]`.
-#[derive(Clone, Copy)]
-struct DepthInferenceSpec {
-    model: DepthModelSpec,
-    download_url: &'static str,
-    sha256: &'static str,
-}
-
-const SELECTED: DepthInferenceSpec = DepthInferenceSpec {
-    model: DepthModelSpec {
-        name: "Depth Anything V2 Small",
-        download_bytes: 99_060_839,
-        cache_filename: "depth_anything_v2_small_fp32.onnx",
-        input_edge: 518,
-        artifact_url: "https://huggingface.co/Duecki/CalibRaw-Artifacts/tree/main/models/da2",
-    },
-    download_url: "https://huggingface.co/Duecki/CalibRaw-Artifacts/resolve/main/models/da2/depth_anything_v2_small_fp32.onnx",
-    sha256: "afb6a5c28f3b6bf1618c6e43f02073ef9dfdc70e937502d51603e57b0a1df10c",
+pub(super) const MODEL_SPEC: DepthModelSpec = DepthModelSpec {
+    name: "Depth Anything V2 Small",
+    download_bytes: 99_060_839,
+    cache_filename: "depth_anything_v2_small_fp32.onnx",
+    input_edge: 518,
+    artifact_url: "https://huggingface.co/Duecki/CalibRaw-Artifacts/tree/main/models/da2",
 };
-
-pub(super) const MODEL_SPEC: DepthModelSpec = SELECTED.model;
 pub(super) const MODEL_INSTALL: ModelInstallSpec = ModelInstallSpec {
     artifact: ModelArtifact {
         name: MODEL_SPEC.name,
-        url: Some(SELECTED.download_url),
-        sha256: SELECTED.sha256,
+        url: Some("https://huggingface.co/Duecki/CalibRaw-Artifacts/resolve/main/models/da2/depth_anything_v2_small_fp32.onnx"),
+        sha256: "afb6a5c28f3b6bf1618c6e43f02073ef9dfdc70e937502d51603e57b0a1df10c",
         bytes: MODEL_SPEC.download_bytes,
     },
     download: MASK_MODEL_DOWNLOAD,
     progress_label: MODEL_SPEC.name,
 };
 
-impl DepthInferenceSpec {
-    fn session_options(self) -> SessionOptions {
-        let options = SessionOptions::new(self.model.name);
-        if cfg!(target_os = "android") {
-            // Depth runs on the CPU beside Android's RAW preview.
-            options
-                .cpu_only()
-                .with_cpu_fallback_profile(CpuFallbackProfile::MobileDepth)
-        } else {
-            options
-        }
+fn session_options() -> SessionOptions {
+    let options = SessionOptions::new(MODEL_SPEC.name);
+    if cfg!(target_os = "android") {
+        // Depth runs on the CPU beside Android's RAW preview.
+        options
+            .cpu_only()
+            .with_cpu_fallback_profile(CpuFallbackProfile::MobileDepth)
+    } else {
+        options
     }
 }
 
@@ -92,8 +77,7 @@ pub(super) fn depth_mask(
     model_path: &Path,
     image: &ImageBuffer<Rgba<u8>, Vec<u8>>,
 ) -> Result<Vec<u8>> {
-    let spec = SELECTED;
-    let edge = spec.model.input_edge;
+    let edge = MODEL_SPEC.input_edge;
     let (width, height) = image.dimensions();
     anyhow::ensure!(width > 0 && height > 0, "empty depth-mask input");
     let box_rect = Letterbox::new(width, height, edge);
@@ -114,7 +98,7 @@ pub(super) fn depth_mask(
     let (shape, raw) = with_model_session(
         AiModel::Depth,
         model_path,
-        spec.session_options(),
+        session_options(),
         mask_model_retention(true),
         |session| {
             session.run_with_fallback("depth ONNX inference", |ort_session, _| {
@@ -131,10 +115,10 @@ pub(super) fn depth_mask(
             })
         },
     )?;
-    let (output_width, output_height) = validate_output(&shape, &raw, spec)?;
+    let (output_width, output_height) = validate_output(&shape, &raw)?;
     calibraw_core::diagnostics::record(format!(
         "AI {}: {width}x{height} source, {output_width}x{output_height} depth in {:.3}s",
-        spec.model.name,
+        MODEL_SPEC.name,
         started.elapsed().as_secs_f64()
     ));
     let mut restored = restore_depth(&raw, output_width, output_height, box_rect, width, height)?;
@@ -147,7 +131,7 @@ pub(super) fn depth_mask(
     Ok(quantize_depth(&restored.depth))
 }
 
-fn validate_output(shape: &[i64], values: &[f32], spec: DepthInferenceSpec) -> Result<(u32, u32)> {
+fn validate_output(shape: &[i64], values: &[f32]) -> Result<(u32, u32)> {
     let (height, width) = match shape {
         [1, h, w] => (*h, *w),
         _ => anyhow::bail!("unexpected depth output shape {shape:?}"),
@@ -155,8 +139,8 @@ fn validate_output(shape: &[i64], values: &[f32], spec: DepthInferenceSpec) -> R
     anyhow::ensure!(
         height > 0
             && width > 0
-            && height <= spec.model.input_edge as i64
-            && width <= spec.model.input_edge as i64,
+            && height <= MODEL_SPEC.input_edge as i64
+            && width <= MODEL_SPEC.input_edge as i64,
         "invalid depth output dimensions {shape:?}"
     );
     anyhow::ensure!(
@@ -264,7 +248,7 @@ fn quantize_depth(depth: &[f32]) -> Vec<u8> {
 mod tests {
     use super::*;
 
-    const EDGE: u32 = SELECTED.model.input_edge;
+    const EDGE: u32 = MODEL_SPEC.input_edge;
 
     /// The enlarged depth as stored, without edge alignment.
     fn restored_bytes(
@@ -315,18 +299,9 @@ mod tests {
     }
 
     #[test]
-    fn metadata_and_install_pin_match_the_model() {
-        assert_eq!(super::super::DEPTH_MODEL, SELECTED.model);
-        assert_eq!(MODEL_INSTALL.artifact.name, SELECTED.model.name);
-        assert_eq!(MODEL_INSTALL.artifact.url, Some(SELECTED.download_url));
-        assert_eq!(MODEL_INSTALL.artifact.bytes, SELECTED.model.download_bytes);
-        assert_eq!(MODEL_INSTALL.artifact.sha256, SELECTED.sha256);
-    }
-
-    #[test]
     fn only_android_sessions_use_the_cpu_only_mobile_depth_profile() {
-        let options = SELECTED.session_options();
-        assert_eq!(options.model_name, SELECTED.model.name);
+        let options = session_options();
+        assert_eq!(options.model_name, MODEL_SPEC.name);
         if cfg!(target_os = "android") {
             assert!(!options.allow_acceleration);
             assert_eq!(
@@ -341,17 +316,14 @@ mod tests {
 
     #[test]
     fn rejects_invalid_depth_outputs() {
-        assert_eq!(
-            validate_output(&[1, 2, 3], &[1.0; 6], SELECTED).unwrap(),
-            (3, 2)
-        );
-        assert!(validate_output(&[1, 1, 2, 3], &[1.0; 6], SELECTED).is_err());
+        assert_eq!(validate_output(&[1, 2, 3], &[1.0; 6]).unwrap(), (3, 2));
+        assert!(validate_output(&[1, 1, 2, 3], &[1.0; 6]).is_err());
         for shape in [[2, 2, 3], [1, 0, 3], [1, -1, 3], [1, 519, 3]] {
-            assert!(validate_output(&shape, &[1.0; 6], SELECTED).is_err());
+            assert!(validate_output(&shape, &[1.0; 6]).is_err());
         }
-        assert!(validate_output(&[1, 2, 3], &[1.0; 5], SELECTED).is_err());
-        assert!(validate_output(&[1, 1, 1], &[f32::NAN], SELECTED).is_err());
-        assert!(validate_output(&[1, 1, 1], &[f32::INFINITY], SELECTED).is_err());
+        assert!(validate_output(&[1, 2, 3], &[1.0; 5]).is_err());
+        assert!(validate_output(&[1, 1, 1], &[f32::NAN]).is_err());
+        assert!(validate_output(&[1, 1, 1], &[f32::INFINITY]).is_err());
     }
 
     #[test]
