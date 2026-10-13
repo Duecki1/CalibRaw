@@ -783,36 +783,10 @@ impl Settings {
         moduwu_design::strong_with_help(
             ui,
             "Subject masks",
-            "Quality applies to newly generated Subject and Background masks.",
+            "Applies to newly generated Subject and Background masks.",
         );
-        let previous_quality = app.ai.birefnet_quality;
-        let mut quality = previous_quality;
-        let quality_help = format!(
-            "{} This quality applies to newly generated Subject and Background masks.",
-            quality.model().explanation
-        );
-        ui.add_enabled_ui(app.birefnet_quality_change_enabled(), |ui| {
-            moduwu_design::form_combo_with_help(
-                ui,
-                "Subject mask quality",
-                "settings-subject-mask-quality",
-                quality.label(),
-                180.0,
-                &quality_help,
-                |ui| {
-                    for option in calibraw_ai::ai_masks::BiRefNetQuality::ALL {
-                        ui.selectable_value(&mut quality, option, option.label())
-                            .on_hover_text(option.model().explanation);
-                    }
-                },
-            );
-        });
-        if quality != previous_quality {
-            app.set_birefnet_quality(quality);
-        }
-
         let mut crop_refinement = app.ai.subject_crop_refinement;
-        ui.add_enabled_ui(app.birefnet_quality_change_enabled(), |ui| {
+        ui.add_enabled_ui(app.ai_mask_generation_idle(), |ui| {
             if moduwu_design::toggle_with_help(
                 ui,
                 &mut crop_refinement,

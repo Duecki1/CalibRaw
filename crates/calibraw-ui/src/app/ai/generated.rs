@@ -2,16 +2,6 @@ use super::*;
 
 impl CalibRawApp {
     #[cfg(not(target_os = "android"))]
-    pub(crate) fn set_birefnet_quality(&mut self, quality: BiRefNetQuality) {
-        if self.ai.birefnet_quality == quality {
-            return;
-        }
-        self.ai.birefnet_quality = quality;
-        self.masks.subject_cache = None;
-        self.persist_performance_settings();
-    }
-
-    #[cfg(not(target_os = "android"))]
     pub(crate) fn set_subject_crop_refinement(&mut self, enabled: bool) {
         if self.ai.subject_crop_refinement == enabled {
             return;
@@ -21,7 +11,7 @@ impl CalibRawApp {
         self.persist_performance_settings();
     }
 
-    pub(crate) fn birefnet_quality_change_enabled(&self) -> bool {
+    pub(crate) fn ai_mask_generation_idle(&self) -> bool {
         self.foreground_operation_kind()
             .and_then(ForegroundOperationKind::ai_feature)
             .and_then(generated_model)
@@ -80,9 +70,7 @@ impl CalibRawApp {
         path: &std::path::Path,
     ) -> bool {
         match model {
-            AiMaskModel::Subject => {
-                calibraw_ai::ai_masks::birefnet_model_is_verified(self.ai.birefnet_quality, path)
-            }
+            AiMaskModel::Subject => calibraw_ai::ai_masks::birefnet_model_is_verified(path),
             AiMaskModel::Sky => calibraw_ai::ai_masks::skyseg_model_is_verified(path),
             AiMaskModel::Depth => calibraw_ai::ai_masks::depth_model_is_verified(path),
         }
@@ -91,13 +79,12 @@ impl CalibRawApp {
     fn generated_mask_progress(&self, model: AiMaskModel, inferencing: bool) -> String {
         match (model, inferencing) {
             (AiMaskModel::Subject, true) => format!(
-                "Running {} quality locally with {}…",
-                self.ai.birefnet_quality.label(),
-                self.ai.birefnet_quality.model().checkpoint
+                "Running {} locally…",
+                calibraw_ai::ai_masks::BIREFNET_MODEL.checkpoint
             ),
             (AiMaskModel::Subject, false) => format!(
                 "Preparing {} download…",
-                self.ai.birefnet_quality.model().download_label
+                calibraw_ai::ai_masks::BIREFNET_MODEL.download_label
             ),
             (AiMaskModel::Sky, true) => "Running SkySeg U2Net locally…".to_owned(),
             (AiMaskModel::Sky, false) => "Preparing SkySeg U2Net download…".to_owned(),
@@ -144,7 +131,6 @@ impl CalibRawApp {
         let receiver = spawn_ai_mask(
             AiMaskWorkerRequest {
                 model,
-                quality: self.ai.birefnet_quality,
                 crop_refinement,
                 model_path,
                 allow_download,

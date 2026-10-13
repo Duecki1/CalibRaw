@@ -124,8 +124,6 @@ fn show_step_body(ui: &mut egui::Ui, app: &mut CalibRawApp, step: OnboardingStep
         #[cfg(not(target_os = "android"))]
         OnboardingStep::CameraProfiles => show_camera_profiles(ui, app),
         #[cfg(not(target_os = "android"))]
-        OnboardingStep::Ai => show_ai(ui, app),
-        #[cfg(not(target_os = "android"))]
         OnboardingStep::Discord => show_discord(ui, app),
     }
 }
@@ -341,50 +339,6 @@ fn show_camera_profiles(ui: &mut egui::Ui, app: &mut CalibRawApp) {
 }
 
 #[cfg(not(target_os = "android"))]
-fn show_ai(ui: &mut egui::Ui, app: &mut CalibRawApp) {
-    let mut acceleration = app.ai.gpu_acceleration;
-    if moduwu_design::toggle_with_help(
-        ui,
-        &mut acceleration,
-        "Use GPU acceleration when available",
-        "Allows AI masks and AI denoise to use a supported GPU execution provider. CPU fallback remains automatic.",
-    )
-    .changed()
-    {
-        app.set_ai_gpu_acceleration(acceleration);
-    }
-    crate::ui::settings::automatic_runtime_kind_control(
-        ui,
-        app,
-        "onboarding-automatic-runtime-kind",
-    );
-
-    ui.add_space(moduwu_design::SPACE_SM);
-    let mut quality = app.ai.birefnet_quality;
-    let explanation = quality.model().explanation;
-    moduwu_design::form_combo_with_help(
-        ui,
-        "Subject mask quality",
-        "onboarding-subject-mask-quality",
-        quality.label(),
-        180.0,
-        explanation,
-        |ui| {
-            for option in calibraw_ai::ai_masks::BiRefNetQuality::ALL {
-                ui.selectable_value(&mut quality, option, option.label())
-                    .on_hover_text(option.model().explanation);
-            }
-        },
-    );
-    if quality != app.ai.birefnet_quality {
-        app.set_birefnet_quality(quality);
-    }
-    ui.add_space(moduwu_design::SPACE_SM);
-    ui.small(quality.model().explanation);
-    ui.small("AI models are downloaded only when you first use the corresponding tool.");
-}
-
-#[cfg(not(target_os = "android"))]
 fn show_discord(ui: &mut egui::Ui, app: &mut CalibRawApp) {
     let mut enabled = app.preferences.discord_rich_presence;
     if moduwu_design::toggle_with_help(
@@ -440,8 +394,6 @@ impl OnboardingStep {
         #[cfg(not(target_os = "android"))]
         Self::CameraProfiles,
         #[cfg(not(target_os = "android"))]
-        Self::Ai,
-        #[cfg(not(target_os = "android"))]
         Self::Discord,
     ];
 
@@ -472,8 +424,6 @@ impl OnboardingStep {
             #[cfg(not(target_os = "android"))]
             Self::CameraProfiles => "Camera profiles",
             #[cfg(not(target_os = "android"))]
-            Self::Ai => "AI model setup",
-            #[cfg(not(target_os = "android"))]
             Self::Discord => "Discord Rich Presence",
         }
     }
@@ -495,10 +445,6 @@ impl OnboardingStep {
             #[cfg(not(target_os = "android"))]
             Self::CameraProfiles => {
                 "Choose where CalibRaw finds DCP camera profiles for your RAW files."
-            }
-            #[cfg(not(target_os = "android"))]
-            Self::Ai => {
-                "Choose how local AI models use your hardware and the quality of new Subject masks."
             }
             #[cfg(not(target_os = "android"))]
             Self::Discord => {

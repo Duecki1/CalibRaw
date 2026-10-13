@@ -23,9 +23,8 @@ use crate::ui::settings::Settings;
 use crate::ui::sidebar::Sidebar;
 use crate::ui::top_bar::TopBar;
 use calibraw_ai::ai_masks::{
-    spawn_ai_mask, spawn_object_mask, AiMaskEvent, AiMaskWorkerRequest, BiRefNetQuality,
-    ObjectInferenceCache, ObjectMaskEvent, ObjectMaskRequest, ObjectMaskWorkerRequest,
-    SAM21_MODEL_BYTES_ESTIMATE,
+    spawn_ai_mask, spawn_object_mask, AiMaskEvent, AiMaskWorkerRequest, ObjectInferenceCache,
+    ObjectMaskEvent, ObjectMaskRequest, ObjectMaskWorkerRequest, SAM21_MODEL_BYTES_ESTIMATE,
 };
 use calibraw_ai::remove::{
     spawn_remove, spawn_retouch, RemoveEvent, RemoveRequest, RetouchRequest,

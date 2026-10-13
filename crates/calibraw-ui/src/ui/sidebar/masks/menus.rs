@@ -17,10 +17,12 @@ impl Sidebar {
             MaskKind::ColorRange,
             MaskKind::DepthRange,
         ] {
-            let label = if kind.is_available() {
-                kind.label().to_owned()
-            } else {
+            let label = if !kind.is_available() {
                 format!("{} · soon", kind.label())
+            } else if kind.is_experimental() {
+                format!("{} · experimental", kind.label())
+            } else {
+                kind.label().to_owned()
             };
             let response = ui
                 .add_enabled_ui(kind.is_available(), |ui| ui.selectable_label(false, label))

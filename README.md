@@ -106,7 +106,7 @@ AI models are downloaded once, on first use and only after you agree; they are v
 
 ### Masking & AI
 - **Masks:** Brush, Linear Gradient, Radial Gradient, and Shape masks with independent curves and adjustments.
-- **AI Masks:** Subject and background (BiRefNet), sky (SkySeg U2Net), depth range (Depth Anything 3 on desktop, Depth Anything V2 on Android), and click-to-select objects (SAM 2.1).
+- **AI Masks:** Subject and background (BiRefNet), sky (SkySeg U2Net), depth range (experimental; Depth Anything 3 on desktop, Depth Anything V2 on Android), and click-to-select objects (SAM 2.1).
 - **AI Remove:** Big-LaMa fills removed objects at native resolution where possible and restores the photo's own grain around the fill.
 - **Clone & Heal:** Classic retouching brushes with aligned, fixed and registered source modes.
 - **AI Denoise:** RawNIND denoises Bayer RAWs while demosaicing them and X-Trans RAWs in linear RGB.

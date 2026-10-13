@@ -11,7 +11,6 @@ use crate::pipeline::{DepthRangeSettings, LocalMask, MaskCombineMode, MaskCompon
 #[derive(Clone, Copy)]
 pub(crate) struct MaskPropertiesControls {
     pub(crate) brush_mode: BrushMode,
-    pub(crate) birefnet_quality: BiRefNetQuality,
     /// False while a subject, sky, or depth model is already running.
     pub(crate) generation_idle: bool,
     pub(crate) refinement_active: bool,
@@ -301,7 +300,6 @@ mod tests {
     fn controls() -> MaskPropertiesControls {
         MaskPropertiesControls {
             brush_mode: BrushMode::Paint,
-            birefnet_quality: BiRefNetQuality::default(),
             generation_idle: true,
             refinement_active: false,
             refinement_size: 0.035,

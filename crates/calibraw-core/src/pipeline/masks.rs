@@ -107,6 +107,11 @@ impl MaskKind {
         }
     }
 
+    /// Available, but its results are not yet reliable enough to present as finished.
+    pub const fn is_experimental(self) -> bool {
+        matches!(self, Self::DepthRange)
+    }
+
     pub const fn is_available(self) -> bool {
         matches!(
             self,

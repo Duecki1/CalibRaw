@@ -335,7 +335,6 @@ impl CalibRawApp {
             auto_check_updates: self.preferences.auto_check_updates,
             github_update_check_allowed: self.preferences.github_update_check_allowed,
             ignored_update_version: self.preferences.ignored_update_version.clone(),
-            birefnet_quality: self.ai.birefnet_quality,
             #[cfg(not(target_os = "android"))]
             subject_crop_refinement: self.ai.subject_crop_refinement,
             #[cfg(not(target_os = "android"))]

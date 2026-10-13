@@ -8,7 +8,6 @@ use anyhow::{Context, Result};
 use image::{imageops::FilterType, ImageBuffer, Luma, Rgba};
 use ort::value::Tensor;
 use rayon::prelude::*;
-use serde::{Deserialize, Serialize};
 #[cfg(not(target_os = "android"))]
 use std::fs;
 use std::{
@@ -32,18 +31,10 @@ pub use crate::model_artifact::sha256_file_hex;
 
 mod depth;
 
-pub const BIREFNET_LOW_MODEL_BYTES: u64 = 224_005_088;
-pub const BIREFNET_LOW_MODEL_URL: &str = "https://huggingface.co/Duecki/CalibRaw-Artifacts/resolve/91085ce0ec322a4a7cbd20059688690218e52f9a/models/briefnet/birefnet-lowQ.onnx";
-pub const BIREFNET_LOW_MODEL_SHA256_HEX: &str =
+pub const BIREFNET_MODEL_BYTES: u64 = 224_005_088;
+pub const BIREFNET_MODEL_URL: &str = "https://huggingface.co/Duecki/CalibRaw-Artifacts/resolve/91085ce0ec322a4a7cbd20059688690218e52f9a/models/briefnet/birefnet-lowQ.onnx";
+pub const BIREFNET_MODEL_SHA256_HEX: &str =
     "5600024376f572a557870a5eb0afb1e5961636bef4e1e22132025467d0f03333";
-pub const BIREFNET_MEDIUM_MODEL_BYTES: u64 = 331_082_421;
-pub const BIREFNET_MEDIUM_MODEL_URL: &str = "https://huggingface.co/Duecki/CalibRaw-Artifacts/resolve/91085ce0ec322a4a7cbd20059688690218e52f9a/models/briefnet/birefnet-medQ.onnx";
-pub const BIREFNET_MEDIUM_MODEL_SHA256_HEX: &str =
-    "6003d2f758bdb4e4802a09e39167529bc2eef9288d5b8fa537331467cbc4759d";
-pub const BIREFNET_HIGH_MODEL_BYTES: u64 = 1_098_928_953;
-pub const BIREFNET_HIGH_MODEL_URL: &str = "https://huggingface.co/Duecki/CalibRaw-Artifacts/resolve/91085ce0ec322a4a7cbd20059688690218e52f9a/models/briefnet/birefnet-highQ.onnx";
-pub const BIREFNET_HIGH_MODEL_SHA256_HEX: &str =
-    "db0217e99b25e0c4f6f4dca2892ff1f7ea7aba38fb6ad84f93122a4024be536a";
 pub const SKYSEG_MODEL_FILENAME: &str = "skyseg-u2net-fp32.onnx";
 /// Metadata for the depth artifact selected on this platform.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -68,15 +59,6 @@ const SKYSEG_MODEL_INSTALL: ModelInstallSpec = ModelInstallSpec {
     progress_label: "SkySeg U2Net",
 };
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum BiRefNetQuality {
-    #[default]
-    Low,
-    Medium,
-    High,
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct BiRefNetModelSpec {
     pub checkpoint: &'static str,
@@ -87,7 +69,6 @@ pub struct BiRefNetModelSpec {
     pub cache_filename: &'static str,
     pub input_width: u32,
     pub input_height: u32,
-    pub explanation: &'static str,
 }
 
 impl BiRefNetModelSpec {
@@ -105,59 +86,18 @@ impl BiRefNetModelSpec {
     }
 }
 
-impl BiRefNetQuality {
-    pub const ALL: [Self; 3] = [Self::Low, Self::Medium, Self::High];
+/// The BiRefNet General-Lite subject model: 1024 x 1024 input, 224 MB.
+pub const BIREFNET_MODEL: BiRefNetModelSpec = BiRefNetModelSpec {
+    checkpoint: "BiRefNet General-Lite",
+    download_label: "BiRefNet General-Lite",
+    url: BIREFNET_MODEL_URL,
+    bytes: BIREFNET_MODEL_BYTES,
+    sha256_hex: BIREFNET_MODEL_SHA256_HEX,
+    cache_filename: "birefnet-general-lite.onnx",
+    input_width: 1024,
+    input_height: 1024,
+};
 
-    pub const fn label(self) -> &'static str {
-        match self {
-            Self::Low => "Good (<12GB VRAM)",
-            Self::Medium => "Better",
-            Self::High => "Best (not recommended)",
-        }
-    }
-
-    pub const fn requires_cpu_to_protect_interactive_gpu(self) -> bool {
-        matches!(self, Self::Medium | Self::High)
-    }
-
-    pub const fn model(self) -> BiRefNetModelSpec {
-        match self {
-            Self::Low => BiRefNetModelSpec {
-                checkpoint: "BiRefNet General-Lite",
-                download_label: "BiRefNet General-Lite (Good)",
-                url: BIREFNET_LOW_MODEL_URL,
-                bytes: BIREFNET_LOW_MODEL_BYTES,
-                sha256_hex: BIREFNET_LOW_MODEL_SHA256_HEX,
-                cache_filename: "birefnet-general-lite.onnx",
-                input_width: 1024,
-                input_height: 1024,
-                explanation: "General-Lite at 1024 x 1024. Fastest and lowest-memory; a 224 MB download.",
-            },
-            Self::Medium => BiRefNetModelSpec {
-                checkpoint: "BiRefNet Lite-2K",
-                download_label: "BiRefNet Lite-2K (Better)",
-                url: BIREFNET_MEDIUM_MODEL_URL,
-                bytes: BIREFNET_MEDIUM_MODEL_BYTES,
-                sha256_hex: BIREFNET_MEDIUM_MODEL_SHA256_HEX,
-                cache_filename: "birefnet-lite-2k.onnx",
-                input_width: 1440,
-                input_height: 2560,
-                explanation: "Lite-2K at its native 2560 x 1440 tensor. More boundary detail with a 331 MB download; runs on CPU to keep the interactive GPU stable.",
-            },
-            Self::High => BiRefNetModelSpec {
-                checkpoint: "BiRefNet HR",
-                download_label: "BiRefNet HR (Best)",
-                url: BIREFNET_HIGH_MODEL_URL,
-                bytes: BIREFNET_HIGH_MODEL_BYTES,
-                sha256_hex: BIREFNET_HIGH_MODEL_SHA256_HEX,
-                cache_filename: "birefnet-hr.onnx",
-                input_width: 2048,
-                input_height: 2048,
-                explanation: "The dedicated BiRefNet HR checkpoint at 2048 x 2048. Best fine-detail quality; a 1.10 GB download with the highest memory use. It runs on CPU to keep the interactive GPU stable.",
-            },
-        }
-    }
-}
 const MASK_MODEL_DOWNLOAD: DownloadOptions = DownloadOptions {
     connect_timeout: Duration::from_secs(45),
     response_timeout: Duration::from_secs(60),
@@ -176,14 +116,6 @@ static RUNTIME_INIT_LOCK: Mutex<()> = Mutex::new(());
 type RuntimeProbeResult = (PathBuf, String);
 #[cfg(not(target_os = "android"))]
 static RUNTIME_PROBE_CACHE: OnceLock<Mutex<Option<RuntimeProbeResult>>> = OnceLock::new();
-
-fn subject_model_id(quality: BiRefNetQuality) -> AiModel {
-    match quality {
-        BiRefNetQuality::Low => AiModel::BiRefNetLow,
-        BiRefNetQuality::Medium => AiModel::BiRefNetMedium,
-        BiRefNetQuality::High => AiModel::BiRefNetHigh,
-    }
-}
 
 fn mask_model_retention(cache_supported: bool) -> ModelRetention {
     #[cfg(target_os = "android")]
@@ -221,8 +153,8 @@ impl AiMaskResult {
     }
 }
 
-pub fn birefnet_model_is_verified(quality: BiRefNetQuality, path: &Path) -> bool {
-    quality.model().install().is_installed(path)
+pub fn birefnet_model_is_verified(path: &Path) -> bool {
+    BIREFNET_MODEL.install().is_installed(path)
 }
 
 pub fn skyseg_model_is_verified(path: &Path) -> bool {
@@ -240,7 +172,6 @@ pub fn object_models_are_verified(encoder: &Path, decoder: &Path) -> bool {
 
 pub struct AiMaskWorkerRequest {
     pub model: AiMaskModel,
-    pub quality: BiRefNetQuality,
     pub crop_refinement: bool,
     pub model_path: PathBuf,
     pub allow_download: bool,
@@ -289,7 +220,7 @@ pub fn spawn_ai_mask(
                 (|| {
                     ensure_ai_not_cancelled(&cancellation)?;
                     let install = match request.model {
-                        AiMaskModel::Subject => request.quality.model().install(),
+                        AiMaskModel::Subject => BIREFNET_MODEL.install(),
                         AiMaskModel::Sky => SKYSEG_MODEL_INSTALL,
                         AiMaskModel::Depth => depth::MODEL_INSTALL,
                     };
@@ -498,7 +429,6 @@ fn cache_object_ai_sessions() -> bool {
 fn infer_ai_mask(request: AiMaskWorkerRequest) -> Result<AiMaskResult> {
     let AiMaskWorkerRequest {
         model,
-        quality,
         crop_refinement,
         model_path,
         allow_download: _,
@@ -531,7 +461,7 @@ fn infer_ai_mask(request: AiMaskWorkerRequest) -> Result<AiMaskResult> {
     let mask = match model {
         AiMaskModel::Depth => depth::depth_mask(&model_path, &image)?,
         AiMaskModel::Sky => sky::sky_mask(&model_path, &image)?,
-        AiMaskModel::Subject => subject_mask(&model_path, quality, &image, crop_refinement)?,
+        AiMaskModel::Subject => subject_mask(&model_path, &image, crop_refinement)?,
     };
     Ok(AiMaskResult {
         width,
@@ -544,12 +474,11 @@ fn infer_ai_mask(request: AiMaskWorkerRequest) -> Result<AiMaskResult> {
 /// with one native-resolution crop pass for finer boundary detail.
 fn subject_mask(
     model_path: &Path,
-    quality: BiRefNetQuality,
     image: &ImageBuffer<Rgba<u8>, Vec<u8>>,
     crop_refinement: bool,
 ) -> Result<Vec<u8>> {
     let (width, height) = image.dimensions();
-    let mut mask = infer_birefnet(model_path, quality, image)?;
+    let mut mask = infer_birefnet(model_path, image)?;
     let crop_refinement =
         subject_crop_refinement_enabled(crop_refinement, cfg!(target_os = "android"));
     if crop_refinement {
@@ -557,7 +486,7 @@ fn subject_mask(
             let crop_image =
                 image::imageops::crop_imm(image, crop.x, crop.y, crop.width, crop.height)
                     .to_image();
-            let crop_alpha = infer_birefnet(model_path, quality, &crop_image)?;
+            let crop_alpha = infer_birefnet(model_path, &crop_image)?;
             mask_refine::merge_crop_pass(&mut mask, width, crop, &crop_alpha, 8);
         }
     }
@@ -572,10 +501,9 @@ const fn subject_crop_refinement_enabled(requested: bool, android: bool) -> bool
 
 pub(super) fn infer_birefnet(
     model_path: &Path,
-    quality: BiRefNetQuality,
     image: &ImageBuffer<Rgba<u8>, Vec<u8>>,
 ) -> Result<Vec<u8>> {
-    let model = quality.model();
+    let model = BIREFNET_MODEL;
     let resized = image::imageops::resize(
         image,
         model.input_width,
@@ -594,15 +522,10 @@ pub(super) fn infer_birefnet(
     ))
     .context("create BiRefNet input tensor")?;
 
-    let subject_session_options = if quality.requires_cpu_to_protect_interactive_gpu() {
-        SessionOptions::new("BiRefNet").cpu_only()
-    } else {
-        SessionOptions::new("BiRefNet")
-    };
     let (output_width, output_height, logits) = with_model_session(
-        subject_model_id(quality),
+        AiModel::BiRefNet,
         model_path,
-        subject_session_options,
+        SessionOptions::new("BiRefNet"),
         mask_model_retention(true),
         |session| run_subject_session(session, input, model.input_width, model.input_height),
     )?;
@@ -768,8 +691,8 @@ fn sigmoid_probability(logit: f32) -> f32 {
 mod tests {
     use super::{
         normalized_rgb_input, restore_birefnet_output, sigmoid_probability,
-        subject_crop_refinement_enabled, validate_birefnet_output_shape, BiRefNetQuality,
-        IMAGENET_MEAN, IMAGENET_STD,
+        subject_crop_refinement_enabled, validate_birefnet_output_shape, IMAGENET_MEAN,
+        IMAGENET_STD,
     };
     use image::{ImageBuffer, Rgba};
 
@@ -821,46 +744,6 @@ mod tests {
         );
         assert!(validate_birefnet_output_shape(&[1, 1, -1, 1024], 0, 1024, 1024).is_err());
         assert!(validate_birefnet_output_shape(&[1, 1, 2, 2], 5, 1024, 1024).is_err());
-    }
-
-    #[test]
-    fn birefnet_quality_tiers_select_distinct_models_and_native_inputs() {
-        let low = BiRefNetQuality::Low.model();
-        let medium = BiRefNetQuality::Medium.model();
-        let high = BiRefNetQuality::High.model();
-        assert_eq!((low.input_width, low.input_height), (1024, 1024));
-        assert_eq!((medium.input_width, medium.input_height), (1440, 2560));
-        assert_eq!((high.input_width, high.input_height), (2048, 2048));
-        assert_ne!(low.url, medium.url);
-        assert_ne!(medium.url, high.url);
-        assert_ne!(low.sha256_hex, medium.sha256_hex);
-        assert_ne!(medium.sha256_hex, high.sha256_hex);
-        assert_ne!(low.cache_filename, medium.cache_filename);
-        assert_ne!(medium.cache_filename, high.cache_filename);
-    }
-
-    #[test]
-    #[ignore = "downloads the published 331 MB medium BiRefNet model"]
-    fn medium_birefnet_download_is_published_and_remains_verified() {
-        let temp = tempfile::tempdir().unwrap();
-        let model = BiRefNetQuality::Medium.model();
-        let path = temp.path().join(model.cache_filename);
-        model
-            .install()
-            .ensure_installed(&path, true, |_| {}, || Ok(()))
-            .unwrap();
-        assert!(path.is_file());
-        assert!(super::birefnet_model_is_verified(
-            BiRefNetQuality::Medium,
-            &path
-        ));
-    }
-
-    #[test]
-    fn high_resolution_subject_models_preserve_interactive_gpu_headroom() {
-        assert!(!BiRefNetQuality::Low.requires_cpu_to_protect_interactive_gpu());
-        assert!(BiRefNetQuality::Medium.requires_cpu_to_protect_interactive_gpu());
-        assert!(BiRefNetQuality::High.requires_cpu_to_protect_interactive_gpu());
     }
 
     #[test]

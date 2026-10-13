@@ -843,6 +843,7 @@ impl Sidebar {
         range: crate::pipeline::DepthRangeSettings,
         edits: &mut PropertyEdits,
     ) {
+        ui.weak("Experimental");
         ui.label(if has_depth {
             "Select a range of relative depth, from near (0) to far (1)."
         } else {
@@ -979,10 +980,7 @@ impl Sidebar {
             if is_sky {
                 ui.label("Generate with SkySeg U2Net");
             } else {
-                ui.label(format!(
-                    "Generate in {} quality",
-                    controls.birefnet_quality.label()
-                ));
+                ui.label("Generate with BiRefNet General-Lite");
             }
             let label = if is_sky {
                 "Generate sky mask"

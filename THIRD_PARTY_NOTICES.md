@@ -112,7 +112,7 @@ from CalibRaw's GPL license; users must comply with the model terms for their us
 | Feature | Packaged model artifact | License |
 | --- | --- | --- |
 | Remove | [Big-LaMa ONNX](https://huggingface.co/Duecki/CalibRaw-Artifacts/tree/main/models/lama) | Apache-2.0 |
-| Subject selection | [BiRefNet ONNX checkpoints](https://huggingface.co/Duecki/CalibRaw-Artifacts/tree/main/models/briefnet) | MIT |
+| Subject selection | [BiRefNet ONNX checkpoint](https://huggingface.co/Duecki/CalibRaw-Artifacts/tree/main/models/briefnet) | MIT |
 | Sky selection | [SkySeg U2Net FP32 ONNX](https://huggingface.co/Duecki/CalibRaw-Artifacts/tree/main/models/skyseg) | MIT; training image provenance is not published |
 | Object selection | [SAM 2.1 Hiera Tiny ONNX encoder and decoder](https://huggingface.co/Duecki/CalibRaw-Artifacts/tree/main/models/sam2) | Apache-2.0 |
 | Depth masks and fog (desktop) | [Depth Anything 3 Mono Large ONNX](https://huggingface.co/Duecki/CalibRaw-Artifacts/tree/main/models/da3) | Apache-2.0 |
