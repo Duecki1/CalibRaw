@@ -66,6 +66,14 @@ fn test_asset(path: impl Into<PathBuf>) -> LibraryAsset {
     LibraryAsset::from_desktop_path(path.into(), 42, 123, Some([6000, 4000]))
 }
 
+#[cfg(not(target_os = "android"))]
+fn no_deferred_metadata(folder: &Path) -> DeferredDisplayMetadata {
+    DeferredDisplayMetadata::new(
+        calibraw_core::display_metadata_cache::FolderDisplayMetadataCache::load(folder),
+        HashMap::new(),
+    )
+}
+
 #[cfg(target_os = "android")]
 fn test_asset(name: impl Into<PathBuf>) -> LibraryAsset {
     let name = name.into().display().to_string();
@@ -982,11 +990,13 @@ fn disabled_index_rendering_still_reuses_a_fresh_edited_thumbnail() {
     fs::write(crate::sidecar::sidecar_path_for_raw(&raw), b"saved edits").unwrap();
     install_test_developed_thumbnail(&raw);
 
-    let loaded =
-        load_desktop_library_thumbnail(&test_asset(raw), ThumbnailLoadStage::RawPreview, false)
-            .expect(
-                "a fresh edited thumbnail should remain usable when index rendering is disabled",
-            );
+    let loaded = load_desktop_library_thumbnail(
+        &test_asset(raw),
+        ThumbnailLoadStage::RawPreview,
+        false,
+        &no_deferred_metadata(&root),
+    )
+    .expect("a fresh edited thumbnail should remain usable when index rendering is disabled");
 
     assert!(loaded.developed);
     assert!(!loaded.developed_thumbnail_stale);
@@ -1428,7 +1438,12 @@ fn folder_scan_only_includes_direct_photo_children() {
     fs::write(root.join("ignore.txt"), b"text").unwrap();
     fs::write(root.join("one.DNG.calibraw"), b"{}").unwrap();
 
-    let (assets, warnings, truncated) = scan_folder(&root, || false).unwrap().unwrap();
+    let FolderScan {
+        assets,
+        warning_count: warnings,
+        truncated,
+        ..
+    } = scan_folder(&root, || false).unwrap().unwrap();
     let mut names = assets
         .iter()
         .map(|asset| asset.display_name.as_str())
@@ -1459,8 +1474,12 @@ fn folder_scan_retains_newest_files_after_limit() {
             .unwrap();
     }
 
-    let (assets, warnings, truncated) =
-        scan_folder_with_limit(&root, 3, || false).unwrap().unwrap();
+    let FolderScan {
+        assets,
+        warning_count: warnings,
+        truncated,
+        ..
+    } = scan_folder_with_limit(&root, 3, || false).unwrap().unwrap();
     let names = assets
         .iter()
         .map(|asset| asset.display_name.as_str())
@@ -1468,6 +1487,38 @@ fn folder_scan_retains_newest_files_after_limit() {
     assert_eq!(names, ["newest.dng", "newer.dng", "middle.dng"]);
     assert_eq!(warnings, 0);
     assert!(truncated);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[cfg(not(target_os = "android"))]
+#[test]
+fn folder_scan_defers_uncached_metadata_to_thumbnail_workers() {
+    let root = unique_temp_dir("library-deferred-metadata");
+    let photo = root.join("frame.arw");
+    fs::write(&photo, b"raw").unwrap();
+    let metadata = crate::pipeline::RawDisplayMetadata {
+        aperture: 2.8,
+        dimensions: [4000, 6000],
+        iso_speed: 400.0,
+        shutter_seconds: 0.004,
+        focal_length: 35.0,
+    };
+
+    let scan = scan_folder(&root, || false).unwrap().unwrap();
+    assert_eq!(scan.assets[0].metadata.dimensions_hint, None);
+    assert!(scan.deferred_metadata.is_pending(&photo));
+    assert_eq!(
+        scan.deferred_metadata.complete(&photo, Some(metadata)),
+        Some(metadata)
+    );
+    assert!(!scan.deferred_metadata.is_pending(&photo));
+    assert_eq!(scan.deferred_metadata.read_pending(&photo), None);
+
+    let rescan = scan_folder(&root, || false).unwrap().unwrap();
+    let asset = &rescan.assets[0].metadata;
+    assert_eq!(asset.dimensions_hint, Some([4000, 6000]));
+    assert_eq!(asset.iso_speed, 400.0);
+    assert!(!rescan.deferred_metadata.is_pending(&photo));
     fs::remove_dir_all(root).unwrap();
 }
 
@@ -1626,9 +1677,13 @@ fn raw_preview_cache_applies_saved_crop_without_full_edited_rendering() {
         },
     )
     .unwrap();
-    let loaded =
-        load_desktop_library_thumbnail(&test_asset(&path), ThumbnailLoadStage::RawPreview, false)
-            .unwrap();
+    let loaded = load_desktop_library_thumbnail(
+        &test_asset(&path),
+        ThumbnailLoadStage::RawPreview,
+        false,
+        &no_deferred_metadata(&root),
+    )
+    .unwrap();
     assert_eq!([loaded.thumbnail.width, loaded.thumbnail.height], [20, 20]);
     assert!(!loaded.developed_render_pending);
     fs::remove_dir_all(root).unwrap();

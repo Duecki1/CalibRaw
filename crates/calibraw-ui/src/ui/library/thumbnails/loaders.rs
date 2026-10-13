@@ -47,6 +47,7 @@ pub(in crate::ui::library) fn load_desktop_library_thumbnail(
     asset: &LibraryAsset,
     stage: ThumbnailLoadStage,
     render_edited_thumbnails_during_indexing: bool,
+    deferred_metadata: &DeferredDisplayMetadata,
 ) -> Result<LoadedLibraryThumbnail, String> {
     let Some(path) = asset.desktop_path() else {
         return Err("invalid desktop thumbnail request".to_owned());
@@ -54,7 +55,11 @@ pub(in crate::ui::library) fn load_desktop_library_thumbnail(
     match stage {
         ThumbnailLoadStage::RawPreview => {
             match crate::sidecar::load_developed_thumbnail_cache(path, THUMBNAIL_EDGE) {
-                Ok(Some(thumbnail)) => return Ok(loaded_library_thumbnail(thumbnail, true)),
+                Ok(Some(thumbnail)) => {
+                    let mut loaded = loaded_library_thumbnail(thumbnail, true);
+                    loaded.display_metadata = deferred_metadata.read_pending(path);
+                    return Ok(loaded);
+                }
                 Ok(None) => {}
                 Err(error) => log::warn!(
                     "could not use developed thumbnail cache for {}: {error}",
@@ -67,12 +72,15 @@ pub(in crate::ui::library) fn load_desktop_library_thumbnail(
                 path,
                 has_edits,
                 render_edited_thumbnails_during_indexing,
+                deferred_metadata,
             )
         }
         ThumbnailLoadStage::DevelopedPreview => {
             match render_uncached_developed_thumbnail(path, THUMBNAIL_EDGE) {
                 Ok(Some(thumbnail)) => Ok(loaded_library_thumbnail(thumbnail, true)),
-                Ok(None) => load_desktop_raw_library_thumbnail(path, false, false),
+                Ok(None) => {
+                    load_desktop_raw_library_thumbnail(path, false, false, deferred_metadata)
+                }
                 Err(error) => Err(format!(
                     "could not render the edited RAW thumbnail for {}: {error}",
                     path.display()
@@ -87,6 +95,7 @@ fn load_desktop_raw_library_thumbnail(
     path: &Path,
     has_edits: bool,
     render_edited_thumbnails_during_indexing: bool,
+    deferred_metadata: &DeferredDisplayMetadata,
 ) -> Result<LoadedLibraryThumbnail, String> {
     let (geometry, has_edits) =
         crate::sidecar::load_photo_preview_info(path).unwrap_or_else(|error| {
@@ -96,41 +105,48 @@ fn load_desktop_raw_library_thumbnail(
             );
             (crate::pipeline::GeometryTransform::default(), has_edits)
         });
-    match calibraw_core::thumbnail_cache::load_desktop_raw_thumbnail(path, THUMBNAIL_EDGE) {
-        Ok(Some(thumbnail)) => {
-            let thumbnail = crate::pipeline::transform_thumbnail_geometry(&thumbnail, geometry);
-            return Ok(if has_edits && render_edited_thumbnails_during_indexing {
-                loaded_library_raw_preview_pending_development(thumbnail)
-            } else if has_edits {
-                loaded_library_raw_preview_with_stale_edits(thumbnail)
-            } else {
-                loaded_library_thumbnail(thumbnail, false)
-            });
-        }
-        Ok(None) => {}
-        Err(error) => log::warn!(
-            "could not use RAW thumbnail cache for {}: {error}",
-            path.display()
-        ),
-    }
-
-    let thumbnail = load_raw_thumbnail(path, THUMBNAIL_EDGE)
-        .map_err(|error| format!("could not render a RAW preview: {error:#}"))?;
-    if let Err(error) = calibraw_core::thumbnail_cache::save_desktop_raw_thumbnail(path, &thumbnail)
-    {
-        log::warn!(
-            "could not persist RAW thumbnail cache for {}: {error}",
-            path.display()
-        );
-    }
+    let (thumbnail, display_metadata) =
+        match calibraw_core::thumbnail_cache::load_desktop_raw_thumbnail(path, THUMBNAIL_EDGE) {
+            Ok(Some(thumbnail)) => (thumbnail, deferred_metadata.read_pending(path)),
+            cached => {
+                if let Err(error) = cached {
+                    log::warn!(
+                        "could not use RAW thumbnail cache for {}: {error}",
+                        path.display()
+                    );
+                }
+                let (thumbnail, display_metadata) = if deferred_metadata.is_pending(path) {
+                    let (thumbnail, metadata) =
+                        load_raw_thumbnail_with_display_metadata(path, THUMBNAIL_EDGE).map_err(
+                            |error| format!("could not render a RAW preview: {error:#}"),
+                        )?;
+                    (thumbnail, deferred_metadata.complete(path, metadata))
+                } else {
+                    let thumbnail = load_raw_thumbnail(path, THUMBNAIL_EDGE)
+                        .map_err(|error| format!("could not render a RAW preview: {error:#}"))?;
+                    (thumbnail, None)
+                };
+                if let Err(error) =
+                    calibraw_core::thumbnail_cache::save_desktop_raw_thumbnail(path, &thumbnail)
+                {
+                    log::warn!(
+                        "could not persist RAW thumbnail cache for {}: {error}",
+                        path.display()
+                    );
+                }
+                (thumbnail, display_metadata)
+            }
+        };
     let thumbnail = crate::pipeline::transform_thumbnail_geometry(&thumbnail, geometry);
-    Ok(if has_edits && render_edited_thumbnails_during_indexing {
+    let mut loaded = if has_edits && render_edited_thumbnails_during_indexing {
         loaded_library_raw_preview_pending_development(thumbnail)
     } else if has_edits {
         loaded_library_raw_preview_with_stale_edits(thumbnail)
     } else {
         loaded_library_thumbnail(thumbnail, false)
-    })
+    };
+    loaded.display_metadata = display_metadata;
+    Ok(loaded)
 }
 
 #[cfg(target_os = "android")]

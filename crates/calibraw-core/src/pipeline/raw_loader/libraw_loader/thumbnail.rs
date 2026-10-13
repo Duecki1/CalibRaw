@@ -1,6 +1,7 @@
 //! Embedded and processed RAW thumbnails, validated before decoding.
 
 use super::*;
+use crate::pipeline::RawDisplayMetadata;
 
 #[cfg(target_os = "android")]
 pub(super) const MAX_EMBEDDED_THUMBNAIL_BYTES: usize = 64 * 1024 * 1024;
@@ -23,39 +24,59 @@ pub(in crate::pipeline::raw_loader) fn load_raw_embedded_thumbnail(
 ) -> Result<RawThumbnail> {
     validate_input_file(path, MAX_RAW_FILE_BYTES, "embedded RAW thumbnail input")?;
     anyhow::ensure!(maximum_edge > 0, "thumbnail edge must be non-zero");
-    load_embedded_thumbnail(path, maximum_edge)
+    load_embedded_thumbnail(path, maximum_edge).map(|(thumbnail, _)| thumbnail)
 }
 
 pub(in crate::pipeline::raw_loader) fn load_raw_thumbnail(
     path: &Path,
     maximum_edge: u32,
 ) -> Result<RawThumbnail> {
+    load_raw_thumbnail_with_display_metadata(path, maximum_edge).map(|(thumbnail, _)| thumbnail)
+}
+
+/// Loads a thumbnail like [`load_raw_thumbnail`] and returns the display
+/// metadata LibRaw parsed while opening the file, so callers needing both open
+/// it once. The metadata is `None` when the header yields no valid dimensions.
+pub(in crate::pipeline::raw_loader) fn load_raw_thumbnail_with_display_metadata(
+    path: &Path,
+    maximum_edge: u32,
+) -> Result<(RawThumbnail, Option<RawDisplayMetadata>)> {
     validate_input_file(path, MAX_RAW_FILE_BYTES, "RAW thumbnail input")?;
     anyhow::ensure!(maximum_edge > 0, "thumbnail edge must be non-zero");
 
     match load_embedded_thumbnail(path, maximum_edge) {
-        Ok(thumbnail) => Ok(thumbnail),
+        Ok(loaded) => Ok(loaded),
         Err(embedded_error) => load_processed_thumbnail(path, maximum_edge)
             .with_context(|| format!("embedded RAW preview was unavailable ({embedded_error:#})")),
     }
 }
 
-fn load_embedded_thumbnail(path: &Path, maximum_edge: u32) -> Result<RawThumbnail> {
+fn load_embedded_thumbnail(
+    path: &Path,
+    maximum_edge: u32,
+) -> Result<(RawThumbnail, Option<RawDisplayMetadata>)> {
     // File reads end with the in-memory copy; decoding runs outside the read gate.
-    let (image, orientation) =
+    let (image, orientation, display_metadata) =
         crate::serialized_reads::run(|| unpack_embedded_preview(path, maximum_edge))?;
-    unsafe { thumbnail_from_processed(&image, maximum_edge, orientation) }
+    let thumbnail = unsafe { thumbnail_from_processed(&image, maximum_edge, orientation) }?;
+    Ok((thumbnail, display_metadata))
 }
 
 /// Unpacks the smallest embedded preview that still covers `maximum_edge`, or
-/// LibRaw's default (usually the largest) when no smaller one qualifies.
-fn unpack_embedded_preview(path: &Path, maximum_edge: u32) -> Result<(ProcessedImage, i32)> {
+/// LibRaw's default (usually the largest) when no smaller one qualifies, with
+/// the display metadata of the opened file.
+fn unpack_embedded_preview(
+    path: &Path,
+    maximum_edge: u32,
+) -> Result<(ProcessedImage, i32, Option<RawDisplayMetadata>)> {
     let ctx = open_libraw(path)?;
+    let display_metadata = display_metadata_from_context(&ctx).ok();
+    let with_metadata = |(image, orientation)| (image, orientation, display_metadata);
     let Some(index) = smaller_covering_preview(&ctx, maximum_edge) else {
-        return unpack_preview(&ctx, None);
+        return unpack_preview(&ctx, None).map(with_metadata);
     };
     match unpack_preview(&ctx, Some(index)) {
-        Ok(unpacked) => Ok(unpacked),
+        Ok(unpacked) => Ok(with_metadata(unpacked)),
         Err(error) => {
             log::debug!(
                 "smaller embedded preview {index} of {} failed, using the default: {error:#}",
@@ -63,7 +84,7 @@ fn unpack_embedded_preview(path: &Path, maximum_edge: u32) -> Result<(ProcessedI
             );
             // A failed unpack leaves the context describing that preview.
             let ctx = open_libraw(path)?;
-            unpack_preview(&ctx, None)
+            unpack_preview(&ctx, None).map(with_metadata)
         }
     }
 }
@@ -239,11 +260,16 @@ pub(super) fn validate_embedded_thumbnail_metadata(
     Ok(())
 }
 
-fn load_processed_thumbnail(path: &Path, maximum_edge: u32) -> Result<RawThumbnail> {
+fn load_processed_thumbnail(
+    path: &Path,
+    maximum_edge: u32,
+) -> Result<(RawThumbnail, Option<RawDisplayMetadata>)> {
     let _render_permit = crate::thumbnail_cache::acquire_rendered_thumbnail_worker();
     // Unpacking reads the sensor payload; processing runs outside the read gate.
-    let ctx = crate::serialized_reads::run(|| -> Result<_> {
+    let (ctx, display_metadata) = crate::serialized_reads::run(|| -> Result<_> {
         let ctx = open_libraw(path)?;
+        // Read before processing parameters and unpacking touch the context.
+        let display_metadata = display_metadata_from_context(&ctx).ok();
         #[cfg(target_os = "android")]
         {
             let sizes = unsafe { &(*ctx.raw).rawdata.sizes };
@@ -266,7 +292,7 @@ fn load_processed_thumbnail(path: &Path, maximum_edge: u32) -> Result<RawThumbna
             unsafe { ffi::libraw_unpack(ctx.raw) },
             "unpack RAW thumbnail fallback",
         )?;
-        Ok(ctx)
+        Ok((ctx, display_metadata))
     })?;
     check_libraw(
         unsafe { ffi::libraw_dcraw_process(ctx.raw) },
@@ -276,7 +302,8 @@ fn load_processed_thumbnail(path: &Path, maximum_edge: u32) -> Result<RawThumbna
     let mut error = 0;
     let image = unsafe { ffi::libraw_dcraw_make_mem_image(ctx.raw, &mut error) };
     let image = ProcessedImage::new(image, error, "make fallback RAW thumbnail")?;
-    unsafe { thumbnail_from_processed(&image, maximum_edge, 0) }
+    let thumbnail = unsafe { thumbnail_from_processed(&image, maximum_edge, 0) }?;
+    Ok((thumbnail, display_metadata))
 }
 
 fn embedded_thumbnail_orientation(ctx: &LibRawContext) -> i32 {

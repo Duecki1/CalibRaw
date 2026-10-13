@@ -77,9 +77,17 @@ impl LibraryState {
                             return;
                         }
                     };
-                    let Some((assets, warning_count, truncated)) = scan else {
+                    let Some(FolderScan {
+                        assets,
+                        warning_count,
+                        truncated,
+                        deferred_metadata,
+                    }) = scan
+                    else {
                         return;
                     };
+                    let deferred_metadata = Arc::new(deferred_metadata);
+                    let worker_metadata = Arc::clone(&deferred_metadata);
                     run_thumbnail_workers(
                         ThumbnailWorker {
                             assets,
@@ -99,9 +107,13 @@ impl LibraryState {
                                 asset,
                                 stage,
                                 render_edited_thumbnails_during_indexing,
+                                &worker_metadata,
                             )
                         }),
                     );
+                    // Keeps metadata read since the last periodic save when the
+                    // workers stop before every photo was read.
+                    deferred_metadata.save();
                 })
         };
 
@@ -372,6 +384,13 @@ impl LibraryState {
                     self.entries[index].thumbnail_queued = false;
                     match result {
                         Ok(loaded) => {
+                            #[cfg(not(target_os = "android"))]
+                            if let Some(metadata) = loaded.display_metadata {
+                                apply_display_metadata(
+                                    &mut self.entries[index].asset.metadata,
+                                    metadata,
+                                );
+                            }
                             if self.entries[index].developed_thumbnail
                                 && !loaded.developed
                                 && !loaded.developed_render_pending
@@ -385,6 +404,7 @@ impl LibraryState {
                                 developed,
                                 developed_thumbnail_stale,
                                 developed_render_pending,
+                                ..
                             } = loaded;
                             let decoded_size = [thumbnail.width, thumbnail.height];
                             let install_pixels =

@@ -248,7 +248,12 @@ pub(super) fn load_raw_file_with_dcp(path: &Path, profile_path: &Path) -> Result
 pub(super) fn load_raw_display_metadata(path: &Path) -> Result<super::RawDisplayMetadata> {
     validate_input_file(path, MAX_RAW_FILE_BYTES, "RAW dimension input")?;
     let ctx = open_libraw(path)?;
+    display_metadata_from_context(&ctx)
+}
 
+/// Reads the oriented dimensions and capture settings LibRaw parsed when the
+/// file was opened; it does not touch the file again.
+fn display_metadata_from_context(ctx: &LibRawContext) -> Result<super::RawDisplayMetadata> {
     let sizes = unsafe { &(*ctx.raw).rawdata.sizes };
     let other = unsafe { &(*ctx.raw).other };
     let width = u32::from(sizes.width);

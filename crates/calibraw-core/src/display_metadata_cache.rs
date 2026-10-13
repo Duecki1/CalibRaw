@@ -97,8 +97,8 @@ impl CachedEntry {
 /// The cached metadata of one folder for the duration of a scan.
 ///
 /// Look up every scanned file with [`Self::get`], record misses with
-/// [`Self::insert`], then [`Self::save`]. Entries for files the scan did not
-/// see are dropped on save.
+/// [`Self::insert`], then [`Self::save`], repeatedly if misses are filled in
+/// over time. Entries for files the scan did not see are dropped on save.
 pub struct FolderDisplayMetadataCache {
     path: PathBuf,
     /// Stored entries not yet claimed by this scan.
@@ -152,15 +152,16 @@ impl FolderDisplayMetadataCache {
         }
     }
 
-    /// Writes the entries seen during this scan when they differ from the stored file.
-    pub fn save(self) -> Result<(), String> {
+    /// Writes the entries seen during this scan when they differ from the stored
+    /// file. Saving again writes only entries inserted since the last save.
+    pub fn save(&mut self) -> Result<(), String> {
         // Unclaimed entries belong to files that were removed or not scanned.
         if !self.changed && self.unclaimed.is_empty() {
             return Ok(());
         }
         let document = CacheDocument {
             version: CACHE_VERSION,
-            entries: self.current,
+            entries: self.current.clone(),
         };
         let bytes = serde_json::to_vec(&document)
             .map_err(|error| format!("could not encode folder metadata cache: {error}"))?;
@@ -169,7 +170,10 @@ impl FolderDisplayMetadataCache {
                 "could not write folder metadata cache {}: {error}",
                 self.path.display()
             )
-        })
+        })?;
+        self.unclaimed.clear();
+        self.changed = false;
+        Ok(())
     }
 }
 
@@ -253,9 +257,8 @@ mod tests {
     fn unchanged_scans_and_empty_folders_do_not_write() {
         let directory = tempfile::tempdir().unwrap();
         let path = cache_path(&directory);
-        FolderDisplayMetadataCache::load_from(path.clone())
-            .save()
-            .unwrap();
+        let mut cache = FolderDisplayMetadataCache::load_from(path.clone());
+        cache.save().unwrap();
         assert!(!path.exists());
     }
 
@@ -281,6 +284,20 @@ mod tests {
         fs::write(&path, serde_json::to_vec(&outdated).unwrap()).unwrap();
         let mut cache = FolderDisplayMetadataCache::load_from(path);
         assert_eq!(cache.get(OsStr::new("IMG_0001.CR3"), STAMP), None);
+    }
+
+    #[test]
+    fn repeated_saves_add_later_insertions() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut cache = FolderDisplayMetadataCache::load_from(cache_path(&directory));
+        cache.insert(OsStr::new("first.arw"), STAMP, METADATA);
+        cache.save().unwrap();
+        cache.insert(OsStr::new("second.arw"), STAMP, METADATA);
+        cache.save().unwrap();
+
+        let mut cache = FolderDisplayMetadataCache::load_from(cache_path(&directory));
+        assert_eq!(cache.get(OsStr::new("first.arw"), STAMP), Some(METADATA));
+        assert_eq!(cache.get(OsStr::new("second.arw"), STAMP), Some(METADATA));
     }
 
     #[test]

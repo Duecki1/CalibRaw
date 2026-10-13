@@ -601,6 +601,18 @@ pub fn load_raw_thumbnail(path: &Path, maximum_edge: u32) -> Result<RawThumbnail
     ))
 }
 
+/// Loads a thumbnail like [`load_raw_thumbnail`] together with the photo's
+/// display metadata, which is `None` when it cannot be read.
+#[cfg(not(libraw_available))]
+pub fn load_raw_thumbnail_with_display_metadata(
+    path: &Path,
+    maximum_edge: u32,
+) -> Result<(RawThumbnail, Option<RawDisplayMetadata>)> {
+    let thumbnail = load_raw_thumbnail(path, maximum_edge)?;
+    let display_metadata = crate::serialized_reads::run(|| load_raw_display_metadata(path)).ok();
+    Ok((thumbnail, display_metadata))
+}
+
 #[cfg(not(libraw_available))]
 pub fn load_raw_display_dimensions(path: &Path) -> Result<[u32; 2]> {
     load_raw_display_metadata(path).map(|metadata| metadata.dimensions)
@@ -814,6 +826,25 @@ pub fn load_raw_thumbnail(path: &Path, maximum_edge: u32) -> Result<RawThumbnail
         )
     } else {
         libraw_loader::load_raw_thumbnail(path, maximum_edge)
+    }
+}
+
+/// Loads a thumbnail like [`load_raw_thumbnail`] together with the photo's
+/// display metadata, which is `None` when it cannot be read. LibRaw-decoded
+/// RAWs take both from one open of the file; DNG and raster files read the
+/// metadata separately, as [`load_raw_display_metadata`] does.
+#[cfg(libraw_available)]
+pub fn load_raw_thumbnail_with_display_metadata(
+    path: &Path,
+    maximum_edge: u32,
+) -> Result<(RawThumbnail, Option<RawDisplayMetadata>)> {
+    if RasterSource::detect(path)?.is_some() || path_is_dng(path) {
+        let thumbnail = load_raw_thumbnail(path, maximum_edge)?;
+        let display_metadata =
+            crate::serialized_reads::run(|| load_raw_display_metadata(path)).ok();
+        Ok((thumbnail, display_metadata))
+    } else {
+        libraw_loader::load_raw_thumbnail_with_display_metadata(path, maximum_edge)
     }
 }
 
