@@ -93,14 +93,37 @@ fn scene_depth_taps_at(pos: vec2<i32>) -> SceneDepthTaps {
     return taps;
 }
 
-// Level 0 of `grid`, a texture on the scene-depth grid (the depth itself or a
-// map derived from it), upsampled with `taps`.
-fn scene_depth_resolve(grid: texture_2d<f32>, taps: SceneDepthTaps) -> vec4<f32> {
+// Upsamples level 0 of a texture on the scene-depth grid (the depth itself or
+// a map derived from it) with `taps`, from its texels at taps 0 to 3 (cells
+// from `scene_depth_tap_cell`). Callers load the texels: a texture passed to a
+// function crashes the Mali-G710 shader compiler (`no_handle_arguments` test).
+fn scene_depth_resolve(
+    texel_0: vec4<f32>,
+    texel_1: vec4<f32>,
+    texel_2: vec4<f32>,
+    texel_3: vec4<f32>,
+    taps: SceneDepthTaps,
+) -> vec4<f32> {
     var total = vec4<f32>(0.0);
     var weights = 0.0;
-    for (var tap = 0u; tap < 4u; tap = tap + 1u) {
-        total += textureLoad(grid, scene_depth_tap_cell(taps, tap), 0) * taps.weights[tap];
-        weights += taps.weights[tap];
-    }
+    total += texel_0 * taps.weights[0];
+    weights += taps.weights[0];
+    total += texel_1 * taps.weights[1];
+    weights += taps.weights[1];
+    total += texel_2 * taps.weights[2];
+    weights += taps.weights[2];
+    total += texel_3 * taps.weights[3];
+    weights += taps.weights[3];
     return total / max(weights, 1e-6);
+}
+
+// Level 0 of `scene_depth_tex` upsampled with `taps`.
+fn scene_depth_resolve_depth(taps: SceneDepthTaps) -> vec4<f32> {
+    return scene_depth_resolve(
+        textureLoad(scene_depth_tex, scene_depth_tap_cell(taps, 0u), 0),
+        textureLoad(scene_depth_tex, scene_depth_tap_cell(taps, 1u), 0),
+        textureLoad(scene_depth_tex, scene_depth_tap_cell(taps, 2u), 0),
+        textureLoad(scene_depth_tex, scene_depth_tap_cell(taps, 3u), 0),
+        taps,
+    );
 }

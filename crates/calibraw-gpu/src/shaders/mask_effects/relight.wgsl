@@ -286,6 +286,17 @@ fn relight_jitter(uv: vec2<f32>) -> f32 {
 
 // The shadow-map channel of a Relight slot plus one, or zero when the slot
 // traces its shadows per pixel instead (`assign_relight_shadow_channels`).
+// The shadow map upsampled with the depth's `taps`.
+fn relight_shadow_map_resolve(taps: SceneDepthTaps) -> vec4<f32> {
+    return scene_depth_resolve(
+        textureLoad(relight_shadow_map, scene_depth_tap_cell(taps, 0u), 0),
+        textureLoad(relight_shadow_map, scene_depth_tap_cell(taps, 1u), 0),
+        textureLoad(relight_shadow_map, scene_depth_tap_cell(taps, 2u), 0),
+        textureLoad(relight_shadow_map, scene_depth_tap_cell(taps, 3u), 0),
+        taps,
+    );
+}
+
 fn relight_shadow_channel(params: MaskEffectParams) -> u32 {
     let option = params.options[RELIGHT_SHADOW_CHANNEL_OPTION];
     return u32(clamp(option, 0.0, f32(RELIGHT_SHADOW_MAP_CHANNELS)) + 0.5);
@@ -361,13 +372,13 @@ fn apply_relight(pos: vec2<i32>, input_rgb: vec3<f32>, params: MaskEffectParams)
     if has_depth {
         // The shadow map shares the depth's grid, so it takes the same taps.
         let taps = scene_depth_taps_at(pos);
-        let texels = scene_depth_resolve(scene_depth_tex, taps);
+        let texels = scene_depth_resolve_depth(taps);
         depth = texels.y;
         gradient = relight_smoothed_gradient(
             camera, uv, depth, texels.zw, mix(0.004, 0.05, size * size),
         );
         if shadow_channel != 0u && shadows > 1e-6 {
-            mapped_visibility = scene_depth_resolve(relight_shadow_map, taps)[shadow_channel - 1u];
+            mapped_visibility = relight_shadow_map_resolve(taps)[shadow_channel - 1u];
         }
     }
     let z = scene_depth_z(camera, depth);

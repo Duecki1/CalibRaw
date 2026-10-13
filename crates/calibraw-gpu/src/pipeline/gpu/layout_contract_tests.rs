@@ -143,6 +143,33 @@ fn production_modules() -> Vec<(String, naga::Module)> {
     modules
 }
 
+/// naga passes a texture or sampler argument as a pointer parameter, which
+/// is valid SPIR-V but crashes the Mali-G710 driver (r54p3, Pixel 7 Pro) in
+/// `vkCreateComputePipelines`: the app dies while compiling the shader, which
+/// no error scope can catch. Shaders read their textures directly instead.
+#[test]
+fn no_handle_arguments() {
+    for (label, module) in production_modules() {
+        for (_, function) in module.functions.iter() {
+            for argument in &function.arguments {
+                let is_handle = matches!(
+                    module.types[argument.ty].inner,
+                    naga::TypeInner::Image { .. }
+                        | naga::TypeInner::Sampler { .. }
+                        | naga::TypeInner::BindingArray { .. }
+                        | naga::TypeInner::AccelerationStructure { .. }
+                );
+                assert!(
+                    !is_handle,
+                    "{label}: {} takes the texture or sampler {}",
+                    function.name.as_deref().unwrap_or("?"),
+                    argument.name.as_deref().unwrap_or("?"),
+                );
+            }
+        }
+    }
+}
+
 #[test]
 fn shared_uniform_and_mask_structs_match_rust_layouts() {
     let contracts: [(&str, RustLayout); 5] = [
