@@ -381,6 +381,7 @@ impl CalibRawApp {
         app.preview.gpu_prewarm_receiver = gpu_preview_prewarm_receiver;
         app.export.gpu_prewarm = Some(gpu_export_prewarm);
         app.remove_legacy_ai_denoise_cache();
+        app.remove_retired_depth_model();
         app
     }
 

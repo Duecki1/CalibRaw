@@ -8,8 +8,14 @@
 //! moves each depth edge onto the photo's edge where the colours on either
 //! side differ, and otherwise softens the blocks into a smooth transition.
 //! Smooth slopes and flat depth keep their values.
+//!
+//! The filter's output follows its guide linearly, steeply so beside a depth
+//! edge, and would copy the photo's texture and noise beside every silhouette
+//! into depth: a ragged fringe that Relight shades as a jagged edge. The guide
+//! is therefore the photo's luminance with fine texture smoothed away first,
+//! by an edge-preserving filter that keeps the outlines of objects.
 
-use super::mask_refine::guided_filter;
+use super::mask_refine::{guided_filter_by_luminance, luminance_guide, self_guided_filter};
 use anyhow::Result;
 
 /// Filter radius in model pixels: enough to reach across the enlarged blocks
@@ -18,6 +24,14 @@ const RADIUS_MODEL_PIXELS: f32 = 1.5;
 /// Regularization in squared luminance units: luminance contrast well below
 /// this (about 3% of the range) is treated as texture, not as an edge.
 const EPSILON: f32 = 1e-3;
+/// Radius in photo pixels of the texture-removing passes over the guide:
+/// about the grain of gravel, foliage and sensor noise.
+const TEXTURE_RADIUS: u32 = 4;
+/// Variance in squared luminance units below which the guide's variation is
+/// texture to remove: a standard deviation of 5% of the range.
+const TEXTURE_EPSILON: f32 = 2.5e-3;
+/// Texture-removing passes; each flattens what the previous one left.
+const TEXTURE_PASSES: usize = 3;
 
 /// Aligns the edges of `depth` (normalized, near 0 and far 1), enlarged to
 /// `width` × `height` from a prediction `model_width` pixels across, with
@@ -30,9 +44,17 @@ pub(super) fn align_depth_edges(
     model_width: u32,
 ) -> Result<()> {
     anyhow::ensure!(model_width > 0, "depth model output has no width");
+    anyhow::ensure!(
+        photo_rgba.len() == width as usize * height as usize * 4,
+        "depth-alignment photo dimensions mismatch"
+    );
     let model_pixel = width as f32 / model_width as f32;
     let radius = (RADIUS_MODEL_PIXELS * model_pixel).round().max(1.0) as u32;
-    guided_filter(photo_rgba, depth, width, height, radius, EPSILON)?;
+    let mut guide = luminance_guide(photo_rgba);
+    for _ in 0..TEXTURE_PASSES {
+        self_guided_filter(&mut guide, width, height, TEXTURE_RADIUS, TEXTURE_EPSILON)?;
+    }
+    guided_filter_by_luminance(&guide, depth, width, height, radius, EPSILON)?;
     for value in depth {
         *value = value.clamp(0.0, 1.0);
     }
@@ -99,6 +121,40 @@ mod tests {
                 depth[edge as usize] - depth[edge as usize - 1] > 0.2,
                 "photo edge {edge}: the jump is weak: {depth:?}"
             );
+        }
+    }
+
+    #[test]
+    fn photo_texture_beside_a_depth_edge_stays_out_of_depth() {
+        // Gravel-like texture, ±8 levels in a pixel-scale pattern, on both
+        // sides of the photo's edge at column 64.
+        let step = enlarged(|x| if x < 8 { 0.2 } else { 0.8 });
+        let level = |x: u32| if x < 64 { 40 } else { 200 };
+        let clean = aligned(step.clone(), &photo(level));
+        let textured_photo: Vec<u8> = (0..WIDTH * HEIGHT)
+            .flat_map(|i| {
+                let (x, y) = (i % WIDTH, i / WIDTH);
+                let value = if (x * 7 + y * 13) % 5 < 2 {
+                    level(x) + 8
+                } else {
+                    level(x) - 8
+                };
+                [value, value, value, 255]
+            })
+            .collect();
+        let textured = aligned(step, &textured_photo);
+        // Within TEXTURE_RADIUS of the edge, texture cannot be told from the
+        // edge and only nudges the steep jump; copied beyond it, it was a
+        // fringe up to 0.028 deep and 20 pixels wide.
+        for (index, (clean, textured)) in clean.iter().zip(&textured).enumerate() {
+            let x = index as u32 % WIDTH;
+            if x.abs_diff(64) > TEXTURE_RADIUS + 1 {
+                let moved = (clean - textured).abs();
+                assert!(
+                    moved < 0.003,
+                    "pixel {index}: texture moved depth by {moved}"
+                );
+            }
         }
     }
 

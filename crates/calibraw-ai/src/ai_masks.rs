@@ -36,7 +36,7 @@ pub const BIREFNET_MODEL_URL: &str = "https://huggingface.co/Duecki/CalibRaw-Art
 pub const BIREFNET_MODEL_SHA256_HEX: &str =
     "5600024376f572a557870a5eb0afb1e5961636bef4e1e22132025467d0f03333";
 pub const SKYSEG_MODEL_FILENAME: &str = "skyseg-u2net-fp32.onnx";
-/// Metadata for the depth artifact selected on this platform.
+/// Metadata for the depth artifact.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct DepthModelSpec {
     pub name: &'static str,
@@ -47,6 +47,11 @@ pub struct DepthModelSpec {
 }
 
 pub const DEPTH_MODEL: DepthModelSpec = depth::MODEL_SPEC;
+/// The depth model desktop builds downloaded before `DEPTH_MODEL`, in the
+/// model cache.
+///
+/// migration: remove in v1.4.0. Listed in `calibraw_core`'s `migrations`.
+pub const RETIRED_DEPTH_MODEL_FILENAME: &str = "da3mono_large_700x700.onnx";
 pub const SKYSEG_MODEL_BYTES: u64 = 175_997_079;
 const SKYSEG_MODEL_INSTALL: ModelInstallSpec = ModelInstallSpec {
     artifact: ModelArtifact {

@@ -17,6 +17,9 @@
 //!   (`presets.rs`).
 //! - The old AI-denoise result cache, removed on start-up
 //!   (`calibraw-ui`, `app/ai_denoise.rs`).
+//! - The depth model desktop builds used before Depth Anything V2 Small,
+//!   removed from the model cache on start-up (`calibraw-ui`,
+//!   `app/ai/models.rs`).
 //!
 //! `older_readers` works the other way: it writes sidecars and presets so
 //! that v1.2 and older can still open them.

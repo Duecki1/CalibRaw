@@ -143,26 +143,52 @@ pub(super) fn guided_filter(
     radius: u32,
     epsilon: f32,
 ) -> Result<()> {
+    anyhow::ensure!(
+        rgba.len() == width as usize * height as usize * 4,
+        "guided-filter image dimensions mismatch"
+    );
+    guided_filter_by_luminance(
+        &luminance_guide(rgba),
+        values,
+        width,
+        height,
+        radius,
+        epsilon,
+    )
+}
+
+/// The perceptual luminance, in [0, 1], of 8-bit RGBA pixels: the guide
+/// `guided_filter` models values against.
+pub(super) fn luminance_guide(rgba: &[u8]) -> Vec<f32> {
+    rgba.chunks_exact(4)
+        .map(|pixel| {
+            (0.2126 * pixel[0] as f32 + 0.7152 * pixel[1] as f32 + 0.0722 * pixel[2] as f32) / 255.0
+        })
+        .collect()
+}
+
+/// `guided_filter` with a precomputed luminance `guide`, one value per pixel.
+pub(super) fn guided_filter_by_luminance(
+    guide: &[f32],
+    values: &mut [f32],
+    width: u32,
+    height: u32,
+    radius: u32,
+    epsilon: f32,
+) -> Result<()> {
     let pixels = width as usize * height as usize;
     anyhow::ensure!(
-        rgba.len() == pixels * 4 && values.len() == pixels,
+        guide.len() == pixels && values.len() == pixels,
         "guided-filter image dimensions mismatch"
     );
     if pixels == 0 {
         return Ok(());
     }
     let (width, height, radius) = (width as usize, height as usize, radius as usize);
-    let mut guide = Vec::with_capacity(pixels);
-    for pixel in rgba.chunks_exact(4) {
-        guide.push(
-            (0.2126 * pixel[0] as f32 + 0.7152 * pixel[1] as f32 + 0.0722 * pixel[2] as f32)
-                / 255.0,
-        );
-    }
     let mut workspace = vec![0.0; pixels];
     let mut mean_values = values.to_vec();
     box_mean_in_place(&mut mean_values, &mut workspace, width, height, radius);
-    let mut mean_guide = guide.clone();
+    let mut mean_guide = guide.to_vec();
     box_mean_in_place(&mut mean_guide, &mut workspace, width, height, radius);
     let mut corr_guide = guide.iter().map(|value| value * value).collect::<Vec<_>>();
     box_mean_in_place(&mut corr_guide, &mut workspace, width, height, radius);
@@ -195,6 +221,46 @@ pub(super) fn guided_filter(
     );
     for (index, value) in values.iter_mut().enumerate() {
         *value = corr_guide[index] * guide[index] + corr_guide_values[index];
+    }
+    Ok(())
+}
+
+/// The guided filter with `values` as their own guide, an edge-preserving
+/// smoothing: within each window of `radius` pixels, variation well below
+/// `epsilon` (a variance in squared value units) is averaged away while
+/// steps well above it are kept.
+pub(super) fn self_guided_filter(
+    values: &mut [f32],
+    width: u32,
+    height: u32,
+    radius: u32,
+    epsilon: f32,
+) -> Result<()> {
+    let pixels = width as usize * height as usize;
+    anyhow::ensure!(
+        values.len() == pixels,
+        "guided-filter image dimensions mismatch"
+    );
+    if pixels == 0 {
+        return Ok(());
+    }
+    let (width, height, radius) = (width as usize, height as usize, radius as usize);
+    let mut workspace = vec![0.0; pixels];
+    let mut mean = values.to_vec();
+    box_mean_in_place(&mut mean, &mut workspace, width, height, radius);
+    let mut gain = values.iter().map(|value| value * value).collect::<Vec<_>>();
+    box_mean_in_place(&mut gain, &mut workspace, width, height, radius);
+    // Per window: the gain a = variance / (variance + epsilon) in `gain`,
+    // the offset (1 − a) × mean in `mean`.
+    for (gain, mean) in gain.iter_mut().zip(mean.iter_mut()) {
+        let variance = (*gain - *mean * *mean).max(0.0);
+        *gain = variance / (variance + epsilon.max(1e-8));
+        *mean *= 1.0 - *gain;
+    }
+    box_mean_in_place(&mut gain, &mut workspace, width, height, radius);
+    box_mean_in_place(&mut mean, &mut workspace, width, height, radius);
+    for ((value, gain), offset) in values.iter_mut().zip(&gain).zip(&mean) {
+        *value = gain * *value + offset;
     }
     Ok(())
 }

@@ -77,7 +77,8 @@ fn fog_depth_at(pos: vec2<i32>) -> f32 {
             let cell = clamp(texel, vec2<i32>(0), size - vec2<i32>(1));
             // Guide colour and stored depth in one load.
             let guide = textureLoad(scene_depth_guide_tex, cell, 0);
-            let weight = tent * scene_depth_guide_weight(guide.xyz, center);
+            let weight = tent
+                * scene_depth_guide_weight(guide.xyz, center, SCENE_DEPTH_FOG_GUIDE_SHARPNESS);
             total += guide.w * weight;
             weights += weight;
         }
