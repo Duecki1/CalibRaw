@@ -810,7 +810,8 @@ fn sidecar_round_trip_preserves_edit_state() {
     });
     let encoded = encode(edits.clone()).unwrap();
     let document: serde_json::Value = serde_json::from_slice(&encoded).unwrap();
-    assert_eq!(SIDECAR_SCHEMA_VERSION, 1);
+    assert_eq!(SIDECAR_SCHEMA_VERSION, 2);
+    // Without Relight, v1.2 and older can still read it.
     assert_eq!(document["schema_version"], 1);
     let loaded = decode(&encoded).unwrap();
     assert_eq!(loaded.edits, edits);
@@ -1372,7 +1373,7 @@ fn generated_masks_are_deduplicated_compressed_and_copy_on_write_after_loading()
 
     let encoded = encode(edits.clone()).unwrap();
     let document: serde_json::Value = serde_json::from_slice(&encoded).unwrap();
-    assert_eq!(document["schema_version"], SIDECAR_SCHEMA_VERSION);
+    assert_eq!(document["schema_version"], 1);
     assert_eq!(document["mask_assets"].as_array().unwrap().len(), 1);
     assert_eq!(document["mask_asset_refs"].as_array().unwrap().len(), 2);
     let compressed = document["mask_assets"][0]["png"].as_str().unwrap();
@@ -1886,9 +1887,14 @@ fn legacy_effect_sliders_load_as_components_and_are_not_saved_again() {
         [halation_effect(63.0)]
     );
 
+    // Resaved, the sliders stay at rest for older readers and nothing migrates again.
     let resaved = encode(loaded.edits.clone()).unwrap();
-    let text = String::from_utf8(resaved.clone()).unwrap();
-    assert!(!text.contains("grain_amount") && !text.contains("halation_amount"));
+    let document: serde_json::Value = serde_json::from_slice(&resaved).unwrap();
+    assert_eq!(document["edits"]["exposure"]["grain_amount"], 0.0);
+    assert_eq!(document["edits"]["exposure"]["vignette_amount"], 0.0);
+    assert!(document["edits"]["masks"]["masks"][0]["adjustments"]
+        .get("halation_amount")
+        .is_none());
     let reloaded = decode(&resaved).unwrap();
     assert!(!reloaded.migrated);
     assert_eq!(reloaded.edits, loaded.edits);

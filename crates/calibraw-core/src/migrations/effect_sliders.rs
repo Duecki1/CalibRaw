@@ -20,7 +20,7 @@ use crate::pipeline::{
     VignetteEffectSettings, MAX_EFFECT_COMPONENTS,
 };
 use crate::sidecar::EditState;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 /// Below this magnitude a slider was at rest, as the renderer treated it.
@@ -36,14 +36,18 @@ pub(crate) struct LegacyEffectSliders {
     masks: MaskStackSliders,
 }
 
-/// Effects-card sliders. Missing fields take the sliders' former defaults.
-#[derive(Debug, Deserialize)]
+/// Effects-card sliders. Missing fields take the sliders' former defaults,
+/// which leave every slider at rest (`older_readers` writes them).
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(default)]
-struct GlobalSliders {
+pub(super) struct GlobalSliders {
     halation_amount: f32,
     grain_amount: f32,
     glow_amount: f32,
     glow_radius: f32,
+    /// Read only so it is written for older readers, which require it; it has
+    /// no component equivalent.
+    glow_threshold: f32,
     vignette_amount: f32,
     vignette_midpoint: f32,
     vignette_roundness: f32,
@@ -58,6 +62,7 @@ impl Default for GlobalSliders {
             grain_amount: 0.0,
             glow_amount: 0.0,
             glow_radius: 50.0,
+            glow_threshold: 60.0,
             vignette_amount: 0.0,
             vignette_midpoint: 50.0,
             vignette_roundness: 0.0,

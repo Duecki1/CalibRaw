@@ -172,7 +172,9 @@ pub fn decode_sidecar_metadata(bytes: &[u8]) -> Result<SidecarMetadata, SidecarE
     }
     let header: MetadataHeader =
         serde_json::from_slice(bytes).map_err(|error| SidecarError::Invalid(error.to_string()))?;
-    if header.format != SIDECAR_FORMAT || header.schema_version != SIDECAR_SCHEMA_VERSION {
+    let readable = (crate::migrations::older_readers::V1_SCHEMA_VERSION..=SIDECAR_SCHEMA_VERSION)
+        .contains(&header.schema_version);
+    if header.format != SIDECAR_FORMAT || !readable {
         return Err(SidecarError::Unsupported(
             "unsupported review sidecar".to_owned(),
         ));
