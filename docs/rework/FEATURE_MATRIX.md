@@ -28,6 +28,10 @@ without models; "GPU" means an explicit local run with an adapter.
 - A sidecar or preset with a **newer schema version** is rejected as
   `Unsupported`; it is never overwritten implicitly. Desktop offers an explicit
   backup-and-replace (`backup_and_replace_desktop_sidecar`).
+- Older versions keep opening what they can: sidecars and presets without a
+  Relight effect are still written as schema 1, with the Effects-card slider
+  fields v1.2 requires at rest; those with Relight are written as schema 2, so
+  v1.2 rejects them as newer instead of overwriting them (`older_readers`).
 - **Unknown fields within the current schema are ignored** on load and are not
   written back on the next save.
 

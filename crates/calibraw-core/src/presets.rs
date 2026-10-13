@@ -25,8 +25,11 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 pub const PRESET_SUFFIX: &str = ".calibraw-preset";
-/// Bump for every incompatible change to the serialized layout.
-pub const PRESET_SCHEMA_VERSION: u32 = 1;
+/// The newest schema. Bump for every incompatible change to the serialized
+/// layout. Schema 2 shares the layout of schema 1 and adds the Relight effect;
+/// presets without it are still written as schema 1
+/// (`migrations::older_readers`).
+pub const PRESET_SCHEMA_VERSION: u32 = 2;
 pub const DEFAULT_PRESET_GROUP: &str = "User Presets";
 pub const MAX_PRESET_NAME_CHARS: usize = 64;
 /// Presets hold no image data, so anything larger is not a preset.
@@ -256,7 +259,10 @@ impl Preset {
     pub fn encode(&self) -> Result<Vec<u8>, PresetError> {
         let document = PresetDocument {
             format: PRESET_FORMAT.to_owned(),
-            schema_version: PRESET_SCHEMA_VERSION,
+            schema_version: migrations::older_readers::schema_version(
+                &self.edits,
+                PRESET_SCHEMA_VERSION,
+            ),
             name: self.name.clone(),
             group: self.group.clone(),
             selection: self.selection,
@@ -280,10 +286,14 @@ impl Preset {
             return invalid("not a CalibRaw preset");
         }
         // Keep each future schema's decoder and migration in its own arm so an
-        // older layout is never read as the current one by accident.
+        // older layout is never read as the current one by accident. Schemas 1
+        // and 2 share one layout.
         let mut document = match header.schema_version {
-            PRESET_SCHEMA_VERSION => serde_json::from_slice::<PresetDocument>(bytes)
-                .map_err(|error| PresetError::Invalid(format!("invalid preset JSON: {error}")))?,
+            migrations::older_readers::V1_SCHEMA_VERSION | PRESET_SCHEMA_VERSION => {
+                serde_json::from_slice::<PresetDocument>(bytes).map_err(|error| {
+                    PresetError::Invalid(format!("invalid preset JSON: {error}"))
+                })?
+            }
             version if version > PRESET_SCHEMA_VERSION => {
                 return Err(PresetError::Unsupported(format!(
                     "preset schema {version} is newer than supported schema {PRESET_SCHEMA_VERSION}; update CalibRaw to use it"

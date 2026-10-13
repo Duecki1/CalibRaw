@@ -24,9 +24,11 @@ use mask_assets::*;
 use remove_assets::*;
 pub use size_limits::*;
 
-// First public schema for the "CalibRaw edit sidecar" format. Bump this for every incompatible
+// The newest schema of the "CalibRaw edit sidecar" format. Bump this for every incompatible
 // serialized layout change; pre-release AuRaw sidecars use a different format discriminator.
-pub const SIDECAR_SCHEMA_VERSION: u32 = 1;
+// Schema 2 shares the layout of schema 1 and adds the Relight effect; edits without it are
+// still written as schema 1 (`migrations::older_readers`).
+pub const SIDECAR_SCHEMA_VERSION: u32 = 2;
 pub const DEVELOPED_THUMBNAIL_CACHE_VERSION_SALT: u64 = 0x4155_5241_5700_0007;
 pub const SIDECAR_SUFFIX: &str = ".calibraw";
 /// The AI-denoise result saved next to a RAW. It is large derived data, so it
@@ -119,6 +121,7 @@ fn is_true(value: &bool) -> bool {
 
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct EditState {
+    #[serde(serialize_with = "migrations::older_readers::serialize_exposure")]
     pub exposure: ExposureParams,
     #[serde(default)]
     pub geometry: GeometryTransform,
@@ -358,11 +361,12 @@ pub fn encode_with_review_and_editing_time(
     }
     synchronize_subject_refinement(&mut edits);
     validate_edit_state(&edits)?;
+    let schema_version = migrations::older_readers::schema_version(&edits, SIDECAR_SCHEMA_VERSION);
     let mask_assets = extract_mask_assets(&mut edits)?;
     let (remove_assets, remove_asset_refs) = extract_remove_assets(&mut edits)?;
     let document = SidecarDocument {
         format: SIDECAR_FORMAT.to_owned(),
-        schema_version: SIDECAR_SCHEMA_VERSION,
+        schema_version,
         edits,
         review,
         editing_time_ms,
@@ -388,11 +392,14 @@ fn decode_versioned_document(
     schema_version: u32,
 ) -> Result<(SidecarDocument, bool), SidecarError> {
     // Keep each future public schema's decoder and migration in its own match arm so an older
-    // layout can never be deserialized as the current schema by accident.
+    // layout can never be deserialized as the current schema by accident. Schemas 1 and 2 share
+    // one layout.
     match schema_version {
-        SIDECAR_SCHEMA_VERSION => serde_json::from_slice::<SidecarDocument>(bytes)
-            .map(|document| (document, false))
-            .map_err(|error| SidecarError::Invalid(format!("invalid sidecar JSON: {error}"))),
+        migrations::older_readers::V1_SCHEMA_VERSION | SIDECAR_SCHEMA_VERSION => {
+            serde_json::from_slice::<SidecarDocument>(bytes)
+                .map(|document| (document, false))
+                .map_err(|error| SidecarError::Invalid(format!("invalid sidecar JSON: {error}")))
+        }
         version if version > SIDECAR_SCHEMA_VERSION => Err(SidecarError::Unsupported(format!(
             "sidecar schema {version} is newer than supported schema {SIDECAR_SCHEMA_VERSION}"
         ))),

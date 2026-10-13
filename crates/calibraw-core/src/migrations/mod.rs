@@ -17,10 +17,14 @@
 //!   (`presets.rs`).
 //! - The old AI-denoise result cache, removed on start-up
 //!   (`calibraw-ui`, `app/ai_denoise.rs`).
+//!
+//! `older_readers` works the other way: it writes sidecars and presets so
+//! that v1.2 and older can still open them.
 
 mod component_names;
 pub(crate) mod depth_range_feather;
 mod effect_sliders;
+pub(crate) mod older_readers;
 pub(crate) mod point_curve_slots;
 
 pub(crate) use effect_sliders::LegacyEffectSliders;
