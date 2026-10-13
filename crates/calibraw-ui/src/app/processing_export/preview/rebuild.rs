@@ -72,7 +72,7 @@ impl CalibRawApp {
     }
 
     pub(crate) fn preview_quality_changed(&mut self) {
-        let preview_source = self.preview_source_raw();
+        let preview_source = self.develop.loaded_raw.clone();
         self.persist_performance_settings();
         if preview_source.is_some() || self.develop.load_receiver.is_some() {
             self.preview.quality_dirty = true;
@@ -125,7 +125,7 @@ impl CalibRawApp {
     }
 
     pub(crate) fn preview_source_region_changed(&mut self) {
-        let preview_source = self.preview_source_raw();
+        let preview_source = self.develop.loaded_raw.clone();
         if self.preview.zoom > DETAIL_ZOOM_START {
             return;
         }
@@ -140,7 +140,7 @@ impl CalibRawApp {
     }
 
     pub(crate) fn set_preview_viewport_pixels(&mut self, viewport_pixels: [u32; 2]) -> bool {
-        let preview_source = self.preview_source_raw();
+        let preview_source = self.develop.loaded_raw.clone();
         if self.preview.viewport_pixels == viewport_pixels {
             return false;
         }
@@ -284,7 +284,7 @@ impl CalibRawApp {
 
     pub(in crate::app) fn poll_preview_rebuild_worker(&mut self, frame: &eframe::Frame) {
         let preview_masks = self.preview_mask_stack();
-        let preview_source = self.preview_source_raw();
+        let preview_source = self.develop.loaded_raw.clone();
         let received = self
             .preview
             .rebuild_receiver
@@ -434,12 +434,7 @@ impl CalibRawApp {
         self.preview.gpu_pipeline = Some(self.present_pipeline(pipeline, render_state));
         #[cfg(target_os = "android")]
         {
-            if self.develop.lens_correction.applied
-                && preview_source
-                    .as_ref()
-                    .zip(self.develop.loaded_raw.as_ref())
-                    .is_some_and(|(preview, saved)| Arc::ptr_eq(preview, saved))
-            {
+            if self.develop.lens_correction.applied {
                 if let (Some(selection), Some(full_raw), Some(preview_raw)) = (
                     self.develop.lens_correction.requested_correction(),
                     preview_source.as_ref(),
@@ -500,7 +495,7 @@ impl CalibRawApp {
     }
 
     pub(in crate::app) fn apply_pending_preview_quality(&mut self, _frame: &eframe::Frame) {
-        let preview_source = self.preview_source_raw();
+        let preview_source = self.develop.loaded_raw.clone();
         if self.preview.rebuild_receiver.is_some() {
             return;
         }

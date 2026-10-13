@@ -9,7 +9,6 @@ pub(crate) struct PreviewVisibility {
     scope: Option<usize>,
     force_mask_overlay: bool,
     pending: bool,
-    source_changed: bool,
     rebuild_required: bool,
     masks: Option<Arc<MaskStack>>,
     mask_names: Vec<String>,
@@ -62,7 +61,6 @@ impl PreviewVisibility {
             state.hidden.insert(key);
         }
         state.pending = true;
-        state.source_changed |= key == (None, "Lens Corrections");
         state.masks = None;
         state.write(ctx);
         ctx.request_repaint();
@@ -83,11 +81,6 @@ impl PreviewVisibility {
     }
     pub(in crate::app) fn requires_rebuild(ctx: &egui::Context) -> bool {
         Self::read(ctx).rebuild_required
-    }
-    pub(in crate::app) fn request_rebuild(ctx: &egui::Context) {
-        let mut state = Self::read(ctx);
-        state.rebuild_required = true;
-        state.write(ctx);
     }
     pub(in crate::app) fn rebuilt(ctx: &egui::Context) {
         let mut state = Self::read(ctx);
@@ -197,14 +190,6 @@ impl CalibRawApp {
         state.write(&self.egui_ctx);
         masks
     }
-    pub(in crate::app) fn preview_source_raw(&self) -> Option<Arc<LoadedRaw>> {
-        let state = PreviewVisibility::read(&self.egui_ctx);
-        if state.hidden.contains(&(None, "Lens Corrections")) {
-            self.develop.original_raw.clone()
-        } else {
-            self.develop.loaded_raw.clone()
-        }
-    }
     pub(in crate::app) fn sync_preview_visibility(&mut self) {
         let mut state = PreviewVisibility::read(&self.egui_ctx);
         let exposure = self.preview_exposure();
@@ -217,10 +202,9 @@ impl CalibRawApp {
             }
             return;
         }
-        let source_changed = state.source_changed
-            || exposure.ai_denoise_enabled != self.develop.target_exposure.ai_denoise_enabled;
+        let source_changed =
+            exposure.ai_denoise_enabled != self.develop.target_exposure.ai_denoise_enabled;
         state.pending = false;
-        state.source_changed = false;
         state.rebuild_required |= source_changed;
         state.write(&self.egui_ctx);
         self.develop.target_exposure = exposure;
@@ -361,7 +345,7 @@ mod tests {
         app.persistence.sidecar_saved_revision = Some(app.edit_commit_revision());
         let revision = app.edit_commit_revision();
 
-        for title in ["Light", "Detail", "Lens Corrections"] {
+        for title in ["Light", "Detail"] {
             PreviewVisibility::toggle(&ctx, title);
         }
         PreviewVisibility::set_mask_scope(&ctx, Some(0));
@@ -371,7 +355,6 @@ mod tests {
         assert_eq!(app.develop.target_exposure.exposure, 0.0);
         assert!(!app.develop.target_exposure.ai_denoise_enabled);
         assert!(!app.preview_mask_stack().masks[0].enabled);
-        assert!(Arc::ptr_eq(&app.preview_source_raw().unwrap(), &original));
         assert!(PreviewVisibility::requires_rebuild(&ctx));
         assert!(app.develop.lens_correction.enabled);
         assert!(Arc::ptr_eq(
@@ -411,7 +394,6 @@ mod tests {
             "Detail",
             "Effects",
             "Color Mixer",
-            "Lens Corrections",
         ] {
             PreviewVisibility::toggle(&ctx, title);
         }

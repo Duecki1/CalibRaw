@@ -424,15 +424,6 @@ impl CalibRawApp {
             |label| format!("Applied {label}"),
         );
         self.ui.notice = None;
-        if self
-            .preview_source_raw()
-            .as_ref()
-            .zip(self.develop.loaded_raw.as_ref())
-            .is_some_and(|(preview, saved)| !Arc::ptr_eq(preview, saved))
-        {
-            self.preview.quality_dirty = true;
-            crate::app::preview_visibility::PreviewVisibility::request_rebuild(&self.egui_ctx);
-        }
         self.resume_persisted_ai_denoise(frame);
         self.egui_ctx.request_repaint();
     }
