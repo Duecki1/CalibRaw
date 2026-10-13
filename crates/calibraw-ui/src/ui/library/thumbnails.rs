@@ -394,6 +394,8 @@ pub(super) fn loaded_library_thumbnail(
         developed,
         developed_thumbnail_stale: false,
         developed_render_pending: false,
+        #[cfg(not(target_os = "android"))]
+        display_metadata: None,
     }
 }
 
