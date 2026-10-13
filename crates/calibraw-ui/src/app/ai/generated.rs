@@ -243,7 +243,13 @@ impl CalibRawApp {
         if !cancelled && !stale {
             match result {
                 Ok(result) => {
-                    if let Some(mask) = result.into_probability_mask() {
+                    // Hardened subject alpha is exactly 0 wherever BiRefNet
+                    // found nothing, so an all-zero mask means no subject.
+                    if model == AiMaskModel::Subject && result.mask.iter().all(|&alpha| alpha == 0)
+                    {
+                        error_message =
+                            Some("Subject selection found no subject in this photo.".to_owned());
+                    } else if let Some(mask) = result.into_probability_mask() {
                         self.apply_generated_mask(model, mask);
                         succeeded = true;
                     } else {
@@ -493,5 +499,44 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn subject_mask_without_any_selected_pixel_reports_an_error() {
+        let mut app = CalibRawApp::empty(&egui::Context::default());
+        app.masks.stack.add_mask(MaskKind::Subject).unwrap();
+        let (sender, receiver) = std::sync::mpsc::channel();
+        sender
+            .send(AiMaskEvent::Finished(Ok(
+                calibraw_ai::ai_masks::AiMaskResult {
+                    width: 2,
+                    height: 2,
+                    mask: vec![0; 4],
+                },
+            )))
+            .unwrap();
+        assert!(app.begin_foreground_operation(ForegroundOperation {
+            kind: ForegroundOperationKind::Ai(AiFeature::Subject),
+            document_id: app.persistence.document_generation,
+            cancellation: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            progress: ForegroundProgress::indeterminate("Testing mask result"),
+            cancelling: false,
+            receiver: ForegroundOperationReceiver::AiMask(receiver),
+            context: ForegroundOperationContext::AiMask,
+        }));
+        app.poll_ai_mask_worker();
+
+        assert!(app.ui.error_dialogs.is_open());
+        assert_eq!(
+            app.ui.notice.as_deref(),
+            Some("Subject selection found no subject in this photo.")
+        );
+        assert!(app
+            .masks
+            .generated_cache_mut(AiMaskModel::Subject)
+            .is_none());
+        assert!(!app.masks.stack.masks[0].components[0]
+            .geometry
+            .is_initialized());
     }
 }
