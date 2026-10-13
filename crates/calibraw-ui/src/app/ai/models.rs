@@ -242,17 +242,8 @@ impl CalibRawApp {
         let path = self
             .ai_model_root()
             .join(calibraw_ai::ai_masks::RETIRED_DEPTH_MODEL_FILENAME);
-        if !path.is_file() {
-            return;
-        }
-        let spawned = std::thread::Builder::new()
-            .name("calibraw-retired-depth-model-cleanup".to_owned())
-            .spawn(move || match std::fs::remove_file(&path) {
-                Ok(()) => log::info!("removed retired depth model {}", path.display()),
-                Err(error) => log::warn!("could not remove {}: {error}", path.display()),
-            });
-        if let Err(error) = spawned {
-            log::warn!("could not start retired depth model cleanup: {error}");
+        if path.is_file() {
+            Self::remove_retired_app_data(path, "retired depth model");
         }
     }
 

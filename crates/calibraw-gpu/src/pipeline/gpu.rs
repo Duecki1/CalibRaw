@@ -348,11 +348,7 @@ impl RawGpuProgramTemplate {
             program.get();
         }
         for variant in COMMON_DEMOSAIC_VARIANTS {
-            for program in self
-                .pipelines
-                .iter()
-                .filter(|program| program.is_bayer_demosaic())
-            {
+            for program in self.bayer_demosaic_programs() {
                 program.demosaic_variant(variant);
             }
         }
@@ -360,13 +356,16 @@ impl RawGpuProgramTemplate {
 
     /// Compiles the demosaic variant that rendering `params` selects.
     pub fn compile_for_params(&self, params: &GpuParams) {
-        for program in self
-            .pipelines
-            .iter()
-            .filter(|program| program.is_bayer_demosaic())
-        {
+        for program in self.bayer_demosaic_programs() {
             program.for_demosaic_params(&params.camera);
         }
+    }
+
+    fn bayer_demosaic_programs(&self) -> impl Iterator<Item = &ComputeProgram> {
+        self.pipelines
+            .iter()
+            .filter(|program| program.is_bayer_demosaic())
+            .map(Arc::as_ref)
     }
 }
 

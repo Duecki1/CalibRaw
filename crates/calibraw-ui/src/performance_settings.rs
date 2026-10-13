@@ -6,6 +6,8 @@ use std::path::{Path, PathBuf};
 const SETTINGS_VERSION: u32 = 3;
 /// The desktop decoded-RAW cache default before version 2 raised it, so that
 /// Develop can prefetch both neighbours of the open photo.
+///
+/// migration: remove in v2.0.0, with the version 2 step in `sanitized`.
 const DESKTOP_RAW_CACHE_FILES_BEFORE_V2: usize = 2;
 const MAX_SETTINGS_BYTES: u64 = 64 * 1024;
 
@@ -193,6 +195,7 @@ impl PerformanceSettings {
         //
         // Version 2: every save wrote the cache size, so a stored old default is almost always
         // the default rather than a choice; move it to the new one.
+        // migration: remove in v2.0.0. Listed in `calibraw_core`'s `migrations`.
         if self.version < 2
             && !cfg!(target_os = "android")
             && self.raw_cache_files == DESKTOP_RAW_CACHE_FILES_BEFORE_V2
@@ -201,6 +204,7 @@ impl PerformanceSettings {
         }
         // Version 3: automatic vignetting correction is off by default. Every save wrote the old
         // default, so it is turned off unless it was the only correction chosen.
+        // migration: remove in v2.0.0. Listed in `calibraw_core`'s `migrations`.
         if self.version < 3 && self.automatic_lens_geometry {
             self.automatic_lens_vignetting = false;
         }
