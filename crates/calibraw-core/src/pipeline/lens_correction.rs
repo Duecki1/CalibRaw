@@ -71,100 +71,133 @@ fn apply_manual_lens_correction(
     if !manual.distortion.is_finite() || !manual.vignetting.is_finite() {
         return Err(anyhow!("manual lens correction amounts must be finite"));
     }
-    let frame = RadialFrame::of(raw.width, raw.height);
-    let distortion = manual.distortion.clamp(-100.0, 100.0) / 100.0;
-    let vignetting = manual.vignetting.clamp(-100.0, 100.0) / 100.0;
-    let lens_geometry = if distortion == 0.0 {
+    let model = ManualLensModel::new(manual, raw.width, raw.height);
+    let lens_geometry = if model.coefficient == 0.0 {
         None
     } else {
-        Some(Arc::new(distortion_map(frame, raw, distortion)?))
+        Some(Arc::new(distortion_map(&model, raw)?))
     };
-    let mut corrected = if vignetting == 0.0 {
+    let mut corrected = if model.vignetting_stops == 0.0 {
         raw.clone()
     } else {
-        apply_vignetting(raw, frame, vignetting * MAX_VIGNETTING_STOPS)?
+        apply_vignetting(raw, &model)?
     };
     corrected.lens_geometry = lens_geometry;
     Ok(corrected)
 }
 
-/// Pixel coordinates normalized so the image centre is 0 and its corners are
-/// at radius 1.
-#[derive(Clone, Copy)]
-struct RadialFrame {
+/// A [`ManualLensCorrection`] evaluated for one image size, in that image's
+/// pixel coordinates. Applying the correction and previewing it share it, so
+/// the preview shows what is applied.
+#[derive(Clone, Copy, Debug)]
+pub struct ManualLensModel {
+    /// The image centre in pixels.
     center: [f32; 2],
+    /// The centre-to-corner distance in pixels: radius 1 of the model.
     half_diagonal: f32,
+    /// Radial distortion coefficient `k`: corrected radius `r` samples the
+    /// source at `zoom·r·(1 + k·(zoom·r)²)`.
+    coefficient: f32,
+    /// Scale that keeps the corrected frame free of empty borders.
+    zoom: f32,
+    /// Exposure change at the corners; it falls off with `r²`.
+    vignetting_stops: f32,
 }
 
-impl RadialFrame {
-    fn of(width: u32, height: u32) -> Self {
+impl ManualLensModel {
+    pub fn new(correction: ManualLensCorrection, width: u32, height: u32) -> Self {
         let center = [
             width.saturating_sub(1) as f32 * 0.5,
             height.saturating_sub(1) as f32 * 0.5,
         ];
-        Self {
+        let amount = |value: f32| {
+            if value.is_finite() {
+                value.clamp(-100.0, 100.0) / 100.0
+            } else {
+                0.0
+            }
+        };
+        // Straightening barrel distortion samples the source closer to the centre.
+        let coefficient = -amount(correction.distortion) * MAX_DISTORTION_COEFFICIENT;
+        let mut model = Self {
             center,
             half_diagonal: center[0].hypot(center[1]).max(1.0),
+            coefficient,
+            zoom: 1.0,
+            vignetting_stops: amount(correction.vignetting) * MAX_VIGNETTING_STOPS,
+        };
+        if coefficient != 0.0 {
+            model.zoom = model.auto_scale();
         }
+        model
     }
 
-    fn normalize(self, x: f32, y: f32) -> [f32; 2] {
+    /// The source position that corrected pixel position `point` shows.
+    pub fn source_position(&self, point: [f32; 2]) -> [f32; 2] {
+        let [u, v] = self.normalize(point);
+        let [u, v] = self.distort([u, v], self.zoom);
+        [
+            self.center[0] + u * self.half_diagonal,
+            self.center[1] + v * self.half_diagonal,
+        ]
+    }
+
+    /// The exposure change, in stops, applied to the source pixel at `point`.
+    pub fn vignetting_stops(&self, point: [f32; 2]) -> f32 {
+        let [u, v] = self.normalize(point);
+        self.vignetting_stops * (u * u + v * v)
+    }
+
+    fn normalize(&self, [x, y]: [f32; 2]) -> [f32; 2] {
         [
             (x - self.center[0]) / self.half_diagonal,
             (y - self.center[1]) / self.half_diagonal,
         ]
     }
 
-    fn pixel(self, [u, v]: [f32; 2]) -> [f32; 2] {
-        [
-            self.center[0] + u * self.half_diagonal,
-            self.center[1] + v * self.half_diagonal,
-        ]
+    /// The normalized source position of normalized corrected position
+    /// `point` at `zoom`.
+    fn distort(&self, point: [f32; 2], zoom: f32) -> [f32; 2] {
+        let scaled = [point[0] * zoom, point[1] * zoom];
+        let factor = 1.0 + self.coefficient * (scaled[0] * scaled[0] + scaled[1] * scaled[1]);
+        [scaled[0] * factor, scaled[1] * factor]
     }
-}
 
-/// The source position of normalized corrected position `point`: scaled by
-/// `zoom`, then moved radially by `coefficient * r²`.
-fn distort(point: [f32; 2], coefficient: f32, zoom: f32) -> [f32; 2] {
-    let scaled = [point[0] * zoom, point[1] * zoom];
-    let factor = 1.0 + coefficient * (scaled[0] * scaled[0] + scaled[1] * scaled[1]);
-    [scaled[0] * factor, scaled[1] * factor]
-}
-
-/// The largest zoom whose source positions stay inside the image along every
-/// edge, so the corrected frame has no empty borders. The mapping is radially
-/// monotonic for the coefficients and zooms used (`1 + 3kr² > 0` up to
-/// `r = 1.4`), so the source of the frame lies inside the source of its edges
-/// and a bisection on edge samples finds the bound.
-fn auto_scale(frame: RadialFrame, coefficient: f32) -> f32 {
-    let limits = frame.normalize(0.0, 0.0).map(f32::abs);
-    let fits = |zoom: f32| {
-        (0..=EDGE_SAMPLES).all(|index| {
-            let t = index as f32 / EDGE_SAMPLES as f32 * 2.0 - 1.0;
-            [[t * limits[0], limits[1]], [limits[0], t * limits[1]]]
-                .into_iter()
-                .all(|point| {
-                    let [u, v] = distort(point, coefficient, zoom);
-                    u.abs() <= limits[0] * (1.0 + 1e-5) && v.abs() <= limits[1] * (1.0 + 1e-5)
-                })
-        })
-    };
-    let (mut low, mut high) = (0.5f32, 1.4f32);
-    for _ in 0..24 {
-        let middle = 0.5 * (low + high);
-        if fits(middle) {
-            low = middle;
-        } else {
-            high = middle;
+    /// The largest zoom whose source positions stay inside the image along
+    /// every edge, so the corrected frame has no empty borders. The mapping is
+    /// radially monotonic for the coefficients and zooms used (`1 + 3kr² > 0`
+    /// up to `r = 1.4`), so the source of the frame lies inside the source of
+    /// its edges and a bisection on edge samples finds the bound.
+    fn auto_scale(&self) -> f32 {
+        let limits = [
+            self.center[0] / self.half_diagonal,
+            self.center[1] / self.half_diagonal,
+        ];
+        let fits = |zoom: f32| {
+            (0..=EDGE_SAMPLES).all(|index| {
+                let t = index as f32 / EDGE_SAMPLES as f32 * 2.0 - 1.0;
+                [[t * limits[0], limits[1]], [limits[0], t * limits[1]]]
+                    .into_iter()
+                    .all(|point| {
+                        let [u, v] = self.distort(point, zoom);
+                        u.abs() <= limits[0] * (1.0 + 1e-5) && v.abs() <= limits[1] * (1.0 + 1e-5)
+                    })
+            })
+        };
+        let (mut low, mut high) = (0.5f32, 1.4f32);
+        for _ in 0..24 {
+            let middle = 0.5 * (low + high);
+            if fits(middle) {
+                low = middle;
+            } else {
+                high = middle;
+            }
         }
+        low
     }
-    low
 }
 
-fn distortion_map(frame: RadialFrame, raw: &LoadedRaw, distortion: f32) -> Result<LensGeometryMap> {
-    // Straightening barrel distortion samples the source closer to the centre.
-    let coefficient = -distortion * MAX_DISTORTION_COEFFICIENT;
-    let zoom = auto_scale(frame, coefficient);
+fn distortion_map(model: &ManualLensModel, raw: &LoadedRaw) -> Result<LensGeometryMap> {
     let grid_width = (raw.width.saturating_sub(1).div_ceil(GEOMETRY_GRID_STEP) + 1).max(2);
     let grid_height = (raw.height.saturating_sub(1).div_ceil(GEOMETRY_GRID_STEP) + 1).max(2);
     let grid_coordinate = |index: u32, cells: u32, extent: u32| {
@@ -175,7 +208,7 @@ fn distortion_map(frame: RadialFrame, raw: &LoadedRaw, distortion: f32) -> Resul
             let y = grid_coordinate(grid_y, grid_height, raw.height);
             (0..grid_width).map(move |grid_x| {
                 let x = grid_coordinate(grid_x, grid_width, raw.width);
-                frame.pixel(distort(frame.normalize(x, y), coefficient, zoom))
+                model.source_position([x, y])
             })
         })
         .collect();
@@ -183,13 +216,10 @@ fn distortion_map(frame: RadialFrame, raw: &LoadedRaw, distortion: f32) -> Resul
         .ok_or_else(|| anyhow!("manual distortion produced an invalid map"))
 }
 
-/// Multiplies the signal above black by `2^(stops * r²)`.
-fn apply_vignetting(raw: &LoadedRaw, frame: RadialFrame, stops: f32) -> Result<LoadedRaw> {
+/// Multiplies the signal above black by the model's vignetting gain.
+fn apply_vignetting(raw: &LoadedRaw, model: &ManualLensModel) -> Result<LoadedRaw> {
     let width = (raw.width as usize).max(1);
-    let gain = |x: usize, y: usize| {
-        let [u, v] = frame.normalize(x as f32, y as f32);
-        (stops * (u * u + v * v)).exp2()
-    };
+    let gain = |x: usize, y: usize| model.vignetting_stops([x as f32, y as f32]).exp2();
 
     if raw.is_pre_demosaiced_raster() {
         let source = raw

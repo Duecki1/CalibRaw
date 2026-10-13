@@ -286,8 +286,8 @@ mod error_dialogs;
 pub(crate) use error_dialogs::{ErrorDialogQueue, ErrorKind};
 mod foreground;
 mod inpainting;
-mod lens_profile_prompt;
 mod library_adjustments;
+mod manual_lens;
 mod presets;
 pub(crate) use library_adjustments::{
     EditTransfer, EditTransferOrigin, LibraryEditTransferOutcome,

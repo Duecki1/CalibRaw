@@ -17,6 +17,7 @@ fn lens_mode_selector(ui: &mut Ui, manual: &mut bool) {
 impl Sidebar {
     pub(super) fn show_optics(ui: &mut Ui, app: &mut CalibRawApp, foldable: bool) -> bool {
         let mut rebuild = false;
+        let mut open_adjust_dialog = false;
         let capture = app.develop.original_raw.as_ref().map(|raw| {
             let lens = match (raw.lens_make.trim(), raw.lens_model.trim()) {
                 ("", "") => "Not reported".to_owned(),
@@ -90,31 +91,13 @@ impl Sidebar {
                 });
 
             ui.add_space(moduwu_design::SPACE_XS);
-            // The sliders stay enabled while their correction waits for the
-            // drag to end; a change restarts a correction already running.
-            if let Some(manual) = state.manual.as_mut() {
-                let distortion_changed = AdjustmentSlider::new(
-                    "Distortion",
-                    &mut manual.distortion,
-                    ManualLensCorrection::RANGE,
-                )
-                .decimals(0)
-                .step(1.0)
-                .hover_text("Positive straightens barrel distortion, negative pincushion.")
-                .show(ui);
-                let vignetting_changed = AdjustmentSlider::new(
-                    "Vignetting",
-                    &mut manual.vignetting,
-                    ManualLensCorrection::RANGE,
-                )
-                .decimals(0)
-                .step(1.0)
-                .hover_text("Positive brightens the corners, negative darkens them.")
-                .show(ui);
-                if distortion_changed || vignetting_changed {
-                    state.enabled = true;
-                    rebuild = true;
-                }
+            if state.manual.is_some() {
+                open_adjust_dialog = ui
+                    .add_enabled_ui(!lens_correction_busy, |ui| {
+                        moduwu_design::full_width_button(ui, "Adjust")
+                    })
+                    .inner
+                    .clicked();
                 return;
             }
 
@@ -234,6 +217,9 @@ impl Sidebar {
                     crate::app::LensCorrectionState::automatic(state.catalog.clone(), automatic);
                 rebuild = true;
             }
+        }
+        if open_adjust_dialog {
+            app.open_manual_lens_dialog();
         }
         rebuild
     }

@@ -11,8 +11,8 @@ impl CalibRawApp {
         }
     }
 
-    /// Records a lens-correction edit made in the Lens Corrections card or
-    /// the missing-profile prompt. The photo is corrected again unless it
+    /// Records a lens-correction edit made in the Lens Corrections card, the
+    /// manual-correction dialog or the missing-profile prompt. The photo is corrected again unless it
     /// already shows what the edit asks for: the original geometry, with no
     /// correction applied or on its way.
     pub(crate) fn lens_correction_edited(&mut self) {
@@ -36,12 +36,7 @@ impl CalibRawApp {
 
     pub(in crate::app) fn queue_pending_lens_correction(&mut self, frame: &eframe::Frame) {
         self.poll_lens_correction_worker(frame);
-        // A held pointer may still be dragging a manual-correction slider;
-        // correct once it is released rather than for every step.
-        if !self.develop.lens_correction_dirty
-            || self.foreground_operation_active()
-            || self.egui_ctx.input(|input| input.pointer.any_down())
-        {
+        if !self.develop.lens_correction_dirty || self.foreground_operation_active() {
             return;
         }
 

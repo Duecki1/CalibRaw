@@ -237,6 +237,7 @@ impl CalibRawApp {
         self.show_ai_consent_dialog(ctx, frame);
         self.show_sidecar_save_error_dialog(ctx);
         self.show_missing_lens_profile_dialog(ctx);
+        crate::ui::manual_lens_dialog::show(ctx, self);
         crate::ui::presets::show_dialogs(ctx, self);
         self.show_error_dialog(ctx);
         self.show_foreground_operation_dialog(ctx);

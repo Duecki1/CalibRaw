@@ -154,6 +154,7 @@ impl CalibRawApp {
                 white_balance_picker_drag: None,
                 adjustment_section: AdjustmentSection::default(),
                 reveal_lens_card: false,
+                manual_lens_dialog: None,
                 mask_section: MaskSection::default(),
                 effect_component: None,
                 mask_effect_component: None,

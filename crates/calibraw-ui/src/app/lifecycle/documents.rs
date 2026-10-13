@@ -428,6 +428,7 @@ impl CalibRawApp {
                 self.develop.lens_correction = loaded.lens_correction;
                 self.develop.lens_correction_dirty = false;
                 self.ui.missing_lens_profile_prompt = None;
+                self.develop_ui.manual_lens_dialog = None;
                 if loaded.lens_profile_missing && !self.document_load_is_background() {
                     if let Some(raw) = self.develop.original_raw.clone() {
                         self.prompt_for_missing_lens_profile(&raw);

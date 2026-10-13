@@ -1,5 +1,6 @@
-//! The prompt shown when automatic lens correction finds no Lensfun profile
-//! for a photo that just opened, offering manual correction instead.
+//! Manual lens correction: the adjust dialog with its live preview, and the
+//! prompt that offers manual correction when automatic correction finds no
+//! Lensfun profile for a photo that just opened.
 
 use super::*;
 
@@ -67,6 +68,35 @@ impl CalibRawApp {
         }
     }
 
+    /// Opens the adjust dialog on the current manual values.
+    pub(crate) fn open_manual_lens_dialog(&mut self) {
+        let lens = &self.develop.lens_correction;
+        let current = lens.manual.unwrap_or_default();
+        // In manual mode an applied correction is the current values, and its
+        // vignetting is already in the preview pixels.
+        let shown = if lens.applied {
+            current
+        } else {
+            ManualLensCorrection::default()
+        };
+        self.develop_ui.manual_lens_dialog = Some(ManualLensDialog {
+            draft: current,
+            shown,
+        });
+    }
+
+    /// Closes the adjust dialog and corrects the photo with `correction`.
+    pub(crate) fn apply_manual_lens_correction(&mut self, correction: ManualLensCorrection) {
+        self.develop_ui.manual_lens_dialog = None;
+        let lens = &mut self.develop.lens_correction;
+        if lens.enabled && lens.manual == Some(correction) {
+            return;
+        }
+        lens.manual = Some(correction);
+        lens.enabled = true;
+        self.lens_correction_edited();
+    }
+
     /// Shows the Lens Corrections card of the Edit tab in manual mode.
     pub(crate) fn start_manual_lens_correction(&mut self) {
         self.activate_tab(AppTab::Develop);
@@ -106,6 +136,41 @@ mod tests {
         assert_eq!(lens.manual, Some(ManualLensCorrection::default()));
         // Neutral manual values change nothing the photo shows.
         assert!(!app.lens_correction_busy());
+    }
+
+    #[test]
+    fn the_dialog_previews_from_what_is_applied_and_apply_corrects() {
+        let mut app = CalibRawApp::empty(&egui::Context::default());
+        let applied = ManualLensCorrection {
+            distortion: 10.0,
+            vignetting: 20.0,
+        };
+        let lens = &mut app.develop.lens_correction;
+        lens.enabled = true;
+        lens.applied = true;
+        lens.manual = Some(applied);
+        app.open_manual_lens_dialog();
+        let dialog = app.develop_ui.manual_lens_dialog.unwrap();
+        assert_eq!((dialog.draft, dialog.shown), (applied, applied));
+
+        // Applying the values already shown changes nothing.
+        app.apply_manual_lens_correction(applied);
+        assert!(app.develop_ui.manual_lens_dialog.is_none());
+        assert!(!app.lens_correction_busy());
+
+        app.develop.lens_correction.applied = false;
+        app.develop.lens_correction.enabled = false;
+        app.open_manual_lens_dialog();
+        let dialog = app.develop_ui.manual_lens_dialog.unwrap();
+        assert_eq!(dialog.shown, ManualLensCorrection::default());
+        let adjusted = ManualLensCorrection {
+            distortion: -15.0,
+            ..applied
+        };
+        app.apply_manual_lens_correction(adjusted);
+        let lens = &app.develop.lens_correction;
+        assert!(lens.enabled);
+        assert_eq!(lens.manual, Some(adjusted));
     }
 
     #[test]
