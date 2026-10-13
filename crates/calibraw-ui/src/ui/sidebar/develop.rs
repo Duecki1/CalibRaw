@@ -1,5 +1,19 @@
 use super::*;
 
+const LENS_CARD_TITLE: &str = "Lens Corrections";
+
+/// Chooses between a Lensfun profile and hand-set corrections.
+fn lens_mode_selector(ui: &mut Ui, manual: &mut bool) {
+    ui.horizontal(|ui| {
+        let width = ((ui.available_width() - ui.spacing().item_spacing.x) * 0.5).max(1.0);
+        for (label, candidate) in [("Profile", false), ("Manual", true)] {
+            if moduwu_design::segmented_button(ui, label, *manual == candidate, width).clicked() {
+                *manual = candidate;
+            }
+        }
+    });
+}
+
 impl Sidebar {
     pub(super) fn show_optics(ui: &mut Ui, app: &mut CalibRawApp, foldable: bool) -> bool {
         let mut rebuild = false;
@@ -14,23 +28,36 @@ impl Sidebar {
             let aperture = (raw.aperture > 0.0).then(|| format!("f/{:.1}", raw.aperture));
             (lens, focal, aperture)
         });
+        if std::mem::take(&mut app.develop_ui.reveal_lens_card) {
+            adjustment_cards::reveal_adjustment_card(ui.ctx(), LENS_CARD_TITLE);
+        }
 
-        let action = Self::adjustment_card(ui, "Lens Corrections", false, foldable, true, |ui| {
+        let action = Self::adjustment_card(ui, LENS_CARD_TITLE, false, foldable, true, |ui| {
             let lens_correction_busy = app.lens_correction_busy();
             let state = &mut app.develop.lens_correction;
-            let has_selection = state.selected_lens().is_some();
+            let can_enable = state.manual.is_some()
+                || (state.catalog.available && state.selected_lens().is_some());
             let enabled_response = ui
-                .add_enabled_ui(
-                    state.catalog.available && has_selection && !lens_correction_busy,
-                    |ui| moduwu_design::toggle(ui, &mut state.enabled, "Enabled"),
-                )
+                .add_enabled_ui(can_enable && !lens_correction_busy, |ui| {
+                    moduwu_design::toggle(ui, &mut state.enabled, "Enabled")
+                })
                 .inner;
             if enabled_response.changed() {
                 rebuild = true;
             }
-            if !state.catalog.available {
+            if !state.catalog.available && state.manual.is_none() {
                 state.enabled = false;
                 state.applied = false;
+            }
+
+            ui.add_space(moduwu_design::SPACE_XXS);
+            let mut manual_mode = state.manual.is_some();
+            ui.add_enabled_ui(!lens_correction_busy, |ui| {
+                lens_mode_selector(ui, &mut manual_mode)
+            });
+            if manual_mode != state.manual.is_some() {
+                state.set_manual_mode(manual_mode);
+                rebuild = true;
             }
 
             ui.add_space(moduwu_design::SPACE_XXS);
@@ -63,6 +90,34 @@ impl Sidebar {
                 });
 
             ui.add_space(moduwu_design::SPACE_XS);
+            // The sliders stay enabled while their correction waits for the
+            // drag to end; a change restarts a correction already running.
+            if let Some(manual) = state.manual.as_mut() {
+                let distortion_changed = AdjustmentSlider::new(
+                    "Distortion",
+                    &mut manual.distortion,
+                    ManualLensCorrection::RANGE,
+                )
+                .decimals(0)
+                .step(1.0)
+                .hover_text("Positive straightens barrel distortion, negative pincushion.")
+                .show(ui);
+                let vignetting_changed = AdjustmentSlider::new(
+                    "Vignetting",
+                    &mut manual.vignetting,
+                    ManualLensCorrection::RANGE,
+                )
+                .decimals(0)
+                .step(1.0)
+                .hover_text("Positive brightens the corners, negative darkens them.")
+                .show(ui);
+                if distortion_changed || vignetting_changed {
+                    state.enabled = true;
+                    rebuild = true;
+                }
+                return;
+            }
+
             let makers = state.makers();
             let previous_maker = state.selected_maker.clone();
             let selected_maker_text = if state.selected_maker.is_empty() {

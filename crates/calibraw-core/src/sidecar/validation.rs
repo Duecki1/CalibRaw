@@ -36,6 +36,12 @@ pub(super) fn validate_edit_state(edits: &EditState) -> Result<(), SidecarError>
     {
         return invalid("lens name is unreasonably long");
     }
+    if let Some(manual) = edits.lens.manual {
+        for amount in [manual.distortion, manual.vignetting] {
+            finite("manual lens correction", &[amount])?;
+            bounded("manual lens correction", amount, -100.0, 100.0)?;
+        }
+    }
 
     if edits.remove.strokes.len() > crate::pipeline::REMOVE_MAX_STROKES {
         return invalid("sidecar contains too many Remove strokes");

@@ -576,6 +576,7 @@ impl Settings {
 
         let previous = app.preferences.automatic_lens_correction;
         let mut automatic = previous;
+        let mut missing_profile_prompt = app.preferences.missing_lens_profile_prompt;
         moduwu_design::toggle_with_help(
             ui,
             &mut automatic.enabled,
@@ -595,12 +596,19 @@ impl Settings {
                 "Vignetting",
                 "Brightens the corners the lens darkens automatically.",
             );
+            moduwu_design::toggle_with_help(
+                ui,
+                &mut missing_profile_prompt,
+                "Ask when no profile matches",
+                "Offers manual lens correction when a RAW opens without a matching Lensfun profile.",
+            );
         });
         // At least one correction must stay selected.
         if !automatic.corrections.geometry && !automatic.corrections.vignetting {
             automatic.corrections = previous.corrections;
         }
         app.set_automatic_lens_correction(automatic);
+        app.set_missing_lens_profile_prompt(missing_profile_prompt);
     }
 
     fn show_export_names_card(ui: &mut Ui, app: &mut CalibRawApp) {

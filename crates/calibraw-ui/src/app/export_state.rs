@@ -213,7 +213,7 @@ pub(super) struct ExportItemRequest {
 
 pub(super) struct LensCorrectionTaskRequest {
     pub(super) original_raw: Arc<LoadedRaw>,
-    pub(super) selection: Option<LensfunLens>,
+    pub(super) selection: Option<LensCorrection>,
     #[cfg(target_os = "android")]
     pub(super) preview_quality: PreviewQuality,
     pub(super) preview_proxy_edge: u32,

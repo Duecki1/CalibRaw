@@ -78,6 +78,37 @@ fn lens_edit_state_defaults_apply_every_correction_and_stay_out_of_the_file() {
         serde_json::from_str(&serde_json::to_string(&geometry_only).unwrap()).unwrap();
     assert_eq!(restored, geometry_only);
     assert!(restored.geometry && !restored.vignetting);
+    assert!(!json.contains("manual"));
+}
+
+#[test]
+fn manual_lens_correction_is_requested_without_a_profile_and_validated() {
+    let raw = crate::pipeline::LoadedRaw::from_scene_linear_rec2020(4, 4, vec![0.5; 48]).unwrap();
+    let manual = crate::pipeline::ManualLensCorrection {
+        distortion: 20.0,
+        vignetting: 0.0,
+    };
+    let mut lens = LensEditState {
+        enabled: true,
+        manual: Some(manual),
+        ..LensEditState::default()
+    };
+    assert_eq!(
+        lens.requested_correction(&raw),
+        Some(crate::pipeline::LensCorrection::Manual(manual))
+    );
+    lens.manual = Some(crate::pipeline::ManualLensCorrection::default());
+    assert_eq!(lens.requested_correction(&raw), None);
+
+    let mut edits = default_edit_state();
+    edits.lens = LensEditState {
+        manual: Some(crate::pipeline::ManualLensCorrection {
+            distortion: 101.0,
+            vignetting: 0.0,
+        }),
+        ..LensEditState::default()
+    };
+    assert!(validation::validate_edit_state(&edits).is_err());
 }
 
 #[test]

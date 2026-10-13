@@ -249,6 +249,14 @@ impl CalibRawApp {
         self.persist_performance_settings();
     }
 
+    pub(crate) fn set_missing_lens_profile_prompt(&mut self, prompt: bool) {
+        if self.preferences.missing_lens_profile_prompt == prompt {
+            return;
+        }
+        self.preferences.missing_lens_profile_prompt = prompt;
+        self.persist_performance_settings();
+    }
+
     pub(crate) fn set_library_thumbnail_size(
         &mut self,
         thumbnail_size: crate::ui::library::LibraryThumbnailSize,
@@ -363,6 +371,7 @@ impl CalibRawApp {
                 .automatic_lens_correction
                 .corrections
                 .vignetting,
+            missing_lens_profile_prompt: self.preferences.missing_lens_profile_prompt,
             adjustment_copy_settings: self.preferences.adjustment_copy_settings,
             #[cfg(target_os = "android")]
             last_android_library_folder: self.library.android_folder().to_owned(),

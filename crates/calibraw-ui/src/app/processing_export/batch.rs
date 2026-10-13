@@ -209,41 +209,16 @@ fn prepare_desktop_library_export_item(
         return Err("batch export cancelled".to_owned());
     }
 
-    let raw = if edits.lens.enabled {
-        let catalog = lensfun_catalog(&original_raw);
-        let selected = catalog
-            .lenses
-            .iter()
-            .find(|lens| lens.maker == edits.lens.maker && lens.model == edits.lens.model)
-            .cloned()
-            .or_else(|| {
-                (!edits.lens.maker.is_empty() || !edits.lens.model.is_empty()).then(|| {
-                    LensfunLens {
-                        maker: edits.lens.maker.clone(),
-                        model: edits.lens.model.clone(),
-                        ..LensfunLens::default()
-                    }
-                })
-            })
-            .or(catalog.auto_match)
-            .map(|lens| LensfunLens {
-                corrections: edits.lens.corrections(),
-                ..lens
-            });
-        if let Some(selected) = selected {
-            Arc::new(
-                apply_lensfun_correction(&original_raw, &selected).map_err(|error| {
-                    format!(
-                        "{}: lens correction failed: {error:#}",
-                        job.source.display()
-                    )
-                })?,
-            )
-        } else {
-            Arc::clone(&original_raw)
-        }
-    } else {
-        Arc::clone(&original_raw)
+    let raw = match edits.lens.requested_correction(&original_raw) {
+        Some(correction) => Arc::new(apply_lens_correction(&original_raw, &correction).map_err(
+            |error| {
+                format!(
+                    "{}: lens correction failed: {error:#}",
+                    job.source.display()
+                )
+            },
+        )?),
+        None => Arc::clone(&original_raw),
     };
 
     let remove = Arc::unwrap_or_clone(edits.remove);

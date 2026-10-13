@@ -441,7 +441,7 @@ impl CalibRawApp {
                     .is_some_and(|(preview, saved)| Arc::ptr_eq(preview, saved))
             {
                 if let (Some(selection), Some(full_raw), Some(preview_raw)) = (
-                    self.develop.lens_correction.selected_lens(),
+                    self.develop.lens_correction.requested_correction(),
                     preview_source.as_ref(),
                     self.develop.preview_raw.as_ref(),
                 ) {
