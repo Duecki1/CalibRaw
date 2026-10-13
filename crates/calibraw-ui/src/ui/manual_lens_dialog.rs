@@ -10,7 +10,7 @@
 use crate::app::{CalibRawApp, ManualLensDialog};
 use crate::pipeline::{ManualLensCorrection, ManualLensModel};
 use crate::ui::components::adjustment_slider::AdjustmentSlider;
-use eframe::egui::{self, epaint::Vertex, Color32, Mesh, Pos2, Rect, Sense, Shape, Ui};
+use eframe::egui::{self, epaint::Vertex, Color32, Mesh, Pos2, Rect, Shape, Ui};
 
 /// Mesh cells along the preview's longer edge.
 const MESH_CELLS: u32 = 48;
@@ -27,47 +27,66 @@ pub(crate) fn show(ctx: &egui::Context, app: &mut CalibRawApp) {
     let texture = app.preview_base_pipeline().map(|pipeline| {
         (
             pipeline.texture(),
-            [pipeline.gpu().width, pipeline.gpu().height],
+            [pipeline.gpu().width, pipeline.gpu().height].map(|extent| extent.max(1)),
         )
     });
+    // The preview is painted before the sliders; a slider change repaints so
+    // the preview catches up within the frame that follows.
+    let painted = dialog;
     let mut action = moduwu_design::DialogAction::None;
     moduwu_design::dialog_window(
         "Manual lens correction",
         ctx,
-        moduwu_design::DIALOG_WIDTH_LARGE,
+        moduwu_design::DIALOG_WIDTH_PREVIEW,
     )
-    .show(ctx, |ui| {
-        if let Some((texture, size)) = texture {
-            ui.vertical_centered(|ui| paint_preview(ui, texture, size, dialog));
-            ui.add_space(moduwu_design::SPACE_SM);
-        }
-        AdjustmentSlider::new(
-            "Distortion",
-            &mut dialog.draft.distortion,
-            ManualLensCorrection::RANGE,
-        )
-        .decimals(0)
-        .step(1.0)
-        .hover_text("Positive straightens barrel distortion, negative pincushion.")
-        .show(ui);
-        AdjustmentSlider::new(
-            "Vignetting",
-            &mut dialog.draft.vignetting,
-            ManualLensCorrection::RANGE,
-        )
-        .decimals(0)
-        .step(1.0)
-        .hover_text("Positive brightens the corners, negative darkens them.")
-        .show(ui);
-        action = moduwu_design::dialog_confirmation_buttons(
-            ui,
-            "Cancel",
-            "Apply",
-            true,
-            false,
-            moduwu_design::DialogKeyboard::CLOSE_ONLY,
-        );
-    });
+    .show_with_preview(
+        ctx,
+        moduwu_design::DialogPreview {
+            label: "Corrected preview",
+            aspect: texture.map_or(2.0 / 3.0, |(_, [width, height])| {
+                height as f32 / width as f32
+            }),
+        },
+        |ui, rect| match texture {
+            Some((texture, size)) => paint_preview(ui, rect, texture, size, painted),
+            None => {
+                ui.painter_at(rect).rect_filled(rect, 0.0, Color32::BLACK);
+            }
+        },
+        |ui| {
+            let distortion_changed = AdjustmentSlider::new(
+                "Distortion",
+                &mut dialog.draft.distortion,
+                ManualLensCorrection::RANGE,
+            )
+            .decimals(0)
+            .step(1.0)
+            .hover_text("Positive straightens barrel distortion, negative pincushion.")
+            .show(ui);
+            let vignetting_changed = AdjustmentSlider::new(
+                "Vignetting",
+                &mut dialog.draft.vignetting,
+                ManualLensCorrection::RANGE,
+            )
+            .decimals(0)
+            .step(1.0)
+            .hover_text("Positive brightens the corners, negative darkens them.")
+            .show(ui);
+            if distortion_changed || vignetting_changed {
+                ui.ctx().request_repaint();
+            }
+        },
+        |ui| {
+            action = moduwu_design::dialog_confirmation_buttons(
+                ui,
+                "Cancel",
+                "Apply",
+                true,
+                false,
+                moduwu_design::DialogKeyboard::CLOSE_ONLY,
+            );
+        },
+    );
     match action {
         moduwu_design::DialogAction::Confirm => app.apply_manual_lens_correction(dialog.draft),
         moduwu_design::DialogAction::Cancel => app.develop_ui.manual_lens_dialog = None,
@@ -75,21 +94,15 @@ pub(crate) fn show(ctx: &egui::Context, app: &mut CalibRawApp) {
     }
 }
 
-/// Paints the whole frame of `texture` (`size` pixels) as `dialog`'s draft
-/// would correct it, fitted to the dialog width and half the screen height.
-fn paint_preview(ui: &mut Ui, texture: egui::TextureId, size: [u32; 2], dialog: ManualLensDialog) {
-    let [width, height] = size.map(|extent| extent.max(1));
-    let aspect = height as f32 / width as f32;
-    let max_height = ui.ctx().content_rect().height() * 0.5;
-    let display_width = ui.available_width().min(max_height / aspect).max(1.0);
-    let (rect, response) = ui.allocate_exact_size(
-        egui::vec2(display_width, display_width * aspect),
-        Sense::hover(),
-    );
-    response.widget_info(|| {
-        egui::WidgetInfo::labeled(egui::WidgetType::Image, true, "Corrected preview")
-    });
-
+/// Paints the whole frame of `texture` (`size` pixels) into `rect` as
+/// `dialog`'s draft would correct it.
+fn paint_preview(
+    ui: &Ui,
+    rect: Rect,
+    texture: egui::TextureId,
+    [width, height]: [u32; 2],
+    dialog: ManualLensDialog,
+) {
     let draft = ManualLensModel::new(dialog.draft, width, height);
     let shown = ManualLensModel::new(dialog.shown, width, height);
     let extent = [

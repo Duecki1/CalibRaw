@@ -482,6 +482,29 @@ impl Sidebar {
         )
     }
 
+    /// An adjustment card without the preview eye, for adjustments the
+    /// preview cannot temporarily hide.
+    pub(super) fn adjustment_card_without_eye(
+        ui: &mut Ui,
+        title: &'static str,
+        default_open: bool,
+        foldable: bool,
+        contents: impl FnOnce(&mut Ui),
+    ) -> CardAction {
+        Self::adjustment_card_controls(
+            ui,
+            title,
+            default_open,
+            foldable,
+            true,
+            CardHeaderControls {
+                show_visibility: false,
+                show_mask_overlay_toggle: false,
+            },
+            contents,
+        )
+    }
+
     pub(super) fn mask_properties_card(
         ui: &mut Ui,
         default_open: bool,

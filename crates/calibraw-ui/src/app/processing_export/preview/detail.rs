@@ -2,7 +2,7 @@ use super::*;
 
 impl CalibRawApp {
     pub(in crate::app) fn advance_preview_detail(&mut self, _frame: &eframe::Frame) {
-        let preview_source = self.preview_source_raw();
+        let preview_source = self.develop.loaded_raw.clone();
         if self.preview.zoom <= DETAIL_ZOOM_START {
             self.preview.detail = None;
             self.preview.motion_at = None;
@@ -92,7 +92,7 @@ impl CalibRawApp {
     }
 
     pub(in crate::app) fn poll_preview_detail_rebuild_worker(&mut self, frame: &eframe::Frame) {
-        let preview_source = self.preview_source_raw();
+        let preview_source = self.develop.loaded_raw.clone();
         let received = self
             .preview
             .detail_rebuild_receiver
@@ -185,7 +185,7 @@ impl CalibRawApp {
         prepared: PreparedPreviewDetail,
     ) -> bool {
         let preview_masks = self.preview_mask_stack();
-        let preview_source = self.preview_source_raw();
+        let preview_source = self.develop.loaded_raw.clone();
         let Some(full_raw) = preview_source.as_ref().map(Arc::clone) else {
             return false;
         };
