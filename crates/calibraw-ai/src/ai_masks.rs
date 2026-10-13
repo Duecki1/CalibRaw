@@ -31,10 +31,14 @@ pub use crate::model_artifact::sha256_file_hex;
 
 mod depth;
 
-pub const BIREFNET_MODEL_BYTES: u64 = 224_005_088;
-pub const BIREFNET_MODEL_URL: &str = "https://huggingface.co/Duecki/CalibRaw-Artifacts/resolve/91085ce0ec322a4a7cbd20059688690218e52f9a/models/briefnet/birefnet-lowQ.onnx";
+/// `birefnet-lowQ.onnx` with its deformable convolutions rewritten by
+/// `packaging/models/birefnet_gridsample.py`. The original export peaks near
+/// 6.5 GB and overruns GPU memory under DirectML; this one peaks near 2 GB and
+/// matches it to float32 rounding.
+pub const BIREFNET_MODEL_BYTES: u64 = 223_665_266;
+pub const BIREFNET_MODEL_URL: &str = "https://huggingface.co/Duecki/CalibRaw-Artifacts/resolve/main/models/briefnet/birefnet-lowQ-gridsample.onnx";
 pub const BIREFNET_MODEL_SHA256_HEX: &str =
-    "5600024376f572a557870a5eb0afb1e5961636bef4e1e22132025467d0f03333";
+    "7c0194fad87cc56371054c14e3cff16ee40b095dcae1183321e6c4b5bb8e21d4";
 pub const SKYSEG_MODEL_FILENAME: &str = "skyseg-u2net-fp32.onnx";
 /// Metadata for the depth artifact.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -91,7 +95,8 @@ impl BiRefNetModelSpec {
     }
 }
 
-/// The BiRefNet General-Lite subject model: 1024 x 1024 input, 224 MB.
+/// The BiRefNet General-Lite subject model: 1024 x 1024 input, 224 MB. The cache
+/// filename predates the rewrite; the changed SHA-256 replaces older downloads.
 pub const BIREFNET_MODEL: BiRefNetModelSpec = BiRefNetModelSpec {
     checkpoint: "BiRefNet General-Lite",
     download_label: "BiRefNet General-Lite",
@@ -695,11 +700,35 @@ fn sigmoid_probability(logit: f32) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::{
-        normalized_rgb_input, restore_birefnet_output, sigmoid_probability,
-        subject_crop_refinement_enabled, validate_birefnet_output_shape, IMAGENET_MEAN,
-        IMAGENET_STD,
+        birefnet_model_is_verified, infer_birefnet, normalized_rgb_input, restore_birefnet_output,
+        sigmoid_probability, subject_crop_refinement_enabled, validate_birefnet_output_shape,
+        IMAGENET_MEAN, IMAGENET_STD,
     };
     use image::{ImageBuffer, Rgba};
+    use std::path::Path;
+
+    #[test]
+    #[ignore = "requires CALIBRAW_BIREFNET_MODEL and ONNX Runtime via ORT_DYLIB_PATH"]
+    fn published_birefnet_runs_on_the_expected_provider() {
+        let path = std::env::var_os("CALIBRAW_BIREFNET_MODEL").expect("CALIBRAW_BIREFNET_MODEL");
+        let runtime = std::env::var_os("ORT_DYLIB_PATH").expect("ORT_DYLIB_PATH");
+        ort::init_from(Path::new(&runtime)).unwrap().commit();
+        assert!(birefnet_model_is_verified(Path::new(&path)));
+        let image = ImageBuffer::from_fn(96, 64, |x, y| {
+            Rgba([(x * 255 / 95) as u8, (y * 255 / 63) as u8, 128, 255])
+        });
+        let mask = infer_birefnet(Path::new(&path), &image).unwrap();
+        assert_eq!(mask.len(), 96 * 64);
+        let providers = crate::active_execution_providers();
+        eprintln!("BiRefNet inference providers: {providers:?}");
+        if let Ok(expected) = std::env::var("CALIBRAW_TEST_BIREFNET_PROVIDER") {
+            assert!(providers.iter().any(|status| {
+                status.model_name == "BiRefNet"
+                    && status.active_provider == expected
+                    && !status.degraded
+            }));
+        }
+    }
 
     #[test]
     fn android_always_disables_subject_crop_refinement() {
