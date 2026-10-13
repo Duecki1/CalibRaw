@@ -32,6 +32,15 @@ pub(super) struct ActivePixelCopy<'a> {
     pub(super) cblack: &'a [u32],
 }
 
+/// Copies the active area out of LibRaw's unpacked sensor buffer, oriented,
+/// with its CFA colour and black level per pixel.
+///
+/// # Safety
+///
+/// `raw` must be a live LibRaw context that has been unpacked, and `raw_image`
+/// its sensor buffer: `raw_height` rows of `raw_pitch` bytes (`raw_width`
+/// samples when the pitch is 0), alive and unmodified during the call. The
+/// crop and pitch are checked against these dimensions here.
 pub(super) unsafe fn copy_active_pixels(request: ActivePixelCopy<'_>) -> Result<ActivePixelData> {
     let ActivePixelCopy {
         raw,
@@ -96,6 +105,9 @@ pub(super) unsafe fn copy_active_pixels(request: ActivePixelCopy<'_>) -> Result<
             let row_offset = raw_y
                 .checked_mul(pitch)
                 .ok_or_else(|| anyhow!("RAW row pointer offset overflow"))?;
+            // SAFETY: `raw_y` < `raw_height` and `crop_x + width` <= `raw_width`
+            // (checked above), so the row slice lies inside the buffer the
+            // caller guarantees; the pitch is u16-aligned.
             let row_ptr = (raw_image as *const u8).add(row_offset) as *const u16;
             let source = std::slice::from_raw_parts(row_ptr.add(crop_x), width);
             let destination = &mut pixels[y * out_width..(y + 1) * out_width];
@@ -112,8 +124,12 @@ pub(super) unsafe fn copy_active_pixels(request: ActivePixelCopy<'_>) -> Result<
                     let row_offset = raw_y
                         .checked_mul(pitch)
                         .ok_or_else(|| anyhow!("RAW row pointer offset overflow"))?;
+                    // SAFETY: `oriented_source_pos` stays inside the crop, which
+                    // lies inside the buffer (checked above); the buffer is only
+                    // read, so sharing it across threads is sound.
                     let row_ptr =
                         unsafe { (raw_image_addr as *const u8).add(row_offset) as *const u16 };
+                    // SAFETY: as above; `raw_x` < `raw_width`.
                     *output = unsafe { *row_ptr.add(raw_x) };
                 }
                 Ok(())
@@ -156,6 +172,7 @@ pub(super) unsafe fn copy_active_pixels(request: ActivePixelCopy<'_>) -> Result<
             let (src_x, src_y) = oriented_source_pos(x, y, width, height, flip);
             let raw_x = crop_x + src_x;
             let raw_y = crop_y + src_y;
+            // SAFETY: `raw` is a live, unpacked context (caller contract).
             let libraw_color = ffi::libraw_COLOR(raw, raw_y as i32, raw_x as i32);
             if !(0..=3).contains(&libraw_color) {
                 return Err(anyhow!(

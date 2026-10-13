@@ -147,6 +147,14 @@ pub(crate) struct PreviewUvRect {
     pub max: [f32; 2],
 }
 
+impl PreviewUvRect {
+    /// The whole image.
+    pub(crate) const FULL: Self = Self {
+        min: [0.0, 0.0],
+        max: [1.0, 1.0],
+    };
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct OverlayRasterKey {
     pub source_x: u32,
@@ -275,4 +283,17 @@ pub(crate) struct PreviewState {
     #[cfg(target_os = "android")]
     pub(crate) lens_corrected_cache:
         Option<(LensfunLens, PreviewQuality, Arc<LoadedRaw>, Arc<LoadedRaw>)>,
+}
+
+impl PreviewState {
+    /// Fits the whole image in the view again and stops view motion. Bumping
+    /// the revision rejects detail renders made for the previous view.
+    pub(crate) fn reset_view(&mut self) {
+        self.zoom = 1.0;
+        self.center = [0.5, 0.5];
+        self.visible_uv = PreviewUvRect::FULL;
+        self.motion_at = None;
+        self.touch_navigation_active = false;
+        self.revision = self.revision.wrapping_add(1);
+    }
 }

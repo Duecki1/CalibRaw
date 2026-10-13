@@ -301,15 +301,7 @@ impl CalibRawApp {
         self.preview.detail_pending_stage = None;
         self.preview.navigation_pending_stage = None;
         self.preview.detail_urgent = false;
-        self.preview.zoom = 1.0;
-        self.preview.center = [0.5, 0.5];
-        self.preview.visible_uv = PreviewUvRect {
-            min: [0.0, 0.0],
-            max: [1.0, 1.0],
-        };
-        self.preview.motion_at = None;
-        self.preview.touch_navigation_active = false;
-        self.preview.revision = self.preview.revision.wrapping_add(1);
+        self.preview.reset_view();
         self.develop.lens_correction = LensCorrectionState::default();
         self.develop.lens_correction_dirty = false;
         #[cfg(target_os = "android")]
@@ -423,15 +415,7 @@ impl CalibRawApp {
                 if loaded.mask_source.is_some() {
                     self.masks.source_cache = loaded.mask_source;
                 }
-                self.preview.zoom = 1.0;
-                self.preview.center = [0.5, 0.5];
-                self.preview.visible_uv = PreviewUvRect {
-                    min: [0.0, 0.0],
-                    max: [1.0, 1.0],
-                };
-                self.preview.motion_at = None;
-                self.preview.touch_navigation_active = false;
-                self.preview.revision = self.preview.revision.wrapping_add(1);
+                self.preview.reset_view();
                 self.preview.original_rendered_state = None;
                 self.preview.detail = None;
                 self.preview.navigation = None;

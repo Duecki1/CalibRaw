@@ -193,60 +193,6 @@ fn apply_optional_profile_look(rgb: vec3<f32>) -> vec3<f32> {
     return apply_profile_hsv_map(rgb, Common::camera_uniforms.profile_look, Common::camera_uniforms.profile_flags.y);
 }
 
-fn profile_curve_value(x: f32) -> f32 {
-    let size = Common::camera_uniforms.profile_tone.x;
-    if size < 2u {
-        return x;
-    }
-    let offset = Common::camera_uniforms.profile_tone.y;
-    let maximum = size - 1u;
-    if x <= 0.0 {
-        return profile_data[offset].x;
-    }
-    if x >= 1.0 {
-        return profile_data[offset + maximum].x;
-    }
-    let position = x * f32(maximum);
-    let low = u32(floor(position));
-    let high = min(low + 1u, maximum);
-    return mix(
-        profile_data[offset + low].x,
-        profile_data[offset + high].x,
-        position - f32(low),
-    );
-}
-
-fn apply_profile_tone_curve(rgb_rec2020: vec3<f32>) -> vec3<f32> {
-    if Common::camera_uniforms.profile_tone.x < 2u {
-        return rgb_rec2020;
-    }
-
-    let prophoto_signed = REC2020_TO_PROPHOTO * rgb_rec2020;
-    let prophoto_linear = Color::gamut_project_nonnegative(prophoto_signed, dot(prophoto_signed, PROPHOTO_LUMA));
-    let profile_headroom = max(
-        1.0,
-        max(prophoto_linear.r, max(prophoto_linear.g, prophoto_linear.b)),
-    );
-    let prophoto = prophoto_linear / profile_headroom;
-    let low = min(prophoto.r, min(prophoto.g, prophoto.b));
-    let high = max(prophoto.r, max(prophoto.g, prophoto.b));
-    if high - low <= 1e-8 {
-        let value = profile_curve_value(low);
-        return PROPHOTO_TO_REC2020 * vec3<f32>(value) * profile_headroom;
-    }
-
-    let mapped_low = profile_curve_value(low);
-    let mapped_high = profile_curve_value(high);
-    let scale = (mapped_high - mapped_low) / (high - low);
-    let curved = vec3<f32>(mapped_low)
-        + (prophoto - vec3<f32>(low)) * scale;
-    return PROPHOTO_TO_REC2020 * curved * profile_headroom;
-}
-
-fn apply_profile_view_tone(rgb: vec3<f32>) -> vec3<f32> {
-    return apply_profile_tone_curve(rgb);
-}
-
 // Encodes display-linear Rec.2020 as sRGB. In-gamut colors are converted
 // exactly; out-of-gamut colors keep their OKLab lightness and hue while their
 // chroma is compressed to the sRGB boundary. Mirrors

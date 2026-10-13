@@ -62,61 +62,12 @@ impl LibraryState {
 
     #[cfg(not(target_os = "android"))]
     pub(crate) fn new_desktop(preferences: LibraryPreferences, folder_sidebar_open: bool) -> Self {
-        let LibraryPreferences {
-            thumbnail_size,
-            sort_order,
-            stack_raw_companions,
-            render_edited_thumbnails_during_indexing,
-            ..
-        } = preferences;
-        let thumbnail_workers = preferences.thumbnail_workers();
-        Self {
-            location: None,
-            folder: None,
-            root_folder: None,
-            folder_tree: None,
-            expanded_folders: HashSet::new(),
+        Self::with_preferences(
+            preferences,
+            None,
             folder_sidebar_open,
-            entries: Vec::new(),
-            entry_indices: HashMap::new(),
-            event_receiver: None,
-            request_sender: None,
-            generation: Arc::new(AtomicU64::new(0)),
-            decoding_paused: Arc::new(AtomicBool::new(false)),
-            decode_gate: Arc::new(RwLock::new(())),
-            thumbnail_progress: ThumbnailBackgroundProgress::default(),
-            scanning: false,
-            catalog_ready: false,
-            status: "Open a folder to build your photo library.".to_owned(),
-            usage_clock: 0,
-            thumbnail_workers,
-            automatic_thumbnail_workers: preferences.automatic_thumbnail_workers,
-            render_edited_thumbnails_during_indexing,
-            sort_order,
-            thumbnail_size,
-            search_query: String::new(),
-            review_filter: LibraryReviewFilter::default(),
-            stack_raw_companions,
-            raw_companions: RawCompanions::default(),
-            selected_assets: HashSet::new(),
-            selection_mode: false,
-            selection_anchor: None,
-            image_clipboard: None,
-            adjustment_clipboard: None,
-            asset_transfer_receiver: None,
-            hdr_merge: None,
-            hdr_merge_message: None,
-            raw_import_receiver: None,
-            folder_operation_receiver: None,
-            folder_clipboard: None,
-            folder_name_dialog: None,
-            folder_delete_confirmation: None,
-            delete_originals_confirmation: None,
-            raw_name_dialog: None,
-            export_dialog: None,
-            adjustment_paste_dialog: None,
-            ai_mask_refresh_prompt: None,
-        }
+            "Open a folder to build your photo library.".to_owned(),
+        )
     }
 
     #[cfg(target_os = "android")]
@@ -126,13 +77,6 @@ impl LibraryState {
         preferences: LibraryPreferences,
         selected_folder: String,
     ) -> Self {
-        let LibraryPreferences {
-            thumbnail_size,
-            sort_order,
-            stack_raw_companions,
-            render_edited_thumbnails_during_indexing,
-            ..
-        } = preferences;
         let root_location = calibraw_ffi::library_location(&android_app).unwrap_or_else(|error| {
             log::warn!("{error}");
             "Android/media/de.duecki.calibraw/.library".to_owned()
@@ -149,11 +93,12 @@ impl LibraryState {
                 }
             };
         let location = android_library_location_label(&root_location, &selected_folder);
-        let thumbnail_workers = preferences.thumbnail_workers();
-        let mut state = Self {
-            location: Some(location),
-            folder_sidebar_open: false,
-            platform: PlatformLibraryState {
+        let mut state = Self::with_preferences(
+            preferences,
+            Some(location),
+            false,
+            String::new(),
+            PlatformLibraryState {
                 app: android_app,
                 root_location,
                 folder: selected_folder.clone(),
@@ -161,6 +106,41 @@ impl LibraryState {
                 expanded_folders: android_folder_ancestors(&selected_folder),
                 folder_name_dialog: None,
             },
+        );
+        state.refresh(context);
+        state
+    }
+
+    /// A library with no folder scanned yet, shared by both platforms.
+    fn with_preferences(
+        preferences: LibraryPreferences,
+        location: Option<String>,
+        folder_sidebar_open: bool,
+        status: String,
+        #[cfg(target_os = "android")] platform: PlatformLibraryState,
+    ) -> Self {
+        let LibraryPreferences {
+            thumbnail_size,
+            sort_order,
+            stack_raw_companions,
+            render_edited_thumbnails_during_indexing,
+            automatic_thumbnail_workers,
+            ..
+        } = preferences;
+        let thumbnail_workers = preferences.thumbnail_workers();
+        Self {
+            location,
+            #[cfg(not(target_os = "android"))]
+            folder: None,
+            #[cfg(not(target_os = "android"))]
+            root_folder: None,
+            #[cfg(not(target_os = "android"))]
+            folder_tree: None,
+            #[cfg(not(target_os = "android"))]
+            expanded_folders: HashSet::new(),
+            folder_sidebar_open,
+            #[cfg(target_os = "android")]
+            platform,
             entries: Vec::new(),
             entry_indices: HashMap::new(),
             event_receiver: None,
@@ -171,10 +151,10 @@ impl LibraryState {
             thumbnail_progress: ThumbnailBackgroundProgress::default(),
             scanning: false,
             catalog_ready: false,
-            status: String::new(),
+            status,
             usage_clock: 0,
             thumbnail_workers,
-            automatic_thumbnail_workers: preferences.automatic_thumbnail_workers,
+            automatic_thumbnail_workers,
             render_edited_thumbnails_during_indexing,
             sort_order,
             thumbnail_size,
@@ -185,16 +165,30 @@ impl LibraryState {
             selected_assets: HashSet::new(),
             selection_mode: false,
             selection_anchor: None,
+            #[cfg(not(target_os = "android"))]
+            image_clipboard: None,
             adjustment_clipboard: None,
             asset_transfer_receiver: None,
+            #[cfg(not(target_os = "android"))]
+            hdr_merge: None,
+            #[cfg(not(target_os = "android"))]
+            hdr_merge_message: None,
+            #[cfg(not(target_os = "android"))]
+            raw_import_receiver: None,
+            #[cfg(not(target_os = "android"))]
+            folder_operation_receiver: None,
+            #[cfg(not(target_os = "android"))]
+            folder_clipboard: None,
+            #[cfg(not(target_os = "android"))]
+            folder_name_dialog: None,
+            #[cfg(not(target_os = "android"))]
+            folder_delete_confirmation: None,
             delete_originals_confirmation: None,
             raw_name_dialog: None,
             export_dialog: None,
             adjustment_paste_dialog: None,
             ai_mask_refresh_prompt: None,
-        };
-        state.refresh(context);
-        state
+        }
     }
 
     pub(crate) fn set_status(&mut self, status: impl Into<String>) {

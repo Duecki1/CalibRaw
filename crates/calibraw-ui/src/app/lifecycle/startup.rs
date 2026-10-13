@@ -107,10 +107,7 @@ impl CalibRawApp {
                 quality: performance.preview_quality,
                 zoom: 1.0,
                 center: [0.5, 0.5],
-                visible_uv: PreviewUvRect {
-                    min: [0.0, 0.0],
-                    max: [1.0, 1.0],
-                },
+                visible_uv: PreviewUvRect::FULL,
                 viewport_pixels: [1, 1],
                 source_axes_swapped: false,
                 motion_at: None,

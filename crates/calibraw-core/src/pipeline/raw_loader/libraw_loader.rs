@@ -173,15 +173,13 @@ pub(super) fn load_raw_file_with_profile_selection(
         ));
         Ok((source_metadata, ctx))
     })?;
-    unsafe { validate_opened_raw_geometry(&ctx) }?;
+    validate_opened_raw_geometry(&ctx)?;
 
-    let (camera_make, camera_model) = unsafe {
-        let iparams = &(*ctx.raw).rawdata.iparams;
-        (
-            c_array_to_string(&iparams.make),
-            c_array_to_string(&iparams.model),
-        )
-    };
+    let iparams = &ctx.data().rawdata.iparams;
+    let (camera_make, camera_model) = (
+        c_array_to_string(&iparams.make),
+        c_array_to_string(&iparams.model),
+    );
 
     let profile_started = Instant::now();
     let (selected_profile, selected_profile_path, available_camera_profiles) =
@@ -199,6 +197,7 @@ pub(super) fn load_raw_file_with_profile_selection(
     ));
 
     let unpack_started = Instant::now();
+    // SAFETY: `ctx` is a live context with a file opened (type invariant).
     crate::serialized_reads::run(|| {
         check_libraw(unsafe { ffi::libraw_unpack(ctx.raw) }, "unpack RAW file")
     })?;
@@ -207,7 +206,7 @@ pub(super) fn load_raw_file_with_profile_selection(
         unpack_started.elapsed().as_secs_f64()
     ));
     let materialize_started = Instant::now();
-    let mut loaded = unsafe { loaded_raw_from_context(&ctx, selected_profile) }?;
+    let mut loaded = loaded_raw_from_context(&ctx, selected_profile)?;
     merge_exif_capture_metadata(&mut loaded.capture_metadata, source_metadata);
     crate::diagnostics::record(format!(
         "Decoded mosaic materialization finished in {:.3}s",
@@ -247,8 +246,8 @@ pub(super) fn load_raw_display_metadata(path: &Path) -> Result<super::RawDisplay
 /// Reads the oriented dimensions and capture settings LibRaw parsed when the
 /// file was opened; it does not touch the file again.
 fn display_metadata_from_context(ctx: &LibRawContext) -> Result<super::RawDisplayMetadata> {
-    let sizes = unsafe { &(*ctx.raw).rawdata.sizes };
-    let other = unsafe { &(*ctx.raw).other };
+    let sizes = &ctx.data().rawdata.sizes;
+    let other = &ctx.data().other;
     let width = u32::from(sizes.width);
     let height = u32::from(sizes.height);
     anyhow::ensure!(
@@ -272,7 +271,7 @@ fn display_metadata_from_context(ctx: &LibRawContext) -> Result<super::RawDispla
 fn open_libraw(path: &Path) -> Result<LibRawContext> {
     let ctx = LibRawContext::new()?;
     open_libraw_file(&ctx, path, "open RAW thumbnail")?;
-    unsafe { validate_opened_thumbnail_geometry(&ctx) }?;
+    validate_opened_thumbnail_geometry(&ctx)?;
     Ok(ctx)
 }
 
@@ -306,12 +305,13 @@ fn load_raw_file_with_selected_profile(
         let ctx = LibRawContext::new()?;
 
         open_libraw_file(&ctx, path, "open RAW file")?;
-        unsafe { validate_opened_raw_geometry(&ctx) }?;
+        validate_opened_raw_geometry(&ctx)?;
+        // SAFETY: `ctx` is a live context with a file opened (type invariant).
         check_libraw(unsafe { ffi::libraw_unpack(ctx.raw) }, "unpack RAW file")?;
         Ok((source_metadata, ctx))
     })?;
 
-    let mut loaded = unsafe { loaded_raw_from_context(&ctx, dcp_profile) }?;
+    let mut loaded = loaded_raw_from_context(&ctx, dcp_profile)?;
     merge_exif_capture_metadata(&mut loaded.capture_metadata, source_metadata);
     Ok(loaded)
 }
@@ -357,11 +357,15 @@ fn open_libraw_file(ctx: &LibRawContext, path: &Path, action: &str) -> Result<()
     #[cfg(windows)]
     let result = {
         let wide_path = path_to_libraw_wide(path)?;
+        // SAFETY: `ctx` is a live context (type invariant) and `wide_path` is
+        // NUL-terminated and outlives the call.
         unsafe { ffi::libraw_open_wfile(ctx.raw, wide_path.as_ptr()) }
     };
     #[cfg(not(windows))]
     let result = {
         let c_path = path_to_libraw_cstring(path)?;
+        // SAFETY: `ctx` is a live context (type invariant) and `c_path` is
+        // NUL-terminated and outlives the call.
         unsafe { ffi::libraw_open_file(ctx.raw, c_path.as_ptr()) }
     };
     check_libraw(result, action)
@@ -398,12 +402,17 @@ fn path_to_libraw_cstring(path: &Path) -> Result<CString> {
         .with_context(|| format!("RAW path contains an interior NUL byte: {}", path.display()))
 }
 
+/// One LibRaw processor. `raw` is the non-null context `libraw_init` returned,
+/// owned exclusively by this value and closed when it drops, so it is valid
+/// for every LibRaw call made through it until then. The type is neither
+/// `Send` nor `Sync`, so only the creating thread uses it.
 struct LibRawContext {
     raw: *mut ffi::libraw_data_t,
 }
 
 impl LibRawContext {
     fn new() -> Result<Self> {
+        // SAFETY: `libraw_init` has no preconditions; a null result is handled.
         let raw = unsafe { ffi::libraw_init(0) };
         if raw.is_null() {
             Err(anyhow!("libraw_init returned null"))
@@ -411,19 +420,33 @@ impl LibRawContext {
             Ok(Self { raw })
         }
     }
+
+    /// The fields LibRaw has filled in so far. Do not hold the reference
+    /// across a LibRaw call that writes the context, such as open or unpack.
+    fn data(&self) -> &ffi::libraw_data_t {
+        // SAFETY: `raw` is valid and initialized for the lifetime of `self`
+        // (type invariant).
+        unsafe { &*self.raw }
+    }
+
+    /// Mutable access, for processing parameters set before a LibRaw call.
+    fn data_mut(&mut self) -> &mut ffi::libraw_data_t {
+        // SAFETY: as in `data`; `&mut self` makes this the only reference.
+        unsafe { &mut *self.raw }
+    }
 }
 
 impl Drop for LibRawContext {
     fn drop(&mut self) {
+        // SAFETY: `raw` came from `libraw_init` and is closed exactly once.
         unsafe {
             ffi::libraw_close(self.raw);
         }
     }
 }
 
-unsafe fn validate_opened_raw_geometry(ctx: &LibRawContext) -> Result<()> {
-    let raw = &*ctx.raw;
-    let sizes = &raw.rawdata.sizes;
+fn validate_opened_raw_geometry(ctx: &LibRawContext) -> Result<()> {
+    let sizes = &ctx.data().rawdata.sizes;
     let active_width = sizes.width as u32;
     let active_height = sizes.height as u32;
     validate_raw_dimensions(active_width, active_height)
@@ -457,11 +480,12 @@ unsafe fn validate_opened_raw_geometry(ctx: &LibRawContext) -> Result<()> {
     Ok(())
 }
 
-unsafe fn loaded_raw_from_context(
+/// Builds the `LoadedRaw` from a context that has been unpacked.
+fn loaded_raw_from_context(
     ctx: &LibRawContext,
     dcp_profile: Option<DcpProfile>,
 ) -> Result<LoadedRaw> {
-    let raw = &*ctx.raw;
+    let raw = ctx.data();
     let rawdata = &raw.rawdata;
     let sizes = &rawdata.sizes;
     let color = &rawdata.color;
@@ -524,7 +548,10 @@ unsafe fn loaded_raw_from_context(
     let cdesc = cdesc4(iparams);
     let cfa_map = canonical_cfa_map(cdesc)?;
     let physical_black_levels = black_levels(color.black, &color.cblack);
-    let (width, height, raw_pixels, color_indices, black_levels_per_pixel) =
+    // SAFETY: a non-null `raw_image` is the buffer `libraw_unpack` allocated:
+    // `raw_height` rows of `raw_pitch` bytes (or `raw_width` samples when the
+    // pitch is 0), owned by `ctx`, which outlives the copy. `raw` belongs to it.
+    let (width, height, raw_pixels, color_indices, black_levels_per_pixel) = unsafe {
         copy_active_pixels(ActivePixelCopy {
             raw: ctx.raw,
             raw_image: rawdata.raw_image,
@@ -538,7 +565,8 @@ unsafe fn loaded_raw_from_context(
             cfa_map,
             shared_black: color.black,
             cblack: &color.cblack,
-        })?;
+        })
+    }?;
     let physical_wb = white_balance(color.cam_mul, cdesc);
     let wb_coeffs = canonicalize_f32x4(physical_wb, cfa_map);
     let calibration_compatible = dcp_profile
@@ -583,7 +611,10 @@ unsafe fn loaded_raw_from_context(
     if !color.profile.is_null() && color.profile_length > 0 {
         let length = usize::try_from(color.profile_length).unwrap_or(0);
         if length <= 16 * 1024 * 1024 {
-            let source = std::slice::from_raw_parts(color.profile as *const u8, length);
+            // SAFETY: a non-null `profile` is LibRaw's copy of the embedded ICC
+            // profile, `profile_length` bytes owned by `ctx`, which outlives
+            // this borrow.
+            let source = unsafe { std::slice::from_raw_parts(color.profile as *const u8, length) };
             let mut profile = Vec::new();
             profile
                 .try_reserve_exact(length)
@@ -674,6 +705,7 @@ fn check_libraw(err: i32, action: &str) -> Result<()> {
         return Ok(());
     }
 
+    // SAFETY: `libraw_strerror` returns null or a static NUL-terminated string.
     let message = unsafe {
         let ptr = ffi::libraw_strerror(err);
         if ptr.is_null() {

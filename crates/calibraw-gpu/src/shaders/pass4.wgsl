@@ -20,11 +20,6 @@ override BAYER_DEMOSAIC_MODE: u32 = 3u;
 override BAYER_SENSOR_DENOISE: bool = true;
 override BAYER_CA: bool = true;
 
-fn demosaic_in_bounds(pos: vec2<i32>) -> bool {
-    return pos.x >= 0 && pos.y >= 0
-        && pos.x < i32(Common::camera_uniforms.width) && pos.y < i32(Common::camera_uniforms.height);
-}
-
 fn rcd_has_reference_margin(pos: vec2<i32>) -> bool {
     return pos.x >= RCD_MARGIN && pos.y >= RCD_MARGIN
         && pos.x < i32(Common::camera_uniforms.width) - RCD_MARGIN

@@ -58,7 +58,7 @@ fn load_embedded_thumbnail(
     // File reads end with the in-memory copy; decoding runs outside the read gate.
     let (image, orientation, display_metadata) =
         crate::serialized_reads::run(|| unpack_embedded_preview(path, maximum_edge))?;
-    let thumbnail = unsafe { thumbnail_from_processed(&image, maximum_edge, orientation) }?;
+    let thumbnail = thumbnail_from_processed(&image, maximum_edge, orientation)?;
     Ok((thumbnail, display_metadata))
 }
 
@@ -94,13 +94,13 @@ fn unpack_preview(ctx: &LibRawContext, index: Option<usize>) -> Result<(Processe
     // LibRaw 0.22 reports the preview's format and channel count only once it
     // is unpacked; its declared length is known after open and bounds the
     // allocation that unpacking makes.
-    let declared_length = unsafe {
-        match index {
-            Some(index) => (*ctx.raw).thumbs_list.thumblist[index].tlength,
-            None => (*ctx.raw).thumbnail.tlength,
-        }
+    let declared_length = match index {
+        Some(index) => ctx.data().thumbs_list.thumblist[index].tlength,
+        None => ctx.data().thumbnail.tlength,
     };
     validate_embedded_thumbnail_length(declared_length)?;
+    // SAFETY: `ctx` is a live context with a file opened (type invariant);
+    // `index` is below `thumbcount` (`smaller_covering_preview`).
     let status = match index {
         Some(index) => {
             let index = i32::try_from(index).context("embedded preview index overflow")?;
@@ -113,6 +113,7 @@ fn unpack_preview(ctx: &LibRawContext, index: Option<usize>) -> Result<(Processe
     let orientation = embedded_thumbnail_orientation(ctx);
 
     let mut error = 0;
+    // SAFETY: `ctx` is a live context whose preview was just unpacked.
     let image = unsafe { ffi::libraw_dcraw_make_mem_thumb(ctx.raw, &mut error) };
     // The copy is malloc'd independently of the context and freed by the
     // context-free `libraw_dcraw_clear_mem`, so it outlives `ctx`.
@@ -121,23 +122,21 @@ fn unpack_preview(ctx: &LibRawContext, index: Option<usize>) -> Result<(Processe
 }
 
 fn smaller_covering_preview(ctx: &LibRawContext, maximum_edge: u32) -> Option<usize> {
-    unsafe {
-        let raw = &*ctx.raw;
-        let list = &raw.thumbs_list;
-        let count = usize::try_from(list.thumbcount)
-            .unwrap_or(0)
-            .min(list.thumblist.len());
-        smaller_covering_preview_index(
-            [raw.thumbnail.twidth, raw.thumbnail.theight],
-            list.thumblist[..count].iter().map(|item| EmbeddedPreview {
-                jpeg: item.tformat
-                    == ffi::LibRaw_internal_thumbnail_formats_LIBRAW_INTERNAL_THUMBNAIL_JPEG,
-                dimensions: [item.twidth, item.theight],
-                length: item.tlength,
-            }),
-            maximum_edge,
-        )
-    }
+    let raw = ctx.data();
+    let list = &raw.thumbs_list;
+    let count = usize::try_from(list.thumbcount)
+        .unwrap_or(0)
+        .min(list.thumblist.len());
+    smaller_covering_preview_index(
+        [raw.thumbnail.twidth, raw.thumbnail.theight],
+        list.thumblist[..count].iter().map(|item| EmbeddedPreview {
+            jpeg: item.tformat
+                == ffi::LibRaw_internal_thumbnail_formats_LIBRAW_INTERNAL_THUMBNAIL_JPEG,
+            dimensions: [item.twidth, item.theight],
+            length: item.tlength,
+        }),
+        maximum_edge,
+    )
 }
 
 /// One entry of LibRaw's embedded preview list, before unpacking.
@@ -199,7 +198,7 @@ fn validate_embedded_thumbnail_length(length: u32) -> Result<usize> {
 }
 
 fn validate_embedded_thumbnail_header(ctx: &LibRawContext) -> Result<()> {
-    let thumbnail = unsafe { &(*ctx.raw).thumbnail };
+    let thumbnail = &ctx.data().thumbnail;
     validate_embedded_thumbnail_metadata(
         thumbnail.tformat,
         thumbnail.twidth,
@@ -266,12 +265,12 @@ fn load_processed_thumbnail(
     let _render_permit = crate::thumbnail_cache::acquire_rendered_thumbnail_worker();
     // Unpacking reads the sensor payload; processing runs outside the read gate.
     let (ctx, display_metadata) = crate::serialized_reads::run(|| -> Result<_> {
-        let ctx = open_libraw(path)?;
+        let mut ctx = open_libraw(path)?;
         // Read before processing parameters and unpacking touch the context.
         let display_metadata = display_metadata_from_context(&ctx).ok();
         #[cfg(target_os = "android")]
         {
-            let sizes = unsafe { &(*ctx.raw).rawdata.sizes };
+            let sizes = &ctx.data().rawdata.sizes;
             let sensor_pixels = u64::from(sizes.raw_width)
                 .checked_mul(u64::from(sizes.raw_height))
                 .context("RAW thumbnail fallback sensor dimensions overflow")?;
@@ -280,52 +279,52 @@ fn load_processed_thumbnail(
                 "embedded preview is unavailable and the {sensor_pixels}-pixel sensor exceeds the Android sensor safety limit"
             );
         }
-        unsafe {
-            (*ctx.raw).params.half_size = 1;
-            (*ctx.raw).params.use_camera_wb = 1;
-            (*ctx.raw).params.output_color = 1;
-            (*ctx.raw).params.output_bps = 8;
-            (*ctx.raw).params.user_flip = -1;
-        }
+        let params = &mut ctx.data_mut().params;
+        params.half_size = 1;
+        params.use_camera_wb = 1;
+        params.output_color = 1;
+        params.output_bps = 8;
+        params.user_flip = -1;
+        // SAFETY: `ctx` is a live context with a file opened (type invariant).
         check_libraw(
             unsafe { ffi::libraw_unpack(ctx.raw) },
             "unpack RAW thumbnail fallback",
         )?;
         Ok((ctx, display_metadata))
     })?;
+    // SAFETY: `ctx` is a live context whose sensor data was just unpacked.
     check_libraw(
         unsafe { ffi::libraw_dcraw_process(ctx.raw) },
         "process RAW thumbnail fallback",
     )?;
 
     let mut error = 0;
+    // SAFETY: `ctx` is a live context that was just processed.
     let image = unsafe { ffi::libraw_dcraw_make_mem_image(ctx.raw, &mut error) };
     let image = ProcessedImage::new(image, error, "make fallback RAW thumbnail")?;
-    let thumbnail = unsafe { thumbnail_from_processed(&image, maximum_edge, 0) }?;
+    let thumbnail = thumbnail_from_processed(&image, maximum_edge, 0)?;
     Ok((thumbnail, display_metadata))
 }
 
 fn embedded_thumbnail_orientation(ctx: &LibRawContext) -> i32 {
-    unsafe {
-        let raw = &*ctx.raw;
-        let selected = &raw.thumbnail;
-        let thumbnail_list = &raw.thumbs_list;
-        let count = usize::try_from(thumbnail_list.thumbcount)
-            .unwrap_or(0)
-            .min(thumbnail_list.thumblist.len());
-        matching_thumbnail_orientation(
-            (selected.twidth, selected.theight, selected.tlength),
-            thumbnail_list.thumblist[..count].iter().map(|thumbnail| {
-                (
-                    thumbnail.twidth,
-                    thumbnail.theight,
-                    thumbnail.tlength,
-                    thumbnail.tflip,
-                )
-            }),
-        )
-        .unwrap_or(raw.rawdata.sizes.flip)
-    }
+    let raw = ctx.data();
+    let selected = &raw.thumbnail;
+    let thumbnail_list = &raw.thumbs_list;
+    let count = usize::try_from(thumbnail_list.thumbcount)
+        .unwrap_or(0)
+        .min(thumbnail_list.thumblist.len());
+    matching_thumbnail_orientation(
+        (selected.twidth, selected.theight, selected.tlength),
+        thumbnail_list.thumblist[..count].iter().map(|thumbnail| {
+            (
+                thumbnail.twidth,
+                thumbnail.theight,
+                thumbnail.tlength,
+                thumbnail.tflip,
+            )
+        }),
+    )
+    .unwrap_or(raw.rawdata.sizes.flip)
 }
 
 pub(super) fn matching_thumbnail_orientation(
@@ -338,6 +337,9 @@ pub(super) fn matching_thumbnail_orientation(
     })
 }
 
+/// An image LibRaw copied out of a context. The pointer is non-null, came from
+/// `libraw_dcraw_make_mem_*` and is freed when this drops; it does not depend
+/// on the context, which may be closed first.
 struct ProcessedImage(pub(super) *mut ffi::libraw_processed_image_t);
 
 impl ProcessedImage {
@@ -356,22 +358,27 @@ impl ProcessedImage {
 
 impl Drop for ProcessedImage {
     fn drop(&mut self) {
+        // SAFETY: the pointer came from `libraw_dcraw_make_mem_*` and is freed
+        // exactly once (type invariant).
         unsafe { ffi::libraw_dcraw_clear_mem(self.0) };
     }
 }
 
-unsafe fn thumbnail_from_processed(
+fn thumbnail_from_processed(
     image: &ProcessedImage,
     maximum_edge: u32,
     orientation: i32,
 ) -> Result<RawThumbnail> {
-    let processed = &*image.0;
+    // SAFETY: `image` owns a valid processed image (type invariant).
+    let processed = unsafe { &*image.0 };
     let data_size = processed.data_size as usize;
     anyhow::ensure!(
         data_size > 0 && data_size <= MAX_EMBEDDED_THUMBNAIL_BYTES,
         "LibRaw thumbnail payload size {data_size} is outside the safe range"
     );
-    let data = std::slice::from_raw_parts(processed.data.as_ptr(), data_size);
+    // SAFETY: `data` is a trailing array of `data_size` bytes allocated with
+    // the image, which `image` keeps alive for this borrow.
+    let data = unsafe { std::slice::from_raw_parts(processed.data.as_ptr(), data_size) };
 
     let decoded = match processed.type_ {
         ffi::LibRaw_image_formats_LIBRAW_IMAGE_JPEG => {
@@ -476,9 +483,8 @@ unsafe fn thumbnail_from_processed(
     })
 }
 
-pub(super) unsafe fn validate_opened_thumbnail_geometry(ctx: &LibRawContext) -> Result<()> {
-    let raw = &*ctx.raw;
-    let sizes = &raw.rawdata.sizes;
+pub(super) fn validate_opened_thumbnail_geometry(ctx: &LibRawContext) -> Result<()> {
+    let sizes = &ctx.data().rawdata.sizes;
     let active_width = u32::from(sizes.width);
     let active_height = u32::from(sizes.height);
     if active_width != 0 || active_height != 0 {
