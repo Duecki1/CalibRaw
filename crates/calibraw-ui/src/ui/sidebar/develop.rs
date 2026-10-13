@@ -1,8 +1,23 @@
 use super::*;
 
+const LENS_CARD_TITLE: &str = "Lens Corrections";
+
+/// Chooses between a Lensfun profile and hand-set corrections.
+fn lens_mode_selector(ui: &mut Ui, manual: &mut bool) {
+    ui.horizontal(|ui| {
+        let width = ((ui.available_width() - ui.spacing().item_spacing.x) * 0.5).max(1.0);
+        for (label, candidate) in [("Profile", false), ("Manual", true)] {
+            if moduwu_design::segmented_button(ui, label, *manual == candidate, width).clicked() {
+                *manual = candidate;
+            }
+        }
+    });
+}
+
 impl Sidebar {
     pub(super) fn show_optics(ui: &mut Ui, app: &mut CalibRawApp, foldable: bool) -> bool {
         let mut rebuild = false;
+        let mut open_adjust_dialog = false;
         let capture = app.develop.original_raw.as_ref().map(|raw| {
             let lens = match (raw.lens_make.trim(), raw.lens_model.trim()) {
                 ("", "") => "Not reported".to_owned(),
@@ -14,130 +29,158 @@ impl Sidebar {
             let aperture = (raw.aperture > 0.0).then(|| format!("f/{:.1}", raw.aperture));
             (lens, focal, aperture)
         });
+        if std::mem::take(&mut app.develop_ui.reveal_lens_card) {
+            adjustment_cards::reveal_adjustment_card(ui.ctx(), LENS_CARD_TITLE);
+        }
 
-        let action = Self::adjustment_card(ui, "Lens Corrections", false, foldable, true, |ui| {
-            let lens_correction_busy = app.lens_correction_busy();
-            let state = &mut app.develop.lens_correction;
-            let has_selection = state.selected_lens().is_some();
-            let enabled_response = ui
-                .add_enabled_ui(
-                    state.catalog.available && has_selection && !lens_correction_busy,
-                    |ui| moduwu_design::toggle(ui, &mut state.enabled, "Enabled"),
-                )
-                .inner;
-            if enabled_response.changed() {
-                rebuild = true;
-            }
-            if !state.catalog.available {
-                state.enabled = false;
-                state.applied = false;
-            }
-
-            ui.add_space(moduwu_design::SPACE_XXS);
-            egui::Grid::new("lens-correction-capture-metadata")
-                .num_columns(2)
-                .spacing(egui::vec2(10.0, 3.0))
-                .show(ui, |ui| {
-                    ui.label("Camera");
-                    ui.label(if state.catalog.camera_label.is_empty() {
-                        "Not matched"
-                    } else {
-                        state.catalog.camera_label.as_str()
-                    });
-                    ui.end_row();
-                    if let Some((lens, focal, aperture)) = &capture {
-                        ui.label("RAW lens");
-                        ui.label(lens);
-                        ui.end_row();
-                        if let Some(focal) = focal {
-                            ui.label("Focal length");
-                            ui.label(focal);
-                            ui.end_row();
-                        }
-                        if let Some(aperture) = aperture {
-                            ui.label("Aperture");
-                            ui.label(aperture);
-                            ui.end_row();
-                        }
-                    }
-                });
-
-            ui.add_space(moduwu_design::SPACE_XS);
-            let makers = state.makers();
-            let previous_maker = state.selected_maker.clone();
-            let selected_maker_text = if state.selected_maker.is_empty() {
-                if state.selected_model.is_empty() {
-                    "Select a brand".to_owned()
-                } else {
-                    "Unknown".to_owned()
+        let action = Self::adjustment_card_without_eye(
+            ui,
+            LENS_CARD_TITLE,
+            false,
+            foldable,
+            |ui| {
+                let lens_correction_busy = app.lens_correction_busy();
+                let state = &mut app.develop.lens_correction;
+                let can_enable = state.manual.is_some()
+                    || (state.catalog.available && state.selected_lens().is_some());
+                let enabled_response = ui
+                    .add_enabled_ui(can_enable && !lens_correction_busy, |ui| {
+                        moduwu_design::toggle(ui, &mut state.enabled, "Enabled")
+                    })
+                    .inner;
+                if enabled_response.changed() {
+                    rebuild = true;
                 }
-            } else {
-                state.selected_maker.clone()
-            };
-            ui.add_enabled_ui(
-                state.catalog.available && !makers.is_empty() && !lens_correction_busy,
-                |ui| {
-                    moduwu_design::form_combo(
-                        ui,
-                        "Brand",
-                        "lens-correction-brand",
-                        selected_maker_text,
-                        240.0,
-                        |ui| {
-                            for maker in &makers {
-                                ui.selectable_value(
-                                    &mut state.selected_maker,
-                                    maker.clone(),
-                                    if maker.is_empty() { "Unknown" } else { maker },
-                                );
-                            }
-                        },
-                    );
-                },
-            );
-            let mut selection_changed = state.selected_maker != previous_maker;
-            if selection_changed {
-                let first_model = state
-                    .models_for_maker(&state.selected_maker)
-                    .into_iter()
-                    .next()
-                    .unwrap_or_default();
-                state.selected_model = first_model;
-            }
+                if !state.catalog.available && state.manual.is_none() {
+                    state.enabled = false;
+                    state.applied = false;
+                }
 
-            let models = state.models_for_maker(&state.selected_maker);
-            let previous_model = state.selected_model.clone();
-            let selected_model_text = if state.selected_model.is_empty() {
-                "Select a lens".to_owned()
-            } else {
-                state.selected_model.clone()
-            };
-            ui.add_enabled_ui(
-                state.catalog.available && !models.is_empty() && !lens_correction_busy,
-                |ui| {
-                    moduwu_design::form_combo(
-                        ui,
-                        "Lens",
-                        "lens-correction-model",
-                        selected_model_text,
-                        240.0,
-                        |ui| {
-                            for model in &models {
-                                ui.selectable_value(
-                                    &mut state.selected_model,
-                                    model.clone(),
-                                    model,
-                                );
-                            }
-                        },
-                    );
-                },
-            );
-            selection_changed |= state.selected_model != previous_model;
+                ui.add_space(moduwu_design::SPACE_XXS);
+                let mut manual_mode = state.manual.is_some();
+                ui.add_enabled_ui(!lens_correction_busy, |ui| {
+                    lens_mode_selector(ui, &mut manual_mode)
+                });
+                if manual_mode != state.manual.is_some() {
+                    state.set_manual_mode(manual_mode);
+                    rebuild = true;
+                }
 
-            ui.add_space(moduwu_design::SPACE_XS);
-            let previous_corrections = state.corrections;
-            ui.add_enabled_ui(state.catalog.available && !lens_correction_busy, |ui| {
+                ui.add_space(moduwu_design::SPACE_XXS);
+                egui::Grid::new("lens-correction-capture-metadata")
+                    .num_columns(2)
+                    .spacing(egui::vec2(10.0, 3.0))
+                    .show(ui, |ui| {
+                        ui.label("Camera");
+                        ui.label(if state.catalog.camera_label.is_empty() {
+                            "Not matched"
+                        } else {
+                            state.catalog.camera_label.as_str()
+                        });
+                        ui.end_row();
+                        if let Some((lens, focal, aperture)) = &capture {
+                            ui.label("RAW lens");
+                            ui.label(lens);
+                            ui.end_row();
+                            if let Some(focal) = focal {
+                                ui.label("Focal length");
+                                ui.label(focal);
+                                ui.end_row();
+                            }
+                            if let Some(aperture) = aperture {
+                                ui.label("Aperture");
+                                ui.label(aperture);
+                                ui.end_row();
+                            }
+                        }
+                    });
+
+                ui.add_space(moduwu_design::SPACE_XS);
+                if state.manual.is_some() {
+                    open_adjust_dialog = ui
+                        .add_enabled_ui(!lens_correction_busy, |ui| {
+                            moduwu_design::full_width_button(ui, "Adjust")
+                        })
+                        .inner
+                        .clicked();
+                    return;
+                }
+
+                let makers = state.makers();
+                let previous_maker = state.selected_maker.clone();
+                let selected_maker_text = if state.selected_maker.is_empty() {
+                    if state.selected_model.is_empty() {
+                        "Select a brand".to_owned()
+                    } else {
+                        "Unknown".to_owned()
+                    }
+                } else {
+                    state.selected_maker.clone()
+                };
+                ui.add_enabled_ui(
+                    state.catalog.available && !makers.is_empty() && !lens_correction_busy,
+                    |ui| {
+                        moduwu_design::form_combo(
+                            ui,
+                            "Brand",
+                            "lens-correction-brand",
+                            selected_maker_text,
+                            240.0,
+                            |ui| {
+                                for maker in &makers {
+                                    ui.selectable_value(
+                                        &mut state.selected_maker,
+                                        maker.clone(),
+                                        if maker.is_empty() { "Unknown" } else { maker },
+                                    );
+                                }
+                            },
+                        );
+                    },
+                );
+                let mut selection_changed = state.selected_maker != previous_maker;
+                if selection_changed {
+                    let first_model = state
+                        .models_for_maker(&state.selected_maker)
+                        .into_iter()
+                        .next()
+                        .unwrap_or_default();
+                    state.selected_model = first_model;
+                }
+
+                let models = state.models_for_maker(&state.selected_maker);
+                let previous_model = state.selected_model.clone();
+                let selected_model_text = if state.selected_model.is_empty() {
+                    "Select a lens".to_owned()
+                } else {
+                    state.selected_model.clone()
+                };
+                ui.add_enabled_ui(
+                    state.catalog.available && !models.is_empty() && !lens_correction_busy,
+                    |ui| {
+                        moduwu_design::form_combo(
+                            ui,
+                            "Lens",
+                            "lens-correction-model",
+                            selected_model_text,
+                            240.0,
+                            |ui| {
+                                for model in &models {
+                                    ui.selectable_value(
+                                        &mut state.selected_model,
+                                        model.clone(),
+                                        model,
+                                    );
+                                }
+                            },
+                        );
+                    },
+                );
+                selection_changed |= state.selected_model != previous_model;
+
+                ui.add_space(moduwu_design::SPACE_XS);
+                let previous_corrections = state.corrections;
+                ui.add_enabled_ui(state.catalog.available && !lens_correction_busy, |ui| {
                 ui.horizontal_wrapped(|ui| {
                     moduwu_design::toggle(ui, &mut state.corrections.geometry, "Geometry")
                         .on_hover_text(
@@ -147,28 +190,29 @@ impl Sidebar {
                         .on_hover_text("Brighten the corners the lens darkens.");
                 });
             });
-            // At least one correction must stay selected.
-            if !state.corrections.geometry && !state.corrections.vignetting {
-                state.corrections = previous_corrections;
-            }
-            selection_changed |= state.corrections != previous_corrections;
-            if selection_changed {
-                state.applied = false;
-                if let Some(selection) = state.selected_lens() {
-                    state.catalog.status = if state.enabled {
-                        format!("Applying {}…", selection.label())
-                    } else {
-                        format!(
-                            "Selected {}. Enable correction to apply it.",
-                            selection.label()
-                        )
-                    };
+                // At least one correction must stay selected.
+                if !state.corrections.geometry && !state.corrections.vignetting {
+                    state.corrections = previous_corrections;
                 }
-                if state.enabled {
-                    rebuild = true;
+                selection_changed |= state.corrections != previous_corrections;
+                if selection_changed {
+                    state.applied = false;
+                    if let Some(selection) = state.selected_lens() {
+                        state.catalog.status = if state.enabled {
+                            format!("Applying {}…", selection.label())
+                        } else {
+                            format!(
+                                "Selected {}. Enable correction to apply it.",
+                                selection.label()
+                            )
+                        };
+                    }
+                    if state.enabled {
+                        rebuild = true;
+                    }
                 }
-            }
-        });
+            },
+        );
         match action {
             adjustment_cards::CardAction::None => {}
             adjustment_cards::CardAction::Toggle => {}
@@ -179,6 +223,9 @@ impl Sidebar {
                     crate::app::LensCorrectionState::automatic(state.catalog.clone(), automatic);
                 rebuild = true;
             }
+        }
+        if open_adjust_dialog {
+            app.open_manual_lens_dialog();
         }
         rebuild
     }

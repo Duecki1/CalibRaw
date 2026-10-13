@@ -258,6 +258,8 @@ pub(crate) struct LensCorrectionState {
     pub catalog: LensfunCatalog,
     pub selected_maker: String,
     pub selected_model: String,
+    /// Hand-set corrections used instead of the selected profile.
+    pub manual: Option<ManualLensCorrection>,
 }
 
 /// The Settings choice for lens correction on photos with no saved edits.
@@ -302,6 +304,31 @@ impl LensCorrectionState {
                 .map(|lens| lens.model.clone())
                 .unwrap_or_default(),
             catalog,
+            manual: None,
+        }
+    }
+
+    /// Switches to hand-set corrections, starting neutral and turned on, or
+    /// back to the selected profile, which stays on only if one is selected.
+    pub(crate) fn set_manual_mode(&mut self, manual: bool) {
+        if manual {
+            self.manual = Some(ManualLensCorrection::default());
+            self.enabled = true;
+        } else {
+            self.manual = None;
+            self.enabled &= self.catalog.available && self.selected_lens().is_some();
+        }
+    }
+
+    /// The correction the photo should show; `None` shows the original
+    /// geometry. Manual mode at its neutral values corrects nothing.
+    pub(crate) fn requested_correction(&self) -> Option<LensCorrection> {
+        if !self.enabled {
+            return None;
+        }
+        match self.manual {
+            Some(manual) => (!manual.is_identity()).then_some(LensCorrection::Manual(manual)),
+            None => self.selected_lens().map(LensCorrection::Profile),
         }
     }
 
@@ -354,7 +381,7 @@ pub(super) struct PreparedLensCorrection {
     pub(super) preview_raw: Arc<LoadedRaw>,
     pub(super) applied_label: Option<String>,
     #[cfg(target_os = "android")]
-    pub(super) selection: Option<LensfunLens>,
+    pub(super) selection: Option<LensCorrection>,
     #[cfg(target_os = "android")]
     pub(super) preview_quality: PreviewQuality,
 }
@@ -425,6 +452,10 @@ pub(crate) struct DevelopUiState {
     pub(crate) white_balance_picker_active: bool,
     pub(crate) white_balance_picker_drag: Option<[[f32; 2]; 2]>,
     pub(crate) adjustment_section: AdjustmentSection,
+    /// Unfold and scroll to the Lens Corrections card when the sidebar next
+    /// draws it.
+    pub(crate) reveal_lens_card: bool,
+    pub(crate) manual_lens_dialog: Option<ManualLensDialog>,
     pub(crate) mask_section: MaskSection,
     pub(crate) effect_component: Option<crate::pipeline::MaskEffect>,
     pub(crate) mask_effect_component: Option<crate::pipeline::MaskEffect>,
@@ -437,6 +468,16 @@ pub(crate) struct DevelopUiState {
     pub(crate) mask_point_color: crate::ui::components::point_color::PointColorUiState,
     pub(crate) mask_point_color_tab: bool,
     pub(crate) mask_point_color_mask: Option<usize>,
+}
+
+/// The open manual lens-correction dialog.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct ManualLensDialog {
+    /// The values being adjusted; nothing is corrected until they are applied.
+    pub(crate) draft: ManualLensCorrection,
+    /// The manual correction already in the preview pixels. The live preview
+    /// shows the draft relative to it.
+    pub(crate) shown: ManualLensCorrection,
 }
 
 impl DevelopUiState {
@@ -509,5 +550,30 @@ mod lens_correction_tests {
         );
         assert!(state.enabled);
         assert_eq!(state.selected_lens().unwrap().corrections, corrections);
+    }
+
+    #[test]
+    fn manual_mode_replaces_the_profile_and_is_neutral_at_zero() {
+        let mut state = LensCorrectionState::automatic(
+            catalog_with_match(),
+            AutomaticLensCorrection::default(),
+        );
+        assert!(matches!(
+            state.requested_correction(),
+            Some(LensCorrection::Profile(_))
+        ));
+        state.manual = Some(ManualLensCorrection::default());
+        assert_eq!(state.requested_correction(), None);
+        let manual = ManualLensCorrection {
+            distortion: 10.0,
+            vignetting: 0.0,
+        };
+        state.manual = Some(manual);
+        assert_eq!(
+            state.requested_correction(),
+            Some(LensCorrection::Manual(manual))
+        );
+        state.enabled = false;
+        assert_eq!(state.requested_correction(), None);
     }
 }

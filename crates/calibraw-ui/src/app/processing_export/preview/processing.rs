@@ -21,7 +21,7 @@ impl CalibRawApp {
     }
 
     pub(crate) fn mark_pipeline_dirty(&mut self) {
-        let preview_source = self.preview_source_raw();
+        let preview_source = self.develop.loaded_raw.clone();
         self.note_edit_changed();
         let next_exposure = self.preview_exposure();
         if self.preview.gpu_pipeline.is_none() {
@@ -48,7 +48,7 @@ impl CalibRawApp {
     }
 
     pub(crate) fn apply_white_balance_area(&mut self, area: [[f32; 2]; 2]) -> bool {
-        let preview_source = self.preview_source_raw();
+        let preview_source = self.develop.loaded_raw.clone();
         let result = preview_source.as_ref().and_then(|raw| {
             raw.white_balance_offsets_from_area(area[0], area[1], self.develop.exposure.black_point)
         });
@@ -68,7 +68,7 @@ impl CalibRawApp {
 
     pub(in crate::app) fn advance_zoomed_processing(&mut self, frame: &eframe::Frame) {
         let preview_masks = self.preview_mask_stack();
-        let preview_source = self.preview_source_raw();
+        let preview_source = self.develop.loaded_raw.clone();
         let Some(stage) = self.preview.detail_pending_stage else {
             return;
         };
@@ -280,7 +280,7 @@ impl CalibRawApp {
         };
 
         let preview_masks = self.preview_mask_stack();
-        let preview_source = self.preview_source_raw();
+        let preview_source = self.develop.loaded_raw.clone();
         if self.preview.zoom > DETAIL_ZOOM_START {
             if exact_white_balance_refresh {
                 drain_detail(self);

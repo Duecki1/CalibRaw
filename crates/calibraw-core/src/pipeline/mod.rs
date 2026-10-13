@@ -6,6 +6,7 @@ mod display_raster;
 mod exif_metadata;
 pub mod geometry;
 pub mod hdr;
+mod lens_correction;
 pub mod lensfun;
 mod mask_region;
 pub mod masks;
@@ -35,6 +36,9 @@ pub use geometry::{
     estimate_straighten_rotation, transform_thumbnail_geometry,
     transform_thumbnail_geometry_with_lens, CropAspectRatio, GeometryTransform, LensGeometryMap,
     LineAnalysisImage, StraightenEstimate,
+};
+pub use lens_correction::{
+    apply_lens_correction, LensCorrection, ManualLensCorrection, ManualLensModel,
 };
 pub use lensfun::{
     apply_lensfun_correction, lensfun_catalog, LensfunCatalog, LensfunCorrections, LensfunLens,

@@ -151,7 +151,7 @@ impl CalibRawApp {
 
     pub(crate) fn sync_original_preview(&mut self, frame: &eframe::Frame) {
         let preview_masks = self.preview_mask_stack();
-        let preview_source = self.preview_source_raw();
+        let preview_source = self.develop.loaded_raw.clone();
         let requested_state = (self.preview.original_requested, self.preview.revision);
         if self.preview.original_rendered_state == Some(requested_state) {
             return;

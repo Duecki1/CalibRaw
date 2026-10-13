@@ -23,6 +23,8 @@ pub(crate) struct PreferencesState {
     pub(crate) image_relative_brush_size: bool,
     pub(crate) show_develop_navigation_labels: bool,
     pub(crate) automatic_lens_correction: AutomaticLensCorrection,
+    /// Ask about manual correction when automatic correction finds no profile.
+    pub(crate) missing_lens_profile_prompt: bool,
     pub(crate) export_name_template: String,
     #[cfg(not(target_os = "android"))]
     pub(crate) discord_rich_presence: bool,
@@ -69,6 +71,8 @@ pub(crate) struct UiState {
     pub(crate) notice: Option<String>,
     pub(crate) error_dialogs: ErrorDialogQueue,
     pub(crate) unsupported_file_dialog: Option<UnsupportedFileDialog>,
+    /// The message of the open missing-lens-profile prompt.
+    pub(crate) missing_lens_profile_prompt: Option<String>,
     pub(crate) onboarding_step: Option<OnboardingStep>,
     pub(in crate::app) version_check: version_update::VersionCheckState,
     pub(crate) thumbnail_cache_size: Option<Result<u64, String>>,
