@@ -11,7 +11,9 @@
 //! counts files, least recently used first out; entries still decoding are
 //! never evicted.
 
-use crate::pipeline::{lensfun_catalog, CameraProfileMode, LensfunCatalog, LensfunLens, LoadedRaw};
+use crate::pipeline::{
+    lensfun_catalog, CameraProfileMode, LensCorrection, LensfunCatalog, LoadedRaw,
+};
 use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, OnceLock, PoisonError};
@@ -33,7 +35,7 @@ pub(crate) struct DecodedRaw {
     lens_catalog: OnceLock<LensfunCatalog>,
     /// Held while a correction runs, so a second request for the same
     /// selection waits for it instead of correcting again.
-    lens_corrected: Mutex<Option<(LensfunLens, Arc<LoadedRaw>)>>,
+    lens_corrected: Mutex<Option<(LensCorrection, Arc<LoadedRaw>)>>,
 }
 
 impl DecodedRaw {
@@ -60,7 +62,7 @@ impl DecodedRaw {
     /// correction when its selection matches. Failures are not kept.
     pub(crate) fn lens_corrected(
         &self,
-        selection: &LensfunLens,
+        selection: &LensCorrection,
         correct: impl FnOnce(&LoadedRaw) -> anyhow::Result<LoadedRaw>,
     ) -> anyhow::Result<Arc<LoadedRaw>> {
         let mut slot = lock(&self.lens_corrected);
@@ -399,10 +401,12 @@ mod tests {
             corrections.fetch_add(1, Ordering::Relaxed);
             Ok(raw.clone())
         };
-        let lens = |model: &str| LensfunLens {
-            maker: "Tamron".to_owned(),
-            model: model.to_owned(),
-            ..LensfunLens::default()
+        let lens = |model: &str| {
+            LensCorrection::Profile(crate::pipeline::LensfunLens {
+                maker: "Tamron".to_owned(),
+                model: model.to_owned(),
+                ..Default::default()
+            })
         };
         let first = decoded.lens_corrected(&lens("28-75"), correct).unwrap();
         let again = decoded.lens_corrected(&lens("28-75"), correct).unwrap();

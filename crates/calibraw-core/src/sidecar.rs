@@ -1,9 +1,10 @@
 use crate::file_ops::write_atomically;
 use crate::pipeline::remove::RemovePatchSidecarCache;
 use crate::pipeline::{
-    ExposureParams, GeometryTransform, LensfunCorrections, MaskGeometry, MaskImage, MaskKind,
-    MaskStack, RemoveEditState, SubjectRefinement, MAX_LOCAL_MASKS, MAX_MASK_COMPONENTS,
-    MAX_PATH_POINTS, REMOVE_MAX_PATCHES_PER_STROKE, REMOVE_MAX_STROKES,
+    lensfun_catalog, ExposureParams, GeometryTransform, LensCorrection, LensfunCorrections,
+    LensfunLens, LoadedRaw, ManualLensCorrection, MaskGeometry, MaskImage, MaskKind, MaskStack,
+    RemoveEditState, SubjectRefinement, MAX_LOCAL_MASKS, MAX_MASK_COMPONENTS, MAX_PATH_POINTS,
+    REMOVE_MAX_PATCHES_PER_STROKE, REMOVE_MAX_STROKES,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
@@ -26,8 +27,8 @@ pub use size_limits::*;
 
 // The newest schema of the "CalibRaw edit sidecar" format. Bump this for every incompatible
 // serialized layout change; pre-release AuRaw sidecars use a different format discriminator.
-// Schema 2 shares the layout of schema 1 and adds the Relight effect; edits without it are
-// still written as schema 1 (`migrations::older_readers`).
+// Schema 2 shares the layout of schema 1 and adds the Relight effect and manual lens correction;
+// edits without them are still written as schema 1 (`migrations::older_readers`).
 pub const SIDECAR_SCHEMA_VERSION: u32 = 2;
 pub const DEVELOPED_THUMBNAIL_CACHE_VERSION_SALT: u64 = 0x4155_5241_5700_0007;
 pub const SIDECAR_SUFFIX: &str = ".calibraw";
@@ -76,7 +77,7 @@ pub enum SidecarTarget {
     },
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct LensEditState {
     pub enabled: bool,
     pub maker: String,
@@ -88,6 +89,10 @@ pub struct LensEditState {
     /// Apply the profile's vignetting data.
     #[serde(default = "default_true", skip_serializing_if = "is_true")]
     pub vignetting: bool,
+    /// Hand-set corrections applied instead of the profile, which stays
+    /// selected for switching back.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub manual: Option<ManualLensCorrection>,
 }
 
 impl Default for LensEditState {
@@ -98,6 +103,7 @@ impl Default for LensEditState {
             model: String::new(),
             geometry: true,
             vignetting: true,
+            manual: None,
         }
     }
 }
@@ -108,6 +114,35 @@ impl LensEditState {
             geometry: self.geometry,
             vignetting: self.vignetting,
         }
+    }
+
+    /// The correction this edit applies to `raw`, if any. A profile missing
+    /// from `raw`'s catalog is still requested by name, and an edit without a
+    /// lens name uses the catalog's automatic match.
+    pub fn requested_correction(&self, raw: &LoadedRaw) -> Option<LensCorrection> {
+        if !self.enabled {
+            return None;
+        }
+        if let Some(manual) = self.manual {
+            return (!manual.is_identity()).then_some(LensCorrection::Manual(manual));
+        }
+        let catalog = lensfun_catalog(raw);
+        let lens = catalog
+            .lenses
+            .into_iter()
+            .find(|lens| lens.maker == self.maker && lens.model == self.model)
+            .or_else(|| {
+                (!self.maker.is_empty() || !self.model.is_empty()).then(|| LensfunLens {
+                    maker: self.maker.clone(),
+                    model: self.model.clone(),
+                    ..LensfunLens::default()
+                })
+            })
+            .or(catalog.auto_match)?;
+        Some(LensCorrection::Profile(LensfunLens {
+            corrections: self.corrections(),
+            ..lens
+        }))
     }
 }
 

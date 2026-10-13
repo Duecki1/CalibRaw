@@ -11,13 +11,37 @@ impl CalibRawApp {
         }
     }
 
+    /// Records a lens-correction edit made in the Lens Corrections card or
+    /// the missing-profile prompt. The photo is corrected again unless it
+    /// already shows what the edit asks for: the original geometry, with no
+    /// correction applied or on its way.
+    pub(crate) fn lens_correction_edited(&mut self) {
+        let showing_request = !self.develop.lens_correction.applied
+            && !self.lens_correction_busy()
+            && self
+                .develop
+                .lens_correction
+                .requested_correction()
+                .is_none();
+        if showing_request {
+            self.note_edit_changed();
+        } else {
+            self.mark_lens_correction_dirty();
+        }
+    }
+
     pub(in crate::app) fn apply_pending_lens_correction(&mut self, frame: &eframe::Frame) {
         self.queue_pending_lens_correction(frame);
     }
 
     pub(in crate::app) fn queue_pending_lens_correction(&mut self, frame: &eframe::Frame) {
         self.poll_lens_correction_worker(frame);
-        if !self.develop.lens_correction_dirty || self.foreground_operation_active() {
+        // A held pointer may still be dragging a manual-correction slider;
+        // correct once it is released rather than for every step.
+        if !self.develop.lens_correction_dirty
+            || self.foreground_operation_active()
+            || self.egui_ctx.input(|input| input.pointer.any_down())
+        {
             return;
         }
 
@@ -25,19 +49,15 @@ impl CalibRawApp {
             self.develop.lens_correction_dirty = false;
             return;
         };
-        let selection = if self.develop.lens_correction.enabled {
-            let Some(selection) = self.develop.lens_correction.selected_lens() else {
-                self.develop.lens_correction_dirty = false;
-                self.develop.lens_correction.enabled = false;
-                self.develop.lens_correction.applied = false;
-                self.develop.lens_correction.catalog.status =
-                    "Select a lens profile before enabling correction.".to_owned();
-                return;
-            };
-            Some(selection)
-        } else {
-            None
-        };
+        let lens = &mut self.develop.lens_correction;
+        if lens.enabled && lens.manual.is_none() && lens.selected_lens().is_none() {
+            self.develop.lens_correction_dirty = false;
+            lens.enabled = false;
+            lens.applied = false;
+            lens.catalog.status = "Select a lens profile before enabling correction.".to_owned();
+            return;
+        }
+        let selection = lens.requested_correction();
 
         if let Some(restored_masks) = self.persistence.lens_restore_masks.take() {
             self.masks.stack = restored_masks;
@@ -96,7 +116,7 @@ impl CalibRawApp {
         let status_label = request
             .selection
             .as_ref()
-            .map(LensfunLens::label)
+            .map(LensCorrection::label)
             .unwrap_or_else(|| "original geometry".to_owned());
         self.develop.lens_correction.catalog.status = if request.selection.is_some() {
             format!("Applying {status_label}…")
@@ -119,13 +139,13 @@ impl CalibRawApp {
                     if worker_cancellation.load(Ordering::Acquire) {
                         return Err("foreground operation cancelled".to_owned());
                     }
-                    let applied_label = request.selection.as_ref().map(LensfunLens::label);
+                    let applied_label = request.selection.as_ref().map(LensCorrection::label);
                     let (full_raw, preview_raw) = if let Some(cached_raws) = request.cached_raws {
                         cached_raws
                     } else {
                         let original_raw = Arc::clone(&request.original_raw);
                         let full_raw = if let Some(selection) = request.selection.as_ref() {
-                            Arc::new(apply_lensfun_correction(&original_raw, selection).map_err(
+                            Arc::new(apply_lens_correction(&original_raw, selection).map_err(
                                 |error| format!("Could not apply {}: {error:#}", selection.label()),
                             )?)
                         } else {

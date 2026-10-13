@@ -77,6 +77,18 @@ impl CardAction {
     }
 }
 
+fn card_reveal_id(title: &str) -> egui::Id {
+    egui::Id::new("calibraw-reveal-adjustment-card").with(title)
+}
+
+/// Unfolds the adjustment card titled `title` and scrolls it into view. Call
+/// it in the pass that draws the card, before drawing it.
+pub(super) fn reveal_adjustment_card(ctx: &egui::Context, title: &'static str) {
+    let target = card_reveal_id(title);
+    ctx.data_mut(|data| data.insert_temp(target, true));
+    moduwu_design::request_scroll_into_view(ctx, target, Some(egui::Align::TOP));
+}
+
 fn visibility_icon(visible: bool) -> &'static str {
     if visible {
         egui_phosphor::regular::EYE_SLASH
@@ -510,8 +522,12 @@ impl Sidebar {
         let visible = !show_visibility
             || crate::app::preview_visibility::PreviewVisibility::visible(ui.ctx(), title);
         let controls_enabled = controls_enabled && visible;
+        let reveal = ui
+            .ctx()
+            .data_mut(|data| data.remove_temp::<bool>(card_reveal_id(title)))
+            .unwrap_or(false);
         let mut action = CardAction::None;
-        moduwu_design::content_card(ui, |ui| {
+        let card = moduwu_design::content_card(ui, |ui| {
             ui.push_id(title, |ui| {
                 // Reserve the button height before laying out the title.
                 ui.spacing_mut().interact_size.y = ui.spacing().interact_size.y.max(26.0);
@@ -539,23 +555,26 @@ impl Sidebar {
                             ui.ctx(),
                             ui.make_persistent_id("expanded"),
                             default_open,
-                        )
-                        .show_header(ui, |ui| {
-                            let available = ui.available_rect_before_wrap();
-                            Self::adjustment_card_title(ui, title);
-                            let card_actions = Self::card_actions(
-                                ui,
-                                title,
-                                visible,
-                                show_visibility,
-                                show_mask_overlay_toggle,
-                            );
-                            action = card_actions.action;
-                            let buttons = card_actions.button_rects();
-                            // The built-in arrow already toggles.
-                            header_clicked =
-                                Self::card_header_background_clicked(ui, available, buttons);
-                        });
+                        );
+                    if reveal {
+                        header.set_open(true);
+                    }
+                    let mut header = header.show_header(ui, |ui| {
+                        let available = ui.available_rect_before_wrap();
+                        Self::adjustment_card_title(ui, title);
+                        let card_actions = Self::card_actions(
+                            ui,
+                            title,
+                            visible,
+                            show_visibility,
+                            show_mask_overlay_toggle,
+                        );
+                        action = card_actions.action;
+                        let buttons = card_actions.button_rects();
+                        // The built-in arrow already toggles.
+                        header_clicked =
+                            Self::card_header_background_clicked(ui, available, buttons);
+                    });
                     if header_clicked {
                         header.toggle();
                     }
@@ -576,6 +595,7 @@ impl Sidebar {
                 }
             });
         });
+        moduwu_design::scroll_into_view_on_draw(ui, card_reveal_id(title), card.response.rect);
         moduwu_design::card_gap(ui);
         match action {
             CardAction::Toggle => {
