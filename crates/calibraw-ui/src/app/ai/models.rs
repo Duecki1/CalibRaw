@@ -233,6 +233,29 @@ impl CalibRawApp {
             .join(calibraw_ai::ai_masks::DEPTH_MODEL.cache_filename)
     }
 
+    /// Desktop builds used a larger depth model before Depth Anything V2
+    /// Small; nothing reads it any more. Removes that file and nothing else.
+    ///
+    /// migration: remove in v1.4.0. Listed in `calibraw_core`'s `migrations`.
+    #[cfg(not(target_os = "android"))]
+    pub(in crate::app) fn remove_retired_depth_model(&self) {
+        let path = self
+            .ai_model_root()
+            .join(calibraw_ai::ai_masks::RETIRED_DEPTH_MODEL_FILENAME);
+        if !path.is_file() {
+            return;
+        }
+        let spawned = std::thread::Builder::new()
+            .name("calibraw-retired-depth-model-cleanup".to_owned())
+            .spawn(move || match std::fs::remove_file(&path) {
+                Ok(()) => log::info!("removed retired depth model {}", path.display()),
+                Err(error) => log::warn!("could not remove {}: {error}", path.display()),
+            });
+        if let Err(error) = spawned {
+            log::warn!("could not start retired depth model cleanup: {error}");
+        }
+    }
+
     pub(in crate::app) fn big_lama_model_path(&self) -> PathBuf {
         self.ai_model_root()
             .join(calibraw_ai::remove::BIG_LAMA_MODEL_FILENAME)

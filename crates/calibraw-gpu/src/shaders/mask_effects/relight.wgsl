@@ -284,19 +284,19 @@ fn relight_jitter(uv: vec2<f32>) -> f32 {
 @group(0) @binding(46) var relight_shadow_map: texture_2d<f32>;
 @group(0) @binding(47) var relight_shadow_map_out: texture_storage_2d<rgba16float, write>;
 
-// The shadow-map channel of a Relight slot plus one, or zero when the slot
-// traces its shadows per pixel instead (`assign_relight_shadow_channels`).
-// The shadow map upsampled with the depth's `taps`.
+// The shadow map upsampled with the depth's `taps`
+// (`scene_depth_resolve_depth`).
 fn relight_shadow_map_resolve(taps: SceneDepthTaps) -> vec4<f32> {
-    return scene_depth_resolve(
-        textureLoad(relight_shadow_map, scene_depth_tap_cell(taps, 0u), 0),
-        textureLoad(relight_shadow_map, scene_depth_tap_cell(taps, 1u), 0),
-        textureLoad(relight_shadow_map, scene_depth_tap_cell(taps, 2u), 0),
-        textureLoad(relight_shadow_map, scene_depth_tap_cell(taps, 3u), 0),
-        taps,
-    );
+    var total = vec4<f32>(0.0);
+    for (var tap = 0u; tap < SCENE_DEPTH_TAPS; tap = tap + 1u) {
+        total += textureLoad(relight_shadow_map, scene_depth_tap_cell(taps, tap), 0)
+            * scene_depth_tap_weight(taps, tap);
+    }
+    return total;
 }
 
+// The shadow-map channel of a Relight slot plus one, or zero when the slot
+// traces its shadows per pixel instead (`assign_relight_shadow_channels`).
 fn relight_shadow_channel(params: MaskEffectParams) -> u32 {
     let option = params.options[RELIGHT_SHADOW_CHANNEL_OPTION];
     return u32(clamp(option, 0.0, f32(RELIGHT_SHADOW_MAP_CHANNELS)) + 0.5);

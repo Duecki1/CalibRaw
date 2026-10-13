@@ -10,8 +10,9 @@
 //! intervals is smoothed, so planes and evenly curved forms such as faces
 //! keep their shape, terraces become ramps, and real depth edges, many levels
 //! high, cannot move by more than half a level.
-//! Gradients are then taken one-sidedly across depth edges so a silhouette
-//! never becomes a steep wall, and a mip chain averages them for broader
+//! Gradients are then taken one-sidedly across depth edges, sharp or blurred
+//! into a ramp by the depth model, so a silhouette never becomes a steep wall
+//! (or a band of one beside it), and a mip chain averages them for broader
 //! light sizes. Above level 0, the mip chain's first channel holds the
 //! nearest smooth depth of its footprint instead, so a shadow ray that passes
 //! in front of every surface near it can skip testing them (relight.wgsl).
@@ -49,6 +50,17 @@ const UNRELIABLE_GUESS: f32 = 2.0 / 255.0;
 const COARSEST_SIDE: usize = 8;
 /// A per-texel depth change above this is an occlusion edge, not a slope.
 const DEPTH_EDGE_STEP: f32 = 0.02;
+/// Texels on each side of a texel within which a soft occlusion edge, a ramp
+/// the depth model blurred a silhouette into, is recognized
+/// (`line_differences`): about the widest such ramp.
+const SOFT_EDGE_REACH: usize = 8;
+/// Differences whose median gives the slope of the surface flanking a soft
+/// edge on each side, beyond `SOFT_EDGE_REACH`.
+const SOFT_EDGE_FLANK: usize = 8;
+/// Depth change across 2 × `SOFT_EDGE_REACH` texels beyond what the flanking
+/// slopes predict that marks a soft occlusion edge: about three 8-bit levels,
+/// above the depth model's noise on continuous surfaces.
+const SOFT_EDGE_EXCESS: f32 = 0.012;
 
 /// One mip level: per texel `[stored depth, smooth depth, ∂depth/∂x, ∂depth/∂y]`
 /// on level 0, and `[nearest smooth depth, smooth depth, ∂depth/∂x, ∂depth/∂y]`
@@ -84,23 +96,28 @@ pub(super) fn derive_scene_surface(stored: &[f32], edge: u32, aspect: f32) -> Ve
     let extent = texel_extent(edge, aspect);
     let smooth = dequantize(stored, side);
 
-    let at = |x: usize, y: usize| smooth[y * side + x];
+    // Per texel along each axis; `columns` holds column x at index x.
+    let rows: Vec<Vec<f32>> = smooth.par_chunks(side).map(line_differences).collect();
+    let columns: Vec<Vec<f32>> = (0..side)
+        .into_par_iter()
+        .map(|x| {
+            let column: Vec<f32> = (0..side).map(|y| smooth[y * side + x]).collect();
+            line_differences(&column)
+        })
+        .collect();
     let mut texels = vec![[0.0; 4]; side * side];
     texels
         .par_chunks_mut(side)
         .enumerate()
         .for_each(|(y, row)| {
             for (x, texel) in row.iter_mut().enumerate() {
-                let center = at(x, y);
-                let gx = edge_aware_difference(
-                    (x > 0).then(|| center - at(x - 1, y)),
-                    (x + 1 < side).then(|| at(x + 1, y) - center),
-                ) / extent[0];
-                let gy = edge_aware_difference(
-                    (y > 0).then(|| center - at(x, y - 1)),
-                    (y + 1 < side).then(|| at(x, y + 1) - center),
-                ) / extent[1];
-                *texel = [stored[y * side + x], center, gx, gy];
+                let index = y * side + x;
+                *texel = [
+                    stored[index],
+                    smooth[index],
+                    rows[y][x] / extent[0],
+                    columns[x][y] / extent[1],
+                ];
             }
         });
 
@@ -127,6 +144,84 @@ pub(super) fn derive_scene_surface(stored: &[f32], edge: u32, aspect: f32) -> Ve
 const NEAREST_DEPTH: usize = 0;
 /// Channel of the smooth depth.
 const SMOOTH_DEPTH: usize = 1;
+
+/// Per-texel depth differences along one row or column of smooth depth.
+///
+/// The depth model blurs silhouettes into ramps up to about a dozen texels
+/// wide whose steps stay below `DEPTH_EDGE_STEP`; read as slopes, they turn
+/// the surface beside every foreground edge away from or toward the light, a
+/// dark or bright band that looks like a short shadow. Within
+/// `SOFT_EDGE_REACH` texels of such a ramp, depth changes more than the
+/// slopes flanking the window predict (their median differences, so one
+/// ramp in a flank does not skew them); there a texel takes the slope of the
+/// flank whose surface it lies on. Elsewhere, including on curved surfaces
+/// and creases, whose flanks predict the change, `edge_aware_difference`
+/// applies. Beyond the line's ends, depth continues with the median slope
+/// at that end.
+fn line_differences(line: &[f32]) -> Vec<f32> {
+    let n = line.len();
+    let local = |i: usize| {
+        edge_aware_difference(
+            (i > 0).then(|| line[i] - line[i - 1]),
+            (i + 1 < n).then(|| line[i + 1] - line[i]),
+        )
+    };
+    let pad = SOFT_EDGE_REACH + SOFT_EDGE_FLANK;
+    if n <= SOFT_EDGE_FLANK {
+        return (0..n).map(local).collect();
+    }
+    let start_slope = median_difference(&line[..=SOFT_EDGE_FLANK]);
+    let end_slope = median_difference(&line[n - 1 - SOFT_EDGE_FLANK..]);
+    // `line` extended by `pad` texels at both ends.
+    let extended: Vec<f32> = (0..n + 2 * pad)
+        .map(|e| {
+            if e < pad {
+                line[0] - (pad - e) as f32 * start_slope
+            } else if e >= pad + n {
+                line[n - 1] + (e + 1 - pad - n) as f32 * end_slope
+            } else {
+                line[e - pad]
+            }
+        })
+        .collect();
+    // flank[e]: median of the `SOFT_EDGE_FLANK` differences from extended
+    // texel e onward.
+    let flank: Vec<f32> = extended
+        .windows(SOFT_EDGE_FLANK + 1)
+        .map(median_difference)
+        .collect();
+    let reach = SOFT_EDGE_REACH as f32;
+    (0..n)
+        .map(|i| {
+            let e = i + pad;
+            let before = flank[e - pad];
+            let after = flank[e + SOFT_EDGE_REACH];
+            let near_before = extended[e - SOFT_EDGE_REACH];
+            let near_after = extended[e + SOFT_EDGE_REACH];
+            let excess = near_after - near_before - reach * (before + after);
+            if excess.abs() <= SOFT_EDGE_EXCESS {
+                return local(i);
+            }
+            // Blended by how close the texel lies to each flank's surface, so
+            // texels across the ramp do not flip between the two slopes.
+            let off_before = (line[i] - (near_before + reach * before)).abs();
+            let off_after = (line[i] - (near_after - reach * after)).abs();
+            let toward_before = off_after / (off_before + off_after).max(f32::MIN_POSITIVE);
+            after + (before - after) * toward_before
+        })
+        .collect()
+}
+
+/// The median of the `SOFT_EDGE_FLANK` differences between consecutive
+/// `values`, the mean of the middle two.
+fn median_difference(values: &[f32]) -> f32 {
+    let mut differences = [0.0_f32; SOFT_EDGE_FLANK];
+    for (difference, pair) in differences.iter_mut().zip(values.windows(2)) {
+        *difference = pair[1] - pair[0];
+    }
+    differences.sort_unstable_by(f32::total_cmp);
+    0.5 * (differences[SOFT_EDGE_FLANK / 2 - 1] + differences[SOFT_EDGE_FLANK / 2])
+}
 
 /// A per-texel depth difference that ignores occlusion edges: the mean of the
 /// one-sided differences on a continuous surface, the side that stays on the
@@ -479,6 +574,31 @@ mod tests {
         }
         for level in &levels[1..] {
             assert!(level.texels.iter().all(|t| t[2].abs() < 1e-3));
+        }
+    }
+
+    #[test]
+    fn blurred_silhouettes_stay_flat_while_steep_slopes_keep_their_gradient() {
+        // A silhouette the depth model blurred over a dozen texels (no step
+        // reaches DEPTH_EDGE_STEP), and a sustained slope of four depth
+        // ranges per image width.
+        let last = (EDGE - 1) as f32;
+        let soft = quantized(EDGE, |x, _| {
+            let t = ((x * last - 506.0) / 12.0).clamp(0.0, 1.0);
+            0.1 + 0.1 * t * t * (3.0 - 2.0 * t)
+        });
+        let level = &derive_scene_surface(&soft, EDGE, 1.0)[0];
+        // Read as a slope, the ramp's middle would be about 12.8; beside the
+        // edge, dequantization leaves gentle slopes of a few tenths.
+        let worst = level.texels.iter().map(|t| t[2].abs()).fold(0.0, f32::max);
+        assert!(worst < 0.5, "steepest gradient {worst}");
+
+        let steep = quantized(EDGE, |x, _| 0.1 + 0.8 * ((x - 0.4) / 0.2).clamp(0.0, 1.0));
+        let level = &derive_scene_surface(&steep, EDGE, 1.0)[0];
+        let row = EDGE as usize / 2 * EDGE as usize;
+        for x in (0.45 * last) as usize..=(0.55 * last) as usize {
+            let gradient = level.texels[row + x][2];
+            assert!((gradient - 4.0).abs() < 0.2, "texel {x}: {gradient}");
         }
     }
 
