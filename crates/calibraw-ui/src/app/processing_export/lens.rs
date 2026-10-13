@@ -397,15 +397,7 @@ impl CalibRawApp {
         self.masks.navigation_dirty_layers = [false; MAX_LOCAL_MASKS];
         self.develop.loaded_raw = Some(prepared.full_raw);
         self.develop.preview_raw = Some(prepared.preview_raw);
-        self.preview.zoom = 1.0;
-        self.preview.center = [0.5, 0.5];
-        self.preview.visible_uv = PreviewUvRect {
-            min: [0.0, 0.0],
-            max: [1.0, 1.0],
-        };
-        self.preview.motion_at = None;
-        self.preview.touch_navigation_active = false;
-        self.preview.revision = self.preview.revision.wrapping_add(1);
+        self.preview.reset_view();
         self.preview.detail_pending_stage = None;
         self.preview.navigation_pending_stage = None;
         self.preview.detail_urgent = false;

@@ -101,29 +101,6 @@ fn rec2020_nonnegative_boundary(lightness: f32, hue: vec2<f32>, requested: f32) 
     return low;
 }
 
-fn rec2020_unit_boundary(lightness: f32, hue: vec2<f32>, requested: f32) -> f32 {
-    let l = clamp(lightness, 0.0, 1.0);
-    var low = 0.0;
-    var high = max(requested, 0.04);
-    for (var iteration = 0; iteration < 8; iteration = iteration + 1) {
-        let probe = rec2020_from_oklab(vec3<f32>(l, hue * high));
-        if rgb_is_unit(probe) {
-            low = high;
-            high = high * 2.0;
-        }
-    }
-    for (var iteration = 0; iteration < 11; iteration = iteration + 1) {
-        let middle = 0.5 * (low + high);
-        let probe = rec2020_from_oklab(vec3<f32>(l, hue * middle));
-        if rgb_is_unit(probe) {
-            low = middle;
-        } else {
-            high = middle;
-        }
-    }
-    return low;
-}
-
 fn srgb_unit_boundary(lightness: f32, hue: vec2<f32>, requested: f32) -> f32 {
     let l = clamp(lightness, 0.0, 1.0);
     var low = 0.0;
@@ -187,27 +164,6 @@ fn perceptual_gamut_compress_nonnegative_rec2020(rgb: vec3<f32>) -> vec3<f32> {
     return perceptual_rec2020_from_oklab_nonnegative(l, hue, chroma);
 }
 
-fn perceptual_gamut_compress_unit_rec2020(rgb: vec3<f32>) -> vec3<f32> {
-    let lab = rec2020_to_oklab(rgb);
-    let l = clamp(lab.x, 0.0, 1.0);
-    let chroma = length(lab.yz);
-    if chroma <= 1e-9 {
-        return rec2020_from_oklab(vec3<f32>(l, vec2<f32>(0.0)));
-    }
-    let hue = lab.yz / chroma;
-    let knee_probe = rec2020_from_oklab(vec3<f32>(l, hue * (chroma / 0.90)));
-    if abs(l - lab.x) <= 1e-7 && rgb_is_unit(rgb) && rgb_is_unit(knee_probe) {
-        return rgb;
-    }
-    let boundary = rec2020_unit_boundary(l, hue, chroma);
-    let compressed = perceptual_soft_chroma(chroma, boundary);
-    return clamp(
-        rec2020_from_oklab(vec3<f32>(l, hue * compressed)),
-        vec3<f32>(0.0),
-        vec3<f32>(1.0),
-    );
-}
-
 fn perceptual_gamut_compress_unit_srgb(rgb: vec3<f32>) -> vec3<f32> {
     let lab = linear_srgb_to_oklab(rgb);
     let l = clamp(lab.x, 0.0, 1.0);
@@ -241,34 +197,6 @@ fn gamut_project_nonnegative_rec2020(rgb: vec3<f32>) -> vec3<f32> {
         return rgb;
     }
     return perceptual_gamut_compress_nonnegative_rec2020(rgb);
-}
-
-fn gamut_project_unit(rgb: vec3<f32>, lightness: f32) -> vec3<f32> {
-    let neutral_value = clamp(lightness, 0.0, 1.0);
-    let neutral = vec3<f32>(neutral_value);
-    let chroma = rgb - neutral;
-    var scale = 1.0;
-
-    if chroma.r < 0.0 {
-        scale = min(scale, neutral_value / max(-chroma.r, 1e-20));
-    } else if chroma.r > 0.0 {
-        scale = min(scale, (1.0 - neutral_value) / max(chroma.r, 1e-20));
-    }
-    if chroma.g < 0.0 {
-        scale = min(scale, neutral_value / max(-chroma.g, 1e-20));
-    } else if chroma.g > 0.0 {
-        scale = min(scale, (1.0 - neutral_value) / max(chroma.g, 1e-20));
-    }
-    if chroma.b < 0.0 {
-        scale = min(scale, neutral_value / max(-chroma.b, 1e-20));
-    } else if chroma.b > 0.0 {
-        scale = min(scale, (1.0 - neutral_value) / max(chroma.b, 1e-20));
-    }
-    return neutral + chroma * clamp(scale, 0.0, 1.0);
-}
-
-fn gamut_project_unit_rec2020(rgb: vec3<f32>) -> vec3<f32> {
-    return perceptual_gamut_compress_unit_rec2020(rgb);
 }
 
 fn map_negative_gamut(rgb: vec3<f32>) -> vec3<f32> {

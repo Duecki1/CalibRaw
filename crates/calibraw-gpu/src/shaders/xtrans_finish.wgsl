@@ -11,11 +11,6 @@
 @group(0) @binding(10) var xtrans_scene_write: texture_storage_2d<rgba16float /* CALIBRAW_WORK_FORMAT */, write>;
 @group(0) @binding(23) var xtrans_dual_low_read: texture_2d<f32>;
 
-fn xt_in_bounds(pos: vec2<i32>) -> bool {
-    return pos.x >= 0 && pos.y >= 0
-        && pos.x < i32(Common::camera_uniforms.width) && pos.y < i32(Common::camera_uniforms.height);
-}
-
 fn xt_high(pos: vec2<i32>) -> vec3<f32> {
     return textureLoad(mark_high_read, Common::clamp_pos(pos), 0).rgb;
 }
