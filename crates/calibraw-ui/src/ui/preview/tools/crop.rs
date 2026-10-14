@@ -189,23 +189,23 @@ impl Preview {
             }
         }
         crop = sanitize_dragged_crop(crop, drag.handle);
-        let aspect_locked = app.develop.loaded_raw.as_ref().is_some_and(|raw| {
-            geometry
-                .normalized_crop_aspect(raw.width, raw.height)
-                .is_some()
-        });
-        if !aspect_locked {
+        let Some(normalized_ratio) = app
+            .develop
+            .loaded_raw
+            .as_ref()
+            .and_then(|raw| geometry.normalized_crop_aspect(raw.width, raw.height))
+        else {
             return geometry.constrain_free_crop_resize_to_transformed_source(
                 drag.crop,
                 crop,
                 source_width,
                 source_height,
             );
-        }
+        };
         crop = if is_crop_corner(drag.handle) {
             constrain_crop_corner_aspect(app, drag.crop, current, drag.handle).unwrap_or(crop)
         } else {
-            constrain_crop_aspect(app, crop, drag.handle)
+            constrain_crop_aspect(crop, drag.handle, normalized_ratio)
         };
         geometry.constrain_crop_drag_to_transformed_source(
             drag.crop,
