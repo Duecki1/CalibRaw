@@ -122,6 +122,39 @@ pub(crate) fn automatic_runtime_kind_control(
     }
 }
 
+/// Subject-mask quality, in the AI card on desktop and the interface card on
+/// Android. Locked while an AI mask is being generated.
+fn subject_mask_quality_control(ui: &mut Ui, app: &mut CalibRawApp) {
+    use calibraw_ai::ai_masks::{SubjectMaskQuality, BIREFNET_LOW_MODEL};
+    let help = format!(
+        "Applies to newly generated Subject and Background masks. Low uses a faster {edge} × {edge} model (a separate {size:.0} MB download) with softer edges. Medium uses the full model.{high}",
+        edge = BIREFNET_LOW_MODEL.input_width,
+        size = BIREFNET_LOW_MODEL.bytes as f64 / 1_000_000.0,
+        high = if SubjectMaskQuality::AVAILABLE.contains(&SubjectMaskQuality::High) {
+            " High adds a pass over the cropped subject for finer edges, taking about twice as long."
+        } else {
+            ""
+        },
+    );
+    let mut quality = app.ai.subject_mask_quality;
+    ui.add_enabled_ui(app.ai_mask_generation_idle(), |ui| {
+        moduwu_design::form_combo_with_help(
+            ui,
+            "Subject mask quality",
+            "settings-subject-mask-quality",
+            quality.label(),
+            160.0,
+            &help,
+            |ui| {
+                for &option in SubjectMaskQuality::AVAILABLE {
+                    ui.selectable_value(&mut quality, option, option.label());
+                }
+            },
+        );
+    });
+    app.set_subject_mask_quality(quality);
+}
+
 pub(crate) fn export_name_template_controls(
     ui: &mut Ui,
     app: &mut CalibRawApp,
@@ -397,6 +430,11 @@ impl Settings {
         );
         if app.preview.quality != previous_quality {
             app.preview_quality_changed();
+        }
+        #[cfg(target_os = "android")]
+        {
+            moduwu_design::section_separator(ui);
+            subject_mask_quality_control(ui, app);
         }
 
         moduwu_design::section_separator(ui);
@@ -788,24 +826,7 @@ impl Settings {
         }
 
         moduwu_design::section_separator(ui);
-        moduwu_design::strong_with_help(
-            ui,
-            "Subject masks",
-            "Applies to newly generated Subject and Background masks.",
-        );
-        let mut crop_refinement = app.ai.subject_crop_refinement;
-        ui.add_enabled_ui(app.ai_mask_generation_idle(), |ui| {
-            if moduwu_design::toggle_with_help(
-                ui,
-                &mut crop_refinement,
-                "Refine subject edges with a cropped pass",
-                "Runs one additional BiRefNet pass on the cropped subject region. This may improve edge quality, but it can be worse at recognizing the entire subject and takes longer.",
-            )
-            .changed()
-            {
-                app.set_subject_crop_refinement(crop_refinement);
-            }
-        });
+        subject_mask_quality_control(ui, app);
 
         moduwu_design::section_separator(ui);
         let bundled_runtime = calibraw_ai::bundled_onnx_runtime_path();

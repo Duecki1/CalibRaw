@@ -8,6 +8,7 @@ use anyhow::{Context, Result};
 use image::{imageops::FilterType, ImageBuffer, Luma, Rgba};
 use ort::value::Tensor;
 use rayon::prelude::*;
+use serde::{Deserialize, Serialize};
 #[cfg(not(target_os = "android"))]
 use std::fs;
 use std::{
@@ -108,6 +109,79 @@ pub const BIREFNET_MODEL: BiRefNetModelSpec = BiRefNetModelSpec {
     input_height: 1024,
 };
 
+/// The same checkpoint exported at 768 x 768 by
+/// `packaging/models/birefnet_export.py` and rewritten by
+/// `birefnet_gridsample.py`, so its operators match `BIREFNET_MODEL`'s. About
+/// half the inference cost; boundaries are softer and small details may drop.
+pub const BIREFNET_LOW_MODEL: BiRefNetModelSpec = BiRefNetModelSpec {
+    checkpoint: "BiRefNet General-Lite 768",
+    download_label: "BiRefNet General-Lite 768",
+    url: "https://huggingface.co/Duecki/CalibRaw-Artifacts/resolve/main/models/briefnet/birefnet-lite-768-gridsample.onnx",
+    bytes: 204_958_552,
+    sha256_hex: "f5c9e0044d82d9ce8023b2f3ce4b7879621361630da3ee6a78315f27f1238b85",
+    cache_filename: "birefnet-general-lite-768.onnx",
+    input_width: 768,
+    input_height: 768,
+};
+
+/// How much work a subject mask may take. Serialized in the performance
+/// settings; keep the names stable.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SubjectMaskQuality {
+    /// `BIREFNET_LOW_MODEL`, one pass.
+    Low,
+    /// `BIREFNET_MODEL`, one pass.
+    Medium,
+    /// `BIREFNET_MODEL` with the cropped refinement pass. Desktop only.
+    High,
+}
+
+impl Default for SubjectMaskQuality {
+    fn default() -> Self {
+        if cfg!(target_os = "android") {
+            Self::Medium
+        } else {
+            Self::High
+        }
+    }
+}
+
+impl SubjectMaskQuality {
+    /// The qualities this platform offers.
+    pub const AVAILABLE: &'static [Self] = if cfg!(target_os = "android") {
+        &[Self::Low, Self::Medium]
+    } else {
+        &[Self::Low, Self::Medium, Self::High]
+    };
+
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Low => "Low",
+            Self::Medium => "Medium",
+            Self::High => "High",
+        }
+    }
+
+    pub const fn model(self) -> BiRefNetModelSpec {
+        match self {
+            Self::Low => BIREFNET_LOW_MODEL,
+            Self::Medium | Self::High => BIREFNET_MODEL,
+        }
+    }
+
+    const fn session_model(self) -> AiModel {
+        match self {
+            Self::Low => AiModel::BiRefNetLow,
+            Self::Medium | Self::High => AiModel::BiRefNet,
+        }
+    }
+
+    const fn crop_refinement(self) -> bool {
+        matches!(self, Self::High)
+    }
+}
+
 const MASK_MODEL_DOWNLOAD: DownloadOptions = DownloadOptions {
     connect_timeout: Duration::from_secs(45),
     response_timeout: Duration::from_secs(60),
@@ -163,8 +237,8 @@ impl AiMaskResult {
     }
 }
 
-pub fn birefnet_model_is_verified(path: &Path) -> bool {
-    BIREFNET_MODEL.install().is_installed(path)
+pub fn birefnet_model_is_verified(quality: SubjectMaskQuality, path: &Path) -> bool {
+    quality.model().install().is_installed(path)
 }
 
 pub fn skyseg_model_is_verified(path: &Path) -> bool {
@@ -182,7 +256,8 @@ pub fn object_models_are_verified(encoder: &Path, decoder: &Path) -> bool {
 
 pub struct AiMaskWorkerRequest {
     pub model: AiMaskModel,
-    pub crop_refinement: bool,
+    /// Used by `AiMaskModel::Subject` only.
+    pub subject_quality: SubjectMaskQuality,
     pub model_path: PathBuf,
     pub allow_download: bool,
     pub runtime_path: Option<PathBuf>,
@@ -230,7 +305,7 @@ pub fn spawn_ai_mask(
                 (|| {
                     ensure_ai_not_cancelled(&cancellation)?;
                     let install = match request.model {
-                        AiMaskModel::Subject => BIREFNET_MODEL.install(),
+                        AiMaskModel::Subject => request.subject_quality.model().install(),
                         AiMaskModel::Sky => SKYSEG_MODEL_INSTALL,
                         AiMaskModel::Depth => depth::MODEL_INSTALL,
                     };
@@ -439,7 +514,7 @@ fn cache_object_ai_sessions() -> bool {
 fn infer_ai_mask(request: AiMaskWorkerRequest) -> Result<AiMaskResult> {
     let AiMaskWorkerRequest {
         model,
-        crop_refinement,
+        subject_quality,
         model_path,
         allow_download: _,
         runtime_path,
@@ -471,7 +546,7 @@ fn infer_ai_mask(request: AiMaskWorkerRequest) -> Result<AiMaskResult> {
     let mask = match model {
         AiMaskModel::Depth => depth::depth_mask(&model_path, &image)?,
         AiMaskModel::Sky => sky::sky_mask(&model_path, &image)?,
-        AiMaskModel::Subject => subject_mask(&model_path, &image, crop_refinement)?,
+        AiMaskModel::Subject => subject_mask(&model_path, &image, subject_quality)?,
     };
     Ok(AiMaskResult {
         width,
@@ -480,23 +555,23 @@ fn infer_ai_mask(request: AiMaskWorkerRequest) -> Result<AiMaskResult> {
     })
 }
 
-/// Runs BiRefNet over the full frame and, when enabled on desktop, follows it
+/// Runs BiRefNet over the full frame and, for `High` on desktop, follows it
 /// with one native-resolution crop pass for finer boundary detail.
 fn subject_mask(
     model_path: &Path,
     image: &ImageBuffer<Rgba<u8>, Vec<u8>>,
-    crop_refinement: bool,
+    quality: SubjectMaskQuality,
 ) -> Result<Vec<u8>> {
     let (width, height) = image.dimensions();
-    let mut mask = infer_birefnet(model_path, image)?;
+    let mut mask = infer_birefnet(model_path, image, quality)?;
     let crop_refinement =
-        subject_crop_refinement_enabled(crop_refinement, cfg!(target_os = "android"));
+        subject_crop_refinement_enabled(quality.crop_refinement(), cfg!(target_os = "android"));
     if crop_refinement {
         if let Some(crop) = mask_refine::mask_crop_above(&mask, width, height, 5, 0.15) {
             let crop_image =
                 image::imageops::crop_imm(image, crop.x, crop.y, crop.width, crop.height)
                     .to_image();
-            let crop_alpha = infer_birefnet(model_path, &crop_image)?;
+            let crop_alpha = infer_birefnet(model_path, &crop_image, quality)?;
             mask_refine::merge_crop_pass(&mut mask, width, crop, &crop_alpha, 8);
         }
     }
@@ -512,8 +587,9 @@ const fn subject_crop_refinement_enabled(requested: bool, android: bool) -> bool
 pub(super) fn infer_birefnet(
     model_path: &Path,
     image: &ImageBuffer<Rgba<u8>, Vec<u8>>,
+    quality: SubjectMaskQuality,
 ) -> Result<Vec<u8>> {
-    let model = BIREFNET_MODEL;
+    let model = quality.model();
     let resized = image::imageops::resize(
         image,
         model.input_width,
@@ -533,7 +609,7 @@ pub(super) fn infer_birefnet(
     .context("create BiRefNet input tensor")?;
 
     let (output_width, output_height, logits) = with_model_session(
-        AiModel::BiRefNet,
+        quality.session_model(),
         model_path,
         SessionOptions::new("BiRefNet"),
         mask_model_retention(true),
@@ -702,22 +778,26 @@ mod tests {
     use super::{
         birefnet_model_is_verified, infer_birefnet, normalized_rgb_input, restore_birefnet_output,
         sigmoid_probability, subject_crop_refinement_enabled, validate_birefnet_output_shape,
-        IMAGENET_MEAN, IMAGENET_STD,
+        SubjectMaskQuality, BIREFNET_LOW_MODEL, BIREFNET_MODEL, IMAGENET_MEAN, IMAGENET_STD,
     };
     use image::{ImageBuffer, Rgba};
     use std::path::Path;
 
+    /// `CALIBRAW_BIREFNET_MODEL` may be either published subject model.
     #[test]
     #[ignore = "requires CALIBRAW_BIREFNET_MODEL and ONNX Runtime via ORT_DYLIB_PATH"]
     fn published_birefnet_runs_on_the_expected_provider() {
         let path = std::env::var_os("CALIBRAW_BIREFNET_MODEL").expect("CALIBRAW_BIREFNET_MODEL");
         let runtime = std::env::var_os("ORT_DYLIB_PATH").expect("ORT_DYLIB_PATH");
         ort::init_from(Path::new(&runtime)).unwrap().commit();
-        assert!(birefnet_model_is_verified(Path::new(&path)));
+        let quality = [SubjectMaskQuality::Low, SubjectMaskQuality::Medium]
+            .into_iter()
+            .find(|&quality| birefnet_model_is_verified(quality, Path::new(&path)))
+            .expect("CALIBRAW_BIREFNET_MODEL is not a published subject model");
         let image = ImageBuffer::from_fn(96, 64, |x, y| {
             Rgba([(x * 255 / 95) as u8, (y * 255 / 63) as u8, 128, 255])
         });
-        let mask = infer_birefnet(Path::new(&path), &image).unwrap();
+        let mask = infer_birefnet(Path::new(&path), &image, quality).unwrap();
         assert_eq!(mask.len(), 96 * 64);
         let providers = crate::active_execution_providers();
         eprintln!("BiRefNet inference providers: {providers:?}");
@@ -735,6 +815,33 @@ mod tests {
         assert!(subject_crop_refinement_enabled(true, false));
         assert!(!subject_crop_refinement_enabled(false, false));
         assert!(!subject_crop_refinement_enabled(true, true));
+    }
+
+    #[test]
+    fn subject_qualities_choose_model_and_crop_pass() {
+        assert_eq!(SubjectMaskQuality::Low.model(), BIREFNET_LOW_MODEL);
+        assert_eq!(SubjectMaskQuality::Medium.model(), BIREFNET_MODEL);
+        assert_eq!(SubjectMaskQuality::High.model(), BIREFNET_MODEL);
+        assert!(!SubjectMaskQuality::Low.crop_refinement());
+        assert!(!SubjectMaskQuality::Medium.crop_refinement());
+        assert!(SubjectMaskQuality::High.crop_refinement());
+        assert_ne!(
+            BIREFNET_LOW_MODEL.cache_filename,
+            BIREFNET_MODEL.cache_filename
+        );
+        assert_ne!(
+            SubjectMaskQuality::Low.session_model(),
+            SubjectMaskQuality::Medium.session_model()
+        );
+    }
+
+    #[test]
+    fn every_platform_defaults_to_an_available_subject_quality() {
+        assert!(SubjectMaskQuality::AVAILABLE.contains(&SubjectMaskQuality::default()));
+        assert_eq!(
+            SubjectMaskQuality::AVAILABLE.contains(&SubjectMaskQuality::High),
+            !cfg!(target_os = "android")
+        );
     }
 
     #[test]

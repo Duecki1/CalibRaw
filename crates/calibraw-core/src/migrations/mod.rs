@@ -15,9 +15,10 @@
 //!   asset table on the next save (`sidecar/mask_assets.rs`).
 //! - Presets that carry global effects in the masks category
 //!   (`presets.rs`).
-//! - Performance settings versions 1 and 2: the old desktop decoded-RAW
-//!   cache default and automatic vignetting correction, updated when the
-//!   settings are loaded (`calibraw-ui`, `performance_settings.rs`).
+//! - Performance settings versions 1 to 3: the old desktop decoded-RAW
+//!   cache default, automatic vignetting correction and the subject
+//!   crop-refinement switch, updated when the settings are loaded
+//!   (`calibraw-ui`, `performance_settings.rs`).
 //! - The old AI-denoise result cache, removed on start-up
 //!   (`calibraw-ui`, `app/ai_denoise.rs`).
 //! - The depth model desktop builds used before Depth Anything V2 Small,

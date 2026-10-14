@@ -343,8 +343,7 @@ impl CalibRawApp {
             auto_check_updates: self.preferences.auto_check_updates,
             github_update_check_allowed: self.preferences.github_update_check_allowed,
             ignored_update_version: self.preferences.ignored_update_version.clone(),
-            #[cfg(not(target_os = "android"))]
-            subject_crop_refinement: self.ai.subject_crop_refinement,
+            subject_mask_quality: self.ai.subject_mask_quality,
             #[cfg(not(target_os = "android"))]
             ai_gpu_acceleration: self.ai.gpu_acceleration,
             #[cfg(not(target_os = "android"))]

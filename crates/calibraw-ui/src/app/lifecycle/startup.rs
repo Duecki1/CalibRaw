@@ -196,8 +196,7 @@ impl CalibRawApp {
                 navigation_dirty_layers: [false; MAX_LOCAL_MASKS],
             },
             ai: AiState {
-                #[cfg(not(target_os = "android"))]
-                subject_crop_refinement: performance.subject_crop_refinement,
+                subject_mask_quality: performance.subject_mask_quality,
                 #[cfg(not(target_os = "android"))]
                 gpu_acceleration: performance.ai_gpu_acceleration,
                 update_needed: false,
