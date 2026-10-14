@@ -408,6 +408,11 @@ pub fn create_session_with_fallback(
         attempted_acceleration = !providers.is_empty();
         for candidate in providers {
             let provider_name = candidate.name;
+            calibraw_core::diagnostics::record(format!(
+                "AI {} creating {provider_name} session",
+                options.model_name
+            ));
+            let started = std::time::Instant::now();
             match create_accelerated_session(&source, &options, candidate) {
                 Ok(session) => {
                     log::info!(
@@ -416,8 +421,9 @@ pub fn create_session_with_fallback(
                         source_description
                     );
                     calibraw_core::diagnostics::record(format!(
-                        "AI {} execution provider: {provider_name}",
-                        options.model_name
+                        "AI {} execution provider: {provider_name} (session created in {:.3}s)",
+                        options.model_name,
+                        started.elapsed().as_secs_f64()
                     ));
                     publish_status(options.model_name, provider_name, false);
                     return Ok(FallbackSession {
@@ -439,6 +445,8 @@ pub fn create_session_with_fallback(
         }
     }
 
+    calibraw_core::diagnostics::record(format!("AI {} creating CPU session", options.model_name));
+    let started = std::time::Instant::now();
     let session = create_cpu_session_inner(&source, &options).with_context(|| {
         if setup_failures.is_empty() {
             format!("create CPU ONNX session for {}", options.model_name)
@@ -463,8 +471,9 @@ pub fn create_session_with_fallback(
             source_description
         );
         calibraw_core::diagnostics::record(format!(
-            "AI {} execution provider: CPU (fallback)",
-            options.model_name
+            "AI {} execution provider: CPU (fallback, session created in {:.3}s)",
+            options.model_name,
+            started.elapsed().as_secs_f64()
         ));
     } else {
         let reason = if !options.allow_acceleration {
@@ -480,8 +489,9 @@ pub fn create_session_with_fallback(
             source_description
         );
         calibraw_core::diagnostics::record(format!(
-            "AI {} execution provider: CPU",
-            options.model_name
+            "AI {} execution provider: CPU (session created in {:.3}s)",
+            options.model_name,
+            started.elapsed().as_secs_f64()
         ));
     }
     publish_status(options.model_name, active_provider, attempted_acceleration);
