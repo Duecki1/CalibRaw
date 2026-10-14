@@ -94,7 +94,7 @@ pub struct CameraProfileCandidate {
 pub const SUPPORTED_RAW_EXTENSIONS: &[&str] = &[
     "3fr", "ari", "arw", "bay", "bmq", "cap", "cine", "cr2", "cr3", "crw", "cs1", "dc2", "dcr",
     "dcs", "dng", "drf", "eip", "erf", "fff", "gpr", "iiq", "k25", "kc2", "kdc", "mdc", "mef",
-    "mos", "mrw", "nef", "nrw", "obm", "orf", "pef", "ptx", "pxn", "qtk", "r3d", "raf", "raw",
+    "mos", "mrw", "nef", "nefx", "nrw", "obm", "orf", "pef", "ptx", "pxn", "qtk", "raf", "raw",
     "rdc", "rw2", "rwl", "rwz", "sr2", "srf", "srw", "sti", "tif", "tiff",
 ];
 
