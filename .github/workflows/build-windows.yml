@@ -41,6 +41,8 @@ jobs:
             compiler: x86_64-w64-mingw32-gcc
             cxx_compiler: x86_64-w64-mingw32-g++
             artifact_arch: x86_64
+            vc_redist_arch: x64
+            vc_runtime_dlls: msvcp140.dll msvcp140_1.dll vcruntime140.dll vcruntime140_1.dll
           - name: ARM64 (GNU LLVM + LibRaw)
             runner: windows-11-arm
             target: aarch64-pc-windows-gnullvm
@@ -57,6 +59,8 @@ jobs:
             compiler: clang
             cxx_compiler: clang++
             artifact_arch: arm64
+            vc_redist_arch: arm64
+            vc_runtime_dlls: msvcp140.dll msvcp140_1.dll vcruntime140.dll
 
     defaults:
       run:
@@ -194,6 +198,42 @@ jobs:
           test "$(git rev-parse --verify HEAD)" = "$revision"
           test -z "$(git status --porcelain=v1 --untracked-files=all)"
 
+      # Automatic mode downloads Microsoft's ONNX Runtime, which imports the
+      # MSVC runtime listed in vc_runtime_dlls. It is built with Visual Studio
+      # 2022 17.14 and hangs while loading against runtimes older than 14.40,
+      # which Windows installs may still have in System32. Windows resolves
+      # these imports from calibraw.exe's directory first, so ship them there.
+      - name: Stage Visual C++ runtime for ONNX Runtime
+        shell: pwsh
+        run: |
+          $vswhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer\vswhere.exe"
+          $vs = & $vswhere -latest -products * -property installationPath
+          if (-not $vs) {
+            throw "Visual Studio was not found on the runner."
+          }
+          $versionFile = Join-Path $vs "VC\Auxiliary\Build\Microsoft.VCRedistVersion.default.txt"
+          $redistVersion = (Get-Content $versionFile -Raw).Trim()
+          $archDir = Join-Path $vs "VC\Redist\MSVC\$redistVersion\${{ matrix.vc_redist_arch }}"
+          $crt = Get-ChildItem $archDir -Directory -Filter "Microsoft.VC*.CRT" | Select-Object -First 1
+          if (-not $crt) {
+            throw "No Visual C++ runtime redistributable found in $archDir."
+          }
+
+          $staging = Join-Path $env:RUNNER_TEMP "vc-runtime"
+          New-Item -ItemType Directory -Force -Path $staging | Out-Null
+          foreach ($name in "${{ matrix.vc_runtime_dlls }}".Split(" ", [StringSplitOptions]::RemoveEmptyEntries)) {
+            $dll = Join-Path $crt.FullName $name
+            if (-not (Test-Path $dll -PathType Leaf)) {
+              throw "Visual C++ runtime is missing $name in $($crt.FullName)."
+            }
+            $version = (Get-Item $dll).VersionInfo.FileVersionRaw
+            if ($version -lt [version]"14.40") {
+              throw "$name is version $version; ONNX Runtime needs 14.40 or newer."
+            }
+            Copy-Item $dll $staging
+          }
+          Set-Content -NoNewline -Path (Join-Path $staging "version.txt") -Value $redistVersion
+
       - name: Package portable Windows artifact
         run: |
           export PKG_CONFIG_PATH="$(cygpath -w ${{ matrix.msys_prefix }}/lib/pkgconfig);$(cygpath -w ${{ matrix.msys_prefix }}/share/pkgconfig)"
@@ -206,6 +246,11 @@ jobs:
           mkdir -p "$package_dir"
           cp "$release_dir/calibraw.exe" "$package_dir/"
           cp COPYING THIRD_PARTY_NOTICES.md THIRD_PARTY_LICENSES.md README.md "$package_dir/"
+
+          vc_runtime_dir="$(cygpath -u "$RUNNER_TEMP")/vc-runtime"
+          for dll in ${{ matrix.vc_runtime_dlls }}; do
+            cp "$vc_runtime_dir/$dll" "$package_dir/"
+          done
 
           lensfun_db="$(find ${{ matrix.msys_prefix }}/share/lensfun -type f -name '*.xml' -printf '%h\n' | head -n 1)"
           test -n "$lensfun_db"
@@ -251,6 +296,7 @@ jobs:
             echo "Target: ${{ matrix.target }}"
             echo "LibRaw: $libraw_version"
             echo "Lensfun: $lensfun_version"
+            echo "Visual C++ runtime: $(cat "$vc_runtime_dir/version.txt")"
           } > "$package_dir/BUILD-INFO.txt"
 
           # Artifact
