@@ -177,6 +177,11 @@ fn run_remove(request: RemoveRequest, events: &mpsc::Sender<RemoveEvent>) -> Res
         .context("Remove brush produced no native image mask")?;
     let passes = plan_remove_passes(request.raw.width, request.raw.height, &mask);
     anyhow::ensure!(!passes.is_empty(), "Remove mask produced no inference pass");
+    // Replaces any finished download progress before the first pass runs.
+    let _ = events.send(RemoveEvent::Processing {
+        completed: 0,
+        total: passes.len(),
+    });
 
     // Passes run in order: each one sees earlier fills as real context, while
     // the stroke pixels still to fill stay masked.

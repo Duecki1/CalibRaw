@@ -309,6 +309,11 @@ fn ensure_models(
         || ensure_not_cancelled(cancellation),
     )?;
     ensure_not_cancelled(cancellation)?;
+    let _ = events.send(AiDenoiseEvent::Progress {
+        phase: "Extracting RawNIND models",
+        completed: 0,
+        total: 0,
+    });
     extract_model(
         &package,
         "rawdenoise-nind/model_bayer.onnx",
