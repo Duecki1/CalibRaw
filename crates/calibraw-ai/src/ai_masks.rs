@@ -432,6 +432,11 @@ pub fn initialize_runtime(
         .lock()
         .map_err(|_| anyhow::anyhow!("ONNX Runtime initialization lock was poisoned"))?;
     if RUNTIME_INITIALIZED.get().is_none() {
+        calibraw_core::diagnostics::record(format!(
+            "ONNX Runtime library loading from {}",
+            runtime_path.display()
+        ));
+        let started = std::time::Instant::now();
         let builder = ort::init_from(&runtime_path).map_err(|error| {
             anyhow::anyhow!(
                 "could not load ONNX Runtime from {}: {error}",
@@ -442,6 +447,10 @@ pub fn initialize_runtime(
             builder.with_name("CalibRaw").commit(),
             "ONNX Runtime was already initialized before the selected pinned library could be committed"
         );
+        calibraw_core::diagnostics::record(format!(
+            "ONNX Runtime library loaded in {:.3}s",
+            started.elapsed().as_secs_f64()
+        ));
         DESKTOP_RUNTIME_IDENTITY
             .set((runtime_path.clone(), actual_sha256.clone()))
             .map_err(|_| anyhow::anyhow!("ONNX Runtime identity was initialized concurrently"))?;
@@ -531,14 +540,21 @@ fn infer_ai_mask(request: AiMaskWorkerRequest) -> Result<AiMaskResult> {
         "AI-mask RGBA buffer has {} bytes, expected {expected_bytes}",
         rgba.len()
     );
+    calibraw_core::diagnostics::record(format!("AI {} mask: preparing ONNX Runtime", model.noun()));
     initialize_runtime(runtime_path.as_deref(), runtime_sha256.as_deref())?;
     let image = ImageBuffer::<Rgba<u8>, _>::from_raw(width, height, rgba)
         .context("invalid preview image for AI mask")?;
+    let started = std::time::Instant::now();
     let mask = match model {
         AiMaskModel::Depth => depth::depth_mask(&model_path, &image)?,
         AiMaskModel::Sky => sky::sky_mask(&model_path, &image)?,
         AiMaskModel::Subject => subject_mask(&model_path, &image, subject_quality)?,
     };
+    calibraw_core::diagnostics::record(format!(
+        "AI {} mask finished in {:.3}s",
+        model.noun(),
+        started.elapsed().as_secs_f64()
+    ));
     Ok(AiMaskResult {
         width,
         height,
