@@ -33,6 +33,7 @@ pub(crate) struct PreferencesState {
     pub(crate) ui_design: UiDesign,
     pub(crate) preview_backdrop: PreviewBackdrop,
     pub(crate) onboarding_completed: bool,
+    pub(crate) subject_mask_quality_chosen: bool,
     pub(crate) auto_check_updates: bool,
     pub(crate) github_update_check_allowed: Option<bool>,
     pub(crate) ignored_update_version: Option<String>,

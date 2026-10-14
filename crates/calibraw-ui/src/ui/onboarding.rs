@@ -23,6 +23,10 @@ pub(crate) fn show(ctx: &egui::Context, app: &mut CalibRawApp) {
     let Some(step) = app.ui.onboarding_step else {
         return;
     };
+    let steps = OnboardingStep::pending(
+        app.preferences.onboarding_completed,
+        app.preferences.subject_mask_quality_chosen,
+    );
 
     let available = ctx.content_rect().size() - egui::vec2(32.0, 32.0);
     let width = available.x.clamp(1.0, 540.0);
@@ -34,23 +38,24 @@ pub(crate) fn show(ctx: &egui::Context, app: &mut CalibRawApp) {
         .show(ctx, |ui| {
             ui.set_width(width);
             ui.set_max_width(width);
-            show_fitted_step_body(ui, app, step, width, max_body_height);
+            show_fitted_step_body(ui, app, steps, step, width, max_body_height);
             ui.add_space(moduwu_design::SPACE_MD);
             ui.separator();
             ui.add_space(moduwu_design::SPACE_SM);
-            show_navigation(ui, step)
+            show_navigation(ui, steps, step)
         })
         .inner;
 
     match action {
         Some(OnboardingAction::Back) => {
-            if let Some(previous) = step.previous() {
+            if let Some(previous) = step.previous(steps) {
                 app.ui.onboarding_step = Some(previous);
             }
         }
-        Some(OnboardingAction::Next) => app.ui.onboarding_step = step.next(),
+        Some(OnboardingAction::Next) => app.ui.onboarding_step = step.next(steps),
         Some(OnboardingAction::Finish) => {
             app.preferences.onboarding_completed = true;
+            app.preferences.subject_mask_quality_chosen = true;
             app.ui.onboarding_step = None;
             if !app.persist_performance_settings() {
                 app.report_error(
@@ -70,6 +75,7 @@ pub(crate) fn show(ctx: &egui::Context, app: &mut CalibRawApp) {
 fn show_fitted_step_body(
     ui: &mut egui::Ui,
     app: &mut CalibRawApp,
+    steps: &[OnboardingStep],
     step: OnboardingStep,
     width: f32,
     max_body_height: f32,
@@ -86,13 +92,13 @@ fn show_fitted_step_body(
         .map(|measurement| measurement.needs_scroll);
 
     if needs_scroll == Some(false) {
-        show_step_body(ui, app, step);
+        show_step_body(ui, app, steps, step);
         return;
     }
     let output = egui::ScrollArea::vertical()
         .max_height(max_body_height)
         .auto_shrink([false, true])
-        .show(ui, |ui| show_step_body(ui, app, step));
+        .show(ui, |ui| show_step_body(ui, app, steps, step));
     if needs_scroll.is_some() {
         return;
     }
@@ -113,8 +119,13 @@ fn show_fitted_step_body(
     }
 }
 
-fn show_step_body(ui: &mut egui::Ui, app: &mut CalibRawApp, step: OnboardingStep) {
-    show_header(ui, step);
+fn show_step_body(
+    ui: &mut egui::Ui,
+    app: &mut CalibRawApp,
+    steps: &[OnboardingStep],
+    step: OnboardingStep,
+) {
+    show_header(ui, steps, step);
     ui.add_space(moduwu_design::SPACE_SM);
     match step {
         OnboardingStep::Appearance => show_appearance(ui, app),
@@ -129,16 +140,14 @@ fn show_step_body(ui: &mut egui::Ui, app: &mut CalibRawApp, step: OnboardingStep
     }
 }
 
-fn show_header(ui: &mut egui::Ui, step: OnboardingStep) {
+fn show_header(ui: &mut egui::Ui, steps: &[OnboardingStep], step: OnboardingStep) {
     ui.horizontal(|ui| {
         ui.heading(step.title());
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            ui.weak(format!(
-                "Step {} of {}",
-                step.index() + 1,
-                OnboardingStep::ALL.len()
-            ));
-        });
+        if steps.len() > 1 {
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.weak(format!("Step {} of {}", step.index(steps) + 1, steps.len()));
+            });
+        }
     });
     ui.label(step.introduction());
 }
@@ -234,9 +243,7 @@ fn show_preview(ui: &mut egui::Ui, app: &mut CalibRawApp) {
 fn show_subject_masks(ui: &mut egui::Ui, app: &mut CalibRawApp) {
     crate::ui::settings::subject_mask_quality_control(ui, app, "onboarding-subject-mask-quality");
     ui.add_space(moduwu_design::SPACE_SM);
-    ui.small(crate::ui::settings::subject_mask_quality_summary(
-        app.ai.subject_mask_quality,
-    ));
+    ui.small(crate::ui::settings::subject_mask_quality_descriptions());
 }
 
 fn show_copy_paste(ui: &mut egui::Ui, app: &mut CalibRawApp) {
@@ -372,18 +379,25 @@ fn show_discord(ui: &mut egui::Ui, app: &mut CalibRawApp) {
     }
 }
 
-fn show_navigation(ui: &mut egui::Ui, step: OnboardingStep) -> Option<OnboardingAction> {
+fn show_navigation(
+    ui: &mut egui::Ui,
+    steps: &[OnboardingStep],
+    step: OnboardingStep,
+) -> Option<OnboardingAction> {
     let mut action = None;
     ui.horizontal(|ui| {
-        if moduwu_design::secondary_button_enabled(ui, step.previous().is_some(), "Back").clicked()
+        if moduwu_design::secondary_button_enabled(ui, step.previous(steps).is_some(), "Back")
+            .clicked()
         {
             action = Some(OnboardingAction::Back);
         }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            let (label, next) = if step.next().is_some() {
+            let (label, next) = if step.next(steps).is_some() {
                 ("Next", OnboardingAction::Next)
-            } else {
+            } else if steps.len() > 1 {
                 ("Finish setup", OnboardingAction::Finish)
+            } else {
+                ("Done", OnboardingAction::Finish)
             };
             if moduwu_design::secondary_button(ui, label).clicked() {
                 action = Some(next);
@@ -407,22 +421,38 @@ impl OnboardingStep {
         Self::Discord,
     ];
 
-    fn index(self) -> usize {
-        // Every variant compiled for this platform is listed in `ALL`.
-        Self::ALL
+    /// Steps added after setup first shipped, shown alone to users who
+    /// finished an earlier setup.
+    const CATCH_UP: &'static [Self] = &[Self::SubjectMasks];
+
+    /// The steps a user still has to go through, empty when none.
+    pub(crate) fn pending(
+        onboarding_completed: bool,
+        subject_mask_quality_chosen: bool,
+    ) -> &'static [Self] {
+        match (onboarding_completed, subject_mask_quality_chosen) {
+            (false, _) => Self::ALL,
+            (true, false) => Self::CATCH_UP,
+            (true, true) => &[],
+        }
+    }
+
+    fn index(self, steps: &[Self]) -> usize {
+        // The shown step is always one of the pending `steps`.
+        steps
             .iter()
             .position(|&step| step == self)
             .unwrap_or_default()
     }
 
-    fn next(self) -> Option<Self> {
-        Self::ALL.get(self.index() + 1).copied()
+    fn next(self, steps: &[Self]) -> Option<Self> {
+        steps.get(self.index(steps) + 1).copied()
     }
 
-    fn previous(self) -> Option<Self> {
-        self.index()
+    fn previous(self, steps: &[Self]) -> Option<Self> {
+        self.index(steps)
             .checked_sub(1)
-            .and_then(|index| Self::ALL.get(index).copied())
+            .and_then(|index| steps.get(index).copied())
     }
 
     const fn title(self) -> &'static str {
@@ -474,8 +504,10 @@ mod tests {
 
     #[test]
     fn steps_are_unique() {
-        for (index, step) in OnboardingStep::ALL.iter().enumerate() {
-            assert_eq!(step.index(), index, "{step:?} appears more than once");
+        for steps in [OnboardingStep::ALL, OnboardingStep::CATCH_UP] {
+            for (index, step) in steps.iter().enumerate() {
+                assert_eq!(step.index(steps), index, "{step:?} appears more than once");
+            }
         }
     }
 
@@ -483,11 +515,29 @@ mod tests {
     fn next_and_previous_walk_the_step_order() {
         let steps = OnboardingStep::ALL;
         assert_eq!(steps.first(), Some(&OnboardingStep::Appearance));
-        assert_eq!(steps[0].previous(), None);
-        assert_eq!(steps[steps.len() - 1].next(), None);
+        assert_eq!(steps[0].previous(steps), None);
+        assert_eq!(steps[steps.len() - 1].next(steps), None);
         for pair in steps.windows(2) {
-            assert_eq!(pair[0].next(), Some(pair[1]));
-            assert_eq!(pair[1].previous(), Some(pair[0]));
+            assert_eq!(pair[0].next(steps), Some(pair[1]));
+            assert_eq!(pair[1].previous(steps), Some(pair[0]));
         }
+    }
+
+    #[test]
+    fn finished_setup_shows_only_steps_added_since() {
+        assert_eq!(OnboardingStep::pending(false, false), OnboardingStep::ALL);
+        assert_eq!(OnboardingStep::pending(false, true), OnboardingStep::ALL);
+        assert_eq!(
+            OnboardingStep::pending(true, false),
+            [OnboardingStep::SubjectMasks]
+        );
+        assert!(OnboardingStep::pending(true, true).is_empty());
+        for &step in OnboardingStep::CATCH_UP {
+            assert!(OnboardingStep::ALL.contains(&step));
+        }
+        // A lone catch-up step offers no way back.
+        let steps = OnboardingStep::pending(true, false);
+        assert_eq!(steps[0].previous(steps), None);
+        assert_eq!(steps[0].next(steps), None);
     }
 }

@@ -36,6 +36,12 @@ fn effect_card<Settings>(
 where
     Settings: InitialEffectSettings,
 {
+    let body = |ui: &mut Ui, settings: &mut Settings| {
+        if effect.is_experimental() {
+            ui.weak("Experimental");
+        }
+        body(ui, settings)
+    };
     let mut changed = false;
     let mut reset = false;
     let card = moduwu_design::content_card(ui, |ui| {
@@ -221,7 +227,11 @@ pub(super) fn add_effect_buttons(
                     moduwu_design::full_width_button(ui, label)
                 })
                 .inner
-                .on_hover_text(format!("Add {}", effect.label()))
+                .on_hover_text(if effect.is_experimental() {
+                    format!("Add {} (experimental)", effect.label())
+                } else {
+                    format!("Add {}", effect.label())
+                })
                 .on_disabled_hover_text(if present {
                     format!("{} is already added", effect.label())
                 } else {

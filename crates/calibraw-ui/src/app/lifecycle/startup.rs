@@ -297,6 +297,7 @@ impl CalibRawApp {
                 ui_design: performance.ui_design,
                 preview_backdrop: performance.preview_backdrop,
                 onboarding_completed: performance.onboarding_completed,
+                subject_mask_quality_chosen: performance.subject_mask_quality_chosen,
                 auto_check_updates: performance.auto_check_updates,
                 github_update_check_allowed: performance.github_update_check_allowed,
                 ignored_update_version: performance.ignored_update_version.clone(),
@@ -321,8 +322,12 @@ impl CalibRawApp {
                 error_dialogs: ErrorDialogQueue::default(),
                 unsupported_file_dialog: None,
                 missing_lens_profile_prompt: None,
-                onboarding_step: (!performance.onboarding_completed)
-                    .then_some(OnboardingStep::Appearance),
+                onboarding_step: OnboardingStep::pending(
+                    performance.onboarding_completed,
+                    performance.subject_mask_quality_chosen,
+                )
+                .first()
+                .copied(),
                 version_check: Default::default(),
             },
             #[cfg(not(target_os = "android"))]

@@ -105,6 +105,11 @@ impl MaskEffect {
         }
     }
 
+    /// Available, but its results are not yet reliable enough to present as finished.
+    pub const fn is_experimental(self) -> bool {
+        matches!(self, Self::Relight)
+    }
+
     pub const fn category(self) -> Option<MaskEffectCategory> {
         match self {
             Self::Adjustment => None,

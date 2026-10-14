@@ -340,6 +340,7 @@ impl CalibRawApp {
             ui_design: self.preferences.ui_design,
             preview_backdrop: self.preferences.preview_backdrop,
             onboarding_completed: self.preferences.onboarding_completed,
+            subject_mask_quality_chosen: self.preferences.subject_mask_quality_chosen,
             auto_check_updates: self.preferences.auto_check_updates,
             github_update_check_allowed: self.preferences.github_update_check_allowed,
             ignored_update_version: self.preferences.ignored_update_version.clone(),
