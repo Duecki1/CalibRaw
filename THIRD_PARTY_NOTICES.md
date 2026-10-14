@@ -149,10 +149,10 @@ The SkySeg model's upstream MIT notice is reproduced here:
 Depending on the platform, release artifacts link or bundle the following
 native components:
 
-- [LibRaw 0.22.1](https://github.com/LibRaw/LibRaw/tree/0.22.1), Copyright
-  LibRaw LLC and other named contributors. LibRaw is dual-licensed under
-  LGPL-2.1 and CDDL-1.0; CalibRaw uses the
-  [LGPL-2.1 option](https://github.com/LibRaw/LibRaw/blob/0.22.1/LICENSE.LGPL).
+- [LibRaw master at 830ac96](https://github.com/LibRaw/LibRaw/tree/830ac963b40223c6a25add5be65036fa8d56e2d6),
+  Copyright LibRaw LLC and other named contributors. LibRaw is dual-licensed
+  under LGPL-2.1 and CDDL-1.0; CalibRaw uses the
+  [LGPL-2.1 option](https://github.com/LibRaw/LibRaw/blob/830ac963b40223c6a25add5be65036fa8d56e2d6/LICENSE.LGPL).
 - [Lensfun 0.3.4](https://github.com/lensfun/lensfun/tree/v0.3.4). The library
   is [LGPL-3.0](https://www.gnu.org/licenses/lgpl-3.0.html) and its separately
   packaged profile database is

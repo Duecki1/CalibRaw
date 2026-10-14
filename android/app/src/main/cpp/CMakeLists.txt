@@ -40,9 +40,12 @@ if(NOT CMAKE_ANDROID_NDK)
     message(FATAL_ERROR "The active Android toolchain did not expose the NDK root")
 endif()
 
-if(DEFINED CALIBRAW_LIBRAW_VERSION AND NOT CALIBRAW_LIBRAW_VERSION STREQUAL "0.22.1")
+# LibRaw master commit; it reports version 0.22.0, so Cargo.toml pins it by
+# commit. Keep in sync with scripts/build_libraw.sh and the Flatpak manifest.
+set(CALIBRAW_LIBRAW_COMMIT 830ac963b40223c6a25add5be65036fa8d56e2d6)
+if(DEFINED CALIBRAW_LIBRAW_VERSION AND NOT CALIBRAW_LIBRAW_VERSION STREQUAL CALIBRAW_LIBRAW_COMMIT)
     message(FATAL_ERROR
-        "Cargo.toml requests LibRaw ${CALIBRAW_LIBRAW_VERSION}, but this CMake pin is 0.22.1")
+        "Cargo.toml requests LibRaw ${CALIBRAW_LIBRAW_VERSION}, but this CMake pin is ${CALIBRAW_LIBRAW_COMMIT}")
 endif()
 if(DEFINED CALIBRAW_LENSFUN_VERSION AND NOT CALIBRAW_LENSFUN_VERSION STREQUAL "0.3.4")
     message(FATAL_ERROR
@@ -71,8 +74,8 @@ find_program(CALIBRAW_PKG_CONFIG_EXECUTABLE NAMES pkg-config REQUIRED)
 # configuration fail before any native dependency is downloaded.
 FetchContent_Declare(
     calibraw_libraw_source
-    URL https://github.com/LibRaw/LibRaw/archive/b860248a89d9082b8e0a1e202e516f46af9adb29.tar.gz
-    URL_HASH SHA256=f5da1e522ea195b54b30f3ff105ef2193daa04ea165dea825b4d6fe9d886395b
+    URL https://github.com/LibRaw/LibRaw/archive/${CALIBRAW_LIBRAW_COMMIT}.tar.gz
+    URL_HASH SHA256=dd77deb5e7e290d2216ad8688ec4ac7dccdeea3def0927076a63a61d326e212a
     SOURCE_SUBDIR _calibraw_do_not_add
 )
 FetchContent_Declare(
@@ -114,7 +117,7 @@ file(MAKE_DIRECTORY
 )
 
 # -----------------------------------------------------------------------------
-# LibRaw 0.22.1
+# LibRaw (pinned master commit)
 # -----------------------------------------------------------------------------
 # Upstream LibRaw does not ship the CMake project used by Android, so overlay the
 # separately pinned LibRaw-cmake files onto FetchContent's private source tree.

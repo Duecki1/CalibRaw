@@ -32,9 +32,14 @@ jobs:
             msys_prefix: /mingw64
             toolchain_package: mingw-w64-x86_64-toolchain
             clang_package: mingw-w64-x86_64-clang
-            libraw_package: mingw-w64-x86_64-libraw
+            autotools_package: mingw-w64-x86_64-autotools
+            libraw_deps: >-
+              mingw-w64-x86_64-lcms2
+              mingw-w64-x86_64-libjpeg-turbo
+              mingw-w64-x86_64-zlib
             lensfun_package: mingw-w64-x86_64-lensfun
             compiler: x86_64-w64-mingw32-gcc
+            cxx_compiler: x86_64-w64-mingw32-g++
             artifact_arch: x86_64
           - name: ARM64 (GNU LLVM + LibRaw)
             runner: windows-11-arm
@@ -43,9 +48,15 @@ jobs:
             msys_prefix: /clangarm64
             toolchain_package: mingw-w64-clang-aarch64-toolchain
             clang_package: mingw-w64-clang-aarch64-clang
-            libraw_package: mingw-w64-clang-aarch64-libraw
+            autotools_package: mingw-w64-clang-aarch64-autotools
+            libraw_deps: >-
+              mingw-w64-clang-aarch64-lcms2
+              mingw-w64-clang-aarch64-libjpeg-turbo
+              mingw-w64-clang-aarch64-openmp
+              mingw-w64-clang-aarch64-zlib
             lensfun_package: mingw-w64-clang-aarch64-lensfun
             compiler: clang
+            cxx_compiler: clang++
             artifact_arch: arm64
 
     defaults:
@@ -117,11 +128,24 @@ jobs:
           path-type: inherit
           install: >-
             git
+            make
+            python
             zip
             ${{ matrix.toolchain_package }}
             ${{ matrix.clang_package }}
-            ${{ matrix.libraw_package }}
+            ${{ matrix.autotools_package }}
+            ${{ matrix.libraw_deps }}
             ${{ matrix.lensfun_package }}
+
+      # MSYS2's LibRaw package is a release that lacks newer cameras, so build
+      # the pinned commit into the MSYS2 prefix, where packaging finds its DLL.
+      - name: Build pinned LibRaw
+        run: |
+          bash scripts/build_libraw.sh ${{ matrix.msys_prefix }} \
+            --build="$MINGW_CHOST" \
+            --host="$MINGW_CHOST" \
+            CC=${{ matrix.compiler }} \
+            CXX=${{ matrix.cxx_compiler }}
 
       - name: Verify native dependencies
         run: |
@@ -219,7 +243,7 @@ jobs:
             done < <(objdump -p "$binary" | awk '/DLL Name:/ { print $3 }')
           done
 
-          libraw_version="$(pkg-config --modversion libraw 2>/dev/null || pkg-config --modversion libraw_r)"
+          libraw_version="$(pkg-config --modversion libraw 2>/dev/null || pkg-config --modversion libraw_r) ($(cat ${{ matrix.msys_prefix }}/share/calibraw/libraw-revision))"
           lensfun_version="$(pkg-config --modversion lensfun)"
           {
             echo "CalibRaw Windows ${{ matrix.artifact_arch }} build"

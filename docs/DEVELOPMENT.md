@@ -8,6 +8,22 @@ dependencies. Crate ownership, dependency rules and threading contracts are in
 cargo run -p calibraw-ui --bin calibraw --release
 ```
 
+Release builds on every platform use the LibRaw master commit pinned as
+`libraw_revision` in `Cargo.toml`, because LibRaw releases up to 0.22.2 lack
+cameras such as the Sony A7 V. A distribution LibRaw still builds and runs,
+but cannot open those cameras. To develop against the pinned commit on Linux
+(macOS needs the extra flags in `build-macos.yml`):
+
+```sh
+scripts/build_libraw.sh "$HOME/.local/calibraw-libraw"
+export PKG_CONFIG_PATH="$HOME/.local/calibraw-libraw/lib/pkgconfig"
+export LD_LIBRARY_PATH="$HOME/.local/calibraw-libraw/lib"
+```
+
+To move the pin, update `Cargo.toml`, `scripts/build_libraw.sh`,
+`android/app/src/main/cpp/CMakeLists.txt`, the Flatpak manifest and the
+`libraw-<commit>` cache key in `build-linux-appimage.yml` together.
+
 ## Checks
 
 Ordinary CI runs these on every push and pull request; run them before
