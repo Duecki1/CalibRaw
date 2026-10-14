@@ -146,7 +146,9 @@ impl Preview {
     }
 
     /// The crop for `drag` with the pointer at `current` (`delta` from where
-    /// the drag started), kept inside the rotated and sheared source.
+    /// the drag started), kept inside the rotated and sheared source. The
+    /// pointer positions are crop workspace coordinates; the handles follow
+    /// them there, and the result is converted back to a stored crop.
     fn dragged_crop(
         app: &CalibRawApp,
         drag: CropDragState,
@@ -156,17 +158,21 @@ impl Preview {
         source_height: u32,
     ) -> [f32; 4] {
         let geometry = app.develop.geometry;
-        if drag.handle == CropHandle::Move {
-            return geometry.constrain_crop_move_to_transformed_source(
-                drag.crop,
-                delta,
-                source_width,
-                source_height,
-            );
-        }
-        let mut crop = drag.crop;
+        let start = crop_to_workspace(geometry, drag.crop, source_width, source_height);
+        let mut crop = start;
         match drag.handle {
-            CropHandle::Move => {}
+            CropHandle::Move => {
+                for (edge, value) in crop.iter_mut().enumerate() {
+                    *value += delta[edge % 2];
+                }
+                let moved = crop_from_workspace(geometry, crop, source_width, source_height);
+                return geometry.constrain_crop_move_to_transformed_source(
+                    drag.crop,
+                    [moved[0] - drag.crop[0], moved[1] - drag.crop[1]],
+                    source_width,
+                    source_height,
+                );
+            }
             CropHandle::Left => crop[0] += delta[0],
             CropHandle::Right => crop[2] += delta[0],
             CropHandle::Top => crop[1] += delta[1],
@@ -195,21 +201,22 @@ impl Preview {
             .as_ref()
             .and_then(|raw| geometry.normalized_crop_aspect(raw.width, raw.height))
         else {
-            return geometry.constrain_free_crop_resize_to_transformed_source(
-                drag.crop,
+            return constrain_free_workspace_crop_resize(
+                geometry,
+                start,
                 crop,
                 source_width,
                 source_height,
             );
         };
         crop = if is_crop_corner(drag.handle) {
-            constrain_crop_corner_aspect(app, drag.crop, current, drag.handle).unwrap_or(crop)
+            constrain_crop_corner_aspect(app, start, current, drag.handle).unwrap_or(crop)
         } else {
             constrain_crop_aspect(crop, drag.handle, normalized_ratio)
         };
         geometry.constrain_crop_drag_to_transformed_source(
             drag.crop,
-            crop,
+            crop_from_workspace(geometry, crop, source_width, source_height),
             source_width,
             source_height,
         )
@@ -341,6 +348,57 @@ impl Preview {
                     Color32::WHITE,
                 );
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rotated_crop_handles_follow_the_pointer() {
+        let ctx = egui::Context::default();
+        crate::ui::theme::install(&ctx);
+        let mut app = CalibRawApp::empty(&ctx);
+        app.develop.geometry.rotation_degrees = 12.0;
+        app.develop.geometry.vertical_transform = 4.0;
+        app.develop.geometry.crop = [0.3, 0.3, 0.6, 0.6];
+        let (width, height) = (3000, 2000);
+        let image_rect = Rect::from_min_size(Pos2::ZERO, egui::vec2(600.0, 400.0));
+        let delta = [0.03, -0.02];
+        let shift = egui::vec2(delta[0] * 600.0, delta[1] * 400.0);
+        let geometry = app.develop.geometry;
+        let before = crop_preview_screen_rect(image_rect, geometry, width, height);
+        for (handle, moves_min, moves_max) in [
+            (CropHandle::Move, [true, true], [true, true]),
+            (CropHandle::Left, [true, false], [false, false]),
+            (CropHandle::Bottom, [false, false], [false, true]),
+            (CropHandle::TopRight, [false, true], [true, false]),
+        ] {
+            let drag = CropDragState {
+                handle,
+                start: [0.5, 0.5],
+                crop: geometry.crop,
+            };
+            let current = [0.5 + delta[0], 0.5 + delta[1]];
+            let mut dragged = geometry;
+            dragged.crop = Preview::dragged_crop(&app, drag, current, delta, width, height);
+            let after = crop_preview_screen_rect(image_rect, dragged, width, height);
+            let expected_min = before.min
+                + egui::vec2(
+                    if moves_min[0] { shift.x } else { 0.0 },
+                    if moves_min[1] { shift.y } else { 0.0 },
+                );
+            let expected_max = before.max
+                + egui::vec2(
+                    if moves_max[0] { shift.x } else { 0.0 },
+                    if moves_max[1] { shift.y } else { 0.0 },
+                );
+            assert!(
+                after.min.distance(expected_min) < 0.05 && after.max.distance(expected_max) < 0.05,
+                "{handle:?}: {before:?} -> {after:?}"
+            );
         }
     }
 }

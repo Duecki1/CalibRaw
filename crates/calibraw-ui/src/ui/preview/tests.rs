@@ -82,6 +82,98 @@ fn aspect_locked_edge_drags_resize_from_the_dragged_edge() {
     }
 }
 
+fn transformed_crop_geometry(quarter_turns: u8, crop: [f32; 4]) -> GeometryTransform {
+    GeometryTransform {
+        crop,
+        quarter_turns,
+        rotation_degrees: 12.0,
+        flip_horizontal: true,
+        horizontal_transform: 5.0,
+        vertical_transform: -3.0,
+        ..GeometryTransform::default()
+    }
+}
+
+#[test]
+fn crop_workspace_image_stays_put_when_the_crop_changes() {
+    let image_rect = Rect::from_min_size(egui::pos2(20.0, 10.0), egui::vec2(600.0, 400.0));
+    for quarter_turns in 0..4 {
+        let before = transformed_crop_geometry(quarter_turns, [0.3, 0.3, 0.6, 0.6]);
+        let after = transformed_crop_geometry(quarter_turns, [0.1, 0.4, 0.5, 0.9]);
+        for uv in [[0.0, 0.0], [0.7, 0.2], [1.0, 1.0]] {
+            let a = crop_workspace_source_to_screen(image_rect, before, 3000, 2000, uv);
+            let b = crop_workspace_source_to_screen(image_rect, after, 3000, 2000, uv);
+            assert!(a.distance(b) < 1e-3, "{quarter_turns}: {a:?} != {b:?}");
+        }
+    }
+}
+
+#[test]
+fn crop_workspace_box_frames_the_final_output() {
+    let workspace = Rect::from_min_size(egui::pos2(20.0, 10.0), egui::vec2(600.0, 400.0));
+    let output = Rect::from_min_size(Pos2::ZERO, egui::vec2(300.0, 200.0));
+    for quarter_turns in 0..4 {
+        let geometry = transformed_crop_geometry(quarter_turns, [0.2, 0.25, 0.55, 0.7]);
+        let crop_rect = crop_preview_screen_rect(workspace, geometry, 3000, 2000);
+        for (workspace_corner, output_corner) in [
+            (crop_rect.left_top(), output.left_top()),
+            (crop_rect.right_bottom(), output.right_bottom()),
+        ] {
+            let shown =
+                crop_workspace_screen_to_source(workspace, geometry, 3000, 2000, workspace_corner);
+            let rendered =
+                final_geometry_screen_to_source(output, geometry, 3000, 2000, output_corner);
+            for axis in 0..2 {
+                assert!(
+                    (shown[axis] - rendered[axis]).abs() < 1e-4,
+                    "{quarter_turns}: {shown:?} != {rendered:?}"
+                );
+            }
+        }
+        let stored = geometry.crop;
+        let round_trip = crop_from_workspace(
+            geometry,
+            crop_to_workspace(geometry, stored, 3000, 2000),
+            3000,
+            2000,
+        );
+        for (a, b) in stored.iter().zip(round_trip) {
+            assert!((a - b).abs() < 1e-5);
+        }
+    }
+}
+
+#[test]
+fn free_corner_resize_slides_along_the_edge_it_hits() {
+    let geometry = GeometryTransform {
+        crop: [0.3, 0.3, 0.7, 0.7],
+        rotation_degrees: 10.0,
+        ..GeometryTransform::default()
+    };
+    let start = crop_to_workspace(geometry, geometry.crop, 4000, 3000);
+    // The bottom-right corner moves far right (into the edge) and a little
+    // down; the downward part should still apply.
+    let proposed = [start[0], start[1], 1.5, start[3] + 0.02];
+    let proportional = crop_to_workspace(
+        geometry,
+        geometry.constrain_crop_drag_to_transformed_source(
+            geometry.crop,
+            crop_from_workspace(geometry, proposed, 4000, 3000),
+            4000,
+            3000,
+        ),
+        4000,
+        3000,
+    );
+    let stored = constrain_free_workspace_crop_resize(geometry, start, proposed, 4000, 3000);
+    assert!(geometry.contains_crop(stored, 4000, 3000));
+    let free = crop_to_workspace(geometry, stored, 4000, 3000);
+    assert!(free[2] >= proportional[2] - 1e-6);
+    assert!(free[3] > proportional[3]);
+    assert!((free[0] - start[0]).abs() < 1e-5, "{start:?} -> {free:?}");
+    assert!((free[1] - start[1]).abs() < 1e-5, "{start:?} -> {free:?}");
+}
+
 #[test]
 fn zoom_out_preserves_mask_workspace_and_invalid_gestures_do_not_corrupt_the_view() {
     let viewport = Rect::from_min_size(Pos2::ZERO, egui::vec2(800.0, 600.0));

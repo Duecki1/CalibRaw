@@ -16,6 +16,61 @@ pub(in crate::ui::preview) fn editable_source_uv(uv: [f32; 2]) -> Option<[f32; 2
     Some([uv[0].clamp(0.0, 1.0), uv[1].clamp(0.0, 1.0)])
 }
 
+/// The crop workspace applies rotation, shear and flips about the image
+/// centre, so the image stays put while the crop changes. The stored crop is
+/// relative to the same transform about the crop centre; the two frames differ
+/// only by where the crop centre lands. This returns `crop` in workspace
+/// coordinates: normalized source units before quarter turns, same size.
+pub(in crate::ui::preview) fn crop_to_workspace(
+    geometry: GeometryTransform,
+    crop: [f32; 4],
+    source_width: u32,
+    source_height: u32,
+) -> [f32; 4] {
+    map_crop_center(crop, source_width, source_height, |dx, dy| {
+        geometry_forward_affine(geometry, dx, dy)
+    })
+}
+
+/// The inverse of [`crop_to_workspace`].
+pub(in crate::ui::preview) fn crop_from_workspace(
+    geometry: GeometryTransform,
+    crop: [f32; 4],
+    source_width: u32,
+    source_height: u32,
+) -> [f32; 4] {
+    map_crop_center(crop, source_width, source_height, |dx, dy| {
+        geometry_inverse_affine(geometry, dx, dy)
+    })
+}
+
+/// Moves the centre of `crop` by `map` applied to its pixel offset from the
+/// image centre, keeping the crop's size.
+fn map_crop_center(
+    crop: [f32; 4],
+    source_width: u32,
+    source_height: u32,
+    map: impl Fn(f32, f32) -> [f32; 2],
+) -> [f32; 4] {
+    let source_width_f = source_width.max(1) as f32;
+    let source_height_f = source_height.max(1) as f32;
+    let offset = map(
+        ((crop[0] + crop[2]) * 0.5 - 0.5) * source_width_f,
+        ((crop[1] + crop[3]) * 0.5 - 0.5) * source_height_f,
+    );
+    let center = [
+        0.5 + offset[0] / source_width_f,
+        0.5 + offset[1] / source_height_f,
+    ];
+    let half = [(crop[2] - crop[0]) * 0.5, (crop[3] - crop[1]) * 0.5];
+    [
+        center[0] - half[0],
+        center[1] - half[1],
+        center[0] + half[0],
+        center[1] + half[1],
+    ]
+}
+
 pub(in crate::ui::preview) fn crop_workspace_source_to_screen(
     image_rect: Rect,
     geometry: GeometryTransform,
@@ -24,9 +79,9 @@ pub(in crate::ui::preview) fn crop_workspace_source_to_screen(
     source_uv: [f32; 2],
 ) -> Pos2 {
     let geometry = geometry.sanitized();
-    let ([center_x, center_y], _) = geometry_crop_metrics(geometry, source_width, source_height);
     let source_width_f = source_width.max(1) as f32;
     let source_height_f = source_height.max(1) as f32;
+    let [center_x, center_y] = [source_width_f * 0.5, source_height_f * 0.5];
     let source_x = source_uv[0] * source_width_f;
     let source_y = source_uv[1] * source_height_f;
     let transformed = geometry_forward_affine(geometry, source_x - center_x, source_y - center_y);
@@ -59,9 +114,9 @@ pub(in crate::ui::preview) fn crop_workspace_screen_to_source(
     screen: Pos2,
 ) -> [f32; 2] {
     let geometry = geometry.sanitized();
-    let ([center_x, center_y], _) = geometry_crop_metrics(geometry, source_width, source_height);
     let source_width_f = source_width.max(1) as f32;
     let source_height_f = source_height.max(1) as f32;
+    let [center_x, center_y] = [source_width_f * 0.5, source_height_f * 0.5];
     let (canvas_width, canvas_height) = if geometry.quarter_turns.is_multiple_of(2) {
         (source_width_f, source_height_f)
     } else {
@@ -229,7 +284,7 @@ pub(in crate::ui::preview) fn crop_preview_screen_rect(
     let geometry = geometry.sanitized();
     let source_width_f = source_width.max(1) as f32;
     let source_height_f = source_height.max(1) as f32;
-    let crop = geometry.crop;
+    let crop = crop_to_workspace(geometry, geometry.crop, source_width, source_height);
     let crop_center = [
         (crop[0] + crop[2]) * 0.5 * source_width_f,
         (crop[1] + crop[3]) * 0.5 * source_height_f,

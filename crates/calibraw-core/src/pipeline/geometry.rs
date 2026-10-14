@@ -294,57 +294,10 @@ impl GeometryTransform {
         sanitized_crop(lerp_crop(start, proposed, low * 0.999_999))
     }
 
-    /// Like [`Self::constrain_crop_drag_to_transformed_source`], but each edge
-    /// stops independently, so a corner dragged into one source edge keeps
-    /// following the pointer along that edge. Only for unconstrained aspect
-    /// ratios: the edges are not kept in proportion.
-    pub fn constrain_free_crop_resize_to_transformed_source(
-        self,
-        start_crop: [f32; 4],
-        proposed_crop: [f32; 4],
-        source_width: u32,
-        source_height: u32,
-    ) -> [f32; 4] {
-        let geometry = self.sanitized();
-        let proposed = sanitized_crop(proposed_crop);
-        let mut crop = geometry.constrain_crop_drag_to_transformed_source(
-            start_crop,
-            proposed,
-            source_width,
-            source_height,
-        );
-        if !crop_fits_transformed_source(geometry, crop, source_width, source_height) {
-            return crop;
-        }
-        // A second pass lets an edge use room freed by the other one.
-        for _ in 0..2 {
-            for edge in 0..4 {
-                if crop[edge] == proposed[edge] {
-                    continue;
-                }
-                let from = crop[edge];
-                let mut low = 0.0_f32;
-                let mut high = 1.0_f32;
-                for _ in 0..24 {
-                    let mid = (low + high) * 0.5;
-                    let mut candidate = crop;
-                    candidate[edge] = from + (proposed[edge] - from) * mid;
-                    if crop_fits_transformed_source(
-                        geometry,
-                        candidate,
-                        source_width,
-                        source_height,
-                    ) {
-                        low = mid;
-                    } else {
-                        high = mid;
-                    }
-                }
-                crop[edge] = from + (proposed[edge] - from) * low * 0.999_999;
-                crop = sanitized_crop(crop);
-            }
-        }
-        crop
+    /// Whether `crop` (normalized source units) lies inside the rotated,
+    /// sheared and flipped source.
+    pub fn contains_crop(self, crop: [f32; 4], source_width: u32, source_height: u32) -> bool {
+        crop_fits_transformed_source(self.sanitized(), crop, source_width, source_height)
     }
 
     /// Translates `start_crop` by `delta` (normalized source units) without
@@ -590,30 +543,6 @@ mod tests {
         }
         assert!(crop[0] < start[0]);
         assert!((crop[1] - (start[1] + 0.1)).abs() < 1e-5);
-    }
-
-    #[test]
-    fn free_corner_resize_slides_along_the_edge_it_hits() {
-        let geometry = GeometryTransform {
-            crop: [0.2, 0.2, 0.8, 0.8],
-            rotation_degrees: 10.0,
-            ..Default::default()
-        };
-        let mut fitted = geometry;
-        fitted.fit_crop_inside_transformed_source(4000, 3000);
-        let start = fitted.crop;
-        // The bottom-right corner moves far right (into the edge) and a
-        // little down; the downward part should still apply.
-        let proposed = [start[0], start[1], 1.5, start[3] + 0.02];
-        let proportional =
-            fitted.constrain_crop_drag_to_transformed_source(start, proposed, 4000, 3000);
-        let free =
-            fitted.constrain_free_crop_resize_to_transformed_source(start, proposed, 4000, 3000);
-        assert!(crop_fits_transformed_source(fitted, free, 4000, 3000));
-        assert!(free[2] >= proportional[2] - 1e-6);
-        assert!(free[3] > proportional[3]);
-        assert!((free[0] - start[0]).abs() < 1e-6);
-        assert!((free[1] - start[1]).abs() < 1e-6);
     }
 
     #[test]

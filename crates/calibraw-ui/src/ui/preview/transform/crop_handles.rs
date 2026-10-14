@@ -188,3 +188,69 @@ pub(in crate::ui::preview) fn constrain_crop_aspect(
     }
     crop
 }
+
+/// Resizes the workspace crop `start` towards `proposed` (both in crop
+/// workspace coordinates) and returns the stored crop that stays inside the
+/// transformed source. Each workspace edge stops independently, so a corner
+/// dragged into one source edge keeps following the pointer along that edge
+/// while the undragged edges stay where they are on screen. Only for
+/// unconstrained aspect ratios: the edges are not kept in proportion.
+pub(in crate::ui::preview) fn constrain_free_workspace_crop_resize(
+    geometry: GeometryTransform,
+    start: [f32; 4],
+    proposed: [f32; 4],
+    source_width: u32,
+    source_height: u32,
+) -> [f32; 4] {
+    const EPSILON: f32 = 1e-6;
+    let min = GeometryTransform::MIN_CROP_EXTENT;
+    let to_stored = |crop| crop_from_workspace(geometry, crop, source_width, source_height);
+    let fits = |crop: [f32; 4]| {
+        let stored = to_stored(crop);
+        stored
+            .iter()
+            .all(|value| (-EPSILON..=1.0 + EPSILON).contains(value))
+            && crop[2] - crop[0] >= min - EPSILON
+            && crop[3] - crop[1] >= min - EPSILON
+            && geometry.contains_crop(stored, source_width, source_height)
+    };
+    // Shrinking the whole drag first keeps a valid crop to grow edges from.
+    let stored = geometry.constrain_crop_drag_to_transformed_source(
+        to_stored(start),
+        to_stored(proposed),
+        source_width,
+        source_height,
+    );
+    if !geometry.contains_crop(stored, source_width, source_height) {
+        return stored;
+    }
+    let mut crop = crop_to_workspace(geometry, stored, source_width, source_height);
+    // A second pass lets an edge use room freed by the other one.
+    for _ in 0..2 {
+        for edge in 0..4 {
+            if crop[edge] == proposed[edge] {
+                continue;
+            }
+            let from = crop[edge];
+            let mut low = 0.0_f32;
+            let mut high = 1.0_f32;
+            for _ in 0..24 {
+                let mid = (low + high) * 0.5;
+                let mut candidate = crop;
+                candidate[edge] = from + (proposed[edge] - from) * mid;
+                if fits(candidate) {
+                    low = mid;
+                } else {
+                    high = mid;
+                }
+            }
+            crop[edge] = from + (proposed[edge] - from) * low * 0.999_999;
+        }
+    }
+    GeometryTransform {
+        crop: to_stored(crop),
+        ..geometry
+    }
+    .sanitized()
+    .crop
+}
