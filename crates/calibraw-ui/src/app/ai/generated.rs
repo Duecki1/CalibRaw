@@ -1,12 +1,14 @@
 use super::*;
 
 impl CalibRawApp {
-    #[cfg(not(target_os = "android"))]
-    pub(crate) fn set_subject_crop_refinement(&mut self, enabled: bool) {
-        if self.ai.subject_crop_refinement == enabled {
+    pub(crate) fn set_subject_mask_quality(
+        &mut self,
+        quality: calibraw_ai::ai_masks::SubjectMaskQuality,
+    ) {
+        if self.ai.subject_mask_quality == quality {
             return;
         }
-        self.ai.subject_crop_refinement = enabled;
+        self.ai.subject_mask_quality = quality;
         self.masks.subject_cache = None;
         self.persist_performance_settings();
     }
@@ -70,7 +72,10 @@ impl CalibRawApp {
         path: &std::path::Path,
     ) -> bool {
         match model {
-            AiMaskModel::Subject => calibraw_ai::ai_masks::birefnet_model_is_verified(path),
+            AiMaskModel::Subject => calibraw_ai::ai_masks::birefnet_model_is_verified(
+                self.ai.subject_mask_quality,
+                path,
+            ),
             AiMaskModel::Sky => calibraw_ai::ai_masks::skyseg_model_is_verified(path),
             AiMaskModel::Depth => calibraw_ai::ai_masks::depth_model_is_verified(path),
         }
@@ -80,11 +85,11 @@ impl CalibRawApp {
         match (model, inferencing) {
             (AiMaskModel::Subject, true) => format!(
                 "Running {} locally…",
-                calibraw_ai::ai_masks::BIREFNET_MODEL.checkpoint
+                self.ai.subject_mask_quality.model().checkpoint
             ),
             (AiMaskModel::Subject, false) => format!(
                 "Preparing {} download…",
-                calibraw_ai::ai_masks::BIREFNET_MODEL.download_label
+                self.ai.subject_mask_quality.model().download_label
             ),
             (AiMaskModel::Sky, true) => "Running SkySeg U2Net locally…".to_owned(),
             (AiMaskModel::Sky, false) => "Preparing SkySeg U2Net download…".to_owned(),
@@ -123,15 +128,11 @@ impl CalibRawApp {
         let (runtime_path, runtime_sha256) = self.onnx_runtime_for_ai();
         #[cfg(target_os = "android")]
         let (runtime_path, runtime_sha256) = (None, None);
-        #[cfg(not(target_os = "android"))]
-        let crop_refinement = model == AiMaskModel::Subject && self.ai.subject_crop_refinement;
-        #[cfg(target_os = "android")]
-        let crop_refinement = false;
         let cancellation = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let receiver = spawn_ai_mask(
             AiMaskWorkerRequest {
                 model,
-                crop_refinement,
+                subject_quality: self.ai.subject_mask_quality,
                 model_path,
                 allow_download,
                 runtime_path,

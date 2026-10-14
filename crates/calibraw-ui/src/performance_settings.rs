@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
 // Bump when a public settings change needs migration; see `sanitized`.
-const SETTINGS_VERSION: u32 = 3;
+const SETTINGS_VERSION: u32 = 4;
 /// The desktop decoded-RAW cache default before version 2 raised it, so that
 /// Develop can prefetch both neighbours of the open photo.
 ///
@@ -42,8 +42,7 @@ pub(crate) struct PerformanceSettings {
     pub github_update_check_allowed: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ignored_update_version: Option<String>,
-    #[cfg(not(target_os = "android"))]
-    pub subject_crop_refinement: bool,
+    pub subject_mask_quality: calibraw_ai::ai_masks::SubjectMaskQuality,
     #[cfg(not(target_os = "android"))]
     pub ai_gpu_acceleration: bool,
     #[cfg(not(target_os = "android"))]
@@ -155,8 +154,7 @@ impl Default for PerformanceSettings {
             auto_check_updates: true,
             github_update_check_allowed: None,
             ignored_update_version: None,
-            #[cfg(not(target_os = "android"))]
-            subject_crop_refinement: true,
+            subject_mask_quality: calibraw_ai::ai_masks::SubjectMaskQuality::default(),
             #[cfg(not(target_os = "android"))]
             ai_gpu_acceleration: true,
             #[cfg(not(target_os = "android"))]
@@ -212,6 +210,11 @@ impl PerformanceSettings {
             self.automatic_lens_vignetting = false;
         }
         self.version = SETTINGS_VERSION;
+        if !calibraw_ai::ai_masks::SubjectMaskQuality::AVAILABLE
+            .contains(&self.subject_mask_quality)
+        {
+            self.subject_mask_quality = calibraw_ai::ai_masks::SubjectMaskQuality::default();
+        }
         self.raw_cache_files = self
             .raw_cache_files
             .min(crate::app::maximum_raw_cache_limit());
@@ -252,9 +255,8 @@ pub(crate) fn load(path: Option<&Path>) -> PerformanceSettings {
     }
     match std::fs::read(path)
         .map_err(|error| error.to_string())
-        .and_then(|bytes| {
-            serde_json::from_slice::<PerformanceSettings>(&bytes).map_err(|error| error.to_string())
-        }) {
+        .and_then(|bytes| decode(&bytes).map_err(|error| error.to_string()))
+    {
         Ok(settings) => settings.sanitized(),
         Err(error) => {
             log::warn!(
@@ -263,6 +265,33 @@ pub(crate) fn load(path: Option<&Path>) -> PerformanceSettings {
             );
             PerformanceSettings::default()
         }
+    }
+}
+
+fn decode(bytes: &[u8]) -> serde_json::Result<PerformanceSettings> {
+    let mut value = serde_json::from_slice::<serde_json::Value>(bytes)?;
+    migrate_subject_crop_refinement(&mut value);
+    serde_json::from_value(value)
+}
+
+/// Version 4: the desktop `subject_crop_refinement` switch became
+/// `subject_mask_quality`. Refinement off is `medium`; on, the default `high`.
+///
+/// migration: remove in v2.0.0. Listed in `calibraw_core`'s `migrations`.
+fn migrate_subject_crop_refinement(value: &mut serde_json::Value) {
+    let Some(settings) = value.as_object_mut() else {
+        return;
+    };
+    let refinement = settings.remove("subject_crop_refinement");
+    let before_v4 = settings
+        .get("version")
+        .and_then(serde_json::Value::as_u64)
+        .is_none_or(|version| version < 4);
+    if before_v4 && refinement == Some(serde_json::Value::Bool(false)) {
+        settings.insert(
+            "subject_mask_quality".to_owned(),
+            serde_json::Value::from("medium"),
+        );
     }
 }
 
@@ -460,6 +489,46 @@ mod tests {
     }
 
     #[test]
+    fn version_3_subject_crop_refinement_becomes_a_subject_quality() {
+        use calibraw_ai::ai_masks::SubjectMaskQuality;
+        let decoded = |json: &str| decode(json.as_bytes()).unwrap().sanitized();
+        assert_eq!(
+            decoded(r#"{"version":3,"subject_crop_refinement":false}"#).subject_mask_quality,
+            SubjectMaskQuality::Medium
+        );
+        assert_eq!(
+            decoded(r#"{"version":3,"subject_crop_refinement":true}"#).subject_mask_quality,
+            SubjectMaskQuality::default()
+        );
+        assert_eq!(
+            decoded(r#"{"version":3}"#).subject_mask_quality,
+            SubjectMaskQuality::default()
+        );
+        // Version 4 files keep the saved quality.
+        let saved = decoded(r#"{"version":4,"subject_mask_quality":"low"}"#);
+        assert_eq!(saved.subject_mask_quality, SubjectMaskQuality::Low);
+        assert_eq!(
+            serde_json::to_value(&saved).unwrap()["subject_mask_quality"],
+            "low"
+        );
+    }
+
+    #[test]
+    fn unavailable_subject_quality_falls_back_to_the_platform_default() {
+        let settings = PerformanceSettings {
+            subject_mask_quality: calibraw_ai::ai_masks::SubjectMaskQuality::High,
+            ..Default::default()
+        }
+        .sanitized();
+        let expected = if cfg!(target_os = "android") {
+            calibraw_ai::ai_masks::SubjectMaskQuality::Medium
+        } else {
+            calibraw_ai::ai_masks::SubjectMaskQuality::High
+        };
+        assert_eq!(settings.subject_mask_quality, expected);
+    }
+
+    #[test]
     fn denied_github_permission_disables_automatic_checks() {
         let settings = PerformanceSettings {
             auto_check_updates: true,
@@ -558,9 +627,12 @@ mod tests {
             crate::ui::library::LibrarySortOrder::NewestFirst
         );
         assert!(settings.library_stack_raw_companions);
+        assert_eq!(
+            settings.subject_mask_quality,
+            calibraw_ai::ai_masks::SubjectMaskQuality::default()
+        );
         #[cfg(not(target_os = "android"))]
         {
-            assert!(settings.subject_crop_refinement);
             assert!(settings.ai_gpu_acceleration);
             assert_eq!(
                 settings.onnx_runtime_mode,
@@ -601,11 +673,11 @@ mod tests {
             automatic_lens_geometry: false,
             automatic_lens_vignetting: true,
             missing_lens_profile_prompt: false,
+            subject_mask_quality: calibraw_ai::ai_masks::SubjectMaskQuality::Low,
             ..Default::default()
         };
         #[cfg(not(target_os = "android"))]
         {
-            settings.subject_crop_refinement = false;
             settings.ai_gpu_acceleration = false;
             settings.onnx_runtime_mode = crate::app::OnnxRuntimeMode::Manual;
             settings.onnx_runtime_kind = calibraw_ai::AutomaticOnnxRuntimeKind::Cuda13;
@@ -647,9 +719,12 @@ mod tests {
         );
         assert!(restored.render_edited_thumbnails_during_indexing);
         assert!(!restored.thumbnail_workers_automatic);
+        assert_eq!(
+            restored.subject_mask_quality,
+            calibraw_ai::ai_masks::SubjectMaskQuality::Low
+        );
         #[cfg(not(target_os = "android"))]
         {
-            assert!(!restored.subject_crop_refinement);
             assert!(!restored.ai_gpu_acceleration);
             assert_eq!(
                 restored.onnx_runtime_mode,

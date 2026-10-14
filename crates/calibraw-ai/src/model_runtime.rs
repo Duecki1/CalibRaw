@@ -14,6 +14,7 @@ use std::{
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum AiModel {
     BiRefNet,
+    BiRefNetLow,
     SkySeg,
     Depth,
     SamEncoder,
@@ -26,7 +27,7 @@ pub(crate) enum AiModel {
 impl AiModel {
     const fn feature(self) -> AiFeature {
         match self {
-            Self::BiRefNet => AiFeature::Subject,
+            Self::BiRefNet | Self::BiRefNetLow => AiFeature::Subject,
             Self::SkySeg => AiFeature::Sky,
             Self::Depth => AiFeature::SceneDepth,
             Self::SamEncoder | Self::SamDecoder => AiFeature::Object,

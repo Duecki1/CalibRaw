@@ -121,8 +121,7 @@ pub(crate) struct AiConsent {
 }
 
 pub(crate) struct AiState {
-    #[cfg(not(target_os = "android"))]
-    pub(crate) subject_crop_refinement: bool,
+    pub(crate) subject_mask_quality: calibraw_ai::ai_masks::SubjectMaskQuality,
     #[cfg(not(target_os = "android"))]
     pub(crate) gpu_acceleration: bool,
     /// Content results (AI masks, scene depth, range sources) were made from an
