@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
 // Bump when a public settings change needs migration; see `sanitized`.
-const SETTINGS_VERSION: u32 = 4;
+const SETTINGS_VERSION: u32 = 3;
 /// The desktop decoded-RAW cache default before version 2 raised it, so that
 /// Develop can prefetch both neighbours of the open photo.
 ///
@@ -255,8 +255,9 @@ pub(crate) fn load(path: Option<&Path>) -> PerformanceSettings {
     }
     match std::fs::read(path)
         .map_err(|error| error.to_string())
-        .and_then(|bytes| decode(&bytes).map_err(|error| error.to_string()))
-    {
+        .and_then(|bytes| {
+            serde_json::from_slice::<PerformanceSettings>(&bytes).map_err(|error| error.to_string())
+        }) {
         Ok(settings) => settings.sanitized(),
         Err(error) => {
             log::warn!(
@@ -265,33 +266,6 @@ pub(crate) fn load(path: Option<&Path>) -> PerformanceSettings {
             );
             PerformanceSettings::default()
         }
-    }
-}
-
-fn decode(bytes: &[u8]) -> serde_json::Result<PerformanceSettings> {
-    let mut value = serde_json::from_slice::<serde_json::Value>(bytes)?;
-    migrate_subject_crop_refinement(&mut value);
-    serde_json::from_value(value)
-}
-
-/// Version 4: the desktop `subject_crop_refinement` switch became
-/// `subject_mask_quality`. Refinement off is `medium`; on, the default `high`.
-///
-/// migration: remove in v2.0.0. Listed in `calibraw_core`'s `migrations`.
-fn migrate_subject_crop_refinement(value: &mut serde_json::Value) {
-    let Some(settings) = value.as_object_mut() else {
-        return;
-    };
-    let refinement = settings.remove("subject_crop_refinement");
-    let before_v4 = settings
-        .get("version")
-        .and_then(serde_json::Value::as_u64)
-        .is_none_or(|version| version < 4);
-    if before_v4 && refinement == Some(serde_json::Value::Bool(false)) {
-        settings.insert(
-            "subject_mask_quality".to_owned(),
-            serde_json::Value::from("medium"),
-        );
     }
 }
 
@@ -486,31 +460,6 @@ mod tests {
         assert_eq!(migrated(SETTINGS_VERSION, true, true), (true, true));
         // Turning both off restores the default selection.
         assert_eq!(migrated(SETTINGS_VERSION, false, false), (true, false));
-    }
-
-    #[test]
-    fn version_3_subject_crop_refinement_becomes_a_subject_quality() {
-        use calibraw_ai::ai_masks::SubjectMaskQuality;
-        let decoded = |json: &str| decode(json.as_bytes()).unwrap().sanitized();
-        assert_eq!(
-            decoded(r#"{"version":3,"subject_crop_refinement":false}"#).subject_mask_quality,
-            SubjectMaskQuality::Medium
-        );
-        assert_eq!(
-            decoded(r#"{"version":3,"subject_crop_refinement":true}"#).subject_mask_quality,
-            SubjectMaskQuality::default()
-        );
-        assert_eq!(
-            decoded(r#"{"version":3}"#).subject_mask_quality,
-            SubjectMaskQuality::default()
-        );
-        // Version 4 files keep the saved quality.
-        let saved = decoded(r#"{"version":4,"subject_mask_quality":"low"}"#);
-        assert_eq!(saved.subject_mask_quality, SubjectMaskQuality::Low);
-        assert_eq!(
-            serde_json::to_value(&saved).unwrap()["subject_mask_quality"],
-            "low"
-        );
     }
 
     #[test]
