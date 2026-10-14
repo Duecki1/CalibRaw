@@ -53,8 +53,8 @@
             "sources": [
                 {
                     "type": "archive",
-                    "url": "https://github.com/LibRaw/LibRaw/archive/b860248a89d9082b8e0a1e202e516f46af9adb29.tar.gz",
-                    "sha256": "f5da1e522ea195b54b30f3ff105ef2193daa04ea165dea825b4d6fe9d886395b"
+                    "url": "https://github.com/LibRaw/LibRaw/archive/830ac963b40223c6a25add5be65036fa8d56e2d6.tar.gz",
+                    "sha256": "dd77deb5e7e290d2216ad8688ec4ac7dccdeea3def0927076a63a61d326e212a"
                 },
                 {
                     "type": "script",

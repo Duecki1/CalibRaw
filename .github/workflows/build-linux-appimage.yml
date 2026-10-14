@@ -54,9 +54,9 @@ jobs:
             target
             /tmp/calibraw-libraw
             /tmp/linuxdeploy-${{ matrix.linuxdeploy_arch }}.AppImage
-          key: calibraw-linux-native-v2-${{ runner.os }}-${{ runner.arch }}-rust-${{ hashFiles('rust-toolchain.toml') }}-libraw-823f25d-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'crates/**/Cargo.toml', 'crates/**/build.rs', 'crates/**/build_support/**') }}
+          key: calibraw-linux-native-v2-${{ runner.os }}-${{ runner.arch }}-rust-${{ hashFiles('rust-toolchain.toml') }}-libraw-830ac96-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'crates/**/Cargo.toml', 'crates/**/build.rs', 'crates/**/build_support/**') }}
           restore-keys: |
-            calibraw-linux-native-v2-${{ runner.os }}-${{ runner.arch }}-rust-${{ hashFiles('rust-toolchain.toml') }}-libraw-823f25d-
+            calibraw-linux-native-v2-${{ runner.os }}-${{ runner.arch }}-rust-${{ hashFiles('rust-toolchain.toml') }}-libraw-830ac96-
 
       - name: Install Linux build dependencies
         shell: bash

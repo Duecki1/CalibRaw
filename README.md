@@ -153,7 +153,7 @@ Anything LibRaw or Rawler supports, as well as JPEG, PNG, HEIC and TIFF; see [Su
 
 ### RAW
 
-CalibRaw uses **LibRaw (0.22.1)** for broad camera compatibility, paired with **Rawler (0.8.0)** for DNG and JPEG-XL DNG streams. When LibRaw cannot open a camera RAW (for example a camera newer than its colour tables), CalibRaw retries it with Rawler. Together, they support RAW files from a wide range of camera models; check their maintained lists for specific compatibility.
+CalibRaw uses **LibRaw (master at 830ac96)** for broad camera compatibility, paired with **Rawler (0.8.0)** for DNG and JPEG-XL DNG streams. When LibRaw cannot open a camera RAW (for example a camera newer than its colour tables), CalibRaw retries it with Rawler. Together, they support RAW files from a wide range of camera models; check their maintained lists for specific compatibility.
 
 Supported cameras: [LibRaw](https://www.libraw.org/supported-cameras) and [Rawler](https://github.com/dnglab/dnglab/blob/main/SUPPORTED_CAMERAS.md) (maintained by the dnglab project). Supported file extensions:
 
