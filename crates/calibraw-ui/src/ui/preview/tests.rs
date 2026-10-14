@@ -52,6 +52,37 @@ fn pinch_translation_and_zoom_preserve_the_gesture_anchor() {
 }
 
 #[test]
+fn aspect_locked_edge_drags_resize_from_the_dragged_edge() {
+    for (handle, proposed, expected) in [
+        (
+            CropHandle::Top,
+            [0.25, 0.15, 0.75, 0.75],
+            [0.2, 0.15, 0.8, 0.75],
+        ),
+        (
+            CropHandle::Bottom,
+            [0.25, 0.25, 0.75, 0.85],
+            [0.2, 0.25, 0.8, 0.85],
+        ),
+        (
+            CropHandle::Left,
+            [0.15, 0.25, 0.75, 0.75],
+            [0.15, 0.2, 0.75, 0.8],
+        ),
+        (
+            CropHandle::Right,
+            [0.25, 0.25, 0.85, 0.75],
+            [0.25, 0.2, 0.85, 0.8],
+        ),
+    ] {
+        let crop = constrain_crop_aspect(proposed, handle, 1.0);
+        for (actual, expected) in crop.iter().zip(expected) {
+            assert!((actual - expected).abs() < 1e-6, "{handle:?}: {crop:?}");
+        }
+    }
+}
+
+#[test]
 fn zoom_out_preserves_mask_workspace_and_invalid_gestures_do_not_corrupt_the_view() {
     let viewport = Rect::from_min_size(Pos2::ZERO, egui::vec2(800.0, 600.0));
     for factor in [f32::NAN, f32::INFINITY, -1.0, 0.0] {

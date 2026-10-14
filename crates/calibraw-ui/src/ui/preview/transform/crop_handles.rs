@@ -166,35 +166,22 @@ pub(in crate::ui::preview) fn constrain_crop_corner_aspect(
     })
 }
 
+/// `crop` after dragging the edge `handle`, with the perpendicular extent
+/// recomputed around its centre so width / height equals `normalized_ratio`
+/// (both in normalized source units). The dragged extent is kept as is.
 pub(in crate::ui::preview) fn constrain_crop_aspect(
-    app: &CalibRawApp,
     mut crop: [f32; 4],
     handle: CropHandle,
+    normalized_ratio: f32,
 ) -> [f32; 4] {
-    let Some(normalized_ratio) = app.develop.loaded_raw.as_ref().and_then(|raw| {
-        app.develop
-            .geometry
-            .normalized_crop_aspect(raw.width, raw.height)
-    }) else {
-        return crop;
-    };
-    let width = crop[2] - crop[0];
-    let height = crop[3] - crop[1];
-    let target_height = width / normalized_ratio;
-    let target_width = height * normalized_ratio;
-
-    let horizontal_edge = matches!(handle, CropHandle::Left | CropHandle::Right);
-    if horizontal_edge
-        || (target_height <= 1.0 && (target_height - height).abs() <= (target_width - width).abs())
-    {
-        let new_height =
-            target_height.clamp(crate::pipeline::GeometryTransform::MIN_CROP_EXTENT, 1.0);
+    let min = crate::pipeline::GeometryTransform::MIN_CROP_EXTENT;
+    if matches!(handle, CropHandle::Left | CropHandle::Right) {
+        let new_height = ((crop[2] - crop[0]) / normalized_ratio).clamp(min, 1.0);
         let center = (crop[1] + crop[3]) * 0.5;
         crop[1] = (center - new_height * 0.5).clamp(0.0, 1.0 - new_height);
         crop[3] = crop[1] + new_height;
     } else {
-        let new_width =
-            target_width.clamp(crate::pipeline::GeometryTransform::MIN_CROP_EXTENT, 1.0);
+        let new_width = ((crop[3] - crop[1]) * normalized_ratio).clamp(min, 1.0);
         let center = (crop[0] + crop[2]) * 0.5;
         crop[0] = (center - new_width * 0.5).clamp(0.0, 1.0 - new_width);
         crop[2] = crop[0] + new_width;
