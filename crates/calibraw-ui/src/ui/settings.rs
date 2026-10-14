@@ -409,7 +409,7 @@ impl Settings {
         }
 
         #[cfg(not(target_os = "android"))]
-        {
+        if app.discord_rich_presence_supported() {
             moduwu_design::section_separator(ui);
             let mut enabled = app.preferences.discord_rich_presence;
             if moduwu_design::toggle_with_help(

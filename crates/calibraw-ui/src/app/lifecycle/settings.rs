@@ -128,6 +128,11 @@ impl CalibRawApp {
     }
 
     #[cfg(not(target_os = "android"))]
+    pub(crate) fn discord_rich_presence_supported(&self) -> bool {
+        self.discord_presence.is_supported()
+    }
+
+    #[cfg(not(target_os = "android"))]
     pub(crate) fn discord_rich_presence_configured(&self) -> bool {
         self.discord_presence.is_configured()
     }
