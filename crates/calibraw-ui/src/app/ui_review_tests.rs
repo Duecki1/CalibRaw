@@ -198,6 +198,7 @@ fn capture_review(root: &Path, output_dir: &Path) {
             let settings = PerformanceSettings {
                 ui_design: design,
                 onboarding_completed: true,
+                subject_mask_quality_chosen: true,
                 auto_check_updates: false,
                 github_update_check_allowed: Some(false),
                 camera_profile_auto_detect: false,

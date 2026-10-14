@@ -122,22 +122,24 @@ pub(crate) fn automatic_runtime_kind_control(
     }
 }
 
-/// Who each subject-mask quality is for, shown in setup and in the
-/// quality control's tooltip.
-pub(crate) fn subject_mask_quality_summary(
-    quality: calibraw_ai::ai_masks::SubjectMaskQuality,
-) -> String {
-    use calibraw_ai::ai_masks::{SubjectMaskQuality, BIREFNET_LOW_MODEL};
-    match quality {
-        SubjectMaskQuality::Low => format!(
-            "For older laptops and phones · fastest, softer edges · separate {:.0} MB download",
-            BIREFNET_LOW_MODEL.bytes as f64 / 1_000_000.0
-        ),
-        SubjectMaskQuality::Medium => "For most devices · recommended".to_owned(),
-        SubjectMaskQuality::High => {
-            "For computers with a dedicated GPU · finest edges, about twice as long".to_owned()
-        }
-    }
+/// Who each subject-mask quality offered on this platform is for, one line
+/// each, so they can be compared at once in setup and in the tooltip.
+pub(crate) fn subject_mask_quality_descriptions() -> String {
+    use calibraw_ai::ai_masks::SubjectMaskQuality;
+    SubjectMaskQuality::AVAILABLE
+        .iter()
+        .map(|&quality| {
+            let description = match quality {
+                SubjectMaskQuality::Low => "For older laptops and phones · fastest, softer edges",
+                SubjectMaskQuality::Medium => "For most devices · recommended",
+                SubjectMaskQuality::High => {
+                    "For computers with a dedicated GPU · finest edges, about twice as long"
+                }
+            };
+            format!("{}: {description}", quality.label())
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// Subject-mask quality, in setup, in the AI card on desktop and in the
@@ -148,14 +150,10 @@ pub(crate) fn subject_mask_quality_control(
     id_salt: &'static str,
 ) {
     use calibraw_ai::ai_masks::SubjectMaskQuality;
-    let mut help = "Applies to newly generated Subject and Background masks.".to_owned();
-    for &option in SubjectMaskQuality::AVAILABLE {
-        help += &format!(
-            "\n{}: {}",
-            option.label(),
-            subject_mask_quality_summary(option)
-        );
-    }
+    let help = format!(
+        "Applies to newly generated Subject and Background masks.\n{}",
+        subject_mask_quality_descriptions()
+    );
     let mut quality = app.ai.subject_mask_quality;
     ui.add_enabled_ui(app.ai_mask_generation_idle(), |ui| {
         moduwu_design::form_combo_with_help(

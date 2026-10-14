@@ -37,6 +37,9 @@ pub(crate) struct PerformanceSettings {
     pub ui_design: crate::appearance::UiDesign,
     pub preview_backdrop: crate::appearance::PreviewBackdrop,
     pub onboarding_completed: bool,
+    /// Missing in files written before the setup step existed, so existing
+    /// users are asked once.
+    pub subject_mask_quality_chosen: bool,
     pub auto_check_updates: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub github_update_check_allowed: Option<bool>,
@@ -151,6 +154,7 @@ impl Default for PerformanceSettings {
             ui_design: crate::appearance::UiDesign::default(),
             preview_backdrop: crate::appearance::PreviewBackdrop::default(),
             onboarding_completed: false,
+            subject_mask_quality_chosen: false,
             auto_check_updates: true,
             github_update_check_allowed: None,
             ignored_update_version: None,
@@ -210,8 +214,11 @@ impl PerformanceSettings {
             self.automatic_lens_vignetting = false;
         }
         self.version = SETTINGS_VERSION;
-        if !calibraw_ai::ai_masks::SubjectMaskQuality::AVAILABLE
-            .contains(&self.subject_mask_quality)
+        // Setup offers the default until the user has chosen; earlier builds
+        // saved other defaults.
+        if !self.subject_mask_quality_chosen
+            || !calibraw_ai::ai_masks::SubjectMaskQuality::AVAILABLE
+                .contains(&self.subject_mask_quality)
         {
             self.subject_mask_quality = calibraw_ai::ai_masks::SubjectMaskQuality::default();
         }
@@ -463,9 +470,24 @@ mod tests {
     }
 
     #[test]
+    fn unchosen_subject_quality_is_the_default() {
+        let settings = PerformanceSettings {
+            subject_mask_quality: calibraw_ai::ai_masks::SubjectMaskQuality::Low,
+            subject_mask_quality_chosen: false,
+            ..Default::default()
+        }
+        .sanitized();
+        assert_eq!(
+            settings.subject_mask_quality,
+            calibraw_ai::ai_masks::SubjectMaskQuality::Medium
+        );
+    }
+
+    #[test]
     fn unavailable_subject_quality_falls_back_to_the_platform_default() {
         let settings = PerformanceSettings {
             subject_mask_quality: calibraw_ai::ai_masks::SubjectMaskQuality::High,
+            subject_mask_quality_chosen: true,
             ..Default::default()
         }
         .sanitized();
@@ -601,6 +623,7 @@ mod tests {
             crate::sidecar::AdjustmentCopySettings::default()
         );
         assert!(!settings.onboarding_completed);
+        assert!(!settings.subject_mask_quality_chosen);
     }
 
     #[test]

@@ -104,7 +104,7 @@ impl MaskKind {
             Self::Object => "Select Object",
             Self::LuminanceRange => "Luminance Range",
             Self::ColorRange => "Color Range",
-            Self::DepthRange => "Depth Range",
+            Self::DepthRange => "Depth",
         }
     }
 
