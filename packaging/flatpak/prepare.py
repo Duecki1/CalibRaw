@@ -38,20 +38,6 @@ def public_origin_url() -> str:
     )
 
 
-def add_discord_application_id(environment: dict) -> None:
-    """Embed the Discord application ID from the environment in the build.
-
-    The ID is read at compile time (`option_env!`). Discord application IDs are
-    public identifiers, so it is fine for the staged Flathub manifest to carry
-    it. Without it the build still works but Discord Rich Presence is disabled.
-    """
-    value = os.environ.get("CALIBRAW_DISCORD_APPLICATION_ID", "").strip()
-    if value:
-        environment["CALIBRAW_DISCORD_APPLICATION_ID"] = value
-    else:
-        print("CALIBRAW_DISCORD_APPLICATION_ID is not set: Discord Rich Presence will be unavailable in this build.")
-
-
 def validate_staged_manifest(manifest: dict) -> None:
     """Reject local-only source paths before writing a Flathub submission."""
     if "default-branch" in manifest:
@@ -118,7 +104,6 @@ def snapshot(profile: str) -> None:
     ]
     environment = manifest["build-options"]["env"]
     environment["CALIBRAW_SOURCE_REVISION"] = git("rev-parse", "HEAD").decode().strip() + "-local"
-    add_discord_application_id(environment)
     # Preserve compilation results when flatpak-builder replaces the app's
     # source directory after an edit. This mount exists only in local builds.
     target = ROOT / ".flatpak/cargo-target" / profile
@@ -168,7 +153,6 @@ def stage_release(revision: str) -> None:
     manifest = json.loads((PACKAGING / f"{APP_ID}.json").read_text())
     manifest.pop("default-branch", None)
     manifest["build-options"]["env"]["CALIBRAW_SOURCE_REVISION"] = commit
-    add_discord_application_id(manifest["build-options"]["env"])
     manifest["build-options"]["env"]["SOURCE_DATE_EPOCH"] = git("show", "-s", "--format=%ct", commit).decode().strip()
     manifest["modules"][-1]["sources"] = [
         {"type": "git", "url": public_origin_url(), "commit": commit},

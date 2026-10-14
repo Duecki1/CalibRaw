@@ -408,7 +408,8 @@ fn show_navigation(
 }
 
 impl OnboardingStep {
-    /// Setup order; navigation and step numbers derive from it.
+    /// Setup order; navigation and step numbers derive from it. Discord stays
+    /// last so builds without Rich Presence can drop it from the end.
     const ALL: &'static [Self] = &[
         Self::Appearance,
         Self::Preview,
@@ -421,6 +422,15 @@ impl OnboardingStep {
         Self::Discord,
     ];
 
+    /// `ALL` for builds without Discord Rich Presence.
+    #[cfg(not(target_os = "android"))]
+    const ALL_WITHOUT_DISCORD: &'static [Self] = match Self::ALL.split_last() {
+        Some((Self::Discord, rest)) => rest,
+        _ => panic!("the Discord step must be the last setup step"),
+    };
+    #[cfg(target_os = "android")]
+    const ALL_WITHOUT_DISCORD: &'static [Self] = Self::ALL;
+
     /// Steps added after setup first shipped, shown alone to users who
     /// finished an earlier setup.
     const CATCH_UP: &'static [Self] = &[Self::SubjectMasks];
@@ -430,8 +440,25 @@ impl OnboardingStep {
         onboarding_completed: bool,
         subject_mask_quality_chosen: bool,
     ) -> &'static [Self] {
+        #[cfg(not(target_os = "android"))]
+        let discord_supported = crate::desktop_portal::discord_presence_supported();
+        #[cfg(target_os = "android")]
+        let discord_supported = false;
+        Self::pending_with(
+            onboarding_completed,
+            subject_mask_quality_chosen,
+            discord_supported,
+        )
+    }
+
+    fn pending_with(
+        onboarding_completed: bool,
+        subject_mask_quality_chosen: bool,
+        discord_supported: bool,
+    ) -> &'static [Self] {
         match (onboarding_completed, subject_mask_quality_chosen) {
-            (false, _) => Self::ALL,
+            (false, _) if discord_supported => Self::ALL,
+            (false, _) => Self::ALL_WITHOUT_DISCORD,
             (true, false) => Self::CATCH_UP,
             (true, true) => &[],
         }
@@ -525,19 +552,31 @@ mod tests {
 
     #[test]
     fn finished_setup_shows_only_steps_added_since() {
-        assert_eq!(OnboardingStep::pending(false, false), OnboardingStep::ALL);
-        assert_eq!(OnboardingStep::pending(false, true), OnboardingStep::ALL);
-        assert_eq!(
-            OnboardingStep::pending(true, false),
-            [OnboardingStep::SubjectMasks]
-        );
-        assert!(OnboardingStep::pending(true, true).is_empty());
+        let pending = |completed, chosen| OnboardingStep::pending_with(completed, chosen, true);
+        assert_eq!(pending(false, false), OnboardingStep::ALL);
+        assert_eq!(pending(false, true), OnboardingStep::ALL);
+        assert_eq!(pending(true, false), [OnboardingStep::SubjectMasks]);
+        assert!(pending(true, true).is_empty());
         for &step in OnboardingStep::CATCH_UP {
             assert!(OnboardingStep::ALL.contains(&step));
         }
         // A lone catch-up step offers no way back.
-        let steps = OnboardingStep::pending(true, false);
+        let steps = pending(true, false);
         assert_eq!(steps[0].previous(steps), None);
         assert_eq!(steps[0].next(steps), None);
+    }
+
+    #[cfg(not(target_os = "android"))]
+    #[test]
+    fn builds_without_discord_skip_only_its_step() {
+        let steps = OnboardingStep::pending_with(false, false, false);
+        assert!(!steps.contains(&OnboardingStep::Discord));
+        assert_eq!(steps.len(), OnboardingStep::ALL.len() - 1);
+        assert_eq!(steps.last(), Some(&OnboardingStep::CameraProfiles));
+        assert_eq!(steps[steps.len() - 1].next(steps), None);
+        assert_eq!(
+            OnboardingStep::pending_with(true, false, false),
+            [OnboardingStep::SubjectMasks]
+        );
     }
 }

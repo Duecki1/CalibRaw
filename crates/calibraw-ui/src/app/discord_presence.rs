@@ -26,6 +26,7 @@ enum PresenceCommand {
 }
 
 pub(super) struct DiscordPresence {
+    supported: bool,
     application_id: Option<String>,
     enabled: bool,
     sender: Option<mpsc::Sender<PresenceCommand>>,
@@ -35,12 +36,16 @@ pub(super) struct DiscordPresence {
 
 impl DiscordPresence {
     pub(super) fn new(enabled: bool) -> Self {
-        let application_id = configured_application_id();
+        let supported = crate::desktop_portal::discord_presence_supported();
+        // An unsupported build never connects, even if an older version saved
+        // the setting as enabled.
+        let application_id = configured_application_id().filter(|_| supported);
         let enabled = enabled && application_id.is_some();
         if enabled {
             log::info!("Discord Rich Presence is enabled");
         }
         Self {
+            supported,
             application_id,
             enabled,
             sender: None,
@@ -49,11 +54,18 @@ impl DiscordPresence {
         }
     }
 
+    pub(super) fn is_supported(&self) -> bool {
+        self.supported
+    }
+
     pub(super) fn is_configured(&self) -> bool {
         self.application_id.is_some()
     }
 
     pub(super) fn set_enabled(&mut self, enabled: bool) -> Result<(), String> {
+        if enabled && !self.supported {
+            return Err("Discord Rich Presence is unavailable in the Flatpak build.".to_owned());
+        }
         if enabled && self.application_id.is_none() {
             return Err(format!(
                 "Discord Rich Presence is unavailable because this build has no {APPLICATION_ID_ENV}."
@@ -243,6 +255,7 @@ mod tests {
 
     fn disabled_presence() -> DiscordPresence {
         DiscordPresence {
+            supported: true,
             application_id: None,
             enabled: false,
             sender: None,
