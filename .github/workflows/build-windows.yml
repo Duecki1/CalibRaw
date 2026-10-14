@@ -52,7 +52,6 @@ jobs:
             libraw_deps: >-
               mingw-w64-clang-aarch64-lcms2
               mingw-w64-clang-aarch64-libjpeg-turbo
-              mingw-w64-clang-aarch64-openmp
               mingw-w64-clang-aarch64-zlib
             lensfun_package: mingw-w64-clang-aarch64-lensfun
             compiler: clang
