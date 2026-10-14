@@ -119,6 +119,7 @@ fn show_step_body(ui: &mut egui::Ui, app: &mut CalibRawApp, step: OnboardingStep
     match step {
         OnboardingStep::Appearance => show_appearance(ui, app),
         OnboardingStep::Preview => show_preview(ui, app),
+        OnboardingStep::SubjectMasks => show_subject_masks(ui, app),
         OnboardingStep::CopyPaste => show_copy_paste(ui, app),
         OnboardingStep::ExportNames => show_export_names(ui, app),
         #[cfg(not(target_os = "android"))]
@@ -228,6 +229,14 @@ fn show_preview(ui: &mut egui::Ui, app: &mut CalibRawApp) {
         PreviewQuality::High => "125% render density · finer previews",
         PreviewQuality::Max => "150% render density · highest GPU memory use",
     });
+}
+
+fn show_subject_masks(ui: &mut egui::Ui, app: &mut CalibRawApp) {
+    crate::ui::settings::subject_mask_quality_control(ui, app, "onboarding-subject-mask-quality");
+    ui.add_space(moduwu_design::SPACE_SM);
+    ui.small(crate::ui::settings::subject_mask_quality_summary(
+        app.ai.subject_mask_quality,
+    ));
 }
 
 fn show_copy_paste(ui: &mut egui::Ui, app: &mut CalibRawApp) {
@@ -389,6 +398,7 @@ impl OnboardingStep {
     const ALL: &'static [Self] = &[
         Self::Appearance,
         Self::Preview,
+        Self::SubjectMasks,
         Self::CopyPaste,
         Self::ExportNames,
         #[cfg(not(target_os = "android"))]
@@ -419,6 +429,7 @@ impl OnboardingStep {
         match self {
             Self::Appearance => "Welcome to CalibRaw",
             Self::Preview => "Preview setup",
+            Self::SubjectMasks => "Subject masks",
             Self::CopyPaste => "Copy & paste setup",
             Self::ExportNames => "Export file names",
             #[cfg(not(target_os = "android"))]
@@ -435,6 +446,9 @@ impl OnboardingStep {
             }
             Self::Preview => {
                 "Choose the balance between interactive preview detail and GPU memory use."
+            }
+            Self::SubjectMasks => {
+                "Choose the balance between AI subject selection speed and edge detail on this device. Models are downloaded when you first select a subject."
             }
             Self::CopyPaste => {
                 "Choose which edit categories are included when copying and pasting adjustments."

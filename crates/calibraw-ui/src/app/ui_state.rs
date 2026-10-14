@@ -49,6 +49,7 @@ pub(crate) struct PreferencesState {
 pub(crate) enum OnboardingStep {
     Appearance,
     Preview,
+    SubjectMasks,
     CopyPaste,
     ExportNames,
     #[cfg(not(target_os = "android"))]

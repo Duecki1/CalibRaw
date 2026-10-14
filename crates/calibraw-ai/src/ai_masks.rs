@@ -126,25 +126,16 @@ pub const BIREFNET_LOW_MODEL: BiRefNetModelSpec = BiRefNetModelSpec {
 
 /// How much work a subject mask may take. Serialized in the performance
 /// settings; keep the names stable.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SubjectMaskQuality {
     /// `BIREFNET_LOW_MODEL`, one pass.
     Low,
     /// `BIREFNET_MODEL`, one pass.
+    #[default]
     Medium,
     /// `BIREFNET_MODEL` with the cropped refinement pass. Desktop only.
     High,
-}
-
-impl Default for SubjectMaskQuality {
-    fn default() -> Self {
-        if cfg!(target_os = "android") {
-            Self::Medium
-        } else {
-            Self::High
-        }
-    }
 }
 
 impl SubjectMaskQuality {

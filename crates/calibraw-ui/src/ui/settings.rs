@@ -122,26 +122,46 @@ pub(crate) fn automatic_runtime_kind_control(
     }
 }
 
-/// Subject-mask quality, in the AI card on desktop and the interface card on
-/// Android. Locked while an AI mask is being generated.
-fn subject_mask_quality_control(ui: &mut Ui, app: &mut CalibRawApp) {
+/// Who each subject-mask quality is for, shown in setup and in the
+/// quality control's tooltip.
+pub(crate) fn subject_mask_quality_summary(
+    quality: calibraw_ai::ai_masks::SubjectMaskQuality,
+) -> String {
     use calibraw_ai::ai_masks::{SubjectMaskQuality, BIREFNET_LOW_MODEL};
-    let help = format!(
-        "Applies to newly generated Subject and Background masks. Low uses a faster {edge} × {edge} model (a separate {size:.0} MB download) with softer edges. Medium uses the full model.{high}",
-        edge = BIREFNET_LOW_MODEL.input_width,
-        size = BIREFNET_LOW_MODEL.bytes as f64 / 1_000_000.0,
-        high = if SubjectMaskQuality::AVAILABLE.contains(&SubjectMaskQuality::High) {
-            " High adds a pass over the cropped subject for finer edges, taking about twice as long."
-        } else {
-            ""
-        },
-    );
+    match quality {
+        SubjectMaskQuality::Low => format!(
+            "For older laptops and phones · fastest, softer edges · separate {:.0} MB download",
+            BIREFNET_LOW_MODEL.bytes as f64 / 1_000_000.0
+        ),
+        SubjectMaskQuality::Medium => "For most devices · recommended".to_owned(),
+        SubjectMaskQuality::High => {
+            "For computers with a dedicated GPU · finest edges, about twice as long".to_owned()
+        }
+    }
+}
+
+/// Subject-mask quality, in setup, in the AI card on desktop and in the
+/// interface card on Android. Locked while an AI mask is being generated.
+pub(crate) fn subject_mask_quality_control(
+    ui: &mut Ui,
+    app: &mut CalibRawApp,
+    id_salt: &'static str,
+) {
+    use calibraw_ai::ai_masks::SubjectMaskQuality;
+    let mut help = "Applies to newly generated Subject and Background masks.".to_owned();
+    for &option in SubjectMaskQuality::AVAILABLE {
+        help += &format!(
+            "\n{}: {}",
+            option.label(),
+            subject_mask_quality_summary(option)
+        );
+    }
     let mut quality = app.ai.subject_mask_quality;
     ui.add_enabled_ui(app.ai_mask_generation_idle(), |ui| {
         moduwu_design::form_combo_with_help(
             ui,
             "Subject mask quality",
-            "settings-subject-mask-quality",
+            id_salt,
             quality.label(),
             160.0,
             &help,
@@ -434,7 +454,7 @@ impl Settings {
         #[cfg(target_os = "android")]
         {
             moduwu_design::section_separator(ui);
-            subject_mask_quality_control(ui, app);
+            subject_mask_quality_control(ui, app, "settings-subject-mask-quality");
         }
 
         moduwu_design::section_separator(ui);
@@ -826,7 +846,7 @@ impl Settings {
         }
 
         moduwu_design::section_separator(ui);
-        subject_mask_quality_control(ui, app);
+        subject_mask_quality_control(ui, app, "settings-subject-mask-quality");
 
         moduwu_design::section_separator(ui);
         let bundled_runtime = calibraw_ai::bundled_onnx_runtime_path();
