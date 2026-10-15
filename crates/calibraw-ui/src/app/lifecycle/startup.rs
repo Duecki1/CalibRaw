@@ -328,6 +328,7 @@ impl CalibRawApp {
                 error_dialogs: ErrorDialogQueue::default(),
                 unsupported_file_dialog: None,
                 missing_lens_profile_prompt: None,
+                runtime_restart_prompt: None,
                 // Set below; the pending steps depend on the AI runtime state.
                 onboarding_step: None,
                 tip: None,

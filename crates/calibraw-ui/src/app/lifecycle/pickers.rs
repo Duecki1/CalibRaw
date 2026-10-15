@@ -105,6 +105,9 @@ impl CalibRawApp {
                     "ONNX Runtime selection and SHA-256 pin saved. Restart CalibRaw before generating another subject mask."
                         .to_owned(),
                 );
+                self.prompt_restart_for_runtime_change(
+                    "ONNX Runtime selection and SHA-256 pin saved.",
+                );
             }
             crate::app::DesktopPickerEvent::OnnxRuntime(Err(error)) => {
                 self.report_error(ErrorKind::AiRuntime, error);

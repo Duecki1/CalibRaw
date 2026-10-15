@@ -468,6 +468,14 @@ pub fn initialize_runtime(
     Ok(())
 }
 
+/// Whether this process has already loaded an ONNX Runtime library. The
+/// library stays loaded until the process exits, so choosing a different one
+/// only takes effect after a restart.
+#[cfg(not(target_os = "android"))]
+pub fn runtime_loaded_in_process() -> bool {
+    DESKTOP_RUNTIME_IDENTITY.get().is_some()
+}
+
 #[cfg(target_os = "android")]
 pub fn initialize_runtime(
     _runtime_path: Option<&Path>,
