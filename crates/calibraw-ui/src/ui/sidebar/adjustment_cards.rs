@@ -155,7 +155,7 @@ impl Sidebar {
         let mut action = CardAction::None;
         let buttons = ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             let size = egui::vec2(26.0, 26.0);
-            let reset = moduwu_design::icon_button(
+            let reset = moduwu_design::ghost_icon_button(
                 ui,
                 egui_phosphor::regular::ARROW_COUNTER_CLOCKWISE,
                 size,
@@ -168,7 +168,7 @@ impl Sidebar {
                 let forced = crate::app::preview_visibility::PreviewVisibility::mask_overlay_forced(
                     ui.ctx(),
                 );
-                let response = moduwu_design::icon_toggle_button(
+                let response = moduwu_design::ghost_icon_toggle_button(
                     ui,
                     egui_phosphor::regular::EYE,
                     forced,
@@ -188,7 +188,7 @@ impl Sidebar {
             });
             if show_visibility {
                 // Like the topbar eye, highlight the button when edits are bypassed.
-                let eye = moduwu_design::icon_toggle_button(
+                let eye = moduwu_design::ghost_icon_toggle_button(
                     ui,
                     visibility_icon(visible),
                     !visible,
@@ -336,7 +336,7 @@ impl Sidebar {
                 entry.scope,
             );
 
-            if moduwu_design::icon_button(
+            if moduwu_design::ghost_icon_button(
                 ui,
                 egui_phosphor::regular::ARROW_COUNTER_CLOCKWISE,
                 size,
@@ -371,7 +371,7 @@ impl Sidebar {
             }
 
             if let VerticalCardKind::Effect { enabled } = entry.kind {
-                if moduwu_design::icon_button(
+                if moduwu_design::ghost_icon_button(
                     ui,
                     egui_phosphor::regular::TRASH,
                     size,
@@ -386,7 +386,7 @@ impl Sidebar {
                         EffectCardAction::Remove,
                     );
                 }
-                if moduwu_design::icon_toggle_button(
+                if moduwu_design::ghost_icon_toggle_button(
                     ui,
                     visibility_icon(enabled),
                     !enabled,
@@ -416,7 +416,7 @@ impl Sidebar {
                 let forced = crate::app::preview_visibility::PreviewVisibility::mask_overlay_forced(
                     ui.ctx(),
                 );
-                if moduwu_design::icon_toggle_button(
+                if moduwu_design::ghost_icon_toggle_button(
                     ui,
                     egui_phosphor::regular::EYE,
                     forced,
@@ -440,7 +440,7 @@ impl Sidebar {
                     ui.ctx(),
                     entry.title,
                 );
-                if moduwu_design::icon_toggle_button(
+                if moduwu_design::ghost_icon_toggle_button(
                     ui,
                     visibility_icon(visible),
                     !visible,

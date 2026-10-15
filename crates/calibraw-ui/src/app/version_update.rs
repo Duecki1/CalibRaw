@@ -145,17 +145,6 @@ fn fetch_latest_release(permission: Option<bool>) -> Result<Option<AvailableUpda
     }))
 }
 
-fn github_consent_body_height(available_height: f32, width: f32) -> f32 {
-    let footer_reserve = if width < 220.0 {
-        moduwu_design::CONTROL_HEIGHT * 3.0 + 32.0
-    } else if width < 480.0 {
-        moduwu_design::CONTROL_HEIGHT * 2.0 + 24.0
-    } else {
-        moduwu_design::CONTROL_HEIGHT + 16.0
-    };
-    (available_height - footer_reserve - 48.0).max(1.0)
-}
-
 impl CalibRawApp {
     fn start_version_check(&mut self, requested_manually: bool) {
         // Reject unapproved checks before spawning a worker as well as at the HTTP
@@ -393,19 +382,14 @@ impl CalibRawApp {
             Allow,
         }
 
-        let available = ctx.content_rect().size() - egui::vec2(32.0, 32.0);
-        let width = available.x.clamp(1.0, moduwu_design::DIALOG_WIDTH_LARGE);
-        let max_body_height = github_consent_body_height(available.y, width);
+        // Very narrow screens get the short label for the primary action.
+        let narrow = ctx.content_rect().width() < 272.0;
         let mut action = None;
-
-        egui::Modal::new(egui::Id::new("calibraw-github-version-check-consent")).show(ctx, |ui| {
-            ui.set_width(width);
-            ui.set_max_width(width);
-            egui::ScrollArea::vertical()
-                .max_height(max_body_height)
-                .auto_shrink([false, true])
-                .show(ui, |ui| {
-                    ui.heading("GitHub update checks");
+        moduwu_design::Dialog::new("calibraw-github-version-check-consent", "GitHub update checks")
+            .size(moduwu_design::DialogSize::Wide)
+            .show_with_footer(
+                ctx,
+                |ui| {
                     let action = match request {
                         VersionCheckConsentRequest::Manual => "check GitHub for updates now",
                         VersionCheckConsentRequest::Settings => "check GitHub for updates",
@@ -431,58 +415,31 @@ impl CalibRawApp {
                                 ));
                             }
                         });
-                });
-
-            moduwu_design::dialog_button_row(ui, |ui| match request {
-                VersionCheckConsentRequest::Startup => {
-                    let label = if width < 240.0 { "Allow" } else { "Allow automatic checks" };
-                    if moduwu_design::primary_action_button(ui, label).clicked() {
+                },
+                |ui| {
+                    let (allow, dismiss) = match request {
+                        VersionCheckConsentRequest::Startup => {
+                            (if narrow { "Allow" } else { "Allow automatic checks" }, "Not now")
+                        }
+                        VersionCheckConsentRequest::EnableAutomatic => {
+                            (if narrow { "Allow" } else { "Allow automatic checks" }, "Cancel")
+                        }
+                        VersionCheckConsentRequest::Manual => ("Allow & check", "Cancel"),
+                        VersionCheckConsentRequest::Settings => {
+                            (if narrow { "Allow" } else { "Allow & remember" }, "Cancel")
+                        }
+                    };
+                    if moduwu_design::primary_action_button(ui, allow).clicked() {
                         action = Some(ConsentAction::Allow);
                     }
                     if moduwu_design::secondary_button(ui, "Don't allow").clicked() {
                         action = Some(ConsentAction::Deny);
                     }
-                    if moduwu_design::secondary_button(ui, "Not now").clicked() {
+                    if moduwu_design::secondary_button(ui, dismiss).clicked() {
                         action = Some(ConsentAction::Dismiss);
                     }
-                }
-                VersionCheckConsentRequest::EnableAutomatic => {
-                    let label = if width < 240.0 { "Allow" } else { "Allow automatic checks" };
-                    if moduwu_design::primary_action_button(ui, label).clicked() {
-                        action = Some(ConsentAction::Allow);
-                    }
-                    if moduwu_design::secondary_button(ui, "Don't allow").clicked() {
-                        action = Some(ConsentAction::Deny);
-                    }
-                    if moduwu_design::secondary_button(ui, "Cancel").clicked() {
-                        action = Some(ConsentAction::Dismiss);
-                    }
-                }
-                VersionCheckConsentRequest::Manual => {
-                    if moduwu_design::primary_action_button(ui, "Allow & check").clicked() {
-                        action = Some(ConsentAction::Allow);
-                    }
-                    if moduwu_design::secondary_button(ui, "Don't allow").clicked() {
-                        action = Some(ConsentAction::Deny);
-                    }
-                    if moduwu_design::secondary_button(ui, "Cancel").clicked() {
-                        action = Some(ConsentAction::Dismiss);
-                    }
-                }
-                VersionCheckConsentRequest::Settings => {
-                    let label = if width < 240.0 { "Allow" } else { "Allow & remember" };
-                    if moduwu_design::primary_action_button(ui, label).clicked() {
-                        action = Some(ConsentAction::Allow);
-                    }
-                    if moduwu_design::secondary_button(ui, "Don't allow").clicked() {
-                        action = Some(ConsentAction::Deny);
-                    }
-                    if moduwu_design::secondary_button(ui, "Cancel").clicked() {
-                        action = Some(ConsentAction::Dismiss);
-                    }
-                }
-            });
-        });
+                },
+            );
 
         match action {
             Some(ConsentAction::Dismiss) => {
@@ -534,30 +491,28 @@ impl CalibRawApp {
             Update,
         }
         let mut action = None;
-        moduwu_design::dialog_window(
-            "CalibRaw update available",
-            ctx,
-            moduwu_design::DIALOG_WIDTH_WIDE,
-        )
-            .show(ctx, |ui| {
-                ui.label(format!(
-                    "CalibRaw {} is available. You are using version {}.",
-                    release.version,
-                    env!("CARGO_PKG_VERSION")
-                ));
-                if let Some(name) = release
-                    .name
-                    .as_deref()
-                    .filter(|name| *name != release.tag)
-                {
-                    ui.add_space(moduwu_design::SPACE_XS);
-                    ui.strong(name);
-                }
-                ui.add_space(6.0);
-                ui.small(
-                    "Close ignores this version permanently. Remind me next time shows it again after the next app start.",
-                );
-                moduwu_design::dialog_button_row(ui, |ui| {
+        moduwu_design::Dialog::new("calibraw-update-available", "CalibRaw update available")
+            .size(moduwu_design::DialogSize::Wide)
+            .show_with_footer(
+                ctx,
+                |ui| {
+                    ui.label(format!(
+                        "CalibRaw {} is available. You are using version {}.",
+                        release.version,
+                        env!("CARGO_PKG_VERSION")
+                    ));
+                    if let Some(name) = release
+                        .name
+                        .as_deref()
+                        .filter(|name| *name != release.tag)
+                    {
+                        ui.strong(name);
+                    }
+                    ui.small(
+                        "Close ignores this version permanently. Remind me next time shows it again after the next app start.",
+                    );
+                },
+                |ui| {
                     if moduwu_design::primary_action_button(ui, "Update Now").clicked() {
                         action = Some(Action::Update);
                     }
@@ -567,17 +522,17 @@ impl CalibRawApp {
                     if moduwu_design::secondary_button(ui, "Close").clicked() {
                         action = Some(Action::Ignore);
                     }
-                });
-                if action.is_none()
-                    && moduwu_design::dialog_keyboard_action(
-                        ui,
-                        moduwu_design::DialogKeyboard::CLOSE_ONLY,
-                        false,
-                    ) == moduwu_design::DialogAction::Cancel
-                {
-                    action = Some(Action::Remind);
-                }
-            });
+                    if action.is_none()
+                        && moduwu_design::dialog_keyboard_action(
+                            ui,
+                            moduwu_design::DialogKeyboard::CLOSE_ONLY,
+                            false,
+                        ) == moduwu_design::DialogAction::Cancel
+                    {
+                        action = Some(Action::Remind);
+                    }
+                },
+            );
 
         match action {
             Some(Action::Ignore) => {
@@ -779,62 +734,5 @@ mod tests {
     fn manual_checks_work_when_automatic_checks_are_disabled() {
         assert!(should_show_update(true, false, false));
         assert!(!should_show_update(false, false, false));
-    }
-
-    #[test]
-    fn github_consent_actions_stay_on_screen_when_details_scroll() {
-        let ctx = egui::Context::default();
-        for (screen_width, screen_height) in [(720.0, 700.0), (320.0, 260.0), (180.0, 260.0)] {
-            let mut footer_rect = None;
-            for _ in 0..3 {
-                let _ = ctx.run_ui(
-                    egui::RawInput {
-                        screen_rect: Some(egui::Rect::from_min_size(
-                            egui::Pos2::ZERO,
-                            egui::vec2(screen_width, screen_height),
-                        )),
-                        ..Default::default()
-                    },
-                    |root| {
-                        let available = root.ctx().content_rect().size() - egui::vec2(32.0, 32.0);
-                        let width = available.x.clamp(1.0, moduwu_design::DIALOG_WIDTH_LARGE);
-                        egui::Modal::new(egui::Id::new("github-consent-geometry-test")).show(
-                            root.ctx(),
-                            |ui| {
-                                ui.set_width(width);
-                                ui.set_max_width(width);
-                                egui::ScrollArea::vertical()
-                                    .max_height(github_consent_body_height(available.y, width))
-                                    .auto_shrink([false, true])
-                                    .show(ui, |ui| {
-                                        ui.heading("GitHub update checks");
-                                        for _ in 0..12 {
-                                            ui.label("Expanded permission details that need to scroll in a short window.");
-                                        }
-                                    });
-                                footer_rect = Some(
-                                    moduwu_design::dialog_button_row(ui, |ui| {
-                                        moduwu_design::primary_action_button(ui, "Allow");
-                                        moduwu_design::secondary_button(ui, "Don't allow");
-                                        moduwu_design::secondary_button(ui, "Not now");
-                                    })
-                                    .response
-                                    .rect,
-                                );
-                            },
-                        );
-                    },
-                );
-            }
-            let footer = footer_rect.expect("consent footer should render");
-            let viewport = egui::Rect::from_min_size(
-                egui::Pos2::ZERO,
-                egui::vec2(screen_width, screen_height),
-            );
-            assert!(
-                viewport.contains_rect(footer),
-                "viewport {screen_width}x{screen_height}, footer {footer:?}"
-            );
-        }
     }
 }

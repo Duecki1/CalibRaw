@@ -181,7 +181,7 @@ impl TopBar {
     }
 
     pub(crate) fn back_icon_button(ui: &mut Ui, size: egui::Vec2) -> egui::Response {
-        moduwu_design::icon_button(
+        moduwu_design::ghost_icon_button(
             ui,
             egui_phosphor::regular::ARROW_LEFT,
             size,
@@ -201,7 +201,10 @@ impl TopBar {
         } else {
             egui_phosphor::regular::ARROW_U_UP_LEFT
         };
-        moduwu_design::icon_button_enabled(ui, enabled, icon, size, hover_text)
+        ui.add_enabled_ui(enabled, |ui| {
+            moduwu_design::ghost_icon_button(ui, icon, size, hover_text)
+        })
+        .inner
     }
 
     fn show_history_controls(ui: &mut Ui, app: &mut CalibRawApp, shortcuts: bool) {
@@ -253,14 +256,17 @@ impl TopBar {
         } else {
             egui_phosphor::regular::FLOPPY_DISK
         };
-        if moduwu_design::icon_button_enabled(
-            ui,
-            app.action_enabled(AppAction::SaveEdits),
-            icon,
-            moduwu_design::toolbar_icon_size(),
-            tooltip,
-        )
-        .clicked()
+        if ui
+            .add_enabled_ui(app.action_enabled(AppAction::SaveEdits), |ui| {
+                moduwu_design::ghost_icon_button(
+                    ui,
+                    icon,
+                    moduwu_design::toolbar_icon_size(),
+                    tooltip,
+                )
+            })
+            .inner
+            .clicked()
         {
             app.dispatch_action(AppAction::SaveEdits);
         }
@@ -269,7 +275,7 @@ impl TopBar {
     pub(crate) fn show_portrait(ui: &mut Ui, app: &mut CalibRawApp, _frame: &eframe::Frame) {
         moduwu_design::prepare_toolbar(ui);
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            app.show_export_task_indicator(ui);
+            app.show_background_tasks(ui);
 
             Self::show_save_control(ui, app, false);
             crate::ui::library::show_current_photo_review(ui, app, true);
@@ -504,16 +510,36 @@ impl TopBar {
                 ui.separator();
             }
 
-            app.show_export_task_indicator(ui);
+            app.show_background_tasks(ui);
+            if app.ui.active_tab == AppTab::Settings
+                && moduwu_design::ghost_icon_button(
+                    ui,
+                    egui_phosphor::regular::KEYBOARD,
+                    moduwu_design::toolbar_icon_size(),
+                    "Keyboard shortcuts",
+                )
+                .clicked()
+            {
+                app.ui.shortcuts_dialog_open = true;
+            }
             ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                for (tab, label) in [
-                    (AppTab::Library, "Library"),
-                    (AppTab::Develop, "Develop"),
-                    (AppTab::Settings, "Settings"),
-                ] {
-                    if moduwu_design::tab_button(ui, label, app.ui.active_tab == tab, tab_width).clicked() {
-                        app.activate_tab(tab);
-                    }
+                // As wide as three tab buttons and their gaps, which the Library
+                // sidebar edge aligns with.
+                let tabs_width = tab_width * 3.0 + ui.spacing().item_spacing.x * 2.0;
+                let mut tab = app.ui.active_tab;
+                if moduwu_design::segmented_control(
+                    ui,
+                    &mut tab,
+                    &[
+                        (AppTab::Library, "Library"),
+                        (AppTab::Develop, "Develop"),
+                        (AppTab::Settings, "Settings"),
+                    ],
+                    tabs_width,
+                )
+                .changed()
+                {
+                    app.activate_tab(tab);
                 }
 
                 let library_search_separator = ui.separator();
@@ -562,7 +588,7 @@ impl TopBar {
                     }
 
                     let open = if compact {
-                        moduwu_design::icon_button(
+                        moduwu_design::ghost_icon_button(
                             ui,
                             egui_phosphor::regular::FOLDER_OPEN,
                             moduwu_design::toolbar_icon_size(),
@@ -591,15 +617,18 @@ impl TopBar {
                     } else {
                         "Show original preview"
                     };
-                    if moduwu_design::icon_toggle_button_enabled(
-                        ui,
-                        app.preview.gpu_pipeline.is_some(),
-                        preview_icon,
-                        original_visible,
-                        moduwu_design::toolbar_icon_size(),
-                        preview_tooltip,
-                    )
-                    .clicked()
+                    if ui
+                        .add_enabled_ui(app.preview.gpu_pipeline.is_some(), |ui| {
+                            moduwu_design::ghost_icon_toggle_button(
+                                ui,
+                                preview_icon,
+                                original_visible,
+                                moduwu_design::toolbar_icon_size(),
+                                preview_tooltip,
+                            )
+                        })
+                        .inner
+                        .clicked()
                     {
                         app.toggle_original_preview();
                     }

@@ -74,7 +74,7 @@ impl Sidebar {
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         match app.ui.sidebar_tab {
                             SidebarTab::Adjustments => {
-                                if moduwu_design::icon_button(
+                                if moduwu_design::ghost_icon_button(
                                     ui,
                                     egui_phosphor::regular::ARROW_COUNTER_CLOCKWISE,
                                     moduwu_design::toolbar_icon_size(),
@@ -86,7 +86,7 @@ impl Sidebar {
                                 }
                             }
                             SidebarTab::Crop => {
-                                if moduwu_design::icon_button(
+                                if moduwu_design::ghost_icon_button(
                                     ui,
                                     egui_phosphor::regular::ARROW_COUNTER_CLOCKWISE,
                                     moduwu_design::toolbar_icon_size(),
@@ -110,20 +110,29 @@ impl Sidebar {
                                         )
                                     })
                                     .count();
-                                if moduwu_design::icon_button_enabled(
-                                    ui,
-                                    active_stroke_count != 0 && !app.inpaint_processing(),
-                                    egui_phosphor::regular::TRASH,
-                                    moduwu_design::toolbar_icon_size(),
-                                    &format!("Clear all {} strokes", active_tool.label()),
-                                )
-                                .clicked()
+                                if ui
+                                    .add_enabled_ui(
+                                        active_stroke_count != 0 && !app.inpaint_processing(),
+                                        |ui| {
+                                            moduwu_design::ghost_icon_button(
+                                                ui,
+                                                egui_phosphor::regular::TRASH,
+                                                moduwu_design::toolbar_icon_size(),
+                                                &format!(
+                                                    "Clear all {} strokes",
+                                                    active_tool.label()
+                                                ),
+                                            )
+                                        },
+                                    )
+                                    .inner
+                                    .clicked()
                                 {
                                     app.clear_inpainting_tool();
                                 }
                             }
                             SidebarTab::Masks => {
-                                if moduwu_design::icon_button(
+                                if moduwu_design::ghost_icon_button(
                                     ui,
                                     egui_phosphor::regular::ARROW_COUNTER_CLOCKWISE,
                                     moduwu_design::toolbar_icon_size(),
@@ -244,22 +253,48 @@ impl Sidebar {
 
     #[cfg(not(target_os = "android"))]
     pub(crate) fn show_desktop_tool_rail(ui: &mut Ui, app: &mut CalibRawApp) {
-        use crate::ui::icons::{glyph_toggle_button, icon_toggle_button, UiIcon};
+        use crate::ui::icons::{icon_toggle_button, UiIcon};
 
         ui.set_min_width(ui.available_width());
         ui.spacing_mut().item_spacing.y = moduwu_design::SPACE_XS;
+        let show_labels = app.preferences.show_develop_navigation_labels;
         ui.vertical_centered(|ui| {
             ui.add_space(5.0);
             for tab in SidebarTab::ALL {
-                if glyph_toggle_button(
-                    ui,
-                    tab.glyph(),
-                    app.ui.sidebar_tab == tab,
-                    moduwu_design::tool_rail_icon_size(),
-                    tab.tooltip(),
-                )
-                .clicked()
-                {
+                let selected = app.ui.sidebar_tab == tab;
+                let clicked = ui
+                    .scope(|ui| {
+                        ui.spacing_mut().item_spacing.y = 1.0;
+                        let mut clicked = moduwu_design::ghost_icon_toggle_button(
+                            ui,
+                            tab.glyph(),
+                            selected,
+                            moduwu_design::tool_rail_icon_size(),
+                            tab.tooltip(),
+                        )
+                        .clicked();
+                        if show_labels {
+                            let color = if selected {
+                                ui.visuals().text_color()
+                            } else {
+                                ui.visuals().weak_text_color()
+                            };
+                            clicked |= ui
+                                .add(
+                                    egui::Label::new(
+                                        egui::RichText::new(tab.short_label())
+                                            .size(10.0)
+                                            .color(color),
+                                    )
+                                    .selectable(false)
+                                    .sense(egui::Sense::click()),
+                                )
+                                .clicked();
+                        }
+                        clicked
+                    })
+                    .inner;
+                if clicked {
                     app.dispatch_action(AppAction::SelectSidebarTab(tab));
                 }
             }

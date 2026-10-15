@@ -25,30 +25,15 @@ impl Sidebar {
         }
         moduwu_design::section_card(ui, "Aspect ratio", |ui| {
             let previous_aspect = app.develop.geometry.aspect_ratio;
-            moduwu_design::combo_box(
-                "crop-aspect-ratio",
-                app.develop.geometry.aspect_ratio.label(),
-                ui.available_width().max(1.0),
-            )
-            .show_ui(ui, |ui| {
-                for aspect in [
-                    CropAspectRatio::Free,
-                    CropAspectRatio::Original,
-                    CropAspectRatio::Square,
-                    CropAspectRatio::FourThree,
-                    CropAspectRatio::ThreeFour,
-                    CropAspectRatio::ThreeTwo,
-                    CropAspectRatio::TwoThree,
-                    CropAspectRatio::SixteenNine,
-                    CropAspectRatio::NineSixteen,
-                ] {
-                    ui.selectable_value(
-                        &mut app.develop.geometry.aspect_ratio,
-                        aspect,
-                        aspect.label(),
-                    );
-                }
-            });
+            let (output_width, output_height) = app
+                .develop
+                .geometry
+                .crop_pixel_dimensions(source_dimensions.0, source_dimensions.1);
+            Self::show_aspect_ratio_picker(
+                ui,
+                &mut app.develop.geometry.aspect_ratio,
+                output_height > output_width,
+            );
             if app.develop.geometry.aspect_ratio != previous_aspect {
                 Self::apply_crop_aspect(app, source_dimensions.0, source_dimensions.1);
                 app.develop_ui.crop_constraint_reference = Some(app.develop.geometry.crop);
@@ -56,27 +41,85 @@ impl Sidebar {
         });
 
         moduwu_design::card_gap(ui);
-        moduwu_design::section_card(ui, "Rotation", |ui| {
-            ui.horizontal(|ui| {
-                if crate::ui::icons::icon_button(
+        moduwu_design::section_card(ui, "Rotate & flip", |ui| {
+            let size = moduwu_design::toolbar_icon_size();
+            ui.horizontal_wrapped(|ui| {
+                if moduwu_design::ghost_icon_button(
                     ui,
-                    crate::ui::icons::UiIcon::RotateLeft,
-                    moduwu_design::toolbar_icon_size(),
+                    egui_phosphor::regular::ARROW_COUNTER_CLOCKWISE,
+                    size,
                     "Rotate 90° counter-clockwise",
                 )
                 .clicked()
                 {
                     app.develop.geometry.rotate_quarter_turn(false);
                 }
-                if crate::ui::icons::icon_button(
+                if moduwu_design::ghost_icon_button(
                     ui,
-                    crate::ui::icons::UiIcon::RotateRight,
-                    moduwu_design::toolbar_icon_size(),
+                    egui_phosphor::regular::ARROW_CLOCKWISE,
+                    size,
                     "Rotate 90° clockwise",
                 )
                 .clicked()
                 {
                     app.develop.geometry.rotate_quarter_turn(true);
+                }
+                if moduwu_design::ghost_icon_toggle_button(
+                    ui,
+                    egui_phosphor::regular::FLIP_HORIZONTAL,
+                    app.develop.geometry.flip_horizontal,
+                    size,
+                    "Flip horizontal",
+                )
+                .clicked()
+                {
+                    app.develop.geometry.flip_horizontal = !app.develop.geometry.flip_horizontal;
+                }
+                if moduwu_design::ghost_icon_toggle_button(
+                    ui,
+                    egui_phosphor::regular::FLIP_VERTICAL,
+                    app.develop.geometry.flip_vertical,
+                    size,
+                    "Flip vertical",
+                )
+                .clicked()
+                {
+                    app.develop.geometry.flip_vertical = !app.develop.geometry.flip_vertical;
+                }
+                ui.separator();
+                let straighten_tooltip = if app.develop_ui.straighten_tool_active {
+                    "Cancel straighten line"
+                } else {
+                    "Draw straighten line: drag along a horizon or vertical edge in the preview to level it"
+                };
+                if moduwu_design::ghost_icon_toggle_button(
+                    ui,
+                    egui_phosphor::regular::RULER,
+                    app.develop_ui.straighten_tool_active,
+                    size,
+                    straighten_tooltip,
+                )
+                .clicked()
+                {
+                    app.develop_ui.straighten_tool_active = !app.develop_ui.straighten_tool_active;
+                    app.develop_ui.straighten_drag = None;
+                    app.develop_ui.crop_drag = None;
+                }
+                if ui
+                    .add_enabled_ui(app.auto_straighten_available(), |ui| {
+                        moduwu_design::ghost_icon_button(
+                            ui,
+                            egui_phosphor::regular::MAGIC_WAND,
+                            size,
+                            "Auto straighten: level the image using its horizon and vertical edges",
+                        )
+                    })
+                    .inner
+                    .clicked()
+                {
+                    app.develop_ui.straighten_tool_active = false;
+                    app.develop_ui.straighten_drag = None;
+                    app.start_auto_straighten();
                 }
             });
             AdjustmentSlider::new(
@@ -86,61 +129,11 @@ impl Sidebar {
             )
             .decimals(1)
             .step(0.1)
-            .hover_text("Fine rotation for leveling the image.")
             .show(ui);
-            let straighten_label = if app.develop_ui.straighten_tool_active {
-                "Cancel straighten line"
-            } else {
-                "Draw straighten line"
-            };
-            if moduwu_design::toggle_button(
-                ui,
-                straighten_label,
-                app.develop_ui.straighten_tool_active,
-            )
-                .on_hover_text("Drag along a horizon or vertical edge in the Crop preview. CalibRaw rotates the image so that line becomes level.")
-                .clicked()
-            {
-                app.develop_ui.straighten_tool_active = !app.develop_ui.straighten_tool_active;
-                app.develop_ui.straighten_drag = None;
-                app.develop_ui.crop_drag = None;
-            }
-            if moduwu_design::secondary_button_enabled(
-                ui,
-                app.auto_straighten_available(),
-                "Auto straighten",
-            )
-            .on_hover_text("Level the image using its horizon and vertical edges.")
-            .clicked()
-            {
-                app.develop_ui.straighten_tool_active = false;
-                app.develop_ui.straighten_drag = None;
-                app.start_auto_straighten();
-            }
         });
 
         moduwu_design::card_gap(ui);
         moduwu_design::section_card(ui, "Transform", |ui| {
-            ui.horizontal_wrapped(|ui| {
-                if moduwu_design::toggle_button(
-                    ui,
-                    "Flip horizontal",
-                    app.develop.geometry.flip_horizontal,
-                )
-                .clicked()
-                {
-                    app.develop.geometry.flip_horizontal = !app.develop.geometry.flip_horizontal;
-                }
-                if moduwu_design::toggle_button(
-                    ui,
-                    "Flip vertical",
-                    app.develop.geometry.flip_vertical,
-                )
-                .clicked()
-                {
-                    app.develop.geometry.flip_vertical = !app.develop.geometry.flip_vertical;
-                }
-            });
             AdjustmentSlider::new(
                 "Horizontal",
                 &mut app.develop.geometry.horizontal_transform,
@@ -148,7 +141,6 @@ impl Sidebar {
             )
             .decimals(1)
             .step(0.1)
-            .hover_text("Correct horizontal perspective.")
             .show(ui);
             AdjustmentSlider::new(
                 "Vertical",
@@ -157,7 +149,6 @@ impl Sidebar {
             )
             .decimals(1)
             .step(0.1)
-            .hover_text("Correct vertical perspective.")
             .show(ui);
         });
 
@@ -178,6 +169,53 @@ impl Sidebar {
             .fit_crop_inside_transformed_source(source_dimensions.0, source_dimensions.1);
         if app.develop.geometry != before {
             app.note_geometry_changed();
+        }
+    }
+
+    /// Ratio chips, the orientation of a non-square ratio and the terms of a
+    /// custom one. `crop_is_portrait` orients a ratio picked while none is
+    /// fixed.
+    fn show_aspect_ratio_picker(ui: &mut Ui, ratio: &mut CropAspectRatio, crop_is_portrait: bool) {
+        moduwu_design::action_row(ui, |ui| {
+            for (choice, label) in AspectChoice::ALL {
+                if moduwu_design::chip(ui, label, AspectChoice::of(*ratio) == choice).clicked() {
+                    *ratio = choice.pick(*ratio, crop_is_portrait);
+                }
+            }
+        });
+        if let Some(mut portrait) = is_portrait(*ratio) {
+            let width = ui.available_width().max(1.0);
+            if moduwu_design::segmented_control(
+                ui,
+                &mut portrait,
+                &[(false, "Landscape"), (true, "Portrait")],
+                width,
+            )
+            .changed()
+            {
+                *ratio = ratio.transposed();
+            }
+        }
+        if let CropAspectRatio::Custom {
+            mut width,
+            mut height,
+        } = *ratio
+        {
+            let terms = 1..=CropAspectRatio::MAX_TERM;
+            ui.horizontal(|ui| {
+                ui.add(
+                    moduwu_design::NumberField::new(&mut width, terms.clone())
+                        .commit_on_finish(true)
+                        .id_salt("crop-custom-aspect-width"),
+                );
+                ui.label("×");
+                ui.add(
+                    moduwu_design::NumberField::new(&mut height, terms)
+                        .commit_on_finish(true)
+                        .id_salt("crop-custom-aspect-height"),
+                );
+            });
+            *ratio = CropAspectRatio::Custom { width, height };
         }
     }
 
@@ -204,5 +242,173 @@ impl Sidebar {
         let left = (center_x - width * 0.5).clamp(0.0, 1.0 - width);
         let top = (center_y - height * 0.5).clamp(0.0, 1.0 - height);
         app.develop.geometry.crop = [left, top, left + width, top + height];
+    }
+}
+
+/// One chip of the aspect-ratio picker. A chip stands for its ratio in both
+/// orientations; the orientation is chosen separately.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum AspectChoice {
+    Free,
+    Original,
+    Square,
+    FourThree,
+    ThreeTwo,
+    SixteenNine,
+    Custom,
+}
+
+impl AspectChoice {
+    const ALL: [(Self, &'static str); 7] = [
+        (Self::Free, "Free"),
+        (Self::Original, "Original"),
+        (Self::Square, "1:1"),
+        (Self::FourThree, "4:3"),
+        (Self::ThreeTwo, "3:2"),
+        (Self::SixteenNine, "16:9"),
+        (Self::Custom, "Custom"),
+    ];
+
+    fn of(ratio: CropAspectRatio) -> Self {
+        match ratio {
+            CropAspectRatio::Free => Self::Free,
+            CropAspectRatio::Original => Self::Original,
+            CropAspectRatio::Square => Self::Square,
+            CropAspectRatio::FourThree | CropAspectRatio::ThreeFour => Self::FourThree,
+            CropAspectRatio::ThreeTwo | CropAspectRatio::TwoThree => Self::ThreeTwo,
+            CropAspectRatio::SixteenNine | CropAspectRatio::NineSixteen => Self::SixteenNine,
+            CropAspectRatio::Custom { .. } => Self::Custom,
+        }
+    }
+
+    /// The ratio to use when this chip is picked while `current` is set:
+    /// the current choice stays as it is, and a new fixed ratio keeps the
+    /// current orientation, or the crop's when no ratio is fixed. Custom
+    /// starts from the current ratio's terms, or 5 × 4.
+    fn pick(self, current: CropAspectRatio, crop_is_portrait: bool) -> CropAspectRatio {
+        if Self::of(current) == self {
+            return current;
+        }
+        let landscape = match self {
+            Self::Free => return CropAspectRatio::Free,
+            Self::Original => return CropAspectRatio::Original,
+            Self::Square => return CropAspectRatio::Square,
+            Self::FourThree => CropAspectRatio::FourThree,
+            Self::ThreeTwo => CropAspectRatio::ThreeTwo,
+            Self::SixteenNine => CropAspectRatio::SixteenNine,
+            Self::Custom => {
+                let (width, height) = current
+                    .terms()
+                    .filter(|(width, height)| width != height)
+                    .map_or((5, 4), |(width, height)| {
+                        (width.max(height), width.min(height))
+                    });
+                CropAspectRatio::Custom { width, height }
+            }
+        };
+        if is_portrait(current).unwrap_or(crop_is_portrait) {
+            landscape.transposed()
+        } else {
+            landscape
+        }
+    }
+}
+
+/// Whether a fixed, non-square ratio is taller than wide; `None` for ratios
+/// without an orientation.
+fn is_portrait(ratio: CropAspectRatio) -> Option<bool> {
+    ratio
+        .terms()
+        .filter(|(width, height)| width != height)
+        .map(|(width, height)| height > width)
+}
+
+#[cfg(test)]
+mod aspect_tests {
+    use super::*;
+
+    #[test]
+    fn every_ratio_has_one_chip() {
+        for ratio in [
+            CropAspectRatio::Free,
+            CropAspectRatio::Original,
+            CropAspectRatio::Square,
+            CropAspectRatio::FourThree,
+            CropAspectRatio::ThreeFour,
+            CropAspectRatio::ThreeTwo,
+            CropAspectRatio::TwoThree,
+            CropAspectRatio::SixteenNine,
+            CropAspectRatio::NineSixteen,
+            CropAspectRatio::Custom {
+                width: 7,
+                height: 5,
+            },
+        ] {
+            let choice = AspectChoice::of(ratio);
+            assert!(AspectChoice::ALL
+                .iter()
+                .any(|(listed, _)| *listed == choice));
+            assert_eq!(choice.pick(ratio, false), ratio, "{ratio:?}");
+        }
+    }
+
+    #[test]
+    fn a_new_ratio_keeps_the_current_orientation() {
+        assert_eq!(
+            AspectChoice::SixteenNine.pick(CropAspectRatio::ThreeFour, false),
+            CropAspectRatio::NineSixteen
+        );
+        assert_eq!(
+            AspectChoice::ThreeTwo.pick(CropAspectRatio::FourThree, true),
+            CropAspectRatio::ThreeTwo
+        );
+        // Without a fixed ratio, the crop's shape decides.
+        assert_eq!(
+            AspectChoice::FourThree.pick(CropAspectRatio::Original, true),
+            CropAspectRatio::ThreeFour
+        );
+        assert_eq!(
+            AspectChoice::FourThree.pick(CropAspectRatio::Free, false),
+            CropAspectRatio::FourThree
+        );
+    }
+
+    #[test]
+    fn custom_starts_from_the_current_ratio() {
+        assert_eq!(
+            AspectChoice::Custom.pick(CropAspectRatio::TwoThree, false),
+            CropAspectRatio::Custom {
+                width: 2,
+                height: 3
+            }
+        );
+        assert_eq!(
+            AspectChoice::Custom.pick(CropAspectRatio::Square, false),
+            CropAspectRatio::Custom {
+                width: 5,
+                height: 4
+            }
+        );
+        assert_eq!(
+            AspectChoice::Custom.pick(CropAspectRatio::Free, true),
+            CropAspectRatio::Custom {
+                width: 4,
+                height: 5
+            }
+        );
+    }
+
+    #[test]
+    fn square_and_open_ratios_have_no_orientation() {
+        assert_eq!(is_portrait(CropAspectRatio::Square), None);
+        assert_eq!(is_portrait(CropAspectRatio::Original), None);
+        assert_eq!(
+            is_portrait(CropAspectRatio::Custom {
+                width: 3,
+                height: 3
+            }),
+            None
+        );
+        assert_eq!(is_portrait(CropAspectRatio::NineSixteen), Some(true));
     }
 }

@@ -53,10 +53,26 @@ impl CalibRawApp {
     }
 
     fn transient_ui_open(&self, ctx: &egui::Context) -> bool {
+        self.ui.tip.is_some() || self.dialog_open(ctx)
+    }
+
+    #[cfg(not(target_os = "android"))]
+    fn shortcuts_dialog_open(&self) -> bool {
+        self.ui.shortcuts_dialog_open
+    }
+
+    #[cfg(target_os = "android")]
+    fn shortcuts_dialog_open(&self) -> bool {
+        false
+    }
+
+    /// Whether a dialog other than a feature tip is open; a tip waits for it.
+    pub(in crate::app) fn dialog_open(&self, ctx: &egui::Context) -> bool {
         self.ui.onboarding_step.is_some()
             || self.ui.unsupported_file_dialog.is_some()
             || self.ui.missing_lens_profile_prompt.is_some()
             || self.develop_ui.manual_lens_dialog.is_some()
+            || self.shortcuts_dialog_open()
             || self.ui.version_check.dialog_open()
             || self.library.transient_dialog_open()
             || self.presets.dialog_open()
@@ -65,11 +81,6 @@ impl CalibRawApp {
             || self.ui.error_dialogs.is_open()
             || self.foreground_operation.is_some()
             || self.ai.library_mask_refresh.is_some()
-            || self
-                .export
-                .task
-                .as_ref()
-                .is_some_and(|task| !task.minimized)
             || crate::ui::sidebar::Sidebar::mask_dialog_open(ctx)
     }
 
@@ -90,7 +101,9 @@ impl CalibRawApp {
             self.develop_ui.cancel_point_color_preview();
             self.develop_ui.cancel_white_balance_picker();
         }
-        if tab != SidebarTab::Masks {
+        if tab == SidebarTab::Masks {
+            self.offer_tip(crate::ui::tips::Tip::MasksTab);
+        } else {
             self.cancel_mask_point_color_preview();
         }
         self.sync_ai_runtime();

@@ -727,6 +727,7 @@ dependencies = [
  "egui-phosphor",
  "env_logger",
  "image",
+ "image-webp",
  "jiff",
  "log",
  "moduwu-design",
@@ -2657,8 +2658,8 @@ dependencies = [
 
 [[package]]
 name = "moduwu-design"
-version = "2.3.0"
-source = "git+https://github.com/Duecki1/Moduwu?rev=d8338af0b1ff7a250164e8669be453f2ff0b3b52#d8338af0b1ff7a250164e8669be453f2ff0b3b52"
+version = "3.2.0"
+source = "git+https://github.com/Duecki1/Moduwu?rev=5a07e5d44c8611b982b2e258e26a770d4856a790#5a07e5d44c8611b982b2e258e26a770d4856a790"
 dependencies = [
  "egui",
  "image",

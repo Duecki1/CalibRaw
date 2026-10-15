@@ -198,7 +198,7 @@ impl Sidebar {
             params::TINT,
             SliderGradient::Tint,
         );
-        changed |= hue_adjustment_slider(ui, &mut adjustment.hue, params::HUE.tooltip);
+        changed |= hue_adjustment_slider(ui, &mut adjustment.hue);
         changed |= gradient_float_param_slider(
             ui,
             &mut adjustment.saturation,

@@ -3,12 +3,17 @@
 
 use std::fmt;
 
-/// Limits CalibRaw's compute pipelines need on `backend`, before callers raise
-/// `max_texture_dimension_2d` to what their work requires. GL adapters only
-/// guarantee WebGL2-level limits.
-pub fn base_device_limits(backend: wgpu::Backend) -> wgpu::Limits {
-    if backend == wgpu::Backend::Gl {
-        wgpu::Limits::downlevel_webgl2_defaults()
+/// Limits CalibRaw's compute pipelines need on `adapter`, before callers raise
+/// `max_texture_dimension_2d` to what their work requires.
+///
+/// GL adapters request the limits the driver reports. `downlevel_webgl2_defaults()`
+/// sets every compute and storage-texture limit to 0, which rejects compute
+/// pipelines with storage textures even where the driver supports them (Mesa Iris
+/// on Haswell reports OpenGL 4.6). wgpu accepts a request equal to the adapter's own
+/// limits, and that is a superset of the WebGL2 request.
+pub fn base_device_limits(adapter: &wgpu::Adapter) -> wgpu::Limits {
+    if adapter.get_info().backend == wgpu::Backend::Gl {
+        adapter.limits()
     } else {
         wgpu::Limits::default()
     }
@@ -89,7 +94,7 @@ pub fn request_headless_device(
             adapter: adapter_info.name,
         });
     }
-    let mut required_limits = base_device_limits(adapter_info.backend);
+    let mut required_limits = base_device_limits(&adapter);
     required_limits.max_texture_dimension_2d = request.texture_dimension;
     let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
         label: Some(request.label),

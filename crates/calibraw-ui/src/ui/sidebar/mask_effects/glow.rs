@@ -16,11 +16,9 @@ pub(crate) fn show(
         remove,
         |ui, settings| {
             let mut changed = false;
-            if moduwu_design::toggle_button(ui, "Self-illuminating", settings.self_illuminating)
-                .on_hover_text("The mask emits the glow color itself, so it also shows on dark surfaces. Turn off to let only bright areas inside the mask glow.")
-                .clicked()
+            if moduwu_design::toggle_with_help(ui, &mut settings.self_illuminating, "Self-illuminating", "The mask emits the glow color itself, so it also shows on dark surfaces. Turn off to let only bright areas inside the mask glow.")
+                .changed()
             {
-                settings.self_illuminating = !settings.self_illuminating;
                 changed = true;
             }
             changed |= float_param_slider(ui, &mut settings.amount, glow::AMOUNT);

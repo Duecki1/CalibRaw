@@ -1,3 +1,4 @@
+pub(crate) mod background_tasks;
 pub(crate) mod components;
 #[cfg(not(target_os = "android"))]
 pub(crate) mod develop;
@@ -10,8 +11,11 @@ pub(crate) mod onboarding;
 pub(crate) mod presets;
 pub(crate) mod preview;
 pub(crate) mod settings;
+#[cfg(not(target_os = "android"))]
+pub(crate) mod shortcuts_dialog;
 pub(crate) mod sidebar;
 pub(crate) mod theme;
+pub(crate) mod tips;
 pub(crate) mod top_bar;
 
 /// Desktop-only “save as” picker. Native paths receive a supported extension when needed;

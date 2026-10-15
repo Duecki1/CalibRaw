@@ -287,6 +287,9 @@ impl CalibRawApp {
         self.prepare_content_mask(frame, kind);
         self.mark_mask_geometry_dirty(mask_index);
         self.masks.thumbnail_component_mask = None;
+        if let Some(tip) = super::tips::mask_tip(kind) {
+            self.offer_tip(tip);
+        }
     }
 
     fn prepare_content_mask(&mut self, frame: &eframe::Frame, kind: MaskKind) {

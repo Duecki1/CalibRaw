@@ -65,6 +65,9 @@ impl Preview {
                         let correction = normalize_degrees(target - angle);
                         let rotation = app.develop.geometry.rotation_degrees + correction;
                         app.set_straighten_rotation(rotation, source_width, source_height);
+                        // One line levels the photo; the crop handles return.
+                        // A tap too short to measure keeps the tool active.
+                        app.develop_ui.straighten_tool_active = false;
                     }
                 }
             } else if !primary_down {
@@ -355,6 +358,60 @@ impl Preview {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Draws a straighten line from `start` to `end` over a 600×400 image
+    /// and returns the app afterwards.
+    fn draw_straighten_line(start: Pos2, end: Pos2) -> CalibRawApp {
+        let ctx = egui::Context::default();
+        crate::ui::theme::install(&ctx);
+        let mut app = CalibRawApp::empty(&ctx);
+        app.develop_ui.straighten_tool_active = true;
+        let image_rect = Rect::from_min_size(Pos2::ZERO, egui::vec2(600.0, 400.0));
+        let layout = PreviewLayout {
+            image_rect,
+            visible_rect: image_rect,
+            viewport_rect: image_rect,
+            source_width: 3000,
+            source_height: 2000,
+        };
+        let button = |pos, pressed| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        for events in [
+            vec![egui::Event::PointerMoved(start)],
+            vec![button(start, true)],
+            vec![egui::Event::PointerMoved(end)],
+            vec![button(end, false)],
+        ] {
+            let _ = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(image_rect),
+                    events,
+                    ..Default::default()
+                },
+                |ui| Preview::handle_crop_interaction(ui, &mut app, layout),
+            );
+        }
+        app
+    }
+
+    #[test]
+    fn a_straighten_line_levels_the_photo_and_ends_the_tool() {
+        let app = draw_straighten_line(Pos2::new(100.0, 200.0), Pos2::new(500.0, 230.0));
+        assert!(!app.develop_ui.straighten_tool_active);
+        assert!(app.develop_ui.straighten_drag.is_none());
+        assert!(app.develop.geometry.rotation_degrees.abs() > 1.0);
+    }
+
+    #[test]
+    fn a_tap_too_short_to_measure_keeps_the_straighten_tool() {
+        let app = draw_straighten_line(Pos2::new(100.0, 200.0), Pos2::new(104.0, 201.0));
+        assert!(app.develop_ui.straighten_tool_active);
+        assert_eq!(app.develop.geometry.rotation_degrees, 0.0);
+    }
 
     #[test]
     fn rotated_crop_handles_follow_the_pointer() {

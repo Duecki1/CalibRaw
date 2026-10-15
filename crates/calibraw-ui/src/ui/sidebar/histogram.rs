@@ -15,7 +15,7 @@ impl Sidebar {
                 "Shadow clipping: mark pixels blue when all processed RGB channels reach 0",
             ),
         ] {
-            if moduwu_design::icon_toggle_button(
+            if moduwu_design::ghost_icon_toggle_button(
                 ui,
                 icon,
                 *enabled,
@@ -31,7 +31,7 @@ impl Sidebar {
 
     pub(super) fn show_histogram_toggle(ui: &mut Ui, app: &mut CalibRawApp) {
         let open = app.develop_ui.histogram_open;
-        if moduwu_design::icon_toggle_button(
+        if moduwu_design::ghost_icon_toggle_button(
             ui,
             egui_phosphor::regular::CHART_BAR,
             open,

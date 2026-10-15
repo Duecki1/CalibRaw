@@ -188,7 +188,6 @@ pub(crate) struct ExportTask {
     pub(super) total: usize,
     pub(super) completed_tiles: usize,
     pub(super) total_tiles: usize,
-    pub(super) minimized: bool,
     pub(super) cancelling: bool,
 }
 

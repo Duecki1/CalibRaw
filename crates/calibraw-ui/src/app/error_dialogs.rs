@@ -35,10 +35,13 @@ pub(crate) enum ErrorKind {
     AiUpdate,
     #[cfg(not(target_os = "android"))]
     AiRuntime,
+    #[cfg(not(target_os = "android"))]
+    HdrMerge,
     GpuMemory,
     Retouch,
     Straighten,
     Settings,
+    Tip,
     EditNotApplied,
     #[cfg(target_os = "android")]
     LibraryAdjustments,
@@ -69,10 +72,13 @@ impl ErrorKind {
             Self::AiUpdate => "AI update failed",
             #[cfg(not(target_os = "android"))]
             Self::AiRuntime => "AI runtime unavailable",
+            #[cfg(not(target_os = "android"))]
+            Self::HdrMerge => "HDR merge failed",
             Self::GpuMemory => "GPU memory exhausted",
             Self::Retouch => "Retouch failed",
             Self::Straighten => "Straightening failed",
             Self::Settings => "Settings error",
+            Self::Tip => "Tip unavailable",
             Self::EditNotApplied => "Edit not applied",
             #[cfg(target_os = "android")]
             Self::LibraryAdjustments => "Library adjustment failed",
@@ -148,39 +154,36 @@ impl CalibRawApp {
         };
         let remaining = self.ui.error_dialogs.dialogs.len() - 1;
         let mut close = false;
-        moduwu_design::dialog_window(
-            dialog.kind.title(),
+        moduwu_design::Dialog::new("error-dialog", dialog.kind.title()).show_with_footer(
             ctx,
-            moduwu_design::DIALOG_WIDTH_DEFAULT,
-        )
-        .resizable(true)
-        .show(ctx, |ui| {
-            ui.label(&dialog.message);
-            if remaining > 0 {
-                ui.add_space(moduwu_design::SPACE_XS);
-                ui.label(
-                    egui::RichText::new(if remaining == 1 {
-                        "1 more error follows.".to_owned()
-                    } else {
-                        format!("{remaining} more errors follow.")
-                    })
-                    .small()
-                    .color(ui.visuals().weak_text_color()),
-                );
-            }
-            moduwu_design::dialog_button_row(ui, |ui| {
+            |ui| {
+                ui.label(&dialog.message);
+                if remaining > 0 {
+                    ui.add_space(moduwu_design::SPACE_XS);
+                    ui.label(
+                        egui::RichText::new(if remaining == 1 {
+                            "1 more error follows.".to_owned()
+                        } else {
+                            format!("{remaining} more errors follow.")
+                        })
+                        .small()
+                        .color(ui.visuals().weak_text_color()),
+                    );
+                }
+            },
+            |ui| {
                 close |= moduwu_design::secondary_button(ui, "Close").clicked();
-            });
-            if !close
-                && moduwu_design::dialog_keyboard_action(
-                    ui,
-                    moduwu_design::DialogKeyboard::CLOSE_ONLY,
-                    false,
-                ) == moduwu_design::DialogAction::Cancel
-            {
-                close = true;
-            }
-        });
+                if !close
+                    && moduwu_design::dialog_keyboard_action(
+                        ui,
+                        moduwu_design::DialogKeyboard::CLOSE_ONLY,
+                        false,
+                    ) == moduwu_design::DialogAction::Cancel
+                {
+                    close = true;
+                }
+            },
+        );
         if close {
             self.ui.error_dialogs.dismiss_current();
         }

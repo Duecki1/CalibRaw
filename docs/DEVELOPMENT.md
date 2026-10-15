@@ -171,11 +171,14 @@ installation and photo/editor-specific colours, and `appearance.rs` the
 persisted `UiDesign` and `PreviewBackdrop` settings. Keep specialized image
 canvases, mask cards, and colour controls in their existing components.
 
-- Use secondary/primary action buttons for forms and settings, `menu_item` for
-  regular menu actions, and `context_menu_item` for selectable navigation menus.
-  Preserve each menu's explicit `ui.close()` behavior.
-- Use `icons` helpers for icon actions and folder disclosure controls. Conditional
-  variants delegate to the same control so enabled state does not change sizing.
+- Use secondary/primary action buttons for forms, settings and dialog footers,
+  `menu_item` for regular menu actions, `menu_checkbox_item` for on/off options
+  in menus, and `context_menu_item` for selectable navigation menus. Preserve
+  each menu's explicit `ui.close()` behavior.
+- Icon actions in toolbars, panel and card headers and tool rows use
+  `ghost_icon_button` and `ghost_icon_toggle_button`, which show a frame only on
+  hover, focus or selection; wrap them in `add_enabled_ui` to disable them.
+  `icons` holds the folder disclosure control and the desktop tool rail glyphs.
 - Use the shared form rows, text edits, `NumberField` and combo builders.
   `moduwu_design::Slider` owns value editing, reset, focus, keyboard and
   accessibility actions, and pointer/scroll handling on desktop and touch
@@ -183,15 +186,24 @@ canvases, mask cards, and colour controls in their existing components.
   photographic track gradients. Scroll areas that contain sliders consult
   `moduwu_design::slider_scroll_locked`.
 - Pick the control from what the value means: `moduwu_design::toggle` or
-  `toggle_with_help` for on/off options, `segmented_button` for one choice among
-  a few, `AngleDial` (via `float_param_angle`) for directions, the shared
+  `toggle_with_help` (a switch) for on/off options, `segmented_control` for one
+  choice among a few, `chip` rows for filters and quick choices (one or
+  several), `toggle_button` only for tool modes that stay active while used,
+  `AngleDial` (via `float_param_angle`) for directions, the shared
   feathered range (`components::feathered_range`) for ranges with soft edges
   such as depth, luminance and Point Color, and `pattern_seed` (Shuffle) for
   random pattern seeds.
-- Use `dialog_window`, dialog action rows, and keyboard helpers for existing
-  window dialogs. Keep initial focus requests one-time, and run keyboard fallback
-  after controls process input. Modal surfaces use themed egui frames; preserve
-  their existing dismissal and backdrop policies.
+- Every dialog is a modal `moduwu_design::Dialog`: actions go in the footer of
+  `show_with_footer` (primary action first), and it becomes a bottom sheet on
+  narrow and touch portrait screens. Use `dialog_confirmation_actions` for
+  confirm/cancel footers and `dialog_keyboard_action` for Escape and Enter.
+  Keep initial focus requests one-time, and run keyboard fallback after
+  controls process input. Backdrop clicks dismiss nothing unless a dialog opts
+  in.
+- Work that may run while the app stays usable (exports, Edit Replays, HDR
+  merges) reports through the toolbar task indicator
+  (`ui/background_tasks.rs`), not a dialog. Work that edits the open document,
+  such as AI masks and denoise, keeps its blocking progress dialog.
 - Report every failure the user should know about with
   `CalibRawApp::report_error(ErrorKind, message)` (`app/error_dialogs.rs`). It
   queues the shared error dialog, keeps the message in the status line and logs
@@ -206,8 +218,11 @@ canvases, mask cards, and colour controls in their existing components.
 - Do not add descriptive text to editing panels, cards, tool rows or the
   toolbar: no explanatory paragraphs under headings and no hint lines below
   controls. When a control needs explaining, use a tooltip
-  (`on_hover_text`, `*_with_help`, a slider's `hover_text`), and only if its
-  label, icon and behavior do not already make it clear. Settings and the
+  (`on_hover_text`, `*_with_help`), and only if its label, icon and behavior do
+  not already make it clear. Controls that are dragged (sliders, range and
+  depth controls, dials, colour fields, curve editors, on-image handles) never
+  get a tooltip, because it would cover them while they are adjusted; put that
+  help on a static label or card heading instead. Settings and the
   first-run setup may keep descriptions. Status lines (progress, empty states,
   "source set") and dialog text that explains a choice are not descriptions.
 
@@ -218,6 +233,33 @@ preview geometry and pointer/touch behavior; it needs a GPU adapter and an
 isolated `XDG_CONFIG_HOME`. `CALIBRAW_PREVIEW_TEST_SCREENSHOT` optionally captures
 its rendered fixture. Review desktop and Android layouts in all six themes
 when a change affects appearance.
+
+### Feature tips
+
+A tip is a dialog with a short looping clip and one or two sentences, shown the
+first time a feature is used (`ui/tips.rs` holds the tips and the dialog,
+`app/tips.rs` decides when one is offered). Every tip ships with a clip of the
+real app, recorded with `demorec`, the demo recorder (a separate repository; the
+maintainer's checkout is `/data/Documents/GitProjects/demo-recorder`). Asking for
+a tip is asking for its recording too, so record the clip as part of the change.
+A recording takes over the mouse and screen for about a minute: say so before
+each launch.
+
+1. Add a `Tip` variant and fill in the `match` arms the compiler points to. The
+   key is saved in settings and never changes. The text says how to use the
+   feature, not what it is.
+2. Offer it from the handler of the feature, not from a view:
+   `self.offer_tip(Tip::…)`, or a line in `mask_tip` for a mask kind.
+3. Record the clip by following the "CalibRaw tip clips" section of the
+   recorder's `AGENTS.md`: a scenario `examples/calibraw/tip-<name>.toml` started
+   from `seed-tips`, on a staged copy of an approved Demo photo. A tip about a
+   whole tab or panel keeps the full window; a tip about one tool is cropped to
+   where it is used and trimmed to that use, with waits cut out. Rebuild the
+   release binary first if the UI changed.
+4. Encode it to `crates/calibraw-ui/assets/tips/<name>.webp` (animated WebP, at
+   most 640 px wide, 1 MB and 12 s; the tests in `ui/tips.rs` enforce this), and
+   check the encoded clip frame by frame.
+5. Add the variant to `Tip::ALL` and its key to `keys_are_unique_and_stable`.
 
 ## Diagnostics and release helpers
 

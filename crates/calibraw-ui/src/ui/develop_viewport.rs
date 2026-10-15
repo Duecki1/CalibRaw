@@ -57,8 +57,7 @@ pub(crate) fn show(ui: &mut Ui, app: &mut CalibRawApp, frame: &eframe::Frame) {
             let handle = Rect::from_min_size(sheet.min, egui::vec2(sheet.width(), HANDLE_HEIGHT));
             let response = ui
                 .interact(handle, height_id, Sense::click_and_drag())
-                .on_hover_cursor(egui::CursorIcon::ResizeVertical)
-                .on_hover_text("Drag to resize tools; tap to collapse or expand");
+                .on_hover_cursor(egui::CursorIcon::ResizeVertical);
             ui.painter().rect_filled(
                 Rect::from_center_size(handle.center(), egui::vec2(36.0, 4.0)),
                 2.0,

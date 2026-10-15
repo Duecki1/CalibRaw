@@ -73,7 +73,7 @@ impl Sidebar {
         }
         ui.separator();
         let mut enabled = mask.enabled;
-        if moduwu_design::toggle(ui, &mut enabled, "Enabled").changed() {
+        if moduwu_design::menu_checkbox_item(ui, &mut enabled, "Enabled").changed() {
             requests.edits.push(MaskStripEdit::SetGroupEnabled {
                 mask_index,
                 enabled,
@@ -83,7 +83,8 @@ impl Sidebar {
             requests.duplicate_mask = Some((mask_index, false));
             ui.close();
         }
-        if moduwu_design::toggle_button(ui, "Invert", mask.invert).clicked() {
+        let mut invert = mask.invert;
+        if moduwu_design::menu_checkbox_item(ui, &mut invert, "Invert").clicked() {
             requests
                 .edits
                 .push(MaskStripEdit::ToggleGroupInvert(mask_index));
@@ -149,7 +150,7 @@ impl Sidebar {
         }
         ui.separator();
         let mut enabled = component.enabled;
-        if moduwu_design::toggle(ui, &mut enabled, "Enabled").changed() {
+        if moduwu_design::menu_checkbox_item(ui, &mut enabled, "Enabled").changed() {
             requests.edits.push(MaskStripEdit::SetComponentEnabled {
                 mask_index,
                 component_index,
@@ -160,7 +161,8 @@ impl Sidebar {
             requests.duplicate_component = Some((mask_index, component_index, false));
             ui.close();
         }
-        if moduwu_design::toggle_button(ui, "Invert", component.invert).clicked() {
+        let mut invert = component.invert;
+        if moduwu_design::menu_checkbox_item(ui, &mut invert, "Invert").clicked() {
             requests.edits.push(MaskStripEdit::ToggleComponentInvert {
                 mask_index,
                 component_index,
@@ -279,26 +281,30 @@ impl Sidebar {
         };
         let mut save = false;
         let mut cancel = false;
-        moduwu_design::dialog_window(title, ctx, moduwu_design::DIALOG_WIDTH_NARROW)
-            .id(egui::Id::new("mask-rename-dialog-window"))
-            .show(ctx, |ui| {
+        // The body edits the name before the footer decides whether Rename
+        // is available in the same frame.
+        let can_rename = std::cell::Cell::new(false);
+        moduwu_design::Dialog::new("mask-rename-dialog-window", title).show_with_footer(
+            ctx,
+            |ui| {
                 let response =
                     moduwu_design::dialog_text_field(ui, &mut dialog.name, "mask-rename-input", "");
                 moduwu_design::request_initial_focus(&response, &mut dialog.focus_requested);
-                let trimmed_is_empty = dialog.name.trim().is_empty();
-                match moduwu_design::dialog_confirmation_buttons(
-                    ui,
-                    "Cancel",
-                    "Rename",
-                    !trimmed_is_empty,
-                    false,
-                    moduwu_design::DialogKeyboard::CONFIRM_ON_ENTER,
-                ) {
-                    moduwu_design::DialogAction::Cancel => cancel = true,
-                    moduwu_design::DialogAction::Confirm => save = true,
-                    moduwu_design::DialogAction::None => {}
-                }
-            });
+                can_rename.set(!dialog.name.trim().is_empty());
+            },
+            |ui| match moduwu_design::dialog_confirmation_actions(
+                ui,
+                "Cancel",
+                "Rename",
+                can_rename.get(),
+                false,
+                moduwu_design::DialogKeyboard::CONFIRM_ON_ENTER,
+            ) {
+                moduwu_design::DialogAction::Cancel => cancel = true,
+                moduwu_design::DialogAction::Confirm => save = true,
+                moduwu_design::DialogAction::None => {}
+            },
+        );
 
         if save {
             let renamed = match dialog.target {
@@ -351,11 +357,13 @@ impl Sidebar {
             ),
         };
         let mut action = moduwu_design::DialogAction::None;
-        moduwu_design::dialog_window(title, &ctx, moduwu_design::DIALOG_WIDTH_NARROW)
-            .id(egui::Id::new("mask-delete-dialog-window"))
-            .show(&ctx, |ui| {
+        moduwu_design::Dialog::new("mask-delete-dialog-window", title).show_with_footer(
+            &ctx,
+            |ui| {
                 ui.label(message);
-                action = moduwu_design::dialog_confirmation_buttons(
+            },
+            |ui| {
+                action = moduwu_design::dialog_confirmation_actions(
                     ui,
                     "Cancel",
                     confirm_label,
@@ -363,7 +371,8 @@ impl Sidebar {
                     true,
                     moduwu_design::DialogKeyboard::CLOSE_ONLY,
                 );
-            });
+            },
+        );
 
         match action {
             moduwu_design::DialogAction::Cancel => {

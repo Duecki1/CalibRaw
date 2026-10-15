@@ -8,43 +8,20 @@ enum OnboardingAction {
     Finish,
 }
 
-#[derive(Clone, Copy, Debug)]
-struct OnboardingLayoutMeasurement {
-    step: OnboardingStep,
-    width_bits: u32,
-    height_bits: u32,
-    needs_scroll: bool,
-}
-
-const ONBOARDING_LAYOUT_MEASUREMENT_ID: &str = "calibraw-first-run-onboarding-layout";
-const ONBOARDING_FOOTER_EXTRA_HEIGHT: f32 = 30.0;
-
 pub(crate) fn show(ctx: &egui::Context, app: &mut CalibRawApp) {
     let Some(step) = app.ui.onboarding_step else {
         return;
     };
-    let steps = OnboardingStep::pending(
-        app.preferences.onboarding_completed,
-        app.preferences.subject_mask_quality_chosen,
-    );
+    let steps = OnboardingStep::pending(app);
 
-    let available = ctx.content_rect().size() - egui::vec2(32.0, 32.0);
-    let width = available.x.clamp(1.0, 540.0);
-    let max_body_height =
-        (available.y.max(1.0) - moduwu_design::CONTROL_HEIGHT - ONBOARDING_FOOTER_EXTRA_HEIGHT)
-            .max(1.0);
-
-    let action = egui::Modal::new(egui::Id::new(("calibraw-first-run-onboarding", step)))
-        .show(ctx, |ui| {
-            ui.set_width(width);
-            ui.set_max_width(width);
-            show_fitted_step_body(ui, app, steps, step, width, max_body_height);
-            ui.add_space(moduwu_design::SPACE_MD);
-            ui.separator();
-            ui.add_space(moduwu_design::SPACE_SM);
-            show_navigation(ui, steps, step)
-        })
-        .inner;
+    let mut action = None;
+    moduwu_design::Dialog::new(("calibraw-first-run-onboarding", step), step.title())
+        .size(moduwu_design::DialogSize::Wide)
+        .show_with_footer(
+            ctx,
+            |ui| show_step_body(ui, app, steps, step),
+            |ui| action = show_navigation(ui, steps, step),
+        );
 
     match action {
         Some(OnboardingAction::Back) => {
@@ -56,6 +33,10 @@ pub(crate) fn show(ctx: &egui::Context, app: &mut CalibRawApp) {
         Some(OnboardingAction::Finish) => {
             app.preferences.onboarding_completed = true;
             app.preferences.subject_mask_quality_chosen = true;
+            #[cfg(not(target_os = "android"))]
+            {
+                app.preferences.onnx_runtime_kind_chosen = true;
+            }
             app.ui.onboarding_step = None;
             if !app.persist_performance_settings() {
                 app.report_error(
@@ -66,56 +47,6 @@ pub(crate) fn show(ctx: &egui::Context, app: &mut CalibRawApp) {
             }
         }
         None => {}
-    }
-}
-
-/// Shows the step body, wrapped in a scroll area only when it does not fit.
-/// The first frame for a step and size measures inside a scroll area, caches
-/// the result and discards the frame if the scroll area was unnecessary.
-fn show_fitted_step_body(
-    ui: &mut egui::Ui,
-    app: &mut CalibRawApp,
-    steps: &[OnboardingStep],
-    step: OnboardingStep,
-    width: f32,
-    max_body_height: f32,
-) {
-    let id = egui::Id::new(ONBOARDING_LAYOUT_MEASUREMENT_ID);
-    let ctx = ui.ctx().clone();
-    let needs_scroll = ctx
-        .data(|data| data.get_temp::<OnboardingLayoutMeasurement>(id))
-        .filter(|measurement| {
-            measurement.step == step
-                && measurement.width_bits == width.to_bits()
-                && measurement.height_bits == max_body_height.to_bits()
-        })
-        .map(|measurement| measurement.needs_scroll);
-
-    if needs_scroll == Some(false) {
-        show_step_body(ui, app, steps, step);
-        return;
-    }
-    let output = egui::ScrollArea::vertical()
-        .max_height(max_body_height)
-        .auto_shrink([false, true])
-        .show(ui, |ui| show_step_body(ui, app, steps, step));
-    if needs_scroll.is_some() {
-        return;
-    }
-    let needs_scroll = output.content_size.y > output.inner_rect.height() + 1.0;
-    ctx.data_mut(|data| {
-        data.insert_temp(
-            id,
-            OnboardingLayoutMeasurement {
-                step,
-                width_bits: width.to_bits(),
-                height_bits: max_body_height.to_bits(),
-                needs_scroll,
-            },
-        );
-    });
-    if !needs_scroll {
-        ctx.request_discard("onboarding content fits without scrolling");
     }
 }
 
@@ -140,15 +71,12 @@ fn show_step_body(
     }
 }
 
+/// The step's place in the setup and what it is for. The dialog's header
+/// shows the step title.
 fn show_header(ui: &mut egui::Ui, steps: &[OnboardingStep], step: OnboardingStep) {
-    ui.horizontal(|ui| {
-        ui.heading(step.title());
-        if steps.len() > 1 {
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.weak(format!("Step {} of {}", step.index(steps) + 1, steps.len()));
-            });
-        }
-    });
+    if steps.len() > 1 {
+        ui.weak(format!("Step {} of {}", step.index(steps) + 1, steps.len()));
+    }
     ui.label(step.introduction());
 }
 
@@ -244,6 +172,15 @@ fn show_subject_masks(ui: &mut egui::Ui, app: &mut CalibRawApp) {
     crate::ui::settings::subject_mask_quality_control(ui, app, "onboarding-subject-mask-quality");
     ui.add_space(moduwu_design::SPACE_SM);
     ui.small(crate::ui::settings::subject_mask_quality_descriptions());
+    #[cfg(not(target_os = "android"))]
+    if crate::ui::settings::automatic_runtime_kind_offered(app) {
+        ui.add_space(moduwu_design::SPACE_SM);
+        crate::ui::settings::automatic_runtime_kind_control(
+            ui,
+            app,
+            "onboarding-automatic-runtime-kind",
+        );
+    }
 }
 
 fn show_copy_paste(ui: &mut egui::Ui, app: &mut CalibRawApp) {
@@ -384,27 +321,22 @@ fn show_navigation(
     steps: &[OnboardingStep],
     step: OnboardingStep,
 ) -> Option<OnboardingAction> {
-    let mut action = None;
-    ui.horizontal(|ui| {
-        if moduwu_design::secondary_button_enabled(ui, step.previous(steps).is_some(), "Back")
-            .clicked()
-        {
-            action = Some(OnboardingAction::Back);
-        }
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            let (label, next) = if step.next(steps).is_some() {
-                ("Next", OnboardingAction::Next)
-            } else if steps.len() > 1 {
-                ("Finish setup", OnboardingAction::Finish)
-            } else {
-                ("Done", OnboardingAction::Finish)
-            };
-            if moduwu_design::secondary_button(ui, label).clicked() {
-                action = Some(next);
-            }
-        });
-    });
-    action
+    // Footer actions are added primary first.
+    let (label, next) = if step.next(steps).is_some() {
+        ("Next", OnboardingAction::Next)
+    } else if steps.len() > 1 {
+        ("Finish setup", OnboardingAction::Finish)
+    } else {
+        ("Done", OnboardingAction::Finish)
+    };
+    let forward = moduwu_design::primary_action_button(ui, label).clicked();
+    let back = moduwu_design::secondary_button_enabled(ui, step.previous(steps).is_some(), "Back")
+        .clicked();
+    if forward {
+        Some(next)
+    } else {
+        back.then_some(OnboardingAction::Back)
+    }
 }
 
 impl OnboardingStep {
@@ -436,27 +368,33 @@ impl OnboardingStep {
     const CATCH_UP: &'static [Self] = &[Self::SubjectMasks];
 
     /// The steps a user still has to go through, empty when none.
-    pub(crate) fn pending(
-        onboarding_completed: bool,
-        subject_mask_quality_chosen: bool,
-    ) -> &'static [Self] {
+    pub(crate) fn pending(app: &CalibRawApp) -> &'static [Self] {
+        // The runtime choice joined the subject-mask step later, so users who
+        // can make it see that step again even with a quality chosen.
+        #[cfg(not(target_os = "android"))]
+        let runtime_kind_unchosen = !app.preferences.onnx_runtime_kind_chosen
+            && crate::ui::settings::automatic_runtime_kind_offered(app);
+        #[cfg(target_os = "android")]
+        let runtime_kind_unchosen = false;
         #[cfg(not(target_os = "android"))]
         let discord_supported = crate::desktop_portal::discord_presence_supported();
         #[cfg(target_os = "android")]
         let discord_supported = false;
         Self::pending_with(
-            onboarding_completed,
-            subject_mask_quality_chosen,
+            app.preferences.onboarding_completed,
+            app.preferences.subject_mask_quality_chosen && !runtime_kind_unchosen,
             discord_supported,
         )
     }
 
+    /// `subject_masks_chosen`: every choice the subject-mask step offers on
+    /// this device has been made.
     fn pending_with(
         onboarding_completed: bool,
-        subject_mask_quality_chosen: bool,
+        subject_masks_chosen: bool,
         discord_supported: bool,
     ) -> &'static [Self] {
-        match (onboarding_completed, subject_mask_quality_chosen) {
+        match (onboarding_completed, subject_masks_chosen) {
             (false, _) if discord_supported => Self::ALL,
             (false, _) => Self::ALL_WITHOUT_DISCORD,
             (true, false) => Self::CATCH_UP,
@@ -564,6 +502,26 @@ mod tests {
         let steps = pending(true, false);
         assert_eq!(steps[0].previous(steps), None);
         assert_eq!(steps[0].next(steps), None);
+    }
+
+    #[cfg(not(target_os = "android"))]
+    #[test]
+    fn finished_setup_asks_once_for_an_offered_runtime_choice() {
+        let ctx = egui::Context::default();
+        crate::ui::theme::install(&ctx);
+        let mut app = CalibRawApp::empty(&ctx);
+        app.preferences.onboarding_completed = true;
+        app.preferences.subject_mask_quality_chosen = true;
+        app.preferences.onnx_runtime_kind_chosen = false;
+        let expected: &[OnboardingStep] =
+            if crate::ui::settings::automatic_runtime_kind_offered(&app) {
+                &[OnboardingStep::SubjectMasks]
+            } else {
+                &[]
+            };
+        assert_eq!(OnboardingStep::pending(&app), expected);
+        app.preferences.onnx_runtime_kind_chosen = true;
+        assert!(OnboardingStep::pending(&app).is_empty());
     }
 
     #[cfg(not(target_os = "android"))]

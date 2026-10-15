@@ -41,13 +41,12 @@ fn export_number_row<Num>(
     Num: egui::emath::Numeric + Copy,
 {
     ui.push_id(label, |ui| {
-        moduwu_design::form_row(ui, label, EXPORT_FIELD_WIDTH, |ui, width| {
+        moduwu_design::form_row_with_help(ui, label, EXPORT_FIELD_WIDTH, help, |ui, width| {
             ui.allocate_ui_with_layout(
                 egui::vec2(width, moduwu_design::CONTROL_HEIGHT),
                 egui::Layout::centered_and_justified(egui::Direction::LeftToRight),
                 |ui| {
-                    ui.add(moduwu_design::NumberField::new(value, range).suffix(suffix))
-                        .on_hover_text(help);
+                    ui.add(moduwu_design::NumberField::new(value, range).suffix(suffix));
                 },
             );
         });
@@ -90,9 +89,6 @@ pub(crate) fn export_settings_controls(
             let default_quality = crate::pipeline::ExportSettings::default().jpeg_quality;
             AdjustmentSlider::new("JPEG quality", &mut settings.jpeg_quality, 1..=100)
                 .reset_to(default_quality)
-                .hover_text(
-                    "Quality from 1 to 100. Higher quality keeps more detail and produces a larger JPEG file.",
-                )
                 .show(ui);
             ui.horizontal(|ui| {
                 let spacing = ui.spacing().item_spacing.x;
@@ -182,9 +178,6 @@ pub(crate) fn export_settings_controls(
                         .decimals(1)
                         .step(0.1)
                         .reset_to(crate::pipeline::ExportSettings::default().percentage)
-                        .hover_text(
-                            "Percentage of the image dimensions after cropping and transforms, from 1 to 400%.",
-                        )
                         .show(ui);
                 }
                 ExportResizeMode::LongEdge
