@@ -1,12 +1,13 @@
 use super::{
     pack_effect_mask, pack_local_point_curve, pack_point_curve, processing_work_format,
     shader_manager::ShaderManager, shaders, work_shader_source, GpuParams, PipelineOptions,
-    ProcessingQuality, RawGpuPipeline, COLOR_DENOISE_ENTRY_POINTS,
+    ProcessingQuality, RawGpuPipeline, ViewTransformMode, COLOR_DENOISE_ENTRY_POINTS,
 };
 use crate::pipeline::{
     extract_padded_tile, CameraProfile, CfaKind, CompactPixelMap, EffectComponent, ExportTile,
     ExposureParams, HighlightReconstructionMethod, LoadedRaw, LocalMask, MaskEffect, MaskKind,
-    MaskStack, NativeRect, PointCurve, ProcessingStage, TONE_GUIDE_CELL_SIZE,
+    MaskStack, NativeRect, PointCurve, ProcessingStage, SigmoidColorProcessing,
+    TONE_GUIDE_CELL_SIZE,
 };
 
 #[test]
@@ -1592,15 +1593,104 @@ fn ai_denoise_strength_renders_the_linear_blend_of_both_mosaics() -> anyhow::Res
 }
 
 #[test]
-fn scene_referred_rasters_always_take_the_scene_view_transform() {
-    let exposure = ExposureParams::default();
+fn view_transform_mode_follows_the_source_and_its_tone_curve() {
     let masks = MaskStack::default();
-    let mut raster = LoadedRaw::from_scene_linear_rec2020(1, 1, vec![4.0, 2.0, 0.5]).unwrap();
-    // A developed photo is shown as rendered until its tone settings change.
-    let rendered = GpuParams::new(&exposure, &masks, &raster);
-    assert_eq!(rendered.camera.scene_view_transform_enabled, 0.0);
-    // An HDR master holds radiance above display white even at default contrast.
-    raster.scene_referred_raster = true;
-    let scene = GpuParams::new(&exposure, &masks, &raster);
-    assert_eq!(scene.camera.scene_view_transform_enabled, 1.0);
+    let mode = |raw: &LoadedRaw, exposure: &ExposureParams| {
+        GpuParams::new(exposure, &masks, raw)
+            .camera
+            .view_transform_mode
+    };
+    let with_contrast = |contrast| ExposureParams {
+        contrast,
+        ..Default::default()
+    };
+    let scene = ViewTransformMode::SceneSigmoid.shader_value();
+    let passthrough = ViewTransformMode::Passthrough.shader_value();
+    let retone = ViewTransformMode::DisplayRetone.shader_value();
+
+    // RAWs and HDR masters hold scene radiance at every setting.
+    let bayer = opposed_highlight_consistency_raw(4, 4);
+    let mut hdr = LoadedRaw::from_scene_linear_rec2020(1, 1, vec![4.0, 2.0, 0.5]).unwrap();
+    hdr.scene_referred_raster = true;
+    for contrast in [0.0, 0.01, 50.0, -50.0] {
+        assert_eq!(mode(&bayer, &with_contrast(contrast)), scene, "{contrast}");
+        assert_eq!(mode(&hdr, &with_contrast(contrast)), scene, "{contrast}");
+    }
+
+    // A developed photo is shown as rendered until its tone curve changes.
+    let photo = LoadedRaw::from_scene_linear_rec2020(1, 1, vec![1.0, 0.5, 0.18]).unwrap();
+    assert_eq!(mode(&photo, &ExposureParams::default()), passthrough);
+    let mut colour_only = ExposureParams::default();
+    colour_only.sigmoid.hue_preservation = 50.0;
+    colour_only.sigmoid.color_processing = SigmoidColorProcessing::RgbRatio;
+    assert_eq!(mode(&photo, &colour_only), passthrough);
+    assert_eq!(mode(&photo, &with_contrast(0.01)), retone);
+    let mut skewed = ExposureParams::default();
+    skewed.sigmoid.skew = 0.2;
+    assert_eq!(mode(&photo, &skewed), retone);
+}
+
+#[test]
+fn developed_raster_contrast_starts_from_the_rendered_photo() -> anyhow::Result<()> {
+    let Some((device, queue)) = request_test_device() else {
+        return Ok(());
+    };
+    const EDGE: u32 = 33;
+    const BAND: u32 = EDGE / 3;
+    // Clipped white, a bright tone and middle grey, in vertical bands.
+    let levels = [1.0_f32, 0.5, 0.18];
+    let pixels = (0..EDGE * EDGE)
+        .flat_map(|index| [levels[(index % EDGE / BAND) as usize]; 3])
+        .collect();
+    let source = LoadedRaw::from_scene_linear_rec2020(EDGE, EDGE, pixels)?;
+    let exposure = |contrast| ExposureParams {
+        contrast,
+        sharpen_amount: 0.0,
+        ..Default::default()
+    };
+    let masks = MaskStack::default();
+    let pipeline = RawGpuPipeline::new(
+        &device,
+        &queue,
+        &source,
+        &GpuParams::new(&exposure(0.0), &masks, &source),
+        PipelineOptions::new(ProcessingQuality::Preview),
+    )?;
+    // The green channel at the centre of each band.
+    let render = |contrast| -> anyhow::Result<[i32; 3]> {
+        pipeline.recompute(
+            &queue,
+            &device,
+            &GpuParams::new(&exposure(contrast), &masks, &source),
+        );
+        let rgba = pipeline.read_output_region_blocking(&device, &queue, 0, 0, EDGE, EDGE)?;
+        Ok(std::array::from_fn(|band| {
+            let x = band as u32 * BAND + BAND / 2;
+            i32::from(rgba[((EDGE / 2 * EDGE + x) * 4 + 1) as usize])
+        }))
+    };
+
+    let rendered = render(0.0)?;
+    assert_eq!(
+        rendered[0], 255,
+        "clipped white stays clipped: {rendered:?}"
+    );
+    for contrast in [0.01, 1.0, -1.0] {
+        let nudged = render(contrast)?;
+        for (band, (nudged, rendered)) in nudged.iter().zip(rendered).enumerate() {
+            assert!(
+                (nudged - rendered).abs() <= 1,
+                "contrast {contrast} band {band}: {nudged} != {rendered}"
+            );
+        }
+    }
+    let stronger = render(100.0)?;
+    assert_eq!(stronger[0], 255, "white stays white: {stronger:?}");
+    assert!(
+        stronger[1] > rendered[1] + 2,
+        "{stronger:?} vs {rendered:?}"
+    );
+    let flatter = render(-100.0)?;
+    assert!(flatter[1] + 2 < rendered[1], "{flatter:?} vs {rendered:?}");
+    Ok(())
 }
