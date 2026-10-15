@@ -243,6 +243,7 @@ impl CalibRawApp {
         self.show_foreground_operation_dialog(ctx);
         self.show_remove_progress_dialog(ctx);
         self.show_export_task_dialog(ctx);
+        self.show_tip_dialog(ctx);
     }
 
     /// Records edit history and saves sidecars and developed thumbnails.

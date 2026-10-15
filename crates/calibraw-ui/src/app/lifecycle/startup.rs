@@ -298,6 +298,10 @@ impl CalibRawApp {
                 preview_backdrop: performance.preview_backdrop,
                 onboarding_completed: performance.onboarding_completed,
                 subject_mask_quality_chosen: performance.subject_mask_quality_chosen,
+                tips: TipPreferences {
+                    enabled: performance.tips_enabled,
+                    seen: performance.seen_tips.clone(),
+                },
                 auto_check_updates: performance.auto_check_updates,
                 github_update_check_allowed: performance.github_update_check_allowed,
                 ignored_update_version: performance.ignored_update_version.clone(),
@@ -328,6 +332,7 @@ impl CalibRawApp {
                 )
                 .first()
                 .copied(),
+                tip: None,
                 version_check: Default::default(),
             },
             #[cfg(not(target_os = "android"))]

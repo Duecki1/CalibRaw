@@ -408,6 +408,28 @@ impl Settings {
             app.persist_performance_settings();
         }
 
+        moduwu_design::section_separator(ui);
+        let mut tips_enabled = app.preferences.tips.enabled;
+        if moduwu_design::toggle_with_help(
+            ui,
+            &mut tips_enabled,
+            "Show feature tips",
+            "Shows a short animated tip the first time you use a feature, such as the Masks tab or the object mask.",
+        )
+        .changed()
+        {
+            app.set_tips_enabled(tips_enabled);
+        }
+        if moduwu_design::secondary_button_enabled(
+            ui,
+            !app.preferences.tips.seen.is_empty(),
+            "Show seen tips again",
+        )
+        .clicked()
+        {
+            app.reset_seen_tips();
+        }
+
         #[cfg(not(target_os = "android"))]
         if app.discord_rich_presence_supported() {
             moduwu_design::section_separator(ui);

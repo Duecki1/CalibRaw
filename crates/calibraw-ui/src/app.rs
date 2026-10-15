@@ -305,6 +305,8 @@ pub(crate) use preview_viewport::PreviewViewportAction;
 mod processing_export;
 mod straighten;
 use straighten::AutoStraightenResult;
+mod tips;
+pub(crate) use tips::{ShownTip, TipPreferences};
 mod sidecar_persistence;
 #[cfg(all(test, not(target_os = "android")))]
 mod ui_review_tests;

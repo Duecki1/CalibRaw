@@ -12,6 +12,7 @@ pub(crate) mod preview;
 pub(crate) mod settings;
 pub(crate) mod sidebar;
 pub(crate) mod theme;
+pub(crate) mod tips;
 pub(crate) mod top_bar;
 
 /// Desktop-only “save as” picker. Native paths receive a supported extension when needed;
