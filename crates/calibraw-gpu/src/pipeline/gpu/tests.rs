@@ -835,6 +835,7 @@ fn opposed_highlight_consistency_raw(width: u32, height: u32) -> LoadedRaw {
         cfa_kind: CfaKind::Bayer,
         raw_pixels: pixels,
         scene_linear_raster: None,
+        scene_referred_raster: false,
         color_indices: CompactPixelMap::dense(width, height, colors),
         wb_coeffs: [1.45, 1.0, 0.72, 1.0],
         cam_to_srgb: [
@@ -1588,4 +1589,18 @@ fn ai_denoise_strength_renders_the_linear_blend_of_both_mosaics() -> anyhow::Res
         .fold(0.0_f32, f32::max);
     assert!(max_error <= 1e-5, "error={max_error}");
     Ok(())
+}
+
+#[test]
+fn scene_referred_rasters_always_take_the_scene_view_transform() {
+    let exposure = ExposureParams::default();
+    let masks = MaskStack::default();
+    let mut raster = LoadedRaw::from_scene_linear_rec2020(1, 1, vec![4.0, 2.0, 0.5]).unwrap();
+    // A developed photo is shown as rendered until its tone settings change.
+    let rendered = GpuParams::new(&exposure, &masks, &raster);
+    assert_eq!(rendered.camera.scene_view_transform_enabled, 0.0);
+    // An HDR master holds radiance above display white even at default contrast.
+    raster.scene_referred_raster = true;
+    let scene = GpuParams::new(&exposure, &masks, &raster);
+    assert_eq!(scene.camera.scene_view_transform_enabled, 1.0);
 }

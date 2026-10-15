@@ -36,6 +36,7 @@ fn raster_with_metadata(
     output.aperture = raw.aperture;
     output.focus_distance = raw.focus_distance;
     output.capture_metadata = raw.capture_metadata.clone();
+    output.scene_referred_raster = raw.scene_referred_raster;
     output.wb_coeffs = raw.wb_coeffs;
     output.cam_to_srgb = raw.cam_to_srgb;
     output.black_levels = raw.black_levels;

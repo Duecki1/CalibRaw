@@ -302,6 +302,10 @@ pub struct LoadedRaw {
     pub cfa_kind: CfaKind,
     pub raw_pixels: Vec<u16>,
     pub scene_linear_raster: Option<Arc<[f32]>>,
+    /// The raster holds scene radiance whose tones were never rendered, such as a
+    /// floating-point HDR or focus-stack master, rather than a developed photo. It may
+    /// exceed display white, so it always takes the scene view transform.
+    pub scene_referred_raster: bool,
     pub color_indices: CompactPixelMap<u8>,
     pub wb_coeffs: [f32; 4],
     pub cam_to_srgb: [[f32; 4]; 3],
@@ -352,6 +356,7 @@ impl LoadedRaw {
             cfa_kind: self.cfa_kind,
             raw_pixels,
             scene_linear_raster: None,
+            scene_referred_raster: self.scene_referred_raster,
             color_indices,
             wb_coeffs: self.wb_coeffs,
             cam_to_srgb: self.cam_to_srgb,
@@ -399,6 +404,7 @@ impl LoadedRaw {
             cfa_kind: CfaKind::Bayer,
             raw_pixels: Vec::new(),
             scene_linear_raster: Some(rgb.into()),
+            scene_referred_raster: false,
             color_indices: CompactPixelMap::repeating(width, height, 1, 1, vec![1]),
             wb_coeffs: [1.0; 4],
             cam_to_srgb: [
@@ -1161,6 +1167,7 @@ mod tests {
             cfa_kind: CfaKind::Bayer,
             raw_pixels: vec![0],
             scene_linear_raster: None,
+            scene_referred_raster: false,
             color_indices: CompactPixelMap::dense(1, 1, vec![0]),
             wb_coeffs: [2.0, 1.0, 1.5, 1.0],
             cam_to_srgb: [
