@@ -15,17 +15,19 @@ const MAX_ANIMATION_HEIGHT_FRACTION: f32 = 0.45;
 pub(crate) enum Tip {
     MasksTab,
     ObjectMask,
+    DepthRange,
 }
 
 impl Tip {
     #[cfg(test)]
-    const ALL: [Self; 2] = [Self::MasksTab, Self::ObjectMask];
+    const ALL: [Self; 3] = [Self::MasksTab, Self::ObjectMask, Self::DepthRange];
 
     /// Saved in settings once the tip was seen; never change an existing key.
     pub(crate) const fn key(self) -> &'static str {
         match self {
             Self::MasksTab => "masks_tab",
             Self::ObjectMask => "object_mask",
+            Self::DepthRange => "depth_range",
         }
     }
 
@@ -33,6 +35,7 @@ impl Tip {
         match self {
             Self::MasksTab => "Masks",
             Self::ObjectMask => "Object mask",
+            Self::DepthRange => "Depth range",
         }
     }
 
@@ -46,6 +49,10 @@ impl Tip {
                 "Paint roughly over the object you want to select. \
                  CalibRaw finds its outline; paint again to include more of it."
             }
+            Self::DepthRange => {
+                "Drag the solid handles to set Near and Far, the ends of the depth range. \
+                 Drag the hollow handles to feather each end."
+            }
         }
     }
 
@@ -54,6 +61,7 @@ impl Tip {
         match self {
             Self::MasksTab => include_bytes!("../../assets/tips/masks-tab.webp"),
             Self::ObjectMask => include_bytes!("../../assets/tips/object-mask.webp"),
+            Self::DepthRange => include_bytes!("../../assets/tips/depth-range.webp"),
         }
     }
 }
@@ -140,6 +148,7 @@ mod tests {
         assert_eq!(keys.len(), Tip::ALL.len());
         assert_eq!(Tip::MasksTab.key(), "masks_tab");
         assert_eq!(Tip::ObjectMask.key(), "object_mask");
+        assert_eq!(Tip::DepthRange.key(), "depth_range");
     }
 
     #[test]
