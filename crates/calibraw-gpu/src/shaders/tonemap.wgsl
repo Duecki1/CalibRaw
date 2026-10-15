@@ -582,23 +582,53 @@ fn finite_scalar(value: f32) -> bool {
     return value == value && abs(value) < 3.0e38;
 }
 
-fn generalized_loglogistic_sigmoid(value: f32) -> f32 {
-    let white_target = Common::scene_tone_uniforms.sigmoid_curve.x;
-    let log2_paper_exposure = Common::scene_tone_uniforms.sigmoid_curve.z;
-    let film_fog = Common::scene_tone_uniforms.sigmoid_curve.w;
-    let film_power = Common::scene_tone_uniforms.sigmoid_power.x;
-    let paper_power = Common::scene_tone_uniforms.sigmoid_power.y;
+// One generalized log-logistic tone curve, mapping linear scene values to
+// display-linear values below `white_target`:
+//   display = white_target * logistic2(film_power * log2(film_fog + scene) - log2_paper_exposure)^paper_power
+// with logistic2(x) = 1 / (1 + 2^-x).
+struct SigmoidCurve {
+    white_target: f32,
+    log2_paper_exposure: f32,
+    film_fog: f32,
+    film_power: f32,
+    paper_power: f32,
+}
+
+// Reads the `sigmoid_curve` / `sigmoid_power` lane packing of a curve.
+fn unpack_sigmoid_curve(curve: vec4<f32>, power: vec4<f32>) -> SigmoidCurve {
+    return SigmoidCurve(curve.x, curve.z, curve.w, power.x, power.y);
+}
+
+fn edit_sigmoid_curve() -> SigmoidCurve {
+    return unpack_sigmoid_curve(
+        Common::scene_tone_uniforms.sigmoid_curve,
+        Common::scene_tone_uniforms.sigmoid_power,
+    );
+}
+
+fn reference_sigmoid_curve() -> SigmoidCurve {
+    return unpack_sigmoid_curve(
+        Common::scene_tone_uniforms.reference_sigmoid_curve,
+        Common::scene_tone_uniforms.reference_sigmoid_power,
+    );
+}
+
+fn sigmoid_curve_is_valid(curve: SigmoidCurve) -> bool {
+    return finite_scalar(curve.white_target) && curve.white_target > 0.0
+        && finite_scalar(curve.log2_paper_exposure)
+        && finite_scalar(curve.film_fog) && curve.film_fog >= 0.0
+        && finite_scalar(curve.film_power) && curve.film_power > 0.0
+        && finite_scalar(curve.paper_power) && curve.paper_power > 0.0;
+}
+
+fn loglogistic_curve(value: f32, curve: SigmoidCurve) -> f32 {
     let fallback = clamp(max(value, 0.0), 0.0, 1.0);
 
-    if !finite_scalar(white_target) || white_target <= 0.0
-        || !finite_scalar(log2_paper_exposure)
-        || !finite_scalar(film_fog) || film_fog < 0.0
-        || !finite_scalar(film_power) || film_power <= 0.0
-        || !finite_scalar(paper_power) || paper_power <= 0.0 {
+    if !sigmoid_curve_is_valid(curve) {
         return fallback;
     }
 
-    let film_base = film_fog + max(value, 0.0);
+    let film_base = curve.film_fog + max(value, 0.0);
     if !finite_scalar(film_base) || film_base < 0.0 {
         return fallback;
     }
@@ -606,8 +636,8 @@ fn generalized_loglogistic_sigmoid(value: f32) -> f32 {
         return 0.0;
     }
 
-    let log2_film_response = film_power * log2(film_base);
-    let log2_ratio = log2_film_response - log2_paper_exposure;
+    let log2_film_response = curve.film_power * log2(film_base);
+    let log2_ratio = log2_film_response - curve.log2_paper_exposure;
     var ratio = 0.0;
     if log2_ratio >= 0.0 {
         ratio = 1.0 / (1.0 + exp2(-log2_ratio));
@@ -615,9 +645,88 @@ fn generalized_loglogistic_sigmoid(value: f32) -> f32 {
         let scaled = exp2(log2_ratio);
         ratio = scaled / (1.0 + scaled);
     }
-    let paper_response = white_target
-        * pow(clamp(ratio, 0.0, 1.0), paper_power);
+    let paper_response = curve.white_target
+        * pow(clamp(ratio, 0.0, 1.0), curve.paper_power);
     return select(fallback, paper_response, finite_scalar(paper_response));
+}
+
+fn generalized_loglogistic_sigmoid(value: f32) -> f32 {
+    return loglogistic_curve(value, edit_sigmoid_curve());
+}
+
+// The scene value that a valid `curve` maps to `display`, for `display` strictly
+// between the curve's response to 0 and its white target.
+fn inverse_loglogistic_curve(display: f32, curve: SigmoidCurve) -> f32 {
+    let ratio = pow(display / curve.white_target, 1.0 / curve.paper_power);
+    // logistic2(x) = ratio  <=>  x = log2(ratio / (1 - ratio)).
+    let log2_ratio = log2(ratio) - log2(1.0 - ratio);
+    let log2_film_response = log2_ratio + curve.log2_paper_exposure;
+    return max(exp2(log2_film_response / curve.film_power) - curve.film_fog, 0.0);
+}
+
+// Maps display values rendered with `reference` to the values `edit` would give.
+struct DisplayRetone {
+    edit: SigmoidCurve,
+    reference: SigmoidCurve,
+    // Each curve's response to scene black.
+    edit_black: f32,
+    reference_black: f32,
+}
+
+// Retones one non-negative display-linear channel. Inside the reference curve's
+// range the value goes back through `reference` and forward through `edit`.
+// Below its black and above its white the map scales linearly, which keeps it
+// continuous, keeps 0 at 0 and lets values above white clip downstream as they do
+// in passthrough. With `edit` equal to `reference` it is the identity.
+fn retone_display_value(value: f32, retone: DisplayRetone) -> f32 {
+    if value <= retone.reference_black {
+        return select(
+            0.0,
+            value * (retone.edit_black / retone.reference_black),
+            retone.reference_black > 0.0,
+        );
+    }
+    if value >= retone.reference.white_target {
+        return value * (retone.edit.white_target / retone.reference.white_target);
+    }
+    return loglogistic_curve(inverse_loglogistic_curve(value, retone.reference), retone.edit);
+}
+
+// VIEW_TRANSFORM_DISPLAY_RETONE: tone edits of a developed raster, relative to the
+// reference sigmoid it is taken to be rendered with. Input and output are
+// display-linear Rec.2020. Colour processing and hue preservation apply as in the
+// scene transform; RGB ratio retones the channel mean and keeps channel ratios.
+fn apply_display_retone(rgb: vec3<f32>) -> vec3<f32> {
+    let edit = edit_sigmoid_curve();
+    let reference = reference_sigmoid_curve();
+    if !sigmoid_curve_is_valid(edit) || !sigmoid_curve_is_valid(reference) {
+        return rgb;
+    }
+    let retone = DisplayRetone(
+        edit,
+        reference,
+        loglogistic_curve(0.0, edit),
+        loglogistic_curve(0.0, reference),
+    );
+    let positive = desaturate_negative_values(rgb);
+    if Common::scene_tone_uniforms.sigmoid_power.w >= 0.5 {
+        let mean = (positive.r + positive.g + positive.b) / 3.0;
+        if mean <= 1e-9 {
+            return positive;
+        }
+        return positive * (retone_display_value(mean, retone) / mean);
+    }
+    let per_channel = vec3<f32>(
+        retone_display_value(positive.r, retone),
+        retone_display_value(positive.g, retone),
+        retone_display_value(positive.b, retone),
+    );
+    return preserve_hue_and_energy(
+        positive,
+        per_channel,
+        pixel_channel_order(positive),
+        clamp(Common::scene_tone_uniforms.sigmoid_power.z, 0.0, 1.0),
+    );
 }
 
 fn desaturate_negative_values(rgb: vec3<f32>) -> vec3<f32> {

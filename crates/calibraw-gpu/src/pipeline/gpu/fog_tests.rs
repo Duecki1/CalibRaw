@@ -156,10 +156,10 @@ fn fog_params_depth_presence_preserves_rust_and_wgsl_uniform_layout() {
     use super::SceneToneUniforms;
     use std::mem::{offset_of, size_of};
 
-    assert_eq!(size_of::<SceneToneUniforms>(), 1_680);
+    assert_eq!(size_of::<SceneToneUniforms>(), 1_712);
     assert_eq!(offset_of!(SceneToneUniforms, scene_depth_present), 12);
     assert_eq!(offset_of!(SceneToneUniforms, basic_tone), 16);
-    assert_eq!(offset_of!(SceneToneUniforms, mask_counts), 736);
+    assert_eq!(offset_of!(SceneToneUniforms, mask_counts), 768);
 
     let module = naga::front::wgsl::parse_str(super::shaders::COMMON.text).unwrap();
     let (_, scene_tone) = module

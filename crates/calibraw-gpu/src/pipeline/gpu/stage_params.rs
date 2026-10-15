@@ -85,15 +85,8 @@ pub(super) fn pack_camera_params(ctx: &GpuParamContext<'_>) -> CameraUniforms {
         } else {
             0.0
         },
-        scene_view_transform_enabled: if camera_linear_raster
-            || !raw.is_pre_demosaiced_raster()
-            || raw.scene_referred_raster
-            || raster_uses_scene_view_transform(exposure)
-        {
-            1.0
-        } else {
-            0.0
-        },
+        view_transform_mode: ViewTransformMode::select(raw, exposure, camera_linear_raster)
+            .shader_value(),
         // Camera-space rasters already receive WB through cam_to_srgb above;
         // suppress the generic raster temperature adaptation to avoid applying
         // a second colour adjustment.
@@ -156,9 +149,9 @@ pub(super) fn pack_camera_params(ctx: &GpuParamContext<'_>) -> CameraUniforms {
 pub(super) fn pack_scene_tone_params(ctx: &GpuParamContext<'_>) -> SceneToneUniforms {
     let exposure = ctx.exposure;
     let masks = ctx.masks;
-    let mut sigmoid_params = exposure.sigmoid;
-    sigmoid_params.contrast = sigmoid_contrast_from_percent(exposure.contrast);
-    let sigmoid = sigmoid_coefficients(sigmoid_params);
+    let (sigmoid_curve, sigmoid_power) = pack_sigmoid(tone_sigmoid_coefficients(exposure));
+    let (reference_sigmoid_curve, reference_sigmoid_power) =
+        pack_sigmoid(reference_sigmoid_coefficients());
     let (hsl_hue_0, hsl_hue_1) = split_eight(exposure.hsl_hue);
     let (hsl_saturation_0, hsl_saturation_1) = split_eight(exposure.hsl_saturation);
     let (hsl_luminance_0, hsl_luminance_1) = split_eight(exposure.hsl_luminance);
@@ -196,18 +189,10 @@ pub(super) fn pack_scene_tone_params(ctx: &GpuParamContext<'_>) -> SceneToneUnif
             exposure.whites,
             exposure.blacks,
         ],
-        sigmoid_curve: [
-            sigmoid.white_target,
-            sigmoid.black_target,
-            sigmoid.paper_exposure,
-            sigmoid.film_fog,
-        ],
-        sigmoid_power: [
-            sigmoid.film_power,
-            sigmoid.paper_power,
-            sigmoid.hue_preservation,
-            sigmoid.color_processing,
-        ],
+        sigmoid_curve,
+        sigmoid_power,
+        reference_sigmoid_curve,
+        reference_sigmoid_power,
         tone_curves,
         hsl_hue_0,
         hsl_hue_1,
@@ -256,6 +241,24 @@ pub(super) fn pack_scene_tone_params(ctx: &GpuParamContext<'_>) -> SceneToneUnif
             local_point_color_flags | (u32::from(exposure.point_colors.has_adjustments()) << 2),
         ],
     }
+}
+
+/// The `sigmoid_curve` and `sigmoid_power` lanes read by tonemap.wgsl.
+fn pack_sigmoid(sigmoid: SigmoidCoefficients) -> ([f32; 4], [f32; 4]) {
+    (
+        [
+            sigmoid.white_target,
+            sigmoid.black_target,
+            sigmoid.paper_exposure,
+            sigmoid.film_fog,
+        ],
+        [
+            sigmoid.film_power,
+            sigmoid.paper_power,
+            sigmoid.hue_preservation,
+            sigmoid.color_processing,
+        ],
+    )
 }
 
 pub(super) fn pack_effect_params(
