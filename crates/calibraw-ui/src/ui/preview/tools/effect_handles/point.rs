@@ -136,11 +136,6 @@ pub(super) fn show(
         Placement::of(frames.screen_of(spec.frame, position), frames.viewport)
     };
     paint(painter, placement, &spec, depth, active);
-    response.on_hover_text(if spec.depth.is_some() {
-        "Drag to move the light; arrow keys nudge it once selected. Scroll or press Page Up or Page Down to move it nearer or farther. Shift makes every step finer. Double-click to reset its position."
-    } else {
-        "Drag to move; arrow keys nudge it once selected, finely with Shift. Double-click to reset the position."
-    });
     edits
 }
 

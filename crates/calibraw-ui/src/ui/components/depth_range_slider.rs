@@ -111,13 +111,7 @@ impl FeatheredRange for DepthRangeSettings {
 
 fn range_track(ui: &mut Ui, range: &mut DepthRangeSettings) -> Response {
     let background = feathered_range::plain_track_background(ui.visuals());
-    feathered_range::feathered_range_track(
-        ui,
-        range,
-        "Depth range",
-        "Near is on the left. Solid handles set where the selection is at full strength; hollow handles set where each end's fade begins.",
-        background,
-    )
+    feathered_range::feathered_range_track(ui, range, "Depth range", background)
 }
 
 pub(crate) fn depth_range_slider(ui: &mut Ui, range: &mut DepthRangeSettings) -> bool {

@@ -76,13 +76,11 @@ pub(crate) fn sidebar_color_picker(
                     rect.max,
                 );
 
-                let plane_response = ui
-                    .interact(
-                        plane,
-                        ui.id().with("saturation-value"),
-                        Sense::click_and_drag(),
-                    )
-                    .on_hover_text("Drag to choose saturation and brightness");
+                let plane_response = ui.interact(
+                    plane,
+                    ui.id().with("saturation-value"),
+                    Sense::click_and_drag(),
+                );
                 if pointer_is_operating(&plane_response) {
                     if let Some(pointer) = plane_response.interact_pointer_pos() {
                         let next_saturation =
@@ -99,9 +97,8 @@ pub(crate) fn sidebar_color_picker(
                     }
                 }
 
-                let hue_response = ui
-                    .interact(hue_strip, ui.id().with("hue"), Sense::click_and_drag())
-                    .on_hover_text("Drag to choose hue");
+                let hue_response =
+                    ui.interact(hue_strip, ui.id().with("hue"), Sense::click_and_drag());
                 if pointer_is_operating(&hue_response) {
                     if let Some(pointer) = hue_response.interact_pointer_pos() {
                         let next_hue =

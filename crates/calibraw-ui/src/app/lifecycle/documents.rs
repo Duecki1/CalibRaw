@@ -525,42 +525,39 @@ impl CalibRawApp {
         };
 
         let mut close = false;
-        moduwu_design::dialog_window(
-            "Unsupported RAW file",
-            ctx,
-            moduwu_design::DIALOG_WIDTH_WIDE,
-        )
-        .resizable(true)
-        .show(ctx, |ui| {
-            ui.add(egui::Label::new(egui::RichText::new(&dialog.label).strong()).wrap());
-            ui.add_space(6.0);
-            ui.label(
-                "CalibRaw could not decode this file with the available RAW decoders. \
-                 The camera or RAW variant may not be supported yet.",
-            );
-            ui.add_space(8.0);
-            egui::CollapsingHeader::new("Technical details")
-                .default_open(false)
-                .show(ui, |ui| {
-                    ui.add(
-                        egui::Label::new(egui::RichText::new(&dialog.detail).monospace())
-                            .wrap()
-                            .selectable(true),
+        moduwu_design::Dialog::new("unsupported-file", "Unsupported RAW file")
+            .size(moduwu_design::DialogSize::Wide)
+            .show_with_footer(
+                ctx,
+                |ui| {
+                    ui.add(egui::Label::new(egui::RichText::new(&dialog.label).strong()).wrap());
+                    ui.label(
+                        "CalibRaw could not decode this file with the available RAW decoders. \
+                         The camera or RAW variant may not be supported yet.",
                     );
-                });
-            moduwu_design::dialog_button_row(ui, |ui| {
-                close |= moduwu_design::secondary_button(ui, "Close").clicked();
-            });
-            if !close
-                && moduwu_design::dialog_keyboard_action(
-                    ui,
-                    moduwu_design::DialogKeyboard::CLOSE_ONLY,
-                    false,
-                ) == moduwu_design::DialogAction::Cancel
-            {
-                close = true;
-            }
-        });
+                    egui::CollapsingHeader::new("Technical details")
+                        .default_open(false)
+                        .show(ui, |ui| {
+                            ui.add(
+                                egui::Label::new(egui::RichText::new(&dialog.detail).monospace())
+                                    .wrap()
+                                    .selectable(true),
+                            );
+                        });
+                },
+                |ui| {
+                    close |= moduwu_design::secondary_button(ui, "Close").clicked();
+                    if !close
+                        && moduwu_design::dialog_keyboard_action(
+                            ui,
+                            moduwu_design::DialogKeyboard::CLOSE_ONLY,
+                            false,
+                        ) == moduwu_design::DialogAction::Cancel
+                    {
+                        close = true;
+                    }
+                },
+            );
 
         if close {
             self.ui.unsupported_file_dialog = None;

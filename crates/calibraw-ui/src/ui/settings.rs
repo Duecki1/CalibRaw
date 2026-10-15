@@ -39,7 +39,6 @@ fn count_setting(
         .unwrap_or(*value);
     AdjustmentSlider::new(label, &mut draft, range)
         .reset_to(default)
-        .hover_text(help)
         .show(ui);
     ui.small(format!("{help} Default: {default}."));
 
@@ -84,6 +83,14 @@ fn diagnostics_snapshot_with_ai_backends() -> String {
     diagnostic_log
 }
 
+/// Whether Automatic mode offers a choice of runtime, which only Linux x86_64
+/// without a bundled runtime does.
+#[cfg(not(target_os = "android"))]
+pub(crate) fn automatic_runtime_kind_offered(app: &CalibRawApp) -> bool {
+    app.ai.runtime_mode == OnnxRuntimeMode::Automatic
+        && calibraw_ai::automatic_onnx_runtime_kind_selectable()
+}
+
 /// Linux x86_64 choice between the CPU and CUDA automatic runtimes. Hidden
 /// where Automatic mode has no choice, including bundled runtimes.
 #[cfg(not(target_os = "android"))]
@@ -92,9 +99,7 @@ pub(crate) fn automatic_runtime_kind_control(
     app: &mut CalibRawApp,
     id_salt: &'static str,
 ) {
-    if app.ai.runtime_mode != OnnxRuntimeMode::Automatic
-        || !calibraw_ai::automatic_onnx_runtime_kind_selectable()
-    {
+    if !automatic_runtime_kind_offered(app) {
         return;
     }
     let mut kind = app.ai.runtime_kind;
@@ -401,11 +406,33 @@ impl Settings {
             ui,
             &mut app.preferences.show_develop_navigation_labels,
             "Show Develop navigation labels",
-            "Shows a short name below each icon in the Develop navigation bars. Leave this disabled for a quieter, more compact interface.",
+            "Shows a short name below each icon in the Develop navigation bars. Turn this off for a quieter, more compact interface.",
         )
         .changed()
         {
             app.persist_performance_settings();
+        }
+
+        moduwu_design::section_separator(ui);
+        let mut tips_enabled = app.preferences.tips.enabled;
+        if moduwu_design::toggle_with_help(
+            ui,
+            &mut tips_enabled,
+            "Show feature tips",
+            "Shows a short animated tip the first time you use a feature, such as the Masks tab or the object mask.",
+        )
+        .changed()
+        {
+            app.set_tips_enabled(tips_enabled);
+        }
+        if moduwu_design::secondary_button_enabled(
+            ui,
+            !app.preferences.tips.seen.is_empty(),
+            "Show seen tips again",
+        )
+        .clicked()
+        {
+            app.reset_seen_tips();
         }
 
         #[cfg(not(target_os = "android"))]

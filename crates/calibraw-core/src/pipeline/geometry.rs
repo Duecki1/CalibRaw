@@ -26,20 +26,31 @@ pub enum CropAspectRatio {
     TwoThree,
     SixteenNine,
     NineSixteen,
+    /// A ratio the user entered, `width` × `height` of the output, each in
+    /// `1..=MAX_TERM`. Serialized as `{"custom": {"width": 5, "height": 4}}`;
+    /// sidecars with it are written as schema 2, which v1.2 reports as newer.
+    Custom {
+        width: u16,
+        height: u16,
+    },
 }
 
 impl CropAspectRatio {
-    pub const fn label(self) -> &'static str {
+    /// The largest term of a custom ratio.
+    pub const MAX_TERM: u16 = 999;
+
+    /// Width and height of a fixed ratio; `None` for `Free` and `Original`.
+    pub const fn terms(self) -> Option<(u16, u16)> {
         match self {
-            Self::Free => "Free",
-            Self::Original => "Original",
-            Self::Square => "1 × 1",
-            Self::FourThree => "4 × 3",
-            Self::ThreeFour => "3 × 4",
-            Self::ThreeTwo => "3 × 2",
-            Self::TwoThree => "2 × 3",
-            Self::SixteenNine => "16 × 9",
-            Self::NineSixteen => "9 × 16",
+            Self::Free | Self::Original => None,
+            Self::Square => Some((1, 1)),
+            Self::FourThree => Some((4, 3)),
+            Self::ThreeFour => Some((3, 4)),
+            Self::ThreeTwo => Some((3, 2)),
+            Self::TwoThree => Some((2, 3)),
+            Self::SixteenNine => Some((16, 9)),
+            Self::NineSixteen => Some((9, 16)),
+            Self::Custom { width, height } => Some((clamp_term(width), clamp_term(height))),
         }
     }
 
@@ -47,13 +58,9 @@ impl CropAspectRatio {
         match self {
             Self::Free => None,
             Self::Original => Some(source_width.max(1) as f32 / source_height.max(1) as f32),
-            Self::Square => Some(1.0),
-            Self::FourThree => Some(4.0 / 3.0),
-            Self::ThreeFour => Some(3.0 / 4.0),
-            Self::ThreeTwo => Some(3.0 / 2.0),
-            Self::TwoThree => Some(2.0 / 3.0),
-            Self::SixteenNine => Some(16.0 / 9.0),
-            Self::NineSixteen => Some(9.0 / 16.0),
+            fixed => fixed
+                .terms()
+                .map(|(width, height)| f32::from(width) / f32::from(height)),
         }
     }
 
@@ -67,8 +74,33 @@ impl CropAspectRatio {
             Self::TwoThree => Self::ThreeTwo,
             Self::SixteenNine => Self::NineSixteen,
             Self::NineSixteen => Self::SixteenNine,
+            Self::Custom { width, height } => Self::Custom {
+                width: height,
+                height: width,
+            },
             other => other,
         }
+    }
+
+    /// Custom terms clamped to `1..=MAX_TERM`, as decoded files may hold any.
+    pub const fn sanitized(self) -> Self {
+        match self {
+            Self::Custom { width, height } => Self::Custom {
+                width: clamp_term(width),
+                height: clamp_term(height),
+            },
+            other => other,
+        }
+    }
+}
+
+const fn clamp_term(term: u16) -> u16 {
+    if term == 0 {
+        1
+    } else if term > CropAspectRatio::MAX_TERM {
+        CropAspectRatio::MAX_TERM
+    } else {
+        term
     }
 }
 
@@ -125,6 +157,7 @@ impl GeometryTransform {
         self.crop[2] = self.crop[2].clamp(self.crop[0] + Self::MIN_CROP_EXTENT, 1.0);
         self.crop[3] = self.crop[3].clamp(self.crop[1] + Self::MIN_CROP_EXTENT, 1.0);
         self.quarter_turns %= 4;
+        self.aspect_ratio = self.aspect_ratio.sanitized();
         self.rotation_degrees = finite_clamp(self.rotation_degrees, -45.0, 45.0);
         self.horizontal_transform = finite_clamp(self.horizontal_transform, -30.0, 30.0);
         self.vertical_transform = finite_clamp(self.vertical_transform, -30.0, 30.0);
@@ -363,6 +396,65 @@ fn finite_clamp(value: f32, min: f32, max: f32) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn custom_ratios_behave_like_the_built_in_ones() {
+        let custom = CropAspectRatio::Custom {
+            width: 5,
+            height: 4,
+        };
+        assert_eq!(custom.value(3000, 2000), Some(1.25));
+        assert_eq!(
+            custom.transposed(),
+            CropAspectRatio::Custom {
+                width: 4,
+                height: 5
+            }
+        );
+        assert_eq!(CropAspectRatio::FourThree.terms(), Some((4, 3)));
+        assert_eq!(CropAspectRatio::Original.terms(), None);
+    }
+
+    #[test]
+    fn decoded_custom_terms_are_clamped() {
+        let geometry = GeometryTransform {
+            aspect_ratio: CropAspectRatio::Custom {
+                width: 0,
+                height: 4000,
+            },
+            ..GeometryTransform::default()
+        }
+        .sanitized();
+        assert_eq!(
+            geometry.aspect_ratio,
+            CropAspectRatio::Custom {
+                width: 1,
+                height: CropAspectRatio::MAX_TERM
+            }
+        );
+        assert!(geometry.normalized_crop_aspect(3000, 2000).is_some());
+    }
+
+    #[test]
+    fn aspect_ratios_keep_their_serialized_names() {
+        assert_eq!(
+            serde_json::to_value(CropAspectRatio::FourThree).unwrap(),
+            "four_three"
+        );
+        let custom = CropAspectRatio::Custom {
+            width: 5,
+            height: 4,
+        };
+        let value = serde_json::to_value(custom).unwrap();
+        assert_eq!(
+            value,
+            serde_json::json!({"custom": {"width": 5, "height": 4}})
+        );
+        assert_eq!(
+            serde_json::from_value::<CropAspectRatio>(value).unwrap(),
+            custom
+        );
+    }
 
     #[test]
     fn lens_mapping_identity_requires_shared_coordinates_and_dimensions() {

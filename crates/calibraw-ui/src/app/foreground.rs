@@ -43,10 +43,9 @@ pub(super) fn show_processing_dialog(
     cancelling: bool,
 ) -> bool {
     let mut cancel = false;
-    moduwu_design::dialog_window(title, ctx, moduwu_design::DIALOG_WIDTH_FORM)
-        .id(egui::Id::new(id))
-        .movable(false)
-        .show(ctx, |ui| {
+    moduwu_design::Dialog::new(id, title).show_with_footer(
+        ctx,
+        |ui| {
             let measured =
                 matches!(progress.value, ForegroundProgressValue::Units { total, .. } if total > 0);
             ui.horizontal(|ui| {
@@ -111,21 +110,14 @@ pub(super) fn show_processing_dialog(
                         .color(ui.visuals().weak_text_color()),
                 );
             }
-            ui.add_space(moduwu_design::SPACE_SM);
-            ui.separator();
-            ui.add_space(moduwu_design::SPACE_XS);
-            ui.allocate_ui_with_layout(
-                egui::vec2(ui.available_width().max(1.0), moduwu_design::CONTROL_HEIGHT),
-                egui::Layout::right_to_left(egui::Align::Center),
-                |ui| {
-                    cancel = ui
-                        .add_enabled_ui(!cancelling, |ui| {
-                            moduwu_design::secondary_button(ui, "Cancel")
-                        })
-                        .inner
-                        .clicked();
-                },
-            );
+        },
+        |ui| {
+            cancel = ui
+                .add_enabled_ui(!cancelling, |ui| {
+                    moduwu_design::secondary_button(ui, "Cancel")
+                })
+                .inner
+                .clicked();
             if !cancel
                 && !cancelling
                 && moduwu_design::dialog_keyboard_action(
@@ -136,7 +128,8 @@ pub(super) fn show_processing_dialog(
             {
                 cancel = true;
             }
-        });
+        },
+    );
     ctx.request_repaint_after(Duration::from_millis(50));
     cancel
 }

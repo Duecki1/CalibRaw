@@ -202,7 +202,7 @@ impl Sidebar {
                 |ui| {
                     moduwu_design::toolbar_title(ui, "Edit");
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if moduwu_design::icon_button(
+                        if moduwu_design::ghost_icon_button(
                             ui,
                             egui_phosphor::regular::ARROW_COUNTER_CLOCKWISE,
                             moduwu_design::toolbar_icon_size(),

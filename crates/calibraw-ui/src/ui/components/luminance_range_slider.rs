@@ -83,30 +83,24 @@ impl FeatheredRange for LuminanceRange {
 pub(crate) fn luminance_range_slider(ui: &mut Ui, range: &mut LuminanceRange) -> bool {
     let before = *range;
     ui.label("Luminance range");
-    feathered_range::feathered_range_track(
-        ui,
-        range,
-        "Luminance range",
-        "Shadows are on the left. Solid handles set the darkest and brightest fully selected tones; hollow handles set where each edge's fade begins.",
-        |painter, track| {
-            const COLUMNS: usize = 64;
-            let mut mesh = egui::Mesh::default();
-            for column in 0..=COLUMNS {
-                let t = column as f32 / COLUMNS as f32;
-                // The track is linear luminance; show each value as it displays.
-                let gray = Color32::from_gray(egui::ecolor::gamma_u8_from_linear_f32(t));
-                let x = egui::lerp(track.x_range(), t);
-                mesh.colored_vertex(egui::pos2(x, track.top()), gray);
-                mesh.colored_vertex(egui::pos2(x, track.bottom()), gray);
-            }
-            for column in 0..COLUMNS as u32 {
-                let i = column * 2;
-                mesh.add_triangle(i, i + 1, i + 2);
-                mesh.add_triangle(i + 1, i + 3, i + 2);
-            }
-            painter.add(egui::Shape::mesh(mesh));
-        },
-    );
+    feathered_range::feathered_range_track(ui, range, "Luminance range", |painter, track| {
+        const COLUMNS: usize = 64;
+        let mut mesh = egui::Mesh::default();
+        for column in 0..=COLUMNS {
+            let t = column as f32 / COLUMNS as f32;
+            // The track is linear luminance; show each value as it displays.
+            let gray = Color32::from_gray(egui::ecolor::gamma_u8_from_linear_f32(t));
+            let x = egui::lerp(track.x_range(), t);
+            mesh.colored_vertex(egui::pos2(x, track.top()), gray);
+            mesh.colored_vertex(egui::pos2(x, track.bottom()), gray);
+        }
+        for column in 0..COLUMNS as u32 {
+            let i = column * 2;
+            mesh.add_triangle(i, i + 1, i + 2);
+            mesh.add_triangle(i + 1, i + 3, i + 2);
+        }
+        painter.add(egui::Shape::mesh(mesh));
+    });
     *range != before
 }
 

@@ -281,6 +281,7 @@ pub(crate) fn format_usage_duration(duration: Duration) -> String {
 }
 
 mod ai;
+mod background_tasks;
 mod eframe_impl;
 mod error_dialogs;
 pub(crate) use error_dialogs::{ErrorDialogQueue, ErrorKind};
@@ -305,6 +306,8 @@ pub(crate) use preview_viewport::PreviewViewportAction;
 mod processing_export;
 mod straighten;
 use straighten::AutoStraightenResult;
+mod tips;
+pub(crate) use tips::{ShownTip, TipPreferences};
 mod sidecar_persistence;
 #[cfg(all(test, not(target_os = "android")))]
 mod ui_review_tests;

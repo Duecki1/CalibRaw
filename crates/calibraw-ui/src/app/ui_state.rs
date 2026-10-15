@@ -34,6 +34,9 @@ pub(crate) struct PreferencesState {
     pub(crate) preview_backdrop: PreviewBackdrop,
     pub(crate) onboarding_completed: bool,
     pub(crate) subject_mask_quality_chosen: bool,
+    #[cfg(not(target_os = "android"))]
+    pub(crate) onnx_runtime_kind_chosen: bool,
+    pub(crate) tips: TipPreferences,
     pub(crate) auto_check_updates: bool,
     pub(crate) github_update_check_allowed: Option<bool>,
     pub(crate) ignored_update_version: Option<String>,
@@ -76,7 +79,12 @@ pub(crate) struct UiState {
     /// The message of the open missing-lens-profile prompt.
     pub(crate) missing_lens_profile_prompt: Option<String>,
     pub(crate) onboarding_step: Option<OnboardingStep>,
+    /// The feature tip offered and not yet answered.
+    pub(in crate::app) tip: Option<ShownTip>,
     pub(in crate::app) version_check: version_update::VersionCheckState,
+    /// The keyboard shortcuts reference is open.
+    #[cfg(not(target_os = "android"))]
+    pub(crate) shortcuts_dialog_open: bool,
     pub(crate) thumbnail_cache_size: Option<Result<u64, String>>,
     pub(crate) thumbnail_cache_size_receiver: Option<mpsc::Receiver<Result<u64, String>>>,
     #[cfg(not(target_os = "android"))]

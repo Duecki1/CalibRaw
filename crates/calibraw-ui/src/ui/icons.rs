@@ -1,25 +1,19 @@
 use eframe::egui::{self, Response, RichText, Ui, Vec2};
 use egui_phosphor::regular;
 
+#[cfg(not(target_os = "android"))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum UiIcon {
-    #[cfg(not(target_os = "android"))]
     Sidebar,
-    #[cfg(not(target_os = "android"))]
     Filmstrip,
-    RotateLeft,
-    RotateRight,
 }
 
+#[cfg(not(target_os = "android"))]
 impl UiIcon {
     fn glyph(self) -> &'static str {
         match self {
-            #[cfg(not(target_os = "android"))]
             Self::Sidebar => regular::SIDEBAR_SIMPLE,
-            #[cfg(not(target_os = "android"))]
             Self::Filmstrip => regular::IMAGE,
-            Self::RotateLeft => regular::ARROW_COUNTER_CLOCKWISE,
-            Self::RotateRight => regular::ARROW_CLOCKWISE,
         }
     }
 }
@@ -32,33 +26,7 @@ pub(crate) fn icon_toggle_button(
     size: Vec2,
     tooltip: &str,
 ) -> Response {
-    glyph_toggle_button(ui, icon.glyph(), selected, size, tooltip)
-}
-
-/// [`icon_toggle_button`] for any Phosphor glyph. Only the selected state is framed.
-#[cfg(not(target_os = "android"))]
-pub(crate) fn glyph_toggle_button(
-    ui: &mut Ui,
-    glyph: &str,
-    selected: bool,
-    size: Vec2,
-    tooltip: &str,
-) -> Response {
-    ui.add_sized(
-        size,
-        egui::Button::new(RichText::new(glyph).size(size.y * 0.52))
-            .selected(selected)
-            .frame(selected),
-    )
-    .on_hover_text(tooltip)
-}
-
-pub(crate) fn icon_button(ui: &mut Ui, icon: UiIcon, size: Vec2, tooltip: &str) -> Response {
-    ui.add_sized(
-        size,
-        egui::Button::new(RichText::new(icon.glyph()).size(size.y * 0.52)).frame(true),
-    )
-    .on_hover_text(tooltip)
+    moduwu_design::ghost_icon_toggle_button(ui, icon.glyph(), selected, size, tooltip)
 }
 
 pub(crate) fn folder_disclosure_size() -> Vec2 {

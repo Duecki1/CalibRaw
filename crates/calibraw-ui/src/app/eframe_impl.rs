@@ -162,6 +162,8 @@ impl CalibRawApp {
         self.resume_android_library_batch_export_if_possible(frame);
         self.poll_foreground_operation(frame);
         self.poll_library_ai_mask_refresh(frame);
+        #[cfg(not(target_os = "android"))]
+        self.poll_hdr_merge();
         self.resume_pending_ai_denoise(frame);
         #[cfg(target_os = "android")]
         self.sync_android_export_notification();
@@ -242,7 +244,9 @@ impl CalibRawApp {
         self.show_error_dialog(ctx);
         self.show_foreground_operation_dialog(ctx);
         self.show_remove_progress_dialog(ctx);
-        self.show_export_task_dialog(ctx);
+        #[cfg(not(target_os = "android"))]
+        crate::ui::shortcuts_dialog::show(ctx, self);
+        self.show_tip_dialog(ctx);
     }
 
     /// Records edit history and saves sidecars and developed thumbnails.

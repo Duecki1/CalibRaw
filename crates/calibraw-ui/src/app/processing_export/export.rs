@@ -28,7 +28,6 @@ impl ExportTask {
             total,
             completed_tiles: 0,
             total_tiles: 0,
-            minimized: false,
             cancelling: false,
         }
     }
@@ -43,14 +42,6 @@ impl ExportTask {
         self.completed_tiles = 0;
         self.total_tiles = 0;
         self.phase = "Preparing tiled export…".to_owned();
-    }
-
-    pub(super) fn minimize(&mut self) {
-        self.minimized = true;
-    }
-
-    pub(super) fn restore(&mut self) {
-        self.minimized = false;
     }
 
     pub(super) fn request_cancel(&mut self) {
@@ -499,20 +490,6 @@ impl CalibRawApp {
         }
         self.egui_ctx.request_repaint();
         true
-    }
-
-    pub(crate) fn minimize_export_task(&mut self) {
-        if let Some(task) = self.export.task.as_mut() {
-            task.minimize();
-            self.egui_ctx.request_repaint();
-        }
-    }
-
-    pub(crate) fn restore_export_task(&mut self) {
-        if let Some(task) = self.export.task.as_mut() {
-            task.restore();
-            self.egui_ctx.request_repaint();
-        }
     }
 
     pub(in crate::app) fn poll_export_worker(&mut self, _frame: &eframe::Frame) {

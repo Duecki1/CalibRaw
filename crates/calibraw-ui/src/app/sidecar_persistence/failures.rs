@@ -48,43 +48,53 @@ impl CalibRawApp {
         let mut close = false;
         #[cfg(not(target_os = "android"))]
         let mut recover = false;
-        moduwu_design::dialog_window(
-            "Could not save edits",
-            ctx,
-            moduwu_design::DIALOG_WIDTH_WIDE,
-        )
-        .resizable(true)
-        .show(ctx, |ui| {
-            ui.label("CalibRaw was unable to write the edit sidecar.");
-            ui.add_space(6.0);
-            ui.add(
-                egui::Label::new(egui::RichText::new(&message).monospace())
-                    .wrap()
-                    .selectable(true),
+        #[cfg(not(target_os = "android"))]
+        let has_recovery = self.persistence.sidecar_recovery.is_some();
+        let mut action = moduwu_design::DialogAction::None;
+        moduwu_design::Dialog::new("sidecar-save-error", "Could not save edits")
+            .size(moduwu_design::DialogSize::Wide)
+            .show_with_footer(
+                ctx,
+                |ui| {
+                    ui.label("CalibRaw was unable to write the edit sidecar.");
+                    ui.add(
+                        egui::Label::new(egui::RichText::new(&message).monospace())
+                            .wrap()
+                            .selectable(true),
+                    );
+                    ui.small("This error was added to the log in Settings → Diagnostics.");
+                    #[cfg(not(target_os = "android"))]
+                    if has_recovery {
+                        ui.label("This sidecar uses an unsupported format or version. You can back up its exact contents and create a new sidecar with the edits currently in memory. Its previous review rating will not be carried over.");
+                    }
+                },
+                |ui| {
+                    action = moduwu_design::dialog_confirmation_actions(
+                        ui,
+                        "Close",
+                        "Try again",
+                        can_retry,
+                        false,
+                        moduwu_design::DialogKeyboard::CLOSE_ONLY,
+                    );
+                    #[cfg(not(target_os = "android"))]
+                    if has_recovery
+                        && moduwu_design::secondary_button_enabled(
+                            ui,
+                            can_recover,
+                            "Back up sidecar and create new one",
+                        )
+                        .clicked()
+                    {
+                        recover = true;
+                    }
+                },
             );
-            ui.add_space(6.0);
-            ui.small("This error was added to the log in Settings → Diagnostics.");
-            #[cfg(not(target_os = "android"))]
-            if self.persistence.sidecar_recovery.is_some() {
-                ui.add_space(8.0);
-                ui.label("This sidecar uses an unsupported format or version. You can back up its exact contents and create a new sidecar with the edits currently in memory. Its previous review rating will not be carried over.");
-                if moduwu_design::secondary_button_enabled(ui, can_recover, "Back up sidecar and create new one").clicked() {
-                    recover = true;
-                }
-            }
-            match moduwu_design::dialog_confirmation_buttons(
-                ui,
-                "Close",
-                "Try again",
-                can_retry,
-                false,
-                moduwu_design::DialogKeyboard::CLOSE_ONLY,
-            ) {
-                moduwu_design::DialogAction::Cancel => close = true,
-                moduwu_design::DialogAction::Confirm => retry = true,
-                moduwu_design::DialogAction::None => {}
-            }
-        });
+        match action {
+            moduwu_design::DialogAction::Cancel => close = true,
+            moduwu_design::DialogAction::Confirm => retry = true,
+            moduwu_design::DialogAction::None => {}
+        }
         #[cfg(not(target_os = "android"))]
         let should_recover = recover;
         #[cfg(target_os = "android")]

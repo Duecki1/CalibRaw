@@ -36,11 +36,9 @@ pub(crate) fn show(
                 &mut settings.color,
                 relight::COLOR,
             );
-            if moduwu_design::toggle_button(ui, "Cast shadows", settings.shadows_enabled)
-                .on_hover_text("Let nearer objects block the light. Turn off for light without shadows; the Shadows strength is preserved.")
-                .clicked()
+            if moduwu_design::toggle_with_help(ui, &mut settings.shadows_enabled, "Cast shadows", "Let nearer objects block the light. Turn off for light without shadows; the Shadows strength is preserved.")
+                .changed()
             {
-                settings.shadows_enabled = !settings.shadows_enabled;
                 changed = true;
             }
             changed |= effect_details(ui, "Light details", |ui| {

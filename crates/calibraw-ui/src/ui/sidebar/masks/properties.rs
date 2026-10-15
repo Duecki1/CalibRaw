@@ -383,7 +383,6 @@ impl Sidebar {
         AdjustmentSlider::new("Grow", grow, -1.0..=1.0)
             .decimals(2)
             .step(0.01)
-            .hover_text("Positive values expand the mask; negative values shrink it inward.")
             .show(ui)
     }
 
@@ -392,13 +391,11 @@ impl Sidebar {
         label: &str,
         feather: &mut f32,
         range: std::ops::RangeInclusive<f32>,
-        help: &str,
         reset: f32,
     ) -> bool {
         AdjustmentSlider::new(label, feather, range)
             .decimals(2)
             .step(0.01)
-            .hover_text(help)
             .reset_to(reset)
             .show(ui)
     }
@@ -419,9 +416,6 @@ impl Sidebar {
         if AdjustmentSlider::new("Mask opacity", &mut opacity, 0.0..=1.0)
             .decimals(2)
             .step(0.01)
-            .hover_text(
-                "Controls the strength of the entire mask before its selected type is applied.",
-            )
             .reset_to(1.0)
             .show(ui)
         {
@@ -447,7 +441,6 @@ impl Sidebar {
                         "Feather",
                         *feather,
                         0.0..=1.0,
-                        "Soft transition from the ellipse interior to its edge.",
                         0.55,
                     ));
                 }
@@ -457,7 +450,6 @@ impl Sidebar {
                         "Feather",
                         *feather,
                         0.02..=1.0,
-                        "Controls the width of the gradient transition.",
                         1.0,
                     ));
                 }
@@ -483,7 +475,6 @@ impl Sidebar {
                         "Feather",
                         *feather,
                         0.0..=1.0,
-                        "Softens the selection edge while keeping the selected interior solid.",
                         0.0,
                     ));
                 }
@@ -543,13 +534,18 @@ impl Sidebar {
                 component_name
                     .on_hover_text("Covers the complete image with uniform mask strength.");
             }
-            if moduwu_design::toggle_button(ui, "Invert", component.invert).clicked() {
+            let mut invert = component.invert;
+            if moduwu_design::toggle(ui, &mut invert, "Invert").changed() {
                 edits.push(MaskPropertyAction::ToggleInvert);
             }
             if component_index > 0 {
                 let mut combine = component.combine;
                 egui::ComboBox::from_id_salt("vertical-mask-combine")
                     .selected_text(combine.label())
+                    // Flat rows, so their labels do not shift on hover.
+                    .popup_style(egui::style::StyleModifier::new(
+                        egui::containers::menu::menu_style,
+                    ))
                     .show_ui(ui, |ui| {
                         for mode in [
                             MaskCombineMode::Add,
@@ -583,61 +579,51 @@ impl Sidebar {
         if AdjustmentSlider::new("Size", &mut size, 0.0025..=0.25)
             .decimals(3)
             .step(0.0025)
-            .hover_text(SCREEN_SIZED_BRUSH_HELP)
             .reset_to(0.055)
             .show(ui)
         {
             edits.push(MaskPropertyAction::SetBrushSize(size));
         }
-        if let Some(feather) = Self::mask_feather_edit(
-            ui,
-            "Feather",
-            *feather,
-            0.0..=1.0,
-            "Softness from the brush core to its edge.",
-            0.55,
-        ) {
+        if let Some(feather) = Self::mask_feather_edit(ui, "Feather", *feather, 0.0..=1.0, 0.55) {
             edits.push(MaskPropertyAction::SetBrushFeather(feather));
         }
         // Toggling opacity enables the stroke opacity slider in the same frame.
         let mut opacity_enabled = *opacity_enabled;
-        ui.horizontal(|ui| {
-            if moduwu_design::toggle_button(ui, "Opacity", opacity_enabled)
-                .on_hover_text(
-                    "Use the opacity setting for newly drawn brush and eraser strokes. \
-                     Disabled strokes always use 100% opacity.",
-                )
-                .clicked()
-            {
-                opacity_enabled = !opacity_enabled;
-                edits.push(MaskPropertyAction::ToggleBrushOpacity);
-            }
-            if moduwu_design::toggle_button(ui, "Overlapping", *overlap_enabled)
-                .on_hover_text(
-                    "Allow separate brush strokes to build opacity where they overlap. \
-                     For example, 10% over 10% produces about 19% coverage.",
-                )
-                .clicked()
-            {
-                edits.push(MaskPropertyAction::ToggleBrushOverlap);
-            }
-        });
+        if moduwu_design::toggle_with_help(
+            ui,
+            &mut opacity_enabled,
+            "Opacity",
+            "Use the opacity setting for newly drawn brush and eraser strokes. \
+             Disabled strokes always use 100% opacity.",
+        )
+        .changed()
+        {
+            edits.push(MaskPropertyAction::ToggleBrushOpacity);
+        }
+        let mut overlap = *overlap_enabled;
+        if moduwu_design::toggle_with_help(
+            ui,
+            &mut overlap,
+            "Overlapping",
+            "Allow separate brush strokes to build opacity where they overlap. \
+             For example, 10% over 10% produces about 19% coverage.",
+        )
+        .changed()
+        {
+            edits.push(MaskPropertyAction::ToggleBrushOverlap);
+        }
         ui.add_enabled_ui(opacity_enabled, |ui| {
             let mut opacity = *opacity;
             if AdjustmentSlider::new("Stroke opacity", &mut opacity, 0.0..=1.0)
                 .decimals(2)
                 .step(0.01)
-                .hover_text(
-                    "Controls only newly drawn brush and eraser strokes. Existing \
-                 strokes and the whole-mask opacity are unchanged.",
-                )
                 .reset_to(1.0)
                 .show(ui)
             {
                 edits.push(MaskPropertyAction::SetBrushStrokeOpacity(opacity));
             }
         });
-        if moduwu_design::icon_button(
+        if moduwu_design::ghost_icon_button(
             ui,
             egui_phosphor::regular::ERASER,
             moduwu_design::toolbar_icon_size(),
@@ -667,7 +653,6 @@ impl Sidebar {
             "Feather",
             feather,
             0.0..=1.0,
-            "Softens only the inside of the freeform path edge.",
             0.0,
         ));
         // The count below reflects this frame's edits.
@@ -724,10 +709,6 @@ impl Sidebar {
         if AdjustmentSlider::new("Size", &mut brush_size, 0.0025..=0.25)
             .decimals(3)
             .step(0.0025)
-            .hover_text(
-                "Controls the hard-edged selection brush. Its on-screen size stays \
-                 constant while zooming for finer detail.",
-            )
             .reset_to(0.055)
             .show(ui)
         {
@@ -740,14 +721,12 @@ impl Sidebar {
             "Mask feather",
             *feather,
             0.0..=1.0,
-            "Softens the final object mask after SAM selection.",
             0.0,
         ));
         let mut edge_refine = *edge_refine;
         if AdjustmentSlider::new("Edge refine", &mut edge_refine, 0.0..=1.0)
             .decimals(2)
             .step(0.01)
-            .hover_text("Aligns uncertain SAM boundaries to local image edges.")
             .reset_to(0.55)
             .show(ui)
         {
@@ -759,7 +738,7 @@ impl Sidebar {
         // The count below reflects a clear in this frame.
         let mut stroke_count = strokes.len();
         ui.horizontal_wrapped(|ui| {
-            if moduwu_design::icon_button(
+            if moduwu_design::ghost_icon_button(
                 ui,
                 egui_phosphor::regular::ARROW_CLOCKWISE,
                 moduwu_design::toolbar_icon_size(),
@@ -769,7 +748,7 @@ impl Sidebar {
             {
                 edits.push(MaskPropertyAction::RequestObject);
             }
-            if moduwu_design::icon_button(
+            if moduwu_design::ghost_icon_button(
                 ui,
                 egui_phosphor::regular::X,
                 moduwu_design::toolbar_icon_size(),
@@ -827,7 +806,6 @@ impl Sidebar {
         if AdjustmentSlider::new("Tolerance", &mut tolerance, 0.005..=1.0)
             .decimals(3)
             .step(0.005)
-            .hover_text("Expands the selected color region in perceptual OkLab space.")
             .reset_to(0.18)
             .show(ui)
         {
@@ -839,7 +817,6 @@ impl Sidebar {
             "Color feather",
             feather,
             0.0..=1.0,
-            "Softens the color-distance cutoff.",
             0.12,
         ));
     }
@@ -880,11 +857,10 @@ impl Sidebar {
         label: &str,
         feather: f32,
         range: std::ops::RangeInclusive<f32>,
-        help: &str,
         reset: f32,
     ) -> Option<f32> {
         let mut feather = feather;
-        Self::mask_feather_slider(ui, label, &mut feather, range, help, reset).then_some(feather)
+        Self::mask_feather_slider(ui, label, &mut feather, range, reset).then_some(feather)
     }
 
     fn brush_mode_selector(
@@ -934,34 +910,25 @@ impl Sidebar {
             if AdjustmentSlider::new("Size", &mut size, 0.0025..=0.25)
                 .decimals(3)
                 .step(0.0025)
-                .hover_text(SCREEN_SIZED_BRUSH_HELP)
                 .reset_to(0.035)
                 .show(ui)
             {
                 edits.set_refinement_size(size);
             }
             let mut feather = edits.controls.refinement_feather;
-            if Self::mask_feather_slider(
-                ui,
-                "Feather",
-                &mut feather,
-                0.0..=1.0,
-                "Softness of newly painted refinement strokes.",
-                0.55,
-            ) {
+            if Self::mask_feather_slider(ui, "Feather", &mut feather, 0.0..=1.0, 0.55) {
                 edits.set_refinement_feather(feather);
             }
             let mut flow = edits.controls.refinement_flow;
             if AdjustmentSlider::new("Flow / opacity", &mut flow, 0.01..=1.0)
                 .decimals(2)
                 .step(0.01)
-                .hover_text("Strength captured by newly painted add/subtract strokes.")
                 .reset_to(1.0)
                 .show(ui)
             {
                 edits.set_refinement_flow(flow);
             }
-            if moduwu_design::icon_button(
+            if moduwu_design::ghost_icon_button(
                 ui,
                 egui_phosphor::regular::ERASER,
                 moduwu_design::toolbar_icon_size(),
@@ -1049,9 +1016,6 @@ impl PropertyEdits {
         self.push(MaskPropertyAction::SetRefinementFlow(flow));
     }
 }
-
-const SCREEN_SIZED_BRUSH_HELP: &str =
-    "Brush stays the same size on screen; zoom in for finer image-space detail.";
 
 #[cfg(test)]
 mod card_tests {
