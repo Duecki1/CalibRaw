@@ -21,7 +21,7 @@ use zip::ZipArchive;
 const ANDROID_64_BIT_ABIS: [&str; 1] = ["arm64-v8a"];
 const CARGO_NDK_VERSION: &str = "4.1.2";
 
-/// `cargo xtask build-android [ABI] [PROFILE]`
+/// `cargo xtask build-android [ABI] [PROFILE] [--features LIST]`
 pub(crate) fn build_android(args: Vec<OsString>) -> Result<()> {
     command_build_android(parse_build_android_args(args)?)
 }
@@ -51,15 +51,27 @@ pub(crate) fn verify_android_16kb(args: Vec<OsString>) -> Result<()> {
 struct BuildAndroidArgs {
     abi: String,
     profile: String,
+    /// Comma-separated `calibraw-ui` Cargo features, e.g. `googleplay`.
+    features: Option<String>,
 }
 
 fn parse_build_android_args(args: Vec<OsString>) -> Result<BuildAndroidArgs> {
     let mut positionals = Vec::new();
-    for argument in args {
+    let mut features = None;
+    let mut index = 0;
+    while index < args.len() {
+        let argument = &args[index];
         match argument.to_string_lossy().as_ref() {
             "--help" | "-h" => {
                 print_help();
                 std::process::exit(0);
+            }
+            "--features" => {
+                let value = next_value(&args, &mut index, "--features")?;
+                let value = value.to_string_lossy().trim().to_owned();
+                if !value.is_empty() {
+                    features = Some(value);
+                }
             }
             value if value.starts_with('-') => {
                 return Err(XtaskError::usage(format!(
@@ -68,6 +80,7 @@ fn parse_build_android_args(args: Vec<OsString>) -> Result<BuildAndroidArgs> {
             }
             _ => positionals.push(argument.to_string_lossy().into_owned()),
         }
+        index += 1;
     }
     if positionals.len() > 2 {
         return Err(XtaskError::usage(
@@ -83,6 +96,7 @@ fn parse_build_android_args(args: Vec<OsString>) -> Result<BuildAndroidArgs> {
             .get(1)
             .cloned()
             .unwrap_or_else(|| "release".to_owned()),
+        features,
     })
 }
 
@@ -545,6 +559,9 @@ fn command_build_android(args: BuildAndroidArgs) -> Result<()> {
     command
         .args(["--package", "calibraw-ui", "--lib", "--manifest-path"])
         .arg(root.join("Cargo.toml"));
+    if let Some(features) = &args.features {
+        command.args(["--features", features]);
+    }
     run_checked(&mut command, &cargo.display().to_string())?;
 
     let cxx_runtime = ndk_host

@@ -47,7 +47,7 @@ If you use the AI features (subject, sky and object masks, depth masks, AI Remov
 
 ### 4.2 Update check (GitHub)
 
-CalibRaw can check whether a newer version has been released. The check asks the public GitHub API (GitHub, Inc., USA) for the latest release of CalibRaw. It only runs after you have allowed it, either at startup or when you start it yourself in Settings, and you can turn it off at any time in Settings. Builds distributed through F-Droid and Flathub do not contain this check, because those stores deliver updates themselves.
+CalibRaw can check whether a newer version has been released. The check asks the public GitHub API (GitHub, Inc., USA) for the latest release of CalibRaw. It only runs after you have allowed it, either at startup or when you start it yourself in Settings, and you can turn it off at any time in Settings. Builds distributed through Google Play, F-Droid and Flathub do not contain this check, because those stores deliver updates themselves.
 
 - **What is transmitted:** Your **IP address**, the time of the request and standard request data (such as the app name and version in the request header).
 - **What is not transmitted:** No device identifier, user identifier, or information about your photos or your use of the app.
@@ -129,7 +129,7 @@ Since no data is stored by us, access or deletion requests usually cannot be ful
 
 ## 13. Changes to this policy
 
-This privacy policy may be updated when the app's features change. The current version is permanently available at https://github.com/Duecki1/CalibRaw/blob/main/privacypolicy.md
+This privacy policy may be updated when the app's features change. The current version is permanently available at https://github.com/Duecki1/CalibRaw/blob/main/play/privacypolicy.md
 
 ## 14. Contact
 

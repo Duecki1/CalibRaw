@@ -7,6 +7,11 @@ on:
   pull_request:
   workflow_dispatch:
   workflow_call:
+    inputs:
+      distribution:
+        description: "`github` builds the APK; `googleplay` builds a signed AAB without GitHub update checks."
+        type: string
+        default: github
 
 env:
   CARGO_TERM_COLOR: always
@@ -15,8 +20,10 @@ env:
 
 jobs:
   android-apk:
-    name: Android APK
+    name: ${{ inputs.distribution == 'googleplay' && 'Android App Bundle (Google Play)' || 'Android APK' }}
     runs-on: ubuntu-latest
+    env:
+      CALIBRAW_DISTRIBUTION: ${{ inputs.distribution || 'github' }}
 
     steps:
       - name: Check out repository
@@ -88,20 +95,41 @@ jobs:
             zip
 
       - name: Prepare release signing keystore
-        if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
+        if: inputs.distribution == 'googleplay' || (github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')))
         shell: bash
         env:
-          KEYSTORE_BASE64: ${{ secrets.CALIBRAW_ANDROID_KEYSTORE_BASE64 }}
-          CALIBRAW_ANDROID_STORE_PASSWORD: ${{ secrets.CALIBRAW_ANDROID_STORE_PASSWORD }}
-          CALIBRAW_ANDROID_KEY_ALIAS: ${{ secrets.CALIBRAW_ANDROID_KEY_ALIAS }}
-          CALIBRAW_ANDROID_KEY_PASSWORD: ${{ secrets.CALIBRAW_ANDROID_KEY_PASSWORD }}
+          RELEASE_KEYSTORE_BASE64: ${{ secrets.CALIBRAW_ANDROID_KEYSTORE_BASE64 }}
+          RELEASE_STORE_PASSWORD: ${{ secrets.CALIBRAW_ANDROID_STORE_PASSWORD }}
+          RELEASE_KEY_ALIAS: ${{ secrets.CALIBRAW_ANDROID_KEY_ALIAS }}
+          RELEASE_KEY_PASSWORD: ${{ secrets.CALIBRAW_ANDROID_KEY_PASSWORD }}
+          PLAY_UPLOAD_KEYSTORE_BASE64: ${{ secrets.CALIBRAW_PLAY_UPLOAD_KEYSTORE_BASE64 }}
+          PLAY_UPLOAD_STORE_PASSWORD: ${{ secrets.CALIBRAW_PLAY_UPLOAD_STORE_PASSWORD }}
+          PLAY_UPLOAD_KEY_ALIAS: ${{ secrets.CALIBRAW_PLAY_UPLOAD_KEY_ALIAS }}
+          PLAY_UPLOAD_KEY_PASSWORD: ${{ secrets.CALIBRAW_PLAY_UPLOAD_KEY_PASSWORD }}
         run: |
           set -euo pipefail
 
-          : "${KEYSTORE_BASE64:?Missing CALIBRAW_ANDROID_KEYSTORE_BASE64 repository secret}"
-          : "${CALIBRAW_ANDROID_STORE_PASSWORD:?Missing CALIBRAW_ANDROID_STORE_PASSWORD repository secret}"
-          : "${CALIBRAW_ANDROID_KEY_ALIAS:?Missing CALIBRAW_ANDROID_KEY_ALIAS repository secret}"
-          : "${CALIBRAW_ANDROID_KEY_PASSWORD:?Missing CALIBRAW_ANDROID_KEY_PASSWORD repository secret}"
+          # Google Play bundles are signed with a separate upload key, which
+          # Google can reset; never fall back to the GitHub release key.
+          if [ "$CALIBRAW_DISTRIBUTION" = "googleplay" ]; then
+            secret_prefix=CALIBRAW_PLAY_UPLOAD
+            KEYSTORE_BASE64="$PLAY_UPLOAD_KEYSTORE_BASE64"
+            CALIBRAW_ANDROID_STORE_PASSWORD="$PLAY_UPLOAD_STORE_PASSWORD"
+            CALIBRAW_ANDROID_KEY_ALIAS="$PLAY_UPLOAD_KEY_ALIAS"
+            CALIBRAW_ANDROID_KEY_PASSWORD="$PLAY_UPLOAD_KEY_PASSWORD"
+          else
+            secret_prefix=CALIBRAW_ANDROID
+            KEYSTORE_BASE64="$RELEASE_KEYSTORE_BASE64"
+            CALIBRAW_ANDROID_STORE_PASSWORD="$RELEASE_STORE_PASSWORD"
+            CALIBRAW_ANDROID_KEY_ALIAS="$RELEASE_KEY_ALIAS"
+            CALIBRAW_ANDROID_KEY_PASSWORD="$RELEASE_KEY_PASSWORD"
+          fi
+          export CALIBRAW_ANDROID_STORE_PASSWORD
+
+          : "${KEYSTORE_BASE64:?Missing ${secret_prefix}_KEYSTORE_BASE64 repository secret}"
+          : "${CALIBRAW_ANDROID_STORE_PASSWORD:?Missing ${secret_prefix}_STORE_PASSWORD repository secret}"
+          : "${CALIBRAW_ANDROID_KEY_ALIAS:?Missing ${secret_prefix}_KEY_ALIAS repository secret}"
+          : "${CALIBRAW_ANDROID_KEY_PASSWORD:?Missing ${secret_prefix}_KEY_PASSWORD repository secret}"
 
           keystore_path="$RUNNER_TEMP/calibraw-release.keystore"
           printf '%s' "$KEYSTORE_BASE64" | base64 --decode > "$keystore_path"
@@ -209,7 +237,19 @@ jobs:
           # JVM-only unit tests; calibrawBuildRust=false skips CMake and Rust.
           ./gradlew --no-daemon --stacktrace -p android :app:testDebugUnitTest -PcalibrawBuildRust=false
 
-          if [ "$GITHUB_EVENT_NAME" = "push" ] && { [ "$GITHUB_REF" = "refs/heads/main" ] || [[ "$GITHUB_REF" == refs/tags/v* ]]; }; then
+          feature_args=()
+          if [ "$CALIBRAW_DISTRIBUTION" = "googleplay" ]; then
+            gradle_task=bundleRelease
+            apk_path="android/app/build/outputs/bundle/release/app-release.aab"
+            output_name="CalibRaw-googleplay-arm64-v8a.aab"
+            artifact_name="calibraw-android-googleplay-arm64-v8a"
+            signing_args=(-PcalibrawRequireReleaseSigning=true)
+            # Google Play delivers updates, so the GitHub update check is compiled out.
+            feature_args=(-PcalibrawRustFeatures=googleplay)
+            # Same sequence as release APKs below. Play rejects a reused
+            # versionCode, so upload only one bundle per commit.
+            version_code=$((1000000 + $(git rev-list --count HEAD)))
+          elif [ "$GITHUB_EVENT_NAME" = "push" ] && { [ "$GITHUB_REF" = "refs/heads/main" ] || [[ "$GITHUB_REF" == refs/tags/v* ]]; }; then
             gradle_task=assembleRelease
             apk_path="android/app/build/outputs/apk/release/app-release.apk"
             output_name="CalibRaw-release-arm64-v8a.apk"
@@ -236,12 +276,21 @@ jobs:
             "$gradle_task" \
             -PcalibrawAbis=arm64-v8a \
             -PcalibrawVersionCode="$version_code" \
-            "${signing_args[@]}"
+            "${signing_args[@]}" \
+            "${feature_args[@]}"
 
           APK="$apk_path"
           test -f "$APK"
-          cargo xtask verify-android-16kb "$APK"
-          if [ "$GITHUB_EVENT_NAME" = "push" ] && { [ "$GITHUB_REF" = "refs/heads/main" ] || [[ "$GITHUB_REF" == refs/tags/v* ]]; }; then
+          if [ "$CALIBRAW_DISTRIBUTION" = "googleplay" ]; then
+            # Play builds the device APKs from the bundle and checks their
+            # 16 KB alignment itself; the APK build covers the same libraries.
+            jarsigner_output="$(jarsigner -verify -certs "$APK")"
+            printf '%s\n' "$jarsigner_output"
+            grep -q '^jar verified\.' <<<"$jarsigner_output"
+          else
+            cargo xtask verify-android-16kb "$APK"
+          fi
+          if [ "$CALIBRAW_DISTRIBUTION" != "googleplay" ] && [ "$GITHUB_EVENT_NAME" = "push" ] && { [ "$GITHUB_REF" = "refs/heads/main" ] || [[ "$GITHUB_REF" == refs/tags/v* ]]; }; then
             "$ANDROID_HOME/build-tools/$CALIBRAW_ANDROID_BUILD_TOOLS_VERSION/apksigner" \
               verify --verbose --print-certs "$APK"
           fi
@@ -251,7 +300,7 @@ jobs:
           echo "artifact_name=$artifact_name" >> "$GITHUB_OUTPUT"
 
       - name: Remove release signing keystore
-        if: always() && github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
+        if: always() && (inputs.distribution == 'googleplay' || (github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))))
         shell: bash
         run: |
           rm -f "$RUNNER_TEMP/calibraw-release.keystore"
@@ -268,3 +317,5 @@ jobs:
           name: ${{ steps.build_android_apk.outputs.artifact_name }}
           path: dist/*
           if-no-files-found: error
+          # The Play bundle is only a hand-off to the Play Console; 0 keeps the repository default.
+          retention-days: ${{ inputs.distribution == 'googleplay' && 7 || 0 }}
