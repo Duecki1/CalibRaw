@@ -214,6 +214,14 @@ def buildRustEnabled = providers.gradleProperty("calibrawBuildRust")
     .map { it.toBoolean() }
     .getOrElse(true)
 
+// Comma-separated calibraw-ui Cargo features, e.g. `googleplay` for store builds.
+def calibrawRustFeatures = providers.gradleProperty("calibrawRustFeatures")
+    .getOrElse("")
+    .trim()
+def rustFeatureArgs = calibrawRustFeatures.isEmpty()
+    ? []
+    : ["--features", calibrawRustFeatures]
+
 def abiTaskSuffix = { String abi ->
     abi.split(/[-_]/)
         .collect { token -> token.substring(0, 1).toUpperCase() + token.substring(1) }
@@ -228,13 +236,13 @@ calibrawAbis.each { abi ->
         dependsOn("buildCMakeDebug[${abi}][calibraw_native_deps]")
         workingDir repositoryRoot
         environment "CALIBRAW_NATIVE_DEPS_READY", "1"
-        commandLine "cargo", "xtask", "build-android", abi, "debug"
+        commandLine(["cargo", "xtask", "build-android", abi, "debug"] + rustFeatureArgs)
     }
     releaseRustTasks << tasks.register("buildRustRelease${suffix}", Exec) {
         dependsOn("buildCMakeRelWithDebInfo[${abi}][calibraw_native_deps]")
         workingDir repositoryRoot
         environment "CALIBRAW_NATIVE_DEPS_READY", "1"
-        commandLine "cargo", "xtask", "build-android", abi, "release"
+        commandLine(["cargo", "xtask", "build-android", abi, "release"] + rustFeatureArgs)
     }
 }
 

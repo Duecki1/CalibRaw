@@ -24,6 +24,7 @@ path = "src/main.rs"
 # compiled out of use: no network request, consent dialog or update settings.
 fdroid = []
 flathub = []
+googleplay = []
 
 [dependencies]
 calibraw-ai.workspace = true

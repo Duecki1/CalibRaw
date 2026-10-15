@@ -1,0 +1,28 @@
+name: Build Google Play Bundle
+
+# Builds the signed Android App Bundle for upload to the Play Console. The bundle
+# is kept as a short-lived workflow artifact and is never attached to the GitHub
+# release; GitHub users install the APK. It is built with the `googleplay`
+# feature, which compiles out the GitHub update check, and signed with the Play
+# upload key (CALIBRAW_PLAY_UPLOAD_* secrets), not the GitHub release key.
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: google-play-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  android:
+    name: Build Android App Bundle
+    uses: ./.github/workflows/build-android.yml
+    with:
+      distribution: googleplay
+    secrets: inherit
