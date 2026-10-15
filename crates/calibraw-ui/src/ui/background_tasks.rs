@@ -1,5 +1,5 @@
 //! The toolbar indicator for work that runs while the app stays usable, such
-//! as exports and HDR merges: a chip with the first task's progress, and a
+//! as exports, HDR merges and focus stacks: a chip with the first task's progress, and a
 //! dropdown that lists every task with its progress and a cancel button.
 
 use eframe::egui::{self, Ui};
@@ -9,8 +9,9 @@ use eframe::egui::{self, Ui};
 pub(crate) enum BackgroundTaskId {
     /// An export, a library batch export or an Edit Replay.
     Export,
+    /// An HDR merge or a focus stack.
     #[cfg(not(target_os = "android"))]
-    HdrMerge,
+    Merge,
 }
 
 /// What the indicator shows for one task.

@@ -170,7 +170,7 @@ impl LibraryState {
             adjustment_clipboard: None,
             asset_transfer_receiver: None,
             #[cfg(not(target_os = "android"))]
-            hdr_merge: None,
+            merge: None,
             #[cfg(not(target_os = "android"))]
             raw_import_receiver: None,
             #[cfg(not(target_os = "android"))]
@@ -233,7 +233,7 @@ impl LibraryState {
         {
             self.raw_import_receiver.is_some()
                 || self.folder_operation_receiver.is_some()
-                || self.hdr_merge.is_some()
+                || self.merge.is_some()
         }
         #[cfg(target_os = "android")]
         {

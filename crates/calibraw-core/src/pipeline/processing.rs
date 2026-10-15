@@ -98,6 +98,7 @@ mod tests {
             cfa_kind: CfaKind::Bayer,
             raw_pixels: pixels,
             scene_linear_raster: None,
+            scene_referred_raster: false,
             color_indices: CompactPixelMap::dense(
                 width,
                 height,
@@ -760,6 +761,27 @@ mod tests {
     }
 
     #[test]
+    fn raster_derivatives_stay_scene_referred() {
+        let mut raw = test_raster(4, 4);
+        raw.scene_referred_raster = true;
+        let tile = ExportTile {
+            core_x: 0,
+            core_y: 0,
+            core_width: 2,
+            core_height: 2,
+            local_core_x: 1,
+            local_core_y: 1,
+            padded_width: 4,
+            padded_height: 4,
+            global_origin_x: -1,
+            global_origin_y: -1,
+        };
+        assert!(crop_raw(&raw, 1, 1, 2, 2).scene_referred_raster);
+        assert!(build_proxy(&raw, ProxySpec { max_edge: 2 }).scene_referred_raster);
+        assert!(extract_padded_tile(&raw, tile).scene_referred_raster);
+    }
+
+    #[test]
     fn raster_derivatives_preserve_camera_transform_metadata() {
         let mut raw = test_raster(4, 4);
         raw.wb_coeffs = [2.0, 1.0, 0.5, 1.0];
@@ -793,6 +815,7 @@ mod tests {
             cfa_kind: CfaKind::Bayer,
             raw_pixels: (0..width * height).map(|value| value as u16).collect(),
             scene_linear_raster: None,
+            scene_referred_raster: false,
             color_indices: CompactPixelMap::dense(
                 width,
                 height,
@@ -866,6 +889,7 @@ mod tests {
             cfa_kind: CfaKind::Bayer,
             raw_pixels: vec![100; (width * height) as usize],
             scene_linear_raster: None,
+            scene_referred_raster: false,
             color_indices: CompactPixelMap::dense(width, height, color_indices),
             wb_coeffs: [1.0; 4],
             cam_to_srgb: [[0.0; 4]; 3],

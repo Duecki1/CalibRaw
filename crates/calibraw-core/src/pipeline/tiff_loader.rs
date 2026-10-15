@@ -334,11 +334,16 @@ fn integer_values(file: &mut File, field: TiffFieldRef, limit: usize) -> Result<
 }
 
 pub(super) fn load_raster_tiff(path: &Path) -> Result<LoadedRaw> {
-    let (width, height, rgb) = decode_scene_linear_rec2020(path)?;
-    LoadedRaw::from_scene_linear_rec2020(width, height, rgb)
+    let (width, height, rgb, source_is_float) = decode_scene_linear_rec2020(path)?;
+    let mut raw = LoadedRaw::from_scene_linear_rec2020(width, height, rgb)?;
+    // Floating-point TIFFs hold scene radiance (HDR and focus-stack masters, linear
+    // exports); integer TIFFs are developed photos.
+    raw.scene_referred_raster = source_is_float;
+    Ok(raw)
 }
 
-fn decode_scene_linear_rec2020(path: &Path) -> Result<(u32, u32, Vec<f32>)> {
+/// Decoded linear Rec.2020 pixels and whether the file stores floating-point samples.
+fn decode_scene_linear_rec2020(path: &Path) -> Result<(u32, u32, Vec<f32>, bool)> {
     let image = decode_tiff(path)?;
     let width = image.width();
     let height = image.height();
@@ -358,7 +363,7 @@ fn decode_scene_linear_rec2020(path: &Path) -> Result<(u32, u32, Vec<f32>)> {
     }
     ensure_finite(&rgb)?;
 
-    Ok((width, height, rgb))
+    Ok((width, height, rgb, source_is_float))
 }
 
 pub(super) fn load_raster_tiff_dimensions(path: &Path) -> Result<[u32; 2]> {
@@ -374,7 +379,7 @@ pub(super) fn load_raster_tiff_dimensions(path: &Path) -> Result<[u32; 2]> {
 
 pub(super) fn load_raster_tiff_thumbnail(path: &Path, maximum_edge: u32) -> Result<RawThumbnail> {
     anyhow::ensure!(maximum_edge > 0, "thumbnail edge must be non-zero");
-    let (width, height, rgb) = decode_scene_linear_rec2020(path)?;
+    let (width, height, rgb, _) = decode_scene_linear_rec2020(path)?;
     let image = image::DynamicImage::ImageRgb32F(
         image::Rgb32FImage::from_raw(width, height, rgb)
             .ok_or_else(|| anyhow!("TIFF RGB buffer size does not match its dimensions"))?,
@@ -645,10 +650,24 @@ mod tests {
         );
         let loaded = load_raster_tiff(path).unwrap();
         assert!(loaded.is_pre_demosaiced_raster());
+        assert!(!loaded.scene_referred_raster);
         let rgb = loaded.scene_linear_raster().unwrap();
         assert!((rgb[0] - crate::color_math::LINEAR_SRGB_TO_REC2020[0][0]).abs() < 2e-4);
         assert!((rgb[1] - crate::color_math::LINEAR_SRGB_TO_REC2020[1][0]).abs() < 2e-4);
         assert!((rgb[2] - crate::color_math::LINEAR_SRGB_TO_REC2020[2][0]).abs() < 2e-4);
+    }
+
+    #[test]
+    fn float_tiff_is_scene_referred_and_keeps_radiance_above_white() {
+        let file = temp_tiff_file("float-tiff", ".tif");
+        let path = file.path();
+        image::Rgb32FImage::from_raw(1, 1, vec![4.0, 2.0, 0.5])
+            .unwrap()
+            .save_with_format(path, ImageFormat::Tiff)
+            .unwrap();
+        let loaded = load_raster_tiff(path).unwrap();
+        assert!(loaded.scene_referred_raster);
+        assert_eq!(loaded.scene_linear_raster().unwrap(), &[4.0, 2.0, 0.5]);
     }
 
     #[test]

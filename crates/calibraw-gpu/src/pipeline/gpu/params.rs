@@ -19,7 +19,8 @@ pub(super) struct CameraUniforms {
     pub(super) frequency_chroma: f32,
     pub(super) tint: f32,
     pub(super) pre_demosaiced_raster: f32,
-    pub(super) scene_view_transform_enabled: f32,
+    /// [`ViewTransformMode::shader_value`].
+    pub(super) view_transform_mode: u32,
     pub(super) camera_linear_raster: f32,
     pub(super) highlight_options: [f32; 4],
     pub(super) noise_shot: [f32; 4],
@@ -65,16 +66,76 @@ pub(super) struct PackedPointColor {
 
 const _: () = assert!(std::mem::size_of::<CameraUniforms>() == CAMERA_UNIFORMS_SIZE_BYTES as usize);
 
-pub(super) fn raster_uses_scene_view_transform(exposure: &ExposureParams) -> bool {
-    const EPSILON: f32 = 1e-6;
-    let default = SigmoidParams::default();
-    exposure.contrast.abs() > EPSILON
-        || (exposure.sigmoid.contrast - default.contrast).abs() > EPSILON
-        || (exposure.sigmoid.skew - default.skew).abs() > EPSILON
-        || (exposure.sigmoid.display_white_target - default.display_white_target).abs() > EPSILON
-        || (exposure.sigmoid.display_black_target - default.display_black_target).abs() > EPSILON
-        || (exposure.sigmoid.hue_preservation - default.hue_preservation).abs() > EPSILON
-        || exposure.sigmoid.color_processing != default.color_processing
+/// How `apply_view_node` maps graded RGB to display-linear RGB
+/// (`VIEW_TRANSFORM_*` in common.wgsl).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum ViewTransformMode {
+    /// A developed raster at the reference tone curve keeps its rendered values.
+    Passthrough,
+    /// Scene radiance (RAWs, camera-linear and scene-referred rasters) takes
+    /// the sigmoid view transform.
+    SceneSigmoid,
+    /// A developed raster whose tone curve differs from the reference is
+    /// retoned relative to it: each value is mapped back through the reference
+    /// curve and forward through the edited one. The mapping is the identity
+    /// at the reference curve, so tone edits start continuously from the
+    /// rendered photo instead of jumping to the scene transform.
+    DisplayRetone,
+}
+
+impl ViewTransformMode {
+    pub(super) fn select(
+        raw: &LoadedRaw,
+        exposure: &ExposureParams,
+        camera_linear_raster: bool,
+    ) -> Self {
+        if camera_linear_raster || !raw.is_pre_demosaiced_raster() || raw.scene_referred_raster {
+            Self::SceneSigmoid
+        } else if same_tone_curve(
+            tone_sigmoid_coefficients(exposure),
+            reference_sigmoid_coefficients(),
+        ) {
+            Self::Passthrough
+        } else {
+            Self::DisplayRetone
+        }
+    }
+
+    pub(super) const fn shader_value(self) -> u32 {
+        match self {
+            Self::Passthrough => 0,
+            Self::SceneSigmoid => 1,
+            Self::DisplayRetone => 2,
+        }
+    }
+}
+
+/// The sigmoid of the edit: its Sigmoid settings with Contrast mapped onto the
+/// sigmoid contrast.
+pub(super) fn tone_sigmoid_coefficients(exposure: &ExposureParams) -> SigmoidCoefficients {
+    sigmoid_coefficients(SigmoidParams {
+        contrast: sigmoid_contrast_from_percent(exposure.contrast),
+        ..exposure.sigmoid
+    })
+}
+
+/// The sigmoid a developed raster is taken to be rendered with: the curve of
+/// default settings.
+pub(super) fn reference_sigmoid_coefficients() -> SigmoidCoefficients {
+    sigmoid_coefficients(SigmoidParams::default())
+}
+
+/// Whether both coefficient sets describe the same tone curve. Hue
+/// preservation and colour processing only change how a curve is applied.
+/// Exact comparison is intended: default settings always derive bit-identical
+/// coefficients, and any edit must leave passthrough.
+fn same_tone_curve(a: SigmoidCoefficients, b: SigmoidCoefficients) -> bool {
+    a.white_target == b.white_target
+        && a.black_target == b.black_target
+        && a.paper_exposure == b.paper_exposure
+        && a.film_fog == b.film_fog
+        && a.film_power == b.film_power
+        && a.paper_power == b.paper_power
 }
 
 #[repr(C)]
@@ -86,8 +147,14 @@ pub(super) struct SceneToneUniforms {
     // Depth availability must not share the packed mask crop bounds below.
     pub(super) scene_depth_present: u32,
     pub(super) basic_tone: [f32; 4],
+    /// The edit's sigmoid: white target, black target, log2 paper exposure, film fog.
     pub(super) sigmoid_curve: [f32; 4],
+    /// Film power, paper power, hue preservation, colour processing.
     pub(super) sigmoid_power: [f32; 4],
+    /// [`reference_sigmoid_coefficients`], packed like `sigmoid_curve` and
+    /// `sigmoid_power`; [`ViewTransformMode::DisplayRetone`] inverts it.
+    pub(super) reference_sigmoid_curve: [f32; 4],
+    pub(super) reference_sigmoid_power: [f32; 4],
     /// Global point curves (master, red, green, blue), each packed by
     /// [`pack_local_point_curve`]: eight point pairs, then `[count, identity, 0, 0]`.
     pub(super) tone_curves: [[[f32; 4]; LOCAL_POINT_CURVE_BLOCKS]; 4],
@@ -137,7 +204,7 @@ pub(super) struct EffectsUniforms {
 
 const _: () =
     assert!(std::mem::size_of::<EffectsUniforms>() == EFFECTS_UNIFORMS_SIZE_BYTES as usize);
-const _: () = assert!(GPU_STAGE_UNIFORM_SIZE_BYTES == 2_224);
+const _: () = assert!(GPU_STAGE_UNIFORM_SIZE_BYTES == 2_256);
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]

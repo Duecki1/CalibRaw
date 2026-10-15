@@ -37,6 +37,8 @@ pub(crate) enum ErrorKind {
     AiRuntime,
     #[cfg(not(target_os = "android"))]
     HdrMerge,
+    #[cfg(not(target_os = "android"))]
+    FocusStack,
     GpuMemory,
     Retouch,
     Straighten,
@@ -74,6 +76,8 @@ impl ErrorKind {
             Self::AiRuntime => "AI runtime unavailable",
             #[cfg(not(target_os = "android"))]
             Self::HdrMerge => "HDR merge failed",
+            #[cfg(not(target_os = "android"))]
+            Self::FocusStack => "Focus stacking failed",
             Self::GpuMemory => "GPU memory exhausted",
             Self::Retouch => "Retouch failed",
             Self::Straighten => "Straightening failed",

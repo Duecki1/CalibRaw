@@ -1,6 +1,6 @@
 use super::basicadj::sigmoid_contrast_from_percent;
 use super::gpu_cache::PersistentGpuPipelineCache;
-use super::sigmoid::coefficients as sigmoid_coefficients;
+use super::sigmoid::{coefficients as sigmoid_coefficients, SigmoidCoefficients};
 use crate::pipeline::{
     canonical_remove_scene_to_pipeline_scene, effect_params, export_mask_atlas_edge_limit,
     mask_atlas_edge, pipeline_scene_to_working_rec2020, AiDenoisedImage, CfaKind, ExposureParams,
@@ -80,7 +80,7 @@ pub use params::*;
 pub use remove_scene::*;
 use stage_params::*;
 
-const GPU_PARAMS_ABI_VERSION: u32 = 11;
+const GPU_PARAMS_ABI_VERSION: u32 = 12;
 const MASK_EFFECT_ID_SHIFT: u32 = 8;
 pub(super) const LIGHT_RAYS_MASK_ATLAS_EDGE: u32 = if cfg!(target_os = "android") {
     256
@@ -89,7 +89,7 @@ pub(super) const LIGHT_RAYS_MASK_ATLAS_EDGE: u32 = if cfg!(target_os = "android"
 };
 const GPU_PARAMS_ABI_SIZE_BYTES: u32 = 1_072;
 const CAMERA_UNIFORMS_SIZE_BYTES: u32 = 352;
-const SCENE_TONE_UNIFORMS_SIZE_BYTES: u32 = 1_680;
+const SCENE_TONE_UNIFORMS_SIZE_BYTES: u32 = 1_712;
 const EFFECTS_UNIFORMS_SIZE_BYTES: u32 = 192;
 const GPU_STAGE_UNIFORM_SIZE_BYTES: u32 =
     CAMERA_UNIFORMS_SIZE_BYTES + SCENE_TONE_UNIFORMS_SIZE_BYTES + EFFECTS_UNIFORMS_SIZE_BYTES;
