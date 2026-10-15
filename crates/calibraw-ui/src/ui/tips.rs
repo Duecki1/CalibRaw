@@ -16,11 +16,21 @@ pub(crate) enum Tip {
     MasksTab,
     ObjectMask,
     DepthRange,
+    PathMask,
+    ColorRangeMask,
+    LuminanceRangeMask,
 }
 
 impl Tip {
     #[cfg(test)]
-    const ALL: [Self; 3] = [Self::MasksTab, Self::ObjectMask, Self::DepthRange];
+    const ALL: [Self; 6] = [
+        Self::MasksTab,
+        Self::ObjectMask,
+        Self::DepthRange,
+        Self::PathMask,
+        Self::ColorRangeMask,
+        Self::LuminanceRangeMask,
+    ];
 
     /// Saved in settings once the tip was seen; never change an existing key.
     pub(crate) const fn key(self) -> &'static str {
@@ -28,6 +38,9 @@ impl Tip {
             Self::MasksTab => "masks_tab",
             Self::ObjectMask => "object_mask",
             Self::DepthRange => "depth_range",
+            Self::PathMask => "path_mask",
+            Self::ColorRangeMask => "color_range_mask",
+            Self::LuminanceRangeMask => "luminance_range_mask",
         }
     }
 
@@ -36,6 +49,9 @@ impl Tip {
             Self::MasksTab => "Masks",
             Self::ObjectMask => "Object mask",
             Self::DepthRange => "Depth range",
+            Self::PathMask => "Freeform mask",
+            Self::ColorRangeMask => "Color range mask",
+            Self::LuminanceRangeMask => "Luminance range mask",
         }
     }
 
@@ -53,6 +69,18 @@ impl Tip {
                 "Drag the solid handles to set Near and Far, the ends of the depth range. \
                  Drag the hollow handles to feather each end."
             }
+            Self::PathMask => {
+                "Click to add points around the subject; the outline closes itself. \
+                 Drag while adding a point to curve its edge, then drag its handles to reshape it."
+            }
+            Self::ColorRangeMask => {
+                "Click or drag on the photo to sample a color. \
+                 Then use Tolerance to widen the selection, and Grow or Color feather to refine its edge."
+            }
+            Self::LuminanceRangeMask => {
+                "Drag the solid handles to set the luminance range, the darkest and brightest tones selected. \
+                 Drag the hollow handles to feather each end."
+            }
         }
     }
 
@@ -62,6 +90,11 @@ impl Tip {
             Self::MasksTab => include_bytes!("../../assets/tips/masks-tab.webp"),
             Self::ObjectMask => include_bytes!("../../assets/tips/object-mask.webp"),
             Self::DepthRange => include_bytes!("../../assets/tips/depth-range.webp"),
+            Self::PathMask => include_bytes!("../../assets/tips/path-mask.webp"),
+            Self::ColorRangeMask => include_bytes!("../../assets/tips/color-range-mask.webp"),
+            Self::LuminanceRangeMask => {
+                include_bytes!("../../assets/tips/luminance-range-mask.webp")
+            }
         }
     }
 }
@@ -149,6 +182,9 @@ mod tests {
         assert_eq!(Tip::MasksTab.key(), "masks_tab");
         assert_eq!(Tip::ObjectMask.key(), "object_mask");
         assert_eq!(Tip::DepthRange.key(), "depth_range");
+        assert_eq!(Tip::PathMask.key(), "path_mask");
+        assert_eq!(Tip::ColorRangeMask.key(), "color_range_mask");
+        assert_eq!(Tip::LuminanceRangeMask.key(), "luminance_range_mask");
     }
 
     #[test]
