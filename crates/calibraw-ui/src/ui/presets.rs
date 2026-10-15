@@ -150,14 +150,17 @@ fn selection_summary(selection: EditSelection) -> String {
 /// groups happens in the list itself.
 #[cfg(not(target_os = "android"))]
 pub(crate) fn show_header_actions(ui: &mut Ui, app: &mut CalibRawApp) {
-    if moduwu_design::icon_button_enabled(
-        ui,
-        app.presets.is_available(),
-        egui_phosphor::regular::DOWNLOAD_SIMPLE,
-        moduwu_design::toolbar_icon_size(),
-        "Import presets",
-    )
-    .clicked()
+    if ui
+        .add_enabled_ui(app.presets.is_available(), |ui| {
+            moduwu_design::ghost_icon_button(
+                ui,
+                egui_phosphor::regular::DOWNLOAD_SIMPLE,
+                moduwu_design::toolbar_icon_size(),
+                "Import presets",
+            )
+        })
+        .inner
+        .clicked()
     {
         app.choose_preset_files_to_import();
     }

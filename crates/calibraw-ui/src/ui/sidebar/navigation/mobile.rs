@@ -382,7 +382,7 @@ impl Sidebar {
                     // Intentionally no global reset in Edit on mobile.
                     SidebarTab::Adjustments => {}
                     SidebarTab::Crop => {
-                        if moduwu_design::icon_button(
+                        if moduwu_design::ghost_icon_button(
                             ui,
                             egui_phosphor::regular::ARROW_COUNTER_CLOCKWISE,
                             moduwu_design::toolbar_icon_size(),
@@ -394,7 +394,7 @@ impl Sidebar {
                         }
                     }
                     SidebarTab::Masks => {
-                        if moduwu_design::icon_button(
+                        if moduwu_design::ghost_icon_button(
                             ui,
                             egui_phosphor::regular::ARROW_COUNTER_CLOCKWISE,
                             moduwu_design::toolbar_icon_size(),
@@ -417,14 +417,20 @@ impl Sidebar {
                                     .matches_stroke_tool(stroke.retouch.map(|retouch| retouch.tool))
                             })
                             .count();
-                        if moduwu_design::icon_button_enabled(
-                            ui,
-                            active_stroke_count != 0 && !app.inpaint_processing(),
-                            egui_phosphor::regular::TRASH,
-                            moduwu_design::toolbar_icon_size(),
-                            &format!("Clear all {} strokes", active_tool.label()),
-                        )
-                        .clicked()
+                        if ui
+                            .add_enabled_ui(
+                                active_stroke_count != 0 && !app.inpaint_processing(),
+                                |ui| {
+                                    moduwu_design::ghost_icon_button(
+                                        ui,
+                                        egui_phosphor::regular::TRASH,
+                                        moduwu_design::toolbar_icon_size(),
+                                        &format!("Clear all {} strokes", active_tool.label()),
+                                    )
+                                },
+                            )
+                            .inner
+                            .clicked()
                         {
                             app.clear_inpainting_tool();
                         }

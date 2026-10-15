@@ -74,7 +74,7 @@ impl Sidebar {
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         match app.ui.sidebar_tab {
                             SidebarTab::Adjustments => {
-                                if moduwu_design::icon_button(
+                                if moduwu_design::ghost_icon_button(
                                     ui,
                                     egui_phosphor::regular::ARROW_COUNTER_CLOCKWISE,
                                     moduwu_design::toolbar_icon_size(),
@@ -86,7 +86,7 @@ impl Sidebar {
                                 }
                             }
                             SidebarTab::Crop => {
-                                if moduwu_design::icon_button(
+                                if moduwu_design::ghost_icon_button(
                                     ui,
                                     egui_phosphor::regular::ARROW_COUNTER_CLOCKWISE,
                                     moduwu_design::toolbar_icon_size(),
@@ -110,20 +110,29 @@ impl Sidebar {
                                         )
                                     })
                                     .count();
-                                if moduwu_design::icon_button_enabled(
-                                    ui,
-                                    active_stroke_count != 0 && !app.inpaint_processing(),
-                                    egui_phosphor::regular::TRASH,
-                                    moduwu_design::toolbar_icon_size(),
-                                    &format!("Clear all {} strokes", active_tool.label()),
-                                )
-                                .clicked()
+                                if ui
+                                    .add_enabled_ui(
+                                        active_stroke_count != 0 && !app.inpaint_processing(),
+                                        |ui| {
+                                            moduwu_design::ghost_icon_button(
+                                                ui,
+                                                egui_phosphor::regular::TRASH,
+                                                moduwu_design::toolbar_icon_size(),
+                                                &format!(
+                                                    "Clear all {} strokes",
+                                                    active_tool.label()
+                                                ),
+                                            )
+                                        },
+                                    )
+                                    .inner
+                                    .clicked()
                                 {
                                     app.clear_inpainting_tool();
                                 }
                             }
                             SidebarTab::Masks => {
-                                if moduwu_design::icon_button(
+                                if moduwu_design::ghost_icon_button(
                                     ui,
                                     egui_phosphor::regular::ARROW_COUNTER_CLOCKWISE,
                                     moduwu_design::toolbar_icon_size(),

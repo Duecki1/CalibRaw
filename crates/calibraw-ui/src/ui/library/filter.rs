@@ -95,6 +95,14 @@ const SORT_GROUPS: &[(&str, [(LibrarySortOrder, &str); 2])] = &[
     ),
 ];
 
+/// A chip that includes one value in a filter; several can be selected.
+#[cfg(not(target_os = "android"))]
+fn toggle_chip(ui: &mut Ui, selected: &mut bool, label: impl Into<egui::WidgetText>) {
+    if moduwu_design::chip(ui, label, *selected).clicked() {
+        *selected = !*selected;
+    }
+}
+
 pub(super) fn show_sort_filter_options(
     ui: &mut Ui,
     sort: &mut LibrarySortOrder,
@@ -119,9 +127,9 @@ pub(super) fn show_sort_filter_options(
     if group != previous {
         *sort = SORT_GROUPS[group].1[0].0;
     }
-    ui.horizontal(|ui| {
+    moduwu_design::action_row(ui, |ui| {
         for (order, label) in SORT_GROUPS[group].1 {
-            if moduwu_design::toggle_button(ui, label, *sort == order).clicked() {
+            if moduwu_design::chip(ui, label, *sort == order).clicked() {
                 *sort = order;
             }
         }
@@ -139,15 +147,13 @@ pub(super) fn show_sort_filter_options(
         ui.separator();
         ui.strong("Show ratings");
         let had_ratings = filter.ratings.iter().any(|selected| *selected);
-        ui.horizontal(|ui| {
-            if moduwu_design::toggle_button(ui, "All ratings", !had_ratings).clicked() {
+        moduwu_design::action_row(ui, |ui| {
+            if moduwu_design::chip(ui, "All", !had_ratings).clicked() {
                 filter.ratings = [false; 6];
             }
-            moduwu_design::toggle(ui, &mut filter.ratings[0], "Unrated");
-        });
-        ui.horizontal(|ui| {
+            toggle_chip(ui, &mut filter.ratings[0], "Unrated");
             for rating in (1..=5).rev() {
-                moduwu_design::toggle(
+                toggle_chip(
                     ui,
                     &mut filter.ratings[rating],
                     format!("{rating} {}", egui_phosphor::regular::STAR),
@@ -168,18 +174,18 @@ pub(super) fn show_sort_filter_options(
         ui.separator();
         ui.strong("Show flags");
         let had_flags = filter.flags.iter().any(|selected| *selected);
-        if moduwu_design::toggle_button(ui, "All flags", !had_flags).clicked() {
-            filter.flags = [false; 3];
-        }
-        ui.horizontal(|ui| {
-            moduwu_design::toggle(
+        moduwu_design::action_row(ui, |ui| {
+            if moduwu_design::chip(ui, "All", !had_flags).clicked() {
+                filter.flags = [false; 3];
+            }
+            toggle_chip(
                 ui,
                 &mut filter.flags[0],
                 egui::RichText::new(format!("{} Pick", egui_phosphor::regular::FLAG))
                     .color(crate::ui::theme::CHANNEL_GREEN),
             );
-            moduwu_design::toggle(ui, &mut filter.flags[1], "Unflagged");
-            moduwu_design::toggle(
+            toggle_chip(ui, &mut filter.flags[1], "Unflagged");
+            toggle_chip(
                 ui,
                 &mut filter.flags[2],
                 egui::RichText::new(format!("{} Reject", egui_phosphor::regular::FLAG))

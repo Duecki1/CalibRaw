@@ -200,11 +200,9 @@ pub(crate) fn point_color(
             range_editor(ui, "Saturation range", &mut point.saturation_range, sample, 1);
             range_editor(ui, "Luminance range", &mut point.luminance_range, sample, 2);
         });
-        if moduwu_design::toggle_button(ui, "Visualize range", state.visualize_range)
-            .on_hover_text("Show the selected range with the same blue translucent overlay used for masks. Feathered pixels use a softer overlay. This preview is never exported.")
-            .clicked()
+        if moduwu_design::toggle_with_help(ui, &mut state.visualize_range, "Visualize range", "Show the selected range with the same blue translucent overlay used for masks. Feathered pixels use a softer overlay. This preview is never exported.")
+            .changed()
         {
-            state.visualize_range = !state.visualize_range;
         }
     });
     before != *colors

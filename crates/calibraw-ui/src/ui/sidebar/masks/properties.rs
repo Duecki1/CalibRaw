@@ -543,7 +543,8 @@ impl Sidebar {
                 component_name
                     .on_hover_text("Covers the complete image with uniform mask strength.");
             }
-            if moduwu_design::toggle_button(ui, "Invert", component.invert).clicked() {
+            let mut invert = component.invert;
+            if moduwu_design::toggle(ui, &mut invert, "Invert").changed() {
                 edits.push(MaskPropertyAction::ToggleInvert);
             }
             if component_index > 0 {
@@ -601,27 +602,29 @@ impl Sidebar {
         }
         // Toggling opacity enables the stroke opacity slider in the same frame.
         let mut opacity_enabled = *opacity_enabled;
-        ui.horizontal(|ui| {
-            if moduwu_design::toggle_button(ui, "Opacity", opacity_enabled)
-                .on_hover_text(
-                    "Use the opacity setting for newly drawn brush and eraser strokes. \
-                     Disabled strokes always use 100% opacity.",
-                )
-                .clicked()
-            {
-                opacity_enabled = !opacity_enabled;
-                edits.push(MaskPropertyAction::ToggleBrushOpacity);
-            }
-            if moduwu_design::toggle_button(ui, "Overlapping", *overlap_enabled)
-                .on_hover_text(
-                    "Allow separate brush strokes to build opacity where they overlap. \
-                     For example, 10% over 10% produces about 19% coverage.",
-                )
-                .clicked()
-            {
-                edits.push(MaskPropertyAction::ToggleBrushOverlap);
-            }
-        });
+        if moduwu_design::toggle_with_help(
+            ui,
+            &mut opacity_enabled,
+            "Opacity",
+            "Use the opacity setting for newly drawn brush and eraser strokes. \
+             Disabled strokes always use 100% opacity.",
+        )
+        .changed()
+        {
+            edits.push(MaskPropertyAction::ToggleBrushOpacity);
+        }
+        let mut overlap = *overlap_enabled;
+        if moduwu_design::toggle_with_help(
+            ui,
+            &mut overlap,
+            "Overlapping",
+            "Allow separate brush strokes to build opacity where they overlap. \
+             For example, 10% over 10% produces about 19% coverage.",
+        )
+        .changed()
+        {
+            edits.push(MaskPropertyAction::ToggleBrushOverlap);
+        }
         ui.add_enabled_ui(opacity_enabled, |ui| {
             let mut opacity = *opacity;
             if AdjustmentSlider::new("Stroke opacity", &mut opacity, 0.0..=1.0)
