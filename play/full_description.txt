@@ -1,0 +1,59 @@
+CalibRaw is a free, open-source RAW photo editor for Linux, Android, Windows and macOS, with a complete photo-development workflow and AI tools that run locally on your device. No account, no subscription, no ads.
+
+The Android app uses the same GPU engine and .calibraw edit files as the desktop app, with layouts made for touch.
+
+DEVELOP YOUR RAW PHOTOS
+• Exposure, white balance, contrast, highlights, shadows and saturation
+• Luminance and RGB tone curves
+• 8-band color mixer and Point Color with an eyedropper
+• 3-way color grading for shadows, midtones and highlights
+• Sigmoid tone mapping with smooth highlight roll-off and highlight recovery
+• Automatic lens correction with Lensfun: distortion, chromatic aberration and vignetting
+
+MASKS AND AI
+• Brush, linear gradient, radial gradient and shape masks, each with its own adjustments
+• AI masks: select the subject, background, sky, a depth range or any object with a tap
+• AI Remove erases distractions and matches the fill to your photo's grain
+• AI Denoise for high-ISO Bayer and Fujifilm X-Trans RAWs
+• Clone and heal brushes
+
+CREATIVE EFFECTS
+• Depth-aware fog and relighting, light rays and smoke
+• Glow, halation, edge glow, neon, grain, vignette and pixelate
+• Lens, motion, radial and tilt-shift blur
+• Apply any effect to the whole photo or inside a mask
+
+MERGE AND STACK
+• HDR merge: combine bracketed RAW exposures into one extended-range image
+• Focus stacking: combine frames focused at different distances into one image that is sharp throughout
+
+LIBRARY, PRESETS AND EXPORT
+• Fast browsing with cached thumbnails, ratings and pick/reject flags
+• RAW+JPEG pairs are shown once
+• Presets for one photo or a whole selection
+• Non-destructive: edits are saved in small .calibraw sidecar files and your originals are never changed
+• Export JPEG or lossless JPEG XL (8 or 16 bit) to your gallery
+• Edit Replay: export a 30 FPS video of your edit, step by step, for Reels and Shorts
+
+SUPPORTED FILES
+RAW files from a wide range of cameras through LibRaw and Rawler, including Canon, Nikon, Sony, Fujifilm (X-Trans), Panasonic, OM System/Olympus, Pentax, Leica and DNG. JPEG, PNG, HEIC/HEIF and TIFF files open with the same tools.
+
+PRIVACY
+Editing, AI masks, AI Remove and AI Denoise all run on your device, and your photos never leave it. CalibRaw only goes online to download AI models, once and only after you agree; each model is verified before use. AI tools need a recent, capable device.
+
+OPEN SOURCE
+CalibRaw is free software under the GNU General Public License v3.0 or later, written in Rust with wgpu and egui.
+Source code: https://github.com/Duecki1/CalibRaw
+Bug reports and ideas: https://github.com/Duecki1/CalibRaw/issues
+Discord: https://discord.gg/yrY3JDJKsr
+Instagram: @calib.raw
+
+THANKS TO
+CalibRaw builds on the work of these open-source projects:
+• darktable: RCD and X-Trans demosaicing, highlight recovery and sigmoid tone mapping
+• LibRaw, Rawler (dnglab) and Lensfun: RAW decoding, DNG metadata and lens profiles
+• RapidRAW: interface and workflow inspiration
+• GIMP and Ansel: inpainting and color references
+• halation-dctl: the approach behind the Halation effect
+• AI models: BiRefNet, SkySeg U2Net, Depth Anything V2, SAM 2.1, Big-LaMa and RawNIND, run with ONNX Runtime
+Full licenses and attributions are in the source repository.

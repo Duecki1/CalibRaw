@@ -74,7 +74,7 @@ pub use raw_loader::{
     load_raw_file_with_profile_config, load_raw_file_with_profile_selection, load_raw_thumbnail,
     load_raw_thumbnail_with_display_metadata, AiDenoisedImage, CameraProfileCandidate,
     CameraProfileMode, CfaKind, CompactPixelMap, LoadedRaw, RawDisplayMetadata, RawThumbnail,
-    SUPPORTED_RAW_EXTENSIONS,
+    WhiteBalanceRanges, SUPPORTED_RAW_EXTENSIONS,
 };
 pub use remove::{
     adaptive_remove_dilation, canonical_remove_scene_to_pipeline_scene,

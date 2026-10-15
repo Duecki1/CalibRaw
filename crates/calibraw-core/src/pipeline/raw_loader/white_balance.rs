@@ -10,9 +10,9 @@ impl LoadedRaw {
     pub fn as_shot_white_balance(&self) -> Option<(f32, f32)> {
         #[cfg(libraw_available)]
         {
-            let model = self.white_balance_model.as_ref()?;
-            libraw_loader::temperature_tint_from_coefficients(model, model.base_wb)
-                .or(Some((model.base_cct, 1.0)))
+            Some(libraw_loader::as_shot_temperature_tint(
+                self.white_balance_model.as_ref()?,
+            ))
         }
         #[cfg(not(libraw_available))]
         {
@@ -20,86 +20,45 @@ impl LoadedRaw {
         }
     }
 
+    /// Fixed temperature and tint slider ranges for this image.
+    pub fn white_balance_ranges(&self) -> Option<WhiteBalanceRanges> {
+        #[cfg(libraw_available)]
+        {
+            libraw_loader::white_balance_ranges(self.white_balance_model.as_ref()?)
+        }
+        #[cfg(not(libraw_available))]
+        {
+            None
+        }
+    }
+
+    /// Temperature and tint the sliders show for stored offsets, each limited
+    /// to its own slider range.
     pub fn white_balance_temperature_tint(
         &self,
         temperature_offset: f32,
         tint_offset: f32,
     ) -> Option<(f32, f32)> {
         let (base_temperature, base_tint) = self.as_shot_white_balance()?;
-        self.clamp_white_balance_temperature_tint(
+        Some(self.white_balance_ranges()?.clamp(
             temperature_kelvin_from_offset(base_temperature, temperature_offset),
             white_balance_tint_from_offset(base_tint, tint_offset),
-        )
+        ))
     }
 
+    /// Stored offsets for a temperature and tint, each first limited to its
+    /// own slider range.
     pub fn white_balance_offsets_from_temperature_tint(
         &self,
         temperature: f32,
         tint: f32,
     ) -> Option<(f32, f32)> {
         let (base_temperature, base_tint) = self.as_shot_white_balance()?;
-        let (temperature, tint) = self.clamp_white_balance_temperature_tint(temperature, tint)?;
+        let (temperature, tint) = self.white_balance_ranges()?.clamp(temperature, tint);
         Some((
             temperature_offset_from_kelvin(base_temperature, temperature),
             white_balance_tint_offset(base_tint, tint),
         ))
-    }
-
-    fn clamp_white_balance_temperature_tint(
-        &self,
-        temperature: f32,
-        tint: f32,
-    ) -> Option<(f32, f32)> {
-        #[cfg(libraw_available)]
-        {
-            libraw_loader::clamp_white_balance_temperature_tint(
-                self.white_balance_model.as_ref()?,
-                temperature,
-                tint,
-            )
-        }
-        #[cfg(not(libraw_available))]
-        {
-            let _ = (temperature, tint);
-            None
-        }
-    }
-
-    /// Temperatures reachable at this tint without crossing invalid camera responses.
-    pub fn white_balance_temperature_range(
-        &self,
-        temperature: f32,
-        tint: f32,
-    ) -> Option<std::ops::RangeInclusive<f32>> {
-        #[cfg(libraw_available)]
-        {
-            libraw_loader::white_balance_temperature_range(
-                self.white_balance_model.as_ref()?,
-                temperature,
-                tint,
-            )
-        }
-        #[cfg(not(libraw_available))]
-        {
-            let _ = (temperature, tint);
-            None
-        }
-    }
-
-    /// Camera-supported tint limits at the selected temperature.
-    pub fn white_balance_tint_range(
-        &self,
-        temperature: f32,
-    ) -> Option<std::ops::RangeInclusive<f32>> {
-        #[cfg(libraw_available)]
-        {
-            libraw_loader::white_balance_tint_range(self.white_balance_model.as_ref()?, temperature)
-        }
-        #[cfg(not(libraw_available))]
-        {
-            let _ = temperature;
-            None
-        }
     }
 
     pub fn camera_white_balance_presets(&self) -> Vec<WhiteBalancePreset> {
