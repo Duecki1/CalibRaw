@@ -236,40 +236,32 @@ impl Sidebar {
             changed |= AdjustmentSlider::new("Exposure", &mut exposure.exposure, -5.0..=5.0)
                 .decimals(2)
                 .step(0.05)
-                .hover_text("Overall scene-linear brightness in exposure stops.")
                 .gradient(SliderGradient::Brightness)
                 .show(ui);
             changed |= AdjustmentSlider::new("Contrast", &mut exposure.contrast, -100.0..=100.0)
                 .decimals(0)
                 .step(1.0)
-                .hover_text("Maps -100%..+100% to darktable's normal sigmoid contrast range, 0.7..3.0 around its 1.5 default.")
                 .gradient(SliderGradient::Brightness)
                 .show(ui);
             changed |=
                 AdjustmentSlider::new("Highlights", &mut exposure.highlights, -100.0..=100.0)
                     .decimals(0)
                     .step(1.0)
-                    .hover_text(
-                        "Recovers or brightens the upper tonal range without hard clipping.",
-                    )
                     .gradient(SliderGradient::Brightness)
                     .show(ui);
             changed |= AdjustmentSlider::new("Shadows", &mut exposure.shadows, -100.0..=100.0)
                 .decimals(0)
                 .step(1.0)
-                .hover_text("Opens or deepens the lower tonal range.")
                 .gradient(SliderGradient::Brightness)
                 .show(ui);
             changed |= AdjustmentSlider::new("Whites", &mut exposure.whites, -100.0..=100.0)
                 .decimals(0)
                 .step(1.0)
-                .hover_text("Moves the bright endpoint and specular range.")
                 .gradient(SliderGradient::Brightness)
                 .show(ui);
             changed |= AdjustmentSlider::new("Blacks", &mut exposure.blacks, -100.0..=100.0)
                 .decimals(0)
                 .step(1.0)
-                .hover_text("Moves the display black/toe endpoint while preserving sensor black calibration.")
                 .gradient(SliderGradient::Brightness)
                 .show(ui);
         });
@@ -458,7 +450,6 @@ impl Sidebar {
                         AdjustmentSlider::new("Temperature (K)", &mut kelvin, temperature_range)
                             .decimals(0)
                             .step(10.0)
-                            .hover_text("Scene illuminant color temperature in Kelvin. The range follows the camera's valid white balance at the current tint; double-click to reset toward the as-shot temperature.")
                             .gradient(SliderGradient::Temperature)
                             .reset_to(base_kelvin)
                             .show(ui)
@@ -474,8 +465,9 @@ impl Sidebar {
                         AdjustmentSlider::new("Tint", &mut tint, tint_range)
                             .decimals(3)
                             .step(0.005)
-                            .hover_text("Camera tint: lower values add magenta, higher values add green. The range follows the camera's valid white balance at the current temperature; double-click to reset toward the as-shot tint.")
-                            .gradient(SliderGradient::CameraTint { neutral_fraction: tint_neutral_fraction })
+                            .gradient(SliderGradient::CameraTint {
+                                neutral_fraction: tint_neutral_fraction,
+                            })
                             .reset_to(base_tint)
                             .show(ui)
                     })
@@ -501,24 +493,16 @@ impl Sidebar {
                     .color(ui.visuals().weak_text_color()),
                 );
             }
-            changed |= hue_adjustment_slider(
-                ui,
-                &mut exposure.hue,
-                Some("Rotates every color around the perceptual color wheel while preserving lightness and chroma."),
-            );
+            changed |= hue_adjustment_slider(ui, &mut exposure.hue);
             changed |= AdjustmentSlider::new("Vibrance", &mut exposure.vibrance, -100.0..=100.0)
                 .decimals(0)
                 .step(1.0)
-                .hover_text(
-                    "Perceptual colorfulness with protection for saturated colors and skin hues.",
-                )
                 .gradient(SliderGradient::Colorfulness)
                 .show(ui);
             changed |=
                 AdjustmentSlider::new("Saturation", &mut exposure.saturation, -100.0..=100.0)
                     .decimals(0)
                     .step(1.0)
-                    .hover_text("Uniform perceptual chroma scaling.")
                     .gradient(SliderGradient::Colorfulness)
                     .show(ui);
         });
@@ -571,7 +555,6 @@ impl Sidebar {
                 if AdjustmentSlider::new("Strength", &mut strength_percent, 0.0..=100.0)
                     .decimals(0)
                     .step(1.0)
-                    .hover_text("Blends the AI-denoised RAW with the original RAW.")
                     .reset_to(ExposureParams::default().ai_denoise_amount * 100.0)
                     .show(ui)
                 {
@@ -587,33 +570,31 @@ impl Sidebar {
             );
             ui.add_enabled_ui(!exposure.ai_denoise_enabled, |ui| {
                 changed |= AdjustmentSlider::new(
-                        "Luminance",
-                        &mut exposure.luminance_denoise,
-                        0.0..=100.0,
-                    )
-                    .decimals(0)
-                    .step(1.0)
-                    .hover_text("Reduces shot/read noise using the RAW's estimated a·signal+b sensor model. Higher values can smooth fine texture.")
-                    .show(ui);
+                    "Luminance",
+                    &mut exposure.luminance_denoise,
+                    0.0..=100.0,
+                )
+                .decimals(0)
+                .step(1.0)
+                .show(ui);
                 let mut color_percent = exposure.chroma_denoise.clamp(0.0, 1.0) * 100.0;
                 if AdjustmentSlider::new("Color", &mut color_percent, 0.0..=100.0)
                     .decimals(0)
                     .step(1.0)
-                    .hover_text("Reduces color speckling while keeping luminance structure comparatively intact.")
-                    .show(ui) {
+                    .show(ui)
+                {
                     exposure.chroma_denoise = color_percent / 100.0;
                     changed = true;
                 }
                 changed |= AdjustmentSlider::new(
-                        "Denoise Detail",
-                        &mut exposure.denoise_detail,
-                        0.0..=100.0,
-                    )
-                    .decimals(0)
-                    .step(1.0)
-                    .hover_text("Higher values protect edges and microtexture more strongly; lower values permit smoother denoising.")
-                    .reset_to(ExposureParams::default().denoise_detail)
-                    .show(ui);
+                    "Denoise Detail",
+                    &mut exposure.denoise_detail,
+                    0.0..=100.0,
+                )
+                .decimals(0)
+                .step(1.0)
+                .reset_to(ExposureParams::default().denoise_detail)
+                .show(ui);
                 let previous_quality = exposure.denoise_quality;
                 moduwu_design::form_combo(
                     ui,
@@ -650,25 +631,21 @@ impl Sidebar {
             changed |= AdjustmentSlider::new("Amount", &mut exposure.sharpen_amount, 0.0..=150.0)
                 .decimals(0)
                 .step(1.0)
-                .hover_text("Controls overall capture sharpening strength. Zero is an exact no-op.")
                 .reset_to(ExposureParams::default().sharpen_amount)
                 .show(ui);
             changed |= AdjustmentSlider::new("Radius", &mut exposure.sharpen_radius, 0.5..=3.0)
                 .decimals(2)
                 .step(0.05)
-                .hover_text("Controls the edge width being sharpened. Smaller values favor fine detail; larger values strengthen broader edges.")
                 .reset_to(ExposureParams::default().sharpen_radius)
                 .show(ui);
             changed |= AdjustmentSlider::new("Detail", &mut exposure.sharpen_detail, 0.0..=100.0)
                 .decimals(0)
                 .step(1.0)
-                .hover_text("Raises the contribution of the finest texture and lowers fine-detail suppression.")
                 .reset_to(ExposureParams::default().sharpen_detail)
                 .show(ui);
             changed |= AdjustmentSlider::new("Masking", &mut exposure.sharpen_masking, 0.0..=100.0)
                 .decimals(0)
                 .step(1.0)
-                .hover_text("Restricts sharpening to stronger luminance edges as the value increases, protecting flat areas and noise.")
                 .show(ui);
         });
         changed |= action.apply(exposure, AdjustmentGroup::Detail);
@@ -693,21 +670,14 @@ impl Sidebar {
             changed |= AdjustmentSlider::new("Texture", &mut exposure.texture, -100.0..=100.0)
                 .decimals(0)
                 .step(1.0)
-                .hover_text(
-                    "Enhances or softens fine surface detail without changing overall exposure.",
-                )
                 .show(ui);
             changed |= AdjustmentSlider::new("Clarity", &mut exposure.clarity, -100.0..=100.0)
                 .decimals(0)
                 .step(1.0)
-                .hover_text("Changes edge-aware midtone local contrast while protecting highlights and deep shadows.")
                 .show(ui);
             changed |= AdjustmentSlider::new("Dehaze", &mut exposure.dehaze, -100.0..=100.0)
                 .decimals(0)
                 .step(1.0)
-                .hover_text(
-                    "Removes or adds atmospheric veil while preserving color relationships.",
-                )
                 .show(ui);
 
             moduwu_design::section_separator(ui);

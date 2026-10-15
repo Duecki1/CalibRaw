@@ -159,21 +159,18 @@ pub(crate) fn point_color(
         AdjustmentSlider::new("Hue Shift", &mut point.hue_shift, -100.0..=100.0)
             .decimals(0)
             .step(1.0)
-            .hover_text("Shift the selected colors around the hue wheel.")
             .accent(accent)
             .gradient(SliderGradient::HueDegrees { start: hue - 180.0, end: hue + 180.0 })
             .show(ui);
         AdjustmentSlider::new("Saturation Shift", &mut point.saturation_shift, -100.0..=100.0)
             .decimals(0)
             .step(1.0)
-            .hover_text("Increase or reduce the intensity of the selected colors.")
             .accent(accent)
             .gradient(SliderGradient::Saturation(accent))
             .show(ui);
         AdjustmentSlider::new("Luminance Shift", &mut point.luminance_shift, -100.0..=100.0)
             .decimals(0)
             .step(1.0)
-            .hover_text("Brighten or darken the selected colors.")
             .accent(accent)
             .gradient(SliderGradient::Luminance(accent))
             .show(ui);
@@ -181,14 +178,12 @@ pub(crate) fn point_color(
         AdjustmentSlider::new("Range", &mut point.range, 0.0..=100.0)
             .decimals(0)
             .step(1.0)
-            .hover_text("Widen or narrow all three selection ranges together.")
             .reset_to(50.0)
             .show(ui);
         let mut feather = point_color_feather(point);
         if AdjustmentSlider::new("Feather", &mut feather, 0.0..=100.0)
             .decimals(0)
             .step(1.0)
-            .hover_text("Control how far the selection softly extends beyond the full-strength range. Increasing Feather only adds a wider soft falloff; it never shrinks the fully selected core.")
             .reset_to(50.0)
             .show(ui) {
             set_point_color_feather(point, feather);
@@ -425,25 +420,19 @@ fn range_editor(
             default,
         };
         let outline = ui.visuals().widgets.noninteractive.bg_stroke;
-        feathered_range::feathered_range_track(
-            ui,
-            &mut track,
-            label,
-            "Drag a solid handle to move where the selection reaches full strength; drag a hollow handle to move where it starts to fade in or out.",
-            move |painter, bar| {
-                gradient(painter, bar, 80, 1, |x, _| {
-                    let offset = (x * 2.0 - 1.0) * limit;
-                    let mut hsl = sample;
-                    hsl[axis] = if axis == 0 {
-                        (sample[axis] + offset).rem_euclid(1.0)
-                    } else {
-                        (sample[axis] + offset).clamp(0.0, 1.0)
-                    };
-                    hsl_color(hsl)
-                });
-                painter.rect_stroke(bar, 2.0, outline, StrokeKind::Inside);
-            },
-        );
+        feathered_range::feathered_range_track(ui, &mut track, label, move |painter, bar| {
+            gradient(painter, bar, 80, 1, |x, _| {
+                let offset = (x * 2.0 - 1.0) * limit;
+                let mut hsl = sample;
+                hsl[axis] = if axis == 0 {
+                    (sample[axis] + offset).rem_euclid(1.0)
+                } else {
+                    (sample[axis] + offset).clamp(0.0, 1.0)
+                };
+                hsl_color(hsl)
+            });
+            painter.rect_stroke(bar, 2.0, outline, StrokeKind::Inside);
+        });
         *range = track.range;
     });
 }

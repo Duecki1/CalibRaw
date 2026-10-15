@@ -39,7 +39,6 @@ fn count_setting(
         .unwrap_or(*value);
     AdjustmentSlider::new(label, &mut draft, range)
         .reset_to(default)
-        .hover_text(help)
         .show(ui);
     ui.small(format!("{help} Default: {default}."));
 

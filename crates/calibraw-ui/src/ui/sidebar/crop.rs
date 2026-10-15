@@ -144,7 +144,6 @@ impl Sidebar {
             )
             .decimals(1)
             .step(0.1)
-            .hover_text("Fine rotation for leveling the image.")
             .show(ui);
         });
 
@@ -157,7 +156,6 @@ impl Sidebar {
             )
             .decimals(1)
             .step(0.1)
-            .hover_text("Correct horizontal perspective.")
             .show(ui);
             AdjustmentSlider::new(
                 "Vertical",
@@ -166,7 +164,6 @@ impl Sidebar {
             )
             .decimals(1)
             .step(0.1)
-            .hover_text("Correct vertical perspective.")
             .show(ui);
         });
 

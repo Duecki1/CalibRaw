@@ -62,7 +62,6 @@ pub(crate) fn hsl_mixer(
         changed |= AdjustmentSlider::new("Hue", &mut hue[index], -HSL_HUE_LIMIT..=HSL_HUE_LIMIT)
             .decimals(0)
             .step(1.0)
-            .hover_text("Shift this color range toward neighboring hues.")
             .accent(accent)
             .gradient(SliderGradient::ChannelHue {
                 left: CHANNELS[(index + CHANNELS.len() - 2) % CHANNELS.len()].1,
@@ -73,14 +72,12 @@ pub(crate) fn hsl_mixer(
         changed |= AdjustmentSlider::new("Saturation", &mut saturation[index], -100.0..=100.0)
             .decimals(0)
             .step(1.0)
-            .hover_text("Increase or reduce this color range's intensity.")
             .accent(accent)
             .gradient(SliderGradient::Saturation(accent))
             .show(ui);
         changed |= AdjustmentSlider::new("Luminance", &mut luminance[index], -100.0..=100.0)
             .decimals(0)
             .step(1.0)
-            .hover_text("Brighten or darken this color range.")
             .accent(accent)
             .gradient(SliderGradient::Luminance(accent))
             .show(ui);
