@@ -316,6 +316,71 @@ fn load_raw_file_with_selected_profile(
     Ok(loaded)
 }
 
+/// Unpacks the stored samples of a DNG's main image for a payload Rawler
+/// cannot decode, without any LibRaw colour processing. Returns `cpp` samples
+/// per pixel (1 for CFA, 3 for LinearRaw) in file order over the full
+/// `[width, height]` image, before black subtraction, cropping and
+/// orientation. A LinearizationTable is already applied, as Rawler does.
+pub(super) fn unpack_dng_samples(
+    path: &Path,
+    [width, height]: [usize; 2],
+    cpp: usize,
+) -> Result<Vec<u16>> {
+    validate_input_file(path, MAX_RAW_FILE_BYTES, "RAW input")?;
+    let ctx = crate::serialized_reads::run(|| -> Result<_> {
+        let ctx = LibRawContext::new()?;
+        open_libraw_file(&ctx, path, "open DNG")?;
+        validate_opened_raw_geometry(&ctx)?;
+        // SAFETY: `ctx` is a live context with a file opened (type invariant).
+        check_libraw(unsafe { ffi::libraw_unpack(ctx.raw) }, "unpack DNG")?;
+        Ok(ctx)
+    })?;
+    let rawdata = &ctx.data().rawdata;
+    let sizes = &rawdata.sizes;
+    anyhow::ensure!(
+        usize::from(sizes.raw_width) == width && usize::from(sizes.raw_height) == height,
+        "LibRaw unpacked {}x{} DNG samples; expected {width}x{height}",
+        sizes.raw_width,
+        sizes.raw_height
+    );
+    // LibRaw keeps one sample per pixel in `raw_image`, and three-sample
+    // images in `color3_image` or, padded to four, `color4_image`.
+    let (base, stride) = match cpp {
+        1 => (rawdata.raw_image, 1),
+        3 if !rawdata.color3_image.is_null() => (rawdata.color3_image.cast::<u16>(), 3),
+        3 => (rawdata.color4_image.cast::<u16>(), 4),
+        _ => anyhow::bail!("unsupported {cpp}-sample DNG"),
+    };
+    anyhow::ensure!(
+        !base.is_null(),
+        "LibRaw did not unpack {cpp}-sample DNG pixels"
+    );
+    let row_samples = width * stride;
+    let pitch = match sizes.raw_pitch as usize {
+        0 => row_samples,
+        bytes => bytes / std::mem::size_of::<u16>(),
+    };
+    anyhow::ensure!(
+        pitch >= row_samples,
+        "LibRaw raw_pitch is smaller than one unpacked row"
+    );
+    // SAFETY: a non-null pixel buffer is the one `libraw_unpack` allocated:
+    // `raw_height` rows of `raw_pitch` bytes (`raw_width * stride` samples when
+    // the pitch is 0), owned by `ctx`, which outlives this borrow. The length
+    // ends at the last row's final sample, inside that allocation.
+    let buffer = unsafe { std::slice::from_raw_parts(base, (height - 1) * pitch + row_samples) };
+    let mut samples = Vec::new();
+    samples
+        .try_reserve_exact(width * height * cpp)
+        .context("reserve unpacked DNG samples")?;
+    for row in buffer.chunks(pitch) {
+        for pixel in row[..row_samples].chunks_exact(stride) {
+            samples.extend_from_slice(&pixel[..cpp]);
+        }
+    }
+    Ok(samples)
+}
+
 pub(super) fn read_exif_capture_metadata(path: &Path) -> Result<super::CaptureMetadata> {
     // LibRaw and Rawler report the numeric capture fields themselves; EXIF
     // only supplies the verbatim dates and the flash state.

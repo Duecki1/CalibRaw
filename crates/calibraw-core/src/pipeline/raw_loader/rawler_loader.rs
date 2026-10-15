@@ -30,7 +30,28 @@ use std::{
 };
 
 const TIFF_TAG_PLANAR_CONFIGURATION: u16 = 284;
+const TIFF_COMPRESSION_LOSSLESS_JPEG: usize = 7;
 const MAX_RAWLER_THUMBNAIL_FALLBACK_EDGE: usize = 2048;
+
+/// Whether a lossless-JPEG strip or tile declares a non-zero restart interval
+/// (DRI). Rawler 0.8 ignores DRI: it decodes the RSTn markers as entropy data
+/// without resetting the predictors and returns drifting samples instead of an
+/// error (Samsung Galaxy S24 LinearRaw DNGs restart every 16 rows). Only the
+/// header segments before SOS are read; malformed headers are left to Rawler.
+fn ljpeg_has_restart_interval(stream: &[u8]) -> bool {
+    if !stream.starts_with(&[0xFF, 0xD8]) {
+        return false;
+    }
+    let mut pos = 2;
+    while let Some(&[0xFF, marker, high, low]) = stream.get(pos..pos + 4) {
+        match marker {
+            0xDD => return stream.get(pos + 4..pos + 6).is_some_and(|ri| ri != [0, 0]),
+            0xDA | 0xD9 => return false,
+            _ => pos += 2 + usize::from(u16::from_be_bytes([high, low])),
+        }
+    }
+    false
+}
 
 fn rawler_thumbnail_fallback_allowed(width: usize, height: usize) -> bool {
     width <= MAX_RAWLER_THUMBNAIL_FALLBACK_EDGE && height <= MAX_RAWLER_THUMBNAIL_FALLBACK_EDGE
@@ -251,7 +272,16 @@ fn open(path: &Path) -> Result<Input> {
     })
 }
 
-fn validate_layout(input: &Input) -> Result<()> {
+/// Which decoder supplies the pixel samples. Rawler always provides the
+/// metadata and the adaptation to `LoadedRaw`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SampleDecoder {
+    Rawler,
+    /// Lossless JPEG with restart markers, see [`ljpeg_has_restart_interval`].
+    LibRaw,
+}
+
+fn validate_layout(input: &Input) -> Result<SampleDecoder> {
     let raw = &*input.raw;
     let cpp =
         number(raw, TiffCommonTag::SamplesPerPixel as u16)?.context("missing sample count")?;
@@ -349,18 +379,40 @@ fn validate_layout(input: &Input) -> Result<()> {
         offsets.value.count() == count && counts.value.count() == count,
         "invalid DNG strip/tile count"
     );
+    let lossless_jpeg =
+        number(raw, TiffCommonTag::Compression as u16)? == Some(TIFF_COMPRESSION_LOSSLESS_JPEG);
+    let file = input.source.buf();
+    let mut samples = SampleDecoder::Rawler;
     for i in 0..count {
         let offset = offsets.force_usize(i);
         let bytes = counts.force_usize(i);
-        ensure!(
-            bytes > 0
-                && offset
-                    .checked_add(bytes)
-                    .is_some_and(|end| end <= input.source.buf().len()),
-            "DNG pixel payload is outside the file"
+        let end = offset
+            .checked_add(bytes)
+            .filter(|&end| bytes > 0 && end <= file.len())
+            .context("DNG pixel payload is outside the file")?;
+        if lossless_jpeg && ljpeg_has_restart_interval(&file[offset..end]) {
+            samples = SampleDecoder::LibRaw;
+        }
+    }
+    Ok(samples)
+}
+
+/// Decodes the validated main image. LibRaw-supplied samples replace Rawler's
+/// after its decode, which Rawler 0.8 cannot skip for DNGs.
+fn decode(path: &Path, input: &Input, samples: SampleDecoder) -> Result<RawImage> {
+    let mut image = input
+        .decoder
+        .raw_image(&input.source, &RawDecodeParams::default(), false)
+        .context("decode DNG with Rawler")?;
+    if samples == SampleDecoder::LibRaw {
+        let data = shared::unpack_dng_samples(path, [image.width, image.height], image.cpp)
+            .context("decode lossless JPEG restart intervals with LibRaw")?;
+        image.data = RawImageData::Integer(data);
+        crate::diagnostics::record(
+            "DNG lossless JPEG uses restart markers; pixel samples decoded through LibRaw",
         );
     }
-    Ok(())
+    Ok(image)
 }
 
 fn embedded_profile(path: &Path, input: &Input) -> Result<DcpProfile> {
@@ -809,11 +861,8 @@ pub(super) fn load_raw_file_with_profile_selection(
 ) -> Result<LoadedRaw> {
     guarded(|| {
         let input = open(path)?;
-        validate_layout(&input)?;
-        let image = input
-            .decoder
-            .raw_image(&input.source, &RawDecodeParams::default(), false)
-            .context("decode DNG with Rawler")?;
+        let samples = validate_layout(&input)?;
+        let image = decode(path, &input, samples)?;
         let (profile, source, candidates) = shared::resolve_camera_profiles(
             path,
             mode,
@@ -888,7 +937,7 @@ pub(super) fn load_raw_file_with_dcp(path: &Path, profile_path: &Path) -> Result
         let mut profile =
             DcpProfile::from_path(profile_path)?.context("not a DNG camera profile")?;
         let input = open(path)?;
-        validate_layout(&input)?;
+        let samples = validate_layout(&input)?;
         let color = CameraColor::from_dng(path, &input)?;
         profile.camera_calibration_signature = color.embedded.camera_calibration_signature.clone();
         let name = profile.name.clone().unwrap_or_else(|| {
@@ -898,9 +947,7 @@ pub(super) fn load_raw_file_with_dcp(path: &Path, profile_path: &Path) -> Result
                 .to_string_lossy()
                 .into_owned()
         });
-        let image = input
-            .decoder
-            .raw_image(&input.source, &RawDecodeParams::default(), false)?;
+        let image = decode(path, &input, samples)?;
         let md = metadata(&*input.decoder, &input.source);
         let mut loaded = adapt(image, input.geometry, color, md, path, Some(profile))?;
         loaded.camera_profile_source = Some(profile_path.to_owned());
@@ -1029,10 +1076,8 @@ pub(super) fn load_raw_thumbnail(path: &Path, maximum_edge: u32) -> Result<RawTh
                     "DNG has no embedded preview and is too large for the bounded Rawler thumbnail fallback"
                 );
                 let _render_permit = crate::thumbnail_cache::acquire_rendered_thumbnail_worker();
-                validate_layout(&input)?;
-                let raw = input
-                    .decoder
-                    .raw_image(&input.source, &RawDecodeParams::default(), false)
+                let samples = validate_layout(&input)?;
+                let raw = decode(path, &input, samples)
                     .context("decode small DNG for thumbnail fallback")?;
                 let developed = RawDevelop::default()
                     .develop_intermediate(&raw)
