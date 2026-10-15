@@ -53,7 +53,7 @@ fn color_grading_editor_contents(
     moduwu_design::toolbar_row(ui, |ui| {
         ui.strong("Four-way color grading");
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if moduwu_design::icon_button(
+            if moduwu_design::ghost_icon_button(
                 ui,
                 egui_phosphor::regular::ARROW_COUNTER_CLOCKWISE,
                 moduwu_design::toolbar_icon_size(),
@@ -173,7 +173,7 @@ fn color_wheel_toolbar(ui: &mut Ui, wheel: &mut ColorGradeWheel) -> bool {
     moduwu_design::toolbar_row(ui, |ui| {
         ui.strong("Hue / Saturation");
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if moduwu_design::icon_button(
+            if moduwu_design::ghost_icon_button(
                 ui,
                 egui_phosphor::regular::ARROW_COUNTER_CLOCKWISE,
                 moduwu_design::toolbar_icon_size(),

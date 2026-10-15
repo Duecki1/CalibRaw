@@ -181,13 +181,7 @@ impl Sidebar {
                     moduwu_design::toolbar_row(ui, |ui| {
                         let selected = app.inpaint.selected_stroke == Some(index);
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            if moduwu_design::icon_button_enabled(
-                                ui,
-                                !app.inpaint_processing(),
-                                egui_phosphor::regular::TRASH,
-                                moduwu_design::toolbar_icon_size(),
-                                "Delete this stroke",
-                            )
+                            if ui.add_enabled_ui(!app.inpaint_processing(), |ui| moduwu_design::ghost_icon_button(ui, egui_phosphor::regular::TRASH, moduwu_design::toolbar_icon_size(), "Delete this stroke")).inner
                             .clicked()
                             {
                                 delete_stroke = Some(index);

@@ -43,7 +43,7 @@ repository = "https://github.com/Duecki1/CalibRaw"
 readme = "README.md"
 
 [workspace.dependencies]
-moduwu-design = { version = "3.1.0", git = "https://github.com/Duecki1/Moduwu", rev = "7661b1b97a5c8892525cab39fa7142007c27768f" }
+moduwu-design = { version = "3.2.0", git = "https://github.com/Duecki1/Moduwu", rev = "5a07e5d44c8611b982b2e258e26a770d4856a790" }
 calibraw-core = { version = "1.1.0", path = "crates/calibraw-core" }
 calibraw-gpu = { version = "1.1.0", path = "crates/calibraw-gpu" }
 calibraw-ai = { version = "1.1.0", path = "crates/calibraw-ai" }

@@ -26,25 +26,7 @@ pub(crate) fn icon_toggle_button(
     size: Vec2,
     tooltip: &str,
 ) -> Response {
-    glyph_toggle_button(ui, icon.glyph(), selected, size, tooltip)
-}
-
-/// [`icon_toggle_button`] for any Phosphor glyph. Only the selected state is framed.
-#[cfg(not(target_os = "android"))]
-pub(crate) fn glyph_toggle_button(
-    ui: &mut Ui,
-    glyph: &str,
-    selected: bool,
-    size: Vec2,
-    tooltip: &str,
-) -> Response {
-    ui.add_sized(
-        size,
-        egui::Button::new(RichText::new(glyph).size(size.y * 0.52))
-            .selected(selected)
-            .frame(selected),
-    )
-    .on_hover_text(tooltip)
+    moduwu_design::ghost_icon_toggle_button(ui, icon.glyph(), selected, size, tooltip)
 }
 
 pub(crate) fn folder_disclosure_size() -> Vec2 {

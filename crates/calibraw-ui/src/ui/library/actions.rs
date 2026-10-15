@@ -432,13 +432,10 @@ pub(super) fn selection_bar_action_button(
     label: &'static str,
 ) -> egui::Response {
     if compact {
-        moduwu_design::icon_button_enabled(
-            ui,
-            enabled,
-            glyph,
-            moduwu_design::toolbar_icon_size(),
-            label,
-        )
+        ui.add_enabled_ui(enabled, |ui| {
+            moduwu_design::ghost_icon_button(ui, glyph, moduwu_design::toolbar_icon_size(), label)
+        })
+        .inner
     } else {
         moduwu_design::secondary_button_enabled(ui, enabled, format!("{glyph}  {label}"))
             .on_hover_text(label)
@@ -704,7 +701,7 @@ pub(super) fn show_library_selection_action_bar(
                             *library_action = Some(action);
                         }
                         ui.separator();
-                        if moduwu_design::icon_button(
+                        if moduwu_design::ghost_icon_button(
                             ui,
                             egui_phosphor::regular::X,
                             moduwu_design::toolbar_icon_size(),

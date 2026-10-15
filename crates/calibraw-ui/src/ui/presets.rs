@@ -289,7 +289,7 @@ fn show_menu_row<R>(
             // Touch screens have no right-click, so the menu gets a button.
             #[cfg(target_os = "android")]
             ui.push_id(menu_id, |ui| {
-                let button = moduwu_design::icon_button(
+                let button = moduwu_design::ghost_icon_button(
                     ui,
                     egui_phosphor::regular::DOTS_THREE_VERTICAL,
                     moduwu_design::toolbar_icon_size(),
@@ -757,21 +757,17 @@ fn show_adjustment_selection(
             "Each group matches a card in the Edit tab. Groups that are not selected keep the destination photo's settings. Edited groups are shown in bold.",
         );
         moduwu_design::action_row(ui, |ui| {
-            if moduwu_design::secondary_button(ui, "All")
-                .on_hover_text("Include every adjustment group, including unchanged values")
+            let all = selection.adjustment_groups == crate::pipeline::AdjustmentGroupSet::ALL;
+            if moduwu_design::chip(ui, "All", all)
+                .on_hover_text("Include every adjustment group, including unchanged values. Click again to clear them.")
                 .clicked()
             {
-                selection.adjustment_groups = crate::pipeline::AdjustmentGroupSet::ALL;
+                selection.adjustment_groups = if all {
+                    crate::pipeline::AdjustmentGroupSet::EMPTY
+                } else {
+                    crate::pipeline::AdjustmentGroupSet::ALL
+                };
             }
-            if moduwu_design::secondary_button(ui, "None")
-                .on_hover_text("Clear the adjustment groups; other settings stay selected")
-                .clicked()
-            {
-                selection.adjustment_groups = crate::pipeline::AdjustmentGroupSet::EMPTY;
-            }
-        });
-        ui.add_space(moduwu_design::SPACE_XS);
-        moduwu_design::action_row(ui, |ui| {
             for group in AdjustmentGroup::ALL {
                 let included = selection.adjustment_groups.contains(group);
                 let edited = crate::sidecar::adjustment_group_is_edited(edits, group);
@@ -782,7 +778,7 @@ fn show_adjustment_selection(
                 } else {
                     "Unchanged on this photo. Including this group replaces the destination’s settings with these defaults."
                 };
-                if moduwu_design::toggle_button(ui, label, included)
+                if moduwu_design::chip(ui, label, included)
                     .on_hover_text(help)
                     .clicked()
                 {
@@ -825,7 +821,7 @@ fn show_additional_selection(ui: &mut Ui, selection: &mut EditSelection) {
                     "Lens correction state and the selected lens profile.",
                 ),
             ] {
-                if moduwu_design::toggle_button(ui, label, *included)
+                if moduwu_design::chip(ui, label, *included)
                     .on_hover_text(help)
                     .clicked()
                 {

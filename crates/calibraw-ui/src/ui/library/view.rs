@@ -15,7 +15,7 @@ impl Library {
             moduwu_design::toolbar_row(ui, |ui| {
                 moduwu_design::toolbar_title(ui, "Folders");
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if moduwu_design::icon_button(
+                    if moduwu_design::ghost_icon_button(
                         ui,
                         egui_phosphor::regular::X,
                         moduwu_design::toolbar_icon_size(),
@@ -25,26 +25,32 @@ impl Library {
                     {
                         app.set_library_folder_sidebar_open(false);
                     }
-                    if moduwu_design::icon_button_enabled(
-                        ui,
-                        folders_available && !action_in_progress,
-                        egui_phosphor::regular::ARROW_CLOCKWISE,
-                        moduwu_design::toolbar_icon_size(),
-                        "Refresh folders",
-                    )
-                    .clicked()
+                    if ui
+                        .add_enabled_ui(folders_available && !action_in_progress, |ui| {
+                            moduwu_design::ghost_icon_button(
+                                ui,
+                                egui_phosphor::regular::ARROW_CLOCKWISE,
+                                moduwu_design::toolbar_icon_size(),
+                                "Refresh folders",
+                            )
+                        })
+                        .inner
+                        .clicked()
                     {
                         requested_toolbar_action =
                             Some(platform::LocalFolderToolbarAction::Refresh);
                     }
-                    if moduwu_design::icon_button_enabled(
-                        ui,
-                        can_create_folder && !action_in_progress,
-                        egui_phosphor::regular::FOLDER_PLUS,
-                        moduwu_design::toolbar_icon_size(),
-                        "Create folder here",
-                    )
-                    .clicked()
+                    if ui
+                        .add_enabled_ui(can_create_folder && !action_in_progress, |ui| {
+                            moduwu_design::ghost_icon_button(
+                                ui,
+                                egui_phosphor::regular::FOLDER_PLUS,
+                                moduwu_design::toolbar_icon_size(),
+                                "Create folder here",
+                            )
+                        })
+                        .inner
+                        .clicked()
                     {
                         requested_toolbar_action = Some(platform::LocalFolderToolbarAction::New);
                     }
@@ -109,7 +115,7 @@ impl Library {
                     ui.spacing_mut().item_spacing.x = moduwu_design::SPACE_XS;
                 }
                 if !app.library.folder_sidebar_open()
-                    && moduwu_design::icon_button(
+                    && moduwu_design::ghost_icon_button(
                         ui,
                         egui_phosphor::regular::SIDEBAR_SIMPLE,
                         moduwu_design::toolbar_icon_size(),
@@ -131,7 +137,7 @@ impl Library {
 
                     #[cfg(target_os = "android")]
                     if (if compact_header {
-                        moduwu_design::icon_button(
+                        moduwu_design::ghost_icon_button(
                             ui,
                             egui_phosphor::regular::GEAR,
                             moduwu_design::toolbar_icon_size(),
@@ -145,14 +151,20 @@ impl Library {
                         app.activate_tab(AppTab::Settings);
                     }
 
-                    if moduwu_design::icon_button_enabled(
-                        ui,
-                        app.library.location.is_some() && !app.library.scanning,
-                        egui_phosphor::regular::ARROW_CLOCKWISE,
-                        moduwu_design::toolbar_icon_size(),
-                        "Refresh library",
-                    )
-                    .clicked()
+                    if ui
+                        .add_enabled_ui(
+                            app.library.location.is_some() && !app.library.scanning,
+                            |ui| {
+                                moduwu_design::ghost_icon_button(
+                                    ui,
+                                    egui_phosphor::regular::ARROW_CLOCKWISE,
+                                    moduwu_design::toolbar_icon_size(),
+                                    "Refresh library",
+                                )
+                            },
+                        )
+                        .inner
+                        .clicked()
                     {
                         refresh = true;
                     }

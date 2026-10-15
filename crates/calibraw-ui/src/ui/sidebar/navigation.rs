@@ -253,14 +253,14 @@ impl Sidebar {
 
     #[cfg(not(target_os = "android"))]
     pub(crate) fn show_desktop_tool_rail(ui: &mut Ui, app: &mut CalibRawApp) {
-        use crate::ui::icons::{glyph_toggle_button, icon_toggle_button, UiIcon};
+        use crate::ui::icons::{icon_toggle_button, UiIcon};
 
         ui.set_min_width(ui.available_width());
         ui.spacing_mut().item_spacing.y = moduwu_design::SPACE_XS;
         ui.vertical_centered(|ui| {
             ui.add_space(5.0);
             for tab in SidebarTab::ALL {
-                if glyph_toggle_button(
+                if moduwu_design::ghost_icon_toggle_button(
                     ui,
                     tab.glyph(),
                     app.ui.sidebar_tab == tab,

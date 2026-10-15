@@ -45,7 +45,7 @@ impl Sidebar {
                     || (state.catalog.available && state.selected_lens().is_some());
                 let enabled_response = ui
                     .add_enabled_ui(can_enable && !lens_correction_busy, |ui| {
-                        moduwu_design::toggle(ui, &mut state.enabled, "Enabled")
+                        moduwu_design::toggle_row(ui, &mut state.enabled, "Enabled")
                     })
                     .inner;
                 if enabled_response.changed() {
@@ -181,15 +181,19 @@ impl Sidebar {
                 ui.add_space(moduwu_design::SPACE_XS);
                 let previous_corrections = state.corrections;
                 ui.add_enabled_ui(state.catalog.available && !lens_correction_busy, |ui| {
-                ui.horizontal_wrapped(|ui| {
-                    moduwu_design::toggle(ui, &mut state.corrections.geometry, "Geometry")
-                        .on_hover_text(
-                            "Correct lens distortion and colour fringing (lateral chromatic aberration).",
-                        );
-                    moduwu_design::toggle(ui, &mut state.corrections.vignetting, "Vignetting")
-                        .on_hover_text("Brighten the corners the lens darkens.");
+                    moduwu_design::toggle_with_help(
+                        ui,
+                        &mut state.corrections.geometry,
+                        "Geometry",
+                        "Correct lens distortion and colour fringing (lateral chromatic aberration).",
+                    );
+                    moduwu_design::toggle_with_help(
+                        ui,
+                        &mut state.corrections.vignetting,
+                        "Vignetting",
+                        "Brighten the corners the lens darkens.",
+                    );
                 });
-            });
                 // At least one correction must stay selected.
                 if !state.corrections.geometry && !state.corrections.vignetting {
                     state.corrections = previous_corrections;
@@ -419,7 +423,7 @@ impl Sidebar {
                                 }
                             }
                         });
-                    let picker = moduwu_design::icon_toggle_button(
+                    let picker = moduwu_design::ghost_icon_toggle_button(
                         ui,
                         egui_phosphor::regular::EYEDROPPER,
                         *white_balance_picker_active,
@@ -542,14 +546,16 @@ impl Sidebar {
         let ai_before = exposure.ai_denoise_enabled;
         let action = Self::adjustment_card(ui, "Detail", false, foldable, true, |ui| {
             let mut ai_enabled = exposure.ai_denoise_enabled;
-            let ai_response =
-                moduwu_design::toggle(ui, &mut ai_enabled, "AI Denoise — RawNIND UtNet2");
-            if ai_response.changed() {
+            if moduwu_design::toggle_with_help(
+                ui,
+                &mut ai_enabled,
+                "AI Denoise — RawNIND UtNet2",
+                "Runs the pinned darktable-ai RawNIND model locally. Bayer uses joint denoise/demosaic; X-Trans uses the linear Rec.2020 variant.",
+            )
+            .changed()
+            {
                 ai_request = Some(ai_enabled);
             }
-            ai_response.on_hover_text(
-                "Runs the pinned darktable-ai RawNIND model locally. Bayer uses joint denoise/demosaic; X-Trans uses the linear Rec.2020 variant.",
-            );
             if ai_strength_available && exposure.ai_denoise_enabled {
                 let mut strength_percent = exposure.ai_denoise_amount.clamp(0.0, 1.0) * 100.0;
                 if AdjustmentSlider::new("Strength", &mut strength_percent, 0.0..=100.0)
