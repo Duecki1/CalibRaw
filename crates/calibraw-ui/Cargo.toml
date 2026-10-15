@@ -33,6 +33,7 @@ moduwu-design.workspace = true
 anyhow.workspace = true
 egui-phosphor.workspace = true
 image.workspace = true
+image-webp.workspace = true
 jiff.workspace = true
 log.workspace = true
 serde.workspace = true

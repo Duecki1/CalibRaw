@@ -1,5 +1,6 @@
 use crate::pipeline::{CameraProfileMode, ExportFormat};
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 // Bump when a public settings change needs migration; see `sanitized`.
@@ -40,6 +41,12 @@ pub(crate) struct PerformanceSettings {
     /// Missing in files written before the setup step existed, so existing
     /// users are asked once.
     pub subject_mask_quality_chosen: bool,
+    /// Show a feature's tip the first time it is used.
+    pub tips_enabled: bool,
+    /// `Tip::key`s of the tips already shown, including keys of tips other
+    /// versions know.
+    #[serde(skip_serializing_if = "BTreeSet::is_empty")]
+    pub seen_tips: BTreeSet<String>,
     pub auto_check_updates: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub github_update_check_allowed: Option<bool>,
@@ -155,6 +162,8 @@ impl Default for PerformanceSettings {
             preview_backdrop: crate::appearance::PreviewBackdrop::default(),
             onboarding_completed: false,
             subject_mask_quality_chosen: false,
+            tips_enabled: true,
+            seen_tips: BTreeSet::new(),
             auto_check_updates: true,
             github_update_check_allowed: None,
             ignored_update_version: None,
@@ -624,6 +633,8 @@ mod tests {
         );
         assert!(!settings.onboarding_completed);
         assert!(!settings.subject_mask_quality_chosen);
+        assert!(settings.tips_enabled);
+        assert!(settings.seen_tips.is_empty());
     }
 
     #[test]
@@ -646,6 +657,8 @@ mod tests {
             automatic_lens_vignetting: true,
             missing_lens_profile_prompt: false,
             subject_mask_quality: calibraw_ai::ai_masks::SubjectMaskQuality::Low,
+            tips_enabled: false,
+            seen_tips: BTreeSet::from(["masks_tab".to_owned(), "from_a_newer_version".to_owned()]),
             ..Default::default()
         };
         #[cfg(not(target_os = "android"))]
@@ -678,6 +691,8 @@ mod tests {
         assert!(!restored.automatic_lens_correction);
         assert!(!restored.automatic_lens_geometry && restored.automatic_lens_vignetting);
         assert!(!restored.missing_lens_profile_prompt);
+        assert!(!restored.tips_enabled);
+        assert_eq!(restored.seen_tips, settings.seen_tips);
         assert!(restored.develop_histogram_open);
         assert_eq!(
             restored.export_name_template,

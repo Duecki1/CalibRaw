@@ -53,6 +53,11 @@ impl CalibRawApp {
     }
 
     fn transient_ui_open(&self, ctx: &egui::Context) -> bool {
+        self.ui.tip.is_some() || self.dialog_open(ctx)
+    }
+
+    /// Whether a dialog other than a feature tip is open; a tip waits for it.
+    pub(in crate::app) fn dialog_open(&self, ctx: &egui::Context) -> bool {
         self.ui.onboarding_step.is_some()
             || self.ui.unsupported_file_dialog.is_some()
             || self.ui.missing_lens_profile_prompt.is_some()
@@ -90,7 +95,9 @@ impl CalibRawApp {
             self.develop_ui.cancel_point_color_preview();
             self.develop_ui.cancel_white_balance_picker();
         }
-        if tab != SidebarTab::Masks {
+        if tab == SidebarTab::Masks {
+            self.offer_tip(crate::ui::tips::Tip::MasksTab);
+        } else {
             self.cancel_mask_point_color_preview();
         }
         self.sync_ai_runtime();

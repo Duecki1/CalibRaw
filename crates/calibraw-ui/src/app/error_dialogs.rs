@@ -39,6 +39,7 @@ pub(crate) enum ErrorKind {
     Retouch,
     Straighten,
     Settings,
+    Tip,
     EditNotApplied,
     #[cfg(target_os = "android")]
     LibraryAdjustments,
@@ -73,6 +74,7 @@ impl ErrorKind {
             Self::Retouch => "Retouch failed",
             Self::Straighten => "Straightening failed",
             Self::Settings => "Settings error",
+            Self::Tip => "Tip unavailable",
             Self::EditNotApplied => "Edit not applied",
             #[cfg(target_os = "android")]
             Self::LibraryAdjustments => "Library adjustment failed",

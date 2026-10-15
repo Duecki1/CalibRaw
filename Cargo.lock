@@ -727,6 +727,7 @@ dependencies = [
  "egui-phosphor",
  "env_logger",
  "image",
+ "image-webp",
  "jiff",
  "log",
  "moduwu-design",
