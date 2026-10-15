@@ -9,14 +9,14 @@
 //!   and show the effects that replaced the sliders as effect components,
 //!   while [`super::LegacyEffectSliders`] reads them back as nothing to
 //!   migrate.
-//! - Those readers cannot decode a Relight effect and would drop a manual lens
-//!   correction. Edits with either are written with schema 2, which they
-//!   report as newer instead of as corrupt, so they never replace the file
-//!   with an unedited one. Every other edit is written with schema 1, whose
-//!   layout schema 2 shares.
+//! - Those readers cannot decode a Relight effect or a custom crop aspect
+//!   ratio and would drop a manual lens correction. Edits with any of them are
+//!   written with schema 2, which they report as newer instead of as corrupt,
+//!   so they never replace the file with an unedited one. Every other edit is
+//!   written with schema 1, whose layout schema 2 shares.
 
 use super::effect_sliders::GlobalSliders;
-use crate::pipeline::{ExposureParams, MaskEffect};
+use crate::pipeline::{CropAspectRatio, ExposureParams, MaskEffect};
 use crate::sidecar::EditState;
 use serde::{Serialize, Serializer};
 
@@ -55,7 +55,8 @@ pub(crate) fn schema_version(edits: &EditState, current: u32) -> u32 {
             .masks
             .iter()
             .any(|mask| mask.effect == MaskEffect::Relight);
-    if uses_relight || edits.lens.manual.is_some() {
+    let custom_aspect = matches!(edits.geometry.aspect_ratio, CropAspectRatio::Custom { .. });
+    if uses_relight || edits.lens.manual.is_some() || custom_aspect {
         current
     } else {
         V1_SCHEMA_VERSION
@@ -145,6 +146,22 @@ mod tests {
         let bytes = encode(edits.clone()).unwrap();
         assert_eq!(document(&bytes)["schema_version"], SIDECAR_SCHEMA_VERSION);
         assert_eq!(decode(&bytes).unwrap().edits, edits);
+    }
+
+    #[test]
+    fn a_custom_crop_ratio_is_written_as_the_newer_schema() {
+        let mut edits = edits(None);
+        edits.geometry.aspect_ratio = CropAspectRatio::Custom {
+            width: 5,
+            height: 4,
+        };
+        let bytes = encode(edits.clone()).unwrap();
+        assert_eq!(document(&bytes)["schema_version"], SIDECAR_SCHEMA_VERSION);
+        assert_eq!(decode(&bytes).unwrap().edits, edits);
+
+        edits.geometry.aspect_ratio = CropAspectRatio::FourThree;
+        let bytes = encode(edits).unwrap();
+        assert_eq!(document(&bytes)["schema_version"], V1_SCHEMA_VERSION);
     }
 
     #[test]
