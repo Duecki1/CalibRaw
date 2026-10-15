@@ -100,7 +100,7 @@ fn native_options() -> eframe::NativeOptions {
                 adapter_limits.max_texture_dimension_2d,
                 adapter.features(),
             ));
-            let mut required_limits = calibraw_gpu::base_device_limits(info.backend);
+            let mut required_limits = calibraw_gpu::base_device_limits(adapter);
             required_limits.max_texture_dimension_2d = adapter_limits.max_texture_dimension_2d;
             let required_features = adapter.features() & eframe::wgpu::Features::PIPELINE_CACHE;
             eframe::wgpu::DeviceDescriptor {
