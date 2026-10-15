@@ -445,22 +445,26 @@ impl Sidebar {
                 let (mut kelvin, mut tint) = raw
                     .white_balance_temperature_tint(exposure.temperature, exposure.tint)
                     .expect("white-balance model was checked above");
+                let ranges = raw
+                    .white_balance_ranges()
+                    .expect("white-balance ranges were checked above");
                 let base_kelvin = raw.as_shot_temperature_kelvin().unwrap_or(kelvin);
-                let temperature_range = raw
-                    .white_balance_temperature_range(kelvin, tint)
-                    .unwrap_or(kelvin..=kelvin);
                 let kelvin_changed = ui
                     .push_id(base_kelvin.to_bits(), |ui| {
-                        AdjustmentSlider::new("Temperature (K)", &mut kelvin, temperature_range)
-                            .decimals(0)
-                            .step(10.0)
-                            .gradient(SliderGradient::Temperature)
-                            .reset_to(base_kelvin)
-                            .show(ui)
+                        AdjustmentSlider::new(
+                            "Temperature (K)",
+                            &mut kelvin,
+                            ranges.temperature.clone(),
+                        )
+                        .decimals(0)
+                        .step(10.0)
+                        .gradient(SliderGradient::Temperature)
+                        .reset_to(base_kelvin)
+                        .show(ui)
                     })
                     .inner;
                 let base_tint = raw.as_shot_white_balance().map_or(tint, |value| value.1);
-                let tint_range = raw.white_balance_tint_range(kelvin).unwrap_or(tint..=tint);
+                let tint_range = ranges.tint;
                 let tint_neutral_fraction = ((1.0 - tint_range.start())
                     / (tint_range.end() - tint_range.start()).max(f32::EPSILON))
                 .clamp(0.0, 1.0);
@@ -480,8 +484,14 @@ impl Sidebar {
                     if let Some((temperature, tint)) =
                         raw.white_balance_offsets_from_temperature_tint(kelvin, tint)
                     {
-                        exposure.temperature = temperature;
-                        exposure.tint = tint;
+                        // Each slider writes only its own value, so moving one
+                        // never changes the other.
+                        if kelvin_changed {
+                            exposure.temperature = temperature;
+                        }
+                        if tint_changed {
+                            exposure.tint = tint;
+                        }
                         *white_balance_picker_active = false;
                         changed = true;
                     }

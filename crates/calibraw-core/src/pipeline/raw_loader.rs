@@ -20,7 +20,7 @@ use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fmt;
-use std::ops::{Deref, DerefMut, Index};
+use std::ops::{Deref, DerefMut, Index, RangeInclusive};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
 
@@ -157,7 +157,7 @@ pub enum CfaKind {
     XTrans,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct DngColorEndpoint {
     pub cct: Option<f32>,
     pub color_matrix: [[f32; 3]; 4],
@@ -165,7 +165,7 @@ pub struct DngColorEndpoint {
     pub forward_matrix: Option<[[f32; 4]; 3]>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum CameraColorModel {
     Dng {
         endpoints: Box<[DngColorEndpoint; 2]>,
@@ -176,12 +176,31 @@ pub enum CameraColorModel {
     },
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct CameraWhiteBalanceModel {
     pub base_wb: [f32; 4],
     pub cdesc: [u8; 4],
     pub base_cct: f32,
     pub color: CameraColorModel,
+}
+
+/// Fixed ranges of the white-balance sliders: temperature in Kelvin and the
+/// multiplicative tint of the Y coordinate. Neither depends on the other
+/// slider's value.
+#[derive(Clone, Debug, PartialEq)]
+pub struct WhiteBalanceRanges {
+    pub temperature: RangeInclusive<f32>,
+    pub tint: RangeInclusive<f32>,
+}
+
+impl WhiteBalanceRanges {
+    /// Limits each value to its own range, independently of the other.
+    pub fn clamp(&self, temperature: f32, tint: f32) -> (f32, f32) {
+        (
+            temperature.clamp(*self.temperature.start(), *self.temperature.end()),
+            tint.clamp(*self.tint.start(), *self.tint.end()),
+        )
+    }
 }
 
 #[derive(Clone, Debug, Default)]
