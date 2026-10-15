@@ -175,11 +175,9 @@ pub(crate) fn show(
         |ui, settings| {
             let mut changed = float_param_slider(ui, &mut settings.amount, fog::AMOUNT);
             changed |= float_param_slider(ui, &mut settings.density, fog::DENSITY);
-            if moduwu_design::toggle_button(ui, "Scene depth", settings.depth_enabled)
-                .on_hover_text("Generate and use shared scene depth so distant areas collect more fog. Turn off to use a flat veil; depth settings are preserved.")
-                .clicked()
+            if moduwu_design::toggle_with_help(ui, &mut settings.depth_enabled, "Scene depth", "Generate and use shared scene depth so distant areas collect more fog. Turn off to use a flat veil; depth settings are preserved.")
+                .changed()
             {
-                settings.depth_enabled = !settings.depth_enabled;
                 changed = true;
             }
             if settings.depth_enabled {

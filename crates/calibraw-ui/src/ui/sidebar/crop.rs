@@ -56,27 +56,85 @@ impl Sidebar {
         });
 
         moduwu_design::card_gap(ui);
-        moduwu_design::section_card(ui, "Rotation", |ui| {
-            ui.horizontal(|ui| {
-                if crate::ui::icons::icon_button(
+        moduwu_design::section_card(ui, "Rotate & flip", |ui| {
+            let size = moduwu_design::toolbar_icon_size();
+            ui.horizontal_wrapped(|ui| {
+                if moduwu_design::ghost_icon_button(
                     ui,
-                    crate::ui::icons::UiIcon::RotateLeft,
-                    moduwu_design::toolbar_icon_size(),
+                    egui_phosphor::regular::ARROW_COUNTER_CLOCKWISE,
+                    size,
                     "Rotate 90° counter-clockwise",
                 )
                 .clicked()
                 {
                     app.develop.geometry.rotate_quarter_turn(false);
                 }
-                if crate::ui::icons::icon_button(
+                if moduwu_design::ghost_icon_button(
                     ui,
-                    crate::ui::icons::UiIcon::RotateRight,
-                    moduwu_design::toolbar_icon_size(),
+                    egui_phosphor::regular::ARROW_CLOCKWISE,
+                    size,
                     "Rotate 90° clockwise",
                 )
                 .clicked()
                 {
                     app.develop.geometry.rotate_quarter_turn(true);
+                }
+                if moduwu_design::ghost_icon_toggle_button(
+                    ui,
+                    egui_phosphor::regular::FLIP_HORIZONTAL,
+                    app.develop.geometry.flip_horizontal,
+                    size,
+                    "Flip horizontal",
+                )
+                .clicked()
+                {
+                    app.develop.geometry.flip_horizontal = !app.develop.geometry.flip_horizontal;
+                }
+                if moduwu_design::ghost_icon_toggle_button(
+                    ui,
+                    egui_phosphor::regular::FLIP_VERTICAL,
+                    app.develop.geometry.flip_vertical,
+                    size,
+                    "Flip vertical",
+                )
+                .clicked()
+                {
+                    app.develop.geometry.flip_vertical = !app.develop.geometry.flip_vertical;
+                }
+                ui.separator();
+                let straighten_tooltip = if app.develop_ui.straighten_tool_active {
+                    "Cancel straighten line"
+                } else {
+                    "Draw straighten line: drag along a horizon or vertical edge in the preview to level it"
+                };
+                if moduwu_design::ghost_icon_toggle_button(
+                    ui,
+                    egui_phosphor::regular::RULER,
+                    app.develop_ui.straighten_tool_active,
+                    size,
+                    straighten_tooltip,
+                )
+                .clicked()
+                {
+                    app.develop_ui.straighten_tool_active = !app.develop_ui.straighten_tool_active;
+                    app.develop_ui.straighten_drag = None;
+                    app.develop_ui.crop_drag = None;
+                }
+                if ui
+                    .add_enabled_ui(app.auto_straighten_available(), |ui| {
+                        moduwu_design::ghost_icon_button(
+                            ui,
+                            egui_phosphor::regular::MAGIC_WAND,
+                            size,
+                            "Auto straighten: level the image using its horizon and vertical edges",
+                        )
+                    })
+                    .inner
+                    .clicked()
+                {
+                    app.develop_ui.straighten_tool_active = false;
+                    app.develop_ui.straighten_drag = None;
+                    app.start_auto_straighten();
                 }
             });
             AdjustmentSlider::new(
@@ -88,59 +146,10 @@ impl Sidebar {
             .step(0.1)
             .hover_text("Fine rotation for leveling the image.")
             .show(ui);
-            let straighten_label = if app.develop_ui.straighten_tool_active {
-                "Cancel straighten line"
-            } else {
-                "Draw straighten line"
-            };
-            if moduwu_design::toggle_button(
-                ui,
-                straighten_label,
-                app.develop_ui.straighten_tool_active,
-            )
-                .on_hover_text("Drag along a horizon or vertical edge in the Crop preview. CalibRaw rotates the image so that line becomes level.")
-                .clicked()
-            {
-                app.develop_ui.straighten_tool_active = !app.develop_ui.straighten_tool_active;
-                app.develop_ui.straighten_drag = None;
-                app.develop_ui.crop_drag = None;
-            }
-            if moduwu_design::secondary_button_enabled(
-                ui,
-                app.auto_straighten_available(),
-                "Auto straighten",
-            )
-            .on_hover_text("Level the image using its horizon and vertical edges.")
-            .clicked()
-            {
-                app.develop_ui.straighten_tool_active = false;
-                app.develop_ui.straighten_drag = None;
-                app.start_auto_straighten();
-            }
         });
 
         moduwu_design::card_gap(ui);
         moduwu_design::section_card(ui, "Transform", |ui| {
-            ui.horizontal_wrapped(|ui| {
-                if moduwu_design::toggle_button(
-                    ui,
-                    "Flip horizontal",
-                    app.develop.geometry.flip_horizontal,
-                )
-                .clicked()
-                {
-                    app.develop.geometry.flip_horizontal = !app.develop.geometry.flip_horizontal;
-                }
-                if moduwu_design::toggle_button(
-                    ui,
-                    "Flip vertical",
-                    app.develop.geometry.flip_vertical,
-                )
-                .clicked()
-                {
-                    app.develop.geometry.flip_vertical = !app.develop.geometry.flip_vertical;
-                }
-            });
             AdjustmentSlider::new(
                 "Horizontal",
                 &mut app.develop.geometry.horizontal_transform,
