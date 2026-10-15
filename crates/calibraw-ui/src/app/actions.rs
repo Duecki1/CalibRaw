@@ -56,12 +56,23 @@ impl CalibRawApp {
         self.ui.tip.is_some() || self.dialog_open(ctx)
     }
 
+    #[cfg(not(target_os = "android"))]
+    fn shortcuts_dialog_open(&self) -> bool {
+        self.ui.shortcuts_dialog_open
+    }
+
+    #[cfg(target_os = "android")]
+    fn shortcuts_dialog_open(&self) -> bool {
+        false
+    }
+
     /// Whether a dialog other than a feature tip is open; a tip waits for it.
     pub(in crate::app) fn dialog_open(&self, ctx: &egui::Context) -> bool {
         self.ui.onboarding_step.is_some()
             || self.ui.unsupported_file_dialog.is_some()
             || self.ui.missing_lens_profile_prompt.is_some()
             || self.develop_ui.manual_lens_dialog.is_some()
+            || self.shortcuts_dialog_open()
             || self.ui.version_check.dialog_open()
             || self.library.transient_dialog_open()
             || self.presets.dialog_open()

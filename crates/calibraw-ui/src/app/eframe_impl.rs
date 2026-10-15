@@ -243,6 +243,8 @@ impl CalibRawApp {
         self.show_foreground_operation_dialog(ctx);
         self.show_remove_progress_dialog(ctx);
         self.show_export_task_dialog(ctx);
+        #[cfg(not(target_os = "android"))]
+        crate::ui::shortcuts_dialog::show(ctx, self);
         self.show_tip_dialog(ctx);
     }
 

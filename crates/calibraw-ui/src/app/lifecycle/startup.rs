@@ -334,6 +334,8 @@ impl CalibRawApp {
                 .copied(),
                 tip: None,
                 version_check: Default::default(),
+                #[cfg(not(target_os = "android"))]
+                shortcuts_dialog_open: false,
             },
             #[cfg(not(target_os = "android"))]
             library: LibraryState::new_desktop(

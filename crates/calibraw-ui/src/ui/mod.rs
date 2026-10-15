@@ -10,6 +10,8 @@ pub(crate) mod onboarding;
 pub(crate) mod presets;
 pub(crate) mod preview;
 pub(crate) mod settings;
+#[cfg(not(target_os = "android"))]
+pub(crate) mod shortcuts_dialog;
 pub(crate) mod sidebar;
 pub(crate) mod theme;
 pub(crate) mod tips;
