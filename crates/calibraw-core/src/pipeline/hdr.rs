@@ -2,9 +2,7 @@
 //! Clipping weights follow the principle of excluding saturated measurements described in
 //! https://www.pauldebevec.com/Research/HDR/ (the RAW response is already linear).
 
-mod alignment;
-pub use alignment::{Alignment, AlignmentReference};
-
+use super::alignment::{sample_coordinates, Alignment};
 use super::raw_loader::validate_raw_dimensions;
 use anyhow::{ensure, Result};
 use rayon::prelude::*;
@@ -24,7 +22,7 @@ pub fn exposure_scale(shutter_seconds: f32, iso: f32, aperture: f32) -> Result<f
     Ok(scale)
 }
 
-pub(super) fn validate_rgb(width: u32, height: u32, rgb: &[f32], exposure: f32) -> Result<()> {
+fn validate_rgb(width: u32, height: u32, rgb: &[f32], exposure: f32) -> Result<()> {
     let pixels = validate_raw_dimensions(width, height)?;
     ensure!(
         rgb.len() == pixels * 3,
@@ -87,12 +85,11 @@ impl HdrAccumulator {
         }
         let width = self.width as usize;
         let height = self.height as usize;
-        let transform = alignment.transform(width, height);
         self.pixels
             .par_iter_mut()
             .enumerate()
             .for_each(|(i, merged)| {
-                let (x, y) = transform.map((i % width) as f32, (i / width) as f32);
+                let (x, y) = alignment.map((i % width) as f32, (i / width) as f32);
                 let Some((indices, fractions)) = sample_coordinates(width, height, x, y) else {
                     return;
                 };
@@ -180,37 +177,6 @@ impl HdrAccumulator {
             .collect();
         Ok((rgb, clipped))
     }
-}
-
-pub(super) fn sample_coordinates(
-    width: usize,
-    height: usize,
-    x: f32,
-    y: f32,
-) -> Option<([usize; 4], [f32; 4])> {
-    if x < 0.0 || y < 0.0 || x > (width - 1) as f32 || y > (height - 1) as f32 {
-        return None;
-    }
-    let ix = x.floor() as usize;
-    let iy = y.floor() as usize;
-    let jx = (ix + 1).min(width - 1);
-    let jy = (iy + 1).min(height - 1);
-    let dx = x - ix as f32;
-    let dy = y - iy as f32;
-    Some((
-        [
-            iy * width + ix,
-            iy * width + jx,
-            jy * width + ix,
-            jy * width + jx,
-        ],
-        [
-            (1.0 - dx) * (1.0 - dy),
-            dx * (1.0 - dy),
-            (1.0 - dx) * dy,
-            dx * dy,
-        ],
-    ))
 }
 
 #[cfg(test)]

@@ -1,9 +1,11 @@
 pub mod adjustment_groups;
 pub use adjustment_groups::{AdjustmentGroup, AdjustmentGroupSet};
+pub mod alignment;
 pub mod basicadj;
 pub mod color_profile;
 mod display_raster;
 mod exif_metadata;
+pub mod focus_stack;
 pub mod geometry;
 pub mod hdr;
 mod lens_correction;
