@@ -71,6 +71,7 @@ impl CalibRawApp {
         self.ui.onboarding_step.is_some()
             || self.ui.unsupported_file_dialog.is_some()
             || self.ui.missing_lens_profile_prompt.is_some()
+            || self.ui.runtime_restart_prompt.is_some()
             || self.develop_ui.manual_lens_dialog.is_some()
             || self.shortcuts_dialog_open()
             || self.ui.version_check.dialog_open()

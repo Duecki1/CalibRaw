@@ -13,6 +13,7 @@ impl CalibRawApp {
             "ONNX Runtime mode changed. Restart CalibRaw if an AI runtime was already used in this session."
                 .to_owned(),
         );
+        self.prompt_restart_for_runtime_change("ONNX Runtime mode changed.");
     }
 
     #[cfg(not(target_os = "android"))]
@@ -28,6 +29,48 @@ impl CalibRawApp {
             "ONNX Runtime changed. Restart CalibRaw if an AI runtime was already used in this session."
                 .to_owned(),
         );
+        self.prompt_restart_for_runtime_change(&format!("AI runtime changed to {}.", kind.label()));
+    }
+
+    /// Asks for a restart when this process already loaded an ONNX Runtime
+    /// library: the new choice cannot replace that library until CalibRaw
+    /// starts again, and AI jobs would fail until then.
+    #[cfg(not(target_os = "android"))]
+    pub(in crate::app) fn prompt_restart_for_runtime_change(&mut self, change: &str) {
+        if calibraw_ai::ai_masks::runtime_loaded_in_process() {
+            self.ui.runtime_restart_prompt = Some(format!(
+                "{change} The ONNX Runtime already loaded in this session cannot be replaced while CalibRaw runs. Restart CalibRaw before using AI features again."
+            ));
+        }
+    }
+
+    #[cfg(not(target_os = "android"))]
+    pub(in crate::app) fn show_runtime_restart_dialog(&mut self, ctx: &egui::Context) {
+        let Some(message) = self.ui.runtime_restart_prompt.clone() else {
+            return;
+        };
+        let mut close = false;
+        moduwu_design::Dialog::new("onnx-runtime-restart", "Restart required").show_with_footer(
+            ctx,
+            |ui| {
+                ui.label(&message);
+            },
+            |ui| {
+                close |= moduwu_design::primary_action_button(ui, "OK").clicked();
+                if !close
+                    && moduwu_design::dialog_keyboard_action(
+                        ui,
+                        moduwu_design::DialogKeyboard::CLOSE_ONLY,
+                        false,
+                    ) == moduwu_design::DialogAction::Cancel
+                {
+                    close = true;
+                }
+            },
+        );
+        if close {
+            self.ui.runtime_restart_prompt = None;
+        }
     }
 
     #[cfg(not(target_os = "android"))]
@@ -384,6 +427,7 @@ impl CalibRawApp {
                     "Manual ONNX Runtime selection cleared. Choose another library or switch to Automatic. Restart CalibRaw to apply the change."
                         .to_owned(),
                 );
+                self.prompt_restart_for_runtime_change("Manual ONNX Runtime selection cleared.");
             }
             Err(error) => self.report_error(ErrorKind::AiRuntime, error),
         }

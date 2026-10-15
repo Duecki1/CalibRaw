@@ -78,6 +78,9 @@ pub(crate) struct UiState {
     pub(crate) unsupported_file_dialog: Option<UnsupportedFileDialog>,
     /// The message of the open missing-lens-profile prompt.
     pub(crate) missing_lens_profile_prompt: Option<String>,
+    /// The message of the open restart prompt, shown after an ONNX Runtime
+    /// choice changed while another runtime is already loaded.
+    pub(crate) runtime_restart_prompt: Option<String>,
     pub(crate) onboarding_step: Option<OnboardingStep>,
     /// The feature tip offered and not yet answered.
     pub(in crate::app) tip: Option<ShownTip>,
