@@ -317,7 +317,7 @@ pub(crate) fn tone_curve_channel_editor(
             }
         }
         ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
-            if moduwu_design::icon_button(
+            if moduwu_design::ghost_icon_button(
                 ui,
                 egui_phosphor::regular::ARROW_COUNTER_CLOCKWISE,
                 moduwu_design::toolbar_icon_size(),
@@ -359,7 +359,7 @@ pub(crate) fn tone_curve_channel_editor(
                 }
             }
 
-            if moduwu_design::icon_button(
+            if moduwu_design::ghost_icon_button(
                 ui,
                 egui_phosphor::regular::ARROW_COUNTER_CLOCKWISE,
                 moduwu_design::toolbar_icon_size(),

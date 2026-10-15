@@ -76,14 +76,14 @@ where
                     let buttons = ui
                         .with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             let size = egui::vec2(26.0, 26.0);
-                            let reset_button = moduwu_design::icon_button(
+                            let reset_button = moduwu_design::ghost_icon_button(
                                 ui,
                                 egui_phosphor::regular::ARROW_COUNTER_CLOCKWISE,
                                 size,
                                 &format!("Reset {}", effect.label()),
                             );
                             reset = reset_button.clicked();
-                            let remove_button = moduwu_design::icon_button(
+                            let remove_button = moduwu_design::ghost_icon_button(
                                 ui,
                                 egui_phosphor::regular::TRASH,
                                 size,
@@ -95,7 +95,7 @@ where
                             } else {
                                 egui_phosphor::regular::EYE
                             };
-                            let visibility_button = moduwu_design::icon_toggle_button(
+                            let visibility_button = moduwu_design::ghost_icon_toggle_button(
                                 ui,
                                 icon,
                                 !*enabled,

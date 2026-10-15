@@ -171,11 +171,14 @@ installation and photo/editor-specific colours, and `appearance.rs` the
 persisted `UiDesign` and `PreviewBackdrop` settings. Keep specialized image
 canvases, mask cards, and colour controls in their existing components.
 
-- Use secondary/primary action buttons for forms and settings, `menu_item` for
-  regular menu actions, and `context_menu_item` for selectable navigation menus.
-  Preserve each menu's explicit `ui.close()` behavior.
-- Use `icons` helpers for icon actions and folder disclosure controls. Conditional
-  variants delegate to the same control so enabled state does not change sizing.
+- Use secondary/primary action buttons for forms, settings and dialog footers,
+  `menu_item` for regular menu actions, `menu_checkbox_item` for on/off options
+  in menus, and `context_menu_item` for selectable navigation menus. Preserve
+  each menu's explicit `ui.close()` behavior.
+- Icon actions in toolbars, panel and card headers and tool rows use
+  `ghost_icon_button` and `ghost_icon_toggle_button`, which show a frame only on
+  hover, focus or selection; wrap them in `add_enabled_ui` to disable them.
+  `icons` holds the folder disclosure control and the desktop tool rail glyphs.
 - Use the shared form rows, text edits, `NumberField` and combo builders.
   `moduwu_design::Slider` owns value editing, reset, focus, keyboard and
   accessibility actions, and pointer/scroll handling on desktop and touch
@@ -183,15 +186,24 @@ canvases, mask cards, and colour controls in their existing components.
   photographic track gradients. Scroll areas that contain sliders consult
   `moduwu_design::slider_scroll_locked`.
 - Pick the control from what the value means: `moduwu_design::toggle` or
-  `toggle_with_help` for on/off options, `segmented_button` for one choice among
-  a few, `AngleDial` (via `float_param_angle`) for directions, the shared
+  `toggle_with_help` (a switch) for on/off options, `segmented_control` for one
+  choice among a few, `chip` rows for filters and quick choices (one or
+  several), `toggle_button` only for tool modes that stay active while used,
+  `AngleDial` (via `float_param_angle`) for directions, the shared
   feathered range (`components::feathered_range`) for ranges with soft edges
   such as depth, luminance and Point Color, and `pattern_seed` (Shuffle) for
   random pattern seeds.
-- Use `dialog_window`, dialog action rows, and keyboard helpers for existing
-  window dialogs. Keep initial focus requests one-time, and run keyboard fallback
-  after controls process input. Modal surfaces use themed egui frames; preserve
-  their existing dismissal and backdrop policies.
+- Every dialog is a modal `moduwu_design::Dialog`: actions go in the footer of
+  `show_with_footer` (primary action first), and it becomes a bottom sheet on
+  narrow and touch portrait screens. Use `dialog_confirmation_actions` for
+  confirm/cancel footers and `dialog_keyboard_action` for Escape and Enter.
+  Keep initial focus requests one-time, and run keyboard fallback after
+  controls process input. Backdrop clicks dismiss nothing unless a dialog opts
+  in.
+- Work that may run while the app stays usable (exports, Edit Replays, HDR
+  merges) reports through the toolbar task indicator
+  (`ui/background_tasks.rs`), not a dialog. Work that edits the open document,
+  such as AI masks and denoise, keeps its blocking progress dialog.
 - Report every failure the user should know about with
   `CalibRawApp::report_error(ErrorKind, message)` (`app/error_dialogs.rs`). It
   queues the shared error dialog, keeps the message in the status line and logs

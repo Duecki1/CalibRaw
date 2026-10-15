@@ -623,7 +623,7 @@ impl Sidebar {
                 edits.push(MaskPropertyAction::SetBrushStrokeOpacity(opacity));
             }
         });
-        if moduwu_design::icon_button(
+        if moduwu_design::ghost_icon_button(
             ui,
             egui_phosphor::regular::ERASER,
             moduwu_design::toolbar_icon_size(),
@@ -738,7 +738,7 @@ impl Sidebar {
         // The count below reflects a clear in this frame.
         let mut stroke_count = strokes.len();
         ui.horizontal_wrapped(|ui| {
-            if moduwu_design::icon_button(
+            if moduwu_design::ghost_icon_button(
                 ui,
                 egui_phosphor::regular::ARROW_CLOCKWISE,
                 moduwu_design::toolbar_icon_size(),
@@ -748,7 +748,7 @@ impl Sidebar {
             {
                 edits.push(MaskPropertyAction::RequestObject);
             }
-            if moduwu_design::icon_button(
+            if moduwu_design::ghost_icon_button(
                 ui,
                 egui_phosphor::regular::X,
                 moduwu_design::toolbar_icon_size(),
@@ -928,7 +928,7 @@ impl Sidebar {
             {
                 edits.set_refinement_flow(flow);
             }
-            if moduwu_design::icon_button(
+            if moduwu_design::ghost_icon_button(
                 ui,
                 egui_phosphor::regular::ERASER,
                 moduwu_design::toolbar_icon_size(),

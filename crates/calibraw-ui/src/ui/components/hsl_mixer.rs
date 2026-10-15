@@ -37,7 +37,7 @@ pub(crate) fn hsl_mixer(
     moduwu_design::toolbar_row(ui, |ui| {
         ui.label(RichText::new(format!("{name} adjustments")).strong());
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            reset_color = moduwu_design::icon_button(
+            reset_color = moduwu_design::ghost_icon_button(
                 ui,
                 egui_phosphor::regular::ARROW_COUNTER_CLOCKWISE,
                 moduwu_design::toolbar_icon_size(),

@@ -31,7 +31,7 @@ pub(crate) fn point_color(
     let mut delete = false;
     moduwu_design::toolbar_row(ui, |ui| {
         ui.add_enabled_ui(colors.len() < MAX_POINT_COLORS, |ui| {
-            if moduwu_design::icon_toggle_button(
+            if moduwu_design::ghost_icon_toggle_button(
                 ui,
                 regular::EYEDROPPER,
                 state.picker_active,
@@ -45,22 +45,28 @@ pub(crate) fn point_color(
         });
         ui.weak(format!("{} / {} colors", colors.len(), MAX_POINT_COLORS));
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            delete = moduwu_design::icon_button_enabled(
-                ui,
-                !colors.is_empty(),
-                regular::TRASH,
-                moduwu_design::toolbar_icon_size(),
-                "Delete selected color",
-            )
-            .clicked();
-            reset = moduwu_design::icon_button_enabled(
-                ui,
-                !colors.is_empty(),
-                regular::ARROW_COUNTER_CLOCKWISE,
-                moduwu_design::toolbar_icon_size(),
-                "Reset this color's adjustments and ranges",
-            )
-            .clicked();
+            delete = ui
+                .add_enabled_ui(!colors.is_empty(), |ui| {
+                    moduwu_design::ghost_icon_button(
+                        ui,
+                        regular::TRASH,
+                        moduwu_design::toolbar_icon_size(),
+                        "Delete selected color",
+                    )
+                })
+                .inner
+                .clicked();
+            reset = ui
+                .add_enabled_ui(!colors.is_empty(), |ui| {
+                    moduwu_design::ghost_icon_button(
+                        ui,
+                        regular::ARROW_COUNTER_CLOCKWISE,
+                        moduwu_design::toolbar_icon_size(),
+                        "Reset this color's adjustments and ranges",
+                    )
+                })
+                .inner
+                .clicked();
         });
     });
     let width = ui.available_width().max(0.0);
