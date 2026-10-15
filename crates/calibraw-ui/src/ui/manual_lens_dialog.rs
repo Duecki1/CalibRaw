@@ -34,57 +34,54 @@ pub(crate) fn show(ctx: &egui::Context, app: &mut CalibRawApp) {
     // the preview catches up within the frame that follows.
     let painted = dialog;
     let mut action = moduwu_design::DialogAction::None;
-    moduwu_design::dialog_window(
-        "Manual lens correction",
-        ctx,
-        moduwu_design::DIALOG_WIDTH_PREVIEW,
-    )
-    .show_with_preview(
-        ctx,
-        moduwu_design::DialogPreview {
-            label: "Corrected preview",
-            aspect: texture.map_or(2.0 / 3.0, |(_, [width, height])| {
-                height as f32 / width as f32
-            }),
-        },
-        |ui, rect| match texture {
-            Some((texture, size)) => paint_preview(ui, rect, texture, size, painted),
-            None => {
-                ui.painter_at(rect).rect_filled(rect, 0.0, Color32::BLACK);
-            }
-        },
-        |ui| {
-            let distortion_changed = AdjustmentSlider::new(
-                "Distortion",
-                &mut dialog.draft.distortion,
-                ManualLensCorrection::RANGE,
-            )
-            .decimals(0)
-            .step(1.0)
-            .show(ui);
-            let vignetting_changed = AdjustmentSlider::new(
-                "Vignetting",
-                &mut dialog.draft.vignetting,
-                ManualLensCorrection::RANGE,
-            )
-            .decimals(0)
-            .step(1.0)
-            .show(ui);
-            if distortion_changed || vignetting_changed {
-                ui.ctx().request_repaint();
-            }
-        },
-        |ui| {
-            action = moduwu_design::dialog_confirmation_buttons(
-                ui,
-                "Cancel",
-                "Apply",
-                true,
-                false,
-                moduwu_design::DialogKeyboard::CLOSE_ONLY,
-            );
-        },
-    );
+    moduwu_design::Dialog::new("manual-lens-correction", "Manual lens correction")
+        .size(moduwu_design::DialogSize::Preview)
+        .show_with_preview(
+            ctx,
+            moduwu_design::DialogPreview {
+                label: "Corrected preview",
+                aspect: texture.map_or(2.0 / 3.0, |(_, [width, height])| {
+                    height as f32 / width as f32
+                }),
+            },
+            |ui, rect| match texture {
+                Some((texture, size)) => paint_preview(ui, rect, texture, size, painted),
+                None => {
+                    ui.painter_at(rect).rect_filled(rect, 0.0, Color32::BLACK);
+                }
+            },
+            |ui| {
+                let distortion_changed = AdjustmentSlider::new(
+                    "Distortion",
+                    &mut dialog.draft.distortion,
+                    ManualLensCorrection::RANGE,
+                )
+                .decimals(0)
+                .step(1.0)
+                .show(ui);
+                let vignetting_changed = AdjustmentSlider::new(
+                    "Vignetting",
+                    &mut dialog.draft.vignetting,
+                    ManualLensCorrection::RANGE,
+                )
+                .decimals(0)
+                .step(1.0)
+                .show(ui);
+                if distortion_changed || vignetting_changed {
+                    ui.ctx().request_repaint();
+                }
+            },
+            |ui| {
+                action = moduwu_design::dialog_confirmation_actions(
+                    ui,
+                    "Cancel",
+                    "Apply",
+                    true,
+                    false,
+                    moduwu_design::DialogKeyboard::CLOSE_ONLY,
+                );
+            },
+        );
     match action {
         moduwu_design::DialogAction::Confirm => app.apply_manual_lens_correction(dialog.draft),
         moduwu_design::DialogAction::Cancel => app.develop_ui.manual_lens_dialog = None,

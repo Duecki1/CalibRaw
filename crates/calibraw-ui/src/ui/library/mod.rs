@@ -66,6 +66,8 @@ pub(crate) use actions::library_image_context_menu;
 pub(crate) use actions::{apply_library_action, show_library_action_overlays};
 pub(crate) use companions::{paint_format_badge, rendered_format_label};
 #[cfg(not(target_os = "android"))]
+pub(crate) use hdr::HdrMergeOutcome;
+#[cfg(not(target_os = "android"))]
 pub(crate) use thumbnails::{load_desktop_cached_thumbnail, load_desktop_reference_preview};
 pub(crate) use view::Library;
 
@@ -773,8 +775,6 @@ pub(crate) struct LibraryState {
     asset_transfer_receiver: Option<mpsc::Receiver<AssetTransferCompletion>>,
     #[cfg(not(target_os = "android"))]
     hdr_merge: Option<hdr::HdrMergeTask>,
-    #[cfg(not(target_os = "android"))]
-    hdr_merge_message: Option<String>,
     #[cfg(not(target_os = "android"))]
     raw_import_receiver: Option<mpsc::Receiver<RawImportResult>>,
     #[cfg(not(target_os = "android"))]

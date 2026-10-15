@@ -167,7 +167,8 @@ pub(crate) fn show(ctx: &egui::Context, app: &mut CalibRawApp) {
     // so the sidebar scrollbar style is applied around the call.
     let page_scroll = ctx.global_style().spacing.scroll;
     ctx.global_style_mut(|style| style.spacing.scroll = sidebar_scroll_style());
-    moduwu_design::dialog_window("Keyboard shortcuts", ctx, moduwu_design::DIALOG_WIDTH_LARGE)
+    moduwu_design::Dialog::new("keyboard-shortcuts", "Keyboard shortcuts")
+        .size(moduwu_design::DialogSize::Wide)
         .show_with_footer(
             ctx,
             |ui| {
@@ -176,11 +177,9 @@ pub(crate) fn show(ctx: &egui::Context, app: &mut CalibRawApp) {
                 }
             },
             |ui| {
-                moduwu_design::dialog_button_row(ui, |ui| {
-                    if moduwu_design::primary_action_button(ui, "Close").clicked() {
-                        close = true;
-                    }
-                });
+                if moduwu_design::primary_action_button(ui, "Close").clicked() {
+                    close = true;
+                }
                 if !close
                     && moduwu_design::dialog_keyboard_action(
                         ui,

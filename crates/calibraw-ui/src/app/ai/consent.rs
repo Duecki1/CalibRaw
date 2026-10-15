@@ -167,7 +167,8 @@ impl CalibRawApp {
         };
         let runtime_ready = self.ai_runtime_ready();
         let mut action = moduwu_design::DialogAction::None;
-        moduwu_design::dialog_window(title, ctx, moduwu_design::DIALOG_WIDTH_LARGE)
+        moduwu_design::Dialog::new("ai-consent", title)
+            .size(moduwu_design::DialogSize::Wide)
             .show_with_footer(
                 ctx,
                 |ui| {

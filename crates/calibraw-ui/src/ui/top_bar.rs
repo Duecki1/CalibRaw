@@ -275,7 +275,7 @@ impl TopBar {
     pub(crate) fn show_portrait(ui: &mut Ui, app: &mut CalibRawApp, _frame: &eframe::Frame) {
         moduwu_design::prepare_toolbar(ui);
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            app.show_export_task_indicator(ui);
+            app.show_background_tasks(ui);
 
             Self::show_save_control(ui, app, false);
             crate::ui::library::show_current_photo_review(ui, app, true);
@@ -510,7 +510,7 @@ impl TopBar {
                 ui.separator();
             }
 
-            app.show_export_task_indicator(ui);
+            app.show_background_tasks(ui);
             if app.ui.active_tab == AppTab::Settings
                 && moduwu_design::ghost_icon_button(
                     ui,

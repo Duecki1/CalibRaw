@@ -56,28 +56,8 @@ fn test_export_task() -> ExportTask {
         total: 1,
         completed_tiles: 4,
         total_tiles: 10,
-        minimized: false,
         cancelling: false,
     }
-}
-
-#[test]
-fn minimized_export_keeps_the_background_worker_active() {
-    let mut task = test_export_task();
-    task.minimize();
-    assert!(task.minimized);
-    assert!(task.receiver.is_some());
-    assert_eq!(task.progress, 0.42);
-    assert!(!task.cancellation.load(Ordering::Acquire));
-}
-
-#[test]
-fn minimized_export_can_be_restored() {
-    let mut task = test_export_task();
-    task.minimize();
-    task.restore();
-    assert!(!task.minimized);
-    assert!(task.receiver.is_some());
 }
 
 #[test]

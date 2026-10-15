@@ -127,7 +127,7 @@ impl Library {
                 }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     #[cfg(target_os = "android")]
-                    app.show_export_task_indicator(ui);
+                    app.show_background_tasks(ui);
 
                     #[cfg(target_os = "android")]
                     if (if compact_header {

@@ -1,3 +1,4 @@
+pub(crate) mod background_tasks;
 pub(crate) mod components;
 #[cfg(not(target_os = "android"))]
 pub(crate) mod develop;

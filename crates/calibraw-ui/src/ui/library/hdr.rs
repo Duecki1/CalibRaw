@@ -1,4 +1,6 @@
 use super::*;
+use crate::app::ErrorKind;
+use crate::ui::background_tasks::{BackgroundTaskId, BackgroundTaskView};
 use anyhow::{Context, Result};
 use calibraw_gpu::pipeline::merge_hdr_bracket;
 
@@ -21,7 +23,7 @@ pub(super) fn start(
         return;
     }
     let Some(render_state) = frame.wgpu_render_state() else {
-        app.library.hdr_merge_message = Some("HDR merge requires GPU rendering.".to_owned());
+        app.report_error(ErrorKind::HdrMerge, "HDR merge requires GPU rendering.");
         return;
     };
     let paths: Vec<_> = assets
@@ -76,13 +78,11 @@ pub(super) fn start(
             repaint.request_repaint();
         });
     match worker {
-        Ok(_) => {
-            app.library.hdr_merge = Some(task);
-            app.library.hdr_merge_message = None;
-        }
-        Err(error) => {
-            app.library.hdr_merge_message = Some(format!("Could not start HDR merge: {error}"))
-        }
+        Ok(_) => app.library.hdr_merge = Some(task),
+        Err(error) => app.report_error(
+            ErrorKind::HdrMerge,
+            format!("Could not start HDR merge: {error}"),
+        ),
     }
 }
 
@@ -108,89 +108,63 @@ fn save_unique(mut temporary: tempfile::NamedTempFile, source: &Path) -> Result<
     anyhow::bail!("Could not find an unused HDR output name")
 }
 
+/// How an HDR merge ended.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum HdrMergeOutcome {
+    Saved(PathBuf),
+    Cancelled,
+    Failed(String),
+}
+
 impl LibraryState {
-    pub(super) fn poll_hdr_merge(&mut self, context: &egui::Context) {
-        let Some(task) = &self.hdr_merge else {
-            return;
-        };
-        match task.receiver.try_recv() {
-            Ok(result) => {
-                self.hdr_merge = None;
-                self.hdr_merge_message = Some(match result {
-                    Ok(path) => {
-                        self.refresh(context);
-                        format!("HDR merge saved: {}", path.display())
-                    }
-                    Err(error) => format!("HDR merge: {error}"),
-                });
-            }
+    /// Takes the result of a finished merge. A saved merge also refreshes the
+    /// library so the new TIFF appears.
+    pub(crate) fn poll_hdr_merge(&mut self, context: &egui::Context) -> Option<HdrMergeOutcome> {
+        let task = self.hdr_merge.as_ref()?;
+        let cancelled = task.cancelled.load(Ordering::Relaxed);
+        let outcome = match task.receiver.try_recv() {
+            Ok(Ok(path)) => HdrMergeOutcome::Saved(path),
+            Ok(Err(_)) if cancelled => HdrMergeOutcome::Cancelled,
+            Ok(Err(error)) => HdrMergeOutcome::Failed(error),
             Err(mpsc::TryRecvError::Disconnected) => {
-                self.hdr_merge = None;
-                self.hdr_merge_message = Some("HDR merge stopped unexpectedly.".to_owned());
+                HdrMergeOutcome::Failed("HDR merge stopped unexpectedly.".to_owned())
             }
-            Err(mpsc::TryRecvError::Empty) => {}
+            Err(mpsc::TryRecvError::Empty) => return None,
+        };
+        self.hdr_merge = None;
+        if matches!(outcome, HdrMergeOutcome::Saved(_)) {
+            self.refresh(context);
         }
+        Some(outcome)
     }
 
-    pub(super) fn show_hdr_merge_dialog(&mut self, ui: &mut Ui) {
-        self.poll_hdr_merge(ui.ctx());
-        if self.hdr_merge.is_none() && self.hdr_merge_message.is_none() {
-            return;
-        }
-        let mut dismiss = false;
-        moduwu_design::dialog_window("HDR merge", ui.ctx(), moduwu_design::DIALOG_WIDTH_DEFAULT)
-            .id(egui::Id::new("library-hdr-merge-dialog"))
-            .show(ui.ctx(), |ui| {
-                if let Some(task) = &self.hdr_merge {
-                    ui.horizontal_wrapped(|ui| {
-                        ui.spinner();
-                        if let Ok(progress) = task.progress.lock() {
-                            ui.label(progress.as_str());
-                        }
-                    });
-                    let cancelling = task.cancelled.load(Ordering::Relaxed);
-                    let mut button_cancel = false;
-                    moduwu_design::dialog_button_row(ui, |ui| {
-                        button_cancel = ui
-                            .add_enabled_ui(!cancelling, |ui| {
-                                moduwu_design::secondary_button(
-                                    ui,
-                                    if cancelling {
-                                        "Cancelling…"
-                                    } else {
-                                        "Cancel"
-                                    },
-                                )
-                            })
-                            .inner
-                            .clicked();
-                    });
-                    let keyboard_cancel = !button_cancel
-                        && !cancelling
-                        && moduwu_design::dialog_keyboard_action(
-                            ui,
-                            moduwu_design::DialogKeyboard::CLOSE_ONLY,
-                            false,
-                        ) == moduwu_design::DialogAction::Cancel;
-                    if keyboard_cancel || button_cancel {
-                        task.cancelled.store(true, Ordering::Relaxed);
-                    }
-                } else if let Some(message) = &self.hdr_merge_message {
-                    ui.label(message);
-                    moduwu_design::dialog_button_row(ui, |ui| {
-                        dismiss |= moduwu_design::secondary_button(ui, "Dismiss").clicked();
-                    });
-                    if !dismiss {
-                        dismiss = moduwu_design::dialog_keyboard_action(
-                            ui,
-                            moduwu_design::DialogKeyboard::CLOSE_ONLY,
-                            false,
-                        ) == moduwu_design::DialogAction::Cancel;
-                    }
-                }
-            });
-        if dismiss {
-            self.hdr_merge_message = None;
+    /// The running merge for the toolbar task indicator.
+    pub(crate) fn hdr_merge_task(&self) -> Option<BackgroundTaskView> {
+        let task = self.hdr_merge.as_ref()?;
+        let detail = task
+            .progress
+            .lock()
+            .map(|progress| {
+                let step = progress.strip_prefix("HDR: ").unwrap_or(&progress);
+                let mut chars = step.chars();
+                chars
+                    .next()
+                    .map(|first| first.to_uppercase().chain(chars).collect())
+                    .unwrap_or_default()
+            })
+            .unwrap_or_default();
+        Some(BackgroundTaskView {
+            id: BackgroundTaskId::HdrMerge,
+            title: "HDR merge".to_owned(),
+            detail,
+            progress: None,
+            cancelling: task.cancelled.load(Ordering::Relaxed),
+        })
+    }
+
+    pub(crate) fn cancel_hdr_merge(&self) {
+        if let Some(task) = &self.hdr_merge {
+            task.cancelled.store(true, Ordering::Relaxed);
         }
     }
 }

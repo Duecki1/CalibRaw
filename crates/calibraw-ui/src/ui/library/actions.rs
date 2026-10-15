@@ -727,9 +727,6 @@ pub(crate) fn show_library_action_overlays(
     app: &mut CalibRawApp,
     frame: &eframe::Frame,
 ) {
-    #[cfg(not(target_os = "android"))]
-    app.library.show_hdr_merge_dialog(ui);
-
     let delete_choice = app
         .library
         .delete_originals_confirmation
@@ -794,15 +791,7 @@ pub(crate) fn show_library_action_overlays(
     }
 
     if let Some((completed, total, failed, current_name)) = app.library_ai_mask_refresh_status() {
-        let (_, cancel) = show_ai_mask_refresh_progress(
-            ui,
-            completed,
-            total,
-            failed,
-            current_name.as_deref(),
-            false,
-        );
-        if cancel {
+        if show_ai_mask_refresh_progress(ui, completed, total, failed, current_name.as_deref()) {
             app.cancel_library_ai_mask_refresh();
         }
     }
@@ -825,46 +814,45 @@ pub(crate) fn show_library_action_overlays(
         } else {
             format!("Export {count} images")
         };
-        moduwu_design::dialog_window(
-            title,
-            ui.ctx(),
-            moduwu_design::DIALOG_WIDTH_WIDE,
-        )
-            .id(egui::Id::new("library-export-dialog"))
-            .resizable(true)
-            .show(ui.ctx(), |ui| {
-                let format_changed = show_library_export_settings_controls(
-                    ui,
-                    &mut dialog.format,
-                    &mut dialog.settings,
-                    #[cfg(not(target_os = "android"))]
-                    export_picker_directory.as_deref(),
-                    #[cfg(target_os = "android")]
-                    None,
-                );
-                if format_changed {
-                    selected_export_format = Some(dialog.format);
-                }
-                #[cfg(not(target_os = "android"))]
-                let help = if count > 1 {
-                    "A destination folder will be selected for the batch. File names are generated from each photo's name."
-                } else {
-                    "Choose the output file after pressing Export."
-                };
-                #[cfg(target_os = "android")]
-                let help = "Exports are saved to Pictures/CalibRaw. File names are generated from each photo's name.";
-                let label = if count == 1 {
-                    #[cfg(not(target_os = "android"))]
-                    { "Export 1 image…".to_owned() }
-                    #[cfg(target_os = "android")]
-                    { "Export 1 image".to_owned() }
-                } else {
-                    #[cfg(not(target_os = "android"))]
-                    { format!("Export {count} images…") }
-                    #[cfg(target_os = "android")]
-                    { format!("Export {count} images") }
-                };
-                moduwu_design::dialog_button_row(ui, |ui| {
+        #[cfg(not(target_os = "android"))]
+        let help = if count > 1 {
+            "A destination folder will be selected for the batch. File names are generated from each photo's name."
+        } else {
+            "Choose the output file after pressing Export."
+        };
+        #[cfg(target_os = "android")]
+        let help = "Exports are saved to Pictures/CalibRaw. File names are generated from each photo's name.";
+        #[cfg(not(target_os = "android"))]
+        let label = if count == 1 {
+            "Export 1 image…".to_owned()
+        } else {
+            format!("Export {count} images…")
+        };
+        #[cfg(target_os = "android")]
+        let label = if count == 1 {
+            "Export 1 image".to_owned()
+        } else {
+            format!("Export {count} images")
+        };
+        moduwu_design::Dialog::new("library-export-dialog", title)
+            .size(moduwu_design::DialogSize::Wide)
+            .show_with_footer(
+                ui.ctx(),
+                |ui| {
+                    let format_changed = show_library_export_settings_controls(
+                        ui,
+                        &mut dialog.format,
+                        &mut dialog.settings,
+                        #[cfg(not(target_os = "android"))]
+                        export_picker_directory.as_deref(),
+                        #[cfg(target_os = "android")]
+                        None,
+                    );
+                    if format_changed {
+                        selected_export_format = Some(dialog.format);
+                    }
+                },
+                |ui| {
                     if moduwu_design::primary_action_button(ui, label)
                         .on_hover_text(help)
                         .clicked()
@@ -874,18 +862,18 @@ pub(crate) fn show_library_action_overlays(
                     if moduwu_design::secondary_button(ui, "Cancel").clicked() {
                         close_export_dialog = true;
                     }
-                });
-                if !close_export_dialog
-                    && !confirm_export
-                    && moduwu_design::dialog_keyboard_action(
-                        ui,
-                        moduwu_design::DialogKeyboard::CLOSE_ONLY,
-                        false,
-                    ) == moduwu_design::DialogAction::Cancel
-                {
-                    close_export_dialog = true;
-                }
-            });
+                    if !close_export_dialog
+                        && !confirm_export
+                        && moduwu_design::dialog_keyboard_action(
+                            ui,
+                            moduwu_design::DialogKeyboard::CLOSE_ONLY,
+                            false,
+                        ) == moduwu_design::DialogAction::Cancel
+                    {
+                        close_export_dialog = true;
+                    }
+                },
+            );
     }
 
     if let Some(format) = selected_export_format {
