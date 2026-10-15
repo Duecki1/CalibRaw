@@ -61,7 +61,6 @@ pub(crate) fn show(ctx: &egui::Context, app: &mut CalibRawApp) {
             )
             .decimals(0)
             .step(1.0)
-            .hover_text("Positive straightens barrel distortion, negative pincushion.")
             .show(ui);
             let vignetting_changed = AdjustmentSlider::new(
                 "Vignetting",
@@ -70,7 +69,6 @@ pub(crate) fn show(ctx: &egui::Context, app: &mut CalibRawApp) {
             )
             .decimals(0)
             .step(1.0)
-            .hover_text("Positive brightens the corners, negative darkens them.")
             .show(ui);
             if distortion_changed || vignetting_changed {
                 ui.ctx().request_repaint();

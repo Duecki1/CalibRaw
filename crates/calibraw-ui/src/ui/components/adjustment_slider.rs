@@ -29,7 +29,8 @@ pub(crate) enum SliderGradient {
     Luminance(egui::Color32),
 }
 
-/// A labelled numeric slider with an editable value field.
+/// A labelled numeric slider with an editable value field. Sliders have no
+/// tooltip: a hint must not cover a control while it is dragged.
 ///
 /// Double-clicking the label or track resets to [`Self::reset_to`] (zero by
 /// default), never to the value the widget was first shown with.
@@ -59,12 +60,6 @@ where
     pub(crate) fn step(self, step: f64) -> Self {
         Self {
             slider: self.slider.step(step),
-        }
-    }
-
-    pub(crate) fn hover_text(self, hover_text: impl Into<Option<&'a str>>) -> Self {
-        Self {
-            slider: self.slider.hover_text(hover_text),
         }
     }
 
@@ -106,19 +101,13 @@ impl<'a> AdjustmentSlider<'a, f32> {
         Self::new(spec.label, value, spec.range())
             .decimals(spec.decimals)
             .step(spec.step)
-            .hover_text(spec.tooltip)
             .reset_to(spec.default)
     }
 }
 
-pub(crate) fn hue_adjustment_slider(
-    ui: &mut Ui,
-    value: &mut f32,
-    hover_text: Option<&str>,
-) -> bool {
+pub(crate) fn hue_adjustment_slider(ui: &mut Ui, value: &mut f32) -> bool {
     let spec = crate::pipeline::effect_params::adjustment::HUE;
     AdjustmentSlider::from_spec(value, spec)
-        .hover_text(hover_text)
         .gradient(SliderGradient::HueDegrees {
             start: spec.min,
             end: spec.max,
@@ -138,7 +127,6 @@ pub(crate) fn float_param_angle(ui: &mut Ui, value: &mut f32, spec: FloatParamSp
         .decimals(spec.decimals)
         .step(spec.step as f32)
         .reset_to(spec.default)
-        .hover_text(spec.tooltip)
         .show(ui)
 }
 

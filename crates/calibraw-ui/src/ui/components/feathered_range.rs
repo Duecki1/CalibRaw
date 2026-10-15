@@ -388,7 +388,6 @@ pub(crate) fn feathered_range_track<R: FeatheredRange>(
     ui: &mut Ui,
     range: &mut R,
     label: &str,
-    hover_text: &str,
     background: impl FnOnce(&egui::Painter, Rect),
 ) -> Response {
     let before = *range;
@@ -630,11 +629,7 @@ pub(crate) fn feathered_range_track<R: FeatheredRange>(
             }
         }
     });
-    response
-        .on_hover_cursor(egui::CursorIcon::ResizeHorizontal)
-        .on_hover_text(format!(
-            "{hover_text}\nArrow keys move the selected handle (Shift for larger steps); Up and Down choose a handle. Double-click to reset."
-        ))
+    response.on_hover_cursor(egui::CursorIcon::ResizeHorizontal)
 }
 
 /// A dark track with faint quarter marks, for ranges without a meaningful

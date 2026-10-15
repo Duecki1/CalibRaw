@@ -112,15 +112,9 @@ impl Sidebar {
         moduwu_design::card_gap(ui);
         moduwu_design::section_card(ui, "Brush", |ui| {
             ui.add_enabled_ui(!app.inpaint_processing(), |ui| {
-                let size_help = if app.preferences.image_relative_brush_size {
-                    "Brush covers the same area of the photo as you zoom."
-                } else {
-                    "Brush stays the same size on screen; zoom in to work on finer details."
-                };
                 AdjustmentSlider::new("Size", &mut app.inpaint.brush_size, 0.0025..=0.25)
                     .decimals(3)
                     .step(0.0025)
-                    .hover_text(size_help)
                     .reset_to(0.055)
                     .show(ui);
                 if app.inpaint.tool.retouch().is_some() {
@@ -128,9 +122,9 @@ impl Sidebar {
                     if AdjustmentSlider::new("Feather (%)", &mut feather_percent, 0.0..=100.0)
                         .decimals(0)
                         .step(1.0)
-                        .hover_text("Softness of new strokes: 0% gives a hard edge; 100% softens the whole brush.")
                         .reset_to(50.0)
-                        .show(ui) {
+                        .show(ui)
+                    {
                         app.inpaint.brush_hardness = 1.0 - feather_percent / 100.0;
                     }
                 }
@@ -138,9 +132,9 @@ impl Sidebar {
                 if AdjustmentSlider::new("Opacity (%)", &mut opacity_percent, 1.0..=100.0)
                     .decimals(0)
                     .step(1.0)
-                    .hover_text("Strength of new strokes. Lower values blend in more of the original photo.")
                     .reset_to(100.0)
-                    .show(ui) {
+                    .show(ui)
+                {
                     app.inpaint.brush_opacity = opacity_percent / 100.0;
                 }
             });
@@ -261,7 +255,6 @@ impl Sidebar {
                         AdjustmentSlider::new("Opacity (%)", &mut opacity_percent, 0.0..=100.0)
                             .decimals(0)
                             .step(1.0)
-                            .hover_text("Adjust this stroke's strength. Set to 0% to hide it or 100% for full strength.")
                             .reset_to(100.0)
                             .show(ui)
                     })

@@ -152,7 +152,6 @@ fn fog_onset(ui: &mut Ui, settings: &mut FogEffectSettings) -> bool {
         ui,
         &mut onset,
         fog::START.label,
-        "How fog builds up with scene distance, near on the left. The hollow handle is where fog starts; the solid handle is where it reaches full strength.",
         feathered_range::plain_track_background(ui.visuals()),
     );
     settings.start = onset.settings.start;

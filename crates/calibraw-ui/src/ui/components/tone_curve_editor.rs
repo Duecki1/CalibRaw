@@ -155,12 +155,6 @@ pub(crate) fn tone_curve_editor(ui: &mut Ui, curve: &mut PointCurve, curve_color
         }
     }
 
-    #[cfg(not(target_os = "android"))]
-    response.on_hover_text(
-        "Click to add a point. Drag points to shape the curve; right-click an interior point to remove it.",
-    );
-    #[cfg(target_os = "android")]
-    response.on_hover_text("Drag points to shape the curve. Double-tap to add a point.");
     curve.sanitize();
     changed
 }

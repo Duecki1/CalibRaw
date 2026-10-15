@@ -206,8 +206,11 @@ canvases, mask cards, and colour controls in their existing components.
 - Do not add descriptive text to editing panels, cards, tool rows or the
   toolbar: no explanatory paragraphs under headings and no hint lines below
   controls. When a control needs explaining, use a tooltip
-  (`on_hover_text`, `*_with_help`, a slider's `hover_text`), and only if its
-  label, icon and behavior do not already make it clear. Settings and the
+  (`on_hover_text`, `*_with_help`), and only if its label, icon and behavior do
+  not already make it clear. Controls that are dragged (sliders, range and
+  depth controls, dials, colour fields, curve editors, on-image handles) never
+  get a tooltip, because it would cover them while they are adjusted; put that
+  help on a static label or card heading instead. Settings and the
   first-run setup may keep descriptions. Status lines (progress, empty states,
   "source set") and dialog text that explains a choice are not descriptions.
 

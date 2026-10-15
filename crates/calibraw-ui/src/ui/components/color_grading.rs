@@ -104,13 +104,11 @@ fn color_grading_editor_contents(
     changed |= AdjustmentSlider::new("Blending", &mut grading.blending, 0.0..=100.0)
         .decimals(0)
         .step(1.0)
-        .hover_text("Controls the overlap between shadows, midtones, and highlights.")
         .reset_to(ColorGrading::default().blending)
         .show(ui);
     changed |= AdjustmentSlider::new("Balance", &mut grading.balance, -100.0..=100.0)
         .decimals(0)
         .step(1.0)
-        .hover_text("Moves the tonal pivot between shadow and highlight grading.")
         .show(ui);
 
     changed
@@ -196,7 +194,8 @@ fn color_wheel_picker(ui: &mut Ui, wheel: &mut ColorGradeWheel) -> bool {
     let size = ui.available_width().clamp(1.0, WHEEL_MAX_SIZE);
 
     ui.vertical_centered(|ui| {
-        let (rect, response) = ui.allocate_exact_size(egui::vec2(size, size), Sense::click_and_drag());
+        let (rect, response) =
+            ui.allocate_exact_size(egui::vec2(size, size), Sense::click_and_drag());
         let painter = ui.painter_at(rect);
         let center = rect.center();
         // Leave room for the marker (radius 6.5 plus stroke) at full
@@ -260,10 +259,6 @@ fn color_wheel_picker(ui: &mut Ui, wheel: &mut ColorGradeWheel) -> bool {
                 changed = true;
             }
         }
-
-        response.on_hover_text(
-            "Drag from the center to choose hue and saturation. Double-click the wheel to reset it.",
-        )
     });
 
     changed
@@ -275,7 +270,6 @@ fn color_wheel_sliders(ui: &mut Ui, wheel: &mut ColorGradeWheel) -> bool {
     changed |= AdjustmentSlider::new("Hue", &mut wheel.hue, 0.0..=360.0)
         .decimals(0)
         .step(1.0)
-        .hover_text("Sets the color-wheel angle in degrees.")
         .gradient(SliderGradient::HueDegrees {
             start: 0.0,
             end: 360.0,
@@ -286,7 +280,6 @@ fn color_wheel_sliders(ui: &mut Ui, wheel: &mut ColorGradeWheel) -> bool {
     changed |= AdjustmentSlider::new("Saturation", &mut wheel.saturation, 0.0..=100.0)
         .decimals(0)
         .step(1.0)
-        .hover_text("Sets the distance from the neutral center of the wheel.")
         .gradient(SliderGradient::Saturation(grade_color))
         .show(ui);
     wheel.saturation = wheel.saturation.clamp(0.0, 100.0);
@@ -294,7 +287,6 @@ fn color_wheel_sliders(ui: &mut Ui, wheel: &mut ColorGradeWheel) -> bool {
     changed |= AdjustmentSlider::new("Luminance", &mut wheel.luminance, -100.0..=100.0)
         .decimals(0)
         .step(1.0)
-        .hover_text("Applies a hue-preserving scene-linear exposure gain to this tonal range.")
         .gradient(SliderGradient::Luminance(grade_color))
         .show(ui);
     wheel.luminance = wheel.luminance.clamp(-100.0, 100.0);
