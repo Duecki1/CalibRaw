@@ -505,6 +505,17 @@ impl TopBar {
             }
 
             app.show_export_task_indicator(ui);
+            if app.ui.active_tab == AppTab::Settings
+                && moduwu_design::icon_button(
+                    ui,
+                    egui_phosphor::regular::KEYBOARD,
+                    moduwu_design::toolbar_icon_size(),
+                    "Keyboard shortcuts",
+                )
+                .clicked()
+            {
+                app.ui.shortcuts_dialog_open = true;
+            }
             ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
                 for (tab, label) in [
                     (AppTab::Library, "Library"),

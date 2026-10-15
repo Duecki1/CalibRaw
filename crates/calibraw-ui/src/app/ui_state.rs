@@ -80,6 +80,9 @@ pub(crate) struct UiState {
     /// The feature tip offered and not yet answered.
     pub(in crate::app) tip: Option<ShownTip>,
     pub(in crate::app) version_check: version_update::VersionCheckState,
+    /// The keyboard shortcuts reference is open.
+    #[cfg(not(target_os = "android"))]
+    pub(crate) shortcuts_dialog_open: bool,
     pub(crate) thumbnail_cache_size: Option<Result<u64, String>>,
     pub(crate) thumbnail_cache_size_receiver: Option<mpsc::Receiver<Result<u64, String>>>,
     #[cfg(not(target_os = "android"))]
