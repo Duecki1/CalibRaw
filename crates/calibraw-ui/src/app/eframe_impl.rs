@@ -163,7 +163,7 @@ impl CalibRawApp {
         self.poll_foreground_operation(frame);
         self.poll_library_ai_mask_refresh(frame);
         #[cfg(not(target_os = "android"))]
-        self.poll_hdr_merge();
+        self.poll_merge();
         self.resume_pending_ai_denoise(frame);
         #[cfg(target_os = "android")]
         self.sync_android_export_notification();

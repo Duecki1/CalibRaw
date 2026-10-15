@@ -588,10 +588,17 @@ fn apply_view_transform(scene_rgb: vec3<f32>) -> vec3<f32> {
     let looked = Profile::apply_optional_profile_look(scene_rgb);
     let view_input = Color::gamut_project_nonnegative_rec2020(looked);
 
-    if Common::camera_uniforms.scene_view_transform_enabled <= 0.5 {
-        return view_input;
+    switch Common::camera_uniforms.view_transform_mode {
+        case Common::VIEW_TRANSFORM_SCENE_SIGMOID: {
+            return Tonemap::apply_sigmoid_view_transform(view_input);
+        }
+        case Common::VIEW_TRANSFORM_DISPLAY_RETONE: {
+            return Tonemap::apply_display_retone(view_input);
+        }
+        case Common::VIEW_TRANSFORM_PASSTHROUGH, default: {
+            return view_input;
+        }
     }
-    return Tonemap::apply_sigmoid_view_transform(view_input);
 }
 
 fn apply_local_display_blacks(pos: vec2<i32>, input_rgb: vec3<f32>) -> vec3<f32> {

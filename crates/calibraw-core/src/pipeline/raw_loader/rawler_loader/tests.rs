@@ -12,16 +12,28 @@ fn fixture(
     jxl: bool,
     edit: impl FnOnce(&mut DirectoryWriter),
 ) -> NamedTempFile {
+    sized_fixture(16, linear, float, jxl, edit)
+}
+
+fn sized_fixture(
+    size: u32,
+    linear: bool,
+    float: bool,
+    jxl: bool,
+    edit: impl FnOnce(&mut DirectoryWriter),
+) -> NamedTempFile {
+    assert!(!jxl || size == 16, "the JPEG XL fixture is 16x16");
+    let pixels = (size * size) as usize;
     let file = tempfile::Builder::new().suffix(".dng").tempfile().unwrap();
     let mut writer = TiffWriter::new(file.reopen().unwrap()).unwrap();
     let mut root = DirectoryWriter::new();
     let cpp = if linear { 3 } else { 1 };
     let data: Vec<u16> = if linear {
-        [8192u16, 16384, 32768].repeat(256)
+        [8192u16, 16384, 32768].repeat(pixels)
     } else {
-        (0..256).map(|v| v as u16 + 100).collect()
+        (0..pixels).map(|v| v as u16 + 100).collect()
     };
-    let (offset, size) = if jxl {
+    let (offset, bytes) = if jxl {
         // Repository-owned synthetic 16x16 RGB fixture (no camera/third-party content)
         // with repeated 16-bit samples [8192, 16384, 32768], generated with cjxl 0.12.0:
         // cjxl input.ppm linearraw-16bit.jxl --distance=0 --effort=3
@@ -39,8 +51,8 @@ fn fixture(
             data.len() as u32 * 2,
         )
     };
-    root.add_tag(TiffCommonTag::ImageWidth, 16u32);
-    root.add_tag(TiffCommonTag::ImageLength, 16u32);
+    root.add_tag(TiffCommonTag::ImageWidth, size);
+    root.add_tag(TiffCommonTag::ImageLength, size);
     root.add_tag(
         TiffCommonTag::BitsPerSample,
         Value::Short(vec![if float { 32u16 } else { 16u16 }; cpp]),
@@ -54,9 +66,9 @@ fn fixture(
         if linear { 34892u16 } else { 32803u16 },
     );
     root.add_tag(TiffCommonTag::SamplesPerPixel, cpp as u16);
-    root.add_tag(TiffCommonTag::RowsPerStrip, 16u32);
+    root.add_tag(TiffCommonTag::RowsPerStrip, size);
     root.add_tag(TiffCommonTag::StripOffsets, offset);
-    root.add_tag(TiffCommonTag::StripByteCounts, size);
+    root.add_tag(TiffCommonTag::StripByteCounts, bytes);
     root.add_tag(TiffCommonTag::Make, "Test");
     root.add_tag(TiffCommonTag::Model, "Synthetic");
     root.add_tag(TiffCommonTag::Orientation, 1u16);
@@ -285,6 +297,86 @@ fn opcode_list2_does_not_block_phone_style_dngs() {
         load_raw_file_with_profile_selection(file.path(), CameraProfileMode::Automatic, None, None)
             .unwrap();
     assert!(raw.is_camera_linear_raster());
+}
+
+/// SOI, SOF3, an optional DRI and SOS; the entropy data is irrelevant because
+/// only the header is inspected.
+fn ljpeg_header(restart_interval: Option<u16>) -> Vec<u8> {
+    let mut bytes = vec![0xFF, 0xD8];
+    bytes.extend([0xFF, 0xC3, 0, 11, 12, 0, 16, 0, 16, 1, 0, 0x11, 0]);
+    if let Some(ri) = restart_interval {
+        bytes.extend([0xFF, 0xDD, 0, 4]);
+        bytes.extend(ri.to_be_bytes());
+    }
+    bytes.extend([0xFF, 0xDA, 0, 8, 1, 0, 0, 1, 0, 0, 0, 0]);
+    bytes
+}
+
+#[test]
+fn ljpeg_restart_interval_is_found_only_in_the_header() {
+    assert!(ljpeg_has_restart_interval(&ljpeg_header(Some(64000))));
+    assert!(!ljpeg_has_restart_interval(&ljpeg_header(Some(0))));
+    assert!(!ljpeg_has_restart_interval(&ljpeg_header(None)));
+    let mut after_scan = ljpeg_header(None);
+    after_scan.extend([0xFF, 0xDD, 0, 4, 0, 16]);
+    assert!(!ljpeg_has_restart_interval(&after_scan));
+    assert!(!ljpeg_has_restart_interval(&ljpeg_header(Some(16))[2..]));
+}
+
+fn lossless_jpeg_dng(restart_interval: Option<u16>) -> NamedTempFile {
+    let file = tempfile::Builder::new().suffix(".dng").tempfile().unwrap();
+    let mut writer = TiffWriter::new(file.reopen().unwrap()).unwrap();
+    let stream = ljpeg_header(restart_interval);
+    let offset = writer.write_data(&stream).unwrap();
+    let mut root = DirectoryWriter::new();
+    root.add_tag(TiffCommonTag::ImageWidth, 16u32);
+    root.add_tag(TiffCommonTag::ImageLength, 16u32);
+    root.add_tag(TiffCommonTag::BitsPerSample, Value::Short(vec![12u16; 3]));
+    root.add_tag(TiffCommonTag::Compression, 7u16);
+    root.add_tag(TiffCommonTag::PhotometricInt, 34892u16);
+    root.add_tag(TiffCommonTag::SamplesPerPixel, 3u16);
+    root.add_tag(TiffCommonTag::RowsPerStrip, 16u32);
+    root.add_tag(TiffCommonTag::StripOffsets, offset);
+    root.add_tag(TiffCommonTag::StripByteCounts, stream.len() as u32);
+    root.add_tag(TiffCommonTag::Make, "Test");
+    root.add_tag(TiffCommonTag::Model, "Synthetic");
+    root.add_tag(DngTag::DNGVersion, Value::Byte(vec![1u8, 6, 0, 0]));
+    root.add_tag(DngTag::UniqueCameraModel, "Test Synthetic");
+    writer.build(root).unwrap();
+    file
+}
+
+#[test]
+fn lossless_jpeg_restart_markers_route_samples_through_libraw() {
+    for (interval, expected) in [
+        (Some(16), SampleDecoder::LibRaw),
+        (Some(0), SampleDecoder::Rawler),
+        (None, SampleDecoder::Rawler),
+    ] {
+        let file = lossless_jpeg_dng(interval);
+        let input = open(file.path()).unwrap();
+        assert_eq!(validate_layout(&input).unwrap(), expected, "{interval:?}");
+    }
+}
+
+#[test]
+fn libraw_dng_samples_match_rawler_file_order() {
+    // LibRaw rejects images smaller than 22 pixels on an edge.
+    for linear in [false, true] {
+        let file = sized_fixture(32, linear, false, false, |_| {});
+        let input = open(file.path()).unwrap();
+        let image = input
+            .decoder
+            .raw_image(&input.source, &RawDecodeParams::default(), false)
+            .unwrap();
+        let RawImageData::Integer(expected) = image.data else {
+            panic!("integer fixture");
+        };
+        let samples =
+            shared::unpack_dng_samples(file.path(), [image.width, image.height], image.cpp)
+                .unwrap();
+        assert_eq!(samples, expected, "linear: {linear}");
+    }
 }
 
 #[test]

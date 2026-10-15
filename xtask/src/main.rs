@@ -98,7 +98,7 @@ pub(crate) fn print_help() {
            colorchecker-wb-validate CSV [--json PATH]\n\n\
          Build and packaging:\n\
            icons\n\
-           build-android [ABI] [PROFILE]\n\
+           build-android [ABI] [PROFILE] [--features LIST]\n\
            build-android-libraw [ABI]\n\
            build-android-lensfun [ABI]\n\
            verify-android-16kb [APK] [--objdump PATH] [--zipalign PATH]"

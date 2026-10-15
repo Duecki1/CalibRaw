@@ -10,8 +10,8 @@
 use super::{
     effect_lanes, processing_work_format, shader_manager::ShaderManager, shaders,
     work_shader_source, CameraUniforms, CfaKind, EffectsUniforms, MaskData, PackedPointColor,
-    ProcessingQuality, RemoveCompositeParams, SceneToneUniforms, IMAGE_LIGHT_BANDS,
-    IMAGE_LIGHT_GRID_LONG, MASK_EFFECT_ID_SHIFT, MAX_RENDER_MASK_SLOTS,
+    ProcessingQuality, RemoveCompositeParams, SceneToneUniforms, ViewTransformMode,
+    IMAGE_LIGHT_BANDS, IMAGE_LIGHT_GRID_LONG, MASK_EFFECT_ID_SHIFT, MAX_RENDER_MASK_SLOTS,
     RELIGHT_SHADOW_MAP_CHANNELS, TONE_HISTOGRAM_BIN_COUNT, TONE_STATS_SIZE_BYTES,
 };
 use crate::pipeline::MaskEffect;
@@ -190,7 +190,7 @@ fn shared_uniform_and_mask_structs_match_rust_layouts() {
                 frequency_chroma,
                 tint,
                 pre_demosaiced_raster,
-                scene_view_transform_enabled,
+                view_transform_mode,
                 camera_linear_raster,
                 highlight_options,
                 noise_shot,
@@ -231,6 +231,8 @@ fn shared_uniform_and_mask_structs_match_rust_layouts() {
                 basic_tone,
                 sigmoid_curve,
                 sigmoid_power,
+                reference_sigmoid_curve,
+                reference_sigmoid_power,
                 tone_curves,
                 hsl_hue_0,
                 hsl_hue_1,
@@ -385,6 +387,19 @@ fn shared_constants_and_effect_ids_match_rust() {
         MAX_RENDER_MASK_SLOTS
     );
     assert_eq!(constant("MASK_EFFECT_ID_SHIFT"), MASK_EFFECT_ID_SHIFT);
+    for (name, mode) in [
+        ("VIEW_TRANSFORM_PASSTHROUGH", ViewTransformMode::Passthrough),
+        (
+            "VIEW_TRANSFORM_SCENE_SIGMOID",
+            ViewTransformMode::SceneSigmoid,
+        ),
+        (
+            "VIEW_TRANSFORM_DISPLAY_RETONE",
+            ViewTransformMode::DisplayRetone,
+        ),
+    ] {
+        assert_eq!(constant(name), mode.shader_value(), "{name}");
+    }
     assert_eq!(
         constant("TONE_HISTOGRAM_BIN_COUNT"),
         TONE_HISTOGRAM_BIN_COUNT

@@ -28,6 +28,14 @@ struct MaskData {
     point_color_meta: vec4<u32>,
 }
 
+// `CameraUniforms.view_transform_mode` (Rust `ViewTransformMode`).
+// A developed raster at the reference tone curve keeps its rendered values.
+const VIEW_TRANSFORM_PASSTHROUGH: u32 = 0u;
+// Scene radiance takes the sigmoid view transform.
+const VIEW_TRANSFORM_SCENE_SIGMOID: u32 = 1u;
+// A developed raster is retoned from the reference sigmoid to the edit's sigmoid.
+const VIEW_TRANSFORM_DISPLAY_RETONE: u32 = 2u;
+
 // `metadata.w` packs the mask effect's shader ID above eight flag bits.
 const MASK_EFFECT_ID_SHIFT: u32 = 8u;
 
@@ -51,7 +59,8 @@ struct CameraUniforms {
     frequency_chroma: f32,
     tint: f32,
     pre_demosaiced_raster: f32,
-    scene_view_transform_enabled: f32,
+    // One of the VIEW_TRANSFORM_* modes.
+    view_transform_mode: u32,
     camera_linear_raster: f32,
     highlight_options: vec4<f32>,
     noise_shot: vec4<f32>,
@@ -88,8 +97,14 @@ struct SceneToneUniforms {
     vibrance: f32,
     scene_depth_present: u32,
     basic_tone: vec4<f32>,
+    // The edit's sigmoid: (white target, black target, log2 paper exposure, film fog)
+    // and (film power, paper power, hue preservation, colour processing).
     sigmoid_curve: vec4<f32>,
     sigmoid_power: vec4<f32>,
+    // The sigmoid of default settings, packed the same way. A developed raster is
+    // taken to be rendered with it, so VIEW_TRANSFORM_DISPLAY_RETONE inverts it.
+    reference_sigmoid_curve: vec4<f32>,
+    reference_sigmoid_power: vec4<f32>,
     // Master, red, green and blue point curves. Blocks 0-7 hold point pairs
     // (x0, y0, x1, y1) in curve-encoded [0, 1]; block 8 is (count, identity, 0, 0).
     tone_curves: array<array<vec4<f32>, 9>, 4>,
