@@ -406,7 +406,7 @@ impl Settings {
             ui,
             &mut app.preferences.show_develop_navigation_labels,
             "Show Develop navigation labels",
-            "Shows a short name below each icon in the Develop navigation bars. Leave this disabled for a quieter, more compact interface.",
+            "Shows a short name below each icon in the Develop navigation bars. Turn this off for a quieter, more compact interface.",
         )
         .changed()
         {
