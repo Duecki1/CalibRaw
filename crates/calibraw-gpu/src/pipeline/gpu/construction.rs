@@ -93,6 +93,7 @@ impl RawGpuPipeline {
             cfa_kind,
             raw_pixels: vec![0u16; pixels],
             scene_linear_raster: None,
+            scene_referred_raster: false,
             color_indices: crate::pipeline::CompactPixelMap::repeating(
                 EDGE,
                 EDGE,

@@ -645,6 +645,7 @@ fn adapt(
         cfa_kind: CfaKind::Bayer,
         raw_pixels: Vec::new(),
         scene_linear_raster: None,
+        scene_referred_raster: false,
         color_indices: CompactPixelMap::repeating(width, height, 1, 1, vec![1]),
         wb_coeffs,
         cam_to_srgb,

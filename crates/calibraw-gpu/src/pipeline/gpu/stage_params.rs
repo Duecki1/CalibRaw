@@ -87,6 +87,7 @@ pub(super) fn pack_camera_params(ctx: &GpuParamContext<'_>) -> CameraUniforms {
         },
         scene_view_transform_enabled: if camera_linear_raster
             || !raw.is_pre_demosaiced_raster()
+            || raw.scene_referred_raster
             || raster_uses_scene_view_transform(exposure)
         {
             1.0
