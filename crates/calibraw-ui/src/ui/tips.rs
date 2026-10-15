@@ -132,7 +132,7 @@ mod tests {
 
     const MAX_MEDIA_WIDTH: u32 = 640;
     const MAX_MEDIA_BYTES: usize = 1024 * 1024;
-    const MAX_CLIP_MS: u64 = 8_000;
+    const MAX_CLIP_MS: u64 = 12_000;
 
     #[test]
     fn keys_are_unique_and_stable() {

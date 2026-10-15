@@ -219,6 +219,33 @@ isolated `XDG_CONFIG_HOME`. `CALIBRAW_PREVIEW_TEST_SCREENSHOT` optionally captur
 its rendered fixture. Review desktop and Android layouts in all six themes
 when a change affects appearance.
 
+### Feature tips
+
+A tip is a dialog with a short looping clip and one or two sentences, shown the
+first time a feature is used (`ui/tips.rs` holds the tips and the dialog,
+`app/tips.rs` decides when one is offered). Every tip ships with a clip of the
+real app, recorded with `demorec`, the demo recorder (a separate repository; the
+maintainer's checkout is `/data/Documents/GitProjects/demo-recorder`). Asking for
+a tip is asking for its recording too, so record the clip as part of the change.
+A recording takes over the mouse and screen for about a minute: say so before
+each launch.
+
+1. Add a `Tip` variant and fill in the `match` arms the compiler points to. The
+   key is saved in settings and never changes. The text says how to use the
+   feature, not what it is.
+2. Offer it from the handler of the feature, not from a view:
+   `self.offer_tip(Tip::…)`, or a line in `mask_tip` for a mask kind.
+3. Record the clip by following the "CalibRaw tip clips" section of the
+   recorder's `AGENTS.md`: a scenario `examples/calibraw/tip-<name>.toml` started
+   from `seed-tips`, on a staged copy of an approved Demo photo. A tip about a
+   whole tab or panel keeps the full window; a tip about one tool is cropped to
+   where it is used and trimmed to that use, with waits cut out. Rebuild the
+   release binary first if the UI changed.
+4. Encode it to `crates/calibraw-ui/assets/tips/<name>.webp` (animated WebP, at
+   most 640 px wide, 1 MB and 12 s; the tests in `ui/tips.rs` enforce this), and
+   check the encoded clip frame by frame.
+5. Add the variant to `Tip::ALL` and its key to `keys_are_unique_and_stable`.
+
 ## Diagnostics and release helpers
 
 `scripts/generate_licenses.sh` is the canonical reproducible wrapper around
