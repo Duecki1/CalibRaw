@@ -257,18 +257,44 @@ impl Sidebar {
 
         ui.set_min_width(ui.available_width());
         ui.spacing_mut().item_spacing.y = moduwu_design::SPACE_XS;
+        let show_labels = app.preferences.show_develop_navigation_labels;
         ui.vertical_centered(|ui| {
             ui.add_space(5.0);
             for tab in SidebarTab::ALL {
-                if moduwu_design::ghost_icon_toggle_button(
-                    ui,
-                    tab.glyph(),
-                    app.ui.sidebar_tab == tab,
-                    moduwu_design::tool_rail_icon_size(),
-                    tab.tooltip(),
-                )
-                .clicked()
-                {
+                let selected = app.ui.sidebar_tab == tab;
+                let clicked = ui
+                    .scope(|ui| {
+                        ui.spacing_mut().item_spacing.y = 1.0;
+                        let mut clicked = moduwu_design::ghost_icon_toggle_button(
+                            ui,
+                            tab.glyph(),
+                            selected,
+                            moduwu_design::tool_rail_icon_size(),
+                            tab.tooltip(),
+                        )
+                        .clicked();
+                        if show_labels {
+                            let color = if selected {
+                                ui.visuals().text_color()
+                            } else {
+                                ui.visuals().weak_text_color()
+                            };
+                            clicked |= ui
+                                .add(
+                                    egui::Label::new(
+                                        egui::RichText::new(tab.short_label())
+                                            .size(10.0)
+                                            .color(color),
+                                    )
+                                    .selectable(false)
+                                    .sense(egui::Sense::click()),
+                                )
+                                .clicked();
+                        }
+                        clicked
+                    })
+                    .inner;
+                if clicked {
                     app.dispatch_action(AppAction::SelectSidebarTab(tab));
                 }
             }

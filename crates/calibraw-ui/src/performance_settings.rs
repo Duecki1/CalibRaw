@@ -4,7 +4,7 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 // Bump when a public settings change needs migration; see `sanitized`.
-const SETTINGS_VERSION: u32 = 3;
+const SETTINGS_VERSION: u32 = 4;
 /// The desktop decoded-RAW cache default before version 2 raised it, so that
 /// Develop can prefetch both neighbours of the open photo.
 ///
@@ -159,7 +159,7 @@ impl Default for PerformanceSettings {
             library_stack_raw_companions: true,
             preview_quality: crate::app::PreviewQuality::default(),
             image_relative_brush_size: false,
-            show_develop_navigation_labels: false,
+            show_develop_navigation_labels: true,
             export_name_template: crate::export_naming::DEFAULT_EXPORT_NAME_TEMPLATE.to_owned(),
             export_format: ExportFormat::Jpeg,
             ui_design: crate::appearance::UiDesign::default(),
@@ -227,6 +227,12 @@ impl PerformanceSettings {
         // migration: remove in v2.0.0. Listed in `calibraw_core`'s `migrations`.
         if self.version < 3 && self.automatic_lens_geometry {
             self.automatic_lens_vignetting = false;
+        }
+        // Version 4: Develop navigation labels are on by default. Every save wrote the old
+        // default, so they are turned on once.
+        // migration: remove in v2.0.0. Listed in `calibraw_core`'s `migrations`.
+        if self.version < 4 {
+            self.show_develop_navigation_labels = true;
         }
         self.version = SETTINGS_VERSION;
         // Setup offers the default until the user has chosen; earlier builds
@@ -485,6 +491,22 @@ mod tests {
     }
 
     #[test]
+    fn version_3_navigation_labels_turn_on_once() {
+        let migrated = |version, labels| {
+            PerformanceSettings {
+                version,
+                show_develop_navigation_labels: labels,
+                ..Default::default()
+            }
+            .sanitized()
+            .show_develop_navigation_labels
+        };
+        assert!(migrated(3, false));
+        // Version 4 files keep the labels as saved.
+        assert!(!migrated(SETTINGS_VERSION, false));
+    }
+
+    #[test]
     fn unchosen_subject_quality_is_the_default() {
         let settings = PerformanceSettings {
             subject_mask_quality: calibraw_ai::ai_masks::SubjectMaskQuality::Low,
@@ -584,7 +606,7 @@ mod tests {
         assert_eq!(settings.thumbnail_workers, 1);
         assert_eq!(settings.preview_quality, crate::app::PreviewQuality::Medium);
         assert!(!settings.image_relative_brush_size);
-        assert!(!settings.show_develop_navigation_labels);
+        assert!(settings.show_develop_navigation_labels);
         assert!(!settings.develop_histogram_open);
         assert_eq!(settings.app_usage_ms, 0);
         assert_eq!(
@@ -652,7 +674,7 @@ mod tests {
             library_sort_order: crate::ui::library::LibrarySortOrder::SmallestFirst,
             library_stack_raw_companions: false,
             image_relative_brush_size: true,
-            show_develop_navigation_labels: true,
+            show_develop_navigation_labels: false,
             export_name_template: "{OriginalName}-{CurrentDate}".to_owned(),
             export_format: ExportFormat::Png,
             ui_design: crate::appearance::UiDesign::Porcelain,
@@ -694,7 +716,7 @@ mod tests {
         );
         assert!(!restored.library_stack_raw_companions);
         assert!(restored.image_relative_brush_size);
-        assert!(restored.show_develop_navigation_labels);
+        assert!(!restored.show_develop_navigation_labels);
         assert!(!restored.automatic_lens_correction);
         assert!(!restored.automatic_lens_geometry && restored.automatic_lens_vignetting);
         assert!(!restored.missing_lens_profile_prompt);
