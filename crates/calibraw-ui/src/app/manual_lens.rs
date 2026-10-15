@@ -34,28 +34,28 @@ impl CalibRawApp {
         let mut close = false;
         let mut manual = false;
         let mut never_again = false;
-        moduwu_design::dialog_window(
-            "Lens correction not applied",
-            ctx,
-            moduwu_design::DIALOG_WIDTH_DEFAULT,
-        )
-        .show(ctx, |ui| {
-            ui.label(&message);
-            moduwu_design::dialog_button_row(ui, |ui| {
-                close |= moduwu_design::primary_action_button(ui, "OK").clicked();
-                manual |= moduwu_design::secondary_button(ui, "Correct manually").clicked();
-                never_again |= moduwu_design::secondary_button(ui, "Never show again").clicked();
-            });
-            if !(close || manual || never_again)
-                && moduwu_design::dialog_keyboard_action(
-                    ui,
-                    moduwu_design::DialogKeyboard::CLOSE_ONLY,
-                    false,
-                ) == moduwu_design::DialogAction::Cancel
-            {
-                close = true;
-            }
-        });
+        moduwu_design::Dialog::new("missing-lens-profile", "Lens correction not applied")
+            .show_with_footer(
+                ctx,
+                |ui| {
+                    ui.label(&message);
+                },
+                |ui| {
+                    close |= moduwu_design::primary_action_button(ui, "OK").clicked();
+                    manual |= moduwu_design::secondary_button(ui, "Correct manually").clicked();
+                    never_again |=
+                        moduwu_design::secondary_button(ui, "Never show again").clicked();
+                    if !(close || manual || never_again)
+                        && moduwu_design::dialog_keyboard_action(
+                            ui,
+                            moduwu_design::DialogKeyboard::CLOSE_ONLY,
+                            false,
+                        ) == moduwu_design::DialogAction::Cancel
+                    {
+                        close = true;
+                    }
+                },
+            );
         if !(close || manual || never_again) {
             return;
         }

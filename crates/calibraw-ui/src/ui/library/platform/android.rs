@@ -226,38 +226,35 @@ pub(in crate::ui::library) fn show_page_dialogs(ui: &mut Ui, app: &mut CalibRawA
 /// Covers the gap between picking photos and their placeholders appearing.
 /// Android copies them without a way to cancel, so the dialog has no buttons.
 fn show_photo_import_progress(ui: &mut Ui, status: crate::app::PhotoImportStatus) {
-    moduwu_design::dialog_window(
-        "Importing photos",
+    moduwu_design::Dialog::new("library-photo-import-progress", "Importing photos").show(
         ui.ctx(),
-        moduwu_design::DIALOG_WIDTH_NARROW,
-    )
-    .id(egui::Id::new("library-photo-import-progress"))
-    .show(ui.ctx(), |ui| match status {
-        crate::app::PhotoImportStatus::Copying(progress) => {
-            let fraction = if progress.total == 0 {
-                0.0
-            } else {
-                (progress.completed as f32 / progress.total as f32).clamp(0.0, 1.0)
-            };
-            ui.label(
-                egui::RichText::new(format!(
-                    "{} / {} photos copied",
-                    progress.completed, progress.total
-                ))
-                .strong(),
-            );
-            ui.add_space(6.0);
-            ui.add(
-                egui::ProgressBar::new(fraction)
-                    .show_percentage()
-                    .animate(true),
-            );
-        }
-        crate::app::PhotoImportStatus::Loading => {
-            ui.horizontal(|ui| {
-                ui.spinner();
-                ui.label("Loading library…");
-            });
-        }
-    });
+        |ui| match status {
+            crate::app::PhotoImportStatus::Copying(progress) => {
+                let fraction = if progress.total == 0 {
+                    0.0
+                } else {
+                    (progress.completed as f32 / progress.total as f32).clamp(0.0, 1.0)
+                };
+                ui.label(
+                    egui::RichText::new(format!(
+                        "{} / {} photos copied",
+                        progress.completed, progress.total
+                    ))
+                    .strong(),
+                );
+                ui.add_space(6.0);
+                ui.add(
+                    egui::ProgressBar::new(fraction)
+                        .show_percentage()
+                        .animate(true),
+                );
+            }
+            crate::app::PhotoImportStatus::Loading => {
+                ui.horizontal(|ui| {
+                    ui.spinner();
+                    ui.label("Loading library…");
+                });
+            }
+        },
+    );
 }

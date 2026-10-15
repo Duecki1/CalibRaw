@@ -114,8 +114,8 @@ pub(crate) fn show(
     animation: Option<&TipAnimation>,
 ) -> Option<TipChoice> {
     let mut choice = None;
-    moduwu_design::dialog_window(tip.title(), ctx, moduwu_design::DIALOG_WIDTH_WIDE)
-        .id(egui::Id::new(("calibraw-tip", tip.key())))
+    moduwu_design::Dialog::new(("calibraw-tip", tip.key()), tip.title())
+        .size(moduwu_design::DialogSize::Wide)
         .show_with_footer(
             ctx,
             |ui| {
@@ -126,14 +126,12 @@ pub(crate) fn show(
                 ui.label(tip.body());
             },
             |ui| {
-                moduwu_design::dialog_button_row(ui, |ui| {
-                    if moduwu_design::primary_action_button(ui, "Got it").clicked() {
-                        choice = Some(TipChoice::Dismiss);
-                    }
-                    if moduwu_design::secondary_button(ui, "Don't show tips").clicked() {
-                        choice = Some(TipChoice::DisableTips);
-                    }
-                });
+                if moduwu_design::primary_action_button(ui, "Got it").clicked() {
+                    choice = Some(TipChoice::Dismiss);
+                }
+                if moduwu_design::secondary_button(ui, "Don't show tips").clicked() {
+                    choice = Some(TipChoice::DisableTips);
+                }
                 if choice.is_none()
                     && moduwu_design::dialog_keyboard_action(
                         ui,
@@ -228,10 +226,18 @@ mod tests {
             }
             let window = ctx
                 .memory(|memory| {
-                    memory.area_rect(egui::Id::new(("calibraw-tip", Tip::ObjectMask.key())))
+                    memory.area_rect(moduwu_design::Dialog::area_id((
+                        "calibraw-tip",
+                        Tip::ObjectMask.key(),
+                    )))
                 })
                 .expect("the tip dialog is shown");
-            assert!(viewport.contains_rect(window), "{window:?} leaves {size:?}");
+            // A bottom sheet is flush with the screen edge; egui rounds its
+            // position to whole pixels, which may overhang by half a pixel.
+            assert!(
+                viewport.expand(0.5).contains_rect(window),
+                "{window:?} leaves {size:?}"
+            );
         }
     }
 }

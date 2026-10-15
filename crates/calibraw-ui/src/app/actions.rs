@@ -81,11 +81,6 @@ impl CalibRawApp {
             || self.ui.error_dialogs.is_open()
             || self.foreground_operation.is_some()
             || self.ai.library_mask_refresh.is_some()
-            || self
-                .export
-                .task
-                .as_ref()
-                .is_some_and(|task| !task.minimized)
             || crate::ui::sidebar::Sidebar::mask_dialog_open(ctx)
     }
 

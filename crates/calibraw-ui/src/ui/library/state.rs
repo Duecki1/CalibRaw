@@ -172,8 +172,6 @@ impl LibraryState {
             #[cfg(not(target_os = "android"))]
             hdr_merge: None,
             #[cfg(not(target_os = "android"))]
-            hdr_merge_message: None,
-            #[cfg(not(target_os = "android"))]
             raw_import_receiver: None,
             #[cfg(not(target_os = "android"))]
             folder_operation_receiver: None,
@@ -219,11 +217,7 @@ impl LibraryState {
             || self.ai_mask_refresh_prompt.is_some();
         #[cfg(not(target_os = "android"))]
         {
-            common
-                || self.folder_name_dialog.is_some()
-                || self.folder_delete_confirmation.is_some()
-                || self.hdr_merge.is_some()
-                || self.hdr_merge_message.is_some()
+            common || self.folder_name_dialog.is_some() || self.folder_delete_confirmation.is_some()
         }
         #[cfg(target_os = "android")]
         {

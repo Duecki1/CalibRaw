@@ -437,20 +437,19 @@ fn show_editor(ctx: &egui::Context, app: &mut CalibRawApp) {
     // making either closure hold a second borrow of the editor.
     let confirm_enabled = std::cell::Cell::new(false);
     let mut choice = moduwu_design::DialogAction::None;
-    moduwu_design::dialog_window(
+    moduwu_design::Dialog::new(
+        "preset-editor-dialog",
         if creating {
             "New preset"
         } else {
             "Rename preset"
         },
-        ctx,
-        if creating {
-            moduwu_design::DIALOG_WIDTH_LARGE
-        } else {
-            moduwu_design::DIALOG_WIDTH_FORM
-        },
     )
-    .id(egui::Id::new("preset-editor-dialog"))
+    .size(if creating {
+        moduwu_design::DialogSize::Wide
+    } else {
+        moduwu_design::DialogSize::Compact
+    })
     .show_with_footer(
         ctx,
         |ui| {
@@ -509,7 +508,7 @@ fn show_editor(ctx: &egui::Context, app: &mut CalibRawApp) {
                 (true, false) => "Save preset",
                 (false, _) => "Rename",
             };
-            choice = moduwu_design::dialog_confirmation_buttons(
+            choice = moduwu_design::dialog_confirmation_actions(
                 ui,
                 "Cancel",
                 confirm_label,
@@ -571,9 +570,10 @@ fn show_group_dialog(ctx: &egui::Context, app: &mut CalibRawApp) {
         GroupDialogMode::Rename { .. } => ("Rename group", "Rename"),
     };
     let mut choice = moduwu_design::DialogAction::None;
-    moduwu_design::dialog_window(title, ctx, moduwu_design::DIALOG_WIDTH_FORM)
-        .id(egui::Id::new("preset-group-dialog"))
-        .show(ctx, |ui| {
+    let confirm_enabled = std::cell::Cell::new(false);
+    moduwu_design::Dialog::new("preset-group-dialog", title).show_with_footer(
+        ctx,
+        |ui| {
             ui.label("Group name");
             let response = moduwu_design::dialog_text_field(
                 ui,
@@ -585,15 +585,19 @@ fn show_group_dialog(ctx: &egui::Context, app: &mut CalibRawApp) {
             if let Some(error) = &dialog.error {
                 show_note(ui, error, ui.visuals().error_fg_color);
             }
-            choice = moduwu_design::dialog_confirmation_buttons(
+            confirm_enabled.set(!dialog.name.trim().is_empty());
+        },
+        |ui| {
+            choice = moduwu_design::dialog_confirmation_actions(
                 ui,
                 "Cancel",
                 confirm_label,
-                !dialog.name.trim().is_empty(),
+                confirm_enabled.get(),
                 false,
                 moduwu_design::DialogKeyboard::CONFIRM_ON_ENTER,
             );
-        });
+        },
+    );
     match choice {
         moduwu_design::DialogAction::Cancel => app.presets.group_dialog = None,
         moduwu_design::DialogAction::Confirm => app.confirm_group_dialog(),
@@ -618,18 +622,20 @@ fn show_group_delete_confirmation(ctx: &egui::Context, app: &mut CalibRawApp) {
 
     let mut choice = None;
     let mut cancel = false;
-    moduwu_design::dialog_window("Delete group?", ctx, moduwu_design::DIALOG_WIDTH_DEFAULT)
-        .id(egui::Id::new("preset-group-delete-confirmation"))
-        .show(ctx, |ui| {
-            ui.add(
-                egui::Label::new(match count {
-                    0 => format!("“{group}” will be deleted."),
-                    1 => format!("“{group}” contains 1 preset."),
-                    count => format!("“{group}” contains {count} presets."),
-                })
-                .wrap(),
-            );
-            moduwu_design::dialog_button_row(ui, |ui| {
+    moduwu_design::Dialog::new("preset-group-delete-confirmation", "Delete group?")
+        .show_with_footer(
+            ctx,
+            |ui| {
+                ui.add(
+                    egui::Label::new(match count {
+                        0 => format!("“{group}” will be deleted."),
+                        1 => format!("“{group}” contains 1 preset."),
+                        count => format!("“{group}” contains {count} presets."),
+                    })
+                    .wrap(),
+                );
+            },
+            |ui| {
                 let delete_label = if count == 0 {
                     "Delete"
                 } else {
@@ -649,14 +655,14 @@ fn show_group_delete_confirmation(ctx: &egui::Context, app: &mut CalibRawApp) {
                     choice = Some(DeletedGroupPresets::MoveToDefaultGroup);
                 }
                 cancel |= moduwu_design::secondary_button(ui, "Cancel").clicked();
-            });
-            cancel |= choice.is_none()
-                && moduwu_design::dialog_keyboard_action(
-                    ui,
-                    moduwu_design::DialogKeyboard::CLOSE_ONLY,
-                    false,
-                ) == moduwu_design::DialogAction::Cancel;
-        });
+                cancel |= choice.is_none()
+                    && moduwu_design::dialog_keyboard_action(
+                        ui,
+                        moduwu_design::DialogKeyboard::CLOSE_ONLY,
+                        false,
+                    ) == moduwu_design::DialogAction::Cancel;
+            },
+        );
     if let Some(presets) = choice {
         app.presets.pending_group_delete = None;
         app.delete_preset_group(&group, presets);
@@ -839,13 +845,15 @@ fn show_delete_confirmation(ctx: &egui::Context, app: &mut CalibRawApp) {
         return;
     };
     let mut choice = moduwu_design::DialogAction::None;
-    moduwu_design::dialog_window("Delete preset?", ctx, moduwu_design::DIALOG_WIDTH_DEFAULT)
-        .id(egui::Id::new("preset-delete-confirmation"))
-        .show(ctx, |ui| {
+    moduwu_design::Dialog::new("preset-delete-confirmation", "Delete preset?").show_with_footer(
+        ctx,
+        |ui| {
             ui.label(format!(
                 "“{name}” will be deleted. Photos it was applied to keep their adjustments."
             ));
-            choice = moduwu_design::dialog_confirmation_buttons(
+        },
+        |ui| {
+            choice = moduwu_design::dialog_confirmation_actions(
                 ui,
                 "Cancel",
                 "Delete",
@@ -853,7 +861,8 @@ fn show_delete_confirmation(ctx: &egui::Context, app: &mut CalibRawApp) {
                 true,
                 moduwu_design::DialogKeyboard::CLOSE_ONLY,
             );
-        });
+        },
+    );
     match choice {
         moduwu_design::DialogAction::Cancel => app.presets.pending_delete = None,
         moduwu_design::DialogAction::Confirm => {
@@ -908,7 +917,9 @@ mod tests {
         for _ in 0..12 {
             let _ = ctx.run_ui(input(), |root| show_dialogs(root.ctx(), &mut app));
             let size = ctx
-                .memory(|memory| memory.area_rect(egui::Id::new("preset-editor-dialog")))
+                .memory(|memory| {
+                    memory.area_rect(moduwu_design::Dialog::area_id("preset-editor-dialog"))
+                })
                 .expect("the rename dialog is open")
                 .size();
             sizes.push(size);
@@ -929,9 +940,11 @@ mod tests {
         for _ in 0..12 {
             let _ = ctx.run_ui(input(), |root| show_dialogs(root.ctx(), &mut app));
             sizes.push(
-                ctx.memory(|memory| memory.area_rect(egui::Id::new("preset-group-dialog")))
-                    .expect("the new group dialog is open")
-                    .size(),
+                ctx.memory(|memory| {
+                    memory.area_rect(moduwu_design::Dialog::area_id("preset-group-dialog"))
+                })
+                .expect("the new group dialog is open")
+                .size(),
             );
         }
         let settled = sizes[2];
@@ -944,11 +957,13 @@ mod tests {
         // Both dialogs are centered, so whatever is hit at the new group
         // dialog's center is the dialog drawn on top.
         let center = ctx
-            .memory(|memory| memory.area_rect(egui::Id::new("preset-group-dialog")))
+            .memory(|memory| {
+                memory.area_rect(moduwu_design::Dialog::area_id("preset-group-dialog"))
+            })
             .unwrap()
             .center();
         let on_top = ctx.layer_id_at(center).map(|layer| layer.id)
-            == Some(egui::Id::new("preset-group-dialog"));
+            == Some(moduwu_design::Dialog::area_id("preset-group-dialog"));
         assert!(
             on_top,
             "the new group dialog must be drawn above the editor"

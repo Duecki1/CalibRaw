@@ -167,7 +167,7 @@ impl CalibRawApp {
         accept_label: &str,
         accept_enabled: bool,
     ) -> moduwu_design::DialogAction {
-        moduwu_design::dialog_confirmation_buttons(
+        moduwu_design::dialog_confirmation_actions(
             ui,
             decline_label,
             accept_label,
