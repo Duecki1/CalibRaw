@@ -28,6 +28,9 @@ pub(in crate::app) fn mask_tip(kind: MaskKind) -> Option<Tip> {
     match kind {
         MaskKind::Object => Some(Tip::ObjectMask),
         MaskKind::DepthRange => Some(Tip::DepthRange),
+        MaskKind::Path => Some(Tip::PathMask),
+        MaskKind::ColorRange => Some(Tip::ColorRangeMask),
+        MaskKind::LuminanceRange => Some(Tip::LuminanceRangeMask),
         _ => None,
     }
 }
@@ -197,10 +200,28 @@ mod tests {
     }
 
     #[test]
-    fn object_and_depth_masks_have_creation_tips() {
+    fn object_depth_and_range_masks_have_creation_tips() {
         assert_eq!(mask_tip(MaskKind::Object), Some(Tip::ObjectMask));
         assert_eq!(mask_tip(MaskKind::DepthRange), Some(Tip::DepthRange));
+        assert_eq!(mask_tip(MaskKind::Path), Some(Tip::PathMask));
+        assert_eq!(mask_tip(MaskKind::ColorRange), Some(Tip::ColorRangeMask));
+        assert_eq!(
+            mask_tip(MaskKind::LuminanceRange),
+            Some(Tip::LuminanceRangeMask)
+        );
         assert_eq!(mask_tip(MaskKind::Brush), None);
+    }
+
+    #[test]
+    fn path_mask_tip_is_offered_once() {
+        let mut app = app_with_tips(true);
+        let tip = mask_tip(MaskKind::Path).expect("path masks have a tip");
+        app.offer_tip(tip);
+        assert_eq!(offered(&app), Some(Tip::PathMask));
+
+        app.answer_tip(TipChoice::Dismiss);
+        app.offer_tip(tip);
+        assert_eq!(offered(&app), None);
     }
 
     #[test]
