@@ -1,5 +1,5 @@
-//! Work that runs while the app stays usable: exports, Edit Replays and HDR
-//! merges. The toolbar indicator follows and cancels them; results arrive as
+//! Work that runs while the app stays usable: exports, Edit Replays, HDR
+//! merges and focus stacks. The toolbar indicator follows and cancels them; results arrive as
 //! a status notice or, for failures, the shared error dialog.
 
 use super::*;
@@ -13,7 +13,7 @@ impl CalibRawApp {
             tasks.push(export_task_view(task));
         }
         #[cfg(not(target_os = "android"))]
-        if let Some(task) = self.library.hdr_merge_task() {
+        if let Some(task) = self.library.merge_task() {
             tasks.push(task);
         }
         tasks
@@ -33,34 +33,34 @@ impl CalibRawApp {
                 self.cancel_export_task();
             }
             #[cfg(not(target_os = "android"))]
-            BackgroundTaskId::HdrMerge => {
-                self.library.cancel_hdr_merge();
+            BackgroundTaskId::Merge => {
+                self.library.cancel_merge();
                 self.egui_ctx.request_repaint();
             }
         }
     }
 
-    /// Reports a finished HDR merge.
+    /// Reports a finished HDR merge or focus stack.
     #[cfg(not(target_os = "android"))]
-    pub(super) fn poll_hdr_merge(&mut self) {
-        use crate::ui::library::HdrMergeOutcome;
-        let Some(outcome) = self.library.poll_hdr_merge(&self.egui_ctx) else {
+    pub(super) fn poll_merge(&mut self) {
+        use crate::ui::library::MergeOutcome;
+        let Some((kind, outcome)) = self.library.poll_merge(&self.egui_ctx) else {
             return;
         };
         match outcome {
-            HdrMergeOutcome::Saved(path) => {
+            MergeOutcome::Saved(path) => {
                 let name = path
                     .file_name()
                     .map(|name| name.to_string_lossy().into_owned())
                     .unwrap_or_else(|| path.display().to_string());
-                let message = format!("HDR merge saved: {name}");
+                let message = format!("{} saved: {name}", kind.title());
                 self.library.set_status(message.clone());
                 self.ui.notice = Some(message);
             }
-            HdrMergeOutcome::Cancelled => {
-                self.ui.notice = Some("HDR merge cancelled.".to_owned());
+            MergeOutcome::Cancelled => {
+                self.ui.notice = Some(format!("{} cancelled.", kind.title()));
             }
-            HdrMergeOutcome::Failed(error) => self.report_error(ErrorKind::HdrMerge, error),
+            MergeOutcome::Failed(error) => self.report_error(kind.error_kind(), error),
         }
         self.egui_ctx.request_repaint();
     }

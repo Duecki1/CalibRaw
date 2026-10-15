@@ -1,10 +1,14 @@
 pub use calibraw_core::pipeline::*;
 
 mod export;
+pub mod focus_stack;
 mod gpu;
 mod gpu_cache;
 pub mod hdr;
-pub use hdr::{merge_hdr_bracket, HdrMergeResult};
+mod raw_merge;
+pub use focus_stack::stack_focus;
+pub use hdr::merge_hdr_bracket;
+pub use raw_merge::MergedImage;
 
 pub use export::{
     render_developed_linear_crop, render_remove_scene_crop, render_remove_scene_crop_resized,

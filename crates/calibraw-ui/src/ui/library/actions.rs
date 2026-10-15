@@ -8,7 +8,7 @@ pub(crate) enum LibraryAction {
     Review(Vec<LibraryAsset>, super::review::ReviewChange),
     Export(Vec<LibraryAsset>),
     #[cfg(not(target_os = "android"))]
-    HdrMerge(Vec<LibraryAsset>),
+    Merge(super::MergeKind, Vec<LibraryAsset>),
     CopyAdjustments(LibraryAsset),
     PasteAdjustments(Vec<LibraryAsset>),
     ApplyPreset(Vec<LibraryAsset>, PathBuf),
@@ -90,13 +90,25 @@ pub(crate) fn library_image_context_menu(
         ui.close();
     }
 
-    if selected_count >= 2
-        && moduwu_design::context_menu_item(ui, action_enabled, "HDR merge")
-            .on_hover_text("Auto-align and merge RAW exposures into an editable 32-bit float TIFF")
-            .clicked()
-    {
-        action = Some(LibraryAction::HdrMerge(context_assets.to_vec()));
-        ui.close();
+    if selected_count >= 2 {
+        for (kind, help) in [
+            (
+                super::MergeKind::Hdr,
+                "Auto-align and merge RAW exposures into an editable 32-bit float TIFF",
+            ),
+            (
+                super::MergeKind::FocusStack,
+                "Auto-align RAW frames focused at different distances and combine their sharpest parts into an editable 32-bit float TIFF",
+            ),
+        ] {
+            if moduwu_design::context_menu_item(ui, action_enabled, kind.title())
+                .on_hover_text(help)
+                .clicked()
+            {
+                action = Some(LibraryAction::Merge(kind, context_assets.to_vec()));
+                ui.close();
+            }
+        }
     }
 
     ui.separator();
@@ -218,7 +230,9 @@ pub(crate) fn apply_library_action(
 ) {
     match action {
         #[cfg(not(target_os = "android"))]
-        LibraryAction::HdrMerge(assets) => super::hdr::start(app, frame, assets, ui.ctx()),
+        LibraryAction::Merge(kind, assets) => {
+            super::merge::start(app, frame, kind, assets, ui.ctx())
+        }
         #[cfg(not(target_os = "android"))]
         LibraryAction::Review(assets, change) => super::review::apply_review(app, assets, change),
         LibraryAction::Export(assets) => {
@@ -462,7 +476,7 @@ pub(super) fn selection_bar_more_menu<R>(
 pub(super) enum SelectionBarCommand {
     Export,
     #[cfg(not(target_os = "android"))]
-    HdrMerge,
+    Merge(super::MergeKind),
     CopyAdjustments,
     PasteAdjustments,
     ApplyPreset(PathBuf),
@@ -497,17 +511,20 @@ pub(super) fn selection_bar_actions(
         action = Some(SelectionBarCommand::Export);
     }
     #[cfg(not(target_os = "android"))]
-    if selected_count >= 2
-        && selection_bar_action_button(
-            ui,
-            action_enabled,
-            compact,
-            egui_phosphor::regular::STACK,
-            "HDR merge",
-        )
-        .clicked()
-    {
-        action = Some(SelectionBarCommand::HdrMerge);
+    if selected_count >= 2 {
+        for (kind, glyph) in [
+            (super::MergeKind::Hdr, egui_phosphor::regular::STACK),
+            (
+                super::MergeKind::FocusStack,
+                egui_phosphor::regular::CROSSHAIR_SIMPLE,
+            ),
+        ] {
+            if selection_bar_action_button(ui, action_enabled, compact, glyph, kind.title())
+                .clicked()
+            {
+                action = Some(SelectionBarCommand::Merge(kind));
+            }
+        }
     }
     if selected_count == 1
         && selection_bar_action_button(
@@ -614,8 +631,8 @@ pub(super) fn library_selection_action(
     match command {
         SelectionBarCommand::Export => Some(LibraryAction::Export(assets.to_vec())),
         #[cfg(not(target_os = "android"))]
-        SelectionBarCommand::HdrMerge => {
-            (assets.len() >= 2).then(|| LibraryAction::HdrMerge(assets.to_vec()))
+        SelectionBarCommand::Merge(kind) => {
+            (assets.len() >= 2).then(|| LibraryAction::Merge(kind, assets.to_vec()))
         }
         SelectionBarCommand::CopyAdjustments if assets.len() == 1 => {
             assets.first().cloned().map(LibraryAction::CopyAdjustments)

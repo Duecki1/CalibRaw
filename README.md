@@ -103,6 +103,7 @@ AI models are downloaded once, on first use and only after you agree; they are v
 - **Dual Demosaicing:** Blends edge-preserving and smoothed passes to suppress chroma noise at high ISOs.
 - **Automatic Lens Correction:** Matches available camera and lens profiles through Lensfun and can automatically correct distortion, chromatic aberration and vignetting.
 - **HDR Merge:** Combine multiple bracketed RAW exposures into one extended-range image.
+- **Focus Stacking:** Combine RAW frames focused at different distances into one image that is sharp throughout.
 
 ### Masking & AI
 - **Masks:** Brush, Linear Gradient, Radial Gradient, and Shape masks with independent curves and adjustments.

@@ -201,7 +201,7 @@ canvases, mask cards, and colour controls in their existing components.
   controls process input. Backdrop clicks dismiss nothing unless a dialog opts
   in.
 - Work that may run while the app stays usable (exports, Edit Replays, HDR
-  merges) reports through the toolbar task indicator
+  merges, focus stacks) reports through the toolbar task indicator
   (`ui/background_tasks.rs`), not a dialog. Work that edits the open document,
   such as AI masks and denoise, keeps its blocking progress dialog.
 - Report every failure the user should know about with
