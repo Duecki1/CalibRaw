@@ -27,6 +27,7 @@ pub(crate) struct ShownTip {
 pub(in crate::app) fn mask_tip(kind: MaskKind) -> Option<Tip> {
     match kind {
         MaskKind::Object => Some(Tip::ObjectMask),
+        MaskKind::DepthRange => Some(Tip::DepthRange),
         _ => None,
     }
 }
@@ -196,8 +197,9 @@ mod tests {
     }
 
     #[test]
-    fn only_object_masks_have_a_creation_tip() {
+    fn object_and_depth_masks_have_creation_tips() {
         assert_eq!(mask_tip(MaskKind::Object), Some(Tip::ObjectMask));
+        assert_eq!(mask_tip(MaskKind::DepthRange), Some(Tip::DepthRange));
         assert_eq!(mask_tip(MaskKind::Brush), None);
     }
 
