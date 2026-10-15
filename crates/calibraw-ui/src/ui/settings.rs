@@ -83,6 +83,14 @@ fn diagnostics_snapshot_with_ai_backends() -> String {
     diagnostic_log
 }
 
+/// Whether Automatic mode offers a choice of runtime, which only Linux x86_64
+/// without a bundled runtime does.
+#[cfg(not(target_os = "android"))]
+pub(crate) fn automatic_runtime_kind_offered(app: &CalibRawApp) -> bool {
+    app.ai.runtime_mode == OnnxRuntimeMode::Automatic
+        && calibraw_ai::automatic_onnx_runtime_kind_selectable()
+}
+
 /// Linux x86_64 choice between the CPU and CUDA automatic runtimes. Hidden
 /// where Automatic mode has no choice, including bundled runtimes.
 #[cfg(not(target_os = "android"))]
@@ -91,9 +99,7 @@ pub(crate) fn automatic_runtime_kind_control(
     app: &mut CalibRawApp,
     id_salt: &'static str,
 ) {
-    if app.ai.runtime_mode != OnnxRuntimeMode::Automatic
-        || !calibraw_ai::automatic_onnx_runtime_kind_selectable()
-    {
+    if !automatic_runtime_kind_offered(app) {
         return;
     }
     let mut kind = app.ai.runtime_kind;

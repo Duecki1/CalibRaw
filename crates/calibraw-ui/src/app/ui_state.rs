@@ -34,6 +34,8 @@ pub(crate) struct PreferencesState {
     pub(crate) preview_backdrop: PreviewBackdrop,
     pub(crate) onboarding_completed: bool,
     pub(crate) subject_mask_quality_chosen: bool,
+    #[cfg(not(target_os = "android"))]
+    pub(crate) onnx_runtime_kind_chosen: bool,
     pub(crate) tips: TipPreferences,
     pub(crate) auto_check_updates: bool,
     pub(crate) github_update_check_allowed: Option<bool>,
