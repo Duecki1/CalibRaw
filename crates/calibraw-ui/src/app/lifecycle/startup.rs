@@ -298,6 +298,8 @@ impl CalibRawApp {
                 preview_backdrop: performance.preview_backdrop,
                 onboarding_completed: performance.onboarding_completed,
                 subject_mask_quality_chosen: performance.subject_mask_quality_chosen,
+                #[cfg(not(target_os = "android"))]
+                onnx_runtime_kind_chosen: performance.onnx_runtime_kind_chosen,
                 tips: TipPreferences {
                     enabled: performance.tips_enabled,
                     seen: performance.seen_tips.clone(),
@@ -326,12 +328,8 @@ impl CalibRawApp {
                 error_dialogs: ErrorDialogQueue::default(),
                 unsupported_file_dialog: None,
                 missing_lens_profile_prompt: None,
-                onboarding_step: OnboardingStep::pending(
-                    performance.onboarding_completed,
-                    performance.subject_mask_quality_chosen,
-                )
-                .first()
-                .copied(),
+                // Set below; the pending steps depend on the AI runtime state.
+                onboarding_step: None,
                 tip: None,
                 version_check: Default::default(),
                 #[cfg(not(target_os = "android"))]
@@ -365,8 +363,8 @@ impl CalibRawApp {
                 photo_import: None,
             },
         };
-        #[cfg(not(target_os = "android"))]
         let mut app = app;
+        app.ui.onboarding_step = OnboardingStep::pending(&app).first().copied();
         #[cfg(not(target_os = "android"))]
         if let Some(folder) = last_library_folder.filter(|folder| folder.is_dir()) {
             app.library

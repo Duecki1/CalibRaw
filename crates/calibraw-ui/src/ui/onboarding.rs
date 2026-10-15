@@ -12,10 +12,7 @@ pub(crate) fn show(ctx: &egui::Context, app: &mut CalibRawApp) {
     let Some(step) = app.ui.onboarding_step else {
         return;
     };
-    let steps = OnboardingStep::pending(
-        app.preferences.onboarding_completed,
-        app.preferences.subject_mask_quality_chosen,
-    );
+    let steps = OnboardingStep::pending(app);
 
     let mut action = None;
     moduwu_design::Dialog::new(("calibraw-first-run-onboarding", step), step.title())
@@ -36,6 +33,10 @@ pub(crate) fn show(ctx: &egui::Context, app: &mut CalibRawApp) {
         Some(OnboardingAction::Finish) => {
             app.preferences.onboarding_completed = true;
             app.preferences.subject_mask_quality_chosen = true;
+            #[cfg(not(target_os = "android"))]
+            {
+                app.preferences.onnx_runtime_kind_chosen = true;
+            }
             app.ui.onboarding_step = None;
             if !app.persist_performance_settings() {
                 app.report_error(
@@ -171,6 +172,15 @@ fn show_subject_masks(ui: &mut egui::Ui, app: &mut CalibRawApp) {
     crate::ui::settings::subject_mask_quality_control(ui, app, "onboarding-subject-mask-quality");
     ui.add_space(moduwu_design::SPACE_SM);
     ui.small(crate::ui::settings::subject_mask_quality_descriptions());
+    #[cfg(not(target_os = "android"))]
+    if crate::ui::settings::automatic_runtime_kind_offered(app) {
+        ui.add_space(moduwu_design::SPACE_SM);
+        crate::ui::settings::automatic_runtime_kind_control(
+            ui,
+            app,
+            "onboarding-automatic-runtime-kind",
+        );
+    }
 }
 
 fn show_copy_paste(ui: &mut egui::Ui, app: &mut CalibRawApp) {
@@ -358,27 +368,33 @@ impl OnboardingStep {
     const CATCH_UP: &'static [Self] = &[Self::SubjectMasks];
 
     /// The steps a user still has to go through, empty when none.
-    pub(crate) fn pending(
-        onboarding_completed: bool,
-        subject_mask_quality_chosen: bool,
-    ) -> &'static [Self] {
+    pub(crate) fn pending(app: &CalibRawApp) -> &'static [Self] {
+        // The runtime choice joined the subject-mask step later, so users who
+        // can make it see that step again even with a quality chosen.
+        #[cfg(not(target_os = "android"))]
+        let runtime_kind_unchosen = !app.preferences.onnx_runtime_kind_chosen
+            && crate::ui::settings::automatic_runtime_kind_offered(app);
+        #[cfg(target_os = "android")]
+        let runtime_kind_unchosen = false;
         #[cfg(not(target_os = "android"))]
         let discord_supported = crate::desktop_portal::discord_presence_supported();
         #[cfg(target_os = "android")]
         let discord_supported = false;
         Self::pending_with(
-            onboarding_completed,
-            subject_mask_quality_chosen,
+            app.preferences.onboarding_completed,
+            app.preferences.subject_mask_quality_chosen && !runtime_kind_unchosen,
             discord_supported,
         )
     }
 
+    /// `subject_masks_chosen`: every choice the subject-mask step offers on
+    /// this device has been made.
     fn pending_with(
         onboarding_completed: bool,
-        subject_mask_quality_chosen: bool,
+        subject_masks_chosen: bool,
         discord_supported: bool,
     ) -> &'static [Self] {
-        match (onboarding_completed, subject_mask_quality_chosen) {
+        match (onboarding_completed, subject_masks_chosen) {
             (false, _) if discord_supported => Self::ALL,
             (false, _) => Self::ALL_WITHOUT_DISCORD,
             (true, false) => Self::CATCH_UP,
@@ -486,6 +502,26 @@ mod tests {
         let steps = pending(true, false);
         assert_eq!(steps[0].previous(steps), None);
         assert_eq!(steps[0].next(steps), None);
+    }
+
+    #[cfg(not(target_os = "android"))]
+    #[test]
+    fn finished_setup_asks_once_for_an_offered_runtime_choice() {
+        let ctx = egui::Context::default();
+        crate::ui::theme::install(&ctx);
+        let mut app = CalibRawApp::empty(&ctx);
+        app.preferences.onboarding_completed = true;
+        app.preferences.subject_mask_quality_chosen = true;
+        app.preferences.onnx_runtime_kind_chosen = false;
+        let expected: &[OnboardingStep] =
+            if crate::ui::settings::automatic_runtime_kind_offered(&app) {
+                &[OnboardingStep::SubjectMasks]
+            } else {
+                &[]
+            };
+        assert_eq!(OnboardingStep::pending(&app), expected);
+        app.preferences.onnx_runtime_kind_chosen = true;
+        assert!(OnboardingStep::pending(&app).is_empty());
     }
 
     #[cfg(not(target_os = "android"))]

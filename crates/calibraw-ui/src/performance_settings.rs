@@ -59,6 +59,10 @@ pub(crate) struct PerformanceSettings {
     pub onnx_runtime_mode: crate::app::OnnxRuntimeMode,
     #[cfg(not(target_os = "android"))]
     pub onnx_runtime_kind: calibraw_ai::AutomaticOnnxRuntimeKind,
+    /// Missing in files written before setup offered the runtime choice, so
+    /// existing users who can choose one are asked once.
+    #[cfg(not(target_os = "android"))]
+    pub onnx_runtime_kind_chosen: bool,
     #[cfg(not(target_os = "android"))]
     pub discord_rich_presence: bool,
     /// Serialize photo file reads for libraries on rotational disks.
@@ -174,6 +178,8 @@ impl Default for PerformanceSettings {
             onnx_runtime_mode: crate::app::OnnxRuntimeMode::default(),
             #[cfg(not(target_os = "android"))]
             onnx_runtime_kind: calibraw_ai::AutomaticOnnxRuntimeKind::default(),
+            #[cfg(not(target_os = "android"))]
+            onnx_runtime_kind_chosen: false,
             #[cfg(not(target_os = "android"))]
             discord_rich_presence: false,
             #[cfg(not(target_os = "android"))]
@@ -622,6 +628,7 @@ mod tests {
                 settings.onnx_runtime_kind,
                 calibraw_ai::AutomaticOnnxRuntimeKind::Cpu
             );
+            assert!(!settings.onnx_runtime_kind_chosen);
             assert!(!settings.discord_rich_presence);
             assert!(!settings.hdd_mode);
             assert!(settings.library_folder_sidebar_open);
