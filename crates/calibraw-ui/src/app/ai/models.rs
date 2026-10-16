@@ -266,11 +266,22 @@ impl CalibRawApp {
     pub(in crate::app) fn subject_model_precision(
         &self,
     ) -> calibraw_ai::ai_masks::SubjectModelPrecision {
+        calibraw_ai::ai_masks::SubjectModelPrecision::for_current_sessions(
+            self.manual_onnx_runtime(),
+        )
+    }
+
+    /// A manually selected ONNX Runtime, whose execution providers are not
+    /// known before it loads.
+    pub(in crate::app) fn manual_onnx_runtime(&self) -> bool {
         #[cfg(not(target_os = "android"))]
-        let manual_runtime = self.ai.runtime_mode == OnnxRuntimeMode::Manual;
+        {
+            self.ai.runtime_mode == OnnxRuntimeMode::Manual
+        }
         #[cfg(target_os = "android")]
-        let manual_runtime = false;
-        calibraw_ai::ai_masks::SubjectModelPrecision::for_current_sessions(manual_runtime)
+        {
+            false
+        }
     }
 
     pub(in crate::app) fn subject_model(&self) -> calibraw_ai::ai_masks::BiRefNetModelSpec {

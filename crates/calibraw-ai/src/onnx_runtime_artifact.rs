@@ -265,7 +265,7 @@ pub fn automatic_onnx_runtime_is_installed() -> bool {
 
 /// Whether Automatic mode's runtime is built with a GPU execution provider.
 /// Packagers bundle CPU builds.
-pub(crate) fn automatic_onnx_runtime_has_gpu_provider() -> bool {
+fn automatic_onnx_runtime_has_gpu_provider() -> bool {
     matches!(
         configured_automatic_runtime(),
         Ok(AutomaticRuntime::Download(RuntimePackage {
@@ -273,6 +273,14 @@ pub(crate) fn automatic_onnx_runtime_has_gpu_provider() -> bool {
             ..
         }))
     )
+}
+
+/// Whether new AI sessions may run on a GPU: GPU AI is enabled and the runtime
+/// may include a GPU execution provider. A manually selected runtime is not
+/// known before it loads, so it may.
+pub fn ai_sessions_may_use_gpu(manual_runtime: bool) -> bool {
+    crate::execution_provider::ai_acceleration_enabled()
+        && (manual_runtime || automatic_onnx_runtime_has_gpu_provider())
 }
 
 fn install_lock() -> MutexGuard<'static, ()> {

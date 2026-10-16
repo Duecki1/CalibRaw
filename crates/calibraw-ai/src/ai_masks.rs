@@ -182,8 +182,7 @@ impl SubjectModelPrecision {
         #[cfg(not(target_os = "android"))]
         let gpu = cfg!(any(target_os = "windows", target_os = "linux"))
             && !manual_runtime
-            && crate::execution_provider::ai_acceleration_enabled()
-            && crate::onnx_runtime_artifact::automatic_onnx_runtime_has_gpu_provider();
+            && crate::onnx_runtime_artifact::ai_sessions_may_use_gpu(false);
         #[cfg(target_os = "android")]
         let gpu = {
             let _ = manual_runtime;

@@ -248,7 +248,7 @@ pub(crate) fn invalidate_for_provider_change() {
 pub(crate) struct ModelSessionGuard {
     runtime: Option<MutexGuard<'static, RuntimeSlot<FallbackSession>>>,
     /// Marks the lease as GPU work until it ends; see `gpu_job_record`.
-    _gpu_job: Option<GpuJobRecord>,
+    gpu_job: Option<GpuJobRecord>,
 }
 
 impl Deref for ModelSessionGuard {
@@ -289,6 +289,9 @@ impl Drop for ModelSessionGuard {
             PROVIDER_GENERATION.load(Ordering::Acquire),
             ai_acceleration_enabled(),
         );
+        // End the record while the lease is held: once it is released, the
+        // next lease may begin its own record, which this one must not clear.
+        drop(self.gpu_job.take());
         drop(guard);
 
         let _ = try_reconcile(
@@ -322,7 +325,7 @@ pub(crate) fn acquire_model_session(
         .and_then(|active| active.session.record_gpu_job());
     Ok(ModelSessionGuard {
         runtime: Some(runtime),
-        _gpu_job: gpu_job,
+        gpu_job,
     })
 }
 

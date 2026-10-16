@@ -58,13 +58,17 @@ impl ForegroundOperationKind {
 
 impl CalibRawApp {
     /// A local-AI job is running and may use the GPU, where the editor's own
-    /// textures compete with it for memory.
+    /// textures compete with it for memory. Always false on Android, whose
+    /// sessions this check was not made for.
     pub(crate) fn ai_job_may_use_gpu(&self) -> bool {
-        calibraw_ai::ai_acceleration_enabled()
-            && self
-                .foreground_operation_kind()
-                .and_then(ForegroundOperationKind::ai_feature)
-                .is_some()
+        #[cfg(not(target_os = "android"))]
+        let gpu = calibraw_ai::ai_sessions_may_use_gpu(self.manual_onnx_runtime());
+        #[cfg(target_os = "android")]
+        let gpu = false;
+        gpu && self
+            .foreground_operation_kind()
+            .and_then(ForegroundOperationKind::ai_feature)
+            .is_some()
     }
 
     /// A mask segmentation or scene-depth job is running.
