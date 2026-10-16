@@ -57,3 +57,4 @@ CalibRaw builds on the work of these open-source projects:
 • halation-dctl: the approach behind the Halation effect
 • AI models: BiRefNet, SkySeg U2Net, Depth Anything V2, SAM 2.1, Big-LaMa and RawNIND, run with ONNX Runtime
 Full licenses and attributions are in the source repository.
+
