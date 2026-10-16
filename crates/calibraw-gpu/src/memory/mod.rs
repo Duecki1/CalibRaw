@@ -9,9 +9,6 @@ mod metal;
 #[cfg(any(target_os = "linux", target_os = "android"))]
 mod vulkan;
 
-#[cfg(target_os = "windows")]
-pub use dxgi::{find_dxgi_adapter, DxgiAdapter};
-
 /// GPU memory of one adapter, in bytes, for this process: dedicated video
 /// memory on discrete GPUs, the share of system memory granted to the GPU on
 /// integrated ones.

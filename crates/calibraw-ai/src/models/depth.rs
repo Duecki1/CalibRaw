@@ -293,13 +293,13 @@ mod tests {
         let mask = depth_mask(Path::new(&path), &image).unwrap();
         assert_eq!(mask.len(), 96 * 64);
         assert!(mask.iter().max().unwrap() - mask.iter().min().unwrap() > 32);
-        let providers = crate::active_execution_providers();
+        let providers = crate::ai_session_statuses();
         eprintln!("Depth inference providers: {providers:?}");
         if let Ok(expected) = std::env::var("CALIBRAW_TEST_DEPTH_PROVIDER") {
             assert!(providers.iter().any(|status| {
                 status.model_name == MODEL.name
-                    && status.active_provider == expected
-                    && !status.degraded
+                    && status.placement.provider_name() == expected
+                    && !status.gpu_failed()
             }));
         }
     }

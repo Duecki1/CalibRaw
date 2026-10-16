@@ -29,7 +29,7 @@ impl CalibRawApp {
             return;
         }
         let ai_job = calibraw_ai::gpu_job_in_progress()
-            .or_else(|| calibraw_ai::take_ai_gpu_failure().map(|_| "an AI model".to_owned()));
+            .or_else(|| calibraw_ai::take_ai_gpu_device_loss().then(|| "an AI model".to_owned()));
         if ai_job.is_some() {
             self.set_ai_gpu_acceleration(false);
         }

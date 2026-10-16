@@ -61,70 +61,23 @@ fn count_setting(
 
 fn diagnostics_snapshot_with_ai_backends() -> String {
     let mut diagnostic_log = calibraw_core::diagnostics::snapshot();
-    let providers = calibraw_ai::active_execution_providers();
-    if providers.is_empty() {
+    let statuses = calibraw_ai::ai_session_statuses();
+    if statuses.is_empty() {
         return diagnostic_log;
     }
 
     if !diagnostic_log.ends_with('\n') && !diagnostic_log.is_empty() {
         diagnostic_log.push('\n');
     }
-    diagnostic_log.push_str("AI execution providers (current):\n");
-    for provider in providers {
+    diagnostic_log.push_str("AI sessions (current):\n");
+    for status in statuses {
         diagnostic_log.push_str("- ");
-        diagnostic_log.push_str(&provider.model_name);
+        diagnostic_log.push_str(&status.model_name);
         diagnostic_log.push_str(": ");
-        diagnostic_log.push_str(&provider.active_provider);
-        if provider.degraded {
-            diagnostic_log.push_str(" [degraded/fallback]");
-        }
+        diagnostic_log.push_str(&status.label());
         diagnostic_log.push('\n');
     }
     diagnostic_log
-}
-
-/// Whether Automatic mode offers a choice of runtime, which only Linux x86_64
-/// without a bundled runtime does.
-#[cfg(not(target_os = "android"))]
-pub(crate) fn automatic_runtime_kind_offered(app: &CalibRawApp) -> bool {
-    app.ai.runtime_mode == OnnxRuntimeMode::Automatic
-        && calibraw_ai::runtime::automatic_onnx_runtime_kind_selectable()
-}
-
-/// Linux x86_64 choice between the CPU and CUDA automatic runtimes. Hidden
-/// where Automatic mode has no choice, including bundled runtimes.
-#[cfg(not(target_os = "android"))]
-pub(crate) fn automatic_runtime_kind_control(
-    ui: &mut Ui,
-    app: &mut CalibRawApp,
-    id_salt: &'static str,
-) {
-    if !automatic_runtime_kind_offered(app) {
-        return;
-    }
-    let mut kind = app.ai.runtime_kind;
-    moduwu_design::form_combo_with_help(
-        ui,
-        "AI runtime",
-        id_salt,
-        kind.label(),
-        180.0,
-        "NVIDIA CUDA needs an NVIDIA GPU with the matching CUDA runtime and cuDNN 9 installed; otherwise AI falls back to CPU. CUDA 13 needs a Turing (RTX 20) or newer GPU; use CUDA 12 for older GPUs.",
-        |ui| {
-            for option in calibraw_ai::runtime::AutomaticOnnxRuntimeKind::ALL {
-                let response = ui.selectable_value(&mut kind, option, option.label());
-                if let Some(bytes) = option.download_bytes() {
-                    response.on_hover_text(format!(
-                        "{:.0} MB download",
-                        bytes as f64 / 1_000_000.0
-                    ));
-                }
-            }
-        },
-    );
-    if kind != app.ai.runtime_kind {
-        app.set_onnx_runtime_kind(kind);
-    }
 }
 
 /// Who each subject-mask quality offered on this platform is for, one line
@@ -846,22 +799,19 @@ impl Settings {
             ui,
             &mut acceleration,
             "Use GPU acceleration when available",
-            "Allows AI masks and AI denoise to use a supported GPU execution provider. CPU fallback remains automatic. Turn this off if GPU inference causes driver errors, instability, or incorrect results.",
+            "Allows AI masks and AI denoise to use a supported GPU execution provider. A model that does not fit in free GPU memory runs on the CPU, and CPU fallback remains automatic. Turn this off if GPU inference causes driver errors, instability, or incorrect results.",
         )
             .changed()
         {
             app.set_ai_gpu_acceleration(acceleration);
         }
-        let statuses = calibraw_ai::active_execution_providers();
-        let mut in_use: Vec<&str> = statuses
-            .iter()
-            .map(|status| status.active_provider.as_str())
-            .collect();
+        let statuses = calibraw_ai::ai_session_statuses();
+        let mut in_use: Vec<String> = statuses.iter().map(|status| status.label()).collect();
         in_use.sort_unstable();
         in_use.dedup();
         if !in_use.is_empty() {
             let text = format!("In use: {}", in_use.join(", "));
-            if statuses.iter().any(|status| status.degraded) {
+            if statuses.iter().any(|status| status.gpu_failed()) {
                 ui.colored_label(ui.visuals().warn_fg_color, text).on_hover_text(
                     "A GPU execution provider failed to start or run. The Diagnostics log lists the reason.",
                 );
@@ -926,7 +876,6 @@ impl Settings {
                         );
                     }
                 } else {
-                    automatic_runtime_kind_control(ui, app, "settings-automatic-runtime-kind");
                     ui.label(format!(
                         "CalibRaw will select the {} / {} runtime and download it when an AI tool first needs it.",
                         std::env::consts::OS,
@@ -942,9 +891,9 @@ impl Settings {
             }
             OnnxRuntimeMode::Manual => {
                 let manual_help = if cfg!(target_os = "windows") {
-                    "Choose a trusted ONNX Runtime 1.18 or newer onnxruntime.dll matching this CalibRaw build's CPU architecture. CalibRaw validates it in an isolated helper process. Provider libraries and dependencies must remain beside it."
+                    "Choose a trusted ONNX Runtime 1.22 or newer onnxruntime.dll matching this CalibRaw build's CPU architecture. CalibRaw validates it in an isolated helper process. AI uses the GPU only if WebGPU is built into it. Dependencies must remain beside it."
                 } else {
-                    "Choose a trusted ONNX Runtime 1.18 or newer shared library built for this hardware. CalibRaw validates it in an isolated helper process. Provider libraries and dependencies must remain beside it."
+                    "Choose a trusted ONNX Runtime 1.22 or newer shared library built for this hardware. CalibRaw validates it in an isolated helper process. AI uses the GPU only if WebGPU is built into it. Dependencies must remain beside it."
                 };
                 if let Some((path, sha256)) = &app.ai.manual_runtime {
                     ui.label("Selected manual runtime:");

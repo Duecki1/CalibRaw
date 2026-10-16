@@ -24,8 +24,12 @@
 //! - The depth model desktop builds used before Depth Anything V2 Small,
 //!   removed from the model cache on start-up (`calibraw-ui`,
 //!   `app/ai/models.rs`).
+//! - The automatic ONNX Runtimes the WebGPU packages replaced (CPU, Linux
+//!   CUDA and Windows DirectML), removed from the model cache on desktop
+//!   start-up (`calibraw-ai`, `runtime/package.rs`, which lists them, and
+//!   `calibraw-ui`, `app/ai/models.rs`).
 //!
-//! Both start-up removals run through `remove_retired_app_data`
+//! The start-up removals run through `remove_retired_app_data`
 //! (`calibraw-ui`, `app/lifecycle/startup.rs`).
 //!
 //! `older_readers` works the other way: it writes sidecars and presets so

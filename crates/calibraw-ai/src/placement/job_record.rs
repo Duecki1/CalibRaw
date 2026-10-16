@@ -147,8 +147,8 @@ mod tests {
         let path = directory.path().join("gpu-ai-job");
         assert_eq!(take_record(&path), None);
 
-        write_record(&path, "BiRefNet on DirectML");
-        assert_eq!(take_record(&path).as_deref(), Some("BiRefNet on DirectML"));
+        write_record(&path, "BiRefNet on WebGPU");
+        assert_eq!(take_record(&path).as_deref(), Some("BiRefNet on WebGPU"));
         assert!(!path.exists());
         assert_eq!(take_record(&path), None);
     }
@@ -157,7 +157,7 @@ mod tests {
     fn a_finished_job_leaves_no_record() {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("gpu-ai-job");
-        write_record(&path, "SkySeg U2Net on CUDA");
+        write_record(&path, "SkySeg U2Net on WebGPU");
         remove_record(&path);
         assert_eq!(take_record(&path), None);
 
@@ -175,13 +175,13 @@ mod tests {
             running_job: None,
             ended: false,
         };
-        records.begin(Some(&path), "BiRefNet on DirectML".to_owned());
+        records.begin(Some(&path), "BiRefNet on WebGPU".to_owned());
         assert!(path.exists());
-        assert_eq!(records.running_job.as_deref(), Some("BiRefNet on DirectML"));
+        assert_eq!(records.running_job.as_deref(), Some("BiRefNet on WebGPU"));
 
         records.end(Some(&path));
         assert!(!path.exists());
-        records.begin(Some(&path), "BiRefNet on DirectML".to_owned());
+        records.begin(Some(&path), "BiRefNet on WebGPU".to_owned());
         assert!(!path.exists());
         assert_eq!(records.running_job, None);
     }

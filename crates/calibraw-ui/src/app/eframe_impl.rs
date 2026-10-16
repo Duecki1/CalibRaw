@@ -70,22 +70,14 @@ impl CalibRawApp {
 impl CalibRawApp {
     /// Reports GPU failures of AI or processing work that CalibRaw survived.
     fn handle_gpu_failures(&mut self) {
-        match calibraw_ai::take_ai_gpu_failure() {
-            Some(calibraw_ai::AiGpuFailure::OutOfMemory) => {
-                self.stop_ai_after_gpu_failure();
-                self.report_error(
-                    ErrorKind::GpuMemory,
-                    "An AI model ran out of GPU memory. Its job was stopped, GPU AI was disabled, and optional preview textures were released. You can re-enable GPU AI in Settings after reducing Subject mask quality.",
-                );
-            }
-            Some(calibraw_ai::AiGpuFailure::DeviceLost) => {
-                self.stop_ai_after_gpu_failure();
-                self.report_error(
-                    ErrorKind::GpuAi,
-                    "The GPU stopped responding while an AI model ran on it. The job was stopped and AI tools now use the CPU; you can turn GPU acceleration back on in Settings.",
-                );
-            }
-            None => {}
+        // An AI model that runs out of GPU memory finishes its job on the CPU
+        // instead; Settings show where each model runs.
+        if calibraw_ai::take_ai_gpu_device_loss() {
+            self.stop_ai_after_gpu_failure();
+            self.report_error(
+                ErrorKind::GpuAi,
+                "The GPU stopped responding while an AI model ran on it. The job was stopped and AI tools now use the CPU; you can turn GPU acceleration back on in Settings.",
+            );
         }
         if calibraw_gpu::take_gpu_out_of_memory() {
             self.stop_ai_after_gpu_failure();

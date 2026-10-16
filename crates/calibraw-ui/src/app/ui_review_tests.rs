@@ -199,8 +199,6 @@ fn capture_review(root: &Path, output_dir: &Path) {
                 ui_design: design,
                 onboarding_completed: true,
                 subject_mask_quality_chosen: true,
-                #[cfg(not(target_os = "android"))]
-                onnx_runtime_kind_chosen: true,
                 tips_enabled: false,
                 auto_check_updates: false,
                 github_update_check_allowed: Some(false),

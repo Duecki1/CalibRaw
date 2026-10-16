@@ -1,107 +1,185 @@
-//! The execution providers a session tries, in order, before the CPU.
+//! The GPU providers a session may try, in order, before the CPU, and what is
+//! known about the adapter each runs on.
 
+use super::place::{GpuProvider, ProviderOffer};
 use super::quirks;
 use super::session::{CpuFallbackProfile, SessionOptions};
-use crate::config::{MemoryClass, CAPABILITIES};
+use crate::config::{GpuIdentity, MemoryClass, CAPABILITIES};
+use anyhow::{Context, Result};
+use ort::device::Device;
+use ort::environment::Environment;
 use ort::ep::{ExecutionProvider, ExecutionProviderDispatch};
+use ort::session::builder::SessionBuilder;
+use ort::AsPointer;
 
-pub(super) struct ProviderCandidate {
-    pub(super) name: &'static str,
-    pub(super) provider: ExecutionProviderDispatch,
-    pub(super) force_sequential: bool,
-    /// GPU memory a new session may still use, where the provider's adapter
-    /// can be queried.
-    pub(super) available_memory: Option<u64>,
-}
+/// This platform's GPU providers, most preferred first.
+#[cfg(not(target_os = "android"))]
+const PLATFORM_PROVIDERS: &[GpuProvider] = &[GpuProvider::WebGpu];
+#[cfg(target_os = "android")]
+const PLATFORM_PROVIDERS: &[GpuProvider] = &[GpuProvider::Nnapi, GpuProvider::Xnnpack];
 
-/// Adds `provider` if the loaded ONNX Runtime was built with it, returning the
-/// new candidate. A provider the runtime lacks is expected (CPU-only packages)
-/// and is not a degradation.
-fn push_if_runtime_available<'a, E>(
-    providers: &'a mut Vec<ProviderCandidate>,
-    name: &'static str,
-    provider: E,
-    force_sequential: bool,
-) -> Option<&'a mut ProviderCandidate>
-where
-    E: ExecutionProvider + Into<ExecutionProviderDispatch>,
-{
-    match provider.is_available() {
-        Ok(true) => {
-            providers.push(ProviderCandidate {
-                name,
-                provider: provider.into(),
-                force_sequential,
-                available_memory: None,
-            });
-            providers.last_mut()
-        }
+/// The name ONNX Runtime gives the WebGPU plugin's execution provider.
+const WEBGPU_EP: &str = "WebGpuExecutionProvider";
+
+/// Whether the loaded ONNX Runtime was built with `provider`, one of
+/// Android's. A provider the runtime lacks is expected and is not a
+/// degradation.
+fn runtime_offers(provider: GpuProvider) -> bool {
+    let available = match provider {
+        GpuProvider::Nnapi => ort::ep::NNAPI::default().is_available(),
+        GpuProvider::Xnnpack => ort::ep::XNNPACK::default().is_available(),
+        GpuProvider::WebGpu => return false,
+    };
+    let name = provider.name();
+    match available {
+        Ok(true) => true,
         Ok(false) => {
             log::info!("AI execution provider {name} is not built into the selected ONNX Runtime");
-            None
+            false
         }
         Err(error) => {
             log::warn!(
                 "AI execution provider {name} skipped: could not query availability: {error}"
             );
-            None
+            false
         }
     }
 }
 
-pub(super) fn preferred_execution_providers() -> Vec<ProviderCandidate> {
-    let mut providers = Vec::new();
+/// PCI vendor and device ID of the hardware `device` stands for.
+fn hardware_ids(device: &Device<'_>) -> (u32, u32) {
+    let api = ort::api();
+    // SAFETY: `device` is an entry of its environment's `GetEpDevices` list,
+    // which the borrow keeps alive. The environment owns the entry and the
+    // hardware device it points to until the plugin is unregistered, which
+    // CalibRaw never does. Both getters only read them.
+    let vendor_id = unsafe { (api.HardwareDevice_VendorId)((api.EpDevice_Device)(device.ptr())) };
+    (vendor_id, device.id())
+}
 
-    #[cfg(target_os = "windows")]
+/// The WebGPU device sessions are created for, and whether it stands for the
+/// editor's adapter `gpu`: of several, the editor's, else the first. `None`
+/// when the runtime has no WebGPU provider or it found no adapter.
+///
+/// The plugin picks its physical adapter itself, by `powerPreference`
+/// (`webgpu_options`). The editor asks wgpu for the high-performance
+/// adapter too, so both normally land on the same GPU.
+fn webgpu_device<'e>(
+    environment: &'e Environment,
+    gpu: Option<&GpuIdentity>,
+) -> Option<(Device<'e>, bool)> {
+    let on_editor_adapter = |device: &Device<'_>| {
+        gpu.is_some_and(|gpu| {
+            // Apple GPUs have no PCI IDs, and Apple Silicon Macs one GPU.
+            gpu.backend() == wgpu::Backend::Metal
+                || hardware_ids(device) == (gpu.vendor_id(), gpu.device_id())
+        })
+    };
+    let mut first = None;
+    for device in environment
+        .devices()
+        .filter(|device| device.ep().is_ok_and(|name| name == WEBGPU_EP))
     {
-        let adapter = super::directml::editor_adapter();
-        let directml = match &adapter {
-            Some(adapter) => ort::ep::DirectML::default().with_device_id(adapter.index),
-            None => ort::ep::DirectML::default(),
-        };
-        if let Some(candidate) =
-            push_if_runtime_available(&mut providers, "DirectML", directml, true)
-        {
-            candidate.available_memory = adapter.map(|adapter| adapter.available_bytes);
+        if on_editor_adapter(&device) {
+            return Some((device, true));
         }
-        push_if_runtime_available(&mut providers, "CUDA", ort::ep::CUDA::default(), false);
-        push_if_runtime_available(
-            &mut providers,
-            "TensorRT",
-            ort::ep::TensorRT::default(),
-            false,
-        );
+        first.get_or_insert(device);
     }
+    first.map(|device| (device, false))
+}
 
-    #[cfg(target_os = "macos")]
-    {
-        push_if_runtime_available(&mut providers, "CoreML", ort::ep::CoreML::default(), false);
+/// Whether the loaded runtime offers WebGPU, and if so whether it runs on
+/// the editor's adapter `gpu`.
+fn webgpu_offered(gpu: Option<&GpuIdentity>) -> Option<bool> {
+    let environment = match ort::environment::current() {
+        Ok(environment) => environment,
+        Err(error) => {
+            log::warn!("AI execution provider WebGPU skipped: {error}");
+            return None;
+        }
+    };
+    let offered = webgpu_device(&environment, gpu).map(|(_, on_editor_adapter)| on_editor_adapter);
+    if offered.is_none() {
+        log::info!("the selected ONNX Runtime offers no WebGPU device");
     }
+    offered
+}
 
-    #[cfg(target_os = "linux")]
-    {
-        push_if_runtime_available(&mut providers, "CUDA", ort::ep::CUDA::default(), false);
-        push_if_runtime_available(
-            &mut providers,
-            "TensorRT",
-            ort::ep::TensorRT::default(),
-            false,
-        );
-        push_if_runtime_available(&mut providers, "ROCm", ort::ep::ROCm::default(), false);
+/// The GPU providers the loaded runtime offers, most preferred first, with
+/// the free memory of `gpu`, the editor's adapter, for those that run on it.
+pub(super) fn offered_providers(gpu: Option<&GpuIdentity>) -> Vec<ProviderOffer> {
+    PLATFORM_PROVIDERS
+        .iter()
+        .filter_map(|&provider| {
+            let on_editor_adapter = match provider {
+                GpuProvider::WebGpu => webgpu_offered(gpu)?,
+                // NNAPI picks its own accelerator and XNNPACK runs on the
+                // CPU; docs/GPU_REWORK.md P6 replaces both.
+                GpuProvider::Nnapi | GpuProvider::Xnnpack => {
+                    runtime_offers(provider).then_some(false)?
+                }
+            };
+            let editor_gpu = gpu.filter(|_| on_editor_adapter);
+            Some(ProviderOffer {
+                provider,
+                free_memory: editor_gpu
+                    .and_then(GpuIdentity::memory)
+                    .map(|memory| memory.available()),
+                adapter: editor_gpu.map(|gpu| gpu.name().to_owned()),
+            })
+        })
+        .collect()
+}
+
+/// Options for the WebGPU provider, prefixed with its name as `with_devices`
+/// expects:
+/// - `powerPreference`: the adapter the editor's eframe device asks for.
+/// - `storageBufferCacheMode=bucket`: keep released storage buffers in size
+///   buckets for the next run, which suits inputs of fixed shape.
+/// - `forceCpuNodeNames`: the session's `quirks::WebGpuCpuNodes`.
+fn webgpu_options(options: &SessionOptions) -> Vec<(String, String)> {
+    let mut entries = vec![
+        ("powerPreference", "high-performance".to_owned()),
+        ("storageBufferCacheMode", "bucket".to_owned()),
+    ];
+    if let Some(names) = options.webgpu_cpu_nodes.node_names() {
+        entries.push(("forceCpuNodeNames", names));
     }
+    entries
+        .into_iter()
+        .map(|(key, value)| (format!("{WEBGPU_EP}.{key}"), value))
+        .collect()
+}
 
-    #[cfg(target_os = "android")]
-    {
-        push_if_runtime_available(&mut providers, "NNAPI", ort::ep::NNAPI::default(), false);
-        push_if_runtime_available(
-            &mut providers,
-            "XNNPACK",
-            ort::ep::XNNPACK::default(),
-            false,
-        );
-    }
-
-    providers
+/// Adds `offer`'s provider to `builder`, then the CPU for the nodes it does
+/// not run.
+pub(super) fn with_gpu_provider(
+    builder: SessionBuilder,
+    offer: &ProviderOffer,
+    options: &SessionOptions,
+    gpu: Option<&GpuIdentity>,
+) -> Result<SessionBuilder> {
+    let name = offer.provider.name();
+    let cpu = cpu_provider(options);
+    let builder = match offer.provider {
+        GpuProvider::WebGpu => {
+            let environment = ort::environment::current()
+                .map_err(|error| anyhow::anyhow!("get the ONNX Runtime environment: {error}"))?;
+            let (device, _) =
+                webgpu_device(&environment, gpu).context("the WebGPU provider has no device")?;
+            builder
+                .with_devices([device], Some(&webgpu_options(options)))
+                .map_err(|error| anyhow::anyhow!("configure {name} execution provider: {error}"))?
+                .with_execution_providers([cpu])
+        }
+        GpuProvider::Nnapi => builder
+            .with_execution_providers([ort::ep::NNAPI::default().build().error_on_failure(), cpu]),
+        GpuProvider::Xnnpack => builder.with_execution_providers([
+            ort::ep::XNNPACK::default().build().error_on_failure(),
+            cpu,
+        ]),
+    };
+    builder.map_err(|error| anyhow::anyhow!("configure {name} execution provider: {error}"))
 }
 
 pub(super) fn cpu_provider(options: &SessionOptions) -> ExecutionProviderDispatch {
@@ -112,37 +190,4 @@ pub(super) fn cpu_provider(options: &SessionOptions) -> ExecutionProviderDispatc
     ort::ep::CPU::default()
         .with_arena_allocator(!disable_arena)
         .build()
-}
-
-/// Why a provider cannot hold a session needing `required` bytes when
-/// `available` are free, or `None` if it fits or either is unknown.
-pub(super) fn gpu_memory_shortfall(
-    required: Option<u64>,
-    available: Option<u64>,
-) -> Option<String> {
-    let (required, available) = (required?, available?);
-    (available < required).then(|| {
-        format!(
-            "{} MiB of GPU memory free, {} MiB needed",
-            available / (1 << 20),
-            required / (1 << 20)
-        )
-    })
-}
-
-#[cfg(test)]
-mod tests {
-    use super::gpu_memory_shortfall;
-
-    #[test]
-    fn gpu_providers_are_skipped_only_when_memory_is_known_to_be_short() {
-        const MIB: u64 = 1 << 20;
-        assert!(gpu_memory_shortfall(Some(1800 * MIB), Some(1200 * MIB)).is_some());
-        assert_eq!(
-            gpu_memory_shortfall(Some(1800 * MIB), Some(1800 * MIB)),
-            None
-        );
-        assert_eq!(gpu_memory_shortfall(None, Some(0)), None);
-        assert_eq!(gpu_memory_shortfall(Some(1800 * MIB), None), None);
-    }
 }

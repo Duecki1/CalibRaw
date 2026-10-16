@@ -6,6 +6,7 @@ pub(crate) mod artifact;
 pub(crate) mod install;
 
 use crate::pipeline::BIG_LAMA_INPUT_EDGE;
+use crate::placement::quirks::WebGpuCpuNodes;
 use crate::placement::{CpuFallbackProfile, SessionOptions};
 use crate::slot::ModelRetention;
 use artifact::{DownloadOptions, ModelArtifact};
@@ -196,11 +197,23 @@ const RAWNIND_DOWNLOAD: DownloadOptions = DownloadOptions {
     resume: true,
 };
 
-/// Peak GPU memory of one BiRefNet inference: measured with ONNX Runtime's
-/// CUDA provider growing its arena by exact requests, less the CUDA context,
-/// rounded up to 100 MiB. DirectML pools allocations similarly.
-const fn birefnet_session(gpu_memory_bytes: u64) -> SessionOptions {
-    SessionOptions::new("BiRefNet").with_gpu_memory(gpu_memory_bytes)
+/// Peak GPU memory of inference at the model's input size, `mib` MiB, for
+/// `SessionOptions::gpu_memory_bytes`. Measured on an NVIDIA GeForce RTX
+/// 4070 Ti (driver 615.71, Linux, Vulkan) with ONNX Runtime 1.30.0 and its
+/// WebGPU plugin 0.4.0, set up as `placement` sets up sessions (bucketed
+/// buffer cache, BiRefNet's decoder splits on the CPU): the most GPU memory
+/// the process held while creating the session and running it three times,
+/// sampled through NVML every 5 ms, less the 15 MiB it held with only the
+/// provider's device, rounded up to 100 MiB. Direct3D 12 and Metal are
+/// assumed to need about as much. Placement adds a margin.
+const fn measured_peak(mib: u64) -> u64 {
+    mib * MIB
+}
+
+const fn birefnet_session(peak: u64) -> SessionOptions {
+    SessionOptions::new("BiRefNet")
+        .with_gpu_memory(peak)
+        .with_webgpu_cpu_nodes(WebGpuCpuNodes::BiRefNetDecoderSplits)
 }
 
 /// The BiRefNet General-Lite subject model: 1024 x 1024 input, 224 MB.
@@ -224,7 +237,8 @@ const BIREFNET: ModelSpec = ModelSpec {
         progress_label: "BiRefNet General-Lite",
     },
     input: InputShape::Square { edge: 1024 },
-    session: birefnet_session(2900 * MIB),
+    // Measured 4557 MiB.
+    session: birefnet_session(measured_peak(4600)),
     retention: ModelRetention::WhileWarm,
 };
 
@@ -247,13 +261,22 @@ const BIREFNET_LOW: ModelSpec = ModelSpec {
         progress_label: "BiRefNet General-Lite 768",
     },
     input: InputShape::Square { edge: 768 },
-    session: birefnet_session(1800 * MIB),
+    // Measured 3018 MiB.
+    session: birefnet_session(measured_peak(3100)),
     retention: ModelRetention::WhileWarm,
 };
 
+/// Whether subject masks expected on the GPU use the float16 BiRefNet
+/// conversions below instead of float32: only once the parity harness
+/// confirms them on the GPU provider (docs/GPU_REWORK.md P5.3). On the
+/// WebGPU provider of `measured_peak`'s machine, Medium's masks reached an
+/// IoU of 0.984 against the float32 CPU goldens and Low's 0.995, where the
+/// harness asks for 0.995, for about 10% less time per mask.
+pub(crate) const BIREFNET_FLOAT16_ON_GPU: bool = false;
+
 /// `BIREFNET` converted by `packaging/models/birefnet_fp16.py` for GPU
-/// sessions. Needs about half the GPU memory; masks match float32 with an IoU
-/// of 0.9989.
+/// sessions. Needs about two thirds of the GPU memory on WebGPU; on CUDA its
+/// masks matched float32 with an IoU of 0.9989.
 const BIREFNET_FP16: ModelSpec = ModelSpec {
     id: AiModel::BiRefNetFp16,
     feature: AiFeature::Subject,
@@ -269,7 +292,8 @@ const BIREFNET_FP16: ModelSpec = ModelSpec {
         progress_label: "BiRefNet General-Lite (GPU)",
     },
     input: InputShape::Square { edge: 1024 },
-    session: birefnet_session(1800 * MIB),
+    // Measured 2886 MiB.
+    session: birefnet_session(measured_peak(2900)),
     retention: ModelRetention::WhileWarm,
 };
 
@@ -290,7 +314,8 @@ const BIREFNET_LOW_FP16: ModelSpec = ModelSpec {
         progress_label: "BiRefNet General-Lite 768 (GPU)",
     },
     input: InputShape::Square { edge: 768 },
-    session: birefnet_session(1100 * MIB),
+    // Measured 1713 MiB.
+    session: birefnet_session(measured_peak(1800)),
     retention: ModelRetention::WhileWarm,
 };
 
@@ -311,7 +336,8 @@ const SKYSEG: ModelSpec = ModelSpec {
         progress_label: "SkySeg U2Net",
     },
     input: InputShape::Square { edge: 320 },
-    session: SessionOptions::new("SkySeg U2Net"),
+    // Measured 650 MiB.
+    session: SessionOptions::new("SkySeg U2Net").with_gpu_memory(measured_peak(700)),
     retention: ModelRetention::WhileWarm,
 };
 
@@ -332,7 +358,8 @@ const DEPTH: ModelSpec = ModelSpec {
         progress_label: "Depth Anything V2 Small",
     },
     input: InputShape::Square { edge: 518 },
-    session: SessionOptions::new("Depth Anything V2 Small"),
+    // Measured 530 MiB.
+    session: SessionOptions::new("Depth Anything V2 Small").with_gpu_memory(measured_peak(600)),
     retention: ModelRetention::WhileWarm,
 };
 
@@ -355,7 +382,9 @@ const SAM_ENCODER: ModelSpec = ModelSpec {
         progress_label: "SAM 2.1 encoder",
     },
     input: InputShape::Square { edge: 1024 },
+    // Measured 2088 MiB.
     session: SessionOptions::new("SAM 2.1 encoder")
+        .with_gpu_memory(measured_peak(2100))
         .with_cpu_fallback_profile(CpuFallbackProfile::SamEncoder),
     retention: ModelRetention::WhileWarm,
 };
@@ -382,7 +411,8 @@ const SAM_DECODER: ModelSpec = ModelSpec {
         edge: SAM_ENCODER.input.edge(),
         mask_edge: 256,
     },
-    session: SessionOptions::new("SAM 2.1 decoder"),
+    // Measured 94 MiB.
+    session: SessionOptions::new("SAM 2.1 decoder").with_gpu_memory(measured_peak(100)),
     retention: ModelRetention::WhileWarm,
 };
 
@@ -404,7 +434,8 @@ const BIG_LAMA: ModelSpec = ModelSpec {
     input: InputShape::Square {
         edge: BIG_LAMA_INPUT_EDGE,
     },
-    session: SessionOptions::new("Big-LaMa Remove"),
+    // Measured 773 MiB; the Remove job's own wgpu memory is not included.
+    session: SessionOptions::new("Big-LaMa Remove").with_gpu_memory(measured_peak(800)),
     retention: ModelRetention::WhileWarm,
 };
 
@@ -442,7 +473,8 @@ const RAWNIND_BAYER: ModelSpec = ModelSpec {
         member: "rawdenoise-nind/model_bayer.onnx",
     },
     input: RAWNIND_INPUT,
-    session: SessionOptions::new("RawNIND Bayer"),
+    // Measured 310 MiB, one tile per run.
+    session: SessionOptions::new("RawNIND Bayer").with_gpu_memory(measured_peak(400)),
     retention: ModelRetention::OneShot,
 };
 
@@ -460,7 +492,8 @@ const RAWNIND_LINEAR: ModelSpec = ModelSpec {
         member: "rawdenoise-nind/model_linear.onnx",
     },
     input: RAWNIND_INPUT,
-    session: SessionOptions::new("RawNIND linear"),
+    // Measured 290 MiB, one tile per run.
+    session: SessionOptions::new("RawNIND linear").with_gpu_memory(measured_peak(300)),
     retention: ModelRetention::OneShot,
 };
 
@@ -585,27 +618,28 @@ mod tests {
         assert_eq!(RAWNIND_PACKAGE.artifact.bytes, 57_700_134);
     }
 
-    /// Model names appear in provider statuses, diagnostics and GPU job
-    /// records, which the app and support read.
+    /// Model names appear in session statuses, diagnostics and GPU job
+    /// records, which the app and support read. Every model has a measured
+    /// GPU peak, so placement can tell whether it fits.
     #[test]
-    fn session_names_and_profiles_are_unchanged() {
+    fn session_names_profiles_and_gpu_peaks() {
         let sessions = [
-            (AiModel::BiRefNet, "BiRefNet", Some(2900 * MIB)),
-            (AiModel::BiRefNetLow, "BiRefNet", Some(1800 * MIB)),
-            (AiModel::BiRefNetFp16, "BiRefNet", Some(1800 * MIB)),
-            (AiModel::BiRefNetLowFp16, "BiRefNet", Some(1100 * MIB)),
-            (AiModel::SkySeg, "SkySeg U2Net", None),
-            (AiModel::Depth, "Depth Anything V2 Small", None),
-            (AiModel::SamEncoder, "SAM 2.1 encoder", None),
-            (AiModel::SamDecoder, "SAM 2.1 decoder", None),
-            (AiModel::BigLama, "Big-LaMa Remove", None),
-            (AiModel::RawNindBayer, "RawNIND Bayer", None),
-            (AiModel::RawNindLinear, "RawNIND linear", None),
+            (AiModel::BiRefNet, "BiRefNet", 4600),
+            (AiModel::BiRefNetLow, "BiRefNet", 3100),
+            (AiModel::BiRefNetFp16, "BiRefNet", 2900),
+            (AiModel::BiRefNetLowFp16, "BiRefNet", 1800),
+            (AiModel::SkySeg, "SkySeg U2Net", 700),
+            (AiModel::Depth, "Depth Anything V2 Small", 600),
+            (AiModel::SamEncoder, "SAM 2.1 encoder", 2100),
+            (AiModel::SamDecoder, "SAM 2.1 decoder", 100),
+            (AiModel::BigLama, "Big-LaMa Remove", 800),
+            (AiModel::RawNindBayer, "RawNIND Bayer", 400),
+            (AiModel::RawNindLinear, "RawNIND linear", 300),
         ];
-        for (model, name, gpu_memory_bytes) in sessions {
+        for (model, name, peak_mib) in sessions {
             let session = model.spec().session;
             assert_eq!(session.model_name, name);
-            assert_eq!(session.gpu_memory_bytes, gpu_memory_bytes);
+            assert_eq!(session.gpu_memory_bytes, Some(peak_mib * MIB), "{model:?}");
             assert!(session.allow_acceleration);
             let cpu = if model == AiModel::SamEncoder {
                 CpuFallbackProfile::SamEncoder
@@ -613,6 +647,12 @@ mod tests {
                 CpuFallbackProfile::Default
             };
             assert_eq!(session.cpu_fallback_profile, cpu);
+            let webgpu_cpu_nodes = if name == "BiRefNet" {
+                WebGpuCpuNodes::BiRefNetDecoderSplits
+            } else {
+                WebGpuCpuNodes::None
+            };
+            assert_eq!(session.webgpu_cpu_nodes, webgpu_cpu_nodes, "{model:?}");
         }
     }
 }

@@ -17,25 +17,6 @@ impl CalibRawApp {
         self.prompt_restart_for_runtime_change("ONNX Runtime mode changed.");
     }
 
-    #[cfg(not(target_os = "android"))]
-    pub(crate) fn set_onnx_runtime_kind(
-        &mut self,
-        kind: calibraw_ai::runtime::AutomaticOnnxRuntimeKind,
-    ) {
-        if self.ai.runtime_kind == kind {
-            return;
-        }
-        self.ai.runtime_kind = kind;
-        calibraw_ai::update(calibraw_ai::AiConfigChange::AutomaticRuntime(kind));
-        self.ai.consent = None;
-        self.persist_performance_settings();
-        self.ui.notice = Some(
-            "ONNX Runtime changed. Restart CalibRaw if an AI runtime was already used in this session."
-                .to_owned(),
-        );
-        self.prompt_restart_for_runtime_change(&format!("AI runtime changed to {}.", kind.label()));
-    }
-
     /// Asks for a restart when this process already loaded an ONNX Runtime
     /// library: the new choice cannot replace that library until CalibRaw
     /// starts again, and AI jobs would fail until then.
@@ -313,6 +294,23 @@ impl CalibRawApp {
             .join(calibraw_ai::models::depth::RETIRED_DEPTH_MODEL_FILENAME);
         if path.is_file() {
             Self::remove_retired_app_data(path, "retired depth model");
+        }
+    }
+
+    /// Automatic runtimes the WebGPU packages replaced: the CPU ones, the
+    /// Linux CUDA ones and the Windows DirectML ones. Removes their install
+    /// folders and archives in the model cache and nothing else, keeping a
+    /// folder that holds the manually selected runtime.
+    ///
+    /// migration: remove in v1.5.0. Listed in `calibraw_core`'s `migrations`.
+    #[cfg(not(target_os = "android"))]
+    pub(in crate::app) fn remove_retired_onnx_runtimes(&self) {
+        let root = self.ai_model_root();
+        let manual = self.ai.manual_runtime.as_ref().map(|(path, _)| path);
+        for path in calibraw_ai::runtime::retired_runtime_paths(&root) {
+            if path.exists() && !manual.is_some_and(|manual| manual.starts_with(&path)) {
+                Self::remove_retired_app_data(path, "retired ONNX Runtime");
+            }
         }
     }
 

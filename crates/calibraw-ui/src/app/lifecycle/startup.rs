@@ -196,8 +196,6 @@ impl CalibRawApp {
                 #[cfg(not(target_os = "android"))]
                 runtime_mode: performance.onnx_runtime_mode,
                 #[cfg(not(target_os = "android"))]
-                runtime_kind: performance.onnx_runtime_kind,
-                #[cfg(not(target_os = "android"))]
                 manual_runtime,
                 library_mask_refresh: None,
                 consent: None,
@@ -288,8 +286,6 @@ impl CalibRawApp {
                 preview_backdrop: performance.preview_backdrop,
                 onboarding_completed: performance.onboarding_completed,
                 subject_mask_quality_chosen: performance.subject_mask_quality_chosen,
-                #[cfg(not(target_os = "android"))]
-                onnx_runtime_kind_chosen: performance.onnx_runtime_kind_chosen,
                 tips: TipPreferences {
                     enabled: performance.tips_enabled,
                     seen: performance.seen_tips.clone(),
@@ -367,7 +363,7 @@ impl CalibRawApp {
     /// Removes a file or folder an older version left in app data and nothing
     /// reads any more, on a background thread so start-up does not wait.
     ///
-    /// migration: remove in v1.4.0, with its callers. Listed in
+    /// migration: remove in v1.5.0, with the last of its callers. Listed in
     /// `calibraw_core`'s `migrations`.
     pub(in crate::app) fn remove_retired_app_data(path: PathBuf, description: &'static str) {
         let spawned = std::thread::Builder::new()
@@ -410,12 +406,12 @@ impl CalibRawApp {
         app.export.gpu_prewarm = Some(gpu_export_prewarm);
         app.remove_legacy_ai_denoise_cache();
         app.remove_retired_depth_model();
+        app.remove_retired_onnx_runtimes();
         let gpu_job_record =
             calibraw_core::thumbnail_cache::desktop_app_cache_root().join("gpu-ai-job.txt");
         let interrupted_gpu_job = calibraw_ai::configure(calibraw_ai::AiConfig {
             acceleration: app.ai.gpu_acceleration,
             runtime: app.ai_runtime_source(),
-            automatic_runtime: app.ai.runtime_kind,
             model_root: app.ai_model_root(),
             job_record_path: Some(gpu_job_record),
             gpu: editor_gpu,
@@ -493,7 +489,6 @@ impl CalibRawApp {
         calibraw_ai::configure(calibraw_ai::AiConfig {
             acceleration: true,
             runtime: calibraw_ai::RuntimeSource::Automatic,
-            automatic_runtime: calibraw_ai::runtime::AutomaticOnnxRuntimeKind::default(),
             model_root: app.ai_model_root(),
             job_record_path: None,
             gpu: editor_gpu,

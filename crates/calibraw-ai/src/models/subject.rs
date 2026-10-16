@@ -4,7 +4,7 @@ use super::masks::mask_model_retention;
 use super::{mask_refine, normalized_rgb_input, sigmoid_probability};
 use crate::config::{MemoryClass, CAPABILITIES};
 use crate::placement::FallbackSession;
-use crate::registry::{AiModel, ModelInfo};
+use crate::registry::{AiModel, ModelInfo, BIREFNET_FLOAT16_ON_GPU};
 use crate::slot::with_model_session;
 use anyhow::{Context, Result};
 use image::{imageops::FilterType, ImageBuffer, Luma, Rgba};
@@ -24,13 +24,13 @@ pub enum SubjectModelPrecision {
 
 impl SubjectModelPrecision {
     /// The precision for subject masks with the current settings: float16
-    /// where sessions are expected on a provider that runs it
-    /// (`AiCapabilities::float16_sessions`), i.e. with GPU acceleration
-    /// enabled and Automatic mode's runtime built with a GPU provider. A
-    /// manually selected runtime is not known before it loads, so it keeps
-    /// float32.
+    /// where it is confirmed on the GPU provider (`BIREFNET_FLOAT16_ON_GPU`,
+    /// so nowhere at present) and sessions are expected on it, i.e. with GPU
+    /// acceleration enabled and Automatic mode's runtime built with a GPU
+    /// provider. A manually selected runtime is not known before it loads, so
+    /// it keeps float32.
     pub fn for_current_sessions(manual_runtime: bool) -> Self {
-        let gpu = CAPABILITIES.float16_sessions
+        let gpu = BIREFNET_FLOAT16_ON_GPU
             && !manual_runtime
             && crate::runtime::ai_sessions_may_use_gpu(false);
         if gpu {
@@ -278,8 +278,8 @@ mod tests {
         subject_crop_refinement_enabled, validate_birefnet_output_shape, SubjectMaskQuality,
         SubjectModelPrecision,
     };
-    use crate::config::{MemoryClass, CAPABILITIES};
-    use crate::registry::AiModel;
+    use crate::config::MemoryClass;
+    use crate::registry::{AiModel, BIREFNET_FLOAT16_ON_GPU};
     use image::{ImageBuffer, Rgba};
     use std::path::Path;
 
@@ -308,13 +308,13 @@ mod tests {
         });
         let mask = infer_birefnet(Path::new(&path), &image, quality, precision).unwrap();
         assert_eq!(mask.len(), 96 * 64);
-        let providers = crate::active_execution_providers();
+        let providers = crate::ai_session_statuses();
         eprintln!("BiRefNet inference providers: {providers:?}");
         if let Ok(expected) = std::env::var("CALIBRAW_TEST_BIREFNET_PROVIDER") {
             assert!(providers.iter().any(|status| {
                 status.model_name == "BiRefNet"
-                    && status.active_provider == expected
-                    && !status.degraded
+                    && status.placement.provider_name() == expected
+                    && !status.gpu_failed()
             }));
         }
     }
@@ -385,7 +385,7 @@ mod tests {
             SubjectModelPrecision::for_current_sessions(true),
             SubjectModelPrecision::Float32
         );
-        if !CAPABILITIES.float16_sessions {
+        if !BIREFNET_FLOAT16_ON_GPU {
             assert_eq!(
                 SubjectModelPrecision::for_current_sessions(false),
                 SubjectModelPrecision::Float32

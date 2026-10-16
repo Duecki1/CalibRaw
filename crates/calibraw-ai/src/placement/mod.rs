@@ -1,25 +1,26 @@
-//! Where sessions run: the execution providers tried for each session, the
-//! CPU fallback, what happens when the GPU fails, and the provider each model
-//! ended up on.
+//! Where sessions run: the rule that puts each on a GPU provider when it fits
+//! and on the CPU otherwise (`place`), the providers on offer, rebuilding on
+//! the CPU when a GPU fails, and where each model ended up.
 
-#[cfg(target_os = "windows")]
-mod directml;
 mod failure;
 mod job_record;
+mod place;
 mod providers;
 pub(crate) mod quirks;
 mod session;
 mod status;
 
-pub use failure::{take_ai_gpu_failure, AiGpuFailure};
+pub use failure::take_ai_gpu_device_loss;
 pub use job_record::{end_gpu_job_records, gpu_job_in_progress};
 pub(crate) use job_record::{set_gpu_job_record_path, GpuJobRecord};
+use place::{needed_memory, place, AccelerationState, ProviderOffer};
+pub use place::{CpuReason, GpuProvider, Placement};
 pub(crate) use session::{
     create_session_with_fallback, CpuFallbackProfile, FallbackSession, SessionOptions,
 };
-pub use status::{active_execution_providers, ExecutionProviderStatus};
+pub use status::{ai_session_statuses, AiSessionStatus};
 
-use crate::config::GpuIdentity;
+use crate::config::{GpuIdentity, RuntimeSource};
 #[cfg(not(target_os = "android"))]
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -56,10 +57,11 @@ pub(crate) fn set_ai_acceleration_enabled(enabled: bool) {
     }
 }
 
-pub fn ai_acceleration_enabled() -> bool {
+/// Whether GPU AI is on in Settings; always on Android.
+fn acceleration_setting() -> bool {
     #[cfg(not(target_os = "android"))]
     {
-        AI_ACCELERATION_ENABLED.load(Ordering::Acquire) && !failure::quarantined()
+        AI_ACCELERATION_ENABLED.load(Ordering::Acquire)
     }
     #[cfg(target_os = "android")]
     {
@@ -67,14 +69,57 @@ pub fn ai_acceleration_enabled() -> bool {
     }
 }
 
+/// Whether new sessions may use a GPU provider: GPU AI is on and was not
+/// switched off after a lost GPU.
+pub fn ai_acceleration_enabled() -> bool {
+    acceleration_settings().usable()
+}
+
+/// What `place` reads besides the session and the providers.
+#[derive(Clone, Copy, Debug)]
+struct AccelerationSettings {
+    enabled: bool,
+    quarantined: bool,
+    gpu_build: bool,
+}
+
+impl AccelerationSettings {
+    fn usable(self) -> bool {
+        self.enabled && !self.quarantined
+    }
+
+    fn with_providers(self, providers: &[ProviderOffer]) -> AccelerationState<'_> {
+        AccelerationState {
+            enabled: self.enabled,
+            quarantined: self.quarantined,
+            gpu_build: self.gpu_build,
+            providers,
+        }
+    }
+}
+
+fn acceleration_settings() -> AccelerationSettings {
+    AccelerationSettings {
+        enabled: acceleration_setting(),
+        quarantined: failure::quarantined(),
+        gpu_build: !(crate::config::runtime_source() == RuntimeSource::Automatic
+            && crate::runtime::automatic_runtime_lacks_gpu_build()),
+    }
+}
+
 /// The GPU the editor renders with, once the app has set it.
 static EDITOR_GPU: OnceLock<GpuIdentity> = OnceLock::new();
 
-/// Runs DirectML sessions on `gpu`; other providers pick their own device.
+fn editor_gpu() -> Option<&'static GpuIdentity> {
+    EDITOR_GPU.get()
+}
+
+/// Places sessions on a provider that runs on `gpu` by its free memory.
 /// Records the memory it has free in diagnostics.
 pub(crate) fn set_editor_gpu(gpu: GpuIdentity) {
     let identity = format!(
-        "{:04x}:{:04x} ({:?})",
+        "{} {:04x}:{:04x} ({:?})",
+        gpu.name(),
         gpu.vendor_id(),
         gpu.device_id(),
         gpu.backend()

@@ -15,8 +15,8 @@ pub use config::desktop_model_cache_root;
 pub use config::{configure, update, AiConfig, AiConfigChange, GpuIdentity, RuntimeSource, Sha256};
 pub use jobs::AiJobEvent;
 pub use placement::{
-    active_execution_providers, ai_acceleration_enabled, end_gpu_job_records, gpu_job_in_progress,
-    take_ai_gpu_failure, AiGpuFailure, ExecutionProviderStatus,
+    ai_acceleration_enabled, ai_session_statuses, end_gpu_job_records, gpu_job_in_progress,
+    take_ai_gpu_device_loss, AiSessionStatus, CpuReason, GpuProvider, Placement,
 };
 pub use registry::install::ModelDownloadProgress;
 pub use registry::{AiFeature, InputShape, ModelInfo};

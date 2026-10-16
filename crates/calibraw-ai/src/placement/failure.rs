@@ -1,42 +1,27 @@
 //! GPU failures during a session: classifying an execution provider error,
-//! and switching GPU AI off after one that the CPU fallback must not paper
-//! over.
+//! what a session does after one, and switching GPU AI off after a lost
+//! device, which the CPU fallback must not paper over.
 
+use super::place::CpuReason;
 #[cfg(not(target_os = "android"))]
-use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 #[cfg(not(target_os = "android"))]
 static AI_GPU_QUARANTINED: AtomicBool = AtomicBool::new(false);
-/// The unreported `AiGpuFailure`, encoded by `AiGpuFailure::code`; 0 for none.
+/// A device loss that switched GPU AI off and that the app was not told of.
 #[cfg(not(target_os = "android"))]
-static AI_GPU_FAILURE: AtomicU8 = AtomicU8::new(0);
+static AI_GPU_DEVICE_LOST: AtomicBool = AtomicBool::new(false);
 
-/// Why GPU AI was switched off during a job.
+/// A GPU failure an execution provider reported.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum AiGpuFailure {
+pub(super) enum AiGpuFailure {
     OutOfMemory,
-    /// The GPU was reset or removed, typically by Windows' driver timeout.
+    /// The GPU was reset or removed, typically by Windows' driver timeout,
+    /// or WebGPU lost its device.
     DeviceLost,
 }
 
 impl AiGpuFailure {
-    #[cfg(not(target_os = "android"))]
-    const fn code(self) -> u8 {
-        match self {
-            Self::OutOfMemory => 1,
-            Self::DeviceLost => 2,
-        }
-    }
-
-    #[cfg(not(target_os = "android"))]
-    const fn from_code(code: u8) -> Option<Self> {
-        match code {
-            1 => Some(Self::OutOfMemory),
-            2 => Some(Self::DeviceLost),
-            _ => None,
-        }
-    }
-
     /// Classifies an execution provider error, or `None` for an ordinary one.
     pub(super) fn of_error(error: &anyhow::Error) -> Option<Self> {
         if is_gpu_memory_failure(error) {
@@ -49,76 +34,129 @@ impl AiGpuFailure {
     }
 }
 
+/// What a session does after its GPU provider failed to create it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum SetupFailure {
+    /// Try the next provider, or the CPU after the last.
+    NextProvider,
+    /// Use the CPU for this job: another provider would compete for the same
+    /// memory.
+    Cpu(CpuReason),
+}
+
+impl SetupFailure {
+    pub(super) fn of_error(error: &anyhow::Error) -> Self {
+        match AiGpuFailure::of_error(error) {
+            Some(AiGpuFailure::OutOfMemory) => Self::Cpu(CpuReason::OutOfMemory),
+            Some(AiGpuFailure::DeviceLost) | None => Self::NextProvider,
+        }
+    }
+}
+
+/// What a session does after its GPU provider failed to run it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum RunFailure {
+    /// Switch GPU AI off and stop the job: the device is gone, and the app
+    /// restarts or must hear of it.
+    StopJob,
+    /// Rebuild the session on the CPU and run the job again there.
+    RerunOnCpu(CpuReason),
+}
+
+impl RunFailure {
+    pub(super) fn of_error(error: &anyhow::Error) -> Self {
+        match AiGpuFailure::of_error(error) {
+            Some(AiGpuFailure::DeviceLost) => Self::StopJob,
+            Some(AiGpuFailure::OutOfMemory) => Self::RerunOnCpu(CpuReason::OutOfMemory),
+            None => Self::RerunOnCpu(CpuReason::GpuFailed),
+        }
+    }
+}
+
 #[cfg(not(target_os = "android"))]
 pub(super) fn quarantined() -> bool {
     AI_GPU_QUARANTINED.load(Ordering::Acquire)
 }
 
+/// Android has no switch-off.
+#[cfg(target_os = "android")]
+pub(super) fn quarantined() -> bool {
+    false
+}
+
 #[cfg(not(target_os = "android"))]
 pub(super) fn clear_quarantine() {
     AI_GPU_QUARANTINED.store(false, Ordering::Release);
-    AI_GPU_FAILURE.store(0, Ordering::Release);
+    AI_GPU_DEVICE_LOST.store(false, Ordering::Release);
 }
 
-/// The GPU failure that switched GPU AI off since the last call, if any.
+/// Whether the GPU was lost during an AI job, switching GPU AI off, since
+/// the last call.
 #[cfg(not(target_os = "android"))]
-pub fn take_ai_gpu_failure() -> Option<AiGpuFailure> {
-    AiGpuFailure::from_code(AI_GPU_FAILURE.swap(0, Ordering::AcqRel))
+pub fn take_ai_gpu_device_loss() -> bool {
+    AI_GPU_DEVICE_LOST.swap(false, Ordering::AcqRel)
 }
 
 #[cfg(target_os = "android")]
-pub fn take_ai_gpu_failure() -> Option<AiGpuFailure> {
-    None
+pub fn take_ai_gpu_device_loss() -> bool {
+    false
 }
 
 #[cfg(not(target_os = "android"))]
-pub(super) fn quarantine_ai_gpu(
-    failure: AiGpuFailure,
-    operation: &str,
-    provider: &str,
-    error: &anyhow::Error,
-) {
+pub(super) fn quarantine_after_device_loss(operation: &str, provider: &str, error: &anyhow::Error) {
     AI_GPU_QUARANTINED.store(true, Ordering::Release);
-    AI_GPU_FAILURE.store(failure.code(), Ordering::Release);
-    let cause = match failure {
-        AiGpuFailure::OutOfMemory => "exhausted GPU memory",
-        AiGpuFailure::DeviceLost => "lost the GPU device",
-    };
+    AI_GPU_DEVICE_LOST.store(true, Ordering::Release);
     let message = format!(
-        "AI {operation} {cause} on {provider}; cancelled the AI job and disabled GPU AI until it is explicitly re-enabled"
+        "AI {operation} lost the GPU device on {provider}; cancelled the AI job and disabled GPU AI until it is explicitly re-enabled"
     );
     log::error!("{message}: {error:#}");
     calibraw_core::diagnostics::record(message);
 }
 
 #[cfg(target_os = "android")]
-pub(super) fn quarantine_ai_gpu(
-    _failure: AiGpuFailure,
+pub(super) fn quarantine_after_device_loss(
     _operation: &str,
     _provider: &str,
     _error: &anyhow::Error,
 ) {
 }
 
+/// ONNX Runtime's WebGPU provider reports a WebGPU error as `WebGPU device
+/// error(<type>): <message>`; type 3 is `WGPUErrorType_OutOfMemory`. Dawn's
+/// messages name the backend's own code: Vulkan's
+/// `VK_ERROR_OUT_OF_DEVICE_MEMORY`, Direct3D 12's `E_OUTOFMEMORY` text and
+/// Metal's "Insufficient Memory". Host memory failures in the CPU nodes of a
+/// GPU session name no GPU, so they are ordinary failures.
 fn is_gpu_memory_failure(error: &anyhow::Error) -> bool {
     let message = format!("{error:#}").to_ascii_lowercase();
-    (message.contains("out of memory")
-        || message.contains("failed to allocate memory")
-        || message.contains("not enough memory resources"))
-        && (message.contains("cuda")
-            || message.contains("directml")
-            || message.contains("dml")
-            || message.contains("tensorrt")
-            || message.contains("rocm")
-            || message.contains("gpu")
-            || message.contains("bfc_arena"))
+    message.contains("webgpu device error(3)")
+        || ([
+            "out of memory",
+            "out_of_device_memory",
+            "failed to allocate memory",
+            "not enough memory resources",
+            "insufficient memory",
+        ]
+        .iter()
+        .any(|marker| message.contains(marker))
+            && ["gpu", "vulkan", "d3d12", "metal", "nnapi"]
+                .iter()
+                .any(|marker| message.contains(marker)))
 }
 
-/// DXGI's device-removed, -hung and -reset codes, which DirectML reports after
-/// a driver reset, and their messages.
+/// A lost WebGPU device (Dawn names the object in brackets: `[Device] is
+/// lost.`), Vulkan's `VK_ERROR_DEVICE_LOST`, and DXGI's device-removed,
+/// -hung and -reset codes and their messages, which Direct3D 12 reports
+/// after a driver reset.
 fn is_gpu_device_lost(error: &anyhow::Error) -> bool {
     let message = format!("{error:#}").to_ascii_lowercase();
     [
+        "device lost",
+        "device is lost",
+        "] is lost",
+        "device was lost",
+        "devicelost",
+        "error_device_lost",
         "887a0005",
         "887a0006",
         "887a0007",
@@ -131,37 +169,77 @@ fn is_gpu_device_lost(error: &anyhow::Error) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{is_gpu_memory_failure, AiGpuFailure};
+    use super::*;
 
     #[test]
-    fn gpu_allocation_failures_are_quarantined_instead_of_retried() {
-        let error =
-            anyhow::anyhow!("BFCArena::AllocateRawInternal failed to allocate memory on CUDA GPU");
-        assert!(is_gpu_memory_failure(&error));
-        assert!(is_gpu_memory_failure(&anyhow::anyhow!(
-            r"providers\dml\DmlExecutionProvider\src\DmlCommandRecorder.cpp(372) 8007000E Not enough memory resources are available to complete this operation."
-        )));
-        assert!(!is_gpu_memory_failure(&anyhow::anyhow!(
-            "invalid tensor shape"
-        )));
+    fn gpu_allocation_failures_are_recognised() {
+        for message in [
+            "Non-zero status code returned while running Conv node. WebGPU device error(3): Out of memory creating buffer",
+            "WebGPU device error(3): Allocation failed",
+            "Dawn: VK_ERROR_OUT_OF_DEVICE_MEMORY while allocating Vulkan memory",
+            "D3D12 CreateCommittedResource failed: Not enough memory resources are available to complete this operation. (0x8007000E)",
+            "Metal command buffer failed: Insufficient Memory (00000008:kIOGPUCommandBufferCallbackErrorOutOfMemory)",
+        ] {
+            assert!(is_gpu_memory_failure(&anyhow::anyhow!(message)), "{message}");
+        }
+        for message in [
+            "invalid tensor shape",
+            "WebGPU device error(2): Validation failed",
+            "BFCArena::AllocateRawInternal failed to allocate memory for requested buffer",
+        ] {
+            assert!(
+                !is_gpu_memory_failure(&anyhow::anyhow!(message)),
+                "{message}"
+            );
+        }
     }
 
     #[test]
-    fn directml_device_removal_is_a_device_loss() {
-        let removed = anyhow::anyhow!(
-            r"providers\dml\DmlExecutionProvider\src\DmlCommandRecorder.cpp(372) 887A0005 The GPU device instance has been suspended."
-        );
+    fn lost_devices_are_recognised() {
+        for message in [
+            "Failed to download data from buffer. wgpu::MapAsyncStatus value: 3: Device is lost",
+            "WebGPU device error(4): [Device] is lost.",
+            "Dawn Vulkan: VK_ERROR_DEVICE_LOST",
+            "D3D12 device removed: DXGI_ERROR_DEVICE_REMOVED (0x887A0005)",
+            "DXGI_ERROR_DEVICE_HUNG 887A0006",
+        ] {
+            assert_eq!(
+                AiGpuFailure::of_error(&anyhow::anyhow!(message)),
+                Some(AiGpuFailure::DeviceLost),
+                "{message}"
+            );
+        }
         assert_eq!(
-            AiGpuFailure::of_error(&removed),
-            Some(AiGpuFailure::DeviceLost)
-        );
-        assert_eq!(
-            AiGpuFailure::of_error(&anyhow::anyhow!("CUDA out of memory")),
+            AiGpuFailure::of_error(&anyhow::anyhow!("WebGPU device error(3): Out of memory")),
             Some(AiGpuFailure::OutOfMemory)
         );
         assert_eq!(
             AiGpuFailure::of_error(&anyhow::anyhow!("invalid tensor shape")),
             None
+        );
+    }
+
+    #[test]
+    fn running_out_of_memory_moves_the_job_to_the_cpu() {
+        let out_of_memory = anyhow::anyhow!("WebGPU device error(3): Out of memory");
+        let removed = anyhow::anyhow!("DXGI_ERROR_DEVICE_REMOVED 887A0005");
+        let other = anyhow::anyhow!("invalid tensor shape");
+
+        assert_eq!(
+            SetupFailure::of_error(&out_of_memory),
+            SetupFailure::Cpu(CpuReason::OutOfMemory)
+        );
+        assert_eq!(SetupFailure::of_error(&removed), SetupFailure::NextProvider);
+        assert_eq!(SetupFailure::of_error(&other), SetupFailure::NextProvider);
+
+        assert_eq!(
+            RunFailure::of_error(&out_of_memory),
+            RunFailure::RerunOnCpu(CpuReason::OutOfMemory)
+        );
+        assert_eq!(RunFailure::of_error(&removed), RunFailure::StopJob);
+        assert_eq!(
+            RunFailure::of_error(&other),
+            RunFailure::RerunOnCpu(CpuReason::GpuFailed)
         );
     }
 }

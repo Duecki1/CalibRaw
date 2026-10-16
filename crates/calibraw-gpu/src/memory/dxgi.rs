@@ -11,21 +11,10 @@ use windows::{
     },
 };
 
-/// An adapter as DXGI lists it.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct DxgiAdapter {
-    /// Position in `IDXGIFactory1::EnumAdapters1` order, which is how
-    /// DirectML selects a device.
-    pub index: u32,
-    /// The local segment group: dedicated video memory on discrete GPUs, the
-    /// shared system memory granted to the GPU on integrated ones.
-    pub memory: AdapterMemory,
-}
-
 pub(super) fn adapter_memory(device: &wgpu::Device) -> Option<AdapterMemory> {
     let info = device.adapter_info();
-    match find_dxgi_adapter(info.vendor, info.device) {
-        Ok(adapter) => adapter.map(|adapter| adapter.memory),
+    match local_memory(info.vendor, info.device) {
+        Ok(memory) => memory,
         Err(error) => {
             log::warn!("could not query DXGI adapter memory: {error}");
             None
@@ -33,12 +22,12 @@ pub(super) fn adapter_memory(device: &wgpu::Device) -> Option<AdapterMemory> {
     }
 }
 
-/// The first adapter DXGI lists with these PCI IDs, as `wgpu` reports them in
-/// `AdapterInfo::vendor` and `AdapterInfo::device`, or `None` if there is none.
-pub fn find_dxgi_adapter(
-    vendor_id: u32,
-    device_id: u32,
-) -> windows::core::Result<Option<DxgiAdapter>> {
+/// The local segment group of the first adapter DXGI lists with these PCI
+/// IDs, as `wgpu` reports them in `AdapterInfo::vendor` and
+/// `AdapterInfo::device`, or `None` if there is none: dedicated video memory
+/// on discrete GPUs, the shared system memory granted to the GPU on
+/// integrated ones.
+fn local_memory(vendor_id: u32, device_id: u32) -> windows::core::Result<Option<AdapterMemory>> {
     // SAFETY: creates a DXGI factory; the returned interface owns its
     // reference and releases it on drop.
     let factory: IDXGIFactory1 = unsafe { CreateDXGIFactory1()? };
@@ -59,12 +48,9 @@ pub fn find_dxgi_adapter(
         let mut memory = DXGI_QUERY_VIDEO_MEMORY_INFO::default();
         // SAFETY: node 0 exists on every adapter and `memory` outlives the call.
         unsafe { adapter.QueryVideoMemoryInfo(0, DXGI_MEMORY_SEGMENT_GROUP_LOCAL, &mut memory)? };
-        return Ok(Some(DxgiAdapter {
-            index,
-            memory: AdapterMemory {
-                budget: memory.Budget,
-                usage: memory.CurrentUsage,
-            },
+        return Ok(Some(AdapterMemory {
+            budget: memory.Budget,
+            usage: memory.CurrentUsage,
         }));
     }
     Ok(None)

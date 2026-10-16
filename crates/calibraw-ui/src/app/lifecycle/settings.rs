@@ -346,8 +346,6 @@ impl CalibRawApp {
             preview_backdrop: self.preferences.preview_backdrop,
             onboarding_completed: self.preferences.onboarding_completed,
             subject_mask_quality_chosen: self.preferences.subject_mask_quality_chosen,
-            #[cfg(not(target_os = "android"))]
-            onnx_runtime_kind_chosen: self.preferences.onnx_runtime_kind_chosen,
             tips_enabled: self.preferences.tips.enabled,
             seen_tips: self.preferences.tips.seen.clone(),
             auto_check_updates: self.preferences.auto_check_updates,
@@ -358,8 +356,6 @@ impl CalibRawApp {
             ai_gpu_acceleration: self.ai.gpu_acceleration,
             #[cfg(not(target_os = "android"))]
             onnx_runtime_mode: self.ai.runtime_mode,
-            #[cfg(not(target_os = "android"))]
-            onnx_runtime_kind: self.ai.runtime_kind,
             #[cfg(not(target_os = "android"))]
             discord_rich_presence: self.preferences.discord_rich_presence,
             #[cfg(not(target_os = "android"))]

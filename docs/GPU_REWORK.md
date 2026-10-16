@@ -3,8 +3,9 @@
 Plan for making local AI and platform handling uniform: one GPU path for
 every vendor, one rule for GPU vs CPU, and platform differences decided once
 instead of scattered through the code. Status: P0.1 (cfg ratchet), P0.2
-(parity harness), P1, P2 and P3 implemented; P0.3 (WebGPU spike) and P4–P7
-planned.
+(parity harness), P1, P2, P3, P4 (without the optional 4.5) and P5
+implemented; P0.3 (WebGPU spike) measured on Linux NVIDIA only, during P5;
+P6–P7 planned.
 
 Target behaviour for AI: **run on the GPU when the model fits in free VRAM,
 otherwise on the CPU** — the same rule for every model on every platform.
@@ -461,6 +462,92 @@ from `Placement` instead of provider strings.
 The desktop editor working-set limit (`gpu_working_set_limit_bytes`, today
 `u64::MAX`) uses the same memory query.
 
+**As built** (differences from the sketch above):
+
+- `place(session, state)` takes the model's `SessionOptions` and an
+  `AccelerationState { enabled, quarantined, providers }`. Each
+  `ProviderOffer` carries the free memory of the adapter its provider runs
+  on. `place` needs no `AiCapabilities`, because depth on `Constrained`
+  memory is already a CPU-only session (`CpuReason::CpuOnly`).
+  `Placement::Gpu` names the first provider that has room or whose free
+  memory is unknown. A provider that fails to create a session for a reason
+  other than out of memory is dropped and `place` runs again, as the
+  provider loop did before.
+- Free memory is known only for providers on the editor's adapter:
+  - DirectML, when DXGI lists the adapter;
+  - CUDA and TensorRT, on an NVIDIA editor GPU;
+  - ROCm, on AMD;
+  - Core ML, on Metal.
+
+  A provider on another adapter, such as CUDA on a hybrid laptop whose
+  editor uses the iGPU, is tried anyway, and 4.3 handles an out-of-memory
+  failure. NNAPI and XNNPACK are left to P6.
+- `CpuReason` adds three reasons a session can end up on the CPU: `CpuOnly`,
+  `OutOfMemory` and `GpuFailed`.
+- 4.2: P0.3 has not run, so the numbers come from ONNX Runtime 1.30.0's CUDA
+  13 provider on an NVIDIA GeForce RTX 4070 Ti (driver 615.71, Linux). Method:
+  - The CUDA arena was switched to grow by exact requests for the run only.
+  - Each parity case's GPU memory was sampled through NVML every 5 ms.
+  - Each figure is that peak less what the process held before the session's
+    weights were loaded: the CUDA context (about 200 MiB), plus wgpu memory
+    for Remove and denoise.
+
+  Re-measuring BiRefNet this way reproduced its previous figures.
+  `registry` stores the peaks rounded up to 100 MiB, and `place` adds the
+  20% margin (`needed_memory`):
+
+  | Model | Measured | Stored | Needed free |
+  |---|---|---|---|
+  | BiRefNet 1024 / 768 | 2854 / 1758 MiB | 2900 / 1800 MiB | 3480 / 2160 MiB |
+  | BiRefNet 1024 / 768 float16 | 1774 / 1066 MiB | 1800 / 1100 MiB | 2160 / 1320 MiB |
+  | SkySeg | 574 MiB | 600 MiB | 720 MiB |
+  | Depth Anything V2 Small | 404 MiB | 500 MiB | 600 MiB |
+  | SAM 2.1 encoder / decoder | 1176 / 102 MiB | 1200 / 200 MiB | 1440 / 240 MiB |
+  | Big-LaMa | 590 MiB | 600 MiB | 720 MiB |
+  | RawNIND Bayer / linear | 342 / 347 MiB | 400 / 400 MiB | 480 / 480 MiB |
+
+  DirectML and Core ML are assumed to need about as much; P0.3 replaces
+  these numbers for WebGPU.
+- 4.3: a session that is on the CPU for lack of memory (`InsufficientMemory`
+  or `OutOfMemory`) is placed again when the next job acquires it. It is
+  replaced only if the GPU now has room. A warm session that fell back after
+  `GpuFailed` stays on the CPU, as before. Out of memory no longer switches
+  GPU AI off, so `take_ai_gpu_failure`/`AiGpuFailure` became
+  `take_ai_gpu_device_loss() -> bool`, and the app's out-of-memory dialog is
+  gone. Open decision 2 is taken as recommended: the fallback is silent, and
+  the status shows it.
+- 4.4: `active_execution_providers`/`ExecutionProviderStatus` became
+  `ai_session_statuses`/`AiSessionStatus { placement, adapter }`, with
+  `label()`:
+  - `GPU · <adapter> (<provider>)` when the provider runs on the editor's
+    adapter;
+  - `GPU · <provider>` otherwise;
+  - `CPU · <reason>`.
+
+  Settings warn only for `GpuFailed`, because a memory fallback is not a
+  failure. The diagnostics section is now "AI sessions (current)".
+- The subject model's precision is still chosen before placement, so a
+  float16 model that does not fit runs on the CPU, where it is about 30%
+  slower than float32. P5.3 revisits precision per model.
+- Checked on Linux with CUDA, with VRAM filled through wgpu:
+  - With 2.4 GB free, a Medium subject mask (3480 MiB needed) was placed on
+    the CPU, and its next job reused that CPU session. Once the memory was
+    freed, the next job moved it to CUDA.
+  - With free memory unknown and 1.1 GB free, a run that ran out of memory
+    finished on the CPU with GPU AI still on, and the next job tried CUDA
+    again.
+- Parity: CPU runs are bit-identical. On CUDA every case passes except the
+  float16 subject masks: Low reached an IoU of 0.99465 and Medium 0.99245,
+  against a minimum of 0.995. Low scored the same at P3, before this
+  change.
+- 4.5 is not done; it is a separate change to the editor's admission
+  control.
+- For the maintainer: no Windows toolchain was available, so the
+  Windows-only code (`placement/directml.rs`, the DirectML offer) was checked
+  by reading only. Placement on Windows DirectML, macOS Core ML and Android
+  still need to be confirmed. On Android, out of memory on NNAPI now reruns
+  on the CPU instead of failing the job.
+
 ---
 
 ## P5 — WebGPU EP on desktop (behaviour change, gated by P0)
@@ -501,6 +588,141 @@ confirmed it.
 
 **Exit:** parity within tolerances on WebGPU; the maintainer confirms the P0
 machines in the real app.
+
+**As built** (differences from the sketch above):
+
+- 5.1, packaging (the P0.3 question): Microsoft ships the WebGPU EP as a
+  plugin library, `onnxruntime-ep-webgpu` 0.4.0 on PyPI, which needs ONNX
+  Runtime 1.24.4 or newer. `ort`'s `webgpu` feature links pyke's static
+  builds, which `load-dynamic` cannot use, so CalibRaw:
+  - registers the plugin with `RegisterExecutionProviderLibrary`;
+  - creates sessions on its EP device with `SessionOptionsAppendExecutionProvider_V2`.
+
+  Both need `ort`'s `api-22`, so a manual runtime must now be 1.22 or newer
+  (was 1.18).
+- 5.1, platforms: plugin builds also exist for Windows arm64 and Linux arm64.
+  Only macOS x86_64 stays on the CPU: Microsoft's last build there is 1.23.2,
+  and the plugin is arm64 only. Its sessions report
+  `CpuReason::NoGpuBuild`.
+- 5.1, archives (open decision taken with the maintainer): one archive per
+  platform, built byte-reproducibly by
+  `packaging/onnxruntime/package_webgpu.py`. Each holds Microsoft's unmodified
+  1.30.0 core library and the plugin beside it in `lib/`, with both licenses;
+  on Windows the plugin's `dxcompiler.dll` and `dxil.dll` sit beside it too.
+  The archives are on CalibRaw-Artifacts at `30b40682` like the other
+  runtimes, so the consent text naming Hugging Face stays true. Sizes:
+
+  | Platform | Before | Now |
+  |---|---|---|
+  | Linux x86_64 | 11.3 MB CPU (CUDA: 236–439 MB) | 17.9 MB |
+  | Linux arm64 | 10.3 MB CPU | 16.1 MB |
+  | macOS arm64 | 42.4 MB | 17.6 MB |
+  | Windows x86_64 | 15.8 MB DirectML | 19.8 MB |
+  | Windows arm64 | 15.6 MB DirectML | 20.9 MB |
+
+  - Install folders are `<platform>-webgpu`, so the folders of the runtimes
+    they replace can be deleted by name.
+  - The install manifest gained `webgpu_sha256=` and `webgpu_path=` lines;
+    macOS x86_64's three-line manifest still reads.
+  - `runtime::load` checks the plugin's hash again and registers it after
+    the core library loads. A plugin that fails to register leaves AI on the
+    CPU and is recorded in diagnostics.
+- 5.1, other runtime sources:
+  - A manual runtime uses only the providers built into it. A plugin beside
+    it is not loaded, because the SHA-256 the user approved does not cover
+    it.
+  - Bundled runtimes stay on the CPU: the Flatpak builds ONNX Runtime with
+    `onnxruntime_USE_WEBGPU=OFF`. The AppImage downloads like other Linux
+    builds.
+- 5.2: `GpuProvider` is `WebGpu` on desktop, `Nnapi` and `Xnnpack` on Android.
+  - The WebGPU session adds its EP device, then the existing `cpu_provider`
+    for the nodes WebGPU leaves, so CPU arena settings and the SAM quirk
+    apply as before.
+  - Options are `powerPreference=high-performance` and
+    `storageBufferCacheMode=bucket`.
+  - The plugin picks its adapter itself; the editor's eframe device asks
+    wgpu for high performance too. WebGPU counts as running on the editor's
+    adapter, so the editor's free memory decides placement, when the EP
+    device's PCI IDs match the editor's (or on Metal).
+  - `bucket` costs memory: against `disabled`, the SAM encoder peaked at
+    2096 instead of 1564 MiB and BiRefNet at 4574 instead of 3722 MiB, for
+    runs 35% and 10% faster.
+- 5.2, provider bug: WebGPU runs a Split as one shader with a storage buffer
+  per output and fails once a node needs more than the adapter's 16 (Dawn's
+  cap here). BiRefNet's 50 decoder Splits have 16 or 32 outputs, so every
+  BiRefNet run failed and reran on the CPU. `quirks::WebGpuCpuNodes` leaves
+  those nodes to the CPU through `forceCpuNodeNames`; BiRefNet 1024 then runs
+  in about 1.0 s against 3.7 s on the CPU. No other model has such a node.
+- 5.3: float16 is not confirmed on WebGPU, so subject masks use float32
+  everywhere; `registry::BIREFNET_FLOAT16_ON_GPU` replaces
+  `AiCapabilities::float16_sessions`.
+  - Against the float32 CPU goldens, Medium float16 reached an IoU of
+    0.98449 and Low 0.99519, against a minimum of 0.995.
+  - Float16 saved about 10% of the time.
+  - The float16 models stay in the registry and the parity harness. Windows
+    and Linux users who had them download the float32 model on their next
+    subject mask; the float16 files stay in their cache.
+- 4.2 replaced: WebGPU peaks on the same NVIDIA GeForce RTX 4070 Ti (driver
+  615.71, Linux, Vulkan), measured as P4 did, with three differences:
+  - sessions were set up as `placement` sets them up;
+  - runs used fixed inputs of the model's shape;
+  - the 15 MiB the process holds once the provider's device exists is taken
+    out, as P4 took out the CUDA context.
+
+  | Model | CUDA (P4) | WebGPU | Stored | Needed free |
+  |---|---|---|---|---|
+  | BiRefNet 1024 / 768 | 2854 / 1758 MiB | 4557 / 3018 MiB | 4600 / 3100 MiB | 5520 / 3720 MiB |
+  | BiRefNet 1024 / 768 float16 | 1774 / 1066 MiB | 2886 / 1713 MiB | 2900 / 1800 MiB | 3480 / 2160 MiB |
+  | SkySeg | 574 MiB | 650 MiB | 700 MiB | 840 MiB |
+  | Depth Anything V2 Small | 404 MiB | 530 MiB | 600 MiB | 720 MiB |
+  | SAM 2.1 encoder / decoder | 1176 / 102 MiB | 2088 / 94 MiB | 2100 / 100 MiB | 2520 / 120 MiB |
+  | Big-LaMa | 590 MiB | 773 MiB | 800 MiB | 960 MiB |
+  | RawNIND Bayer / linear | 342 / 347 MiB | 310 / 290 MiB | 400 / 300 MiB | 480 / 360 MiB |
+
+  Direct3D 12 and Metal are assumed to need about as much.
+- Speed on that machine, per run after the first, which compiles shaders:
+  - SkySeg 0.05 s (0.19 s on the CPU);
+  - Depth 0.04 s;
+  - SAM encoder 0.07–0.12 s;
+  - Big-LaMa 0.24 s;
+  - a RawNIND tile 0.01–0.03 s;
+  - BiRefNet as above.
+
+  Sessions took 0.1–5.3 s to create, most of it Big-LaMa's.
+- Parity on WebGPU: every float32 case passes.
+  - Object, sky and subject Low are bit-identical.
+  - Subject Medium and High reach an IoU of 1.00000, at most 3 levels apart.
+  - Depth, Bayer denoise and the decoder-only object case differ by at most
+    one level or code, X-Trans denoise by at most 1.2e-4.
+  - Remove reaches a PSNR of 123.8 dB.
+  - CPU runs are bit-identical.
+- 4.3, failures: WebGPU reports a WebGPU error as `WebGPU device
+  error(<type>)`, where type 3 is out of memory. Dawn names lost objects
+  `[Device] is lost.`. `failure.rs` matches these and Vulkan's,
+  Direct3D 12's and Metal's own texts. They come from the plugin's strings;
+  no run here ran out of memory or lost its device. A lost device still
+  switches GPU AI off.
+- 5.4, deleted beyond the list:
+  - `calibraw_gpu::memory::find_dxgi_adapter`'s DXGI index (the lookup is
+    private now);
+  - the CUDA runtime help in Settings;
+  - `packaging/onnxruntime/package_windows_directml.py`.
+- 5.5, migrations:
+  - `RETIRED_RUNTIME_FILES` (`runtime/package.rs`) lists the CPU, CUDA and
+    DirectML install folders and archives. Start-up deletes them, except a
+    folder holding the manually selected runtime.
+  - `remove_retired_app_data`, which other cleanups due in v1.4.0 also use,
+    now carries this one's `v1.5.0` marker.
+  - Deleting these migrations is a release-note item, as is the end of CUDA.
+- For the maintainer, not checked here:
+  - Windows Direct3D 12, including whether Dawn finds `dxcompiler.dll`
+    beside the plugin and whether the SAM encoder's CPU quirk still applies
+    to Microsoft's 1.30.0 CPU build.
+  - macOS arm64 on Metal; Linux on AMD and Intel.
+  - Which adapter the plugin picks on a hybrid laptop.
+  - Whether the AppImage still needs to unload SAM sessions (open decision
+    4).
+  - Running out of memory and losing the device on each OS.
 
 ---
 
@@ -579,13 +801,14 @@ Each finished area leaves the baseline. Final arch-check rule: `target_os` in
 Recommended answer first.
 
 1. **CUDA:** drop it and use WebGPU only, or keep it as an opt-in for NVIDIA?
+   Taken in P5: dropped.
 2. **CPU fallback notice:** silent with the status line, or a one-time notice
    per session? A fallback is not a failure, so a silent fallback is
    recommended.
 3. **Android GPU AI:** 6.1 only, or plan for 6.2?
 4. **AppImage disables warm sessions** (introduced in `837ab43d`, "Try fix
-   pixelated"): the reason is unknown. If it was a runtime loading issue, P5
-   may remove it; otherwise it becomes a quirks entry.
+   pixelated"): the reason is unknown. It is the quirks entry
+   `sam_sessions_may_stay_warm` since P2; recheck it with the P5 runtime.
 
 ## References
 
