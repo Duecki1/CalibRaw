@@ -7,6 +7,7 @@
 mod android;
 mod arch;
 mod baseline;
+mod cfg_ratchet;
 mod colorchecker;
 mod error;
 mod icons;
@@ -51,6 +52,7 @@ fn run() -> Result<()> {
             arch::run()
         }
         "baseline-run" => baseline::run(rest),
+        "cfg-ratchet" => cfg_ratchet::run(rest),
         "baseline-compare" => baseline::compare(rest),
         "colorchecker-wb-validate" => colorchecker::run(rest),
         "icons" => {
@@ -88,6 +90,7 @@ pub(crate) fn print_help() {
          Usage: cargo xtask <command> [options]\n\n\
          Verification:\n\
            arch-check                       check crate dependency boundaries\n\
+           cfg-ratchet [--update]           fail when target_os conditions spread\n\
            jni-contract                     check Rust JNI exports and calls against Java\n\
            loc [--json PATH] [REPO...]      count production, test and build lines\n\
            migrations                       list migrations of older files; fail when one is due\n\

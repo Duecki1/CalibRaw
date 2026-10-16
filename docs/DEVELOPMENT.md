@@ -36,6 +36,7 @@ cargo clippy --locked --workspace --all-targets --all-features -- \
   -W clippy::redundant_clone -W unreachable-pub
 cargo test --locked --workspace --all-targets
 cargo xtask arch-check
+cargo xtask cfg-ratchet
 cargo xtask jni-contract
 cargo xtask ui-lint
 cargo xtask migrations
@@ -44,6 +45,14 @@ cargo deny check
 
 - `cargo xtask arch-check` enforces the crate dependency rules listed in
   ARCHITECTURE.md against `cargo tree -e normal,build --target all`.
+- `cargo xtask cfg-ratchet` counts the `cfg`, `cfg!` and `cfg_attr`
+  conditions that mention `target_os` in every Rust file under `crates/` and
+  `xtask/`, tests included, and compares them with `xtask/cfg-baseline.txt`.
+  It fails when a file's count rises or a file gains its first one; a drop
+  passes, and `--update` lowers the baseline (it refuses while any count
+  rose). Directories that own platform differences are exempt and listed in
+  `ALLOWED_DIRECTORIES` in `xtask/src/cfg_ratchet.rs`. Raising an entry is a
+  reviewed edit of the baseline file.
 - `cargo xtask jni-contract` checks every Rust JNI export and Java `native`
   declaration, and every Rust-to-Java call, against each other.
 - `cargo xtask ui-lint` reports UI code that bypasses an established shared
@@ -109,6 +118,30 @@ FFmpeg with libx264):
 ```sh
 cargo test --locked -p calibraw-ui --lib services::replay -- --ignored --test-threads=1
 ```
+
+### AI parity
+
+`crates/calibraw-ai/tests/parity.rs` runs every published AI model through
+its public job API on one fixed input from the Demo photos and compares the
+result with a golden in `data/ai-parity/`: IoU for masks, mean and maximum
+difference for depth and denoise, PSNR for Remove. Run it for every change
+that touches `calibraw-ai`; a CPU run of unchanged code reports
+`bit-identical`.
+
+```sh
+CALIBRAW_PARITY_PHOTOS=/path/to/Demo \
+  cargo test --locked -p calibraw-ai --test parity -- --ignored --nocapture
+```
+
+The inputs are pinned by SHA-256. Models come from the desktop model cache,
+or `CALIBRAW_PARITY_MODELS`; `CALIBRAW_PARITY_DOWNLOAD=1` fetches missing
+ones. `CALIBRAW_PARITY_RUNTIME` loads a specific ONNX Runtime library, and
+`CALIBRAW_PARITY_GPU=1` keeps GPU acceleration on to compare GPU sessions
+with the CPU goldens. `CALIBRAW_PARITY_BLESS=1` rewrites the goldens and
+their pins from CPU sessions; do it only for an intended output change, and
+review the new goldens like code. The Remove and X-Trans denoise cases
+render or demosaic on the GPU first, so their goldens hold only on the
+adapter that blessed them. The file header documents the formats.
 
 For Linux sandbox development and packaging, see the [Flatpak workflow](FLATPAK.md),
 including local snapshots, debug builds, validation, and unpublished release staging.
