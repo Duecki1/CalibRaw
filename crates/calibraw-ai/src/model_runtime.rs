@@ -15,6 +15,8 @@ use std::{
 pub(crate) enum AiModel {
     BiRefNet,
     BiRefNetLow,
+    BiRefNetFp16,
+    BiRefNetLowFp16,
     SkySeg,
     Depth,
     SamEncoder,
@@ -27,7 +29,9 @@ pub(crate) enum AiModel {
 impl AiModel {
     const fn feature(self) -> AiFeature {
         match self {
-            Self::BiRefNet | Self::BiRefNetLow => AiFeature::Subject,
+            Self::BiRefNet | Self::BiRefNetLow | Self::BiRefNetFp16 | Self::BiRefNetLowFp16 => {
+                AiFeature::Subject
+            }
             Self::SkySeg => AiFeature::Sky,
             Self::Depth => AiFeature::SceneDepth,
             Self::SamEncoder | Self::SamDecoder => AiFeature::Object,

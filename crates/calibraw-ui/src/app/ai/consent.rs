@@ -33,7 +33,7 @@ impl CalibRawApp {
     fn describe_ai_job(&self, feature: AiFeature) -> AiJobDescription {
         match feature {
             AiFeature::Subject => {
-                let checkpoint = self.ai.subject_mask_quality.model();
+                let checkpoint = self.subject_model();
                 AiJobDescription {
                     label: "subject selection",
                     model: format!("BiRefNet (~{:.0} MB)", megabytes(checkpoint.bytes)),

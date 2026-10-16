@@ -26,6 +26,8 @@ struct RuntimePackage {
     bytes: u64,
     sha256: &'static str,
     format: ArchiveFormat,
+    /// Built with a GPU execution provider (DirectML, CUDA or CoreML).
+    gpu_provider: bool,
 }
 
 /// Which automatic runtime to download. Only Linux x86_64 has a choice: its
@@ -90,6 +92,7 @@ fn runtime_package(kind: AutomaticOnnxRuntimeKind) -> Result<RuntimePackage> {
             bytes: 439_354_926,
             sha256: "f9886932ee7bb0b4d3fcab736a392d4ff5efaa0672b47f19f0cec03437cf64f1",
             format: ArchiveFormat::TarGz,
+            gpu_provider: true,
         },
         ("linux", "x86_64", AutomaticOnnxRuntimeKind::Cuda13) => RuntimePackage {
             platform: "linux-x86_64-cuda13",
@@ -99,6 +102,7 @@ fn runtime_package(kind: AutomaticOnnxRuntimeKind) -> Result<RuntimePackage> {
             bytes: 235_697_517,
             sha256: "382d79133112388cf94ce5855789b7c9bef12bef76a08b6b277e5a317213adcd",
             format: ArchiveFormat::TarGz,
+            gpu_provider: true,
         },
         ("linux", "x86_64", AutomaticOnnxRuntimeKind::Cpu) => RuntimePackage {
             platform: "linux-x86_64",
@@ -108,6 +112,7 @@ fn runtime_package(kind: AutomaticOnnxRuntimeKind) -> Result<RuntimePackage> {
             bytes: 11_306_877,
             sha256: "a5ed5a3cac51fbb2e90da632ae43d19212faaa20e76484e62bcb7c23ddb3b3fd",
             format: ArchiveFormat::TarGz,
+            gpu_provider: false,
         },
         ("linux", "aarch64", _) => RuntimePackage {
             platform: "linux-arm64",
@@ -117,6 +122,7 @@ fn runtime_package(kind: AutomaticOnnxRuntimeKind) -> Result<RuntimePackage> {
             bytes: 10_269_495,
             sha256: "e16a27a8ed330bbc698df7330b0cf56e722f354e3bcc92118682c74ef3c3e3da",
             format: ArchiveFormat::TarGz,
+            gpu_provider: false,
         },
         ("macos", "aarch64", _) => RuntimePackage {
             platform: "macos-arm64",
@@ -126,6 +132,7 @@ fn runtime_package(kind: AutomaticOnnxRuntimeKind) -> Result<RuntimePackage> {
             bytes: 42_373_116,
             sha256: "6ebb5062a934537c352937821f9fe9718e7de1a2db1122a93dd363ffd53a7012",
             format: ArchiveFormat::TarGz,
+            gpu_provider: true,
         },
         ("macos", "x86_64", _) => RuntimePackage {
             platform: "macos-x86_64",
@@ -135,6 +142,7 @@ fn runtime_package(kind: AutomaticOnnxRuntimeKind) -> Result<RuntimePackage> {
             bytes: 11_676_322,
             sha256: "d10359e16347b57d9959f7e80a225a5b4a66ed7d7e007274a15cae86836485a6",
             format: ArchiveFormat::TarGz,
+            gpu_provider: true,
         },
         // 1.24.4 is Microsoft's final DirectML build. DirectML.dll ships beside
         // onnxruntime.dll, where its delay-load hook looks before System32.
@@ -146,6 +154,7 @@ fn runtime_package(kind: AutomaticOnnxRuntimeKind) -> Result<RuntimePackage> {
             bytes: 15_806_028,
             sha256: "23131eec611e9ccd5cc563679aaaf55f221d51615ff6bf5e245970a5f5218c38",
             format: ArchiveFormat::Zip,
+            gpu_provider: true,
         },
         ("windows", "aarch64", _) => RuntimePackage {
             platform: "windows-arm64",
@@ -155,6 +164,7 @@ fn runtime_package(kind: AutomaticOnnxRuntimeKind) -> Result<RuntimePackage> {
             bytes: 15_562_020,
             sha256: "27385338c565cf41c2c46e613ef603e7063a358a821176b1f916902d5afa93e3",
             format: ArchiveFormat::Zip,
+            gpu_provider: true,
         },
         (os, arch, _) => anyhow::bail!(
             "automatic ONNX Runtime is unavailable for {os}/{arch}; select a compatible runtime manually in Settings"
@@ -251,6 +261,18 @@ pub fn automatic_onnx_runtime_info() -> Option<AutomaticOnnxRuntimeInfo> {
 
 pub fn automatic_onnx_runtime_is_installed() -> bool {
     configured_automatic_runtime().is_ok_and(|runtime| runtime.is_installed())
+}
+
+/// Whether Automatic mode's runtime is built with a GPU execution provider.
+/// Packagers bundle CPU builds.
+pub(crate) fn automatic_onnx_runtime_has_gpu_provider() -> bool {
+    matches!(
+        configured_automatic_runtime(),
+        Ok(AutomaticRuntime::Download(RuntimePackage {
+            gpu_provider: true,
+            ..
+        }))
+    )
 }
 
 fn install_lock() -> MutexGuard<'static, ()> {

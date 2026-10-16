@@ -124,17 +124,80 @@ pub const BIREFNET_LOW_MODEL: BiRefNetModelSpec = BiRefNetModelSpec {
     input_height: 768,
 };
 
+/// `BIREFNET_MODEL` converted by `packaging/models/birefnet_fp16.py` for GPU
+/// sessions. Needs about half the GPU memory; masks match float32 with an IoU
+/// of 0.9989.
+pub const BIREFNET_FP16_MODEL: BiRefNetModelSpec = BiRefNetModelSpec {
+    checkpoint: "BiRefNet General-Lite",
+    download_label: "BiRefNet General-Lite (GPU)",
+    url: "https://huggingface.co/Duecki/CalibRaw-Artifacts/resolve/main/models/briefnet/birefnet-lowQ-gridsample-fp16.onnx",
+    bytes: 114_115_335,
+    sha256_hex: "4966ed930390ec1570f4d6be7d003f2e6a275ffa26d3a8f34c80982a56b16ff3",
+    cache_filename: "birefnet-general-lite-fp16.onnx",
+    input_width: 1024,
+    input_height: 1024,
+};
+
+/// `BIREFNET_LOW_MODEL` converted by `packaging/models/birefnet_fp16.py` for
+/// GPU sessions; masks match float32 with an IoU of 0.9982.
+pub const BIREFNET_LOW_FP16_MODEL: BiRefNetModelSpec = BiRefNetModelSpec {
+    checkpoint: "BiRefNet General-Lite 768",
+    download_label: "BiRefNet General-Lite 768 (GPU)",
+    url: "https://huggingface.co/Duecki/CalibRaw-Artifacts/resolve/main/models/briefnet/birefnet-lite-768-gridsample-fp16.onnx",
+    bytes: 104_756_493,
+    sha256_hex: "d6d1c6dc4cb451fa1e56f3cbb1035dd803e6a4fc04e5c71ca0f373d0a71f7b44",
+    cache_filename: "birefnet-general-lite-768-fp16.onnx",
+    input_width: 768,
+    input_height: 768,
+};
+
+/// Numeric format of the subject model file.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum SubjectModelPrecision {
+    #[default]
+    Float32,
+    /// For GPU sessions. CPU providers have few float16 kernels and run it
+    /// about 30% slower than `Float32`.
+    Float16,
+}
+
+impl SubjectModelPrecision {
+    /// The precision for subject masks with the current settings: float16
+    /// where sessions are expected on DirectML or CUDA, i.e. Windows and
+    /// Linux with GPU acceleration enabled and Automatic mode's runtime built
+    /// with a GPU provider. A manually selected runtime is not known before it
+    /// loads, so it keeps float32, as does CoreML, which has not been tested
+    /// with float16.
+    pub fn for_current_sessions(manual_runtime: bool) -> Self {
+        #[cfg(not(target_os = "android"))]
+        let gpu = cfg!(any(target_os = "windows", target_os = "linux"))
+            && !manual_runtime
+            && crate::execution_provider::ai_acceleration_enabled()
+            && crate::onnx_runtime_artifact::automatic_onnx_runtime_has_gpu_provider();
+        #[cfg(target_os = "android")]
+        let gpu = {
+            let _ = manual_runtime;
+            false
+        };
+        if gpu {
+            Self::Float16
+        } else {
+            Self::Float32
+        }
+    }
+}
+
 /// How much work a subject mask may take. Serialized in the performance
 /// settings; keep the names stable.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SubjectMaskQuality {
-    /// `BIREFNET_LOW_MODEL`, one pass.
+    /// `BIREFNET_LOW_MODEL` or its float16 conversion, one pass.
     Low,
-    /// `BIREFNET_MODEL`, one pass.
+    /// `BIREFNET_MODEL` or its float16 conversion, one pass.
     #[default]
     Medium,
-    /// `BIREFNET_MODEL` with the cropped refinement pass. Desktop only.
+    /// `Medium`'s model with the cropped refinement pass. Desktop only.
     High,
 }
 
@@ -154,17 +217,21 @@ impl SubjectMaskQuality {
         }
     }
 
-    pub const fn model(self) -> BiRefNetModelSpec {
-        match self {
-            Self::Low => BIREFNET_LOW_MODEL,
-            Self::Medium | Self::High => BIREFNET_MODEL,
+    pub const fn model(self, precision: SubjectModelPrecision) -> BiRefNetModelSpec {
+        match (self, precision) {
+            (Self::Low, SubjectModelPrecision::Float32) => BIREFNET_LOW_MODEL,
+            (Self::Low, SubjectModelPrecision::Float16) => BIREFNET_LOW_FP16_MODEL,
+            (Self::Medium | Self::High, SubjectModelPrecision::Float32) => BIREFNET_MODEL,
+            (Self::Medium | Self::High, SubjectModelPrecision::Float16) => BIREFNET_FP16_MODEL,
         }
     }
 
-    const fn session_model(self) -> AiModel {
-        match self {
-            Self::Low => AiModel::BiRefNetLow,
-            Self::Medium | Self::High => AiModel::BiRefNet,
+    const fn session_model(self, precision: SubjectModelPrecision) -> AiModel {
+        match (self, precision) {
+            (Self::Low, SubjectModelPrecision::Float32) => AiModel::BiRefNetLow,
+            (Self::Low, SubjectModelPrecision::Float16) => AiModel::BiRefNetLowFp16,
+            (Self::Medium | Self::High, SubjectModelPrecision::Float32) => AiModel::BiRefNet,
+            (Self::Medium | Self::High, SubjectModelPrecision::Float16) => AiModel::BiRefNetFp16,
         }
     }
 
@@ -228,8 +295,12 @@ impl AiMaskResult {
     }
 }
 
-pub fn birefnet_model_is_verified(quality: SubjectMaskQuality, path: &Path) -> bool {
-    quality.model().install().is_installed(path)
+pub fn birefnet_model_is_verified(
+    quality: SubjectMaskQuality,
+    precision: SubjectModelPrecision,
+    path: &Path,
+) -> bool {
+    quality.model(precision).install().is_installed(path)
 }
 
 pub fn skyseg_model_is_verified(path: &Path) -> bool {
@@ -249,6 +320,8 @@ pub struct AiMaskWorkerRequest {
     pub model: AiMaskModel,
     /// Used by `AiMaskModel::Subject` only.
     pub subject_quality: SubjectMaskQuality,
+    /// Used by `AiMaskModel::Subject` only.
+    pub subject_precision: SubjectModelPrecision,
     pub model_path: PathBuf,
     pub allow_download: bool,
     pub runtime_path: Option<PathBuf>,
@@ -296,7 +369,10 @@ pub fn spawn_ai_mask(
                 (|| {
                     ensure_ai_not_cancelled(&cancellation)?;
                     let install = match request.model {
-                        AiMaskModel::Subject => request.subject_quality.model().install(),
+                        AiMaskModel::Subject => request
+                            .subject_quality
+                            .model(request.subject_precision)
+                            .install(),
                         AiMaskModel::Sky => SKYSEG_MODEL_INSTALL,
                         AiMaskModel::Depth => depth::MODEL_INSTALL,
                     };
@@ -523,6 +599,7 @@ fn infer_ai_mask(request: AiMaskWorkerRequest) -> Result<AiMaskResult> {
     let AiMaskWorkerRequest {
         model,
         subject_quality,
+        subject_precision,
         model_path,
         allow_download: _,
         runtime_path,
@@ -556,7 +633,9 @@ fn infer_ai_mask(request: AiMaskWorkerRequest) -> Result<AiMaskResult> {
     let mask = match model {
         AiMaskModel::Depth => depth::depth_mask(&model_path, &image)?,
         AiMaskModel::Sky => sky::sky_mask(&model_path, &image)?,
-        AiMaskModel::Subject => subject_mask(&model_path, &image, subject_quality)?,
+        AiMaskModel::Subject => {
+            subject_mask(&model_path, &image, subject_quality, subject_precision)?
+        }
     };
     calibraw_core::diagnostics::record(format!(
         "AI {} mask finished in {:.3}s",
@@ -576,9 +655,10 @@ fn subject_mask(
     model_path: &Path,
     image: &ImageBuffer<Rgba<u8>, Vec<u8>>,
     quality: SubjectMaskQuality,
+    precision: SubjectModelPrecision,
 ) -> Result<Vec<u8>> {
     let (width, height) = image.dimensions();
-    let mut mask = infer_birefnet(model_path, image, quality)?;
+    let mut mask = infer_birefnet(model_path, image, quality, precision)?;
     let crop_refinement =
         subject_crop_refinement_enabled(quality.crop_refinement(), cfg!(target_os = "android"));
     if crop_refinement {
@@ -586,7 +666,7 @@ fn subject_mask(
             let crop_image =
                 image::imageops::crop_imm(image, crop.x, crop.y, crop.width, crop.height)
                     .to_image();
-            let crop_alpha = infer_birefnet(model_path, &crop_image, quality)?;
+            let crop_alpha = infer_birefnet(model_path, &crop_image, quality, precision)?;
             mask_refine::merge_crop_pass(&mut mask, width, crop, &crop_alpha, 8);
         }
     }
@@ -603,8 +683,9 @@ pub(super) fn infer_birefnet(
     model_path: &Path,
     image: &ImageBuffer<Rgba<u8>, Vec<u8>>,
     quality: SubjectMaskQuality,
+    precision: SubjectModelPrecision,
 ) -> Result<Vec<u8>> {
-    let model = quality.model();
+    let model = quality.model(precision);
     let resized = image::imageops::resize(
         image,
         model.input_width,
@@ -624,7 +705,7 @@ pub(super) fn infer_birefnet(
     .context("create BiRefNet input tensor")?;
 
     let (output_width, output_height, logits) = with_model_session(
-        quality.session_model(),
+        quality.session_model(precision),
         model_path,
         SessionOptions::new("BiRefNet"),
         mask_model_retention(true),
@@ -793,7 +874,8 @@ mod tests {
     use super::{
         birefnet_model_is_verified, infer_birefnet, normalized_rgb_input, restore_birefnet_output,
         sigmoid_probability, subject_crop_refinement_enabled, validate_birefnet_output_shape,
-        SubjectMaskQuality, BIREFNET_LOW_MODEL, BIREFNET_MODEL, IMAGENET_MEAN, IMAGENET_STD,
+        SubjectMaskQuality, SubjectModelPrecision, BIREFNET_FP16_MODEL, BIREFNET_LOW_FP16_MODEL,
+        BIREFNET_LOW_MODEL, BIREFNET_MODEL, IMAGENET_MEAN, IMAGENET_STD,
     };
     use image::{ImageBuffer, Rgba};
     use std::path::Path;
@@ -805,14 +887,23 @@ mod tests {
         let path = std::env::var_os("CALIBRAW_BIREFNET_MODEL").expect("CALIBRAW_BIREFNET_MODEL");
         let runtime = std::env::var_os("ORT_DYLIB_PATH").expect("ORT_DYLIB_PATH");
         ort::init_from(Path::new(&runtime)).unwrap().commit();
-        let quality = [SubjectMaskQuality::Low, SubjectMaskQuality::Medium]
+        let (quality, precision) = [SubjectMaskQuality::Low, SubjectMaskQuality::Medium]
             .into_iter()
-            .find(|&quality| birefnet_model_is_verified(quality, Path::new(&path)))
+            .flat_map(|quality| {
+                [
+                    SubjectModelPrecision::Float32,
+                    SubjectModelPrecision::Float16,
+                ]
+                .map(|precision| (quality, precision))
+            })
+            .find(|&(quality, precision)| {
+                birefnet_model_is_verified(quality, precision, Path::new(&path))
+            })
             .expect("CALIBRAW_BIREFNET_MODEL is not a published subject model");
         let image = ImageBuffer::from_fn(96, 64, |x, y| {
             Rgba([(x * 255 / 95) as u8, (y * 255 / 63) as u8, 128, 255])
         });
-        let mask = infer_birefnet(Path::new(&path), &image, quality).unwrap();
+        let mask = infer_birefnet(Path::new(&path), &image, quality, precision).unwrap();
         assert_eq!(mask.len(), 96 * 64);
         let providers = crate::active_execution_providers();
         eprintln!("BiRefNet inference providers: {providers:?}");
@@ -834,20 +925,72 @@ mod tests {
 
     #[test]
     fn subject_qualities_choose_model_and_crop_pass() {
-        assert_eq!(SubjectMaskQuality::Low.model(), BIREFNET_LOW_MODEL);
-        assert_eq!(SubjectMaskQuality::Medium.model(), BIREFNET_MODEL);
-        assert_eq!(SubjectMaskQuality::High.model(), BIREFNET_MODEL);
+        use SubjectModelPrecision::{Float16, Float32};
+        assert_eq!(SubjectMaskQuality::Low.model(Float32), BIREFNET_LOW_MODEL);
+        assert_eq!(SubjectMaskQuality::Medium.model(Float32), BIREFNET_MODEL);
+        assert_eq!(SubjectMaskQuality::High.model(Float32), BIREFNET_MODEL);
+        assert_eq!(
+            SubjectMaskQuality::Low.model(Float16),
+            BIREFNET_LOW_FP16_MODEL
+        );
+        assert_eq!(
+            SubjectMaskQuality::Medium.model(Float16),
+            BIREFNET_FP16_MODEL
+        );
+        assert_eq!(SubjectMaskQuality::High.model(Float16), BIREFNET_FP16_MODEL);
         assert!(!SubjectMaskQuality::Low.crop_refinement());
         assert!(!SubjectMaskQuality::Medium.crop_refinement());
         assert!(SubjectMaskQuality::High.crop_refinement());
-        assert_ne!(
-            BIREFNET_LOW_MODEL.cache_filename,
-            BIREFNET_MODEL.cache_filename
+    }
+
+    /// Each model file has its own cache file and session, so switching
+    /// quality or precision never reuses another file's download or session.
+    #[test]
+    fn every_subject_model_file_is_distinct() {
+        use SubjectModelPrecision::{Float16, Float32};
+        let choices = [
+            (SubjectMaskQuality::Low, Float32),
+            (SubjectMaskQuality::Low, Float16),
+            (SubjectMaskQuality::Medium, Float32),
+            (SubjectMaskQuality::Medium, Float16),
+        ];
+        for (index, &(quality, precision)) in choices.iter().enumerate() {
+            let model = quality.model(precision);
+            for &(other_quality, other_precision) in &choices[index + 1..] {
+                let other = other_quality.model(other_precision);
+                assert_ne!(model.cache_filename, other.cache_filename);
+                assert_ne!(model.sha256_hex, other.sha256_hex);
+                assert_ne!(model.url, other.url);
+                assert_ne!(
+                    quality.session_model(precision),
+                    other_quality.session_model(other_precision)
+                );
+            }
+            let other_precision = if precision == Float32 {
+                Float16
+            } else {
+                Float32
+            };
+            let other = quality.model(other_precision);
+            assert_eq!(
+                (model.input_width, model.input_height),
+                (other.input_width, other.input_height)
+            );
+        }
+    }
+
+    #[test]
+    fn manual_and_cpu_runtimes_use_float32_subject_models() {
+        assert_eq!(
+            SubjectModelPrecision::for_current_sessions(true),
+            SubjectModelPrecision::Float32
         );
-        assert_ne!(
-            SubjectMaskQuality::Low.session_model(),
-            SubjectMaskQuality::Medium.session_model()
-        );
+        if !cfg!(any(target_os = "windows", target_os = "linux")) {
+            assert_eq!(
+                SubjectModelPrecision::for_current_sessions(false),
+                SubjectModelPrecision::Float32
+            );
+        }
     }
 
     #[test]
