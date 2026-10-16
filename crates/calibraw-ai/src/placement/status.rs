@@ -1,31 +1,59 @@
-//! The execution provider each model's latest session uses, for Settings and
-//! diagnostics.
+//! Where each model's latest session runs, for Settings and diagnostics.
 
+use super::place::{CpuReason, Placement};
 use std::{
     collections::BTreeMap,
     sync::{Mutex, OnceLock},
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ExecutionProviderStatus {
+pub struct AiSessionStatus {
     pub model_name: String,
-    pub active_provider: String,
-    pub degraded: bool,
+    pub placement: Placement,
+    /// The adapter a GPU session runs on, where it is the editor's.
+    pub adapter: Option<String>,
 }
 
-fn provider_statuses() -> &'static Mutex<BTreeMap<String, ExecutionProviderStatus>> {
-    static STATUSES: OnceLock<Mutex<BTreeMap<String, ExecutionProviderStatus>>> = OnceLock::new();
+impl AiSessionStatus {
+    /// `GPU · <adapter> (<provider>)`, `GPU · <provider>` when the adapter is
+    /// not known, or `CPU · <reason>`.
+    pub fn label(&self) -> String {
+        match (self.placement, &self.adapter) {
+            (Placement::Gpu { provider }, Some(adapter)) => {
+                format!("GPU · {adapter} ({})", provider.name())
+            }
+            (Placement::Gpu { provider }, None) => format!("GPU · {}", provider.name()),
+            (Placement::Cpu { reason }, _) => format!("CPU · {reason}"),
+        }
+    }
+
+    /// Whether a GPU provider failed for this model, other than by running
+    /// out of memory.
+    pub fn gpu_failed(&self) -> bool {
+        self.placement
+            == Placement::Cpu {
+                reason: CpuReason::GpuFailed,
+            }
+    }
+}
+
+fn statuses() -> &'static Mutex<BTreeMap<&'static str, AiSessionStatus>> {
+    static STATUSES: OnceLock<Mutex<BTreeMap<&'static str, AiSessionStatus>>> = OnceLock::new();
     STATUSES.get_or_init(|| Mutex::new(BTreeMap::new()))
 }
 
-pub(super) fn publish_status(model_name: &str, active_provider: &str, degraded: bool) {
-    if let Ok(mut statuses) = provider_statuses().lock() {
+pub(super) fn publish_status(
+    model_name: &'static str,
+    placement: Placement,
+    adapter: Option<String>,
+) {
+    if let Ok(mut statuses) = statuses().lock() {
         statuses.insert(
-            model_name.to_owned(),
-            ExecutionProviderStatus {
+            model_name,
+            AiSessionStatus {
                 model_name: model_name.to_owned(),
-                active_provider: active_provider.to_owned(),
-                degraded,
+                placement,
+                adapter,
             },
         );
     }
@@ -34,14 +62,63 @@ pub(super) fn publish_status(model_name: &str, active_provider: &str, degraded: 
 /// Forgets every status, for a change that makes them stale.
 #[cfg(not(target_os = "android"))]
 pub(super) fn clear() {
-    if let Ok(mut statuses) = provider_statuses().lock() {
+    if let Ok(mut statuses) = statuses().lock() {
         statuses.clear();
     }
 }
 
-pub fn active_execution_providers() -> Vec<ExecutionProviderStatus> {
-    provider_statuses()
+/// The latest session of each model that had one, by model name.
+pub fn ai_session_statuses() -> Vec<AiSessionStatus> {
+    statuses()
         .lock()
         .map(|statuses| statuses.values().cloned().collect())
         .unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::placement::GpuProvider;
+
+    fn status(placement: Placement, adapter: Option<&str>) -> AiSessionStatus {
+        AiSessionStatus {
+            model_name: "BiRefNet".to_owned(),
+            placement,
+            adapter: adapter.map(str::to_owned),
+        }
+    }
+
+    #[test]
+    fn labels_name_the_adapter_or_the_cpu_reason() {
+        let webgpu = Placement::Gpu {
+            provider: GpuProvider::WebGpu,
+        };
+        assert_eq!(
+            status(webgpu, Some("NVIDIA GeForce RTX 4070 Ti")).label(),
+            "GPU · NVIDIA GeForce RTX 4070 Ti (WebGPU)"
+        );
+        assert_eq!(status(webgpu, None).label(), "GPU · WebGPU");
+        let disabled = Placement::Cpu {
+            reason: CpuReason::Disabled,
+        };
+        assert_eq!(
+            status(disabled, None).label(),
+            "CPU · GPU AI is off in Settings"
+        );
+    }
+
+    #[test]
+    fn only_a_failed_provider_counts_as_a_gpu_failure() {
+        let failed = Placement::Cpu {
+            reason: CpuReason::GpuFailed,
+        };
+        assert!(status(failed, None).gpu_failed());
+        for reason in [
+            CpuReason::OutOfMemory,
+            CpuReason::InsufficientMemory { free: 0, needed: 1 },
+            CpuReason::Disabled,
+        ] {
+            assert!(!status(Placement::Cpu { reason }, None).gpu_failed());
+        }
+    }
 }

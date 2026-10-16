@@ -51,7 +51,9 @@ use calibraw_ai::pipeline::{
     crop_raw, load_raw_file, CfaKind, ExposureParams, GeometryTransform, LoadedRaw, MaskStack,
     ObjectStroke, RemoveBrushPoint, RemoveBrushStroke, RemoveEditState,
 };
-use calibraw_ai::{AiConfigChange, AiJobEvent, RuntimeSource, Sha256};
+use calibraw_ai::{
+    AiConfigChange, AiJobEvent, AiSessionStatus, CpuReason, Placement, RuntimeSource, Sha256,
+};
 use calibraw_gpu::wgpu;
 use calibraw_gpu::{
     request_headless_device, HeadlessAdapter, HeadlessDevice, HeadlessDeviceRequest,
@@ -506,16 +508,10 @@ impl Harness {
     /// Compares `output` with the golden `name`, or writes it when blessing.
     fn check(&self, name: &str, tolerance: Tolerance, output: &Output) {
         // Statuses accumulate per model name over the process.
-        let providers = calibraw_ai::active_execution_providers();
-        let sessions = providers
+        let statuses = calibraw_ai::ai_session_statuses();
+        let sessions = statuses
             .iter()
-            .map(|status| {
-                let degraded = if status.degraded { " (degraded)" } else { "" };
-                format!(
-                    "{} on {}{degraded}",
-                    status.model_name, status.active_provider
-                )
-            })
+            .map(|status| format!("{} on {}", status.model_name, status.label()))
             .collect::<Vec<_>>();
         eprintln!("{name}: sessions so far: {}", sessions.join(", "));
         let directory = Path::new(GOLDEN_DIR);
@@ -556,8 +552,9 @@ impl Harness {
             Ok(report) => eprintln!("{name}: {report}"),
             Err(report) => panic!("{name}: {report}"),
         }
-        if self.gpu && providers.iter().any(|status| status.degraded) {
-            eprintln!("{name}: warning: a session fell back to the CPU");
+        let on_cpu = |status: &AiSessionStatus| matches!(status.placement, Placement::Cpu { reason } if reason != CpuReason::CpuOnly);
+        if self.gpu && statuses.iter().any(on_cpu) {
+            eprintln!("{name}: warning: a session ran on the CPU");
         }
     }
 }

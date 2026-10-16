@@ -4,7 +4,9 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 // Bump when a public settings change needs migration; see `sanitized`.
-const SETTINGS_VERSION: u32 = 4;
+// Version 5 dropped the automatic runtime choice (`onnx_runtime_kind` and
+// `onnx_runtime_kind_chosen`), which unknown fields leave to be ignored.
+const SETTINGS_VERSION: u32 = 5;
 /// The desktop decoded-RAW cache default before version 2 raised it, so that
 /// Develop can prefetch both neighbours of the open photo.
 ///
@@ -57,12 +59,6 @@ pub(crate) struct PerformanceSettings {
     pub ai_gpu_acceleration: bool,
     #[cfg(not(target_os = "android"))]
     pub onnx_runtime_mode: crate::app::OnnxRuntimeMode,
-    #[cfg(not(target_os = "android"))]
-    pub onnx_runtime_kind: calibraw_ai::runtime::AutomaticOnnxRuntimeKind,
-    /// Missing in files written before setup offered the runtime choice, so
-    /// existing users who can choose one are asked once.
-    #[cfg(not(target_os = "android"))]
-    pub onnx_runtime_kind_chosen: bool,
     #[cfg(not(target_os = "android"))]
     pub discord_rich_presence: bool,
     /// Serialize photo file reads for libraries on rotational disks.
@@ -176,10 +172,6 @@ impl Default for PerformanceSettings {
             ai_gpu_acceleration: true,
             #[cfg(not(target_os = "android"))]
             onnx_runtime_mode: crate::app::OnnxRuntimeMode::default(),
-            #[cfg(not(target_os = "android"))]
-            onnx_runtime_kind: calibraw_ai::runtime::AutomaticOnnxRuntimeKind::default(),
-            #[cfg(not(target_os = "android"))]
-            onnx_runtime_kind_chosen: false,
             #[cfg(not(target_os = "android"))]
             discord_rich_presence: false,
             #[cfg(not(target_os = "android"))]
@@ -506,6 +498,21 @@ mod tests {
         assert!(!migrated(SETTINGS_VERSION, false));
     }
 
+    /// Version 4 files may name the CUDA runtime; they load with every other
+    /// setting kept.
+    #[test]
+    fn version_4_runtime_choice_is_ignored() {
+        let settings: PerformanceSettings = serde_json::from_str(
+            r#"{"version": 4, "onnx_runtime_kind": "cuda13", "onnx_runtime_kind_chosen": true, "image_relative_brush_size": true}"#,
+        )
+        .unwrap();
+        let settings = settings.sanitized();
+        assert_eq!(settings.version, SETTINGS_VERSION);
+        assert!(settings.image_relative_brush_size);
+        let saved = serde_json::to_string(&settings).unwrap();
+        assert!(!saved.contains("onnx_runtime_kind"), "{saved}");
+    }
+
     #[test]
     fn unchosen_subject_quality_is_the_default() {
         let settings = PerformanceSettings {
@@ -646,11 +653,6 @@ mod tests {
                 settings.onnx_runtime_mode,
                 crate::app::OnnxRuntimeMode::Automatic
             );
-            assert_eq!(
-                settings.onnx_runtime_kind,
-                calibraw_ai::runtime::AutomaticOnnxRuntimeKind::Cpu
-            );
-            assert!(!settings.onnx_runtime_kind_chosen);
             assert!(!settings.discord_rich_presence);
             assert!(!settings.hdd_mode);
             assert!(settings.library_folder_sidebar_open);
@@ -694,7 +696,6 @@ mod tests {
         {
             settings.ai_gpu_acceleration = false;
             settings.onnx_runtime_mode = crate::app::OnnxRuntimeMode::Manual;
-            settings.onnx_runtime_kind = calibraw_ai::runtime::AutomaticOnnxRuntimeKind::Cuda13;
             settings.discord_rich_presence = true;
             settings.hdd_mode = true;
             settings.last_library_folder = Some(PathBuf::from("photos"));
@@ -745,10 +746,6 @@ mod tests {
             assert_eq!(
                 restored.onnx_runtime_mode,
                 crate::app::OnnxRuntimeMode::Manual
-            );
-            assert_eq!(
-                restored.onnx_runtime_kind,
-                calibraw_ai::runtime::AutomaticOnnxRuntimeKind::Cuda13
             );
             assert!(restored.discord_rich_presence);
             assert!(restored.hdd_mode);

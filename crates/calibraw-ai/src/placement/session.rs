@@ -1,12 +1,11 @@
-//! Creating a session on the preferred provider, and rebuilding it on the
-//! CPU when the accelerated one fails.
+//! Creating a session where `place` puts it, and rebuilding it on the CPU
+//! when its GPU provider fails.
 
-use super::failure::{quarantine_ai_gpu, AiGpuFailure};
+use super::failure::{quarantine_after_device_loss, RunFailure, SetupFailure};
 use super::job_record::GpuJobRecord;
-use super::providers::{
-    cpu_provider, gpu_memory_shortfall, preferred_execution_providers, ProviderCandidate,
-};
-use super::quirks;
+use super::place::{CpuReason, GpuProvider, Placement, ProviderOffer};
+use super::providers::{cpu_provider, offered_providers, with_gpu_provider};
+use super::quirks::{self, WebGpuCpuNodes};
 use super::status::publish_status;
 use anyhow::{Context, Result};
 use ort::session::{
@@ -14,6 +13,8 @@ use ort::session::{
     Session,
 };
 use std::path::{Path, PathBuf};
+
+const MIB: u64 = 1 << 20;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) enum CpuFallbackProfile {
@@ -32,11 +33,13 @@ pub(crate) struct SessionOptions {
     pub(crate) model_name: &'static str,
     pub(crate) allow_acceleration: bool,
     pub(crate) cpu_fallback_profile: CpuFallbackProfile,
-    /// Peak GPU memory a session of this model needs. Where a provider can
-    /// measure what is free (DirectML), it is skipped when less is: Windows
-    /// pages overcommitted video memory instead of failing allocations, and
-    /// the slowdown ends in a driver reset.
+    /// Peak GPU memory of one inference, in bytes, as `registry` measured it.
+    /// `place` keeps the session off a GPU whose adapter has less free,
+    /// margin included: allocations beyond it fail, or on Windows overcommit
+    /// video memory, which pages until the slowdown ends in a driver reset.
     pub(crate) gpu_memory_bytes: Option<u64>,
+    /// Nodes its WebGPU sessions run on the CPU (`quirks::WebGpuCpuNodes`).
+    pub(crate) webgpu_cpu_nodes: WebGpuCpuNodes,
 }
 
 impl SessionOptions {
@@ -46,11 +49,17 @@ impl SessionOptions {
             allow_acceleration: true,
             cpu_fallback_profile: CpuFallbackProfile::Default,
             gpu_memory_bytes: None,
+            webgpu_cpu_nodes: WebGpuCpuNodes::None,
         }
     }
 
     pub(crate) const fn with_gpu_memory(mut self, bytes: u64) -> Self {
         self.gpu_memory_bytes = Some(bytes);
+        self
+    }
+
+    pub(crate) const fn with_webgpu_cpu_nodes(mut self, nodes: WebGpuCpuNodes) -> Self {
+        self.webgpu_cpu_nodes = nodes;
         self
     }
 
@@ -63,6 +72,19 @@ impl SessionOptions {
         self.allow_acceleration = false;
         self
     }
+}
+
+/// Where a session of `options` runs now, and the providers on offer. The
+/// providers are only queried when the session may use one.
+fn current_placement(options: &SessionOptions) -> (Placement, Vec<ProviderOffer>) {
+    let settings = super::acceleration_settings();
+    let offers = if options.allow_acceleration && settings.usable() {
+        offered_providers(super::editor_gpu())
+    } else {
+        Vec::new()
+    };
+    let placement = super::place(options, &settings.with_providers(&offers));
+    (placement, offers)
 }
 
 fn configure_common_builder(mut builder: SessionBuilder) -> Result<SessionBuilder> {
@@ -119,21 +141,13 @@ fn create_cpu_session_inner(source: &Path, options: &SessionOptions) -> Result<S
 fn create_accelerated_session(
     source: &Path,
     options: &SessionOptions,
-    candidate: ProviderCandidate,
+    offer: &ProviderOffer,
 ) -> Result<Session> {
-    let builder = Session::builder()
-        .with_context(|| format!("create {} ONNX Runtime session", candidate.name))?;
-    let mut builder = configure_common_builder(builder)?;
-    if candidate.force_sequential {
-        builder = builder.with_parallel_execution(false).map_err(|error| {
-            anyhow::anyhow!("configure {} sequential execution: {error}", candidate.name)
-        })?;
-    }
-    let mut builder = builder
-        .with_execution_providers([candidate.provider.error_on_failure(), cpu_provider(options)])
-        .map_err(|error| {
-            anyhow::anyhow!("configure {} execution provider: {error}", candidate.name)
-        })?;
+    let name = offer.provider.name();
+    let builder =
+        Session::builder().with_context(|| format!("create {name} ONNX Runtime session"))?;
+    let builder = configure_common_builder(builder)?;
+    let mut builder = with_gpu_provider(builder, offer, options, super::editor_gpu())?;
     commit_model(&mut builder, source)
 }
 
@@ -141,66 +155,75 @@ pub(crate) struct FallbackSession {
     session: Session,
     source: PathBuf,
     options: SessionOptions,
-    active_provider: &'static str,
-    accelerated: bool,
+    placement: Placement,
 }
 
 impl FallbackSession {
     /// Records this session's GPU job while the returned value lives; `None`
     /// for CPU sessions.
     pub(crate) fn record_gpu_job(&self) -> Option<GpuJobRecord> {
-        self.accelerated
-            .then(|| GpuJobRecord::begin(self.options.model_name, self.active_provider))
+        match self.placement {
+            Placement::Gpu { provider } => Some(GpuJobRecord::begin(
+                self.options.model_name,
+                provider.name(),
+            )),
+            Placement::Cpu { .. } => None,
+        }
+    }
+
+    /// Whether this session is on the CPU only because GPU memory was short,
+    /// and the GPU now has room for it, so the next job should get a new
+    /// session instead of reusing this one.
+    pub(crate) fn gpu_now_fits(&self) -> bool {
+        match self.placement {
+            Placement::Cpu { reason } if reason.memory_bound() => {
+                matches!(current_placement(&self.options).0, Placement::Gpu { .. })
+            }
+            _ => false,
+        }
     }
 
     pub(crate) fn run_with_fallback<T, F>(&mut self, operation: &str, mut run: F) -> Result<T>
     where
         F: FnMut(&mut Session, bool) -> Result<T>,
     {
-        match run(&mut self.session, self.accelerated) {
-            Ok(value) => Ok(value),
-            Err(accelerated_error) if self.accelerated => {
-                let failed_provider = self.active_provider;
-                if let Some(failure) = AiGpuFailure::of_error(&accelerated_error) {
-                    quarantine_ai_gpu(failure, operation, failed_provider, &accelerated_error);
-                    return Err(accelerated_error.context(format!(
-                        "{operation} failed on {failed_provider}; the AI job was stopped before CPU fallback"
-                    )));
-                }
-                log::warn!(
-                    "{operation} failed on {failed_provider}; rebuilding {} on CPU: {accelerated_error:#}",
-                    self.options.model_name
-                );
-                calibraw_core::diagnostics::record(format!(
-                    "AI {}: {failed_provider} inference failed; switching to CPU fallback",
-                    self.options.model_name
-                ));
-                publish_status(self.options.model_name, failed_provider, true);
-
-                let cpu_session = create_cpu_session_inner(&self.source, &self.options)
-                    .with_context(|| {
-                        format!(
-                            "rebuild {} on CPU after {failed_provider} inference failure: {accelerated_error:#}",
-                            self.options.model_name
-                        )
-                    })?;
-                self.session = cpu_session;
-                self.active_provider = "CPU (fallback)";
-                self.accelerated = false;
-                publish_status(self.options.model_name, self.active_provider, true);
-
-                log::info!(
-                    "{} now uses CPU fallback after {failed_provider} runtime failure",
-                    self.options.model_name
-                );
-                run(&mut self.session, false).with_context(|| {
-                    format!(
-                        "{operation} failed on {failed_provider} ({accelerated_error:#}) and again on CPU fallback"
-                    )
-                })
+        let Placement::Gpu { provider } = self.placement else {
+            return run(&mut self.session, false);
+        };
+        let gpu_error = match run(&mut self.session, true) {
+            Ok(value) => return Ok(value),
+            Err(error) => error,
+        };
+        let failed = provider.name();
+        let model_name = self.options.model_name;
+        let reason = match RunFailure::of_error(&gpu_error) {
+            RunFailure::StopJob => {
+                quarantine_after_device_loss(operation, failed, &gpu_error);
+                return Err(gpu_error.context(format!(
+                    "{operation} failed on {failed}; the AI job was stopped before CPU fallback"
+                )));
             }
-            Err(error) => Err(error),
-        }
+            RunFailure::RerunOnCpu(reason) => reason,
+        };
+        log::warn!("{operation} failed on {failed}; rebuilding {model_name} on CPU: {gpu_error:#}");
+        calibraw_core::diagnostics::record(format!(
+            "AI {model_name}: {failed} inference failed ({reason}); switching to CPU fallback"
+        ));
+
+        let cpu_session =
+            create_cpu_session_inner(&self.source, &self.options).with_context(|| {
+                format!(
+                    "rebuild {model_name} on CPU after {failed} inference failure: {gpu_error:#}"
+                )
+            })?;
+        self.session = cpu_session;
+        self.placement = Placement::Cpu { reason };
+        publish_status(model_name, self.placement, None);
+
+        log::info!("{model_name} now uses CPU fallback after {failed} runtime failure");
+        run(&mut self.session, false).with_context(|| {
+            format!("{operation} failed on {failed} ({gpu_error:#}) and again on CPU fallback")
+        })
     }
 }
 
@@ -209,67 +232,47 @@ pub(crate) fn create_session_with_fallback(
     options: SessionOptions,
 ) -> Result<FallbackSession> {
     let source = model.as_ref().to_path_buf();
-    let source_description = source.display().to_string();
-    let mut attempted_acceleration = false;
+    let (mut placement, mut offers) = current_placement(&options);
     let mut setup_failures = Vec::new();
 
-    let acceleration_enabled = options.allow_acceleration && super::ai_acceleration_enabled();
-    if acceleration_enabled {
-        let providers = preferred_execution_providers();
-        attempted_acceleration = !providers.is_empty();
-        for candidate in providers {
-            let provider_name = candidate.name;
-            if let Some(shortfall) =
-                gpu_memory_shortfall(options.gpu_memory_bytes, candidate.available_memory)
-            {
-                log::warn!(
-                    "AI {} skips {provider_name}: {shortfall}",
-                    options.model_name
-                );
-                calibraw_core::diagnostics::record(format!(
-                    "AI {} skips {provider_name}: {shortfall}",
-                    options.model_name
-                ));
-                setup_failures.push(format!("{provider_name}: {shortfall}"));
-                continue;
+    let reason = loop {
+        let provider = match placement {
+            Placement::Gpu { provider } => provider,
+            Placement::Cpu { reason } if setup_failures.is_empty() => break reason,
+            Placement::Cpu { .. } => break CpuReason::GpuFailed,
+        };
+        let offer = take_offer(&mut offers, provider);
+        match try_gpu_session(&source, &options, &offer) {
+            Ok(session) => {
+                publish_status(options.model_name, placement, offer.adapter);
+                return Ok(FallbackSession {
+                    session,
+                    source,
+                    options,
+                    placement,
+                });
             }
-            calibraw_core::diagnostics::record(format!(
-                "AI {} creating {provider_name} session",
-                options.model_name
-            ));
-            let started = std::time::Instant::now();
-            let _record = GpuJobRecord::begin(options.model_name, provider_name);
-            match create_accelerated_session(&source, &options, candidate) {
-                Ok(session) => {
-                    log::info!(
-                        "AI {} uses {provider_name} for {}",
-                        options.model_name,
-                        source_description
-                    );
-                    calibraw_core::diagnostics::record(format!(
-                        "AI {} execution provider: {provider_name} (session created in {:.3}s)",
-                        options.model_name,
-                        started.elapsed().as_secs_f64()
-                    ));
-                    publish_status(options.model_name, provider_name, false);
-                    return Ok(FallbackSession {
-                        session,
-                        source,
-                        options,
-                        active_provider: provider_name,
-                        accelerated: true,
-                    });
-                }
-                Err(error) => {
+            Err(error) => {
+                let name = provider.name();
+                setup_failures.push(format!("{name}: {error:#}"));
+                if let SetupFailure::Cpu(reason) = SetupFailure::of_error(&error) {
                     log::warn!(
-                        "AI {} could not initialize {provider_name}; trying the next provider: {error:#}",
+                        "AI {} ran out of GPU memory creating its {name} session; using the CPU for this job: {error:#}",
                         options.model_name
                     );
-                    setup_failures.push(format!("{provider_name}: {error:#}"));
+                    break reason;
                 }
+                log::warn!(
+                    "AI {} could not initialize {name}; trying the next provider: {error:#}",
+                    options.model_name
+                );
+                placement = super::place(
+                    &options,
+                    &super::acceleration_settings().with_providers(&offers),
+                );
             }
         }
-    }
+    };
 
     calibraw_core::diagnostics::record(format!("AI {} creating CPU session", options.model_name));
     let started = std::time::Instant::now();
@@ -284,49 +287,67 @@ pub(crate) fn create_session_with_fallback(
             )
         }
     })?;
-
-    let active_provider = if attempted_acceleration {
-        "CPU (fallback)"
-    } else {
-        "CPU"
-    };
-    if attempted_acceleration {
-        log::info!(
-            "AI {} uses CPU fallback for {} after accelerator setup failures",
-            options.model_name,
-            source_description
-        );
-        calibraw_core::diagnostics::record(format!(
-            "AI {} execution provider: CPU (fallback, session created in {:.3}s)",
-            options.model_name,
-            started.elapsed().as_secs_f64()
-        ));
-    } else {
-        let reason = if !options.allow_acceleration {
-            "CPU-only session"
-        } else if !acceleration_enabled {
-            "GPU acceleration disabled in Settings"
-        } else {
-            "the ONNX Runtime has no GPU execution provider for this target"
-        };
-        log::info!(
-            "AI {} uses CPU for {} ({reason})",
-            options.model_name,
-            source_description
-        );
-        calibraw_core::diagnostics::record(format!(
-            "AI {} execution provider: CPU (session created in {:.3}s)",
-            options.model_name,
-            started.elapsed().as_secs_f64()
-        ));
-    }
-    publish_status(options.model_name, active_provider, attempted_acceleration);
+    log::info!(
+        "AI {} uses CPU for {} ({reason})",
+        options.model_name,
+        source.display()
+    );
+    calibraw_core::diagnostics::record(format!(
+        "AI {} execution provider: CPU, {reason} (session created in {:.3}s)",
+        options.model_name,
+        started.elapsed().as_secs_f64()
+    ));
+    let placement = Placement::Cpu { reason };
+    publish_status(options.model_name, placement, None);
 
     Ok(FallbackSession {
         session,
         source,
         options,
-        active_provider,
-        accelerated: false,
+        placement,
     })
+}
+
+/// Removes and returns `provider`'s offer, so a provider that failed is not
+/// placed on again.
+fn take_offer(offers: &mut Vec<ProviderOffer>, provider: GpuProvider) -> ProviderOffer {
+    let index = offers
+        .iter()
+        .position(|offer| offer.provider == provider)
+        .expect("`place` only picks an offered provider");
+    offers.remove(index)
+}
+
+fn try_gpu_session(
+    source: &Path,
+    options: &SessionOptions,
+    offer: &ProviderOffer,
+) -> Result<Session> {
+    let name = offer.provider.name();
+    let memory = match (offer.free_memory, options.gpu_memory_bytes) {
+        (Some(free), Some(peak)) => format!(
+            ", {} MiB free, {} MiB needed",
+            free / MIB,
+            super::needed_memory(peak) / MIB
+        ),
+        _ => String::new(),
+    };
+    calibraw_core::diagnostics::record(format!(
+        "AI {} creating {name} session{memory}",
+        options.model_name
+    ));
+    let started = std::time::Instant::now();
+    let _record = GpuJobRecord::begin(options.model_name, name);
+    let session = create_accelerated_session(source, options, offer)?;
+    log::info!(
+        "AI {} uses {name} for {}",
+        options.model_name,
+        source.display()
+    );
+    calibraw_core::diagnostics::record(format!(
+        "AI {} execution provider: {name} (session created in {:.3}s)",
+        options.model_name,
+        started.elapsed().as_secs_f64()
+    ));
+    Ok(session)
 }

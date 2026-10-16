@@ -130,8 +130,6 @@ pub(crate) struct AiState {
     pub(crate) update: Option<AiUpdate>,
     #[cfg(not(target_os = "android"))]
     pub(crate) runtime_mode: OnnxRuntimeMode,
-    #[cfg(not(target_os = "android"))]
-    pub(crate) runtime_kind: calibraw_ai::runtime::AutomaticOnnxRuntimeKind,
     /// The library Manual mode loads and the SHA-256 the user approved.
     #[cfg(not(target_os = "android"))]
     pub(crate) manual_runtime: Option<(PathBuf, calibraw_ai::Sha256)>,

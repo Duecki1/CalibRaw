@@ -1,7 +1,7 @@
 # `target_os` conditions per file, checked by `cargo xtask cfg-ratchet`.
 # Counts may only fall: `cargo xtask cfg-ratchet --update` lowers them.
 # Raising one, or adding a file, is a reviewed change to this file.
-  6 crates/calibraw-ai/src/config.rs
+  4 crates/calibraw-ai/src/config.rs
   1 crates/calibraw-ai/src/lib.rs
   1 crates/calibraw-core/src/diagnostics.rs
   1 crates/calibraw-core/src/lib.rs
@@ -46,7 +46,7 @@
  22 crates/calibraw-ui/src/app/export_state.rs
   1 crates/calibraw-ui/src/app/foreground.rs
   1 crates/calibraw-ui/src/app/inpainting.rs
-  5 crates/calibraw-ui/src/app/job_state.rs
+  4 crates/calibraw-ui/src/app/job_state.rs
  22 crates/calibraw-ui/src/app/library_adjustments.rs
   5 crates/calibraw-ui/src/app/lifecycle/cache.rs
  10 crates/calibraw-ui/src/app/lifecycle/document_load.rs
@@ -54,8 +54,8 @@
   7 crates/calibraw-ui/src/app/lifecycle/mod.rs
   7 crates/calibraw-ui/src/app/lifecycle/pickers.rs
  10 crates/calibraw-ui/src/app/lifecycle/profiles.rs
- 32 crates/calibraw-ui/src/app/lifecycle/settings.rs
- 35 crates/calibraw-ui/src/app/lifecycle/startup.rs
+ 30 crates/calibraw-ui/src/app/lifecycle/settings.rs
+ 33 crates/calibraw-ui/src/app/lifecycle/startup.rs
   1 crates/calibraw-ui/src/app/persistence_state.rs
   6 crates/calibraw-ui/src/app/presets.rs
   2 crates/calibraw-ui/src/app/presets/preview.rs
@@ -79,8 +79,7 @@
  10 crates/calibraw-ui/src/app/sidecar_persistence/developed_thumbnail.rs
   9 crates/calibraw-ui/src/app/sidecar_persistence/failures.rs
   5 crates/calibraw-ui/src/app/sidecar_persistence/library_actions.rs
-  1 crates/calibraw-ui/src/app/ui_review_tests.rs
- 10 crates/calibraw-ui/src/app/ui_state.rs
+  9 crates/calibraw-ui/src/app/ui_state.rs
   7 crates/calibraw-ui/src/app/version_update.rs
   2 crates/calibraw-ui/src/app/worker.rs
   1 crates/calibraw-ui/src/appearance.rs
@@ -88,7 +87,7 @@
   4 crates/calibraw-ui/src/export_naming.rs
   8 crates/calibraw-ui/src/lib.rs
   3 crates/calibraw-ui/src/main.rs
- 44 crates/calibraw-ui/src/performance_settings.rs
+ 40 crates/calibraw-ui/src/performance_settings.rs
   4 crates/calibraw-ui/src/services/replay/android.rs
   9 crates/calibraw-ui/src/services/replay/mod.rs
   1 crates/calibraw-ui/src/ui/background_tasks.rs
@@ -119,7 +118,7 @@
   5 crates/calibraw-ui/src/ui/library/thumbnails/loaders.rs
  24 crates/calibraw-ui/src/ui/library/view.rs
   9 crates/calibraw-ui/src/ui/mod.rs
- 20 crates/calibraw-ui/src/ui/onboarding.rs
+ 15 crates/calibraw-ui/src/ui/onboarding.rs
  10 crates/calibraw-ui/src/ui/presets.rs
   1 crates/calibraw-ui/src/ui/preview/inpaint_regression_tests.rs
   2 crates/calibraw-ui/src/ui/preview/interaction.rs
@@ -128,7 +127,7 @@
   2 crates/calibraw-ui/src/ui/preview/overlays.rs
   2 crates/calibraw-ui/src/ui/preview/tests.rs
   5 crates/calibraw-ui/src/ui/preview/viewport.rs
- 35 crates/calibraw-ui/src/ui/settings.rs
+ 33 crates/calibraw-ui/src/ui/settings.rs
   1 crates/calibraw-ui/src/ui/shortcuts_dialog.rs
   2 crates/calibraw-ui/src/ui/sidebar.rs
   6 crates/calibraw-ui/src/ui/sidebar/export.rs

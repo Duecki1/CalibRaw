@@ -5,7 +5,6 @@
 
 use crate::placement;
 use crate::registry::artifact::sha256_file_hex;
-use crate::runtime::AutomaticOnnxRuntimeKind;
 use anyhow::Result;
 use calibraw_gpu::memory::AdapterMemory;
 use std::{
@@ -59,10 +58,12 @@ pub enum RuntimeSource {
     Manual { path: PathBuf, sha256: Sha256 },
 }
 
-/// The GPU the editor renders with. DirectML sessions run on it, so AI work
-/// and its free-memory check concern the same adapter.
+/// The GPU the editor renders with. Sessions on a provider that runs on it
+/// are placed by its free memory.
 #[derive(Clone, Debug)]
 pub struct GpuIdentity {
+    /// The adapter's name, for statuses.
+    name: String,
     /// PCI IDs as `wgpu` reports them; 0 on Metal, which has none.
     vendor_id: u32,
     device_id: u32,
@@ -76,11 +77,16 @@ impl GpuIdentity {
     pub fn new(device: &wgpu::Device) -> Self {
         let info = device.adapter_info();
         Self {
+            name: info.name,
             vendor_id: info.vendor,
             device_id: info.device,
             backend: info.backend,
             device: device.clone(),
         }
+    }
+
+    pub(crate) fn name(&self) -> &str {
+        &self.name
     }
 
     pub(crate) fn vendor_id(&self) -> u32 {
@@ -110,9 +116,6 @@ pub(crate) struct AiCapabilities {
     /// Mask sessions (subject, sky, depth, object) may stay loaded between
     /// jobs while their feature is warm.
     pub(crate) keep_mask_sessions_warm: bool,
-    /// The platform's GPU providers run float16 models: DirectML and CUDA.
-    /// CoreML has not been tested with float16; Android has no float16 models.
-    pub(crate) float16_sessions: bool,
 }
 
 /// How much memory AI may take beside the editor.
@@ -129,13 +132,11 @@ pub(crate) const CAPABILITIES: AiCapabilities = if cfg!(target_os = "android") {
     AiCapabilities {
         memory: MemoryClass::Constrained,
         keep_mask_sessions_warm: false,
-        float16_sessions: false,
     }
 } else {
     AiCapabilities {
         memory: MemoryClass::Standard,
         keep_mask_sessions_warm: true,
-        float16_sessions: cfg!(any(target_os = "windows", target_os = "linux")),
     }
 };
 
@@ -143,9 +144,6 @@ pub struct AiConfig {
     /// Whether sessions may use GPU execution providers. Android always may.
     pub acceleration: bool,
     pub runtime: RuntimeSource,
-    /// The runtime `RuntimeSource::Automatic` downloads where there is a
-    /// choice (desktop Linux x86_64).
-    pub automatic_runtime: AutomaticOnnxRuntimeKind,
     /// The folder models and the automatic runtime are cached in.
     pub model_root: PathBuf,
     /// Where the GPU job record is kept (`gpu_job_in_progress`); without it,
@@ -163,19 +161,16 @@ pub enum AiConfigChange {
     /// Takes effect only before a runtime is loaded; the loaded one stays
     /// until CalibRaw restarts.
     Runtime(RuntimeSource),
-    AutomaticRuntime(AutomaticOnnxRuntimeKind),
 }
 
 struct Settings {
     runtime: RuntimeSource,
-    automatic_runtime: AutomaticOnnxRuntimeKind,
     /// `None` until configured.
     model_root: Option<PathBuf>,
 }
 
 static SETTINGS: RwLock<Settings> = RwLock::new(Settings {
     runtime: RuntimeSource::Automatic,
-    automatic_runtime: AutomaticOnnxRuntimeKind::Cpu,
     model_root: None,
 });
 
@@ -186,7 +181,6 @@ pub fn configure(config: AiConfig) -> Option<String> {
     let AiConfig {
         acceleration,
         runtime,
-        automatic_runtime,
         model_root,
         job_record_path,
         gpu,
@@ -194,7 +188,6 @@ pub fn configure(config: AiConfig) -> Option<String> {
     {
         let mut settings = write();
         settings.runtime = runtime;
-        settings.automatic_runtime = automatic_runtime;
         settings.model_root = Some(model_root);
     }
     placement::set_ai_acceleration_enabled(acceleration);
@@ -208,18 +201,11 @@ pub fn update(change: AiConfigChange) {
     match change {
         AiConfigChange::Acceleration(enabled) => placement::set_ai_acceleration_enabled(enabled),
         AiConfigChange::Runtime(runtime) => write().runtime = runtime,
-        AiConfigChange::AutomaticRuntime(kind) => write().automatic_runtime = kind,
     }
 }
 
 pub(crate) fn runtime_source() -> RuntimeSource {
     read().runtime.clone()
-}
-
-/// Android has no automatic runtime download.
-#[cfg(not(target_os = "android"))]
-pub(crate) fn automatic_runtime_kind() -> AutomaticOnnxRuntimeKind {
-    read().automatic_runtime
 }
 
 /// The configured model folder, or before `configure` the platform default.

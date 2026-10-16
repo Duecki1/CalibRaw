@@ -71,18 +71,23 @@ impl<S> Default for RuntimeSlot<S> {
 }
 
 impl<S> RuntimeSlot<S> {
+    /// The loaded session of `model`, or a new one from `create`. A loaded
+    /// session is reused while the providers are unchanged and `reusable`
+    /// accepts it.
     fn ensure_model<E>(
         &mut self,
         model: AiModel,
         retention: ModelRetention,
         provider_generation: u64,
         acceleration_enabled: bool,
+        reusable: impl FnOnce(&S) -> bool,
         create: impl FnOnce() -> std::result::Result<S, E>,
     ) -> std::result::Result<&mut S, E> {
         let reusable = self.active.as_ref().is_some_and(|active| {
             active.model == model
                 && active.provider_generation == provider_generation
                 && active.acceleration_enabled == acceleration_enabled
+                && reusable(&active.session)
         });
         if !reusable {
             if let Some(active) = self.active.take() {
@@ -261,6 +266,9 @@ pub(crate) fn acquire_model_session(
         retention,
         provider_generation,
         acceleration_enabled,
+        // A session on the CPU for lack of GPU memory moves to the GPU once
+        // the GPU has room.
+        |session| !session.gpu_now_fits(),
         || create_session_with_fallback(source, options),
     )?;
     let gpu_job = runtime
@@ -321,6 +329,7 @@ mod tests {
             ModelRetention::WhileWarm,
             0,
             true,
+            |_| true,
             || {
                 events.lock().unwrap().push("create low".to_owned());
                 Ok::<_, ()>(DropLog {
@@ -335,6 +344,7 @@ mod tests {
             ModelRetention::WhileWarm,
             0,
             true,
+            |_| true,
             || {
                 events.lock().unwrap().push("create low again".to_owned());
                 Ok::<_, ()>(DropLog {
@@ -349,6 +359,37 @@ mod tests {
     }
 
     #[test]
+    fn a_session_that_is_no_longer_reusable_is_replaced() {
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let mut slot = RuntimeSlot::default();
+        for (label, reusable) in [("cpu", true), ("gpu", false)] {
+            slot.ensure_model(
+                AiModel::SkySeg,
+                ModelRetention::WhileWarm,
+                0,
+                true,
+                |_| reusable,
+                || {
+                    events.lock().unwrap().push(format!("create {label}"));
+                    Ok::<_, ()>(DropLog {
+                        label,
+                        events: Arc::clone(&events),
+                    })
+                },
+            )
+            .unwrap();
+        }
+        assert_eq!(
+            &*events.lock().unwrap(),
+            &[
+                "create cpu".to_owned(),
+                "drop cpu".to_owned(),
+                "create gpu".to_owned()
+            ]
+        );
+    }
+
+    #[test]
     fn different_model_drops_previous_before_create() {
         let events = Arc::new(Mutex::new(Vec::new()));
         let mut slot = RuntimeSlot::default();
@@ -357,6 +398,7 @@ mod tests {
             ModelRetention::WhileWarm,
             0,
             true,
+            |_| true,
             || {
                 Ok::<_, ()>(DropLog {
                     label: "low",
@@ -370,6 +412,7 @@ mod tests {
             ModelRetention::WhileWarm,
             0,
             true,
+            |_| true,
             || {
                 events.lock().unwrap().push("create encoder".to_owned());
                 Ok::<_, ()>(DropLog {
@@ -394,6 +437,7 @@ mod tests {
             ModelRetention::WhileWarm,
             0,
             true,
+            |_| true,
             || Ok::<_, ()>(()),
         )
         .unwrap();
@@ -406,9 +450,14 @@ mod tests {
     #[test]
     fn scene_depth_stays_warm_for_effects_without_a_mask_context() {
         let mut slot = RuntimeSlot::default();
-        slot.ensure_model(AiModel::Depth, ModelRetention::WhileWarm, 0, true, || {
-            Ok::<_, ()>(())
-        })
+        slot.ensure_model(
+            AiModel::Depth,
+            ModelRetention::WhileWarm,
+            0,
+            true,
+            |_| true,
+            || Ok::<_, ()>(()),
+        )
         .unwrap();
         slot.reconcile(warm(AiFeature::SceneDepth), 0, true);
         assert_eq!(slot.active_model(), Some(AiModel::Depth));
@@ -422,6 +471,7 @@ mod tests {
             ModelRetention::OneShot,
             0,
             true,
+            |_| true,
             || Ok::<_, ()>(()),
         )
         .unwrap();
@@ -465,12 +515,19 @@ mod tests {
         let worker_release = Arc::clone(&release);
         let worker = thread::spawn(move || {
             let mut slot = worker_runtime.lock().unwrap();
-            slot.ensure_model(AiModel::BigLama, ModelRetention::WhileWarm, 0, true, || {
-                Ok::<_, ()>(DropLog {
-                    label: "big-lama",
-                    events: worker_events,
-                })
-            })
+            slot.ensure_model(
+                AiModel::BigLama,
+                ModelRetention::WhileWarm,
+                0,
+                true,
+                |_| true,
+                || {
+                    Ok::<_, ()>(DropLog {
+                        label: "big-lama",
+                        events: worker_events,
+                    })
+                },
+            )
             .unwrap();
             worker_entered.wait();
             worker_release.wait();
@@ -498,6 +555,7 @@ mod tests {
             ModelRetention::WhileWarm,
             4,
             true,
+            |_| true,
             || Ok::<_, ()>(()),
         )
         .unwrap();
