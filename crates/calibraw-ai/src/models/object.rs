@@ -1,7 +1,7 @@
 //! Object masks from SAM 2.1 Hiera Tiny: the encoder runs once per crop, the
 //! decoder once per prompt change.
 
-use super::masks::{cache_object_ai_sessions, mask_model_retention};
+use super::masks::mask_model_retention;
 use super::normalized_rgb_input;
 use crate::jobs::{spawn_job, AiJobEvent, JobKind};
 use crate::registry::{AiModel, InputShape, ModelInfo};

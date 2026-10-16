@@ -7,6 +7,7 @@ mod directml;
 mod failure;
 mod job_record;
 mod providers;
+pub(crate) mod quirks;
 mod session;
 mod status;
 
@@ -20,7 +21,16 @@ pub use status::{active_execution_providers, ExecutionProviderStatus};
 
 use crate::config::GpuIdentity;
 #[cfg(not(target_os = "android"))]
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+/// Rises whenever the providers new sessions may use change; a loaded session
+/// of an older generation is not reused.
+static PROVIDER_GENERATION: AtomicU64 = AtomicU64::new(0);
+
+pub(crate) fn provider_generation() -> u64 {
+    PROVIDER_GENERATION.load(Ordering::Acquire)
+}
 
 #[cfg(not(target_os = "android"))]
 static AI_ACCELERATION_ENABLED: AtomicBool = AtomicBool::new(true);
@@ -40,7 +50,8 @@ pub(crate) fn set_ai_acceleration_enabled(enabled: bool) {
             "AI GPU acceleration {} in Settings",
             if enabled { "enabled" } else { "disabled" }
         ));
-        crate::slot::invalidate_for_provider_change();
+        PROVIDER_GENERATION.fetch_add(1, Ordering::AcqRel);
+        crate::slot::unload_cold_session();
     }
 }
 

@@ -21,6 +21,13 @@ pub use package::{
 #[cfg(not(target_os = "android"))]
 pub use probe::{probe_runtime_subprocess, run_runtime_probe_process};
 
+/// Whether new AI sessions may run on a GPU. Android's built-in runtime may
+/// offer NNAPI, and GPU AI cannot be switched off there.
+#[cfg(target_os = "android")]
+pub fn ai_sessions_may_use_gpu(_manual_runtime: bool) -> bool {
+    true
+}
+
 use serde::{Deserialize, Serialize};
 
 /// Which automatic runtime to download. Only Linux x86_64 has a choice: its

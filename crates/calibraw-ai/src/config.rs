@@ -67,6 +67,43 @@ pub struct GpuIdentity {
     pub device_id: u32,
 }
 
+/// What this device offers local AI. Model code reads these instead of the
+/// OS; platform bugs are `placement::quirks` instead.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct AiCapabilities {
+    pub(crate) memory: MemoryClass,
+    /// Mask sessions (subject, sky, depth, object) may stay loaded between
+    /// jobs while their feature is warm.
+    pub(crate) keep_mask_sessions_warm: bool,
+    /// The platform's GPU providers run float16 models: DirectML and CUDA.
+    /// CoreML has not been tested with float16; Android has no float16 models.
+    pub(crate) float16_sessions: bool,
+}
+
+/// How much memory AI may take beside the editor.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum MemoryClass {
+    /// Shared with the system and the RAW preview (Android): models unload
+    /// after each job, depth runs on a lean CPU session and High subject
+    /// quality is unavailable.
+    Constrained,
+    Standard,
+}
+
+pub(crate) const CAPABILITIES: AiCapabilities = if cfg!(target_os = "android") {
+    AiCapabilities {
+        memory: MemoryClass::Constrained,
+        keep_mask_sessions_warm: false,
+        float16_sessions: false,
+    }
+} else {
+    AiCapabilities {
+        memory: MemoryClass::Standard,
+        keep_mask_sessions_warm: true,
+        float16_sessions: cfg!(any(target_os = "windows", target_os = "linux")),
+    }
+};
+
 pub struct AiConfig {
     /// Whether sessions may use GPU execution providers. Android always may.
     pub acceleration: bool,

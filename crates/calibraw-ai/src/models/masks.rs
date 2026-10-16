@@ -1,6 +1,7 @@
 //! The job behind generated masks: subject, sky and scene depth.
 
 use super::{depth, sky, subject};
+use crate::config::CAPABILITIES;
 use crate::jobs::{spawn_job, AiJobEvent, JobKind};
 use crate::pipeline::MaskImage;
 use crate::registry::AiModel;
@@ -20,42 +21,13 @@ const MASK_JOB: JobKind = JobKind {
     cancelled: "background task cancelled",
 };
 
-/// How long a mask model's session stays loaded on this platform: Android
-/// unloads every model after its job.
+/// How long a mask model's session stays loaded: models unload after each
+/// job unless `cache_supported` and the device keeps mask sessions warm.
 pub(super) fn mask_model_retention(cache_supported: bool) -> ModelRetention {
-    #[cfg(target_os = "android")]
-    {
-        let _ = cache_supported;
+    if cache_supported && CAPABILITIES.keep_mask_sessions_warm {
+        ModelRetention::WhileWarm
+    } else {
         ModelRetention::OneShot
-    }
-    #[cfg(not(target_os = "android"))]
-    {
-        if cache_supported {
-            ModelRetention::WhileWarm
-        } else {
-            ModelRetention::OneShot
-        }
-    }
-}
-
-#[cfg(target_os = "linux")]
-fn running_from_appimage() -> bool {
-    std::env::var_os("APPIMAGE").is_some() || std::env::var_os("APPDIR").is_some()
-}
-
-/// Whether SAM sessions may stay loaded between object-mask jobs.
-pub(super) fn cache_object_ai_sessions() -> bool {
-    #[cfg(target_os = "android")]
-    {
-        false
-    }
-    #[cfg(all(not(target_os = "android"), target_os = "linux"))]
-    {
-        !running_from_appimage()
-    }
-    #[cfg(all(not(target_os = "android"), not(target_os = "linux")))]
-    {
-        true
     }
 }
 
