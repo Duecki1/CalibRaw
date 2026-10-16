@@ -16,7 +16,7 @@ mod onnx_runtime_artifact;
 pub mod remove;
 #[cfg(target_os = "windows")]
 pub use directml_adapter::set_directml_adapter;
-pub use gpu_job_record::{clear_gpu_job_record, gpu_job_in_progress, set_gpu_job_record_path};
+pub use gpu_job_record::{end_gpu_job_records, gpu_job_in_progress, set_gpu_job_record_path};
 pub use model_install::ModelDownloadProgress;
 pub use model_runtime::{set_warm_ai_features, AiFeature, AiFeatureSet};
 
@@ -24,7 +24,7 @@ pub use model_runtime::{set_warm_ai_features, AiFeature, AiFeatureSet};
 pub use model_artifact::desktop_model_cache_root;
 #[cfg(not(target_os = "android"))]
 pub use onnx_runtime_artifact::{
-    automatic_onnx_runtime_info, automatic_onnx_runtime_is_installed,
+    ai_sessions_may_use_gpu, automatic_onnx_runtime_info, automatic_onnx_runtime_is_installed,
     automatic_onnx_runtime_kind_selectable, bundled_onnx_runtime_path,
     ensure_automatic_onnx_runtime, set_automatic_onnx_runtime_kind, AutomaticOnnxRuntimeInfo,
     AutomaticOnnxRuntimeKind,

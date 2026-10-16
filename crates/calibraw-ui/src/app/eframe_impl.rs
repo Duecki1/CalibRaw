@@ -502,7 +502,7 @@ impl eframe::App for CalibRawApp {
 
     fn on_exit(&mut self) {
         calibraw_ai::set_warm_ai_features(calibraw_ai::AiFeatureSet::EMPTY);
-        calibraw_ai::clear_gpu_job_record();
+        calibraw_ai::end_gpu_job_records();
         #[cfg(not(target_os = "android"))]
         self.discord_presence.shutdown();
         #[cfg(target_os = "android")]

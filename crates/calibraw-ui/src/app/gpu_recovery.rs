@@ -33,12 +33,15 @@ impl CalibRawApp {
         if ai_job.is_some() {
             self.set_ai_gpu_acceleration(false);
         }
-        self.flush_sidecar_on_exit();
+        let save_failure = self.save_edits_before_exit();
 
         let restart = restart_command();
         let mut message =
-            "The graphics driver reset the GPU, so CalibRaw cannot continue. Your edits were saved."
-                .to_owned();
+            "The graphics driver reset the GPU, so CalibRaw cannot continue.".to_owned();
+        match &save_failure {
+            None => message.push_str(" Your edits were saved."),
+            Some(error) => message.push_str(&format!(" {error}.")),
+        }
         if let Some(job) = &ai_job {
             message.push_str(&format!(
                 " This happened while {job} was running, so AI tools now use the CPU. You can turn GPU acceleration back on in Settings."
@@ -56,12 +59,24 @@ impl CalibRawApp {
             .set_buttons(rfd::MessageButtons::Ok)
             .show();
 
+        // This loss has been reported; the next start must not find the record
+        // of a job that is still running and report it again.
+        calibraw_ai::end_gpu_job_records();
         if let Some(mut command) = restart {
             if let Err(error) = command.spawn() {
                 log::error!("could not restart CalibRaw after the GPU was lost: {error}");
             }
         }
         ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+    }
+
+    /// Saves the open photo's edits, returning the failure if they could not
+    /// be saved. Save failures are normally shown in an egui dialog, which a
+    /// lost device cannot draw, so the caller reports it instead.
+    fn save_edits_before_exit(&mut self) -> Option<String> {
+        self.persistence.sidecar_save_error_dialog = None;
+        self.flush_sidecar_on_exit();
+        self.persistence.sidecar_save_error_dialog.take()
     }
 }
 
