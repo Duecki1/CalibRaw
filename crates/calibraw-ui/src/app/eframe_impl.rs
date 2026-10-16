@@ -51,7 +51,7 @@ impl CalibRawApp {
         self.masks.thumbnail_component_mask = None;
     }
 
-    fn stop_ai_after_gpu_memory_failure(&mut self) {
+    fn stop_ai_after_gpu_failure(&mut self) {
         self.cancel_foreground_operation();
         if self.ai.update.is_some() {
             self.cancel_ai_update();
@@ -68,17 +68,27 @@ impl CalibRawApp {
 
 /// The phases of one frame, in the order `ui` runs them.
 impl CalibRawApp {
-    /// Reports GPU memory exhaustion from AI or processing work.
-    fn handle_gpu_memory_failures(&mut self) {
-        if calibraw_ai::take_ai_gpu_memory_failure() {
-            self.stop_ai_after_gpu_memory_failure();
-            self.report_error(
-                ErrorKind::GpuMemory,
-                "An AI model ran out of GPU memory. Its job was stopped, GPU AI was disabled, and optional preview textures were released. You can re-enable GPU AI in Settings after reducing Subject mask quality.",
-            );
+    /// Reports GPU failures of AI or processing work that CalibRaw survived.
+    fn handle_gpu_failures(&mut self) {
+        match calibraw_ai::take_ai_gpu_failure() {
+            Some(calibraw_ai::AiGpuFailure::OutOfMemory) => {
+                self.stop_ai_after_gpu_failure();
+                self.report_error(
+                    ErrorKind::GpuMemory,
+                    "An AI model ran out of GPU memory. Its job was stopped, GPU AI was disabled, and optional preview textures were released. You can re-enable GPU AI in Settings after reducing Subject mask quality.",
+                );
+            }
+            Some(calibraw_ai::AiGpuFailure::DeviceLost) => {
+                self.stop_ai_after_gpu_failure();
+                self.report_error(
+                    ErrorKind::GpuAi,
+                    "The GPU stopped responding while an AI model ran on it. The job was stopped and AI tools now use the CPU; you can turn GPU acceleration back on in Settings.",
+                );
+            }
+            None => {}
         }
         if calibraw_gpu::take_gpu_out_of_memory() {
-            self.stop_ai_after_gpu_memory_failure();
+            self.stop_ai_after_gpu_failure();
             self.report_error(
                 ErrorKind::GpuMemory,
                 "GPU memory was exhausted. CalibRaw stopped AI work, disabled GPU AI, and released optional preview textures. Close other GPU-heavy apps or lower Preview Quality before retrying.",
@@ -263,7 +273,9 @@ impl CalibRawApp {
 
 impl eframe::App for CalibRawApp {
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
-        self.handle_gpu_memory_failures();
+        #[cfg(not(target_os = "android"))]
+        self.handle_gpu_device_loss(ui.ctx());
+        self.handle_gpu_failures();
         self.release_retired_egui_textures(frame);
         self.poll_version_check();
         #[cfg(not(target_os = "android"))]
@@ -490,6 +502,7 @@ impl eframe::App for CalibRawApp {
 
     fn on_exit(&mut self) {
         calibraw_ai::set_warm_ai_features(calibraw_ai::AiFeatureSet::EMPTY);
+        calibraw_ai::clear_gpu_job_record();
         #[cfg(not(target_os = "android"))]
         self.discord_presence.shutdown();
         #[cfg(target_os = "android")]

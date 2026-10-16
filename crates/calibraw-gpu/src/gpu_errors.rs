@@ -1,6 +1,6 @@
 use anyhow::{anyhow, Result};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 struct OomSignal(AtomicBool);
 
@@ -19,6 +19,8 @@ impl OomSignal {
 }
 
 static GPU_OUT_OF_MEMORY: OomSignal = OomSignal::new();
+/// The driver's message for an unreported loss of the editor's device.
+static DEVICE_LOST: Mutex<Option<String>> = Mutex::new(None);
 
 pub fn install_uncaptured_gpu_error_handler(device: &wgpu::Device) {
     device.on_uncaptured_error(Arc::new(|error| {
@@ -28,6 +30,30 @@ pub fn install_uncaptured_gpu_error_handler(device: &wgpu::Device) {
 
 pub fn take_gpu_out_of_memory() -> bool {
     GPU_OUT_OF_MEMORY.take()
+}
+
+/// Records the loss of `device`, typically a driver reset, for
+/// `take_gpu_device_lost`. Every later use of the device fails, including
+/// drawing the UI. Losses CalibRaw causes by destroying a device are ignored.
+pub fn install_gpu_device_lost_handler(device: &wgpu::Device) {
+    device.set_device_lost_callback(|reason, message| {
+        if reason == wgpu::DeviceLostReason::Destroyed {
+            return;
+        }
+        log::error!("the GPU device was lost: {message}");
+        calibraw_core::diagnostics::record(format!("GPU device lost: {message}"));
+        *DEVICE_LOST
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(message);
+    });
+}
+
+/// The driver's message if the device was lost since the last call.
+pub fn take_gpu_device_lost() -> Option<String> {
+    DEVICE_LOST
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .take()
 }
 
 fn record_gpu_error(error: &wgpu::Error, context: &str) {

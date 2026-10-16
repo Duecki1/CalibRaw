@@ -57,6 +57,16 @@ impl ForegroundOperationKind {
 }
 
 impl CalibRawApp {
+    /// A local-AI job is running and may use the GPU, where the editor's own
+    /// textures compete with it for memory.
+    pub(crate) fn ai_job_may_use_gpu(&self) -> bool {
+        calibraw_ai::ai_acceleration_enabled()
+            && self
+                .foreground_operation_kind()
+                .and_then(ForegroundOperationKind::ai_feature)
+                .is_some()
+    }
+
     /// A mask segmentation or scene-depth job is running.
     pub(crate) fn content_job_active(&self) -> bool {
         self.foreground_operation_kind()

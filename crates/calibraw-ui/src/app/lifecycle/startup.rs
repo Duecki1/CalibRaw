@@ -402,6 +402,12 @@ impl CalibRawApp {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
         if let Some(render_state) = cc.wgpu_render_state.as_ref() {
             calibraw_gpu::install_uncaptured_gpu_error_handler(&render_state.device);
+            calibraw_gpu::install_gpu_device_lost_handler(&render_state.device);
+            #[cfg(target_os = "windows")]
+            {
+                let adapter = render_state.adapter.get_info();
+                calibraw_ai::set_directml_adapter(adapter.vendor, adapter.device);
+            }
         }
         crate::ui::theme::install(&cc.egui_ctx);
         calibraw_core::diagnostics::record("CalibRaw desktop UI initialized");
@@ -417,6 +423,11 @@ impl CalibRawApp {
         app.export.gpu_prewarm = Some(gpu_export_prewarm);
         app.remove_legacy_ai_denoise_cache();
         app.remove_retired_depth_model();
+        let gpu_job_record =
+            calibraw_core::thumbnail_cache::desktop_app_cache_root().join("gpu-ai-job.txt");
+        if let Some(job) = calibraw_ai::set_gpu_job_record_path(gpu_job_record) {
+            app.handle_interrupted_gpu_ai_job(&job);
+        }
         app
     }
 

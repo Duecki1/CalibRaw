@@ -3,7 +3,9 @@ use super::*;
 impl CalibRawApp {
     pub(in crate::app) fn advance_preview_detail(&mut self, _frame: &eframe::Frame) {
         let preview_source = self.develop.loaded_raw.clone();
-        if self.preview.zoom <= DETAIL_ZOOM_START {
+        // The zoomed detail is a second full GPU pipeline. It gives way to a
+        // GPU AI job and is rebuilt when the job ends.
+        if self.preview.zoom <= DETAIL_ZOOM_START || self.ai_job_may_use_gpu() {
             self.preview.detail = None;
             self.preview.motion_at = None;
             self.preview.detail_pending_stage = None;
