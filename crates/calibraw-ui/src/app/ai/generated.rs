@@ -13,6 +13,36 @@ impl CalibRawApp {
         self.persist_performance_settings();
     }
 
+    /// Refuses a subject mask whose estimated peak exceeds the memory free
+    /// now, with a dialog naming a lower quality that would fit. Android kills
+    /// the whole app when memory runs out rather than failing the job.
+    #[cfg(target_os = "android")]
+    pub(in crate::app) fn subject_mask_fits_in_memory(&mut self) -> bool {
+        let Some(available) = calibraw_core::system_memory::available_memory_bytes() else {
+            return true;
+        };
+        let quality = self.ai.subject_mask_quality;
+        let needed = quality.estimated_peak_memory_bytes();
+        if needed <= available {
+            return true;
+        }
+        let advice = match quality.lower_quality_within(available) {
+            Some(lower) => format!(
+                "Close other apps, or choose {} for Subject mask quality in Settings.",
+                lower.label()
+            ),
+            None => "Close other apps and try again.".to_owned(),
+        };
+        let gigabytes = |bytes: u64| bytes as f64 / 1_000_000_000.0;
+        self.report_ai_mask_error(format!(
+            "There is not enough free memory for a {} quality subject mask: it needs about {:.1} GB and {:.1} GB is free. {advice}",
+            quality.label(),
+            gigabytes(needed),
+            gigabytes(available)
+        ));
+        false
+    }
+
     pub(crate) fn ai_mask_generation_idle(&self) -> bool {
         self.foreground_operation_kind()
             .and_then(ForegroundOperationKind::ai_feature)

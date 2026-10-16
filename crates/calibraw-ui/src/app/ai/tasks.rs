@@ -114,6 +114,12 @@ impl CalibRawApp {
             self.abandon_ai_job(feature);
             return false;
         }
+        // Before consent, so nothing is downloaded for a job that cannot run.
+        #[cfg(target_os = "android")]
+        if feature == AiFeature::Subject && !self.subject_mask_fits_in_memory() {
+            self.abandon_ai_job(feature);
+            return false;
+        }
         let runtime_download_needed = self.automatic_onnx_runtime_download_needed();
         if runtime_download_needed
             || self.model_download_needed(feature)

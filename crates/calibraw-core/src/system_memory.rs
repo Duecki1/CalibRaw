@@ -1,14 +1,31 @@
-//! Installed physical memory, for sizing background work pools.
+//! Installed and currently available physical memory, for sizing background
+//! work pools and refusing work that would not fit.
 
 /// Total physical memory in bytes, or `None` when the platform does not report it.
 pub fn total_memory_bytes() -> Option<u64> {
     platform_total_memory_bytes()
 }
 
+/// Memory the kernel estimates new allocations can get without swapping, in
+/// bytes (`MemAvailable`), or `None` when the platform does not report it.
+/// Android can free more by killing cached background apps, so this is a
+/// lower bound there.
+pub fn available_memory_bytes() -> Option<u64> {
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    {
+        let meminfo = std::fs::read_to_string("/proc/meminfo").ok()?;
+        parse_meminfo_bytes(&meminfo, "MemAvailable:")
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "android")))]
+    {
+        None
+    }
+}
+
 #[cfg(any(target_os = "linux", target_os = "android"))]
 fn platform_total_memory_bytes() -> Option<u64> {
     let meminfo = std::fs::read_to_string("/proc/meminfo").ok()?;
-    parse_mem_total_bytes(&meminfo)
+    parse_meminfo_bytes(&meminfo, "MemTotal:")
 }
 
 #[cfg(windows)]
@@ -54,12 +71,13 @@ fn platform_total_memory_bytes() -> Option<u64> {
     None
 }
 
-/// Total RAM in bytes from `/proc/meminfo` (`MemTotal:  7812345 kB`).
+/// The `field` line of `/proc/meminfo` in bytes, e.g. `MemTotal:` from
+/// `MemTotal:  7812345 kB`.
 #[cfg(any(target_os = "linux", target_os = "android", test))]
-fn parse_mem_total_bytes(meminfo: &str) -> Option<u64> {
+fn parse_meminfo_bytes(meminfo: &str, field: &str) -> Option<u64> {
     let mut fields = meminfo
         .lines()
-        .find_map(|line| line.strip_prefix("MemTotal:"))?
+        .find_map(|line| line.strip_prefix(field))?
         .split_whitespace();
     let value = fields.next()?.parse::<u64>().ok()?;
     match fields.next() {
@@ -73,12 +91,25 @@ mod tests {
     use super::*;
 
     #[test]
-    fn mem_total_is_parsed_from_meminfo() {
-        let meminfo = "MemTotal:        7812344 kB\nMemFree:          123456 kB\n";
-        assert_eq!(parse_mem_total_bytes(meminfo), Some(7_812_344 * 1024));
-        assert_eq!(parse_mem_total_bytes("MemFree: 1 kB\n"), None);
-        assert_eq!(parse_mem_total_bytes("MemTotal: x kB\n"), None);
-        assert_eq!(parse_mem_total_bytes("MemTotal: 12 MB\n"), None);
+    fn meminfo_fields_are_parsed_in_bytes() {
+        let meminfo = "MemTotal:        7812344 kB\nMemFree:          123456 kB\nMemAvailable:    2345678 kB\n";
+        assert_eq!(
+            parse_meminfo_bytes(meminfo, "MemTotal:"),
+            Some(7_812_344 * 1024)
+        );
+        assert_eq!(
+            parse_meminfo_bytes(meminfo, "MemAvailable:"),
+            Some(2_345_678 * 1024)
+        );
+        assert_eq!(parse_meminfo_bytes("MemFree: 1 kB\n", "MemTotal:"), None);
+        assert_eq!(parse_meminfo_bytes("MemTotal: x kB\n", "MemTotal:"), None);
+        assert_eq!(parse_meminfo_bytes("MemTotal: 12 MB\n", "MemTotal:"), None);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_reports_available_memory() {
+        assert!(available_memory_bytes().is_some_and(|bytes| bytes > 0));
     }
 
     #[cfg(any(target_os = "linux", windows, target_os = "macos"))]

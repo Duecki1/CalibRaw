@@ -171,6 +171,31 @@ impl SubjectMaskQuality {
     const fn crop_refinement(self) -> bool {
         matches!(self, Self::High)
     }
+
+    /// Rough peak process memory of one subject mask on the CPU, in bytes.
+    /// `Low` was measured on a Pixel 7 Pro (about 1.5 GB). `Medium` scales
+    /// its ~1.3 GB of activations by the input pixels (1024² / 768²) and
+    /// keeps the ~0.2 GB of weights. `High`'s crop pass reuses the session
+    /// after the first pass, so it peaks like `Medium`.
+    pub const fn estimated_peak_memory_bytes(self) -> u64 {
+        match self {
+            Self::Low => 1_500_000_000,
+            Self::Medium | Self::High => 2_500_000_000,
+        }
+    }
+
+    /// The highest quality offered below `self` whose estimated peak fits in
+    /// `available_bytes`.
+    pub fn lower_quality_within(self, available_bytes: u64) -> Option<Self> {
+        let position = Self::AVAILABLE
+            .iter()
+            .position(|&quality| quality == self)?;
+        Self::AVAILABLE[..position]
+            .iter()
+            .rev()
+            .copied()
+            .find(|quality| quality.estimated_peak_memory_bytes() <= available_bytes)
+    }
 }
 
 const MASK_MODEL_DOWNLOAD: DownloadOptions = DownloadOptions {
@@ -848,6 +873,22 @@ mod tests {
             SubjectMaskQuality::Low.session_model(),
             SubjectMaskQuality::Medium.session_model()
         );
+    }
+
+    #[test]
+    fn lower_subject_quality_is_offered_only_when_it_fits() {
+        let low = SubjectMaskQuality::Low.estimated_peak_memory_bytes();
+        let medium = SubjectMaskQuality::Medium.estimated_peak_memory_bytes();
+        assert!(low < medium);
+        assert_eq!(
+            SubjectMaskQuality::Medium.lower_quality_within(low),
+            Some(SubjectMaskQuality::Low)
+        );
+        assert_eq!(
+            SubjectMaskQuality::Medium.lower_quality_within(low - 1),
+            None
+        );
+        assert_eq!(SubjectMaskQuality::Low.lower_quality_within(u64::MAX), None);
     }
 
     #[test]
