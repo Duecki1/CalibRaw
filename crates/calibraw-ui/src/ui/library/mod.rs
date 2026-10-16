@@ -176,6 +176,17 @@ impl LibraryThumbnailSize {
             Self::Enormous => 1.75,
         }
     }
+
+    /// Mouse-wheel speed of the thumbnail grid. Larger thumbnails scroll faster
+    /// so one wheel notch still moves a comparable share of a row.
+    const fn wheel_scroll_multiplier(self) -> f32 {
+        match self {
+            Self::Small => 1.25,
+            Self::Medium => 1.5,
+            Self::Large => 1.75,
+            Self::Enormous => 2.0,
+        }
+    }
 }
 
 /// The manual worker setting's initial and reset value.

@@ -304,6 +304,10 @@ fn thumbnail_size_and_responsive_mobile_target_remain_stable() {
     assert_eq!(LibraryThumbnailSize::default(), LibraryThumbnailSize::Large);
     assert_eq!(LibraryThumbnailSize::Small.scale(), 1.0);
     assert!(LibraryThumbnailSize::Large.scale() > LibraryThumbnailSize::Medium.scale());
+    assert!(LibraryThumbnailSize::Small.wheel_scroll_multiplier() > 1.0);
+    assert!(LibraryThumbnailSize::ALL
+        .windows(2)
+        .all(|sizes| sizes[1].wheel_scroll_multiplier() > sizes[0].wheel_scroll_multiplier()));
     assert_eq!(
         responsive_thumbnail_target_height(400.0, 800.0, 3.0, true),
         120.0

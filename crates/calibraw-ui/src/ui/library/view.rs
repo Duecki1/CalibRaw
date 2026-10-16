@@ -418,6 +418,10 @@ fn show_thumbnail_grid(
         },
     );
     egui::ScrollArea::vertical()
+        .wheel_scroll_multiplier(egui::vec2(
+            1.0,
+            app.library.thumbnail_size().wheel_scroll_multiplier(),
+        ))
         .auto_shrink([false, false])
         .show_viewport(ui, |ui, viewport| {
             let (content_rect, _) =
