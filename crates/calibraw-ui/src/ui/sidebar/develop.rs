@@ -543,11 +543,14 @@ impl Sidebar {
         changed
     }
 
-    /// `ai_strength_available` is whether the photo has an AI result that can
-    /// be blended with the original: a Bayer RAW whose denoised mosaic is loaded.
+    /// `defaults` holds the photo's first-open Detail settings, which slider
+    /// double-clicks and the card reset restore. `ai_strength_available` is
+    /// whether the photo has an AI result that can be blended with the
+    /// original: a Bayer RAW whose denoised mosaic is loaded.
     pub(super) fn show_detail(
         ui: &mut Ui,
         exposure: &mut ExposureParams,
+        defaults: &ExposureParams,
         ai_strength_available: bool,
         foldable: bool,
     ) -> (bool, Option<bool>) {
@@ -571,7 +574,7 @@ impl Sidebar {
                 if AdjustmentSlider::new("Strength", &mut strength_percent, 0.0..=100.0)
                     .decimals(0)
                     .step(1.0)
-                    .reset_to(ExposureParams::default().ai_denoise_amount * 100.0)
+                    .reset_to(defaults.ai_denoise_amount * 100.0)
                     .show(ui)
                 {
                     exposure.ai_denoise_amount = strength_percent / 100.0;
@@ -592,11 +595,13 @@ impl Sidebar {
                 )
                 .decimals(0)
                 .step(1.0)
+                .reset_to(defaults.luminance_denoise)
                 .show(ui);
                 let mut color_percent = exposure.chroma_denoise.clamp(0.0, 1.0) * 100.0;
                 if AdjustmentSlider::new("Color", &mut color_percent, 0.0..=100.0)
                     .decimals(0)
                     .step(1.0)
+                    .reset_to(defaults.chroma_denoise.clamp(0.0, 1.0) * 100.0)
                     .show(ui)
                 {
                     exposure.chroma_denoise = color_percent / 100.0;
@@ -609,7 +614,7 @@ impl Sidebar {
                 )
                 .decimals(0)
                 .step(1.0)
-                .reset_to(ExposureParams::default().denoise_detail)
+                .reset_to(defaults.denoise_detail)
                 .show(ui);
                 let previous_quality = exposure.denoise_quality;
                 moduwu_design::form_combo(
@@ -647,24 +652,25 @@ impl Sidebar {
             changed |= AdjustmentSlider::new("Amount", &mut exposure.sharpen_amount, 0.0..=150.0)
                 .decimals(0)
                 .step(1.0)
-                .reset_to(ExposureParams::default().sharpen_amount)
+                .reset_to(defaults.sharpen_amount)
                 .show(ui);
             changed |= AdjustmentSlider::new("Radius", &mut exposure.sharpen_radius, 0.5..=3.0)
                 .decimals(2)
                 .step(0.05)
-                .reset_to(ExposureParams::default().sharpen_radius)
+                .reset_to(defaults.sharpen_radius)
                 .show(ui);
             changed |= AdjustmentSlider::new("Detail", &mut exposure.sharpen_detail, 0.0..=100.0)
                 .decimals(0)
                 .step(1.0)
-                .reset_to(ExposureParams::default().sharpen_detail)
+                .reset_to(defaults.sharpen_detail)
                 .show(ui);
             changed |= AdjustmentSlider::new("Masking", &mut exposure.sharpen_masking, 0.0..=100.0)
                 .decimals(0)
                 .step(1.0)
+                .reset_to(defaults.sharpen_masking)
                 .show(ui);
         });
-        changed |= action.apply(exposure, AdjustmentGroup::Detail);
+        changed |= action.apply_from(exposure, defaults, AdjustmentGroup::Detail);
         if exposure.ai_denoise_enabled != ai_before {
             ai_request = Some(exposure.ai_denoise_enabled);
             exposure.ai_denoise_enabled = ai_before;

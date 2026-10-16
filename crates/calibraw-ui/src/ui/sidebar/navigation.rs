@@ -362,6 +362,12 @@ impl Sidebar {
                     .ai_denoised_image()
                     .is_some_and(|image| image.bayer_cfa().is_some())
         });
+        // Detail resets restore this photo's first-open noise reduction, as
+        // resetting all adjustments does, rather than switching it off.
+        let mut detail_defaults = ExposureParams::default();
+        if let Some(raw) = app.develop.original_raw.as_deref() {
+            raw.apply_adaptive_detail_defaults(&mut detail_defaults);
+        }
         if layout == ScreenLayout::Vertical {
             match app.develop_ui.adjustment_section {
                 AdjustmentSection::Light => {
@@ -396,6 +402,7 @@ impl Sidebar {
                     let (detail_changed, request) = Self::show_detail(
                         ui,
                         &mut app.develop.exposure,
+                        &detail_defaults,
                         ai_strength_available,
                         false,
                     );
@@ -449,8 +456,13 @@ impl Sidebar {
                 &mut app.develop_ui.color_grade_tab,
                 true,
             );
-            let (detail_changed, request) =
-                Self::show_detail(ui, &mut app.develop.exposure, ai_strength_available, true);
+            let (detail_changed, request) = Self::show_detail(
+                ui,
+                &mut app.develop.exposure,
+                &detail_defaults,
+                ai_strength_available,
+                true,
+            );
             changed |= detail_changed;
             ai_denoise_request = request;
             let (presence_changed, added) = Self::show_presence(
