@@ -71,6 +71,9 @@ jobs:
       - name: Check architecture boundaries
         run: cargo xtask arch-check
 
+      - name: Check target_os conditions do not spread
+        run: cargo xtask cfg-ratchet
+
       - name: Check the Rust/Java JNI contract
         run: cargo xtask jni-contract
 
