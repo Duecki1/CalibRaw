@@ -68,6 +68,16 @@ impl CardAction {
         self.apply_reset(|| exposure.reset_group(group))
     }
 
+    /// Resets `group` to the photo-specific starting values in `defaults`.
+    pub(super) fn apply_from(
+        self,
+        exposure: &mut ExposureParams,
+        defaults: &ExposureParams,
+        group: AdjustmentGroup,
+    ) -> bool {
+        self.apply_reset(|| exposure.copy_group_from(defaults, group))
+    }
+
     pub(super) fn apply_local(
         self,
         adjustments: &mut crate::pipeline::LocalAdjustments,
