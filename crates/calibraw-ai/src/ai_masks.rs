@@ -79,7 +79,13 @@ pub struct BiRefNetModelSpec {
     pub cache_filename: &'static str,
     pub input_width: u32,
     pub input_height: u32,
+    /// Peak GPU memory of one inference: measured with ONNX Runtime's CUDA
+    /// provider growing its arena by exact requests, less the CUDA context,
+    /// rounded up to 100 MiB. DirectML pools allocations similarly.
+    pub gpu_memory_bytes: u64,
 }
+
+const MIB: u64 = 1 << 20;
 
 impl BiRefNetModelSpec {
     fn install(self) -> ModelInstallSpec {
@@ -107,6 +113,7 @@ pub const BIREFNET_MODEL: BiRefNetModelSpec = BiRefNetModelSpec {
     cache_filename: "birefnet-general-lite.onnx",
     input_width: 1024,
     input_height: 1024,
+    gpu_memory_bytes: 2900 * MIB,
 };
 
 /// The same checkpoint exported at 768 x 768 by
@@ -122,6 +129,7 @@ pub const BIREFNET_LOW_MODEL: BiRefNetModelSpec = BiRefNetModelSpec {
     cache_filename: "birefnet-general-lite-768.onnx",
     input_width: 768,
     input_height: 768,
+    gpu_memory_bytes: 1800 * MIB,
 };
 
 /// `BIREFNET_MODEL` converted by `packaging/models/birefnet_fp16.py` for GPU
@@ -136,6 +144,7 @@ pub const BIREFNET_FP16_MODEL: BiRefNetModelSpec = BiRefNetModelSpec {
     cache_filename: "birefnet-general-lite-fp16.onnx",
     input_width: 1024,
     input_height: 1024,
+    gpu_memory_bytes: 1800 * MIB,
 };
 
 /// `BIREFNET_LOW_MODEL` converted by `packaging/models/birefnet_fp16.py` for
@@ -149,6 +158,7 @@ pub const BIREFNET_LOW_FP16_MODEL: BiRefNetModelSpec = BiRefNetModelSpec {
     cache_filename: "birefnet-general-lite-768-fp16.onnx",
     input_width: 768,
     input_height: 768,
+    gpu_memory_bytes: 1100 * MIB,
 };
 
 /// Numeric format of the subject model file.
@@ -707,7 +717,7 @@ pub(super) fn infer_birefnet(
     let (output_width, output_height, logits) = with_model_session(
         quality.session_model(precision),
         model_path,
-        SessionOptions::new("BiRefNet"),
+        SessionOptions::new("BiRefNet").with_gpu_memory(model.gpu_memory_bytes),
         mask_model_retention(true),
         |session| run_subject_session(session, input, model.input_width, model.input_height),
     )?;
@@ -966,16 +976,14 @@ mod tests {
                     other_quality.session_model(other_precision)
                 );
             }
-            let other_precision = if precision == Float32 {
-                Float16
-            } else {
-                Float32
-            };
-            let other = quality.model(other_precision);
+        }
+        for &quality in SubjectMaskQuality::AVAILABLE {
+            let (float32, float16) = (quality.model(Float32), quality.model(Float16));
             assert_eq!(
-                (model.input_width, model.input_height),
-                (other.input_width, other.input_height)
+                (float32.input_width, float32.input_height),
+                (float16.input_width, float16.input_height)
             );
+            assert!(float16.gpu_memory_bytes < float32.gpu_memory_bytes);
         }
     }
 

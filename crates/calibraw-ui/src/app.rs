@@ -286,6 +286,8 @@ mod eframe_impl;
 mod error_dialogs;
 pub(crate) use error_dialogs::{ErrorDialogQueue, ErrorKind};
 mod foreground;
+#[cfg(not(target_os = "android"))]
+mod gpu_recovery;
 mod inpainting;
 mod library_adjustments;
 mod manual_lens;

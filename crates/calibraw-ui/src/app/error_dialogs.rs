@@ -40,6 +40,7 @@ pub(crate) enum ErrorKind {
     #[cfg(not(target_os = "android"))]
     FocusStack,
     GpuMemory,
+    GpuAi,
     Retouch,
     Straighten,
     Settings,
@@ -79,6 +80,7 @@ impl ErrorKind {
             #[cfg(not(target_os = "android"))]
             Self::FocusStack => "Focus stacking failed",
             Self::GpuMemory => "GPU memory exhausted",
+            Self::GpuAi => "GPU AI turned off",
             Self::Retouch => "Retouch failed",
             Self::Straighten => "Straightening failed",
             Self::Settings => "Settings error",

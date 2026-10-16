@@ -1,5 +1,8 @@
-use crate::execution_provider::{
-    ai_acceleration_enabled, create_session_with_fallback, FallbackSession, SessionOptions,
+use crate::{
+    execution_provider::{
+        ai_acceleration_enabled, create_session_with_fallback, FallbackSession, SessionOptions,
+    },
+    gpu_job_record::GpuJobRecord,
 };
 use anyhow::Result;
 use std::{
@@ -244,6 +247,8 @@ pub(crate) fn invalidate_for_provider_change() {
 
 pub(crate) struct ModelSessionGuard {
     runtime: Option<MutexGuard<'static, RuntimeSlot<FallbackSession>>>,
+    /// Marks the lease as GPU work until it ends; see `gpu_job_record`.
+    _gpu_job: Option<GpuJobRecord>,
 }
 
 impl Deref for ModelSessionGuard {
@@ -311,8 +316,13 @@ pub(crate) fn acquire_model_session(
         acceleration_enabled,
         || create_session_with_fallback(source, options),
     )?;
+    let gpu_job = runtime
+        .active
+        .as_ref()
+        .and_then(|active| active.session.record_gpu_job());
     Ok(ModelSessionGuard {
         runtime: Some(runtime),
+        _gpu_job: gpu_job,
     })
 }
 

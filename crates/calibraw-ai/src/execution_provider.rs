@@ -1,3 +1,4 @@
+use crate::gpu_job_record::GpuJobRecord;
 use anyhow::{Context, Result};
 use ort::{
     ep::{ExecutionProvider, ExecutionProviderDispatch},
@@ -7,7 +8,7 @@ use ort::{
     },
 };
 #[cfg(not(target_os = "android"))]
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::{
     collections::BTreeMap,
     path::{Path, PathBuf},
@@ -17,15 +18,54 @@ use std::{
 #[cfg(not(target_os = "android"))]
 static AI_ACCELERATION_ENABLED: AtomicBool = AtomicBool::new(true);
 #[cfg(not(target_os = "android"))]
-static AI_GPU_MEMORY_QUARANTINED: AtomicBool = AtomicBool::new(false);
+static AI_GPU_QUARANTINED: AtomicBool = AtomicBool::new(false);
+/// The unreported `AiGpuFailure`, encoded by `AiGpuFailure::code`; 0 for none.
 #[cfg(not(target_os = "android"))]
-static AI_GPU_MEMORY_FAILURE: AtomicBool = AtomicBool::new(false);
+static AI_GPU_FAILURE: AtomicU8 = AtomicU8::new(0);
+
+/// Why GPU AI was switched off during a job.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AiGpuFailure {
+    OutOfMemory,
+    /// The GPU was reset or removed, typically by Windows' driver timeout.
+    DeviceLost,
+}
+
+impl AiGpuFailure {
+    #[cfg(not(target_os = "android"))]
+    const fn code(self) -> u8 {
+        match self {
+            Self::OutOfMemory => 1,
+            Self::DeviceLost => 2,
+        }
+    }
+
+    #[cfg(not(target_os = "android"))]
+    const fn from_code(code: u8) -> Option<Self> {
+        match code {
+            1 => Some(Self::OutOfMemory),
+            2 => Some(Self::DeviceLost),
+            _ => None,
+        }
+    }
+
+    /// Classifies an execution provider error, or `None` for an ordinary one.
+    fn of_error(error: &anyhow::Error) -> Option<Self> {
+        if is_gpu_memory_failure(error) {
+            Some(Self::OutOfMemory)
+        } else if is_gpu_device_lost(error) {
+            Some(Self::DeviceLost)
+        } else {
+            None
+        }
+    }
+}
 
 #[cfg(not(target_os = "android"))]
 pub fn set_ai_acceleration_enabled(enabled: bool) {
     if enabled {
-        AI_GPU_MEMORY_QUARANTINED.store(false, Ordering::Release);
-        AI_GPU_MEMORY_FAILURE.store(false, Ordering::Release);
+        AI_GPU_QUARANTINED.store(false, Ordering::Release);
+        AI_GPU_FAILURE.store(0, Ordering::Release);
     }
     if AI_ACCELERATION_ENABLED.swap(enabled, Ordering::AcqRel) != enabled {
         if let Ok(mut statuses) = provider_statuses().lock() {
@@ -43,7 +83,7 @@ pub fn ai_acceleration_enabled() -> bool {
     #[cfg(not(target_os = "android"))]
     {
         AI_ACCELERATION_ENABLED.load(Ordering::Acquire)
-            && !AI_GPU_MEMORY_QUARANTINED.load(Ordering::Acquire)
+            && !AI_GPU_QUARANTINED.load(Ordering::Acquire)
     }
     #[cfg(target_os = "android")]
     {
@@ -51,29 +91,40 @@ pub fn ai_acceleration_enabled() -> bool {
     }
 }
 
+/// The GPU failure that switched GPU AI off since the last call, if any.
 #[cfg(not(target_os = "android"))]
-pub fn take_ai_gpu_memory_failure() -> bool {
-    AI_GPU_MEMORY_FAILURE.swap(false, Ordering::AcqRel)
+pub fn take_ai_gpu_failure() -> Option<AiGpuFailure> {
+    AiGpuFailure::from_code(AI_GPU_FAILURE.swap(0, Ordering::AcqRel))
 }
 
 #[cfg(target_os = "android")]
-pub fn take_ai_gpu_memory_failure() -> bool {
-    false
+pub fn take_ai_gpu_failure() -> Option<AiGpuFailure> {
+    None
 }
 
 #[cfg(not(target_os = "android"))]
-fn quarantine_ai_gpu_after_memory_failure(operation: &str, provider: &str, error: &anyhow::Error) {
-    AI_GPU_MEMORY_QUARANTINED.store(true, Ordering::Release);
-    AI_GPU_MEMORY_FAILURE.store(true, Ordering::Release);
+fn quarantine_ai_gpu(
+    failure: AiGpuFailure,
+    operation: &str,
+    provider: &str,
+    error: &anyhow::Error,
+) {
+    AI_GPU_QUARANTINED.store(true, Ordering::Release);
+    AI_GPU_FAILURE.store(failure.code(), Ordering::Release);
+    let cause = match failure {
+        AiGpuFailure::OutOfMemory => "exhausted GPU memory",
+        AiGpuFailure::DeviceLost => "lost the GPU device",
+    };
     let message = format!(
-        "AI {operation} exhausted {provider} GPU memory; cancelled the AI job and disabled GPU AI until it is explicitly re-enabled"
+        "AI {operation} {cause} on {provider}; cancelled the AI job and disabled GPU AI until it is explicitly re-enabled"
     );
     log::error!("{message}: {error:#}");
     calibraw_core::diagnostics::record(message);
 }
 
 #[cfg(target_os = "android")]
-fn quarantine_ai_gpu_after_memory_failure(
+fn quarantine_ai_gpu(
+    _failure: AiGpuFailure,
     _operation: &str,
     _provider: &str,
     _error: &anyhow::Error,
@@ -94,6 +145,21 @@ fn is_gpu_memory_failure(error: &anyhow::Error) -> bool {
             || message.contains("bfc_arena"))
 }
 
+/// DXGI's device-removed, -hung and -reset codes, which DirectML reports after
+/// a driver reset, and their messages.
+fn is_gpu_device_lost(error: &anyhow::Error) -> bool {
+    let message = format!("{error:#}").to_ascii_lowercase();
+    [
+        "887a0005",
+        "887a0006",
+        "887a0007",
+        "device removed",
+        "device hung",
+    ]
+    .iter()
+    .any(|marker| message.contains(marker))
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum CpuFallbackProfile {
     #[default]
@@ -107,6 +173,11 @@ pub struct SessionOptions {
     pub model_name: &'static str,
     pub allow_acceleration: bool,
     pub cpu_fallback_profile: CpuFallbackProfile,
+    /// Peak GPU memory a session of this model needs. Where a provider can
+    /// measure what is free (DirectML), it is skipped when less is: Windows
+    /// pages overcommitted video memory instead of failing allocations, and
+    /// the slowdown ends in a driver reset.
+    pub gpu_memory_bytes: Option<u64>,
 }
 
 impl SessionOptions {
@@ -115,7 +186,13 @@ impl SessionOptions {
             model_name,
             allow_acceleration: true,
             cpu_fallback_profile: CpuFallbackProfile::Default,
+            gpu_memory_bytes: None,
         }
+    }
+
+    pub const fn with_gpu_memory(mut self, bytes: u64) -> Self {
+        self.gpu_memory_bytes = Some(bytes);
+        self
     }
 
     pub const fn with_cpu_fallback_profile(mut self, profile: CpuFallbackProfile) -> Self {
@@ -165,31 +242,42 @@ struct ProviderCandidate {
     name: &'static str,
     provider: ExecutionProviderDispatch,
     force_sequential: bool,
+    /// GPU memory a new session may still use, where the provider's adapter
+    /// can be queried.
+    available_memory: Option<u64>,
 }
 
-/// Adds `provider` if the loaded ONNX Runtime was built with it. A provider the
-/// runtime lacks is expected (CPU-only packages) and is not a degradation.
-fn push_if_runtime_available<E>(
-    providers: &mut Vec<ProviderCandidate>,
+/// Adds `provider` if the loaded ONNX Runtime was built with it, returning the
+/// new candidate. A provider the runtime lacks is expected (CPU-only packages)
+/// and is not a degradation.
+fn push_if_runtime_available<'a, E>(
+    providers: &'a mut Vec<ProviderCandidate>,
     name: &'static str,
     provider: E,
     force_sequential: bool,
-) where
+) -> Option<&'a mut ProviderCandidate>
+where
     E: ExecutionProvider + Into<ExecutionProviderDispatch>,
 {
     match provider.is_available() {
-        Ok(true) => providers.push(ProviderCandidate {
-            name,
-            provider: provider.into(),
-            force_sequential,
-        }),
+        Ok(true) => {
+            providers.push(ProviderCandidate {
+                name,
+                provider: provider.into(),
+                force_sequential,
+                available_memory: None,
+            });
+            providers.last_mut()
+        }
         Ok(false) => {
-            log::info!("AI execution provider {name} is not built into the selected ONNX Runtime")
+            log::info!("AI execution provider {name} is not built into the selected ONNX Runtime");
+            None
         }
         Err(error) => {
             log::warn!(
                 "AI execution provider {name} skipped: could not query availability: {error}"
-            )
+            );
+            None
         }
     }
 }
@@ -199,12 +287,16 @@ fn preferred_execution_providers() -> Vec<ProviderCandidate> {
 
     #[cfg(target_os = "windows")]
     {
-        push_if_runtime_available(
-            &mut providers,
-            "DirectML",
-            ort::ep::DirectML::default(),
-            true,
-        );
+        let adapter = crate::directml_adapter::editor_adapter();
+        let directml = match &adapter {
+            Some(adapter) => ort::ep::DirectML::default().with_device_id(adapter.index),
+            None => ort::ep::DirectML::default(),
+        };
+        if let Some(candidate) =
+            push_if_runtime_available(&mut providers, "DirectML", directml, true)
+        {
+            candidate.available_memory = adapter.map(|adapter| adapter.available_bytes);
+        }
         push_if_runtime_available(&mut providers, "CUDA", ort::ep::CUDA::default(), false);
         push_if_runtime_available(
             &mut providers,
@@ -338,6 +430,13 @@ pub struct FallbackSession {
 }
 
 impl FallbackSession {
+    /// Records this session's GPU job while the returned value lives; `None`
+    /// for CPU sessions.
+    pub(crate) fn record_gpu_job(&self) -> Option<GpuJobRecord> {
+        self.accelerated
+            .then(|| GpuJobRecord::begin(self.options.model_name, self.active_provider))
+    }
+
     pub fn run_with_fallback<T, F>(&mut self, operation: &str, mut run: F) -> Result<T>
     where
         F: FnMut(&mut Session, bool) -> Result<T>,
@@ -346,14 +445,10 @@ impl FallbackSession {
             Ok(value) => Ok(value),
             Err(accelerated_error) if self.accelerated => {
                 let failed_provider = self.active_provider;
-                if is_gpu_memory_failure(&accelerated_error) {
-                    quarantine_ai_gpu_after_memory_failure(
-                        operation,
-                        failed_provider,
-                        &accelerated_error,
-                    );
+                if let Some(failure) = AiGpuFailure::of_error(&accelerated_error) {
+                    quarantine_ai_gpu(failure, operation, failed_provider, &accelerated_error);
                     return Err(accelerated_error.context(format!(
-                        "{operation} exceeded the GPU memory safety budget; the AI job was stopped before CPU fallback"
+                        "{operation} failed on {failed_provider}; the AI job was stopped before CPU fallback"
                     )));
                 }
                 log::warn!(
@@ -393,6 +488,19 @@ impl FallbackSession {
     }
 }
 
+/// Why a provider cannot hold a session needing `required` bytes when
+/// `available` are free, or `None` if it fits or either is unknown.
+fn gpu_memory_shortfall(required: Option<u64>, available: Option<u64>) -> Option<String> {
+    let (required, available) = (required?, available?);
+    (available < required).then(|| {
+        format!(
+            "{} MiB of GPU memory free, {} MiB needed",
+            available / (1 << 20),
+            required / (1 << 20)
+        )
+    })
+}
+
 pub fn create_session_with_fallback(
     model: impl AsRef<Path>,
     options: SessionOptions,
@@ -408,11 +516,26 @@ pub fn create_session_with_fallback(
         attempted_acceleration = !providers.is_empty();
         for candidate in providers {
             let provider_name = candidate.name;
+            if let Some(shortfall) =
+                gpu_memory_shortfall(options.gpu_memory_bytes, candidate.available_memory)
+            {
+                log::warn!(
+                    "AI {} skips {provider_name}: {shortfall}",
+                    options.model_name
+                );
+                calibraw_core::diagnostics::record(format!(
+                    "AI {} skips {provider_name}: {shortfall}",
+                    options.model_name
+                ));
+                setup_failures.push(format!("{provider_name}: {shortfall}"));
+                continue;
+            }
             calibraw_core::diagnostics::record(format!(
                 "AI {} creating {provider_name} session",
                 options.model_name
             ));
             let started = std::time::Instant::now();
+            let _record = GpuJobRecord::begin(options.model_name, provider_name);
             match create_accelerated_session(&source, &options, candidate) {
                 Ok(session) => {
                     log::info!(
@@ -507,7 +630,7 @@ pub fn create_session_with_fallback(
 
 #[cfg(test)]
 mod tests {
-    use super::is_gpu_memory_failure;
+    use super::{gpu_memory_shortfall, is_gpu_memory_failure, AiGpuFailure};
 
     #[test]
     fn gpu_allocation_failures_are_quarantined_instead_of_retried() {
@@ -520,5 +643,36 @@ mod tests {
         assert!(!is_gpu_memory_failure(&anyhow::anyhow!(
             "invalid tensor shape"
         )));
+    }
+
+    #[test]
+    fn directml_device_removal_is_a_device_loss() {
+        let removed = anyhow::anyhow!(
+            r"providers\dml\DmlExecutionProvider\src\DmlCommandRecorder.cpp(372) 887A0005 The GPU device instance has been suspended."
+        );
+        assert_eq!(
+            AiGpuFailure::of_error(&removed),
+            Some(AiGpuFailure::DeviceLost)
+        );
+        assert_eq!(
+            AiGpuFailure::of_error(&anyhow::anyhow!("CUDA out of memory")),
+            Some(AiGpuFailure::OutOfMemory)
+        );
+        assert_eq!(
+            AiGpuFailure::of_error(&anyhow::anyhow!("invalid tensor shape")),
+            None
+        );
+    }
+
+    #[test]
+    fn gpu_providers_are_skipped_only_when_memory_is_known_to_be_short() {
+        const MIB: u64 = 1 << 20;
+        assert!(gpu_memory_shortfall(Some(1800 * MIB), Some(1200 * MIB)).is_some());
+        assert_eq!(
+            gpu_memory_shortfall(Some(1800 * MIB), Some(1800 * MIB)),
+            None
+        );
+        assert_eq!(gpu_memory_shortfall(None, Some(0)), None);
+        assert_eq!(gpu_memory_shortfall(Some(1800 * MIB), None), None);
     }
 }
