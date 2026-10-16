@@ -1,11 +1,11 @@
 //! SAM 2.1 encoder and decoder runs and their tensor conversions.
 
 use super::{
-    cache_object_ai_sessions, mask_model_retention, normalized_rgb_input, select_sam_candidate,
-    ObjectCropRect, ObjectInferenceCache, ObjectPromptSet, SamTensorData, SAM21_MASK_INPUT_SIZE,
-    SAM21_MAX_PROMPTS, SAM21_MODEL_SIZE,
+    mask_model_retention, normalized_rgb_input, select_sam_candidate, ObjectCropRect,
+    ObjectInferenceCache, ObjectPromptSet, SamTensorData, SAM21_MASK_INPUT_SIZE, SAM21_MAX_PROMPTS,
+    SAM21_MODEL_SIZE,
 };
-use crate::placement::FallbackSession;
+use crate::placement::{quirks, FallbackSession};
 use crate::registry::AiModel;
 use crate::slot::with_model_session;
 use anyhow::{Context, Result};
@@ -35,7 +35,7 @@ pub(super) fn encode_sam_image(
         AiModel::SamEncoder,
         encoder_path,
         AiModel::SamEncoder.spec().session,
-        mask_model_retention(cache_object_ai_sessions()),
+        mask_model_retention(quirks::sam_sessions_may_stay_warm()),
         |session| run_sam_encoder(session, input),
     )?;
 
@@ -75,7 +75,7 @@ fn extract_sam_encoder_output(
     outputs: &ort::session::SessionOutputs<'_>,
     index: usize,
     label: &str,
-    _accelerated: bool,
+    accelerated: bool,
 ) -> Result<SamTensorData> {
     let value = outputs
         .values()
@@ -86,10 +86,9 @@ fn extract_sam_encoder_output(
         .with_context(|| format!("read SAM 2.1 {label}"))?;
 
     let non_finite = data.iter().filter(|value| !value.is_finite()).count();
-    #[cfg(target_os = "windows")]
-    let values = if non_finite > 0 {
+    let values = if non_finite > 0 && quirks::sam_encoder_tolerates_non_finite() {
         anyhow::ensure!(
-            !_accelerated,
+            !accelerated,
             "SAM 2.1 {label} produced {non_finite} non-finite values on the accelerated execution provider"
         );
         let repair_limit = 64usize.max(data.len() / 100_000);
@@ -105,10 +104,6 @@ fn extract_sam_encoder_output(
             .map(|value| if value.is_finite() { *value } else { 0.0 })
             .collect::<Vec<_>>()
     } else {
-        data.to_vec()
-    };
-    #[cfg(not(target_os = "windows"))]
-    let values = {
         anyhow::ensure!(
             non_finite == 0,
             "SAM 2.1 {label} contains non-finite values"
@@ -226,7 +221,7 @@ pub(super) fn decode_sam_mask(
         AiModel::SamDecoder,
         decoder_path,
         AiModel::SamDecoder.spec().session,
-        mask_model_retention(cache_object_ai_sessions()),
+        mask_model_retention(quirks::sam_sessions_may_stay_warm()),
         |session| {
             run_sam_decoder(
                 session,

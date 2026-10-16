@@ -3,7 +3,8 @@
 Plan for making local AI and platform handling uniform: one GPU path for
 every vendor, one rule for GPU vs CPU, and platform differences decided once
 instead of scattered through the code. Status: P0.1 (cfg ratchet), P0.2
-(parity harness) and P1 implemented; P0.3 (WebGPU spike) and P2–P7 planned.
+(parity harness), P1 and P2 implemented; P0.3 (WebGPU spike) and P3–P7
+planned.
 
 Target behaviour for AI: **run on the GPU when the model fits in free VRAM,
 otherwise on the CPU** — the same rule for every model on every platform.
@@ -296,6 +297,30 @@ fusion are a genuine platform bug, not a capability. It goes into
 **Exit:** `calibraw-ai` OS cfgs drop from 56 to those in `runtime/`,
 `placement/` and `config.rs`. Parity holds on Linux; Android is confirmed by
 the maintainer.
+
+**As built** (differences from the sketch above):
+
+- `AiCapabilities` is the crate-private const `config::CAPABILITIES`; nothing
+  outside the crate needs it yet. `SubjectMaskQuality::AVAILABLE` stays a
+  public const, computed by `const fn available(MemoryClass)`, so the UI is
+  unchanged.
+- `keep_sessions_warm` is `keep_mask_sessions_warm`: Android only ever
+  unloaded mask models (subject, sky, depth, object), not LaMa or RawNIND.
+  The AppImage only unloaded SAM, so it is a quirk,
+  `quirks::sam_sessions_may_stay_warm`, rather than part of this flag.
+- `float16_sessions` is the platform half (Windows, Linux); whether GPU AI is
+  on and the automatic runtime has a GPU provider is still asked per job
+  through `runtime::ai_sessions_may_use_gpu`, which Android now also has
+  (always `true`, as `ai_acceleration_enabled` is there).
+- The CPU profiles are `CpuFallbackProfile::{SamEncoder, LowMemory}` (was
+  `WindowsSamEncoder`, `MobileDepth`). The arena stays off on every
+  `Constrained` session, not only `LowMemory` ones.
+- `quirks.rs` also owns the SAM encoder's unfused CPU graph and disabled
+  arena, which are the same Windows bug as its non-finite tolerance.
+- The provider generation counter moved from `slot.rs` to `placement`, which
+  bumps it, so `slot.rs` needs no Android branch.
+- `lib.rs` keeps one cfg on the `desktop_model_cache_root` re-export: it is
+  public API that does not exist on Android, not a check.
 
 ---
 

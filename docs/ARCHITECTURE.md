@@ -10,7 +10,7 @@ background work follows. Update it in the change that alters a boundary.
 |---|---|---|---|
 | `calibraw-core` | Image and edit models, colour mathematics, geometry, parameter validation, RAW/rendered loading, sidecars, presets, thumbnail cache | std, decoding and serde crates | any other CalibRaw crate, egui/eframe |
 | `calibraw-gpu` | GPU resource planning, WGSL composition, processing passes, readback, tiled export and file encoding | `calibraw-core`, wgpu, naga_oil | UI crates, egui/eframe |
-| `calibraw-ai` | AI configuration (`config`), ONNX Runtime loading and packages (`runtime/`), provider choice, CPU fallback and GPU failure handling (`placement/`), the model table, downloads and installation (`registry/`), the session slot (`slot`), the job worker (`jobs`), model-specific pre/postprocessing (`models/`) | `calibraw-core`, `calibraw-gpu` (denoise/remove render paths) | UI crates, egui/eframe |
+| `calibraw-ai` | AI configuration and device capabilities (`config`), ONNX Runtime loading and packages (`runtime/`), provider choice, CPU fallback, GPU failure handling and platform quirks (`placement/`), the model table, downloads and installation (`registry/`), the session slot (`slot`), the job worker (`jobs`), model-specific pre/postprocessing (`models/`) | `calibraw-core`, `calibraw-gpu` (denoise/remove render paths) | UI crates, egui/eframe |
 | `calibraw-ffi` | C ABI and the Android JNI bridge: storage, pickers, export publishing, notifications, replay encoder | `calibraw-core` (sidecar types), jni, android-activity | processing crates, UI crates, egui/eframe |
 | `calibraw-ui` (lib `calibraw`) | Application coordination (`app/`), views (`ui/`), presentation-independent services (`services/`), preview presentation | all crates above, eframe/egui, `moduwu-design` | — |
 | `calibraw-cli` | Headless develop export and white-balance diagnostics | `calibraw-core`, `calibraw-gpu` | UI crates, egui/eframe |
@@ -36,9 +36,14 @@ fails, so a lockfile or network error is never read as "dependency absent".
 | `calibraw-cli` | `calibraw-ui`, `calibraw-ffi`, egui family | rework step 4 |
 | `moduwu-design` | any `calibraw*` package | baseline |
 
-Source rule: `crates/calibraw-ui/src/services/` must not use `egui`, `eframe`
-or `egui_wgpu` in code (comments and strings are ignored), since a module
-cannot be held to a narrower dependency set than its crate by Cargo.
+Source rules (in code; comments and strings are ignored):
+
+- `crates/calibraw-ui/src/services/` must not use `egui`, `eframe` or
+  `egui_wgpu`, since a module cannot be held to a narrower dependency set than
+  its crate by Cargo.
+- `calibraw-ai`'s `models/`, `registry/`, `jobs.rs` and `slot.rs` must not use
+  `target_os`: they read `config::AiCapabilities` (what the device can do) and
+  `placement::quirks` (platform bugs) instead.
 
 "egui family" is egui, egui-wgpu, eframe and egui-winit. Add a rule in the
 change that establishes a boundary, not in advance.

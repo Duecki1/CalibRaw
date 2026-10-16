@@ -2,8 +2,8 @@
 //! between jobs.
 
 use crate::placement::{
-    ai_acceleration_enabled, create_session_with_fallback, FallbackSession, GpuJobRecord,
-    SessionOptions,
+    ai_acceleration_enabled, create_session_with_fallback, provider_generation, FallbackSession,
+    GpuJobRecord, SessionOptions,
 };
 use crate::registry::{AiFeature, AiModel};
 use anyhow::Result;
@@ -11,7 +11,7 @@ use std::{
     ops::{Deref, DerefMut},
     path::Path,
     sync::{
-        atomic::{AtomicU64, AtomicU8, Ordering},
+        atomic::{AtomicU8, Ordering},
         Mutex, MutexGuard, OnceLock, TryLockError,
     },
 };
@@ -140,7 +140,6 @@ fn runtime() -> &'static Mutex<RuntimeSlot<FallbackSession>> {
 }
 
 static WARM_FEATURES: AtomicU8 = AtomicU8::new(0);
-static PROVIDER_GENERATION: AtomicU64 = AtomicU64::new(0);
 
 fn warm_features() -> AiFeatureSet {
     AiFeatureSet(WARM_FEATURES.load(Ordering::Acquire))
@@ -176,21 +175,16 @@ fn try_reconcile<S>(
 /// of other features unload now, or once their running job releases them.
 pub fn set_warm_ai_features(features: AiFeatureSet) {
     WARM_FEATURES.store(features.0, Ordering::Release);
-    let _ = try_reconcile(
-        runtime(),
-        features,
-        PROVIDER_GENERATION.load(Ordering::Acquire),
-        ai_acceleration_enabled(),
-    );
+    unload_cold_session();
 }
 
-#[cfg(not(target_os = "android"))]
-pub(crate) fn invalidate_for_provider_change() {
-    let generation = PROVIDER_GENERATION.fetch_add(1, Ordering::AcqRel) + 1;
+/// Unloads the loaded session unless it may stay warm with the current warm
+/// features and providers, or leaves that to its running job's release.
+pub(crate) fn unload_cold_session() {
     let _ = try_reconcile(
         runtime(),
         warm_features(),
-        generation,
+        provider_generation(),
         ai_acceleration_enabled(),
     );
 }
@@ -236,7 +230,7 @@ impl Drop for ModelSessionGuard {
         };
         guard.reconcile(
             warm_features(),
-            PROVIDER_GENERATION.load(Ordering::Acquire),
+            provider_generation(),
             ai_acceleration_enabled(),
         );
         // End the record while the lease is held: once it is released, the
@@ -247,7 +241,7 @@ impl Drop for ModelSessionGuard {
         let _ = try_reconcile(
             runtime(),
             warm_features(),
-            PROVIDER_GENERATION.load(Ordering::Acquire),
+            provider_generation(),
             ai_acceleration_enabled(),
         );
     }
@@ -260,7 +254,7 @@ pub(crate) fn acquire_model_session(
     retention: ModelRetention,
 ) -> Result<ModelSessionGuard> {
     let mut runtime = lock_runtime();
-    let provider_generation = PROVIDER_GENERATION.load(Ordering::Acquire);
+    let provider_generation = provider_generation();
     let acceleration_enabled = ai_acceleration_enabled();
     runtime.ensure_model(
         model,

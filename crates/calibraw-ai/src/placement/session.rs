@@ -6,6 +6,7 @@ use super::job_record::GpuJobRecord;
 use super::providers::{
     cpu_provider, gpu_memory_shortfall, preferred_execution_providers, ProviderCandidate,
 };
+use super::quirks;
 use super::status::publish_status;
 use anyhow::{Context, Result};
 use ort::session::{
@@ -18,8 +19,12 @@ use std::path::{Path, PathBuf};
 pub(crate) enum CpuFallbackProfile {
     #[default]
     Default,
-    WindowsSamEncoder,
-    MobileDepth,
+    /// Where `quirks::sam_encoder_cpu_needs_unfused_graph`: no graph
+    /// optimizations and no arena allocator.
+    SamEncoder,
+    /// Two sequential threads, no weight prepacking and no arena allocator,
+    /// for a model beside the RAW preview on `MemoryClass::Constrained`.
+    LowMemory,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -71,8 +76,8 @@ fn configure_cpu_builder(
     mut builder: SessionBuilder,
     options: &SessionOptions,
 ) -> Result<SessionBuilder> {
-    if options.cpu_fallback_profile == CpuFallbackProfile::MobileDepth {
-        // Depth runs alongside Android's RAW preview. Bound the thread pool and
+    if options.cpu_fallback_profile == CpuFallbackProfile::LowMemory {
+        // The model runs alongside the RAW preview. Bound the thread pool and
         // avoid retaining a second, packed copy of the model's weights.
         builder = builder
             .with_parallel_execution(false)
@@ -84,11 +89,9 @@ fn configure_cpu_builder(
             .with_prepacking(false)
             .map_err(|error| anyhow::anyhow!("disable mobile depth weight prepacking: {error}"))?;
     }
-    if options.cpu_fallback_profile == CpuFallbackProfile::WindowsSamEncoder
-        && cfg!(target_os = "windows")
+    if options.cpu_fallback_profile == CpuFallbackProfile::SamEncoder
+        && quirks::sam_encoder_cpu_needs_unfused_graph()
     {
-        // Some Windows CPU builds produce non-finite Hiera features after graph
-        // fusions. Thread count does not affect this, so keep the thread pool.
         builder = builder
             .with_optimization_level(GraphOptimizationLevel::Disable)
             .map_err(|error| {

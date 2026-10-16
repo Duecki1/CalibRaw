@@ -2,6 +2,7 @@
 
 use super::masks::mask_model_retention;
 use super::{mask_refine, normalized_rgb_input, sigmoid_probability};
+use crate::config::{MemoryClass, CAPABILITIES};
 use crate::placement::FallbackSession;
 use crate::registry::{AiModel, ModelInfo};
 use crate::slot::with_model_session;
@@ -23,21 +24,15 @@ pub enum SubjectModelPrecision {
 
 impl SubjectModelPrecision {
     /// The precision for subject masks with the current settings: float16
-    /// where sessions are expected on DirectML or CUDA, i.e. Windows and
-    /// Linux with GPU acceleration enabled and Automatic mode's runtime built
-    /// with a GPU provider. A manually selected runtime is not known before it
-    /// loads, so it keeps float32, as does CoreML, which has not been tested
-    /// with float16.
+    /// where sessions are expected on a provider that runs it
+    /// (`AiCapabilities::float16_sessions`), i.e. with GPU acceleration
+    /// enabled and Automatic mode's runtime built with a GPU provider. A
+    /// manually selected runtime is not known before it loads, so it keeps
+    /// float32.
     pub fn for_current_sessions(manual_runtime: bool) -> Self {
-        #[cfg(not(target_os = "android"))]
-        let gpu = cfg!(any(target_os = "windows", target_os = "linux"))
+        let gpu = CAPABILITIES.float16_sessions
             && !manual_runtime
             && crate::runtime::ai_sessions_may_use_gpu(false);
-        #[cfg(target_os = "android")]
-        let gpu = {
-            let _ = manual_runtime;
-            false
-        };
         if gpu {
             Self::Float16
         } else {
@@ -56,17 +51,21 @@ pub enum SubjectMaskQuality {
     /// The 1024 x 1024 model or its float16 conversion, one pass.
     #[default]
     Medium,
-    /// `Medium`'s model with the cropped refinement pass. Desktop only.
+    /// `Medium`'s model with the cropped refinement pass. Needs
+    /// `MemoryClass::Standard`.
     High,
 }
 
 impl SubjectMaskQuality {
-    /// The qualities this platform offers.
-    pub const AVAILABLE: &'static [Self] = if cfg!(target_os = "android") {
-        &[Self::Low, Self::Medium]
-    } else {
-        &[Self::Low, Self::Medium, Self::High]
-    };
+    /// The qualities this device offers.
+    pub const AVAILABLE: &'static [Self] = Self::available(CAPABILITIES.memory);
+
+    const fn available(memory: MemoryClass) -> &'static [Self] {
+        match memory {
+            MemoryClass::Constrained => &[Self::Low, Self::Medium],
+            MemoryClass::Standard => &[Self::Low, Self::Medium, Self::High],
+        }
+    }
 
     pub const fn label(self) -> &'static str {
         match self {
@@ -102,8 +101,8 @@ pub fn birefnet_model_is_verified(
     quality.ai_model(precision).spec().is_installed(path)
 }
 
-/// Runs BiRefNet over the full frame and, for `High` on desktop, follows it
-/// with one native-resolution crop pass for finer boundary detail.
+/// Runs BiRefNet over the full frame and, for `High` with standard memory,
+/// follows it with one native-resolution crop pass for finer boundary detail.
 pub(super) fn subject_mask(
     model_path: &Path,
     image: &ImageBuffer<Rgba<u8>, Vec<u8>>,
@@ -113,7 +112,7 @@ pub(super) fn subject_mask(
     let (width, height) = image.dimensions();
     let mut mask = infer_birefnet(model_path, image, quality, precision)?;
     let crop_refinement =
-        subject_crop_refinement_enabled(quality.crop_refinement(), cfg!(target_os = "android"));
+        subject_crop_refinement_enabled(quality.crop_refinement(), CAPABILITIES.memory);
     if crop_refinement {
         if let Some(crop) = mask_refine::mask_crop_above(&mask, width, height, 5, 0.15) {
             let crop_image =
@@ -128,8 +127,8 @@ pub(super) fn subject_mask(
     Ok(mask)
 }
 
-const fn subject_crop_refinement_enabled(requested: bool, android: bool) -> bool {
-    requested && !android
+const fn subject_crop_refinement_enabled(requested: bool, memory: MemoryClass) -> bool {
+    requested && matches!(memory, MemoryClass::Standard)
 }
 
 fn infer_birefnet(
@@ -279,6 +278,7 @@ mod tests {
         subject_crop_refinement_enabled, validate_birefnet_output_shape, SubjectMaskQuality,
         SubjectModelPrecision,
     };
+    use crate::config::{MemoryClass, CAPABILITIES};
     use crate::registry::AiModel;
     use image::{ImageBuffer, Rgba};
     use std::path::Path;
@@ -320,10 +320,16 @@ mod tests {
     }
 
     #[test]
-    fn android_always_disables_subject_crop_refinement() {
-        assert!(subject_crop_refinement_enabled(true, false));
-        assert!(!subject_crop_refinement_enabled(false, false));
-        assert!(!subject_crop_refinement_enabled(true, true));
+    fn constrained_memory_always_disables_subject_crop_refinement() {
+        assert!(subject_crop_refinement_enabled(true, MemoryClass::Standard));
+        assert!(!subject_crop_refinement_enabled(
+            false,
+            MemoryClass::Standard
+        ));
+        assert!(!subject_crop_refinement_enabled(
+            true,
+            MemoryClass::Constrained
+        ));
     }
 
     #[test]
@@ -379,7 +385,7 @@ mod tests {
             SubjectModelPrecision::for_current_sessions(true),
             SubjectModelPrecision::Float32
         );
-        if !cfg!(any(target_os = "windows", target_os = "linux")) {
+        if !CAPABILITIES.float16_sessions {
             assert_eq!(
                 SubjectModelPrecision::for_current_sessions(false),
                 SubjectModelPrecision::Float32
@@ -388,12 +394,15 @@ mod tests {
     }
 
     #[test]
-    fn every_platform_defaults_to_an_available_subject_quality() {
-        assert!(SubjectMaskQuality::AVAILABLE.contains(&SubjectMaskQuality::default()));
-        assert_eq!(
-            SubjectMaskQuality::AVAILABLE.contains(&SubjectMaskQuality::High),
-            !cfg!(target_os = "android")
-        );
+    fn every_memory_class_defaults_to_an_available_subject_quality() {
+        for (memory, high) in [
+            (MemoryClass::Constrained, false),
+            (MemoryClass::Standard, true),
+        ] {
+            let available = SubjectMaskQuality::available(memory);
+            assert!(available.contains(&SubjectMaskQuality::default()));
+            assert_eq!(available.contains(&SubjectMaskQuality::High), high);
+        }
     }
 
     #[test]

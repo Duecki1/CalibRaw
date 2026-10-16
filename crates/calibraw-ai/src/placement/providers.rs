@@ -1,6 +1,8 @@
 //! The execution providers a session tries, in order, before the CPU.
 
+use super::quirks;
 use super::session::{CpuFallbackProfile, SessionOptions};
+use crate::config::{MemoryClass, CAPABILITIES};
 use ort::ep::{ExecutionProvider, ExecutionProviderDispatch};
 
 pub(super) struct ProviderCandidate {
@@ -103,10 +105,10 @@ pub(super) fn preferred_execution_providers() -> Vec<ProviderCandidate> {
 }
 
 pub(super) fn cpu_provider(options: &SessionOptions) -> ExecutionProviderDispatch {
-    let disable_arena = cfg!(target_os = "android")
-        || options.cpu_fallback_profile == CpuFallbackProfile::MobileDepth
-        || (cfg!(target_os = "windows")
-            && options.cpu_fallback_profile == CpuFallbackProfile::WindowsSamEncoder);
+    let disable_arena = CAPABILITIES.memory == MemoryClass::Constrained
+        || options.cpu_fallback_profile == CpuFallbackProfile::LowMemory
+        || (options.cpu_fallback_profile == CpuFallbackProfile::SamEncoder
+            && quirks::sam_encoder_cpu_needs_unfused_graph());
     ort::ep::CPU::default()
         .with_arena_allocator(!disable_arena)
         .build()

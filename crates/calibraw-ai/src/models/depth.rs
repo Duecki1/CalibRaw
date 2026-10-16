@@ -2,6 +2,7 @@
 
 use super::masks::mask_model_retention;
 use super::{depth_refine, normalized_rgb_input};
+use crate::config::{MemoryClass, CAPABILITIES};
 use crate::placement::{CpuFallbackProfile, SessionOptions};
 use crate::registry::{AiModel, ModelInfo};
 use crate::slot::with_model_session;
@@ -26,14 +27,17 @@ pub fn depth_model_is_verified(path: &Path) -> bool {
 }
 
 fn session_options() -> SessionOptions {
+    session_options_for(CAPABILITIES.memory)
+}
+
+const fn session_options_for(memory: MemoryClass) -> SessionOptions {
     let options = AiModel::Depth.spec().session;
-    if cfg!(target_os = "android") {
-        // Depth runs on the CPU beside Android's RAW preview.
-        options
+    match memory {
+        // Depth runs on the CPU beside the RAW preview.
+        MemoryClass::Constrained => options
             .cpu_only()
-            .with_cpu_fallback_profile(CpuFallbackProfile::MobileDepth)
-    } else {
-        options
+            .with_cpu_fallback_profile(CpuFallbackProfile::LowMemory),
+        MemoryClass::Standard => options,
     }
 }
 
@@ -301,19 +305,17 @@ mod tests {
     }
 
     #[test]
-    fn only_android_sessions_use_the_cpu_only_mobile_depth_profile() {
-        let options = session_options();
-        assert_eq!(options.model_name, MODEL.name);
-        if cfg!(target_os = "android") {
-            assert!(!options.allow_acceleration);
-            assert_eq!(
-                options.cpu_fallback_profile,
-                CpuFallbackProfile::MobileDepth
-            );
-        } else {
-            assert!(options.allow_acceleration);
-            assert_eq!(options.cpu_fallback_profile, CpuFallbackProfile::Default);
-        }
+    fn only_constrained_memory_runs_depth_on_a_low_memory_cpu_session() {
+        let constrained = session_options_for(MemoryClass::Constrained);
+        assert_eq!(constrained.model_name, MODEL.name);
+        assert!(!constrained.allow_acceleration);
+        assert_eq!(
+            constrained.cpu_fallback_profile,
+            CpuFallbackProfile::LowMemory
+        );
+        let standard = session_options_for(MemoryClass::Standard);
+        assert!(standard.allow_acceleration);
+        assert_eq!(standard.cpu_fallback_profile, CpuFallbackProfile::Default);
     }
 
     #[test]

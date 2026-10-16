@@ -356,7 +356,7 @@ const SAM_ENCODER: ModelSpec = ModelSpec {
     },
     input: InputShape::Square { edge: 1024 },
     session: SessionOptions::new("SAM 2.1 encoder")
-        .with_cpu_fallback_profile(CpuFallbackProfile::WindowsSamEncoder),
+        .with_cpu_fallback_profile(CpuFallbackProfile::SamEncoder),
     retention: ModelRetention::WhileWarm,
 };
 
@@ -608,7 +608,7 @@ mod tests {
             assert_eq!(session.gpu_memory_bytes, gpu_memory_bytes);
             assert!(session.allow_acceleration);
             let cpu = if model == AiModel::SamEncoder {
-                CpuFallbackProfile::WindowsSamEncoder
+                CpuFallbackProfile::SamEncoder
             } else {
                 CpuFallbackProfile::Default
             };
