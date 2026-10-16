@@ -1,15 +1,13 @@
 # `target_os` conditions per file, checked by `cargo xtask cfg-ratchet`.
 # Counts may only fall: `cargo xtask cfg-ratchet --update` lowers them.
 # Raising one, or adding a file, is a reviewed change to this file.
-  1 crates/calibraw-ai/src/ai_denoise.rs
- 22 crates/calibraw-ai/src/ai_masks.rs
-  2 crates/calibraw-ai/src/ai_masks/depth.rs
-  2 crates/calibraw-ai/src/ai_masks/object/sam.rs
- 20 crates/calibraw-ai/src/execution_provider.rs
-  6 crates/calibraw-ai/src/lib.rs
-  1 crates/calibraw-ai/src/model_artifact.rs
-  1 crates/calibraw-ai/src/model_runtime.rs
-  1 crates/calibraw-ai/src/onnx_runtime_artifact.rs
+  4 crates/calibraw-ai/src/config.rs
+  1 crates/calibraw-ai/src/lib.rs
+  2 crates/calibraw-ai/src/models/depth.rs
+  6 crates/calibraw-ai/src/models/masks.rs
+  2 crates/calibraw-ai/src/models/object/sam.rs
+  7 crates/calibraw-ai/src/models/subject.rs
+  1 crates/calibraw-ai/src/slot.rs
   1 crates/calibraw-core/src/diagnostics.rs
   1 crates/calibraw-core/src/lib.rs
   2 crates/calibraw-core/src/pipeline/masks.rs
@@ -36,15 +34,14 @@
   1 crates/calibraw-gpu/src/pipeline/gpu/stage_params.rs
  18 crates/calibraw-ui/src/app.rs
   3 crates/calibraw-ui/src/app/actions.rs
-  3 crates/calibraw-ui/src/app/ai/generated.rs
+  1 crates/calibraw-ui/src/app/ai/generated.rs
   3 crates/calibraw-ui/src/app/ai/mod.rs
  25 crates/calibraw-ui/src/app/ai/models.rs
-  3 crates/calibraw-ui/src/app/ai/object.rs
   2 crates/calibraw-ui/src/app/ai/source.rs
   3 crates/calibraw-ui/src/app/ai/state.rs
   2 crates/calibraw-ui/src/app/ai/tasks.rs
   2 crates/calibraw-ui/src/app/ai/update.rs
- 17 crates/calibraw-ui/src/app/ai_denoise.rs
+ 11 crates/calibraw-ui/src/app/ai_denoise.rs
   3 crates/calibraw-ui/src/app/background_tasks.rs
   1 crates/calibraw-ui/src/app/decoded_raw_cache.rs
  15 crates/calibraw-ui/src/app/develop_state.rs
@@ -53,8 +50,8 @@
  12 crates/calibraw-ui/src/app/error_dialogs.rs
  22 crates/calibraw-ui/src/app/export_state.rs
   1 crates/calibraw-ui/src/app/foreground.rs
-  4 crates/calibraw-ui/src/app/inpainting.rs
-  6 crates/calibraw-ui/src/app/job_state.rs
+  1 crates/calibraw-ui/src/app/inpainting.rs
+  5 crates/calibraw-ui/src/app/job_state.rs
  22 crates/calibraw-ui/src/app/library_adjustments.rs
   5 crates/calibraw-ui/src/app/lifecycle/cache.rs
  10 crates/calibraw-ui/src/app/lifecycle/document_load.rs
@@ -63,7 +60,7 @@
   7 crates/calibraw-ui/src/app/lifecycle/pickers.rs
  10 crates/calibraw-ui/src/app/lifecycle/profiles.rs
  32 crates/calibraw-ui/src/app/lifecycle/settings.rs
- 41 crates/calibraw-ui/src/app/lifecycle/startup.rs
+ 35 crates/calibraw-ui/src/app/lifecycle/startup.rs
   1 crates/calibraw-ui/src/app/persistence_state.rs
   6 crates/calibraw-ui/src/app/presets.rs
   2 crates/calibraw-ui/src/app/presets/preview.rs

@@ -1,6 +1,20 @@
-use super::*;
+//! Sky masks from SkySeg U2Net.
 
-const INPUT_EDGE: u32 = 320;
+use super::masks::mask_model_retention;
+use super::{mask_refine, normalized_rgb_input};
+use crate::registry::{AiModel, ModelInfo};
+use crate::slot::with_model_session;
+use anyhow::{Context, Result};
+use image::{imageops::FilterType, ImageBuffer, Rgba};
+use ort::value::Tensor;
+use std::path::Path;
+
+pub const MODEL: ModelInfo = AiModel::SkySeg.spec().info();
+const INPUT_EDGE: u32 = MODEL.input.edge();
+
+pub fn skyseg_model_is_verified(path: &Path) -> bool {
+    AiModel::SkySeg.spec().is_installed(path)
+}
 
 pub(super) fn sky_mask(
     model_path: &Path,
@@ -15,7 +29,7 @@ pub(super) fn sky_mask(
     let (output_width, output_height, sky_probabilities) = with_model_session(
         AiModel::SkySeg,
         model_path,
-        SessionOptions::new("SkySeg U2Net"),
+        AiModel::SkySeg.spec().session,
         mask_model_retention(true),
         |session| {
             session.run_with_fallback("SkySeg ONNX inference", |ort_session, _| {
@@ -95,7 +109,7 @@ mod tests {
     #[ignore = "requires the published model and ONNX Runtime"]
     fn published_model_runs_end_to_end() {
         let path = std::env::var("CALIBRAW_TEST_SKYSEG_MODEL").unwrap();
-        super::initialize_runtime(None, None).unwrap();
+        crate::runtime::initialize_runtime().unwrap();
         let image = ImageBuffer::from_pixel(64, 40, Rgba([100, 160, 220, 255]));
         let mask = sky_mask(Path::new(&path), &image).unwrap();
         assert_eq!(mask.len(), 64 * 40);

@@ -62,7 +62,7 @@ impl CalibRawApp {
     /// sessions this check was not made for.
     pub(crate) fn ai_job_may_use_gpu(&self) -> bool {
         #[cfg(not(target_os = "android"))]
-        let gpu = calibraw_ai::ai_sessions_may_use_gpu(self.manual_onnx_runtime());
+        let gpu = calibraw_ai::runtime::ai_sessions_may_use_gpu(self.manual_onnx_runtime());
         #[cfg(target_os = "android")]
         let gpu = false;
         gpu && self
@@ -103,13 +103,13 @@ impl CalibRawApp {
             }
             AiFeature::Object => {
                 let (encoder, decoder) = self.sam21_model_paths();
-                !calibraw_ai::ai_masks::object_models_are_verified(&encoder, &decoder)
+                !calibraw_ai::models::object::object_models_are_verified(&encoder, &decoder)
             }
-            AiFeature::Remove => {
-                !calibraw_ai::remove::big_lama_model_is_verified(&self.big_lama_model_path())
-            }
+            AiFeature::Remove => !calibraw_ai::models::remove::big_lama_model_is_verified(
+                &self.big_lama_model_path(),
+            ),
             AiFeature::Denoise => {
-                !calibraw_ai::ai_denoise::models_are_verified(&self.rawnind_model_dir())
+                !calibraw_ai::models::denoise::models_are_verified(&self.rawnind_model_dir())
             }
         }
     }

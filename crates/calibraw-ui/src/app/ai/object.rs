@@ -142,22 +142,13 @@ impl CalibRawApp {
             return;
         };
         self.ai.object_pending_target = None;
-        #[cfg(not(target_os = "android"))]
-        let (runtime_path, runtime_sha256) = self.onnx_runtime_for_ai();
-        #[cfg(target_os = "android")]
-        let runtime_path = None;
-        #[cfg(target_os = "android")]
-        let runtime_sha256 = None;
-
         let needs_download =
-            !calibraw_ai::ai_masks::object_models_are_verified(&encoder_path, &decoder_path);
+            !calibraw_ai::models::object::object_models_are_verified(&encoder_path, &decoder_path);
         let cancellation = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let receiver = spawn_object_mask(ObjectMaskWorkerRequest {
             encoder_path,
             decoder_path,
             allow_download,
-            runtime_path,
-            runtime_sha256,
             inference: request,
             cancellation: Arc::clone(&cancellation),
         });
@@ -191,27 +182,14 @@ impl CalibRawApp {
             self.foreground_operation = Some(operation);
             return;
         };
-        let (events, disconnected) = drain_worker_events(Some(receiver), |event| {
-            matches!(event, ObjectMaskEvent::Finished(_))
-        });
-
-        let mut finished = None;
-        for event in events {
-            match event {
-                ObjectMaskEvent::DownloadProgress(progress) => {
-                    operation.progress = ForegroundProgress::units(
-                        progress.downloaded,
-                        progress.total,
-                        Some("bytes".to_owned()),
-                        format!("Downloading {}", progress.label),
-                    )
-                    .with_detail(format!(
-                        "{:.1} / {:.1} MB",
-                        progress.downloaded as f64 / 1_000_000.0,
-                        progress.total as f64 / 1_000_000.0
-                    ));
+        let finished = poll_ai_job(
+            receiver,
+            || "The object-mask worker stopped unexpectedly.".to_owned(),
+            |update| match update {
+                AiJobUpdate::Download(progress) => {
+                    operation.progress = model_download_progress(progress);
                 }
-                ObjectMaskEvent::Inferencing { decoder_only } => {
+                AiJobUpdate::Progress(ObjectMaskProgress::Inferencing { decoder_only }) => {
                     if let ForegroundOperationContext::Object {
                         inference_started, ..
                     } = &mut operation.context
@@ -224,14 +202,8 @@ impl CalibRawApp {
                         "Encoding the image and generating the object mask…"
                     });
                 }
-                ObjectMaskEvent::Finished(result) => finished = Some(result),
-            }
-        }
-        if finished.is_none() && disconnected {
-            finished = Some(Err(
-                "The object-mask worker stopped unexpectedly.".to_owned()
-            ));
-        }
+            },
+        );
         let Some(result) = finished else {
             self.foreground_operation = Some(operation);
             return;
@@ -250,7 +222,7 @@ impl CalibRawApp {
         if !cancelled && !stale {
             match (target, result) {
                 (Some(target), Ok(result)) => {
-                    let calibraw_ai::ai_masks::ObjectMaskResult {
+                    let calibraw_ai::models::object::ObjectMaskResult {
                         width,
                         height,
                         mask: pixels,

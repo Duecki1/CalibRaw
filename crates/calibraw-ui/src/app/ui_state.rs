@@ -7,7 +7,7 @@ pub(crate) enum DesktopPickerEvent {
     RawFile(Option<PathBuf>),
     LibraryFolder(Option<PathBuf>),
     CameraProfileFolder(Option<PathBuf>),
-    OnnxRuntime(Result<Option<(PathBuf, String)>, String>),
+    OnnxRuntime(Result<Option<(PathBuf, calibraw_ai::Sha256)>, String>),
     PresetFiles(Option<Vec<PathBuf>>),
 }
 

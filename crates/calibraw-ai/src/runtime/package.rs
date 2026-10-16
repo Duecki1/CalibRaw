@@ -1,7 +1,11 @@
-use crate::model_artifact::{ensure_artifact, sha256_file_hex, DownloadOptions, ModelArtifact};
+//! The automatic runtime: the library a packager bundled, or else the pinned
+//! ONNX Runtime release for this platform, downloaded into the model cache.
+
+use super::AutomaticOnnxRuntimeKind;
+use crate::config::Sha256;
+use crate::registry::artifact::{ensure_artifact, sha256_file_hex, DownloadOptions, ModelArtifact};
 use anyhow::{Context, Result};
 use flate2::read::GzDecoder;
-use serde::{Deserialize, Serialize};
 use std::{
     fs::{self, File},
     path::{Component, Path, PathBuf},
@@ -30,49 +34,12 @@ struct RuntimePackage {
     gpu_provider: bool,
 }
 
-/// Which automatic runtime to download. Only Linux x86_64 has a choice: its
-/// CPU package has no GPU provider, and Microsoft's CUDA builds need the
-/// matching CUDA toolkit and cuDNN 9 installed on the system.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum AutomaticOnnxRuntimeKind {
-    #[default]
-    Cpu,
-    Cuda12,
-    Cuda13,
-}
-
 impl AutomaticOnnxRuntimeKind {
-    pub const ALL: [Self; 3] = [Self::Cpu, Self::Cuda12, Self::Cuda13];
-
-    pub const fn label(self) -> &'static str {
-        match self {
-            Self::Cpu => "CPU",
-            Self::Cuda12 => "NVIDIA CUDA 12",
-            Self::Cuda13 => "NVIDIA CUDA 13",
-        }
-    }
-
     /// Archive size of this kind's download, or `None` where this platform
     /// has no automatic runtime.
     pub fn download_bytes(self) -> Option<u64> {
         runtime_package(self).ok().map(|package| package.bytes)
     }
-}
-
-static AUTOMATIC_RUNTIME_KIND: Mutex<AutomaticOnnxRuntimeKind> =
-    Mutex::new(AutomaticOnnxRuntimeKind::Cpu);
-
-pub fn set_automatic_onnx_runtime_kind(kind: AutomaticOnnxRuntimeKind) {
-    *AUTOMATIC_RUNTIME_KIND
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner()) = kind;
-}
-
-fn automatic_runtime_kind() -> AutomaticOnnxRuntimeKind {
-    *AUTOMATIC_RUNTIME_KIND
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 /// Whether Automatic mode offers the CUDA runtimes. Bundled runtimes, such as
@@ -215,7 +182,7 @@ fn configured_automatic_runtime() -> Result<AutomaticRuntime<'static>> {
     automatic_runtime(
         bundled_onnx_runtime_path(),
         option_env!("CALIBRAW_BUNDLED_ONNX_RUNTIME_VERSION"),
-        automatic_runtime_kind(),
+        crate::config::automatic_runtime_kind(),
     )
 }
 
@@ -245,7 +212,7 @@ impl AutomaticRuntime<'_> {
             Self::Bundled { path, .. } => return path.is_file(),
             Self::Download(package) => package,
         };
-        let install_dir = crate::desktop_model_cache_root()
+        let install_dir = crate::config::model_root()
             .join("onnxruntime")
             .join(package.platform);
         matches!(
@@ -279,7 +246,7 @@ fn automatic_onnx_runtime_has_gpu_provider() -> bool {
 /// may include a GPU execution provider. A manually selected runtime is not
 /// known before it loads, so it may.
 pub fn ai_sessions_may_use_gpu(manual_runtime: bool) -> bool {
-    crate::execution_provider::ai_acceleration_enabled()
+    crate::placement::ai_acceleration_enabled()
         && (manual_runtime || automatic_onnx_runtime_has_gpu_provider())
 }
 
@@ -300,11 +267,11 @@ fn runtime_download_options() -> DownloadOptions {
     }
 }
 
-pub fn ensure_automatic_onnx_runtime() -> Result<(PathBuf, String)> {
+pub(crate) fn ensure_automatic_onnx_runtime() -> Result<(PathBuf, Sha256)> {
     ensure_automatic_runtime(configured_automatic_runtime()?)
 }
 
-fn ensure_automatic_runtime(runtime: AutomaticRuntime<'_>) -> Result<(PathBuf, String)> {
+fn ensure_automatic_runtime(runtime: AutomaticRuntime<'_>) -> Result<(PathBuf, Sha256)> {
     let _guard = install_lock();
     let package = match runtime {
         AutomaticRuntime::Bundled { path, .. } => {
@@ -315,13 +282,13 @@ fn ensure_automatic_runtime(runtime: AutomaticRuntime<'_>) -> Result<(PathBuf, S
             );
             // Flatpak strips libraries after Cargo builds the application. Hash
             // the installed bytes here and retain the normal pre-load checks.
-            let sha256 = sha256_file_hex(path)
+            let sha256 = Sha256::of_file(path)
                 .with_context(|| format!("hash bundled ONNX Runtime {}", path.display()))?;
             return Ok((path.to_path_buf(), sha256));
         }
         AutomaticRuntime::Download(package) => package,
     };
-    let root = crate::desktop_model_cache_root().join("onnxruntime");
+    let root = crate::config::model_root().join("onnxruntime");
     let install_dir = root.join(package.platform);
     if let Some(runtime) = load_verified_install(&install_dir, package.sha256)? {
         return Ok(runtime);
@@ -335,6 +302,7 @@ fn ensure_automatic_runtime(runtime: AutomaticRuntime<'_>) -> Result<(PathBuf, S
         url: Some(package.url),
         sha256: package.sha256,
         bytes: package.bytes,
+        cache_filename: package.archive_name,
     };
     ensure_artifact(
         &archive_path,
@@ -353,7 +321,7 @@ fn ensure_automatic_runtime(runtime: AutomaticRuntime<'_>) -> Result<(PathBuf, S
 fn load_verified_install(
     install_dir: &Path,
     expected_archive_sha256: &str,
-) -> Result<Option<(PathBuf, String)>> {
+) -> Result<Option<(PathBuf, Sha256)>> {
     let manifest = match fs::read_to_string(install_dir.join(INSTALL_MANIFEST)) {
         Ok(manifest) => manifest,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
@@ -372,13 +340,12 @@ fn load_verified_install(
     let Some(relative) = lines.next().and_then(|line| line.strip_prefix("path=")) else {
         return Ok(None);
     };
-    if archive_sha256 != expected_archive_sha256
-        || lines.next().is_some()
-        || sha256.len() != 64
-        || !sha256.bytes().all(|byte| byte.is_ascii_hexdigit())
-    {
+    if archive_sha256 != expected_archive_sha256 || lines.next().is_some() {
         return Ok(None);
     }
+    let Ok(sha256) = Sha256::parse(sha256) else {
+        return Ok(None);
+    };
     let relative = Path::new(relative);
     if relative.is_absolute()
         || relative
@@ -388,10 +355,10 @@ fn load_verified_install(
         return Ok(None);
     }
     let runtime_path = install_dir.join(relative);
-    if !runtime_path.is_file() || sha256_file_hex(&runtime_path)? != sha256 {
+    if !runtime_path.is_file() || Sha256::of_file(&runtime_path)? != sha256 {
         return Ok(None);
     }
-    Ok(Some((runtime_path, sha256.to_owned())))
+    Ok(Some((runtime_path, sha256)))
 }
 
 fn install_archive(
@@ -523,11 +490,15 @@ mod tests {
             assert!(bundled_onnx_runtime_path().is_none());
             assert_eq!(
                 info.version,
-                runtime_package(automatic_runtime_kind()).unwrap().version
+                runtime_package(crate::config::automatic_runtime_kind())
+                    .unwrap()
+                    .version
             );
             assert_eq!(
                 info.download_bytes,
-                runtime_package(automatic_runtime_kind()).unwrap().bytes
+                runtime_package(crate::config::automatic_runtime_kind())
+                    .unwrap()
+                    .bytes
             );
         }
     }
@@ -548,13 +519,13 @@ mod tests {
         assert!(resolve().is_installed());
         let (path, original_hash) = ensure_automatic_runtime(resolve()).unwrap();
         assert_eq!(path, library);
-        assert_eq!(original_hash, sha256_file_hex(&library).unwrap());
+        assert_eq!(original_hash.as_str(), sha256_file_hex(&library).unwrap());
 
         // Model flatpak-builder changing the library after Cargo has built it.
         fs::write(&library, b"stripped runtime").unwrap();
         let (path, installed_hash) = ensure_automatic_runtime(resolve()).unwrap();
         assert_eq!(path, library);
-        assert_eq!(installed_hash, sha256_file_hex(&library).unwrap());
+        assert_eq!(installed_hash.as_str(), sha256_file_hex(&library).unwrap());
         assert_ne!(installed_hash, original_hash);
     }
 
@@ -667,6 +638,6 @@ mod tests {
     #[test]
     #[ignore = "requires a network connection and writes the desktop runtime cache"]
     fn automatic_runtime_downloads_extracts_and_initializes() {
-        crate::ai_masks::initialize_runtime(None, None).unwrap();
+        crate::runtime::initialize_runtime().unwrap();
     }
 }

@@ -1,6 +1,7 @@
 //! Post-processing a selected mask: connectivity, hole filling, edge-aware refinement, resizing.
 
 use super::*;
+use rayon::prelude::*;
 
 pub(super) fn keep_prompt_connected_component(
     probabilities: Vec<f32>,
@@ -325,7 +326,7 @@ pub(super) fn edge_aware_refine(
     mask
 }
 
-pub(in crate::ai_masks) fn resize_probability_u8(
+pub(super) fn resize_probability_u8(
     values: &[f32],
     width: u32,
     height: u32,

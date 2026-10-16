@@ -121,8 +121,9 @@ pub fn run_onnx_runtime_probe_cli(args: &[String]) -> Option<i32> {
         return None;
     }
     let path = std::path::Path::new(&args[2]);
-    let sha256 = &args[3];
-    match calibraw_ai::ai_masks::run_runtime_probe_process(path, sha256) {
+    let probe = calibraw_ai::Sha256::parse(&args[3])
+        .and_then(|sha256| calibraw_ai::runtime::run_runtime_probe_process(path, &sha256));
+    match probe {
         Ok(()) => Some(0),
         Err(error) => {
             eprintln!("CalibRaw ONNX Runtime probe failed: {error:#}");

@@ -254,6 +254,7 @@ fn update_digest_cancelable(
 }
 
 pub fn models_are_verified(model_dir: &Path) -> bool {
-    verify_artifact(&model_dir.join("model_bayer.onnx"), BAYER_MODEL_ARTIFACT).is_ok()
-        && verify_artifact(&model_dir.join("model_linear.onnx"), LINEAR_MODEL_ARTIFACT).is_ok()
+    [AiModel::RawNindBayer, AiModel::RawNindLinear]
+        .into_iter()
+        .all(|model| model.spec().is_installed(&model_path(model_dir, model)))
 }

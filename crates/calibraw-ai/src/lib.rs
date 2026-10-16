@@ -2,38 +2,22 @@ pub mod pipeline {
     pub use calibraw_gpu::pipeline::*;
 }
 
-pub mod ai_denoise;
-pub mod ai_masks;
-#[cfg(target_os = "windows")]
-mod directml_adapter;
-pub mod execution_provider;
-mod gpu_job_record;
-mod model_artifact;
-mod model_install;
-mod model_runtime;
-#[cfg(not(target_os = "android"))]
-mod onnx_runtime_artifact;
-pub mod remove;
-#[cfg(target_os = "windows")]
-pub use directml_adapter::set_directml_adapter;
-pub use gpu_job_record::{end_gpu_job_records, gpu_job_in_progress, set_gpu_job_record_path};
-pub use model_install::ModelDownloadProgress;
-pub use model_runtime::{set_warm_ai_features, AiFeature, AiFeatureSet};
+mod config;
+mod jobs;
+pub mod models;
+mod placement;
+mod registry;
+pub mod runtime;
+mod slot;
 
 #[cfg(not(target_os = "android"))]
-pub use model_artifact::desktop_model_cache_root;
-#[cfg(not(target_os = "android"))]
-pub use onnx_runtime_artifact::{
-    ai_sessions_may_use_gpu, automatic_onnx_runtime_info, automatic_onnx_runtime_is_installed,
-    automatic_onnx_runtime_kind_selectable, bundled_onnx_runtime_path,
-    ensure_automatic_onnx_runtime, set_automatic_onnx_runtime_kind, AutomaticOnnxRuntimeInfo,
-    AutomaticOnnxRuntimeKind,
+pub use config::desktop_model_cache_root;
+pub use config::{configure, update, AiConfig, AiConfigChange, GpuIdentity, RuntimeSource, Sha256};
+pub use jobs::AiJobEvent;
+pub use placement::{
+    active_execution_providers, ai_acceleration_enabled, end_gpu_job_records, gpu_job_in_progress,
+    take_ai_gpu_failure, AiGpuFailure, ExecutionProviderStatus,
 };
-
-#[cfg(not(target_os = "android"))]
-pub use execution_provider::set_ai_acceleration_enabled;
-pub use execution_provider::{
-    active_execution_providers, ai_acceleration_enabled, create_session_with_fallback,
-    take_ai_gpu_failure, AiGpuFailure, CpuFallbackProfile, ExecutionProviderStatus,
-    FallbackSession, SessionOptions,
-};
+pub use registry::install::ModelDownloadProgress;
+pub use registry::{AiFeature, InputShape, ModelInfo};
+pub use slot::{set_warm_ai_features, AiFeatureSet};

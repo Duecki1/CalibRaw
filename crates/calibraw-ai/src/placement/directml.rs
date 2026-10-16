@@ -17,25 +17,25 @@ static EDITOR_GPU: OnceLock<(u32, u32)> = OnceLock::new();
 
 /// Runs DirectML sessions on the GPU with these PCI IDs, as `wgpu` reports
 /// them for the editor's adapter.
-pub fn set_directml_adapter(vendor_id: u32, device_id: u32) {
+pub(super) fn set_directml_adapter(vendor_id: u32, device_id: u32) {
     if EDITOR_GPU.set((vendor_id, device_id)).is_err() {
         log::warn!("the DirectML adapter was already chosen");
     }
 }
 
-pub(crate) struct DirectMlAdapter {
+pub(super) struct DirectMlAdapter {
     /// Position in `IDXGIFactory1::EnumAdapters1` order, which is what
     /// DirectML's `device_id` selects.
-    pub(crate) index: i32,
+    pub(super) index: i32,
     /// Local video memory this process may still use without the OS paging
     /// it out: its budget minus its current usage. Integrated GPUs report the
     /// shared system memory granted to them here.
-    pub(crate) available_bytes: u64,
+    pub(super) available_bytes: u64,
 }
 
 /// The editor's GPU as DirectML numbers it, or `None` when it is unknown or
 /// DXGI does not list it.
-pub(crate) fn editor_adapter() -> Option<DirectMlAdapter> {
+pub(super) fn editor_adapter() -> Option<DirectMlAdapter> {
     let &(vendor_id, device_id) = EDITOR_GPU.get()?;
     match find_adapter(vendor_id, device_id) {
         Ok(Some(adapter)) => Some(adapter),

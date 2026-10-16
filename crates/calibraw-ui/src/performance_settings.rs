@@ -52,13 +52,13 @@ pub(crate) struct PerformanceSettings {
     pub github_update_check_allowed: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ignored_update_version: Option<String>,
-    pub subject_mask_quality: calibraw_ai::ai_masks::SubjectMaskQuality,
+    pub subject_mask_quality: calibraw_ai::models::subject::SubjectMaskQuality,
     #[cfg(not(target_os = "android"))]
     pub ai_gpu_acceleration: bool,
     #[cfg(not(target_os = "android"))]
     pub onnx_runtime_mode: crate::app::OnnxRuntimeMode,
     #[cfg(not(target_os = "android"))]
-    pub onnx_runtime_kind: calibraw_ai::AutomaticOnnxRuntimeKind,
+    pub onnx_runtime_kind: calibraw_ai::runtime::AutomaticOnnxRuntimeKind,
     /// Missing in files written before setup offered the runtime choice, so
     /// existing users who can choose one are asked once.
     #[cfg(not(target_os = "android"))]
@@ -171,13 +171,13 @@ impl Default for PerformanceSettings {
             auto_check_updates: true,
             github_update_check_allowed: None,
             ignored_update_version: None,
-            subject_mask_quality: calibraw_ai::ai_masks::SubjectMaskQuality::default(),
+            subject_mask_quality: calibraw_ai::models::subject::SubjectMaskQuality::default(),
             #[cfg(not(target_os = "android"))]
             ai_gpu_acceleration: true,
             #[cfg(not(target_os = "android"))]
             onnx_runtime_mode: crate::app::OnnxRuntimeMode::default(),
             #[cfg(not(target_os = "android"))]
-            onnx_runtime_kind: calibraw_ai::AutomaticOnnxRuntimeKind::default(),
+            onnx_runtime_kind: calibraw_ai::runtime::AutomaticOnnxRuntimeKind::default(),
             #[cfg(not(target_os = "android"))]
             onnx_runtime_kind_chosen: false,
             #[cfg(not(target_os = "android"))]
@@ -238,10 +238,10 @@ impl PerformanceSettings {
         // Setup offers the default until the user has chosen; earlier builds
         // saved other defaults.
         if !self.subject_mask_quality_chosen
-            || !calibraw_ai::ai_masks::SubjectMaskQuality::AVAILABLE
+            || !calibraw_ai::models::subject::SubjectMaskQuality::AVAILABLE
                 .contains(&self.subject_mask_quality)
         {
-            self.subject_mask_quality = calibraw_ai::ai_masks::SubjectMaskQuality::default();
+            self.subject_mask_quality = calibraw_ai::models::subject::SubjectMaskQuality::default();
         }
         self.raw_cache_files = self
             .raw_cache_files
@@ -509,29 +509,29 @@ mod tests {
     #[test]
     fn unchosen_subject_quality_is_the_default() {
         let settings = PerformanceSettings {
-            subject_mask_quality: calibraw_ai::ai_masks::SubjectMaskQuality::Low,
+            subject_mask_quality: calibraw_ai::models::subject::SubjectMaskQuality::Low,
             subject_mask_quality_chosen: false,
             ..Default::default()
         }
         .sanitized();
         assert_eq!(
             settings.subject_mask_quality,
-            calibraw_ai::ai_masks::SubjectMaskQuality::Medium
+            calibraw_ai::models::subject::SubjectMaskQuality::Medium
         );
     }
 
     #[test]
     fn unavailable_subject_quality_falls_back_to_the_platform_default() {
         let settings = PerformanceSettings {
-            subject_mask_quality: calibraw_ai::ai_masks::SubjectMaskQuality::High,
+            subject_mask_quality: calibraw_ai::models::subject::SubjectMaskQuality::High,
             subject_mask_quality_chosen: true,
             ..Default::default()
         }
         .sanitized();
         let expected = if cfg!(target_os = "android") {
-            calibraw_ai::ai_masks::SubjectMaskQuality::Medium
+            calibraw_ai::models::subject::SubjectMaskQuality::Medium
         } else {
-            calibraw_ai::ai_masks::SubjectMaskQuality::High
+            calibraw_ai::models::subject::SubjectMaskQuality::High
         };
         assert_eq!(settings.subject_mask_quality, expected);
     }
@@ -637,7 +637,7 @@ mod tests {
         assert!(settings.library_stack_raw_companions);
         assert_eq!(
             settings.subject_mask_quality,
-            calibraw_ai::ai_masks::SubjectMaskQuality::default()
+            calibraw_ai::models::subject::SubjectMaskQuality::default()
         );
         #[cfg(not(target_os = "android"))]
         {
@@ -648,7 +648,7 @@ mod tests {
             );
             assert_eq!(
                 settings.onnx_runtime_kind,
-                calibraw_ai::AutomaticOnnxRuntimeKind::Cpu
+                calibraw_ai::runtime::AutomaticOnnxRuntimeKind::Cpu
             );
             assert!(!settings.onnx_runtime_kind_chosen);
             assert!(!settings.discord_rich_presence);
@@ -685,7 +685,7 @@ mod tests {
             automatic_lens_geometry: false,
             automatic_lens_vignetting: true,
             missing_lens_profile_prompt: false,
-            subject_mask_quality: calibraw_ai::ai_masks::SubjectMaskQuality::Low,
+            subject_mask_quality: calibraw_ai::models::subject::SubjectMaskQuality::Low,
             tips_enabled: false,
             seen_tips: BTreeSet::from(["masks_tab".to_owned(), "from_a_newer_version".to_owned()]),
             ..Default::default()
@@ -694,7 +694,7 @@ mod tests {
         {
             settings.ai_gpu_acceleration = false;
             settings.onnx_runtime_mode = crate::app::OnnxRuntimeMode::Manual;
-            settings.onnx_runtime_kind = calibraw_ai::AutomaticOnnxRuntimeKind::Cuda13;
+            settings.onnx_runtime_kind = calibraw_ai::runtime::AutomaticOnnxRuntimeKind::Cuda13;
             settings.discord_rich_presence = true;
             settings.hdd_mode = true;
             settings.last_library_folder = Some(PathBuf::from("photos"));
@@ -737,7 +737,7 @@ mod tests {
         assert!(!restored.thumbnail_workers_automatic);
         assert_eq!(
             restored.subject_mask_quality,
-            calibraw_ai::ai_masks::SubjectMaskQuality::Low
+            calibraw_ai::models::subject::SubjectMaskQuality::Low
         );
         #[cfg(not(target_os = "android"))]
         {
@@ -748,7 +748,7 @@ mod tests {
             );
             assert_eq!(
                 restored.onnx_runtime_kind,
-                calibraw_ai::AutomaticOnnxRuntimeKind::Cuda13
+                calibraw_ai::runtime::AutomaticOnnxRuntimeKind::Cuda13
             );
             assert!(restored.discord_rich_presence);
             assert!(restored.hdd_mode);

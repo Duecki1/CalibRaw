@@ -2,7 +2,7 @@
 //! tell when a GPU failure ended the process mid-job: a driver reset or a
 //! native abort inside an execution provider leaves no error to handle.
 //!
-//! Model sessions run one at a time (`model_runtime`), so one record suffices.
+//! Model sessions run one at a time (`slot`), so one record suffices.
 
 use std::{
     fs,
@@ -52,7 +52,7 @@ impl Records {
 /// Keeps the record at `path` and returns the job a previous run left in it,
 /// i.e. the GPU job that run did not survive. Call once at startup, before
 /// any AI job. Without a path, jobs are only tracked in memory.
-pub fn set_gpu_job_record_path(path: PathBuf) -> Option<String> {
+pub(crate) fn set_gpu_job_record_path(path: PathBuf) -> Option<String> {
     let interrupted = take_record(&path);
     if RECORD_PATH.set(path).is_err() {
         log::warn!("the GPU AI job record path was already set");
