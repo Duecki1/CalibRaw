@@ -66,6 +66,22 @@
     <control>keyboard</control>
   </supports>
   <releases>
+    <release version="1.3.0" date="2026-10-16" type="stable">
+      <url>https://github.com/Duecki1/CalibRaw/releases/tag/v1.3.0</url>
+      <description>
+        <p>This release adds depth-based relighting, focus stacking and manual lens correction.</p>
+        <ul>
+          <li>Relight photos with depth-based lights and shadows</li>
+          <li>Merge focus stacks and improve HDR merging</li>
+          <li>Correct lenses manually with a live preview when no lens profile matches</li>
+          <li>Add an AI Denoise strength slider for RAW files</li>
+          <li>Run AI tools on the GPU through CUDA on Linux and DirectML on Windows</li>
+          <li>Show feature tips with short clips</li>
+          <li>Load the library and open RAW files faster</li>
+          <li>Fix temperature and tint, tone of non-RAW files and some DNG files</li>
+        </ul>
+      </description>
+    </release>
     <release version="1.2.1" date="2026-10-08" type="stable">
       <url>https://github.com/Duecki1/CalibRaw/releases/tag/v1.2.1</url>
       <description>

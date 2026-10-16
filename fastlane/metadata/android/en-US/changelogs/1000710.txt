@@ -1,0 +1,8 @@
+Relight photos with depth-based lights and shadows.
+Merge focus stacks, with an improved HDR merge.
+Correct lenses manually with a live preview when no profile matches.
+AI Denoise strength slider for RAW files.
+Faster, lower-quality subject mask option.
+Feature tips with short clips.
+Faster library loading and RAW opening.
+Fixes for temperature and tint, tone of non-RAW files and some DNGs.

@@ -13,9 +13,9 @@ RepoType: git
 Repo: https://github.com/Duecki1/CalibRaw.git
 
 Builds:
-  - versionName: 1.2.1
-    versionCode: 1000709
-    commit: 2ffab153dc7a5342620681e161c23da1dd801341
+  - versionName: 1.3.0
+    versionCode: 1000710
+    commit: v1.3.0
     subdir: android
     sudo:
       - apt-get update
@@ -73,5 +73,5 @@ MaintainerNotes: |-
 AutoUpdateMode: Version
 UpdateCheckMode: Tags ^v[0-9]+\.[0-9]+\.[0-9]+$
 UpdateCheckData: Cargo.toml|(?m)^fdroid_version_code = (\d+)|.|(?m)^version = "([\d.]+)"
-CurrentVersion: 1.2.1
-CurrentVersionCode: 1000709
+CurrentVersion: 1.3.0
+CurrentVersionCode: 1000710
