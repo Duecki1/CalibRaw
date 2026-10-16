@@ -28,7 +28,6 @@ zip.workspace = true
 
 [target.'cfg(target_os = "windows")'.dependencies]
 ort = { workspace = true, features = ["load-dynamic", "directml", "cuda", "tensorrt"] }
-windows.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
 ort = { workspace = true, features = ["load-dynamic", "coreml"] }

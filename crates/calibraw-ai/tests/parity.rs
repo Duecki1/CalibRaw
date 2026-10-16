@@ -53,7 +53,9 @@ use calibraw_ai::pipeline::{
 };
 use calibraw_ai::{AiConfigChange, AiJobEvent, RuntimeSource, Sha256};
 use calibraw_gpu::wgpu;
-use calibraw_gpu::{request_headless_device, HeadlessDevice, HeadlessDeviceRequest};
+use calibraw_gpu::{
+    request_headless_device, HeadlessAdapter, HeadlessDevice, HeadlessDeviceRequest,
+};
 use half::f16;
 use image::{imageops::FilterType, GrayImage, ImageBuffer, Luma, Rgb, RgbaImage};
 use std::collections::BTreeMap;
@@ -391,7 +393,7 @@ impl Harness {
     fn gpu_device(&self) -> HeadlessDevice {
         let device = request_headless_device(&HeadlessDeviceRequest {
             label: "AI parity",
-            power_preference: wgpu::PowerPreference::HighPerformance,
+            adapter: HeadlessAdapter::PreferredOrSoftware(wgpu::PowerPreference::HighPerformance),
             texture_dimension: 8192,
         })
         .unwrap_or_else(|error| panic!("{error}"));

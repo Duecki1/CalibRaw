@@ -6,7 +6,8 @@ use calibraw_cli::pipeline::{
     TileSpec, TiledExportJob, GLOBAL_TINT_OFFSET_LIMIT, HUE_ROTATION_LIMIT_DEGREES,
 };
 use calibraw_gpu::{
-    request_headless_device, wgpu, HeadlessDevice, HeadlessDeviceError, HeadlessDeviceRequest,
+    request_headless_device, wgpu, HeadlessAdapter, HeadlessDevice, HeadlessDeviceError,
+    HeadlessDeviceRequest,
 };
 use std::env;
 use std::path::{Path, PathBuf};
@@ -68,7 +69,7 @@ fn run() -> Result<()> {
         adapter_info,
     } = request_headless_device(&HeadlessDeviceRequest {
         label: "calibraw headless Develop export",
-        power_preference: wgpu::PowerPreference::HighPerformance,
+        adapter: HeadlessAdapter::PreferredOrSoftware(wgpu::PowerPreference::HighPerformance),
         texture_dimension: export_mask_atlas_edge(raw.width, raw.height),
     })
     .map_err(|error| match error {

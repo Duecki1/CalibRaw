@@ -9,7 +9,7 @@ background work follows. Update it in the change that alters a boundary.
 | Crate | Owns | May depend on | Must not depend on |
 |---|---|---|---|
 | `calibraw-core` | Image and edit models, colour mathematics, geometry, parameter validation, RAW/rendered loading, sidecars, presets, thumbnail cache | std, decoding and serde crates | any other CalibRaw crate, egui/eframe |
-| `calibraw-gpu` | GPU resource planning, WGSL composition, processing passes, readback, tiled export and file encoding | `calibraw-core`, wgpu, naga_oil | UI crates, egui/eframe |
+| `calibraw-gpu` | Headless devices (`device`), adapter memory queries (`memory/`), GPU resource planning, WGSL composition, processing passes, readback, tiled export and file encoding | `calibraw-core`, wgpu, naga_oil; in `memory/`, the platform APIs under wgpu (`windows` DXGI, `ash`, `objc2-metal`) | UI crates, egui/eframe |
 | `calibraw-ai` | AI configuration and device capabilities (`config`), ONNX Runtime loading and packages (`runtime/`), provider choice, CPU fallback, GPU failure handling and platform quirks (`placement/`), the model table, downloads and installation (`registry/`), the session slot (`slot`), the job worker (`jobs`), model-specific pre/postprocessing (`models/`) | `calibraw-core`, `calibraw-gpu` (denoise/remove render paths) | UI crates, egui/eframe |
 | `calibraw-ffi` | C ABI and the Android JNI bridge: storage, pickers, export publishing, notifications, replay encoder | `calibraw-core` (sidecar types), jni, android-activity | processing crates, UI crates, egui/eframe |
 | `calibraw-ui` (lib `calibraw`) | Application coordination (`app/`), views (`ui/`), presentation-independent services (`services/`), preview presentation | all crates above, eframe/egui, `moduwu-design` | — |

@@ -641,7 +641,6 @@ dependencies = [
  "tempfile",
  "ureq",
  "wgpu",
- "windows 0.62.2",
  "zip",
 ]
 
@@ -694,6 +693,7 @@ name = "calibraw-gpu"
 version = "1.3.0"
 dependencies = [
  "anyhow",
+ "ash",
  "bytemuck",
  "calibraw-core",
  "half",
@@ -705,10 +705,12 @@ dependencies = [
  "memmap2",
  "naga",
  "naga_oil",
+ "objc2-metal 0.3.2",
  "png",
  "pollster",
  "rayon",
  "wgpu",
+ "windows 0.62.2",
  "zune-core",
  "zune-jpegxl",
 ]

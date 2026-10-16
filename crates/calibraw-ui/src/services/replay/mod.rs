@@ -519,12 +519,13 @@ mod tests {
     }
 
     fn test_request() -> Option<ReplayRequest> {
-        let instance = wgpu::Instance::default();
-        let adapter =
-            pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default()))
-                .ok()?;
-        let (device, queue) =
-            pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default())).ok()?;
+        let calibraw_gpu::HeadlessDevice { device, queue, .. } =
+            calibraw_gpu::request_headless_device(&calibraw_gpu::HeadlessDeviceRequest {
+                label: "replay test",
+                adapter: calibraw_gpu::HeadlessAdapter::Preferred(wgpu::PowerPreference::None),
+                texture_dimension: wgpu::Limits::default().max_texture_dimension_2d,
+            })
+            .ok()?;
         let (width, height) = (96, 64);
         let rgb = (0..width * height)
             .flat_map(|index| {
