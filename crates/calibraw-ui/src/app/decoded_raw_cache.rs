@@ -180,6 +180,25 @@ impl DecodedRawCache {
         Ok(decoded)
     }
 
+    /// Drops the lens-corrected copy kept with the entry whose decode is
+    /// `original`. A correction changed after opening is made outside the
+    /// cache, so the copy made at open would otherwise stay in memory unused.
+    pub(crate) fn forget_lens_correction(&self, original: &Arc<LoadedRaw>) {
+        let decoded = self
+            .lock()
+            .entries
+            .iter()
+            .find_map(|entry| match &entry.slot {
+                Slot::Ready(decoded) if Arc::ptr_eq(decoded.original(), original) => {
+                    Some(Arc::clone(decoded))
+                }
+                _ => None,
+            });
+        if let Some(decoded) = decoded {
+            *lock(&decoded.lens_corrected) = None;
+        }
+    }
+
     fn lock(&self) -> MutexGuard<'_, CacheState> {
         lock(&self.shared.state)
     }
@@ -391,6 +410,33 @@ mod tests {
         }
         cache.set_limit(1);
         assert_eq!(cached_sources(&cache), ["c"]);
+    }
+
+    #[test]
+    fn a_forgotten_lens_correction_is_made_again() {
+        let cache = DecodedRawCache::new(2);
+        let decoded = cache.get_or_decode(&key("a"), || Ok(raw(4))).unwrap();
+        let lens = LensCorrection::Profile(crate::pipeline::LensfunLens {
+            maker: "Tamron".to_owned(),
+            model: "28-75".to_owned(),
+            ..Default::default()
+        });
+        let corrections = AtomicUsize::new(0);
+        let correct = |raw: &LoadedRaw| {
+            corrections.fetch_add(1, Ordering::Relaxed);
+            Ok(raw.clone())
+        };
+        let first = decoded.lens_corrected(&lens, correct).unwrap();
+        // A RAW that is not this entry's decode leaves the copy in place.
+        cache.forget_lens_correction(&Arc::new(raw(4)));
+        assert!(Arc::ptr_eq(
+            &first,
+            &decoded.lens_corrected(&lens, correct).unwrap()
+        ));
+        cache.forget_lens_correction(decoded.original());
+        let again = decoded.lens_corrected(&lens, correct).unwrap();
+        assert!(!Arc::ptr_eq(&first, &again));
+        assert_eq!(corrections.load(Ordering::Relaxed), 2);
     }
 
     #[test]

@@ -217,6 +217,8 @@ pub(super) struct LensCorrectionTaskRequest {
     pub(super) preview_quality: PreviewQuality,
     pub(super) preview_proxy_edge: u32,
     pub(super) cached_raws: Option<(Arc<LoadedRaw>, Arc<LoadedRaw>)>,
+    /// Where `original_raw`'s lens-corrected copy from opening is kept.
+    pub(super) decoded_raws: DecodedRawCache,
 }
 
 pub(crate) struct ExportState {

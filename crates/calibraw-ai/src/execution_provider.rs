@@ -249,6 +249,13 @@ fn configure_common_builder(mut builder: SessionBuilder) -> Result<SessionBuilde
     builder = builder
         .with_memory_pattern(false)
         .map_err(|error| anyhow::anyhow!("disable ONNX Runtime memory pattern: {error}"))?;
+    if cfg!(target_os = "android") {
+        // Android kills the app when memory runs out, so do not keep a second,
+        // packed copy of the model's weights; inference is somewhat slower.
+        builder = builder
+            .with_prepacking(false)
+            .map_err(|error| anyhow::anyhow!("disable Android weight prepacking: {error}"))?;
+    }
     Ok(builder)
 }
 
@@ -257,17 +264,15 @@ fn configure_cpu_builder(
     options: &SessionOptions,
 ) -> Result<SessionBuilder> {
     if options.cpu_fallback_profile == CpuFallbackProfile::MobileDepth {
-        // Depth runs alongside Android's RAW preview. Bound the thread pool and
-        // avoid retaining a second, packed copy of the model's weights.
+        // Depth runs alongside Android's RAW preview, so bound the thread
+        // pool. Every Android session already skips weight prepacking.
         builder = builder
             .with_parallel_execution(false)
             .map_err(|error| anyhow::anyhow!("force sequential mobile depth execution: {error}"))?
             .with_intra_threads(2)
             .map_err(|error| anyhow::anyhow!("limit mobile depth inference threads: {error}"))?
             .with_intra_op_spinning(false)
-            .map_err(|error| anyhow::anyhow!("disable mobile depth thread spinning: {error}"))?
-            .with_prepacking(false)
-            .map_err(|error| anyhow::anyhow!("disable mobile depth weight prepacking: {error}"))?;
+            .map_err(|error| anyhow::anyhow!("disable mobile depth thread spinning: {error}"))?;
     }
     if options.cpu_fallback_profile == CpuFallbackProfile::WindowsSamEncoder
         && cfg!(target_os = "windows")
@@ -330,7 +335,8 @@ fn create_accelerated_session(
 }
 
 pub struct FallbackSession {
-    session: Session,
+    /// `None` only after a CPU rebuild failed; the next run tries it again.
+    session: Option<Session>,
     source: PathBuf,
     options: SessionOptions,
     active_provider: &'static str,
@@ -342,9 +348,10 @@ impl FallbackSession {
     where
         F: FnMut(&mut Session, bool) -> Result<T>,
     {
-        match run(&mut self.session, self.accelerated) {
+        let accelerated = self.accelerated;
+        match run(self.session()?, accelerated) {
             Ok(value) => Ok(value),
-            Err(accelerated_error) if self.accelerated => {
+            Err(accelerated_error) if accelerated => {
                 let failed_provider = self.active_provider;
                 if is_gpu_memory_failure(&accelerated_error) {
                     quarantine_ai_gpu_after_memory_failure(
@@ -366,23 +373,23 @@ impl FallbackSession {
                 ));
                 publish_status(self.options.model_name, failed_provider, true);
 
-                let cpu_session = create_cpu_session_inner(&self.source, &self.options)
-                    .with_context(|| {
-                        format!(
-                            "rebuild {} on CPU after {failed_provider} inference failure: {accelerated_error:#}",
-                            self.options.model_name
-                        )
-                    })?;
-                self.session = cpu_session;
+                // Drop the failed session before building its replacement, so
+                // the two sessions' weights and buffers are never held at once.
+                self.session = None;
                 self.active_provider = "CPU (fallback)";
                 self.accelerated = false;
-                publish_status(self.options.model_name, self.active_provider, true);
+                let model_name = self.options.model_name;
+                let session = self.session().with_context(|| {
+                    format!(
+                        "rebuild {model_name} on CPU after {failed_provider} inference failure: {accelerated_error:#}"
+                    )
+                })?;
+                publish_status(model_name, "CPU (fallback)", true);
 
                 log::info!(
-                    "{} now uses CPU fallback after {failed_provider} runtime failure",
-                    self.options.model_name
+                    "{model_name} now uses CPU fallback after {failed_provider} runtime failure"
                 );
-                run(&mut self.session, false).with_context(|| {
+                run(session, false).with_context(|| {
                     format!(
                         "{operation} failed on {failed_provider} ({accelerated_error:#}) and again on CPU fallback"
                     )
@@ -390,6 +397,16 @@ impl FallbackSession {
             }
             Err(error) => Err(error),
         }
+    }
+
+    /// The session, built on the CPU when an earlier rebuild left none.
+    fn session(&mut self) -> Result<&mut Session> {
+        let session = match self.session.take() {
+            Some(session) => session,
+            None => create_cpu_session_inner(&self.source, &self.options)
+                .with_context(|| format!("rebuild {} on CPU", self.options.model_name))?,
+        };
+        Ok(self.session.insert(session))
     }
 }
 
@@ -427,7 +444,7 @@ pub fn create_session_with_fallback(
                     ));
                     publish_status(options.model_name, provider_name, false);
                     return Ok(FallbackSession {
-                        session,
+                        session: Some(session),
                         source,
                         options,
                         active_provider: provider_name,
@@ -497,7 +514,7 @@ pub fn create_session_with_fallback(
     publish_status(options.model_name, active_provider, attempted_acceleration);
 
     Ok(FallbackSession {
-        session,
+        session: Some(session),
         source,
         options,
         active_provider,

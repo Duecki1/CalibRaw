@@ -392,12 +392,15 @@ pub(super) enum LensCorrectionEvent {
 }
 
 pub(crate) const MAX_DESKTOP_RAW_CACHE_FILES: usize = 8;
-pub(crate) const MAX_ANDROID_RAW_CACHE_FILES: usize = 3;
+/// Android keeps no decoded RAWs: the open photo is held by its document, and
+/// a cached one would keep a previous photo or a stale lens-corrected copy in
+/// memory, where running out kills the app.
+pub(crate) const MAX_ANDROID_RAW_CACHE_FILES: usize = 0;
 
 /// Desktop keeps the open photo and both prefetched neighbours.
 pub(crate) const fn default_raw_cache_limit() -> usize {
     if cfg!(target_os = "android") {
-        1
+        MAX_ANDROID_RAW_CACHE_FILES
     } else {
         3
     }

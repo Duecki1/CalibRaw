@@ -95,6 +95,7 @@ impl CalibRawApp {
             preview_quality: self.preview.quality,
             preview_proxy_edge,
             cached_raws,
+            decoded_raws: self.develop.decoded_raws.clone(),
         });
     }
 
@@ -134,6 +135,11 @@ impl CalibRawApp {
                     if worker_cancellation.load(Ordering::Acquire) {
                         return Err("foreground operation cancelled".to_owned());
                     }
+                    // The document keeps its own reference until this result
+                    // replaces it; the cache's would outlive it unused.
+                    request
+                        .decoded_raws
+                        .forget_lens_correction(&request.original_raw);
                     let applied_label = request.selection.as_ref().map(LensCorrection::label);
                     let (full_raw, preview_raw) = if let Some(cached_raws) = request.cached_raws {
                         cached_raws
