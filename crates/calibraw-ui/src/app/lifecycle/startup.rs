@@ -394,11 +394,7 @@ impl CalibRawApp {
         if let Some(render_state) = cc.wgpu_render_state.as_ref() {
             calibraw_gpu::install_uncaptured_gpu_error_handler(&render_state.device);
             calibraw_gpu::install_gpu_device_lost_handler(&render_state.device);
-            let adapter = render_state.adapter.get_info();
-            editor_gpu = Some(calibraw_ai::GpuIdentity {
-                vendor_id: adapter.vendor,
-                device_id: adapter.device,
-            });
+            editor_gpu = Some(calibraw_ai::GpuIdentity::new(&render_state.device));
         }
         crate::ui::theme::install(&cc.egui_ctx);
         calibraw_core::diagnostics::record("CalibRaw desktop UI initialized");
@@ -435,8 +431,10 @@ impl CalibRawApp {
         cc: &eframe::CreationContext<'_>,
         android_app: calibraw_ffi::AndroidApp,
     ) -> Self {
+        let mut editor_gpu = None;
         if let Some(render_state) = cc.wgpu_render_state.as_ref() {
             calibraw_gpu::install_uncaptured_gpu_error_handler(&render_state.device);
+            editor_gpu = Some(calibraw_ai::GpuIdentity::new(&render_state.device));
         }
         let repaint = cc.egui_ctx.clone();
         calibraw_ffi::attach_ui(move || repaint.request_repaint());
@@ -498,7 +496,7 @@ impl CalibRawApp {
             automatic_runtime: calibraw_ai::runtime::AutomaticOnnxRuntimeKind::default(),
             model_root: app.ai_model_root(),
             job_record_path: None,
-            gpu: None,
+            gpu: editor_gpu,
         });
         app.remove_legacy_ai_denoise_cache();
         app

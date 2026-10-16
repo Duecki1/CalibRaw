@@ -7,6 +7,7 @@ use crate::placement;
 use crate::registry::artifact::sha256_file_hex;
 use crate::runtime::AutomaticOnnxRuntimeKind;
 use anyhow::Result;
+use calibraw_gpu::memory::AdapterMemory;
 use std::{
     fmt,
     path::{Path, PathBuf},
@@ -58,13 +59,47 @@ pub enum RuntimeSource {
     Manual { path: PathBuf, sha256: Sha256 },
 }
 
-/// The GPU the editor renders with, by its PCI IDs as `wgpu` reports them.
-/// DirectML sessions run on it, so AI work and its free-memory check concern
-/// the same adapter.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// The GPU the editor renders with. DirectML sessions run on it, so AI work
+/// and its free-memory check concern the same adapter.
+#[derive(Clone, Debug)]
 pub struct GpuIdentity {
-    pub vendor_id: u32,
-    pub device_id: u32,
+    /// PCI IDs as `wgpu` reports them; 0 on Metal, which has none.
+    vendor_id: u32,
+    device_id: u32,
+    backend: wgpu::Backend,
+    /// The editor's device, kept for the memory query, which Metal answers
+    /// only through a device.
+    device: wgpu::Device,
+}
+
+impl GpuIdentity {
+    pub fn new(device: &wgpu::Device) -> Self {
+        let info = device.adapter_info();
+        Self {
+            vendor_id: info.vendor,
+            device_id: info.device,
+            backend: info.backend,
+            device: device.clone(),
+        }
+    }
+
+    pub(crate) fn vendor_id(&self) -> u32 {
+        self.vendor_id
+    }
+
+    pub(crate) fn device_id(&self) -> u32 {
+        self.device_id
+    }
+
+    pub(crate) fn backend(&self) -> wgpu::Backend {
+        self.backend
+    }
+
+    /// GPU memory this process may use on the adapter now, where its backend
+    /// reports it.
+    pub(crate) fn memory(&self) -> Option<AdapterMemory> {
+        calibraw_gpu::memory::adapter_memory(&self.device)
+    }
 }
 
 /// What this device offers local AI. Model code reads these instead of the

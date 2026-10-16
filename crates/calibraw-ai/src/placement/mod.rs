@@ -23,6 +23,7 @@ use crate::config::GpuIdentity;
 #[cfg(not(target_os = "android"))]
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::OnceLock;
 
 /// Rises whenever the providers new sessions may use change; a loaded session
 /// of an older generation is not reused.
@@ -66,10 +67,27 @@ pub fn ai_acceleration_enabled() -> bool {
     }
 }
 
+/// The GPU the editor renders with, once the app has set it.
+static EDITOR_GPU: OnceLock<GpuIdentity> = OnceLock::new();
+
 /// Runs DirectML sessions on `gpu`; other providers pick their own device.
+/// Records the memory it has free in diagnostics.
 pub(crate) fn set_editor_gpu(gpu: GpuIdentity) {
-    #[cfg(target_os = "windows")]
-    directml::set_directml_adapter(gpu.vendor_id, gpu.device_id);
-    #[cfg(not(target_os = "windows"))]
-    let _ = gpu;
+    let identity = format!(
+        "{:04x}:{:04x} ({:?})",
+        gpu.vendor_id(),
+        gpu.device_id(),
+        gpu.backend()
+    );
+    calibraw_core::diagnostics::record(match gpu.memory() {
+        Some(memory) => format!(
+            "editor GPU {identity}: {} MiB of {} MiB budget free",
+            memory.available() >> 20,
+            memory.budget >> 20
+        ),
+        None => format!("editor GPU {identity}: free memory not reported"),
+    });
+    if EDITOR_GPU.set(gpu).is_err() {
+        log::warn!("the editor GPU was already set");
+    }
 }

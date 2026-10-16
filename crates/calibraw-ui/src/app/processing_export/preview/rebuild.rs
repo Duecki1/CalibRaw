@@ -7,18 +7,19 @@ mod mask_upload_tests {
 
     #[test]
     fn shared_depth_refresh_uploads_compact_atlases_and_clears_unused_dirty_slots() {
-        let instance = wgpu::Instance::default();
-        let Ok(adapter) =
-            pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-                force_fallback_adapter: true,
-                ..Default::default()
-            }))
-        else {
-            eprintln!("compact preview mask upload test skipped: no headless GPU adapter");
-            return;
+        let gpu = calibraw_gpu::request_headless_device(&calibraw_gpu::HeadlessDeviceRequest {
+            label: "compact preview mask upload test",
+            adapter: calibraw_gpu::HeadlessAdapter::Software,
+            texture_dimension: wgpu::Limits::default().max_texture_dimension_2d,
+        });
+        let (device, queue) = match gpu {
+            Ok(gpu) => (gpu.device, gpu.queue),
+            Err(calibraw_gpu::HeadlessDeviceError::NoAdapter(_)) => {
+                eprintln!("compact preview mask upload test skipped: no headless GPU adapter");
+                return;
+            }
+            Err(error) => panic!("{error}"),
         };
-        let (device, queue) =
-            pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default())).unwrap();
         let raw = LoadedRaw::from_scene_linear_rec2020(16, 16, vec![0.2; 16 * 16 * 3]).unwrap();
         let exposure = ExposureParams::default();
         for mask_count in [0, 2] {

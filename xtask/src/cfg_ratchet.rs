@@ -24,10 +24,11 @@ const BASELINE: &str = "xtask/cfg-baseline.txt";
 /// Workspace directories whose Rust files are counted.
 const SCANNED_ROOTS: &[&str] = &["crates", "xtask"];
 /// Directories that own platform differences; `target_os` is free there.
-/// Filled as the platform modules of docs/GPU_REWORK.md (P1, P7) appear.
+/// Filled as the platform modules of docs/GPU_REWORK.md (P1, P3, P7) appear.
 const ALLOWED_DIRECTORIES: &[&str] = &[
     "crates/calibraw-ai/src/placement",
     "crates/calibraw-ai/src/runtime",
+    "crates/calibraw-gpu/src/memory",
 ];
 
 /// `target_os` conditions per workspace-relative file path.

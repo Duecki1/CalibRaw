@@ -25,7 +25,9 @@ pub(in crate::ui::library) fn developed_thumbnail_gpu(
     let initialized = DEVELOPED_THUMBNAIL_GPU.get_or_init(|| {
         let gpu = calibraw_gpu::request_headless_device(&calibraw_gpu::HeadlessDeviceRequest {
             label: "calibraw library edited-thumbnail device",
-            power_preference: eframe::wgpu::PowerPreference::LowPower,
+            adapter: calibraw_gpu::HeadlessAdapter::PreferredOrSoftware(
+                eframe::wgpu::PowerPreference::LowPower,
+            ),
             texture_dimension: DEVELOPED_THUMBNAIL_PROXY_EDGE.max(mask_atlas_edge()),
         })
         .map_err(|error| match error {

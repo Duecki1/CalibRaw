@@ -3,7 +3,7 @@
 Plan for making local AI and platform handling uniform: one GPU path for
 every vendor, one rule for GPU vs CPU, and platform differences decided once
 instead of scattered through the code. Status: P0.1 (cfg ratchet), P0.2
-(parity harness), P1 and P2 implemented; P0.3 (WebGPU spike) and P3–P7
+(parity harness), P1, P2 and P3 implemented; P0.3 (WebGPU spike) and P4–P7
 planned.
 
 Target behaviour for AI: **run on the GPU when the model fits in free VRAM,
@@ -369,6 +369,44 @@ adapter lookup reads from it.
 
 **Exit:** no behaviour change; diagnostics log the measured budget on every
 OS.
+
+**As built** (differences from the sketch above):
+
+- Of the five sites, `developed.rs` and `calibraw-develop-export.rs` already
+  used `request_headless_device`. The other three are test devices, as are
+  two more that were converted with them (`mask_interaction_tests.rs` and the
+  RawNIND test device in `models/denoise.rs`).
+- `HeadlessDeviceRequest::adapter` is a `HeadlessAdapter` enum instead of
+  `software_fallback: bool`: `Preferred(power)`, `PreferredOrSoftware(power)`
+  (the previous behaviour, kept by the thumbnail device, the CLI and the
+  parity harness) and `Software`, for the two mask tests that only ever used
+  wgpu's fallback adapter.
+- Still creating their own adapter: the editor's device (eframe creates it
+  with the window surface; it already uses `base_device_limits`),
+  `pipeline/gpu/tests.rs` (software adapter first, then hardware), and
+  `preview_tests.rs` and `ui_review_tests.rs` (the editor's instance
+  descriptor with its memory budget thresholds).
+- `adapter_memory` takes the `wgpu::Device`, not the adapter: wgpu-hal 29
+  exposes Metal's `MTLDevice` only through a device.
+  `AdapterMemory::available()` is budget minus usage, never below 0.
+- The query lives in `calibraw-gpu/src/memory/` (`dxgi`, `vulkan`, `metal`),
+  a cfg-ratchet allowed directory. Windows uses DXGI whatever backend wgpu
+  picked, matching PCI IDs as DirectML did; `find_dxgi_adapter` also returns
+  the DXGI index DirectML needs, so one enumeration still serves both.
+  Vulkan sums the device-local heaps (AMD splits video memory around its
+  256 MiB CPU-visible heap) and needs `VK_EXT_memory_budget` on the device
+  and `VK_KHR_get_physical_device_properties2` on the instance, both of which
+  wgpu enables wherever the driver has them.
+- `ash` and `objc2-metal` are added at the versions wgpu-hal already uses, so
+  the lockfile gains no crates; `windows` moved from `calibraw-ai` to
+  `calibraw-gpu`.
+- `GpuIdentity::new(&wgpu::Device)` keeps the vendor, device and backend and a
+  clone of the editor's device for `memory()`; its fields are private.
+  Android now passes it too, although no Android provider reads it.
+  `configure` records `editor GPU vvvv:dddd (Backend): X MiB of Y MiB budget
+  free` (or `free memory not reported`) in diagnostics.
+- `cargo test -p calibraw-gpu adapter_memory -- --ignored --nocapture`
+  prints what this machine's preferred adapter reports, for checking each OS.
 
 ---
 

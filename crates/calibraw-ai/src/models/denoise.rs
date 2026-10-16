@@ -398,18 +398,17 @@ mod tests {
     }
 
     fn test_wgpu_device() -> (calibraw_gpu::wgpu::Device, calibraw_gpu::wgpu::Queue) {
-        let instance = calibraw_gpu::wgpu::Instance::default();
-        let adapter = pollster::block_on(
-            instance.request_adapter(&calibraw_gpu::wgpu::RequestAdapterOptions::default()),
-        )
-        .expect("a wgpu adapter is required for RawNIND integration tests");
-        pollster::block_on(
-            adapter.request_device(&calibraw_gpu::wgpu::DeviceDescriptor {
-                label: Some("RawNIND integration test"),
-                ..Default::default()
-            }),
-        )
-        .unwrap()
+        let gpu = calibraw_gpu::request_headless_device(&calibraw_gpu::HeadlessDeviceRequest {
+            label: "RawNIND integration test",
+            adapter: calibraw_gpu::HeadlessAdapter::Preferred(
+                calibraw_gpu::wgpu::PowerPreference::None,
+            ),
+            texture_dimension: calibraw_gpu::wgpu::Limits::default().max_texture_dimension_2d,
+        })
+        .unwrap_or_else(|error| {
+            panic!("a wgpu adapter is required for RawNIND integration tests: {error}")
+        });
+        (gpu.device, gpu.queue)
     }
 
     #[test]
