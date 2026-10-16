@@ -58,9 +58,15 @@ impl CalibRawApp {
         true
     }
 
-    pub(super) fn generated_model_path(&self, model: AiMaskModel) -> PathBuf {
+    /// `subject_precision` comes from the caller, so one job's path, check and
+    /// download all name the same subject model file.
+    pub(super) fn generated_model_path(
+        &self,
+        model: AiMaskModel,
+        subject_precision: SubjectModelPrecision,
+    ) -> PathBuf {
         match model {
-            AiMaskModel::Subject => self.birefnet_model_path(),
+            AiMaskModel::Subject => self.birefnet_model_path(subject_precision),
             AiMaskModel::Sky => self.skyseg_model_path(),
             AiMaskModel::Depth => self.depth_model_path(),
         }
@@ -69,11 +75,13 @@ impl CalibRawApp {
     pub(super) fn generated_model_is_verified(
         &self,
         model: AiMaskModel,
+        subject_precision: SubjectModelPrecision,
         path: &std::path::Path,
     ) -> bool {
         match model {
             AiMaskModel::Subject => calibraw_ai::ai_masks::birefnet_model_is_verified(
                 self.ai.subject_mask_quality,
+                subject_precision,
                 path,
             ),
             AiMaskModel::Sky => calibraw_ai::ai_masks::skyseg_model_is_verified(path),
@@ -83,13 +91,12 @@ impl CalibRawApp {
 
     fn generated_mask_progress(&self, model: AiMaskModel, inferencing: bool) -> String {
         match (model, inferencing) {
-            (AiMaskModel::Subject, true) => format!(
-                "Running {} locally…",
-                self.ai.subject_mask_quality.model().checkpoint
-            ),
+            (AiMaskModel::Subject, true) => {
+                format!("Running {} locally…", self.subject_model().checkpoint)
+            }
             (AiMaskModel::Subject, false) => format!(
                 "Preparing {} download…",
-                self.ai.subject_mask_quality.model().download_label
+                self.subject_model().download_label
             ),
             (AiMaskModel::Sky, true) => "Running SkySeg U2Net locally…".to_owned(),
             (AiMaskModel::Sky, false) => "Preparing SkySeg U2Net download…".to_owned(),
@@ -122,8 +129,9 @@ impl CalibRawApp {
             );
             return;
         };
-        let model_path = self.generated_model_path(model);
-        let model_present = self.generated_model_is_verified(model, &model_path);
+        let subject_precision = self.subject_model_precision();
+        let model_path = self.generated_model_path(model, subject_precision);
+        let model_present = self.generated_model_is_verified(model, subject_precision, &model_path);
         #[cfg(not(target_os = "android"))]
         let (runtime_path, runtime_sha256) = self.onnx_runtime_for_ai();
         #[cfg(target_os = "android")]
@@ -133,6 +141,7 @@ impl CalibRawApp {
             AiMaskWorkerRequest {
                 model,
                 subject_quality: self.ai.subject_mask_quality,
+                subject_precision,
                 model_path,
                 allow_download,
                 runtime_path,

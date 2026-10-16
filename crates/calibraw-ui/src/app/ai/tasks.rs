@@ -80,7 +80,12 @@ impl CalibRawApp {
         match feature {
             AiFeature::Subject | AiFeature::Sky | AiFeature::SceneDepth => {
                 let model = generated_model(feature).expect("generated feature has a model");
-                !self.generated_model_is_verified(model, &self.generated_model_path(model))
+                let precision = self.subject_model_precision();
+                !self.generated_model_is_verified(
+                    model,
+                    precision,
+                    &self.generated_model_path(model, precision),
+                )
             }
             AiFeature::Object => {
                 let (encoder, decoder) = self.sam21_model_paths();

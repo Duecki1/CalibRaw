@@ -261,9 +261,30 @@ impl CalibRawApp {
         )
     }
 
-    pub(in crate::app) fn birefnet_model_path(&self) -> PathBuf {
+    /// Float16 when subject masks are expected to run on the GPU; see
+    /// `SubjectModelPrecision::for_current_sessions`.
+    pub(in crate::app) fn subject_model_precision(
+        &self,
+    ) -> calibraw_ai::ai_masks::SubjectModelPrecision {
+        #[cfg(not(target_os = "android"))]
+        let manual_runtime = self.ai.runtime_mode == OnnxRuntimeMode::Manual;
+        #[cfg(target_os = "android")]
+        let manual_runtime = false;
+        calibraw_ai::ai_masks::SubjectModelPrecision::for_current_sessions(manual_runtime)
+    }
+
+    pub(in crate::app) fn subject_model(&self) -> calibraw_ai::ai_masks::BiRefNetModelSpec {
+        self.ai
+            .subject_mask_quality
+            .model(self.subject_model_precision())
+    }
+
+    pub(in crate::app) fn birefnet_model_path(
+        &self,
+        precision: calibraw_ai::ai_masks::SubjectModelPrecision,
+    ) -> PathBuf {
         self.ai_model_root()
-            .join(self.ai.subject_mask_quality.model().cache_filename)
+            .join(self.ai.subject_mask_quality.model(precision).cache_filename)
     }
 
     pub(in crate::app) fn skyseg_model_path(&self) -> PathBuf {

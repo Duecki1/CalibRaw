@@ -1,5 +1,5 @@
 use super::*;
-use calibraw_ai::ai_masks::AiMaskModel;
+use calibraw_ai::ai_masks::{AiMaskModel, SubjectModelPrecision};
 use tasks::{generated_feature, generated_model};
 
 fn generated_mask_model(kind: MaskKind) -> Option<AiMaskModel> {
