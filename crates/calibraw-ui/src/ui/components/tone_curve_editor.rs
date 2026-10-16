@@ -376,6 +376,17 @@ pub(crate) fn tone_curve_channel_editor(
         changed |= tone_curve_editor(ui, curve, color);
     });
 
+    // Touch has no hover, so the gestures are stated as visible text.
+    #[cfg(target_os = "android")]
+    ui.add(
+        egui::Label::new(
+            egui::RichText::new("Double-tap to add a point. Long-press a point to remove it.")
+                .small()
+                .color(ui.visuals().weak_text_color()),
+        )
+        .wrap(),
+    );
+
     changed
 }
 
