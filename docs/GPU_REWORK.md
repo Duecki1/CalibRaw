@@ -2,8 +2,8 @@
 
 Plan for making local AI and platform handling uniform: one GPU path for
 every vendor, one rule for GPU vs CPU, and platform differences decided once
-instead of scattered through the code. Status: P0.1 (cfg ratchet) and P0.2
-(parity harness) implemented; P0.3 (WebGPU spike) and P1–P7 planned.
+instead of scattered through the code. Status: P0.1 (cfg ratchet), P0.2
+(parity harness) and P1 implemented; P0.3 (WebGPU spike) and P2–P7 planned.
 
 Target behaviour for AI: **run on the GPU when the model fits in free VRAM,
 otherwise on the CPU** — the same rule for every model on every platform.
@@ -227,6 +227,27 @@ calibraw_ai::update(AiConfigChange::Acceleration(bool) | AiConfigChange::Runtime
 
 **Exit:** parity harness bit-identical; tests pass;
 [ARCHITECTURE.md](ARCHITECTURE.md)'s `calibraw-ai` row and lock table updated.
+
+**As built** (differences from the sketch above):
+
+- `ModelSpec::session` is the existing `SessionOptions` (model name, CPU
+  profile, GPU memory); there is no separate `SessionProfile` type yet.
+  Download and package membership are a `ModelSource` enum, and the app reads
+  model facts through the public `ModelInfo` (`models::sky::MODEL` etc.).
+- Events are `AiJobEvent<T, P>`: `P` is each job's own progress type
+  (`AiMaskProgress`, `ObjectMaskProgress`, `RemoveProgress`,
+  `AiDenoiseProgress`), so no job matches variants it never sends. The old
+  event names remain as type aliases.
+- The runtime is part of `AiConfig` and `AiConfigChange::Runtime`, not of each
+  request. Manual mode without a selected library maps to `Automatic`, as
+  the `(None, None)` pair did. `AutomaticOnnxRuntimeKind` has its own
+  `AiConfigChange::AutomaticRuntime` until P5 deletes it.
+- `AiConfig::gpu` is a minimal `GpuIdentity { vendor_id, device_id }`; P3.3
+  extends it. `model_root` places the automatic runtime and RawNIND models.
+- Remove and retouch now run on `spawn_job` too, so a panic there finishes the
+  job with an error; before, the Remove dialog waited forever.
+- OS checks left outside `runtime/` and `placement/` for P2: `config.rs`,
+  `models/{masks,subject,depth}.rs`, `models/object/sam.rs`, `slot.rs`.
 
 ---
 

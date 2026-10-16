@@ -1,65 +1,52 @@
-use super::*;
+//! Object masks from SAM 2.1 Hiera Tiny: the encoder runs once per crop, the
+//! decoder once per prompt change.
+
+use super::masks::{cache_object_ai_sessions, mask_model_retention};
+use super::normalized_rgb_input;
+use crate::jobs::{spawn_job, AiJobEvent, JobKind};
+use crate::registry::{AiModel, InputShape, ModelInfo};
+use crate::runtime::initialize_runtime;
+use anyhow::{Context, Result};
+use image::{imageops::FilterType, ImageBuffer, Rgba};
+use std::{
+    path::{Path, PathBuf},
+    sync::{atomic::AtomicBool, mpsc, Arc},
+};
 
 mod candidates;
 mod cleanup;
 mod prompts;
 mod sam;
 use candidates::*;
-pub(super) use cleanup::*;
+use cleanup::*;
 use prompts::*;
 use sam::*;
 
-pub const SAM21_ENCODER_MODEL_URL: &str = concat!(
-    "https://huggingface.co/Duecki/CalibRaw-Artifacts/resolve/",
-    "91085ce0ec322a4a7cbd20059688690218e52f9a/",
-    "models/sam2/sam2.1-hiera-tiny.encoder.onnx"
-);
-pub const SAM21_DECODER_MODEL_URL: &str = concat!(
-    "https://huggingface.co/Duecki/CalibRaw-Artifacts/resolve/",
-    "91085ce0ec322a4a7cbd20059688690218e52f9a/",
-    "models/sam2/sam2.1-hiera-tiny.decoder.onnx"
-);
-pub const SAM21_ENCODER_SHA256_HEX: &str =
-    "667384d1e686de6828b841ac8a24db0fafa2b3452494225f82eeedac56141230";
-pub const SAM21_DECODER_SHA256_HEX: &str =
-    "c40f5aa7d37b681cd500481a85d44839fd81c93dce1e86271a2c866470d22105";
+pub const ENCODER_MODEL: ModelInfo = AiModel::SamEncoder.spec().info();
+pub const DECODER_MODEL: ModelInfo = AiModel::SamDecoder.spec().info();
+/// Both SAM 2.1 files together, as the download consent shows them.
 pub const SAM21_MODEL_BYTES_ESTIMATE: u64 = 125_500_000;
-const SAM21_MODEL_SIZE: u32 = 1024;
-const SAM21_MASK_INPUT_SIZE: u32 = 256;
+const SAM21_MODEL_SIZE: u32 = ENCODER_MODEL.input.edge();
+const SAM21_MASK_INPUT_SIZE: u32 = match DECODER_MODEL.input {
+    InputShape::Prompted { mask_edge, .. } => mask_edge,
+    InputShape::Square { .. } | InputShape::Tiled { .. } => {
+        panic!("the SAM 2.1 decoder takes prompts and a previous mask")
+    }
+};
 const SAM21_MAX_PROMPTS: usize = 32;
-pub(super) const SAM21_ENCODER_BYTES: u64 = 109_471_931;
-pub(super) const SAM21_DECODER_BYTES: u64 = 16_519_561;
-
-pub(super) const SAM21_ENCODER_ARTIFACT: ModelArtifact = ModelArtifact {
-    name: "SAM 2.1 encoder",
-    url: Some(SAM21_ENCODER_MODEL_URL),
-    sha256: SAM21_ENCODER_SHA256_HEX,
-    bytes: SAM21_ENCODER_BYTES,
-};
-pub(super) const SAM21_DECODER_ARTIFACT: ModelArtifact = ModelArtifact {
-    name: "SAM 2.1 decoder",
-    url: Some(SAM21_DECODER_MODEL_URL),
-    sha256: SAM21_DECODER_SHA256_HEX,
-    bytes: SAM21_DECODER_BYTES,
-};
-const SAM_DOWNLOAD: DownloadOptions = DownloadOptions {
-    connect_timeout: Duration::from_secs(45),
-    response_timeout: Duration::from_secs(60),
-    body_timeout: Duration::from_secs(30 * 60),
-    attempts: 5,
-    resume: true,
-};
-pub(super) const SAM21_ENCODER_INSTALL: ModelInstallSpec = ModelInstallSpec {
-    artifact: SAM21_ENCODER_ARTIFACT,
-    download: SAM_DOWNLOAD,
-    progress_label: "SAM 2.1 encoder",
-};
-pub(super) const SAM21_DECODER_INSTALL: ModelInstallSpec = ModelInstallSpec {
-    artifact: SAM21_DECODER_ARTIFACT,
-    download: SAM_DOWNLOAD,
-    progress_label: "SAM 2.1 decoder",
-};
 const MAX_OBJECT_MASK_PIXELS: u64 = 17_000_000;
+
+const OBJECT_JOB: JobKind = JobKind {
+    thread: "calibraw-onnx-object",
+    worker: "SAM 2.1 worker",
+    panicked: "ONNX Runtime terminated object-mask inference",
+    cancelled: "background task cancelled",
+};
+
+pub fn object_models_are_verified(encoder: &Path, decoder: &Path) -> bool {
+    AiModel::SamEncoder.spec().is_installed(encoder)
+        && AiModel::SamDecoder.spec().is_installed(decoder)
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ObjectCropRect {
@@ -108,18 +95,17 @@ pub struct ObjectMaskResult {
 }
 
 #[derive(Debug)]
-pub enum ObjectMaskEvent {
-    DownloadProgress(ModelDownloadProgress),
+pub enum ObjectMaskProgress {
+    /// `decoder_only` when the request's cache spares the encoder.
     Inferencing { decoder_only: bool },
-    Finished(Result<ObjectMaskResult, String>),
 }
+
+pub type ObjectMaskEvent = AiJobEvent<ObjectMaskResult, ObjectMaskProgress>;
 
 pub struct ObjectMaskWorkerRequest {
     pub encoder_path: PathBuf,
     pub decoder_path: PathBuf,
     pub allow_download: bool,
-    pub runtime_path: Option<PathBuf>,
-    pub runtime_sha256: Option<String>,
     pub inference: ObjectMaskRequest,
     pub cancellation: Arc<AtomicBool>,
 }
@@ -129,88 +115,22 @@ pub fn spawn_object_mask(worker: ObjectMaskWorkerRequest) -> mpsc::Receiver<Obje
         encoder_path,
         decoder_path,
         allow_download,
-        runtime_path,
-        runtime_sha256,
         inference,
         cancellation,
     } = worker;
-    let (sender, receiver) = mpsc::channel();
-    let worker_sender = sender.clone();
-    let spawn = std::thread::Builder::new()
-        .name("calibraw-onnx-object".to_owned())
-        .spawn(move || {
-            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                (|| {
-                    ensure_sam_model(
-                        &encoder_path,
-                        SAM21_ENCODER_INSTALL,
-                        allow_download,
-                        &worker_sender,
-                        &cancellation,
-                    )?;
-                    ensure_sam_model(
-                        &decoder_path,
-                        SAM21_DECODER_INSTALL,
-                        allow_download,
-                        &worker_sender,
-                        &cancellation,
-                    )?;
-                    ensure_ai_not_cancelled(&cancellation)?;
-                    let decoder_only = inference.cache.is_some();
-                    let _ = worker_sender.send(ObjectMaskEvent::Inferencing { decoder_only });
-                    infer_object_mask(
-                        &encoder_path,
-                        &decoder_path,
-                        runtime_path.as_deref(),
-                        runtime_sha256.as_deref(),
-                        inference,
-                    )
-                })()
-            }))
-            .unwrap_or_else(|panic| {
-                let message = panic
-                    .downcast_ref::<&str>()
-                    .copied()
-                    .or_else(|| panic.downcast_ref::<String>().map(String::as_str))
-                    .unwrap_or("unknown ONNX Runtime failure");
-                Err(anyhow::anyhow!(
-                    "ONNX Runtime terminated object-mask inference: {message}"
-                ))
-            });
-            let _ = worker_sender.send(ObjectMaskEvent::Finished(
-                result.map_err(|error| format!("{error:#}")),
-            ));
-        });
-    if let Err(error) = spawn {
-        let _ = sender.send(ObjectMaskEvent::Finished(Err(format!(
-            "could not start SAM 2.1 worker: {error}"
-        ))));
-    }
-    receiver
-}
-
-fn ensure_sam_model(
-    path: &Path,
-    install: ModelInstallSpec,
-    allow_download: bool,
-    events: &mpsc::Sender<ObjectMaskEvent>,
-    cancellation: &AtomicBool,
-) -> Result<()> {
-    install.ensure_installed(
-        path,
-        allow_download,
-        |progress| {
-            let _ = events.send(ObjectMaskEvent::DownloadProgress(progress));
-        },
-        || ensure_ai_not_cancelled(cancellation),
-    )
+    spawn_job(&OBJECT_JOB, cancellation, move |job| {
+        job.install(AiModel::SamEncoder.spec(), &encoder_path, allow_download)?;
+        job.install(AiModel::SamDecoder.spec(), &decoder_path, allow_download)?;
+        job.ensure_not_cancelled()?;
+        let decoder_only = inference.cache.is_some();
+        job.progress(ObjectMaskProgress::Inferencing { decoder_only });
+        infer_object_mask(&encoder_path, &decoder_path, inference)
+    })
 }
 
 fn infer_object_mask(
     encoder_path: &Path,
     decoder_path: &Path,
-    runtime_path: Option<&Path>,
-    runtime_sha256: Option<&str>,
     request: ObjectMaskRequest,
 ) -> Result<ObjectMaskResult> {
     anyhow::ensure!(
@@ -242,7 +162,7 @@ fn infer_object_mask(
             .any(|stroke| stroke.positive && !stroke.points.is_empty()),
         "paint inside an object before running selection"
     );
-    initialize_runtime(runtime_path, runtime_sha256)?;
+    initialize_runtime()?;
 
     let source = ImageBuffer::<Rgba<u8>, _>::from_raw(
         request.source_width,

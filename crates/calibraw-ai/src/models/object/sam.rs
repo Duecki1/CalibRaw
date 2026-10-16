@@ -1,6 +1,17 @@
 //! SAM 2.1 encoder and decoder runs and their tensor conversions.
 
-use super::*;
+use super::{
+    cache_object_ai_sessions, mask_model_retention, normalized_rgb_input, select_sam_candidate,
+    ObjectCropRect, ObjectInferenceCache, ObjectPromptSet, SamTensorData, SAM21_MASK_INPUT_SIZE,
+    SAM21_MAX_PROMPTS, SAM21_MODEL_SIZE,
+};
+use crate::placement::FallbackSession;
+use crate::registry::AiModel;
+use crate::slot::with_model_session;
+use anyhow::{Context, Result};
+use image::{ImageBuffer, Rgba};
+use ort::value::Tensor;
+use std::path::Path;
 
 pub(super) fn encode_sam_image(
     encoder_path: &Path,
@@ -23,8 +34,7 @@ pub(super) fn encode_sam_image(
     let tensors = with_model_session(
         AiModel::SamEncoder,
         encoder_path,
-        SessionOptions::new("SAM 2.1 encoder")
-            .with_cpu_fallback_profile(CpuFallbackProfile::WindowsSamEncoder),
+        AiModel::SamEncoder.spec().session,
         mask_model_retention(cache_object_ai_sessions()),
         |session| run_sam_encoder(session, input),
     )?;
@@ -215,7 +225,7 @@ pub(super) fn decode_sam_mask(
     let (masks, scores) = with_model_session(
         AiModel::SamDecoder,
         decoder_path,
-        SessionOptions::new("SAM 2.1 decoder"),
+        AiModel::SamDecoder.spec().session,
         mask_model_retention(cache_object_ai_sessions()),
         |session| {
             run_sam_decoder(

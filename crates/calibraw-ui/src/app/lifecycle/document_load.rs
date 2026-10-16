@@ -752,7 +752,7 @@ fn restore_ai_denoise_result(
         return Ok(());
     };
     let restore_started = Instant::now();
-    match calibraw_ai::ai_denoise::load_saved_result(result_path, raw) {
+    match calibraw_ai::models::denoise::load_saved_result(result_path, raw) {
         Ok(Some(image)) => {
             raw.set_ai_denoised_image(image)
                 .map_err(|error| format!("could not install saved AI-denoise result: {error:#}"))?;

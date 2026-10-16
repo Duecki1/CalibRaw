@@ -25,7 +25,10 @@ const BASELINE: &str = "xtask/cfg-baseline.txt";
 const SCANNED_ROOTS: &[&str] = &["crates", "xtask"];
 /// Directories that own platform differences; `target_os` is free there.
 /// Filled as the platform modules of docs/GPU_REWORK.md (P1, P7) appear.
-const ALLOWED_DIRECTORIES: &[&str] = &[];
+const ALLOWED_DIRECTORIES: &[&str] = &[
+    "crates/calibraw-ai/src/placement",
+    "crates/calibraw-ai/src/runtime",
+];
 
 /// `target_os` conditions per workspace-relative file path.
 type Counts = BTreeMap<String, usize>;

@@ -1,6 +1,7 @@
 //! Choosing among SAM's candidate masks using the prompts.
 
 use super::*;
+use crate::models::sigmoid_probability;
 
 pub(super) fn select_sam_candidate(
     masks: SamTensorData,

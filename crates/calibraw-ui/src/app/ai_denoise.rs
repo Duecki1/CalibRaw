@@ -1,5 +1,6 @@
+use super::worker::megabytes_detail;
 use super::*;
-use calibraw_ai::ai_denoise::{AiDenoiseEvent, RawNindJob};
+use calibraw_ai::models::denoise::{AiDenoiseProgress, RawNindJob};
 use calibraw_ai::AiFeature;
 use std::{
     path::PathBuf,
@@ -14,18 +15,7 @@ impl CalibRawApp {
     }
 
     pub(in crate::app) fn rawnind_model_dir(&self) -> PathBuf {
-        #[cfg(target_os = "android")]
-        {
-            self.android
-                .android_app
-                .internal_data_path()
-                .unwrap_or_else(std::env::temp_dir)
-                .join("models/rawdenoise-nind-1.0")
-        }
-        #[cfg(not(target_os = "android"))]
-        {
-            calibraw_ai::ai_denoise::model_cache_dir()
-        }
+        calibraw_ai::models::denoise::model_cache_dir()
     }
 
     /// The AI-denoise result saved next to the RAW. `None` when the RAW has no
@@ -177,7 +167,7 @@ impl CalibRawApp {
         }
         #[cfg(target_os = "android")]
         if !saved_result_exists {
-            if let Err(error) = calibraw_ai::ai_masks::initialize_runtime(None, None) {
+            if let Err(error) = calibraw_ai::runtime::initialize_runtime() {
                 self.develop.exposure.ai_denoise_enabled = false;
                 self.develop.target_exposure.ai_denoise_enabled = false;
                 self.report_error(
@@ -214,28 +204,8 @@ impl CalibRawApp {
         self.preview.detail_urgent = false;
         self.preview.quality_dirty = false;
         let cancellation = Arc::new(AtomicBool::new(false));
-        let receiver = calibraw_ai::ai_denoise::spawn_rawnind_denoise(
+        let receiver = calibraw_ai::models::denoise::spawn_rawnind_denoise(
             self.rawnind_model_dir(),
-            {
-                #[cfg(not(target_os = "android"))]
-                {
-                    self.onnx_runtime_for_ai().0
-                }
-                #[cfg(target_os = "android")]
-                {
-                    None
-                }
-            },
-            {
-                #[cfg(not(target_os = "android"))]
-                {
-                    self.onnx_runtime_for_ai().1
-                }
-                #[cfg(target_os = "android")]
-                {
-                    None
-                }
-            },
             raw,
             Some(render_state.device.clone()),
             Some(render_state.queue.clone()),
@@ -295,34 +265,32 @@ impl CalibRawApp {
             self.foreground_operation = Some(operation);
             return;
         };
-        let (events, disconnected) = drain_worker_events(Some(receiver), |event| {
-            matches!(event, AiDenoiseEvent::Finished(_))
-        });
-        let mut finished = None;
         let mut saved_result_unusable = false;
         let mut save_error = None;
-        for event in events {
-            match event {
-                AiDenoiseEvent::SavedResultUnusable => saved_result_unusable = true,
-                AiDenoiseEvent::ResultNotSaved(error) => save_error = Some(error),
-                AiDenoiseEvent::DownloadProgress { downloaded, total } => {
+        let finished = poll_ai_job(
+            receiver,
+            || "RawNIND worker stopped unexpectedly.".to_owned(),
+            |update| match update {
+                AiJobUpdate::Progress(AiDenoiseProgress::SavedResultUnusable) => {
+                    saved_result_unusable = true;
+                }
+                AiJobUpdate::Progress(AiDenoiseProgress::ResultNotSaved(error)) => {
+                    save_error = Some(error);
+                }
+                AiJobUpdate::Download(progress) => {
                     operation.progress = ForegroundProgress::units(
-                        downloaded,
-                        total,
+                        progress.downloaded,
+                        progress.total,
                         Some("bytes".to_owned()),
                         "Downloading verified RawNIND model package",
                     )
-                    .with_detail(format!(
-                        "{:.1} / {:.1} MB",
-                        downloaded as f64 / 1_000_000.0,
-                        total as f64 / 1_000_000.0
-                    ));
+                    .with_detail(megabytes_detail(progress));
                 }
-                AiDenoiseEvent::Progress {
+                AiJobUpdate::Progress(AiDenoiseProgress::Phase {
                     phase,
                     completed,
                     total,
-                } => {
+                }) => {
                     operation.progress = if total > 0 {
                         ForegroundProgress::units(
                             completed as u64,
@@ -334,12 +302,8 @@ impl CalibRawApp {
                         ForegroundProgress::indeterminate(format!("{phase}…"))
                     };
                 }
-                AiDenoiseEvent::Finished(result) => finished = Some(result),
-            }
-        }
-        if disconnected && finished.is_none() {
-            finished = Some(Err("RawNIND worker stopped unexpectedly.".to_owned()));
-        }
+            },
+        );
         let Some(result) = finished else {
             self.foreground_operation = Some(operation);
             return;

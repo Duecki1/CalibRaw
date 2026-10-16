@@ -1,8 +1,12 @@
-use crate::execution_provider::{FallbackSession, SessionOptions};
-use crate::model_artifact::{
-    ensure_artifact, install_artifact_from_reader, verify_artifact, DownloadOptions, ModelArtifact,
-};
-use crate::model_runtime::{acquire_model_session, AiModel, ModelRetention};
+//! RawNIND denoising of Bayer and X-Trans RAWs, and the result saved next to
+//! the RAW.
+
+use crate::jobs::{spawn_job, AiJobEvent, JobContext, JobKind};
+use crate::placement::FallbackSession;
+use crate::registry::artifact::install_artifact_from_reader;
+use crate::registry::{AiModel, InputShape, ModelSource, ModelSpec, RAWNIND_PACKAGE};
+use crate::runtime::initialize_runtime;
+use crate::slot::acquire_model_session;
 use anyhow::{Context, Result};
 use calibraw_core::color_math::LINEAR_SRGB_TO_REC2020;
 use calibraw_core::file_ops::write_atomically;
@@ -18,7 +22,6 @@ use std::{
         atomic::{AtomicBool, Ordering},
         mpsc, Arc,
     },
-    time::Duration,
 };
 use zip::{write::FileOptions, CompressionMethod, ZipArchive, ZipWriter};
 
@@ -34,44 +37,22 @@ use inference::*;
 pub use result_cache::*;
 use tiling::*;
 
-pub const RAWNIND_PACKAGE_URL: &str =
-    "https://huggingface.co/Duecki/CalibRaw-Artifacts/resolve/91085ce0ec322a4a7cbd20059688690218e52f9a/models/rawnind/rawdenoise-nind.dtmodel";
-pub const RAWNIND_PACKAGE_BYTES: u64 = 57_700_134;
-pub const RAWNIND_PACKAGE_SHA256: &str =
-    "d71b5f1e727c85a359e6f74dca9e2016c9d8fc3e2f7ac3e9b347d80ceca969af";
-const BAYER_MODEL_BYTES: u64 = 31_056_425;
-const BAYER_MODEL_SHA256: &str = "da27509dab6a2915da67e988acd86cf71f9d5bbc8d1aa0ed32933578a887b901";
-const LINEAR_MODEL_BYTES: u64 = 31_053_823;
-const LINEAR_MODEL_SHA256: &str =
-    "df957efadcc152c007d5d3b0917bdff9e41c0d4a0efe56584ef30b36393cd181";
-
-const RAWNIND_PACKAGE_ARTIFACT: ModelArtifact = ModelArtifact {
-    name: "RawNIND model package",
-    url: Some(RAWNIND_PACKAGE_URL),
-    sha256: RAWNIND_PACKAGE_SHA256,
-    bytes: RAWNIND_PACKAGE_BYTES,
+/// Download size of the package holding both RawNIND models.
+pub const PACKAGE_BYTES: u64 = RAWNIND_PACKAGE.artifact.bytes;
+/// The folder in the model cache the RawNIND models are extracted to.
+const MODEL_DIR: &str = "rawdenoise-nind-1.0";
+const TILE_EDGE: usize = match AiModel::RawNindBayer.spec().input {
+    InputShape::Tiled { tile, .. } => tile as usize,
+    InputShape::Square { .. } | InputShape::Prompted { .. } => {
+        panic!("RawNIND runs on tiles")
+    }
 };
-const BAYER_MODEL_ARTIFACT: ModelArtifact = ModelArtifact {
-    name: "RawNIND Bayer model",
-    url: None,
-    sha256: BAYER_MODEL_SHA256,
-    bytes: BAYER_MODEL_BYTES,
+const OVERLAP: usize = match AiModel::RawNindBayer.spec().input {
+    InputShape::Tiled { overlap, .. } => overlap as usize,
+    InputShape::Square { .. } | InputShape::Prompted { .. } => {
+        panic!("RawNIND runs on tiles")
+    }
 };
-const LINEAR_MODEL_ARTIFACT: ModelArtifact = ModelArtifact {
-    name: "RawNIND linear model",
-    url: None,
-    sha256: LINEAR_MODEL_SHA256,
-    bytes: LINEAR_MODEL_BYTES,
-};
-const RAWNIND_DOWNLOAD: DownloadOptions = DownloadOptions {
-    connect_timeout: Duration::from_secs(45),
-    response_timeout: Duration::from_secs(60),
-    body_timeout: Duration::from_secs(30 * 60),
-    attempts: 5,
-    resume: true,
-};
-const TILE_EDGE: usize = 512;
-const OVERLAP: usize = 64;
 const CORE_EDGE: usize = TILE_EDGE - 2 * OVERLAP;
 const MAX_MODEL_ABS: f32 = 60_000.0;
 const RESULT_FILE_MAGIC: [u8; 8] = *b"CALIBRAW";
@@ -82,12 +63,8 @@ const RESULT_FILE_HEADER_BYTES: usize = 96;
 const RESULT_FILE_IO_CHUNK: usize = 1024 * 1024;
 
 #[derive(Debug)]
-pub enum AiDenoiseEvent {
-    DownloadProgress {
-        downloaded: u64,
-        total: u64,
-    },
-    Progress {
+pub enum AiDenoiseProgress {
+    Phase {
         phase: &'static str,
         completed: usize,
         total: usize,
@@ -97,8 +74,16 @@ pub enum AiDenoiseEvent {
     /// The new result could not be written next to the RAW, so it only lasts
     /// for this session.
     ResultNotSaved(String),
-    Finished(Result<AiDenoisedImage, String>),
 }
+
+pub type AiDenoiseEvent = AiJobEvent<AiDenoisedImage, AiDenoiseProgress>;
+
+const DENOISE_JOB: JobKind = JobKind {
+    thread: "calibraw-rawnind-denoise",
+    worker: "RawNIND worker",
+    panicked: "ONNX Runtime terminated RawNIND denoise",
+    cancelled: "AI denoise cancelled",
+};
 
 /// What a RawNIND worker does.
 #[derive(Clone, Debug)]
@@ -113,132 +98,104 @@ pub enum RawNindJob {
     },
 }
 
-#[cfg(not(target_os = "android"))]
+/// The folder in the configured model cache that holds the RawNIND models.
 pub fn model_cache_dir() -> PathBuf {
-    crate::desktop_model_cache_root().join("rawdenoise-nind-1.0")
+    crate::config::model_root().join(MODEL_DIR)
 }
 
-#[allow(clippy::too_many_arguments)]
 pub fn spawn_rawnind_denoise(
     model_dir: PathBuf,
-    runtime_path: Option<PathBuf>,
-    runtime_sha256: Option<String>,
     raw: Arc<LoadedRaw>,
     device: Option<wgpu::Device>,
     queue: Option<wgpu::Queue>,
-    job: RawNindJob,
+    job_kind: RawNindJob,
     cancellation: Arc<AtomicBool>,
 ) -> mpsc::Receiver<AiDenoiseEvent> {
-    let (sender, receiver) = mpsc::channel();
-    let worker_sender = sender.clone();
-    let spawn = std::thread::Builder::new()
-        .name("calibraw-rawnind-denoise".to_owned())
-        .spawn(move || {
-            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                (|| {
-                    ensure_not_cancelled(&cancellation)?;
-                    let (save_to, allow_model_download) = match job {
-                        RawNindJob::Restore { path } => {
-                            return restore_saved_result(&path, &raw, &worker_sender);
-                        }
-                        RawNindJob::Infer {
-                            save_to,
-                            allow_model_download,
-                        } => (save_to, allow_model_download),
-                    };
-                    let _ = worker_sender.send(AiDenoiseEvent::Progress {
-                        phase: "Checking RawNIND models",
-                        completed: 0,
-                        total: 0,
-                    });
-                    anyhow::ensure!(
-                        allow_model_download || models_are_verified(&model_dir),
-                        "RawNIND models are not installed; enable AI denoise again to authorize the download"
-                    );
-                    ensure_models(&model_dir, &worker_sender, &cancellation)?;
-                    ensure_not_cancelled(&cancellation)?;
-                    let _ = worker_sender.send(AiDenoiseEvent::Progress {
-                        phase: "Starting AI runtime",
-                        completed: 0,
-                        total: 0,
-                    });
-                    crate::ai_masks::initialize_runtime(
-                        runtime_path.as_deref(),
-                        runtime_sha256.as_deref(),
-                    )?;
-                    let image = match raw.cfa_kind {
-                        CfaKind::Bayer => infer_bayer(
-                            &model_dir.join("model_bayer.onnx"),
-                            &raw,
-                            &worker_sender,
-                            &cancellation,
-                        ),
-                        CfaKind::XTrans => infer_linear(
-                            &model_dir.join("model_linear.onnx"),
-                            &raw,
-                            device
-                                .as_ref()
-                                .context("X-Trans AI denoise requires CalibRaw's wgpu device")?,
-                            queue
-                                .as_ref()
-                                .context("X-Trans AI denoise requires CalibRaw's wgpu queue")?,
-                            &worker_sender,
-                            &cancellation,
-                        ),
-                    }?;
-                    if let Some(path) = save_to.as_deref() {
-                        ensure_not_cancelled(&cancellation)?;
-                        let _ = worker_sender.send(AiDenoiseEvent::Progress {
-                            phase: "Saving AI denoise result",
-                            completed: 0,
-                            total: 0,
-                        });
-                        if let Err(error) = save_result(path, &raw, &image, &cancellation) {
-                            ensure_not_cancelled(&cancellation)?;
-                            log::warn!(
-                                "could not persist AI-denoise result {}: {error:#}",
-                                path.display()
-                            );
-                            let _ = worker_sender
-                                .send(AiDenoiseEvent::ResultNotSaved(format!("{error:#}")));
-                            calibraw_core::diagnostics::record(format!(
-                                "AI-denoise result write failed for {}: {error:#}",
-                                path.display()
-                            ));
-                        }
-                    }
-                    ensure_not_cancelled(&cancellation)?;
-                    Ok(image)
-                })()
-            }))
-            .unwrap_or_else(|panic| {
-                let message = panic
-                    .downcast_ref::<&str>()
-                    .copied()
-                    .or_else(|| panic.downcast_ref::<String>().map(String::as_str))
-                    .unwrap_or("unknown ONNX Runtime failure");
-                Err(anyhow::anyhow!(
-                    "ONNX Runtime terminated RawNIND denoise: {message}"
-                ))
-            });
-            let _ = worker_sender.send(AiDenoiseEvent::Finished(
-                result.map_err(|error| format!("{error:#}")),
-            ));
+    spawn_job(&DENOISE_JOB, cancellation, move |job| {
+        job.ensure_not_cancelled()?;
+        let (save_to, allow_model_download) = match job_kind {
+            RawNindJob::Restore { path } => {
+                return restore_saved_result(&path, &raw, job);
+            }
+            RawNindJob::Infer {
+                save_to,
+                allow_model_download,
+            } => (save_to, allow_model_download),
+        };
+        job.progress(AiDenoiseProgress::Phase {
+            phase: "Checking RawNIND models",
+            completed: 0,
+            total: 0,
         });
-    if let Err(error) = spawn {
-        let _ = sender.send(AiDenoiseEvent::Finished(Err(format!(
-            "could not start RawNIND worker: {error}"
-        ))));
-    }
-    receiver
+        anyhow::ensure!(
+            allow_model_download || models_are_verified(&model_dir),
+            "RawNIND models are not installed; enable AI denoise again to authorize the download"
+        );
+        ensure_models(&model_dir, job)?;
+        job.ensure_not_cancelled()?;
+        job.progress(AiDenoiseProgress::Phase {
+            phase: "Starting AI runtime",
+            completed: 0,
+            total: 0,
+        });
+        initialize_runtime()?;
+        let progress = |progress| job.progress(progress);
+        let image = match raw.cfa_kind {
+            CfaKind::Bayer => infer_bayer(
+                &model_path(&model_dir, AiModel::RawNindBayer),
+                &raw,
+                &progress,
+                job.cancellation(),
+            ),
+            CfaKind::XTrans => infer_linear(
+                &model_path(&model_dir, AiModel::RawNindLinear),
+                &raw,
+                device
+                    .as_ref()
+                    .context("X-Trans AI denoise requires CalibRaw's wgpu device")?,
+                queue
+                    .as_ref()
+                    .context("X-Trans AI denoise requires CalibRaw's wgpu queue")?,
+                &progress,
+                job.cancellation(),
+            ),
+        }?;
+        if let Some(path) = save_to.as_deref() {
+            job.ensure_not_cancelled()?;
+            job.progress(AiDenoiseProgress::Phase {
+                phase: "Saving AI denoise result",
+                completed: 0,
+                total: 0,
+            });
+            if let Err(error) = save_result(path, &raw, &image, job.cancellation()) {
+                job.ensure_not_cancelled()?;
+                log::warn!(
+                    "could not persist AI-denoise result {}: {error:#}",
+                    path.display()
+                );
+                job.progress(AiDenoiseProgress::ResultNotSaved(format!("{error:#}")));
+                calibraw_core::diagnostics::record(format!(
+                    "AI-denoise result write failed for {}: {error:#}",
+                    path.display()
+                ));
+            }
+        }
+        job.ensure_not_cancelled()?;
+        Ok(image)
+    })
+}
+
+/// Where `model`'s file is extracted in `model_dir`.
+fn model_path(model_dir: &Path, model: AiModel) -> PathBuf {
+    model_dir.join(model.spec().artifact.cache_filename)
 }
 
 fn restore_saved_result(
     path: &Path,
     raw: &LoadedRaw,
-    events: &mpsc::Sender<AiDenoiseEvent>,
+    job: &JobContext<AiDenoisedImage, AiDenoiseProgress>,
 ) -> Result<AiDenoisedImage> {
-    let _ = events.send(AiDenoiseEvent::Progress {
+    job.progress(AiDenoiseProgress::Phase {
         phase: "Restoring saved AI denoise",
         completed: 0,
         total: 0,
@@ -271,7 +228,7 @@ fn restore_saved_result(
     calibraw_core::diagnostics::record(format!(
         "AI-denoise worker could not restore a saved result: {error:#}"
     ));
-    let _ = events.send(AiDenoiseEvent::SavedResultUnusable);
+    job.progress(AiDenoiseProgress::SavedResultUnusable);
     Err(error)
 }
 
@@ -285,47 +242,29 @@ fn ensure_not_cancelled(cancellation: &AtomicBool) -> Result<()> {
 
 fn ensure_models(
     model_dir: &Path,
-    events: &mpsc::Sender<AiDenoiseEvent>,
-    cancellation: &AtomicBool,
+    job: &JobContext<AiDenoisedImage, AiDenoiseProgress>,
 ) -> Result<()> {
-    let bayer = model_dir.join("model_bayer.onnx");
-    let linear = model_dir.join("model_linear.onnx");
-    if verify_artifact(&bayer, BAYER_MODEL_ARTIFACT).is_ok()
-        && verify_artifact(&linear, LINEAR_MODEL_ARTIFACT).is_ok()
+    let models = [AiModel::RawNindBayer.spec(), AiModel::RawNindLinear.spec()];
+    if models
+        .iter()
+        .all(|spec| spec.is_installed(&model_path(model_dir, spec.id)))
     {
         return Ok(());
     }
     fs::create_dir_all(model_dir)
         .with_context(|| format!("create RawNIND model cache {}", model_dir.display()))?;
 
-    let package = model_dir.join("rawdenoise-nind.dtmodel");
-    ensure_artifact(
-        &package,
-        RAWNIND_PACKAGE_ARTIFACT,
-        RAWNIND_DOWNLOAD,
-        |downloaded, total| {
-            let _ = events.send(AiDenoiseEvent::DownloadProgress { downloaded, total });
-        },
-        || ensure_not_cancelled(cancellation),
-    )?;
-    ensure_not_cancelled(cancellation)?;
-    let _ = events.send(AiDenoiseEvent::Progress {
+    let package = model_dir.join(RAWNIND_PACKAGE.artifact.cache_filename);
+    job.install_package(&RAWNIND_PACKAGE, &package)?;
+    job.ensure_not_cancelled()?;
+    job.progress(AiDenoiseProgress::Phase {
         phase: "Extracting RawNIND models",
         completed: 0,
         total: 0,
     });
-    extract_model(
-        &package,
-        "rawdenoise-nind/model_bayer.onnx",
-        &bayer,
-        BAYER_MODEL_ARTIFACT,
-    )?;
-    extract_model(
-        &package,
-        "rawdenoise-nind/model_linear.onnx",
-        &linear,
-        LINEAR_MODEL_ARTIFACT,
-    )?;
+    for spec in models {
+        extract_model(&package, spec, &model_path(model_dir, spec.id))?;
+    }
     if let Err(error) = fs::remove_file(&package) {
         log::warn!(
             "could not remove verified RawNIND package {} after extraction: {error}",
@@ -335,27 +274,25 @@ fn ensure_models(
     Ok(())
 }
 
-fn extract_model(
-    package: &Path,
-    member: &str,
-    destination: &Path,
-    artifact: ModelArtifact,
-) -> Result<()> {
-    if verify_artifact(destination, artifact).is_ok() {
+fn extract_model(package: &Path, spec: &ModelSpec, destination: &Path) -> Result<()> {
+    if spec.is_installed(destination) {
         return Ok(());
     }
+    let ModelSource::Package { member } = spec.source else {
+        anyhow::bail!("{} is not part of the RawNIND package", spec.artifact.name);
+    };
     let file = File::open(package).with_context(|| format!("open {}", package.display()))?;
     let mut archive = zip::ZipArchive::new(file).context("read RawNIND dtmodel ZIP")?;
     let mut source = archive
         .by_name(member)
         .with_context(|| format!("find {member} in RawNIND package"))?;
-    let expected_bytes = artifact.bytes;
+    let expected_bytes = spec.artifact.bytes;
     anyhow::ensure!(
         source.size() == expected_bytes,
         "{member} declares {} bytes, expected {expected_bytes}",
         source.size()
     );
-    install_artifact_from_reader(destination, artifact, &mut source, || Ok(()))
+    install_artifact_from_reader(destination, spec.artifact, &mut source, || Ok(()))
         .with_context(|| format!("extract {member} from RawNIND package"))
 }
 
@@ -363,17 +300,19 @@ fn extract_model(
 mod tests {
     use super::{
         bayer_rggb_origin, load_saved_result, match_gain_tile, reflect_index, run_model_tile,
-        save_result, seam_weight, spawn_rawnind_denoise, AiDenoiseEvent, RawNindJob, CORE_EDGE,
-        TILE_EDGE,
+        save_result, seam_weight, spawn_rawnind_denoise, AiDenoiseEvent, AiDenoiseProgress,
+        RawNindJob, CORE_EDGE, TILE_EDGE,
     };
 
-    use crate::execution_provider::SessionOptions;
-    use crate::model_runtime::{acquire_model_session, AiModel, ModelRetention};
+    use crate::config::{RuntimeSource, Sha256};
+    use crate::jobs::AiJobEvent;
     use crate::pipeline::{
         build_proxy, AiDenoisedImage, CameraProfile, CfaKind, CompactPixelMap, ExposureParams,
         GpuParams, LoadedRaw, MaskStack, NoiseProfile, PipelineOptions, ProcessingQuality,
         ProxySpec, RawGpuPipeline,
     };
+    use crate::registry::AiModel;
+    use crate::slot::acquire_model_session;
 
     fn result_test_raw(width: u32, height: u32) -> LoadedRaw {
         let pixels = (width * height) as usize;
@@ -524,8 +463,6 @@ mod tests {
 
         let receiver = spawn_rawnind_denoise(
             directory.join("models-do-not-exist"),
-            None,
-            None,
             std::sync::Arc::clone(&raw),
             None,
             None,
@@ -535,7 +472,7 @@ mod tests {
         let restored = receiver
             .into_iter()
             .find_map(|event| match event {
-                AiDenoiseEvent::Finished(result) => Some(result.unwrap()),
+                AiJobEvent::Finished(result) => Some(result.unwrap()),
                 _ => None,
             })
             .expect("restore worker must send a terminal event");
@@ -556,8 +493,6 @@ mod tests {
 
         let receiver = spawn_rawnind_denoise(
             directory.join("models-do-not-exist"),
-            None,
-            None,
             std::sync::Arc::new(raw),
             None,
             None,
@@ -565,13 +500,12 @@ mod tests {
             cancellation,
         );
         let events = receiver.into_iter().collect::<Vec<_>>();
-        assert!(events
-            .iter()
-            .any(|event| matches!(event, AiDenoiseEvent::SavedResultUnusable)));
-        assert!(matches!(
-            events.last(),
-            Some(AiDenoiseEvent::Finished(Err(_)))
-        ));
+        assert!(events.iter().any(|event| matches!(
+            event,
+            AiJobEvent::Progress(AiDenoiseProgress::SavedResultUnusable)
+        )));
+        let last: Option<&AiDenoiseEvent> = events.last();
+        assert!(matches!(last, Some(AiJobEvent::Finished(Err(_)))));
         assert!(!path.exists());
         assert!(!directory.join("models-do-not-exist").exists());
     }
@@ -584,8 +518,6 @@ mod tests {
         let cancellation = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         let receiver = spawn_rawnind_denoise(
             directory.join("models-do-not-exist"),
-            None,
-            None,
             raw,
             None,
             None,
@@ -598,7 +530,7 @@ mod tests {
         let error = receiver
             .into_iter()
             .find_map(|event| match event {
-                AiDenoiseEvent::Finished(Err(error)) => Some(error),
+                AiJobEvent::Finished(Err(error)) => Some(error),
                 _ => None,
             })
             .expect("inference must stop before model acquisition");
@@ -625,13 +557,17 @@ mod tests {
             std::env::var_os("CALIBRAW_ONNX_RUNTIME")
                 .expect("set CALIBRAW_ONNX_RUNTIME to libonnxruntime"),
         );
-        let sha = crate::ai_masks::sha256_file_hex(&runtime).unwrap();
-        crate::ai_masks::initialize_runtime(Some(&runtime), Some(&sha)).unwrap();
+        let sha256 = Sha256::of_file(&runtime).unwrap();
+        crate::update(crate::AiConfigChange::Runtime(RuntimeSource::Manual {
+            path: runtime,
+            sha256,
+        }));
+        crate::runtime::initialize_runtime().unwrap();
         let mut session = acquire_model_session(
             AiModel::RawNindBayer,
             model_dir.join("model_bayer.onnx"),
-            SessionOptions::new("RawNIND Bayer"),
-            ModelRetention::OneShot,
+            AiModel::RawNindBayer.spec().session,
+            AiModel::RawNindBayer.spec().retention,
         )
         .unwrap();
         let mut output =
@@ -651,13 +587,17 @@ mod tests {
             std::env::var_os("CALIBRAW_ONNX_RUNTIME")
                 .expect("set CALIBRAW_ONNX_RUNTIME to libonnxruntime"),
         );
-        let sha = crate::ai_masks::sha256_file_hex(&runtime).unwrap();
-        crate::ai_masks::initialize_runtime(Some(&runtime), Some(&sha)).unwrap();
+        let sha256 = Sha256::of_file(&runtime).unwrap();
+        crate::update(crate::AiConfigChange::Runtime(RuntimeSource::Manual {
+            path: runtime,
+            sha256,
+        }));
+        crate::runtime::initialize_runtime().unwrap();
         let mut session = acquire_model_session(
             AiModel::RawNindLinear,
             model_dir.join("model_linear.onnx"),
-            SessionOptions::new("RawNIND linear"),
-            ModelRetention::OneShot,
+            AiModel::RawNindLinear.spec().session,
+            AiModel::RawNindLinear.spec().retention,
         )
         .unwrap();
         let input = vec![0.1; 3 * TILE_EDGE * TILE_EDGE];
@@ -681,16 +621,19 @@ mod tests {
             std::env::var_os("CALIBRAW_RAWNIND_TEST_RAW")
                 .expect("set CALIBRAW_RAWNIND_TEST_RAW to a Bayer RAW fixture"),
         );
-        let sha = crate::ai_masks::sha256_file_hex(&runtime).unwrap();
-        crate::ai_masks::initialize_runtime(Some(&runtime), Some(&sha)).unwrap();
+        let sha256 = Sha256::of_file(&runtime).unwrap();
+        crate::update(crate::AiConfigChange::Runtime(RuntimeSource::Manual {
+            path: runtime,
+            sha256,
+        }));
+        crate::runtime::initialize_runtime().unwrap();
         let raw = crate::pipeline::load_raw_file(&raw_path).unwrap();
         assert_eq!(raw.cfa_kind, crate::pipeline::CfaKind::Bayer);
-        let (events, _receiver) = std::sync::mpsc::channel();
         let cancellation = std::sync::atomic::AtomicBool::new(false);
         let image = super::infer_bayer(
             &model_dir.join("model_bayer.onnx"),
             &raw,
-            &events,
+            &|_| {},
             &cancellation,
         )
         .unwrap();
@@ -802,19 +745,22 @@ mod tests {
             std::env::var_os("CALIBRAW_RAWNIND_TEST_RAW")
                 .expect("set CALIBRAW_RAWNIND_TEST_RAW to an X-Trans RAW fixture"),
         );
-        let sha = crate::ai_masks::sha256_file_hex(&runtime).unwrap();
-        crate::ai_masks::initialize_runtime(Some(&runtime), Some(&sha)).unwrap();
+        let sha256 = Sha256::of_file(&runtime).unwrap();
+        crate::update(crate::AiConfigChange::Runtime(RuntimeSource::Manual {
+            path: runtime,
+            sha256,
+        }));
+        crate::runtime::initialize_runtime().unwrap();
         let raw = crate::pipeline::load_raw_file(&raw_path).unwrap();
         assert_eq!(raw.cfa_kind, crate::pipeline::CfaKind::XTrans);
         let (device, queue) = test_wgpu_device();
-        let (events, _receiver) = std::sync::mpsc::channel();
         let cancellation = std::sync::atomic::AtomicBool::new(false);
         let image = super::infer_linear(
             &model_dir.join("model_linear.onnx"),
             &raw,
             &device,
             &queue,
-            &events,
+            &|_| {},
             &cancellation,
         )
         .unwrap();

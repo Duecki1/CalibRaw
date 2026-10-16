@@ -1,12 +1,13 @@
-use crate::model_artifact::{ensure_artifact, verify_artifact, DownloadOptions, ModelArtifact};
+use super::artifact::{ensure_artifact, verify_artifact, DownloadOptions, ModelArtifact};
+use super::{ModelSource, ModelSpec};
 use anyhow::Result;
 use std::path::Path;
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct ModelInstallSpec {
-    pub artifact: ModelArtifact,
-    pub download: DownloadOptions,
-    pub progress_label: &'static str,
+    pub(crate) artifact: ModelArtifact,
+    pub(crate) download: DownloadOptions,
+    pub(crate) progress_label: &'static str,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -16,11 +17,41 @@ pub struct ModelDownloadProgress {
     pub total: u64,
 }
 
-impl ModelInstallSpec {
-    pub(crate) fn is_installed(self, path: &Path) -> bool {
+impl ModelSpec {
+    pub(crate) fn is_installed(&self, path: &Path) -> bool {
         verify_artifact(path, self.artifact).is_ok()
     }
 
+    /// Downloads the model to `path` unless a verified copy is there. A model
+    /// extracted from a package is only verified.
+    pub(crate) fn ensure_installed<F, C>(
+        &self,
+        path: &Path,
+        allow_download: bool,
+        progress: F,
+        cancellation: C,
+    ) -> Result<()>
+    where
+        F: FnMut(ModelDownloadProgress),
+        C: FnMut() -> Result<()>,
+    {
+        let (download, progress_label) = match self.source {
+            ModelSource::Download {
+                options,
+                progress_label,
+            } => (options, progress_label),
+            ModelSource::Package { .. } => return verify_installed(path, self.artifact),
+        };
+        ModelInstallSpec {
+            artifact: self.artifact,
+            download,
+            progress_label,
+        }
+        .ensure_installed(path, allow_download, progress, cancellation)
+    }
+}
+
+impl ModelInstallSpec {
     pub(crate) fn ensure_installed<F, C>(
         self,
         path: &Path,
@@ -33,12 +64,7 @@ impl ModelInstallSpec {
         C: FnMut() -> Result<()>,
     {
         if !allow_download {
-            return verify_artifact(path, self.artifact).map_err(|error| {
-                anyhow::anyhow!(
-                    "the pinned {} is unavailable or invalid ({error:#}); consent to its download again",
-                    self.artifact.name
-                )
-            });
+            return verify_installed(path, self.artifact);
         }
 
         ensure_artifact(
@@ -57,6 +83,15 @@ impl ModelInstallSpec {
     }
 }
 
+fn verify_installed(path: &Path, artifact: ModelArtifact) -> Result<()> {
+    verify_artifact(path, artifact).map_err(|error| {
+        anyhow::anyhow!(
+            "the pinned {} is unavailable or invalid ({error:#}); consent to its download again",
+            artifact.name
+        )
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -67,6 +102,7 @@ mod tests {
         url: None,
         sha256: "7702832f291b1ad6d8269d712184a9ddc87c9bac3833fa10b3f2140830fb4c47",
         bytes: 17,
+        cache_filename: "model.onnx",
     };
     const TEST_INSTALL: ModelInstallSpec = ModelInstallSpec {
         artifact: TEST_ARTIFACT,

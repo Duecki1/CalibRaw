@@ -44,7 +44,7 @@ pub(super) fn run_model_tile(
 pub(super) fn infer_bayer(
     model_path: &Path,
     raw: &LoadedRaw,
-    events: &mpsc::Sender<AiDenoiseEvent>,
+    progress: &dyn Fn(AiDenoiseProgress),
     cancellation: &AtomicBool,
 ) -> Result<AiDenoisedImage> {
     let (origin_x, origin_y) = bayer_rggb_origin(raw)?;
@@ -65,8 +65,8 @@ pub(super) fn infer_bayer(
     let mut session = acquire_model_session(
         AiModel::RawNindBayer,
         model_path,
-        SessionOptions::new("RawNIND Bayer"),
-        ModelRetention::OneShot,
+        AiModel::RawNindBayer.spec().session,
+        AiModel::RawNindBayer.spec().retention,
     )?;
     let model_white_balance = raw.rawnind_daylight_white_balance();
     for tile_y in 0..tiles_y {
@@ -179,7 +179,7 @@ pub(super) fn infer_bayer(
                 }
             }
             let completed = tile_y * tiles_x + tile_x + 1;
-            let _ = events.send(AiDenoiseEvent::Progress {
+            progress(AiDenoiseProgress::Phase {
                 phase: "Denoising Bayer mosaic",
                 completed,
                 total: total_tiles,
@@ -272,7 +272,7 @@ pub(super) fn infer_linear(
     raw: &LoadedRaw,
     device: &wgpu::Device,
     queue: &wgpu::Queue,
-    events: &mpsc::Sender<AiDenoiseEvent>,
+    progress: &dyn Fn(AiDenoiseProgress),
     cancellation: &AtomicBool,
 ) -> Result<AiDenoisedImage> {
     let tiles_x = raw.width.div_ceil(CORE_EDGE as u32) as usize;
@@ -287,8 +287,8 @@ pub(super) fn infer_linear(
     let mut session = acquire_model_session(
         AiModel::RawNindLinear,
         model_path,
-        SessionOptions::new("RawNIND linear"),
-        ModelRetention::OneShot,
+        AiModel::RawNindLinear.spec().session,
+        AiModel::RawNindLinear.spec().retention,
     )?;
     let mut neutral = ExposureParams::scene_referred_default();
     neutral.ai_denoise_enabled = false;
@@ -404,7 +404,7 @@ pub(super) fn infer_linear(
                 }
             }
             let completed = tile_y * tiles_x + tile_x + 1;
-            let _ = events.send(AiDenoiseEvent::Progress {
+            progress(AiDenoiseProgress::Phase {
                 phase: "Demosaicing and denoising X-Trans",
                 completed,
                 total: total_tiles,

@@ -1,27 +1,32 @@
-use super::*;
+//! Scene depth from Depth Anything V2 Small, aligned to the photo's edges.
 
-/// Depth Anything V2 Small on every platform. It predicts inverse depth
-/// (high values near) from an NCHW image and returns `[1, height, width]`.
-pub(super) const MODEL_SPEC: DepthModelSpec = DepthModelSpec {
-    name: "Depth Anything V2 Small",
-    download_bytes: 99_060_839,
-    cache_filename: "depth_anything_v2_small_fp32.onnx",
-    input_edge: 518,
-    artifact_url: "https://huggingface.co/Duecki/CalibRaw-Artifacts/tree/main/models/da2",
-};
-pub(super) const MODEL_INSTALL: ModelInstallSpec = ModelInstallSpec {
-    artifact: ModelArtifact {
-        name: MODEL_SPEC.name,
-        url: Some("https://huggingface.co/Duecki/CalibRaw-Artifacts/resolve/main/models/da2/depth_anything_v2_small_fp32.onnx"),
-        sha256: "afb6a5c28f3b6bf1618c6e43f02073ef9dfdc70e937502d51603e57b0a1df10c",
-        bytes: MODEL_SPEC.download_bytes,
-    },
-    download: MASK_MODEL_DOWNLOAD,
-    progress_label: MODEL_SPEC.name,
-};
+use super::masks::mask_model_retention;
+use super::{depth_refine, normalized_rgb_input};
+use crate::placement::{CpuFallbackProfile, SessionOptions};
+use crate::registry::{AiModel, ModelInfo};
+use crate::slot::with_model_session;
+use anyhow::{Context, Result};
+use image::{imageops::FilterType, ImageBuffer, Luma, Rgba};
+use ort::value::Tensor;
+use std::path::Path;
+
+pub const MODEL: ModelInfo = AiModel::Depth.spec().info();
+/// The page listing the depth model's files.
+pub const ARTIFACT_PAGE_URL: &str =
+    "https://huggingface.co/Duecki/CalibRaw-Artifacts/tree/main/models/da2";
+/// The depth model desktop builds downloaded before `MODEL`, in the model
+/// cache.
+///
+/// migration: remove in v1.4.0. Listed in `calibraw_core`'s `migrations`.
+pub const RETIRED_DEPTH_MODEL_FILENAME: &str = "da3mono_large_700x700.onnx";
+const INPUT_EDGE: u32 = MODEL.input.edge();
+
+pub fn depth_model_is_verified(path: &Path) -> bool {
+    AiModel::Depth.spec().is_installed(path)
+}
 
 fn session_options() -> SessionOptions {
-    let options = SessionOptions::new(MODEL_SPEC.name);
+    let options = AiModel::Depth.spec().session;
     if cfg!(target_os = "android") {
         // Depth runs on the CPU beside Android's RAW preview.
         options
@@ -77,7 +82,7 @@ pub(super) fn depth_mask(
     model_path: &Path,
     image: &ImageBuffer<Rgba<u8>, Vec<u8>>,
 ) -> Result<Vec<u8>> {
-    let edge = MODEL_SPEC.input_edge;
+    let edge = INPUT_EDGE;
     let (width, height) = image.dimensions();
     anyhow::ensure!(width > 0 && height > 0, "empty depth-mask input");
     let box_rect = Letterbox::new(width, height, edge);
@@ -118,7 +123,7 @@ pub(super) fn depth_mask(
     let (output_width, output_height) = validate_output(&shape, &raw)?;
     calibraw_core::diagnostics::record(format!(
         "AI {}: {width}x{height} source, {output_width}x{output_height} depth in {:.3}s",
-        MODEL_SPEC.name,
+        MODEL.name,
         started.elapsed().as_secs_f64()
     ));
     let mut restored = restore_depth(&raw, output_width, output_height, box_rect, width, height)?;
@@ -137,10 +142,7 @@ fn validate_output(shape: &[i64], values: &[f32]) -> Result<(u32, u32)> {
         _ => anyhow::bail!("unexpected depth output shape {shape:?}"),
     };
     anyhow::ensure!(
-        height > 0
-            && width > 0
-            && height <= MODEL_SPEC.input_edge as i64
-            && width <= MODEL_SPEC.input_edge as i64,
+        height > 0 && width > 0 && height <= INPUT_EDGE as i64 && width <= INPUT_EDGE as i64,
         "invalid depth output dimensions {shape:?}"
     );
     anyhow::ensure!(
@@ -248,7 +250,7 @@ fn quantize_depth(depth: &[f32]) -> Vec<u8> {
 mod tests {
     use super::*;
 
-    const EDGE: u32 = MODEL_SPEC.input_edge;
+    const EDGE: u32 = INPUT_EDGE;
 
     /// The enlarged depth as stored, without edge alignment.
     fn restored_bytes(
@@ -278,9 +280,9 @@ mod tests {
         let runtime = std::env::var_os("ORT_DYLIB_PATH").expect("ORT_DYLIB_PATH");
         ort::init_from(Path::new(&runtime)).unwrap().commit();
         if std::env::var("CALIBRAW_TEST_DEPTH_PROVIDER").as_deref() == Ok("CPU") {
-            crate::set_ai_acceleration_enabled(false);
+            crate::update(crate::AiConfigChange::Acceleration(false));
         }
-        assert!(MODEL_INSTALL.is_installed(Path::new(&path)));
+        assert!(depth_model_is_verified(Path::new(&path)));
         let image = ImageBuffer::from_fn(96, 64, |x, y| {
             Rgba([(x * 255 / 95) as u8, (y * 255 / 63) as u8, 128, 255])
         });
@@ -291,7 +293,7 @@ mod tests {
         eprintln!("Depth inference providers: {providers:?}");
         if let Ok(expected) = std::env::var("CALIBRAW_TEST_DEPTH_PROVIDER") {
             assert!(providers.iter().any(|status| {
-                status.model_name == MODEL_SPEC.name
+                status.model_name == MODEL.name
                     && status.active_provider == expected
                     && !status.degraded
             }));
@@ -301,7 +303,7 @@ mod tests {
     #[test]
     fn only_android_sessions_use_the_cpu_only_mobile_depth_profile() {
         let options = session_options();
-        assert_eq!(options.model_name, MODEL_SPEC.name);
+        assert_eq!(options.model_name, MODEL.name);
         if cfg!(target_os = "android") {
             assert!(!options.allow_acceleration);
             assert_eq!(

@@ -14,19 +14,21 @@ static NEXT_PARTIAL_ARTIFACT_ID: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct ModelArtifact {
-    pub name: &'static str,
-    pub url: Option<&'static str>,
-    pub sha256: &'static str,
-    pub bytes: u64,
+    pub(crate) name: &'static str,
+    pub(crate) url: Option<&'static str>,
+    pub(crate) sha256: &'static str,
+    pub(crate) bytes: u64,
+    /// File name in its cache folder.
+    pub(crate) cache_filename: &'static str,
 }
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct DownloadOptions {
-    pub connect_timeout: Duration,
-    pub response_timeout: Duration,
-    pub body_timeout: Duration,
-    pub attempts: usize,
-    pub resume: bool,
+    pub(crate) connect_timeout: Duration,
+    pub(crate) response_timeout: Duration,
+    pub(crate) body_timeout: Duration,
+    pub(crate) attempts: usize,
+    pub(crate) resume: bool,
 }
 
 pub(crate) fn ensure_artifact<F, C>(
@@ -125,7 +127,7 @@ pub(crate) fn verify_artifact(path: &Path, artifact: ModelArtifact) -> Result<()
     Ok(())
 }
 
-pub fn sha256_file_hex(path: &Path) -> Result<String> {
+pub(crate) fn sha256_file_hex(path: &Path) -> Result<String> {
     let mut file = File::open(path).with_context(|| format!("open {}", path.display()))?;
     let mut hasher = Sha256Context::new(&SHA256);
     let mut buffer = vec![0u8; IO_BUFFER_BYTES];
@@ -139,15 +141,6 @@ pub fn sha256_file_hex(path: &Path) -> Result<String> {
         hasher.update(&buffer[..read]);
     }
     Ok(hex::encode(hasher.finish().as_ref()))
-}
-
-#[cfg(not(target_os = "android"))]
-pub fn desktop_model_cache_root() -> PathBuf {
-    let root = std::env::var_os("XDG_CACHE_HOME")
-        .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".cache")))
-        .unwrap_or_else(std::env::temp_dir);
-    root.join("calibraw/models")
 }
 
 fn download_artifact<F, C>(
@@ -467,6 +460,7 @@ mod tests {
         url: None,
         sha256: "7702832f291b1ad6d8269d712184a9ddc87c9bac3833fa10b3f2140830fb4c47",
         bytes: 17,
+        cache_filename: "model.onnx",
     };
 
     fn write_temp(bytes: &[u8]) -> (tempfile::TempDir, PathBuf) {

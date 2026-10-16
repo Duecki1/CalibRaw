@@ -88,7 +88,7 @@ fn diagnostics_snapshot_with_ai_backends() -> String {
 #[cfg(not(target_os = "android"))]
 pub(crate) fn automatic_runtime_kind_offered(app: &CalibRawApp) -> bool {
     app.ai.runtime_mode == OnnxRuntimeMode::Automatic
-        && calibraw_ai::automatic_onnx_runtime_kind_selectable()
+        && calibraw_ai::runtime::automatic_onnx_runtime_kind_selectable()
 }
 
 /// Linux x86_64 choice between the CPU and CUDA automatic runtimes. Hidden
@@ -111,7 +111,7 @@ pub(crate) fn automatic_runtime_kind_control(
         180.0,
         "NVIDIA CUDA needs an NVIDIA GPU with the matching CUDA runtime and cuDNN 9 installed; otherwise AI falls back to CPU. CUDA 13 needs a Turing (RTX 20) or newer GPU; use CUDA 12 for older GPUs.",
         |ui| {
-            for option in calibraw_ai::AutomaticOnnxRuntimeKind::ALL {
+            for option in calibraw_ai::runtime::AutomaticOnnxRuntimeKind::ALL {
                 let response = ui.selectable_value(&mut kind, option, option.label());
                 if let Some(bytes) = option.download_bytes() {
                     response.on_hover_text(format!(
@@ -130,7 +130,7 @@ pub(crate) fn automatic_runtime_kind_control(
 /// Who each subject-mask quality offered on this platform is for, one line
 /// each, so they can be compared at once in setup and in the tooltip.
 pub(crate) fn subject_mask_quality_descriptions() -> String {
-    use calibraw_ai::ai_masks::SubjectMaskQuality;
+    use calibraw_ai::models::subject::SubjectMaskQuality;
     SubjectMaskQuality::AVAILABLE
         .iter()
         .map(|&quality| {
@@ -154,7 +154,7 @@ pub(crate) fn subject_mask_quality_control(
     app: &mut CalibRawApp,
     id_salt: &'static str,
 ) {
-    use calibraw_ai::ai_masks::SubjectMaskQuality;
+    use calibraw_ai::models::subject::SubjectMaskQuality;
     let help = format!(
         "Applies to newly generated Subject and Background masks.\n{}",
         subject_mask_quality_descriptions()
@@ -874,7 +874,7 @@ impl Settings {
         subject_mask_quality_control(ui, app, "settings-subject-mask-quality");
 
         moduwu_design::section_separator(ui);
-        let bundled_runtime = calibraw_ai::bundled_onnx_runtime_path();
+        let bundled_runtime = calibraw_ai::runtime::bundled_onnx_runtime_path();
         let automatic_help = if bundled_runtime.is_some() {
             "Recommended. Use the ONNX Runtime included with CalibRaw, with CPU AI fallback and no runtime download."
         } else {
@@ -909,14 +909,14 @@ impl Settings {
         match app.ai.runtime_mode {
             OnnxRuntimeMode::Automatic => {
                 if let Some(path) = bundled_runtime {
-                    if let Some(runtime) = calibraw_ai::automatic_onnx_runtime_info() {
+                    if let Some(runtime) = calibraw_ai::runtime::automatic_onnx_runtime_info() {
                         ui.label(format!(
                             "ONNX Runtime {} is included with CalibRaw. No runtime download is needed.",
                             runtime.version
                         ));
                     }
                     ui.small("AI tools can fall back to CPU inference. AI models are downloaded separately when needed.");
-                    if !calibraw_ai::automatic_onnx_runtime_is_installed() {
+                    if !calibraw_ai::runtime::automatic_onnx_runtime_is_installed() {
                         ui.colored_label(
                             ui.visuals().error_fg_color,
                             format!(
@@ -933,7 +933,7 @@ impl Settings {
                         std::env::consts::ARCH
                     ));
                     ui.small("The archive and extracted runtime are cached locally and verified with pinned SHA-256 values.");
-                    if let Some(url) = calibraw_ai::automatic_onnx_runtime_info()
+                    if let Some(url) = calibraw_ai::runtime::automatic_onnx_runtime_info()
                         .and_then(|runtime| runtime.download_url)
                     {
                         ui.hyperlink_to("View runtime source", url);
@@ -946,7 +946,7 @@ impl Settings {
                 } else {
                     "Choose a trusted ONNX Runtime 1.18 or newer shared library built for this hardware. CalibRaw validates it in an isolated helper process. Provider libraries and dependencies must remain beside it."
                 };
-                if let Some(path) = &app.ai.runtime_path {
+                if let Some((path, sha256)) = &app.ai.manual_runtime {
                     ui.label("Selected manual runtime:");
                     ui.add(
                         egui::Label::new(
@@ -954,10 +954,10 @@ impl Settings {
                         )
                         .wrap(),
                     );
-                    if let Some(sha256) = &app.ai.runtime_sha256 {
-                        ui.small("Pinned SHA-256:");
-                        ui.add(egui::Label::new(egui::RichText::new(sha256).monospace()).wrap());
-                    }
+                    ui.small("Pinned SHA-256:");
+                    ui.add(
+                        egui::Label::new(egui::RichText::new(sha256.as_str()).monospace()).wrap(),
+                    );
                 } else {
                     ui.colored_label(
                         ui.visuals().warn_fg_color,
@@ -973,7 +973,7 @@ impl Settings {
                     }
                     if moduwu_design::secondary_button_enabled(
                         ui,
-                        app.ai.runtime_path.is_some(),
+                        app.ai.manual_runtime.is_some(),
                         "Clear",
                     )
                     .on_hover_text("Forget the selected manual runtime.")

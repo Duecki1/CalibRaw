@@ -1,9 +1,11 @@
-use crate::{
-    execution_provider::{
-        ai_acceleration_enabled, create_session_with_fallback, FallbackSession, SessionOptions,
-    },
-    gpu_job_record::GpuJobRecord,
+//! The one loaded model session, and which features may keep theirs loaded
+//! between jobs.
+
+use crate::placement::{
+    ai_acceleration_enabled, create_session_with_fallback, FallbackSession, GpuJobRecord,
+    SessionOptions,
 };
+use crate::registry::{AiFeature, AiModel};
 use anyhow::Result;
 use std::{
     ops::{Deref, DerefMut},
@@ -13,62 +15,6 @@ use std::{
         Mutex, MutexGuard, OnceLock, TryLockError,
     },
 };
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum AiModel {
-    BiRefNet,
-    BiRefNetLow,
-    BiRefNetFp16,
-    BiRefNetLowFp16,
-    SkySeg,
-    Depth,
-    SamEncoder,
-    SamDecoder,
-    BigLama,
-    RawNindBayer,
-    RawNindLinear,
-}
-
-impl AiModel {
-    const fn feature(self) -> AiFeature {
-        match self {
-            Self::BiRefNet | Self::BiRefNetLow | Self::BiRefNetFp16 | Self::BiRefNetLowFp16 => {
-                AiFeature::Subject
-            }
-            Self::SkySeg => AiFeature::Sky,
-            Self::Depth => AiFeature::SceneDepth,
-            Self::SamEncoder | Self::SamDecoder => AiFeature::Object,
-            Self::BigLama => AiFeature::Remove,
-            Self::RawNindBayer | Self::RawNindLinear => AiFeature::Denoise,
-        }
-    }
-}
-
-/// What a local model is used for, independent of where in the UI it runs.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum AiFeature {
-    Subject,
-    Sky,
-    SceneDepth,
-    Object,
-    Remove,
-    Denoise,
-}
-
-impl AiFeature {
-    pub const ALL: [Self; 6] = [
-        Self::Subject,
-        Self::Sky,
-        Self::SceneDepth,
-        Self::Object,
-        Self::Remove,
-        Self::Denoise,
-    ];
-
-    const fn bit(self) -> u8 {
-        1 << self as u8
-    }
-}
 
 /// Features whose models may stay loaded between jobs, typically those whose
 /// tools are on screen. It only governs memory: a running job always finishes.
@@ -80,11 +26,15 @@ impl AiFeatureSet {
 
     #[must_use]
     pub const fn with(self, feature: AiFeature) -> Self {
-        Self(self.0 | feature.bit())
+        Self(self.0 | Self::bit(feature))
     }
 
     pub const fn contains(self, feature: AiFeature) -> bool {
-        self.0 & feature.bit() != 0
+        self.0 & Self::bit(feature) != 0
+    }
+
+    const fn bit(feature: AiFeature) -> u8 {
+        1 << feature as u8
     }
 }
 
@@ -168,7 +118,7 @@ impl<S> RuntimeSlot<S> {
             active.provider_generation == provider_generation
                 && active.acceleration_enabled == acceleration_enabled
                 && active.retention == ModelRetention::WhileWarm
-                && warm.contains(active.model.feature())
+                && warm.contains(active.model.spec().feature)
         });
         if !retain {
             if let Some(active) = self.active.take() {
@@ -247,7 +197,7 @@ pub(crate) fn invalidate_for_provider_change() {
 
 pub(crate) struct ModelSessionGuard {
     runtime: Option<MutexGuard<'static, RuntimeSlot<FallbackSession>>>,
-    /// Marks the lease as GPU work until it ends; see `gpu_job_record`.
+    /// Marks the lease as GPU work until it ends; see `placement::job_record`.
     gpu_job: Option<GpuJobRecord>,
 }
 

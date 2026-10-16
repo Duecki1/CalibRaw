@@ -38,18 +38,20 @@
 //! 16-bit RGB PNG whose samples are IEEE float16 bit patterns, so it
 //! round-trips exactly. `SHA256SUMS` pins every golden in `sha256sum` format.
 
-use calibraw_ai::ai_denoise::{spawn_rawnind_denoise, AiDenoiseEvent, RawNindJob};
-use calibraw_ai::ai_masks::{
-    sha256_file_hex, spawn_ai_mask, spawn_object_mask, AiMaskEvent, AiMaskModel,
-    AiMaskWorkerRequest, ObjectInferenceCache, ObjectMaskEvent, ObjectMaskRequest,
-    ObjectMaskWorkerRequest, SubjectMaskQuality, SubjectModelPrecision, DEPTH_MODEL,
-    SKYSEG_MODEL_FILENAME,
+use calibraw_ai::models::denoise::{spawn_rawnind_denoise, RawNindJob};
+use calibraw_ai::models::masks::{spawn_ai_mask, AiMaskModel, AiMaskWorkerRequest};
+use calibraw_ai::models::object::{
+    spawn_object_mask, ObjectInferenceCache, ObjectMaskRequest, ObjectMaskWorkerRequest,
+    DECODER_MODEL, ENCODER_MODEL,
 };
+use calibraw_ai::models::remove::{spawn_remove, RemoveRequest};
+use calibraw_ai::models::subject::{SubjectMaskQuality, SubjectModelPrecision};
+use calibraw_ai::models::{depth, remove, sky};
 use calibraw_ai::pipeline::{
     crop_raw, load_raw_file, CfaKind, ExposureParams, GeometryTransform, LoadedRaw, MaskStack,
     ObjectStroke, RemoveBrushPoint, RemoveBrushStroke, RemoveEditState,
 };
-use calibraw_ai::remove::{spawn_remove, RemoveEvent, RemoveRequest, BIG_LAMA_MODEL_FILENAME};
+use calibraw_ai::{AiConfigChange, AiJobEvent, RuntimeSource, Sha256};
 use calibraw_gpu::wgpu;
 use calibraw_gpu::{request_headless_device, HeadlessDevice, HeadlessDeviceRequest};
 use half::f16;
@@ -152,7 +154,7 @@ fn subject_high_float32() {
 #[ignore = "needs CALIBRAW_PARITY_PHOTOS, the SkySeg model and ONNX Runtime"]
 fn sky() {
     let harness = Harness::lock();
-    let model_path = harness.models.join(SKYSEG_MODEL_FILENAME);
+    let model_path = harness.models.join(sky::MODEL.cache_filename);
     let output = harness.mask_job(AiMaskModel::Sky, model_path, Default::default());
     harness.check("sky", Tolerance::MaskIou(0.995), &output);
 }
@@ -161,7 +163,7 @@ fn sky() {
 #[ignore = "needs CALIBRAW_PARITY_PHOTOS, the depth model and ONNX Runtime"]
 fn depth() {
     let harness = Harness::lock();
-    let model_path = harness.models.join(DEPTH_MODEL.cache_filename);
+    let model_path = harness.models.join(depth::MODEL.cache_filename);
     let output = harness.mask_job(AiMaskModel::Depth, model_path, Default::default());
     let output = match output {
         Output::Mask(plane) => Output::Depth(plane),
@@ -220,15 +222,13 @@ fn remove() {
         existing: RemoveEditState::default(),
         brush,
         opacity: 1.0,
-        model_path: harness.models.join(BIG_LAMA_MODEL_FILENAME),
+        model_path: harness.models.join(remove::MODEL.cache_filename),
         allow_download: harness.download,
-        runtime_path: harness.runtime_path(),
-        runtime_sha256: harness.runtime_sha256(),
         program_prewarm: None,
         cancellation: Arc::new(AtomicBool::new(false)),
     });
     let stroke = finish(events, |event| match event {
-        RemoveEvent::Finished(result) => Some(result),
+        AiJobEvent::Finished(result) => Some(result),
         _ => None,
     });
     let [patch] = stroke.patches.as_slice() else {
@@ -303,7 +303,6 @@ struct Harness {
     _serial: MutexGuard<'static, ()>,
     photos: PathBuf,
     models: PathBuf,
-    runtime: Option<(PathBuf, String)>,
     download: bool,
     gpu: bool,
     bless: bool,
@@ -322,12 +321,13 @@ impl Harness {
         );
         let models = std::env::var_os("CALIBRAW_PARITY_MODELS")
             .map_or_else(calibraw_ai::desktop_model_cache_root, PathBuf::from);
-        let runtime = std::env::var_os("CALIBRAW_PARITY_RUNTIME").map(|path| {
-            let path = PathBuf::from(path);
-            let sha256 = sha256_file_hex(&path)
-                .unwrap_or_else(|error| panic!("hash {}: {error:#}", path.display()));
-            (path, sha256)
-        });
+        let runtime =
+            std::env::var_os("CALIBRAW_PARITY_RUNTIME").map_or(RuntimeSource::Automatic, |path| {
+                let path = PathBuf::from(path);
+                let sha256 = Sha256::of_file(&path)
+                    .unwrap_or_else(|error| panic!("hash {}: {error:#}", path.display()));
+                RuntimeSource::Manual { path, sha256 }
+            });
         let flag = |name: &str| std::env::var_os(name).is_some_and(|value| value == "1");
         let gpu = flag("CALIBRAW_PARITY_GPU");
         let bless = flag("CALIBRAW_PARITY_BLESS");
@@ -335,32 +335,24 @@ impl Harness {
             !(gpu && bless),
             "goldens come from CPU sessions; unset CALIBRAW_PARITY_GPU to bless"
         );
-        calibraw_ai::set_ai_acceleration_enabled(gpu);
+        calibraw_ai::update(AiConfigChange::Runtime(runtime));
+        calibraw_ai::update(AiConfigChange::Acceleration(gpu));
         Self {
             _serial: serial,
             photos,
             models,
-            runtime,
             download: flag("CALIBRAW_PARITY_DOWNLOAD"),
             gpu,
             bless,
         }
     }
 
-    fn runtime_path(&self) -> Option<PathBuf> {
-        self.runtime.as_ref().map(|(path, _)| path.clone())
-    }
-
-    fn runtime_sha256(&self) -> Option<String> {
-        self.runtime.as_ref().map(|(_, sha256)| sha256.clone())
-    }
-
     fn photo(&self, photo: &Photo) -> PathBuf {
         let path = self.photos.join(photo.path);
-        let sha256 = sha256_file_hex(&path)
+        let sha256 = Sha256::of_file(&path)
             .unwrap_or_else(|error| panic!("hash {}: {error:#}", path.display()));
         assert_eq!(
-            sha256,
+            sha256.as_str(),
             photo.sha256,
             "{} changed; the parity inputs are pinned",
             path.display()
@@ -421,8 +413,6 @@ impl Harness {
                 subject_precision,
                 model_path,
                 allow_download: self.download,
-                runtime_path: self.runtime_path(),
-                runtime_sha256: self.runtime_sha256(),
                 width: scene.width(),
                 height: scene.height(),
                 rgba: scene.as_raw().clone(),
@@ -430,7 +420,7 @@ impl Harness {
             Arc::new(AtomicBool::new(false)),
         );
         let result = finish(events, |event| match event {
-            AiMaskEvent::Finished(result) => Some(result),
+            AiJobEvent::Finished(result) => Some(result),
             _ => None,
         });
         Output::Mask(Plane {
@@ -447,11 +437,9 @@ impl Harness {
     ) -> (Output, ObjectInferenceCache) {
         let scene = self.scene();
         let events = spawn_object_mask(ObjectMaskWorkerRequest {
-            encoder_path: self.models.join("sam2.1-hiera-tiny.encoder.onnx"),
-            decoder_path: self.models.join("sam2.1-hiera-tiny.decoder.onnx"),
+            encoder_path: self.models.join(ENCODER_MODEL.cache_filename),
+            decoder_path: self.models.join(DECODER_MODEL.cache_filename),
             allow_download: self.download,
-            runtime_path: self.runtime_path(),
-            runtime_sha256: self.runtime_sha256(),
             inference: ObjectMaskRequest {
                 source_width: scene.width(),
                 source_height: scene.height(),
@@ -464,7 +452,7 @@ impl Harness {
             cancellation: Arc::new(AtomicBool::new(false)),
         });
         let result = finish(events, |event| match event {
-            ObjectMaskEvent::Finished(result) => Some(result),
+            AiJobEvent::Finished(result) => Some(result),
             _ => None,
         });
         let output = Output::Mask(Plane {
@@ -482,8 +470,6 @@ impl Harness {
         let gpu = self.gpu_device();
         let events = spawn_rawnind_denoise(
             model_dir,
-            self.runtime_path(),
-            self.runtime_sha256(),
             Arc::new(raw),
             Some(gpu.device.clone()),
             Some(gpu.queue),
@@ -494,7 +480,7 @@ impl Harness {
             Arc::new(AtomicBool::new(false)),
         );
         let image = finish(events, |event| match event {
-            AiDenoiseEvent::Finished(result) => Some(result),
+            AiJobEvent::Finished(result) => Some(result),
             _ => None,
         });
         assert_eq!((image.width, image.height), (width, height));
@@ -538,7 +524,10 @@ impl Harness {
             for (file, bytes) in &files {
                 let path = directory.join(file);
                 fs::write(&path, bytes).unwrap_or_else(|error| panic!("write {file}: {error}"));
-                pins.insert(file.clone(), sha256_file_hex(&path).expect("hash golden"));
+                pins.insert(
+                    file.clone(),
+                    Sha256::of_file(&path).expect("hash golden").to_string(),
+                );
             }
             write_pins(directory, &pins);
             eprintln!("{name}: blessed {} files", files.len());
@@ -551,9 +540,13 @@ impl Harness {
             let expected = pins.get(file).unwrap_or_else(|| {
                 panic!("no golden {file}; bless with CALIBRAW_PARITY_BLESS=1 on the CPU")
             });
-            let actual = sha256_file_hex(&path)
+            let actual = Sha256::of_file(&path)
                 .unwrap_or_else(|error| panic!("hash golden {file}: {error:#}"));
-            assert_eq!(&actual, expected, "golden {file} does not match {PINS}");
+            assert_eq!(
+                actual.as_str(),
+                expected,
+                "golden {file} does not match {PINS}"
+            );
             golden.insert(file.clone(), fs::read(&path).expect("read golden"));
         }
         let golden = Output::decode(output, name, &golden);

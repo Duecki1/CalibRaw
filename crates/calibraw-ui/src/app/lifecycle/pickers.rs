@@ -99,8 +99,8 @@ impl CalibRawApp {
                 self.apply_camera_profile_folder(folder);
             }
             crate::app::DesktopPickerEvent::OnnxRuntime(Ok(Some((path, sha256)))) => {
-                self.ai.runtime_path = Some(path);
-                self.ai.runtime_sha256 = Some(sha256);
+                self.ai.manual_runtime = Some((path, sha256));
+                self.sync_onnx_runtime_source();
                 self.ui.notice = Some(
                     "ONNX Runtime selection and SHA-256 pin saved. Restart CalibRaw before generating another subject mask."
                         .to_owned(),

@@ -15,10 +15,6 @@ impl CalibRawApp {
         #[cfg(target_os = "android")] android_app: calibraw_ffi::AndroidApp,
     ) -> Self {
         #[cfg(not(target_os = "android"))]
-        calibraw_ai::set_ai_acceleration_enabled(performance.ai_gpu_acceleration);
-        #[cfg(not(target_os = "android"))]
-        calibraw_ai::set_automatic_onnx_runtime_kind(performance.onnx_runtime_kind);
-        #[cfg(not(target_os = "android"))]
         calibraw_core::serialized_reads::set_enabled(performance.hdd_mode);
         #[cfg(not(target_os = "android"))]
         let discord_presence = DiscordPresence::new(performance.discord_rich_presence);
@@ -60,11 +56,7 @@ impl CalibRawApp {
         let lens_correction = LensCorrectionState::default();
         let edit_history = EditHistory::new(&exposure, &masks, &lens_correction);
         #[cfg(not(target_os = "android"))]
-        let runtime_selection = Self::load_onnx_runtime_selection();
-        #[cfg(not(target_os = "android"))]
-        let onnx_runtime_path = runtime_selection.as_ref().map(|(path, _)| path.clone());
-        #[cfg(not(target_os = "android"))]
-        let onnx_runtime_sha256 = runtime_selection.map(|(_, sha256)| sha256);
+        let manual_runtime = Self::load_onnx_runtime_selection();
         let library_preferences = crate::ui::library::LibraryPreferences {
             thumbnail_workers: performance.thumbnail_workers,
             automatic_thumbnail_workers: performance.thumbnail_workers_automatic,
@@ -206,9 +198,7 @@ impl CalibRawApp {
                 #[cfg(not(target_os = "android"))]
                 runtime_kind: performance.onnx_runtime_kind,
                 #[cfg(not(target_os = "android"))]
-                runtime_path: onnx_runtime_path,
-                #[cfg(not(target_os = "android"))]
-                runtime_sha256: onnx_runtime_sha256,
+                manual_runtime,
                 library_mask_refresh: None,
                 consent: None,
                 object_pending_target: None,
@@ -400,14 +390,15 @@ impl CalibRawApp {
 
     #[cfg(not(target_os = "android"))]
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
+        let mut editor_gpu = None;
         if let Some(render_state) = cc.wgpu_render_state.as_ref() {
             calibraw_gpu::install_uncaptured_gpu_error_handler(&render_state.device);
             calibraw_gpu::install_gpu_device_lost_handler(&render_state.device);
-            #[cfg(target_os = "windows")]
-            {
-                let adapter = render_state.adapter.get_info();
-                calibraw_ai::set_directml_adapter(adapter.vendor, adapter.device);
-            }
+            let adapter = render_state.adapter.get_info();
+            editor_gpu = Some(calibraw_ai::GpuIdentity {
+                vendor_id: adapter.vendor,
+                device_id: adapter.device,
+            });
         }
         crate::ui::theme::install(&cc.egui_ctx);
         calibraw_core::diagnostics::record("CalibRaw desktop UI initialized");
@@ -425,7 +416,15 @@ impl CalibRawApp {
         app.remove_retired_depth_model();
         let gpu_job_record =
             calibraw_core::thumbnail_cache::desktop_app_cache_root().join("gpu-ai-job.txt");
-        if let Some(job) = calibraw_ai::set_gpu_job_record_path(gpu_job_record) {
+        let interrupted_gpu_job = calibraw_ai::configure(calibraw_ai::AiConfig {
+            acceleration: app.ai.gpu_acceleration,
+            runtime: app.ai_runtime_source(),
+            automatic_runtime: app.ai.runtime_kind,
+            model_root: app.ai_model_root(),
+            job_record_path: Some(gpu_job_record),
+            gpu: editor_gpu,
+        });
+        if let Some(job) = interrupted_gpu_job {
             app.handle_interrupted_gpu_ai_job(&job);
         }
         app
@@ -491,6 +490,16 @@ impl CalibRawApp {
         ) {
             log::warn!("{error}");
         }
+        // Android always allows GPU providers, links its runtime into the
+        // app and keeps no GPU job record.
+        calibraw_ai::configure(calibraw_ai::AiConfig {
+            acceleration: true,
+            runtime: calibraw_ai::RuntimeSource::Automatic,
+            automatic_runtime: calibraw_ai::runtime::AutomaticOnnxRuntimeKind::default(),
+            model_root: app.ai_model_root(),
+            job_record_path: None,
+            gpu: None,
+        });
         app.remove_legacy_ai_denoise_cache();
         app
     }

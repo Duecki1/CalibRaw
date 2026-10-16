@@ -3,10 +3,7 @@
 // Copyright the GIMP contributors.
 // Copyright (C) 2026 CalibRaw contributors (Rust adaptation).
 
-use crate::execution_provider::SessionOptions;
-use crate::model_artifact::{DownloadOptions, ModelArtifact};
-use crate::model_install::ModelInstallSpec;
-use crate::model_runtime::{with_model_session, AiModel, ModelRetention};
+use crate::jobs::{spawn_job, AiJobEvent, JobContext, JobKind};
 use crate::pipeline::{
     adaptive_remove_dilation, pipeline_scene_to_canonical_remove_scene,
     pipeline_scene_to_working_rec2020, plan_remove_passes, rasterize_remove_brush,
@@ -17,7 +14,9 @@ use crate::pipeline::{
     RemoveMask, RemovePass, RemovePatch, RemoveStroke, ResizedRemoveSceneCrop, RetouchAlignment,
     RetouchStroke, RetouchTool, BIG_LAMA_INPUT_EDGE,
 };
-use crate::ModelDownloadProgress;
+use crate::registry::{AiModel, ModelInfo};
+use crate::runtime::initialize_runtime;
+use crate::slot::with_model_session;
 
 mod lama;
 use anyhow::{Context, Result};
@@ -30,39 +29,27 @@ use std::{
         atomic::{AtomicBool, Ordering},
         mpsc, Arc,
     },
-    time::Duration,
 };
 
 mod retouch;
 use retouch::*;
 
-pub const BIG_LAMA_MODEL_FILENAME: &str = "big-lama-places2-fp32-512.onnx";
-pub const BIG_LAMA_MODEL_URL: &str =
-    "https://huggingface.co/Duecki/CalibRaw-Artifacts/resolve/91085ce0ec322a4a7cbd20059688690218e52f9a/models/lama/lama_fp32.onnx";
-pub const BIG_LAMA_MODEL_SHA256_HEX: &str =
-    "1faef5301d78db7dda502fe59966957ec4b79dd64e16f03ed96913c7a4eb68d6";
-pub const BIG_LAMA_MODEL_BYTES: u64 = 208_044_816;
-pub const BIG_LAMA_MODEL_LICENSE: &str = "Apache-2.0";
-pub const BIG_LAMA_MODEL_PROVENANCE: &str =
+pub const MODEL: ModelInfo = AiModel::BigLama.spec().info();
+pub const MODEL_LICENSE: &str = "Apache-2.0";
+pub const MODEL_PROVENANCE: &str =
     "Carve/LaMa-ONNX port of the original PyTorch big-lama inpainting model";
 
-const BIG_LAMA_ARTIFACT: ModelArtifact = ModelArtifact {
-    name: "Big-LaMa Places2 ONNX",
-    url: Some(BIG_LAMA_MODEL_URL),
-    sha256: BIG_LAMA_MODEL_SHA256_HEX,
-    bytes: BIG_LAMA_MODEL_BYTES,
+const REMOVE_JOB: JobKind = JobKind {
+    thread: "calibraw-big-lama-remove",
+    worker: "Remove worker",
+    panicked: "Remove stopped unexpectedly",
+    cancelled: "Remove operation cancelled",
 };
-const BIG_LAMA_DOWNLOAD: DownloadOptions = DownloadOptions {
-    connect_timeout: Duration::from_secs(30),
-    response_timeout: Duration::from_secs(60),
-    body_timeout: Duration::from_secs(30 * 60),
-    attempts: 5,
-    resume: true,
-};
-const BIG_LAMA_INSTALL: ModelInstallSpec = ModelInstallSpec {
-    artifact: BIG_LAMA_ARTIFACT,
-    download: BIG_LAMA_DOWNLOAD,
-    progress_label: "Big-LaMa Remove model",
+const RETOUCH_JOB: JobKind = JobKind {
+    thread: "calibraw-retouch-brush",
+    worker: "retouch worker",
+    panicked: "Retouch stopped unexpectedly",
+    cancelled: "Remove operation cancelled",
 };
 
 #[derive(Clone)]
@@ -78,8 +65,6 @@ pub struct RemoveRequest {
     pub opacity: f32,
     pub model_path: PathBuf,
     pub allow_download: bool,
-    pub runtime_path: Option<PathBuf>,
-    pub runtime_sha256: Option<String>,
     pub program_prewarm: Option<Arc<GpuProgramPrewarm>>,
     pub cancellation: Arc<AtomicBool>,
 }
@@ -99,50 +84,31 @@ pub struct RetouchRequest {
     pub cancellation: Arc<AtomicBool>,
 }
 
-#[derive(Debug)]
-pub enum RemoveEvent {
-    DownloadProgress(ModelDownloadProgress),
-    Processing { completed: usize, total: usize },
-    Finished(Result<RemoveStroke, String>),
+/// Remove fills a stroke in one or more passes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RemoveProgress {
+    pub completed: usize,
+    pub total: usize,
 }
 
+/// Events of Remove and retouch jobs; retouch reports no progress.
+pub type RemoveEvent = AiJobEvent<RemoveStroke, RemoveProgress>;
+
 pub fn big_lama_model_is_verified(path: &Path) -> bool {
-    BIG_LAMA_INSTALL.is_installed(path)
+    AiModel::BigLama.spec().is_installed(path)
 }
 
 pub fn spawn_remove(request: RemoveRequest) -> mpsc::Receiver<RemoveEvent> {
-    let (sender, receiver) = mpsc::channel();
-    let worker = sender.clone();
-    let spawn = std::thread::Builder::new()
-        .name("calibraw-big-lama-remove".to_owned())
-        .spawn(move || {
-            let result = run_remove(request, &worker).map_err(|error| format!("{error:#}"));
-            let _ = worker.send(RemoveEvent::Finished(result));
-        });
-    if let Err(error) = spawn {
-        let _ = sender.send(RemoveEvent::Finished(Err(format!(
-            "could not start Remove worker: {error}"
-        ))));
-    }
-    receiver
+    let cancellation = Arc::clone(&request.cancellation);
+    spawn_job(&REMOVE_JOB, cancellation, move |job| {
+        run_remove(request, job)
+    })
 }
 
 /// Local clone/heal path; never initializes or downloads an ONNX model.
 pub fn spawn_retouch(request: RetouchRequest) -> mpsc::Receiver<RemoveEvent> {
-    let (sender, receiver) = mpsc::channel();
-    let worker = sender.clone();
-    let spawn = std::thread::Builder::new()
-        .name("calibraw-retouch-brush".to_owned())
-        .spawn(move || {
-            let result = run_retouch(request).map_err(|error| format!("{error:#}"));
-            let _ = worker.send(RemoveEvent::Finished(result));
-        });
-    if let Err(error) = spawn {
-        let _ = sender.send(RemoveEvent::Finished(Err(format!(
-            "could not start retouch worker: {error}"
-        ))));
-    }
-    receiver
+    let cancellation = Arc::clone(&request.cancellation);
+    spawn_job(&RETOUCH_JOB, cancellation, move |_| run_retouch(request))
 }
 
 fn ensure_not_cancelled(cancellation: &AtomicBool) -> Result<()> {
@@ -153,21 +119,18 @@ fn ensure_not_cancelled(cancellation: &AtomicBool) -> Result<()> {
     Ok(())
 }
 
-fn run_remove(request: RemoveRequest, events: &mpsc::Sender<RemoveEvent>) -> Result<RemoveStroke> {
-    ensure_not_cancelled(&request.cancellation)?;
-    crate::ai_masks::initialize_runtime(
-        request.runtime_path.as_deref(),
-        request.runtime_sha256.as_deref(),
-    )?;
-    BIG_LAMA_INSTALL.ensure_installed(
+fn run_remove(
+    request: RemoveRequest,
+    job: &JobContext<RemoveStroke, RemoveProgress>,
+) -> Result<RemoveStroke> {
+    job.ensure_not_cancelled()?;
+    initialize_runtime()?;
+    job.install(
+        AiModel::BigLama.spec(),
         &request.model_path,
         request.allow_download,
-        |progress| {
-            let _ = events.send(RemoveEvent::DownloadProgress(progress));
-        },
-        || ensure_not_cancelled(&request.cancellation),
     )?;
-    ensure_not_cancelled(&request.cancellation)?;
+    job.ensure_not_cancelled()?;
 
     let mut brush = request.brush;
     if brush.dilation_radius == 0 {
@@ -178,7 +141,7 @@ fn run_remove(request: RemoveRequest, events: &mpsc::Sender<RemoveEvent>) -> Res
     let passes = plan_remove_passes(request.raw.width, request.raw.height, &mask);
     anyhow::ensure!(!passes.is_empty(), "Remove mask produced no inference pass");
     // Replaces any finished download progress before the first pass runs.
-    let _ = events.send(RemoveEvent::Processing {
+    job.progress(RemoveProgress {
         completed: 0,
         total: passes.len(),
     });
@@ -247,7 +210,7 @@ fn run_remove(request: RemoveRequest, events: &mpsc::Sender<RemoveEvent>) -> Res
             },
         )?);
         unfilled.subtract(&pass.target);
-        let _ = events.send(RemoveEvent::Processing {
+        job.progress(RemoveProgress {
             completed: index + 1,
             total: passes.len(),
         });

@@ -9,7 +9,7 @@ const RESTARTED_AFTER_GPU_LOSS: &str = "CALIBRAW_RESTARTED_AFTER_GPU_LOSS";
 
 impl CalibRawApp {
     /// Turns GPU AI off when the previous run ended during `job` on the GPU,
-    /// as `calibraw_ai::set_gpu_job_record_path` reports it.
+    /// as `calibraw_ai::configure` reports it.
     pub(in crate::app) fn handle_interrupted_gpu_ai_job(&mut self, job: &str) {
         calibraw_core::diagnostics::record(format!("previous run ended during GPU AI job: {job}"));
         self.set_ai_gpu_acceleration(false);

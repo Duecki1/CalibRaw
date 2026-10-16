@@ -84,7 +84,7 @@ impl CalibRawApp {
             return;
         }
         self.ai.gpu_acceleration = enabled;
-        calibraw_ai::set_ai_acceleration_enabled(enabled);
+        calibraw_ai::update(calibraw_ai::AiConfigChange::Acceleration(enabled));
         self.sync_ai_runtime();
         self.persist_performance_settings();
         self.ui.notice = Some(if enabled {

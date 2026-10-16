@@ -548,8 +548,8 @@ fn run_big_lama(
     let values = with_model_session(
         AiModel::BigLama,
         model_path,
-        SessionOptions::new("Big-LaMa Remove"),
-        ModelRetention::WhileWarm,
+        AiModel::BigLama.spec().session,
+        AiModel::BigLama.spec().retention,
         |session| {
             session.run_with_fallback(
                 "Big-LaMa Remove ONNX inference",
