@@ -20,4 +20,4 @@ pub use placement::{
 };
 pub use registry::install::ModelDownloadProgress;
 pub use registry::{AiFeature, InputShape, ModelInfo};
-pub use slot::{set_warm_ai_features, AiFeatureSet};
+pub use slot::{release_idle_gpu_session, set_warm_ai_features, AiFeatureSet};

@@ -77,11 +77,34 @@ impl CalibRawApp {
             );
         }
         if calibraw_gpu::take_gpu_out_of_memory() {
-            self.stop_ai_after_gpu_failure();
-            self.report_error(
-                ErrorKind::GpuMemory,
-                "GPU memory was exhausted. CalibRaw stopped AI work, disabled GPU AI, and released optional preview textures. Close other GPU-heavy apps or lower Preview Quality before retrying.",
-            );
+            self.handle_gpu_out_of_memory(calibraw_ai::gpu_job_in_progress());
+        }
+    }
+
+    /// The editor, an export or a thumbnail render ran out of GPU memory
+    /// while `ai_gpu_job` ran on the GPU, if one did. Only an AI job on the
+    /// GPU competed for that memory, so only then is the job stopped and GPU
+    /// AI switched off. Otherwise optional preview textures and an idle AI
+    /// session left on the GPU are released, and AI work goes on.
+    fn handle_gpu_out_of_memory(&mut self, ai_gpu_job: Option<String>) {
+        match ai_gpu_job {
+            Some(job) => {
+                self.stop_ai_after_gpu_failure();
+                self.report_error(
+                    ErrorKind::GpuMemory,
+                    format!(
+                        "GPU memory was exhausted while {job} was running. CalibRaw stopped the AI job, switched AI tools to the CPU and released optional preview textures. You can turn GPU acceleration back on in Settings."
+                    ),
+                );
+            }
+            None => {
+                calibraw_ai::release_idle_gpu_session();
+                self.release_optional_gpu_memory();
+                self.report_error(
+                    ErrorKind::GpuMemory,
+                    "GPU memory was exhausted. CalibRaw released optional preview textures. Close other GPU-heavy apps or lower Preview Quality before retrying.",
+                );
+            }
         }
     }
 
@@ -536,4 +559,24 @@ pub(super) fn show_raw_drop_overlay(ui: &egui::Ui, folder: Option<&std::path::Pa
         egui::FontId::proportional(18.0),
         egui::Color32::WHITE,
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Running out of GPU memory with no AI job on the GPU is not an AI
+    /// failure: GPU AI stays on and only optional textures are released.
+    #[test]
+    fn running_out_of_gpu_memory_without_gpu_ai_keeps_gpu_ai_on() {
+        let mut app = CalibRawApp::empty(&egui::Context::default());
+        assert!(app.ai.gpu_acceleration);
+        app.preview.zoom = 4.0;
+
+        app.handle_gpu_out_of_memory(None);
+
+        assert!(app.ai.gpu_acceleration);
+        assert_eq!(app.preview.zoom, 1.0);
+        assert!(app.ui.error_dialogs.is_open());
+    }
 }
