@@ -54,15 +54,14 @@ impl CalibRawApp {
     /// migration: remove in v1.4.0. Listed in `calibraw_core`'s `migrations`.
     pub(in crate::app) fn remove_legacy_ai_denoise_cache(&self) {
         // In the app's private data where the platform assigns one, otherwise
-        // in the cache root above the RawNIND models.
+        // in the cache root that held the models then.
         let root = if self.caps().has_media_library() {
             self.platform
                 .internal_data_dir()
                 .map(|data| data.join("ai-denoise-results-v2"))
         } else {
-            self.rawnind_model_dir()
+            calibraw_core::migrations::desktop_model_folder::legacy_desktop_model_root()
                 .parent()
-                .and_then(std::path::Path::parent)
                 .map(|cache_root| cache_root.join("ai-denoise-results-v2"))
         };
         if let Some(root) = root.filter(|root| root.is_dir()) {

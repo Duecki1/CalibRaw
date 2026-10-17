@@ -34,7 +34,7 @@ impl Platform for DesktopPlatform {
     }
 
     fn model_root(&self) -> PathBuf {
-        calibraw_ai::desktop_model_cache_root()
+        calibraw_ai::desktop_model_root()
     }
 
     fn gpu_pipeline_cache_dir(&self) -> Result<Option<PathBuf>, String> {

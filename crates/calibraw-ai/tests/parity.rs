@@ -18,7 +18,7 @@
 //!   pinned by SHA-256, so a changed photo fails instead of silently moving
 //!   the baseline.
 //! - `CALIBRAW_PARITY_MODELS`: the model folder; defaults to the desktop model
-//!   cache the app downloads into.
+//!   folder the app downloads into.
 //! - `CALIBRAW_PARITY_DOWNLOAD=1`: download missing models into it.
 //! - `CALIBRAW_PARITY_RUNTIME`: an ONNX Runtime library to load instead of
 //!   the automatic runtime.
@@ -324,7 +324,7 @@ impl Harness {
                 .expect("set CALIBRAW_PARITY_PHOTOS to the Demo photo folder"),
         );
         let models = std::env::var_os("CALIBRAW_PARITY_MODELS")
-            .map_or_else(calibraw_ai::desktop_model_cache_root, PathBuf::from);
+            .map_or_else(calibraw_ai::desktop_model_root, PathBuf::from);
         let runtime =
             std::env::var_os("CALIBRAW_PARITY_RUNTIME").map_or(RuntimeSource::Automatic, |path| {
                 let path = PathBuf::from(path);
@@ -469,7 +469,7 @@ impl Harness {
 
     fn denoise_job(&self, raw: LoadedRaw) -> Output {
         let (width, height) = (raw.width, raw.height);
-        // `ai_denoise::model_cache_dir()` is this folder in the desktop cache.
+        // `ai_denoise::model_cache_dir()` is this folder in the desktop model folder.
         let model_dir = self.models.join("rawdenoise-nind-1.0");
         let gpu = self.gpu_device();
         let events = spawn_rawnind_denoise(

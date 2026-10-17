@@ -1,7 +1,7 @@
 # `target_os` conditions per file, checked by `cargo xtask cfg-ratchet`.
 # Counts may only fall: `cargo xtask cfg-ratchet --update` lowers them.
 # Raising one, or adding a file, is a reviewed change to this file.
-  4 crates/calibraw-ai/src/config.rs
+  5 crates/calibraw-ai/src/config.rs
   1 crates/calibraw-ai/src/lib.rs
   2 crates/calibraw-core/src/pipeline/masks.rs
   2 crates/calibraw-core/src/pipeline/masks/raster_cache.rs

@@ -215,7 +215,7 @@ pub(crate) fn model_root() -> PathBuf {
 
 #[cfg(not(target_os = "android"))]
 fn default_model_root() -> PathBuf {
-    desktop_model_cache_root()
+    desktop_model_root()
 }
 
 /// Android apps keep models in their internal data folder, which only the
@@ -225,13 +225,37 @@ fn default_model_root() -> PathBuf {
     std::env::temp_dir().join("models")
 }
 
+/// Where desktop builds keep downloaded models and automatic runtimes: the
+/// platform's folder for application data, which cleaners leave alone,
+/// unlike a cache or the temporary folder.
+/// - Windows: `%LOCALAPPDATA%\calibraw\models`, local rather than roaming
+///   because the models are large.
+/// - macOS: `~/Library/Application Support/calibraw/models`.
+/// - Linux: `$XDG_DATA_HOME/calibraw/models`, by default
+///   `~/.local/share/calibraw/models`.
+///
+/// Versions up to 1.3 used a cache folder, which on Windows was the
+/// temporary folder; `calibraw_core::migrations::desktop_model_folder`
+/// moves what they downloaded.
 #[cfg(not(target_os = "android"))]
-pub fn desktop_model_cache_root() -> PathBuf {
-    let root = std::env::var_os("XDG_CACHE_HOME")
-        .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".cache")))
-        .unwrap_or_else(std::env::temp_dir);
-    root.join("calibraw/models")
+pub fn desktop_model_root() -> PathBuf {
+    let env_path = |name| std::env::var_os(name).map(PathBuf::from);
+    let data_root = if cfg!(windows) {
+        env_path("LOCALAPPDATA").or_else(|| {
+            env_path("USERPROFILE").map(|profile| profile.join("AppData").join("Local"))
+        })
+    } else if cfg!(target_os = "macos") {
+        env_path("HOME").map(|home| home.join("Library").join("Application Support"))
+    } else {
+        // The XDG specification ignores a relative `XDG_DATA_HOME`.
+        env_path("XDG_DATA_HOME")
+            .filter(|path| path.is_absolute())
+            .or_else(|| env_path("HOME").map(|home| home.join(".local").join("share")))
+    };
+    data_root
+        .unwrap_or_else(std::env::temp_dir)
+        .join("calibraw")
+        .join("models")
 }
 
 fn read() -> RwLockReadGuard<'static, Settings> {

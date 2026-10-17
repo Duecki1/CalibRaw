@@ -133,7 +133,7 @@ CALIBRAW_PARITY_PHOTOS=/path/to/Demo \
   cargo test --locked -p calibraw-ai --test parity -- --ignored --nocapture
 ```
 
-The inputs are pinned by SHA-256. Models come from the desktop model cache,
+The inputs are pinned by SHA-256. Models come from the desktop model folder,
 or `CALIBRAW_PARITY_MODELS`; `CALIBRAW_PARITY_DOWNLOAD=1` fetches missing
 ones. `CALIBRAW_PARITY_RUNTIME` loads a specific ONNX Runtime library, and
 `CALIBRAW_PARITY_GPU=1` keeps GPU acceleration on to compare GPU sessions

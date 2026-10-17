@@ -320,7 +320,7 @@ the maintainer.
   arena, which are the same Windows bug as its non-finite tolerance.
 - The provider generation counter moved from `slot.rs` to `placement`, which
   bumps it, so `slot.rs` needs no Android branch.
-- `lib.rs` keeps one cfg on the `desktop_model_cache_root` re-export: it is
+- `lib.rs` keeps one cfg on the `desktop_model_root` re-export: it is
   public API that does not exist on Android, not a check.
 
 ---

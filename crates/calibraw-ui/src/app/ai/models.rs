@@ -283,16 +283,68 @@ impl CalibRawApp {
             .join(calibraw_ai::models::remove::MODEL.cache_filename)
     }
 
-    pub(in crate::app) fn onnx_runtime_config_path() -> PathBuf {
-        let root = std::env::var_os("XDG_CONFIG_HOME")
-            .map(PathBuf::from)
-            .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".config")))
-            .unwrap_or_else(std::env::temp_dir);
-        root.join("calibraw/onnx-runtime-path")
+    /// The file naming the manually selected ONNX Runtime, beside the
+    /// settings file at `settings_path` as the presets are.
+    fn onnx_runtime_selection_path(settings_path: Option<&std::path::Path>) -> Option<PathBuf> {
+        settings_path?
+            .parent()
+            .map(|folder| folder.join("onnx-runtime-path"))
     }
 
-    pub(in crate::app) fn load_onnx_runtime_selection() -> Option<(PathBuf, calibraw_ai::Sha256)> {
-        let configured = std::fs::read_to_string(Self::onnx_runtime_config_path()).ok()?;
+    /// Moves the ONNX Runtime selection that versions up to 1.3 saved in the
+    /// config or temporary folder beside the settings file, before it is
+    /// loaded. Returns the failure to report.
+    ///
+    /// migration: remove in v2.0.0, with
+    /// `calibraw_core::migrations::onnx_runtime_selection`.
+    pub(in crate::app) fn move_onnx_runtime_selection(
+        settings_path: Option<&std::path::Path>,
+    ) -> Option<String> {
+        use calibraw_core::migrations::onnx_runtime_selection;
+        let selection = Self::onnx_runtime_selection_path(settings_path)?;
+        let legacy = onnx_runtime_selection::legacy_onnx_runtime_selection_path();
+        onnx_runtime_selection::move_onnx_runtime_selection(&legacy, &selection)
+            .err()
+            .map(|error| {
+                format!(
+                    "CalibRaw could not move the ONNX Runtime selection from {} to {} ({error}). Select the ONNX Runtime library again in Settings.",
+                    legacy.display(),
+                    selection.display()
+                )
+            })
+    }
+
+    /// Moves the models and runtimes that desktop versions up to 1.3
+    /// downloaded into a cache or the temporary folder to `model_root`,
+    /// before anything looks for them. A manually selected runtime in the old
+    /// folder stays there, since the settings name it by its path. Returns
+    /// the failure to report.
+    ///
+    /// migration: remove in v1.5.0, with
+    /// `calibraw_core::migrations::desktop_model_folder`.
+    pub(in crate::app) fn move_desktop_model_folder(
+        settings_path: Option<&std::path::Path>,
+        model_root: &std::path::Path,
+    ) -> Option<String> {
+        use calibraw_core::migrations::desktop_model_folder;
+        let legacy = desktop_model_folder::legacy_desktop_model_root();
+        let manual_runtime = Self::load_onnx_runtime_selection(settings_path).map(|(path, _)| path);
+        desktop_model_folder::move_desktop_models(&legacy, model_root, manual_runtime.as_deref())
+            .err()
+            .map(|error| {
+                format!(
+                    "CalibRaw could not move the downloaded AI models from {} to {} ({error}). Models left behind are downloaded again when needed, and the old folder can then be deleted.",
+                    legacy.display(),
+                    model_root.display()
+                )
+            })
+    }
+
+    pub(in crate::app) fn load_onnx_runtime_selection(
+        settings_path: Option<&std::path::Path>,
+    ) -> Option<(PathBuf, calibraw_ai::Sha256)> {
+        let configured =
+            std::fs::read_to_string(Self::onnx_runtime_selection_path(settings_path)?).ok()?;
         let mut lines = configured.lines();
         let sha256 = calibraw_ai::Sha256::parse(lines.next()?.strip_prefix("sha256=")?).ok()?;
         let path = PathBuf::from(lines.next()?.strip_prefix("path=")?);
@@ -303,9 +355,18 @@ impl CalibRawApp {
     }
 
     pub(in crate::app) fn persist_onnx_runtime_selection(
+        settings_path: Option<&std::path::Path>,
         selection: Option<(&std::path::Path, &calibraw_ai::Sha256)>,
     ) -> Result<(), String> {
-        let config = Self::onnx_runtime_config_path();
+        let config = match Self::onnx_runtime_selection_path(settings_path) {
+            Some(config) => config,
+            None if selection.is_none() => return Ok(()),
+            None => {
+                return Err(
+                    "there is no settings folder to save the ONNX Runtime selection in".to_owned(),
+                )
+            }
+        };
         if let Some((path, sha256)) = selection {
             let path_text = path
                 .to_str()
@@ -349,10 +410,11 @@ impl CalibRawApp {
         {
             dialog = dialog.set_directory(parent);
         }
+        let settings_path = self.preferences.performance_settings_path.clone();
         self.ui.desktop_picker_receiver = Some(spawn_ui_worker(&self.egui_ctx, move || {
             let result = dialog
                 .pick_file_on_worker()
-                .map(Self::validate_and_persist_onnx_runtime)
+                .map(|path| Self::validate_and_persist_onnx_runtime(path, settings_path.as_deref()))
                 .transpose();
             crate::app::DesktopPickerEvent::OnnxRuntime(result)
         }));
@@ -360,6 +422,7 @@ impl CalibRawApp {
 
     pub(in crate::app) fn validate_and_persist_onnx_runtime(
         path: PathBuf,
+        settings_path: Option<&std::path::Path>,
     ) -> Result<(PathBuf, calibraw_ai::Sha256), String> {
         if !path.is_file() {
             return Err(format!("{} is not a file.", path.display()));
@@ -382,12 +445,15 @@ impl CalibRawApp {
                 "This ONNX Runtime could not be loaded safely: {error:#}"
             ));
         }
-        Self::persist_onnx_runtime_selection(Some((&path, &sha256)))?;
+        Self::persist_onnx_runtime_selection(settings_path, Some((&path, &sha256)))?;
         Ok((path, sha256))
     }
 
     pub(crate) fn clear_onnx_runtime(&mut self) {
-        match Self::persist_onnx_runtime_selection(None) {
+        match Self::persist_onnx_runtime_selection(
+            self.preferences.performance_settings_path.as_deref(),
+            None,
+        ) {
             Ok(()) => {
                 self.ai.manual_runtime = None;
                 self.sync_onnx_runtime_source();
