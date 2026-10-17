@@ -1,15 +1,11 @@
-#[cfg(not(target_os = "android"))]
 use super::AI_DENOISE_SUFFIX;
 use super::SIDECAR_SUFFIX;
-#[cfg(not(target_os = "android"))]
 use super::{
     atomic_write, read_bounded, SidecarError, DEVELOPED_THUMBNAIL_CACHE_VERSION_SALT,
     DEVELOPED_THUMBNAIL_FINGERPRINT_SUFFIX, DEVELOPED_THUMBNAIL_SUFFIX,
 };
-#[cfg(not(target_os = "android"))]
 use crate::pipeline::RawThumbnail;
 use std::ffi::OsString;
-#[cfg(not(target_os = "android"))]
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -17,14 +13,12 @@ pub fn sidecar_path_for_raw(raw_path: &Path) -> PathBuf {
     path_beside_raw(raw_path, SIDECAR_SUFFIX)
 }
 
-#[cfg(not(target_os = "android"))]
 pub fn ai_denoise_path_for_raw(raw_path: &Path) -> PathBuf {
     path_beside_raw(raw_path, AI_DENOISE_SUFFIX)
 }
 
 /// Files stored next to a RAW that belong to it, so they are copied, renamed
 /// and deleted together with it.
-#[cfg(not(target_os = "android"))]
 pub fn raw_companion_paths(raw_path: &Path) -> [PathBuf; 2] {
     [
         sidecar_path_for_raw(raw_path),
@@ -38,12 +32,10 @@ fn path_beside_raw(raw_path: &Path, suffix: &str) -> PathBuf {
     PathBuf::from(path)
 }
 
-#[cfg(not(target_os = "android"))]
 pub fn developed_thumbnail_path_for_raw(raw_path: &Path) -> PathBuf {
     crate::thumbnail_cache::desktop_cache_path_for_raw(raw_path, DEVELOPED_THUMBNAIL_SUFFIX)
 }
 
-#[cfg(not(target_os = "android"))]
 pub(super) fn developed_thumbnail_fingerprint_path_for_raw(raw_path: &Path) -> PathBuf {
     crate::thumbnail_cache::desktop_cache_path_for_raw(
         raw_path,
@@ -51,7 +43,6 @@ pub(super) fn developed_thumbnail_fingerprint_path_for_raw(raw_path: &Path) -> P
     )
 }
 
-#[cfg(not(target_os = "android"))]
 pub fn desktop_sidecar_fingerprint(raw_path: &Path) -> Result<Option<u64>, String> {
     let path = sidecar_path_for_raw(raw_path);
     let bytes = match read_bounded(&path) {
@@ -70,7 +61,6 @@ pub fn desktop_sidecar_fingerprint(raw_path: &Path) -> Result<Option<u64>, Strin
     super::render_fingerprint(&bytes).map(Some)
 }
 
-#[cfg(not(target_os = "android"))]
 pub fn load_developed_thumbnail_cache(
     raw_path: &Path,
     maximum_edge: u32,
@@ -99,7 +89,6 @@ pub fn load_developed_thumbnail_cache(
     }
 }
 
-#[cfg(not(target_os = "android"))]
 pub fn developed_thumbnail_cache_is_fresh(raw_path: &Path) -> Result<bool, String> {
     let sidecar_path = sidecar_path_for_raw(raw_path);
     let cache_path = developed_thumbnail_path_for_raw(raw_path);
@@ -162,7 +151,6 @@ pub fn developed_thumbnail_cache_is_fresh(raw_path: &Path) -> Result<bool, Strin
     Ok(fresh)
 }
 
-#[cfg(not(target_os = "android"))]
 pub fn save_developed_thumbnail_cache(
     raw_path: &Path,
     thumbnail: &RawThumbnail,
@@ -202,7 +190,6 @@ pub fn save_developed_thumbnail_cache(
     Ok(cache_path)
 }
 
-#[cfg(not(target_os = "android"))]
 pub fn copy_developed_thumbnail_cache(
     source_raw: &Path,
     destination_raw: &Path,
@@ -217,7 +204,6 @@ pub fn copy_developed_thumbnail_cache(
     Ok(true)
 }
 
-#[cfg(not(target_os = "android"))]
 pub fn invalidate_developed_thumbnail_cache(raw_path: &Path) -> Result<(), String> {
     for path in [
         developed_thumbnail_path_for_raw(raw_path),
@@ -232,7 +218,6 @@ pub fn invalidate_developed_thumbnail_cache(raw_path: &Path) -> Result<(), Strin
     Ok(())
 }
 
-#[cfg(not(target_os = "android"))]
 pub fn remove_desktop_edits(raw_path: &Path) -> Result<bool, String> {
     let paths = [
         sidecar_path_for_raw(raw_path),

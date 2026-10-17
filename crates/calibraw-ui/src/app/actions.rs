@@ -47,7 +47,6 @@ impl CalibRawApp {
         self.shortcut_overlays_clear(ctx)
     }
 
-    #[cfg(not(target_os = "android"))]
     pub(crate) fn navigation_shortcuts_allowed(&self, ctx: &egui::Context) -> bool {
         self.app_shortcuts_allowed(ctx) && ctx.memory(|memory| memory.focused().is_none())
     }
@@ -56,14 +55,8 @@ impl CalibRawApp {
         self.ui.tip.is_some() || self.dialog_open(ctx)
     }
 
-    #[cfg(not(target_os = "android"))]
     fn shortcuts_dialog_open(&self) -> bool {
         self.ui.shortcuts_dialog_open
-    }
-
-    #[cfg(target_os = "android")]
-    fn shortcuts_dialog_open(&self) -> bool {
-        false
     }
 
     /// Whether a dialog other than a feature tip is open; a tip waits for it.

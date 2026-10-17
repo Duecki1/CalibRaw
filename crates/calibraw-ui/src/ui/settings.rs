@@ -1,12 +1,8 @@
-#[cfg(not(target_os = "android"))]
 use crate::app::maximum_raw_cache_limit;
-#[cfg(not(target_os = "android"))]
 use crate::app::OnnxRuntimeMode;
 use crate::app::{CalibRawApp, PreviewQuality, GITHUB_UPDATE_CHECKS_AVAILABLE, UPDATE_STORE_NAME};
 use crate::pipeline::CameraProfileMode;
-#[cfg(not(target_os = "android"))]
 use crate::ui::components::adjustment_slider::AdjustmentSlider;
-#[cfg(not(target_os = "android"))]
 use crate::ui::library::maximum_thumbnail_worker_count;
 use eframe::egui::{self, Ui};
 use moduwu_design::ScreenLayout;
@@ -24,7 +20,6 @@ pub(crate) struct Settings;
 /// is applied once the pointer is released and the value field loses focus,
 /// because applying a change restarts work such as the thumbnail queue.
 /// Returns whether the value was applied.
-#[cfg(not(target_os = "android"))]
 fn count_setting(
     ui: &mut Ui,
     label: &str,
@@ -172,14 +167,12 @@ pub(crate) fn export_name_template_controls(
         .and_then(std::ffi::OsStr::to_str)
         .filter(|name| !name.is_empty())
         .unwrap_or("IMG_1234");
-    #[cfg(not(target_os = "android"))]
     let edited_at = app
         .develop
         .current_path
         .as_deref()
+        .filter(|_| app.caps().has_folders())
         .and_then(crate::export_naming::edited_time_for_path);
-    #[cfg(target_os = "android")]
-    let edited_at = None;
     let context = if let Some(raw) = app.develop.loaded_raw.as_deref() {
         crate::export_naming::ExportNameContext::from_raw(original_name, raw, edited_at)
     } else {
@@ -232,14 +225,18 @@ impl Settings {
     }
 
     fn show_content(ui: &mut Ui, app: &mut CalibRawApp, layout: ScreenLayout) {
-        #[cfg(target_os = "android")]
-        moduwu_design::toolbar_row(ui, |ui| {
-            if crate::ui::top_bar::TopBar::back_icon_button(ui, moduwu_design::toolbar_icon_size())
+        if app.caps().is_mobile() {
+            moduwu_design::toolbar_row(ui, |ui| {
+                if crate::ui::top_bar::TopBar::back_icon_button(
+                    ui,
+                    moduwu_design::toolbar_icon_size(),
+                )
                 .clicked()
-            {
-                app.activate_tab(crate::app::AppTab::Library);
-            }
-        });
+                {
+                    app.activate_tab(crate::app::AppTab::Library);
+                }
+            });
+        }
         moduwu_design::card_gap(ui);
 
         moduwu_design::content_card(ui, |ui| Self::show_usage_card(ui, app));
@@ -264,8 +261,7 @@ impl Settings {
         moduwu_design::card_gap(ui);
         moduwu_design::content_card(ui, |ui| Self::show_raw_color_profiles_card(ui, app));
 
-        #[cfg(not(target_os = "android"))]
-        {
+        if app.caps().configurable_ai_runtime {
             moduwu_design::card_gap(ui);
             moduwu_design::content_card(ui, |ui| Self::show_ai_models_card(ui, app));
         }
@@ -388,7 +384,6 @@ impl Settings {
             app.reset_seen_tips();
         }
 
-        #[cfg(not(target_os = "android"))]
         if app.discord_rich_presence_supported() {
             moduwu_design::section_separator(ui);
             let mut enabled = app.preferences.discord_rich_presence;
@@ -429,8 +424,9 @@ impl Settings {
         if app.preview.quality != previous_quality {
             app.preview_quality_changed();
         }
-        #[cfg(target_os = "android")]
-        {
+        // Without a configurable AI runtime there is no AI models card to hold
+        // this control.
+        if !app.caps().configurable_ai_runtime {
             moduwu_design::section_separator(ui);
             subject_mask_quality_control(ui, app, "settings-subject-mask-quality");
         }
@@ -453,8 +449,7 @@ impl Settings {
             "Library performance",
             "Tune memory use and background preview generation. Conservative values are recommended on phones.",
         );
-        #[cfg(not(target_os = "android"))]
-        {
+        if app.caps().has_folders() {
             let mut render_edited_thumbnails =
                 app.library.renders_edited_thumbnails_during_indexing();
             if moduwu_design::toggle_with_help(
@@ -469,8 +464,7 @@ impl Settings {
             }
         }
 
-        #[cfg(not(target_os = "android"))]
-        {
+        if !app.caps().constrained_memory() {
             let mut raw_cache_files = app.develop.decoded_raws.limit();
             if count_setting(
                 ui,
@@ -703,38 +697,20 @@ impl Settings {
         }
 
         moduwu_design::section_separator(ui);
-        #[cfg(target_os = "android")]
-        let camera_folder_help = "Choose a top-level CameraProfiles folder with Android's system picker. CalibRaw recursively imports only .dcp files into private persistent storage, groups matches by camera, and exposes them in Develop.";
-        #[cfg(not(target_os = "android"))]
-        let camera_folder_help = "Choose a top-level DCP profile folder. CalibRaw searches subfolders recursively. Auto-detect checks common CameraProfiles locations on Windows and macOS.";
+        let has_folders = app.caps().has_folders();
+        let camera_folder_help = if has_folders {
+            "Choose a top-level DCP profile folder. CalibRaw searches subfolders recursively. Auto-detect checks common CameraProfiles locations on Windows and macOS."
+        } else {
+            "Choose a top-level CameraProfiles folder with Android's system picker. CalibRaw recursively imports only .dcp files into private persistent storage, groups matches by camera, and exposes them in Develop."
+        };
         moduwu_design::strong_with_help(ui, "Camera profile folder", camera_folder_help);
-        #[cfg(target_os = "android")]
         if let Some(label) = &app.android.camera_profile_folder_importing_label {
             ui.add(
                 egui::Label::new(egui::RichText::new(format!("Importing {label}…")).strong())
                     .wrap(),
             );
         } else if let Some(path) = &app.preferences.camera_profile_folder {
-            ui.add(
-                egui::Label::new(
-                    egui::RichText::new(
-                        app.preferences
-                            .camera_profile_folder_label
-                            .as_deref()
-                            .unwrap_or("CameraProfiles"),
-                    )
-                    .strong(),
-                )
-                .wrap(),
-            );
-            let _ = path;
-        } else {
-            ui.small("No external DCP folder selected.");
-        }
-        #[cfg(not(target_os = "android"))]
-        if let Some(path) = &app.preferences.camera_profile_folder {
-            #[cfg(not(target_os = "android"))]
-            {
+            if has_folders {
                 if let Some(label) = &app.preferences.camera_profile_folder_label {
                     ui.small(label);
                 }
@@ -742,24 +718,30 @@ impl Settings {
                     egui::Label::new(egui::RichText::new(path.display().to_string()).monospace())
                         .wrap(),
                 );
+            } else {
+                ui.add(
+                    egui::Label::new(
+                        egui::RichText::new(
+                            app.preferences
+                                .camera_profile_folder_label
+                                .as_deref()
+                                .unwrap_or("CameraProfiles"),
+                        )
+                        .strong(),
+                    )
+                    .wrap(),
+                );
             }
         } else {
             ui.small("No external DCP folder selected.");
         }
         moduwu_design::action_row(ui, |ui| {
-            #[cfg(target_os = "android")]
             let choose_label = if app.android.camera_profile_folder_importing_label.is_some() {
                 "Importing…"
             } else {
                 "Choose folder…"
             };
-            #[cfg(not(target_os = "android"))]
-            let choose_label = "Choose folder…";
-
-            #[cfg(target_os = "android")]
             let choose_enabled = !app.android.picker_pending;
-            #[cfg(not(target_os = "android"))]
-            let choose_enabled = true;
 
             if moduwu_design::secondary_button_enabled(ui, choose_enabled, choose_label)
                 .on_hover_text(camera_folder_help)
@@ -767,17 +749,16 @@ impl Settings {
             {
                 app.choose_camera_profile_folder();
             }
-            #[cfg(not(target_os = "android"))]
-            if moduwu_design::secondary_button(ui, "Auto-detect DCP profiles")
-                .on_hover_text("Check common CameraProfiles locations.")
-                .clicked()
+            if has_folders
+                && moduwu_design::secondary_button(ui, "Auto-detect DCP profiles")
+                    .on_hover_text("Check common CameraProfiles locations.")
+                    .clicked()
             {
                 app.auto_detect_camera_profile_folder();
             }
-            let can_clear = app.preferences.camera_profile_folder.is_some()
-                || app.preferences.camera_profile_auto_detect;
-            #[cfg(target_os = "android")]
-            let can_clear = can_clear && !app.android.picker_pending;
+            let can_clear = (app.preferences.camera_profile_folder.is_some()
+                || app.preferences.camera_profile_auto_detect)
+                && !app.android.picker_pending;
             if moduwu_design::secondary_button_enabled(ui, can_clear, "Clear")
                 .on_hover_text("Stop using the configured external DCP profile folder.")
                 .clicked()
@@ -787,7 +768,6 @@ impl Settings {
         });
     }
 
-    #[cfg(not(target_os = "android"))]
     fn show_ai_models_card(ui: &mut Ui, app: &mut CalibRawApp) {
         moduwu_design::heading_with_help(
             ui,
@@ -890,7 +870,7 @@ impl Settings {
                 }
             }
             OnnxRuntimeMode::Manual => {
-                let manual_help = if cfg!(target_os = "windows") {
+                let manual_help = if crate::platform::ONNX_RUNTIME_IS_DLL {
                     "Choose a trusted ONNX Runtime 1.22 or newer onnxruntime.dll matching this CalibRaw build's CPU architecture. CalibRaw validates it in an isolated helper process. AI uses the GPU only if WebGPU is built into it. Dependencies must remain beside it."
                 } else {
                     "Choose a trusted ONNX Runtime 1.22 or newer shared library built for this hardware. CalibRaw validates it in an isolated helper process. AI uses the GPU only if WebGPU is built into it. Dependencies must remain beside it."
@@ -1012,11 +992,7 @@ impl Settings {
         ui.small(status);
     }
 
-    fn show_legal_card(
-        ui: &mut Ui,
-        // Copying to the clipboard goes through the activity on Android.
-        #[cfg_attr(not(target_os = "android"), allow(unused_variables))] app: &mut CalibRawApp,
-    ) {
+    fn show_legal_card(ui: &mut Ui, app: &mut CalibRawApp) {
         moduwu_design::heading_with_help(
             ui,
             "Legal & attributions",
@@ -1035,17 +1011,15 @@ impl Settings {
                 let legal_text = format!(
                     "{PROJECT_LICENSE}\n\n{THIRD_PARTY_NOTICES}\n\n{RUST_DEPENDENCY_LICENSES}"
                 );
-                #[cfg(target_os = "android")]
                 match app.copy_text_to_clipboard("CalibRaw legal notices", &legal_text) {
-                    Ok(()) => calibraw_core::diagnostics::record(
+                    None => ui.ctx().copy_text(legal_text),
+                    Some(Ok(())) => calibraw_core::diagnostics::record(
                         "CalibRaw legal notices copied to Android clipboard",
                     ),
-                    Err(error) => calibraw_core::diagnostics::record(format!(
+                    Some(Err(error)) => calibraw_core::diagnostics::record(format!(
                         "Android legal-notice clipboard copy failed: {error}"
                     )),
                 }
-                #[cfg(not(target_os = "android"))]
-                ui.ctx().copy_text(legal_text);
             }
         });
 
@@ -1060,12 +1034,7 @@ impl Settings {
             .show(ui, |ui| Self::legal_text(ui, RUST_DEPENDENCY_LICENSES, 18));
     }
 
-    fn show_diagnostics_card(
-        ui: &mut Ui,
-        // Copying to the clipboard goes through the activity on Android.
-        #[cfg_attr(not(target_os = "android"), allow(unused_variables))] app: &mut CalibRawApp,
-        layout: ScreenLayout,
-    ) {
+    fn show_diagnostics_card(ui: &mut Ui, app: &mut CalibRawApp, layout: ScreenLayout) {
         moduwu_design::heading_with_help(
             ui,
             "Diagnostics",
@@ -1078,17 +1047,15 @@ impl Settings {
                 .on_hover_text("Copy the complete diagnostic report.")
                 .clicked()
             {
-                #[cfg(target_os = "android")]
                 match app.copy_text_to_clipboard("CalibRaw diagnostics", &diagnostic_log) {
-                    Ok(()) => calibraw_core::diagnostics::record(
+                    None => ui.ctx().copy_text(diagnostic_log.clone()),
+                    Some(Ok(())) => calibraw_core::diagnostics::record(
                         "Diagnostic log copied to Android clipboard",
                     ),
-                    Err(error) => calibraw_core::diagnostics::record(format!(
+                    Some(Err(error)) => calibraw_core::diagnostics::record(format!(
                         "Android clipboard copy failed: {error}"
                     )),
                 }
-                #[cfg(not(target_os = "android"))]
-                ui.ctx().copy_text(diagnostic_log.clone());
             }
             if moduwu_design::secondary_button(ui, "Clear events")
                 .on_hover_text("Clear recorded runtime events from the diagnostic report.")
@@ -1129,7 +1096,7 @@ impl Settings {
     }
 }
 
-#[cfg(all(test, not(target_os = "android")))]
+#[cfg(test)]
 mod tests {
     use super::count_setting;
     use eframe::egui;

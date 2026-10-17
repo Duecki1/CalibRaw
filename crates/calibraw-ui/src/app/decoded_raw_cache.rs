@@ -127,7 +127,6 @@ impl DecodedRawCache {
         self.lock().limit
     }
 
-    #[cfg(any(not(target_os = "android"), test))]
     pub(crate) fn set_limit(&self, limit: usize) {
         let mut state = self.lock();
         state.limit = limit;

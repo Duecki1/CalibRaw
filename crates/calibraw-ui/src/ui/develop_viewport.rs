@@ -14,8 +14,8 @@ fn sheet_height(viewport_height: f32, requested: f32) -> f32 {
 /// The canvas owns the entire safe area. Tool surfaces never participate in
 /// its width/scale calculation, and gestures only start in the exposed image.
 pub(crate) fn show(ui: &mut Ui, app: &mut CalibRawApp, frame: &eframe::Frame) {
-    #[cfg(target_os = "android")]
-    if ui.available_width() >= ui.available_height() {
+    // A phone held sideways puts the tools in a rail beside the photo.
+    if app.caps().is_mobile() && ui.available_width() >= ui.available_height() {
         show_landscape(ui, app, frame);
         return;
     }
@@ -124,7 +124,6 @@ fn show_top_controls(
         });
 }
 
-#[cfg(target_os = "android")]
 fn show_landscape(ui: &mut Ui, app: &mut CalibRawApp, frame: &eframe::Frame) {
     let canvas = ui.available_rect_before_wrap();
     let context = ui.ctx().clone();

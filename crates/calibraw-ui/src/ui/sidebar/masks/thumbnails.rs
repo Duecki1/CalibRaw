@@ -171,7 +171,7 @@ impl Sidebar {
 
         let size = card_size.card_size();
         let image_edge = card_size.image_edge();
-        let thumbnail_sense = if cfg!(target_os = "android") {
+        let thumbnail_sense = if crate::platform::PlatformCaps::CURRENT.is_mobile() {
             egui::Sense::click()
         } else {
             egui::Sense::click_and_drag()

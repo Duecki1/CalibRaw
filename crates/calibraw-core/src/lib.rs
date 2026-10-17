@@ -1,7 +1,6 @@
 mod base64_arc_bytes;
 pub mod color_math;
 pub mod diagnostics;
-#[cfg(not(target_os = "android"))]
 pub mod display_metadata_cache;
 pub mod file_ops;
 pub mod matrix;

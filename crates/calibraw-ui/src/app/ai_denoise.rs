@@ -25,23 +25,19 @@ impl CalibRawApp {
         target: &crate::sidecar::SidecarTarget,
     ) -> Option<PathBuf> {
         match target {
-            #[cfg(not(target_os = "android"))]
-            crate::sidecar::SidecarTarget::Desktop { raw_path } => {
-                Some(crate::sidecar::ai_denoise_path_for_raw(raw_path))
-            }
-            #[cfg(target_os = "android")]
-            crate::sidecar::SidecarTarget::Desktop { .. } => None,
-            #[cfg(target_os = "android")]
+            // Folder storage keeps the result beside the RAW.
+            crate::sidecar::SidecarTarget::Desktop { raw_path } => self
+                .caps()
+                .has_folders()
+                .then(|| crate::sidecar::ai_denoise_path_for_raw(raw_path)),
             crate::sidecar::SidecarTarget::Android {
                 raw_uri,
                 display_name,
-            } => calibraw_ffi::ai_denoise_result_path(
-                &self.android.android_app,
-                raw_uri,
-                display_name,
-            )
-            .map_err(|error| log::warn!("{error}"))
-            .ok(),
+            } => self
+                .platform
+                .ai_denoise_result_path(raw_uri, display_name)
+                .map_err(|error| log::warn!("{error}"))
+                .ok(),
         }
     }
 
@@ -57,18 +53,18 @@ impl CalibRawApp {
     ///
     /// migration: remove in v1.4.0. Listed in `calibraw_core`'s `migrations`.
     pub(in crate::app) fn remove_legacy_ai_denoise_cache(&self) {
-        #[cfg(target_os = "android")]
-        let root = self
-            .android
-            .android_app
-            .internal_data_path()
-            .map(|data| data.join("ai-denoise-results-v2"));
-        #[cfg(not(target_os = "android"))]
-        let root = self
-            .rawnind_model_dir()
-            .parent()
-            .and_then(std::path::Path::parent)
-            .map(|cache_root| cache_root.join("ai-denoise-results-v2"));
+        // In the app's private data where the platform assigns one, otherwise
+        // in the cache root above the RawNIND models.
+        let root = if self.caps().has_media_library() {
+            self.platform
+                .internal_data_dir()
+                .map(|data| data.join("ai-denoise-results-v2"))
+        } else {
+            self.rawnind_model_dir()
+                .parent()
+                .and_then(std::path::Path::parent)
+                .map(|cache_root| cache_root.join("ai-denoise-results-v2"))
+        };
         if let Some(root) = root.filter(|root| root.is_dir()) {
             Self::remove_retired_app_data(root, "legacy AI-denoise cache");
         }
@@ -160,13 +156,15 @@ impl CalibRawApp {
         };
         let result_path = self.ai_denoise_result_path();
         let saved_result_exists = result_path.as_ref().is_some_and(|path| path.is_file());
-        #[cfg(not(target_os = "android"))]
-        if !saved_result_exists && !self.validate_onnx_runtime_for_ai() {
+        if self.caps().configurable_ai_runtime
+            && !saved_result_exists
+            && !self.validate_onnx_runtime_for_ai()
+        {
             self.develop.exposure.ai_denoise_enabled = false;
             return;
         }
-        #[cfg(target_os = "android")]
-        if !saved_result_exists {
+        // A built-in runtime is loaded before the worker starts.
+        if !self.caps().configurable_ai_runtime && !saved_result_exists {
             if let Err(error) = calibraw_ai::runtime::initialize_runtime() {
                 self.develop.exposure.ai_denoise_enabled = false;
                 self.develop.target_exposure.ai_denoise_enabled = false;
@@ -191,13 +189,13 @@ impl CalibRawApp {
             return;
         };
         raw.clear_ai_denoised_image();
-        #[cfg(target_os = "android")]
-        {
+        // Constrained memory frees the whole preview for the denoise worker.
+        if self.caps().constrained_memory() {
             let previous_pipeline = self.take_preview_pipeline_and_release_textures();
             drop(previous_pipeline);
+        } else {
+            self.discard_auxiliary_previews();
         }
-        #[cfg(not(target_os = "android"))]
-        self.discard_auxiliary_previews();
         self.preview.pending_stage = None;
         self.preview.detail_pending_stage = None;
         self.preview.navigation_pending_stage = None;
@@ -245,7 +243,7 @@ impl CalibRawApp {
         calibraw_core::diagnostics::record(format!(
             "RawNIND worker started for document {} on {}",
             self.persistence.document_generation,
-            if cfg!(target_os = "android") {
+            if self.caps().is_mobile() {
                 "Android"
             } else {
                 "desktop"
@@ -430,10 +428,7 @@ mod tests {
 
     fn app() -> CalibRawApp {
         let mut app = CalibRawApp::empty(&egui::Context::default());
-        #[cfg(not(target_os = "android"))]
-        {
-            app.ai.runtime_mode = OnnxRuntimeMode::Automatic;
-        }
+        app.ai.runtime_mode = OnnxRuntimeMode::Automatic;
         app
     }
 

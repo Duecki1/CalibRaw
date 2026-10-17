@@ -327,7 +327,7 @@ impl CalibRawApp {
     }
 }
 
-#[cfg(all(test, not(target_os = "android")))]
+#[cfg(test)]
 mod tests {
     use super::*;
     use std::sync::atomic::Ordering;

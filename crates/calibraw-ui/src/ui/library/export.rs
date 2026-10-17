@@ -10,7 +10,6 @@ pub(super) fn show_library_export_settings_controls(
 }
 
 /// The templated export name stem for `source`, without an extension.
-#[cfg(not(target_os = "android"))]
 pub(super) fn library_export_stem(source: &Path, name_template: &str) -> String {
     let original_name = source
         .file_stem()
@@ -25,7 +24,6 @@ pub(super) fn library_export_stem(source: &Path, name_template: &str) -> String 
     crate::export_naming::render_export_stem_or_default(name_template, &context)
 }
 
-#[cfg(not(target_os = "android"))]
 pub(super) fn library_export_jobs(
     paths: &[PathBuf],
     format: ExportFormat,
@@ -47,7 +45,7 @@ pub(super) fn library_export_jobs(
         )]);
     }
 
-    let mut dialog = rfd::FileDialog::new();
+    let mut dialog = crate::platform::FileDialog::new();
     if let Some(parent) = paths
         .first()
         .and_then(|path| path.parent())

@@ -8,10 +8,9 @@ pub mod file_ops {
     pub use calibraw_core::file_ops::*;
 }
 
-#[cfg(not(target_os = "android"))]
-pub(crate) mod desktop_portal;
 pub(crate) mod export_naming;
 pub(crate) mod performance_settings;
+pub(crate) mod platform;
 pub(crate) use calibraw_core::presets;
 
 pub mod pipeline {
@@ -20,10 +19,6 @@ pub mod pipeline {
 
 pub mod sidecar {
     pub use calibraw_core::sidecar::*;
-    #[cfg(target_os = "android")]
-    pub use calibraw_ffi::{
-        load_android, load_android_review, save_android, save_android_with_review_and_editing_time,
-    };
 }
 
 mod app;
@@ -44,12 +39,13 @@ pub use calibraw_core::SOURCE_REVISION;
 /// physically free, so it is disabled on desktop; genuine physical OOM is still
 /// surfaced by the driver itself.
 ///
-/// Android/unified-memory devices benefit from the guard (memory-pressure kills
-/// there are expensive), so the default thresholds stay enabled.
+/// Devices with constrained, usually unified, memory benefit from the guard
+/// (memory-pressure kills there are expensive), so the default thresholds stay
+/// enabled.
 ///
 /// `CALIBRAW_GPU_MEMORY_BUDGET_THRESHOLD=<1-100>` overrides the desktop default for
 /// testing; an invalid or empty value falls back to the platform default.
-fn memory_budget_thresholds() -> eframe::wgpu::MemoryBudgetThresholds {
+fn memory_budget_thresholds(memory: platform::MemoryClass) -> eframe::wgpu::MemoryBudgetThresholds {
     if let Ok(raw) = std::env::var("CALIBRAW_GPU_MEMORY_BUDGET_THRESHOLD") {
         if let Ok(percent) = raw.trim().parse::<u8>() {
             let percent = percent.clamp(1, 100);
@@ -59,7 +55,7 @@ fn memory_budget_thresholds() -> eframe::wgpu::MemoryBudgetThresholds {
             };
         }
     }
-    if cfg!(target_os = "android") {
+    if memory == platform::MemoryClass::Constrained {
         eframe::wgpu::MemoryBudgetThresholds {
             for_resource_creation: Some(70),
             for_device_loss: Some(97),
@@ -72,19 +68,15 @@ fn memory_budget_thresholds() -> eframe::wgpu::MemoryBudgetThresholds {
     }
 }
 
-fn native_options() -> eframe::NativeOptions {
+/// Options for the editor window; each platform's entry point adds its own.
+fn native_options(caps: platform::PlatformCaps) -> eframe::NativeOptions {
     let mut options = eframe::NativeOptions {
         renderer: eframe::Renderer::Wgpu,
         ..Default::default()
     };
 
-    #[cfg(target_os = "android")]
-    {
-        options.wgpu_options.surface = eframe::egui_wgpu::SurfaceConfig::LOW_LATENCY;
-    }
-
     if let eframe::egui_wgpu::WgpuSetup::CreateNew(setup) = &mut options.wgpu_options.wgpu_setup {
-        setup.instance_descriptor.memory_budget_thresholds = memory_budget_thresholds();
+        setup.instance_descriptor.memory_budget_thresholds = memory_budget_thresholds(caps.memory);
         setup.device_descriptor = std::sync::Arc::new(|adapter| {
             let info = adapter.get_info();
             let adapter_limits = adapter.limits();
@@ -115,83 +107,9 @@ fn native_options() -> eframe::NativeOptions {
     options
 }
 
-#[cfg(not(target_os = "android"))]
-pub fn run_onnx_runtime_probe_cli(args: &[String]) -> Option<i32> {
-    if args.len() != 4 || args.get(1).map(String::as_str) != Some("--calibraw-onnx-runtime-probe") {
-        return None;
-    }
-    let path = std::path::Path::new(&args[2]);
-    let probe = calibraw_ai::Sha256::parse(&args[3])
-        .and_then(|sha256| calibraw_ai::runtime::run_runtime_probe_process(path, &sha256));
-    match probe {
-        Ok(()) => Some(0),
-        Err(error) => {
-            eprintln!("CalibRaw ONNX Runtime probe failed: {error:#}");
-            Some(2)
-        }
-    }
-}
-
-#[cfg(not(target_os = "android"))]
-fn desktop_icon() -> std::sync::Arc<eframe::egui::IconData> {
-    static ICON: std::sync::OnceLock<std::sync::Arc<eframe::egui::IconData>> =
-        std::sync::OnceLock::new();
-    ICON.get_or_init(|| {
-        let image =
-            image::load_from_memory(include_bytes!("../../../packaging/icons/calibraw-256.png"))
-                .expect("embedded desktop icon must be a valid PNG")
-                .into_rgba8();
-        let (width, height) = image.dimensions();
-        std::sync::Arc::new(eframe::egui::IconData {
-            rgba: image.into_raw(),
-            width,
-            height,
-        })
-    })
-    .clone()
-}
-
-#[cfg(not(target_os = "android"))]
-pub fn run_desktop() -> eframe::Result {
-    env_logger::init();
-
-    let mut options = native_options();
-    options.viewport = eframe::egui::ViewportBuilder::default()
-        .with_app_id(if desktop_portal::is_flatpak() {
-            "io.github.Duecki1.CalibRaw"
-        } else {
-            "de.duecki.calibraw"
-        })
-        .with_inner_size([1280.0, 720.0])
-        .with_min_inner_size([480.0, 480.0])
-        .with_icon(desktop_icon());
-
-    eframe::run_native(
-        "CalibRaw",
-        options,
-        Box::new(|cc| Ok(Box::new(CalibRawApp::new(cc)))),
-    )
-}
-
-#[cfg(target_os = "android")]
-#[unsafe(no_mangle)]
-pub fn android_main(android_app: calibraw_ffi::AndroidApp) {
-    android_logger::init_once(
-        android_logger::Config::default()
-            .with_max_level(log::LevelFilter::Info)
-            .with_tag("CalibRaw"),
-    );
-
-    let mut options = native_options();
-    options.android_app = Some(android_app.clone());
-    options.viewport = eframe::egui::ViewportBuilder::default();
-
-    let result = eframe::run_native(
-        "CalibRaw",
-        options,
-        Box::new(move |cc| Ok(Box::new(CalibRawApp::new_android(cc, android_app)))),
-    );
-    if let Err(error) = result {
-        log::error!("CalibRaw terminated: {error:#}");
-    }
+/// The desktop program's `main`: answers an ONNX Runtime probe when started
+/// as one, otherwise runs the editor. Does nothing on Android, which starts
+/// through `android_main`.
+pub fn main() -> eframe::Result {
+    platform::main()
 }

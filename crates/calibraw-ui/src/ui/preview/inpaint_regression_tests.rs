@@ -1,6 +1,4 @@
 //! Drive the inpaint tool with pointer frames and inspect the brush state.
-#![cfg(not(target_os = "android"))]
-
 use super::*;
 use crate::app::InpaintTool;
 use crate::pipeline::LoadedRaw;

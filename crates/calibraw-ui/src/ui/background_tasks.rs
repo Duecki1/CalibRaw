@@ -9,8 +9,7 @@ use eframe::egui::{self, Ui};
 pub(crate) enum BackgroundTaskId {
     /// An export, a library batch export or an Edit Replay.
     Export,
-    /// An HDR merge or a focus stack.
-    #[cfg(not(target_os = "android"))]
+    /// An HDR merge or a focus stack, in a folder library.
     Merge,
 }
 

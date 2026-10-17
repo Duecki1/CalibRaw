@@ -1,23 +1,29 @@
 use super::*;
 
 impl CalibRawApp {
-    #[cfg(not(target_os = "android"))]
+    /// Asks for a DCP profile folder: a native folder dialog, or the
+    /// platform's picker, which copies the folder into app storage.
     pub(crate) fn choose_camera_profile_folder(&mut self) {
+        if self.caps().has_folders() {
+            self.choose_desktop_camera_profile_folder();
+        } else {
+            self.import_camera_profile_folder();
+        }
+    }
+
+    fn choose_desktop_camera_profile_folder(&mut self) {
         if self.ui.desktop_picker_receiver.is_some() {
             return;
         }
-        let mut dialog = rfd::AsyncFileDialog::new();
+        let mut dialog = crate::platform::FileDialog::new();
         if let Some(folder) = &self.preferences.camera_profile_folder {
             dialog = dialog.set_directory(folder);
         }
         self.ui.desktop_picker_receiver = Some(spawn_ui_worker(&self.egui_ctx, move || {
-            let folder =
-                pollster::block_on(dialog.pick_folder()).map(|handle| handle.path().to_path_buf());
-            crate::app::DesktopPickerEvent::CameraProfileFolder(folder)
+            crate::app::DesktopPickerEvent::CameraProfileFolder(dialog.pick_folder_on_worker())
         }));
     }
 
-    #[cfg(not(target_os = "android"))]
     pub(in crate::app) fn apply_camera_profile_folder(&mut self, folder: PathBuf) {
         crate::pipeline::invalidate_dcp_profile_index();
         self.preferences.camera_profile_folder_label = folder
@@ -35,13 +41,12 @@ impl CalibRawApp {
         );
     }
 
-    #[cfg(target_os = "android")]
-    pub(crate) fn choose_camera_profile_folder(&mut self) {
+    fn import_camera_profile_folder(&mut self) {
         if self.android.picker_pending {
             self.ui.notice = Some("Finish the current Android file picker first.".to_owned());
             return;
         }
-        match calibraw_ffi::open_camera_profile_folder(&self.android.android_app) {
+        match self.platform.open_camera_profile_folder() {
             Ok(()) => {
                 self.android.picker_pending = true;
                 self.android.camera_profile_folder_importing_label = None;
@@ -60,19 +65,18 @@ impl CalibRawApp {
             self.preferences.camera_profile_auto_detect = false;
             self.preferences.last_camera_profile = None;
             self.clear_decoded_raws();
-            #[cfg(target_os = "android")]
-            if let Err(error) =
-                calibraw_ffi::clear_camera_profile_folder_picker_location(&self.android.android_app)
-            {
-                log::warn!("{error}");
+            // Imported profiles are app-storage copies; forget the picker
+            // location and delete the copy.
+            let imported = self.caps().has_media_library();
+            if imported {
+                if let Err(error) = self.platform.clear_camera_profile_folder_picker_location() {
+                    log::warn!("{error}");
+                }
             }
-            if self.persist_performance_settings() {
-                #[cfg(target_os = "android")]
+            if self.persist_performance_settings() && imported {
                 if let Some(previous_folder) = previous_folder {
-                    if let Err(error) = calibraw_ffi::remove_camera_profile_mirror(
-                        &self.android.android_app,
-                        &previous_folder,
-                    ) {
+                    if let Err(error) = self.platform.remove_camera_profile_mirror(&previous_folder)
+                    {
                         log::warn!("{error}");
                     }
                 }
@@ -84,11 +88,10 @@ impl CalibRawApp {
         }
     }
 
-    #[cfg(not(target_os = "android"))]
     pub(crate) fn auto_detect_camera_profile_folder(&mut self) {
         crate::pipeline::invalidate_dcp_profile_index();
         self.preferences.camera_profile_auto_detect = true;
-        match crate::performance_settings::detected_camera_profile_folder() {
+        match crate::platform::detected_camera_profile_folder() {
             Some(folder) => {
                 self.preferences.camera_profile_folder = Some(folder.clone());
                 self.preferences.camera_profile_folder_label =
@@ -131,9 +134,6 @@ impl CalibRawApp {
         selection: Option<PathBuf>,
         frame: &eframe::Frame,
     ) {
-        #[cfg(target_os = "android")]
-        let _ = frame;
-        #[cfg(target_os = "android")]
         if self.android_foreground_task_active() {
             self.ui.notice = Some(
                 "Wait for the current foreground operation to finish before changing camera profile."
@@ -185,18 +185,15 @@ impl CalibRawApp {
         self.queue_explicit_sidecar_save();
         let edit_override = self.capture_sidecar_edit_state();
 
-        #[cfg(not(target_os = "android"))]
-        {
-            let crate::sidecar::SidecarTarget::Desktop { raw_path } = sidecar_target;
-            let reload = ProfileReload {
-                camera_profile: selection,
-                edits: edit_override,
-            };
-            self.reopen_desktop_with_camera_profile(raw_path, reload, frame);
-        }
-
-        #[cfg(target_os = "android")]
-        {
+        let reload = ProfileReload {
+            camera_profile: selection,
+            edits: edit_override,
+        };
+        if self.caps().has_folders() {
+            if let crate::sidecar::SidecarTarget::Desktop { raw_path } = sidecar_target {
+                self.reopen_desktop_with_camera_profile(raw_path, reload, frame);
+            }
+        } else {
             let (raw_uri, display_name) = match sidecar_target {
                 crate::sidecar::SidecarTarget::Android {
                     raw_uri,
@@ -211,16 +208,9 @@ impl CalibRawApp {
                     return;
                 }
             };
-            match calibraw_ffi::open_library_document(
-                &self.android.android_app,
-                &raw_uri,
-                &display_name,
-            ) {
+            match self.platform.open_library_document(&raw_uri, &display_name) {
                 Ok(()) => {
-                    self.android.pending_android_profile_reload = Some(ProfileReload {
-                        camera_profile: selection,
-                        edits: edit_override,
-                    });
+                    self.android.pending_android_profile_reload = Some(reload);
                     self.android.picker_pending = true;
                     self.ui.notice = None;
                     self.ui.status = format!("Applying camera profile to {display_name}…");

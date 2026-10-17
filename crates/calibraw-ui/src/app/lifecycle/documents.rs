@@ -7,7 +7,6 @@ impl CalibRawApp {
         self.ai.library_mask_refresh.is_some() || self.export.batch.is_some()
     }
 
-    #[cfg(target_os = "android")]
     pub fn open_android_library_document(&mut self, uri: &str, display_name: &str) {
         if self.android_foreground_task_active() {
             self.report_error(ErrorKind::OpenPhoto, format!(
@@ -41,7 +40,7 @@ impl CalibRawApp {
         self.prepare_android_develop_loading_thumbnail(uri);
 
         self.export.android_batch_load_pending = false;
-        match calibraw_ffi::open_library_document(&self.android.android_app, uri, display_name) {
+        match self.platform.open_library_document(uri, display_name) {
             Ok(()) => {
                 self.android.picker_pending = true;
                 self.ui.notice = None;
@@ -54,7 +53,6 @@ impl CalibRawApp {
         }
     }
 
-    #[cfg(target_os = "android")]
     pub(crate) fn reload_android_library_document_after_reset(
         &mut self,
         uri: &str,
@@ -68,7 +66,7 @@ impl CalibRawApp {
         }
         self.export.android_batch_load_pending = false;
         self.android.pending_android_library_reset_reload = true;
-        match calibraw_ffi::open_library_document(&self.android.android_app, uri, display_name) {
+        match self.platform.open_library_document(uri, display_name) {
             Ok(()) => {
                 self.android.picker_pending = true;
                 self.ui.notice = None;
@@ -96,7 +94,6 @@ impl CalibRawApp {
         self.open_document(DocumentSource::desktop(path, label), frame);
     }
 
-    #[cfg(not(target_os = "android"))]
     pub(crate) fn reload_desktop_library_document_after_reset(
         &mut self,
         path: PathBuf,
@@ -163,7 +160,6 @@ impl CalibRawApp {
         self.prepare_loading_thumbnail_for(&source.sidecar_target);
         self.library.prepare_for_develop();
 
-        #[cfg(not(target_os = "android"))]
         self.cancel_neighbour_prefetch();
         calibraw_core::diagnostics::record(format!(
             "RAW open requested: label=\"{}\" preview_quality={}",
@@ -202,10 +198,9 @@ impl CalibRawApp {
             device: render_state.device.clone(),
             queue: render_state.queue.clone(),
             programs,
-            #[cfg(target_os = "android")]
-            android_app: self.android.android_app.clone(),
-            #[cfg(target_os = "android")]
-            export_active: self.export.task.is_some(),
+            platform: Arc::clone(&self.platform),
+            release_previous_preview: self.caps().constrained_memory()
+                && self.export.task.is_some(),
             source,
             profile_reload,
             editing_time_override_ms,
@@ -241,26 +236,23 @@ impl CalibRawApp {
     }
 
     fn prepare_loading_thumbnail_for(&mut self, target: &crate::sidecar::SidecarTarget) {
-        #[cfg(not(target_os = "android"))]
-        {
-            if self.ui.active_tab == AppTab::Develop {
-                let crate::sidecar::SidecarTarget::Desktop { raw_path } = target;
-                self.prepare_develop_loading_thumbnail(raw_path);
-            } else {
-                self.develop_ui.loading_thumbnail.clear();
+        match target {
+            crate::sidecar::SidecarTarget::Desktop { raw_path } => {
+                if self.ui.active_tab == AppTab::Develop {
+                    self.prepare_develop_loading_thumbnail(raw_path);
+                } else {
+                    self.develop_ui.loading_thumbnail.clear();
+                }
             }
-        }
-        #[cfg(target_os = "android")]
-        {
-            let loading_thumbnail_matches = self.ui.active_tab == AppTab::Develop
-                && matches!(
-                    target,
-                    crate::sidecar::SidecarTarget::Android { raw_uri, .. }
-                        if self.develop_ui.loading_thumbnail.source_uri.as_deref()
-                            == Some(raw_uri.as_str())
-                );
-            if !loading_thumbnail_matches {
-                self.develop_ui.loading_thumbnail.clear();
+            // The library prepared the thumbnail before asking the platform
+            // to open the photo; keep it if this is that photo.
+            crate::sidecar::SidecarTarget::Android { raw_uri, .. } => {
+                let loading_thumbnail_matches = self.ui.active_tab == AppTab::Develop
+                    && self.develop_ui.loading_thumbnail.source_uri.as_deref()
+                        == Some(raw_uri.as_str());
+                if !loading_thumbnail_matches {
+                    self.develop_ui.loading_thumbnail.clear();
+                }
             }
         }
     }
@@ -304,11 +296,8 @@ impl CalibRawApp {
         self.preview.reset_view();
         self.develop.lens_correction = LensCorrectionState::default();
         self.develop.lens_correction_dirty = false;
-        #[cfg(target_os = "android")]
-        {
-            self.preview.lens_original_cache = None;
-            self.preview.lens_corrected_cache = None;
-        }
+        self.preview.lens_original_cache = None;
+        self.preview.lens_corrected_cache = None;
         self.reset_edit_history();
     }
 
@@ -329,12 +318,9 @@ impl CalibRawApp {
                     "The photo decode worker stopped unexpectedly.".to_owned(),
                 );
                 self.on_library_ai_mask_refresh_load_finished(false, frame);
-                #[cfg(target_os = "android")]
-                if std::mem::take(&mut self.export.android_batch_load_pending) {
+                if self.take_batch_owned_load() {
                     self.on_library_batch_load_finished(false, frame);
                 }
-                #[cfg(not(target_os = "android"))]
-                self.on_library_batch_load_finished(false, frame);
                 None
             }
             Some(Err(mpsc::TryRecvError::Empty)) | None => None,
@@ -346,8 +332,7 @@ impl CalibRawApp {
         self.develop.load_receiver = None;
         self.develop.loading_label = None;
         self.develop_ui.loading_thumbnail.clear();
-        #[cfg(target_os = "android")]
-        let batch_owned_load = std::mem::take(&mut self.export.android_batch_load_pending);
+        let batch_owned_load = self.take_batch_owned_load();
 
         match result {
             Ok(loaded) => {
@@ -357,12 +342,9 @@ impl CalibRawApp {
                         "eframe is not running with the wgpu backend.".to_owned(),
                     );
                     self.on_library_ai_mask_refresh_load_finished(false, frame);
-                    #[cfg(target_os = "android")]
                     if batch_owned_load {
                         self.on_library_batch_load_finished(false, frame);
                     }
-                    #[cfg(not(target_os = "android"))]
-                    self.on_library_batch_load_finished(false, frame);
                     return;
                 };
                 drop(self.take_preview_pipeline_and_release_textures());
@@ -434,8 +416,7 @@ impl CalibRawApp {
                         self.prompt_for_missing_lens_profile(&raw);
                     }
                 }
-                #[cfg(target_os = "android")]
-                {
+                if self.caps().constrained_memory() {
                     if self.develop.lens_correction.applied {
                         self.preview.lens_corrected_cache = match (
                             self.develop.lens_correction.requested_correction(),
@@ -481,17 +462,13 @@ impl CalibRawApp {
                 self.cancel_document_bound_foreground_operation();
                 self.resume_persisted_ai_denoise(frame);
                 log::info!("loaded RAW preview for {}", loaded.label);
-                #[cfg(not(target_os = "android"))]
-                if !self.document_load_is_background() {
+                if self.caps().has_folders() && !self.document_load_is_background() {
                     self.prefetch_neighbour_raws();
                 }
                 self.on_library_ai_mask_refresh_load_finished(true, frame);
-                #[cfg(target_os = "android")]
                 if batch_owned_load {
                     self.on_library_batch_load_finished(true, frame);
                 }
-                #[cfg(not(target_os = "android"))]
-                self.on_library_batch_load_finished(true, frame);
             }
             Err(error) => {
                 self.report_error(
@@ -507,13 +484,21 @@ impl CalibRawApp {
                 }
                 log::error!("RAW load failed: {}", error.message);
                 self.on_library_ai_mask_refresh_load_finished(false, frame);
-                #[cfg(target_os = "android")]
                 if batch_owned_load {
                     self.on_library_batch_load_finished(false, frame);
                 }
-                #[cfg(not(target_os = "android"))]
-                self.on_library_batch_load_finished(false, frame);
             }
+        }
+    }
+
+    /// Whether a finished load belongs to the library batch export. Folder
+    /// batches check their own progress; a media-library batch marks the open
+    /// it requested from the platform.
+    fn take_batch_owned_load(&mut self) -> bool {
+        if self.caps().has_media_library() {
+            std::mem::take(&mut self.export.android_batch_load_pending)
+        } else {
+            true
         }
     }
 }

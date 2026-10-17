@@ -2,7 +2,6 @@
 
 use super::*;
 
-#[cfg(not(target_os = "android"))]
 pub(crate) fn load_desktop_reference_preview(
     path: &Path,
     maximum_edge: u32,
@@ -26,7 +25,6 @@ pub(crate) fn load_desktop_reference_preview(
         .map_err(|error| format!("could not render reference preview: {error:#}"))
 }
 
-#[cfg(not(target_os = "android"))]
 pub(crate) fn load_desktop_cached_thumbnail(
     path: &Path,
     maximum_edge: u32,
@@ -42,7 +40,6 @@ pub(crate) fn load_desktop_cached_thumbnail(
     calibraw_core::thumbnail_cache::load_desktop_raw_thumbnail(path, maximum_edge)
 }
 
-#[cfg(not(target_os = "android"))]
 pub(in crate::ui::library) fn load_desktop_library_thumbnail(
     asset: &LibraryAsset,
     stage: ThumbnailLoadStage,
@@ -90,7 +87,6 @@ pub(in crate::ui::library) fn load_desktop_library_thumbnail(
     }
 }
 
-#[cfg(not(target_os = "android"))]
 fn load_desktop_raw_library_thumbnail(
     path: &Path,
     has_edits: bool,
@@ -149,9 +145,8 @@ fn load_desktop_raw_library_thumbnail(
     Ok(loaded)
 }
 
-#[cfg(target_os = "android")]
 pub(in crate::ui::library) fn load_android_library_thumbnail(
-    app: &calibraw_ffi::AndroidApp,
+    platform: &dyn Platform,
     asset: &LibraryAsset,
     _stage: ThumbnailLoadStage,
     _render_edited_thumbnails_during_indexing: bool,
@@ -162,10 +157,10 @@ pub(in crate::ui::library) fn load_android_library_thumbnail(
     let display_name = asset.display_name.as_str();
     let bytes = asset.metadata.bytes;
     let modified_seconds = asset.metadata.modified_seconds;
-    match calibraw_ffi::load_developed_thumbnail_cache(app, uri, display_name, THUMBNAIL_EDGE) {
+    match platform.load_developed_thumbnail_cache(uri, display_name, THUMBNAIL_EDGE) {
         Ok(Some(thumbnail)) => {
             let mut loaded = loaded_library_thumbnail(thumbnail, true);
-            loaded.review = match crate::sidecar::load_android_review(app, uri, display_name) {
+            loaded.review = match platform.load_sidecar_review(uri, display_name) {
                 Ok(review) => review,
                 Err(error) => {
                     log::warn!(
@@ -181,7 +176,7 @@ pub(in crate::ui::library) fn load_android_library_thumbnail(
             "could not use Android developed-thumbnail cache for {display_name}: {error}"
         ),
     }
-    let sidecar = match crate::sidecar::load_android(app, uri, display_name) {
+    let sidecar = match platform.load_sidecar(uri, display_name) {
         Ok(sidecar) => sidecar,
         Err(error) => {
             log::warn!("could not inspect Android edit sidecar for {display_name}: {error}");
@@ -189,8 +184,7 @@ pub(in crate::ui::library) fn load_android_library_thumbnail(
         }
     };
     let review = sidecar.as_ref().map(|sidecar| sidecar.review);
-    let mut thumbnail = calibraw_ffi::load_library_thumbnail(
-        app,
+    let mut thumbnail = platform.load_library_thumbnail(
         uri,
         display_name,
         bytes,

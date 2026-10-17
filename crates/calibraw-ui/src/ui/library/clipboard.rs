@@ -1,6 +1,5 @@
 use super::*;
 
-#[cfg(not(target_os = "android"))]
 pub(super) fn image_paste_summary(
     mode: ImageClipboardMode,
     total: usize,
@@ -27,44 +26,27 @@ pub(super) fn image_paste_summary(
 fn copy_asset_to_destination(
     asset: &LibraryAsset,
     destination: &LibraryTransferDestination,
-    #[cfg(target_os = "android")] android_app: &calibraw_ffi::AndroidApp,
+    platform: &dyn Platform,
 ) -> Result<ImportedLibraryAsset, String> {
-    let materialized = materialize_library_asset(
-        asset,
-        #[cfg(target_os = "android")]
-        android_app,
-    )?;
-    let result = import_materialized_library_asset(
-        &materialized,
-        destination,
-        #[cfg(target_os = "android")]
-        android_app,
-    )
-    .and_then(|imported| {
-        if let Err(error) = preserve_imported_thumbnail(
-            asset,
-            &imported,
-            #[cfg(target_os = "android")]
-            android_app,
-        ) {
-            rollback_imported_library_asset(
-                imported,
-                #[cfg(target_os = "android")]
-                android_app,
-            );
-            Err(error)
-        } else {
-            Ok(imported)
-        }
-    });
+    let materialized = materialize_library_asset(asset, platform)?;
+    let result = import_materialized_library_asset(&materialized, destination, platform).and_then(
+        |imported| {
+            if let Err(error) = preserve_imported_thumbnail(asset, &imported, platform) {
+                rollback_imported_library_asset(imported, platform);
+                Err(error)
+            } else {
+                Ok(imported)
+            }
+        },
+    );
     materialized.cleanup();
     result
 }
 
-#[cfg(not(target_os = "android"))]
 pub(super) fn run_image_paste(
     clipboard: ImageClipboard,
     destination: LibraryTransferDestination,
+    platform: &dyn Platform,
 ) -> AssetTransferCompletion {
     let mode = clipboard.mode;
     let total = clipboard.assets.len();
@@ -78,17 +60,18 @@ pub(super) fn run_image_paste(
             remaining.retain(|candidate| candidate.id != asset.id);
             continue;
         }
-        let result = copy_asset_to_destination(&asset, &destination).and_then(|imported| {
-            if mode != ImageClipboardMode::Cut {
-                return Ok(());
-            }
-            if let Err(error) = remove_library_asset(&asset) {
-                rollback_imported_library_asset(imported);
-                Err(error)
-            } else {
-                Ok(())
-            }
-        });
+        let result =
+            copy_asset_to_destination(&asset, &destination, platform).and_then(|imported| {
+                if mode != ImageClipboardMode::Cut {
+                    return Ok(());
+                }
+                if let Err(error) = remove_library_asset(&asset) {
+                    rollback_imported_library_asset(imported, platform);
+                    Err(error)
+                } else {
+                    Ok(())
+                }
+            });
 
         match result {
             Ok(()) => {
@@ -101,6 +84,7 @@ pub(super) fn run_image_paste(
 
     let destination_label = match &destination {
         LibraryTransferDestination::LocalFolder(folder) => folder.display().to_string(),
+        LibraryTransferDestination::LocalLibrary => "the library".to_owned(),
     };
 
     let result = image_paste_summary(mode, total, completed, &destination_label, errors);
@@ -121,20 +105,14 @@ pub(super) fn run_image_paste(
 
 pub(super) fn run_duplicate_assets(
     assets: Vec<LibraryAsset>,
-    #[cfg(target_os = "android")] android_app: &calibraw_ffi::AndroidApp,
+    platform: &dyn Platform,
 ) -> AssetTransferCompletion {
     let total = assets.len();
     let mut completed = 0usize;
     let mut errors = Vec::new();
     for asset in assets {
         let result = duplicate_destination(&asset).and_then(|destination| {
-            copy_asset_to_destination(
-                &asset,
-                &destination,
-                #[cfg(target_os = "android")]
-                android_app,
-            )
-            .map(|_| ())
+            copy_asset_to_destination(&asset, &destination, platform).map(|_| ())
         });
         match result {
             Ok(()) => completed += 1,
@@ -152,9 +130,7 @@ pub(super) fn run_duplicate_assets(
     };
     AssetTransferCompletion {
         result,
-        #[cfg(not(target_os = "android"))]
         clear_clipboard: false,
-        #[cfg(not(target_os = "android"))]
         remaining_clipboard: None,
     }
 }
@@ -181,16 +157,11 @@ pub(super) fn start_duplicate_assets(
         format!("Duplicating {total} selected images…")
     };
     let repaint = context.clone();
-    #[cfg(target_os = "android")]
-    let android_app = app.library.platform.app.clone();
+    let platform = Arc::clone(&app.library.platform);
     let spawn = std::thread::Builder::new()
         .name("calibraw-library-duplicate".to_owned())
         .spawn(move || {
-            let completion = run_duplicate_assets(
-                assets,
-                #[cfg(target_os = "android")]
-                &android_app,
-            );
+            let completion = run_duplicate_assets(assets, &*platform);
             let _ = sender.send(completion);
             repaint.request_repaint();
         });
@@ -200,7 +171,6 @@ pub(super) fn start_duplicate_assets(
     }
 }
 
-#[cfg(not(target_os = "android"))]
 pub(super) fn start_image_clipboard_paste(
     app: &mut CalibRawApp,
     destination: LibraryTransferDestination,
@@ -218,10 +188,11 @@ pub(super) fn start_image_clipboard_paste(
     app.library.asset_transfer_receiver = Some(receiver);
     app.library.status = format!("Pasting {}…", clipboard.paste_label());
     let repaint = context.clone();
+    let platform = Arc::clone(&app.library.platform);
     let spawn = std::thread::Builder::new()
         .name("calibraw-library-paste".to_owned())
         .spawn(move || {
-            let completion = run_image_paste(clipboard, destination);
+            let completion = run_image_paste(clipboard, destination, &*platform);
             let _ = sender.send(completion);
             repaint.request_repaint();
         });

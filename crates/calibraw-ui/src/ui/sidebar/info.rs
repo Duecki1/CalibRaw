@@ -34,8 +34,13 @@ impl Sidebar {
             );
             ui.ctx()
                 .request_repaint_after(std::time::Duration::from_secs(1));
-            #[cfg(not(target_os = "android"))]
-            if let Some(path) = app.develop.current_path.as_deref() {
+            // A media-library photo is open from a temporary copy.
+            if let Some(path) = app
+                .develop
+                .current_path
+                .as_deref()
+                .filter(|_| app.caps().has_folders())
+            {
                 if let Some(parent) = path.parent() {
                     metadata_row(ui, "Location", &parent.display().to_string());
                 }
@@ -273,7 +278,6 @@ fn equipment_name(make: &str, model: &str) -> Option<String> {
     }
 }
 
-#[cfg(not(target_os = "android"))]
 fn format_file_size(bytes: u64) -> String {
     const UNITS: [&str; 5] = ["B", "KB", "MB", "GB", "TB"];
     let mut value = bytes as f64;

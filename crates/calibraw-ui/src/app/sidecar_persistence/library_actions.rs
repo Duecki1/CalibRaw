@@ -3,7 +3,6 @@
 use super::*;
 
 impl CalibRawApp {
-    #[cfg(not(target_os = "android"))]
     pub(crate) fn detach_current_file_for_library_action(
         &mut self,
         raw_path: &std::path::Path,
@@ -14,7 +13,6 @@ impl CalibRawApp {
         self.detach_current_sidecar_target_for_library_action()
     }
 
-    #[cfg(target_os = "android")]
     pub(crate) fn detach_current_android_document_for_library_action(
         &mut self,
         raw_uri: &str,
@@ -33,7 +31,6 @@ impl CalibRawApp {
         self.detach_current_sidecar_target_for_library_action()
     }
 
-    #[cfg(target_os = "android")]
     pub(crate) fn reset_android_library_adjustments(
         &mut self,
         raw_uri: &str,
@@ -41,27 +38,16 @@ impl CalibRawApp {
     ) -> Result<(), String> {
         let was_current =
             self.detach_current_android_document_for_library_action(raw_uri, display_name);
-        let result = if was_current {
-            calibraw_ffi::reset_android_adjustments_with_editing_time(
-                &self.android.android_app,
-                raw_uri,
-                display_name,
-                self.raw_editing_time_ms(),
-            )
-        } else {
-            calibraw_ffi::reset_android_adjustments(
-                &self.android.android_app,
-                raw_uri,
-                display_name,
-            )
-        };
+        let editing_time_ms = was_current.then(|| self.raw_editing_time_ms());
+        let result = self
+            .platform
+            .reset_adjustments(raw_uri, display_name, editing_time_ms);
         if was_current && result.is_ok() {
             self.reload_android_library_document_after_reset(raw_uri, display_name);
         }
         result
     }
 
-    #[cfg(target_os = "android")]
     pub(crate) fn rename_android_library_item(
         &mut self,
         raw_uri: &str,
@@ -70,12 +56,9 @@ impl CalibRawApp {
     ) -> Result<String, String> {
         let was_current =
             self.detach_current_android_document_for_library_action(raw_uri, display_name);
-        let result = calibraw_ffi::rename_library_document(
-            &self.android.android_app,
-            raw_uri,
-            display_name,
-            requested_name,
-        );
+        let result = self
+            .platform
+            .rename_library_document(raw_uri, display_name, requested_name);
         match result {
             Ok(renamed_uri) => {
                 if was_current {
@@ -92,7 +75,6 @@ impl CalibRawApp {
         }
     }
 
-    #[cfg(target_os = "android")]
     pub(crate) fn delete_android_library_item(
         &mut self,
         raw_uri: &str,
@@ -100,8 +82,7 @@ impl CalibRawApp {
     ) -> Result<(), String> {
         let was_current =
             self.detach_current_android_document_for_library_action(raw_uri, display_name);
-        let result =
-            calibraw_ffi::delete_library_document(&self.android.android_app, raw_uri, display_name);
+        let result = self.platform.delete_library_document(raw_uri, display_name);
         if result.is_err() && was_current {
             self.open_android_library_document(raw_uri, display_name);
         }

@@ -273,10 +273,7 @@ mod tests {
 
     fn app_with_depth_fog() -> CalibRawApp {
         let mut app = CalibRawApp::empty(&egui::Context::default());
-        #[cfg(not(target_os = "android"))]
-        {
-            app.ai.runtime_mode = OnnxRuntimeMode::Automatic;
-        }
+        app.ai.runtime_mode = OnnxRuntimeMode::Automatic;
         app.masks
             .stack
             .global_effects

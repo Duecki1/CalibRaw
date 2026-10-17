@@ -12,7 +12,7 @@ background work follows. Update it in the change that alters a boundary.
 | `calibraw-gpu` | Headless devices (`device`), adapter memory queries (`memory/`), GPU resource planning, WGSL composition, processing passes, readback, tiled export and file encoding | `calibraw-core`, wgpu, naga_oil; in `memory/`, the platform APIs under wgpu (`windows` DXGI, `ash`, `objc2-metal`) | UI crates, egui/eframe |
 | `calibraw-ai` | AI configuration and device capabilities (`config`), ONNX Runtime loading, its WebGPU plugin and the automatic packages (`runtime/`), where sessions run (GPU if they fit in free memory, else CPU), CPU fallback, GPU failure handling and platform and provider quirks (`placement/`), the model table, downloads and installation (`registry/`), the session slot (`slot`), the job worker (`jobs`), model-specific pre/postprocessing (`models/`) | `calibraw-core`, `calibraw-gpu` (denoise/remove render paths) | UI crates, egui/eframe |
 | `calibraw-ffi` | C ABI and the Android JNI bridge: storage, pickers, export publishing, notifications, replay encoder | `calibraw-core` (sidecar types), jni, android-activity | processing crates, UI crates, egui/eframe |
-| `calibraw-ui` (lib `calibraw`) | Application coordination (`app/`), views (`ui/`), presentation-independent services (`services/`), preview presentation | all crates above, eframe/egui, `moduwu-design` | — |
+| `calibraw-ui` (lib `calibraw`) | Application coordination (`app/`), views (`ui/`), presentation-independent services (`services/`), preview presentation, platform capabilities and OS services (`platform/`) | all crates above, eframe/egui, `moduwu-design`; in `platform/`, the OS crates (`calibraw-ffi`, `rfd`, `trash`, `zbus`, Discord IPC, loggers) | — |
 | `calibraw-cli` | Headless develop export and white-balance diagnostics | `calibraw-core`, `calibraw-gpu` | UI crates, egui/eframe |
 | `xtask` | Repository tooling: architecture checks, line counts, baselines, Android build helpers, icons | std and tooling crates | product crates |
 | `moduwu-design` (separate repository) | Reusable egui tokens, themes, controls, frames and responsive helpers | egui | any CalibRaw crate |
@@ -44,6 +44,10 @@ Source rules (in code; comments and strings are ignored):
 - `calibraw-ai`'s `models/`, `registry/`, `jobs.rs` and `slot.rs` must not use
   `target_os`: they read `config::AiCapabilities` (what the device can do) and
   `placement::quirks` (platform bugs) instead.
+- `crates/calibraw-ui/src/` outside `platform/` must not use `target_os`,
+  `calibraw_ffi`, `rfd`, `zbus`, `env_logger` or `android_logger`: UI code
+  reads `PlatformCaps` and calls `Platform`. `cargo xtask cfg-ratchet` does
+  not count `platform/` either.
 
 "egui family" is egui, egui-wgpu, eframe and egui-winit. Add a rule in the
 change that establishes a boundary, not in advance.
@@ -71,6 +75,8 @@ change that establishes a boundary, not in advance.
 - `services/` — presentation-independent workflows (no egui/eframe), currently
   edit replay. Progress is reported through callbacks and failures through
   typed errors; the app turns them into repaints and displayed state.
+- `platform/` — the only module that names an OS (see
+  [Platform boundaries](#platform-boundaries)).
 
 ## State ownership
 
@@ -179,6 +185,29 @@ production `ShaderManager` composes.
 - Android: `calibraw-ffi` exposes content-URI storage, document pickers,
   MediaStore publishing, background-task notifications and the MediaCodec replay
   encoder. Java classes live in `android/app/src/main/java/de/duecki/calibraw`.
-- Desktop: native file dialogs (`rfd`), trash, Discord presence and the `ffmpeg`
-  replay writer are confined to `cfg(not(target_os = "android"))` modules in
-  `calibraw-ui`.
+- `calibraw-ui/src/platform/` decides platform differences once. Everything
+  else compiles on every target and branches at run time:
+  - `PlatformCaps` (`form_factor`, `storage`, `memory`,
+    `tasks_need_foreground`, `configurable_ai_runtime`, `video_encoder`,
+    `can_restart`) is what views and handlers read. Views take it, or
+    `app.caps()`, and return actions; leaf widgets without the app use
+    `PlatformCaps::CURRENT`. Data that already names its kind is matched
+    instead: `LibraryLocator`, `SidecarTarget` and `ExportDestination`.
+  - `Platform` (`Arc<dyn Platform>`, in `CalibRawApp::platform` and
+    `LibraryState`) is the service behind actions: the Android bridge's
+    pickers, media library, sidecars, thumbnails, publishing, clipboard,
+    notifications, system bars and replay encoder, and the desktop's settings
+    and cache folders and GPU-loss restart. Its default methods answer
+    "unavailable" or do nothing, so a backend implements only what it has.
+    `platform/android.rs` wraps `calibraw-ffi`; `platform/desktop/` holds the
+    window entry point, the Flatpak portal and Discord IPC.
+  - Stateless desktop services are free functions: `FileDialog` (`rfd`),
+    `trash`, `show_fatal_message`, camera-profile search folders.
+  - `platform::fake::FakePlatform` (tests) takes any `PlatformCaps` and
+    scripted media-library contents and records the services called, so
+    Android paths are tested on Linux.
+- Library storage lives in `ui/library/folders/` (folders on disk) and
+  `ui/library/media_library/` (the Android library); `ui/library/sources.rs`
+  dispatches on `PlatformCaps::storage`.
+- Edit replay picks FFmpeg or the platform encoder from
+  `PlatformCaps::video_encoder` (`services/replay/`).

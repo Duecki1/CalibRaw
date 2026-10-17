@@ -2,7 +2,6 @@
 
 use super::*;
 
-#[cfg(target_os = "android")]
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct AndroidOriginalHold {
     pub start: egui::Pos2,
@@ -10,7 +9,6 @@ pub(crate) struct AndroidOriginalHold {
     pub phase: AndroidOriginalHoldPhase,
 }
 
-#[cfg(target_os = "android")]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum AndroidOriginalHoldPhase {
     /// The finger is down and still; the original shows once the hold time passes.
@@ -34,7 +32,7 @@ pub(crate) enum PreviewQuality {
 
 impl PreviewQuality {
     pub(crate) fn bounded_source_edge(width: u32, height: u32, requested: u32) -> u32 {
-        if cfg!(target_os = "android") {
+        if PlatformCaps::CURRENT.constrained_memory() {
             RawGpuPipeline::bounded_mobile_preview_edge(width, height, requested)
         } else {
             requested.min(width.max(height))
@@ -273,16 +271,13 @@ pub(crate) struct PreviewState {
     pub(crate) original_exposure: ExposureParams,
     pub(crate) original_requested: bool,
     pub(crate) original_rendered_state: Option<(bool, u64)>,
-    #[cfg(target_os = "android")]
     pub(crate) original_hold: Option<AndroidOriginalHold>,
     pub(crate) pending_stage: Option<ProcessingStage>,
     // Keep white-balance updates exact and coalesce zoomed mask scrubs while
     // the preceding GPU render is still running.
     pub(crate) white_balance_refresh_pending: bool,
     pub(crate) interactive_render_ready: Arc<AtomicBool>,
-    #[cfg(target_os = "android")]
     pub(crate) lens_original_cache: Option<(PreviewQuality, Arc<LoadedRaw>)>,
-    #[cfg(target_os = "android")]
     pub(crate) lens_corrected_cache: Option<(
         LensCorrection,
         PreviewQuality,

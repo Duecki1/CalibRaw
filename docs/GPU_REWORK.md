@@ -3,9 +3,9 @@
 Plan for making local AI and platform handling uniform: one GPU path for
 every vendor, one rule for GPU vs CPU, and platform differences decided once
 instead of scattered through the code. Status: P0.1 (cfg ratchet), P0.2
-(parity harness), P1, P2, P3, P4 (without the optional 4.5) and P5
+(parity harness), P1, P2, P3, P4 (without the optional 4.5), P5 and P7
 implemented; P0.3 (WebGPU spike) measured on Linux NVIDIA only, during P5;
-P6–P7 planned.
+P6 planned.
 
 Target behaviour for AI: **run on the GPU when the model fits in free VRAM,
 otherwise on the CPU** — the same rule for every model on every platform.
@@ -784,6 +784,68 @@ A fake `Platform` lets Android-gated tests (for example
 
 Each finished area leaves the baseline. Final arch-check rule: `target_os` in
 `calibraw-ui` only under `src/platform/`.
+
+**As built** (differences from the sketch above):
+
+- `calibraw-ui` went from 1,029 `target_os` conditions in 111 files to none
+  outside `src/platform/` (39 lines there); the workspace baseline fell from
+  1,150 to 71. All five areas were migrated in one change, because the
+  shared state types (`AndroidState`, `LibraryState`, the export jobs) could
+  not compile on every target one area at a time.
+- `PlatformCaps` has `form_factor` (`Desktop`/`Mobile`), `storage`
+  (`Folders`/`MediaLibrary`), `memory` (`Standard`/`Constrained`),
+  `tasks_need_foreground`, `configurable_ai_runtime`, `video_encoder`
+  (`Ffmpeg`/`Platform`) and `can_restart`. `file_dialogs` and
+  `can_reveal_in_files` were not needed: native dialogs come with
+  `StorageKind::Folders`, and nothing reveals files yet. `DESKTOP` and
+  `ANDROID` are constants; `CURRENT` is the one cfg-selected value, for leaf
+  widgets and worker-pool sizes that have no app.
+- `Platform` is a trait object (`Arc<dyn Platform>`) in `CalibRawApp` and
+  `LibraryState`, with default methods that report "unavailable" or do
+  nothing. `AndroidPlatform` wraps every `calibraw-ffi` call;
+  `DesktopPlatform` supplies the settings path, model and cache folders and
+  the GPU-loss restart command (moved from `app/gpu_recovery.rs`). Native
+  dialogs (`FileDialog`), trash, the fatal-error dialog and camera-profile
+  search folders are free functions, since they keep no state.
+  `copy_text_to_clipboard` returns `None` where egui's clipboard reaches the
+  system one.
+- Both entry points moved in: `android_main` to `platform/android.rs` and
+  the desktop `main` (with the ONNX Runtime probe CLI) to
+  `platform/desktop/entry.rs`. `desktop_portal.rs` became
+  `platform/desktop/portal.rs`; Discord IPC moved to `platform/discord.rs`
+  and `platform/desktop/discord.rs`.
+- `ui/library/platform/` did not merge into `src/platform/`: its contents are
+  library views and workers over two kinds of storage, not OS calls. It
+  became `ui/library/folders/` and `ui/library/media_library/`, with
+  `ui/library/sources.rs` dispatching on `PlatformCaps::storage`; their OS
+  calls go through `Platform`.
+- Data that names its kind is matched instead of a capability:
+  `LibraryLocator`, `SidecarTarget::Android` (now on every target),
+  `ExportDestination`, and the new `LibraryJobPhoto` and
+  `LibraryBatchExportJob` enums for library AI refresh and batch export.
+- 7.2: every `PerformanceSettings` field exists and is saved on every
+  target, so each platform's file now also carries the other's fields at
+  their defaults. Old files still load (`#[serde(default)]`). The
+  defaults that differ come from `PlatformCaps::CURRENT`.
+- `calibraw-core` APIs for folders on disk (desktop sidecars and developed
+  thumbnails, `raw_companion_paths`, `display_metadata_cache`, the desktop
+  thumbnail cache) compile on Android too; only the UI's folder branch
+  calls them. `calibraw-ai`'s built-in Android runtime answers the
+  automatic-runtime queries, so the AI settings code compiles everywhere.
+- Onboarding drops the camera-profile and Discord steps where
+  `StorageKind::MediaLibrary` (Android imports profiles in Settings).
+- arch-check also forbids `calibraw_ffi`, `rfd`, `zbus`, `env_logger` and
+  `android_logger` outside `src/platform/`; `SourceRule` gained `excluded`
+  directories for it. `src/platform` is a cfg-ratchet allowed directory.
+- 7.4: `platform::fake::FakePlatform` takes any `PlatformCaps` and scripted
+  media-library folders and documents and records the services called. The
+  Android-only tests of `ui/library/tests.rs` (media-library folder paths
+  and assets) now run on Linux, the back-navigation test runs with Android
+  capabilities, and new tests cover a media-library scan, opening a library
+  photo through the platform and the mobile onboarding steps.
+- Checked: host workspace clippy and tests; `cargo ndk` clippy of
+  `calibraw-ui` for arm64-v8a. Windows and macOS code was read but not
+  compiled here.
 
 ---
 

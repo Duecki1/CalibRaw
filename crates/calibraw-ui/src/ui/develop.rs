@@ -1,5 +1,4 @@
 use crate::app::CalibRawApp;
-#[cfg(not(target_os = "android"))]
 use crate::ui::library::library_image_context_menu;
 use crate::ui::library::{
     apply_library_action, load_desktop_reference_preview, DesktopFilmstripItem,

@@ -29,6 +29,7 @@ const ALLOWED_DIRECTORIES: &[&str] = &[
     "crates/calibraw-ai/src/placement",
     "crates/calibraw-ai/src/runtime",
     "crates/calibraw-gpu/src/memory",
+    "crates/calibraw-ui/src/platform",
 ];
 
 /// `target_os` conditions per workspace-relative file path.

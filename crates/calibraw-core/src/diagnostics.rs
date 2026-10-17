@@ -52,7 +52,7 @@ pub fn record(message: impl AsRef<str>) {
     log::info!("diagnostics: {message}");
 }
 
-#[cfg(target_os = "android")]
+/// Device details the platform reports (Android), shown in the diagnostics.
 pub fn set_device_info(info: String) {
     if let Ok(mut state) = state().lock() {
         state.device_info = Some(info);

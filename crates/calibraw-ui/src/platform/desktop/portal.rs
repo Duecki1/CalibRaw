@@ -1,5 +1,5 @@
 /// Flatpak document grants and host services need portal-specific handling.
-pub(crate) fn is_flatpak() -> bool {
+pub(in crate::platform) fn is_flatpak() -> bool {
     #[cfg(target_os = "linux")]
     {
         std::path::Path::new("/.flatpak-info").is_file() || std::env::var_os("FLATPAK_ID").is_some()
@@ -10,14 +10,8 @@ pub(crate) fn is_flatpak() -> bool {
     }
 }
 
-/// The Flatpak is not granted Discord's IPC socket, so it leaves out Rich
-/// Presence along with its setup step and setting.
-pub(crate) fn discord_presence_supported() -> bool {
-    !is_flatpak()
-}
-
 #[cfg(target_os = "linux")]
-pub(crate) fn trash_file(path: &std::path::Path) -> anyhow::Result<()> {
+pub(in crate::platform) fn trash_file(path: &std::path::Path) -> anyhow::Result<()> {
     use anyhow::Context;
     use std::os::fd::AsFd;
 

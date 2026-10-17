@@ -4,6 +4,7 @@
 //! execution provider beside the core library
 //! (`packaging/onnxruntime/package_webgpu.py`).
 
+use super::AutomaticOnnxRuntimeInfo;
 use crate::config::Sha256;
 use crate::registry::artifact::{ensure_artifact, sha256_file_hex, DownloadOptions, ModelArtifact};
 use anyhow::{Context, Result};
@@ -189,15 +190,6 @@ fn runtime_package() -> Result<RuntimePackage> {
                 "automatic ONNX Runtime is unavailable for {os}/{arch}; select a compatible runtime manually in Settings"
             )
         })
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct AutomaticOnnxRuntimeInfo {
-    pub platform: &'static str,
-    pub version: &'static str,
-    pub download_bytes: u64,
-    /// `None` for a bundled runtime.
-    pub download_url: Option<&'static str>,
 }
 
 /// The runtime included by the packager, fixed when CalibRaw is compiled.
