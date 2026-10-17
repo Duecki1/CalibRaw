@@ -98,8 +98,11 @@ fn records() -> MutexGuard<'static, Records> {
         .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
+/// Writes the record through to disk, so that a failure taking the system
+/// down keeps it, and creates its folder, which on Windows only exists once
+/// a thumbnail has been cached.
 fn write_record(path: &Path, job: &str) {
-    if let Err(error) = fs::write(path, job) {
+    if let Err(error) = calibraw_core::file_ops::write_bytes_atomically(path, job.as_bytes()) {
         log::warn!(
             "could not write the GPU AI job record {}: {error}",
             path.display()
@@ -151,6 +154,17 @@ mod tests {
         assert_eq!(take_record(&path).as_deref(), Some("BiRefNet on WebGPU"));
         assert!(!path.exists());
         assert_eq!(take_record(&path), None);
+    }
+
+    #[test]
+    fn the_record_creates_its_folder() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("calibraw").join("gpu-ai-job.txt");
+        write_record(&path, "SAM 2.1 encoder on WebGPU");
+        assert_eq!(
+            take_record(&path).as_deref(),
+            Some("SAM 2.1 encoder on WebGPU")
+        );
     }
 
     #[test]

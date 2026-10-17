@@ -1,8 +1,9 @@
 //! Loading the ONNX Runtime library once per process. Desktop builds load a
 //! library file pinned by its SHA-256, and register the automatic runtime's
 //! WebGPU plugin execution provider beside it; Android links the runtime
-//! into the app.
+//! into the app. Either way its log goes to `logger`.
 
+use super::logger;
 use crate::config::RuntimeSource;
 use anyhow::Result;
 use std::sync::{Mutex, OnceLock};
@@ -78,9 +79,13 @@ pub(super) fn load(source: &RuntimeSource) -> Result<()> {
             )
         })?;
         anyhow::ensure!(
-            builder.with_name("CalibRaw").commit(),
+            builder
+                .with_name("CalibRaw")
+                .with_logger(logger::logger())
+                .commit(),
             "ONNX Runtime was already initialized before the selected pinned library could be committed"
         );
+        set_log_level();
         calibraw_core::diagnostics::record(format!(
             "ONNX Runtime library loaded in {:.3}s",
             started.elapsed().as_secs_f64()
@@ -118,6 +123,8 @@ fn register_webgpu_plugin(plugin: &WebGpuPlugin) {
             "the WebGPU provider changed after it was installed: expected SHA-256 {}, found {sha256}",
             plugin.sha256
         );
+        #[cfg(target_os = "windows")]
+        preload_plugin_imports();
         let environment = ort::environment::current()
             .map_err(|error| anyhow::anyhow!("get the ONNX Runtime environment: {error}"))?;
         environment
@@ -141,6 +148,53 @@ fn register_webgpu_plugin(plugin: &WebGpuPlugin) {
     });
 }
 
+/// The Visual C++ runtime libraries the WebGPU plugin imports and the core
+/// library does not. `packaging/onnxruntime/package_webgpu.py` reads this
+/// list to check the Windows archives.
+#[cfg(target_os = "windows")]
+const PRELOADED_PLUGIN_IMPORTS: &[&str] = &["msvcp140_atomic_wait.dll"];
+
+/// Loads `PRELOADED_PLUGIN_IMPORTS` from CalibRaw's folder, where the Windows
+/// build ships them (`vc_runtime_dlls` in `build-windows.yml`). ONNX Runtime
+/// loads a plugin with `LOAD_WITH_ALTERED_SEARCH_PATH`, which searches the
+/// plugin's folder and System32 but not CalibRaw's, so without them the
+/// plugin needs a recent Visual C++ redistributable installed. Windows
+/// resolves an import to a loaded library of the same name first. Where a
+/// file is missing, as in a development build, System32's copy is left to
+/// serve.
+#[cfg(target_os = "windows")]
+fn preload_plugin_imports() {
+    let Some(folder) = std::env::current_exe()
+        .ok()
+        .and_then(|exe| exe.parent().map(std::path::Path::to_path_buf))
+    else {
+        return;
+    };
+    for name in PRELOADED_PLUGIN_IMPORTS {
+        let path = folder.join(name);
+        if !path.is_file() {
+            continue;
+        }
+        if let Err(error) = ort::util::preload_dylib(&path) {
+            log::warn!("could not load {}: {error}", path.display());
+            calibraw_core::diagnostics::record(format!(
+                "could not load {} for the WebGPU provider: {error}",
+                path.display()
+            ));
+        }
+    }
+}
+
+/// Lowers ONNX Runtime's log level from the verbose one an environment with
+/// a custom logger starts at (`logger::level`). An environment that cannot
+/// be created now fails again, with its error, where a session needs it.
+fn set_log_level() {
+    match ort::environment::current() {
+        Ok(environment) => environment.set_log_level(logger::level()),
+        Err(error) => log::warn!("could not set the ONNX Runtime log level: {error}"),
+    }
+}
+
 /// Whether this process has already loaded an ONNX Runtime library. The
 /// library stays loaded until the process exits, so choosing a different one
 /// only takes effect after a restart.
@@ -159,9 +213,13 @@ fn load(_source: &RuntimeSource) -> Result<()> {
         .map_err(|_| anyhow::anyhow!("ONNX Runtime initialization lock was poisoned"))?;
     if RUNTIME_INITIALIZED.get().is_none() {
         anyhow::ensure!(
-            ort::init().with_name("CalibRaw").commit(),
+            ort::init()
+                .with_name("CalibRaw")
+                .with_logger(logger::logger())
+                .commit(),
             "ONNX Runtime was already initialized before CalibRaw could configure it"
         );
+        set_log_level();
         RUNTIME_INITIALIZED
             .set(())
             .map_err(|_| anyhow::anyhow!("ONNX Runtime state was initialized concurrently"))?;

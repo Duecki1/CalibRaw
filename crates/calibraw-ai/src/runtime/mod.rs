@@ -1,8 +1,9 @@
-//! The ONNX Runtime library: loading it into this process (`load`), checking
-//! a user-selected one in a separate process first (`probe`), and the
-//! automatic runtime packages (`package`).
+//! The ONNX Runtime library: loading it into this process (`load`), its log
+//! (`logger`), checking a user-selected one in a separate process first
+//! (`probe`), and the automatic runtime packages (`package`).
 
 mod load;
+mod logger;
 #[cfg(not(target_os = "android"))]
 mod package;
 #[cfg(not(target_os = "android"))]

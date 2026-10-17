@@ -12,6 +12,9 @@ dxcompiler.dll and dxil.dll stay beside it, where Dawn looks for them.
 The plugin needs ONNX Runtime 1.24.4 or newer and exists for these five
 platforms only; macOS x86_64 keeps its CPU-only runtime.
 
+Before writing a Windows archive, the script checks that ONNX Runtime will
+find every library its libraries import (`check_windows_imports`).
+
 Downloads are SHA-256 pinned and kept in DOWNLOAD_DIR when it is given. The
 output is byte-reproducible with the same Python and zlib. Upload each archive
 unchanged to the CalibRaw-Artifacts repository at onnxruntime/<platform>/, the
@@ -22,6 +25,8 @@ into crates/calibraw-ai/src/runtime/package.rs.
 import gzip
 import hashlib
 import io
+import re
+import struct
 import sys
 import tarfile
 import urllib.request
@@ -87,6 +92,28 @@ PLATFORMS = {
 TIMESTAMP = (2026, 9, 16, 0, 0, 0)
 MTIME = 1789516800
 
+REPOSITORY = Path(__file__).resolve().parents[2]
+# Ships the Visual C++ runtime beside calibraw.exe (`vc_runtime_dlls`).
+WINDOWS_WORKFLOW = REPOSITORY / ".github/workflows/build-windows.yml"
+# Loads the plugin's imports that the core library does not
+# (`PRELOADED_PLUGIN_IMPORTS`).
+RUNTIME_LOADER = REPOSITORY / "crates/calibraw-ai/src/runtime/load.rs"
+# CalibRaw platform -> `artifact_arch` of its build in WINDOWS_WORKFLOW.
+WINDOWS_ARCHES = {"windows-x86_64": "x86_64", "windows-arm64": "arm64"}
+# Libraries every supported Windows has, besides the api-ms-win-* API sets.
+# Anything new here should be checked against Windows 10's System32.
+WINDOWS_SYSTEM_DLLS = {
+    "advapi32.dll",
+    "dbghelp.dll",
+    "dxgi.dll",
+    "kernel32.dll",
+    "ole32.dll",
+    "oleaut32.dll",
+    "setupapi.dll",
+    "shell32.dll",
+    "user32.dll",
+}
+
 
 def fetch(url, sha256, downloads):
     cached = downloads / url.rsplit("/", 1)[1] if downloads else None
@@ -133,6 +160,98 @@ def plugin_files(data, names):
     return files
 
 
+def pe_imports(data):
+    """Lowercase names of the libraries a PE image imports, delay-loaded ones
+    included."""
+    (header,) = struct.unpack_from("<I", data, 0x3C)
+    if data[:2] != b"MZ" or data[header : header + 4] != b"PE\0\0":
+        raise ValueError("not a PE image")
+    coff = header + 4
+    (section_count,) = struct.unpack_from("<H", data, coff + 2)
+    (optional_size,) = struct.unpack_from("<H", data, coff + 16)
+    optional = coff + 20
+    (magic,) = struct.unpack_from("<H", data, optional)
+    directories = optional + {0x10B: 96, 0x20B: 112}[magic]
+    # (virtual size, virtual address, raw size, raw offset) of each section.
+    sections = [
+        struct.unpack_from("<IIII", data, optional + optional_size + 40 * index + 8)
+        for index in range(section_count)
+    ]
+
+    def offset(rva):
+        for virtual_size, address, raw_size, raw_offset in sections:
+            if address <= rva < address + max(virtual_size, raw_size):
+                return raw_offset + rva - address
+        raise ValueError(f"RVA {rva:#x} lies in no section")
+
+    names = set()
+    # Data directories 1 (imports, 20-byte entries naming the library at 12)
+    # and 13 (delay-loaded imports, 32-byte entries naming it at 4); a zeroed
+    # entry ends each table.
+    for directory, entry_size, name_field in ((1, 20, 12), (13, 32, 4)):
+        (table,) = struct.unpack_from("<I", data, directories + 8 * directory)
+        entry = offset(table) if table else None
+        while entry is not None and any(data[entry : entry + entry_size]):
+            if directory == 13 and not struct.unpack_from("<I", data, entry)[0] & 1:
+                raise ValueError("delay-load table addresses are not RVAs")
+            (name,) = struct.unpack_from("<I", data, entry + name_field)
+            start = offset(name)
+            names.add(data[start : data.index(b"\0", start)].decode("ascii").lower())
+            entry += entry_size
+    return names
+
+
+def shipped_beside_calibraw(platform):
+    """The Visual C++ runtime the Windows build of `platform` ships beside
+    calibraw.exe."""
+    for entry in WINDOWS_WORKFLOW.read_text().split("- name: ")[1:]:
+        arch = re.search(r"^\s*artifact_arch:\s*(\S+)", entry, re.M)
+        dlls = re.search(r"^\s*vc_runtime_dlls:\s*(.+)$", entry, re.M)
+        if arch and dlls and arch.group(1) == WINDOWS_ARCHES[platform]:
+            return {name.lower() for name in dlls.group(1).split()}
+    raise ValueError(f"{WINDOWS_WORKFLOW} lists no vc_runtime_dlls for {platform}")
+
+
+def preloaded_plugin_imports():
+    """The libraries CalibRaw loads from its folder before the plugin."""
+    found = re.search(r"PRELOADED_PLUGIN_IMPORTS: &\[&str\] = &\[([^\]]*)\]", RUNTIME_LOADER.read_text())
+    if not found:
+        raise ValueError(f"{RUNTIME_LOADER} has no PRELOADED_PLUGIN_IMPORTS")
+    return {name.lower() for name in re.findall(r'"([^"]+)"', found.group(1))}
+
+
+def check_windows_imports(platform, core_library, members):
+    """Fails unless ONNX Runtime will find what the libraries in `members`
+    import, beyond Windows' own libraries.
+
+    CalibRaw loads the core library by path, so Windows looks for its imports
+    beside calibraw.exe, where the build ships the Visual C++ runtime, and
+    not beside the core. ONNX Runtime loads the plugin, and Dawn the shader
+    compiler, with `LOAD_WITH_ALTERED_SEARCH_PATH`: their imports are found
+    in the archive's lib/ or as a library already loaded, which is one the
+    core imports or one CalibRaw loads first."""
+    shipped = shipped_beside_calibraw(platform)
+    libraries = {name: data for name, data in members if name.lower().endswith(".dll")}
+    core_imports = pe_imports(libraries[core_library])
+    beside_plugin = {Path(name).name.lower() for name in libraries}
+    loaded_first = (core_imports | preloaded_plugin_imports()) & shipped
+    for name, data in sorted(libraries.items()):
+        imports = core_imports if name == core_library else pe_imports(data)
+        found = shipped if name == core_library else beside_plugin | loaded_first
+        missing = sorted(
+            library
+            for library in imports
+            if not library.startswith(("api-ms-win-", "ext-ms-win-"))
+            and library not in WINDOWS_SYSTEM_DLLS | found
+        )
+        if missing:
+            raise ValueError(
+                f"{platform}: {name} imports {', '.join(missing)}, which ONNX Runtime would not "
+                f"find; ship it beside calibraw.exe ({WINDOWS_WORKFLOW.name}) and, for the plugin, "
+                f"load it first ({RUNTIME_LOADER.name}), or add it to the archive"
+            )
+
+
 def write_tgz(path, root, members):
     buffer = io.BytesIO()
     with gzip.GzipFile(filename="", mode="wb", fileobj=buffer, compresslevel=9, mtime=0) as gz:
@@ -176,6 +295,8 @@ def main():
             ("webgpu-ThirdPartyNotices.txt", webgpu["ThirdPartyNotices.txt"]),
         ]
         members.sort()
+        if platform in WINDOWS_ARCHES:
+            check_windows_imports(platform, library, members)
         stem, extension = core_name.rsplit(".", 1)
         root = f"{stem}-webgpu-{WEBGPU_VERSION}"
         archive_path = output / platform / f"{root}.{extension}"
