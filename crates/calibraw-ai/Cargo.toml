@@ -34,7 +34,7 @@ ort = { workspace = true, features = ["load-dynamic"] }
 tar.workspace = true
 
 [target.'cfg(target_os = "android")'.dependencies]
-ort = { workspace = true, features = ["download-binaries", "copy-dylibs", "tls-rustls", "nnapi", "xnnpack"] }
+ort = { workspace = true, features = ["download-binaries", "copy-dylibs", "tls-rustls"] }
 
 [dev-dependencies]
 pollster.workspace = true

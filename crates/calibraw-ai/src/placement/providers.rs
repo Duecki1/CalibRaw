@@ -8,43 +8,21 @@ use crate::config::{GpuIdentity, MemoryClass, CAPABILITIES};
 use anyhow::{Context, Result};
 use ort::device::Device;
 use ort::environment::Environment;
-use ort::ep::{ExecutionProvider, ExecutionProviderDispatch};
+use ort::ep::ExecutionProviderDispatch;
 use ort::session::builder::SessionBuilder;
 use ort::AsPointer;
 
-/// This platform's GPU providers, most preferred first.
+/// This platform's GPU providers, most preferred first. Android's built-in
+/// runtime has none (docs/GPU_REWORK.md P6.1): its NNAPI ran on Android's
+/// CPU reference code where no vendor driver exists, slower than ONNX
+/// Runtime's own CPU kernels, and its prebuilt binary has no XNNPACK.
 #[cfg(not(target_os = "android"))]
 const PLATFORM_PROVIDERS: &[GpuProvider] = &[GpuProvider::WebGpu];
 #[cfg(target_os = "android")]
-const PLATFORM_PROVIDERS: &[GpuProvider] = &[GpuProvider::Nnapi, GpuProvider::Xnnpack];
+const PLATFORM_PROVIDERS: &[GpuProvider] = &[];
 
 /// The name ONNX Runtime gives the WebGPU plugin's execution provider.
 const WEBGPU_EP: &str = "WebGpuExecutionProvider";
-
-/// Whether the loaded ONNX Runtime was built with `provider`, one of
-/// Android's. A provider the runtime lacks is expected and is not a
-/// degradation.
-fn runtime_offers(provider: GpuProvider) -> bool {
-    let available = match provider {
-        GpuProvider::Nnapi => ort::ep::NNAPI::default().is_available(),
-        GpuProvider::Xnnpack => ort::ep::XNNPACK::default().is_available(),
-        GpuProvider::WebGpu => return false,
-    };
-    let name = provider.name();
-    match available {
-        Ok(true) => true,
-        Ok(false) => {
-            log::info!("AI execution provider {name} is not built into the selected ONNX Runtime");
-            false
-        }
-        Err(error) => {
-            log::warn!(
-                "AI execution provider {name} skipped: could not query availability: {error}"
-            );
-            false
-        }
-    }
-}
 
 /// PCI vendor and device ID of the hardware `device` stands for.
 fn hardware_ids(device: &Device<'_>) -> (u32, u32) {
@@ -113,11 +91,6 @@ pub(super) fn offered_providers(gpu: Option<&GpuIdentity>) -> Vec<ProviderOffer>
         .filter_map(|&provider| {
             let on_editor_adapter = match provider {
                 GpuProvider::WebGpu => webgpu_offered(gpu)?,
-                // NNAPI picks its own accelerator and XNNPACK runs on the
-                // CPU; docs/GPU_REWORK.md P6 replaces both.
-                GpuProvider::Nnapi | GpuProvider::Xnnpack => {
-                    runtime_offers(provider).then_some(false)?
-                }
             };
             let editor_gpu = gpu.filter(|_| on_editor_adapter);
             Some(ProviderOffer {
@@ -172,12 +145,6 @@ pub(super) fn with_gpu_provider(
                 .map_err(|error| anyhow::anyhow!("configure {name} execution provider: {error}"))?
                 .with_execution_providers([cpu])
         }
-        GpuProvider::Nnapi => builder
-            .with_execution_providers([ort::ep::NNAPI::default().build().error_on_failure(), cpu]),
-        GpuProvider::Xnnpack => builder.with_execution_providers([
-            ort::ep::XNNPACK::default().build().error_on_failure(),
-            cpu,
-        ]),
     };
     builder.map_err(|error| anyhow::anyhow!("configure {name} execution provider: {error}"))
 }

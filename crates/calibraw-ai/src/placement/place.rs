@@ -13,14 +13,11 @@ const MIB: u64 = 1 << 20;
 /// editor keeps allocating while AI runs.
 const MEMORY_MARGIN_PERCENT: u64 = 20;
 
-/// An accelerated execution provider: WebGPU on desktop, NNAPI and XNNPACK
-/// on Android. XNNPACK is a CPU library, but Android treats it like a GPU
-/// provider until docs/GPU_REWORK.md P6.
+/// An accelerated execution provider: WebGPU on desktop. Android has none
+/// (docs/GPU_REWORK.md P6.1).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum GpuProvider {
     WebGpu,
-    Nnapi,
-    Xnnpack,
 }
 
 impl GpuProvider {
@@ -28,8 +25,6 @@ impl GpuProvider {
     pub const fn name(self) -> &'static str {
         match self {
             Self::WebGpu => "WebGPU",
-            Self::Nnapi => "NNAPI",
-            Self::Xnnpack => "XNNPACK",
         }
     }
 }
@@ -63,7 +58,7 @@ pub enum CpuReason {
     /// GPU AI is off for this process after the GPU was lost during a job.
     Quarantined,
     /// The automatic runtime has no GPU build for this platform (macOS
-    /// x86_64).
+    /// x86_64, Android).
     NoGpuBuild,
     /// The loaded ONNX Runtime has none of this platform's GPU providers, or
     /// its WebGPU provider found no adapter.
@@ -228,7 +223,7 @@ mod tests {
 
     #[test]
     fn sessions_run_on_the_gpu_when_they_fit_and_on_the_cpu_otherwise() {
-        use GpuProvider::{Nnapi, WebGpu, Xnnpack};
+        use GpuProvider::WebGpu;
         let peak_2900 = SessionOptions::new("BiRefNet").with_gpu_memory(2900 * MIB);
         let unknown_peak = SessionOptions::new("SkySeg U2Net");
         let short = cpu(CpuReason::InsufficientMemory {
@@ -269,13 +264,13 @@ mod tests {
             case(
                 "the next provider runs on another adapter",
                 peak_2900,
-                vec![offer(Nnapi, Some(3000)), offer(Xnnpack, None)],
-                gpu(Xnnpack),
+                vec![offer(WebGpu, Some(3000)), offer(WebGpu, None)],
+                gpu(WebGpu),
             ),
             case(
                 "no provider has room; the first shortfall is reported",
                 peak_2900,
-                vec![offer(Nnapi, Some(3000)), offer(Xnnpack, Some(100))],
+                vec![offer(WebGpu, Some(3000)), offer(WebGpu, Some(100))],
                 short,
             ),
             case(
