@@ -70,7 +70,7 @@ impl CalibRawApp {
         let lens_correction = LensCorrectionState::default();
         let edit_history = EditHistory::new(&exposure, &masks, &lens_correction);
         let manual_runtime = if caps.configurable_ai_runtime {
-            Self::load_onnx_runtime_selection()
+            Self::load_onnx_runtime_selection(performance_settings_path.as_deref())
         } else {
             None
         };
@@ -435,6 +435,21 @@ impl CalibRawApp {
                 Err(error) => log::warn!("{error}"),
             }
         }
+        // Before the app reads the ONNX Runtime selection or looks for models.
+        let moved_ai_file_failures: Vec<String> = if caps.is_desktop() {
+            [
+                Self::move_onnx_runtime_selection(performance_settings_path.as_deref()),
+                Self::move_desktop_model_folder(
+                    performance_settings_path.as_deref(),
+                    &platform.model_root(),
+                ),
+            ]
+            .into_iter()
+            .flatten()
+            .collect()
+        } else {
+            Vec::new()
+        };
         let performance = crate::performance_settings::load(performance_settings_path.as_deref());
         // A media library uses imported copies of profile folders; drop the
         // ones no setting names any more.
@@ -463,6 +478,9 @@ impl CalibRawApp {
             .set_light_system_bars(!app.preferences.ui_design.is_dark())
         {
             log::warn!("{error}");
+        }
+        for failure in moved_ai_file_failures {
+            app.report_error(ErrorKind::AiFilesNotMoved, failure);
         }
         app.remove_legacy_ai_denoise_cache();
         if caps.is_desktop() {

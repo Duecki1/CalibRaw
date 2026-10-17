@@ -1,4 +1,5 @@
-//! Reading sidecars and presets saved in older layouts.
+//! Reading sidecars and presets saved in older layouts, and moving app data
+//! older versions saved elsewhere.
 //!
 //! Every conversion from an older layout lives in this folder, so the current
 //! model carries no compatibility code. Each one is marked
@@ -22,23 +23,28 @@
 //! - The old AI-denoise result cache, removed on start-up
 //!   (`calibraw-ui`, `app/ai_denoise.rs`).
 //! - The depth model desktop builds used before Depth Anything V2 Small,
-//!   removed from the model cache on start-up (`calibraw-ui`,
+//!   removed from the model folder on start-up (`calibraw-ui`,
 //!   `app/ai/models.rs`).
 //! - The automatic ONNX Runtimes the WebGPU packages replaced (CPU, Linux
-//!   CUDA and Windows DirectML), removed from the model cache on desktop
+//!   CUDA and Windows DirectML), removed from the model folder on desktop
 //!   start-up (`calibraw-ai`, `runtime/package.rs`, which lists them, and
 //!   `calibraw-ui`, `app/ai/models.rs`).
 //!
 //! The start-up removals run through `remove_retired_app_data`
-//! (`calibraw-ui`, `app/lifecycle/startup.rs`).
+//! (`calibraw-ui`, `app/lifecycle/startup.rs`). The desktop model folder and
+//! ONNX Runtime selection moves (`desktop_model_folder`,
+//! `onnx_runtime_selection`) run from `move_desktop_ai_files`
+//! (`calibraw-ui`, `app/ai/models.rs`) before the app reads either.
 //!
 //! `older_readers` works the other way: it writes sidecars and presets so
 //! that v1.2 and older can still open them.
 
 mod component_names;
 pub(crate) mod depth_range_feather;
+pub mod desktop_model_folder;
 mod effect_sliders;
 pub(crate) mod older_readers;
+pub mod onnx_runtime_selection;
 pub(crate) mod point_curve_slots;
 
 pub(crate) use effect_sliders::LegacyEffectSliders;

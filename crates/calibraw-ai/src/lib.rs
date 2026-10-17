@@ -11,7 +11,7 @@ pub mod runtime;
 mod slot;
 
 #[cfg(not(target_os = "android"))]
-pub use config::desktop_model_cache_root;
+pub use config::desktop_model_root;
 pub use config::{configure, update, AiConfig, AiConfigChange, GpuIdentity, RuntimeSource, Sha256};
 pub use jobs::AiJobEvent;
 pub use placement::{
