@@ -1,8 +1,11 @@
-//! A file naming the AI job that is running on the GPU, so the next start can
-//! tell when a GPU failure ended the process mid-job: a driver reset or a
-//! native abort inside an execution provider leaves no error to handle.
+//! A file naming the AI work on the GPU, so the next start can tell when a
+//! GPU failure ended the process during it: a driver reset or a native abort
+//! inside an execution provider leaves no error to handle. It names a running
+//! job, or else a model whose GPU session is loaded between jobs, whose
+//! memory alone can push the GPU into paging and a driver reset.
 //!
-//! Model sessions run one at a time (`slot`), so one record suffices.
+//! Model sessions live in one slot and run one at a time (`slot`), so one
+//! record suffices.
 
 use std::{
     fs,
@@ -14,45 +17,119 @@ use std::{
 static RECORD_PATH: OnceLock<PathBuf> = OnceLock::new();
 /// Guards the record file as well as the in-memory state, so ending the
 /// records cannot interleave with a job writing one.
-static RECORDS: Mutex<Records> = Mutex::new(Records {
-    running_job: None,
-    ended: false,
-});
+static RECORDS: Mutex<Records> = Mutex::new(Records::new());
+
+/// AI work on the GPU, as "model on provider".
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum GpuAiActivity {
+    /// A job ran, or a session was being created.
+    Job(String),
+    /// A model's session was loaded between its jobs.
+    IdleModel(String),
+}
+
+/// The second line of the record of an idle model. A record without it, as
+/// every record before idle models were recorded, names a job.
+const IDLE_MARKER: &str = "idle";
+
+impl GpuAiActivity {
+    fn record_text(&self) -> String {
+        match self {
+            Self::Job(job) => job.clone(),
+            Self::IdleModel(model) => format!("{model}\n{IDLE_MARKER}"),
+        }
+    }
+
+    fn of_record_text(text: &str) -> Option<Self> {
+        let mut lines = text.lines().map(str::trim);
+        let work = lines.next().filter(|work| !work.is_empty())?.to_owned();
+        Some(if lines.next() == Some(IDLE_MARKER) {
+            Self::IdleModel(work)
+        } else {
+            Self::Job(work)
+        })
+    }
+}
 
 struct Records {
     running_job: Option<String>,
-    /// Set by `end_gpu_job_records`; later jobs are not recorded.
+    loaded_model: Option<String>,
+    /// What the file says, so the same is not written again.
+    written: Option<GpuAiActivity>,
+    /// Set by `end_gpu_job_records`; later work is not recorded.
     ended: bool,
 }
 
 impl Records {
-    fn begin(&mut self, path: Option<&Path>, job: String) {
-        if self.ended {
+    const fn new() -> Self {
+        Self {
+            running_job: None,
+            loaded_model: None,
+            written: None,
+            ended: false,
+        }
+    }
+
+    /// The work to record: a running job before a loaded model.
+    fn activity(&self) -> Option<GpuAiActivity> {
+        match (&self.running_job, &self.loaded_model) {
+            (Some(job), _) => Some(GpuAiActivity::Job(job.clone())),
+            (None, Some(model)) => Some(GpuAiActivity::IdleModel(model.clone())),
+            (None, None) => None,
+        }
+    }
+
+    /// Brings the file at `path` in line with the work to record.
+    fn sync(&mut self, path: Option<&Path>) {
+        let activity = self.activity();
+        if activity == self.written {
             return;
         }
         if let Some(path) = path {
-            write_record(path, &job);
+            match &activity {
+                Some(activity) => write_record(path, activity),
+                None => remove_record(path),
+            }
         }
-        self.running_job = Some(job);
+        self.written = activity;
+    }
+
+    fn begin_job(&mut self, path: Option<&Path>, job: String) {
+        if !self.ended {
+            self.running_job = Some(job);
+            self.sync(path);
+        }
     }
 
     fn forget_running_job(&mut self, path: Option<&Path>) {
         self.running_job = None;
-        if let Some(path) = path {
-            remove_record(path);
+        self.sync(path);
+    }
+
+    fn load_model(&mut self, path: Option<&Path>, model: String) {
+        if !self.ended {
+            self.loaded_model = Some(model);
+            self.sync(path);
         }
+    }
+
+    fn forget_loaded_model(&mut self, path: Option<&Path>) {
+        self.loaded_model = None;
+        self.sync(path);
     }
 
     fn end(&mut self, path: Option<&Path>) {
         self.ended = true;
-        self.forget_running_job(path);
+        self.running_job = None;
+        self.loaded_model = None;
+        self.sync(path);
     }
 }
 
-/// Keeps the record at `path` and returns the job a previous run left in it,
-/// i.e. the GPU job that run did not survive. Call once at startup, before
-/// any AI job. Without a path, jobs are only tracked in memory.
-pub(crate) fn set_gpu_job_record_path(path: PathBuf) -> Option<String> {
+/// Keeps the record at `path` and returns the work a previous run left in
+/// it, i.e. the GPU work that run did not survive. Call once at startup,
+/// before any AI job. Without a path, work is only tracked in memory.
+pub(crate) fn set_gpu_job_record_path(path: PathBuf) -> Option<GpuAiActivity> {
     let interrupted = take_record(&path);
     if RECORD_PATH.set(path).is_err() {
         log::warn!("the GPU AI job record path was already set");
@@ -65,9 +142,16 @@ pub fn gpu_job_in_progress() -> Option<String> {
     records().running_job.clone()
 }
 
-/// Forgets the running job and records no later ones, for an orderly exit or
-/// a restart: quitting during a job is not a GPU failure, and a job that
-/// keeps running until the process ends must not leave a record behind.
+/// The AI work on the GPU in this process: a running job, or else a model
+/// loaded there between jobs.
+pub fn gpu_ai_activity() -> Option<GpuAiActivity> {
+    records().activity()
+}
+
+/// Forgets the running job and loaded model and records no later work, for
+/// an orderly exit or a restart: quitting during a job or with a model loaded
+/// is not a GPU failure, and work that goes on until the process ends must
+/// not leave a record behind.
 pub fn end_gpu_job_records() {
     records().end(record_path());
 }
@@ -77,7 +161,7 @@ pub(crate) struct GpuJobRecord(());
 
 impl GpuJobRecord {
     pub(crate) fn begin(model_name: &str, provider: &str) -> Self {
-        records().begin(record_path(), format!("{model_name} on {provider}"));
+        records().begin_job(record_path(), format!("{model_name} on {provider}"));
         Self(())
     }
 }
@@ -85,6 +169,22 @@ impl GpuJobRecord {
 impl Drop for GpuJobRecord {
     fn drop(&mut self) {
         records().forget_running_job(record_path());
+    }
+}
+
+/// Records a model's GPU session for as long as it is loaded.
+pub(crate) struct GpuSessionRecord(());
+
+impl GpuSessionRecord {
+    pub(crate) fn begin(model_name: &str, provider: &str) -> Self {
+        records().load_model(record_path(), format!("{model_name} on {provider}"));
+        Self(())
+    }
+}
+
+impl Drop for GpuSessionRecord {
+    fn drop(&mut self) {
+        records().forget_loaded_model(record_path());
     }
 }
 
@@ -101,8 +201,9 @@ fn records() -> MutexGuard<'static, Records> {
 /// Writes the record through to disk, so that a failure taking the system
 /// down keeps it, and creates its folder, which on Windows only exists once
 /// a thumbnail has been cached.
-fn write_record(path: &Path, job: &str) {
-    if let Err(error) = calibraw_core::file_ops::write_bytes_atomically(path, job.as_bytes()) {
+fn write_record(path: &Path, activity: &GpuAiActivity) {
+    let text = activity.record_text();
+    if let Err(error) = calibraw_core::file_ops::write_bytes_atomically(path, text.as_bytes()) {
         log::warn!(
             "could not write the GPU AI job record {}: {error}",
             path.display()
@@ -110,12 +211,12 @@ fn write_record(path: &Path, job: &str) {
     }
 }
 
-/// The job recorded at `path`, removing the record.
-fn take_record(path: &Path) -> Option<String> {
+/// The work recorded at `path`, removing the record.
+fn take_record(path: &Path) -> Option<GpuAiActivity> {
     match fs::read_to_string(path) {
-        Ok(job) => {
+        Ok(text) => {
             remove_record(path);
-            Some(job.trim().to_owned()).filter(|job| !job.is_empty())
+            GpuAiActivity::of_record_text(&text)
         }
         Err(error) if error.kind() == ErrorKind::NotFound => None,
         Err(error) => {
@@ -142,7 +243,15 @@ fn remove_record(path: &Path) {
 
 #[cfg(test)]
 mod tests {
-    use super::{remove_record, take_record, write_record, Records};
+    use super::{remove_record, take_record, write_record, GpuAiActivity, Records};
+
+    fn job(work: &str) -> GpuAiActivity {
+        GpuAiActivity::Job(work.to_owned())
+    }
+
+    fn idle(work: &str) -> GpuAiActivity {
+        GpuAiActivity::IdleModel(work.to_owned())
+    }
 
     #[test]
     fn a_record_left_behind_is_reported_once() {
@@ -150,28 +259,28 @@ mod tests {
         let path = directory.path().join("gpu-ai-job");
         assert_eq!(take_record(&path), None);
 
-        write_record(&path, "BiRefNet on WebGPU");
-        assert_eq!(take_record(&path).as_deref(), Some("BiRefNet on WebGPU"));
+        write_record(&path, &job("BiRefNet on WebGPU"));
+        assert_eq!(take_record(&path), Some(job("BiRefNet on WebGPU")));
         assert!(!path.exists());
         assert_eq!(take_record(&path), None);
+
+        write_record(&path, &idle("SAM 2.1 encoder on WebGPU"));
+        assert_eq!(take_record(&path), Some(idle("SAM 2.1 encoder on WebGPU")));
     }
 
     #[test]
     fn the_record_creates_its_folder() {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("calibraw").join("gpu-ai-job.txt");
-        write_record(&path, "SAM 2.1 encoder on WebGPU");
-        assert_eq!(
-            take_record(&path).as_deref(),
-            Some("SAM 2.1 encoder on WebGPU")
-        );
+        write_record(&path, &job("SAM 2.1 encoder on WebGPU"));
+        assert_eq!(take_record(&path), Some(job("SAM 2.1 encoder on WebGPU")));
     }
 
     #[test]
     fn a_finished_job_leaves_no_record() {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("gpu-ai-job");
-        write_record(&path, "SkySeg U2Net on WebGPU");
+        write_record(&path, &job("SkySeg U2Net on WebGPU"));
         remove_record(&path);
         assert_eq!(take_record(&path), None);
 
@@ -179,24 +288,60 @@ mod tests {
         assert_eq!(take_record(&path), None);
     }
 
-    /// A job still running when CalibRaw exits, or one that starts after,
-    /// is not a GPU failure the next start should report.
+    /// Records written before idle models were recorded have one line.
     #[test]
-    fn jobs_after_the_end_leave_no_record() {
+    fn a_record_of_one_line_names_a_job() {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("gpu-ai-job");
-        let mut records = Records {
-            running_job: None,
-            ended: false,
+        std::fs::write(&path, "BiRefNet on WebGPU").unwrap();
+        assert_eq!(take_record(&path), Some(job("BiRefNet on WebGPU")));
+    }
+
+    #[test]
+    fn a_loaded_model_is_recorded_between_its_jobs() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("gpu-ai-job");
+        let read = || {
+            std::fs::read_to_string(&path)
+                .ok()
+                .and_then(|text| GpuAiActivity::of_record_text(&text))
         };
-        records.begin(Some(&path), "BiRefNet on WebGPU".to_owned());
+        let mut records = Records::new();
+
+        records.begin_job(Some(&path), "SAM 2.1 encoder on WebGPU".to_owned());
+        records.load_model(Some(&path), "SAM 2.1 encoder on WebGPU".to_owned());
+        assert_eq!(read(), Some(job("SAM 2.1 encoder on WebGPU")));
+        records.forget_running_job(Some(&path));
+        assert_eq!(read(), Some(idle("SAM 2.1 encoder on WebGPU")));
+        assert_eq!(records.activity(), Some(idle("SAM 2.1 encoder on WebGPU")));
+
+        records.begin_job(Some(&path), "SAM 2.1 encoder on WebGPU".to_owned());
+        assert_eq!(read(), Some(job("SAM 2.1 encoder on WebGPU")));
+        // Unloaded after the job: the job's record outlives the session.
+        records.forget_loaded_model(Some(&path));
+        assert_eq!(read(), Some(job("SAM 2.1 encoder on WebGPU")));
+        records.forget_running_job(Some(&path));
+        assert!(!path.exists());
+        assert_eq!(records.activity(), None);
+    }
+
+    /// Work still going on when CalibRaw exits, or starting after, is not a
+    /// GPU failure the next start should report.
+    #[test]
+    fn work_after_the_end_leaves_no_record() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("gpu-ai-job");
+        let mut records = Records::new();
+        records.load_model(Some(&path), "Depth Anything V2 on WebGPU".to_owned());
+        records.begin_job(Some(&path), "BiRefNet on WebGPU".to_owned());
         assert!(path.exists());
         assert_eq!(records.running_job.as_deref(), Some("BiRefNet on WebGPU"));
 
         records.end(Some(&path));
         assert!(!path.exists());
-        records.begin(Some(&path), "BiRefNet on WebGPU".to_owned());
+        records.begin_job(Some(&path), "BiRefNet on WebGPU".to_owned());
+        records.load_model(Some(&path), "BiRefNet on WebGPU".to_owned());
         assert!(!path.exists());
-        assert_eq!(records.running_job, None);
+        assert_eq!(records.activity(), None);
     }
 }

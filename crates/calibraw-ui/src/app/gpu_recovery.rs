@@ -3,30 +3,53 @@
 
 use super::*;
 
+/// When AI had `activity` on the GPU, for a message: "while … was running".
+fn during(activity: &calibraw_ai::GpuAiActivity) -> String {
+    match activity {
+        calibraw_ai::GpuAiActivity::Job(job) => format!("while {job} was running"),
+        calibraw_ai::GpuAiActivity::IdleModel(model) => format!("while {model} was loaded"),
+    }
+}
+
 impl CalibRawApp {
-    /// Turns GPU AI off when the previous run ended during `job` on the GPU,
-    /// as `calibraw_ai::configure` reports it.
-    pub(in crate::app) fn handle_interrupted_gpu_ai_job(&mut self, job: &str) {
-        calibraw_core::diagnostics::record(format!("previous run ended during GPU AI job: {job}"));
+    /// Turns GPU AI off when the previous run ended during `activity` on the
+    /// GPU, as `calibraw_ai::configure` reports it.
+    pub(in crate::app) fn handle_interrupted_gpu_ai(
+        &mut self,
+        activity: &calibraw_ai::GpuAiActivity,
+    ) {
+        calibraw_core::diagnostics::record(match activity {
+            calibraw_ai::GpuAiActivity::Job(job) => {
+                format!("previous run ended during GPU AI job: {job}")
+            }
+            calibraw_ai::GpuAiActivity::IdleModel(model) => {
+                format!("previous run ended with an AI model loaded on the GPU: {model}")
+            }
+        });
         self.set_ai_gpu_acceleration(false);
         self.report_error(
             ErrorKind::GpuAi,
             format!(
-                "CalibRaw closed unexpectedly last time while {job} was running. AI tools now use the CPU; you can turn GPU acceleration back on in Settings."
+                "CalibRaw closed unexpectedly last time {}. AI tools now use the CPU; you can turn GPU acceleration back on in Settings.",
+                during(activity)
             ),
         );
     }
 
     /// Saves and restarts after the GPU device was lost, usually a driver
     /// reset. Nothing can be drawn on a lost device, so the notice is a native
-    /// dialog. A GPU AI job that was running switches AI to the CPU first.
+    /// dialog. A GPU AI job that was running, or a model loaded on the GPU,
+    /// switches AI to the CPU first: a loaded model's memory alone can drive
+    /// the GPU into paging and a reset.
     pub(in crate::app) fn handle_gpu_device_loss(&mut self, ctx: &egui::Context) {
         if calibraw_gpu::take_gpu_device_lost().is_none() {
             return;
         }
-        let ai_job = calibraw_ai::gpu_job_in_progress()
-            .or_else(|| calibraw_ai::take_ai_gpu_device_loss().then(|| "an AI model".to_owned()));
-        if ai_job.is_some() {
+        let ai_activity = calibraw_ai::gpu_ai_activity().or_else(|| {
+            calibraw_ai::take_ai_gpu_device_loss()
+                .then(|| calibraw_ai::GpuAiActivity::Job("an AI model".to_owned()))
+        });
+        if ai_activity.is_some() {
             self.set_ai_gpu_acceleration(false);
         }
         let save_failure = self.save_edits_before_exit();
@@ -38,9 +61,10 @@ impl CalibRawApp {
             None => message.push_str(" Your edits were saved."),
             Some(error) => message.push_str(&format!(" {error}.")),
         }
-        if let Some(job) = &ai_job {
+        if let Some(activity) = &ai_activity {
             message.push_str(&format!(
-                " This happened while {job} was running, so AI tools now use the CPU. You can turn GPU acceleration back on in Settings."
+                " This happened {}, so AI tools now use the CPU. You can turn GPU acceleration back on in Settings.",
+                during(activity)
             ));
         }
         message.push_str(if restart.is_some() {

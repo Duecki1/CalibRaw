@@ -471,15 +471,15 @@ impl CalibRawApp {
         }
         // Where the runtime is built in (Android), GPU providers are always
         // allowed and no GPU job record is kept.
-        let interrupted_gpu_job = calibraw_ai::configure(calibraw_ai::AiConfig {
+        let interrupted_gpu_ai = calibraw_ai::configure(calibraw_ai::AiConfig {
             acceleration: !caps.configurable_ai_runtime || app.ai.gpu_acceleration,
             runtime: app.ai_runtime_source(),
             model_root: app.ai_model_root(),
             job_record_path: app.platform.gpu_ai_job_record_path(),
             gpu: editor_gpu,
         });
-        if let Some(job) = interrupted_gpu_job {
-            app.handle_interrupted_gpu_ai_job(&job);
+        if let Some(activity) = interrupted_gpu_ai {
+            app.handle_interrupted_gpu_ai(&activity);
         }
         app
     }

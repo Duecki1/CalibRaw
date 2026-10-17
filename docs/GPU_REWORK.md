@@ -734,6 +734,19 @@ machines in the real app.
     and Vulkan's, Direct3D 12's and Metal's own texts in returned errors.
   - They come from the plugin's strings and source; no run here ran out of
     memory or lost its device. A lost device still switches GPU AI off.
+- 4.3, memory between jobs (behaviour change): a WebGPU session keeps its
+  peak in cached buffers (`storageBufferCacheMode=bucket`), and on Windows
+  the editor's allocations page instead of failing, so a warm model could
+  push a small GPU into paging and a driver reset.
+  - When a job ends, a GPU session stays loaded only while its adapter still
+    has the margin placement asked for beside its peak, a fifth of the peak
+    (`placement::may_stay_loaded`). Otherwise it unloads, and the next job
+    places the model again, which needs that margin on top of the peak
+    unloading returned, so the model does not reload for every job. Where
+    free memory is not reported, it stays.
+  - The job record also names a model whose GPU session is loaded between
+    jobs, with `idle` on a second line. A driver reset, or a run that ended
+    while one was loaded, switches GPU AI off as one during a job does.
 - 5.4, deleted beyond the list:
   - `calibraw_gpu::memory::find_dxgi_adapter`'s DXGI index (the lookup is
     private now);
