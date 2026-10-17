@@ -5,7 +5,7 @@ every vendor, one rule for GPU vs CPU, and platform differences decided once
 instead of scattered through the code. Status: P0.1 (cfg ratchet), P0.2
 (parity harness), P1, P2, P3, P4 (without the optional 4.5), P5 and P7
 implemented; P0.3 (WebGPU spike) measured on Linux NVIDIA only, during P5;
-P6 planned.
+P6.1 implemented without XNNPACK; P6.2 planned.
 
 Target behaviour for AI: **run on the GPU when the model fits in free VRAM,
 otherwise on the CPU** — the same rule for every model on every platform.
@@ -634,7 +634,8 @@ machines in the real app.
   - Bundled runtimes stay on the CPU: the Flatpak builds ONNX Runtime with
     `onnxruntime_USE_WEBGPU=OFF`. The AppImage downloads like other Linux
     builds.
-- 5.2: `GpuProvider` is `WebGpu` on desktop, `Nnapi` and `Xnnpack` on Android.
+- 5.2: `GpuProvider` is `WebGpu` on desktop, `Nnapi` and `Xnnpack` on Android
+  (both dropped in P6.1).
   - The WebGPU session adds its EP device, then the existing `cpu_provider`
     for the nodes WebGPU leaves, so CPU arena settings and the SAM quirk
     apply as before.
@@ -739,6 +740,31 @@ A custom ONNX Runtime Android build with the WebGPU EP on Vulkan, built by a
 script under `packaging/` and linked via `ORT_LIB_LOCATION`. Android then
 follows P4 with the P3 Vulkan budget, falling back to the RAM-based budget.
 Only after P5 has been stable for one release.
+
+**As built** (differences from the sketch above):
+
+- 6.1 was prompted by a Samsung Galaxy S25 Ultra (SM-S938B, Adreno 830,
+  Android 16). Its logcat during a subject and a sky mask showed:
+  - NNAPI found no vendor driver (`hwservicemanager is not supported`) and
+    compiled every partition on `nnapi-reference`, Android's CPU reference
+    code, so it never reached the GPU or NPU.
+  - BiRefNet failed there (`Conv size is too large, not enough memory`,
+    `ANEURALNETWORKS_OP_FAILED`) after a 5.8 s session setup, then was
+    rebuilt on the CPU and run again.
+  - SkySeg ran there in about 4.2 s.
+- Android has no XNNPACK either: pyke's prebuilt Android ONNX Runtime, which
+  `ort`'s `download-binaries` fetches, is not built with it, whatever the
+  `xnnpack` feature says. `ort-sys` reads the `nnapi` and `xnnpack` features
+  only when linking a custom static build, so dropping them changes no
+  download.
+- Android's GPU provider list is therefore empty. Its built-in runtime
+  counts as having no GPU build, so every Android session runs on ONNX
+  Runtime's CPU provider and reports `CPU · no GPU build of ONNX Runtime
+  for this platform` (depth keeps `CpuOnly`).
+  `runtime::ai_sessions_may_use_gpu` is `false` there.
+- `GpuProvider` is `WebGpu` alone; the `nnapi` marker left `failure.rs`.
+- For the maintainer: time the subject and sky masks on the device against
+  the log above (subject 16.3 s, sky 4.9 s, end to end).
 
 ---
 

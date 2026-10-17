@@ -139,7 +139,7 @@ fn is_gpu_memory_failure(error: &anyhow::Error) -> bool {
         ]
         .iter()
         .any(|marker| message.contains(marker))
-            && ["gpu", "vulkan", "d3d12", "metal", "nnapi"]
+            && ["gpu", "vulkan", "d3d12", "metal"]
                 .iter()
                 .any(|marker| message.contains(marker)))
 }

@@ -78,15 +78,15 @@ mod builtin {
     }
 }
 
-/// Whether new AI sessions may run on a GPU. Android's built-in runtime may
-/// offer NNAPI, and GPU AI cannot be switched off there.
+/// Whether new AI sessions may run on a GPU: never on Android, whose
+/// built-in runtime offers no GPU provider.
 #[cfg(target_os = "android")]
 pub fn ai_sessions_may_use_gpu(_manual_runtime: bool) -> bool {
-    true
+    false
 }
 
-/// Android's built-in runtime offers NNAPI and XNNPACK.
+/// Android's built-in runtime has no GPU provider (docs/GPU_REWORK.md P6.1).
 #[cfg(target_os = "android")]
 pub(crate) fn automatic_runtime_lacks_gpu_build() -> bool {
-    false
+    true
 }
