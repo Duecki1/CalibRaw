@@ -17,7 +17,9 @@ use std::{
 };
 
 /// Features whose models may stay loaded between jobs, typically those whose
-/// tools are on screen. It only governs memory: a running job always finishes.
+/// tools are on screen, while a GPU model also leaves the editor room
+/// (`FallbackSession::may_stay_loaded`). It only governs memory: a running
+/// job always finishes.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct AiFeatureSet(u8);
 
@@ -258,6 +260,11 @@ impl Drop for ModelSessionGuard {
             provider_generation(),
             ai_acceleration_enabled(),
         );
+        // A warm GPU session holds its peak; it stays only while the GPU
+        // keeps room for the editor beside it.
+        if let Some(model) = guard.unload_if(|session| !session.may_stay_loaded()) {
+            log::info!("unloaded AI model session {model:?} after its job to free GPU memory");
+        }
         // End the record while the lease is held: once it is released, the
         // next lease may begin its own record, which this one must not clear.
         drop(self.gpu_job.take());

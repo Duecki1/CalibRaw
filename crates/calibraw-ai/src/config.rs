@@ -146,8 +146,8 @@ pub struct AiConfig {
     pub runtime: RuntimeSource,
     /// The folder models and the automatic runtime are cached in.
     pub model_root: PathBuf,
-    /// Where the GPU job record is kept (`gpu_job_in_progress`); without it,
-    /// jobs are only tracked in memory.
+    /// Where the GPU job record is kept (`gpu_ai_activity`); without it, GPU
+    /// work is only tracked in memory.
     pub job_record_path: Option<PathBuf>,
     pub gpu: Option<GpuIdentity>,
 }
@@ -175,9 +175,9 @@ static SETTINGS: RwLock<Settings> = RwLock::new(Settings {
 });
 
 /// Applies `config`. Call once at startup, before the first AI job. Returns
-/// the GPU job a previous run left in the job record, i.e. the one that run
+/// the GPU work a previous run left in the job record, i.e. the work that run
 /// did not survive.
-pub fn configure(config: AiConfig) -> Option<String> {
+pub fn configure(config: AiConfig) -> Option<placement::GpuAiActivity> {
     let AiConfig {
         acceleration,
         runtime,

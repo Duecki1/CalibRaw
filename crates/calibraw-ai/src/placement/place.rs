@@ -162,6 +162,20 @@ const fn retry_growth(peak: Option<u64>) -> u64 {
     }
 }
 
+/// Whether a GPU session of a model with measured peak `peak` may stay
+/// loaded after its job, with `free` bytes now free on its adapter: while
+/// the margin `place` asked for beside the peak still is, which is the room
+/// placement left the editor. Placing the model again needs that margin on
+/// top of the peak unloading returns, so a model unloaded for want of it
+/// does not come straight back. Unknown free memory or peak does not unload
+/// a session, as neither keeps one off the GPU.
+pub(crate) const fn may_stay_loaded(free: Option<u64>, peak: Option<u64>) -> bool {
+    match (free, peak) {
+        (Some(free), Some(peak)) => free >= needed_memory(peak) - peak,
+        _ => true,
+    }
+}
+
 /// What `place` knows besides the session.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct AccelerationState<'a> {
@@ -504,6 +518,56 @@ mod tests {
         };
         assert!(record.allows(Some(u64::MAX), None));
         assert!(!record.allows(Some(u64::MAX - MIB), None));
+    }
+
+    /// The SAM 2.1 encoder holds about 2100 MiB once placed; its margin is
+    /// 420 MiB.
+    #[test]
+    fn a_session_stays_loaded_while_its_margin_is_free() {
+        let encoder = Some(2100 * MIB);
+        assert!(may_stay_loaded(Some(500 * MIB), encoder));
+        assert!(may_stay_loaded(Some(420 * MIB), encoder));
+        assert!(!may_stay_loaded(Some(419 * MIB), encoder));
+        assert!(!may_stay_loaded(Some(0), encoder));
+        assert!(may_stay_loaded(Some(140 * MIB), Some(700 * MIB)));
+        assert!(!may_stay_loaded(Some(139 * MIB), Some(700 * MIB)));
+        assert!(may_stay_loaded(None, encoder));
+        assert!(may_stay_loaded(Some(0), None));
+    }
+
+    /// Placed with just enough free, a model that uses its peak keeps its
+    /// margin and stays. Once the editor took some of it, the model unloads
+    /// and is not placed again until that much is free once more, so it does
+    /// not reload for every job.
+    #[test]
+    fn a_model_unloaded_for_memory_does_not_come_straight_back() {
+        let encoder = SessionOptions::new("SAM 2.1 encoder").with_gpu_memory(2100 * MIB);
+        let peak = encoder.gpu_memory_bytes;
+        let place_with = |free_mib: u64| {
+            let providers = [offer(GpuProvider::WebGpu, Some(free_mib))];
+            place(
+                &encoder,
+                &AccelerationState {
+                    enabled: true,
+                    quarantined: false,
+                    gpu_build: true,
+                    providers: &providers,
+                    out_of_memory: None,
+                },
+            )
+        };
+        assert_eq!(place_with(2520), gpu(GpuProvider::WebGpu));
+        assert!(may_stay_loaded(Some((2520 - 2100) * MIB), peak));
+
+        // The editor took 100 MiB while the encoder was loaded.
+        assert!(!may_stay_loaded(Some(320 * MIB), peak));
+        assert_eq!(
+            place_with(320 + 2100),
+            cpu(CpuReason::InsufficientMemory {
+                free: 2420 * MIB,
+                needed: 2520 * MIB,
+            })
+        );
     }
 
     #[test]

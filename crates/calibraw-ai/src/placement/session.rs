@@ -4,7 +4,7 @@
 use super::failure::{
     quarantine_after_device_loss, GpuFailure, LoggedGpuErrors, RunFailure, SetupFailure,
 };
-use super::job_record::GpuJobRecord;
+use super::job_record::{GpuJobRecord, GpuSessionRecord};
 use super::out_of_memory;
 use super::place::{CpuReason, GpuProvider, Placement, ProviderOffer};
 use super::providers::{cpu_provider, offered_providers, with_gpu_provider};
@@ -179,6 +179,9 @@ pub(crate) struct FallbackSession {
     /// created; it is checked against them after each run, so an error
     /// logged after a run returned fails the next one.
     logged_gpu_errors: LoggedGpuErrors,
+    /// Records the session while it is loaded on a GPU; `None` on the CPU.
+    /// Declared after `session`, so it ends after the session was dropped.
+    gpu_record: Option<GpuSessionRecord>,
 }
 
 impl FallbackSession {
@@ -210,6 +213,33 @@ impl FallbackSession {
             ),
             _ => false,
         }
+    }
+
+    /// Whether this session may stay loaded after its job. A WebGPU session
+    /// keeps its peak in cached buffers, so it stays only while its adapter
+    /// keeps the margin `place` asked for beside it (`may_stay_loaded`),
+    /// which leaves the editor room. CPU sessions may stay. Records why when
+    /// it may not.
+    pub(crate) fn may_stay_loaded(&self) -> bool {
+        let Placement::Gpu { provider } = self.placement else {
+            return true;
+        };
+        let peak = self.options.gpu_memory_bytes;
+        let free = offered_providers(super::editor_gpu())
+            .into_iter()
+            .find(|offer| offer.provider == provider)
+            .and_then(|offer| offer.free_memory);
+        if super::may_stay_loaded(free, peak) {
+            return true;
+        }
+        calibraw_core::diagnostics::record(format!(
+            "AI {}: unloading its {} session after the job, {} MiB of GPU memory free, {} MiB kept free beside it",
+            self.options.model_name,
+            provider.name(),
+            free.unwrap_or_default() / MIB,
+            peak.map_or(0, |peak| super::needed_memory(peak) - peak) / MIB
+        ));
+        false
     }
 
     pub(crate) fn run_with_fallback<T, F>(&mut self, operation: &str, mut run: F) -> Result<T>
@@ -257,6 +287,7 @@ impl FallbackSession {
         self.session = cpu_session;
         self.placement = Placement::Cpu { reason };
         self.gpu_free_before = None;
+        self.gpu_record = None;
         publish_status(model_name, self.placement, None);
 
         log::info!("{model_name} now uses CPU fallback after {failed} runtime failure");
@@ -282,7 +313,7 @@ pub(crate) fn create_session_with_fallback(
         };
         let offer = take_offer(&mut offers, provider);
         match try_gpu_session(&source, &options, &offer) {
-            Ok((session, logged_gpu_errors)) => {
+            Ok((session, logged_gpu_errors, gpu_record)) => {
                 let gpu_free_before = offer.free_memory;
                 publish_status(options.model_name, placement, offer.adapter);
                 return Ok(FallbackSession {
@@ -292,6 +323,7 @@ pub(crate) fn create_session_with_fallback(
                     placement,
                     gpu_free_before,
                     logged_gpu_errors,
+                    gpu_record: Some(gpu_record),
                 });
             }
             Err(failure) => {
@@ -350,6 +382,7 @@ pub(crate) fn create_session_with_fallback(
         placement,
         gpu_free_before: None,
         logged_gpu_errors: LoggedGpuErrors::now(),
+        gpu_record: None,
     })
 }
 
@@ -364,12 +397,13 @@ fn take_offer(offers: &mut Vec<ProviderOffer>, provider: GpuProvider) -> Provide
 }
 
 /// A session on `offer`'s provider, with the WebGPU errors logged before it
-/// was created.
+/// was created and its record as a loaded model, which takes over from the
+/// record of its creation as a job.
 fn try_gpu_session(
     source: &Path,
     options: &SessionOptions,
     offer: &ProviderOffer,
-) -> std::result::Result<(Session, LoggedGpuErrors), GpuFailure> {
+) -> std::result::Result<(Session, LoggedGpuErrors, GpuSessionRecord), GpuFailure> {
     let name = offer.provider.name();
     let memory = match (offer.free_memory, options.gpu_memory_bytes) {
         (Some(free), Some(peak)) => format!(
@@ -399,5 +433,6 @@ fn try_gpu_session(
         options.model_name,
         started.elapsed().as_secs_f64()
     ));
-    Ok((session, logged_gpu_errors))
+    let gpu_record = GpuSessionRecord::begin(options.model_name, name);
+    Ok((session, logged_gpu_errors, gpu_record))
 }
