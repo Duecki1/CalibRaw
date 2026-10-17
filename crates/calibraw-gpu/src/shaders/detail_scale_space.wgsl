@@ -28,6 +28,11 @@ fn creative_edge_guard(pos: vec2<i32>) -> f32 {
     return 1.0 - 0.78 * smoothstep(0.48, 1.25, gradient);
 }
 
+// Measures Texture and Clarity on the adjustment base and applies the resulting
+// EV change to `rgb`. The bases are neighbourhoods of the adjustment base, so the
+// centre is measured there as well: when `rgb` already carries earlier effects
+// (local masks run after the global ones), their brightness change is not
+// mistaken for detail. For the global pass `rgb` is the adjustment base itself.
 fn apply_texture_and_clarity_values(
     pos: vec2<i32>,
     rgb: vec3<f32>,
@@ -40,7 +45,7 @@ fn apply_texture_and_clarity_values(
         return rgb;
     }
 
-    let center_ev = Common::log_luminance(rgb);
+    let center_ev = Common::log_luminance(SceneAdjustments::adjustment_base_at(pos));
     let fine_base_ev = creative_fine_base_ev(pos);
     var broad_base_ev = fine_base_ev;
     if abs(clarity) >= 1e-6 {
