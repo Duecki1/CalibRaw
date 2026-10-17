@@ -534,3 +534,62 @@ fn self_illuminating_glow_lights_dark_surfaces_in_its_color() -> anyhow::Result<
     );
     Ok(())
 }
+
+#[test]
+fn masked_texture_leaves_flat_areas_unchanged_after_global_presence() -> anyhow::Result<()> {
+    const WIDTH: u32 = 192;
+    // A flat left half beside fine low-contrast texture (for Texture to act on)
+    // and a hard checkerboard (for tonal range). The flat samples lie farther
+    // from either than any presence or haze neighbourhood reaches.
+    let Some(mut scene) = Fixture::new(WIDTH, 96, |x, y| {
+        if x < 96 {
+            [0.18; 3]
+        } else if y < 48 {
+            [if (x / 2 + y / 2) % 2 == 0 { 0.16 } else { 0.20 }; 3]
+        } else {
+            [if (x / 8 + y / 8) % 2 == 0 { 0.03 } else { 0.8 }; 3]
+        }
+    })?
+    else {
+        return Ok(());
+    };
+    let flat_luma = |rgb: &[f32]| {
+        let samples = (32..64)
+            .flat_map(|y| (16..48).map(move |x| (y * WIDTH + x) as usize * 3))
+            .map(|i| 0.2627 * rgb[i] + 0.6780 * rgb[i + 1] + 0.0593 * rgb[i + 2]);
+        samples.sum::<f32>() / 1024.0
+    };
+
+    let untouched = flat_luma(&scene.render(None)?);
+    scene.exposure.dehaze = 60.0;
+    scene.exposure.clarity = 50.0;
+    let global = scene.render(None)?;
+    assert!(
+        (flat_luma(&global) - untouched).abs() > 1e-3,
+        "global Dehaze/Clarity must shift the flat area for this test to apply"
+    );
+
+    scene.pipeline.update_mask_layer(
+        &scene.queue,
+        0,
+        &vec![half::f16::ONE.to_bits(); (MASK_EDGE * MASK_EDGE) as usize],
+    )?;
+    for texture in [80.0, -80.0] {
+        let mut mask = LocalMask::new(MaskKind::Fullscreen, 1);
+        mask.adjustments.texture = texture;
+        let textured = scene.render_masks(&MaskStack {
+            masks: vec![mask],
+            ..Default::default()
+        })?;
+        let (before, after) = (flat_luma(&global), flat_luma(&textured));
+        assert!(
+            (after - before).abs() < EPSILON,
+            "masked Texture {texture} changed flat brightness: {before} -> {after}"
+        );
+        assert!(
+            difference(&textured, &global) > 1e-3,
+            "masked Texture {texture} had no effect on the fine texture"
+        );
+    }
+    Ok(())
+}
