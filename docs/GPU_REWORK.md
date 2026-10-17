@@ -511,7 +511,16 @@ The desktop editor working-set limit (`gpu_working_set_limit_bytes`, today
 - 4.3: a session that is on the CPU for lack of memory (`InsufficientMemory`
   or `OutOfMemory`) is placed again when the next job acquires it. It is
   replaced only if the GPU now has room. A warm session that fell back after
-  `GpuFailed` stays on the CPU, as before. Out of memory no longer switches
+  `GpuFailed` stays on the CPU, as before.
+  - After running out of memory, the model (by model file) stays on the CPU
+    until more memory is free than when it was placed, by the margin of its
+    peak and at least 256 MiB (`placement::out_of_memory`). Where free memory
+    is not reported, it waits instead: 1 minute after the first failure,
+    doubling up to 30 minutes. A GPU run or switching GPU AI on again in
+    Settings forgets it.
+  - Before this, a model whose free memory was unknown, or whose real peak
+    exceeded the stored one, went back to the GPU for every job: a new GPU
+    session, the failed run, then a CPU rebuild and rerun. Out of memory no longer switches
   GPU AI off, so `take_ai_gpu_failure`/`AiGpuFailure` became
   `take_ai_gpu_device_loss() -> bool`, and the app's out-of-memory dialog is
   gone. Open decision 2 is taken as recommended: the fallback is silent, and

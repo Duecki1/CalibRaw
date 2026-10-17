@@ -4,6 +4,7 @@
 
 mod failure;
 mod job_record;
+mod out_of_memory;
 mod place;
 mod providers;
 pub(crate) mod quirks;
@@ -13,7 +14,7 @@ mod status;
 pub use failure::take_ai_gpu_device_loss;
 pub use job_record::{end_gpu_job_records, gpu_job_in_progress};
 pub(crate) use job_record::{set_gpu_job_record_path, GpuJobRecord};
-use place::{needed_memory, place, AccelerationState, ProviderOffer};
+use place::{needed_memory, place, AccelerationState, OutOfMemoryRecord, ProviderOffer};
 pub use place::{CpuReason, GpuProvider, Placement};
 pub(crate) use session::{
     create_session_with_fallback, CpuFallbackProfile, FallbackSession, SessionOptions,
@@ -52,6 +53,9 @@ pub(crate) fn set_ai_acceleration_enabled(enabled: bool) {
             "AI GPU acceleration {} in Settings",
             if enabled { "enabled" } else { "disabled" }
         ));
+        // Switching GPU AI back on is the way to retry models that ran out
+        // of memory now.
+        out_of_memory::forget_all();
         PROVIDER_GENERATION.fetch_add(1, Ordering::AcqRel);
         crate::slot::unload_cold_session();
     }
@@ -88,12 +92,17 @@ impl AccelerationSettings {
         self.enabled && !self.quarantined
     }
 
-    fn with_providers(self, providers: &[ProviderOffer]) -> AccelerationState<'_> {
+    fn with_providers(
+        self,
+        providers: &[ProviderOffer],
+        out_of_memory: Option<OutOfMemoryRecord>,
+    ) -> AccelerationState<'_> {
         AccelerationState {
             enabled: self.enabled,
             quarantined: self.quarantined,
             gpu_build: self.gpu_build,
             providers,
+            out_of_memory,
         }
     }
 }

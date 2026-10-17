@@ -3,6 +3,7 @@
 
 use super::failure::{quarantine_after_device_loss, RunFailure, SetupFailure};
 use super::job_record::GpuJobRecord;
+use super::out_of_memory;
 use super::place::{CpuReason, GpuProvider, Placement, ProviderOffer};
 use super::providers::{cpu_provider, offered_providers, with_gpu_provider};
 use super::quirks::{self, WebGpuCpuNodes};
@@ -74,17 +75,30 @@ impl SessionOptions {
     }
 }
 
-/// Where a session of `options` runs now, and the providers on offer. The
-/// providers are only queried when the session may use one.
-fn current_placement(options: &SessionOptions) -> (Placement, Vec<ProviderOffer>) {
+/// Where a session of `options` for the model at `source` runs now, and the
+/// providers on offer. The providers are only queried when the session may
+/// use one.
+fn current_placement(source: &Path, options: &SessionOptions) -> (Placement, Vec<ProviderOffer>) {
     let settings = super::acceleration_settings();
     let offers = if options.allow_acceleration && settings.usable() {
         offered_providers(super::editor_gpu())
     } else {
         Vec::new()
     };
-    let placement = super::place(options, &settings.with_providers(&offers));
+    let placement = place_on(source, options, settings, &offers);
     (placement, offers)
+}
+
+fn place_on(
+    source: &Path,
+    options: &SessionOptions,
+    settings: super::AccelerationSettings,
+    offers: &[ProviderOffer],
+) -> Placement {
+    super::place(
+        options,
+        &settings.with_providers(offers, out_of_memory::lookup(source)),
+    )
 }
 
 fn configure_common_builder(mut builder: SessionBuilder) -> Result<SessionBuilder> {
@@ -156,6 +170,9 @@ pub(crate) struct FallbackSession {
     source: PathBuf,
     options: SessionOptions,
     placement: Placement,
+    /// Bytes free on the GPU provider's adapter when the session was placed
+    /// on it, where known; `None` on the CPU.
+    gpu_free_before: Option<u64>,
 }
 
 impl FallbackSession {
@@ -173,12 +190,14 @@ impl FallbackSession {
 
     /// Whether this session is on the CPU only because GPU memory was short,
     /// and the GPU now has room for it, so the next job should get a new
-    /// session instead of reusing this one.
+    /// session instead of reusing this one. After running out of memory,
+    /// "room" is what `out_of_memory` allows.
     pub(crate) fn gpu_now_fits(&self) -> bool {
         match self.placement {
-            Placement::Cpu { reason } if reason.memory_bound() => {
-                matches!(current_placement(&self.options).0, Placement::Gpu { .. })
-            }
+            Placement::Cpu { reason } if reason.memory_bound() => matches!(
+                current_placement(&self.source, &self.options).0,
+                Placement::Gpu { .. }
+            ),
             _ => false,
         }
     }
@@ -191,7 +210,10 @@ impl FallbackSession {
             return run(&mut self.session, false);
         };
         let gpu_error = match run(&mut self.session, true) {
-            Ok(value) => return Ok(value),
+            Ok(value) => {
+                out_of_memory::forget(&self.source);
+                return Ok(value);
+            }
             Err(error) => error,
         };
         let failed = provider.name();
@@ -205,6 +227,9 @@ impl FallbackSession {
             }
             RunFailure::RerunOnCpu(reason) => reason,
         };
+        if reason == CpuReason::OutOfMemory {
+            out_of_memory::record(&self.source, self.gpu_free_before);
+        }
         log::warn!("{operation} failed on {failed}; rebuilding {model_name} on CPU: {gpu_error:#}");
         calibraw_core::diagnostics::record(format!(
             "AI {model_name}: {failed} inference failed ({reason}); switching to CPU fallback"
@@ -218,6 +243,7 @@ impl FallbackSession {
             })?;
         self.session = cpu_session;
         self.placement = Placement::Cpu { reason };
+        self.gpu_free_before = None;
         publish_status(model_name, self.placement, None);
 
         log::info!("{model_name} now uses CPU fallback after {failed} runtime failure");
@@ -232,7 +258,7 @@ pub(crate) fn create_session_with_fallback(
     options: SessionOptions,
 ) -> Result<FallbackSession> {
     let source = model.as_ref().to_path_buf();
-    let (mut placement, mut offers) = current_placement(&options);
+    let (mut placement, mut offers) = current_placement(&source, &options);
     let mut setup_failures = Vec::new();
 
     let reason = loop {
@@ -244,18 +270,23 @@ pub(crate) fn create_session_with_fallback(
         let offer = take_offer(&mut offers, provider);
         match try_gpu_session(&source, &options, &offer) {
             Ok(session) => {
+                let gpu_free_before = offer.free_memory;
                 publish_status(options.model_name, placement, offer.adapter);
                 return Ok(FallbackSession {
                     session,
                     source,
                     options,
                     placement,
+                    gpu_free_before,
                 });
             }
             Err(error) => {
                 let name = provider.name();
                 setup_failures.push(format!("{name}: {error:#}"));
                 if let SetupFailure::Cpu(reason) = SetupFailure::of_error(&error) {
+                    if reason == CpuReason::OutOfMemory {
+                        out_of_memory::record(&source, offer.free_memory);
+                    }
                     log::warn!(
                         "AI {} ran out of GPU memory creating its {name} session; using the CPU for this job: {error:#}",
                         options.model_name
@@ -266,10 +297,7 @@ pub(crate) fn create_session_with_fallback(
                     "AI {} could not initialize {name}; trying the next provider: {error:#}",
                     options.model_name
                 );
-                placement = super::place(
-                    &options,
-                    &super::acceleration_settings().with_providers(&offers),
-                );
+                placement = place_on(&source, &options, super::acceleration_settings(), &offers);
             }
         }
     };
@@ -305,6 +333,7 @@ pub(crate) fn create_session_with_fallback(
         source,
         options,
         placement,
+        gpu_free_before: None,
     })
 }
 

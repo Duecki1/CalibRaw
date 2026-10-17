@@ -13,6 +13,11 @@ const MIB: u64 = 1 << 20;
 /// editor keeps allocating while AI runs.
 const MEMORY_MARGIN_PERCENT: u64 = 20;
 
+/// How much more memory than at its failure must be free before a model that
+/// ran out of GPU memory goes back to the GPU, at least: free memory moves by
+/// a few MiB between jobs without anything having been released.
+const MIN_RETRY_GROWTH: u64 = 256 * MIB;
+
 /// An accelerated execution provider: WebGPU on desktop. Android has none
 /// (docs/GPU_REWORK.md P6.1).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -66,8 +71,10 @@ pub enum CpuReason {
     /// Every GPU provider's adapter has less memory free than the session
     /// needs, margin included; in bytes, for the first provider.
     InsufficientMemory { free: u64, needed: u64 },
-    /// The GPU ran out of memory creating or running the session. The next
-    /// job places the model again.
+    /// The GPU ran out of memory creating or running the model's session.
+    /// The model goes back to the GPU once more memory is free than then, or,
+    /// where free memory is not reported, after a backoff
+    /// (`OutOfMemoryRecord`).
     OutOfMemory,
     /// Every GPU provider failed to create the session, or the one in use
     /// failed to run it, other than by running out of memory.
@@ -115,6 +122,46 @@ pub(crate) struct ProviderOffer {
     pub(crate) adapter: Option<String>,
 }
 
+/// A model that ran out of GPU memory in this process
+/// (`placement::out_of_memory`), as `place` sees it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct OutOfMemoryRecord {
+    /// Bytes free on the provider's adapter when the model was placed on it
+    /// before failing, where that was known.
+    pub(crate) free_before: Option<u64>,
+    /// The backoff after the last failure is over. It decides only where free
+    /// memory is not known, now or at the failure.
+    pub(crate) backoff_over: bool,
+}
+
+impl OutOfMemoryRecord {
+    /// Whether the model may try a provider with `free` bytes free again:
+    /// once free memory has grown since the failure by the margin of its
+    /// measured peak `peak` (at least `MIN_RETRY_GROWTH`), or where either
+    /// amount is unknown, once the backoff is over. Retrying sooner would
+    /// rebuild the session on the GPU, fail and rebuild it on the CPU for
+    /// every job.
+    const fn allows(self, free: Option<u64>, peak: Option<u64>) -> bool {
+        match (free, self.free_before) {
+            (Some(free), Some(before)) => free >= before.saturating_add(retry_growth(peak)),
+            _ => self.backoff_over,
+        }
+    }
+}
+
+/// The growth in free memory `OutOfMemoryRecord::allows` asks for.
+const fn retry_growth(peak: Option<u64>) -> u64 {
+    let margin = match peak {
+        Some(peak) => needed_memory(peak) - peak,
+        None => 0,
+    };
+    if margin > MIN_RETRY_GROWTH {
+        margin
+    } else {
+        MIN_RETRY_GROWTH
+    }
+}
+
 /// What `place` knows besides the session.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct AccelerationState<'a> {
@@ -127,6 +174,8 @@ pub(crate) struct AccelerationState<'a> {
     pub(crate) gpu_build: bool,
     /// The GPU providers the loaded runtime offers, most preferred first.
     pub(crate) providers: &'a [ProviderOffer],
+    /// Whether and how the model ran out of GPU memory before.
+    pub(crate) out_of_memory: Option<OutOfMemoryRecord>,
 }
 
 /// The memory a session must find free for a measured peak of `peak` bytes.
@@ -136,7 +185,8 @@ pub(crate) const fn needed_memory(peak: u64) -> u64 {
 
 /// Places a session: on the first offered provider whose adapter has room
 /// for it, or whose free memory or the session's need is unknown, otherwise
-/// on the CPU.
+/// on the CPU. A model that ran out of GPU memory before skips providers its
+/// `OutOfMemoryRecord` does not allow yet.
 pub(crate) fn place(session: &SessionOptions, state: &AccelerationState<'_>) -> Placement {
     let reason = if !session.allow_acceleration {
         CpuReason::CpuOnly
@@ -150,6 +200,12 @@ pub(crate) fn place(session: &SessionOptions, state: &AccelerationState<'_>) -> 
         let needed = session.gpu_memory_bytes.map(needed_memory);
         let mut shortfall = None;
         for offer in state.providers {
+            if let Some(record) = state.out_of_memory {
+                if !record.allows(offer.free_memory, session.gpu_memory_bytes) {
+                    shortfall.get_or_insert(CpuReason::OutOfMemory);
+                    continue;
+                }
+            }
             match (offer.free_memory, needed) {
                 (Some(free), Some(needed)) if free < needed => {
                     shortfall.get_or_insert(CpuReason::InsufficientMemory { free, needed });
@@ -200,6 +256,7 @@ mod tests {
         quarantined: bool,
         gpu_build: bool,
         providers: Vec<ProviderOffer>,
+        out_of_memory: Option<OutOfMemoryRecord>,
         expected: Placement,
     }
 
@@ -217,7 +274,20 @@ mod tests {
             quarantined: false,
             gpu_build: true,
             providers,
+            out_of_memory: None,
             expected,
+        }
+    }
+
+    /// A case for a model that ran out of GPU memory with `free_before_mib`
+    /// free.
+    fn after_out_of_memory(free_before_mib: Option<u64>, backoff_over: bool, case: Case) -> Case {
+        Case {
+            out_of_memory: Some(OutOfMemoryRecord {
+                free_before: free_before_mib.map(|mib| mib * MIB),
+                backoff_over,
+            }),
+            ..case
         }
     }
 
@@ -332,6 +402,83 @@ mod tests {
                 vec![offer(WebGpu, None)],
                 cpu(CpuReason::CpuOnly),
             ),
+            // The margin of a 2900 MiB peak is 580 MiB.
+            after_out_of_memory(
+                Some(4000),
+                true,
+                case(
+                    "ran out of memory; no more is free than then",
+                    peak_2900,
+                    vec![offer(WebGpu, Some(4500))],
+                    cpu(CpuReason::OutOfMemory),
+                ),
+            ),
+            after_out_of_memory(
+                Some(4000),
+                false,
+                case(
+                    "ran out of memory; the margin more is free now",
+                    peak_2900,
+                    vec![offer(WebGpu, Some(4580))],
+                    gpu(WebGpu),
+                ),
+            ),
+            after_out_of_memory(
+                Some(1000),
+                false,
+                case(
+                    "more memory is free, but not what the model needs",
+                    peak_2900,
+                    vec![offer(WebGpu, Some(1600))],
+                    cpu(CpuReason::InsufficientMemory {
+                        free: 1600 * MIB,
+                        needed: 3480 * MIB,
+                    }),
+                ),
+            ),
+            after_out_of_memory(
+                None,
+                false,
+                case(
+                    "ran out of memory, free memory unknown, backoff running",
+                    peak_2900,
+                    vec![offer(WebGpu, None)],
+                    cpu(CpuReason::OutOfMemory),
+                ),
+            ),
+            after_out_of_memory(
+                None,
+                true,
+                case(
+                    "ran out of memory, free memory unknown, backoff over",
+                    peak_2900,
+                    vec![offer(WebGpu, None)],
+                    gpu(WebGpu),
+                ),
+            ),
+            after_out_of_memory(
+                Some(4000),
+                true,
+                case(
+                    "free memory known then but not now: the backoff decides",
+                    unknown_peak,
+                    vec![offer(WebGpu, None)],
+                    gpu(WebGpu),
+                ),
+            ),
+            Case {
+                enabled: false,
+                ..after_out_of_memory(
+                    None,
+                    true,
+                    case(
+                        "Settings come before a memory failure",
+                        peak_2900,
+                        vec![offer(WebGpu, None)],
+                        cpu(CpuReason::Disabled),
+                    ),
+                )
+            },
         ];
         for case in cases {
             let state = AccelerationState {
@@ -339,9 +486,24 @@ mod tests {
                 quarantined: case.quarantined,
                 gpu_build: case.gpu_build,
                 providers: &case.providers,
+                out_of_memory: case.out_of_memory,
             };
             assert_eq!(place(&case.session, &state), case.expected, "{}", case.name);
         }
+    }
+
+    #[test]
+    fn a_retry_needs_the_peak_margin_or_256_mib_more_free_memory() {
+        assert_eq!(retry_growth(Some(2900 * MIB)), 580 * MIB);
+        assert_eq!(retry_growth(Some(400 * MIB)), MIN_RETRY_GROWTH);
+        assert_eq!(retry_growth(None), MIN_RETRY_GROWTH);
+        // The sum saturates instead of overflowing.
+        let record = OutOfMemoryRecord {
+            free_before: Some(u64::MAX - MIB),
+            backoff_over: false,
+        };
+        assert!(record.allows(Some(u64::MAX), None));
+        assert!(!record.allows(Some(u64::MAX - MIB), None));
     }
 
     #[test]
