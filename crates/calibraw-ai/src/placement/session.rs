@@ -188,6 +188,10 @@ impl FallbackSession {
         }
     }
 
+    pub(crate) fn on_gpu(&self) -> bool {
+        matches!(self.placement, Placement::Gpu { .. })
+    }
+
     /// Whether this session is on the CPU only because GPU memory was short,
     /// and the GPU now has room for it, so the next job should get a new
     /// session instead of reusing this one. After running out of memory,

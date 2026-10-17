@@ -550,7 +550,12 @@ The desktop editor working-set limit (`gpu_working_set_limit_bytes`, today
   against a minimum of 0.995. Low scored the same at P3, before this
   change.
 - 4.5 is not done; it is a separate change to the editor's admission
-  control.
+  control. Until then, when the editor, an export or a thumbnail render runs
+  out of GPU memory, GPU AI is switched off only if an AI job was on the GPU
+  at that moment (`gpu_job_in_progress`). Otherwise CalibRaw releases
+  optional preview textures and an idle AI session on the GPU
+  (`release_idle_gpu_session`), and AI work goes on. Before, every editor
+  out-of-memory stopped AI work and saved GPU AI as off.
 - For the maintainer: no Windows toolchain was available, so the
   Windows-only code (`placement/directml.rs`, the DirectML offer) was checked
   by reading only. Placement on Windows DirectML, macOS Core ML and Android

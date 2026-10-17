@@ -133,6 +133,12 @@ impl<S> RuntimeSlot<S> {
         }
     }
 
+    /// Unloads the loaded session if `unload` says so.
+    fn unload_if(&mut self, unload: impl FnOnce(&S) -> bool) -> Option<AiModel> {
+        let active = self.active.take_if(|active| unload(&active.session))?;
+        Some(active.model)
+    }
+
     #[cfg(test)]
     fn active_model(&self) -> Option<AiModel> {
         self.active.as_ref().map(|active| active.model)
@@ -192,6 +198,20 @@ pub(crate) fn unload_cold_session() {
         provider_generation(),
         ai_acceleration_enabled(),
     );
+}
+
+/// Unloads the loaded session if it runs on a GPU and no job holds it, so its
+/// GPU memory returns after the editor ran out. A held session is left to its
+/// job; the next job of an unloaded model places it again.
+pub fn release_idle_gpu_session() {
+    let mut slot = match runtime().try_lock() {
+        Ok(slot) => slot,
+        Err(TryLockError::Poisoned(error)) => error.into_inner(),
+        Err(TryLockError::WouldBlock) => return,
+    };
+    if let Some(model) = slot.unload_if(FallbackSession::on_gpu) {
+        log::info!("unloaded idle AI model session {model:?} to free GPU memory");
+    }
 }
 
 pub(crate) struct ModelSessionGuard {
@@ -545,6 +565,25 @@ mod tests {
         worker.join().unwrap();
         assert_eq!(runtime.lock().unwrap().active_model(), None);
         assert_eq!(&*events.lock().unwrap(), &["drop big-lama".to_owned()]);
+    }
+
+    #[test]
+    fn only_a_session_that_matches_is_unloaded() {
+        let mut slot = RuntimeSlot::default();
+        slot.ensure_model(
+            AiModel::SkySeg,
+            ModelRetention::WhileWarm,
+            0,
+            true,
+            |_| true,
+            || Ok::<_, ()>(false),
+        )
+        .unwrap();
+        assert_eq!(slot.unload_if(|on_gpu| *on_gpu), None);
+        assert_eq!(slot.active_model(), Some(AiModel::SkySeg));
+        assert_eq!(slot.unload_if(|on_gpu| !*on_gpu), Some(AiModel::SkySeg));
+        assert_eq!(slot.active_model(), None);
+        assert_eq!(slot.unload_if(|_| true), None);
     }
 
     #[test]
