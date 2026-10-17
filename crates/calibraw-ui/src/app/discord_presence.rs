@@ -1,28 +1,16 @@
 use super::AppTab;
-use discord_rich_presence::{activity, DiscordIpc, DiscordIpcClient};
+use crate::platform::discord::{
+    presence_supported, run_presence_worker, PresenceActivity, PresenceCommand,
+};
 use std::sync::mpsc;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 const APPLICATION_ID_ENV: &str = "CALIBRAW_DISCORD_APPLICATION_ID";
-const GET_CALIBRAW_URL: &str = env!("CARGO_PKG_REPOSITORY");
-const DISCONNECTED_RETRY_INTERVAL: Duration = Duration::from_secs(30);
-const CONNECTED_REFRESH_INTERVAL: Duration = Duration::from_secs(60);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum PresenceContext {
     Browsing,
     Editing { document_id: u64 },
-}
-
-#[derive(Clone, Copy, Debug)]
-enum PresenceActivity {
-    Browsing,
-    Editing { started_at: i64 },
-}
-
-enum PresenceCommand {
-    Set(PresenceActivity),
-    Shutdown,
 }
 
 pub(super) struct DiscordPresence {
@@ -36,7 +24,7 @@ pub(super) struct DiscordPresence {
 
 impl DiscordPresence {
     pub(super) fn new(enabled: bool) -> Self {
-        let supported = crate::desktop_portal::discord_presence_supported();
+        let supported = presence_supported();
         // An unsupported build never connects, even if an older version saved
         // the setting as enabled.
         let application_id = configured_application_id().filter(|_| supported);
@@ -141,7 +129,7 @@ impl DiscordPresence {
         let (sender, receiver) = mpsc::channel();
         match std::thread::Builder::new()
             .name("calibraw-discord-presence".to_owned())
-            .spawn(move || presence_worker(&application_id, receiver))
+            .spawn(move || run_presence_worker(&application_id, receiver))
         {
             Ok(_) => {
                 self.sender = Some(sender);
@@ -183,72 +171,6 @@ fn unix_timestamp_seconds() -> i64 {
         .unwrap_or_default()
 }
 
-fn presence_worker(application_id: &str, receiver: mpsc::Receiver<PresenceCommand>) {
-    let mut client = None;
-    let mut desired_activity = None;
-
-    loop {
-        let timeout = if client.is_some() {
-            CONNECTED_REFRESH_INTERVAL
-        } else {
-            DISCONNECTED_RETRY_INTERVAL
-        };
-        match receiver.recv_timeout(timeout) {
-            Ok(PresenceCommand::Set(activity)) => desired_activity = Some(activity),
-            Ok(PresenceCommand::Shutdown) | Err(mpsc::RecvTimeoutError::Disconnected) => {
-                clear_and_close(&mut client);
-                return;
-            }
-            Err(mpsc::RecvTimeoutError::Timeout) => {}
-        }
-
-        let Some(activity) = desired_activity else {
-            continue;
-        };
-        if client.is_none() {
-            let mut next_client = DiscordIpcClient::new(application_id);
-            match next_client.connect() {
-                Ok(()) => client = Some(next_client),
-                Err(error) => {
-                    log::debug!("Discord Rich Presence is waiting for Discord: {error}");
-                    continue;
-                }
-            }
-        }
-
-        let result = client
-            .as_mut()
-            .expect("Discord client was connected above")
-            .set_activity(activity_payload(activity));
-        if let Err(error) = result {
-            log::debug!("Discord Rich Presence update failed; reconnecting: {error}");
-            clear_and_close(&mut client);
-        }
-    }
-}
-
-fn activity_payload(presence: PresenceActivity) -> activity::Activity<'static> {
-    let payload = activity::Activity::new()
-        .activity_type(activity::ActivityType::Playing)
-        .buttons(vec![activity::Button::new(
-            "Get CalibRaw",
-            GET_CALIBRAW_URL,
-        )]);
-    match presence {
-        PresenceActivity::Browsing => payload.details("Browsing Photos"),
-        PresenceActivity::Editing { started_at } => payload
-            .details("Editing a Picture")
-            .timestamps(activity::Timestamps::new().start(started_at)),
-    }
-}
-
-fn clear_and_close(client: &mut Option<DiscordIpcClient>) {
-    if let Some(mut client) = client.take() {
-        let _ = client.clear_activity();
-        let _ = client.close();
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -284,25 +206,5 @@ mod tests {
             presence.last_non_settings_context,
             Some(PresenceContext::Editing { document_id: 43 })
         );
-    }
-
-    #[test]
-    fn payloads_do_not_expose_document_identity() {
-        let browsing =
-            serde_json::to_string(&activity_payload(PresenceActivity::Browsing)).unwrap();
-        let editing = serde_json::to_string(&activity_payload(PresenceActivity::Editing {
-            started_at: 123,
-        }))
-        .unwrap();
-
-        assert!(browsing.contains("Browsing Photos"));
-        assert!(editing.contains("Editing a Picture"));
-        assert!(editing.contains("\"start\":123"));
-        assert!(browsing.contains("Get CalibRaw"));
-        assert!(editing.contains("Get CalibRaw"));
-        assert!(browsing.contains(GET_CALIBRAW_URL));
-        assert!(editing.contains(GET_CALIBRAW_URL));
-        assert!(!browsing.contains("document"));
-        assert!(!editing.contains("document"));
     }
 }

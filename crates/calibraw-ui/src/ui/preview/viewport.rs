@@ -126,17 +126,14 @@ pub(crate) struct PreviewViewport {
 }
 
 impl PreviewViewport {
-    #[cfg(target_os = "android")]
     pub(crate) fn point_color_canvas(&self) -> bool {
         self.point_color_canvas
     }
 
-    #[cfg(target_os = "android")]
     pub(crate) fn interaction_rect(&self) -> Rect {
         self.outer_rect
     }
 
-    #[cfg(target_os = "android")]
     pub(crate) fn touch_navigation(&self) -> bool {
         self.touch_navigation
     }
@@ -218,7 +215,7 @@ impl Preview {
         unobscured: Option<Rect>,
     ) -> PreviewCanvas {
         let available = ui.available_size();
-        let inset = if unobscured.is_some() || cfg!(target_os = "android") {
+        let inset = if unobscured.is_some() || crate::platform::PlatformCaps::CURRENT.is_mobile() {
             0.0
         } else {
             10.0
@@ -339,8 +336,7 @@ impl Preview {
             outer_rect.contains(touch.start_pos)
                 && ui.ctx().layer_id_at(touch.start_pos) == Some(ui.layer_id())
         });
-        #[cfg(target_os = "android")]
-        if any_touches {
+        if crate::platform::PlatformCaps::CURRENT.is_mobile() && any_touches {
             ui.ctx().request_repaint();
         }
         let touch_navigation = if multi_touch.is_some() {

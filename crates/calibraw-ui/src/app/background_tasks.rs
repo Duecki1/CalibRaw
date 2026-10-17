@@ -12,7 +12,6 @@ impl CalibRawApp {
         if let Some(task) = self.export.task.as_ref() {
             tasks.push(export_task_view(task));
         }
-        #[cfg(not(target_os = "android"))]
         if let Some(task) = self.library.merge_task() {
             tasks.push(task);
         }
@@ -32,7 +31,6 @@ impl CalibRawApp {
             BackgroundTaskId::Export => {
                 self.cancel_export_task();
             }
-            #[cfg(not(target_os = "android"))]
             BackgroundTaskId::Merge => {
                 self.library.cancel_merge();
                 self.egui_ctx.request_repaint();
@@ -41,7 +39,6 @@ impl CalibRawApp {
     }
 
     /// Reports a finished HDR merge or focus stack.
-    #[cfg(not(target_os = "android"))]
     pub(super) fn poll_merge(&mut self) {
         use crate::ui::library::MergeOutcome;
         let Some((kind, outcome)) = self.library.poll_merge(&self.egui_ctx) else {

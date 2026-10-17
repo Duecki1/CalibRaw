@@ -58,13 +58,11 @@ impl ForegroundOperationKind {
 
 impl CalibRawApp {
     /// A local-AI job is running and may use the GPU, where the editor's own
-    /// textures compete with it for memory. Always false on Android, whose
-    /// sessions this check was not made for.
+    /// textures compete with it for memory. Always false where the runtime
+    /// is built in (Android), whose sessions this check was not made for.
     pub(crate) fn ai_job_may_use_gpu(&self) -> bool {
-        #[cfg(not(target_os = "android"))]
-        let gpu = calibraw_ai::runtime::ai_sessions_may_use_gpu(self.manual_onnx_runtime());
-        #[cfg(target_os = "android")]
-        let gpu = false;
+        let gpu = self.caps().configurable_ai_runtime
+            && calibraw_ai::runtime::ai_sessions_may_use_gpu(self.manual_onnx_runtime());
         gpu && self
             .foreground_operation_kind()
             .and_then(ForegroundOperationKind::ai_feature)

@@ -85,10 +85,10 @@ pub(super) struct DocumentLoadJob {
     pub(super) device: wgpu::Device,
     pub(super) queue: wgpu::Queue,
     pub(super) programs: PreviewProgramSources,
-    #[cfg(target_os = "android")]
-    pub(super) android_app: calibraw_ffi::AndroidApp,
-    #[cfg(target_os = "android")]
-    pub(super) export_active: bool,
+    pub(super) platform: Arc<dyn Platform>,
+    /// Release the previous preview pipeline before decoding: set where
+    /// memory is constrained and an export is running.
+    pub(super) release_previous_preview: bool,
 }
 
 type SidecarLookup = Result<Option<crate::sidecar::LoadedSidecar>, crate::sidecar::SidecarError>;
@@ -111,14 +111,11 @@ pub(super) fn run_document_load(job: DocumentLoadJob) -> Result<LoadedPreview, L
         device,
         queue,
         programs,
-        #[cfg(target_os = "android")]
-        android_app,
-        #[cfg(target_os = "android")]
-        export_active,
+        platform,
+        release_previous_preview,
     } = job;
-    // Android cannot afford two preview pipelines alongside a running export.
-    #[cfg(target_os = "android")]
-    let programs = if export_active {
+    // Constrained memory cannot afford two preview pipelines alongside a running export.
+    let programs = if release_previous_preview {
         calibraw_core::diagnostics::record(
             "Released the previous Android preview before concurrent RAW open",
         );
@@ -131,11 +128,7 @@ pub(super) fn run_document_load(job: DocumentLoadJob) -> Result<LoadedPreview, L
     };
 
     let sidecar_started = Instant::now();
-    let loaded_sidecar = load_sidecar_for_target(
-        &source.sidecar_target,
-        #[cfg(target_os = "android")]
-        &android_app,
-    );
+    let loaded_sidecar = load_sidecar_for_target(&source.sidecar_target, &*platform);
     calibraw_core::diagnostics::record(format!(
         "RAW sidecar lookup finished in {:.3}s",
         sidecar_started.elapsed().as_secs_f64()
@@ -321,8 +314,8 @@ pub(super) fn run_document_load(job: DocumentLoadJob) -> Result<LoadedPreview, L
 }
 
 /// What preparing a document ahead of its open needs, captured on the UI thread.
-#[cfg(not(target_os = "android"))]
 pub(super) struct AheadOfOpen {
+    pub(super) platform: Arc<dyn Platform>,
     pub(super) decoded_raws: DecodedRawCache,
     pub(super) decode_gate: Arc<RwLock<()>>,
     pub(super) camera_profiles: CameraProfileSettings,
@@ -336,14 +329,13 @@ pub(super) struct AheadOfOpen {
 /// its edits select. It follows [`run_document_load`] step by step, so the
 /// later open finds exactly what it asks for. `cancelled` is checked between
 /// steps.
-#[cfg(not(target_os = "android"))]
 pub(super) fn prepare_ahead_of_open(
     context: &AheadOfOpen,
     path: &Path,
     cancelled: impl Fn() -> bool,
 ) -> anyhow::Result<()> {
     let source = DocumentSource::desktop(path.to_owned(), String::new());
-    let loaded_sidecar = load_sidecar_for_target(&source.sidecar_target);
+    let loaded_sidecar = load_sidecar_for_target(&source.sidecar_target, &*context.platform);
     let profile_request =
         CameraProfileRequest::resolve(None, &loaded_sidecar, &context.camera_profiles);
     let decoded = decode_cached(
@@ -485,7 +477,6 @@ enum DecodePriority {
     /// Runs alone under the decode gate.
     Interactive,
     /// Shares the decode gate with thumbnail decodes and yields to interactive ones.
-    #[cfg(not(target_os = "android"))]
     Background,
 }
 
@@ -524,7 +515,6 @@ fn decode_cached(
                 let _exclusive = decode_gate.write().map_err(|_| poisoned())?;
                 decode()
             }
-            #[cfg(not(target_os = "android"))]
             DecodePriority::Background => {
                 let _shared = decode_gate.read().map_err(|_| poisoned())?;
                 decode()

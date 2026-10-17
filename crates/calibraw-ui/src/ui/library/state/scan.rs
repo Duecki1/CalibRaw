@@ -31,8 +31,7 @@ impl LibraryState {
         self.catalog_ready = !self.entries.is_empty();
         self.usage_clock = 0;
 
-        #[cfg(not(target_os = "android"))]
-        let worker = {
+        let worker = if self.platform.caps().has_folders() {
             let Some(folder) = self.folder.clone() else {
                 self.event_receiver = None;
                 self.request_sender = None;
@@ -115,16 +114,13 @@ impl LibraryState {
                     // workers stop before every photo was read.
                     deferred_metadata.save();
                 })
-        };
-
-        #[cfg(target_os = "android")]
-        let worker = {
-            let android_app = self.platform.app.clone();
+        } else {
+            let platform = Arc::clone(&self.platform);
             self.status = "Refreshing CalibRaw library…".to_owned();
             std::thread::Builder::new()
                 .name("calibraw-library".to_owned())
                 .spawn(move || {
-                    let folders = match calibraw_ffi::list_library_folders(&android_app) {
+                    let folders = match platform.list_library_folders() {
                         Ok(folders) => folders,
                         Err(error) => {
                             send_scan_failure(&event_sender, generation, error, &repaint);
@@ -140,7 +136,7 @@ impl LibraryState {
                     {
                         return;
                     }
-                    let documents = match calibraw_ffi::list_library_documents(&android_app) {
+                    let documents = match platform.list_library_documents() {
                         Ok(documents) => documents,
                         Err(error) => {
                             send_scan_failure(&event_sender, generation, error, &repaint);
@@ -156,11 +152,10 @@ impl LibraryState {
                     for asset in &mut assets {
                         if let Some(uri) = asset.android_uri() {
                             asset.metadata.dimensions_hint =
-                                calibraw_ffi::load_library_display_dimensions(&android_app, uri)
-                                    .ok();
+                                platform.load_library_display_dimensions(uri).ok();
                         }
                     }
-                    let thumbnail_app = android_app.clone();
+                    let thumbnail_platform = Arc::clone(&platform);
                     run_thumbnail_workers(
                         ThumbnailWorker {
                             assets,
@@ -177,7 +172,7 @@ impl LibraryState {
                         thumbnail_workers,
                         Arc::new(move |asset, stage| {
                             load_android_library_thumbnail(
-                                &thumbnail_app,
+                                &*thumbnail_platform,
                                 asset,
                                 stage,
                                 render_edited_thumbnails_during_indexing,
@@ -196,7 +191,6 @@ impl LibraryState {
         }
     }
 
-    #[cfg(not(target_os = "android"))]
     pub(crate) fn poll_dropped_raw_import(&mut self, context: &egui::Context) {
         let imported = self
             .raw_import_receiver
@@ -226,7 +220,6 @@ impl LibraryState {
         match pasted {
             Some(Ok(completion)) => {
                 self.asset_transfer_receiver = None;
-                #[cfg(not(target_os = "android"))]
                 if completion.clear_clipboard {
                     self.image_clipboard = None;
                 } else if let Some(remaining) = completion.remaining_clipboard {
@@ -243,7 +236,7 @@ impl LibraryState {
             Some(Err(mpsc::TryRecvError::Empty)) | None => {}
         }
 
-        #[cfg(not(target_os = "android"))]
+        // Folder imports and operations; never started for a media library.
         {
             self.poll_dropped_raw_import(context);
 
@@ -298,29 +291,27 @@ impl LibraryState {
             };
 
             match event {
-                #[cfg(not(target_os = "android"))]
                 ScanEvent::FolderTree { generation, tree }
                     if generation == self.generation.load(Ordering::Acquire) =>
                 {
                     self.folder_tree = Some(tree);
                 }
-                #[cfg(target_os = "android")]
                 ScanEvent::AndroidFolders {
                     generation,
                     folders,
                 } if generation == self.generation.load(Ordering::Acquire) => {
-                    self.platform.folders = folders;
+                    self.media.folders = folders;
                     let folder_paths = self
-                        .platform
+                        .media
                         .folders
                         .iter()
                         .map(|folder| folder.path.as_str())
                         .collect::<HashSet<_>>();
-                    self.platform
+                    self.media
                         .expanded_folders
                         .retain(|path| path.is_empty() || folder_paths.contains(path.as_str()));
-                    let selected_folder = self.platform.folder.clone();
-                    self.platform
+                    let selected_folder = self.media.folder.clone();
+                    self.media
                         .expanded_folders
                         .extend(android_folder_ancestors(&selected_folder));
                 }
@@ -384,7 +375,6 @@ impl LibraryState {
                     self.entries[index].thumbnail_queued = false;
                     match result {
                         Ok(loaded) => {
-                            #[cfg(not(target_os = "android"))]
                             if let Some(metadata) = loaded.display_metadata {
                                 apply_display_metadata(
                                     &mut self.entries[index].asset.metadata,

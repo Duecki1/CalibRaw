@@ -77,13 +77,17 @@ pub(super) fn start(
         );
         return;
     };
+    // Merging reads files; the library offers it only where photos are files.
     let paths: Vec<_> = assets
         .into_iter()
-        .map(|asset| {
-            let LibraryLocator::Desktop(path) = asset.locator;
-            path
+        .filter_map(|asset| match asset.locator {
+            LibraryLocator::Desktop(path) => Some(path),
+            LibraryLocator::Android { .. } => None,
         })
         .collect();
+    if paths.len() < 2 {
+        return;
+    }
     let device = render_state.device.clone();
     let queue = render_state.queue.clone();
     let prewarm = app.export.gpu_prewarm.clone();

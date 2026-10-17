@@ -1,7 +1,6 @@
 use super::*;
 
 impl CalibRawApp {
-    #[cfg(not(target_os = "android"))]
     pub(crate) fn set_onnx_runtime_mode(&mut self, mode: OnnxRuntimeMode) {
         if self.ai.runtime_mode == mode {
             return;
@@ -20,7 +19,6 @@ impl CalibRawApp {
     /// Asks for a restart when this process already loaded an ONNX Runtime
     /// library: the new choice cannot replace that library until CalibRaw
     /// starts again, and AI jobs would fail until then.
-    #[cfg(not(target_os = "android"))]
     pub(in crate::app) fn prompt_restart_for_runtime_change(&mut self, change: &str) {
         if calibraw_ai::runtime::runtime_loaded_in_process() {
             self.ui.runtime_restart_prompt = Some(format!(
@@ -29,7 +27,6 @@ impl CalibRawApp {
         }
     }
 
-    #[cfg(not(target_os = "android"))]
     pub(in crate::app) fn show_runtime_restart_dialog(&mut self, ctx: &egui::Context) {
         let Some(message) = self.ui.runtime_restart_prompt.clone() else {
             return;
@@ -59,19 +56,12 @@ impl CalibRawApp {
     }
 
     pub(in crate::app) fn automatic_onnx_runtime_download_needed(&self) -> bool {
-        #[cfg(not(target_os = "android"))]
-        {
-            self.ai.runtime_mode == OnnxRuntimeMode::Automatic
-                && calibraw_ai::runtime::bundled_onnx_runtime_path().is_none()
-                && !calibraw_ai::runtime::automatic_onnx_runtime_is_installed()
-        }
-        #[cfg(target_os = "android")]
-        {
-            false
-        }
+        self.caps().configurable_ai_runtime
+            && self.ai.runtime_mode == OnnxRuntimeMode::Automatic
+            && calibraw_ai::runtime::bundled_onnx_runtime_path().is_none()
+            && !calibraw_ai::runtime::automatic_onnx_runtime_is_installed()
     }
 
-    #[cfg(not(target_os = "android"))]
     pub(in crate::app) fn show_automatic_onnx_runtime_download_details(ui: &mut egui::Ui) {
         ui.separator();
         ui.strong("ONNX Runtime");
@@ -102,9 +92,6 @@ impl CalibRawApp {
         ui: &mut egui::Ui,
         runtime_download_needed: bool,
     ) {
-        #[cfg(target_os = "android")]
-        let _ = (ui, runtime_download_needed);
-        #[cfg(not(target_os = "android"))]
         if runtime_download_needed {
             Self::show_automatic_onnx_runtime_download_details(ui);
         }
@@ -166,10 +153,7 @@ impl CalibRawApp {
     /// Warning shown when Manual runtime mode has no trusted library. Every local-AI consent
     /// dialog has to say the same thing here.
     pub(in crate::app) fn show_manual_runtime_warning(&self, ui: &mut egui::Ui) {
-        #[cfg(target_os = "android")]
-        let _ = ui;
-        #[cfg(not(target_os = "android"))]
-        if self.ai.runtime_mode == OnnxRuntimeMode::Manual && self.ai.manual_runtime.is_none() {
+        if self.manual_onnx_runtime() && self.ai.manual_runtime.is_none() {
             ui.colored_label(
                 egui::Color32::YELLOW,
                 "Manual runtime mode needs a trusted local ONNX Runtime library. Select one in Settings or switch to Automatic.",
@@ -214,18 +198,7 @@ impl CalibRawApp {
     }
 
     pub(in crate::app) fn ai_model_root(&self) -> PathBuf {
-        #[cfg(not(target_os = "android"))]
-        {
-            calibraw_ai::desktop_model_cache_root()
-        }
-        #[cfg(target_os = "android")]
-        {
-            self.android
-                .android_app
-                .internal_data_path()
-                .unwrap_or_else(std::env::temp_dir)
-                .join("models")
-        }
+        self.platform.model_root()
     }
 
     pub(in crate::app) fn sam21_model_paths(&self) -> (PathBuf, PathBuf) {
@@ -249,14 +222,7 @@ impl CalibRawApp {
     /// A manually selected ONNX Runtime, whose execution providers are not
     /// known before it loads.
     pub(in crate::app) fn manual_onnx_runtime(&self) -> bool {
-        #[cfg(not(target_os = "android"))]
-        {
-            self.ai.runtime_mode == OnnxRuntimeMode::Manual
-        }
-        #[cfg(target_os = "android")]
-        {
-            false
-        }
+        self.caps().configurable_ai_runtime && self.ai.runtime_mode == OnnxRuntimeMode::Manual
     }
 
     pub(in crate::app) fn subject_model(&self) -> calibraw_ai::ModelInfo {
@@ -287,7 +253,6 @@ impl CalibRawApp {
     /// Small; nothing reads it any more. Removes that file and nothing else.
     ///
     /// migration: remove in v1.4.0. Listed in `calibraw_core`'s `migrations`.
-    #[cfg(not(target_os = "android"))]
     pub(in crate::app) fn remove_retired_depth_model(&self) {
         let path = self
             .ai_model_root()
@@ -303,7 +268,6 @@ impl CalibRawApp {
     /// folder that holds the manually selected runtime.
     ///
     /// migration: remove in v1.5.0. Listed in `calibraw_core`'s `migrations`.
-    #[cfg(not(target_os = "android"))]
     pub(in crate::app) fn remove_retired_onnx_runtimes(&self) {
         let root = self.ai_model_root();
         let manual = self.ai.manual_runtime.as_ref().map(|(path, _)| path);
@@ -319,7 +283,6 @@ impl CalibRawApp {
             .join(calibraw_ai::models::remove::MODEL.cache_filename)
     }
 
-    #[cfg(not(target_os = "android"))]
     pub(in crate::app) fn onnx_runtime_config_path() -> PathBuf {
         let root = std::env::var_os("XDG_CONFIG_HOME")
             .map(PathBuf::from)
@@ -328,7 +291,6 @@ impl CalibRawApp {
         root.join("calibraw/onnx-runtime-path")
     }
 
-    #[cfg(not(target_os = "android"))]
     pub(in crate::app) fn load_onnx_runtime_selection() -> Option<(PathBuf, calibraw_ai::Sha256)> {
         let configured = std::fs::read_to_string(Self::onnx_runtime_config_path()).ok()?;
         let mut lines = configured.lines();
@@ -340,7 +302,6 @@ impl CalibRawApp {
         Some((path, sha256))
     }
 
-    #[cfg(not(target_os = "android"))]
     pub(in crate::app) fn persist_onnx_runtime_selection(
         selection: Option<(&std::path::Path, &calibraw_ai::Sha256)>,
     ) -> Result<(), String> {
@@ -373,13 +334,12 @@ impl CalibRawApp {
         Ok(())
     }
 
-    #[cfg(not(target_os = "android"))]
     pub(crate) fn choose_onnx_runtime(&mut self) {
         if self.ui.desktop_picker_receiver.is_some() {
             return;
         }
         let mut dialog =
-            rfd::AsyncFileDialog::new().set_title("Select the ONNX Runtime shared library");
+            crate::platform::FileDialog::new().set_title("Select the ONNX Runtime shared library");
         if let Some(parent) = self
             .ai
             .manual_runtime
@@ -390,15 +350,14 @@ impl CalibRawApp {
             dialog = dialog.set_directory(parent);
         }
         self.ui.desktop_picker_receiver = Some(spawn_ui_worker(&self.egui_ctx, move || {
-            let result = pollster::block_on(dialog.pick_file())
-                .map(|handle| handle.path().to_path_buf())
+            let result = dialog
+                .pick_file_on_worker()
                 .map(Self::validate_and_persist_onnx_runtime)
                 .transpose();
             crate::app::DesktopPickerEvent::OnnxRuntime(result)
         }));
     }
 
-    #[cfg(not(target_os = "android"))]
     pub(in crate::app) fn validate_and_persist_onnx_runtime(
         path: PathBuf,
     ) -> Result<(PathBuf, calibraw_ai::Sha256), String> {
@@ -410,15 +369,7 @@ impl CalibRawApp {
             .and_then(|name| name.to_str())
             .unwrap_or_default()
             .to_ascii_lowercase();
-        let looks_like_runtime = if cfg!(target_os = "windows") {
-            file_name == "onnxruntime.dll"
-        } else if cfg!(target_os = "macos") {
-            file_name == "libonnxruntime.dylib"
-                || (file_name.starts_with("libonnxruntime.") && file_name.ends_with(".dylib"))
-        } else {
-            file_name == "libonnxruntime.so" || file_name.starts_with("libonnxruntime.so.")
-        };
-        if !looks_like_runtime {
+        if !crate::platform::is_onnx_runtime_library_name(&file_name) {
             return Err(
                 "Select the ONNX Runtime shared library (onnxruntime.dll, libonnxruntime.so, or libonnxruntime.dylib)."
                     .to_owned(),
@@ -435,7 +386,6 @@ impl CalibRawApp {
         Ok((path, sha256))
     }
 
-    #[cfg(not(target_os = "android"))]
     pub(crate) fn clear_onnx_runtime(&mut self) {
         match Self::persist_onnx_runtime_selection(None) {
             Ok(()) => {
@@ -452,13 +402,15 @@ impl CalibRawApp {
     }
 }
 
-/// The ONNX Runtime choice, which Android does not offer.
-#[cfg(not(target_os = "android"))]
+/// The ONNX Runtime choice, offered where `configurable_ai_runtime`.
 impl CalibRawApp {
     /// The runtime AI jobs load. Manual mode without a selected library
     /// falls back to Automatic; `validate_onnx_runtime_for_ai` stops jobs
-    /// that ask for it.
+    /// that ask for it. Always Automatic where the runtime is built in.
     pub(in crate::app) fn ai_runtime_source(&self) -> calibraw_ai::RuntimeSource {
+        if !self.caps().configurable_ai_runtime {
+            return calibraw_ai::RuntimeSource::Automatic;
+        }
         match (self.ai.runtime_mode, &self.ai.manual_runtime) {
             (OnnxRuntimeMode::Manual, Some((path, sha256))) => calibraw_ai::RuntimeSource::Manual {
                 path: path.clone(),

@@ -5,7 +5,6 @@ mod loaders;
 mod workers;
 pub(super) use developed::*;
 pub(super) use loaders::*;
-#[cfg(not(target_os = "android"))]
 pub(crate) use loaders::{load_desktop_cached_thumbnail, load_desktop_reference_preview};
 pub(super) use workers::*;
 
@@ -78,7 +77,6 @@ impl LibraryState {
         }
     }
 
-    #[cfg(not(target_os = "android"))]
     pub(crate) fn install_developed_thumbnail(
         &mut self,
         raw_path: &Path,
@@ -93,7 +91,6 @@ impl LibraryState {
         self.install_developed_thumbnail_at(index, thumbnail, context, revision);
     }
 
-    #[cfg(target_os = "android")]
     pub(crate) fn install_android_developed_thumbnail(
         &mut self,
         raw_uri: &str,
@@ -162,13 +159,14 @@ impl LibraryState {
     }
 
     pub(crate) fn evict_old_textures(&mut self, protected_indices: &HashSet<usize>) {
-        let limit = if cfg!(target_os = "android") {
+        let constrained = self.platform.caps().constrained_memory();
+        let limit = if constrained {
             ANDROID_TEXTURE_CACHE_LIMIT
         } else {
             DESKTOP_TEXTURE_CACHE_LIMIT
         };
         self.evict_textures_to_limit_protecting(limit, protected_indices);
-        let resident_limit = if cfg!(target_os = "android") {
+        let resident_limit = if constrained {
             ANDROID_RESIDENT_THUMBNAIL_CACHE_LIMIT
         } else {
             DESKTOP_RESIDENT_THUMBNAIL_CACHE_LIMIT
@@ -176,7 +174,6 @@ impl LibraryState {
         self.evict_resident_thumbnails_to_limit_protecting(resident_limit, protected_indices);
     }
 
-    #[cfg(target_os = "android")]
     pub(super) fn evict_textures_to_limit(&mut self, limit: usize) {
         self.evict_textures_to_limit_protecting(limit, &HashSet::new());
     }
@@ -394,12 +391,10 @@ pub(super) fn loaded_library_thumbnail(
         developed,
         developed_thumbnail_stale: false,
         developed_render_pending: false,
-        #[cfg(not(target_os = "android"))]
         display_metadata: None,
     }
 }
 
-#[cfg(not(target_os = "android"))]
 pub(super) fn loaded_library_raw_preview_pending_development(
     thumbnail: RawThumbnail,
 ) -> LoadedLibraryThumbnail {

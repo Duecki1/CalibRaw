@@ -1,4 +1,5 @@
 use crate::pipeline::{CameraProfileMode, ExportFormat};
+use crate::platform::PlatformCaps;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -55,14 +56,16 @@ pub(crate) struct PerformanceSettings {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ignored_update_version: Option<String>,
     pub subject_mask_quality: calibraw_ai::models::subject::SubjectMaskQuality,
-    #[cfg(not(target_os = "android"))]
+    // The fields below are read only where the platform offers what they
+    // configure; every platform writes all of them.
+    /// Where the AI runtime is configurable.
     pub ai_gpu_acceleration: bool,
-    #[cfg(not(target_os = "android"))]
+    /// Where the AI runtime is configurable.
     pub onnx_runtime_mode: crate::app::OnnxRuntimeMode,
-    #[cfg(not(target_os = "android"))]
+    /// Where Discord can be reached.
     pub discord_rich_presence: bool,
-    /// Serialize photo file reads for libraries on rotational disks.
-    #[cfg(not(target_os = "android"))]
+    /// Serialize photo file reads for libraries on rotational disks; folder
+    /// storage only.
     pub hdd_mode: bool,
     pub camera_profile_mode: CameraProfileMode,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -79,17 +82,15 @@ pub(crate) struct PerformanceSettings {
     /// Ask about manual correction when automatic correction finds no profile.
     pub missing_lens_profile_prompt: bool,
     pub adjustment_copy_settings: crate::sidecar::AdjustmentCopySettings,
-    #[cfg(target_os = "android")]
+    /// The media-library folder open last; media-library storage only.
     pub(crate) last_android_library_folder: String,
-    #[cfg(not(target_os = "android"))]
+    /// The folder library's root and selected folder; folder storage only.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_library_folder: Option<PathBuf>,
-    #[cfg(not(target_os = "android"))]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_library_selected_folder: Option<PathBuf>,
-    #[cfg(not(target_os = "android"))]
+    /// Desktop window layout.
     pub library_folder_sidebar_open: bool,
-    #[cfg(not(target_os = "android"))]
     pub develop_filmstrip_open: bool,
 }
 
@@ -168,33 +169,26 @@ impl Default for PerformanceSettings {
             github_update_check_allowed: None,
             ignored_update_version: None,
             subject_mask_quality: calibraw_ai::models::subject::SubjectMaskQuality::default(),
-            #[cfg(not(target_os = "android"))]
             ai_gpu_acceleration: true,
-            #[cfg(not(target_os = "android"))]
             onnx_runtime_mode: crate::app::OnnxRuntimeMode::default(),
-            #[cfg(not(target_os = "android"))]
             discord_rich_presence: false,
-            #[cfg(not(target_os = "android"))]
             hdd_mode: false,
             camera_profile_mode: CameraProfileMode::default(),
             camera_profile_folder: None,
             camera_profile_folder_label: None,
-            camera_profile_auto_detect: !cfg!(target_os = "android"),
+            // Folder storage finds profiles in the standard folders;
+            // a media library imports them instead.
+            camera_profile_auto_detect: PlatformCaps::CURRENT.has_folders(),
             last_camera_profile: None,
             automatic_lens_correction: true,
             automatic_lens_geometry: true,
             automatic_lens_vignetting: false,
             missing_lens_profile_prompt: true,
             adjustment_copy_settings: crate::sidecar::AdjustmentCopySettings::default(),
-            #[cfg(target_os = "android")]
             last_android_library_folder: String::new(),
-            #[cfg(not(target_os = "android"))]
             last_library_folder: None,
-            #[cfg(not(target_os = "android"))]
             last_library_selected_folder: None,
-            #[cfg(not(target_os = "android"))]
             library_folder_sidebar_open: true,
-            #[cfg(not(target_os = "android"))]
             develop_filmstrip_open: true,
         }
     }
@@ -209,7 +203,7 @@ impl PerformanceSettings {
         // the default rather than a choice; move it to the new one.
         // migration: remove in v2.0.0. Listed in `calibraw_core`'s `migrations`.
         if self.version < 2
-            && !cfg!(target_os = "android")
+            && !PlatformCaps::CURRENT.constrained_memory()
             && self.raw_cache_files == DESKTOP_RAW_CACHE_FILES_BEFORE_V2
         {
             self.raw_cache_files = crate::app::default_raw_cache_limit();
@@ -304,108 +298,6 @@ pub(crate) fn save(path: Option<&Path>, settings: PerformanceSettings) -> Result
     })
 }
 
-#[cfg(not(target_os = "android"))]
-pub(crate) fn desktop_path() -> Option<PathBuf> {
-    #[cfg(target_os = "windows")]
-    let base = std::env::var_os("APPDATA").map(PathBuf::from);
-
-    #[cfg(target_os = "macos")]
-    let base = std::env::var_os("HOME")
-        .map(PathBuf::from)
-        .map(|home| home.join("Library/Application Support"));
-
-    #[cfg(all(unix, not(target_os = "macos"), not(target_os = "android")))]
-    let base = std::env::var_os("XDG_CONFIG_HOME")
-        .map(PathBuf::from)
-        .or_else(|| {
-            std::env::var_os("HOME")
-                .map(PathBuf::from)
-                .map(|home| home.join(".config"))
-        });
-
-    #[cfg(not(any(windows, unix, target_os = "macos")))]
-    let base: Option<PathBuf> = None;
-
-    base.map(|base| base.join("calibraw").join("performance.json"))
-}
-
-/// Human-readable form of [`camera_profile_candidates`], shown during setup;
-/// keep the two in sync. Empty where auto-detect has no standard locations.
-#[cfg(target_os = "windows")]
-pub(crate) const CAMERA_PROFILE_SEARCH_LOCATIONS: &[&str] = &[
-    r"%ProgramData%\CameraRaw\CameraProfiles",
-    r"%ProgramData%\<vendor>\CameraRaw\CameraProfiles",
-];
-#[cfg(target_os = "macos")]
-pub(crate) const CAMERA_PROFILE_SEARCH_LOCATIONS: &[&str] = &[
-    "~/Library/Application Support/<vendor>/CameraRaw/CameraProfiles",
-    "/Library/Application Support/<vendor>/CameraRaw/CameraProfiles",
-];
-#[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "android")))]
-pub(crate) const CAMERA_PROFILE_SEARCH_LOCATIONS: &[&str] = &[];
-
-#[cfg(not(target_os = "android"))]
-pub(crate) fn detected_camera_profile_folder() -> Option<PathBuf> {
-    camera_profile_candidates()
-        .into_iter()
-        .find(|path| path.is_dir())
-}
-
-#[cfg(any(target_os = "windows", target_os = "macos"))]
-fn camera_profile_candidates_under(root: &Path) -> Vec<PathBuf> {
-    let mut candidates = vec![root.join("CameraRaw").join("CameraProfiles")];
-    if let Ok(entries) = std::fs::read_dir(root) {
-        candidates.extend(
-            entries
-                .filter_map(Result::ok)
-                .map(|entry| entry.path().join("CameraRaw").join("CameraProfiles")),
-        );
-    }
-    candidates.sort();
-    candidates.dedup();
-    candidates
-}
-
-#[cfg(not(target_os = "android"))]
-pub(crate) fn camera_profile_candidates() -> Vec<PathBuf> {
-    #[cfg(target_os = "windows")]
-    {
-        return if let Some(program_data) =
-            std::env::var_os("ProgramData").or_else(|| std::env::var_os("ALLUSERSPROFILE"))
-        {
-            camera_profile_candidates_under(&PathBuf::from(program_data))
-        } else {
-            Vec::new()
-        };
-    }
-
-    #[cfg(target_os = "macos")]
-    {
-        let mut candidates = Vec::new();
-        if let Some(home) = std::env::var_os("HOME") {
-            candidates.extend(camera_profile_candidates_under(
-                &PathBuf::from(home)
-                    .join("Library")
-                    .join("Application Support"),
-            ));
-        }
-        candidates.extend(camera_profile_candidates_under(&PathBuf::from(
-            "/Library/Application Support",
-        )));
-        return candidates;
-    }
-
-    #[cfg(all(unix, not(target_os = "macos"), not(target_os = "android")))]
-    {
-        Vec::new()
-    }
-
-    #[cfg(not(any(windows, unix, target_os = "macos")))]
-    {
-        Vec::new()
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -448,12 +340,7 @@ mod tests {
             .raw_cache_files
         };
         // Android never had the desktop default, so its stored 2 is a choice.
-        let expected = if cfg!(target_os = "android") {
-            2
-        } else {
-            crate::app::default_raw_cache_limit()
-        };
-        assert_eq!(migrated(1, 2), expected);
+        assert_eq!(migrated(1, 2), crate::app::default_raw_cache_limit());
         // Other stored sizes were chosen, and version 2 files are kept as saved.
         assert_eq!(migrated(1, 1), 1);
         assert_eq!(migrated(SETTINGS_VERSION, 2), 2);
@@ -535,12 +422,10 @@ mod tests {
             ..Default::default()
         }
         .sanitized();
-        let expected = if cfg!(target_os = "android") {
-            calibraw_ai::models::subject::SubjectMaskQuality::Medium
-        } else {
+        assert_eq!(
+            settings.subject_mask_quality,
             calibraw_ai::models::subject::SubjectMaskQuality::High
-        };
-        assert_eq!(settings.subject_mask_quality, expected);
+        );
     }
 
     #[test]
@@ -646,18 +531,16 @@ mod tests {
             settings.subject_mask_quality,
             calibraw_ai::models::subject::SubjectMaskQuality::default()
         );
-        #[cfg(not(target_os = "android"))]
-        {
-            assert!(settings.ai_gpu_acceleration);
-            assert_eq!(
-                settings.onnx_runtime_mode,
-                crate::app::OnnxRuntimeMode::Automatic
-            );
-            assert!(!settings.discord_rich_presence);
-            assert!(!settings.hdd_mode);
-            assert!(settings.library_folder_sidebar_open);
-            assert!(settings.develop_filmstrip_open);
-        }
+        assert!(settings.ai_gpu_acceleration);
+        assert_eq!(
+            settings.onnx_runtime_mode,
+            crate::app::OnnxRuntimeMode::Automatic
+        );
+        assert!(!settings.discord_rich_presence);
+        assert!(!settings.hdd_mode);
+        assert!(settings.library_folder_sidebar_open);
+        assert!(settings.develop_filmstrip_open);
+        assert!(settings.last_android_library_folder.is_empty());
         assert_eq!(
             settings.adjustment_copy_settings,
             crate::sidecar::AdjustmentCopySettings::default()
@@ -670,7 +553,7 @@ mod tests {
 
     #[test]
     fn library_preferences_round_trip() {
-        let mut settings = PerformanceSettings {
+        let settings = PerformanceSettings {
             develop_histogram_open: true,
             library_thumbnail_size: crate::ui::library::LibraryThumbnailSize::Enormous,
             library_sort_order: crate::ui::library::LibrarySortOrder::SmallestFirst,
@@ -690,19 +573,17 @@ mod tests {
             subject_mask_quality: calibraw_ai::models::subject::SubjectMaskQuality::Low,
             tips_enabled: false,
             seen_tips: BTreeSet::from(["masks_tab".to_owned(), "from_a_newer_version".to_owned()]),
+            ai_gpu_acceleration: false,
+            onnx_runtime_mode: crate::app::OnnxRuntimeMode::Manual,
+            discord_rich_presence: true,
+            hdd_mode: true,
+            last_android_library_folder: "Trips/Day 1".to_owned(),
+            last_library_folder: Some(PathBuf::from("photos")),
+            last_library_selected_folder: Some(PathBuf::from("photos/2026/trip")),
+            library_folder_sidebar_open: false,
+            develop_filmstrip_open: false,
             ..Default::default()
         };
-        #[cfg(not(target_os = "android"))]
-        {
-            settings.ai_gpu_acceleration = false;
-            settings.onnx_runtime_mode = crate::app::OnnxRuntimeMode::Manual;
-            settings.discord_rich_presence = true;
-            settings.hdd_mode = true;
-            settings.last_library_folder = Some(PathBuf::from("photos"));
-            settings.last_library_selected_folder = Some(PathBuf::from("photos/2026/trip"));
-            settings.library_folder_sidebar_open = false;
-            settings.develop_filmstrip_open = false;
-        }
 
         let json = serde_json::to_string(&settings).unwrap();
         let restored: PerformanceSettings = serde_json::from_str(&json).unwrap();
@@ -740,22 +621,20 @@ mod tests {
             restored.subject_mask_quality,
             calibraw_ai::models::subject::SubjectMaskQuality::Low
         );
-        #[cfg(not(target_os = "android"))]
-        {
-            assert!(!restored.ai_gpu_acceleration);
-            assert_eq!(
-                restored.onnx_runtime_mode,
-                crate::app::OnnxRuntimeMode::Manual
-            );
-            assert!(restored.discord_rich_presence);
-            assert!(restored.hdd_mode);
-            assert_eq!(restored.last_library_folder, Some(PathBuf::from("photos")));
-            assert_eq!(
-                restored.last_library_selected_folder,
-                Some(PathBuf::from("photos/2026/trip"))
-            );
-            assert!(!restored.library_folder_sidebar_open);
-            assert!(!restored.develop_filmstrip_open);
-        }
+        assert!(!restored.ai_gpu_acceleration);
+        assert_eq!(
+            restored.onnx_runtime_mode,
+            crate::app::OnnxRuntimeMode::Manual
+        );
+        assert!(restored.discord_rich_presence);
+        assert!(restored.hdd_mode);
+        assert_eq!(restored.last_android_library_folder, "Trips/Day 1");
+        assert_eq!(restored.last_library_folder, Some(PathBuf::from("photos")));
+        assert_eq!(
+            restored.last_library_selected_folder,
+            Some(PathBuf::from("photos/2026/trip"))
+        );
+        assert!(!restored.library_folder_sidebar_open);
+        assert!(!restored.develop_filmstrip_open);
     }
 }

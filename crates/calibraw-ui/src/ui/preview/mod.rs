@@ -10,7 +10,7 @@ use crate::ui::mask_component_color;
 use eframe::egui::{self, Color32, Mesh, Pos2, Rect, Sense, Shape, Stroke, Ui};
 use std::sync::Arc;
 
-pub(crate) const MIN_PREVIEW_ZOOM: f32 = if cfg!(target_os = "android") {
+pub(crate) const MIN_PREVIEW_ZOOM: f32 = if crate::platform::PlatformCaps::CURRENT.is_mobile() {
     0.25
 } else {
     0.70

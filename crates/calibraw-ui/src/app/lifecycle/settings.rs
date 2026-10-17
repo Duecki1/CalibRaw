@@ -7,10 +7,7 @@ impl CalibRawApp {
         }
         self.preferences.ui_design = design;
         crate::ui::theme::apply(&self.egui_ctx, design);
-        #[cfg(target_os = "android")]
-        if let Err(error) =
-            calibraw_ffi::set_light_system_bars(&self.android.android_app, !design.is_dark())
-        {
+        if let Err(error) = self.platform.set_light_system_bars(!design.is_dark()) {
             log::warn!("{error}");
         }
         self.persist_performance_settings();
@@ -31,7 +28,6 @@ impl CalibRawApp {
             .color(self.ui.adaptive_preview_backdrop)
     }
 
-    #[cfg(not(target_os = "android"))]
     pub(crate) fn set_raw_cache_limit(&mut self, limit: usize) {
         let limit = limit.min(maximum_raw_cache_limit());
         if self.develop.decoded_raws.limit() == limit {
@@ -41,12 +37,10 @@ impl CalibRawApp {
         self.persist_performance_settings();
     }
 
-    #[cfg(not(target_os = "android"))]
     pub(crate) fn thumbnail_worker_count(&self) -> usize {
         self.library.thumbnail_worker_count()
     }
 
-    #[cfg(not(target_os = "android"))]
     pub(crate) fn set_thumbnail_worker_count(&mut self, workers: usize) {
         let context = self.egui_ctx.clone();
         let previous = self.library.thumbnail_worker_count();
@@ -56,7 +50,6 @@ impl CalibRawApp {
         }
     }
 
-    #[cfg(not(target_os = "android"))]
     pub(crate) fn set_automatic_thumbnail_workers(&mut self, automatic: bool) {
         if self.library.automatic_thumbnail_workers() == automatic {
             return;
@@ -67,7 +60,6 @@ impl CalibRawApp {
         self.persist_performance_settings();
     }
 
-    #[cfg(not(target_os = "android"))]
     pub(crate) fn set_render_edited_thumbnails_during_indexing(&mut self, enabled: bool) {
         let context = self.egui_ctx.clone();
         if self
@@ -78,7 +70,6 @@ impl CalibRawApp {
         }
     }
 
-    #[cfg(not(target_os = "android"))]
     pub(crate) fn set_ai_gpu_acceleration(&mut self, enabled: bool) {
         if self.ai.gpu_acceleration == enabled {
             return;
@@ -96,7 +87,6 @@ impl CalibRawApp {
         self.egui_ctx.request_repaint();
     }
 
-    #[cfg(not(target_os = "android"))]
     pub(crate) fn set_hdd_mode(&mut self, enabled: bool) {
         if self.preferences.hdd_mode == enabled {
             return;
@@ -106,7 +96,6 @@ impl CalibRawApp {
         self.persist_performance_settings();
     }
 
-    #[cfg(not(target_os = "android"))]
     pub(crate) fn set_discord_rich_presence(&mut self, enabled: bool) {
         if self.preferences.discord_rich_presence == enabled {
             return;
@@ -127,17 +116,14 @@ impl CalibRawApp {
         });
     }
 
-    #[cfg(not(target_os = "android"))]
     pub(crate) fn discord_rich_presence_supported(&self) -> bool {
         self.discord_presence.is_supported()
     }
 
-    #[cfg(not(target_os = "android"))]
     pub(crate) fn discord_rich_presence_configured(&self) -> bool {
         self.discord_presence.is_configured()
     }
 
-    #[cfg(not(target_os = "android"))]
     pub(in crate::app) fn sync_discord_presence(&mut self) {
         let document_id = self
             .develop
@@ -174,16 +160,11 @@ impl CalibRawApp {
         {
             let (sender, receiver) = mpsc::channel();
             let repaint = self.egui_ctx.clone();
-            #[cfg(target_os = "android")]
-            let android_app = self.android.android_app.clone();
+            let platform = Arc::clone(&self.platform);
             let spawn = std::thread::Builder::new()
                 .name("calibraw-thumbnail-cache-size".to_owned())
                 .spawn(move || {
-                    #[cfg(not(target_os = "android"))]
-                    let result =
-                        calibraw_core::thumbnail_cache::desktop_thumbnail_cache_size_bytes();
-                    #[cfg(target_os = "android")]
-                    let result = calibraw_ffi::thumbnail_cache_size_bytes(&android_app);
+                    let result = platform.thumbnail_cache_size_bytes();
                     let _ = sender.send(result);
                     repaint.request_repaint();
                 });
@@ -211,13 +192,7 @@ impl CalibRawApp {
         self.library.prepare_for_thumbnail_cache_clear();
         let decode_gate = self.library.decode_gate();
         let result = match decode_gate.write() {
-            Ok(_decode_guard) => {
-                #[cfg(not(target_os = "android"))]
-                let cleared = calibraw_core::thumbnail_cache::clear_desktop_thumbnail_cache();
-                #[cfg(target_os = "android")]
-                let cleared = calibraw_ffi::clear_thumbnail_cache(&self.android.android_app);
-                cleared
-            }
+            Ok(_decode_guard) => self.platform.clear_thumbnail_cache(),
             Err(_) => Err("thumbnail decode gate was poisoned".to_owned()),
         };
 
@@ -291,20 +266,20 @@ impl CalibRawApp {
 
     pub(crate) fn set_library_folder_sidebar_open(&mut self, open: bool) {
         if self.library.set_folder_sidebar_open(open) {
-            #[cfg(not(target_os = "android"))]
-            self.persist_performance_settings();
+            // Desktop windows reopen with the sidebar as it was left.
+            if self.caps().is_desktop() {
+                self.persist_performance_settings();
+            }
             self.egui_ctx.request_repaint();
         }
     }
 
-    #[cfg(target_os = "android")]
     pub(crate) fn select_android_library_folder(&mut self, folder: String) {
         if self.library.select_android_folder(folder, &self.egui_ctx) {
             self.persist_performance_settings();
         }
     }
 
-    #[cfg(not(target_os = "android"))]
     pub(crate) fn set_develop_filmstrip_open(&mut self, open: bool) {
         if self.develop_ui.filmstrip_open == open {
             return;
@@ -317,7 +292,6 @@ impl CalibRawApp {
         self.egui_ctx.request_repaint();
     }
 
-    #[cfg(not(target_os = "android"))]
     pub(crate) fn select_library_folder(&mut self, folder: PathBuf) {
         if self.library.select_folder(folder, &self.egui_ctx) {
             self.persist_performance_settings();
@@ -352,13 +326,9 @@ impl CalibRawApp {
             github_update_check_allowed: self.preferences.github_update_check_allowed,
             ignored_update_version: self.preferences.ignored_update_version.clone(),
             subject_mask_quality: self.ai.subject_mask_quality,
-            #[cfg(not(target_os = "android"))]
             ai_gpu_acceleration: self.ai.gpu_acceleration,
-            #[cfg(not(target_os = "android"))]
             onnx_runtime_mode: self.ai.runtime_mode,
-            #[cfg(not(target_os = "android"))]
             discord_rich_presence: self.preferences.discord_rich_presence,
-            #[cfg(not(target_os = "android"))]
             hdd_mode: self.preferences.hdd_mode,
             camera_profile_mode: self.preferences.camera_profile_mode,
             camera_profile_folder: self.preferences.camera_profile_folder.clone(),
@@ -378,18 +348,13 @@ impl CalibRawApp {
                 .vignetting,
             missing_lens_profile_prompt: self.preferences.missing_lens_profile_prompt,
             adjustment_copy_settings: self.preferences.adjustment_copy_settings,
-            #[cfg(target_os = "android")]
             last_android_library_folder: self.library.android_folder().to_owned(),
-            #[cfg(not(target_os = "android"))]
             last_library_folder: self
                 .library
                 .root_folder()
                 .map(|folder| folder.to_path_buf()),
-            #[cfg(not(target_os = "android"))]
             last_library_selected_folder: self.library.folder().map(|folder| folder.to_path_buf()),
-            #[cfg(not(target_os = "android"))]
             library_folder_sidebar_open: self.library.folder_sidebar_open(),
-            #[cfg(not(target_os = "android"))]
             develop_filmstrip_open: self.develop_ui.filmstrip_open,
             ..Default::default()
         };

@@ -5,7 +5,6 @@ impl Preview {
     /// lifts or moves. Works in every sidebar tab except Crop, whose handles
     /// are often pressed and held before dragging; the caller cancels the
     /// tool gesture the press started when `original_started` is set.
-    #[cfg(target_os = "android")]
     pub(crate) fn handle_android_original_hold(
         ui: &Ui,
         app: &mut CalibRawApp,
@@ -98,7 +97,6 @@ impl Preview {
     }
 }
 
-#[cfg(target_os = "android")]
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct AndroidOriginalHoldUpdate {
     /// The press may still become a hold, so primary-drag panning waits.

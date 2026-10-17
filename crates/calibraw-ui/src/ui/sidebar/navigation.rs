@@ -144,8 +144,9 @@ impl Sidebar {
                                 }
                             }
                             SidebarTab::Presets => {
-                                #[cfg(not(target_os = "android"))]
-                                crate::ui::presets::show_header_actions(ui, app);
+                                if app.caps().has_folders() {
+                                    crate::ui::presets::show_header_actions(ui, app);
+                                }
                             }
                             SidebarTab::Export | SidebarTab::Info => {}
                         }
@@ -251,7 +252,6 @@ impl Sidebar {
         });
     }
 
-    #[cfg(not(target_os = "android"))]
     pub(crate) fn show_desktop_tool_rail(ui: &mut Ui, app: &mut CalibRawApp) {
         use crate::ui::icons::{icon_toggle_button, UiIcon};
 

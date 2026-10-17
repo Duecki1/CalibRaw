@@ -1,4 +1,9 @@
-use super::super::*;
+//! A library in the platform's media library: folders by relative path and
+//! photos by content URI, listed and changed through the platform.
+
+use super::*;
+
+mod local;
 
 pub(in crate::ui::library) fn default_thumbnail_worker_count() -> usize {
     1
@@ -9,7 +14,7 @@ pub(in crate::ui::library) fn automatic_thumbnail_worker_count() -> usize {
 }
 
 pub(in crate::ui::library) fn maximum_thumbnail_worker_count() -> usize {
-    super::super::MAX_ANDROID_THUMBNAIL_WORKERS
+    super::MAX_ANDROID_THUMBNAIL_WORKERS
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -17,7 +22,7 @@ pub(super) fn show_android_library_folder_node(
     ui: &mut Ui,
     path: &str,
     name: &str,
-    children_by_parent: &HashMap<&str, Vec<&calibraw_ffi::LibraryFolder>>,
+    children_by_parent: &HashMap<&str, Vec<&crate::platform::LibraryFolder>>,
     selected_folder: &str,
     action_in_progress: bool,
     expanded_folders: &mut HashSet<String>,
@@ -115,7 +120,7 @@ pub(super) fn apply_android_library_folder_ui_action(
             app.set_library_folder_sidebar_open(false);
         }
         AndroidLibraryFolderUiAction::New(parent) => {
-            app.library.platform.folder_name_dialog = Some(AndroidLibraryFolderNameDialog {
+            app.library.media.folder_name_dialog = Some(AndroidLibraryFolderNameDialog {
                 parent,
                 name: String::new(),
                 error: None,
@@ -166,13 +171,13 @@ pub(in crate::ui::library) fn can_create_local_folder(_app: &CalibRawApp) -> boo
 
 pub(in crate::ui::library) fn apply_local_toolbar_action(
     app: &mut CalibRawApp,
-    action: super::LocalFolderToolbarAction,
+    action: LocalFolderToolbarAction,
     context: &egui::Context,
 ) {
     let action = match action {
-        super::LocalFolderToolbarAction::Refresh => AndroidLibraryFolderUiAction::Refresh,
-        super::LocalFolderToolbarAction::New => {
-            AndroidLibraryFolderUiAction::New(app.library.platform.folder.clone())
+        LocalFolderToolbarAction::Refresh => AndroidLibraryFolderUiAction::Refresh,
+        LocalFolderToolbarAction::New => {
+            AndroidLibraryFolderUiAction::New(app.library.media.folder.clone())
         }
     };
     apply_android_library_folder_ui_action(app, action, context);
@@ -183,13 +188,13 @@ pub(in crate::ui::library) fn show_local_folder_tree(
     app: &mut CalibRawApp,
     action_in_progress: bool,
 ) {
-    let PlatformLibraryState {
+    let MediaLibraryState {
         folder: selected_folder,
         folders,
         expanded_folders,
         ..
-    } = &mut app.library.platform;
-    let mut children_by_parent = HashMap::<&str, Vec<&calibraw_ffi::LibraryFolder>>::new();
+    } = &mut app.library.media;
+    let mut children_by_parent = HashMap::<&str, Vec<&crate::platform::LibraryFolder>>::new();
     for folder in folders.iter() {
         children_by_parent
             .entry(android_folder_parent(&folder.path))
@@ -257,4 +262,27 @@ fn show_photo_import_progress(ui: &mut Ui, status: crate::app::PhotoImportStatus
             }
         },
     );
+}
+
+pub(in crate::ui::library) fn android_library_location_label(root: &str, folder: &str) -> String {
+    if folder.is_empty() {
+        root.to_owned()
+    } else {
+        format!("{root}/{folder}")
+    }
+}
+
+pub(in crate::ui::library) fn android_folder_parent(path: &str) -> &str {
+    path.rsplit_once('/').map_or("", |(parent, _)| parent)
+}
+
+pub(in crate::ui::library) fn android_folder_ancestors(path: &str) -> HashSet<String> {
+    let mut expanded = HashSet::from([String::new()]);
+    let mut current = path.to_owned();
+    while !current.is_empty() {
+        let parent = android_folder_parent(&current).to_owned();
+        expanded.insert(parent.clone());
+        current = parent;
+    }
+    expanded
 }

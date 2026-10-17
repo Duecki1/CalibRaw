@@ -9,17 +9,14 @@ pub(in crate::ui::library) type ThumbnailLoader = Arc<
         + 'static,
 >;
 
-#[cfg(not(target_os = "android"))]
 pub(in crate::ui::library) struct DevelopedThumbnailGpu {
     pub(super) device: eframe::wgpu::Device,
     pub(super) queue: eframe::wgpu::Queue,
 }
 
-#[cfg(not(target_os = "android"))]
 static DEVELOPED_THUMBNAIL_GPU: OnceLock<Result<Mutex<DevelopedThumbnailGpu>, String>> =
     OnceLock::new();
 
-#[cfg(not(target_os = "android"))]
 pub(in crate::ui::library) fn developed_thumbnail_gpu(
 ) -> Result<&'static Mutex<DevelopedThumbnailGpu>, String> {
     let initialized = DEVELOPED_THUMBNAIL_GPU.get_or_init(|| {
@@ -54,7 +51,6 @@ pub(in crate::ui::library) fn developed_thumbnail_gpu(
     }
 }
 
-#[cfg(not(target_os = "android"))]
 pub(in crate::ui::library) fn render_uncached_developed_thumbnail(
     path: &Path,
     maximum_edge: u32,
@@ -93,14 +89,14 @@ pub(in crate::ui::library) fn render_uncached_developed_thumbnail(
     }
 
     let performance =
-        crate::performance_settings::load(crate::performance_settings::desktop_path().as_deref());
+        crate::performance_settings::load(crate::platform::desktop_settings_path().as_deref());
     let mut camera_profile_folder = performance.camera_profile_folder;
     if performance.camera_profile_auto_detect
         && camera_profile_folder
             .as_ref()
             .is_none_or(|folder| !folder.is_dir())
     {
-        camera_profile_folder = crate::performance_settings::detected_camera_profile_folder();
+        camera_profile_folder = crate::platform::detected_camera_profile_folder();
     }
     let requested_camera_profile =
         loaded_sidecar

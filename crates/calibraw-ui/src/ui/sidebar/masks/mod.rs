@@ -29,7 +29,7 @@ pub(super) fn submask_creation_icon() -> &'static str {
 /// Touch drags scroll the strip on Android, except while they carry a card:
 /// then the drag moves the card and the strip scrolls at its ends.
 fn mask_strip_scroll_source(dragging_card: bool) -> egui::scroll_area::ScrollSource {
-    let source = if cfg!(target_os = "android") {
+    let source = if crate::platform::PlatformCaps::CURRENT.is_mobile() {
         egui::scroll_area::ScrollSource::ALL
     } else {
         egui::scroll_area::ScrollSource::default()

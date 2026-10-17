@@ -91,7 +91,6 @@ pub(crate) struct ForegroundOperation {
     pub(super) context: ForegroundOperationContext,
 }
 
-#[cfg(not(target_os = "android"))]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum OnnxRuntimeMode {
@@ -122,16 +121,13 @@ pub(crate) struct AiConsent {
 
 pub(crate) struct AiState {
     pub(crate) subject_mask_quality: calibraw_ai::models::subject::SubjectMaskQuality,
-    #[cfg(not(target_os = "android"))]
     pub(crate) gpu_acceleration: bool,
     /// Content results (AI masks, scene depth, range sources) were made from an
     /// image that has since changed. Persisted as `ai_masks_need_update`.
     pub(crate) update_needed: bool,
     pub(crate) update: Option<AiUpdate>,
-    #[cfg(not(target_os = "android"))]
     pub(crate) runtime_mode: OnnxRuntimeMode,
     /// The library Manual mode loads and the SHA-256 the user approved.
-    #[cfg(not(target_os = "android"))]
     pub(crate) manual_runtime: Option<(PathBuf, calibraw_ai::Sha256)>,
     pub(crate) library_mask_refresh: Option<LibraryAiMaskRefreshState>,
     pub(crate) consent: Option<AiConsent>,

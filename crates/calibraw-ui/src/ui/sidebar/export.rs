@@ -220,7 +220,6 @@ pub(crate) fn export_settings_controls(
 }
 
 /// A square, glyph-only touch action filling `rect` exactly.
-#[cfg(target_os = "android")]
 fn square_icon_action(
     ui: &mut Ui,
     rect: egui::Rect,
@@ -272,8 +271,8 @@ impl Sidebar {
         // Android row: square replay and share actions flank a shortened Export.
         // Each control gets an exact rect so the touch button padding cannot
         // push the row past the panel edge.
-        #[cfg(target_os = "android")]
-        let response = {
+        let publishes = app.caps().has_media_library();
+        let response = if publishes {
             let edge = moduwu_design::Metrics::of(ui.ctx()).control_height;
             let gap = ui.spacing().item_spacing.x;
             let (row, _) = ui.allocate_exact_size(
@@ -324,13 +323,12 @@ impl Sidebar {
                 app.export_and_share(frame);
             }
             export
-        };
-        #[cfg(not(target_os = "android"))]
-        let response = ui
-            .add_enabled_ui(export_enabled, |ui| {
+        } else {
+            ui.add_enabled_ui(export_enabled, |ui| {
                 moduwu_design::full_width_button(ui, "Export…")
             })
-            .inner;
+            .inner
+        };
         if response.clicked() {
             match app.export.format {
                 ExportFormat::Jpeg => app.export_jpeg(frame),
@@ -345,16 +343,16 @@ impl Sidebar {
         let content_width = ui.available_width().max(1.0);
         let column_width = content_width;
 
-        #[cfg(not(target_os = "android"))]
-        let export_picker_directory = app
-            .develop
-            .current_path
-            .as_deref()
-            .and_then(|path| path.parent())
-            .filter(|parent| !parent.as_os_str().is_empty())
-            .map(std::path::Path::to_path_buf);
-        #[cfg(target_os = "android")]
-        let export_picker_directory: Option<std::path::PathBuf> = None;
+        let export_picker_directory = if app.caps().has_folders() {
+            app.develop
+                .current_path
+                .as_deref()
+                .and_then(|path| path.parent())
+                .filter(|parent| !parent.as_os_str().is_empty())
+                .map(std::path::Path::to_path_buf)
+        } else {
+            None
+        };
         ui.allocate_ui_with_layout(
             egui::vec2(column_width, 0.0),
             egui::Layout::top_down(egui::Align::Min),
@@ -406,8 +404,7 @@ impl Sidebar {
 
                 ui.add_space(moduwu_design::SPACE_SM);
                 // Android offers the replay as an icon beside Export.
-                #[cfg(not(target_os = "android"))]
-                {
+                if app.caps().has_folders() {
                     let export_enabled = app.can_export();
                     moduwu_design::section_separator(ui);
                     let replay_response = ui

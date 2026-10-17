@@ -348,9 +348,10 @@ impl CalibRawApp {
         // On mobile the fitted graph and one detail graph share the budget.
         // Release an incompatible cached graph only once its replacement is
         // ready to upload, keeping the fitted image available on failure.
-        #[cfg(target_os = "android")]
-        if let Some(old) = self.preview.detail.take() {
-            old.pipeline.free_now(&mut render_state.renderer.write());
+        if self.caps().constrained_memory() {
+            if let Some(old) = self.preview.detail.take() {
+                old.pipeline.free_now(&mut render_state.renderer.write());
+            }
         }
         let Some(program_template) = self.preview.pipeline() else {
             return false;
@@ -576,7 +577,7 @@ fn settled_detail_uses_native_source(
     // proxy, but remains bounded so a near-fit view cannot allocate a full
     // high-megapixel processing graph.  As zoom increases the native region
     // eventually fits and becomes the authoritative fidelity path.
-    let platform_limit = if cfg!(target_os = "android") {
+    let platform_limit = if PlatformCaps::CURRENT.constrained_memory() {
         2_048
     } else {
         4_096

@@ -5,7 +5,6 @@ use crate::ui::theme;
 const STAR_COLOR: Color32 = Color32::from_rgb(234, 195, 112);
 const STAR_PREVIEW_COLOR: Color32 = Color32::from_rgb(255, 232, 183);
 const MUTED: Color32 = Color32::from_rgb(137, 145, 155);
-#[cfg(not(target_os = "android"))]
 const HOVER_ANIMATION_SECONDS: f32 = 0.18;
 const EDITOR_WIDTH: f32 = 196.0;
 
@@ -17,7 +16,6 @@ pub(crate) enum ReviewChange {
 
 /// One hover surface owns both photo details and review controls, including when
 /// the pointer moves from the image onto a star or flag.
-#[cfg(not(target_os = "android"))]
 pub(super) fn thumbnail_hover_overlay(
     ui: &mut Ui,
     rect: egui::Rect,
@@ -85,7 +83,6 @@ pub(super) fn thumbnail_hover_overlay(
 }
 
 /// Never squeeze complete metadata into ellipses or unreadably small text.
-#[cfg(not(target_os = "android"))]
 fn hover_text_lines(
     ui: &Ui,
     rect: egui::Rect,
@@ -496,8 +493,16 @@ fn compact_review_editor(
     change
 }
 
-#[cfg(not(target_os = "android"))]
+/// The open photo's rating and flag editor; `false` when no photo is open.
 pub(crate) fn show_current_photo_review(ui: &mut Ui, app: &mut CalibRawApp, compact: bool) -> bool {
+    if app.caps().has_folders() {
+        show_current_folder_photo_review(ui, app, compact)
+    } else {
+        show_current_media_library_photo_review(ui, app)
+    }
+}
+
+fn show_current_folder_photo_review(ui: &mut Ui, app: &mut CalibRawApp, compact: bool) -> bool {
     let Some(path) = app.develop.current_path.clone() else {
         return false;
     };
@@ -544,12 +549,7 @@ pub(crate) fn show_current_photo_review(ui: &mut Ui, app: &mut CalibRawApp, comp
     true
 }
 
-#[cfg(target_os = "android")]
-pub(crate) fn show_current_photo_review(
-    ui: &mut Ui,
-    app: &mut CalibRawApp,
-    _compact: bool,
-) -> bool {
+fn show_current_media_library_photo_review(ui: &mut Ui, app: &mut CalibRawApp) -> bool {
     let Some((raw_uri, asset_id)) =
         app.persistence
             .sidecar_target
@@ -581,7 +581,6 @@ pub(crate) fn show_current_photo_review(
     true
 }
 
-#[cfg(not(target_os = "android"))]
 pub(super) fn apply_review(app: &mut CalibRawApp, assets: Vec<LibraryAsset>, change: ReviewChange) {
     let mut failures = Vec::new();
     for asset in assets {
@@ -617,7 +616,7 @@ pub(super) fn apply_review(app: &mut CalibRawApp, assets: Vec<LibraryAsset>, cha
     }
 }
 
-#[cfg(all(test, not(target_os = "android")))]
+#[cfg(test)]
 mod tests {
     use super::*;
 

@@ -1,12 +1,10 @@
 use super::*;
-#[cfg(not(target_os = "android"))]
 use document_load::{prepare_ahead_of_open, AheadOfOpen};
 use document_load::{
     run_document_load, CameraProfileSettings, DocumentLoadJob, PreviewProgramSources,
     SIDECAR_MIGRATED_NOTICE,
 };
 pub(crate) use document_load::{DocumentSource, ProfileReload};
-#[cfg(not(target_os = "android"))]
 pub(crate) use prefetch::NeighbourPrefetch;
 
 pub(super) fn remove_temporary_raw(path: &std::path::Path) {
@@ -20,17 +18,16 @@ pub(super) fn remove_temporary_raw(path: &std::path::Path) {
 
 pub(super) fn load_sidecar_for_target(
     target: &crate::sidecar::SidecarTarget,
-    #[cfg(target_os = "android")] android_app: &calibraw_ffi::AndroidApp,
+    platform: &dyn Platform,
 ) -> Result<Option<crate::sidecar::LoadedSidecar>, crate::sidecar::SidecarError> {
     match target {
         crate::sidecar::SidecarTarget::Desktop { raw_path } => {
             crate::sidecar::load_desktop(raw_path)
         }
-        #[cfg(target_os = "android")]
         crate::sidecar::SidecarTarget::Android {
             raw_uri,
             display_name,
-        } => crate::sidecar::load_android(android_app, raw_uri, display_name),
+        } => platform.load_sidecar(raw_uri, display_name),
     }
 }
 
@@ -49,7 +46,6 @@ pub(super) fn raw_cache_key_for_target(target: &crate::sidecar::SidecarTarget) -
                 .unwrap_or_default();
             format!("desktop:{}:{bytes}:{modified}", raw_path.display())
         }
-        #[cfg(target_os = "android")]
         crate::sidecar::SidecarTarget::Android { raw_uri, .. } => {
             format!("android:{raw_uri}")
         }
@@ -72,7 +68,6 @@ pub(super) fn prewarm_dcp_profile_folder(folder: Option<std::path::PathBuf>) {
         });
 }
 
-#[cfg(not(target_os = "android"))]
 pub(super) fn selected_picker_directory(path: &std::path::Path) -> Option<std::path::PathBuf> {
     if path.is_dir() {
         Some(path.to_path_buf())
@@ -282,7 +277,6 @@ mod cache;
 mod document_load;
 mod documents;
 mod pickers;
-#[cfg(not(target_os = "android"))]
 mod prefetch;
 mod profiles;
 mod settings;

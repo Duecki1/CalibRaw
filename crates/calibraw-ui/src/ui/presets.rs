@@ -1,21 +1,19 @@
 //! The Presets sidebar panel, its dialogs and the "Apply preset" menus.
 use crate::app::{CalibRawApp, GroupDialogMode, PresetEditor, PresetEditorMode};
 use crate::pipeline::AdjustmentGroup;
+use crate::platform::PlatformCaps;
 use crate::presets::DeletedGroupPresets;
 use crate::sidecar::EditSelection;
 use eframe::egui::{self, Ui};
 use std::path::PathBuf;
 
-#[cfg(not(target_os = "android"))]
-const ROW_HELP: &str = "Previewing on the photo. Click to apply, right-click for more.";
-#[cfg(target_os = "android")]
-const ROW_HELP: &str = "Tap to apply to this photo.";
+const POINTER_ROW_HELP: &str = "Previewing on the photo. Click to apply, right-click for more.";
+const TOUCH_ROW_HELP: &str = "Tap to apply to this photo.";
 
 #[derive(Clone, Debug)]
 enum PresetAction {
     Apply(PathBuf),
     Rename(PathBuf),
-    #[cfg(not(target_os = "android"))]
     Export(PathBuf),
     Delete(PathBuf),
     NewPreset(String),
@@ -148,7 +146,6 @@ fn selection_summary(selection: EditSelection) -> String {
 /// The Presets tab's action for the sidebar header, next to the histogram
 /// toggle, like the reset buttons of the other tabs. Creating presets and
 /// groups happens in the list itself.
-#[cfg(not(target_os = "android"))]
 pub(crate) fn show_header_actions(ui: &mut Ui, app: &mut CalibRawApp) {
     if ui
         .add_enabled_ui(app.presets.is_available(), |ui| {
@@ -208,6 +205,7 @@ pub(crate) fn show_panel(ui: &mut Ui, app: &mut CalibRawApp, frame: &eframe::Fra
         });
     }
 
+    let caps = app.caps();
     let can_create_preset = app.can_create_preset();
     let mut hovered = None;
     for (index, group) in list.groups.iter().enumerate() {
@@ -215,9 +213,9 @@ pub(crate) fn show_panel(ui: &mut Ui, app: &mut CalibRawApp, frame: &eframe::Fra
             moduwu_design::card_gap(ui);
         }
         moduwu_design::content_card(ui, |ui| {
-            show_group_title(ui, &group.name, &mut action);
+            show_group_title(ui, caps, &group.name, &mut action);
             for entry in &group.presets {
-                if show_preset_row(ui, entry, &mut action) {
+                if show_preset_row(ui, caps, entry, &mut action) {
                     hovered = Some(entry.path.clone());
                 }
             }
@@ -246,17 +244,13 @@ pub(crate) fn show_panel(ui: &mut Ui, app: &mut CalibRawApp, frame: &eframe::Fra
         action = Some(PresetAction::NewGroup);
     }
     // Touch screens have no hover; a tap applies the preset directly.
-    #[cfg(not(target_os = "android"))]
-    if let Some(path) = hovered {
+    if let Some(path) = hovered.filter(|_| caps.is_desktop()) {
         app.presets.hover.request(path);
     }
-    #[cfg(target_os = "android")]
-    let _ = hovered;
 
     match action {
         Some(PresetAction::Apply(path)) => app.apply_preset_to_current(&path, frame),
         Some(PresetAction::Rename(path)) => app.open_rename_preset_editor(&path),
-        #[cfg(not(target_os = "android"))]
         Some(PresetAction::Export(path)) => app.export_preset(&path),
         Some(PresetAction::Delete(path)) => app.presets.pending_delete = Some(path),
         Some(PresetAction::NewPreset(group)) => app.open_new_preset_editor(group),
@@ -273,11 +267,12 @@ fn show_note(ui: &mut Ui, text: &str, color: egui::Color32) -> egui::Response {
     ui.add(egui::Label::new(egui::RichText::new(text).small().color(color)).wrap())
 }
 
-/// A row of control height: the title or button fills it, and on Android a
+/// A row of control height: the title or button fills it, and on mobile a
 /// menu button sits at its right end. A bare right-to-left layout would
 /// claim the remaining height of the panel.
 fn show_menu_row<R>(
     ui: &mut Ui,
+    caps: PlatformCaps,
     menu_id: impl egui::AsIdSalt,
     add_menu: impl FnOnce(&mut Ui),
     add_contents: impl FnOnce(&mut Ui) -> R,
@@ -287,18 +282,17 @@ fn show_menu_row<R>(
         egui::Layout::right_to_left(egui::Align::Center),
         |ui| {
             // Touch screens have no right-click, so the menu gets a button.
-            #[cfg(target_os = "android")]
-            ui.push_id(menu_id, |ui| {
-                let button = moduwu_design::ghost_icon_button(
-                    ui,
-                    egui_phosphor::regular::DOTS_THREE_VERTICAL,
-                    moduwu_design::toolbar_icon_size(),
-                    "More actions",
-                );
-                moduwu_design::dropdown_menu(&button, add_menu);
-            });
-            #[cfg(not(target_os = "android"))]
-            let _ = (menu_id, add_menu);
+            if caps.is_mobile() {
+                ui.push_id(menu_id, |ui| {
+                    let button = moduwu_design::ghost_icon_button(
+                        ui,
+                        egui_phosphor::regular::DOTS_THREE_VERTICAL,
+                        moduwu_design::toolbar_icon_size(),
+                        "More actions",
+                    );
+                    moduwu_design::dropdown_menu(&button, add_menu);
+                });
+            }
             ui.with_layout(
                 egui::Layout::left_to_right(egui::Align::Center),
                 add_contents,
@@ -310,8 +304,13 @@ fn show_menu_row<R>(
 }
 
 /// The group's card title. Its actions are on a right-click menu, like the
-/// mask list, and on a menu button on Android.
-fn show_group_title(ui: &mut Ui, group: &str, action: &mut Option<PresetAction>) {
+/// mask list, and on a menu button on mobile.
+fn show_group_title(
+    ui: &mut Ui,
+    caps: PlatformCaps,
+    group: &str,
+    action: &mut Option<PresetAction>,
+) {
     let menu = |ui: &mut Ui, action: &mut Option<PresetAction>| {
         if moduwu_design::menu_item(ui, true, "Rename group…").clicked() {
             *action = Some(PresetAction::RenameGroup(group.to_owned()));
@@ -326,6 +325,7 @@ fn show_group_title(ui: &mut Ui, group: &str, action: &mut Option<PresetAction>)
     let mut android_action = None;
     let title = show_menu_row(
         ui,
+        caps,
         ("preset-group-menu", group),
         |ui| menu(ui, &mut android_action),
         |ui| {
@@ -355,14 +355,16 @@ fn show_add_row(ui: &mut Ui, enabled: bool, label: &str) -> egui::Response {
 /// whether the pointer rests on it.
 fn show_preset_row(
     ui: &mut Ui,
+    caps: PlatformCaps,
     entry: &PresetListEntry,
     action: &mut Option<PresetAction>,
 ) -> bool {
     let mut android_action = None;
     let response = show_menu_row(
         ui,
+        caps,
         ("preset-menu", &entry.path),
-        |ui| preset_actions_menu(ui, entry, &mut android_action),
+        |ui| preset_actions_menu(ui, caps, entry, &mut android_action),
         |ui| {
             ui.add_sized(
                 [ui.available_width(), moduwu_design::CONTROL_HEIGHT],
@@ -373,8 +375,16 @@ fn show_preset_row(
             )
         },
     )
-    .on_hover_text(format!("{ROW_HELP}\n{}", entry.summary));
-    moduwu_design::context_menu(&response, |ui| preset_actions_menu(ui, entry, action));
+    .on_hover_text(format!(
+        "{}\n{}",
+        if caps.is_mobile() {
+            TOUCH_ROW_HELP
+        } else {
+            POINTER_ROW_HELP
+        },
+        entry.summary
+    ));
+    moduwu_design::context_menu(&response, |ui| preset_actions_menu(ui, caps, entry, action));
     if response.clicked() {
         *action = Some(PresetAction::Apply(entry.path.clone()));
     }
@@ -386,7 +396,12 @@ fn show_preset_row(
     response.hovered() && !egui::Popup::is_any_open(ui.ctx())
 }
 
-fn preset_actions_menu(ui: &mut Ui, entry: &PresetListEntry, action: &mut Option<PresetAction>) {
+fn preset_actions_menu(
+    ui: &mut Ui,
+    caps: PlatformCaps,
+    entry: &PresetListEntry,
+    action: &mut Option<PresetAction>,
+) {
     if moduwu_design::menu_item(ui, true, "Apply to this photo").clicked() {
         *action = Some(PresetAction::Apply(entry.path.clone()));
         ui.close();
@@ -395,8 +410,7 @@ fn preset_actions_menu(ui: &mut Ui, entry: &PresetListEntry, action: &mut Option
         *action = Some(PresetAction::Rename(entry.path.clone()));
         ui.close();
     }
-    #[cfg(not(target_os = "android"))]
-    if moduwu_design::menu_item(ui, true, "Export…").clicked() {
+    if caps.has_folders() && moduwu_design::menu_item(ui, true, "Export…").clicked() {
         *action = Some(PresetAction::Export(entry.path.clone()));
         ui.close();
     }

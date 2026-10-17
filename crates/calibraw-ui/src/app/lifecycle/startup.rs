@@ -1,29 +1,44 @@
 use super::*;
 
 impl CalibRawApp {
-    #[cfg(not(target_os = "android"))]
+    /// A desktop app with default settings and no GPU, for tests.
+    #[cfg(test)]
     pub(crate) fn empty(ctx: &egui::Context) -> Self {
-        let performance_settings_path = crate::performance_settings::desktop_path();
-        let performance = crate::performance_settings::load(performance_settings_path.as_deref());
-        Self::from_performance_settings(ctx, performance_settings_path, performance)
+        Self::empty_on(
+            ctx,
+            crate::platform::fake::FakePlatform::new(PlatformCaps::DESKTOP),
+        )
+    }
+
+    /// An app on `platform` with default settings and no GPU, for tests.
+    #[cfg(test)]
+    pub(crate) fn empty_on(ctx: &egui::Context, platform: Arc<dyn Platform>) -> Self {
+        Self::from_performance_settings(
+            ctx,
+            None,
+            crate::performance_settings::PerformanceSettings::default(),
+            platform,
+        )
     }
 
     pub(in crate::app) fn from_performance_settings(
         ctx: &egui::Context,
         performance_settings_path: Option<PathBuf>,
         performance: crate::performance_settings::PerformanceSettings,
-        #[cfg(target_os = "android")] android_app: calibraw_ffi::AndroidApp,
+        platform: Arc<dyn Platform>,
     ) -> Self {
-        #[cfg(not(target_os = "android"))]
-        calibraw_core::serialized_reads::set_enabled(performance.hdd_mode);
-        #[cfg(not(target_os = "android"))]
+        let caps = platform.caps();
+        // HDD mode serializes reads from folders on rotational disks.
+        if caps.has_folders() {
+            calibraw_core::serialized_reads::set_enabled(performance.hdd_mode);
+        }
         let discord_presence = DiscordPresence::new(performance.discord_rich_presence);
-        #[cfg(not(target_os = "android"))]
         let last_library_folder = performance.last_library_folder.clone();
-        #[cfg(not(target_os = "android"))]
         let last_library_selected_folder = performance.last_library_selected_folder.clone();
-        #[cfg(not(target_os = "android"))]
-        let (camera_profile_folder, camera_profile_folder_label) = {
+        // Folder storage reads profiles from a folder on disk, found in the
+        // standard locations when asked to; a media library uses the copy
+        // it imported, prewarmed before this.
+        let (camera_profile_folder, camera_profile_folder_label) = if caps.has_folders() {
             let mut camera_profile_folder = performance.camera_profile_folder.clone();
             let mut camera_profile_folder_label = performance.camera_profile_folder_label.clone();
             if performance.camera_profile_auto_detect
@@ -31,8 +46,7 @@ impl CalibRawApp {
                     .as_ref()
                     .is_none_or(|folder| !folder.is_dir())
             {
-                camera_profile_folder =
-                    crate::performance_settings::detected_camera_profile_folder();
+                camera_profile_folder = crate::platform::detected_camera_profile_folder();
                 if let Some(folder) = &camera_profile_folder {
                     calibraw_core::diagnostics::record(format!(
                         "DCP profiles: auto-detected folder {}",
@@ -45,18 +59,21 @@ impl CalibRawApp {
             }
             prewarm_dcp_profile_folder(camera_profile_folder.clone());
             (camera_profile_folder, camera_profile_folder_label)
+        } else {
+            (
+                performance.camera_profile_folder.clone(),
+                performance.camera_profile_folder_label.clone(),
+            )
         };
-        #[cfg(target_os = "android")]
-        let (camera_profile_folder, camera_profile_folder_label) = (
-            performance.camera_profile_folder.clone(),
-            performance.camera_profile_folder_label.clone(),
-        );
         let exposure = ExposureParams::scene_referred_default();
         let masks = MaskStack::default();
         let lens_correction = LensCorrectionState::default();
         let edit_history = EditHistory::new(&exposure, &masks, &lens_correction);
-        #[cfg(not(target_os = "android"))]
-        let manual_runtime = Self::load_onnx_runtime_selection();
+        let manual_runtime = if caps.configurable_ai_runtime {
+            Self::load_onnx_runtime_selection()
+        } else {
+            None
+        };
         let library_preferences = crate::ui::library::LibraryPreferences {
             thumbnail_workers: performance.thumbnail_workers,
             automatic_thumbnail_workers: performance.thumbnail_workers_automatic,
@@ -75,7 +92,6 @@ impl CalibRawApp {
                 preview_raw: None,
                 exposure,
                 decoded_raws: DecodedRawCache::new(performance.raw_cache_files),
-                #[cfg(not(target_os = "android"))]
                 neighbour_prefetch: Default::default(),
                 selected_camera_profile: None,
                 geometry: GeometryTransform::default(),
@@ -118,24 +134,18 @@ impl CalibRawApp {
                 original_exposure: exposure,
                 original_requested: false,
                 original_rendered_state: None,
-                #[cfg(target_os = "android")]
                 original_hold: None,
                 pending_stage: None,
                 white_balance_refresh_pending: false,
                 interactive_render_ready: Arc::new(AtomicBool::new(true)),
-                #[cfg(target_os = "android")]
                 lens_original_cache: None,
-                #[cfg(target_os = "android")]
                 lens_corrected_cache: None,
             },
             develop_ui: DevelopUiState {
                 histogram_open: performance.develop_histogram_open,
-                #[cfg(not(target_os = "android"))]
                 reference: DevelopReferenceState::default(),
                 loading_thumbnail: DevelopLoadingThumbnailState::default(),
-                #[cfg(not(target_os = "android"))]
                 filmstrip_open: performance.develop_filmstrip_open,
-                #[cfg(not(target_os = "android"))]
                 filmstrip_centered_path: None,
                 sidebar_open: true,
                 crop_constraint_reference: None,
@@ -189,13 +199,10 @@ impl CalibRawApp {
             },
             ai: AiState {
                 subject_mask_quality: performance.subject_mask_quality,
-                #[cfg(not(target_os = "android"))]
                 gpu_acceleration: performance.ai_gpu_acceleration,
                 update_needed: false,
                 update: None,
-                #[cfg(not(target_os = "android"))]
                 runtime_mode: performance.onnx_runtime_mode,
-                #[cfg(not(target_os = "android"))]
                 manual_runtime,
                 library_mask_refresh: None,
                 consent: None,
@@ -232,9 +239,7 @@ impl CalibRawApp {
                 task: None,
                 batch: None,
                 publish_pending: false,
-                #[cfg(target_os = "android")]
                 android_batch_load_pending: false,
-                #[cfg(target_os = "android")]
                 share_mime_type: None,
             },
             persistence: PersistenceState {
@@ -278,9 +283,7 @@ impl CalibRawApp {
                 },
                 missing_lens_profile_prompt: performance.missing_lens_profile_prompt,
                 export_name_template: performance.export_name_template.clone(),
-                #[cfg(not(target_os = "android"))]
                 discord_rich_presence: performance.discord_rich_presence,
-                #[cfg(not(target_os = "android"))]
                 hdd_mode: performance.hdd_mode,
                 ui_design: performance.ui_design,
                 preview_backdrop: performance.preview_backdrop,
@@ -306,7 +309,6 @@ impl CalibRawApp {
                 thumbnail_cache_size_receiver: None,
                 active_tab: AppTab::default(),
                 sidebar_tab: SidebarTab::default(),
-                #[cfg(not(target_os = "android"))]
                 desktop_picker_receiver: None,
                 status: "Open a RAW, TIFF, JPEG, PNG or HEIC photo to get started.".to_owned(),
                 adaptive_preview_backdrop: crate::ui::theme::CANVAS_BACKDROP,
@@ -319,43 +321,44 @@ impl CalibRawApp {
                 onboarding_step: None,
                 tip: None,
                 version_check: Default::default(),
-                #[cfg(not(target_os = "android"))]
                 shortcuts_dialog_open: false,
             },
-            #[cfg(not(target_os = "android"))]
-            library: LibraryState::new_desktop(
-                library_preferences,
-                performance.library_folder_sidebar_open,
-            ),
-            #[cfg(target_os = "android")]
-            library: LibraryState::new_android(
-                android_app.clone(),
-                ctx,
-                library_preferences,
-                performance.last_android_library_folder,
-            ),
-            #[cfg(not(target_os = "android"))]
+            library: if caps.has_media_library() {
+                LibraryState::new_android(
+                    Arc::clone(&platform),
+                    ctx,
+                    library_preferences,
+                    performance.last_android_library_folder,
+                )
+            } else {
+                LibraryState::new_desktop(
+                    Arc::clone(&platform),
+                    library_preferences,
+                    performance.library_folder_sidebar_open,
+                )
+            },
             discord_presence,
-            #[cfg(not(target_os = "android"))]
-            toolbar_brand_texture: crate::ui::top_bar::load_toolbar_brand_texture(ctx),
+            toolbar_brand_texture: caps
+                .is_desktop()
+                .then(|| crate::ui::top_bar::load_toolbar_brand_texture(ctx)),
             egui_ctx: ctx.clone(),
             foreground_operation: None,
-            #[cfg(target_os = "android")]
             android: AndroidState {
-                android_app,
                 picker_pending: false,
                 pending_android_library_reset_reload: false,
                 camera_profile_folder_importing_label: None,
                 pending_android_profile_reload: None,
                 photo_import: None,
             },
+            platform,
         };
         let mut app = app;
         app.ui.onboarding_step = OnboardingStep::pending(&app).first().copied();
-        #[cfg(not(target_os = "android"))]
-        if let Some(folder) = last_library_folder.filter(|folder| folder.is_dir()) {
-            app.library
-                .restore_folder(folder, last_library_selected_folder, ctx);
+        if caps.has_folders() {
+            if let Some(folder) = last_library_folder.filter(|folder| folder.is_dir()) {
+                app.library
+                    .restore_folder(folder, last_library_selected_folder, ctx);
+            }
         }
         app
     }
@@ -384,88 +387,65 @@ impl CalibRawApp {
         }
     }
 
-    #[cfg(not(target_os = "android"))]
-    pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
+    /// The editor on `platform`, started from its saved settings.
+    pub(crate) fn new(cc: &eframe::CreationContext<'_>, platform: Arc<dyn Platform>) -> Self {
+        let caps = platform.caps();
         let mut editor_gpu = None;
         if let Some(render_state) = cc.wgpu_render_state.as_ref() {
             calibraw_gpu::install_uncaptured_gpu_error_handler(&render_state.device);
-            calibraw_gpu::install_gpu_device_lost_handler(&render_state.device);
-            editor_gpu = Some(calibraw_ai::GpuIdentity::new(&render_state.device));
-        }
-        crate::ui::theme::install(&cc.egui_ctx);
-        calibraw_core::diagnostics::record("CalibRaw desktop UI initialized");
-        let gpu_export_prewarm = Arc::new(crate::pipeline::GpuProgramPrewarm::new());
-        let gpu_preview_prewarm_receiver = spawn_gpu_preview_prewarm(
-            cc,
-            Some(calibraw_core::thumbnail_cache::desktop_app_cache_root()),
-            Arc::clone(&gpu_export_prewarm),
-        );
-        let mut app = Self::empty(&cc.egui_ctx);
-        crate::ui::theme::apply(&cc.egui_ctx, app.preferences.ui_design);
-        app.preview.gpu_prewarm_receiver = gpu_preview_prewarm_receiver;
-        app.export.gpu_prewarm = Some(gpu_export_prewarm);
-        app.remove_legacy_ai_denoise_cache();
-        app.remove_retired_depth_model();
-        app.remove_retired_onnx_runtimes();
-        let gpu_job_record =
-            calibraw_core::thumbnail_cache::desktop_app_cache_root().join("gpu-ai-job.txt");
-        let interrupted_gpu_job = calibraw_ai::configure(calibraw_ai::AiConfig {
-            acceleration: app.ai.gpu_acceleration,
-            runtime: app.ai_runtime_source(),
-            model_root: app.ai_model_root(),
-            job_record_path: Some(gpu_job_record),
-            gpu: editor_gpu,
-        });
-        if let Some(job) = interrupted_gpu_job {
-            app.handle_interrupted_gpu_ai_job(&job);
-        }
-        app
-    }
-
-    #[cfg(target_os = "android")]
-    pub fn new_android(
-        cc: &eframe::CreationContext<'_>,
-        android_app: calibraw_ffi::AndroidApp,
-    ) -> Self {
-        let mut editor_gpu = None;
-        if let Some(render_state) = cc.wgpu_render_state.as_ref() {
-            calibraw_gpu::install_uncaptured_gpu_error_handler(&render_state.device);
+            // A lost device is recovered by restarting (`handle_gpu_device_loss`).
+            if caps.can_restart {
+                calibraw_gpu::install_gpu_device_lost_handler(&render_state.device);
+            }
             editor_gpu = Some(calibraw_ai::GpuIdentity::new(&render_state.device));
         }
         let repaint = cc.egui_ctx.clone();
-        calibraw_ffi::attach_ui(move || repaint.request_repaint());
+        platform.attach_ui(Box::new(move || repaint.request_repaint()));
         crate::ui::theme::install(&cc.egui_ctx);
-        match calibraw_ffi::device_diagnostics(&android_app) {
-            Ok(info) => calibraw_core::diagnostics::set_device_info(info),
+        match platform.device_diagnostics() {
+            Ok(Some(info)) => calibraw_core::diagnostics::set_device_info(info),
+            Ok(None) => {}
             Err(error) => calibraw_core::diagnostics::record(error),
         }
-        calibraw_core::diagnostics::record("CalibRaw Android UI initialized");
-        let performance_settings_path = calibraw_ffi::performance_settings_path(&android_app)
+        calibraw_core::diagnostics::record(if caps.is_mobile() {
+            "CalibRaw Android UI initialized"
+        } else {
+            "CalibRaw desktop UI initialized"
+        });
+        let performance_settings_path = platform
+            .performance_settings_path()
             .map_err(|error| log::warn!("{error}"))
-            .ok();
-        let gpu_pipeline_cache_root = calibraw_ffi::gpu_pipeline_cache_dir(&android_app)
+            .ok()
+            .flatten();
+        let gpu_pipeline_cache_root = platform
+            .gpu_pipeline_cache_dir()
             .map_err(|error| log::warn!("{error}"))
-            .ok();
+            .ok()
+            .flatten();
         if std::env::var_os("CALIBRAW_LENSFUN_DB").is_none() {
-            match calibraw_ffi::lensfun_database_dir(&android_app) {
-                Ok(path) => {
+            match platform.lensfun_database_dir() {
+                Ok(Some(path)) => {
                     std::env::set_var("CALIBRAW_LENSFUN_DB", &path);
                     calibraw_core::diagnostics::record(format!(
                         "bundled Lensfun database materialized at {}",
                         path.display()
                     ));
                 }
+                Ok(None) => {}
                 Err(error) => log::warn!("{error}"),
             }
         }
         let performance = crate::performance_settings::load(performance_settings_path.as_deref());
-        if let Err(error) = calibraw_ffi::scavenge_camera_profile_mirrors(
-            &android_app,
-            performance.camera_profile_folder.as_deref(),
-        ) {
-            log::warn!("{error}");
+        // A media library uses imported copies of profile folders; drop the
+        // ones no setting names any more.
+        if caps.has_media_library() {
+            if let Err(error) = platform
+                .scavenge_camera_profile_mirrors(performance.camera_profile_folder.as_deref())
+            {
+                log::warn!("{error}");
+            }
+            prewarm_dcp_profile_folder(performance.camera_profile_folder.clone());
         }
-        prewarm_dcp_profile_folder(performance.camera_profile_folder.clone());
         let gpu_export_prewarm = Arc::new(crate::pipeline::GpuProgramPrewarm::new());
         let gpu_preview_prewarm_receiver =
             spawn_gpu_preview_prewarm(cc, gpu_pipeline_cache_root, Arc::clone(&gpu_export_prewarm));
@@ -473,27 +453,34 @@ impl CalibRawApp {
             &cc.egui_ctx,
             performance_settings_path,
             performance,
-            android_app,
+            platform,
         );
         app.preview.gpu_prewarm_receiver = gpu_preview_prewarm_receiver;
         app.export.gpu_prewarm = Some(gpu_export_prewarm);
         crate::ui::theme::apply(&cc.egui_ctx, app.preferences.ui_design);
-        if let Err(error) = calibraw_ffi::set_light_system_bars(
-            &app.android.android_app,
-            !app.preferences.ui_design.is_dark(),
-        ) {
+        if let Err(error) = app
+            .platform
+            .set_light_system_bars(!app.preferences.ui_design.is_dark())
+        {
             log::warn!("{error}");
         }
-        // Android always allows GPU providers, links its runtime into the
-        // app and keeps no GPU job record.
-        calibraw_ai::configure(calibraw_ai::AiConfig {
-            acceleration: true,
-            runtime: calibraw_ai::RuntimeSource::Automatic,
+        app.remove_legacy_ai_denoise_cache();
+        if caps.is_desktop() {
+            app.remove_retired_depth_model();
+            app.remove_retired_onnx_runtimes();
+        }
+        // Where the runtime is built in (Android), GPU providers are always
+        // allowed and no GPU job record is kept.
+        let interrupted_gpu_job = calibraw_ai::configure(calibraw_ai::AiConfig {
+            acceleration: !caps.configurable_ai_runtime || app.ai.gpu_acceleration,
+            runtime: app.ai_runtime_source(),
             model_root: app.ai_model_root(),
-            job_record_path: None,
+            job_record_path: app.platform.gpu_ai_job_record_path(),
             gpu: editor_gpu,
         });
-        app.remove_legacy_ai_denoise_cache();
+        if let Some(job) = interrupted_gpu_job {
+            app.handle_interrupted_gpu_ai_job(&job);
+        }
         app
     }
 }

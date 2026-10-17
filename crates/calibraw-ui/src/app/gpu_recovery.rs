@@ -3,10 +3,6 @@
 
 use super::*;
 
-/// Set in a process started by `restart_command`, so a GPU that fails again
-/// right away does not restart CalibRaw in a loop.
-const RESTARTED_AFTER_GPU_LOSS: &str = "CALIBRAW_RESTARTED_AFTER_GPU_LOSS";
-
 impl CalibRawApp {
     /// Turns GPU AI off when the previous run ended during `job` on the GPU,
     /// as `calibraw_ai::configure` reports it.
@@ -35,7 +31,7 @@ impl CalibRawApp {
         }
         let save_failure = self.save_edits_before_exit();
 
-        let restart = restart_command();
+        let restart = self.platform.restart_after_gpu_loss_command();
         let mut message =
             "The graphics driver reset the GPU, so CalibRaw cannot continue.".to_owned();
         match &save_failure {
@@ -52,12 +48,7 @@ impl CalibRawApp {
         } else {
             " Please start CalibRaw again."
         });
-        rfd::MessageDialog::new()
-            .set_level(rfd::MessageLevel::Error)
-            .set_title("CalibRaw has to restart")
-            .set_description(message)
-            .set_buttons(rfd::MessageButtons::Ok)
-            .show();
+        crate::platform::show_fatal_message("CalibRaw has to restart", &message);
 
         // This loss has been reported; the next start must not find the record
         // of a job that is still running and report it again.
@@ -78,25 +69,4 @@ impl CalibRawApp {
         self.flush_sidecar_on_exit();
         self.persistence.sidecar_save_error_dialog.take()
     }
-}
-
-/// This program with its arguments, or `None` where a restart cannot work:
-/// after a restart that already followed a GPU loss, and inside Flatpak,
-/// whose sandbox ends with this process.
-fn restart_command() -> Option<std::process::Command> {
-    if std::env::var_os(RESTARTED_AFTER_GPU_LOSS).is_some()
-        || std::env::var_os("FLATPAK_ID").is_some()
-    {
-        return None;
-    }
-    // An AppImage runs from a temporary mount; restart the image itself.
-    let program = match std::env::var_os("APPIMAGE") {
-        Some(image) => PathBuf::from(image),
-        None => std::env::current_exe().ok()?,
-    };
-    let mut command = std::process::Command::new(program);
-    command
-        .args(std::env::args_os().skip(1))
-        .env(RESTARTED_AFTER_GPU_LOSS, "1");
-    Some(command)
 }

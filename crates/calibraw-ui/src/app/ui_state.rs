@@ -2,7 +2,6 @@
 
 use super::*;
 
-#[cfg(not(target_os = "android"))]
 pub(crate) enum DesktopPickerEvent {
     RawFile(Option<PathBuf>),
     LibraryFolder(Option<PathBuf>),
@@ -26,9 +25,7 @@ pub(crate) struct PreferencesState {
     /// Ask about manual correction when automatic correction finds no profile.
     pub(crate) missing_lens_profile_prompt: bool,
     pub(crate) export_name_template: String,
-    #[cfg(not(target_os = "android"))]
     pub(crate) discord_rich_presence: bool,
-    #[cfg(not(target_os = "android"))]
     pub(crate) hdd_mode: bool,
     pub(crate) ui_design: UiDesign,
     pub(crate) preview_backdrop: PreviewBackdrop,
@@ -54,9 +51,9 @@ pub(crate) enum OnboardingStep {
     SubjectMasks,
     CopyPaste,
     ExportNames,
-    #[cfg(not(target_os = "android"))]
+    /// Desktop only: Android imports profiles from Settings.
     CameraProfiles,
-    #[cfg(not(target_os = "android"))]
+    /// Desktop only, where Discord can be reached.
     Discord,
 }
 
@@ -84,17 +81,15 @@ pub(crate) struct UiState {
     pub(in crate::app) tip: Option<ShownTip>,
     pub(in crate::app) version_check: version_update::VersionCheckState,
     /// The keyboard shortcuts reference is open.
-    #[cfg(not(target_os = "android"))]
     pub(crate) shortcuts_dialog_open: bool,
     pub(crate) thumbnail_cache_size: Option<Result<u64, String>>,
     pub(crate) thumbnail_cache_size_receiver: Option<mpsc::Receiver<Result<u64, String>>>,
-    #[cfg(not(target_os = "android"))]
     pub(crate) desktop_picker_receiver: Option<mpsc::Receiver<DesktopPickerEvent>>,
 }
 
-#[cfg(target_os = "android")]
+/// Media-library workflows the platform finishes asynchronously: its picker,
+/// library reloads and imports. Idle where storage is folders.
 pub(crate) struct AndroidState {
-    pub(crate) android_app: calibraw_ffi::AndroidApp,
     pub(crate) picker_pending: bool,
     pub(crate) pending_android_library_reset_reload: bool,
     pub(crate) camera_profile_folder_importing_label: Option<String>,
@@ -104,11 +99,10 @@ pub(crate) struct AndroidState {
     pub(crate) photo_import: Option<PhotoImportStatus>,
 }
 
-#[cfg(target_os = "android")]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum PhotoImportStatus {
-    /// Android is copying the picked photos into the library.
-    Copying(calibraw_ffi::ImportProgress),
+    /// The platform is copying the picked photos into the library.
+    Copying(crate::platform::ImportProgress),
     /// The copy finished; the library is rescanning to show the photos.
     Loading,
 }

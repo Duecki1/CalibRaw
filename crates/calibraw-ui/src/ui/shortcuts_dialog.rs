@@ -9,11 +9,7 @@ use crate::app::CalibRawApp;
 use eframe::egui;
 
 /// Primary modifier in the platform's own spelling (egui's `COMMAND`).
-const COMMAND: &str = if cfg!(target_os = "macos") {
-    "Cmd"
-} else {
-    "Ctrl"
-};
+const COMMAND: &str = crate::platform::PRIMARY_MODIFIER_NAME;
 
 /// One control. Each entry of `inputs` is an alternative way to do it.
 struct Control {

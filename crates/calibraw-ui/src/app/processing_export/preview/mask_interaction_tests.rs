@@ -74,7 +74,6 @@ fn mask_crop_reuse_handles_navigation_image_edges_and_large_imported_widths() {
     );
 }
 
-#[cfg(not(target_os = "android"))]
 #[test]
 fn zoom_drag_mapping_refines_all_layers_and_release_keeps_the_last_edit() {
     let gpu = calibraw_gpu::request_headless_device(&calibraw_gpu::HeadlessDeviceRequest {

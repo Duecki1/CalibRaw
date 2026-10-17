@@ -2,26 +2,23 @@
 //! MP4 that replays the edit category by category.
 //!
 //! Runs on a worker thread. Progress is reported through a callback and the
-//! MP4 is published atomically at the destination. Platform encoders live in
-//! `desktop` (FFmpeg) and `android` (MediaCodec through `calibraw-ffi`).
+//! MP4 is published atomically at the destination. Encoders live in `desktop`
+//! (FFmpeg) and `android` (the platform codec, MediaCodec on Android); the
+//! platform's `VideoEncoder` capability picks one.
 
 mod frames;
 mod plan;
 
-#[cfg(not(target_os = "android"))]
-mod desktop;
-#[cfg(not(target_os = "android"))]
-use desktop::{ensure_ffmpeg_available, ReplayFrameWriter};
-#[cfg(any(target_os = "android", test))]
 mod android;
-#[cfg(target_os = "android")]
-use android::ReplayFrameWriter;
+mod desktop;
+use desktop::ensure_ffmpeg_available;
 
 use crate::pipeline::{
     spawn_tiled_export, ExportBitDepth, ExportEvent, ExportFormat, ExportMetadata,
     ExportResizeMode, ExportSettings, ExportTarget, ExposureParams, GeometryTransform,
     GpuProgramPrewarm, LoadedRaw, MaskStack, RemoveEditState, TileSpec, TiledExportJob,
 };
+use crate::platform::{Platform, VideoEncoder};
 use calibraw_gpu::wgpu;
 use frames::{
     brand_outro_frame, crossfade, draw_stage_title, fit_to_canvas, replay_canvas_dimensions,
@@ -66,8 +63,53 @@ pub(crate) struct ReplayRequest {
     pub(crate) final_masks: MaskStack,
     pub(crate) final_remove: RemoveEditState,
     pub(crate) gpu_export_prewarm: Option<Arc<GpuProgramPrewarm>>,
-    #[cfg(target_os = "android")]
-    pub(crate) android_app: calibraw_ffi::AndroidApp,
+    pub(crate) platform: Arc<dyn Platform>,
+}
+
+/// The encoder the platform's `VideoEncoder` capability names.
+enum ReplayFrameWriter {
+    Ffmpeg(desktop::ReplayFrameWriter),
+    Platform(android::ReplayFrameWriter),
+}
+
+impl ReplayFrameWriter {
+    fn start(
+        platform: &dyn Platform,
+        path: &Path,
+        width: u32,
+        height: u32,
+    ) -> Result<Self, String> {
+        Ok(match platform.caps().video_encoder {
+            VideoEncoder::Ffmpeg => {
+                Self::Ffmpeg(desktop::ReplayFrameWriter::start(path, width, height)?)
+            }
+            VideoEncoder::Platform => Self::Platform(android::ReplayFrameWriter::start(
+                platform, path, width, height,
+            )?),
+        })
+    }
+
+    /// One RGB frame of the size the writer was started with.
+    fn write_frame(&mut self, rgb: &[u8]) -> Result<(), String> {
+        match self {
+            Self::Ffmpeg(writer) => writer.write_frame(rgb),
+            Self::Platform(writer) => writer.write_frame(rgb),
+        }
+    }
+
+    fn finish(self) -> Result<(), String> {
+        match self {
+            Self::Ffmpeg(writer) => writer.finish(),
+            Self::Platform(writer) => writer.finish(),
+        }
+    }
+
+    fn cancel(&mut self) {
+        match self {
+            Self::Ffmpeg(writer) => writer.cancel(),
+            Self::Platform(writer) => writer.cancel(),
+        }
+    }
 }
 
 /// Progress of a running replay.
@@ -217,8 +259,7 @@ fn write_video_frame(
 /// may create and rename files but not directories, so the stills go to the
 /// app's own cache folder.
 fn render_cache_parent(destination: &Path) -> PathBuf {
-    #[cfg(not(target_os = "android"))]
-    if crate::desktop_portal::is_flatpak() {
+    if crate::platform::is_flatpak() {
         if let Some(cache) = std::env::var_os("XDG_CACHE_HOME").map(PathBuf::from) {
             let cache = cache.join("calibraw");
             if std::fs::create_dir_all(&cache).is_ok() {
@@ -242,8 +283,9 @@ pub(crate) fn render_edit_replay(
     cancellation: &Arc<AtomicBool>,
     progress: &mut dyn FnMut(ReplayProgress),
 ) -> Result<PathBuf, ReplayError> {
-    #[cfg(not(target_os = "android"))]
-    ensure_ffmpeg_available()?;
+    if request.platform.caps().video_encoder == VideoEncoder::Ffmpeg {
+        ensure_ffmpeg_available()?;
+    }
     let stages = replay_stage_plan(
         request.original_exposure,
         request.final_exposure,
@@ -324,11 +366,8 @@ pub(crate) fn render_edit_replay(
         .tempfile_in(parent)
         .map_err(|error| format!("Could not create temporary replay output: {error}"))?
         .into_temp_path();
-    #[cfg(not(target_os = "android"))]
-    let mut writer = ReplayFrameWriter::start(temporary.as_ref(), canvas_width, canvas_height)?;
-    #[cfg(target_os = "android")]
     let mut writer = ReplayFrameWriter::start(
-        &request.android_app,
+        &*request.platform,
         temporary.as_ref(),
         canvas_width,
         canvas_height,
@@ -550,6 +589,9 @@ mod tests {
             final_masks: MaskStack::default(),
             final_remove: RemoveEditState::default(),
             gpu_export_prewarm: None,
+            platform: crate::platform::fake::FakePlatform::new(
+                crate::platform::PlatformCaps::DESKTOP,
+            ),
         })
     }
 

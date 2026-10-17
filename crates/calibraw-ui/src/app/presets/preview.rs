@@ -25,7 +25,6 @@ pub(crate) struct PresetHoverPreview {
 
 impl PresetHoverPreview {
     /// Reports the preset under the pointer for this frame.
-    #[cfg(not(target_os = "android"))]
     pub(crate) fn request(&mut self, path: PathBuf) {
         self.requested = Some(path);
     }
@@ -113,7 +112,7 @@ impl CalibRawApp {
     }
 }
 
-#[cfg(all(test, not(target_os = "android")))]
+#[cfg(test)]
 mod tests {
     use super::*;
 

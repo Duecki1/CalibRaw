@@ -89,7 +89,6 @@ where
     }
 
     /// Renders only the track at `width`, using the label as the widget id.
-    #[cfg(any(not(target_os = "android"), test))]
     pub(crate) fn show_inline(self, ui: &mut Ui, width: f32) -> moduwu_design::SliderResponse {
         self.slider.show_track(ui, width)
     }

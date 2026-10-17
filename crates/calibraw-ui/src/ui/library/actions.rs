@@ -4,19 +4,14 @@ const SELECTION_BAR_COUNT_LABEL_BREAKPOINT: f32 = 360.0;
 
 #[derive(Clone, Debug)]
 pub(crate) enum LibraryAction {
-    #[cfg(not(target_os = "android"))]
     Review(Vec<LibraryAsset>, super::review::ReviewChange),
     Export(Vec<LibraryAsset>),
-    #[cfg(not(target_os = "android"))]
     Merge(super::MergeKind, Vec<LibraryAsset>),
     CopyAdjustments(LibraryAsset),
     PasteAdjustments(Vec<LibraryAsset>),
     ApplyPreset(Vec<LibraryAsset>, PathBuf),
-    #[cfg(not(target_os = "android"))]
     Copy(Vec<LibraryAsset>),
-    #[cfg(not(target_os = "android"))]
     Cut(Vec<LibraryAsset>),
-    #[cfg(not(target_os = "android"))]
     PasteIntoAssetFolder(LibraryAsset),
     Duplicate(Vec<LibraryAsset>),
     Rename(LibraryAsset),
@@ -24,7 +19,6 @@ pub(crate) enum LibraryAction {
     Delete(Vec<LibraryAsset>),
 }
 
-#[cfg(not(target_os = "android"))]
 pub(crate) fn library_image_context_menu(
     ui: &mut Ui,
     app: &CalibRawApp,
@@ -229,11 +223,9 @@ pub(crate) fn apply_library_action(
     action: LibraryAction,
 ) {
     match action {
-        #[cfg(not(target_os = "android"))]
         LibraryAction::Merge(kind, assets) => {
             super::merge::start(app, frame, kind, assets, ui.ctx())
         }
-        #[cfg(not(target_os = "android"))]
         LibraryAction::Review(assets, change) => super::review::apply_review(app, assets, change),
         LibraryAction::Export(assets) => {
             if !assets.is_empty() {
@@ -275,15 +267,12 @@ pub(crate) fn apply_library_action(
         LibraryAction::ApplyPreset(assets, preset) => {
             apply_library_preset(app, assets, &preset, ui.ctx(), frame);
         }
-        #[cfg(not(target_os = "android"))]
         LibraryAction::Copy(assets) => {
             set_library_clipboard(app, ImageClipboardMode::Copy, assets);
         }
-        #[cfg(not(target_os = "android"))]
         LibraryAction::Cut(assets) => {
             set_library_clipboard(app, ImageClipboardMode::Cut, assets);
         }
-        #[cfg(not(target_os = "android"))]
         LibraryAction::PasteIntoAssetFolder(asset) => match duplicate_destination(&asset) {
             Ok(destination) => start_image_clipboard_paste(app, destination, ui.ctx()),
             Err(error) => app.library.status = format!("Could not determine paste folder: {error}"),
@@ -301,14 +290,12 @@ pub(crate) fn apply_library_action(
             });
         }
         LibraryAction::ResetAdjustments(assets) => {
-            #[cfg(not(target_os = "android"))]
             let current_to_reopen = app.develop.current_path.as_ref().and_then(|current| {
                 assets
                     .iter()
                     .find(|asset| asset.desktop_path() == Some(current.as_path()))
                     .and_then(|asset| asset.desktop_path().map(Path::to_path_buf))
             });
-            #[cfg(not(target_os = "android"))]
             if let Some(path) = current_to_reopen.as_deref() {
                 app.detach_current_file_for_library_action(path);
             }
@@ -339,7 +326,6 @@ pub(crate) fn apply_library_action(
                     failures.join(" · ")
                 )
             };
-            #[cfg(not(target_os = "android"))]
             if let Some(path) = current_to_reopen {
                 app.reload_desktop_library_document_after_reset(path, frame);
             }
@@ -353,7 +339,6 @@ pub(crate) fn apply_library_action(
 }
 
 /// An "Apply preset" submenu listing every preset. Returns the chosen preset.
-#[cfg(not(target_os = "android"))]
 fn apply_preset_menu(ui: &mut Ui, app: &CalibRawApp, enabled: bool) -> Option<PathBuf> {
     presets_submenu(ui, &crate::ui::presets::PresetList::from_app(app), enabled)
 }
@@ -386,8 +371,7 @@ fn delete_confirmed_library_assets(ui: &Ui, app: &mut CalibRawApp, assets: Vec<L
     app.library.clear_selection();
     app.library.refresh(ui.ctx());
     app.library.status = if failures.is_empty() {
-        #[cfg(not(target_os = "android"))]
-        {
+        if app.caps().has_folders() {
             format!(
                 "Moved {deleted} selected {} to the {}",
                 if deleted == 1 {
@@ -395,11 +379,9 @@ fn delete_confirmed_library_assets(ui: &Ui, app: &mut CalibRawApp, assets: Vec<L
                 } else {
                     "originals"
                 },
-                system_trash_name()
+                crate::platform::trash_name()
             )
-        }
-        #[cfg(target_os = "android")]
-        {
+        } else {
             format!(
                 "Deleted {deleted} selected {}",
                 if deleted == 1 {
@@ -417,7 +399,6 @@ fn delete_confirmed_library_assets(ui: &Ui, app: &mut CalibRawApp, assets: Vec<L
     };
 }
 
-#[cfg(not(target_os = "android"))]
 fn set_library_clipboard(
     app: &mut CalibRawApp,
     mode: ImageClipboardMode,
@@ -475,14 +456,11 @@ pub(super) fn selection_bar_more_menu<R>(
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) enum SelectionBarCommand {
     Export,
-    #[cfg(not(target_os = "android"))]
     Merge(super::MergeKind),
     CopyAdjustments,
     PasteAdjustments,
     ApplyPreset(PathBuf),
-    #[cfg(not(target_os = "android"))]
     Copy,
-    #[cfg(not(target_os = "android"))]
     Cut,
     Duplicate,
     Rename,
@@ -497,6 +475,7 @@ pub(super) fn selection_bar_actions(
     can_paste_adjustments: bool,
     presets: &crate::ui::presets::PresetList,
     compact: bool,
+    caps: PlatformCaps,
 ) -> Option<SelectionBarCommand> {
     let mut action = None;
     if selection_bar_action_button(
@@ -510,8 +489,8 @@ pub(super) fn selection_bar_actions(
     {
         action = Some(SelectionBarCommand::Export);
     }
-    #[cfg(not(target_os = "android"))]
-    if selected_count >= 2 {
+    // Merging, copying and cutting work on photos in folders.
+    if caps.has_folders() && selected_count >= 2 {
         for (kind, glyph) in [
             (super::MergeKind::Hdr, egui_phosphor::regular::STACK),
             (
@@ -550,15 +529,15 @@ pub(super) fn selection_bar_actions(
     {
         action = Some(SelectionBarCommand::PasteAdjustments);
     }
-    #[cfg(not(target_os = "android"))]
-    if selection_bar_action_button(
-        ui,
-        action_enabled,
-        compact,
-        egui_phosphor::regular::COPY,
-        "Copy",
-    )
-    .clicked()
+    if caps.has_folders()
+        && selection_bar_action_button(
+            ui,
+            action_enabled,
+            compact,
+            egui_phosphor::regular::COPY,
+            "Copy",
+        )
+        .clicked()
     {
         action = Some(SelectionBarCommand::Copy);
     }
@@ -566,8 +545,7 @@ pub(super) fn selection_bar_actions(
         if let Some(preset) = presets_submenu(ui, presets, true) {
             action = Some(SelectionBarCommand::ApplyPreset(preset));
         }
-        #[cfg(not(target_os = "android"))]
-        if moduwu_design::menu_item(ui, true, "Cut").clicked() {
+        if caps.has_folders() && moduwu_design::menu_item(ui, true, "Cut").clicked() {
             action = Some(SelectionBarCommand::Cut);
             ui.close();
         }
@@ -630,7 +608,6 @@ pub(super) fn library_selection_action(
 ) -> Option<LibraryAction> {
     match command {
         SelectionBarCommand::Export => Some(LibraryAction::Export(assets.to_vec())),
-        #[cfg(not(target_os = "android"))]
         SelectionBarCommand::Merge(kind) => {
             (assets.len() >= 2).then(|| LibraryAction::Merge(kind, assets.to_vec()))
         }
@@ -644,9 +621,7 @@ pub(super) fn library_selection_action(
         SelectionBarCommand::ApplyPreset(preset) => {
             Some(LibraryAction::ApplyPreset(assets.to_vec(), preset))
         }
-        #[cfg(not(target_os = "android"))]
         SelectionBarCommand::Copy => Some(LibraryAction::Copy(assets.to_vec())),
-        #[cfg(not(target_os = "android"))]
         SelectionBarCommand::Cut => Some(LibraryAction::Cut(assets.to_vec())),
         SelectionBarCommand::Duplicate => Some(LibraryAction::Duplicate(assets.to_vec())),
         SelectionBarCommand::Rename if assets.len() == 1 => {
@@ -712,6 +687,7 @@ pub(super) fn show_library_selection_action_bar(
                             app.library.has_copied_adjustments(),
                             &presets,
                             compact,
+                            app.caps(),
                         )
                         .and_then(|command| library_selection_action(command, selected))
                         {
@@ -745,7 +721,7 @@ pub(crate) fn show_library_action_overlays(
         .library
         .delete_originals_confirmation
         .as_ref()
-        .and_then(|assets| show_delete_originals_confirmation(ui, assets));
+        .and_then(|assets| show_delete_originals_confirmation(ui, assets, app.caps()));
     if let Some(confirmed) = delete_choice {
         if let Some(assets) = app.library.delete_originals_confirmation.take() {
             if confirmed {
@@ -813,9 +789,10 @@ pub(crate) fn show_library_action_overlays(
     let mut close_export_dialog = false;
     let mut confirm_export = false;
     let mut selected_export_format = None;
+    // Folder exports ask where to save; media-library exports are published.
+    let publishes = app.caps().has_media_library();
     if let Some(dialog) = app.library.export_dialog.as_mut() {
         let count = dialog.assets.len();
-        #[cfg(not(target_os = "android"))]
         let export_picker_directory = dialog
             .assets
             .first()
@@ -828,25 +805,18 @@ pub(crate) fn show_library_action_overlays(
         } else {
             format!("Export {count} images")
         };
-        #[cfg(not(target_os = "android"))]
-        let help = if count > 1 {
+        let help = if publishes {
+            "Exports are saved to Pictures/CalibRaw. File names are generated from each photo's name."
+        } else if count > 1 {
             "A destination folder will be selected for the batch. File names are generated from each photo's name."
         } else {
             "Choose the output file after pressing Export."
         };
-        #[cfg(target_os = "android")]
-        let help = "Exports are saved to Pictures/CalibRaw. File names are generated from each photo's name.";
-        #[cfg(not(target_os = "android"))]
-        let label = if count == 1 {
-            "Export 1 image…".to_owned()
-        } else {
-            format!("Export {count} images…")
-        };
-        #[cfg(target_os = "android")]
-        let label = if count == 1 {
-            "Export 1 image".to_owned()
-        } else {
-            format!("Export {count} images")
+        let label = match (count, publishes) {
+            (1, false) => "Export 1 image…".to_owned(),
+            (1, true) => "Export 1 image".to_owned(),
+            (_, false) => format!("Export {count} images…"),
+            (_, true) => format!("Export {count} images"),
         };
         moduwu_design::Dialog::new("library-export-dialog", title)
             .size(moduwu_design::DialogSize::Wide)
@@ -857,10 +827,7 @@ pub(crate) fn show_library_action_overlays(
                         ui,
                         &mut dialog.format,
                         &mut dialog.settings,
-                        #[cfg(not(target_os = "android"))]
                         export_picker_directory.as_deref(),
-                        #[cfg(target_os = "android")]
-                        None,
                     );
                     if format_changed {
                         selected_export_format = Some(dialog.format);

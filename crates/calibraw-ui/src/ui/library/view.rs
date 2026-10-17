@@ -1,14 +1,13 @@
 use super::*;
-#[cfg(target_os = "android")]
 use crate::app::AppTab;
 
 pub(crate) struct Library;
 
 impl Library {
     pub(crate) fn show_folder_sidebar(ui: &mut Ui, app: &mut CalibRawApp) {
-        let action_in_progress = platform::local_action_in_progress(app);
-        let folders_available = platform::local_folders_available(app);
-        let can_create_folder = platform::can_create_local_folder(app);
+        let action_in_progress = sources::local_action_in_progress(app);
+        let folders_available = sources::local_folders_available(app);
+        let can_create_folder = sources::can_create_local_folder(app);
         let mut requested_toolbar_action = None;
 
         moduwu_design::card_header(ui, |ui| {
@@ -37,8 +36,7 @@ impl Library {
                         .inner
                         .clicked()
                     {
-                        requested_toolbar_action =
-                            Some(platform::LocalFolderToolbarAction::Refresh);
+                        requested_toolbar_action = Some(LocalFolderToolbarAction::Refresh);
                     }
                     if ui
                         .add_enabled_ui(can_create_folder && !action_in_progress, |ui| {
@@ -52,7 +50,7 @@ impl Library {
                         .inner
                         .clicked()
                     {
-                        requested_toolbar_action = Some(platform::LocalFolderToolbarAction::New);
+                        requested_toolbar_action = Some(LocalFolderToolbarAction::New);
                     }
                 });
             });
@@ -77,7 +75,7 @@ impl Library {
                             ui.set_width(content_width);
                             ui.set_max_width(content_width);
                             moduwu_design::content_card(ui, |ui| {
-                                platform::show_local_folder_tree(ui, app, action_in_progress);
+                                sources::show_local_folder_tree(ui, app, action_in_progress);
                             });
                             moduwu_design::card_gap(ui);
                         },
@@ -86,17 +84,17 @@ impl Library {
         });
 
         if let Some(action) = requested_toolbar_action {
-            platform::apply_local_toolbar_action(app, action, ui.ctx());
+            sources::apply_local_toolbar_action(app, action, ui.ctx());
         }
-        platform::show_sidebar_dialogs(ui, app);
+        sources::show_sidebar_dialogs(ui, app);
     }
 
     pub(crate) fn show(ui: &mut Ui, app: &mut CalibRawApp, frame: &eframe::Frame) {
         app.library.resume_thumbnail_decoding();
         app.library.poll(ui.ctx());
 
+        let caps = app.caps();
         let mut refresh = false;
-        #[cfg(target_os = "android")]
         let mut import_raw = false;
         let mut open_asset: Option<LibraryAsset> = None;
         let mut library_action = None;
@@ -132,21 +130,23 @@ impl Library {
                     moduwu_design::toolbar_title(ui, &header_title);
                 }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    #[cfg(target_os = "android")]
-                    app.show_background_tasks(ui);
+                    // Mobile has no top bar; the library header carries its tasks and Settings.
+                    if caps.is_mobile() {
+                        app.show_background_tasks(ui);
+                    }
 
-                    #[cfg(target_os = "android")]
-                    if (if compact_header {
-                        moduwu_design::ghost_icon_button(
-                            ui,
-                            egui_phosphor::regular::GEAR,
-                            moduwu_design::toolbar_icon_size(),
-                            "Settings",
-                        )
-                    } else {
-                        moduwu_design::toolbar_button(ui, "Settings", 82.0)
-                    })
-                    .clicked()
+                    if caps.is_mobile()
+                        && (if compact_header {
+                            moduwu_design::ghost_icon_button(
+                                ui,
+                                egui_phosphor::regular::GEAR,
+                                moduwu_design::toolbar_icon_size(),
+                                "Settings",
+                            )
+                        } else {
+                            moduwu_design::toolbar_button(ui, "Settings", 82.0)
+                        })
+                        .clicked()
                     {
                         app.activate_tab(AppTab::Settings);
                     }
@@ -177,6 +177,7 @@ impl Library {
                             &mut stack_raw_companions,
                             Some(&mut selected_size),
                             64.0,
+                            caps,
                         );
                     } else {
                         show_library_view_combos(
@@ -185,6 +186,7 @@ impl Library {
                             &mut selected_size,
                             &mut selected_filter,
                             &mut stack_raw_companions,
+                            caps,
                         );
                     }
                 });
@@ -230,37 +232,34 @@ impl Library {
         moduwu_design::card_gap(ui);
 
         if app.library.location.is_none() {
-            #[cfg(not(target_os = "android"))]
-            if show_library_empty_state(
-                ui,
-                "Build your photo library",
-                "Choose a top-level photo folder. CalibRaw keeps your hierarchy intact and shows the RAW, JPEG, PNG and HEIC photos in each folder.",
-                Some("Open Folder…"),
-            ) {
-                app.open_library_folder_dialog();
+            if caps.has_folders() {
+                if show_library_empty_state(
+                    ui,
+                    "Build your photo library",
+                    "Choose a top-level photo folder. CalibRaw keeps your hierarchy intact and shows the RAW, JPEG, PNG and HEIC photos in each folder.",
+                    Some("Open Folder…"),
+                ) {
+                    app.open_library_folder_dialog();
+                }
+            } else {
+                show_library_empty_state(
+                    ui,
+                    "Your library is ready",
+                    "Use the folder sidebar to browse your Library, or tap + to import photos.",
+                    None,
+                );
             }
-            #[cfg(target_os = "android")]
-            show_library_empty_state(
-                ui,
-                "Your library is ready",
-                "Use the folder sidebar to browse your Library, or tap + to import photos.",
-                None,
-            );
         } else if app.library.scanning && !app.library.catalog_ready {
             show_library_loading_state(ui);
         } else if app.library.catalog_ready && app.library.entries.is_empty() {
-            #[cfg(not(target_os = "android"))]
             show_library_empty_state(
                 ui,
                 "No photos here yet",
-                "Choose another folder in the sidebar or add RAW, JPEG, PNG or HEIC photos to this folder.",
-                None,
-            );
-            #[cfg(target_os = "android")]
-            show_library_empty_state(
-                ui,
-                "No photos here yet",
-                "Tap + to import RAW, JPEG, PNG or HEIC photos.",
+                if caps.has_folders() {
+                    "Choose another folder in the sidebar or add RAW, JPEG, PNG or HEIC photos to this folder."
+                } else {
+                    "Tap + to import RAW, JPEG, PNG or HEIC photos."
+                },
                 None,
             );
         } else if visible_indices
@@ -299,11 +298,11 @@ impl Library {
             apply_library_action(ui, app, frame, action);
         }
 
-        platform::show_page_dialogs(ui, app);
+        sources::show_page_dialogs(ui, app);
         show_library_action_overlays(ui, app, frame);
 
-        #[cfg(target_os = "android")]
-        if !app.library.has_selection() {
+        // Photos are imported into a media library with the floating + button.
+        if caps.has_media_library() && !app.library.has_selection() {
             let rect = moduwu_design::floating_action_rect(ui.max_rect());
             let response = moduwu_design::floating_action_button(
                 ui,
@@ -319,19 +318,16 @@ impl Library {
         if refresh {
             app.library.refresh(ui.ctx());
         }
-        #[cfg(target_os = "android")]
         if import_raw {
             app.open_file_dialog(frame);
         }
         if let Some(asset) = open_asset {
-            #[cfg(not(target_os = "android"))]
-            if let Some(path) = asset.desktop_path().map(Path::to_path_buf) {
-                app.open_path(path, frame);
-            }
-            #[cfg(target_os = "android")]
-            if let Some(uri) = asset.android_uri() {
-                app.library.clear_selection();
-                app.open_android_library_document(uri, &asset.display_name);
+            match &asset.locator {
+                LibraryLocator::Desktop(path) => app.open_path(path.clone(), frame),
+                LibraryLocator::Android { uri } => {
+                    app.library.clear_selection();
+                    app.open_android_library_document(uri, &asset.display_name);
+                }
             }
         }
     }
@@ -341,24 +337,21 @@ fn library_header_title(app: &CalibRawApp) -> String {
     selected_library_folder_name(app).unwrap_or_else(|| "Library".to_owned())
 }
 
-#[cfg(not(target_os = "android"))]
 fn selected_library_folder_name(app: &CalibRawApp) -> Option<String> {
+    if app.caps().has_media_library() {
+        let folder = app.library.media.folder.as_str();
+        return Some(if folder.is_empty() {
+            "All photos".to_owned()
+        } else {
+            folder.rsplit('/').next().unwrap_or(folder).to_owned()
+        });
+    }
     app.library.folder.as_deref().map(|path| {
         path.file_name()
             .and_then(|name| name.to_str())
             .filter(|name| !name.is_empty())
             .map(str::to_owned)
             .unwrap_or_else(|| path.display().to_string())
-    })
-}
-
-#[cfg(target_os = "android")]
-fn selected_library_folder_name(app: &CalibRawApp) -> Option<String> {
-    let folder = app.library.platform.folder.as_str();
-    Some(if folder.is_empty() {
-        "All photos".to_owned()
-    } else {
-        folder.rsplit('/').next().unwrap_or(folder).to_owned()
     })
 }
 
@@ -370,9 +363,9 @@ fn show_thumbnail_grid(
     visible_indices: &Option<Vec<usize>>,
     open_asset: &mut Option<LibraryAsset>,
     // Set from thumbnail context menus, which exist on desktop only.
-    #[cfg_attr(target_os = "android", allow(unused))] library_action: &mut Option<LibraryAction>,
+    library_action: &mut Option<LibraryAction>,
 ) {
-    #[cfg(not(target_os = "android"))]
+    let caps = app.caps();
     let current_path = app.develop.current_path.clone();
     let available = ui.available_width().max(1.0);
     let available_height = ui.available_height().max(1.0);
@@ -381,7 +374,7 @@ fn show_thumbnail_grid(
         available,
         available_height,
         ui.ctx().pixels_per_point(),
-        cfg!(target_os = "android"),
+        caps.is_mobile(),
     ) * app.library.thumbnail_size().scale();
     let (placements, grid_height) = if let Some(indices) = &visible_indices {
         justified_thumbnail_layout_for_indices(
@@ -401,7 +394,6 @@ fn show_thumbnail_grid(
     };
 
     let mut protected_thumbnail_indices = HashSet::new();
-    #[cfg(not(target_os = "android"))]
     let selection_order = visible_indices.as_ref().map_or_else(
         || {
             app.library
@@ -446,33 +438,28 @@ fn show_thumbnail_grid(
                 let selected = if app.library.selection_mode() {
                     app.library.selected_assets.contains(&asset.id)
                 } else {
-                    #[cfg(not(target_os = "android"))]
-                    {
-                        current_path.as_deref() == asset.desktop_path()
-                    }
-                    #[cfg(target_os = "android")]
-                    {
-                        false
-                    }
+                    // Desktop highlights the photo open in Develop.
+                    caps.is_desktop() && current_path.as_deref() == asset.desktop_path()
                 };
-                let response = thumbnail_tile(ui, entry, item_rect, selected);
-                #[cfg(target_os = "android")]
-                if !response.hovered() {
+                let response = thumbnail_tile(ui, entry, item_rect, selected, caps);
+                if caps.is_mobile() && !response.hovered() {
                     paint_review_badge(ui, item_rect, entry.review);
                 }
-                #[cfg(not(target_os = "android"))]
-                if let Some(action) = thumbnail_hover_overlay(
-                    ui,
-                    item_rect,
-                    entry,
-                    app.library.stacked_formats(&asset.id),
-                ) {
-                    *library_action = Some(action);
-                    continue;
+                if caps.is_desktop() {
+                    if let Some(action) = thumbnail_hover_overlay(
+                        ui,
+                        item_rect,
+                        entry,
+                        app.library.stacked_formats(&asset.id),
+                    ) {
+                        *library_action = Some(action);
+                        continue;
+                    }
                 }
 
-                #[cfg(target_os = "android")]
-                {
+                // Touch: a checkbox selects, a tap opens. Desktop: modifier
+                // clicks select and a context menu holds the actions.
+                if caps.is_mobile() {
                     let checkbox = thumbnail_selection_checkbox(ui, entry, item_rect, selected);
                     let checkbox_clicked = checkbox.clicked()
                         || (response.clicked()
@@ -484,10 +471,7 @@ fn show_thumbnail_grid(
                     } else if response.clicked() && !response.secondary_clicked() {
                         *open_asset = Some(asset);
                     }
-                }
-
-                #[cfg(not(target_os = "android"))]
-                {
+                } else {
                     if response.clicked() && !response.secondary_clicked() {
                         let modifiers = ui.input(|input| input.modifiers);
                         if modifiers.shift {
@@ -603,6 +587,7 @@ fn show_library_view_combos(
     selected_size: &mut LibraryThumbnailSize,
     selected_filter: &mut LibraryReviewFilter,
     stack_raw_companions: &mut bool,
+    caps: PlatformCaps,
 ) {
     const SORT_WIDTH: f32 = 154.0;
     const SIZE_WIDTH: f32 = 118.0;
@@ -622,6 +607,7 @@ fn show_library_view_combos(
         stack_raw_companions,
         None,
         sort_width,
+        caps,
     );
     moduwu_design::responsive_combo_box(
         ui,

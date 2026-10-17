@@ -245,9 +245,8 @@ pub(super) fn thumbnail_tile(
     entry: &LibraryEntry,
     rect: egui::Rect,
     selected: bool,
+    caps: PlatformCaps,
 ) -> egui::Response {
-    #[cfg(target_os = "android")]
-    let _ = selected;
     let response = ui.interact(
         rect,
         ui.make_persistent_id(("library-thumbnail-tile", entry.asset.display_path.as_str())),
@@ -304,8 +303,8 @@ pub(super) fn thumbnail_tile(
         }
     }
 
-    #[cfg(not(target_os = "android"))]
-    if selected {
+    // Touch screens show selection with a checkbox instead.
+    if caps.is_desktop() && selected {
         let badge_edge = 24.0_f32.min(tile_rect.width() * 0.28);
         let badge_rect = egui::Rect::from_min_size(
             tile_rect.min + egui::vec2(7.0, 7.0),
@@ -324,7 +323,6 @@ pub(super) fn thumbnail_tile(
     response
 }
 
-#[cfg(any(not(target_os = "android"), test))]
 pub(super) fn thumbnail_hover_details(
     asset: &LibraryAsset,
     stacked_formats: &[crate::pipeline::RenderedImageFormat],
@@ -347,7 +345,6 @@ pub(super) fn thumbnail_hover_details(
         })
 }
 
-#[cfg(any(not(target_os = "android"), test))]
 pub(super) fn thumbnail_capture_details(asset: &LibraryAsset) -> String {
     let metadata = &asset.metadata;
     format!(
@@ -359,7 +356,6 @@ pub(super) fn thumbnail_capture_details(asset: &LibraryAsset) -> String {
     )
 }
 
-#[cfg(any(not(target_os = "android"), test))]
 fn format_thumbnail_aperture(value: f32) -> String {
     if value.is_finite() && value > 0.0 {
         format!("f/{value:.1}")
@@ -368,7 +364,6 @@ fn format_thumbnail_aperture(value: f32) -> String {
     }
 }
 
-#[cfg(any(not(target_os = "android"), test))]
 fn format_thumbnail_iso(value: f32) -> String {
     if !value.is_finite() || value <= 0.0 {
         return "ISO —".to_owned();
@@ -380,7 +375,6 @@ fn format_thumbnail_iso(value: f32) -> String {
     }
 }
 
-#[cfg(any(not(target_os = "android"), test))]
 fn format_thumbnail_shutter(seconds: f32) -> String {
     if !seconds.is_finite() || seconds <= 0.0 {
         return "— s".to_owned();
@@ -395,7 +389,6 @@ fn format_thumbnail_shutter(seconds: f32) -> String {
     }
 }
 
-#[cfg(any(not(target_os = "android"), test))]
 fn format_thumbnail_focal_length(value: f32) -> String {
     if !value.is_finite() || value <= 0.0 {
         return "— mm".to_owned();
@@ -407,7 +400,6 @@ fn format_thumbnail_focal_length(value: f32) -> String {
     }
 }
 
-#[cfg(target_os = "android")]
 pub(super) fn thumbnail_selection_checkbox(
     ui: &mut Ui,
     entry: &LibraryEntry,

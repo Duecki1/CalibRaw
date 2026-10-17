@@ -1,6 +1,5 @@
 use super::*;
 
-#[cfg(not(target_os = "android"))]
 use super::export::run_export_item;
 
 pub(in crate::app) fn batch_export_overall_fraction(
@@ -33,14 +32,12 @@ pub(in crate::app) fn batch_export_overall_fraction(
         .clamp(0.0, EXPORT_MAX_INCOMPLETE_FRACTION)
 }
 
-#[cfg(not(target_os = "android"))]
 struct DesktopLibraryBatchExportRequest {
-    jobs: VecDeque<LibraryBatchExportJob>,
+    jobs: VecDeque<FileBatchExportJob>,
     context: DesktopLibraryExportContext,
     repaint: egui::Context,
 }
 
-#[cfg(not(target_os = "android"))]
 struct DesktopLibraryExportContext {
     device: wgpu::Device,
     queue: wgpu::Queue,
@@ -54,7 +51,6 @@ struct DesktopLibraryExportContext {
     cancellation: Arc<std::sync::atomic::AtomicBool>,
 }
 
-#[cfg(not(target_os = "android"))]
 fn spawn_desktop_library_batch_export(
     request: DesktopLibraryBatchExportRequest,
 ) -> mpsc::Receiver<LibraryBatchExportEvent> {
@@ -135,9 +131,8 @@ fn spawn_desktop_library_batch_export(
     receiver
 }
 
-#[cfg(not(target_os = "android"))]
 fn prepare_desktop_library_export_item(
-    job: &LibraryBatchExportJob,
+    job: &FileBatchExportJob,
     context: &DesktopLibraryExportContext,
 ) -> Result<ExportItemRequest, String> {
     let device = &context.device;
@@ -332,7 +327,6 @@ impl CalibRawApp {
         );
     }
 
-    #[cfg(target_os = "android")]
     pub(crate) fn start_android_library_exports(
         &mut self,
         targets: Vec<AndroidLibraryExportTarget>,
@@ -350,7 +344,7 @@ impl CalibRawApp {
         }
         let pending = targets
             .into_iter()
-            .map(|target| LibraryBatchExportJob { target })
+            .map(LibraryBatchExportJob::MediaLibrary)
             .collect::<VecDeque<_>>();
         let total = pending.len();
         let cancellation = Arc::new(std::sync::atomic::AtomicBool::new(false));
@@ -376,7 +370,8 @@ impl CalibRawApp {
         self.egui_ctx.request_repaint();
     }
 
-    #[cfg(target_os = "android")]
+    /// Opens the next photo of a media-library batch; its export starts when
+    /// the photo has loaded (`on_library_batch_load_finished`).
     pub(in crate::app) fn start_next_library_export(&mut self, _frame: &eframe::Frame) {
         if self.ui.active_tab == AppTab::Develop {
             if let Some(task) = self.export.task.as_mut() {
@@ -408,18 +403,20 @@ impl CalibRawApp {
                 self.finish_library_batch_export();
                 return;
             };
+            let LibraryBatchExportJob::MediaLibrary(target) = job else {
+                return;
+            };
 
             if let Some(task) = self.export.task.as_mut() {
-                task.phase = format!("Opening {}…", job.target.display_name());
+                task.phase = format!("Opening {}…", target.display_name());
                 task.completed_tiles = 0;
                 task.total_tiles = 0;
             }
-            let display_name = job.target.display_name().to_owned();
-            match calibraw_ffi::open_library_document(
-                &self.android.android_app,
-                &job.target.uri,
-                &display_name,
-            ) {
+            let display_name = target.display_name().to_owned();
+            match self
+                .platform
+                .open_library_document(&target.uri, &display_name)
+            {
                 Ok(()) => {
                     self.export.android_batch_load_pending = true;
                     self.android.picker_pending = true;
@@ -443,7 +440,8 @@ impl CalibRawApp {
         }
     }
 
-    #[cfg(target_os = "android")]
+    /// Exports the media-library photo the batch opened. Folder batches
+    /// render in their own worker and ignore loads.
     pub(in crate::app) fn on_library_batch_load_finished(
         &mut self,
         success: bool,
@@ -452,7 +450,7 @@ impl CalibRawApp {
         let Some(batch) = self.export.batch.as_ref() else {
             return;
         };
-        let Some(current) = batch.current.as_ref() else {
+        let Some(LibraryBatchExportJob::MediaLibrary(current)) = batch.current.as_ref() else {
             return;
         };
 
@@ -464,7 +462,7 @@ impl CalibRawApp {
         }
 
         if !success {
-            let name = current.target.display_name().to_owned();
+            let name = current.display_name().to_owned();
             if let Some(batch) = self.export.batch.as_mut() {
                 if !batch.cancel_requested {
                     batch.failures.push(format!("{name}: photo load failed"));
@@ -478,7 +476,7 @@ impl CalibRawApp {
 
         let format = batch.format;
         let settings = batch.settings.clone();
-        let display_name = current.target.display_name().to_owned();
+        let display_name = current.display_name().to_owned();
         self.export.settings = settings;
         let original_name = super::export::export_source_stem(None, Some(&display_name));
         let Some(raw) = self.develop.loaded_raw.as_deref() else {
@@ -537,7 +535,6 @@ impl CalibRawApp {
         }
     }
 
-    #[cfg(target_os = "android")]
     pub(in crate::app) fn complete_android_library_batch_export_item(
         &mut self,
         result: Result<(), String>,
@@ -546,7 +543,7 @@ impl CalibRawApp {
             let name = batch
                 .current
                 .as_ref()
-                .map(|job| job.target.display_name().to_owned())
+                .map(LibraryBatchExportJob::display_name)
                 .unwrap_or_else(|| "image".to_owned());
             match result {
                 Ok(()) => batch.completed += 1,
@@ -582,7 +579,6 @@ impl CalibRawApp {
         }
     }
 
-    #[cfg(target_os = "android")]
     pub(in crate::app) fn resume_android_library_batch_export_if_possible(
         &mut self,
         frame: &eframe::Frame,
@@ -618,7 +614,7 @@ impl CalibRawApp {
                 batch.total
             )
         } else if batch.failures.is_empty() {
-            if cfg!(target_os = "android") {
+            if self.caps().has_media_library() {
                 format!(
                     "Exported {succeeded} {} to Pictures/CalibRaw.",
                     if succeeded == 1 { "image" } else { "images" }
@@ -652,7 +648,6 @@ impl CalibRawApp {
         self.egui_ctx.request_repaint();
     }
 
-    #[cfg(not(target_os = "android"))]
     pub(crate) fn start_library_exports(
         &mut self,
         jobs: Vec<(PathBuf, LibraryExportDestination)>,
@@ -675,7 +670,7 @@ impl CalibRawApp {
         };
         let pending = jobs
             .into_iter()
-            .map(|(source, destination)| LibraryBatchExportJob {
+            .map(|(source, destination)| FileBatchExportJob {
                 source,
                 destination,
             })
@@ -688,7 +683,7 @@ impl CalibRawApp {
                 device: render_state.device.clone(),
                 queue: render_state.queue.clone(),
                 format,
-                settings,
+                settings: settings.clone(),
                 camera_profile_mode: self.preferences.camera_profile_mode,
                 camera_profile_folder: self.preferences.camera_profile_folder.clone(),
                 last_camera_profile: self.preferences.last_camera_profile.clone(),
@@ -705,6 +700,8 @@ impl CalibRawApp {
             completed: 0,
             failures: Vec::new(),
             cancel_requested: false,
+            format,
+            settings,
         });
         self.export.task = Some(ExportTask::new(
             ExportTaskKind::LibraryBatch,
@@ -717,24 +714,15 @@ impl CalibRawApp {
         self.egui_ctx.request_repaint();
     }
 
-    #[cfg(not(target_os = "android"))]
-    pub(in crate::app) fn on_library_batch_load_finished(
-        &mut self,
-        _success: bool,
-        _frame: &eframe::Frame,
-    ) {
-    }
-
-    #[cfg(target_os = "android")]
     pub(in crate::app) fn poll_android_export_publish(&mut self) {
-        while let Some(result) = calibraw_ffi::take_export_publish_result() {
+        while let Some(result) = self.platform.take_export_publish_result() {
             self.export.publish_pending = false;
             if self.export.batch.is_some() {
                 match result {
-                    calibraw_ffi::ExportPublishResult::Published(_) => {
+                    crate::platform::ExportPublishResult::Published(_) => {
                         self.complete_android_library_batch_export_item(Ok(()));
                     }
-                    calibraw_ffi::ExportPublishResult::Failed(error) => {
+                    crate::platform::ExportPublishResult::Failed(error) => {
                         log::error!("Android batch export publish failed: {error}");
                         self.complete_android_library_batch_export_item(Err(error));
                     }
@@ -742,11 +730,11 @@ impl CalibRawApp {
                 continue;
             }
             match result {
-                calibraw_ffi::ExportPublishResult::Published(published) => {
+                crate::platform::ExportPublishResult::Published(published) => {
                     self.ui.notice = Some(format!("Exported to {}", published.location));
                     self.share_finished_export(&published);
                 }
-                calibraw_ffi::ExportPublishResult::Failed(error) => {
+                crate::platform::ExportPublishResult::Failed(error) => {
                     self.export.share_mime_type = None;
                     self.report_error(ErrorKind::Export, format!("Export failed: {error}"));
                 }
@@ -755,7 +743,6 @@ impl CalibRawApp {
         }
     }
 
-    #[cfg(not(target_os = "android"))]
     pub(in crate::app) fn poll_library_batch_export_worker(&mut self) {
         let (events, disconnected) = {
             let receiver = self.export.task.as_ref().and_then(|task| {
@@ -775,7 +762,7 @@ impl CalibRawApp {
             match event {
                 LibraryBatchExportEvent::Started { job } => {
                     if let Some(batch) = self.export.batch.as_mut() {
-                        batch.current = Some(job);
+                        batch.current = Some(LibraryBatchExportJob::File(job));
                     }
                     if let Some(task) = self.export.task.as_mut() {
                         task.completed_tiles = 0;

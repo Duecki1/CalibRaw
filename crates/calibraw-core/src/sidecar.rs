@@ -35,9 +35,7 @@ pub const SIDECAR_SUFFIX: &str = ".calibraw";
 /// The AI-denoise result saved next to a RAW. It is large derived data, so it
 /// lives outside the sidecar and only while the saved edit uses AI denoise.
 pub const AI_DENOISE_SUFFIX: &str = ".calibraw-denoise";
-#[cfg(not(target_os = "android"))]
 pub const DEVELOPED_THUMBNAIL_SUFFIX: &str = ".calibraw-thumb.jpg";
-#[cfg(not(target_os = "android"))]
 const DEVELOPED_THUMBNAIL_FINGERPRINT_SUFFIX: &str = ".calibraw-thumb.fingerprint";
 pub const MAX_SIDECAR_BYTES: u64 = if cfg!(target_os = "android") {
     32 * 1024 * 1024
@@ -70,7 +68,7 @@ pub enum SidecarTarget {
     Desktop {
         raw_path: PathBuf,
     },
-    #[cfg(target_os = "android")]
+    /// A photo in Android's media library.
     Android {
         raw_uri: String,
         display_name: String,
@@ -368,7 +366,6 @@ pub use transfer::{
 };
 
 pub use desktop::sidecar_path_for_raw;
-#[cfg(not(target_os = "android"))]
 pub use desktop::{
     ai_denoise_path_for_raw, copy_developed_thumbnail_cache, desktop_sidecar_fingerprint,
     developed_thumbnail_cache_is_fresh, developed_thumbnail_path_for_raw,

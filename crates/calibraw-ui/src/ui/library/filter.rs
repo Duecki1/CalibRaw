@@ -96,7 +96,6 @@ const SORT_GROUPS: &[(&str, [(LibrarySortOrder, &str); 2])] = &[
 ];
 
 /// A chip that includes one value in a filter; several can be selected.
-#[cfg(not(target_os = "android"))]
 fn toggle_chip(ui: &mut Ui, selected: &mut bool, label: impl Into<egui::WidgetText>) {
     if moduwu_design::chip(ui, label, *selected).clicked() {
         *selected = !*selected;
@@ -108,9 +107,8 @@ pub(super) fn show_sort_filter_options(
     sort: &mut LibrarySortOrder,
     filter: &mut LibraryReviewFilter,
     stack_raw_companions: &mut bool,
+    caps: PlatformCaps,
 ) {
-    #[cfg(target_os = "android")]
-    let _ = filter;
     ui.set_min_width(280.0);
     ui.strong("Sort by");
     let mut group = SORT_GROUPS
@@ -142,8 +140,7 @@ pub(super) fn show_sort_filter_options(
              as the RAW, and hide the JPEG or HEIC with the same name.",
     );
 
-    #[cfg(not(target_os = "android"))]
-    {
+    if caps.is_desktop() {
         ui.separator();
         ui.strong("Show ratings");
         let had_ratings = filter.ratings.iter().any(|selected| *selected);
@@ -217,6 +214,7 @@ pub(super) fn sort_filter_popup(
     stack_raw_companions: &mut bool,
     compact_size: Option<&mut LibraryThumbnailSize>,
     width: f32,
+    caps: PlatformCaps,
 ) {
     let compact = compact_size.is_some();
     let label: egui::WidgetText = if compact {
@@ -248,7 +246,7 @@ pub(super) fn sort_filter_popup(
         egui::ScrollArea::vertical()
             .max_height(480.0)
             .show(ui, |ui| {
-                show_sort_filter_options(ui, sort, filter, stack_raw_companions);
+                show_sort_filter_options(ui, sort, filter, stack_raw_companions, caps);
                 if let Some(size) = compact_size {
                     ui.separator();
                     ui.strong("Thumbnail size");

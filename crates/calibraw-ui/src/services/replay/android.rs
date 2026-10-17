@@ -1,30 +1,26 @@
-//! Android replay encoding through MediaCodec (`calibraw-ffi`).
+//! Replay encoding through the platform's codec (MediaCodec on Android),
+//! which takes planar YUV.
 
-#[cfg(target_os = "android")]
 use super::REPLAY_FPS;
-#[cfg(target_os = "android")]
+use crate::platform::{Platform, ReplayVideoEncoder};
 use std::path::Path;
 
-#[cfg(target_os = "android")]
 pub(super) struct ReplayFrameWriter {
-    encoder: Option<calibraw_ffi::ReplayVideoEncoder>,
+    encoder: Option<Box<dyn ReplayVideoEncoder>>,
     width: usize,
     height: usize,
     yuv: Vec<u8>,
 }
 
-#[cfg(target_os = "android")]
 impl ReplayFrameWriter {
     pub(super) fn start(
-        app: &calibraw_ffi::AndroidApp,
+        platform: &dyn Platform,
         path: &Path,
         width: u32,
         height: u32,
     ) -> Result<Self, String> {
         Ok(Self {
-            encoder: Some(calibraw_ffi::ReplayVideoEncoder::start(
-                app, path, width, height, REPLAY_FPS,
-            )?),
+            encoder: Some(platform.start_replay_encoder(path, width, height, REPLAY_FPS)?),
             width: width as usize,
             height: height as usize,
             yuv: vec![0; width as usize * height as usize * 3 / 2],

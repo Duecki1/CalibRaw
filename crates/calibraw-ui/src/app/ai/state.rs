@@ -422,7 +422,6 @@ impl CalibRawApp {
         self.masks.overlay_revision = self.masks.overlay_revision.wrapping_add(1);
     }
 
-    #[cfg(not(target_os = "android"))]
     pub(crate) fn validate_onnx_runtime_for_ai(&mut self) -> bool {
         if self.ai.runtime_mode == OnnxRuntimeMode::Automatic {
             return true;
@@ -444,14 +443,7 @@ impl CalibRawApp {
     }
 
     pub(in crate::app) fn ai_runtime_ready(&mut self) -> bool {
-        #[cfg(target_os = "android")]
-        {
-            true
-        }
-        #[cfg(not(target_os = "android"))]
-        {
-            self.validate_onnx_runtime_for_ai()
-        }
+        !self.caps().configurable_ai_runtime || self.validate_onnx_runtime_for_ai()
     }
 }
 

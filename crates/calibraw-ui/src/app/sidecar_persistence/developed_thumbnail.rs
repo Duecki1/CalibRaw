@@ -10,18 +10,16 @@ impl CalibRawApp {
         revision: u64,
     ) {
         match target {
-            #[cfg(not(target_os = "android"))]
             crate::sidecar::SidecarTarget::Desktop { raw_path } => {
-                self.library.install_developed_thumbnail(
-                    raw_path,
-                    thumbnail,
-                    &self.egui_ctx,
-                    revision,
-                );
+                if self.caps().has_folders() {
+                    self.library.install_developed_thumbnail(
+                        raw_path,
+                        thumbnail,
+                        &self.egui_ctx,
+                        revision,
+                    );
+                }
             }
-            #[cfg(target_os = "android")]
-            crate::sidecar::SidecarTarget::Desktop { .. } => {}
-            #[cfg(target_os = "android")]
             crate::sidecar::SidecarTarget::Android { raw_uri, .. } => {
                 self.library.install_android_developed_thumbnail(
                     raw_uri,
@@ -38,22 +36,19 @@ impl CalibRawApp {
         target: &crate::sidecar::SidecarTarget,
     ) -> Result<Option<crate::pipeline::RawThumbnail>, String> {
         match target {
-            #[cfg(not(target_os = "android"))]
             crate::sidecar::SidecarTarget::Desktop { raw_path } => {
-                crate::sidecar::load_developed_thumbnail_cache(raw_path, 512)
+                if self.caps().has_folders() {
+                    crate::sidecar::load_developed_thumbnail_cache(raw_path, 512)
+                } else {
+                    Ok(None)
+                }
             }
-            #[cfg(target_os = "android")]
-            crate::sidecar::SidecarTarget::Desktop { .. } => Ok(None),
-            #[cfg(target_os = "android")]
             crate::sidecar::SidecarTarget::Android {
                 raw_uri,
                 display_name,
-            } => calibraw_ffi::load_developed_thumbnail_cache(
-                &self.android.android_app,
-                raw_uri,
-                display_name,
-                512,
-            ),
+            } => self
+                .platform
+                .load_developed_thumbnail_cache(raw_uri, display_name, 512),
         }
     }
 
@@ -195,8 +190,8 @@ impl CalibRawApp {
         let geometry = self.develop.geometry;
         let worker_job = job.clone();
         let worker_target = job.target.clone();
-        #[cfg(target_os = "android")]
-        let android_app = self.android.android_app.clone();
+        let platform = Arc::clone(&self.platform);
+        let folders = self.caps().has_folders();
         let (sender, receiver) = mpsc::channel();
         let spawn = std::thread::Builder::new()
             .name("calibraw-developed-thumbnail".to_owned())
@@ -208,8 +203,7 @@ impl CalibRawApp {
                     let thumbnail =
                         crate::pipeline::transform_thumbnail_geometry(&thumbnail, geometry);
                     match &worker_target {
-                        #[cfg(not(target_os = "android"))]
-                        crate::sidecar::SidecarTarget::Desktop { raw_path } => {
+                        crate::sidecar::SidecarTarget::Desktop { raw_path } if folders => {
                             let fingerprint = crate::sidecar::desktop_sidecar_fingerprint(
                                 raw_path,
                             )?
@@ -222,14 +216,11 @@ impl CalibRawApp {
                                 fingerprint,
                             )?;
                         }
-                        #[cfg(target_os = "android")]
                         crate::sidecar::SidecarTarget::Desktop { .. } => {}
-                        #[cfg(target_os = "android")]
                         crate::sidecar::SidecarTarget::Android {
                             raw_uri,
                             display_name,
-                        } => calibraw_ffi::save_developed_thumbnail_cache(
-                            &android_app,
+                        } => platform.save_developed_thumbnail_cache(
                             raw_uri,
                             display_name,
                             &thumbnail,

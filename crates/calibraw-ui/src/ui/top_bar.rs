@@ -1,29 +1,20 @@
 use crate::app::{AppAction, AppTab, CalibRawApp};
-#[cfg(not(target_os = "android"))]
 use crate::ui::components::adjustment_slider::AdjustmentSlider;
 use eframe::egui::{self, Ui};
 
 pub(crate) struct TopBar;
 
-#[cfg(not(target_os = "android"))]
 const LIBRARY_SIDEBAR_ALIGNMENT_ID: &str = "library-sidebar-toolbar-alignment-x";
-#[cfg(not(target_os = "android"))]
 const DEVELOP_DOCK_MIN_WIDTH: f32 = 220.0;
 /// Widest the review and zoom group grows when no sidebar dock bounds it,
 /// the narrowest open dock (320 px sidebar plus the 60 px tool rail).
-#[cfg(not(target_os = "android"))]
 const DEVELOP_UNDOCKED_CONTROLS_MAX_WIDTH: f32 = 380.0;
-#[cfg(not(target_os = "android"))]
 const TOOLBAR_COMPACT_WIDTH: f32 = 620.0;
-#[cfg(not(target_os = "android"))]
 const TOOLBAR_COMPACT_REVIEW_WIDTH: f32 = 760.0;
-#[cfg(not(target_os = "android"))]
 const TOOLBAR_COMPACT_ZOOM_WIDTH: f32 = 176.0;
 
-#[cfg(not(target_os = "android"))]
 const DEVELOP_ZOOM_FIT_POSITION: f32 = 0.18;
 
-#[cfg(not(target_os = "android"))]
 fn develop_zoom_to_slider(zoom: f32) -> f32 {
     let min = crate::ui::preview::MIN_PREVIEW_ZOOM;
     let max = crate::ui::preview::MAX_PREVIEW_ZOOM;
@@ -39,7 +30,6 @@ fn develop_zoom_to_slider(zoom: f32) -> f32 {
 }
 
 /// Zoom presets as photo-pixel scales; `None` fits the photo to the window.
-#[cfg(not(target_os = "android"))]
 const DEVELOP_ZOOM_PRESETS: [(&str, Option<f32>); 4] = [
     ("Fit", None),
     ("50%", Some(0.5)),
@@ -49,7 +39,6 @@ const DEVELOP_ZOOM_PRESETS: [(&str, Option<f32>); 4] = [
 
 /// The readout for a fit-relative `zoom`: "Fit", or the photo-pixel scale,
 /// where 100% shows one photo pixel per screen pixel.
-#[cfg(not(target_os = "android"))]
 fn develop_zoom_readout(zoom: f32, native_zoom: Option<f32>) -> String {
     if (zoom - 1.0).abs() <= 0.0005 {
         return "Fit".to_owned();
@@ -60,7 +49,6 @@ fn develop_zoom_readout(zoom: f32, native_zoom: Option<f32>) -> String {
     }
 }
 
-#[cfg(not(target_os = "android"))]
 fn develop_slider_to_zoom(position: f32) -> f32 {
     let min = crate::ui::preview::MIN_PREVIEW_ZOOM;
     let max = crate::ui::preview::MAX_PREVIEW_ZOOM;
@@ -74,7 +62,6 @@ fn develop_slider_to_zoom(position: f32) -> f32 {
     }
 }
 
-#[cfg(not(target_os = "android"))]
 fn develop_toolbar_dock_geometry(
     ctx: &egui::Context,
     app: &CalibRawApp,
@@ -133,7 +120,6 @@ fn develop_toolbar_dock_geometry(
         .then_some((separator_x, width.max(moduwu_design::SPACE_SM)))
 }
 
-#[cfg(not(target_os = "android"))]
 pub(crate) fn load_toolbar_brand_texture(ctx: &egui::Context) -> egui::TextureHandle {
     let image = image::load_from_memory(include_bytes!(
         "../../../../packaging/icons/CalibRawIconTransHoriz.png"
@@ -150,7 +136,6 @@ pub(crate) fn load_toolbar_brand_texture(ctx: &egui::Context) -> egui::TextureHa
 }
 
 impl TopBar {
-    #[cfg(not(target_os = "android"))]
     pub(crate) fn library_sidebar_default_width(
         ctx: &egui::Context,
         viewport_left: f32,
@@ -174,10 +159,11 @@ impl TopBar {
     }
 
     pub(crate) fn show(ui: &mut Ui, app: &mut CalibRawApp, frame: &eframe::Frame) {
-        #[cfg(target_os = "android")]
-        Self::show_portrait(ui, app, frame);
-        #[cfg(not(target_os = "android"))]
-        Self::show_desktop(ui, app, frame);
+        if app.caps().is_mobile() {
+            Self::show_portrait(ui, app, frame);
+        } else {
+            Self::show_desktop(ui, app, frame);
+        }
     }
 
     pub(crate) fn back_icon_button(ui: &mut Ui, size: egui::Vec2) -> egui::Response {
@@ -289,23 +275,23 @@ impl TopBar {
         });
     }
 
-    #[cfg(not(target_os = "android"))]
     fn toolbar_brand_size() -> egui::Vec2 {
         let height = 24.0_f32.min(moduwu_design::TOOLBAR_HEIGHT);
         // CalibRawIconTransHoriz.png is 440x160, so preserve its 2.75:1 aspect.
         egui::vec2(height * 2.75, height)
     }
 
-    #[cfg(not(target_os = "android"))]
     fn show_toolbar_brand(ui: &mut Ui, app: &CalibRawApp) {
+        let Some(texture) = &app.toolbar_brand_texture else {
+            return;
+        };
         ui.add(
-            egui::Image::new((app.toolbar_brand_texture.id(), Self::toolbar_brand_size()))
+            egui::Image::new((texture.id(), Self::toolbar_brand_size()))
                 .sense(egui::Sense::hover()),
         )
         .on_hover_text("CalibRaw");
     }
 
-    #[cfg(not(target_os = "android"))]
     fn toolbar_brand_can_be_centered(tab: AppTab, width: f32) -> bool {
         // Centering is purely decorative, so only do it when both sides have a
         // generous amount of guaranteed room. At smaller/windowed widths the
@@ -320,20 +306,21 @@ impl TopBar {
         width >= minimum_width
     }
 
-    #[cfg(not(target_os = "android"))]
     fn paint_centered_toolbar_brand(ui: &Ui, app: &CalibRawApp) {
+        let Some(texture) = &app.toolbar_brand_texture else {
+            return;
+        };
         let brand_size = Self::toolbar_brand_size();
         let brand_center = egui::pos2(ui.max_rect().center().x, ui.min_rect().center().y);
         let brand_rect = egui::Rect::from_center_size(brand_center, brand_size);
         ui.painter().image(
-            app.toolbar_brand_texture.id(),
+            texture.id(),
             brand_rect,
             egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0)),
             egui::Color32::WHITE,
         );
     }
 
-    #[cfg(not(target_os = "android"))]
     fn show_develop_zoom_control(ui: &mut Ui, app: &mut CalibRawApp) {
         let enabled = app.preview.gpu_pipeline.is_some();
         let available_width = ui.available_width().max(1.0);
@@ -431,7 +418,6 @@ impl TopBar {
         }
     }
 
-    #[cfg(not(target_os = "android"))]
     fn show_develop_review_and_zoom(
         ui: &mut Ui,
         app: &mut CalibRawApp,
@@ -449,7 +435,6 @@ impl TopBar {
         }
     }
 
-    #[cfg(not(target_os = "android"))]
     fn show_desktop(ui: &mut Ui, app: &mut CalibRawApp, _frame: &eframe::Frame) {
         moduwu_design::prepare_toolbar(ui);
         let toolbar_width = ui.available_width();
@@ -642,7 +627,7 @@ impl TopBar {
     }
 }
 
-#[cfg(all(test, not(target_os = "android")))]
+#[cfg(test)]
 mod tests {
     use super::*;
 

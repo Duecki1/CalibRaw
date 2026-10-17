@@ -78,6 +78,8 @@ const DEPENDENCY_RULES: &[DependencyRule] = &[
 struct SourceRule {
     /// Directories (searched recursively) and single `.rs` files.
     paths: &'static [&'static str],
+    /// Directories under `paths` the rule does not apply to.
+    excluded: &'static [&'static str],
     forbidden: &'static [&'static str],
     reason: &'static str,
 }
@@ -85,6 +87,7 @@ struct SourceRule {
 const SOURCE_RULES: &[SourceRule] = &[
     SourceRule {
         paths: &["crates/calibraw-ui/src/services"],
+        excluded: &[],
         forbidden: &["egui", "eframe", "egui_wgpu"],
         reason: "application services are presentation-independent",
     },
@@ -95,8 +98,22 @@ const SOURCE_RULES: &[SourceRule] = &[
             "crates/calibraw-ai/src/jobs.rs",
             "crates/calibraw-ai/src/slot.rs",
         ],
+        excluded: &[],
         forbidden: &["target_os"],
         reason: "AI model code reads capabilities and quirks, not the OS",
+    },
+    SourceRule {
+        paths: &["crates/calibraw-ui/src"],
+        excluded: &["crates/calibraw-ui/src/platform"],
+        forbidden: &[
+            "target_os",
+            "calibraw_ffi",
+            "rfd",
+            "zbus",
+            "env_logger",
+            "android_logger",
+        ],
+        reason: "UI code reads PlatformCaps and calls Platform; OS code lives in src/platform",
     },
 ];
 
@@ -184,8 +201,16 @@ fn forbidden_uses(root: &Path, rule: &SourceRule) -> Result<Vec<(String, usize, 
             )));
         }
     }
+    let excluded = rule
+        .excluded
+        .iter()
+        .map(|path| root.join(path))
+        .collect::<Vec<_>>();
     let mut uses = Vec::new();
     for file in files {
+        if excluded.iter().any(|directory| file.starts_with(directory)) {
+            continue;
+        }
         let source = RustSource::new(fs::read_to_string(&file)?);
         uses.extend(
             identifier_uses(&source, rule.forbidden)

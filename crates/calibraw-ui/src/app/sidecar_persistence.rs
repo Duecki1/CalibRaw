@@ -114,16 +114,18 @@ impl CalibRawApp {
             self.queue_current_sidecar_save(false);
             self.start_next_sidecar_save();
         } else {
-            #[cfg(not(target_os = "android"))]
-            if self
-                .persistence
-                .sidecar_target
-                .as_ref()
-                .is_some_and(|target| match target {
-                    crate::sidecar::SidecarTarget::Desktop { raw_path } => {
-                        crate::sidecar::sidecar_path_for_raw(raw_path).is_file()
-                    }
-                })
+            // A folder photo opened with saved edits refreshes its developed thumbnail.
+            if self.caps().has_folders()
+                && self
+                    .persistence
+                    .sidecar_target
+                    .as_ref()
+                    .is_some_and(|target| match target {
+                        crate::sidecar::SidecarTarget::Desktop { raw_path } => {
+                            crate::sidecar::sidecar_path_for_raw(raw_path).is_file()
+                        }
+                        crate::sidecar::SidecarTarget::Android { .. } => false,
+                    })
             {
                 self.queue_developed_thumbnail_refresh(generation, self.edit_commit_revision());
             }
@@ -164,7 +166,6 @@ impl CalibRawApp {
             explicit,
             edits: self.capture_sidecar_edit_state(),
             editing_time_ms: self.raw_editing_time_ms(),
-            #[cfg(target_os = "android")]
             review: self.develop.review,
         };
         if let Some(index) = self
@@ -310,18 +311,13 @@ impl CalibRawApp {
         };
         let repaint = self.egui_ctx.clone();
         let (sender, receiver) = mpsc::channel();
-        #[cfg(target_os = "android")]
-        let android_app = self.android.android_app.clone();
+        let platform = Arc::clone(&self.platform);
 
         let spawn = std::thread::Builder::new()
             .name("calibraw-sidecar-save".to_owned())
             .spawn(move || {
                 let recovery = request.clone();
-                let result = save_sidecar_request(
-                    request,
-                    #[cfg(target_os = "android")]
-                    &android_app,
-                );
+                let result = save_sidecar_request(request, &*platform);
                 let recovery = matches!(&result, Err(crate::sidecar::SidecarError::Unsupported(_)))
                     .then_some(recovery);
                 let _ = sender.send(SidecarSaveEvent {
@@ -502,7 +498,7 @@ impl CalibRawApp {
 
 pub(super) fn save_sidecar_request(
     request: SidecarSaveRequest,
-    #[cfg(target_os = "android")] android_app: &calibraw_ffi::AndroidApp,
+    platform: &dyn Platform,
 ) -> Result<String, crate::sidecar::SidecarError> {
     match request.target {
         crate::sidecar::SidecarTarget::Desktop { raw_path } => {
@@ -513,12 +509,10 @@ pub(super) fn save_sidecar_request(
             )
             .map(|path| path.display().to_string())
         }
-        #[cfg(target_os = "android")]
         crate::sidecar::SidecarTarget::Android {
             raw_uri,
             display_name,
-        } => crate::sidecar::save_android_with_review_and_editing_time(
-            android_app,
+        } => platform.save_sidecar_with_review_and_editing_time(
             &raw_uri,
             &display_name,
             request.edits,

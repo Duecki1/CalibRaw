@@ -13,6 +13,7 @@ fn show_dialog_error(ui: &mut Ui, error: Option<&str>) {
 pub(super) fn show_delete_originals_confirmation(
     ui: &mut Ui,
     assets: &[LibraryAsset],
+    caps: PlatformCaps,
 ) -> Option<bool> {
     if assets.is_empty() {
         return Some(false);
@@ -23,10 +24,13 @@ pub(super) fn show_delete_originals_confirmation(
     } else {
         format!("Delete {count} originals?")
     };
-    #[cfg(not(target_os = "android"))]
-    let confirm_label = format!("Move to {}", system_trash_name());
-    #[cfg(target_os = "android")]
-    let confirm_label = "Delete permanently".to_owned();
+    // Folder photos go to the desktop trash; the media library deletes them.
+    let recycles = caps.has_folders();
+    let confirm_label = if recycles {
+        format!("Move to {}", crate::platform::trash_name())
+    } else {
+        "Delete permanently".to_owned()
+    };
     let mut action = moduwu_design::DialogAction::None;
     moduwu_design::Dialog::new("library-delete-originals-confirmation", title).show_with_footer(
         ui.ctx(),
@@ -38,19 +42,19 @@ pub(super) fn show_delete_originals_confirmation(
                     "Remove the {count} selected originals from the Library?"
                 ));
             }
-            #[cfg(not(target_os = "android"))]
+            if recycles {
             ui.label(if count == 1 {
                 format!(
                     "The original photo and its saved adjustments will be moved to the system {}.",
-                    system_trash_name()
+                    crate::platform::trash_name()
                 )
             } else {
                 format!(
                     "The selected originals and their saved adjustments will be moved to the system {}.",
-                    system_trash_name()
+                    crate::platform::trash_name()
                 )
             });
-            #[cfg(target_os = "android")]
+            } else {
             ui.label(
                 egui::RichText::new(
                     "CalibRaw's Android library does not support recycling. This cannot be undone.",
@@ -58,6 +62,7 @@ pub(super) fn show_delete_originals_confirmation(
                 .strong()
                 .color(ui.visuals().warn_fg_color),
             );
+            }
         },
         |ui| {
             action = moduwu_design::dialog_confirmation_actions(
@@ -242,11 +247,10 @@ pub(super) fn show_ai_mask_refresh_progress(
     cancel
 }
 
-#[cfg(target_os = "android")]
 pub(super) fn show_android_library_folder_dialog(ui: &mut Ui, app: &mut CalibRawApp) {
     let mut close = false;
     let mut create = None;
-    if let Some(dialog) = app.library.platform.folder_name_dialog.as_mut() {
+    if let Some(dialog) = app.library.media.folder_name_dialog.as_mut() {
         let mut action = moduwu_design::DialogAction::None;
         moduwu_design::Dialog::new("android-library-folder-name-dialog", "New folder")
             .show_with_footer(
@@ -282,18 +286,18 @@ pub(super) fn show_android_library_folder_dialog(ui: &mut Ui, app: &mut CalibRaw
         }
     }
     if close {
-        app.library.platform.folder_name_dialog = None;
+        app.library.media.folder_name_dialog = None;
     }
     if let Some((parent, name)) = create {
-        match calibraw_ffi::create_library_folder(&app.library.platform.app, &parent, &name) {
+        match app.library.platform.create_library_folder(&parent, &name) {
             Ok(folder) => {
-                app.library.platform.folder_name_dialog = None;
-                app.library.platform.expanded_folders.insert(parent);
+                app.library.media.folder_name_dialog = None;
+                app.library.media.expanded_folders.insert(parent);
                 app.library.status = format!("Created folder {folder}");
                 app.library.refresh(ui.ctx());
             }
             Err(error) => {
-                if let Some(dialog) = app.library.platform.folder_name_dialog.as_mut() {
+                if let Some(dialog) = app.library.media.folder_name_dialog.as_mut() {
                     dialog.error = Some(error);
                 }
             }
@@ -301,7 +305,6 @@ pub(super) fn show_android_library_folder_dialog(ui: &mut Ui, app: &mut CalibRaw
     }
 }
 
-#[cfg(not(target_os = "android"))]
 pub(super) fn show_library_folder_dialogs(ui: &mut Ui, app: &mut CalibRawApp) {
     let mut close_name_dialog = false;
     let mut name_operation = None;
@@ -459,8 +462,6 @@ pub(super) fn show_library_raw_name_dialog(
     app: &mut CalibRawApp,
     frame: &eframe::Frame,
 ) {
-    #[cfg(target_os = "android")]
-    let _ = frame;
     let mut close = false;
     let mut rename = None;
     if let Some(dialog) = app.library.raw_name_dialog.as_mut() {
@@ -508,11 +509,9 @@ pub(super) fn show_library_raw_name_dialog(
         return;
     };
 
-    #[cfg(not(target_os = "android"))]
     let current_path = asset.desktop_path().and_then(|path| {
         (app.develop.current_path.as_deref() == Some(path)).then(|| path.to_path_buf())
     });
-    #[cfg(not(target_os = "android"))]
     if let Some(path) = current_path.as_deref() {
         app.detach_current_file_for_library_action(path);
         app.develop.current_path = None;
@@ -520,9 +519,6 @@ pub(super) fn show_library_raw_name_dialog(
 
     match rename_asset(app, &asset, &name) {
         Ok(renamed_asset) => {
-            #[cfg(target_os = "android")]
-            let _ = renamed_asset;
-            #[cfg(not(target_os = "android"))]
             if let Some(clipboard) = app.library.image_clipboard.as_mut() {
                 for clipboard_asset in &mut clipboard.assets {
                     if clipboard_asset.id == asset.id {
@@ -535,7 +531,6 @@ pub(super) fn show_library_raw_name_dialog(
             app.library.refresh(ui.ctx());
             app.library.status = format!("Renamed photo to {name}.");
 
-            #[cfg(not(target_os = "android"))]
             if current_path.is_some() {
                 if let Some(destination) = renamed_asset.desktop_path().map(Path::to_path_buf) {
                     app.open_document(
@@ -549,7 +544,6 @@ pub(super) fn show_library_raw_name_dialog(
             if let Some(dialog) = app.library.raw_name_dialog.as_mut() {
                 dialog.error = Some(error);
             }
-            #[cfg(not(target_os = "android"))]
             if let Some(source) = current_path.filter(|path| path.is_file()) {
                 let label = source
                     .file_name()

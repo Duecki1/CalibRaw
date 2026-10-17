@@ -101,8 +101,10 @@ impl CalibRawApp {
             self.save_completed_ai_update();
             return;
         }
-        #[cfg(not(target_os = "android"))]
-        if dependencies.needs_ai() && !self.validate_onnx_runtime_for_ai() {
+        if self.caps().configurable_ai_runtime
+            && dependencies.needs_ai()
+            && !self.validate_onnx_runtime_for_ai()
+        {
             return;
         }
 
@@ -340,7 +342,6 @@ mod tests {
         );
     }
 
-    #[cfg(not(target_os = "android"))]
     #[test]
     fn ai_update_persists_completion_when_pixels_are_unchanged() {
         let mut app = CalibRawApp::empty(&egui::Context::default());

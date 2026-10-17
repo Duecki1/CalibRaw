@@ -1,4 +1,11 @@
-use super::super::*;
+//! A library of folders on a file system: a folder tree under the opened
+//! root, with photos and their sidecars read and changed by path.
+
+use super::*;
+
+pub(super) mod catalog;
+pub(super) mod files;
+mod local;
 
 pub(in crate::ui::library) fn default_thumbnail_worker_count() -> usize {
     automatic_thumbnail_worker_count()
@@ -25,8 +32,8 @@ pub(in crate::ui::library) fn automatic_thumbnail_worker_count() -> usize {
 /// Every logical core, but never below the previous fixed maximum.
 pub(in crate::ui::library) fn maximum_thumbnail_worker_count() -> usize {
     logical_core_count().clamp(
-        super::super::MIN_DESKTOP_THUMBNAIL_WORKER_LIMIT,
-        super::super::MAX_DESKTOP_THUMBNAIL_WORKER_LIMIT,
+        super::MIN_DESKTOP_THUMBNAIL_WORKER_LIMIT,
+        super::MAX_DESKTOP_THUMBNAIL_WORKER_LIMIT,
     )
 }
 
@@ -38,15 +45,13 @@ fn logical_core_count() -> usize {
 /// bounded by a share of installed memory at a per-worker peak budget.
 fn automatic_thumbnail_worker_count_for(cores: usize, total_memory_bytes: Option<u64>) -> usize {
     let by_cores = cores.saturating_sub(1);
-    let by_memory =
-        total_memory_bytes.map_or(super::super::UNKNOWN_MEMORY_THUMBNAIL_WORKERS, |bytes| {
-            let share = bytes / super::super::THUMBNAIL_WORKER_MEMORY_SHARE_DIVISOR;
-            usize::try_from(share / super::super::THUMBNAIL_WORKER_MEMORY_BUDGET_BYTES)
-                .unwrap_or(usize::MAX)
-        });
+    let by_memory = total_memory_bytes.map_or(super::UNKNOWN_MEMORY_THUMBNAIL_WORKERS, |bytes| {
+        let share = bytes / super::THUMBNAIL_WORKER_MEMORY_SHARE_DIVISOR;
+        usize::try_from(share / super::THUMBNAIL_WORKER_MEMORY_BUDGET_BYTES).unwrap_or(usize::MAX)
+    });
     by_cores
         .min(by_memory)
-        .clamp(1, super::super::MAX_AUTOMATIC_THUMBNAIL_WORKERS)
+        .clamp(1, super::MAX_AUTOMATIC_THUMBNAIL_WORKERS)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -402,18 +407,18 @@ pub(in crate::ui::library) fn can_create_local_folder(app: &CalibRawApp) -> bool
 
 pub(in crate::ui::library) fn apply_local_toolbar_action(
     app: &mut CalibRawApp,
-    action: super::LocalFolderToolbarAction,
+    action: LocalFolderToolbarAction,
     context: &egui::Context,
 ) {
     let Some(folder) = app.library.folder.clone() else {
-        if matches!(action, super::LocalFolderToolbarAction::Refresh) {
+        if matches!(action, LocalFolderToolbarAction::Refresh) {
             app.library.refresh(context);
         }
         return;
     };
     let action = match action {
-        super::LocalFolderToolbarAction::Refresh => LibraryFolderUiAction::Refresh,
-        super::LocalFolderToolbarAction::New => LibraryFolderUiAction::New(folder),
+        LocalFolderToolbarAction::Refresh => LibraryFolderUiAction::Refresh,
+        LocalFolderToolbarAction::New => LibraryFolderUiAction::New(folder),
     };
     apply_library_folder_ui_action(app, action, context);
 }
