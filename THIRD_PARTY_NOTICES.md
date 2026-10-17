@@ -169,8 +169,9 @@ native components:
   `Microsoft.AI.DirectML` NuGet package under its
   [license](https://www.nuget.org/packages/Microsoft.AI.DirectML/1.15.4/License).
 - The Microsoft Visual C++ runtime (`msvcp140.dll`, `msvcp140_1.dll`,
-  `vcruntime140.dll` and, on x86_64, `vcruntime140_1.dll`). Windows artifacts
-  include these redistributable files from Visual Studio for ONNX Runtime,
+  `msvcp140_atomic_wait.dll`, `vcruntime140.dll` and, on x86_64,
+  `vcruntime140_1.dll`). Windows artifacts include these redistributable files
+  from Visual Studio for ONNX Runtime and its WebGPU execution provider,
   under the Visual Studio
   [license terms](https://visualstudio.microsoft.com/license-terms/) for
   [distributable code](https://learn.microsoft.com/en-us/visualstudio/releases/2022/redistribution).

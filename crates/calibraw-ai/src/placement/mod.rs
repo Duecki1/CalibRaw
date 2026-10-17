@@ -11,6 +11,7 @@ pub(crate) mod quirks;
 mod session;
 mod status;
 
+pub(crate) use failure::count_logged_gpu_error;
 pub use failure::take_ai_gpu_device_loss;
 pub use job_record::{end_gpu_job_records, gpu_job_in_progress};
 pub(crate) use job_record::{set_gpu_job_record_path, GpuJobRecord};

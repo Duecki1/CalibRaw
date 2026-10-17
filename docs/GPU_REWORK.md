@@ -623,6 +623,13 @@ machines in the real app.
   `packaging/onnxruntime/package_webgpu.py`. Each holds Microsoft's unmodified
   1.30.0 core library and the plugin beside it in `lib/`, with both licenses;
   on Windows the plugin's `dxcompiler.dll` and `dxil.dll` sit beside it too.
+  The plugin also imports `msvcp140_atomic_wait.dll`, which the core does
+  not. ONNX Runtime loads a plugin with `LOAD_WITH_ALTERED_SEARCH_PATH`,
+  which does not search CalibRaw's folder, so the Windows build ships the
+  DLL beside `calibraw.exe` with the rest of the Visual C++ runtime, and
+  `runtime/load.rs` loads it from there before registering the plugin. The
+  script checks that every library the Windows archives import is a Windows
+  one, in the archive, or shipped beside `calibraw.exe`.
   The archives are on CalibRaw-Artifacts at `30b40682` like the other
   runtimes, so the consent text naming Hugging Face stays true. Sizes:
 
@@ -711,12 +718,22 @@ machines in the real app.
     one level or code, X-Trans denoise by at most 1.2e-4.
   - Remove reaches a PSNR of 123.8 dB.
   - CPU runs are bit-identical.
-- 4.3, failures: WebGPU reports a WebGPU error as `WebGPU device
-  error(<type>)`, where type 3 is out of memory. Dawn names lost objects
-  `[Device] is lost.`. `failure.rs` matches these and Vulkan's,
-  Direct3D 12's and Metal's own texts. They come from the plugin's strings;
-  no run here ran out of memory or lost its device. A lost device still
-  switches GPU AI off.
+- 4.3, failures: plugin 0.4.0 checks a run for validation errors only. Any
+  other WebGPU error, running out of memory among them, goes to ONNX
+  Runtime's log alone, as `WebGPU device error(<type>): <message>` with type
+  3 for out of memory. The run returns success with whatever its buffers
+  hold, or fails on a later validation error that names no memory.
+  - CalibRaw therefore creates the environment with its own logger
+    (`runtime/logger.rs`). It forwards the log to `log`, records these
+    lines in diagnostics and counts them (`failure::LoggedGpuError`).
+  - A session created or run while one was logged has failed: on running
+    out of memory, or otherwise as a GPU failure. A run's output is then
+    dropped, and errors logged after a run returned fail the next one.
+  - The plugin's 0.5 branch returns these errors as the run's error.
+  - Dawn names lost objects `[Device] is lost.`. `failure.rs` matches these
+    and Vulkan's, Direct3D 12's and Metal's own texts in returned errors.
+  - They come from the plugin's strings and source; no run here ran out of
+    memory or lost its device. A lost device still switches GPU AI off.
 - 5.4, deleted beyond the list:
   - `calibraw_gpu::memory::find_dxgi_adapter`'s DXGI index (the lookup is
     private now);
