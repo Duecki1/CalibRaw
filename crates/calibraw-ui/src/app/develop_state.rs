@@ -2,7 +2,6 @@
 
 use super::*;
 
-#[cfg(not(target_os = "android"))]
 pub(crate) struct DevelopReferenceState {
     pub(crate) path: Option<PathBuf>,
     pub(crate) label: Option<String>,
@@ -15,7 +14,6 @@ pub(crate) struct DevelopReferenceState {
     pub(crate) split_ratio: f32,
 }
 
-#[cfg(not(target_os = "android"))]
 impl Default for DevelopReferenceState {
     fn default() -> Self {
         Self {
@@ -32,7 +30,6 @@ impl Default for DevelopReferenceState {
     }
 }
 
-#[cfg(not(target_os = "android"))]
 impl DevelopReferenceState {
     pub(crate) fn clear(&mut self) {
         *self = Self {
@@ -42,18 +39,16 @@ impl DevelopReferenceState {
     }
 }
 
-#[cfg(not(target_os = "android"))]
 type DevelopThumbnailResult = (PathBuf, Result<Option<RawThumbnail>, String>);
 
 #[derive(Default)]
 pub(crate) struct DevelopLoadingThumbnailState {
-    #[cfg(not(target_os = "android"))]
+    /// The folder photo the thumbnail shows.
     pub(crate) path: Option<PathBuf>,
-    #[cfg(target_os = "android")]
+    /// The media-library photo the thumbnail shows.
     pub(crate) source_uri: Option<String>,
     pub(crate) texture: Option<egui::TextureHandle>,
     pub(crate) texture_size: Option<[u32; 2]>,
-    #[cfg(not(target_os = "android"))]
     pub(crate) receiver: Option<mpsc::Receiver<DevelopThumbnailResult>>,
 }
 
@@ -380,9 +375,7 @@ pub(super) struct PreparedLensCorrection {
     pub(super) full_raw: Arc<LoadedRaw>,
     pub(super) preview_raw: Arc<LoadedRaw>,
     pub(super) applied_label: Option<String>,
-    #[cfg(target_os = "android")]
     pub(super) selection: Option<LensCorrection>,
-    #[cfg(target_os = "android")]
     pub(super) preview_quality: PreviewQuality,
 }
 
@@ -396,7 +389,7 @@ pub(crate) const MAX_ANDROID_RAW_CACHE_FILES: usize = 3;
 
 /// Desktop keeps the open photo and both prefetched neighbours.
 pub(crate) const fn default_raw_cache_limit() -> usize {
-    if cfg!(target_os = "android") {
+    if PlatformCaps::CURRENT.constrained_memory() {
         1
     } else {
         3
@@ -404,7 +397,7 @@ pub(crate) const fn default_raw_cache_limit() -> usize {
 }
 
 pub(crate) const fn maximum_raw_cache_limit() -> usize {
-    if cfg!(target_os = "android") {
+    if PlatformCaps::CURRENT.constrained_memory() {
         MAX_ANDROID_RAW_CACHE_FILES
     } else {
         MAX_DESKTOP_RAW_CACHE_FILES
@@ -429,18 +422,14 @@ pub(crate) struct DevelopState {
     pub(crate) image_status: String,
     pub(crate) current_label: Option<String>,
     pub(crate) decoded_raws: DecodedRawCache,
-    #[cfg(not(target_os = "android"))]
     pub(crate) neighbour_prefetch: crate::app::lifecycle::NeighbourPrefetch,
 }
 
 pub(crate) struct DevelopUiState {
     pub(crate) histogram_open: bool,
-    #[cfg(not(target_os = "android"))]
     pub(crate) reference: DevelopReferenceState,
     pub(crate) loading_thumbnail: DevelopLoadingThumbnailState,
-    #[cfg(not(target_os = "android"))]
     pub(crate) filmstrip_open: bool,
-    #[cfg(not(target_os = "android"))]
     pub(crate) filmstrip_centered_path: Option<PathBuf>,
     /// Whether the Develop tool surface is shown. Selecting the active sidebar
     /// tab again toggles it; selecting another tab opens it.

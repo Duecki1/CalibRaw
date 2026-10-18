@@ -96,7 +96,6 @@ impl PresetState {
         })
     }
 
-    #[cfg(not(target_os = "android"))]
     /// A name for `preset` that does not collide with an existing preset in
     /// its group: "Name", then "Name 2", "Name 3", …
     fn unique_name(&self, preset: &Preset) -> String {
@@ -375,7 +374,6 @@ impl CalibRawApp {
         );
     }
 
-    #[cfg(not(target_os = "android"))]
     /// Copies preset files into the preset folder. Imported presets whose
     /// name is taken in their group get a numbered name.
     pub(crate) fn import_preset_files(&mut self, paths: &[PathBuf]) {
@@ -424,25 +422,18 @@ impl CalibRawApp {
         }
     }
 
-    #[cfg(not(target_os = "android"))]
     pub(crate) fn choose_preset_files_to_import(&mut self) {
         if self.ui.desktop_picker_receiver.is_some() || !self.presets.is_available() {
             return;
         }
         let extension = PRESET_FILE_EXTENSIONS[0];
-        let dialog = rfd::AsyncFileDialog::new().add_filter("CalibRaw presets", &[extension]);
+        let dialog =
+            crate::platform::FileDialog::new().add_filter("CalibRaw presets", &[extension]);
         self.ui.desktop_picker_receiver = Some(spawn_ui_worker(&self.egui_ctx, move || {
-            let paths = pollster::block_on(dialog.pick_files()).map(|handles| {
-                handles
-                    .into_iter()
-                    .map(|handle| handle.path().to_path_buf())
-                    .collect()
-            });
-            DesktopPickerEvent::PresetFiles(paths)
+            DesktopPickerEvent::PresetFiles(dialog.pick_files_on_worker())
         }));
     }
 
-    #[cfg(not(target_os = "android"))]
     pub(crate) fn export_preset(&mut self, path: &Path) {
         let Some(preset) = self.presets.get(path).cloned() else {
             return;
@@ -480,7 +471,6 @@ impl CalibRawApp {
 }
 
 /// [`crate::presets::PRESET_SUFFIX`] without its leading dot, for file pickers.
-#[cfg(not(target_os = "android"))]
 const PRESET_FILE_EXTENSIONS: &[&str] = &["calibraw-preset"];
 
 pub(crate) fn sentence_case(message: &str) -> String {
@@ -497,7 +487,6 @@ mod tests {
 
     #[test]
     fn preset_file_extension_matches_the_preset_suffix() {
-        #[cfg(not(target_os = "android"))]
         assert_eq!(
             format!(".{}", PRESET_FILE_EXTENSIONS[0]),
             crate::presets::PRESET_SUFFIX

@@ -3,7 +3,7 @@ use super::*;
 impl CalibRawApp {
     pub(crate) fn set_subject_mask_quality(
         &mut self,
-        quality: calibraw_ai::ai_masks::SubjectMaskQuality,
+        quality: calibraw_ai::models::subject::SubjectMaskQuality,
     ) {
         if self.ai.subject_mask_quality == quality {
             return;
@@ -79,20 +79,20 @@ impl CalibRawApp {
         path: &std::path::Path,
     ) -> bool {
         match model {
-            AiMaskModel::Subject => calibraw_ai::ai_masks::birefnet_model_is_verified(
+            AiMaskModel::Subject => calibraw_ai::models::subject::birefnet_model_is_verified(
                 self.ai.subject_mask_quality,
                 subject_precision,
                 path,
             ),
-            AiMaskModel::Sky => calibraw_ai::ai_masks::skyseg_model_is_verified(path),
-            AiMaskModel::Depth => calibraw_ai::ai_masks::depth_model_is_verified(path),
+            AiMaskModel::Sky => calibraw_ai::models::sky::skyseg_model_is_verified(path),
+            AiMaskModel::Depth => calibraw_ai::models::depth::depth_model_is_verified(path),
         }
     }
 
     fn generated_mask_progress(&self, model: AiMaskModel, inferencing: bool) -> String {
         match (model, inferencing) {
             (AiMaskModel::Subject, true) => {
-                format!("Running {} locally…", self.subject_model().checkpoint)
+                format!("Running {} locally…", self.subject_model().name)
             }
             (AiMaskModel::Subject, false) => format!(
                 "Preparing {} download…",
@@ -103,13 +103,13 @@ impl CalibRawApp {
             (AiMaskModel::Depth, true) => {
                 format!(
                     "Running {} locally…",
-                    calibraw_ai::ai_masks::DEPTH_MODEL.name
+                    calibraw_ai::models::depth::MODEL.name
                 )
             }
             (AiMaskModel::Depth, false) => {
                 format!(
                     "Preparing {} download…",
-                    calibraw_ai::ai_masks::DEPTH_MODEL.name
+                    calibraw_ai::models::depth::MODEL.name
                 )
             }
         }
@@ -132,10 +132,6 @@ impl CalibRawApp {
         let subject_precision = self.subject_model_precision();
         let model_path = self.generated_model_path(model, subject_precision);
         let model_present = self.generated_model_is_verified(model, subject_precision, &model_path);
-        #[cfg(not(target_os = "android"))]
-        let (runtime_path, runtime_sha256) = self.onnx_runtime_for_ai();
-        #[cfg(target_os = "android")]
-        let (runtime_path, runtime_sha256) = (None, None);
         let cancellation = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let receiver = spawn_ai_mask(
             AiMaskWorkerRequest {
@@ -144,8 +140,6 @@ impl CalibRawApp {
                 subject_precision,
                 model_path,
                 allow_download,
-                runtime_path,
-                runtime_sha256,
                 width: source.width,
                 height: source.height,
                 rgba: source.rgba.to_vec(),
@@ -206,40 +200,18 @@ impl CalibRawApp {
             self.foreground_operation = Some(operation);
             return;
         };
-        let (events, disconnected) = drain_worker_events(Some(receiver), |event| {
-            matches!(event, AiMaskEvent::Finished(_))
-        });
-
-        let mut finished = None;
-        for event in events {
-            match event {
-                AiMaskEvent::DownloadProgress(progress) => {
-                    operation.progress = ForegroundProgress::units(
-                        progress.downloaded,
-                        progress.total,
-                        Some("bytes".to_owned()),
-                        format!("Downloading {}", progress.label),
-                    )
-                    .with_detail(format!(
-                        "{:.1} / {:.1} MB",
-                        progress.downloaded as f64 / 1_000_000.0,
-                        progress.total as f64 / 1_000_000.0
-                    ));
+        let finished = poll_ai_job(
+            receiver,
+            || format!("The {}-mask worker stopped unexpectedly.", model.noun()),
+            |update| {
+                operation.progress = match update {
+                    AiJobUpdate::Download(progress) => model_download_progress(progress),
+                    AiJobUpdate::Progress(AiMaskProgress::Inferencing) => {
+                        ForegroundProgress::indeterminate(self.generated_mask_progress(model, true))
+                    }
                 }
-                AiMaskEvent::Inferencing => {
-                    operation.progress = ForegroundProgress::indeterminate(
-                        self.generated_mask_progress(model, true),
-                    );
-                }
-                AiMaskEvent::Finished(result) => finished = Some(result),
-            }
-        }
-        if finished.is_none() && disconnected {
-            finished = Some(Err(format!(
-                "The {}-mask worker stopped unexpectedly.",
-                model.noun()
-            )));
-        }
+            },
+        );
         let Some(result) = finished else {
             self.foreground_operation = Some(operation);
             return;
@@ -301,10 +273,7 @@ mod tests {
 
     fn app_with_depth_fog() -> CalibRawApp {
         let mut app = CalibRawApp::empty(&egui::Context::default());
-        #[cfg(not(target_os = "android"))]
-        {
-            app.ai.runtime_mode = OnnxRuntimeMode::Automatic;
-        }
+        app.ai.runtime_mode = OnnxRuntimeMode::Automatic;
         app.masks
             .stack
             .global_effects
@@ -472,10 +441,12 @@ mod tests {
                 }
                 let pixels = vec![0, 85, 170, 255];
                 let (sender, receiver) = std::sync::mpsc::channel();
-                sender.send(AiMaskEvent::Inferencing).unwrap();
+                sender
+                    .send(AiMaskEvent::Progress(AiMaskProgress::Inferencing))
+                    .unwrap();
                 sender
                     .send(AiMaskEvent::Finished(Ok(
-                        calibraw_ai::ai_masks::AiMaskResult {
+                        calibraw_ai::models::masks::AiMaskResult {
                             width: 2,
                             height: 2,
                             mask: pixels.clone(),
@@ -537,7 +508,7 @@ mod tests {
         let (sender, receiver) = std::sync::mpsc::channel();
         sender
             .send(AiMaskEvent::Finished(Ok(
-                calibraw_ai::ai_masks::AiMaskResult {
+                calibraw_ai::models::masks::AiMaskResult {
                     width: 2,
                     height: 2,
                     mask: vec![0; 4],

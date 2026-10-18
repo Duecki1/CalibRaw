@@ -36,7 +36,7 @@ impl CalibRawApp {
                 let checkpoint = self.subject_model();
                 AiJobDescription {
                     label: "subject selection",
-                    model: format!("BiRefNet (~{:.0} MB)", megabytes(checkpoint.bytes)),
+                    model: format!("BiRefNet (~{:.0} MB)", megabytes(checkpoint.download_bytes)),
                     purpose: "create subject and background masks",
                     details_id: "subject-download-details",
                     artifact: (
@@ -45,7 +45,9 @@ impl CalibRawApp {
                     ),
                     details: format!(
                         "{} runs locally with a {} × {} input. License: MIT.",
-                        checkpoint.checkpoint, checkpoint.input_height, checkpoint.input_width
+                        checkpoint.name,
+                        checkpoint.input.edge(),
+                        checkpoint.input.edge()
                     ),
                     restore: None,
                 }
@@ -62,7 +64,7 @@ impl CalibRawApp {
                 restore: None,
             },
             AiFeature::SceneDepth => {
-                let depth_model = calibraw_ai::ai_masks::DEPTH_MODEL;
+                let depth_model = calibraw_ai::models::depth::MODEL;
                 AiJobDescription {
                     label: "scene depth",
                     model: format!(
@@ -72,12 +74,15 @@ impl CalibRawApp {
                     ),
                     purpose: "estimate scene depth for depth masks and effects",
                     details_id: "depth-download-details",
-                    artifact: ("Depth model artifact", depth_model.artifact_url.to_owned()),
+                    artifact: (
+                        "Depth model artifact",
+                        calibraw_ai::models::depth::ARTIFACT_PAGE_URL.to_owned(),
+                    ),
                     details: format!(
                         "{name} runs locally on a {edge} × {edge} letterboxed image and \
                          produces relative depth. License: Apache-2.0.",
                         name = depth_model.name,
-                        edge = depth_model.input_edge,
+                        edge = depth_model.input.edge(),
                     ),
                     restore: None,
                 }
@@ -97,7 +102,7 @@ impl CalibRawApp {
                 label: "Remove",
                 model: format!(
                     "Big-LaMa (~{:.0} MB)",
-                    megabytes(calibraw_ai::remove::BIG_LAMA_MODEL_BYTES)
+                    megabytes(calibraw_ai::models::remove::MODEL.download_bytes)
                 ),
                 purpose: "remove unwanted content",
                 details_id: "remove-download-details",
@@ -105,9 +110,9 @@ impl CalibRawApp {
                 details: format!(
                     "Big-LaMa Places2 ONNX repairs a local context crop. License: {}. \
                      Source: {}. CalibRaw verifies its pinned size and SHA-256 ({}).",
-                    calibraw_ai::remove::BIG_LAMA_MODEL_LICENSE,
-                    calibraw_ai::remove::BIG_LAMA_MODEL_PROVENANCE,
-                    &calibraw_ai::remove::BIG_LAMA_MODEL_SHA256_HEX[..12]
+                    calibraw_ai::models::remove::MODEL_LICENSE,
+                    calibraw_ai::models::remove::MODEL_PROVENANCE,
+                    &calibraw_ai::models::remove::MODEL.sha256[..12]
                 ),
                 restore: None,
             },
@@ -115,7 +120,7 @@ impl CalibRawApp {
                 label: "AI denoise",
                 model: format!(
                     "RawNIND (~{:.1} MB)",
-                    megabytes(calibraw_ai::ai_denoise::RAWNIND_PACKAGE_BYTES)
+                    megabytes(calibraw_ai::models::denoise::PACKAGE_BYTES)
                 ),
                 purpose: "apply AI denoise",
                 details_id: "denoise-download-details",

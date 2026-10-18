@@ -1,5 +1,4 @@
 use crate::pipeline::{LoadedRaw, RawDisplayMetadata};
-#[cfg(not(target_os = "android"))]
 use std::path::Path;
 use std::time::SystemTime;
 
@@ -133,7 +132,6 @@ pub(crate) fn render_export_stem_or_default(template: &str, context: &ExportName
 /// The first free export file name in `directory`, for a save dialog that
 /// opens there. Without a directory the dialog's folder is unknown, so the
 /// plain name is returned.
-#[cfg(not(target_os = "android"))]
 pub(crate) fn free_export_file_name(
     directory: Option<&Path>,
     stem: &str,
@@ -145,7 +143,6 @@ pub(crate) fn free_export_file_name(
     })
 }
 
-#[cfg(not(target_os = "android"))]
 pub(crate) fn edited_time_for_path(path: &Path) -> Option<SystemTime> {
     std::fs::metadata(crate::sidecar::sidecar_path_for_raw(path))
         .and_then(|metadata| metadata.modified())
@@ -318,7 +315,6 @@ mod tests {
         assert_eq!(render_export_stem("{ShutterSpeed}", &values).unwrap(), "2s");
     }
 
-    #[cfg(not(target_os = "android"))]
     #[test]
     fn free_export_file_names_skip_files_in_the_directory() {
         let directory = tempfile::tempdir().unwrap();

@@ -90,12 +90,17 @@ egui = "0.35"
 egui-phosphor = "0.13"
 egui-wgpu = "0.35"
 wgpu = "29"
+# The versions wgpu-hal 29 uses, for its Vulkan and Metal handles.
+ash = { version = "0.38", default-features = false, features = ["std"] }
+objc2-metal = { version = "0.3.2", default-features = false, features = ["std", "MTLDevice"] }
 naga = { version = "29", features = ["wgsl-in"] }
 naga_oil = { version = "=0.22.0", default-features = false }
 
 env_logger = { version = "=0.11.11", default-features = false, features = ["humantime", "regex"] }
 rfd = "=0.17.2"
-ort = { version = "=2.0.0-rc.12", default-features = false, features = ["std", "api-18"] }
+# API 22 (ONNX Runtime 1.22) registers plugin execution providers, which the
+# desktop WebGPU provider is.
+ort = { version = "=2.0.0-rc.12", default-features = false, features = ["std", "api-22"] }
 
 android-activity = { version = "0.6", features = ["native-activity"] }
 android_logger = "0.15"

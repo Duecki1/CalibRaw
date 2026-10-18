@@ -62,7 +62,7 @@ impl ForegroundProgress {
 pub(super) enum ForegroundOperationReceiver {
     AiMask(mpsc::Receiver<AiMaskEvent>),
     Object(mpsc::Receiver<ObjectMaskEvent>),
-    AiDenoise(mpsc::Receiver<calibraw_ai::ai_denoise::AiDenoiseEvent>),
+    AiDenoise(mpsc::Receiver<calibraw_ai::models::denoise::AiDenoiseEvent>),
     LensCorrection(mpsc::Receiver<LensCorrectionEvent>),
     AutoStraighten(mpsc::Receiver<AutoStraightenResult>),
 }
@@ -91,7 +91,6 @@ pub(crate) struct ForegroundOperation {
     pub(super) context: ForegroundOperationContext,
 }
 
-#[cfg(not(target_os = "android"))]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum OnnxRuntimeMode {
@@ -121,21 +120,15 @@ pub(crate) struct AiConsent {
 }
 
 pub(crate) struct AiState {
-    pub(crate) subject_mask_quality: calibraw_ai::ai_masks::SubjectMaskQuality,
-    #[cfg(not(target_os = "android"))]
+    pub(crate) subject_mask_quality: calibraw_ai::models::subject::SubjectMaskQuality,
     pub(crate) gpu_acceleration: bool,
     /// Content results (AI masks, scene depth, range sources) were made from an
     /// image that has since changed. Persisted as `ai_masks_need_update`.
     pub(crate) update_needed: bool,
     pub(crate) update: Option<AiUpdate>,
-    #[cfg(not(target_os = "android"))]
     pub(crate) runtime_mode: OnnxRuntimeMode,
-    #[cfg(not(target_os = "android"))]
-    pub(crate) runtime_kind: calibraw_ai::AutomaticOnnxRuntimeKind,
-    #[cfg(not(target_os = "android"))]
-    pub(crate) runtime_path: Option<PathBuf>,
-    #[cfg(not(target_os = "android"))]
-    pub(crate) runtime_sha256: Option<String>,
+    /// The library Manual mode loads and the SHA-256 the user approved.
+    pub(crate) manual_runtime: Option<(PathBuf, calibraw_ai::Sha256)>,
     pub(crate) library_mask_refresh: Option<LibraryAiMaskRefreshState>,
     pub(crate) consent: Option<AiConsent>,
     pub(crate) object_pending_target: Option<(usize, usize)>,

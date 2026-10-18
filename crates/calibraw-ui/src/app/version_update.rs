@@ -563,7 +563,6 @@ impl CalibRawApp {
 mod tests {
     use super::*;
 
-    #[cfg(not(target_os = "android"))]
     fn headless_app(auto_check: bool, permission: Option<bool>) -> CalibRawApp {
         CalibRawApp::from_performance_settings(
             &egui::Context::default(),
@@ -575,6 +574,7 @@ mod tests {
                 onboarding_completed: false,
                 ..Default::default()
             },
+            crate::platform::fake::FakePlatform::new(crate::platform::PlatformCaps::DESKTOP),
         )
     }
 
@@ -588,7 +588,6 @@ mod tests {
         }
     }
 
-    #[cfg(not(target_os = "android"))]
     #[test]
     fn startup_waits_for_onboarding_and_requests_consent_only_once() {
         let mut app = headless_app(true, None);
@@ -614,7 +613,6 @@ mod tests {
         assert!(app.ui.version_check.receiver.is_none());
     }
 
-    #[cfg(not(target_os = "android"))]
     #[test]
     fn disabled_automatic_checks_skip_startup_consent() {
         let mut app = headless_app(false, None);
@@ -630,7 +628,6 @@ mod tests {
         ));
     }
 
-    #[cfg(not(target_os = "android"))]
     #[test]
     fn saved_denial_blocks_startup_manual_and_enabling_automatic_checks() {
         let mut app = headless_app(true, Some(false));
@@ -657,7 +654,6 @@ mod tests {
         ));
     }
 
-    #[cfg(not(target_os = "android"))]
     #[test]
     fn manual_unknown_permission_requests_consent_with_automatic_checks_disabled() {
         let mut app = headless_app(false, None);
@@ -672,7 +668,6 @@ mod tests {
         assert!(app.ui.version_check.receiver.is_none());
     }
 
-    #[cfg(not(target_os = "android"))]
     #[test]
     fn enabling_automatic_checks_waits_for_unknown_permission() {
         let mut app = headless_app(false, None);
@@ -687,7 +682,6 @@ mod tests {
         assert!(app.ui.version_check.receiver.is_none());
     }
 
-    #[cfg(not(target_os = "android"))]
     #[test]
     fn granted_permission_cannot_start_checks_during_onboarding() {
         let mut app = headless_app(true, Some(true));

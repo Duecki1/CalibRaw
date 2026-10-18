@@ -1,7 +1,5 @@
 use crate::app::CalibRawApp;
-#[cfg(not(target_os = "android"))]
 use crate::app::LibraryExportDestination;
-#[cfg(not(target_os = "android"))]
 use crate::pipeline::{
     apply_lens_correction, build_proxy, is_supported_image_path, load_raw_display_metadata,
     load_raw_file_with_profile_selection, load_raw_thumbnail,
@@ -9,19 +7,16 @@ use crate::pipeline::{
     PipelineOptions, ProcessingQuality, ProxySpec, RawGpuPipeline, MAX_LOCAL_MASKS,
 };
 use crate::pipeline::{ExportFormat, ExportSettings, RawThumbnail};
+use crate::platform::{Platform, PlatformCaps};
 use eframe::egui::{self, Align2, Color32, FontId, Sense, Stroke, StrokeKind, Ui};
 use std::cmp::Ordering as CmpOrdering;
 use std::collections::{HashMap, HashSet, VecDeque};
-#[cfg(not(target_os = "android"))]
 use std::ffi::OsString;
 use std::fs;
-#[cfg(not(target_os = "android"))]
 use std::fs::OpenOptions;
-#[cfg(not(target_os = "android"))]
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-#[cfg(not(target_os = "android"))]
 use std::sync::OnceLock;
 use std::sync::{mpsc, Arc, Mutex, RwLock};
 use std::time::{Duration, Instant};
@@ -34,17 +29,17 @@ mod companions;
 mod dialogs;
 mod export;
 mod filter;
+mod folders;
 mod local;
-#[cfg(not(target_os = "android"))]
+mod media_library;
 mod merge;
-mod platform;
 mod review;
+mod sources;
 mod state;
 pub(crate) use state::LibraryPreferences;
 mod storage;
 mod thumbnails;
 mod view;
-#[cfg(not(target_os = "android"))]
 use review::thumbnail_hover_overlay;
 pub(crate) use review::{paint_review_badge, show_current_photo_review};
 
@@ -56,18 +51,17 @@ use companions::*;
 use dialogs::*;
 use export::*;
 use filter::*;
-use platform::*;
+use folders::catalog::*;
+use folders::files::*;
+use media_library::{android_folder_ancestors, android_library_location_label};
+use sources::*;
 use storage::*;
 use thumbnails::*;
 
-#[cfg(not(target_os = "android"))]
 pub(crate) use actions::library_image_context_menu;
-#[cfg(not(target_os = "android"))]
 pub(crate) use actions::{apply_library_action, show_library_action_overlays};
 pub(crate) use companions::{paint_format_badge, rendered_format_label};
-#[cfg(not(target_os = "android"))]
 pub(crate) use merge::{MergeKind, MergeOutcome};
-#[cfg(not(target_os = "android"))]
 pub(crate) use thumbnails::{load_desktop_cached_thumbnail, load_desktop_reference_preview};
 pub(crate) use view::Library;
 
@@ -81,20 +75,15 @@ const ANDROID_TEXTURE_CACHE_LIMIT: usize = 48;
 const RESIDENT_THUMBNAIL_EDGE: u32 = 384;
 const DESKTOP_RESIDENT_THUMBNAIL_CACHE_LIMIT: usize = 256;
 const ANDROID_RESIDENT_THUMBNAIL_CACHE_LIMIT: usize = 72;
-#[cfg(target_os = "android")]
 const ANDROID_DEVELOP_TEXTURE_CACHE_LIMIT: usize = 10;
 const THUMBNAIL_PAUSE_POLL_INTERVAL: Duration = Duration::from_millis(20);
 const THUMBNAIL_QUEUE_POLL_INTERVAL: Duration = Duration::from_millis(8);
 const THUMBNAIL_RETRY_MAX_DELAY: Duration = Duration::from_secs(30);
-#[cfg(not(target_os = "android"))]
 const DEVELOPED_THUMBNAIL_PROXY_EDGE: u32 = 1024;
 /// The manual worker limit always allows at least this many on desktop, even
 /// on machines with fewer cores.
-#[cfg(not(target_os = "android"))]
 pub(crate) const MIN_DESKTOP_THUMBNAIL_WORKER_LIMIT: usize = 8;
-#[cfg(not(target_os = "android"))]
 pub(crate) const MAX_DESKTOP_THUMBNAIL_WORKER_LIMIT: usize = 64;
-#[cfg(target_os = "android")]
 pub(crate) const MAX_ANDROID_THUMBNAIL_WORKERS: usize = 2;
 /// Concurrent full RAW renders for thumbnails (files without an embedded
 /// preview, and edited thumbnails), whatever the worker count. Each one holds
@@ -102,15 +91,11 @@ pub(crate) const MAX_ANDROID_THUMBNAIL_WORKERS: usize = 2;
 const MAX_RENDERED_THUMBNAIL_WORKERS: usize = 4;
 /// Peak memory one thumbnail job may need: a decoded full-size embedded JPEG
 /// or a half-size RAW fallback of a high-resolution sensor.
-#[cfg(not(target_os = "android"))]
 const THUMBNAIL_WORKER_MEMORY_BUDGET_BYTES: u64 = 300 * 1024 * 1024;
 /// Automatic workers together may claim this fraction of installed memory.
-#[cfg(not(target_os = "android"))]
 const THUMBNAIL_WORKER_MEMORY_SHARE_DIVISOR: u64 = 4;
-#[cfg(not(target_os = "android"))]
 const MAX_AUTOMATIC_THUMBNAIL_WORKERS: usize = 12;
 /// The automatic count when installed memory is unknown.
-#[cfg(not(target_os = "android"))]
 const UNKNOWN_MEMORY_THUMBNAIL_WORKERS: usize = 4;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
@@ -191,31 +176,29 @@ impl LibraryThumbnailSize {
 
 /// The manual worker setting's initial and reset value.
 pub(crate) fn default_thumbnail_worker_count() -> usize {
-    platform::default_thumbnail_worker_count()
+    sources::default_thumbnail_worker_count()
 }
 
 /// Workers used while the worker count is automatic.
 pub(crate) fn automatic_thumbnail_worker_count() -> usize {
-    platform::automatic_thumbnail_worker_count()
+    sources::automatic_thumbnail_worker_count()
 }
 
 pub(crate) fn maximum_thumbnail_worker_count() -> usize {
-    platform::maximum_thumbnail_worker_count()
+    sources::maximum_thumbnail_worker_count()
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub(crate) enum LibraryAssetId {
-    #[cfg(not(target_os = "android"))]
+    /// A photo in a folder, by path.
     Desktop(PathBuf),
-    #[cfg(target_os = "android")]
+    /// A photo in the media library, by content URI.
     Android(String),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum LibraryLocator {
-    #[cfg(not(target_os = "android"))]
     Desktop(PathBuf),
-    #[cfg(target_os = "android")]
     Android { uri: String },
 }
 
@@ -224,13 +207,10 @@ pub(crate) struct LibraryAssetMetadata {
     pub(crate) review: crate::sidecar::PhotoReview,
     pub(crate) bytes: u64,
     pub(crate) dimensions_hint: Option<[u32; 2]>,
-    #[cfg(any(not(target_os = "android"), test))]
+    /// Capture settings read from folder photos; zero for media-library photos.
     pub(crate) iso_speed: f32,
-    #[cfg(any(not(target_os = "android"), test))]
     pub(crate) shutter_seconds: f32,
-    #[cfg(any(not(target_os = "android"), test))]
     pub(crate) focal_length: f32,
-    #[cfg(any(not(target_os = "android"), test))]
     pub(crate) aperture: f32,
     pub(crate) modified_seconds: u64,
 }
@@ -245,7 +225,6 @@ pub(crate) struct LibraryAsset {
 }
 
 impl LibraryAsset {
-    #[cfg(not(target_os = "android"))]
     pub(crate) fn from_desktop_path(
         path: PathBuf,
         bytes: u64,
@@ -272,15 +251,13 @@ impl LibraryAsset {
                 iso_speed: 0.0,
                 shutter_seconds: 0.0,
                 focal_length: 0.0,
-                #[cfg(any(not(target_os = "android"), test))]
                 aperture: 0.0,
                 modified_seconds,
             },
         }
     }
 
-    #[cfg(target_os = "android")]
-    pub(crate) fn from_android_document(document: calibraw_ffi::LibraryDocument) -> Self {
+    pub(crate) fn from_android_document(document: crate::platform::LibraryDocument) -> Self {
         Self {
             id: LibraryAssetId::Android(document.uri.clone()),
             display_name: document.display_name,
@@ -290,29 +267,25 @@ impl LibraryAsset {
                 review: crate::sidecar::PhotoReview::default(),
                 bytes: document.bytes,
                 dimensions_hint: None,
-                #[cfg(test)]
                 iso_speed: 0.0,
-                #[cfg(test)]
                 shutter_seconds: 0.0,
-                #[cfg(test)]
                 focal_length: 0.0,
-                #[cfg(any(not(target_os = "android"), test))]
                 aperture: 0.0,
                 modified_seconds: document.modified_seconds,
             },
         }
     }
 
-    #[cfg(not(target_os = "android"))]
     pub(crate) fn desktop_path(&self) -> Option<&Path> {
         match &self.locator {
             LibraryLocator::Desktop(path) => Some(path.as_path()),
+            LibraryLocator::Android { .. } => None,
         }
     }
 
-    #[cfg(target_os = "android")]
     pub(crate) fn android_uri(&self) -> Option<&str> {
         match &self.locator {
+            LibraryLocator::Desktop(_) => None,
             LibraryLocator::Android { uri } => Some(uri.as_str()),
         }
     }
@@ -335,7 +308,6 @@ pub(crate) struct LibraryEntry {
     last_used: u64,
 }
 
-#[cfg(not(target_os = "android"))]
 #[derive(Clone)]
 pub(crate) struct DesktopFilmstripItem {
     pub(crate) asset: LibraryAsset,
@@ -353,7 +325,6 @@ struct LoadedLibraryThumbnail {
     developed_thumbnail_stale: bool,
     developed_render_pending: bool,
     /// Display metadata the catalog scan deferred, read while loading this thumbnail.
-    #[cfg(not(target_os = "android"))]
     display_metadata: Option<crate::pipeline::RawDisplayMetadata>,
 }
 
@@ -477,15 +448,13 @@ enum ScanEvent {
         warning_count: usize,
         truncated: bool,
     },
-    #[cfg(not(target_os = "android"))]
     FolderTree {
         generation: u64,
         tree: LibraryFolderNode,
     },
-    #[cfg(target_os = "android")]
     AndroidFolders {
         generation: u64,
-        folders: Vec<calibraw_ffi::LibraryFolder>,
+        folders: Vec<crate::platform::LibraryFolder>,
     },
     Thumbnail {
         generation: u64,
@@ -500,21 +469,18 @@ enum ScanEvent {
     },
 }
 
-#[cfg(not(target_os = "android"))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum ImageClipboardMode {
     Copy,
     Cut,
 }
 
-#[cfg(not(target_os = "android"))]
 #[derive(Clone, Debug)]
 struct ImageClipboard {
     mode: ImageClipboardMode,
     assets: Vec<LibraryAsset>,
 }
 
-#[cfg(not(target_os = "android"))]
 impl ImageClipboard {
     fn paste_label(&self) -> String {
         let count = self.assets.len();
@@ -524,17 +490,13 @@ impl ImageClipboard {
 
 #[derive(Clone, Debug)]
 enum LibraryTransferDestination {
-    #[cfg(not(target_os = "android"))]
     LocalFolder(PathBuf),
-    #[cfg(target_os = "android")]
     LocalLibrary,
 }
 
 struct AssetTransferCompletion {
     result: Result<String, String>,
-    #[cfg(not(target_os = "android"))]
     clear_clipboard: bool,
-    #[cfg(not(target_os = "android"))]
     remaining_clipboard: Option<ImageClipboard>,
 }
 
@@ -569,7 +531,6 @@ struct LibraryAiMaskRefreshPrompt {
     assets: Vec<LibraryAsset>,
 }
 
-#[cfg(not(target_os = "android"))]
 struct RawImportResult {
     imported: Vec<PathBuf>,
     imported_folders: Vec<PathBuf>,
@@ -578,31 +539,26 @@ struct RawImportResult {
     failures: Vec<String>,
 }
 
-#[cfg(not(target_os = "android"))]
 enum RawImportOutcome {
     Imported(PathBuf),
     AlreadyPresent,
 }
 
-#[cfg(not(target_os = "android"))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum LibraryFolderClipboardMode {
     Copy,
     Cut,
 }
 
-#[cfg(not(target_os = "android"))]
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct LibraryFolderClipboard {
     path: PathBuf,
     mode: LibraryFolderClipboardMode,
 }
 
-#[cfg(not(target_os = "android"))]
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct LibraryFolderDrag(PathBuf);
 
-#[cfg(not(target_os = "android"))]
 enum LibraryFolderOperation {
     Create {
         root: PathBuf,
@@ -626,7 +582,6 @@ enum LibraryFolderOperation {
     },
 }
 
-#[cfg(not(target_os = "android"))]
 enum LibraryFolderOperationResult {
     Created(PathBuf),
     Copied {
@@ -640,13 +595,11 @@ enum LibraryFolderOperationResult {
     Deleted(PathBuf),
 }
 
-#[cfg(not(target_os = "android"))]
 struct LibraryFolderOperationCompletion {
     root: PathBuf,
     result: Result<LibraryFolderOperationResult, String>,
 }
 
-#[cfg(not(target_os = "android"))]
 enum LibraryFolderUiAction {
     New(PathBuf),
     Copy(PathBuf),
@@ -662,13 +615,11 @@ enum LibraryFolderUiAction {
     Refresh,
 }
 
-#[cfg(not(target_os = "android"))]
 enum LibraryFolderNameDialogKind {
     Create { parent: PathBuf },
     Rename { source: PathBuf },
 }
 
-#[cfg(not(target_os = "android"))]
 struct LibraryFolderNameDialog {
     kind: LibraryFolderNameDialogKind,
     name: String,
@@ -683,7 +634,6 @@ struct LibraryRawNameDialog {
     focus_requested: bool,
 }
 
-#[cfg(target_os = "android")]
 struct AndroidLibraryFolderNameDialog {
     parent: String,
     name: String,
@@ -691,24 +641,22 @@ struct AndroidLibraryFolderNameDialog {
     focus_requested: bool,
 }
 
-#[cfg(target_os = "android")]
-struct PlatformLibraryState {
-    app: calibraw_ffi::AndroidApp,
+/// The media library's folders; empty where storage is folders.
+#[derive(Default)]
+struct MediaLibraryState {
     root_location: String,
     folder: String,
-    folders: Vec<calibraw_ffi::LibraryFolder>,
+    folders: Vec<crate::platform::LibraryFolder>,
     expanded_folders: HashSet<String>,
     folder_name_dialog: Option<AndroidLibraryFolderNameDialog>,
 }
 
-#[cfg(target_os = "android")]
 enum AndroidLibraryFolderUiAction {
     Select(String),
     New(String),
     Refresh,
 }
 
-#[cfg(not(target_os = "android"))]
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct LibraryFolderNode {
     path: PathBuf,
@@ -716,7 +664,6 @@ struct LibraryFolderNode {
     children: Vec<Self>,
 }
 
-#[cfg(not(target_os = "android"))]
 impl LibraryFolderNode {
     fn empty(path: PathBuf) -> Self {
         let name = path
@@ -743,17 +690,13 @@ pub(crate) struct AdjustmentClipboard {
 
 pub(crate) struct LibraryState {
     location: Option<String>,
-    #[cfg(not(target_os = "android"))]
     folder: Option<PathBuf>,
-    #[cfg(not(target_os = "android"))]
     root_folder: Option<PathBuf>,
-    #[cfg(not(target_os = "android"))]
     folder_tree: Option<LibraryFolderNode>,
-    #[cfg(not(target_os = "android"))]
     expanded_folders: HashSet<PathBuf>,
     folder_sidebar_open: bool,
-    #[cfg(target_os = "android")]
-    platform: PlatformLibraryState,
+    platform: Arc<dyn Platform>,
+    media: MediaLibraryState,
     entries: Vec<LibraryEntry>,
     entry_indices: HashMap<LibraryAssetId, usize>,
     event_receiver: Option<mpsc::Receiver<ScanEvent>>,
@@ -780,21 +723,14 @@ pub(crate) struct LibraryState {
     selected_assets: HashSet<LibraryAssetId>,
     selection_mode: bool,
     selection_anchor: Option<LibraryAssetId>,
-    #[cfg(not(target_os = "android"))]
     image_clipboard: Option<ImageClipboard>,
     pub(crate) adjustment_clipboard: Option<AdjustmentClipboard>,
     asset_transfer_receiver: Option<mpsc::Receiver<AssetTransferCompletion>>,
-    #[cfg(not(target_os = "android"))]
     merge: Option<merge::MergeTask>,
-    #[cfg(not(target_os = "android"))]
     raw_import_receiver: Option<mpsc::Receiver<RawImportResult>>,
-    #[cfg(not(target_os = "android"))]
     folder_operation_receiver: Option<mpsc::Receiver<LibraryFolderOperationCompletion>>,
-    #[cfg(not(target_os = "android"))]
     folder_clipboard: Option<LibraryFolderClipboard>,
-    #[cfg(not(target_os = "android"))]
     folder_name_dialog: Option<LibraryFolderNameDialog>,
-    #[cfg(not(target_os = "android"))]
     folder_delete_confirmation: Option<PathBuf>,
     delete_originals_confirmation: Option<Vec<LibraryAsset>>,
     raw_name_dialog: Option<LibraryRawNameDialog>,

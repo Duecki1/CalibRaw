@@ -140,12 +140,13 @@ mod tests {
     #[test]
     #[ignore = "requires a compute-capable GPU"]
     fn raw_demosaic_merge_preserves_highlights_and_shadows() {
-        let instance = wgpu::Instance::default();
-        let adapter =
-            pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default()))
-                .unwrap();
-        let (device, queue) =
-            pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default())).unwrap();
+        let crate::HeadlessDevice { device, queue, .. } =
+            crate::request_headless_device(&crate::HeadlessDeviceRequest {
+                label: "HDR merge test",
+                adapter: crate::HeadlessAdapter::Preferred(wgpu::PowerPreference::None),
+                texture_dimension: wgpu::Limits::default().max_texture_dimension_2d,
+            })
+            .unwrap();
         let (width, height) = (256u32, 96u32);
         let mut merge = HdrAccumulator::new(width, height).unwrap();
         for exposure in [1.0, 1.0 / 16.0, 16.0] {

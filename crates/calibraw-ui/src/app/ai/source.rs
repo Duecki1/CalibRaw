@@ -90,15 +90,13 @@ impl CalibRawApp {
             return Ok(());
         }
 
-        #[cfg(target_os = "android")]
-        {
+        // Constrained memory reads the source back from the preview instead
+        // of rendering a separate proxy.
+        if self.caps().constrained_memory() {
             let source = self.capture_mask_source_from_active_preview(frame)?;
             self.masks.source_cache = Some(source);
             Ok(())
-        }
-
-        #[cfg(not(target_os = "android"))]
-        {
+        } else {
             let render_state = frame
                 .wgpu_render_state()
                 .ok_or_else(|| "The GPU preview is not available.".to_owned())?;

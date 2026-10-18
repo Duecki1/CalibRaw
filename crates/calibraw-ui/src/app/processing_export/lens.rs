@@ -59,27 +59,30 @@ impl CalibRawApp {
             self.rehydrate_restored_mask_state();
         }
 
-        #[cfg(target_os = "android")]
-        let cached_raws = match selection.as_ref() {
-            Some(requested) => self
-                .preview
-                .lens_corrected_cache
-                .as_ref()
-                .filter(|(cached, quality, _, _)| {
-                    cached == requested && *quality == self.preview.quality
-                })
-                .map(|(_, _, full_raw, preview_raw)| {
-                    (Arc::clone(full_raw), Arc::clone(preview_raw))
-                }),
-            None => self
-                .preview
-                .lens_original_cache
-                .as_ref()
-                .filter(|(quality, _)| *quality == self.preview.quality)
-                .map(|(_, preview_raw)| (Arc::clone(&original_raw), Arc::clone(preview_raw))),
+        // Constrained memory keeps the last corrected and uncorrected
+        // previews, so toggling the correction does not decode again.
+        let cached_raws = if !self.caps().constrained_memory() {
+            None
+        } else {
+            match selection.as_ref() {
+                Some(requested) => self
+                    .preview
+                    .lens_corrected_cache
+                    .as_ref()
+                    .filter(|(cached, quality, _, _)| {
+                        cached == requested && *quality == self.preview.quality
+                    })
+                    .map(|(_, _, full_raw, preview_raw)| {
+                        (Arc::clone(full_raw), Arc::clone(preview_raw))
+                    }),
+                None => self
+                    .preview
+                    .lens_original_cache
+                    .as_ref()
+                    .filter(|(quality, _)| *quality == self.preview.quality)
+                    .map(|(_, preview_raw)| (Arc::clone(&original_raw), Arc::clone(preview_raw))),
+            }
         };
-        #[cfg(not(target_os = "android"))]
-        let cached_raws = None;
 
         let preview_proxy_edge = self.preview.quality.proxy_edge_for_fitted_source(
             self.preview.viewport_pixels,
@@ -91,7 +94,6 @@ impl CalibRawApp {
         self.start_lens_correction_task(LensCorrectionTaskRequest {
             original_raw,
             selection,
-            #[cfg(target_os = "android")]
             preview_quality: self.preview.quality,
             preview_proxy_edge,
             cached_raws,
@@ -171,9 +173,7 @@ impl CalibRawApp {
                         full_raw,
                         preview_raw,
                         applied_label,
-                        #[cfg(target_os = "android")]
                         selection: request.selection,
-                        #[cfg(target_os = "android")]
                         preview_quality: request.preview_quality,
                     })
                 })();
@@ -281,8 +281,9 @@ impl CalibRawApp {
                 .inpaint_opposed_chroma_for_exposure(&self.preview_exposure());
         }
 
-        #[cfg(target_os = "android")]
-        {
+        // Constrained memory updates the current preview in place instead of
+        // building a second pipeline next to it.
+        if self.caps().constrained_memory() {
             let Some(pipeline) = self.preview.pipeline() else {
                 self.report_error(
                     ErrorKind::LensCorrection,
@@ -336,10 +337,7 @@ impl CalibRawApp {
                 self.preview.lens_original_cache =
                     Some((prepared.preview_quality, Arc::clone(&prepared.preview_raw)));
             }
-        }
-
-        #[cfg(not(target_os = "android"))]
-        {
+        } else {
             let preview_masks = self.preview_mask_stack();
             let params = GpuParams::new(
                 &self.preview_exposure(),

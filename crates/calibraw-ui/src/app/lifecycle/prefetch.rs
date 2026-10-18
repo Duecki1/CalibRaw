@@ -49,6 +49,7 @@ impl CalibRawApp {
         }
 
         let context = AheadOfOpen {
+            platform: Arc::clone(&self.platform),
             decoded_raws: self.develop.decoded_raws.clone(),
             decode_gate: self.library.decode_gate(),
             camera_profiles: self.camera_profile_settings(),

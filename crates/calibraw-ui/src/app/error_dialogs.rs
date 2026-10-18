@@ -16,14 +16,12 @@ pub(crate) enum ErrorKind {
     Export,
     ExportUnavailable,
     BatchExport,
-    #[cfg(target_os = "android")]
     Share,
     EditReplay,
     Preview,
     Sampling,
     LensCorrection,
     OpenPhoto,
-    #[cfg(target_os = "android")]
     Import,
     PhotoOpenedWithProblems,
     CameraProfile,
@@ -33,11 +31,9 @@ pub(crate) enum ErrorKind {
     AiMask,
     AiMaskRefresh,
     AiUpdate,
-    #[cfg(not(target_os = "android"))]
     AiRuntime,
-    #[cfg(not(target_os = "android"))]
+    AiFilesNotMoved,
     HdrMerge,
-    #[cfg(not(target_os = "android"))]
     FocusStack,
     GpuMemory,
     GpuAi,
@@ -46,7 +42,6 @@ pub(crate) enum ErrorKind {
     Settings,
     Tip,
     EditNotApplied,
-    #[cfg(target_os = "android")]
     LibraryAdjustments,
 }
 
@@ -56,14 +51,12 @@ impl ErrorKind {
             Self::Export => "Export failed",
             Self::ExportUnavailable => "Export unavailable",
             Self::BatchExport => "Batch export failed",
-            #[cfg(target_os = "android")]
             Self::Share => "Sharing failed",
             Self::EditReplay => "Edit replay failed",
             Self::Preview => "Preview failed",
             Self::Sampling => "Sampling failed",
             Self::LensCorrection => "Lens correction failed",
             Self::OpenPhoto => "Could not open photo",
-            #[cfg(target_os = "android")]
             Self::Import => "Import failed",
             Self::PhotoOpenedWithProblems => "Photo opened with problems",
             Self::CameraProfile => "Camera profile failed",
@@ -73,11 +66,9 @@ impl ErrorKind {
             Self::AiMask => "AI mask failed",
             Self::AiMaskRefresh => "AI mask refresh failed",
             Self::AiUpdate => "AI update failed",
-            #[cfg(not(target_os = "android"))]
             Self::AiRuntime => "AI runtime unavailable",
-            #[cfg(not(target_os = "android"))]
+            Self::AiFilesNotMoved => "AI files not moved",
             Self::HdrMerge => "HDR merge failed",
-            #[cfg(not(target_os = "android"))]
             Self::FocusStack => "Focus stacking failed",
             Self::GpuMemory => "GPU memory exhausted",
             Self::GpuAi => "GPU AI turned off",
@@ -86,7 +77,6 @@ impl ErrorKind {
             Self::Settings => "Settings error",
             Self::Tip => "Tip unavailable",
             Self::EditNotApplied => "Edit not applied",
-            #[cfg(target_os = "android")]
             Self::LibraryAdjustments => "Library adjustment failed",
         }
     }

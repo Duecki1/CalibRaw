@@ -26,25 +26,15 @@ ureq.workspace = true
 wgpu.workspace = true
 zip.workspace = true
 
-[target.'cfg(target_os = "windows")'.dependencies]
-ort = { workspace = true, features = ["load-dynamic", "directml", "cuda", "tensorrt"] }
-windows.workspace = true
-
-[target.'cfg(target_os = "macos")'.dependencies]
-ort = { workspace = true, features = ["load-dynamic", "coreml"] }
-
-[target.'cfg(target_os = "linux")'.dependencies]
-ort = { workspace = true, features = ["load-dynamic", "cuda", "tensorrt", "rocm"] }
-
-[target.'cfg(all(not(target_os = "android"), not(any(target_os = "windows", target_os = "macos", target_os = "linux"))))'.dependencies]
-ort = { workspace = true, features = ["load-dynamic"] }
-
+# Desktop loads the automatic runtime and registers its WebGPU plugin at run
+# time, so no execution provider is compiled in.
 [target.'cfg(not(target_os = "android"))'.dependencies]
 flate2.workspace = true
+ort = { workspace = true, features = ["load-dynamic"] }
 tar.workspace = true
 
 [target.'cfg(target_os = "android")'.dependencies]
-ort = { workspace = true, features = ["download-binaries", "copy-dylibs", "tls-rustls", "nnapi", "xnnpack"] }
+ort = { workspace = true, features = ["download-binaries", "copy-dylibs", "tls-rustls"] }
 
 [dev-dependencies]
 pollster.workspace = true

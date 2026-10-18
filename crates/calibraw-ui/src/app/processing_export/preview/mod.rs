@@ -171,7 +171,7 @@ impl PreviewDetailPlan {
 }
 
 pub(in crate::app) fn navigation_proxy_edge() -> u32 {
-    if cfg!(target_os = "android") {
+    if PlatformCaps::CURRENT.constrained_memory() {
         384
     } else {
         512
@@ -179,7 +179,7 @@ pub(in crate::app) fn navigation_proxy_edge() -> u32 {
 }
 
 pub(in crate::app) fn navigation_mask_edge() -> u32 {
-    if cfg!(target_os = "android") {
+    if PlatformCaps::CURRENT.constrained_memory() {
         256
     } else {
         384
@@ -187,7 +187,7 @@ pub(in crate::app) fn navigation_mask_edge() -> u32 {
 }
 
 pub(in crate::app) fn detail_mask_edge() -> u32 {
-    if cfg!(target_os = "android") {
+    if PlatformCaps::CURRENT.constrained_memory() {
         1024
     } else {
         2048
@@ -269,7 +269,7 @@ fn detail_mask_update_region(
 
 fn detail_mask_texture_extent(region: [u32; 4], atlas_edge: u32, interactive: bool) -> [u32; 2] {
     let edge = if interactive {
-        atlas_edge.min(if cfg!(target_os = "android") {
+        atlas_edge.min(if PlatformCaps::CURRENT.constrained_memory() {
             512
         } else {
             768
@@ -283,7 +283,7 @@ fn detail_mask_texture_extent(region: [u32; 4], atlas_edge: u32, interactive: bo
 pub(super) const DETAIL_ZOOM_START: f32 = 1.0005;
 
 pub(in crate::app) fn zoom_detail_idle_delay() -> Duration {
-    Duration::from_millis(if cfg!(target_os = "android") {
+    Duration::from_millis(if PlatformCaps::CURRENT.constrained_memory() {
         220
     } else {
         140

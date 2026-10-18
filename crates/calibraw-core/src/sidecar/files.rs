@@ -48,7 +48,6 @@ pub fn save_desktop_with_editing_time(
 
 /// Preserve an unreadable or newer desktop sidecar before replacing it with a
 /// current-schema document. The caller must explicitly request this recovery.
-#[cfg(not(target_os = "android"))]
 pub fn backup_and_replace_desktop_sidecar(
     raw_path: &Path,
     edits: EditState,
@@ -89,7 +88,6 @@ fn remove_unused_ai_denoise_result(raw_path: &Path, uses_ai_denoise: bool) {
 }
 
 /// Copies `path` to a new, uniquely named `<path>.backup-<pid>-<n>` file.
-#[cfg(not(target_os = "android"))]
 fn create_backup_copy(path: &Path) -> Result<PathBuf, SidecarError> {
     use std::sync::atomic::{AtomicU64, Ordering};
     static NEXT_BACKUP_ID: AtomicU64 = AtomicU64::new(0);
@@ -126,12 +124,10 @@ fn create_backup_copy(path: &Path) -> Result<PathBuf, SidecarError> {
     }
 }
 
-#[cfg(not(target_os = "android"))]
 pub fn reset_desktop_adjustments(raw_path: &Path) -> Result<bool, String> {
     reset_desktop_adjustments_impl(raw_path, None)
 }
 
-#[cfg(not(target_os = "android"))]
 pub fn reset_desktop_adjustments_with_editing_time(
     raw_path: &Path,
     editing_time_ms: u64,
@@ -139,7 +135,6 @@ pub fn reset_desktop_adjustments_with_editing_time(
     reset_desktop_adjustments_impl(raw_path, Some(editing_time_ms))
 }
 
-#[cfg(not(target_os = "android"))]
 fn reset_desktop_adjustments_impl(
     raw_path: &Path,
     editing_time_override_ms: Option<u64>,

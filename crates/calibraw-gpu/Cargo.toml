@@ -27,6 +27,15 @@ naga_oil.workspace = true
 zune-core.workspace = true
 zune-jpegxl.workspace = true
 
+[target.'cfg(target_os = "windows")'.dependencies]
+windows.workspace = true
+
+[target.'cfg(any(target_os = "linux", target_os = "android"))'.dependencies]
+ash.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2-metal.workspace = true
+
 [dev-dependencies]
 exif.workspace = true
 jxl-oxide = "0.12.6"

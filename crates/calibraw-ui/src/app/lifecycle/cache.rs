@@ -4,7 +4,6 @@ impl CalibRawApp {
     /// Drops every decoded RAW, for settings that change what decodes produce,
     /// and stops a prefetch still decoding with the old settings.
     pub(in crate::app) fn clear_decoded_raws(&mut self) {
-        #[cfg(not(target_os = "android"))]
         self.cancel_neighbour_prefetch();
         self.develop.decoded_raws.clear();
     }
@@ -21,7 +20,6 @@ impl CalibRawApp {
         exposure
     }
 
-    #[cfg(not(target_os = "android"))]
     pub(in crate::app) fn prepare_develop_loading_thumbnail(&mut self, path: &std::path::Path) {
         const LOADING_THUMBNAIL_EDGE: u32 = 512;
 
@@ -62,8 +60,11 @@ impl CalibRawApp {
         }
     }
 
-    #[cfg(not(target_os = "android"))]
     pub(crate) fn refresh_develop_loading_thumbnail(&mut self, context: &egui::Context) {
+        if let Some(uri) = self.develop_ui.loading_thumbnail.source_uri.clone() {
+            self.refresh_media_library_loading_thumbnail(&uri, context);
+            return;
+        }
         let Some(path) = self.develop_ui.loading_thumbnail.path.clone() else {
             return;
         };
@@ -127,7 +128,6 @@ impl CalibRawApp {
         }
     }
 
-    #[cfg(target_os = "android")]
     pub(in crate::app) fn prepare_android_develop_loading_thumbnail(&mut self, uri: &str) {
         self.develop_ui.loading_thumbnail.clear();
         self.ui.adaptive_preview_backdrop = crate::ui::theme::CANVAS_BACKDROP;
@@ -144,16 +144,11 @@ impl CalibRawApp {
         }
     }
 
-    #[cfg(target_os = "android")]
-    pub(crate) fn refresh_develop_loading_thumbnail(&mut self, context: &egui::Context) {
-        let Some(uri) = self.develop_ui.loading_thumbnail.source_uri.clone() else {
-            return;
-        };
+    fn refresh_media_library_loading_thumbnail(&mut self, uri: &str, context: &egui::Context) {
         self.library.poll(context);
         if self.develop_ui.loading_thumbnail.texture.is_none() {
-            if let Some((texture, size, adaptive_backdrop)) = self
-                .library
-                .android_loading_thumbnail_for_uri(&uri, context)
+            if let Some((texture, size, adaptive_backdrop)) =
+                self.library.android_loading_thumbnail_for_uri(uri, context)
             {
                 self.develop_ui.loading_thumbnail.texture = Some(texture);
                 self.develop_ui.loading_thumbnail.texture_size = Some(size);

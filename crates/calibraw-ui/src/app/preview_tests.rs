@@ -7,7 +7,8 @@ use eframe::egui_wgpu::{Renderer, RendererOptions, ScreenDescriptor};
 #[ignore = "requires a GPU adapter; optional CALIBRAW_PREVIEW_TEST_SCREENSHOT writes a visual fixture"]
 fn portrait_gpu_layout_and_input() {
     let mut instance_descriptor = wgpu::InstanceDescriptor::new_without_display_handle();
-    instance_descriptor.memory_budget_thresholds = crate::memory_budget_thresholds();
+    instance_descriptor.memory_budget_thresholds =
+        crate::memory_budget_thresholds(crate::platform::MemoryClass::Standard);
     let instance = wgpu::Instance::new(instance_descriptor);
     let adapter =
         pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default()))
@@ -162,14 +163,7 @@ fn portrait_gpu_layout_and_input() {
         SidebarTab::Crop,
     ] {
         for touch in [false, true] {
-            for zoom in [
-                if cfg!(target_os = "android") {
-                    0.25
-                } else {
-                    0.7
-                },
-                2.0,
-            ] {
+            for zoom in [0.7, 2.0] {
                 app.ui.sidebar_tab = tab;
                 app.preview.zoom = zoom;
                 app.preview.center = [0.5; 2];

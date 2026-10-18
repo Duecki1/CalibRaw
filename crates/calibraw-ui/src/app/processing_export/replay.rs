@@ -24,26 +24,26 @@ impl CalibRawApp {
             return;
         };
         let stem = format!("{stem}-edit-replay");
-        #[cfg(not(target_os = "android"))]
-        let initial_directory = self
-            .develop
-            .current_path
-            .as_deref()
-            .and_then(|path| path.parent());
-        #[cfg(not(target_os = "android"))]
-        let default_name =
-            crate::export_naming::free_export_file_name(initial_directory, &stem, "mp4");
-        #[cfg(target_os = "android")]
-        let default_name = format!("{stem}.mp4");
-        #[cfg(not(target_os = "android"))]
-        let Some(destination) =
-            crate::ui::choose_edit_replay_file_path(&default_name, initial_directory)
-        else {
-            return;
-        };
-        #[cfg(target_os = "android")]
-        let destination = {
-            let Some(data_dir) = self.android.android_app.internal_data_path() else {
+        // Saved where a save dialog says, or rendered into the app's cache
+        // and then published to the shared media store.
+        let publishes = self.caps().has_media_library();
+        let destination = if !publishes {
+            let initial_directory = self
+                .develop
+                .current_path
+                .as_deref()
+                .and_then(|path| path.parent());
+            let default_name =
+                crate::export_naming::free_export_file_name(initial_directory, &stem, "mp4");
+            let Some(destination) =
+                crate::ui::choose_edit_replay_file_path(&default_name, initial_directory)
+            else {
+                return;
+            };
+            destination
+        } else {
+            let default_name = format!("{stem}.mp4");
+            let Some(data_dir) = self.platform.internal_data_dir() else {
                 self.report_error(
                     ErrorKind::EditReplay,
                     "Android did not provide an app data directory.",
@@ -80,8 +80,7 @@ impl CalibRawApp {
             final_masks: self.masks.stack.clone(),
             final_remove: self.inpaint.edits.as_ref().clone(),
             gpu_export_prewarm: self.export.gpu_prewarm.as_ref().map(Arc::clone),
-            #[cfg(target_os = "android")]
-            android_app: self.android.android_app.clone(),
+            platform: Arc::clone(&self.platform),
         };
         let cancellation = Arc::new(AtomicBool::new(false));
         let (sender, receiver) = mpsc::channel();
@@ -115,8 +114,7 @@ impl CalibRawApp {
                 if let Some(task) = self.export.task.as_mut() {
                     task.phase = "Preparing edit replay…".to_owned();
                 }
-                #[cfg(target_os = "android")]
-                {
+                if publishes {
                     self.export.share_mime_type = Some("video/mp4");
                 }
                 self.ui.notice = None;
@@ -168,20 +166,12 @@ impl CalibRawApp {
                         .is_some_and(|task| task.cancelling);
                     match result {
                         Ok(path) => {
-                            #[cfg(not(target_os = "android"))]
-                            {
+                            if self.caps().has_folders() {
                                 self.ui.notice =
                                     Some(format!("Created edit replay {}", path.display()));
-                            }
-                            #[cfg(target_os = "android")]
-                            {
+                            } else {
                                 let name = path.file_name().unwrap_or_default().to_string_lossy();
-                                match calibraw_ffi::publish_image(
-                                    &self.android.android_app,
-                                    &path,
-                                    &name,
-                                    "video/mp4",
-                                ) {
+                                match self.platform.publish_image(&path, &name, "video/mp4") {
                                     Ok(()) => {
                                         self.export.publish_pending = true;
                                         self.ui.notice =

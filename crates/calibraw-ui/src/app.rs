@@ -1,5 +1,4 @@
 use crate::appearance::{PreviewBackdrop, UiDesign};
-#[cfg(not(target_os = "android"))]
 use crate::pipeline::RawThumbnail;
 use crate::pipeline::{
     affected_stage, apply_lens_correction, build_proxy, build_region_proxy,
@@ -12,21 +11,22 @@ use crate::pipeline::{
     RemoveEditState, RemoveSceneContext, RetouchAlignment, RetouchStroke, RetouchTool,
     SubjectRefinement, TileSpec, TiledExportJob, MAX_LOCAL_MASKS,
 };
+use crate::platform::{Platform, PlatformCaps};
 use crate::sidecar::{
     AdjustmentCopySettings, AdjustmentPasteMode, EditSelection, EditState as SidecarEditState,
     LensEditState as SidecarLensEditState,
 };
-#[cfg(not(target_os = "android"))]
 use crate::ui::develop::Develop;
 use crate::ui::library::{AdjustmentClipboard, Library, LibraryState};
 use crate::ui::settings::Settings;
 use crate::ui::sidebar::Sidebar;
 use crate::ui::top_bar::TopBar;
-use calibraw_ai::ai_masks::{
-    spawn_ai_mask, spawn_object_mask, AiMaskEvent, AiMaskWorkerRequest, ObjectInferenceCache,
-    ObjectMaskEvent, ObjectMaskRequest, ObjectMaskWorkerRequest, SAM21_MODEL_BYTES_ESTIMATE,
+use calibraw_ai::models::masks::{spawn_ai_mask, AiMaskEvent, AiMaskWorkerRequest};
+use calibraw_ai::models::object::{
+    spawn_object_mask, ObjectInferenceCache, ObjectMaskEvent, ObjectMaskRequest,
+    ObjectMaskWorkerRequest, SAM21_MODEL_BYTES_ESTIMATE,
 };
-use calibraw_ai::remove::{
+use calibraw_ai::models::remove::{
     spawn_remove, spawn_retouch, RemoveEvent, RemoveRequest, RetouchRequest,
 };
 use eframe::{egui, wgpu};
@@ -42,9 +42,7 @@ use std::time::{Duration, Instant};
 mod actions;
 pub(crate) use actions::AppAction;
 mod ai_denoise;
-#[cfg(not(target_os = "android"))]
 mod discord_presence;
-#[cfg(not(target_os = "android"))]
 use discord_presence::DiscordPresence;
 mod edit_history;
 use edit_history::EditHistory;
@@ -52,8 +50,8 @@ mod version_update;
 pub(crate) use version_update::{GITHUB_UPDATE_CHECKS_AVAILABLE, UPDATE_STORE_NAME};
 mod worker;
 use worker::drain_worker_events;
-#[cfg(not(target_os = "android"))]
 use worker::spawn_ui_worker;
+use worker::{model_download_progress, poll_ai_job, AiJobUpdate};
 
 mod decoded_raw_cache;
 mod develop_state;
@@ -98,17 +96,21 @@ pub struct CalibRawApp {
     pub(crate) preferences: PreferencesState,
     pub(crate) presets: PresetState,
     pub(crate) ui: UiState,
-    #[cfg(not(target_os = "android"))]
     discord_presence: DiscordPresence,
-    #[cfg(not(target_os = "android"))]
-    pub(crate) toolbar_brand_texture: egui::TextureHandle,
+    /// The desktop toolbar's brand mark; `None` where there is no toolbar brand.
+    pub(crate) toolbar_brand_texture: Option<egui::TextureHandle>,
     egui_ctx: egui::Context,
     foreground_operation: Option<ForegroundOperation>,
-    #[cfg(target_os = "android")]
     pub(crate) android: AndroidState,
+    pub(crate) platform: Arc<dyn Platform>,
 }
 
 impl CalibRawApp {
+    /// What this device offers; views and handlers branch on it.
+    pub(crate) fn caps(&self) -> PlatformCaps {
+        self.platform.caps()
+    }
+
     pub(crate) fn app_usage_duration(&self) -> Duration {
         self.usage
             .app_persisted
@@ -177,8 +179,9 @@ impl CalibRawApp {
         }
         if self.ui.active_tab == AppTab::Library && tab != AppTab::Library {
             self.library.prepare_for_develop();
-            #[cfg(target_os = "android")]
-            self.library.set_folder_sidebar_open(false);
+            if self.caps().is_mobile() {
+                self.library.set_folder_sidebar_open(false);
+            }
         }
         if tab == AppTab::Settings {
             self.ui.thumbnail_cache_size = None;
@@ -191,22 +194,17 @@ impl CalibRawApp {
         self.sync_ai_runtime();
     }
 
-    /// Whether the app consumes Android back presses: outside the library, or
+    /// Whether the app consumes system back presses: outside the library, or
     /// while the library has a selection or an open folder sidebar to dismiss.
-    #[cfg(any(target_os = "android", test))]
     pub(crate) fn handles_back_navigation(&self) -> bool {
         self.ui.active_tab != AppTab::Library
             || self.library.has_selection()
             || self.library.folder_sidebar_open()
     }
 
-    #[cfg(target_os = "android")]
     fn clear_android_original_hold(&mut self) {
         self.preview.original_hold = None;
     }
-
-    #[cfg(not(target_os = "android"))]
-    fn clear_android_original_hold(&mut self) {}
 
     fn release_retired_egui_textures(&mut self, frame: &eframe::Frame) {
         if self.preview.retired_textures.is_empty() {
@@ -253,9 +251,13 @@ impl CalibRawApp {
         self.preview.navigation = None;
     }
 
-    #[cfg(target_os = "android")]
-    pub(crate) fn copy_text_to_clipboard(&self, label: &str, text: &str) -> Result<(), String> {
-        calibraw_ffi::copy_text_to_clipboard(&self.android.android_app, label, text)
+    /// `None` when the platform has no clipboard of its own and egui's is used.
+    pub(crate) fn copy_text_to_clipboard(
+        &self,
+        label: &str,
+        text: &str,
+    ) -> Option<Result<(), String>> {
+        self.platform.copy_text_to_clipboard(label, text)
     }
 }
 
@@ -286,7 +288,6 @@ mod eframe_impl;
 mod error_dialogs;
 pub(crate) use error_dialogs::{ErrorDialogQueue, ErrorKind};
 mod foreground;
-#[cfg(not(target_os = "android"))]
 mod gpu_recovery;
 mod inpainting;
 mod library_adjustments;
@@ -299,7 +300,7 @@ pub(crate) use presets::{GroupDialogMode, PresetEditor, PresetEditorMode, Preset
 mod lifecycle;
 mod preview_clipping;
 mod preview_histogram;
-#[cfg(all(test, not(target_os = "android")))]
+#[cfg(test)]
 mod preview_tests;
 mod preview_texture;
 mod preview_viewport;
@@ -311,13 +312,12 @@ use straighten::AutoStraightenResult;
 mod tips;
 pub(crate) use tips::{ShownTip, TipPreferences};
 mod sidecar_persistence;
-#[cfg(all(test, not(target_os = "android")))]
+#[cfg(test)]
 mod ui_review_tests;
 
 use ai::AiUpdate;
 use lifecycle::needs_canonical_mask_source;
 pub(crate) use lifecycle::ProfileReload;
-#[cfg(not(target_os = "android"))]
 pub(crate) use lifecycle::{
     install_missing_range_sources, masks_have_missing_range_sources, DocumentSource,
 };
@@ -329,9 +329,31 @@ mod tests {
     use crate::pipeline::GeometryTransform;
 
     #[test]
+    fn media_library_photos_open_through_the_platform_once() {
+        let context = eframe::egui::Context::default();
+        let platform =
+            crate::platform::fake::FakePlatform::new(crate::platform::PlatformCaps::ANDROID);
+        let mut app = super::CalibRawApp::empty_on(&context, platform.clone());
+        let uri = "content://calibraw.test/photo.DNG";
+        app.open_android_library_document(uri, "photo.DNG");
+        assert!(app.android.picker_pending);
+        // A second request waits for the first document to arrive.
+        app.open_android_library_document(uri, "photo.DNG");
+        let opens = platform
+            .calls()
+            .into_iter()
+            .filter(|call| call.starts_with("open_library_document"))
+            .collect::<Vec<_>>();
+        assert_eq!(opens, [format!("open_library_document {uri} photo.DNG")]);
+    }
+
+    #[test]
     fn back_presses_are_handled_outside_the_plain_library() {
         let context = eframe::egui::Context::default();
-        let mut app = super::CalibRawApp::empty(&context);
+        let mut app = super::CalibRawApp::empty_on(
+            &context,
+            crate::platform::fake::FakePlatform::new(crate::platform::PlatformCaps::ANDROID),
+        );
         app.ui.active_tab = super::AppTab::Develop;
         assert!(app.handles_back_navigation());
 
@@ -345,7 +367,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(not(target_os = "android"))]
     fn preview_quality_levels_track_physical_viewport_density() {
         assert_eq!(
             PreviewQuality::Max.proxy_edge_for_viewport([3_000, 2_000]),

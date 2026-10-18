@@ -42,7 +42,7 @@ jobs:
             cxx_compiler: x86_64-w64-mingw32-g++
             artifact_arch: x86_64
             vc_redist_arch: x64
-            vc_runtime_dlls: msvcp140.dll msvcp140_1.dll vcruntime140.dll vcruntime140_1.dll
+            vc_runtime_dlls: msvcp140.dll msvcp140_1.dll msvcp140_atomic_wait.dll vcruntime140.dll vcruntime140_1.dll
           - name: ARM64 (GNU LLVM + LibRaw)
             runner: windows-11-arm
             target: aarch64-pc-windows-gnullvm
@@ -60,7 +60,7 @@ jobs:
             cxx_compiler: clang++
             artifact_arch: arm64
             vc_redist_arch: arm64
-            vc_runtime_dlls: msvcp140.dll msvcp140_1.dll vcruntime140.dll
+            vc_runtime_dlls: msvcp140.dll msvcp140_1.dll msvcp140_atomic_wait.dll vcruntime140.dll
 
     defaults:
       run:
@@ -203,6 +203,9 @@ jobs:
       # 2022 17.14 and hangs while loading against runtimes older than 14.40,
       # which Windows installs may still have in System32. Windows resolves
       # these imports from calibraw.exe's directory first, so ship them there.
+      # Only its WebGPU plugin imports msvcp140_atomic_wait.dll; ONNX Runtime
+      # loads the plugin without searching this directory, so CalibRaw loads
+      # that DLL from here first (crates/calibraw-ai/src/runtime/load.rs).
       - name: Stage Visual C++ runtime for ONNX Runtime
         shell: pwsh
         run: |

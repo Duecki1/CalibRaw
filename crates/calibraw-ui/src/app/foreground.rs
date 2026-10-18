@@ -216,9 +216,11 @@ impl CalibRawApp {
         self.cancel_foreground_operation();
     }
 
-    #[cfg(target_os = "android")]
+    /// A task the person must keep the app open for, where the platform
+    /// stops background work; input waits until it finishes.
     pub(crate) fn android_foreground_task_active(&self) -> bool {
-        self.foreground_operation_active() || self.ai.library_mask_refresh.is_some()
+        self.caps().tasks_need_foreground
+            && (self.foreground_operation_active() || self.ai.library_mask_refresh.is_some())
     }
 }
 

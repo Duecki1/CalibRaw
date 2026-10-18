@@ -62,8 +62,8 @@ impl CalibRawApp {
         };
         self.apply_preview_viewport_actions(actions);
 
-        #[cfg(target_os = "android")]
-        let original_hold_tracking = !viewport.point_color_canvas() && {
+        // Touch screens show the original while a finger rests on the photo.
+        let original_hold_tracking = self.caps().is_mobile() && !viewport.point_color_canvas() && {
             let hold = Preview::handle_android_original_hold(
                 ui,
                 self,
@@ -79,8 +79,6 @@ impl CalibRawApp {
             }
             hold.tracking
         };
-        #[cfg(not(target_os = "android"))]
-        let original_hold_tracking = false;
 
         let actions = Preview::navigate_viewport(
             ui,

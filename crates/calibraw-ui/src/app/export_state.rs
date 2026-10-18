@@ -2,15 +2,60 @@
 
 use super::*;
 
-#[cfg(not(target_os = "android"))]
+/// A photo in a folder that the batch export worker renders.
 #[derive(Clone, Debug)]
-pub(super) struct LibraryBatchExportJob {
+pub(super) struct FileBatchExportJob {
     pub(super) source: PathBuf,
     pub(super) destination: LibraryExportDestination,
 }
 
+/// One photo of a library batch export.
+#[derive(Clone, Debug)]
+pub(super) enum LibraryBatchExportJob {
+    /// Rendered by the batch worker straight from the file.
+    File(FileBatchExportJob),
+    /// Opened through the platform and exported from Develop, one at a time.
+    MediaLibrary(AndroidLibraryExportTarget),
+}
+
+impl LibraryBatchExportJob {
+    pub(super) fn display_name(&self) -> String {
+        match self {
+            Self::File(job) => job.source.display().to_string(),
+            Self::MediaLibrary(target) => target.display_name().to_owned(),
+        }
+    }
+}
+
+/// A library photo a batch job opens in Develop.
+#[derive(Clone, Debug)]
+pub(super) enum LibraryJobPhoto {
+    File(PathBuf),
+    MediaLibrary(AndroidLibraryExportTarget),
+}
+
+impl LibraryJobPhoto {
+    /// The path, or the media-library name.
+    pub(super) fn label(&self) -> String {
+        match self {
+            Self::File(path) => path.display().to_string(),
+            Self::MediaLibrary(target) => target.display_name.clone(),
+        }
+    }
+
+    /// The file name, or the media-library name.
+    pub(super) fn name(&self) -> String {
+        match self {
+            Self::File(path) => path
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_else(|| path.display().to_string()),
+            Self::MediaLibrary(target) => target.display_name.clone(),
+        }
+    }
+}
+
 /// Where a desktop library export of one photo goes.
-#[cfg(not(target_os = "android"))]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum LibraryExportDestination {
     /// A path from a save dialog, which already asked before replacing a file.
@@ -20,38 +65,22 @@ pub(crate) enum LibraryExportDestination {
     InFolder { folder: PathBuf, stem: String },
 }
 
-#[cfg(target_os = "android")]
+/// A media-library photo, by URI and display name.
 #[derive(Clone, Debug)]
 pub(crate) struct AndroidLibraryExportTarget {
     pub(crate) uri: String,
     pub(crate) display_name: String,
 }
 
-#[cfg(target_os = "android")]
 impl AndroidLibraryExportTarget {
     pub(super) fn display_name(&self) -> &str {
         &self.display_name
     }
 }
 
-#[cfg(target_os = "android")]
-#[derive(Clone, Debug)]
-pub(super) struct LibraryBatchExportJob {
-    pub(super) target: AndroidLibraryExportTarget,
-}
-
-#[cfg(not(target_os = "android"))]
 #[derive(Clone, Debug)]
 pub(super) struct LibraryAiMaskRefreshJob {
-    pub(super) source: PathBuf,
-    pub(super) mask_targets: usize,
-}
-
-#[cfg(target_os = "android")]
-#[derive(Clone, Debug)]
-pub(super) struct LibraryAiMaskRefreshJob {
-    pub(super) uri: String,
-    pub(super) display_name: String,
+    pub(super) photo: LibraryJobPhoto,
     pub(super) mask_targets: usize,
 }
 
@@ -83,16 +112,14 @@ pub(crate) struct LibraryBatchExportState {
     pub(super) completed: usize,
     pub(super) failures: Vec<String>,
     pub(super) cancel_requested: bool,
-    #[cfg(target_os = "android")]
+    /// Used by media-library batches, which start each export themselves.
     pub(super) format: ExportFormat,
-    #[cfg(target_os = "android")]
     pub(super) settings: ExportSettings,
 }
 
-#[cfg(not(target_os = "android"))]
 pub(super) enum LibraryBatchExportEvent {
     Started {
-        job: LibraryBatchExportJob,
+        job: FileBatchExportJob,
     },
     Progress {
         completed_tiles: usize,
@@ -116,7 +143,6 @@ pub(super) enum ExportTaskKind {
 
 pub(super) enum ExportTaskReceiver {
     Tiled(mpsc::Receiver<ExportEvent>),
-    #[cfg(not(target_os = "android"))]
     LibraryBatch(mpsc::Receiver<LibraryBatchExportEvent>),
     Replay(mpsc::Receiver<ReplayExportEvent>),
 }
@@ -128,10 +154,8 @@ pub(super) enum ReplayExportEvent {
 
 #[derive(Clone, Debug)]
 pub(super) enum ExportDestination {
-    #[cfg(not(target_os = "android"))]
     File(PathBuf),
     /// A new file in `directory`; see [`crate::pipeline::ExportTarget::NewFile`].
-    #[cfg(not(target_os = "android"))]
     NewFile {
         directory: PathBuf,
         stem: String,
@@ -139,9 +163,10 @@ pub(super) enum ExportDestination {
     },
     /// A MediaStore descriptor written in place; intermediates are staged in
     /// `staging_dir`.
-    #[cfg(target_os = "android")]
-    AndroidDirect { path: PathBuf, staging_dir: PathBuf },
-    #[cfg(target_os = "android")]
+    AndroidDirect {
+        path: PathBuf,
+        staging_dir: PathBuf,
+    },
     AndroidGallery {
         path: PathBuf,
         display_name: String,
@@ -153,9 +178,7 @@ impl ExportDestination {
     pub(super) fn target(&self) -> crate::pipeline::ExportTarget {
         use crate::pipeline::ExportTarget;
         match self {
-            #[cfg(not(target_os = "android"))]
             Self::File(path) => ExportTarget::File(path.clone()),
-            #[cfg(not(target_os = "android"))]
             Self::NewFile {
                 directory,
                 stem,
@@ -165,13 +188,11 @@ impl ExportDestination {
                 stem: stem.clone(),
                 extension: extension.clone(),
             },
-            #[cfg(target_os = "android")]
             Self::AndroidDirect { path, staging_dir } => ExportTarget::Descriptor {
                 path: path.clone(),
                 staging_dir: staging_dir.clone(),
             },
             // Gallery exports are cached as files and published afterwards.
-            #[cfg(target_os = "android")]
             Self::AndroidGallery { path, .. } => ExportTarget::File(path.clone()),
         }
     }
@@ -213,7 +234,6 @@ pub(super) struct ExportItemRequest {
 pub(super) struct LensCorrectionTaskRequest {
     pub(super) original_raw: Arc<LoadedRaw>,
     pub(super) selection: Option<LensCorrection>,
-    #[cfg(target_os = "android")]
     pub(super) preview_quality: PreviewQuality,
     pub(super) preview_proxy_edge: u32,
     pub(super) cached_raws: Option<(Arc<LoadedRaw>, Arc<LoadedRaw>)>,
@@ -226,11 +246,10 @@ pub(crate) struct ExportState {
     pub(crate) task: Option<ExportTask>,
     pub(crate) batch: Option<LibraryBatchExportState>,
     pub(crate) publish_pending: bool,
-    #[cfg(target_os = "android")]
+    /// The platform is opening a photo for the media-library batch export.
     pub(crate) android_batch_load_pending: bool,
     /// MIME type to share the next finished single export or replay as; `None`
     /// publishes without sharing. Kept outside the task because a replay's task
     /// ends before its gallery publish does.
-    #[cfg(target_os = "android")]
     pub(crate) share_mime_type: Option<&'static str>,
 }

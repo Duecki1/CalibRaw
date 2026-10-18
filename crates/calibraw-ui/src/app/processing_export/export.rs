@@ -116,7 +116,6 @@ pub(in crate::app) fn spawn_export_item(
     )
 }
 
-#[cfg(not(target_os = "android"))]
 pub(in crate::app) fn run_export_item(
     request: ExportItemRequest,
     cancellation: Arc<std::sync::atomic::AtomicBool>,
@@ -154,14 +153,16 @@ impl CalibRawApp {
             self.develop.current_path.as_deref(),
             self.develop.current_label.as_deref(),
         );
-        #[cfg(not(target_os = "android"))]
-        let edited_at = self
-            .develop
-            .current_path
-            .as_deref()
-            .and_then(crate::export_naming::edited_time_for_path);
-        #[cfg(target_os = "android")]
-        let edited_at = None;
+        // Media-library photos open from a temporary copy without the
+        // original's edit time.
+        let edited_at = if self.caps().has_folders() {
+            self.develop
+                .current_path
+                .as_deref()
+                .and_then(crate::export_naming::edited_time_for_path)
+        } else {
+            None
+        };
         let context =
             crate::export_naming::ExportNameContext::from_raw(original_name, raw, edited_at);
         Some(crate::export_naming::render_export_stem_or_default(
@@ -170,7 +171,16 @@ impl CalibRawApp {
         ))
     }
 
-    #[cfg(not(target_os = "android"))]
+    /// Exports the open photo: to a file chosen in a save dialog, or into the
+    /// platform's shared media store.
+    fn export_with_format(&mut self, frame: &eframe::Frame, format: ExportFormat) {
+        if self.caps().has_folders() {
+            self.export_desktop(frame, format);
+        } else {
+            self.export_android(frame, format);
+        }
+    }
+
     fn export_desktop(&mut self, frame: &eframe::Frame, format: ExportFormat) {
         if !self.can_export() {
             return;
@@ -197,59 +207,32 @@ impl CalibRawApp {
         self.start_export(path, frame, format);
     }
 
-    #[cfg(not(target_os = "android"))]
     pub(crate) fn export_png(&mut self, frame: &eframe::Frame) {
-        self.export_desktop(frame, ExportFormat::Png);
+        self.export_with_format(frame, ExportFormat::Png);
     }
 
-    #[cfg(not(target_os = "android"))]
     pub(crate) fn export_jpeg(&mut self, frame: &eframe::Frame) {
-        self.export_desktop(frame, ExportFormat::Jpeg);
+        self.export_with_format(frame, ExportFormat::Jpeg);
     }
 
-    #[cfg(not(target_os = "android"))]
     pub(crate) fn export_tiff(&mut self, frame: &eframe::Frame) {
-        self.export_desktop(frame, ExportFormat::Tiff);
+        self.export_with_format(frame, ExportFormat::Tiff);
     }
 
-    #[cfg(not(target_os = "android"))]
     pub(crate) fn export_jxl(&mut self, frame: &eframe::Frame) {
-        self.export_desktop(frame, ExportFormat::JpegXl);
-    }
-
-    #[cfg(target_os = "android")]
-    pub(crate) fn export_png(&mut self, frame: &eframe::Frame) {
-        self.export_android(frame, ExportFormat::Png);
-    }
-
-    #[cfg(target_os = "android")]
-    pub(crate) fn export_jpeg(&mut self, frame: &eframe::Frame) {
-        self.export_android(frame, ExportFormat::Jpeg);
-    }
-
-    #[cfg(target_os = "android")]
-    pub(crate) fn export_tiff(&mut self, frame: &eframe::Frame) {
-        self.export_android(frame, ExportFormat::Tiff);
-    }
-
-    #[cfg(target_os = "android")]
-    pub(crate) fn export_jxl(&mut self, frame: &eframe::Frame) {
-        self.export_android(frame, ExportFormat::JpegXl);
+        self.export_with_format(frame, ExportFormat::JpegXl);
     }
 
     /// Exports in the selected format, then opens the Android share sheet.
-    #[cfg(target_os = "android")]
     pub(crate) fn export_and_share(&mut self, frame: &eframe::Frame) {
         let format = self.export.format;
         self.start_android_export(frame, format, true);
     }
 
-    #[cfg(target_os = "android")]
     pub(in crate::app) fn export_android(&mut self, frame: &eframe::Frame, format: ExportFormat) {
         self.start_android_export(frame, format, false);
     }
 
-    #[cfg(target_os = "android")]
     fn start_android_export(&mut self, frame: &eframe::Frame, format: ExportFormat, share: bool) {
         if !self.can_export() {
             return;
@@ -284,10 +267,9 @@ impl CalibRawApp {
     }
 
     /// Opens the share sheet when the finished single export or replay asked for it.
-    #[cfg(target_os = "android")]
     pub(in crate::app) fn share_finished_export(
         &mut self,
-        published: &calibraw_ffi::PublishedExport,
+        published: &crate::platform::PublishedExport,
     ) {
         let Some(mime_type) = self.export.share_mime_type.take() else {
             return;
@@ -302,9 +284,7 @@ impl CalibRawApp {
             );
             return;
         }
-        if let Err(error) =
-            calibraw_ffi::share_export(&self.android.android_app, &published.uri, mime_type)
-        {
+        if let Err(error) = self.platform.share_export(&published.uri, mime_type) {
             self.report_error(
                 ErrorKind::Share,
                 format!(
@@ -315,24 +295,22 @@ impl CalibRawApp {
         }
     }
 
-    #[cfg(target_os = "android")]
     pub(in crate::app) fn prepare_android_export_destination(
         &self,
         display_name: String,
         cache_file_name: String,
         format: ExportFormat,
     ) -> Result<ExportDestination, String> {
-        let Some(data_dir) = self.android.android_app.internal_data_path() else {
+        let Some(data_dir) = self.platform.internal_data_dir() else {
             return Err("Android did not provide an app data directory.".to_owned());
         };
         let export_dir = data_dir.join("cache").join("exports");
         std::fs::create_dir_all(&export_dir)
             .map_err(|error| format!("Could not prepare Android export cache: {error}"))?;
-        match calibraw_ffi::prepare_direct_export(
-            &self.android.android_app,
-            &display_name,
-            format.mime_type(),
-        ) {
+        match self
+            .platform
+            .prepare_direct_export(&display_name, format.mime_type())
+        {
             Ok(Some(path)) => Ok(ExportDestination::AndroidDirect {
                 path,
                 staging_dir: export_dir,
@@ -353,13 +331,12 @@ impl CalibRawApp {
         }
     }
 
-    #[cfg(target_os = "android")]
     pub(in crate::app) fn cancel_android_export_destination(
         &self,
         destination: &ExportDestination,
     ) {
         if let ExportDestination::AndroidDirect { path, .. } = destination {
-            calibraw_ffi::cancel_direct_export(&self.android.android_app, path);
+            self.platform.cancel_direct_export(path);
         }
     }
 
@@ -412,7 +389,6 @@ impl CalibRawApp {
         })
     }
 
-    #[cfg(not(target_os = "android"))]
     pub(in crate::app) fn start_export(
         &mut self,
         path: PathBuf,
@@ -518,7 +494,8 @@ impl CalibRawApp {
         };
 
         let mut finished = false;
-        #[cfg(target_os = "android")]
+        // Media-library exports are published, or fail, before the batch moves on.
+        let publishes = self.caps().has_media_library();
         let mut android_batch_result: Option<Result<(), String>> = None;
         for event in events {
             match event {
@@ -577,16 +554,12 @@ impl CalibRawApp {
 
                     match result {
                         Ok(path) => {
-                            #[cfg(not(target_os = "android"))]
-                            {
+                            if !publishes {
                                 if !is_batch {
                                     self.ui.notice = Some(format!("Exported {}", path.display()));
                                     self.export.task = None;
                                 }
-                            }
-
-                            #[cfg(target_os = "android")]
-                            {
+                            } else {
                                 let destination = self
                                     .export
                                     .task
@@ -598,10 +571,7 @@ impl CalibRawApp {
                                         ..
                                     }) => {
                                         debug_assert_eq!(path, direct_path);
-                                        match calibraw_ffi::finalize_direct_export(
-                                            &self.android.android_app,
-                                            &direct_path,
-                                        ) {
+                                        match self.platform.finalize_direct_export(&direct_path) {
                                             Ok(published) => {
                                                 if is_batch {
                                                     android_batch_result = Some(Ok(()));
@@ -633,8 +603,7 @@ impl CalibRawApp {
                                         format,
                                     }) => {
                                         debug_assert_eq!(path, cache_path);
-                                        match calibraw_ffi::publish_image(
-                                            &self.android.android_app,
+                                        match self.platform.publish_image(
                                             &cache_path,
                                             &display_name,
                                             format.mime_type(),
@@ -665,7 +634,9 @@ impl CalibRawApp {
                                             }
                                         }
                                     }
-                                    None => {
+                                    Some(ExportDestination::File(_))
+                                    | Some(ExportDestination::NewFile { .. })
+                                    | None => {
                                         let error = "export destination state was lost".to_owned();
                                         if is_batch {
                                             android_batch_result = Some(Err(error.clone()));
@@ -681,17 +652,14 @@ impl CalibRawApp {
                             }
                         }
                         Err(error) => {
-                            #[cfg(target_os = "android")]
-                            {
-                                calibraw_ffi::cancel_all_direct_exports(&self.android.android_app);
+                            if publishes {
+                                self.platform.cancel_all_direct_exports();
                                 if is_batch {
                                     android_batch_result = Some(Err(error.clone()));
                                 } else {
                                     self.export.task = None;
                                 }
-                            }
-                            #[cfg(not(target_os = "android"))]
-                            if !is_batch {
+                            } else if !is_batch {
                                 self.export.task = None;
                             }
                             if was_cancelled {
@@ -714,23 +682,19 @@ impl CalibRawApp {
                 task.receiver = None;
             }
             self.report_error(ErrorKind::Export, "Export worker stopped unexpectedly.");
-            #[cfg(target_os = "android")]
-            {
-                calibraw_ffi::cancel_all_direct_exports(&self.android.android_app);
+            if publishes {
+                self.platform.cancel_all_direct_exports();
                 if self.export.batch.is_some() {
                     android_batch_result =
                         Some(Err("export worker stopped unexpectedly".to_owned()));
                 } else {
                     self.export.task = None;
                 }
-            }
-            #[cfg(not(target_os = "android"))]
-            if self.export.batch.is_none() {
+            } else if self.export.batch.is_none() {
                 self.export.task = None;
             }
         }
 
-        #[cfg(target_os = "android")]
         if let Some(result) = android_batch_result {
             self.complete_android_library_batch_export_item(result);
         }

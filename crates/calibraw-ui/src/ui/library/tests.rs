@@ -1,3 +1,4 @@
+use super::media_library::android_folder_parent;
 use super::state::{library_filename_matches, library_search_terms};
 use super::*;
 use std::fs;
@@ -17,7 +18,6 @@ fn unique_temp_dir(label: &str) -> PathBuf {
     root
 }
 
-#[cfg(not(target_os = "android"))]
 #[test]
 fn library_export_stems_follow_the_name_template() {
     let root = unique_temp_dir("library-export-name-test");
@@ -33,7 +33,6 @@ fn library_export_stems_follow_the_name_template() {
     fs::remove_dir_all(root).unwrap();
 }
 
-#[cfg(not(target_os = "android"))]
 fn test_developed_thumbnail() -> RawThumbnail {
     RawThumbnail {
         width: 16,
@@ -42,7 +41,6 @@ fn test_developed_thumbnail() -> RawThumbnail {
     }
 }
 
-#[cfg(not(target_os = "android"))]
 fn install_test_developed_thumbnail(raw: &Path) {
     let fingerprint = crate::sidecar::desktop_sidecar_fingerprint(raw)
         .unwrap()
@@ -51,7 +49,6 @@ fn install_test_developed_thumbnail(raw: &Path) {
         .unwrap();
 }
 
-#[cfg(not(target_os = "android"))]
 fn assert_test_developed_thumbnail(raw: &Path) {
     let thumbnail = crate::sidecar::load_developed_thumbnail_cache(raw, 512)
         .unwrap()
@@ -61,12 +58,10 @@ fn assert_test_developed_thumbnail(raw: &Path) {
     assert!(pixel[2] > pixel[1] && pixel[1] > pixel[0], "{pixel:?}");
 }
 
-#[cfg(not(target_os = "android"))]
 fn test_asset(path: impl Into<PathBuf>) -> LibraryAsset {
     LibraryAsset::from_desktop_path(path.into(), 42, 123, Some([6000, 4000]))
 }
 
-#[cfg(not(target_os = "android"))]
 fn no_deferred_metadata(folder: &Path) -> DeferredDisplayMetadata {
     DeferredDisplayMetadata::new(
         calibraw_core::display_metadata_cache::FolderDisplayMetadataCache::load(folder),
@@ -74,8 +69,7 @@ fn no_deferred_metadata(folder: &Path) -> DeferredDisplayMetadata {
     )
 }
 
-#[cfg(target_os = "android")]
-fn test_asset(name: impl Into<PathBuf>) -> LibraryAsset {
+fn android_test_asset(name: impl Into<PathBuf>) -> LibraryAsset {
     let name = name.into().display().to_string();
     let uri = format!("content://calibraw.test/{name}");
     LibraryAsset {
@@ -118,9 +112,12 @@ fn unified_asset_keeps_identity_locator_and_metadata_together() {
     assert_eq!(asset.metadata.dimensions_hint, Some([6000, 4000]));
     assert_eq!(asset.metadata.modified_seconds, 123);
 
-    #[cfg(not(target_os = "android"))]
     assert_eq!(asset.desktop_path(), Some(Path::new("photo.CR3")));
-    #[cfg(target_os = "android")]
+    assert!(asset.android_uri().is_none());
+
+    let asset = android_test_asset("photo.CR3");
+    assert_eq!(asset.display_name, "photo.CR3");
+    assert!(asset.desktop_path().is_none());
     assert!(asset
         .android_uri()
         .is_some_and(|uri| uri.starts_with("content://")));
@@ -136,12 +133,10 @@ fn selection_actions_are_shared_and_single_item_actions_stay_guarded() {
         Some(LibraryAction::Rename(_))
     ));
     assert!(library_selection_action(SelectionBarCommand::Rename, &two).is_none());
-    #[cfg(not(target_os = "android"))]
     assert!(matches!(
         library_selection_action(SelectionBarCommand::Copy, &two),
         Some(LibraryAction::Copy(assets)) if assets.len() == 2
     ));
-    #[cfg(not(target_os = "android"))]
     assert!(matches!(
         library_selection_action(SelectionBarCommand::Cut, &two),
         Some(LibraryAction::Cut(assets)) if assets.len() == 2
@@ -156,7 +151,6 @@ fn selection_actions_are_shared_and_single_item_actions_stay_guarded() {
     ));
 }
 
-#[cfg(not(target_os = "android"))]
 #[test]
 fn thumbnail_selection_uses_unified_asset_ids() {
     let mut library = LibraryState::new();
@@ -173,7 +167,6 @@ fn thumbnail_selection_uses_unified_asset_ids() {
     assert!(!library.selection_mode());
 }
 
-#[cfg(not(target_os = "android"))]
 #[test]
 fn desktop_range_and_select_all_selection_follow_library_order() {
     let mut library = LibraryState::new();
@@ -217,7 +210,6 @@ fn filename_search_is_case_insensitive_and_supports_comma_separated_fragments() 
     ));
 }
 
-#[cfg(not(target_os = "android"))]
 #[test]
 fn selecting_search_matches_replaces_the_selection_with_every_visible_match() {
     let mut library = LibraryState::new();
@@ -395,7 +387,6 @@ fn cover_uv_crops_without_leaving_unit_square() {
     assert_eq!(uv.bottom(), 1.0);
 }
 
-#[cfg(not(target_os = "android"))]
 #[test]
 fn image_paste_summary_reports_success_and_partial_failure() {
     assert_eq!(
@@ -427,7 +418,7 @@ fn raw_names_require_safe_supported_extensions() {
     }
 }
 
-#[cfg(all(not(target_os = "android"), unix))]
+#[cfg(unix)]
 #[test]
 fn non_utf8_paths_remain_distinct_asset_ids() {
     use std::ffi::OsString;
@@ -442,7 +433,6 @@ fn non_utf8_paths_remain_distinct_asset_ids() {
     assert_eq!(ids.len(), 2);
 }
 
-#[cfg(not(target_os = "android"))]
 #[test]
 fn reserved_gallery_geometry_is_used_until_preview_is_installed() {
     let mut entry = new_library_entry(test_asset("stable-layout.dng"));
@@ -457,7 +447,6 @@ fn reserved_gallery_geometry_is_used_until_preview_is_installed() {
     assert_eq!(before_height, after_height);
 }
 
-#[cfg(not(target_os = "android"))]
 #[test]
 fn opening_a_library_folder_records_it_before_async_scanning() {
     let root = unique_temp_dir("library-open-folder").join("not-created");
@@ -471,7 +460,6 @@ fn opening_a_library_folder_records_it_before_async_scanning() {
     fs::remove_dir_all(root.parent().unwrap()).unwrap();
 }
 
-#[cfg(not(target_os = "android"))]
 #[test]
 fn desktop_subfolder_navigation_keeps_the_chosen_root() {
     let root = unique_temp_dir("library-navigation");
@@ -492,7 +480,6 @@ fn desktop_subfolder_navigation_keeps_the_chosen_root() {
     fs::remove_dir_all(root).unwrap();
 }
 
-#[cfg(not(target_os = "android"))]
 #[test]
 fn restoring_a_library_reopens_and_reveals_its_selected_subfolder() {
     let root = unique_temp_dir("library-restore");
@@ -513,7 +500,6 @@ fn restoring_a_library_reopens_and_reveals_its_selected_subfolder() {
     fs::remove_dir_all(root).unwrap();
 }
 
-#[cfg(not(target_os = "android"))]
 #[test]
 fn desktop_folder_tree_contains_nested_directories_and_ignores_symlinks() {
     let root = unique_temp_dir("library-tree");
@@ -537,7 +523,6 @@ fn desktop_folder_tree_contains_nested_directories_and_ignores_symlinks() {
     fs::remove_dir_all(root).unwrap();
 }
 
-#[cfg(not(target_os = "android"))]
 #[test]
 fn evicted_thumbnail_restores_from_resident_pixels_without_reloading() {
     let context = eframe::egui::Context::default();
@@ -558,7 +543,6 @@ fn evicted_thumbnail_restores_from_resident_pixels_without_reloading() {
     assert!(!library.entries[0].thumbnail_queued);
 }
 
-#[cfg(not(target_os = "android"))]
 #[test]
 fn develop_loading_thumbnail_uses_resident_pixels_without_queuing_decode() {
     let context = eframe::egui::Context::default();
@@ -584,7 +568,6 @@ fn develop_loading_thumbnail_uses_resident_pixels_without_queuing_decode() {
     assert!(!library.entries[0].thumbnail_queued);
 }
 
-#[cfg(not(target_os = "android"))]
 #[test]
 fn resetting_adjustments_allows_an_unedited_thumbnail_to_replace_the_developed_one() {
     let context = eframe::egui::Context::default();
@@ -985,7 +968,6 @@ fn stale_edited_preview_does_not_schedule_development_when_index_rendering_is_di
     worker.join().unwrap();
 }
 
-#[cfg(not(target_os = "android"))]
 #[test]
 fn disabled_index_rendering_still_reuses_a_fresh_edited_thumbnail() {
     let root = unique_temp_dir("library-fresh-edited-thumbnail");
@@ -1021,7 +1003,6 @@ fn resident_thumbnail_is_bounded_and_keeps_aspect_ratio() {
     assert_eq!(resident.rgba.len(), 384 * 256 * 4);
 }
 
-#[cfg(not(target_os = "android"))]
 #[test]
 fn library_exposes_its_shared_decode_gate_and_resumes_in_library() {
     let mut library = LibraryState::new();
@@ -1035,7 +1016,6 @@ fn library_exposes_its_shared_decode_gate_and_resumes_in_library() {
     assert!(!library.decoding_paused.load(Ordering::Acquire));
 }
 
-#[cfg(not(target_os = "android"))]
 #[test]
 fn dropped_folders_are_copied_recursively_with_unique_names() {
     let base = unique_temp_dir("library-folder-import");
@@ -1055,7 +1035,6 @@ fn dropped_folders_are_copied_recursively_with_unique_names() {
     fs::remove_dir_all(base).unwrap();
 }
 
-#[cfg(not(target_os = "android"))]
 #[test]
 fn dropping_a_raw_already_in_the_library_is_a_noop() {
     let root = unique_temp_dir("library-import-noop");
@@ -1071,7 +1050,6 @@ fn dropping_a_raw_already_in_the_library_is_a_noop() {
     fs::remove_dir_all(root).unwrap();
 }
 
-#[cfg(not(target_os = "android"))]
 #[test]
 fn shared_clipboard_flow_copies_and_moves_raw_sidecar_bundles() {
     let root = unique_temp_dir("library-clipboard-test");
@@ -1096,6 +1074,7 @@ fn shared_clipboard_flow_copies_and_moves_raw_sidecar_bundles() {
             assets: vec![asset.clone()],
         },
         LibraryTransferDestination::LocalFolder(destination.clone()),
+        &*crate::platform::fake::FakePlatform::new(PlatformCaps::DESKTOP),
     );
     assert!(copy.result.is_ok());
     assert!(!copy.clear_clipboard);
@@ -1118,6 +1097,7 @@ fn shared_clipboard_flow_copies_and_moves_raw_sidecar_bundles() {
             assets: vec![asset],
         },
         LibraryTransferDestination::LocalFolder(destination.clone()),
+        &*crate::platform::fake::FakePlatform::new(PlatformCaps::DESKTOP),
     );
     assert!(cut.result.is_ok());
     assert!(cut.clear_clipboard);
@@ -1139,7 +1119,6 @@ fn shared_clipboard_flow_copies_and_moves_raw_sidecar_bundles() {
     fs::remove_dir_all(root).unwrap();
 }
 
-#[cfg(not(target_os = "android"))]
 #[test]
 fn duplicate_uses_shared_materialize_import_flow() {
     let root = unique_temp_dir("library-shared-duplicate-test");
@@ -1149,7 +1128,10 @@ fn duplicate_uses_shared_materialize_import_flow() {
     install_test_developed_thumbnail(&raw);
     let asset = LibraryAsset::from_desktop_path(raw, 9, 1, None);
 
-    let completion = run_duplicate_assets(vec![asset]);
+    let completion = run_duplicate_assets(
+        vec![asset],
+        &*crate::platform::fake::FakePlatform::new(PlatformCaps::DESKTOP),
+    );
     assert!(completion.result.is_ok());
     assert!(!completion.clear_clipboard);
     let duplicate = root.join("photo (1).CR3");
@@ -1163,7 +1145,6 @@ fn duplicate_uses_shared_materialize_import_flow() {
     fs::remove_dir_all(root).unwrap();
 }
 
-#[cfg(not(target_os = "android"))]
 #[test]
 fn shared_clipboard_same_folder_copy_duplicates_but_cut_is_noop() {
     let root = unique_temp_dir("library-same-folder-clipboard-test");
@@ -1179,6 +1160,7 @@ fn shared_clipboard_same_folder_copy_duplicates_but_cut_is_noop() {
             assets: vec![asset.clone()],
         },
         LibraryTransferDestination::LocalFolder(root.clone()),
+        &*crate::platform::fake::FakePlatform::new(PlatformCaps::DESKTOP),
     );
     assert!(copy.result.is_ok());
     let duplicate = root.join("photo (1).CR3");
@@ -1195,6 +1177,7 @@ fn shared_clipboard_same_folder_copy_duplicates_but_cut_is_noop() {
             assets: vec![asset],
         },
         LibraryTransferDestination::LocalFolder(root.clone()),
+        &*crate::platform::fake::FakePlatform::new(PlatformCaps::DESKTOP),
     );
     assert!(cut.result.is_ok());
     assert!(cut.clear_clipboard);
@@ -1204,7 +1187,6 @@ fn shared_clipboard_same_folder_copy_duplicates_but_cut_is_noop() {
     fs::remove_dir_all(root).unwrap();
 }
 
-#[cfg(not(target_os = "android"))]
 #[test]
 fn partial_cut_keeps_only_failed_assets_on_clipboard() {
     let root = unique_temp_dir("library-partial-cut-test");
@@ -1225,6 +1207,7 @@ fn partial_cut_keeps_only_failed_assets_on_clipboard() {
             ],
         },
         LibraryTransferDestination::LocalFolder(destination.clone()),
+        &*crate::platform::fake::FakePlatform::new(PlatformCaps::DESKTOP),
     );
 
     assert!(completion.result.is_err());
@@ -1237,7 +1220,6 @@ fn partial_cut_keeps_only_failed_assets_on_clipboard() {
     fs::remove_dir_all(root).unwrap();
 }
 
-#[cfg(not(target_os = "android"))]
 #[test]
 fn broken_developed_thumbnail_cache_does_not_block_raw_bundle_operations() {
     let root = unique_temp_dir("library-broken-developed-thumbnail-test");
@@ -1300,7 +1282,6 @@ fn broken_developed_thumbnail_cache_does_not_block_raw_bundle_operations() {
     fs::remove_dir_all(root).unwrap();
 }
 
-#[cfg(not(target_os = "android"))]
 #[test]
 fn rename_raw_keeps_matching_sidecar() {
     let root = unique_temp_dir("library-rename-test");
@@ -1331,7 +1312,6 @@ fn rename_raw_keeps_matching_sidecar() {
     fs::remove_dir_all(root).unwrap();
 }
 
-#[cfg(not(target_os = "android"))]
 #[test]
 fn folder_names_are_single_safe_path_components() {
     assert!(validate_folder_name("Photos 2026").is_ok());
@@ -1343,7 +1323,6 @@ fn folder_names_are_single_safe_path_components() {
     }
 }
 
-#[cfg(not(target_os = "android"))]
 #[test]
 fn folder_operations_stay_inside_library_and_protect_root() {
     let base = unique_temp_dir("library-folder-boundary-test");
@@ -1376,7 +1355,6 @@ fn folder_operations_stay_inside_library_and_protect_root() {
     fs::remove_dir_all(base).unwrap();
 }
 
-#[cfg(not(target_os = "android"))]
 #[test]
 fn recursive_folder_copy_never_overwrites_and_rejects_symlinks() {
     let root = unique_temp_dir("library-folder-copy-test");
@@ -1403,7 +1381,6 @@ fn recursive_folder_copy_never_overwrites_and_rejects_symlinks() {
     fs::remove_dir_all(root).unwrap();
 }
 
-#[cfg(not(target_os = "android"))]
 #[test]
 fn dropped_raw_import_preserves_name_and_never_overwrites() {
     let root = unique_temp_dir("library-import-test");
@@ -1430,7 +1407,6 @@ fn dropped_raw_import_preserves_name_and_never_overwrites() {
     fs::remove_dir_all(root).unwrap();
 }
 
-#[cfg(not(target_os = "android"))]
 #[test]
 fn folder_scan_only_includes_direct_photo_children() {
     let root = unique_temp_dir("library-scan-test");
@@ -1459,7 +1435,6 @@ fn folder_scan_only_includes_direct_photo_children() {
     fs::remove_dir_all(root).unwrap();
 }
 
-#[cfg(not(target_os = "android"))]
 #[test]
 fn folder_scan_retains_newest_files_after_limit() {
     let root = unique_temp_dir("library-limit-test");
@@ -1494,7 +1469,6 @@ fn folder_scan_retains_newest_files_after_limit() {
     fs::remove_dir_all(root).unwrap();
 }
 
-#[cfg(not(target_os = "android"))]
 #[test]
 fn folder_scan_defers_uncached_metadata_to_thumbnail_workers() {
     let root = unique_temp_dir("library-deferred-metadata");
@@ -1526,7 +1500,6 @@ fn folder_scan_defers_uncached_metadata_to_thumbnail_workers() {
     fs::remove_dir_all(root).unwrap();
 }
 
-#[cfg(not(target_os = "android"))]
 #[test]
 fn review_sort_orders_preserve_selection_and_use_names_for_ties() {
     use crate::sidecar::{PhotoFlag, PhotoReview};
@@ -1577,7 +1550,6 @@ fn review_sort_orders_preserve_selection_and_use_names_for_ties() {
     }
 }
 
-#[cfg(not(target_os = "android"))]
 #[test]
 fn develop_arrow_navigation_matches_filtered_library_sort_order() {
     use crate::sidecar::{PhotoFlag, PhotoReview};
@@ -1639,7 +1611,6 @@ fn develop_arrow_navigation_matches_filtered_library_sort_order() {
     assert_eq!(next.asset.display_name, "delta.dng");
 }
 
-#[cfg(not(target_os = "android"))]
 #[test]
 fn cropped_preview_updates_gallery_and_filmstrip_proportions() {
     let context = egui::Context::default();
@@ -1663,7 +1634,6 @@ fn cropped_preview_updates_gallery_and_filmstrip_proportions() {
     assert!((rects[0].width() / rects[0].height() - 0.5).abs() < 0.001);
 }
 
-#[cfg(not(target_os = "android"))]
 #[test]
 fn raw_preview_cache_applies_saved_crop_without_full_edited_rendering() {
     let root = unique_temp_dir("crop-raw-preview");
@@ -1693,7 +1663,6 @@ fn raw_preview_cache_applies_saved_crop_without_full_edited_rendering() {
     fs::remove_dir_all(root).unwrap();
 }
 
-#[cfg(not(target_os = "android"))]
 #[test]
 fn resetting_crop_invalidates_geometry_only_raw_preview() {
     let mut library = LibraryState::new();
@@ -1713,7 +1682,6 @@ fn resetting_crop_invalidates_geometry_only_raw_preview() {
     );
 }
 
-#[cfg(not(target_os = "android"))]
 fn library_with_assets(names: &[&str]) -> LibraryState {
     let mut library = LibraryState::new();
     for name in names {
@@ -1723,7 +1691,6 @@ fn library_with_assets(names: &[&str]) -> LibraryState {
     library
 }
 
-#[cfg(not(target_os = "android"))]
 fn visible_paths(library: &LibraryState) -> Vec<String> {
     let mut paths = library
         .visible_entry_indices()
@@ -1777,7 +1744,6 @@ fn raw_companions_pair_rendered_copies_in_the_same_folder_by_base_name() {
     assert_eq!(paired("trip/IMG_5.png"), (false, vec![]));
 }
 
-#[cfg(not(target_os = "android"))]
 #[test]
 fn library_shows_only_the_raw_of_raw_jpeg_pairs_by_default() {
     let mut library = library_with_assets(&[
@@ -1819,7 +1785,6 @@ fn library_shows_only_the_raw_of_raw_jpeg_pairs_by_default() {
     assert_eq!(library.filmstrip_entry_indices().len(), 3);
 }
 
-#[cfg(not(target_os = "android"))]
 #[test]
 fn rendered_photos_are_labelled_by_format() {
     assert_eq!(rendered_format_label("IMG_0001.HEIC"), Some("HEIC"));
@@ -1827,4 +1792,63 @@ fn rendered_photos_are_labelled_by_format() {
     assert_eq!(rendered_format_label("export.png"), Some("PNG"));
     assert_eq!(rendered_format_label("DSC_0001.NEF"), None);
     assert_eq!(rendered_format_label("rendered.tif"), None);
+}
+
+#[test]
+fn a_media_library_lists_the_platform_folders_and_documents() {
+    let platform = crate::platform::fake::FakePlatform::new(PlatformCaps::ANDROID);
+    *platform.library_folders.lock().unwrap() = vec![crate::platform::LibraryFolder {
+        path: "Trips".to_owned(),
+        name: "Trips".to_owned(),
+    }];
+    *platform.library_documents.lock().unwrap() = ["first.DNG", "second.CR3"]
+        .into_iter()
+        .map(|name| crate::platform::LibraryDocument {
+            uri: format!("content://calibraw.test/{name}"),
+            display_name: name.to_owned(),
+            display_path: format!("Library/Trips/{name}"),
+            bytes: 42,
+            modified_seconds: 123,
+        })
+        .collect();
+    let context = egui::Context::default();
+    let mut library = LibraryState::new_android(
+        platform.clone(),
+        &context,
+        LibraryPreferences {
+            thumbnail_workers: 1,
+            automatic_thumbnail_workers: false,
+            thumbnail_size: LibraryThumbnailSize::default(),
+            sort_order: LibrarySortOrder::default(),
+            stack_raw_companions: true,
+            render_edited_thumbnails_during_indexing: false,
+        },
+        "Trips".to_owned(),
+    );
+    assert_eq!(platform.calls(), ["select_library_folder Trips"]);
+
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    while (library.entries.len() < 2 || library.media.folders.is_empty())
+        && std::time::Instant::now() < deadline
+    {
+        library.poll(&context);
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert_eq!(library.media.folders.len(), 1);
+    let mut uris = library
+        .entries
+        .iter()
+        .map(|entry| match &entry.asset.locator {
+            LibraryLocator::Android { uri } => uri.clone(),
+            LibraryLocator::Desktop(path) => panic!("unexpected file {}", path.display()),
+        })
+        .collect::<Vec<_>>();
+    uris.sort();
+    assert_eq!(
+        uris,
+        [
+            "content://calibraw.test/first.DNG",
+            "content://calibraw.test/second.CR3"
+        ]
+    );
 }

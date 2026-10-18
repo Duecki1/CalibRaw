@@ -265,7 +265,7 @@ mod preview_overlay_tests {
 
     #[test]
     fn mask_drag_overlay_caps_raster_without_changing_aspect_or_source_coordinates() {
-        let edge = if cfg!(target_os = "android") {
+        let edge = if crate::platform::PlatformCaps::CURRENT.constrained_memory() {
             384
         } else {
             512
@@ -354,7 +354,7 @@ mod preview_overlay_tests {
         assert_eq!(thin.texture_width, 1);
         assert_eq!(
             thin.texture_height,
-            if cfg!(target_os = "android") {
+            if crate::platform::PlatformCaps::CURRENT.constrained_memory() {
                 384
             } else {
                 512

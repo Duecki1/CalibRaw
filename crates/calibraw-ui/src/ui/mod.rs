@@ -1,6 +1,5 @@
 pub(crate) mod background_tasks;
 pub(crate) mod components;
-#[cfg(not(target_os = "android"))]
 pub(crate) mod develop;
 pub(crate) mod develop_viewport;
 pub(crate) mod icons;
@@ -11,16 +10,14 @@ pub(crate) mod onboarding;
 pub(crate) mod presets;
 pub(crate) mod preview;
 pub(crate) mod settings;
-#[cfg(not(target_os = "android"))]
 pub(crate) mod shortcuts_dialog;
 pub(crate) mod sidebar;
 pub(crate) mod theme;
 pub(crate) mod tips;
 pub(crate) mod top_bar;
 
-/// Desktop-only “save as” picker. Native paths receive a supported extension when needed;
+/// The native “save as” picker, where storage is folders. Native paths receive a supported extension when needed;
 /// Flatpak paths keep the exact filename granted by the document portal.
-#[cfg(not(target_os = "android"))]
 pub(crate) fn choose_save_path(
     filter: String,
     extensions: &'static [&'static str],
@@ -28,13 +25,13 @@ pub(crate) fn choose_save_path(
     initial_directory: Option<&std::path::Path>,
 ) -> Option<std::path::PathBuf> {
     extensions.first()?;
-    let is_flatpak = crate::desktop_portal::is_flatpak();
+    let is_flatpak = crate::platform::is_flatpak();
     let mut file_name = default_name.to_owned();
     let mut directory = initial_directory
         .filter(|path| !path.as_os_str().is_empty())
         .map(std::path::Path::to_path_buf);
     loop {
-        let mut dialog = rfd::FileDialog::new()
+        let mut dialog = crate::platform::FileDialog::new()
             .add_filter(filter.clone(), extensions)
             .set_file_name(&file_name);
         if let Some(directory) = &directory {
@@ -53,7 +50,6 @@ pub(crate) fn choose_save_path(
 }
 
 /// Apply native extension defaults without changing Flatpak document grants.
-#[cfg(not(target_os = "android"))]
 fn save_path_with_extension(
     mut path: std::path::PathBuf,
     extensions: &[&str],
@@ -78,7 +74,6 @@ fn save_path_with_extension(
 }
 
 /// Save picker for a developed-image export.
-#[cfg(not(target_os = "android"))]
 pub(crate) fn choose_export_file_path(
     format: crate::pipeline::ExportFormat,
     default_name: &str,
@@ -93,7 +88,6 @@ pub(crate) fn choose_export_file_path(
 }
 
 /// Save picker for the Edit Replay MP4.
-#[cfg(not(target_os = "android"))]
 pub(crate) fn choose_edit_replay_file_path(
     default_name: &str,
     initial_directory: Option<&std::path::Path>,
@@ -107,10 +101,32 @@ pub(crate) fn choose_edit_replay_file_path(
 }
 
 /// Extension list for [`choose_edit_replay_file_path`]; also the container FFmpeg is asked for.
-#[cfg(not(target_os = "android"))]
 const MP4_EXTENSIONS: &[&str] = &["mp4"];
 
-#[cfg(all(test, not(target_os = "android")))]
+pub(crate) fn android_overflow_menu<R>(
+    ui: &mut eframe::egui::Ui,
+    anchor_rect: eframe::egui::Rect,
+    id: eframe::egui::Id,
+    edge: f32,
+    add_contents: impl FnOnce(&mut eframe::egui::Ui) -> R,
+) -> eframe::egui::Response {
+    moduwu_design::overflow_menu(
+        ui,
+        anchor_rect,
+        id,
+        edge,
+        egui_phosphor::regular::DOTS_THREE_VERTICAL,
+        "More actions",
+        add_contents,
+    )
+}
+
+pub(crate) fn mask_component_color(index: usize) -> eframe::egui::Color32 {
+    use crate::ui::theme::MASK_COMPONENT_COLORS;
+    MASK_COMPONENT_COLORS[index % MASK_COMPONENT_COLORS.len()]
+}
+
+#[cfg(test)]
 mod save_path_tests {
     use super::save_path_with_extension;
     use std::path::PathBuf;
@@ -173,28 +189,4 @@ mod save_path_tests {
             Some(PathBuf::from("export.jpg"))
         );
     }
-}
-
-#[cfg(target_os = "android")]
-pub(crate) fn android_overflow_menu<R>(
-    ui: &mut eframe::egui::Ui,
-    anchor_rect: eframe::egui::Rect,
-    id: eframe::egui::Id,
-    edge: f32,
-    add_contents: impl FnOnce(&mut eframe::egui::Ui) -> R,
-) -> eframe::egui::Response {
-    moduwu_design::overflow_menu(
-        ui,
-        anchor_rect,
-        id,
-        edge,
-        egui_phosphor::regular::DOTS_THREE_VERTICAL,
-        "More actions",
-        add_contents,
-    )
-}
-
-pub(crate) fn mask_component_color(index: usize) -> eframe::egui::Color32 {
-    use crate::ui::theme::MASK_COMPONENT_COLORS;
-    MASK_COMPONENT_COLORS[index % MASK_COMPONENT_COLORS.len()]
 }

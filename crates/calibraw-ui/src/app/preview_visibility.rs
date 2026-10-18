@@ -225,7 +225,6 @@ mod tests {
     use super::*;
     use crate::pipeline::{BrushDab, LocalMask};
 
-    #[cfg(not(target_os = "android"))]
     #[test]
     fn point_color_range_preview_never_changes_saved_edits_or_history() {
         let ctx = egui::Context::default();
@@ -258,7 +257,6 @@ mod tests {
         assert_eq!(app.capture_sidecar_edit_state().exposure, saved.exposure);
     }
 
-    #[cfg(not(target_os = "android"))]
     #[test]
     fn local_point_color_range_preview_is_only_in_projected_masks() {
         let ctx = egui::Context::default();
@@ -315,7 +313,6 @@ mod tests {
         edits
     }
 
-    #[cfg(not(target_os = "android"))]
     #[test]
     fn eye_sync_and_shutdown_never_queue_or_write_a_sidecar() {
         let ctx = egui::Context::default();

@@ -83,8 +83,7 @@ impl RegisteredTexture {
 
     /// Releases the registration now instead of at the next frame. Only for
     /// callers that must return GPU memory before allocating a replacement and
-    /// know the texture is not painted in the current frame (Android).
-    #[cfg(target_os = "android")]
+    /// know the texture is not painted in the current frame (constrained memory).
     pub(crate) fn free_now(mut self, renderer: &mut egui_wgpu::Renderer) {
         if let Some(id) = self.id.take() {
             renderer.free_texture(&id);
@@ -135,7 +134,6 @@ impl PreviewPipeline {
 
     /// Drops the pipeline and releases its texture immediately (see
     /// [`RegisteredTexture::free_now`]).
-    #[cfg(target_os = "android")]
     pub(crate) fn free_now(self, renderer: &mut egui_wgpu::Renderer) {
         let Self { gpu, texture } = self;
         texture.free_now(renderer);

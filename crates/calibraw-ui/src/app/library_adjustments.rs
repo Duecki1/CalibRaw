@@ -1,4 +1,5 @@
 use super::*;
+use crate::ui::library::LibraryLocator;
 
 /// Settings to apply to one or more photos.
 #[derive(Clone, Copy)]
@@ -187,13 +188,6 @@ impl CalibRawApp {
             edits: edit_override,
         };
 
-        #[cfg(not(target_os = "android"))]
-        {
-            let crate::sidecar::SidecarTarget::Desktop { raw_path } = sidecar_target;
-            self.reopen_desktop_with_camera_profile(raw_path, reload, frame);
-        }
-
-        #[cfg(target_os = "android")]
         match sidecar_target {
             crate::sidecar::SidecarTarget::Desktop { raw_path } => {
                 self.reopen_desktop_with_camera_profile(raw_path, reload, frame);
@@ -201,11 +195,7 @@ impl CalibRawApp {
             crate::sidecar::SidecarTarget::Android {
                 raw_uri,
                 display_name,
-            } => match calibraw_ffi::open_library_document(
-                &self.android.android_app,
-                &raw_uri,
-                &display_name,
-            ) {
+            } => match self.platform.open_library_document(&raw_uri, &display_name) {
                 Ok(()) => {
                     self.android.pending_android_profile_reload = Some(reload);
                     self.android.picker_pending = true;
@@ -227,25 +217,20 @@ impl CalibRawApp {
     }
 
     fn library_asset_is_current(&self, asset: &crate::ui::library::LibraryAsset) -> bool {
-        #[cfg(not(target_os = "android"))]
-        {
-            asset
-                .desktop_path()
-                .is_some_and(|path| self.develop.current_path.as_deref() == Some(path))
-                && self.develop.loaded_raw.is_some()
-        }
-        #[cfg(target_os = "android")]
-        {
-            let Some(uri) = asset.android_uri() else {
-                return false;
-            };
-            matches!(
-                self.persistence.sidecar_target.as_ref(),
-                Some(crate::sidecar::SidecarTarget::Android {
-                    raw_uri: current_uri,
-                    display_name: current_name,
-                }) if current_uri == uri && current_name == &asset.display_name
-            ) && self.develop.loaded_raw.is_some()
+        match &asset.locator {
+            LibraryLocator::Desktop(path) => {
+                self.develop.current_path.as_deref() == Some(path.as_path())
+                    && self.develop.loaded_raw.is_some()
+            }
+            LibraryLocator::Android { uri } => {
+                matches!(
+                    self.persistence.sidecar_target.as_ref(),
+                    Some(crate::sidecar::SidecarTarget::Android {
+                        raw_uri: current_uri,
+                        display_name: current_name,
+                    }) if current_uri == uri && current_name == &asset.display_name
+                ) && self.develop.loaded_raw.is_some()
+            }
         }
     }
 
@@ -253,21 +238,13 @@ impl CalibRawApp {
         &mut self,
         asset: &crate::ui::library::LibraryAsset,
     ) -> Result<SidecarEditState, String> {
-        #[cfg(not(target_os = "android"))]
-        let persisted = {
-            let path = asset
-                .desktop_path()
-                .ok_or_else(|| "Library asset is not available from desktop storage".to_owned())?;
-            desktop_library_sidecar_edits(path)?
-        };
-        #[cfg(target_os = "android")]
-        let persisted = {
-            let uri = asset
-                .android_uri()
-                .ok_or_else(|| "Library asset is not available from Android storage".to_owned())?;
-            crate::sidecar::load_android(&self.android.android_app, uri, &asset.display_name)
+        let persisted = match &asset.locator {
+            LibraryLocator::Desktop(path) => desktop_library_sidecar_edits(path)?,
+            LibraryLocator::Android { uri } => self
+                .platform
+                .load_sidecar(uri, &asset.display_name)
                 .map_err(|error| error.to_string())?
-                .map(|loaded| loaded.edits)
+                .map(|loaded| loaded.edits),
         };
 
         if self.library_asset_is_current(asset) {
@@ -287,47 +264,35 @@ impl CalibRawApp {
         edits: SidecarEditState,
     ) -> Result<(), String> {
         let is_current = self.library_asset_is_current(asset);
-        #[cfg(not(target_os = "android"))]
-        {
-            let path = asset
-                .desktop_path()
-                .ok_or_else(|| "Library asset is not available from desktop storage".to_owned())?;
-            let result = if is_current {
-                crate::sidecar::save_desktop_with_editing_time(
-                    path,
-                    edits,
-                    self.raw_editing_time_ms(),
-                )
-            } else {
-                crate::sidecar::save_desktop(path, edits)
-            };
-            result.map_err(|error| error.to_string())?;
-            crate::sidecar::invalidate_developed_thumbnail_cache(path)?;
-            Ok(())
-        }
-        #[cfg(target_os = "android")]
-        {
-            let uri = asset
-                .android_uri()
-                .ok_or_else(|| "Library asset is not available from Android storage".to_owned())?;
-            let result = if is_current {
-                crate::sidecar::save_android_with_review_and_editing_time(
-                    &self.android.android_app,
-                    uri,
-                    &asset.display_name,
-                    edits,
-                    self.develop.review,
-                    self.raw_editing_time_ms(),
-                )
-            } else {
-                crate::sidecar::save_android(
-                    &self.android.android_app,
-                    uri,
-                    &asset.display_name,
-                    edits,
-                )
-            };
-            result.map(|_| ()).map_err(|error| error.to_string())
+        match &asset.locator {
+            LibraryLocator::Desktop(path) => {
+                let result = if is_current {
+                    crate::sidecar::save_desktop_with_editing_time(
+                        path,
+                        edits,
+                        self.raw_editing_time_ms(),
+                    )
+                } else {
+                    crate::sidecar::save_desktop(path, edits)
+                };
+                result.map_err(|error| error.to_string())?;
+                crate::sidecar::invalidate_developed_thumbnail_cache(path)?;
+                Ok(())
+            }
+            LibraryLocator::Android { uri } => {
+                let result = if is_current {
+                    self.platform.save_sidecar_with_review_and_editing_time(
+                        uri,
+                        &asset.display_name,
+                        edits,
+                        self.develop.review,
+                        self.raw_editing_time_ms(),
+                    )
+                } else {
+                    self.platform.save_sidecar(uri, &asset.display_name, edits)
+                };
+                result.map(|_| ()).map_err(|error| error.to_string())
+            }
         }
     }
 
@@ -424,7 +389,6 @@ impl CalibRawApp {
     }
 }
 
-#[cfg(not(target_os = "android"))]
 pub(super) fn desktop_library_sidecar_edits(
     raw_path: &std::path::Path,
 ) -> Result<Option<SidecarEditState>, String> {
@@ -453,14 +417,7 @@ impl CalibRawApp {
         let ready = self.ai.library_mask_refresh.is_none()
             && !self.foreground_operation_active()
             && !self.sidecar_save_in_progress();
-        #[cfg(not(target_os = "android"))]
-        {
-            ready
-        }
-        #[cfg(target_os = "android")]
-        {
-            ready && !self.android.picker_pending
-        }
+        ready && !self.android.picker_pending
     }
 
     pub(crate) fn library_ai_mask_refresh_status(
@@ -480,19 +437,7 @@ impl CalibRawApp {
                 job.mask_targets
                     .saturating_sub(self.ai_update_remaining_runs())
             });
-            let current = state.current.as_ref().map(|job| {
-                #[cfg(not(target_os = "android"))]
-                {
-                    job.source
-                        .file_name()
-                        .map(|name| name.to_string_lossy().into_owned())
-                        .unwrap_or_else(|| job.source.display().to_string())
-                }
-                #[cfg(target_os = "android")]
-                {
-                    job.display_name.clone()
-                }
-            });
+            let current = state.current.as_ref().map(|job| job.photo.name());
             (
                 state.mask_completed + current_mask_progress,
                 state.mask_total,
@@ -502,52 +447,39 @@ impl CalibRawApp {
         })
     }
 
-    #[cfg(not(target_os = "android"))]
     pub(crate) fn start_library_ai_mask_refresh_paths(
         &mut self,
         paths: Vec<PathBuf>,
         frame: &eframe::Frame,
     ) {
-        if paths.is_empty() {
-            return;
-        }
-        if !self.can_start_library_ai_mask_refresh() {
-            self.ui.notice = Some(
-                "Finish the current editing operation or sidecar save before refreshing AI masks."
-                    .to_owned(),
-            );
-            return;
-        }
-        let pending = paths
-            .into_iter()
-            .map(|source| LibraryAiMaskRefreshJob {
-                source,
-                mask_targets: 0,
-            })
-            .collect::<VecDeque<_>>();
-        let total = pending.len();
-        self.ai.library_mask_refresh = Some(LibraryAiMaskRefreshState {
-            pending,
-            current: None,
-            phase: LibraryAiMaskRefreshPhase::Loading,
-            total,
-            completed: 0,
-            mask_total: 0,
-            mask_completed: 0,
-            failures: Vec::new(),
-            cancel_requested: false,
-        });
-        self.start_next_library_ai_mask_refresh(frame);
-        self.egui_ctx.request_repaint();
+        self.start_library_ai_mask_refresh(
+            paths.into_iter().map(LibraryJobPhoto::File).collect(),
+            frame,
+        );
     }
 
-    #[cfg(target_os = "android")]
     pub(crate) fn start_library_ai_mask_refresh_android(
         &mut self,
         targets: Vec<(String, String)>,
         frame: &eframe::Frame,
     ) {
-        if targets.is_empty() {
+        self.start_library_ai_mask_refresh(
+            targets
+                .into_iter()
+                .map(|(uri, display_name)| {
+                    LibraryJobPhoto::MediaLibrary(AndroidLibraryExportTarget { uri, display_name })
+                })
+                .collect(),
+            frame,
+        );
+    }
+
+    fn start_library_ai_mask_refresh(
+        &mut self,
+        photos: Vec<LibraryJobPhoto>,
+        frame: &eframe::Frame,
+    ) {
+        if photos.is_empty() {
             return;
         }
         if !self.can_start_library_ai_mask_refresh() {
@@ -557,11 +489,10 @@ impl CalibRawApp {
             );
             return;
         }
-        let pending = targets
+        let pending = photos
             .into_iter()
-            .map(|(uri, display_name)| LibraryAiMaskRefreshJob {
-                uri,
-                display_name,
+            .map(|photo| LibraryAiMaskRefreshJob {
+                photo,
                 mask_targets: 0,
             })
             .collect::<VecDeque<_>>();
@@ -581,7 +512,6 @@ impl CalibRawApp {
         self.egui_ctx.request_repaint();
     }
 
-    #[cfg(not(target_os = "android"))]
     pub(super) fn start_next_library_ai_mask_refresh(&mut self, frame: &eframe::Frame) {
         loop {
             let next = {
@@ -608,71 +538,46 @@ impl CalibRawApp {
                 return;
             };
 
-            self.open_path(job.source.clone(), frame);
-            // AI mask refresh owns this transition; activating interactively
-            // would cancel the refresh's document-bound operation.
-            self.ui.active_tab = AppTab::Library;
-            if self.develop.load_receiver.is_some() {
-                return;
-            }
-
-            if let Some(state) = self.ai.library_mask_refresh.as_mut() {
-                state.failures.push(format!(
-                    "{}: could not start photo load",
-                    job.source.display()
-                ));
-                complete_library_ai_mask_refresh_item(state);
-            }
-        }
-    }
-
-    #[cfg(target_os = "android")]
-    pub(super) fn start_next_library_ai_mask_refresh(&mut self, _frame: &eframe::Frame) {
-        loop {
-            let next = {
-                let Some(state) = self.ai.library_mask_refresh.as_mut() else {
-                    return;
-                };
-                if state.current.is_some() {
-                    return;
-                }
-                (if state.cancel_requested {
-                    state.pending.clear();
-                    None
-                } else {
-                    state.pending.pop_front()
-                })
-                .inspect(|job| {
-                    state.current = Some(job.clone());
-                    state.phase = LibraryAiMaskRefreshPhase::Loading;
-                })
-            };
-
-            let Some(job) = next else {
-                self.finish_library_ai_mask_refresh();
-                return;
-            };
-
-            match calibraw_ffi::open_library_document(
-                &self.android.android_app,
-                &job.uri,
-                &job.display_name,
-            ) {
-                Ok(()) => {
-                    self.android.picker_pending = true;
-                    self.ui.notice = None;
-                    self.ui.status = format!("Opening {}…", job.display_name);
+            match &job.photo {
+                LibraryJobPhoto::File(source) => {
+                    self.open_path(source.clone(), frame);
                     // AI mask refresh owns this transition; activating interactively
                     // would cancel the refresh's document-bound operation.
                     self.ui.active_tab = AppTab::Library;
-                    return;
-                }
-                Err(error) => {
+                    if self.develop.load_receiver.is_some() {
+                        return;
+                    }
+
                     if let Some(state) = self.ai.library_mask_refresh.as_mut() {
                         state
                             .failures
-                            .push(format!("{}: {error}", job.display_name));
+                            .push(format!("{}: could not start photo load", source.display()));
                         complete_library_ai_mask_refresh_item(state);
+                    }
+                }
+                // The platform opens the photo; its picker result continues the refresh.
+                LibraryJobPhoto::MediaLibrary(target) => {
+                    match self
+                        .platform
+                        .open_library_document(&target.uri, &target.display_name)
+                    {
+                        Ok(()) => {
+                            self.android.picker_pending = true;
+                            self.ui.notice = None;
+                            self.ui.status = format!("Opening {}…", target.display_name);
+                            // AI mask refresh owns this transition; activating interactively
+                            // would cancel the refresh's document-bound operation.
+                            self.ui.active_tab = AppTab::Library;
+                            return;
+                        }
+                        Err(error) => {
+                            if let Some(state) = self.ai.library_mask_refresh.as_mut() {
+                                state
+                                    .failures
+                                    .push(format!("{}: {error}", target.display_name));
+                                complete_library_ai_mask_refresh_item(state);
+                            }
+                        }
                     }
                 }
             }
@@ -705,10 +610,7 @@ impl CalibRawApp {
         }
 
         if !success {
-            #[cfg(not(target_os = "android"))]
-            let label = current.source.display().to_string();
-            #[cfg(target_os = "android")]
-            let label = current.display_name.clone();
+            let label = current.photo.label();
             if let Some(state) = self.ai.library_mask_refresh.as_mut() {
                 state.failures.push(format!("{label}: photo load failed"));
                 complete_library_ai_mask_refresh_item(state);
@@ -733,7 +635,6 @@ impl CalibRawApp {
         self.ui.active_tab = AppTab::Library;
     }
 
-    #[cfg(target_os = "android")]
     pub(super) fn complete_android_library_ai_mask_open_failure(
         &mut self,
         error: String,
@@ -744,7 +645,7 @@ impl CalibRawApp {
             .library_mask_refresh
             .as_ref()
             .and_then(|state| state.current.as_ref())
-            .map(|job| job.display_name.clone())
+            .map(|job| job.photo.label())
             .unwrap_or_else(|| "image".to_owned());
         if let Some(state) = self.ai.library_mask_refresh.as_mut() {
             if state.cancel_requested {
@@ -807,16 +708,7 @@ impl CalibRawApp {
             .library_mask_refresh
             .as_ref()
             .and_then(|state| state.current.as_ref())
-            .map(|job| {
-                #[cfg(not(target_os = "android"))]
-                {
-                    job.source.display().to_string()
-                }
-                #[cfg(target_os = "android")]
-                {
-                    job.display_name.clone()
-                }
-            })
+            .map(|job| job.photo.label())
             .unwrap_or_else(|| "image".to_owned());
 
         match phase {

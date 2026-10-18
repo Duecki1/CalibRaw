@@ -1,4 +1,5 @@
 use super::*;
+use calibraw_ai::models::remove::RemoveProgress;
 use calibraw_ai::AiFeature;
 
 impl InpaintState {
@@ -141,12 +142,6 @@ impl CalibRawApp {
             );
             return false;
         };
-        #[cfg(not(target_os = "android"))]
-        let (runtime_path, runtime_sha256) = self.onnx_runtime_for_ai();
-        #[cfg(target_os = "android")]
-        let runtime_path = None;
-        #[cfg(target_os = "android")]
-        let runtime_sha256 = None;
         let cancellation = Arc::new(AtomicBool::new(false));
         let request = RemoveRequest {
             device: render_state.device.clone(),
@@ -160,8 +155,6 @@ impl CalibRawApp {
             opacity: self.inpaint.brush_opacity,
             model_path: self.big_lama_model_path(),
             allow_download,
-            runtime_path,
-            runtime_sha256,
             program_prewarm: self.export.gpu_prewarm.clone(),
             cancellation: Arc::clone(&cancellation),
         };
@@ -253,95 +246,79 @@ impl CalibRawApp {
     }
 
     pub(crate) fn advance_remove_worker(&mut self, _frame: &eframe::Frame) {
-        let mut events = Vec::new();
-        if let Some(receiver) = self.inpaint.receiver.as_ref() {
-            while let Ok(event) = receiver.try_recv() {
-                events.push(event);
-            }
-        }
-        if events.is_empty() {
-            if self.inpaint.receiver.is_some() {
-                self.egui_ctx
-                    .request_repaint_after(Duration::from_millis(50));
-            }
+        let Some(receiver) = self.inpaint.receiver.as_ref() else {
             return;
-        }
-        for event in events {
-            match event {
-                RemoveEvent::DownloadProgress(progress) => {
-                    self.inpaint.processing_progress = Some(
-                        ForegroundProgress::units(
-                            progress.downloaded,
-                            progress.total,
-                            Some("bytes".to_owned()),
-                            format!("Downloading {}", progress.label),
-                        )
-                        .with_detail(format!(
-                            "{:.1} / {:.1} MB",
-                            progress.downloaded as f64 / 1_000_000.0,
-                            progress.total as f64 / 1_000_000.0
-                        )),
-                    );
-                }
-                RemoveEvent::Processing { completed, total } => {
+        };
+        let mut updated = false;
+        let mut progress = None;
+        let finished = poll_ai_job(
+            receiver,
+            || "The Remove worker stopped unexpectedly.".to_owned(),
+            |update| {
+                updated = true;
+                progress = Some(match update {
+                    AiJobUpdate::Download(download) => model_download_progress(download),
                     // A stroke is filled in one or more passes; show which.
-                    self.inpaint.processing_progress = Some(if total > 1 {
+                    AiJobUpdate::Progress(RemoveProgress { completed, total }) if total > 1 => {
                         ForegroundProgress::units(
                             completed as u64,
                             total as u64,
                             Some("areas".to_owned()),
                             "Applying Big-LaMa",
                         )
-                    } else {
+                    }
+                    AiJobUpdate::Progress(RemoveProgress { .. }) => {
                         ForegroundProgress::indeterminate("Applying Big-LaMa…")
-                    });
+                    }
+                });
+            },
+        );
+        if let Some(progress) = progress {
+            self.inpaint.processing_progress = Some(progress);
+        }
+        if !updated && finished.is_none() {
+            self.egui_ctx
+                .request_repaint_after(Duration::from_millis(50));
+            return;
+        }
+        if let Some(result) = finished {
+            self.inpaint.receiver = None;
+            self.inpaint.cancellation = None;
+            let pending_brush = self.inpaint.pending_brush.take();
+            let pending_retouch = self.inpaint.pending_retouch.take();
+            self.inpaint.processing_progress = None;
+            match result {
+                Ok(stroke) => {
+                    let applied_tool = stroke
+                        .retouch
+                        .map(|retouch| retouch.tool.label())
+                        .unwrap_or("Remove");
+                    Arc::make_mut(&mut self.inpaint.edits).strokes.push(stroke);
+                    self.inpaint.selected_stroke = None;
+                    self.inpaint.hovered_stroke = None;
+                    self.note_remove_edit_changed();
+                    self.ui.notice = Some(format!("{applied_tool} applied."));
                 }
-                RemoveEvent::Finished(result) => {
-                    self.inpaint.receiver = None;
-                    self.inpaint.cancellation = None;
-                    let pending_brush = self.inpaint.pending_brush.take();
-                    let pending_retouch = self.inpaint.pending_retouch.take();
-                    self.inpaint.processing_progress = None;
-                    match result {
-                        Ok(stroke) => {
-                            let applied_tool = stroke
-                                .retouch
-                                .map(|retouch| retouch.tool.label())
-                                .unwrap_or("Remove");
-                            Arc::make_mut(&mut self.inpaint.edits).strokes.push(stroke);
-                            self.inpaint.selected_stroke = None;
-                            self.inpaint.hovered_stroke = None;
-                            self.note_remove_edit_changed();
-                            self.ui.notice = Some(format!("{applied_tool} applied."));
-                        }
-                        Err(error) => {
-                            if error.contains("consent to its download again") {
-                                self.inpaint.pending_brush = pending_brush;
-                                let runtime_download_needed =
-                                    self.automatic_onnx_runtime_download_needed();
-                                self.ai.consent = Some(AiConsent {
-                                    feature: AiFeature::Remove,
-                                    runtime_download_needed,
-                                    origin: AiJobOrigin::Requested,
-                                });
-                                self.ui.notice = Some(
-                                    "Big-LaMa needs to be installed or re-verified before Remove can continue."
-                                        .to_owned(),
-                                );
-                            } else if !error.contains("cancelled") {
-                                let tool = pending_retouch
-                                    .map(|retouch| retouch.tool.label())
-                                    .unwrap_or("Remove");
-                                self.report_error(
-                                    ErrorKind::Retouch,
-                                    format!("{tool} failed: {error}"),
-                                );
-                                calibraw_core::diagnostics::record(format!(
-                                    "{tool} failed: {error}"
-                                ));
-                                log::error!("{tool} failed: {error}");
-                            }
-                        }
+                Err(error) => {
+                    if error.contains("consent to its download again") {
+                        self.inpaint.pending_brush = pending_brush;
+                        let runtime_download_needed = self.automatic_onnx_runtime_download_needed();
+                        self.ai.consent = Some(AiConsent {
+                            feature: AiFeature::Remove,
+                            runtime_download_needed,
+                            origin: AiJobOrigin::Requested,
+                        });
+                        self.ui.notice = Some(
+                            "Big-LaMa needs to be installed or re-verified before Remove can continue."
+                                .to_owned(),
+                        );
+                    } else if !error.contains("cancelled") {
+                        let tool = pending_retouch
+                            .map(|retouch| retouch.tool.label())
+                            .unwrap_or("Remove");
+                        self.report_error(ErrorKind::Retouch, format!("{tool} failed: {error}"));
+                        calibraw_core::diagnostics::record(format!("{tool} failed: {error}"));
+                        log::error!("{tool} failed: {error}");
                     }
                 }
             }
@@ -350,7 +327,7 @@ impl CalibRawApp {
     }
 }
 
-#[cfg(all(test, not(target_os = "android")))]
+#[cfg(test)]
 mod tests {
     use super::*;
     use std::sync::atomic::Ordering;
