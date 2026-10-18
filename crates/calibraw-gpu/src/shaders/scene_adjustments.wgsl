@@ -119,9 +119,13 @@ fn local_effects_rgba_at(pos: vec2<i32>) -> vec4<f32> {
     return textureLoad(local_effects_tex, Common::clamp_pos(pos), 0);
 }
 
+// A step of `reference_pixels` at the reference scale. `maximum` is the
+// largest step in native pixels (the export tile halos reserve it), so a
+// reduced preview limits the step at the same share of the photo.
 fn presence_step(reference_pixels: f32, maximum: i32) -> i32 {
+    let limit = f32(maximum) * Common::processing_per_source_pixel();
     return clamp(
-        i32(round(reference_pixels * DetailUtils::presence_reference_scale())),
+        i32(round(min(reference_pixels * DetailUtils::presence_reference_scale(), limit))),
         1,
         maximum,
     );
@@ -147,25 +151,6 @@ fn bilateral_log_luminance(
             let distance_squared = f32(dx * dx + dy * dy);
             let spatial = exp(-0.5 * distance_squared / (sigma * sigma));
             let delta = sample_ev - center;
-            let range = exp(-range_strength * delta * delta);
-            let weight = spatial * range;
-            sum = sum + sample_ev * weight;
-            sum_w = sum_w + weight;
-        }
-    }
-    return sum / max(sum_w, 1e-6);
-}
-
-fn atrous_log_luminance(pos: vec2<i32>, step: i32, range_strength: f32) -> f32 {
-    let center = Common::log_luminance(adjustment_base_at(pos));
-    var sum = 0.0;
-    var sum_w = 0.0;
-    for (var ky = -2; ky <= 2; ky = ky + 1) {
-        for (var kx = -2; kx <= 2; kx = kx + 1) {
-            let sample_pos = pos + vec2<i32>(kx * step, ky * step);
-            let sample_ev = Common::log_luminance(adjustment_base_at(sample_pos));
-            let delta = sample_ev - center;
-            let spatial = Common::binomial5_weight(kx) * Common::binomial5_weight(ky);
             let range = exp(-range_strength * delta * delta);
             let weight = spatial * range;
             sum = sum + sample_ev * weight;

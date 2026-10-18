@@ -310,6 +310,11 @@ impl AiDenoisedImage {
 pub struct LoadedRaw {
     pub width: u32,
     pub height: u32,
+    /// Width and height of the whole photo at its native resolution. Crops,
+    /// proxies and tiles keep their source's value, so effects whose radius
+    /// follows the photo's size (`resolution_scale` in common.wgsl) cover the
+    /// same part of the photo in a reduced preview as in a full-size export.
+    pub source_extent: [u32; 2],
     pub camera_make: String,
     pub camera_model: String,
     pub lens_make: String,
@@ -364,6 +369,7 @@ impl LoadedRaw {
         Self {
             width,
             height,
+            source_extent: self.source_extent,
             camera_make: self.camera_make.clone(),
             camera_model: self.camera_model.clone(),
             lens_make: self.lens_make.clone(),
@@ -412,6 +418,7 @@ impl LoadedRaw {
         Ok(Self {
             width,
             height,
+            source_extent: [width, height],
             camera_make: String::new(),
             camera_model: String::new(),
             lens_make: String::new(),
@@ -1175,6 +1182,7 @@ mod tests {
         LoadedRaw {
             width: 1,
             height: 1,
+            source_extent: [1, 1],
             camera_make: "Test".to_owned(),
             camera_model: "Matrix".to_owned(),
             lens_make: String::new(),

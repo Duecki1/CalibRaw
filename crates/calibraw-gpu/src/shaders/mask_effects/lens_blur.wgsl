@@ -3,12 +3,14 @@ const MASK_LENS_BLUR_PI: f32 = 3.14159265;
 
 // Match presence_reference_scale, retaining fractional radii and a true zero.
 // The bilinear footprint is contained in the existing 144-pixel blur halo.
+// `maximum` is in native pixels, so previews limit at the same share of the photo.
 fn mask_focus_blur_radius(reference_pixels: f32, maximum: f32) -> f32 {
-    let scale = clamp(
-        f32(min(Common::camera_uniforms.full_width, Common::camera_uniforms.full_height)) / 1080.0,
-        0.55, 3.0,
+    let scale = Common::resolution_scale(0.55, 3.0);
+    return clamp(
+        reference_pixels * scale,
+        0.0,
+        maximum * Common::processing_per_source_pixel(),
     );
-    return clamp(reference_pixels * scale, 0.0, maximum);
 }
 
 fn mask_lens_blur_at(

@@ -24,6 +24,7 @@ pub(in crate::pipeline::gpu) struct BindGroups {
     pub(in crate::pipeline::gpu) bg_adjust_prepare: wgpu::BindGroup,
     pub(in crate::pipeline::gpu) bg_adjust_tone: wgpu::BindGroup,
     pub(in crate::pipeline::gpu) bg_adjust_local_tone: wgpu::BindGroup,
+    pub(in crate::pipeline::gpu) bg_detail_pyramid: [wgpu::BindGroup; DETAIL_PYRAMID_LEVELS],
     pub(in crate::pipeline::gpu) bg_adjust_effects: wgpu::BindGroup,
     pub(in crate::pipeline::gpu) bg_adjust_effects_copy: wgpu::BindGroup,
     pub(in crate::pipeline::gpu) bg_mask_blur: [wgpu::BindGroup; MASK_BLUR_STEPS],
@@ -372,6 +373,27 @@ pub(in crate::pipeline::gpu) fn create_bind_groups(
     let bg_adjust_local_tone =
         make_adjust_tone_bind_group("bg local scene tone edits", tex2_view, tex1_view);
 
+    // The Texture and Clarity cascade ping-pongs between the highlight work
+    // textures, which, as for the Pixelate block cache, are free once the scene
+    // texture exists. Level 0 reads the adjustment base and writes A; both level
+    // counts are odd, so the last level is always in A.
+    let detail_pyramid_view = highlight_work_a_view;
+    let bg_detail_pyramid = std::array::from_fn(|level| {
+        let (read_view, write_view) =
+            ping_pong(level, highlight_work_b_view, highlight_work_a_view);
+        create_bind_group(
+            device,
+            &format!("bg detail pyramid level {level}"),
+            &layouts.bgl_detail_pyramid,
+            &[
+                buffer_binding(0, camera_uniforms_buffer),
+                texture_binding(22, tex1_view),
+                texture_binding(50, read_view),
+                texture_binding(51, write_view),
+            ],
+        )
+    });
+
     let make_adjust_effects_bind_group =
         |label: &str, input: &wgpu::TextureView, output: &wgpu::TextureView| {
             create_bind_group(
@@ -382,6 +404,7 @@ pub(in crate::pipeline::gpu) fn create_bind_groups(
                     buffer_binding(0, camera_uniforms_buffer),
                     texture_binding(22, input),
                     texture_binding(23, output),
+                    texture_binding(50, detail_pyramid_view),
                     buffer_binding(16, tone_stats_buffer),
                     texture_binding(27, mask_view),
                     sampler_binding(28, mask_sampler),
@@ -542,6 +565,7 @@ pub(in crate::pipeline::gpu) fn create_bind_groups(
         bg_adjust_prepare,
         bg_adjust_tone,
         bg_adjust_local_tone,
+        bg_detail_pyramid,
         bg_adjust_effects,
         bg_adjust_effects_copy,
         bg_mask_blur,

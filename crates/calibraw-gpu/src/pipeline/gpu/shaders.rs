@@ -190,7 +190,11 @@ pub(super) const COMPOSABLE_MODULES: [ComposableModule; 22] = [
         sensor: None,
         work_format: true,
     },
-    module(DETAIL_SCALE_SPACE),
+    ComposableModule {
+        source: DETAIL_SCALE_SPACE,
+        sensor: None,
+        work_format: true,
+    },
     module(CREATIVE_EFFECTS),
 ];
 

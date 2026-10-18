@@ -69,11 +69,7 @@ pub(super) fn pack_camera_params(ctx: &GpuParamContext<'_>) -> CameraUniforms {
         ca_blue: exposure.ca_blue,
         highlight_reconstruction: exposure.highlight_reconstruction,
         tone_analysis_scale: tone_analysis_scale() as f32,
-        tone_guide_radius: if cfg!(target_os = "android") {
-            3.0
-        } else {
-            5.0
-        },
+        tone_guide_radius: crate::pipeline::TONE_GUIDE_RADIUS_CELLS as f32,
         demosaic_mode: exposure.demosaic_mode.shader_value(),
         dual_threshold: exposure.dual_threshold.clamp(0.0, 100.0),
         frequency_chroma: exposure.frequency_chroma.clamp(0.0, 1.0),
@@ -142,7 +138,7 @@ pub(super) fn pack_camera_params(ctx: &GpuParamContext<'_>) -> CameraUniforms {
         } else {
             0.0
         },
-        _pad_camera_1: 0,
+        source_short_edge: raw.source_extent[0].min(raw.source_extent[1]),
     }
 }
 

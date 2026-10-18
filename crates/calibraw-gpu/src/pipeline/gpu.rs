@@ -80,7 +80,7 @@ pub use params::*;
 pub use remove_scene::*;
 use stage_params::*;
 
-const GPU_PARAMS_ABI_VERSION: u32 = 12;
+const GPU_PARAMS_ABI_VERSION: u32 = 13;
 const MASK_EFFECT_ID_SHIFT: u32 = 8;
 pub(super) const LIGHT_RAYS_MASK_ATLAS_EDGE: u32 = if cfg!(target_os = "android") {
     256
@@ -993,6 +993,10 @@ impl RawGpuPipeline {
         let blur_active = params.needs_blur_passes();
         if params.needs_intermediate_adjustment_passes() {
             self.encode_pass(encoder, self.indices.adjustment_local_tone_pass_index);
+            if let Some(levels) = params.detail_pyramid_levels() {
+                let start = self.indices.detail_pyramid_start_index;
+                self.encode_pass_range(encoder, start, start + levels);
+            }
             self.encode_pass(encoder, self.indices.adjustment_effects_pass_index);
             self.encode_pass(encoder, self.indices.adjustment_effects_copy_pass_index);
             if blur_active {

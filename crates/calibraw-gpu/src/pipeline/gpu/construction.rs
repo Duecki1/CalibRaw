@@ -82,6 +82,7 @@ impl RawGpuPipeline {
         let raw = LoadedRaw {
             width: EDGE,
             height: EDGE,
+            source_extent: [EDGE, EDGE],
             camera_make: "CalibRaw".to_owned(),
             camera_model: "GPU prewarm".to_owned(),
             lens_make: String::new(),

@@ -138,11 +138,7 @@ fn glow_stage_step(stage: u32) -> i32 {
         case 4u: { reference_step = 8.0; }
         default: {}
     }
-    let scale = clamp(
-        f32(min(Common::camera_uniforms.full_width, Common::camera_uniforms.full_height)) / 1080.0,
-        0.45,
-        3.0,
-    );
+    let scale = Common::resolution_scale(0.45, 3.0);
     return max(i32(round(reference_step * scale)), 1);
 }
 
@@ -381,6 +377,41 @@ fn apply_local_creative_mask_effect_nodes(pos: vec2<i32>, input_rgb: vec3<f32>) 
         rgb = mix(rgb, adjusted, weight);
     }
     return rgb;
+}
+
+@compute @workgroup_size(8, 8, 1)
+fn build_detail_level_0(@builtin(global_invocation_id) gid: vec3<u32>) {
+    DetailScaleSpace::store_detail_pyramid_level(gid, 0u);
+}
+
+@compute @workgroup_size(8, 8, 1)
+fn build_detail_level_1(@builtin(global_invocation_id) gid: vec3<u32>) {
+    DetailScaleSpace::store_detail_pyramid_level(gid, 1u);
+}
+
+@compute @workgroup_size(8, 8, 1)
+fn build_detail_level_2(@builtin(global_invocation_id) gid: vec3<u32>) {
+    DetailScaleSpace::store_detail_pyramid_level(gid, 2u);
+}
+
+@compute @workgroup_size(8, 8, 1)
+fn build_detail_level_3(@builtin(global_invocation_id) gid: vec3<u32>) {
+    DetailScaleSpace::store_detail_pyramid_level(gid, 3u);
+}
+
+@compute @workgroup_size(8, 8, 1)
+fn build_detail_level_4(@builtin(global_invocation_id) gid: vec3<u32>) {
+    DetailScaleSpace::store_detail_pyramid_level(gid, 4u);
+}
+
+@compute @workgroup_size(8, 8, 1)
+fn build_detail_level_5(@builtin(global_invocation_id) gid: vec3<u32>) {
+    DetailScaleSpace::store_detail_pyramid_level(gid, 5u);
+}
+
+@compute @workgroup_size(8, 8, 1)
+fn build_detail_level_6(@builtin(global_invocation_id) gid: vec3<u32>) {
+    DetailScaleSpace::store_detail_pyramid_level(gid, 6u);
 }
 
 @compute @workgroup_size(8, 8, 1)

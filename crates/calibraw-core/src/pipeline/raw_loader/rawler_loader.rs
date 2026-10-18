@@ -686,6 +686,7 @@ fn adapt(
     let mut loaded = LoadedRaw {
         width,
         height,
+        source_extent: [width, height],
         camera_make: image.make.clone(),
         camera_model: image.model.clone(),
         lens_make: md.exif.lens_make.clone().unwrap_or_default(),

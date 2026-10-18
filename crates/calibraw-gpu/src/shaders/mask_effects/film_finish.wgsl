@@ -13,8 +13,7 @@ fn mask_halation_emission(rgb: vec3<f32>, threshold: f32) -> f32 {
 fn apply_mask_halation(pos: vec2<i32>, rgb: vec3<f32>, primary: vec4<f32>) -> vec3<f32> {
     let amount = clamp(primary.x / 100.0, 0.0, 1.0);
     if amount <= 1e-6 || primary.y <= 1e-6 { return rgb; }
-    let scale = clamp(f32(min(Common::camera_uniforms.full_width,
-        Common::camera_uniforms.full_height)) / 1080.0, 0.45, 3.0);
+    let scale = Common::resolution_scale(0.45, 3.0);
     // Finite Gaussian support, at most 96 pixels (GLOW_SUPPORT in processing.rs).
     // Keep radius continuous so tiny halos fade smoothly instead of snapping.
     let radius = clamp(primary.y, 0.0, 32.0) * scale;
