@@ -350,7 +350,6 @@ impl Sidebar {
         let mut changed = false;
         let mut lens_changed = false;
         let mut ai_denoise_request = None;
-        let mut added_effect = None;
         let white_balance_raw = app.develop.loaded_raw.clone();
         let white_balance_was_active = app.develop_ui.white_balance_picker_active;
         // Matches the GPU pipeline: only a Bayer-mosaic AI result is blended.
@@ -410,16 +409,18 @@ impl Sidebar {
                     ai_denoise_request = request;
                 }
                 AdjustmentSection::Effects => {
+                    let mut added = None;
                     if app.develop_ui.effect_component.is_none() {
-                        let (presence_changed, added) = Self::show_presence(
+                        let (presence_changed, presence_added) = Self::show_presence(
                             ui,
                             &mut app.develop.exposure,
                             &app.masks.stack.global_effects,
                             false,
                         );
                         changed |= presence_changed;
-                        added_effect = added;
+                        added = presence_added;
                     }
+                    Self::show_global_effects(ui, app, frame, layout, added);
                 }
                 AdjustmentSection::ColorMixer => {
                     changed |= Self::show_hsl(
@@ -472,7 +473,7 @@ impl Sidebar {
                 true,
             );
             changed |= presence_changed;
-            added_effect = added;
+            Self::show_global_effects(ui, app, frame, layout, added);
             changed |= Self::show_hsl(
                 ui,
                 &mut app.develop.exposure,
@@ -482,43 +483,6 @@ impl Sidebar {
                 true,
             );
             lens_changed |= Self::show_optics(ui, app, true);
-        }
-
-        if let Some(effect) = added_effect {
-            if app.add_global_effect(effect, layout) {
-                moduwu_design::request_scroll_into_view(
-                    ui.ctx(),
-                    mask_effects::effect_card_scroll_target(effect),
-                    None,
-                );
-            }
-        }
-
-        let effect_frame = mask_effects::EffectFrame::of(app);
-        let effects_shown = layout != ScreenLayout::Vertical
-            || app.develop_ui.adjustment_section == AdjustmentSection::Effects;
-        if effects_shown && app.masks.stack.has_scene_depth_effect() {
-            Self::show_ai_update_card(ui, app, frame);
-        }
-        if layout == ScreenLayout::Vertical {
-            if app.develop_ui.adjustment_section == AdjustmentSection::Effects
-                && Self::show_selected_effect_component(
-                    ui,
-                    &mut app.masks.stack.global_effects,
-                    &mut app.develop_ui.effect_component,
-                    true,
-                    &effect_frame,
-                )
-            {
-                app.mark_mask_adjustments_dirty();
-            }
-        } else if Self::show_effect_components(
-            ui,
-            &mut app.masks.stack.global_effects,
-            true,
-            &effect_frame,
-        ) {
-            app.mark_mask_adjustments_dirty();
         }
 
         if !white_balance_was_active && app.develop_ui.white_balance_picker_active {
@@ -536,6 +500,51 @@ impl Sidebar {
         }
         if let Some(enabled) = ai_denoise_request {
             app.set_ai_denoise_enabled(enabled, frame);
+        }
+    }
+
+    /// The global effects, drawn right after the Effects card so an added
+    /// effect's card appears below the button that added it: adds `added`,
+    /// then shows the scene depth update card while an effect needs depth, and
+    /// the effect cards. A vertical layout shows only the selected effect's card.
+    fn show_global_effects(
+        ui: &mut Ui,
+        app: &mut CalibRawApp,
+        frame: &eframe::Frame,
+        layout: ScreenLayout,
+        added: Option<MaskEffect>,
+    ) {
+        if let Some(effect) = added {
+            if app.add_global_effect(effect, layout) {
+                moduwu_design::request_scroll_into_view(
+                    ui.ctx(),
+                    mask_effects::effect_card_scroll_target(effect),
+                    None,
+                );
+            }
+        }
+        if app.masks.stack.has_scene_depth_effect() {
+            Self::show_ai_update_card(ui, app, frame);
+        }
+        let effect_frame = mask_effects::EffectFrame::of(app);
+        let changed = if layout == ScreenLayout::Vertical {
+            Self::show_selected_effect_component(
+                ui,
+                &mut app.masks.stack.global_effects,
+                &mut app.develop_ui.effect_component,
+                true,
+                &effect_frame,
+            )
+        } else {
+            Self::show_effect_components(
+                ui,
+                &mut app.masks.stack.global_effects,
+                true,
+                &effect_frame,
+            )
+        };
+        if changed {
+            app.mark_mask_adjustments_dirty();
         }
     }
 

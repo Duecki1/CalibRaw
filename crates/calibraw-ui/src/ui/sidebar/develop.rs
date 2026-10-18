@@ -678,8 +678,8 @@ impl Sidebar {
         (changed, ai_request)
     }
 
-    /// The Effects card. Returns whether a slider changed and the effect a
-    /// button asked to add to `global_effects`.
+    /// The Effects card. Returns whether a slider changed and the effect its
+    /// add controls asked to add to `global_effects`.
     pub(super) fn show_presence(
         ui: &mut Ui,
         exposure: &mut ExposureParams,
@@ -703,8 +703,11 @@ impl Sidebar {
                 .show(ui);
 
             moduwu_design::section_separator(ui);
-            added =
-                mask_effects::add_effect_buttons(ui, &mask_effects::FINISH_EFFECTS, global_effects);
+            added = mask_effects::add_effect_controls(
+                ui,
+                &mask_effects::FINISH_EFFECTS,
+                global_effects,
+            );
         });
         changed |= action.apply(exposure, AdjustmentGroup::Effects);
         (changed, added)

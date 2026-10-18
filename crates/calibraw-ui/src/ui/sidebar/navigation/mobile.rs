@@ -310,11 +310,7 @@ impl Sidebar {
                 )
             })
             .inner;
-        let mut added = None;
-        moduwu_design::dropdown_menu(&response, |ui| {
-            added = Self::effect_creation_menu(ui, components);
-        });
-        if let Some(effect) = added {
+        if let Some(effect) = mask_effects::effect_picker_popup(&response, components) {
             components.push(crate::pipeline::EffectComponent::new(effect));
             *selection = Some(effect);
             return true;
