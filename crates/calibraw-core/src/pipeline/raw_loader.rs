@@ -471,6 +471,13 @@ impl LoadedRaw {
             })
     }
 
+    /// Whether temperature and tint apply to this photo. Rendered photos and
+    /// raster TIFFs have no camera white-balance model, nor do RAWs without
+    /// usable colour metadata.
+    pub fn has_white_balance_model(&self) -> bool {
+        self.white_balance_model.is_some()
+    }
+
     /// A raster decoded from camera-space LinearRaw samples. Unlike normal
     /// scene rasters, these pixels still need the camera white balance and
     /// camera-to-working transform applied by the GPU.
@@ -607,6 +614,13 @@ impl RasterSource {
             }
         }
     }
+}
+
+/// Whether `path` decodes as a display-referred raster (a rendered photo or a
+/// raster TIFF), which never has a camera white-balance model. Reads the
+/// file header.
+pub fn decodes_as_raster(path: &Path) -> Result<bool> {
+    Ok(RasterSource::detect(path)?.is_some())
 }
 
 /// Decodes any supported photo: camera RAW, TIFF, JPEG, PNG or HEIF.

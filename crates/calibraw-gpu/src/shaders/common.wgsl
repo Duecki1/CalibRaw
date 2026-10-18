@@ -46,7 +46,7 @@ fn mask_effect_id(metadata: vec4<u32>) -> u32 {
 struct CameraUniforms {
     // Scalar fields keep the following vec4 on the Rust/WGSL 16-byte boundary.
     black_point: f32,
-    temperature: f32,
+    reserved_a: f32,
     highlight_clip: f32,
     chroma_denoise: f32,
     ca_red: f32,
@@ -57,11 +57,11 @@ struct CameraUniforms {
     demosaic_mode: f32,
     dual_threshold: f32,
     frequency_chroma: f32,
-    tint: f32,
+    reserved_b: f32,
     pre_demosaiced_raster: f32,
     // One of the VIEW_TRANSFORM_* modes.
     view_transform_mode: u32,
-    camera_linear_raster: f32,
+    reserved_c: f32,
     highlight_options: vec4<f32>,
     noise_shot: vec4<f32>,
     noise_read: vec4<f32>,

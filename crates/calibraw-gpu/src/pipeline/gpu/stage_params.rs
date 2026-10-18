@@ -60,9 +60,7 @@ pub(super) fn pack_camera_params(ctx: &GpuParamContext<'_>) -> CameraUniforms {
 
     CameraUniforms {
         black_point: exposure.black_point,
-        temperature: exposure
-            .temperature
-            .clamp(-GLOBAL_TEMPERATURE_LIMIT, GLOBAL_TEMPERATURE_LIMIT),
+        reserved_a: 0.0,
         highlight_clip: exposure.highlight_clip,
         chroma_denoise: exposure.chroma_denoise,
         ca_red: exposure.ca_red,
@@ -73,9 +71,7 @@ pub(super) fn pack_camera_params(ctx: &GpuParamContext<'_>) -> CameraUniforms {
         demosaic_mode: exposure.demosaic_mode.shader_value(),
         dual_threshold: exposure.dual_threshold.clamp(0.0, 100.0),
         frequency_chroma: exposure.frequency_chroma.clamp(0.0, 1.0),
-        tint: exposure
-            .tint
-            .clamp(-GLOBAL_TINT_OFFSET_LIMIT, GLOBAL_TINT_OFFSET_LIMIT),
+        reserved_b: 0.0,
         pre_demosaiced_raster: if raw.is_pre_demosaiced_raster() {
             1.0
         } else {
@@ -83,10 +79,7 @@ pub(super) fn pack_camera_params(ctx: &GpuParamContext<'_>) -> CameraUniforms {
         },
         view_transform_mode: ViewTransformMode::select(raw, exposure, camera_linear_raster)
             .shader_value(),
-        // Camera-space rasters already receive WB through cam_to_srgb above;
-        // suppress the generic raster temperature adaptation to avoid applying
-        // a second colour adjustment.
-        camera_linear_raster: if camera_linear_raster { 1.0 } else { 0.0 },
+        reserved_c: 0.0,
         highlight_options: [
             highlight_method,
             opposed_chroma[0],

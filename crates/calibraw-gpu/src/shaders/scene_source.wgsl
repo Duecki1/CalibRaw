@@ -1,7 +1,6 @@
 #import calibraw::common as Common
 #import calibraw::color as Color
 #import calibraw::profile as Profile
-#import calibraw::basic_adjustments as BasicAdjustments
 
 // The demosaiced scene in camera RGB, shared by tone analysis and the scene
 // adjustment passes. Some Mali Vulkan compilers crash when image operands are
@@ -49,21 +48,14 @@ fn source_is_scene_referred() -> bool {
 }
 
 // Camera RGB `camera_rgb` in linear working RGB, before camera
-// characterization. Rasters that are not camera-linear take their white
-// balance here. Scene-referred sources leave inside Rec.2020, so no later
-// stage sees the negative channels a camera matrix gives narrow-band light;
-// developed photos keep their colours.
+// characterization. Global white balance reaches only sources with a camera
+// white-balance model, through the CFA multipliers or the camera transform;
+// developed photos have none and keep their colours. Scene-referred sources
+// leave inside Rec.2020, so no later stage sees the negative channels a
+// camera matrix gives narrow-band light.
 fn working_from_camera(camera_rgb: vec3<f32>) -> vec3<f32> {
     var working = Color::cam_to_working(camera_rgb);
 
-    if Common::camera_uniforms.pre_demosaiced_raster > 0.5
-        && Common::camera_uniforms.camera_linear_raster <= 0.5 {
-        working = BasicAdjustments::apply_temperature_tint_values(
-            working,
-            Common::camera_uniforms.temperature,
-            Common::camera_uniforms.tint,
-        );
-    }
     if source_is_scene_referred() {
         working = Color::compress_scene_gamut(working);
     }
