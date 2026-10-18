@@ -1,4 +1,4 @@
-use super::{tests::request_test_device, CfaKind, ShaderManager};
+use super::{direct_shader::run_direct_shader, tests::request_test_device};
 use crate::wgpu;
 
 const RAMP_COUNT: usize = 1024;
@@ -45,139 +45,15 @@ fn run_direct(
     input: &[[f32; 4]],
     amount: f32,
 ) -> anyhow::Result<Vec<[f32; 4]>> {
-    let mut manager = ShaderManager::new(wgpu::TextureFormat::Rgba32Float, CfaKind::Bayer)?;
-    let shader = manager.create_shader_module(
+    run_direct_shader(
         device,
+        queue,
         "black-toe direct regression shader",
-        DIRECT_SHADER,
         "black_tone_tests.wgsl",
-    )?;
-    let size = (input.len() * 16) as u64;
-    let input_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("black-toe direct input"),
-        size,
-        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-        mapped_at_creation: false,
-    });
-    let output_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("black-toe direct output"),
-        size,
-        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
-        mapped_at_creation: false,
-    });
-    let readback = device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("black-toe direct readback"),
-        size,
-        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
-        mapped_at_creation: false,
-    });
-    let params = device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("black-toe direct params"),
-        size: 16,
-        usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-        mapped_at_creation: false,
-    });
-    queue.write_buffer(&input_buffer, 0, bytemuck::cast_slice(input));
-    queue.write_buffer(
-        &params,
-        0,
-        bytemuck::cast_slice(&[amount.to_bits(), input.len() as u32, 0, 0]),
-    );
-
-    let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-        label: Some("black-toe direct layout"),
-        entries: &[
-            wgpu::BindGroupLayoutEntry {
-                binding: 40,
-                visibility: wgpu::ShaderStages::COMPUTE,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Uniform,
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
-                },
-                count: None,
-            },
-            wgpu::BindGroupLayoutEntry {
-                binding: 41,
-                visibility: wgpu::ShaderStages::COMPUTE,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Storage { read_only: true },
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
-                },
-                count: None,
-            },
-            wgpu::BindGroupLayoutEntry {
-                binding: 42,
-                visibility: wgpu::ShaderStages::COMPUTE,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Storage { read_only: false },
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
-                },
-                count: None,
-            },
-        ],
-    });
-    let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: Some("black-toe direct bind group"),
-        layout: &layout,
-        entries: &[
-            wgpu::BindGroupEntry {
-                binding: 40,
-                resource: params.as_entire_binding(),
-            },
-            wgpu::BindGroupEntry {
-                binding: 41,
-                resource: input_buffer.as_entire_binding(),
-            },
-            wgpu::BindGroupEntry {
-                binding: 42,
-                resource: output_buffer.as_entire_binding(),
-            },
-        ],
-    });
-    let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-        label: Some("black-toe direct pipeline layout"),
-        bind_group_layouts: &[Some(&layout)],
-        immediate_size: 0,
-    });
-    let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-        label: Some("black-toe direct pipeline"),
-        layout: Some(&pipeline_layout),
-        module: &shader,
-        entry_point: Some("main"),
-        compilation_options: Default::default(),
-        cache: None,
-    });
-    let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-        label: Some("black-toe direct encoder"),
-    });
-    {
-        let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-            label: Some("black-toe direct pass"),
-            timestamp_writes: None,
-        });
-        pass.set_pipeline(&pipeline);
-        pass.set_bind_group(0, &bind_group, &[]);
-        pass.dispatch_workgroups(input.len().div_ceil(64) as u32, 1, 1);
-    }
-    encoder.copy_buffer_to_buffer(&output_buffer, 0, &readback, 0, size);
-    let submission = queue.submit(Some(encoder.finish()));
-    let (sender, receiver) = std::sync::mpsc::sync_channel(1);
-    readback.map_async(wgpu::MapMode::Read, .., move |result| {
-        let _ = sender.send(result);
-    });
-    device.poll(wgpu::PollType::Wait {
-        submission_index: Some(submission),
-        timeout: None,
-    })?;
-    receiver.recv()??;
-    let bytes = readback.get_mapped_range(..);
-    let output = bytemuck::cast_slice::<u8, [f32; 4]>(&bytes).to_vec();
-    drop(bytes);
-    readback.unmap();
-    Ok(output)
+        DIRECT_SHADER,
+        [amount.to_bits(), input.len() as u32, 0, 0],
+        input,
+    )
 }
 
 fn encoded_luma(rgb: [f32; 4]) -> f32 {
@@ -262,5 +138,50 @@ fn black_tone_direct_invariants_hold() -> anyhow::Result<()> {
             }
         }
     }
+    Ok(())
+}
+
+#[test]
+fn black_tone_shapes_shadows_and_leaves_middle_grey() -> anyhow::Result<()> {
+    let Some((device, queue)) = request_test_device() else {
+        eprintln!("black tone regression skipped: no headless wgpu adapter");
+        return Ok(());
+    };
+    // Display-linear luminance: deep shadow, shadow and display middle grey.
+    let levels = [0.01_f32, 0.05, 0.1845];
+    let input = levels.map(|y| [y, y, y, 1.0]);
+    let change_ev = |slider: f32| -> anyhow::Result<[f32; 3]> {
+        let output = run_direct(&device, &queue, &input, slider)?;
+        Ok(std::array::from_fn(|index| {
+            (output[index][1] / input[index][1]).log2()
+        }))
+    };
+
+    let crush = change_ev(-100.0)?;
+    let lift = change_ev(100.0)?;
+    eprintln!("Blacks -100: {crush:?} EV, +100: {lift:?} EV");
+    for (name, change) in [("-100", crush), ("+100", lift)] {
+        assert!(
+            change[2].abs() <= 0.1,
+            "Blacks {name} moved middle grey by {} EV",
+            change[2]
+        );
+        assert!(
+            change[0].abs() > change[1].abs() && change[1].abs() > change[2].abs(),
+            "Blacks {name} does not fade from the deepest shadows: {change:?}"
+        );
+    }
+    assert!(crush[0] <= -1.2, "Blacks -100 at Y=0.01: {} EV", crush[0]);
+    assert!(
+        (-1.0..=-0.3).contains(&crush[1]),
+        "Blacks -100 at Y=0.05: {} EV",
+        crush[1]
+    );
+    assert!(lift[0] >= 1.0, "Blacks +100 at Y=0.01: {} EV", lift[0]);
+    assert!(
+        (0.3..=1.0).contains(&lift[1]),
+        "Blacks +100 at Y=0.05: {} EV",
+        lift[1]
+    );
     Ok(())
 }
