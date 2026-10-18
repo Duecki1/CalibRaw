@@ -6,6 +6,14 @@ use super::*;
 pub(in crate::pipeline::gpu) const MASK_BLUR_STEPS: usize = 5;
 /// Diffusion steps of Glow, one program each (`diffuse_glow_*`).
 pub(in crate::pipeline::gpu) const GLOW_BLUR_STEPS: usize = 5;
+/// Levels of the Texture and Clarity cascade, one program each
+/// (`build_detail_level_*`); `DETAIL_PYRAMID_LEVEL_COUNT` in
+/// detail_scale_space.wgsl.
+pub(in crate::pipeline::gpu) const DETAIL_PYRAMID_LEVELS: usize = 7;
+/// The cascade levels Texture alone needs (`DETAIL_PYRAMID_TEXTURE_LEVEL_COUNT`).
+/// Both counts are odd, so the last level always lands in the texture the
+/// scene effects pass reads.
+pub(in crate::pipeline::gpu) const DETAIL_PYRAMID_TEXTURE_LEVELS: usize = 5;
 
 /// Where every program sits in the pass list. Program templates share
 /// compiled programs by position, so bind group layouts, pass assembly and
@@ -30,6 +38,8 @@ pub(in crate::pipeline::gpu) struct StageIndices {
     pub(in crate::pipeline::gpu) adjustment_prepare_pass_index: usize,
     pub(in crate::pipeline::gpu) adjustment_tone_pass_index: usize,
     pub(in crate::pipeline::gpu) adjustment_local_tone_pass_index: usize,
+    /// The first Texture and Clarity cascade level; the others follow.
+    pub(in crate::pipeline::gpu) detail_pyramid_start_index: usize,
     pub(in crate::pipeline::gpu) adjustment_effects_pass_index: usize,
     /// Copies the scene unchanged when no scene effect applies.
     pub(in crate::pipeline::gpu) adjustment_effects_copy_pass_index: usize,
@@ -80,6 +90,7 @@ impl StageIndices {
         let adjustment_prepare_pass_index = take(1);
         let adjustment_tone_pass_index = take(1);
         let adjustment_local_tone_pass_index = take(1);
+        let detail_pyramid_start_index = take(DETAIL_PYRAMID_LEVELS);
         let adjustment_effects_pass_index = take(1);
         let adjustment_effects_copy_pass_index = take(1);
         let mask_blur_start_index = take(MASK_BLUR_STEPS);
@@ -109,6 +120,7 @@ impl StageIndices {
             adjustment_prepare_pass_index,
             adjustment_tone_pass_index,
             adjustment_local_tone_pass_index,
+            detail_pyramid_start_index,
             adjustment_effects_pass_index,
             adjustment_effects_copy_pass_index,
             mask_blur_start_index,
@@ -418,6 +430,27 @@ pub(in crate::pipeline::gpu) fn assemble_passes(
             groups.bg_adjust_local_tone.clone(),
             image_workgroups,
         ),
+    ]);
+    ensure_planned(
+        &passes,
+        indices.detail_pyramid_start_index,
+        "detail pyramid",
+    )?;
+    for (level, bind_group) in groups.bg_detail_pyramid.iter().enumerate() {
+        passes.push(assembler.make_pass(
+            shaders.creative_effects_module.as_ref(),
+            &format!("build_detail_level_{level}"),
+            &layouts.bgl_detail_pyramid,
+            bind_group.clone(),
+            image_workgroups,
+        ));
+    }
+    ensure_planned(
+        &passes,
+        indices.adjustment_effects_pass_index,
+        "scene effects",
+    )?;
+    passes.extend([
         assembler.make_pass(
             shaders.creative_effects_module.as_ref(),
             "apply_scene_effects_node",

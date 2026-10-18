@@ -695,6 +695,7 @@ fn loaded_raw_from_context(
     Ok(LoadedRaw {
         width,
         height,
+        source_extent: [width, height],
         camera_make: c_array_to_string(&iparams.make),
         camera_model: c_array_to_string(&iparams.model),
         lens_make: c_array_to_string(&lens.LensMake),

@@ -22,6 +22,7 @@ pub(in crate::pipeline::gpu) struct BindGroupLayouts {
     pub(in crate::pipeline::gpu) bgl_tone_reduce: wgpu::BindGroupLayout,
     pub(in crate::pipeline::gpu) bgl_adjust_prepare: wgpu::BindGroupLayout,
     pub(in crate::pipeline::gpu) bgl_adjust_tone: wgpu::BindGroupLayout,
+    pub(in crate::pipeline::gpu) bgl_detail_pyramid: wgpu::BindGroupLayout,
     pub(in crate::pipeline::gpu) bgl_adjust_effects: wgpu::BindGroupLayout,
     pub(in crate::pipeline::gpu) bgl_mask_blur: wgpu::BindGroupLayout,
     pub(in crate::pipeline::gpu) bgl_glow_prepare: wgpu::BindGroupLayout,
@@ -359,6 +360,19 @@ pub(in crate::pipeline::gpu) fn create_bind_group_layouts(
         )
     });
 
+    let bgl_detail_pyramid = reused_layout(plan.detail_pyramid_start_index).unwrap_or_else(|| {
+        create_bind_group_layout(
+            device,
+            "bgl detail pyramid",
+            &[
+                buffer_entry(0),
+                texture_entry(22, wgpu::TextureSampleType::Float { filterable: false }),
+                texture_entry(50, wgpu::TextureSampleType::Float { filterable: false }),
+                storage_texture_entry(51, work_format, wgpu::StorageTextureAccess::WriteOnly),
+            ],
+        )
+    });
+
     let bgl_adjust_effects =
         reused_layout(plan.adjustment_effects_pass_index).unwrap_or_else(|| {
             create_bind_group_layout(
@@ -368,6 +382,7 @@ pub(in crate::pipeline::gpu) fn create_bind_group_layouts(
                     buffer_entry(0),
                     texture_entry(22, wgpu::TextureSampleType::Float { filterable: false }),
                     storage_texture_entry(23, work_format, wgpu::StorageTextureAccess::WriteOnly),
+                    texture_entry(50, wgpu::TextureSampleType::Float { filterable: false }),
                     storage_buffer_entry(16, true),
                     texture_array_entry(27, wgpu::TextureSampleType::Float { filterable: true }),
                     sampler_entry(28),
@@ -599,6 +614,7 @@ pub(in crate::pipeline::gpu) fn create_bind_group_layouts(
         bgl_tone_reduce,
         bgl_adjust_prepare,
         bgl_adjust_tone,
+        bgl_detail_pyramid,
         bgl_adjust_effects,
         bgl_mask_blur,
         bgl_glow_prepare,

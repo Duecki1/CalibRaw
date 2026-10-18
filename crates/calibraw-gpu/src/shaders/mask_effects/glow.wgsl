@@ -61,8 +61,7 @@ fn mask_glow_emitter(pos: vec2<f32>, index: u32, tint: vec3<f32>) -> vec3<f32> {
 fn apply_mask_glow_cores(pos: vec2<i32>, input_rgb: vec3<f32>) -> vec3<f32> {
     var emitted = vec3<f32>(0.0);
     var self_lit = vec3<f32>(0.0);
-    let scale = clamp(f32(min(Common::camera_uniforms.full_width,
-        Common::camera_uniforms.full_height)) / 1080.0, 0.45, 3.0);
+    let scale = Common::resolution_scale(0.45, 3.0);
     let count = min(Common::scene_tone_uniforms.mask_counts.x, Common::MAX_RENDER_MASK_SLOTS);
     for (var index = 0u; index < count; index += 1u) {
         let state = Common::mask_data[index].metadata;

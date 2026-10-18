@@ -51,7 +51,10 @@ pub(super) struct CameraUniforms {
     /// texture against the original mosaic (R). The pipeline uploads 0 when its
     /// raw texture has no AI plane.
     pub(super) ai_cfa_weight: f32,
-    pub(super) _pad_camera_1: u32,
+    /// Shorter edge in pixels of the whole photo at its native resolution
+    /// ([`LoadedRaw::source_extent`]); `full_width` and `full_height` give the
+    /// processing resolution. `resolution_scale` in common.wgsl reads both.
+    pub(super) source_short_edge: u32,
 }
 
 #[repr(C)]
@@ -572,6 +575,34 @@ impl GpuParams {
 
     pub(super) fn needs_dual_demosaic_passes(&self) -> bool {
         self.camera.demosaic_mode >= 1.5
+    }
+
+    /// How many Texture and Clarity cascade levels the scene effects pass
+    /// reads: every level for Clarity, fewer for Texture alone, none without
+    /// either. Covers every call of `apply_texture_and_clarity_values`
+    /// (creative_effects.wgsl): the global values and adjustment masks.
+    pub(super) fn detail_pyramid_levels(&self) -> Option<usize> {
+        let [global_texture, global_clarity, ..] = self.effects.presence;
+        let local_count = (self.scene_tone.mask_counts[0] as usize).min(MAX_RENDER_MASK_SLOTS);
+        let local_values = self.mask_data[..local_count].iter().filter_map(|mask| {
+            let state = mask.metadata;
+            (state[0] != 0
+                && state[1] != 0
+                && state[3] >> MASK_EFFECT_ID_SHIFT == MaskEffect::Adjustment.shader_id())
+            .then_some((mask.adjust_2[1], mask.adjust_2[2]))
+        });
+        let (mut texture, mut clarity) = (global_texture.abs() > 1e-6, global_clarity.abs() > 1e-6);
+        for (local_texture, local_clarity) in local_values {
+            texture |= local_texture.abs() > 1e-6;
+            clarity |= local_clarity.abs() > 1e-6;
+        }
+        if clarity {
+            Some(DETAIL_PYRAMID_LEVELS)
+        } else if texture {
+            Some(DETAIL_PYRAMID_TEXTURE_LEVELS)
+        } else {
+            None
+        }
     }
 
     pub(super) fn needs_intermediate_adjustment_passes(&self) -> bool {

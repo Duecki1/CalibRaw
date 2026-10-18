@@ -28,6 +28,7 @@ fn raster_with_metadata(
 ) -> LoadedRaw {
     let mut output = LoadedRaw::from_scene_linear_rec2020(width, height, rgb)
         .expect("validated raster dimensions must remain valid");
+    output.source_extent = raw.source_extent;
     output.camera_make = raw.camera_make.clone();
     output.camera_model = raw.camera_model.clone();
     output.lens_make = raw.lens_make.clone();
@@ -270,12 +271,16 @@ pub fn build_region_proxy(
     let mut raw_pixels = vec![0u16; len];
     let mut color_indices = vec![0u8; len];
     let mut black_levels_per_pixel = vec![0.0f32; len];
-    raw_pixels
+    // Per CFA channel: the sum over proxy pixels of 1/n, n being the sensor
+    // samples a pixel averages, and the number of those pixels.
+    let (inverse_counts, pixel_counts) = raw_pixels
         .par_chunks_mut(row_stride)
         .zip(color_indices.par_chunks_mut(row_stride))
         .zip(black_levels_per_pixel.par_chunks_mut(row_stride))
         .enumerate()
-        .for_each(|(py, ((raw_row, cfa_row), black_row))| {
+        .map(|(py, ((raw_row, cfa_row), black_row))| {
+            let mut inverse_counts = [0.0f64; 4];
+            let mut pixel_counts = [0u64; 4];
             let py = py as u32;
             let output_phase_y = py % cfa_period;
             let (source_y0, source_y1) = proportional_partition(py, region_height, height);
@@ -323,16 +328,35 @@ pub fn build_region_proxy(
                     black_row[px] = (black_sum / f64::from(count)) as f32;
                 }
                 cfa_row[px] = cfa;
+                let channel = usize::from(cfa.min(3));
+                inverse_counts[channel] += 1.0 / f64::from(count.max(1));
+                pixel_counts[channel] += 1;
             }
-        });
+            (inverse_counts, pixel_counts)
+        })
+        .reduce(
+            || ([0.0f64; 4], [0u64; 4]),
+            |(mut inverse, mut pixels), (row_inverse, row_pixels)| {
+                for channel in 0..4 {
+                    inverse[channel] += row_inverse[channel];
+                    pixels[channel] += row_pixels[channel];
+                }
+                (inverse, pixels)
+            },
+        );
+    // A proxy pixel averages only the footprint's samples of its own colour, a
+    // quarter of the footprint on Bayer, so its variance is the sensor's over
+    // that sample count, not over the footprint area.
+    let variance_factors = std::array::from_fn(|channel| {
+        if pixel_counts[channel] == 0 {
+            1.0
+        } else {
+            (inverse_counts[channel] / pixel_counts[channel] as f64) as f32
+        }
+    });
 
     LoadedRaw {
-        // Proxy pixels average same-colour samples, so noise variance scales with the area ratio.
-        noise_profile: raw.noise_profile.scaled_variance(
-            ((u64::from(width) * u64::from(height)) as f64
-                / (u64::from(region_width) * u64::from(region_height)) as f64)
-                .clamp(0.0, 1.0) as f32,
-        ),
+        noise_profile: raw.noise_profile.scaled_variance(variance_factors),
         lens_geometry: (x == 0
             && y == 0
             && region_width == raw.width

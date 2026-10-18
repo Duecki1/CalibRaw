@@ -2,6 +2,7 @@ use super::{
     pack_effect_mask, pack_local_point_curve, pack_point_curve, processing_work_format,
     shader_manager::ShaderManager, shaders, work_shader_source, GpuParams, PipelineOptions,
     ProcessingQuality, RawGpuPipeline, ViewTransformMode, COLOR_DENOISE_ENTRY_POINTS,
+    DETAIL_PYRAMID_LEVELS,
 };
 use crate::pipeline::{
     extract_padded_tile, CameraProfile, CfaKind, CompactPixelMap, EffectComponent, ExportTile,
@@ -825,6 +826,7 @@ fn opposed_highlight_consistency_raw(width: u32, height: u32) -> LoadedRaw {
     LoadedRaw {
         width,
         height,
+        source_extent: [width, height],
         camera_make: "Test".to_owned(),
         camera_model: "Opposed highlights".to_owned(),
         lens_make: String::new(),
@@ -880,6 +882,11 @@ fn assert_planned_programs(pipeline: &RawGpuPipeline) {
         (
             indices.adjustment_local_tone_pass_index,
             "apply_local_scene_tone_node",
+        ),
+        (indices.detail_pyramid_start_index, "build_detail_level_0"),
+        (
+            indices.detail_pyramid_start_index + DETAIL_PYRAMID_LEVELS - 1,
+            "build_detail_level_6",
         ),
         (
             indices.adjustment_effects_pass_index,

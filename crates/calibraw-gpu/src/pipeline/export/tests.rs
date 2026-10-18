@@ -485,6 +485,18 @@ fn wide_sources_reduce_band_height_to_stay_within_budget() {
 }
 
 #[test]
+fn wide_halos_shrink_the_core_to_keep_the_padded_tile_bounded() {
+    let requested = crate::pipeline::TileSpec {
+        core_edge: 1024,
+        halo: EXPORT_TILE_HALO,
+    };
+    let bounded = bounded_tile_spec(requested, 4_000).unwrap();
+    assert_eq!(bounded.halo, EXPORT_TILE_HALO);
+    assert!(bounded.core_edge < requested.core_edge);
+    assert!(bounded.core_edge + 2 * bounded.halo <= 1024 + 2 * 768);
+}
+
+#[test]
 fn resolving_export_halo_never_enlarges_the_requested_tile() {
     let requested = TileSpec {
         core_edge: 768,

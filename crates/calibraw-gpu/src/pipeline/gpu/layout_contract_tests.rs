@@ -14,7 +14,11 @@ use super::{
     IMAGE_LIGHT_BANDS, IMAGE_LIGHT_GRID_LONG, MASK_EFFECT_ID_SHIFT, MAX_RENDER_MASK_SLOTS,
     RELIGHT_SHADOW_MAP_CHANNELS, TONE_HISTOGRAM_BIN_COUNT, TONE_STATS_SIZE_BYTES,
 };
+use super::{DETAIL_PYRAMID_LEVELS, DETAIL_PYRAMID_TEXTURE_LEVELS};
 use crate::pipeline::MaskEffect;
+use calibraw_core::pipeline::{
+    DETAIL_CLARITY_SUPPORT, DETAIL_TEXTURE_SUPPORT, MAX_RESOLUTION_SCALE, TONE_GUIDE_RADIUS_CELLS,
+};
 use naga::proc::Layouter;
 use std::collections::BTreeSet;
 
@@ -105,6 +109,9 @@ pub(super) fn u32_constant(module: &naga::Module, name: &str) -> Option<u32> {
                 naga::Expression::Literal(naga::Literal::U32(value)) => value,
                 naga::Expression::Literal(naga::Literal::AbstractInt(value)) => {
                     u32::try_from(value).expect("constant fits in u32")
+                }
+                naga::Expression::Literal(naga::Literal::I32(value)) => {
+                    u32::try_from(value).expect("constant is not negative")
                 }
                 ref other => panic!("{name} is not a u32 literal: {other:?}"),
             }
@@ -218,7 +225,7 @@ fn shared_uniform_and_mask_structs_match_rust_layouts() {
                 ai_denoise_enabled,
                 user_exposure_bits,
                 ai_cfa_weight,
-                _pad_camera_1,
+                source_short_edge,
             }),
         ),
         (
@@ -366,21 +373,24 @@ fn shared_buffer_bindings_match_the_rust_bind_group_layouts() {
     assert_eq!(seen.len(), expected.len(), "every shared buffer is used");
 }
 
+/// The value of a u32 constant, which every module that keeps it must agree on.
+fn shared_u32_constant(modules: &[(String, naga::Module)], name: &str) -> u32 {
+    let values = modules
+        .iter()
+        .filter_map(|(_, module)| u32_constant(module, name))
+        .collect::<BTreeSet<_>>();
+    assert_eq!(
+        values.len(),
+        1,
+        "{name} has one value across modules: {values:?}"
+    );
+    values.into_iter().next().unwrap()
+}
+
 #[test]
 fn shared_constants_and_effect_ids_match_rust() {
     let modules = production_modules();
-    let constant = |name: &str| {
-        let values = modules
-            .iter()
-            .filter_map(|(_, module)| u32_constant(module, name))
-            .collect::<BTreeSet<_>>();
-        assert_eq!(
-            values.len(),
-            1,
-            "{name} has one value across modules: {values:?}"
-        );
-        values.into_iter().next().unwrap()
-    };
+    let constant = |name: &str| shared_u32_constant(&modules, name);
 
     assert_eq!(
         constant("MAX_RENDER_MASK_SLOTS") as usize,
@@ -418,6 +428,35 @@ fn shared_constants_and_effect_ids_match_rust() {
         );
         assert_eq!(constant(&name), effect.shader_id(), "{name}");
     }
+}
+
+/// The pass counts of the Texture and Clarity cascade and the export-tile
+/// support reserved for it follow from detail_scale_space.wgsl: level k filters
+/// at a step of 2^k pixels with `DETAIL_PYRAMID_KERNEL_RADIUS` taps a side.
+#[test]
+fn detail_pyramid_levels_and_tile_support_match_the_shader() {
+    let modules = production_modules();
+    let constant = |name: &str| shared_u32_constant(&modules, name);
+    let levels = constant("DETAIL_PYRAMID_LEVEL_COUNT");
+    let texture_levels = constant("DETAIL_PYRAMID_TEXTURE_LEVEL_COUNT");
+    let radius = constant("DETAIL_PYRAMID_KERNEL_RADIUS");
+    assert_eq!(levels as usize, DETAIL_PYRAMID_LEVELS);
+    assert_eq!(texture_levels as usize, DETAIL_PYRAMID_TEXTURE_LEVELS);
+    // Level 0 writes the texture the scene effects read and the levels
+    // alternate, so both counts must be odd.
+    assert!(levels % 2 == 1 && texture_levels % 2 == 1);
+    let footprint = |levels: u32| radius * ((1 << levels) - 1);
+    assert_eq!(footprint(levels), DETAIL_CLARITY_SUPPORT);
+    assert_eq!(footprint(texture_levels), DETAIL_TEXTURE_SUPPORT);
+}
+
+/// The tone-guide blur in tone_analysis.wgsl takes enough taps for its radius
+/// at the largest resolution scale, which TONE_GUIDE_SUPPORT in tiles.rs reserves.
+#[test]
+fn tone_guide_taps_cover_the_largest_scaled_radius() {
+    let modules = production_modules();
+    let taps = shared_u32_constant(&modules, "TONE_GUIDE_MAX_RADIUS_CELLS");
+    assert!(TONE_GUIDE_RADIUS_CELLS * MAX_RESOLUTION_SCALE <= taps);
 }
 
 #[test]

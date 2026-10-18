@@ -112,10 +112,9 @@ fn stabilized_mixer_sample(pos: vec2<i32>, center_rgb: vec3<f32>) -> MixerSample
 
     var vector_sum = center.hue_vector * center.confidence * 4.0;
     var weight_sum = center.confidence * 4.0;
-    let selector_radius = select(1, 2, Common::camera_uniforms.tone_guide_radius > 3.5);
     for (var dy = -2; dy <= 2; dy = dy + 1) {
         for (var dx = -2; dx <= 2; dx = dx + 1) {
-            if (dx == 0 && dy == 0) || abs(dx) > selector_radius || abs(dy) > selector_radius {
+            if dx == 0 && dy == 0 {
                 continue;
             }
             let neighbour_rgb = textureLoad(SceneAdjustments::final_adjustment_tex, Common::clamp_pos(pos + vec2<i32>(dx, dy)), 0).xyz;

@@ -319,6 +319,7 @@ mod tests {
         LoadedRaw {
             width,
             height,
+            source_extent: [width, height],
             camera_make: "Cache Test".to_owned(),
             camera_model: "Synthetic".to_owned(),
             lens_make: String::new(),

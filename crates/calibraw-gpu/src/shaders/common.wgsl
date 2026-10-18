@@ -88,7 +88,9 @@ struct CameraUniforms {
     ai_denoise_enabled: u32,
     user_exposure_bits: u32,
     ai_cfa_weight: f32,
-    _pad_camera_1_field: u32,
+    // Shorter edge in pixels of the whole photo at its native resolution;
+    // full_width and full_height give the processing resolution.
+    source_short_edge: u32,
 }
 
 struct SceneToneUniforms {
@@ -192,6 +194,35 @@ fn tile_origin() -> vec2<i32> {
 
 fn full_image_max() -> vec2<i32> {
     return vec2<i32>(i32(camera_uniforms.full_width) - 1, i32(camera_uniforms.full_height) - 1);
+}
+
+fn processing_short_edge() -> f32 {
+    return f32(max(min(camera_uniforms.full_width, camera_uniforms.full_height), 1u));
+}
+
+fn source_short_edge() -> f32 {
+    return select(
+        processing_short_edge(),
+        f32(camera_uniforms.source_short_edge),
+        camera_uniforms.source_short_edge > 0u,
+    );
+}
+
+// Processing pixels per pixel of the photo at its native resolution: 1 in an
+// export, less in a reduced preview. A limit in native pixels times this is
+// the same limit at the processing resolution.
+fn processing_per_source_pixel() -> f32 {
+    return processing_short_edge() / source_short_edge();
+}
+
+// Pixels per reference pixel for effects sized against a 1080-pixel short edge.
+// The scale is set by the photo at its native resolution, limited to
+// [minimum, maximum] there so export tiles keep bounded halos, and then
+// carried to the processing resolution. A reduced preview therefore uses the
+// export's radii in proportion instead of limits of its own.
+fn resolution_scale(minimum: f32, maximum: f32) -> f32 {
+    return clamp(source_short_edge() / 1080.0, minimum, maximum)
+        * processing_per_source_pixel();
 }
 
 // Image lights (tone_analysis.wgsl): a coarse grid over the full image with

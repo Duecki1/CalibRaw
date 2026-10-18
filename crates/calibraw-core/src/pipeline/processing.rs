@@ -87,6 +87,7 @@ mod tests {
         LoadedRaw {
             width,
             height,
+            source_extent: [width, height],
             camera_make: "Test".to_owned(),
             camera_model: String::new(),
             lens_make: String::new(),
@@ -646,9 +647,9 @@ mod tests {
         };
         type AdjustmentCase = (fn(&mut LocalAdjustments) -> &mut f32, u32);
         let cases: [AdjustmentCase; 3] = [
-            (|a| &mut a.texture, super::LOCAL_EFFECTS_SUPPORT),
-            (|a| &mut a.clarity, super::LOCAL_EFFECTS_SUPPORT),
-            (|a| &mut a.dehaze, super::LOCAL_EFFECTS_SUPPORT),
+            (|a| &mut a.texture, super::DETAIL_TEXTURE_SUPPORT),
+            (|a| &mut a.clarity, super::DETAIL_CLARITY_SUPPORT),
+            (|a| &mut a.dehaze, super::tiles::DEHAZE_SUPPORT),
         ];
         for (field, support) in cases {
             let mut stack = MaskStack::default();
@@ -681,6 +682,32 @@ mod tests {
                 MIN_EXPORT_TILE_HALO
             );
         }
+    }
+
+    #[test]
+    fn export_halo_adds_sharpening_to_the_widest_scene_effect() {
+        let base = super::HIGHLIGHT_RECONSTRUCTION_SUPPORT
+            + super::DEMOSAIC_CHAIN_SUPPORT
+            + super::TONE_GUIDE_SUPPORT
+            + super::COLOR_MIXER_SUPPORT;
+        let masks = MaskStack::default();
+        let mut exposure = ExposureParams {
+            sharpen_amount: 40.0,
+            dehaze: 30.0,
+            texture: 30.0,
+            ..Default::default()
+        };
+        // Sharpening runs in the pass before the scene effects, so its
+        // footprint adds to theirs; Dehaze and Texture share one pass.
+        assert_eq!(
+            required_export_tile_halo(&exposure, &masks),
+            (base + 6 + super::DETAIL_TEXTURE_SUPPORT).div_ceil(8) * 8
+        );
+        exposure.clarity = 30.0;
+        assert_eq!(
+            required_export_tile_halo(&exposure, &masks),
+            (base + super::LOCAL_EFFECTS_SUPPORT).div_ceil(8) * 8
+        );
     }
 
     #[test]
@@ -804,6 +831,7 @@ mod tests {
         let raw = LoadedRaw {
             width,
             height,
+            source_extent: [width, height],
             camera_make: "Test".to_owned(),
             camera_model: String::new(),
             lens_make: String::new(),
@@ -878,6 +906,7 @@ mod tests {
         let raw = LoadedRaw {
             width,
             height,
+            source_extent: [width, height],
             camera_make: String::new(),
             camera_model: String::new(),
             lens_make: String::new(),
@@ -982,6 +1011,30 @@ mod tests {
         assert_eq!(portrait.width.max(portrait.height), 26);
         assert_eq!(larger.width % 2, 0);
         assert_eq!(larger.height % 2, 0);
+    }
+
+    #[test]
+    fn bayer_proxy_noise_follows_same_colour_sample_counts() {
+        let mut raw = test_raw(96, 96);
+        raw.color_indices = CompactPixelMap::repeating(96, 96, 2, 2, vec![0, 1, 3, 2]);
+        raw.noise_profile = crate::pipeline::NoiseProfile {
+            shot: [0.01; 4],
+            read: [0.001; 4],
+            confidence: 1.0,
+            green2_present: true,
+        };
+
+        let proxy = build_proxy(&raw, ProxySpec { max_edge: 32 });
+        assert_eq!((proxy.width, proxy.height), (32, 32));
+        // Each proxy pixel averages the four samples of its own colour in its
+        // 3x3 footprint, not all nine.
+        for channel in 0..4 {
+            assert!((proxy.noise_profile.shot[channel] - 0.0025).abs() < 1e-7);
+            assert!((proxy.noise_profile.read[channel] - 0.000_25).abs() < 1e-8);
+        }
+        // Proxies and crops keep the source's native size.
+        assert_eq!(proxy.source_extent, [96, 96]);
+        assert_eq!(crop_raw(&raw, 4, 4, 20, 20).source_extent, [96, 96]);
     }
 
     #[test]
