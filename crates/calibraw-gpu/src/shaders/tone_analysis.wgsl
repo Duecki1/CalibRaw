@@ -1,6 +1,5 @@
 #import calibraw::common as Common
 #import calibraw::color as Color
-#import calibraw::profile as Profile
 #import calibraw::tone_common as ToneCommon
 #import calibraw::scene_source as SceneSource
 
@@ -15,11 +14,7 @@ struct ToneHistogram {
 @group(0) @binding(18) var tone_guide_write: texture_storage_2d<r32float, write>;
 
 fn tone_unexposed_working_at(pos: vec2<i32>) -> vec3<f32> {
-    let working = SceneSource::scene_working_at(pos);
-    let characterized = Profile::apply_camera_characterization(working);
-    let profile_exposure_ev = bitcast<f32>(Common::camera_uniforms.profile_flags.z);
-    let exposed = characterized * exp2(profile_exposure_ev);
-    return Color::map_negative_gamut(exposed);
+    return Color::map_negative_gamut(SceneSource::profiled_scene_at(pos));
 }
 
 fn tone_guide_cell_size() -> i32 {
@@ -253,21 +248,20 @@ fn image_light_cell_index(cell: vec2<u32>) -> u32 {
     return cell.y * Common::IMAGE_LIGHT_GRID_LONG + cell.x;
 }
 
-// Global pixels whose centres fall in grid cells [cell, cell + 1) along one axis.
-fn image_light_pixel_span(cell: u32, cells: u32, full: u32) -> vec2<i32> {
-    let scale = f32(full) / f32(cells);
-    return vec2<i32>(
-        i32(ceil(f32(cell) * scale - 0.5)),
-        i32(ceil(f32(cell + 1u) * scale - 0.5)),
-    );
-}
-
 @compute @workgroup_size(8, 8, 1)
 fn accumulate_image_lights(@builtin(global_invocation_id) gid: vec3<u32>) {
     let grid = Common::image_light_grid();
     if gid.x >= grid.x || gid.y >= grid.y { return; }
-    let span_x = image_light_pixel_span(gid.x, grid.x, Common::camera_uniforms.full_width);
-    let span_y = image_light_pixel_span(gid.y, grid.y, Common::camera_uniforms.full_height);
+    let span_x = Common::full_image_grid_pixel_span(
+        gid.x,
+        grid.x,
+        Common::camera_uniforms.full_width,
+    );
+    let span_y = Common::full_image_grid_pixel_span(
+        gid.y,
+        grid.y,
+        Common::camera_uniforms.full_height,
+    );
     // Only this tile's core counts, so overlapping tile halos add nothing twice.
     let bounds = vec4<i32>(Common::camera_uniforms.tone_histogram_bounds);
     let origin = Common::tile_origin();

@@ -66,7 +66,8 @@ pub use processing::{
     affected_stage, build_proxy, build_region_proxy, crop_raw, extract_padded_tile,
     extract_padded_tile_into, required_export_tile_halo, ExportTile, ProcessingStage, ProxySpec,
     TilePlan, TileSpec, DETAIL_CLARITY_SUPPORT, DETAIL_TEXTURE_SUPPORT, EXPORT_TILE_HALO,
-    MAX_RESOLUTION_SCALE, MIN_EXPORT_TILE_HALO, TONE_GUIDE_CELL_SIZE, TONE_GUIDE_RADIUS_CELLS,
+    HAZE_BOX_SUPPORT, MAX_RESOLUTION_SCALE, MIN_EXPORT_TILE_HALO, TONE_GUIDE_CELL_SIZE,
+    TONE_GUIDE_RADIUS_CELLS,
 };
 pub use raw_loader::{invalidate_dcp_profile_index, prewarm_dcp_profile_index};
 pub use raw_loader::{

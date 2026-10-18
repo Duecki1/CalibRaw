@@ -928,6 +928,9 @@ fn assert_planned_programs(pipeline: &RawGpuPipeline) {
             indices.scene_depth_guide_pass_index,
             "build_scene_depth_guide",
         ),
+        (indices.haze_accumulate_pass_index, "accumulate_haze"),
+        (indices.haze_resolve_pass_index, "resolve_haze_airlight"),
+        (indices.haze_end_index - 1, "smooth_haze_coefficients"),
     ] {
         assert_eq!(entry(index), expected, "pass {index}");
     }

@@ -33,7 +33,7 @@ mod shaders;
 
 use builder::*;
 pub use clipping::PreviewClippingGpu;
-use effect_inputs::{EffectInputs, InputBindingSources, InputBoundPass};
+use effect_inputs::{EffectInputs, FullImageMap, InputBindingSources, InputBoundPass, HAZE_PASSES};
 pub use histogram::{PreviewHistogram, PreviewHistogramGpu};
 use readback::*;
 use resources::*;
@@ -45,6 +45,8 @@ use shader_manager::ShaderManager;
 mod black_tone_tests;
 #[cfg(test)]
 mod blacks_pipeline_tests;
+#[cfg(test)]
+mod dehaze_tests;
 #[cfg(test)]
 mod direct_shader;
 #[cfg(test)]
@@ -434,14 +436,15 @@ pub struct RawGpuPipeline {
     mask_data_buffer: wgpu::Buffer,
     tone_histogram_buffer: wgpu::Buffer,
     tone_stats_buffer: wgpu::Buffer,
-    /// Relight's surface and shadow map and the image-light map, allocated
+    /// Relight's surface and shadow map and the full-image maps, allocated
     /// when an effect first reads them. Cropped and zoomed views copy the
-    /// image-light map from the full frame like the tone statistics.
+    /// full-image maps from the full frame like the tone statistics.
     effect_inputs: EffectInputs,
-    /// Whether the image-light map matches the current tone result. The tone
-    /// stage builds it only when an effect reads it; otherwise the output
-    /// stage builds it once one does (`ensure_image_lights`).
-    image_lights_current: AtomicBool,
+    /// Whether each full-image map matches the current tone result, indexed
+    /// by `FullImageMap`. The tone stage builds a map only when an effect
+    /// reads it; otherwise the output stage builds it once one does
+    /// (`ensure_full_image_map`).
+    full_image_maps_current: [AtomicBool; FullImageMap::ALL.len()],
     /// Where each processing stage starts and ends in `passes`.
     indices: StageIndices,
     post_blur_glow_passes: Vec<Pass>,
@@ -623,7 +626,7 @@ impl RawGpuPipeline {
             self.indices.tone_prepare_pass_index,
             self.indices.tone_stage_end,
         );
-        self.encode_tone_image_lights(&mut encoder, params);
+        self.encode_tone_full_image_maps(&mut encoder, params);
         self.encode_output_stage(&mut encoder, params);
         queue.submit(Some(encoder.finish()));
     }
@@ -649,7 +652,7 @@ impl RawGpuPipeline {
                     self.indices.tone_prepare_pass_index,
                     self.indices.tone_stage_end,
                 );
-                self.encode_tone_image_lights(&mut encoder, params);
+                self.encode_tone_full_image_maps(&mut encoder, params);
             }
             ProcessingStage::Output => self.encode_output_stage(&mut encoder, params),
         }
@@ -709,11 +712,16 @@ impl RawGpuPipeline {
             label: Some("calibraw export tone histogram clear"),
         });
         encoder.clear_buffer(&self.tone_histogram_buffer, 0, None);
-        if let Some((cells, _)) = self.effect_inputs.image_lights() {
-            encoder.clear_buffer(&cells, 0, None);
+        for map in FullImageMap::ALL {
+            if let Some(resources) = self.effect_inputs.full_image_map(map) {
+                encoder.clear_buffer(&resources.cells, 0, None);
+            }
         }
         queue.submit(Some(encoder.finish()));
-        self.image_lights_current.store(false, Ordering::Release);
+        for map in FullImageMap::ALL {
+            self.full_image_map_current(map)
+                .store(false, Ordering::Release);
+        }
     }
 
     /// Allocates the effect inputs `params` reads (`effect_inputs`).
@@ -726,71 +734,88 @@ impl RawGpuPipeline {
             // plain depth texture in every bind group.
             self.forget_uploaded_scene_depth();
         }
-        if params.needs_image_lights() {
-            self.effect_inputs.allocate_image_lights();
+        for map in FullImageMap::ALL {
+            if params.needs_full_image_map(map) {
+                self.effect_inputs.allocate_full_image_map(map);
+            }
         }
     }
 
-    /// Builds the image-light map from this pipeline's whole image, after the
-    /// tone statistics it is resolved against.
-    fn encode_image_lights(&self, encoder: &mut wgpu::CommandEncoder) {
-        self.effect_inputs.allocate_image_lights();
-        if let Some((cells, _)) = self.effect_inputs.image_lights() {
-            encoder.clear_buffer(&cells, 0, None);
-        }
-        self.encode_pass_range(
-            encoder,
-            self.indices.image_light_accumulate_pass_index,
-            self.indices.image_light_end_index,
-        );
-        self.image_lights_current.store(true, Ordering::Release);
+    fn full_image_map_current(&self, map: FullImageMap) -> &AtomicBool {
+        &self.full_image_maps_current[map as usize]
     }
 
-    /// Image lights for a new tone result: built when an effect reads them,
-    /// otherwise left for `ensure_image_lights`, which most edits never need.
-    fn encode_tone_image_lights(&self, encoder: &mut wgpu::CommandEncoder, params: &GpuParams) {
-        if params.needs_image_lights() {
-            self.encode_image_lights(encoder);
-        } else {
-            self.image_lights_current.store(false, Ordering::Release);
+    /// Builds `map` from this pipeline's whole image, after the tone
+    /// statistics it is resolved against.
+    fn encode_full_image_map(&self, encoder: &mut wgpu::CommandEncoder, map: FullImageMap) {
+        self.effect_inputs.allocate_full_image_map(map);
+        if let Some(resources) = self.effect_inputs.full_image_map(map) {
+            encoder.clear_buffer(&resources.cells, 0, None);
         }
+        let passes = self.indices.full_image_map_passes(map);
+        self.encode_pass(encoder, passes.accumulate);
+        self.encode_pass_range(encoder, passes.resolve.start, passes.resolve.end);
+        self.full_image_map_current(map)
+            .store(true, Ordering::Release);
     }
 
-    /// Builds the image-light map if the current tone result has none yet.
-    /// The scene and tone statistics it reads stay valid until the next raw or
-    /// tone stage.
-    fn ensure_image_lights(&self, encoder: &mut wgpu::CommandEncoder) {
-        if !self.image_lights_current.load(Ordering::Acquire) {
-            self.encode_image_lights(encoder);
+    /// Full-image maps for a new tone result: built when an effect reads
+    /// them, otherwise left for `ensure_full_image_map`, which most edits
+    /// never need.
+    fn encode_tone_full_image_maps(&self, encoder: &mut wgpu::CommandEncoder, params: &GpuParams) {
+        for map in FullImageMap::ALL {
+            if params.needs_full_image_map(map) {
+                self.encode_full_image_map(encoder, map);
+            } else {
+                self.full_image_map_current(map)
+                    .store(false, Ordering::Release);
+            }
         }
     }
 
-    /// Takes the full frame's image-light map when `params` reads it, so a
-    /// cropped or zoomed view sees lights outside its region.
-    fn inherit_image_lights(
+    /// Builds `map` if the current tone result has none yet. The scene and
+    /// tone statistics it reads stay valid until the next raw or tone stage.
+    fn ensure_full_image_map(&self, encoder: &mut wgpu::CommandEncoder, map: FullImageMap) {
+        if !self.full_image_map_current(map).load(Ordering::Acquire) {
+            self.encode_full_image_map(encoder, map);
+        }
+    }
+
+    /// Takes the full frame's maps that `params` reads, so a cropped or
+    /// zoomed view sees the lights and haze outside its region.
+    fn inherit_full_image_maps(
         &self,
         encoder: &mut wgpu::CommandEncoder,
         full_frame: &Self,
         params: &GpuParams,
     ) {
-        if !params.needs_image_lights() {
-            self.image_lights_current.store(false, Ordering::Release);
-            return;
+        for map in FullImageMap::ALL {
+            if !params.needs_full_image_map(map) {
+                self.full_image_map_current(map)
+                    .store(false, Ordering::Release);
+                continue;
+            }
+            full_frame.ensure_full_image_map(encoder, map);
+            self.effect_inputs.allocate_full_image_map(map);
+            let (Some(source), Some(destination)) = (
+                full_frame.effect_inputs.full_image_map(map),
+                self.effect_inputs.full_image_map(map),
+            ) else {
+                continue;
+            };
+            for (source, destination) in source.textures.iter().zip(&destination.textures) {
+                encoder.copy_texture_to_texture(
+                    source.as_image_copy(),
+                    destination.as_image_copy(),
+                    destination.size(),
+                );
+            }
+            for (source, destination) in source.buffers.iter().zip(&destination.buffers) {
+                encoder.copy_buffer_to_buffer(source, 0, destination, 0, destination.size());
+            }
+            self.full_image_map_current(map)
+                .store(true, Ordering::Release);
         }
-        full_frame.ensure_image_lights(encoder);
-        self.effect_inputs.allocate_image_lights();
-        let (Some((_, source)), Some((_, destination))) = (
-            full_frame.effect_inputs.image_lights(),
-            self.effect_inputs.image_lights(),
-        ) else {
-            return;
-        };
-        encoder.copy_texture_to_texture(
-            source.as_image_copy(),
-            destination.as_image_copy(),
-            destination.size(),
-        );
-        self.image_lights_current.store(true, Ordering::Release);
     }
 
     pub fn dispatch_stage_with_remove(
@@ -844,7 +869,7 @@ impl RawGpuPipeline {
             0,
             TONE_STATS_SIZE_BYTES,
         );
-        self.inherit_image_lights(&mut encoder, full_frame, params);
+        self.inherit_full_image_maps(&mut encoder, full_frame, params);
         self.encode_pass_range(
             &mut encoder,
             self.indices.tone_prepare_pass_index,
@@ -870,7 +895,7 @@ impl RawGpuPipeline {
             0,
             TONE_STATS_SIZE_BYTES,
         );
-        self.inherit_image_lights(&mut encoder, full_frame, params);
+        self.inherit_full_image_maps(&mut encoder, full_frame, params);
         queue.submit(Some(encoder.finish()));
     }
 
@@ -887,11 +912,16 @@ impl RawGpuPipeline {
             label: Some("calibraw Remove-aware export tone tile"),
         });
         self.encode_pass(&mut encoder, self.indices.tone_prepare_pass_index);
-        // Each tile adds its core to the shared image-light grid. Without a
-        // receiver the grid stays empty and the tiles skip reading it all again.
-        if params.needs_image_lights() {
-            self.effect_inputs.allocate_image_lights();
-            self.encode_pass(&mut encoder, self.indices.image_light_accumulate_pass_index);
+        // Each tile adds its core to the shared full-image maps. Without a
+        // receiver a map stays empty and the tiles skip reading it all again.
+        for map in FullImageMap::ALL {
+            if params.needs_full_image_map(map) {
+                self.effect_inputs.allocate_full_image_map(map);
+                self.encode_pass(
+                    &mut encoder,
+                    self.indices.full_image_map_passes(map).accumulate,
+                );
+            }
         }
         queue.submit(Some(encoder.finish()));
         Ok(())
@@ -902,21 +932,23 @@ impl RawGpuPipeline {
             label: Some("calibraw export tone histogram reduction"),
         });
         self.encode_pass(&mut encoder, self.indices.tone_reduce_pass_index);
-        // Tiles accumulated image lights only if an effect reads them, which
-        // allocated the grid.
-        let image_lights = self.effect_inputs.image_lights().is_some();
-        if image_lights {
-            self.encode_pass_range(
-                &mut encoder,
-                self.indices.image_light_resolve_pass_index,
-                self.indices.image_light_end_index,
-            );
+        // Tiles accumulated a map only if an effect reads it, which allocated
+        // its grid.
+        let allocated =
+            FullImageMap::ALL.map(|map| self.effect_inputs.full_image_map(map).is_some());
+        for (map, allocated) in FullImageMap::ALL.into_iter().zip(allocated) {
+            if allocated {
+                let resolve = self.indices.full_image_map_passes(map).resolve;
+                self.encode_pass_range(&mut encoder, resolve.start, resolve.end);
+            }
         }
         queue.submit(Some(encoder.finish()));
-        // Resolved from every tile's accumulation; tiles must not rebuild it
+        // Resolved from every tile's accumulation; tiles must not rebuild them
         // from their own region.
-        self.image_lights_current
-            .store(image_lights, Ordering::Release);
+        for (map, allocated) in FullImageMap::ALL.into_iter().zip(allocated) {
+            self.full_image_map_current(map)
+                .store(allocated, Ordering::Release);
+        }
     }
 
     pub fn dispatch_export_tile_with_remove(
@@ -992,8 +1024,10 @@ impl RawGpuPipeline {
     fn encode_output_stage(&self, encoder: &mut wgpu::CommandEncoder, params: &GpuParams) {
         self.output_revision
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        if params.needs_image_lights() {
-            self.ensure_image_lights(encoder);
+        for map in FullImageMap::ALL {
+            if params.needs_full_image_map(map) {
+                self.ensure_full_image_map(encoder, map);
+            }
         }
         self.encode_relight_shadow_map(encoder, params);
         self.encode_pass(encoder, self.indices.adjustment_prepare_pass_index);

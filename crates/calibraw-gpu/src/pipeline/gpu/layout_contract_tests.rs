@@ -11,13 +11,15 @@ use super::{
     effect_lanes, processing_work_format, shader_manager::ShaderManager, shaders,
     work_shader_source, CameraUniforms, CfaKind, EffectsUniforms, MaskData, PackedPointColor,
     ProcessingQuality, RemoveCompositeParams, SceneToneUniforms, ViewTransformMode,
-    IMAGE_LIGHT_BANDS, IMAGE_LIGHT_GRID_LONG, MASK_EFFECT_ID_SHIFT, MAX_RENDER_MASK_SLOTS,
-    RELIGHT_SHADOW_MAP_CHANNELS, TONE_HISTOGRAM_BIN_COUNT, TONE_STATS_SIZE_BYTES,
+    HAZE_AIRLIGHT_BYTES, HAZE_CELL_BYTES, HAZE_GRID_LONG, IMAGE_LIGHT_BANDS, IMAGE_LIGHT_GRID_LONG,
+    MASK_EFFECT_ID_SHIFT, MAX_RENDER_MASK_SLOTS, RELIGHT_SHADOW_MAP_CHANNELS,
+    TONE_HISTOGRAM_BIN_COUNT, TONE_STATS_SIZE_BYTES,
 };
 use super::{DETAIL_PYRAMID_LEVELS, DETAIL_PYRAMID_TEXTURE_LEVELS};
 use crate::pipeline::MaskEffect;
 use calibraw_core::pipeline::{
-    DETAIL_CLARITY_SUPPORT, DETAIL_TEXTURE_SUPPORT, MAX_RESOLUTION_SCALE, TONE_GUIDE_RADIUS_CELLS,
+    DETAIL_CLARITY_SUPPORT, DETAIL_TEXTURE_SUPPORT, HAZE_BOX_SUPPORT, MAX_RESOLUTION_SCALE,
+    TONE_GUIDE_RADIUS_CELLS,
 };
 use naga::proc::Layouter;
 use std::collections::BTreeSet;
@@ -417,6 +419,8 @@ fn shared_constants_and_effect_ids_match_rust() {
     // The image-light grid buffer and textures are sized from these.
     assert_eq!(constant("IMAGE_LIGHT_GRID_LONG"), IMAGE_LIGHT_GRID_LONG);
     assert_eq!(constant("IMAGE_LIGHT_BANDS"), IMAGE_LIGHT_BANDS);
+    // So are the haze grid's.
+    assert_eq!(constant("HAZE_GRID_LONG"), HAZE_GRID_LONG);
     for effect in MaskEffect::ALL {
         if effect == MaskEffect::Adjustment {
             assert_eq!(effect.shader_id(), 0, "adjustment masks use shader ID 0");
@@ -527,6 +531,31 @@ fn tone_statistics_buffers_match_their_wgsl_declarations() {
         size_of("ToneHistogram"),
         u64::from(TONE_HISTOGRAM_BIN_COUNT) * std::mem::size_of::<u32>() as u64
     );
+}
+
+/// The haze buffers Rust allocates hold the WGSL structs, and the export
+/// halo reserves how far the haze grid's boxes reach past a tile core.
+#[test]
+fn haze_buffers_and_box_support_match_their_wgsl_declarations() {
+    let modules = production_modules();
+    let (_, haze_analysis) = modules
+        .iter()
+        .find(|(name, _)| name.starts_with(shaders::HAZE_ANALYSIS_ENTRY.label))
+        .expect("haze analysis module");
+    let mut layouter = Layouter::default();
+    layouter.update(haze_analysis.to_ctx()).unwrap();
+    let size_of = |wgsl_name: &str| {
+        let (handle, _) = haze_analysis
+            .types
+            .iter()
+            .find(|(_, ty)| ty.name.as_deref().map(undecorated) == Some(wgsl_name))
+            .unwrap_or_else(|| panic!("{wgsl_name} is declared"));
+        u64::from(layouter[handle].size)
+    };
+    assert_eq!(size_of("HazeCell"), HAZE_CELL_BYTES);
+    assert_eq!(size_of("HazeAirlight"), HAZE_AIRLIGHT_BYTES);
+    let box_max = u32_constant(haze_analysis, "HAZE_BOX_MAX").expect("WGSL declares HAZE_BOX_MAX");
+    assert_eq!(box_max - 1, HAZE_BOX_SUPPORT);
 }
 
 #[test]

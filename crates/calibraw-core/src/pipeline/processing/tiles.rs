@@ -26,17 +26,21 @@ pub(super) const TONE_GUIDE_SUPPORT: u32 =
 // Capture sharpening (detail_capture.wgsl): a 5×5 blur at a step of at most 3,
 // in the scene tone pass before the scene effects.
 const CAPTURE_SHARPEN_SUPPORT: u32 = 6;
-// Dehaze (creative_effects.wgsl): a 7×7 haze neighbourhood at a step of at most 6.
-pub(super) const DEHAZE_SUPPORT: u32 = 18;
+/// Pixels past a tile core that the haze grid's box means read in the export
+/// tone prepass (`HAZE_BOX_MAX` - 1 in haze_analysis.wgsl). Dehaze itself
+/// reads only its own pixel and the full-image haze map, so it adds no halo.
+pub const HAZE_BOX_SUPPORT: u32 = 1;
+// The prepass reads the box beside the tone guide over the same scene, so
+// the guide's halo covers it.
+const _: () = assert!(HAZE_BOX_SUPPORT <= TONE_GUIDE_SUPPORT);
 /// Footprint of the Texture and Clarity cascade (detail_scale_space.wgsl):
 /// 2 taps each side at steps 1, 2, 4, …, 2^(levels - 1), so 2 × (2^levels - 1).
 /// Texture alone builds 5 levels, Clarity all 7; `layout_contract_tests`
 /// derives both from the shader constants.
 pub const DETAIL_TEXTURE_SUPPORT: u32 = 62;
 pub const DETAIL_CLARITY_SUPPORT: u32 = 254;
-// Dehaze, Texture and Clarity run in one pass over the same input, so their
+// Texture and Clarity run in one pass over the same input, so their
 // footprints overlap rather than add up; sharpening's adds to them.
-const _: () = assert!(DEHAZE_SUPPORT <= DETAIL_CLARITY_SUPPORT);
 const _: () = assert!(DETAIL_TEXTURE_SUPPORT <= DETAIL_CLARITY_SUPPORT);
 pub(super) const LOCAL_EFFECTS_SUPPORT: u32 = CAPTURE_SHARPEN_SUPPORT + DETAIL_CLARITY_SUPPORT;
 pub(super) const NEON_SUPPORT: u32 = 48;
@@ -122,10 +126,6 @@ pub fn required_export_tile_halo(exposure: &ExposureParams, masks: &MaskStack) -
         })
     };
     let scene_effects_support = [
-        (
-            exposure.dehaze.abs() > 1e-6 || local_adjustment_active(|a| a.dehaze),
-            DEHAZE_SUPPORT,
-        ),
         (
             exposure.texture.abs() > 1e-6 || local_adjustment_active(|a| a.texture),
             DETAIL_TEXTURE_SUPPORT,

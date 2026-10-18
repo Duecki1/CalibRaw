@@ -1,11 +1,11 @@
 #import calibraw::common as Common
 #import calibraw::color as Color
-#import calibraw::profile as Profile
 #import calibraw::basic_adjustments as BasicAdjustments
 #import calibraw::tonemap as Tonemap
 #import calibraw::detail_capture as DetailCapture
 #import calibraw::detail_utils as DetailUtils
 #import calibraw::scene_source as SceneSource
+#import calibraw::haze as Haze
 
 @group(0) @binding(12) var out_tex: texture_storage_2d<rgba8unorm, write>;
 @group(0) @binding(21) var adjustment_base_out: texture_storage_2d<rgba16float /* CALIBRAW_WORK_FORMAT */, write>;
@@ -102,6 +102,24 @@ fn apply_local_exposure_nodes(pos: vec2<i32>, input_rgb: vec3<f32>) -> vec3<f32>
         rgb = rgb * exp2(value * weight);
     }
     return rgb;
+}
+
+// The perceptual amount of global and mask Dehaze at a pixel. Amounts add up
+// in the exponent of the haze model (haze.wgsl), so one transmission serves
+// every mask.
+fn dehaze_amount_at(pos: vec2<i32>) -> f32 {
+    var amount = BasicAdjustments::perceptual_control(Common::effects_uniforms.presence.z);
+    let count = min(Common::scene_tone_uniforms.mask_counts.x, Common::MAX_RENDER_MASK_SLOTS);
+    for (var index = 0u; index < count; index = index + 1u) {
+        let state = Common::mask_data[index].metadata;
+        if state.x == 0u || state.y == 0u || Common::mask_effect_id(state) != 0u { continue; }
+        let value = Common::mask_data[index].adjust_2_field.w;
+        if abs(value) <= 1e-7 { continue; }
+        let weight = local_mask_weight(pos, index);
+        if weight <= 1e-5 { continue; }
+        amount = amount + weight * BasicAdjustments::perceptual_control(value);
+    }
+    return clamp(amount, -1.0, 1.0);
 }
 
 fn adjustment_base_at(pos: vec2<i32>) -> vec3<f32> {
@@ -317,9 +335,9 @@ fn prepare_scene_node(@builtin(global_invocation_id) gid: vec3<u32>) {
     if gid.x >= Common::camera_uniforms.width || gid.y >= Common::camera_uniforms.height { return; }
     let pos = vec2<i32>(i32(gid.x), i32(gid.y));
 
-    var rgb = Profile::apply_camera_characterization(SceneSource::scene_working_at(pos));
-    let profile_exposure_ev = bitcast<f32>(Common::camera_uniforms.profile_flags.z);
-    rgb = rgb * exp2(profile_exposure_ev);
+    var rgb = SceneSource::profiled_scene_at(pos);
+    // Dehaze precedes exposure: the haze grid measures this same signal.
+    rgb = Haze::apply_dehaze(pos, rgb, dehaze_amount_at(pos));
     rgb = BasicAdjustments::apply_exposure(rgb);
     rgb = apply_local_exposure_nodes(pos, rgb);
     textureStore(adjustment_base_out, pos, vec4<f32>(rgb, 1.0));
