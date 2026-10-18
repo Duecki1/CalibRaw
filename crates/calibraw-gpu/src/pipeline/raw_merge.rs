@@ -76,30 +76,43 @@ impl MergeCamera {
     }
 
     /// Converts merged camera RGB to working Rec.2020; see [`camera_to_working_rec2020`].
-    pub(super) fn to_working_rec2020(&self, rgb: &mut [f32], clipped: &[bool]) {
-        camera_to_working_rec2020(rgb, clipped, self.color_transform);
+    pub(super) fn to_working_rec2020(&self, rgb: &mut [f32]) {
+        camera_to_working_rec2020(rgb, self.color_transform);
     }
+}
+
+/// A RAW file to merge.
+pub(super) struct MergeSource<'a> {
+    pub(super) path: &'a Path,
+    /// Exposure (light × sensor gain) in a unit shared by all sources.
+    pub(super) exposure: f32,
+    /// Light collected (shutter × aperture area) in a unit shared by all sources.
+    pub(super) light: f32,
 }
 
 /// One developed source, registered to the reference.
 pub(super) struct MergeFrame<'a> {
-    /// Black-subtracted, white-normalized camera RGB without white balance.
+    /// Black-subtracted, white-normalized camera RGB without white balance. Clipped
+    /// highlights are reconstructed the way a single RAW develops them.
     pub(super) rgb: &'a [f32],
-    /// Demosaic footprints containing saturated sensor samples.
-    pub(super) clipped: &'a [u8],
+    /// Per pixel, the brightest normalized sensor sample (white = 1) of its demosaic
+    /// footprint.
+    pub(super) peak: &'a [f32],
     /// Exposure relative to the reference.
     pub(super) exposure: f32,
+    /// Collected light relative to the reference.
+    pub(super) light: f32,
     pub(super) registration: Registration,
 }
 
-/// Develops and registers `sources` (path and exposure, in processing order; the first
-/// is the reference) one at a time and hands each to `merge`, so only one developed
-/// frame is resident. `noun` names a source in progress messages ("exposure", "frame").
-/// The progress callback returns false to cancel between frames and tiles.
+/// Develops and registers `sources` (in processing order; the first is the reference)
+/// one at a time and hands each to `merge`, so only one developed frame is resident.
+/// `noun` names a source in progress messages ("exposure", "frame"). The progress
+/// callback returns false to cancel between frames and tiles.
 pub(super) fn merge_sources(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
-    sources: &[(&Path, f32)],
+    sources: &[MergeSource],
     program_prewarm: Option<Arc<GpuProgramPrewarm>>,
     noun: &str,
     progress: &mut impl FnMut(String) -> bool,
@@ -108,8 +121,10 @@ pub(super) fn merge_sources(
     let count = sources.len();
     let mut reference_camera: Option<MergeCamera> = None;
     let mut reference: Option<AlignmentReference> = None;
-    let reference_exposure = sources.first().context("Nothing to merge")?.1;
-    for (index, &(path, exposure)) in sources.iter().enumerate() {
+    let first = sources.first().context("Nothing to merge")?;
+    let (reference_exposure, reference_light) = (first.exposure, first.light);
+    for (index, source) in sources.iter().enumerate() {
+        let path = source.path;
         let step = format!("{noun} {}/{count}", index + 1);
         ensure!(progress(format!("Decoding {step}")), "Merge cancelled");
         let mut raw = load_raw_file_with_profile_config(path, CameraProfileMode::MatrixOnly, None)?;
@@ -131,10 +146,10 @@ pub(super) fn merge_sources(
         let rgb = render_camera_rgb(device, queue, &raw, program_prewarm.clone(), |percent| {
             progress(format!("Developing {step} ({percent:.0}%)"))
         })?;
-        let clipped = sensor_clipping_mask(&raw);
+        let peak = sensor_footprint_peak(&raw);
         drop(raw);
         ensure!(progress(format!("Aligning {step}")), "Merge cancelled");
-        let exposure = exposure / reference_exposure;
+        let exposure = source.exposure / reference_exposure;
         let registration = match &reference {
             Some(reference) => reference
                 .align(&rgb, exposure)
@@ -157,8 +172,9 @@ pub(super) fn merge_sources(
             camera,
             MergeFrame {
                 rgb: &rgb,
-                clipped: &clipped,
+                peak: &peak,
                 exposure,
+                light: source.light / reference_light,
                 registration,
             },
         )?;
@@ -167,28 +183,20 @@ pub(super) fn merge_sources(
 }
 
 /// Applies `color_transform` (camera RGB → working Rec.2020) and preserves negative
-/// out-of-gamut values and values above 1. Pixels in `clipped` lost highlight chroma in
-/// every usable source: equal saturated camera channels turn magenta after WB and matrix
-/// conversion, so they take an achromatic fallback that preserves luminance and range.
-pub(super) fn camera_to_working_rec2020(
-    rgb: &mut [f32],
-    clipped: &[bool],
-    color_transform: [[f32; 3]; 3],
-) {
-    rgb.par_chunks_exact_mut(3)
-        .zip(clipped.par_iter())
-        .for_each(|(p, &clipped)| {
-            let source = [p[0], p[1], p[2]];
-            for row in 0..3 {
-                p[row] = (0..3).map(|c| color_transform[row][c] * source[c]).sum();
-            }
-            if clipped {
-                let luminance = 0.2627 * p[0] + 0.6780 * p[1] + 0.0593 * p[2];
-                p.fill(luminance);
-            }
-        });
+/// out-of-gamut values and values above 1.
+pub(super) fn camera_to_working_rec2020(rgb: &mut [f32], color_transform: [[f32; 3]; 3]) {
+    rgb.par_chunks_exact_mut(3).for_each(|p| {
+        let source = [p[0], p[1], p[2]];
+        for row in 0..3 {
+            p[row] = (0..3).map(|c| color_transform[row][c] * source[c]).sum();
+        }
+    });
 }
 
+/// Develops `raw` to camera RGB without white balance. Clipped highlights get the
+/// default reconstruction, which only replaces saturated photosites: a merge weighs
+/// those pixels out wherever another frame measured them, and keeps the reconstruction
+/// where none did, as a single RAW would show it.
 pub(super) fn render_camera_rgb(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
@@ -197,8 +205,6 @@ pub(super) fn render_camera_rgb(
     mut progress: impl FnMut(f32) -> bool,
 ) -> Result<Vec<f32>> {
     let exposure = ExposureParams {
-        highlight_method: HighlightReconstructionMethod::Off,
-        highlight_reconstruction: 0.0,
         frequency_chroma: 0.0,
         sharpen_amount: 0.0,
         ..ExposureParams::default()
@@ -252,16 +258,17 @@ pub(super) fn render_camera_rgb(
     Ok(rgb)
 }
 
-/// Demosaicing can smooth a saturated photosite below the clipping threshold. Dilate the
-/// sensor clipping mask over its local color neighborhood before interpolating aligned RGB.
-pub(super) fn sensor_clipping_mask(raw: &LoadedRaw) -> Vec<u8> {
+/// Per pixel, the brightest normalized sensor sample (white = 1) within the demosaic
+/// footprint, so a pixel interpolated from a saturated photosite reads as saturated even
+/// where demosaicing smoothed its value below the white level.
+pub(super) fn sensor_footprint_peak(raw: &LoadedRaw) -> Vec<f32> {
     let width = raw.width as usize;
     let height = raw.height as usize;
     let radius = match raw.cfa_kind {
         CfaKind::Bayer => 3,
         CfaKind::XTrans => 6,
     };
-    let sensor: Vec<u8> = raw
+    let sensor: Vec<f32> = raw
         .raw_pixels
         .par_iter()
         .enumerate()
@@ -269,28 +276,27 @@ pub(super) fn sensor_clipping_mask(raw: &LoadedRaw) -> Vec<u8> {
             let c = usize::from(raw.color_indices[i].min(3));
             let black = raw.black_levels_per_pixel[i];
             let range = (raw.white_levels[c] - black).max(1.0);
-            u8::from((*value as f32 - black) / range >= 0.98)
+            (f32::from(*value) - black) / range
         })
         .collect();
-    let horizontal: Vec<u8> = (0..sensor.len())
+    let horizontal: Vec<f32> = (0..sensor.len())
         .into_par_iter()
         .map(|i| {
             let x = i % width;
             let row = i - x;
-            u8::from(
-                sensor[row + x.saturating_sub(radius)..=row + (x + radius).min(width - 1)]
-                    .contains(&1),
-            )
+            sensor[row + x.saturating_sub(radius)..=row + (x + radius).min(width - 1)]
+                .iter()
+                .copied()
+                .fold(f32::NEG_INFINITY, f32::max)
         })
         .collect();
     (0..sensor.len())
         .into_par_iter()
         .map(|i| {
             let (x, y) = (i % width, i / width);
-            u8::from(
-                (y.saturating_sub(radius)..=(y + radius).min(height - 1))
-                    .any(|sy| horizontal[sy * width + x] != 0),
-            )
+            (y.saturating_sub(radius)..=(y + radius).min(height - 1))
+                .map(|sy| horizontal[sy * width + x])
+                .fold(f32::NEG_INFINITY, f32::max)
         })
         .collect()
 }
