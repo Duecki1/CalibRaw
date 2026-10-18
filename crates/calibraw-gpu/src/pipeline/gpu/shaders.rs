@@ -64,6 +64,7 @@ pub(super) const RAW_SAMPLING: ShaderSource = wgsl!("raw_sampling.wgsl");
 pub(super) const PROFILE: ShaderSource = wgsl!("profile.wgsl");
 pub(super) const BASIC_ADJUSTMENTS: ShaderSource = wgsl!("basic_adjustments.wgsl");
 pub(super) const SCENE_SOURCE: ShaderSource = wgsl!("scene_source.wgsl");
+pub(super) const HAZE: ShaderSource = wgsl!("haze.wgsl");
 pub(super) const TONE_COMMON: ShaderSource = wgsl!("tone_common.wgsl");
 pub(super) const TONEMAP: ShaderSource = wgsl!("tonemap.wgsl");
 pub(super) const NOISE_CA_FINISH: ShaderSource = wgsl!("noise_ca_finish.wgsl");
@@ -134,6 +135,7 @@ pub(super) const XTRANS_DEMOSAIC: ShaderSource = wgsl!("xtrans_demosaic.wgsl");
 pub(super) const XTRANS_FINISH: ShaderSource = wgsl!("xtrans_finish.wgsl");
 pub(super) const COLOR_DENOISE: ShaderSource = wgsl!("color_denoise.wgsl");
 pub(super) const TONE_ANALYSIS: ShaderSource = wgsl!("tone_analysis.wgsl");
+pub(super) const HAZE_ANALYSIS: ShaderSource = wgsl!("haze_analysis.wgsl");
 pub(super) const SCENE_ADJUSTMENTS: ShaderSource = wgsl!("scene_adjustments.wgsl");
 pub(super) const VIEW_TRANSFORM: ShaderSource = wgsl!("view_transform.wgsl");
 pub(super) const REMOVE_COMPOSITE: ShaderSource = wgsl!("remove_composite.wgsl");
@@ -165,7 +167,7 @@ const fn xtrans_module(source: ShaderSource) -> ComposableModule {
 
 /// Composable modules in registration order: a module may only import
 /// modules listed before it.
-pub(super) const COMPOSABLE_MODULES: [ComposableModule; 22] = [
+pub(super) const COMPOSABLE_MODULES: [ComposableModule; 23] = [
     module(COMMON),
     module(COLOR),
     module(NOISE),
@@ -180,6 +182,7 @@ pub(super) const COMPOSABLE_MODULES: [ComposableModule; 22] = [
     module(PROFILE),
     module(BASIC_ADJUSTMENTS),
     module(SCENE_SOURCE),
+    module(HAZE),
     module(TONE_COMMON),
     module(TONEMAP),
     module(NOISE_CA_FINISH),
@@ -278,6 +281,8 @@ pub(super) const COLOR_DENOISE_ENTRY: EntryShader = entry(
 );
 pub(super) const TONE_ANALYSIS_ENTRY: EntryShader =
     entry("calibraw tone analysis", TONE_ANALYSIS, false, None);
+pub(super) const HAZE_ANALYSIS_ENTRY: EntryShader =
+    entry("calibraw haze analysis", HAZE_ANALYSIS, false, None);
 pub(super) const SCENE_ADJUSTMENTS_ENTRY: EntryShader =
     entry("calibraw scene adjustments", SCENE_ADJUSTMENTS, true, None);
 pub(super) const CREATIVE_EFFECTS_ENTRY: EntryShader =
@@ -294,7 +299,7 @@ pub(super) const REMOVE_COMPOSITE_ENTRY: EntryShader = entry(
 
 /// Every entry shader, for validation and layout tests.
 #[cfg(test)]
-pub(super) const ALL_ENTRY_SHADERS: [EntryShader; 14] = [
+pub(super) const ALL_ENTRY_SHADERS: [EntryShader; 15] = [
     HIGHLIGHTS_ENTRY,
     BAYER_RCD_P1_ENTRY,
     BAYER_RCD_P2_ENTRY,
@@ -305,6 +310,7 @@ pub(super) const ALL_ENTRY_SHADERS: [EntryShader; 14] = [
     XTRANS_FINISH_ENTRY,
     COLOR_DENOISE_ENTRY,
     TONE_ANALYSIS_ENTRY,
+    HAZE_ANALYSIS_ENTRY,
     SCENE_ADJUSTMENTS_ENTRY,
     CREATIVE_EFFECTS_ENTRY,
     VIEW_TRANSFORM_ENTRY,

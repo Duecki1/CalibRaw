@@ -1,7 +1,7 @@
 //! GPU inputs that only some effects read, allocated the first time one of
 //! them renders: the joint-upsampling guide of scene depth that Fog, Smoke and
-//! Relight read, Relight's scene-depth surface and shadow map, and the
-//! image-light map that Fog and Smoke scatter.
+//! Relight read, Relight's scene-depth surface and shadow map, the image-light
+//! map that Fog and Smoke scatter, and the haze map Dehaze applies.
 //!
 //! Until then the passes that read them are bound to placeholders of one
 //! texel, and Fog reads the plain scene-depth texture, so a pipeline whose
@@ -18,10 +18,41 @@ use super::*;
 
 /// The image-light passes: accumulate, resolve, horizontal and vertical blur.
 pub(super) const IMAGE_LIGHT_PASSES: usize = 4;
+/// The haze passes (haze_analysis.wgsl): accumulate, airlight, transmission
+/// and the guided filter's two window passes.
+pub(super) const HAZE_PASSES: usize = 5;
+
+/// Coarse maps over the full image that a cropped view or an export tile
+/// cannot build from its own region. Each is built from the whole scene with
+/// the tone statistics, accumulated by every export tile during the tone
+/// prepass, and copied from the full frame by cropped and zoomed views.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum FullImageMap {
+    /// The light sources Fog and Smoke scatter (tone_analysis.wgsl).
+    ImageLights,
+    /// The airlight and transmission Dehaze applies (haze_analysis.wgsl).
+    Haze,
+}
+
+impl FullImageMap {
+    pub(super) const ALL: [Self; 2] = [Self::ImageLights, Self::Haze];
+}
+
+/// The resources of an allocated [`FullImageMap`].
+pub(super) struct FullImageMapResources {
+    /// The grid every accumulation pass adds to, cleared before a new image.
+    pub(super) cells: wgpu::Buffer,
+    /// What a cropped or zoomed view copies from the full frame, in an order
+    /// that is the same for every pipeline.
+    pub(super) textures: Vec<wgpu::Texture>,
+    pub(super) buffers: Vec<wgpu::Buffer>,
+}
 
 /// A pass whose bind group follows the allocated effect inputs.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum InputBoundPass {
+    /// The scene preparation, which applies Dehaze from the haze map.
+    ScenePreparation,
     Creative,
     CreativeAfterBlur,
     SceneDepthGuide,
@@ -29,27 +60,33 @@ pub(super) enum InputBoundPass {
     RelightShadowMap,
     /// One of the image-light passes, in pass order.
     ImageLights(usize),
+    /// One of the haze passes, in pass order.
+    Haze(usize),
 }
 
 /// Bind groups of every [`InputBoundPass`].
 struct InputBindGroups {
+    scene_preparation: wgpu::BindGroup,
     creative: wgpu::BindGroup,
     creative_after_blur: wgpu::BindGroup,
     scene_depth_guide: wgpu::BindGroup,
     scene_depth_guide_after_blur: wgpu::BindGroup,
     relight_shadow_map: wgpu::BindGroup,
     image_lights: [wgpu::BindGroup; IMAGE_LIGHT_PASSES],
+    haze: [wgpu::BindGroup; HAZE_PASSES],
 }
 
 impl InputBindGroups {
     fn get(&self, pass: InputBoundPass) -> &wgpu::BindGroup {
         match pass {
+            InputBoundPass::ScenePreparation => &self.scene_preparation,
             InputBoundPass::Creative => &self.creative,
             InputBoundPass::CreativeAfterBlur => &self.creative_after_blur,
             InputBoundPass::SceneDepthGuide => &self.scene_depth_guide,
             InputBoundPass::SceneDepthGuideAfterBlur => &self.scene_depth_guide_after_blur,
             InputBoundPass::RelightShadowMap => &self.relight_shadow_map,
             InputBoundPass::ImageLights(index) => &self.image_lights[index],
+            InputBoundPass::Haze(index) => &self.haze[index],
         }
     }
 }
@@ -57,14 +94,20 @@ impl InputBindGroups {
 /// The pipeline's own layouts, buffers and views that the input-bound passes
 /// also bind. Handles are reference-counted, so keeping them is cheap.
 pub(super) struct InputBindingSources {
+    pub(super) scene_preparation_layout: wgpu::BindGroupLayout,
     pub(super) creative_layout: wgpu::BindGroupLayout,
     pub(super) scene_depth_guide_layout: wgpu::BindGroupLayout,
     pub(super) relight_shadow_map_layout: wgpu::BindGroupLayout,
     pub(super) image_light_layouts: [wgpu::BindGroupLayout; IMAGE_LIGHT_PASSES],
+    pub(super) haze_layouts: [wgpu::BindGroupLayout; HAZE_PASSES],
     pub(super) camera_uniforms: wgpu::Buffer,
     pub(super) mask_data: wgpu::Buffer,
     pub(super) tone_stats: wgpu::Buffer,
     pub(super) profile: wgpu::Buffer,
+    pub(super) raw: wgpu::TextureView,
+    pub(super) color: wgpu::TextureView,
+    pub(super) black: wgpu::TextureView,
+    pub(super) tone_guide: wgpu::TextureView,
     pub(super) scene: wgpu::TextureView,
     pub(super) tex1: wgpu::TextureView,
     pub(super) tex2: wgpu::TextureView,
@@ -147,11 +190,11 @@ fn shadow_map(device: &wgpu::Device, edge: u32) -> (wgpu::Texture, wgpu::Texture
 }
 
 /// The image-light grid and its maps (tone_analysis.wgsl).
-pub(super) struct ImageLightInputs {
-    pub(super) cells: wgpu::Buffer,
+struct ImageLightInputs {
+    cells: wgpu::Buffer,
     /// The resolved and finally blurred map Fog and Smoke sample; cropped and
     /// zoomed views copy it from the full frame.
-    pub(super) map: wgpu::Texture,
+    map: wgpu::Texture,
     map_view: wgpu::TextureView,
     _core: wgpu::Texture,
     core_view: wgpu::TextureView,
@@ -192,6 +235,64 @@ impl ImageLightInputs {
     }
 }
 
+/// The haze grid, its airlight and its maps (haze_analysis.wgsl).
+struct HazeInputs {
+    cells: wgpu::Buffer,
+    /// The resolved airlight and added veil Dehaze reads; cropped and zoomed
+    /// views copy them from the full frame.
+    airlight: wgpu::Buffer,
+    /// The transmission per cell, then the guided filter's averaged
+    /// coefficients Dehaze reads; cropped and zoomed views copy them.
+    map: wgpu::Texture,
+    map_view: wgpu::TextureView,
+    _work: wgpu::Texture,
+    /// The guided filter's coefficients of one window, before averaging.
+    work_view: wgpu::TextureView,
+}
+
+impl HazeInputs {
+    /// Inputs for a grid of `edge` × `edge` cells.
+    fn new(device: &wgpu::Device, edge: u32) -> Self {
+        let usage = wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING;
+        let texture = |usage, label| {
+            let texture = create_processing_texture(
+                device,
+                texture_size(edge, edge),
+                HAZE_MAP_FORMAT,
+                usage,
+                label,
+            );
+            let view = default_texture_view(&texture);
+            (texture, view)
+        };
+        let (map, map_view) = texture(
+            usage | wgpu::TextureUsages::COPY_SRC | wgpu::TextureUsages::COPY_DST,
+            "calibraw full-image haze map",
+        );
+        let (work, work_view) = texture(usage, "calibraw haze guided-filter coefficients");
+        Self {
+            cells: create_gpu_buffer(
+                device,
+                "calibraw haze grid",
+                haze_cells_bytes(edge),
+                wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            ),
+            airlight: create_gpu_buffer(
+                device,
+                "calibraw haze airlight",
+                HAZE_AIRLIGHT_BYTES,
+                wgpu::BufferUsages::STORAGE
+                    | wgpu::BufferUsages::COPY_SRC
+                    | wgpu::BufferUsages::COPY_DST,
+            ),
+            map,
+            map_view,
+            _work: work,
+            work_view,
+        }
+    }
+}
+
 /// Views the input-bound passes bind, allocated or placeholder.
 struct BoundInputs<'a> {
     /// Scene depth: the Relight surface once allocated, else the plain depth.
@@ -199,10 +300,33 @@ struct BoundInputs<'a> {
     scene_depth_guide: &'a wgpu::TextureView,
     shadow_map: &'a wgpu::TextureView,
     image_lights: &'a ImageLightInputs,
+    haze: &'a HazeInputs,
 }
 
 impl InputBindingSources {
     fn bind_groups(&self, device: &wgpu::Device, inputs: &BoundInputs<'_>) -> InputBindGroups {
+        let haze = inputs.haze;
+        let scene_preparation = create_bind_group(
+            device,
+            "bg adjustment preparation",
+            &self.scene_preparation_layout,
+            &[
+                buffer_binding(0, &self.camera_uniforms),
+                texture_binding(1, &self.raw),
+                texture_binding(2, &self.color),
+                texture_binding(19, &self.black),
+                texture_binding(11, &self.scene),
+                texture_binding(21, &self.tex1),
+                buffer_binding(16, &self.tone_stats),
+                texture_binding(17, &self.tone_guide),
+                buffer_binding(20, &self.profile),
+                texture_binding(27, &self.mask),
+                sampler_binding(28, &self.mask_sampler),
+                buffer_binding(33, &self.mask_data),
+                buffer_binding(54, &haze.airlight),
+                texture_binding(60, &haze.map_view),
+            ],
+        );
         let creative = |label: &str, input: &wgpu::TextureView, output: &wgpu::TextureView| {
             create_bind_group(
                 device,
@@ -287,7 +411,64 @@ impl InputBindingSources {
                 ],
             ),
         ];
+        let [accumulate, airlight, transmission, coefficients, smooth] = &self.haze_layouts;
+        let haze_groups = [
+            create_bind_group(
+                device,
+                "bg haze accumulation",
+                accumulate,
+                &[
+                    buffer_binding(0, &self.camera_uniforms),
+                    texture_binding(11, &self.scene),
+                    buffer_binding(20, &self.profile),
+                    buffer_binding(52, &haze.cells),
+                ],
+            ),
+            create_bind_group(
+                device,
+                "bg haze airlight",
+                airlight,
+                &[
+                    buffer_binding(0, &self.camera_uniforms),
+                    buffer_binding(16, &self.tone_stats),
+                    buffer_binding(52, &haze.cells),
+                    buffer_binding(53, &haze.airlight),
+                ],
+            ),
+            create_bind_group(
+                device,
+                "bg haze transmission",
+                transmission,
+                &[
+                    buffer_binding(0, &self.camera_uniforms),
+                    buffer_binding(52, &haze.cells),
+                    buffer_binding(54, &haze.airlight),
+                    texture_binding(55, &haze.map_view),
+                ],
+            ),
+            create_bind_group(
+                device,
+                "bg haze guided-filter coefficients",
+                coefficients,
+                &[
+                    buffer_binding(0, &self.camera_uniforms),
+                    texture_binding(56, &haze.map_view),
+                    texture_binding(57, &haze.work_view),
+                ],
+            ),
+            create_bind_group(
+                device,
+                "bg haze coefficient smoothing",
+                smooth,
+                &[
+                    buffer_binding(0, &self.camera_uniforms),
+                    texture_binding(58, &haze.work_view),
+                    texture_binding(59, &haze.map_view),
+                ],
+            ),
+        ];
         InputBindGroups {
+            scene_preparation,
             creative: creative("bg creative glow", &self.tex1, &self.tex2),
             creative_after_blur: creative(
                 "bg creative effects after mask Blur",
@@ -311,6 +492,7 @@ impl InputBindingSources {
                 ],
             ),
             image_lights,
+            haze: haze_groups,
         }
     }
 }
@@ -320,6 +502,7 @@ struct Allocated {
     scene_depth_guide: Option<(wgpu::Texture, wgpu::TextureView)>,
     relight: Option<RelightInputs>,
     image_lights: Option<ImageLightInputs>,
+    haze: Option<HazeInputs>,
     bind_groups: InputBindGroups,
 }
 
@@ -331,6 +514,7 @@ pub(super) struct EffectInputs {
     _placeholder_shadow_map: wgpu::Texture,
     placeholder_shadow_map_view: wgpu::TextureView,
     placeholder_image_lights: ImageLightInputs,
+    placeholder_haze: HazeInputs,
     allocated: Mutex<Allocated>,
 }
 
@@ -341,6 +525,7 @@ impl EffectInputs {
             scene_depth_guide(device, 1);
         let (placeholder_shadow_map, placeholder_shadow_map_view) = shadow_map(device, 1);
         let placeholder_image_lights = ImageLightInputs::new(device, 1);
+        let placeholder_haze = HazeInputs::new(device, 1);
         let bind_groups = sources.bind_groups(
             device,
             &BoundInputs {
@@ -348,6 +533,7 @@ impl EffectInputs {
                 scene_depth_guide: &placeholder_scene_depth_guide_view,
                 shadow_map: &placeholder_shadow_map_view,
                 image_lights: &placeholder_image_lights,
+                haze: &placeholder_haze,
             },
         );
         Self {
@@ -358,10 +544,12 @@ impl EffectInputs {
             _placeholder_shadow_map: placeholder_shadow_map,
             placeholder_shadow_map_view,
             placeholder_image_lights,
+            placeholder_haze,
             allocated: Mutex::new(Allocated {
                 scene_depth_guide: None,
                 relight: None,
                 image_lights: None,
+                haze: None,
                 bind_groups,
             }),
         }
@@ -400,13 +588,24 @@ impl EffectInputs {
         self.rebind(&mut allocated);
     }
 
-    /// Allocates the image-light grid and maps unless they exist.
-    pub(super) fn allocate_image_lights(&self) {
+    /// Allocates `map`'s grid and outputs unless they exist.
+    pub(super) fn allocate_full_image_map(&self, map: FullImageMap) {
         let mut allocated = self.lock();
-        if allocated.image_lights.is_some() {
-            return;
+        match map {
+            FullImageMap::ImageLights => {
+                if allocated.image_lights.is_some() {
+                    return;
+                }
+                allocated.image_lights =
+                    Some(ImageLightInputs::new(&self.device, IMAGE_LIGHT_GRID_LONG));
+            }
+            FullImageMap::Haze => {
+                if allocated.haze.is_some() {
+                    return;
+                }
+                allocated.haze = Some(HazeInputs::new(&self.device, HAZE_GRID_LONG));
+            }
         }
-        allocated.image_lights = Some(ImageLightInputs::new(&self.device, IMAGE_LIGHT_GRID_LONG));
         self.rebind(&mut allocated);
     }
 
@@ -428,6 +627,7 @@ impl EffectInputs {
                     .image_lights
                     .as_ref()
                     .unwrap_or(&self.placeholder_image_lights),
+                haze: allocated.haze.as_ref().unwrap_or(&self.placeholder_haze),
             },
         );
     }
@@ -441,12 +641,26 @@ impl EffectInputs {
             .map(|relight| relight.surface.clone())
     }
 
-    /// The image-light grid buffer and map, once allocated.
-    pub(super) fn image_lights(&self) -> Option<(wgpu::Buffer, wgpu::Texture)> {
-        self.lock()
-            .image_lights
-            .as_ref()
-            .map(|lights| (lights.cells.clone(), lights.map.clone()))
+    /// `map`'s grid and outputs, once allocated.
+    pub(super) fn full_image_map(&self, map: FullImageMap) -> Option<FullImageMapResources> {
+        let allocated = self.lock();
+        match map {
+            FullImageMap::ImageLights => {
+                allocated
+                    .image_lights
+                    .as_ref()
+                    .map(|lights| FullImageMapResources {
+                        cells: lights.cells.clone(),
+                        textures: vec![lights.map.clone()],
+                        buffers: Vec::new(),
+                    })
+            }
+            FullImageMap::Haze => allocated.haze.as_ref().map(|haze| FullImageMapResources {
+                cells: haze.cells.clone(),
+                textures: vec![haze.map.clone()],
+                buffers: vec![haze.airlight.clone()],
+            }),
+        }
     }
 }
 

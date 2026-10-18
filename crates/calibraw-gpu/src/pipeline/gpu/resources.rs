@@ -21,6 +21,20 @@ pub(super) const IMAGE_LIGHT_BANDS: u32 = 16;
 pub(super) const IMAGE_LIGHT_CELL_BYTES: u64 = IMAGE_LIGHT_BANDS as u64 * 16;
 pub(super) const IMAGE_LIGHT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 
+/// Dehaze (haze.wgsl): grid cells along the full image's longer edge. The
+/// cell buffer and textures are sized for a square grid.
+pub(super) const HAZE_GRID_LONG: u32 = 160;
+/// Bytes of one haze grid cell (`HazeCell` in haze_analysis.wgsl): two RGBA
+/// f32 vectors.
+pub(super) const HAZE_CELL_BYTES: u64 = 2 * 16;
+/// Bytes of the resolved airlight and added veil (`HazeAirlight` in
+/// haze.wgsl): two RGBA f32 vectors.
+pub(super) const HAZE_AIRLIGHT_BYTES: u64 = 2 * 16;
+/// Per haze grid cell, the transmission and then the guided filter's
+/// coefficients. They stay f32: a slope of several units times the guide
+/// nearly cancels its offset.
+pub(super) const HAZE_MAP_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba32Float;
+
 /// Per scene-depth texel, the joint-upsampling guide colour and the stored
 /// depth (scene_depth.wgsl).
 pub(super) const SCENE_DEPTH_GUIDE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
@@ -31,6 +45,11 @@ pub(super) const RELIGHT_SHADOW_MAP_FORMAT: wgpu::TextureFormat = wgpu::TextureF
 /// Bytes of an image-light grid of `edge` × `edge` cells.
 pub(super) const fn image_light_cells_bytes(edge: u32) -> u64 {
     edge as u64 * edge as u64 * IMAGE_LIGHT_CELL_BYTES
+}
+
+/// Bytes of a haze grid of `edge` × `edge` cells.
+pub(super) const fn haze_cells_bytes(edge: u32) -> u64 {
+    edge as u64 * edge as u64 * HAZE_CELL_BYTES
 }
 
 const MAX_UPLOAD_SCRATCH_BYTES: usize = 8 * 1024 * 1024;
@@ -418,6 +437,20 @@ pub(super) fn build_gpu_resource_plan(input: GpuResourcePlanInput) -> Result<Gpu
             1,
             IMAGE_LIGHT_FORMAT,
         )?,
+    );
+    push_entry(
+        &mut entries,
+        "haze grid and airlight buffers",
+        GpuResourceResidency::OnDemand,
+        aligned_buffer_bytes(haze_cells_bytes(HAZE_GRID_LONG))?
+            .checked_add(aligned_buffer_bytes(HAZE_AIRLIGHT_BYTES)?)
+            .ok_or_else(|| anyhow!("haze buffer size overflows"))?,
+    );
+    push_entry(
+        &mut entries,
+        "haze textures",
+        GpuResourceResidency::OnDemand,
+        2 * texture_allocation_bytes(HAZE_GRID_LONG, HAZE_GRID_LONG, 1, 1, HAZE_MAP_FORMAT)?,
     );
 
     let rgba32_readback = aligned_copy_buffer_bytes(input.width, input.height, 16)?

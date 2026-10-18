@@ -539,12 +539,14 @@ fn self_illuminating_glow_lights_dark_surfaces_in_its_color() -> anyhow::Result<
 #[test]
 fn masked_texture_leaves_flat_areas_unchanged_after_global_presence() -> anyhow::Result<()> {
     const WIDTH: u32 = 192;
-    // A flat left half beside fine low-contrast texture (for Texture to act on)
-    // and a hard checkerboard (for tonal range). The flat samples lie farther
-    // from either than any presence or haze neighbourhood reaches.
+    // A flat, hazy left half beside fine low-contrast texture (for Texture to
+    // act on) and a hard checkerboard (for tonal range), whose white is the
+    // airlight. Global Dehaze thins the flat half's haze in the adjustment
+    // base that masked Texture reads its detail against. The flat samples lie
+    // farther from the texture than any presence neighbourhood reaches.
     let Some(mut scene) = Fixture::new(WIDTH, 96, |x, y| {
         if x < 96 {
-            [0.18; 3]
+            [0.55, 0.6, 0.7]
         } else if y < 48 {
             [if (x / 2 + y / 2) % 2 == 0 { 0.16 } else { 0.20 }; 3]
         } else {

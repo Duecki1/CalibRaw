@@ -64,7 +64,20 @@ pub(in crate::pipeline::gpu) struct StageIndices {
     /// The joint-upsampling guide of scene depth, built right before the
     /// creative pass that reads it.
     pub(in crate::pipeline::gpu) scene_depth_guide_pass_index: usize,
+    /// Accumulation into the haze grid; the airlight, transmission and
+    /// guided-filter passes follow. Like the image lights they run with the
+    /// tone stage and come last so that adding them kept earlier positions.
+    pub(in crate::pipeline::gpu) haze_accumulate_pass_index: usize,
+    pub(in crate::pipeline::gpu) haze_resolve_pass_index: usize,
+    pub(in crate::pipeline::gpu) haze_end_index: usize,
     pub(in crate::pipeline::gpu) pass_count: usize,
+}
+
+/// Where a full-image map's passes sit: its accumulation, then the passes
+/// that resolve it once every tile has been added.
+pub(in crate::pipeline::gpu) struct FullImageMapPasses {
+    pub(in crate::pipeline::gpu) accumulate: usize,
+    pub(in crate::pipeline::gpu) resolve: std::ops::Range<usize>,
 }
 
 impl StageIndices {
@@ -104,6 +117,8 @@ impl StageIndices {
         let image_light_blur_pass_index = take(2);
         let relight_shadow_map_pass_index = take(1);
         let scene_depth_guide_pass_index = take(1);
+        let haze_accumulate_pass_index = take(1);
+        let haze_resolve_pass_index = take(HAZE_PASSES - 1);
         let pass_count = next;
         Self {
             highlight_pass_index,
@@ -137,7 +152,26 @@ impl StageIndices {
             image_light_end_index: relight_shadow_map_pass_index,
             relight_shadow_map_pass_index,
             scene_depth_guide_pass_index,
+            haze_accumulate_pass_index,
+            haze_resolve_pass_index,
+            haze_end_index: pass_count,
             pass_count,
+        }
+    }
+
+    pub(in crate::pipeline::gpu) fn full_image_map_passes(
+        &self,
+        map: FullImageMap,
+    ) -> FullImageMapPasses {
+        match map {
+            FullImageMap::ImageLights => FullImageMapPasses {
+                accumulate: self.image_light_accumulate_pass_index,
+                resolve: self.image_light_resolve_pass_index..self.image_light_end_index,
+            },
+            FullImageMap::Haze => FullImageMapPasses {
+                accumulate: self.haze_accumulate_pass_index,
+                resolve: self.haze_resolve_pass_index..self.haze_end_index,
+            },
         }
     }
 }
@@ -413,7 +447,7 @@ pub(in crate::pipeline::gpu) fn assemble_passes(
             shaders.scene_adjustments_module.as_ref(),
             "prepare_scene_node",
             &layouts.bgl_adjust_prepare,
-            groups.bg_adjust_prepare.clone(),
+            InputBoundPass::ScenePreparation,
             image_workgroups,
         ),
         assembler.make_pass(
@@ -596,6 +630,29 @@ pub(in crate::pipeline::gpu) fn assemble_passes(
         InputBoundPass::SceneDepthGuide,
         scene_depth_workgroups,
     ));
+
+    let haze_workgroups = [
+        HAZE_GRID_LONG.div_ceil(WORKGROUP_EDGE),
+        HAZE_GRID_LONG.div_ceil(WORKGROUP_EDGE),
+        1,
+    ];
+    ensure_planned(&passes, indices.haze_accumulate_pass_index, "haze")?;
+    let haze_programs: [(&str, [u32; 3]); HAZE_PASSES] = [
+        ("accumulate_haze", haze_workgroups),
+        ("resolve_haze_airlight", single_workgroup),
+        ("resolve_haze_transmission", haze_workgroups),
+        ("haze_guide_coefficients", haze_workgroups),
+        ("smooth_haze_coefficients", haze_workgroups),
+    ];
+    for (index, (entry, workgroups)) in haze_programs.into_iter().enumerate() {
+        passes.push(assembler.make_pass(
+            shaders.haze_analysis_module.as_ref(),
+            entry,
+            &layouts.bgl_haze[index],
+            InputBoundPass::Haze(index),
+            workgroups,
+        ));
+    }
 
     // The post-blur variants reuse the programs above with bind groups that
     // read the mask-blurred scene.

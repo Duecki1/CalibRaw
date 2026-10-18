@@ -646,10 +646,9 @@ mod tests {
             ..Default::default()
         };
         type AdjustmentCase = (fn(&mut LocalAdjustments) -> &mut f32, u32);
-        let cases: [AdjustmentCase; 3] = [
+        let cases: [AdjustmentCase; 2] = [
             (|a| &mut a.texture, super::DETAIL_TEXTURE_SUPPORT),
             (|a| &mut a.clarity, super::DETAIL_CLARITY_SUPPORT),
-            (|a| &mut a.dehaze, super::tiles::DEHAZE_SUPPORT),
         ];
         for (field, support) in cases {
             let mut stack = MaskStack::default();
@@ -685,6 +684,26 @@ mod tests {
     }
 
     #[test]
+    fn dehaze_adds_no_export_halo() {
+        use crate::pipeline::MaskKind;
+
+        // Dehaze reads its own pixel and the full-image haze map, which the
+        // export prepass builds from every tile's core.
+        let exposure = ExposureParams {
+            sharpen_amount: 0.0,
+            dehaze: 80.0,
+            ..Default::default()
+        };
+        let mut stack = MaskStack::default();
+        stack.add_mask(MaskKind::Fullscreen).unwrap();
+        stack.masks[0].adjustments.dehaze = -60.0;
+        assert_eq!(
+            required_export_tile_halo(&exposure, &stack),
+            MIN_EXPORT_TILE_HALO
+        );
+    }
+
+    #[test]
     fn export_halo_adds_sharpening_to_the_widest_scene_effect() {
         let base = super::HIGHLIGHT_RECONSTRUCTION_SUPPORT
             + super::DEMOSAIC_CHAIN_SUPPORT
@@ -698,7 +717,7 @@ mod tests {
             ..Default::default()
         };
         // Sharpening runs in the pass before the scene effects, so its
-        // footprint adds to theirs; Dehaze and Texture share one pass.
+        // footprint adds to theirs; Dehaze adds none.
         assert_eq!(
             required_export_tile_halo(&exposure, &masks),
             (base + 6 + super::DETAIL_TEXTURE_SUPPORT).div_ceil(8) * 8

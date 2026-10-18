@@ -21,7 +21,6 @@ pub(in crate::pipeline::gpu) struct BindGroups {
     pub(in crate::pipeline::gpu) bg_tone_horizontal: wgpu::BindGroup,
     pub(in crate::pipeline::gpu) bg_tone_vertical: wgpu::BindGroup,
     pub(in crate::pipeline::gpu) bg_tone_reduce: wgpu::BindGroup,
-    pub(in crate::pipeline::gpu) bg_adjust_prepare: wgpu::BindGroup,
     pub(in crate::pipeline::gpu) bg_adjust_tone: wgpu::BindGroup,
     pub(in crate::pipeline::gpu) bg_adjust_local_tone: wgpu::BindGroup,
     pub(in crate::pipeline::gpu) bg_detail_pyramid: [wgpu::BindGroup; DETAIL_PYRAMID_LEVELS],
@@ -330,26 +329,6 @@ pub(in crate::pipeline::gpu) fn create_bind_groups(
         ],
     );
 
-    let bg_adjust_prepare = create_bind_group(
-        device,
-        "bg adjustment preparation",
-        &layouts.bgl_adjust_prepare,
-        &[
-            buffer_binding(0, camera_uniforms_buffer),
-            texture_binding(1, raw_view),
-            texture_binding(2, color_view),
-            texture_binding(19, black_view),
-            texture_binding(11, scene_view),
-            texture_binding(21, tex1_view),
-            buffer_binding(16, tone_stats_buffer),
-            texture_binding(17, tone_guide_a_view),
-            buffer_binding(20, profile_buffer),
-            texture_binding(27, mask_view),
-            sampler_binding(28, mask_sampler),
-            buffer_binding(33, mask_data_buffer),
-        ],
-    );
-
     let make_adjust_tone_bind_group =
         |label: &str, input: &wgpu::TextureView, output: &wgpu::TextureView| {
             create_bind_group(
@@ -405,7 +384,6 @@ pub(in crate::pipeline::gpu) fn create_bind_groups(
                     texture_binding(22, input),
                     texture_binding(23, output),
                     texture_binding(50, detail_pyramid_view),
-                    buffer_binding(16, tone_stats_buffer),
                     texture_binding(27, mask_view),
                     sampler_binding(28, mask_sampler),
                     buffer_binding(33, mask_data_buffer),
@@ -562,7 +540,6 @@ pub(in crate::pipeline::gpu) fn create_bind_groups(
         bg_tone_horizontal,
         bg_tone_vertical,
         bg_tone_reduce,
-        bg_adjust_prepare,
         bg_adjust_tone,
         bg_adjust_local_tone,
         bg_detail_pyramid,
@@ -602,6 +579,7 @@ pub(in crate::pipeline::gpu) fn input_binding_sources(
     surfaces: &PipelineSurfaces,
 ) -> InputBindingSources {
     InputBindingSources {
+        scene_preparation_layout: layouts.bgl_adjust_prepare.clone(),
         creative_layout: layouts.bgl_adjust_creative.clone(),
         scene_depth_guide_layout: layouts.bgl_scene_depth_guide.clone(),
         relight_shadow_map_layout: layouts.bgl_relight_shadow_map.clone(),
@@ -611,10 +589,15 @@ pub(in crate::pipeline::gpu) fn input_binding_sources(
             layouts.bgl_image_light_blur_horizontal.clone(),
             layouts.bgl_image_light_blur_vertical.clone(),
         ],
+        haze_layouts: layouts.bgl_haze.clone(),
         camera_uniforms: buffers.camera_uniforms_buffer.clone(),
         mask_data: buffers.mask_data_buffer.clone(),
         tone_stats: buffers.tone_stats_buffer.clone(),
         profile: buffers.profile_buffer.clone(),
+        raw: surfaces.raw_view.clone(),
+        color: surfaces.color_view.clone(),
+        black: surfaces.black_view.clone(),
+        tone_guide: surfaces.tone_guide_a_view.clone(),
         scene: surfaces.scene_view.clone(),
         tex1: surfaces.tex1_view.clone(),
         tex2: surfaces.tex2_view.clone(),

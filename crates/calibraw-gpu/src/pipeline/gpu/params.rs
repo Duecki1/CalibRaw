@@ -606,12 +606,14 @@ impl GpuParams {
         }
     }
 
+    /// Whether anything after the scene tone pass runs. Dehaze is applied
+    /// in the scene preparation and needs none of these passes.
     pub(super) fn needs_intermediate_adjustment_passes(&self) -> bool {
+        let [global_texture, global_clarity, ..] = self.effects.presence;
         let global_effects = self.scene_tone.saturation.abs() > 1e-6
             || self.scene_tone.vibrance.abs() > 1e-6
-            || self.effects.presence[..3]
-                .iter()
-                .any(|value| value.abs() > 1e-6);
+            || global_texture.abs() > 1e-6
+            || global_clarity.abs() > 1e-6;
         let local_count = (self.scene_tone.mask_counts[0] as usize).min(MAX_RENDER_MASK_SLOTS);
         let local_effects = (0..local_count).any(|index| {
             let local = self.mask_data[index];
@@ -648,7 +650,10 @@ impl GpuParams {
                 || local.adjust_1[2].abs() > 1e-6
                 || local.adjust_1[3].abs() > 1e-6;
             let curves = state[2] != 0;
-            let presence_or_saturation = local.adjust_2.iter().any(|value| value.abs() > 1e-6);
+            let [saturation, texture, clarity, _dehaze] = local.adjust_2;
+            let presence_or_saturation = [saturation, texture, clarity]
+                .iter()
+                .any(|value| value.abs() > 1e-6);
             tone || white_balance || curves || presence_or_saturation
         });
         global_effects || local_effects
@@ -683,6 +688,29 @@ impl GpuParams {
         self.mask_data[..local_count]
             .iter()
             .any(medium_uses_image_lights)
+    }
+
+    /// Whether global or mask Dehaze applies (`dehaze_amount_at` in
+    /// scene_adjustments.wgsl), so the haze map must be built.
+    pub(super) fn needs_haze(&self) -> bool {
+        let local_count = (self.scene_tone.mask_counts[0] as usize).min(MAX_RENDER_MASK_SLOTS);
+        self.effects.presence[2].abs() > 1e-6
+            || self.mask_data[..local_count].iter().any(|mask| {
+                mask.metadata[0] != 0
+                    && mask.metadata[1] != 0
+                    && mask.metadata[3] >> MASK_EFFECT_ID_SHIFT
+                        == MaskEffect::Adjustment.shader_id()
+                    && mask.adjust_2[3].abs() > 1e-7
+            })
+    }
+
+    /// Whether an effect reads `map`, which the tone stage, or the export tone
+    /// prepass, must then build.
+    pub(super) fn needs_full_image_map(&self, map: FullImageMap) -> bool {
+        match map {
+            FullImageMap::ImageLights => self.needs_image_lights(),
+            FullImageMap::Haze => self.needs_haze(),
+        }
     }
 
     /// Whether an effect upsamples scene depth with the image as its guide:

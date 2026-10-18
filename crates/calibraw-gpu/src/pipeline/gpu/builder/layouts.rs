@@ -36,6 +36,8 @@ pub(in crate::pipeline::gpu) struct BindGroupLayouts {
     pub(in crate::pipeline::gpu) bgl_image_light_blur_vertical: wgpu::BindGroupLayout,
     pub(in crate::pipeline::gpu) bgl_relight_shadow_map: wgpu::BindGroupLayout,
     pub(in crate::pipeline::gpu) bgl_scene_depth_guide: wgpu::BindGroupLayout,
+    /// The haze passes, in pass order (`HAZE_PASSES`).
+    pub(in crate::pipeline::gpu) bgl_haze: [wgpu::BindGroupLayout; HAZE_PASSES],
 }
 
 pub(in crate::pipeline::gpu) fn create_bind_group_layouts(
@@ -338,6 +340,8 @@ pub(in crate::pipeline::gpu) fn create_bind_group_layouts(
                     texture_array_entry(27, wgpu::TextureSampleType::Float { filterable: true }),
                     sampler_entry(28),
                     storage_buffer_entry(33, true),
+                    storage_buffer_entry(54, true),
+                    texture_entry(60, wgpu::TextureSampleType::Float { filterable: false }),
                 ],
             )
         });
@@ -383,7 +387,6 @@ pub(in crate::pipeline::gpu) fn create_bind_group_layouts(
                     texture_entry(22, wgpu::TextureSampleType::Float { filterable: false }),
                     storage_texture_entry(23, work_format, wgpu::StorageTextureAccess::WriteOnly),
                     texture_entry(50, wgpu::TextureSampleType::Float { filterable: false }),
-                    storage_buffer_entry(16, true),
                     texture_array_entry(27, wgpu::TextureSampleType::Float { filterable: true }),
                     sampler_entry(28),
                     storage_buffer_entry(33, true),
@@ -594,6 +597,54 @@ pub(in crate::pipeline::gpu) fn create_bind_group_layouts(
             )
         });
 
+    let haze_write = |binding| {
+        storage_texture_entry(
+            binding,
+            HAZE_MAP_FORMAT,
+            wgpu::StorageTextureAccess::WriteOnly,
+        )
+    };
+    let haze_read = |binding| {
+        texture_entry(
+            binding,
+            wgpu::TextureSampleType::Float { filterable: false },
+        )
+    };
+    let haze_entries: [&[wgpu::BindGroupLayoutEntry]; HAZE_PASSES] = [
+        &[
+            buffer_entry(0),
+            texture_entry(11, wgpu::TextureSampleType::Float { filterable: false }),
+            storage_buffer_entry(20, true),
+            storage_buffer_entry(52, false),
+        ],
+        &[
+            buffer_entry(0),
+            storage_buffer_entry(16, true),
+            storage_buffer_entry(52, false),
+            storage_buffer_entry(53, false),
+        ],
+        &[
+            buffer_entry(0),
+            storage_buffer_entry(52, false),
+            storage_buffer_entry(54, true),
+            haze_write(55),
+        ],
+        &[buffer_entry(0), haze_read(56), haze_write(57)],
+        &[buffer_entry(0), haze_read(58), haze_write(59)],
+    ];
+    let haze_labels: [&str; HAZE_PASSES] = [
+        "bgl haze accumulation",
+        "bgl haze airlight",
+        "bgl haze transmission",
+        "bgl haze guided-filter coefficients",
+        "bgl haze coefficient smoothing",
+    ];
+    let bgl_haze = std::array::from_fn(|index| {
+        reused_layout(plan.haze_accumulate_pass_index + index).unwrap_or_else(|| {
+            create_bind_group_layout(device, haze_labels[index], haze_entries[index])
+        })
+    });
+
     BindGroupLayouts {
         bgl_scene_tone,
         bgl_effects,
@@ -628,5 +679,6 @@ pub(in crate::pipeline::gpu) fn create_bind_group_layouts(
         bgl_image_light_blur_vertical,
         bgl_relight_shadow_map,
         bgl_scene_depth_guide,
+        bgl_haze,
     }
 }

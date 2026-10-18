@@ -225,6 +225,28 @@ fn resolution_scale(minimum: f32, maximum: f32) -> f32 {
         * processing_per_source_pixel();
 }
 
+// Cells across and down a coarse grid over the full image with `long_cells`
+// cells along its longer edge. Cells cover the same share of the photo at
+// every processing resolution and tile origin.
+fn full_image_grid(long_cells: u32) -> vec2<u32> {
+    let full = vec2<f32>(
+        f32(max(camera_uniforms.full_width, 1u)),
+        f32(max(camera_uniforms.full_height, 1u)),
+    );
+    let cells = round(f32(long_cells) * full / max(full.x, full.y));
+    return clamp(vec2<u32>(cells), vec2<u32>(1u), vec2<u32>(long_cells));
+}
+
+// Global pixels whose centres fall in grid cells [cell, cell + 1) along one
+// axis of `cells` cells over `full` pixels.
+fn full_image_grid_pixel_span(cell: u32, cells: u32, full: u32) -> vec2<i32> {
+    let scale = f32(full) / f32(cells);
+    return vec2<i32>(
+        i32(ceil(f32(cell) * scale - 0.5)),
+        i32(ceil(f32(cell + 1u) * scale - 0.5)),
+    );
+}
+
 // Image lights (tone_analysis.wgsl): a coarse grid over the full image with
 // IMAGE_LIGHT_GRID_LONG cells along its longer edge, stored in textures and
 // a buffer sized for a square grid. Matches IMAGE_LIGHT_GRID_LONG in Rust.
@@ -232,12 +254,7 @@ const IMAGE_LIGHT_GRID_LONG: u32 = 160u;
 
 // Cells of the image-light grid across and down the full image.
 fn image_light_grid() -> vec2<u32> {
-    let full = vec2<f32>(
-        f32(max(camera_uniforms.full_width, 1u)),
-        f32(max(camera_uniforms.full_height, 1u)),
-    );
-    let cells = round(f32(IMAGE_LIGHT_GRID_LONG) * full / max(full.x, full.y));
-    return clamp(vec2<u32>(cells), vec2<u32>(1u), vec2<u32>(IMAGE_LIGHT_GRID_LONG));
+    return full_image_grid(IMAGE_LIGHT_GRID_LONG);
 }
 
 fn clamp_pos(pos: vec2<i32>) -> vec2<i32> {

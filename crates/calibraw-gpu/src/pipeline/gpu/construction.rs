@@ -342,7 +342,7 @@ impl RawGpuPipeline {
             scene_depth_texture: surfaces.scene_depth_texture,
             uploaded_scene_depth: Mutex::new(None),
             relight_shadow_map_key: Mutex::new(None),
-            image_lights_current: AtomicBool::new(false),
+            full_image_maps_current: Default::default(),
             mask_layer_capacity: geometry.mask_layer_capacity,
             mask_atlas_edge: geometry.mask_atlas_edge,
             out_texture: surfaces.out_texture,
@@ -364,13 +364,13 @@ impl RawGpuPipeline {
             pipeline.indices.tone_prepare_pass_index,
             pipeline.indices.tone_stage_end,
         );
-        pipeline.encode_tone_image_lights(&mut warmup, params);
+        pipeline.encode_tone_full_image_maps(&mut warmup, params);
         pipeline.encode_output_stage(&mut warmup, params);
         drop(warmup);
         // Nothing ran: the maps the warmup encoded are not built.
-        pipeline
-            .image_lights_current
-            .store(false, Ordering::Release);
+        for current in &pipeline.full_image_maps_current {
+            current.store(false, Ordering::Release);
+        }
         *pipeline
             .relight_shadow_map_key
             .lock()

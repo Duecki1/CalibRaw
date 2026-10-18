@@ -1,5 +1,6 @@
 #import calibraw::common as Common
 #import calibraw::color as Color
+#import calibraw::profile as Profile
 #import calibraw::basic_adjustments as BasicAdjustments
 
 // The demosaiced scene in camera RGB, shared by tone analysis and the scene
@@ -67,4 +68,13 @@ fn scene_working_at(pos: vec2<i32>) -> vec3<f32> {
         working = Color::compress_scene_gamut(working);
     }
     return working;
+}
+
+// The scene after camera characterization at the profile's exposure, before
+// the edit's own exposure. The scene preparation starts from it; tone analysis
+// and Dehaze measure it, so their statistics do not follow the exposure slider.
+fn profiled_scene_at(pos: vec2<i32>) -> vec3<f32> {
+    let characterized = Profile::apply_camera_characterization(scene_working_at(pos));
+    let profile_exposure_ev = bitcast<f32>(Common::camera_uniforms.profile_flags.z);
+    return characterized * exp2(profile_exposure_ev);
 }
