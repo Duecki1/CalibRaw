@@ -101,8 +101,101 @@ pub struct Registration {
     pub gain: f32,
 }
 
+/// A source frame resampled onto the reference grid.
+pub(super) struct Warped {
+    /// Camera RGB, unscaled.
+    pub(super) rgb: Vec<[f32; 3]>,
+    /// The source's `peak` map, maximized over every tap a pixel mixes, so a resampled
+    /// pixel counts as saturated when any sample it was interpolated from is. Empty
+    /// when no map was given.
+    pub(super) peak: Vec<f32>,
+    /// Whether the pixel maps inside the source frame. Uncovered pixels repeat the edge.
+    pub(super) covered: Vec<bool>,
+}
+
+/// Resamples `rgb` (and optionally a per-pixel `peak` map) of a `width × height` source
+/// onto the reference grid. Catmull–Rom keeps the detail bilinear interpolation softens,
+/// so frames that are shifted by a fraction of a pixel stay as sharp as the reference.
+pub(super) fn warp(
+    width: usize,
+    height: usize,
+    rgb: &[f32],
+    alignment: Alignment,
+    peak: Option<&[f32]>,
+) -> Warped {
+    if alignment == Alignment::default() {
+        return Warped {
+            rgb: rgb
+                .par_chunks_exact(3)
+                .map(|p| [p[0], p[1], p[2]])
+                .collect(),
+            peak: peak.map(<[f32]>::to_vec).unwrap_or_default(),
+            covered: vec![true; width * height],
+        };
+    }
+    let has_peak = peak.is_some();
+    let ((rgb, maxima), covered): ((Vec<_>, Vec<_>), Vec<_>) = (0..width * height)
+        .into_par_iter()
+        .map(|i| {
+            let (x, y) = alignment.map((i % width) as f32, (i / width) as f32);
+            let covered = sample_coordinates(width, height, x, y).is_some();
+            let (ix, fx) = split(x, width);
+            let (iy, fy) = split(y, height);
+            let (wx, wy) = (catmull_rom(fx), catmull_rom(fy));
+            let mut value = [0.0f32; 3];
+            let mut maximum = f32::NEG_INFINITY;
+            for (j, wy) in wy.into_iter().enumerate() {
+                let row = tap(iy, j, height) * width;
+                for (k, wx) in wx.into_iter().enumerate() {
+                    let source = row + tap(ix, k, width);
+                    for (c, value) in value.iter_mut().enumerate() {
+                        *value += wy * wx * rgb[source * 3 + c];
+                    }
+                    if let Some(peak) = peak.filter(|_| wy * wx != 0.0) {
+                        maximum = maximum.max(peak[source]);
+                    }
+                }
+            }
+            ((value, maximum), covered)
+        })
+        .unzip();
+    Warped {
+        rgb,
+        peak: if has_peak { maxima } else { Vec::new() },
+        covered,
+    }
+}
+
+/// Integer part (clamped into the image) and fraction of a sample coordinate.
+fn split(value: f32, size: usize) -> (isize, f32) {
+    let floor = value.floor();
+    // NaN comes from a point the homography cannot map.
+    if floor.is_nan() || floor < 0.0 {
+        (0, 0.0)
+    } else if floor >= (size - 1) as f32 {
+        (size as isize - 1, 0.0)
+    } else {
+        (floor as isize, value - floor)
+    }
+}
+
+/// The `k`-th of four Catmull–Rom taps around `base`, clamped to the edge.
+fn tap(base: isize, k: usize, size: usize) -> usize {
+    (base + k as isize - 1).clamp(0, size as isize - 1) as usize
+}
+
+fn catmull_rom(t: f32) -> [f32; 4] {
+    let (t2, t3) = (t * t, t * t * t);
+    [
+        0.5 * (-t3 + 2.0 * t2 - t),
+        0.5 * (3.0 * t3 - 5.0 * t2 + 2.0),
+        0.5 * (-3.0 * t3 + 4.0 * t2 + t),
+        0.5 * (t3 - t2),
+    ]
+}
+
 /// Bilinear taps for `(x, y)`, or `None` outside the pixel centers of the image.
-pub(super) fn sample_coordinates(
+fn sample_coordinates(
     width: usize,
     height: usize,
     x: f32,

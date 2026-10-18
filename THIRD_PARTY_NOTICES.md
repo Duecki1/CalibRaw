@@ -42,6 +42,10 @@ against darktable release 5.6.0:
 - The sigmoid display transform in `crates/calibraw-core/src/pipeline/sigmoid.rs`
   and `crates/calibraw-gpu/src/shaders/tonemap.wgsl`, based on
   `src/iop/sigmoid.c` and `data/kernels/sigmoid.cl`.
+- HDR merge frame weighting (weights proportional to collected light, the
+  highlight envelope and its saturation margin) in
+  `crates/calibraw-core/src/pipeline/hdr.rs`, based on
+  `src/control/jobs/control_jobs.c`.
 
 Copyright (C) 2010-2026 darktable developers and the authors named in the
 upstream files. darktable is GPL-3.0-or-later. The referenced source is in the
@@ -88,6 +92,21 @@ The highlight-only halation approximation in
 frequency-separation approach of
 [hotgluebanjo/halation-dctl](https://github.com/hotgluebanjo/halation-dctl).
 It is an independent implementation; no halation-dctl source is included.
+
+### HDR merge and focus stacking design references
+
+These are independent implementations; no source from the projects below is
+included.
+
+- `crates/calibraw-core/src/pipeline/hdr.rs` measures each frame's exposure
+  ratio from pixels both frames expose well, as
+  [HDRMerge](https://github.com/jcelaya/hdrmerge) (GPL-3.0-or-later) does, and
+  rejects motion against the reference frame block by block after the robust
+  merge of [HDR+](https://github.com/timothybrooks/hdr-plus) (MIT).
+- `crates/calibraw-core/src/pipeline/focus_stack.rs` selects each pyramid
+  coefficient from the most salient frame and limits the result to the range the
+  frames measured, following
+  [focus-stack](https://github.com/PetteriAimonen/focus-stack) (MIT).
 
 ## Bundled data
 

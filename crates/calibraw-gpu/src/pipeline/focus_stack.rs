@@ -1,5 +1,5 @@
 //! Focus stacking of RAW frames into a floating-point master.
-use super::raw_merge::{ensure_distinct_sources, merge_sources, MergedImage};
+use super::raw_merge::{ensure_distinct_sources, merge_sources, MergeSource, MergedImage};
 use super::*;
 use anyhow::{ensure, Context, Result};
 use calibraw_core::pipeline::focus_stack::FocusStack;
@@ -17,8 +17,15 @@ pub fn stack_focus(
     mut progress: impl FnMut(String) -> bool,
 ) -> Result<MergedImage> {
     ensure_distinct_sources(paths, "frame")?;
-    let mut frames: Vec<_> = paths.iter().map(|path| (path.as_path(), 1.0)).collect();
-    frames.sort_by(|a, b| a.0.cmp(b.0));
+    let mut frames: Vec<_> = paths
+        .iter()
+        .map(|path| MergeSource {
+            path,
+            exposure: 1.0,
+            light: 1.0,
+        })
+        .collect();
+    frames.sort_by(|a, b| a.path.cmp(b.path));
     let reference_index = frames.len() / 2;
     frames.swap(0, reference_index);
     let mut stack = None;
@@ -34,15 +41,15 @@ pub fn stack_focus(
                 Some(stack) => stack,
                 None => stack.insert(FocusStack::new(camera.width, camera.height)?),
             };
-            stack.add(frame.rgb, frame.registration, Some(frame.clipped))
+            stack.add(frame.rgb, frame.registration)
         },
     )?;
     ensure!(
         progress("Preparing floating-point master".to_owned()),
         "Merge cancelled"
     );
-    let (mut rgb, clipped) = stack.context("Focus stack is empty")?.finish()?;
-    camera.to_working_rec2020(&mut rgb, &clipped);
+    let mut rgb = stack.context("Focus stack is empty")?.finish()?;
+    camera.to_working_rec2020(&mut rgb);
     Ok(MergedImage {
         width: camera.width,
         height: camera.height,

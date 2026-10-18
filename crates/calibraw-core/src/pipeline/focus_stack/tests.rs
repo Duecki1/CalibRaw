@@ -48,9 +48,9 @@ fn defocus(rgb: &[f32], blurred: impl Fn(usize) -> bool) -> Vec<f32> {
 fn stack(frames: &[(&[f32], Registration)]) -> Vec<f32> {
     let mut stack = FocusStack::new(WIDTH as u32, HEIGHT as u32).unwrap();
     for (rgb, registration) in frames {
-        stack.add(rgb, *registration, None).unwrap();
+        stack.add(rgb, *registration).unwrap();
     }
-    stack.finish().unwrap().0
+    stack.finish().unwrap()
 }
 
 /// Mean absolute error over columns `columns`, rows away from the top and bottom edge.
@@ -143,16 +143,30 @@ fn shifted_frames_leave_no_gaps_and_divide_out_their_gain() {
 }
 
 #[test]
-fn marks_pixels_whose_sharpest_frame_clipped() {
-    let scene = sharp();
-    let blurred = defocus(&scene, |_| true);
-    let mut stack = FocusStack::new(WIDTH as u32, HEIGHT as u32).unwrap();
-    stack
-        .add(&scene, identity(), Some(&vec![1; WIDTH * HEIGHT]))
-        .unwrap();
-    stack.add(&blurred, identity(), None).unwrap();
-    let (_, clipped) = stack.finish().unwrap();
-    assert!(clipped[(HEIGHT / 2) * WIDTH + WIDTH / 2]);
+fn stays_within_the_range_the_frames_measured() {
+    // A bright bar in focus in one frame and spread out in the other: switching between
+    // their coefficients rings, which must not leave the measured range.
+    let mut sharp = vec![0.02; WIDTH * HEIGHT * 3];
+    for y in 0..HEIGHT {
+        for x in WIDTH / 2 - 2..WIDTH / 2 + 2 {
+            sharp[(y * WIDTH + x) * 3..(y * WIDTH + x) * 3 + 3].fill(0.9);
+        }
+    }
+    let blurred = defocus(&defocus(&sharp, |_| true), |_| true);
+    let fused = stack(&[(&sharp, identity()), (&blurred, identity())]);
+    for (i, pixel) in fused.chunks_exact(3).enumerate() {
+        let luminance = |rgb: &[f32]| (rgb[0] + 2.0 * rgb[1] + rgb[2]) * 0.25;
+        let inputs = [
+            luminance(&sharp[i * 3..i * 3 + 3]),
+            luminance(&blurred[i * 3..i * 3 + 3]),
+        ];
+        let (low, high) = (inputs[0].min(inputs[1]), inputs[0].max(inputs[1]));
+        let value = luminance(pixel);
+        assert!(
+            value >= low * 0.999 - 1e-6 && value <= high * 1.001 + 1e-6,
+            "pixel {i}: {value} outside {low}..{high}"
+        );
+    }
 }
 
 #[test]
@@ -160,12 +174,11 @@ fn rejects_invalid_frames() {
     assert!(FocusStack::new(0, 1).is_err());
     assert!(FocusStack::new(2, 1).unwrap().finish().is_err());
     let mut stack = FocusStack::new(2, 1).unwrap();
-    assert!(stack.add(&[0.5; 3], identity(), None).is_err());
-    assert!(stack.add(&[f32::NAN; 6], identity(), None).is_err());
-    assert!(stack.add(&[0.5; 6], identity(), Some(&[0])).is_err());
+    assert!(stack.add(&[0.5; 3], identity()).is_err());
+    assert!(stack.add(&[f32::NAN; 6], identity()).is_err());
     let invalid = Registration {
         gain: 0.0,
         ..identity()
     };
-    assert!(stack.add(&[0.5; 6], invalid, None).is_err());
+    assert!(stack.add(&[0.5; 6], invalid).is_err());
 }
