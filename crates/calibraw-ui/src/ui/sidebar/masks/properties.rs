@@ -133,9 +133,10 @@ impl Sidebar {
         true
     }
 
-    /// The cards of `components`, then an Add effect button. The Effects card
-    /// also adds to them ([`mask_effects::add_effect_controls`]), so draw them
-    /// right below it.
+    /// The cards of `components`, then an Add effect button. Draw them below
+    /// every other card, so the button ends the sidebar and effects added
+    /// from the Effects card ([`mask_effects::add_effect_controls`]) join them
+    /// there.
     pub(crate) fn show_effect_components(
         ui: &mut Ui,
         components: &mut Vec<crate::pipeline::EffectComponent>,

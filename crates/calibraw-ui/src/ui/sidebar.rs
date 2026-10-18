@@ -100,6 +100,8 @@ mod info;
 mod inpainting;
 mod masks;
 mod navigation;
+#[cfg(test)]
+mod test_support;
 
 pub(crate) use export::export_settings_controls;
 pub(crate) use mask_effects::effect_card_open;

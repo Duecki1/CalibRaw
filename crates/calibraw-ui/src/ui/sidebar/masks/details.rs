@@ -361,17 +361,14 @@ impl Sidebar {
                         );
                         adjustments_changed |=
                             apply_local_adjustment_response(ui.ctx(), mask, response);
-                        if section == MaskSection::Effects {
-                            // Below the card that adds them.
-                            let fullscreen = Self::is_plain_fullscreen_mask(mask);
-                            adjustments_changed |= Self::show_effect_components(
-                                ui,
-                                &mut mask.effect_components,
-                                fullscreen,
-                                &effect_frame,
-                            );
-                        }
                     }
+                    let fullscreen = Self::is_plain_fullscreen_mask(mask);
+                    adjustments_changed |= Self::show_effect_components(
+                        ui,
+                        &mut mask.effect_components,
+                        fullscreen,
+                        &effect_frame,
+                    );
                 }
                 MaskStripOrientation::Vertical => {
                     let mask_section = vertical_section.expect("vertical details have a section");
@@ -501,5 +498,49 @@ impl Sidebar {
         }
         crate::app::preview_visibility::PreviewVisibility::set_mask_scope(ui.ctx(), None);
         edit_header_rect
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::pipeline::EffectComponent;
+    use crate::ui::sidebar::test_support::{
+        add_effect_label, text_rect, text_rects, SidebarHarness,
+    };
+    use std::{cell::RefCell, rc::Rc};
+
+    #[test]
+    fn effect_cards_and_the_last_add_effect_button_follow_every_mask_card() {
+        let app = Rc::new(RefCell::new(CalibRawApp::empty(&egui::Context::default())));
+        {
+            let stack = &mut app.borrow_mut().masks.stack;
+            stack.add_mask(MaskKind::Brush).expect("mask");
+            stack.masks[0]
+                .effect_components
+                .push(EffectComponent::new(MaskEffect::Fog));
+        }
+        let shown = Rc::clone(&app);
+        let frame = eframe::Frame::_new_kittest();
+        // Wider than tall for the desktop cards, and tall enough for them all.
+        let mut sidebar = SidebarHarness::new(egui::vec2(3000.0, 2800.0), 300.0, move |ui| {
+            Sidebar::show_masks_horizontal_details(ui, &mut shown.borrow_mut(), &frame);
+        });
+
+        let (shapes, ()) = sidebar.render(Vec::new());
+        let title = |text| text_rect(&shapes, text).unwrap_or_else(|| panic!("{text} card"));
+        let button = *text_rects(&shapes, &add_effect_label())
+            .last()
+            .expect("Add effect button");
+        assert!(title("Color Mixer").bottom() < title("Fog").top());
+        assert!(title("Fog").bottom() < button.top());
+
+        sidebar.pick(MaskEffect::Blur);
+        let effects: Vec<_> = app.borrow().masks.stack.masks[0]
+            .effect_components
+            .iter()
+            .map(|component| component.effect)
+            .collect();
+        assert_eq!(effects, [MaskEffect::Fog, MaskEffect::Blur]);
     }
 }
