@@ -52,7 +52,8 @@ impl MergeKind {
 
 pub(super) struct MergeTask {
     kind: MergeKind,
-    receiver: mpsc::Receiver<Result<PathBuf, String>>,
+    /// The saved file name, or the error.
+    receiver: mpsc::Receiver<Result<String, String>>,
     progress: Arc<Mutex<String>>,
     cancelled: Arc<AtomicBool>,
 }
@@ -77,20 +78,10 @@ pub(super) fn start(
         );
         return;
     };
-    // Merging reads files; the library offers it only where photos are files.
-    let paths: Vec<_> = assets
-        .into_iter()
-        .filter_map(|asset| match asset.locator {
-            LibraryLocator::Desktop(path) => Some(path),
-            LibraryLocator::Android { .. } => None,
-        })
-        .collect();
-    if paths.len() < 2 {
-        return;
-    }
     let device = render_state.device.clone();
     let queue = render_state.queue.clone();
     let prewarm = app.export.gpu_prewarm.clone();
+    let platform = Arc::clone(&app.library.platform);
     let (sender, receiver) = mpsc::channel();
     let progress = Arc::new(Mutex::new("Preparing…".to_owned()));
     let cancelled = Arc::new(AtomicBool::new(false));
@@ -104,32 +95,38 @@ pub(super) fn start(
     let worker = std::thread::Builder::new()
         .name("raw-merge".to_owned())
         .spawn(move || {
-            let result = (|| -> Result<PathBuf> {
-                let merged = kind.run(&device, &queue, &paths, prewarm, |message| {
-                    if let Ok(mut status) = progress.lock() {
-                        *status = message;
-                    }
-                    repaint.request_repaint();
-                    !cancelled.load(Ordering::Relaxed)
-                })?;
-                anyhow::ensure!(!cancelled.load(Ordering::Relaxed), "Merge cancelled");
+            let report = |message: String| {
                 if let Ok(mut status) = progress.lock() {
-                    *status = "Saving floating-point TIFF…".to_owned();
+                    *status = message;
                 }
                 repaint.request_repaint();
-                let parent = paths[0]
-                    .parent()
-                    .context("Merge source has no parent folder")?;
-                let mut temporary = tempfile::Builder::new()
-                    .prefix(".calibraw-merge-")
-                    .suffix(".tmp")
-                    .tempfile_in(parent)?;
-                merged.write_tiff(temporary.as_file_mut())?;
-                temporary.as_file().sync_all()?;
+                !cancelled.load(Ordering::Relaxed)
+            };
+            // The merge reads files: media-library photos are staged as local copies.
+            let mut staged = Vec::with_capacity(assets.len());
+            let result = (|| -> Result<String> {
+                for (index, asset) in assets.iter().enumerate() {
+                    anyhow::ensure!(
+                        report(format!("Reading photo {}/{}", index + 1, assets.len())),
+                        "Merge cancelled"
+                    );
+                    staged.push(
+                        materialize_library_asset(asset, &*platform).map_err(anyhow::Error::msg)?,
+                    );
+                }
+                let paths: Vec<_> = staged
+                    .iter()
+                    .map(|staged| staged.raw_path.clone())
+                    .collect();
+                let merged = kind.run(&device, &queue, &paths, prewarm, report)?;
                 anyhow::ensure!(!cancelled.load(Ordering::Relaxed), "Merge cancelled");
-                save_unique(temporary, &paths[0], kind.file_suffix())
+                report("Saving floating-point TIFF…".to_owned());
+                save_merged(&merged, &assets[0], &paths[0], kind, &*platform, &cancelled)
             })()
             .map_err(|error| format!("{error:#}"));
+            for staged in &staged {
+                staged.cleanup();
+            }
             let _ = sender.send(result);
             repaint.request_repaint();
         });
@@ -139,6 +136,50 @@ pub(super) fn start(
             kind.error_kind(),
             format!("Could not start {}: {error}", kind.title()),
         ),
+    }
+}
+
+/// Saves `merged` as `{stem}-{suffix}.tif` for the first `source`, staged at
+/// `staged`: beside a folder photo, or into the media library for a media-library
+/// photo. Returns the saved file name.
+fn save_merged(
+    merged: &MergedImage,
+    source: &LibraryAsset,
+    staged: &Path,
+    kind: MergeKind,
+    platform: &dyn Platform,
+    cancelled: &AtomicBool,
+) -> Result<String> {
+    let parent = staged
+        .parent()
+        .context("Merge source has no parent folder")?;
+    let mut temporary = tempfile::Builder::new()
+        .prefix(".calibraw-merge-")
+        .suffix(".tmp")
+        .tempfile_in(parent)?;
+    merged.write_tiff(temporary.as_file_mut())?;
+    temporary.as_file().sync_all()?;
+    anyhow::ensure!(!cancelled.load(Ordering::Relaxed), "Merge cancelled");
+    match &source.locator {
+        LibraryLocator::Desktop(path) => {
+            let saved = save_unique(temporary, path, kind.file_suffix())?;
+            Ok(saved
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_else(|| saved.display().to_string()))
+        }
+        // The library picks a free name; the staged copy is deleted when dropped.
+        LibraryLocator::Android { .. } => {
+            let stem = Path::new(&source.display_name)
+                .file_stem()
+                .context("Merge source has no file name")?
+                .to_string_lossy();
+            let name = format!("{stem}-{}.tif", kind.file_suffix());
+            let imported = platform
+                .import_local_library_document(temporary.path(), &name)
+                .map_err(anyhow::Error::msg)?;
+            Ok(imported.display_name)
+        }
     }
 }
 
@@ -177,7 +218,8 @@ fn save_unique(
 /// How a merge ended.
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum MergeOutcome {
-    Saved(PathBuf),
+    /// The saved file name.
+    Saved(String),
     Cancelled,
     Failed(String),
 }
@@ -192,7 +234,7 @@ impl LibraryState {
         let task = self.merge.as_ref()?;
         let cancelled = task.cancelled.load(Ordering::Relaxed);
         let outcome = match task.receiver.try_recv() {
-            Ok(Ok(path)) => MergeOutcome::Saved(path),
+            Ok(Ok(name)) => MergeOutcome::Saved(name),
             Ok(Err(_)) if cancelled => MergeOutcome::Cancelled,
             Ok(Err(error)) => MergeOutcome::Failed(error),
             Err(mpsc::TryRecvError::Disconnected) => {
@@ -235,6 +277,38 @@ impl LibraryState {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn media_library_merge_is_imported_under_the_source_name() {
+        let staging = tempfile::tempdir().unwrap();
+        let platform = crate::platform::fake::FakePlatform::new(PlatformCaps::ANDROID);
+        let master = MergedImage {
+            width: 2,
+            height: 1,
+            rgb: vec![4.0, 2.0, 0.5, 0.1, 0.2, 0.3],
+        };
+        let name = save_merged(
+            &master,
+            &super::super::tests::android_test_asset("DSC01704.ARW"),
+            &staging.path().join("calibraw-library-1.ARW"),
+            MergeKind::FocusStack,
+            &*platform,
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+        assert_eq!(name, "DSC01704-FocusStack.tif");
+        let mut tiff = std::io::Cursor::new(Vec::new());
+        master.write_tiff(&mut tiff).unwrap();
+        assert_eq!(
+            platform.calls(),
+            [format!(
+                "import_local_library_document DSC01704-FocusStack.tif {}",
+                tiff.get_ref().len()
+            )]
+        );
+        // The staged TIFF is gone once the library holds its copy.
+        assert_eq!(fs::read_dir(staging.path()).unwrap().count(), 0);
+    }
+
     #[test]
     fn saves_without_overwriting_existing_master() {
         let dir = tempfile::tempdir().unwrap();

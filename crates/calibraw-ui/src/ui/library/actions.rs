@@ -489,8 +489,7 @@ pub(super) fn selection_bar_actions(
     {
         action = Some(SelectionBarCommand::Export);
     }
-    // Merging, copying and cutting work on photos in folders.
-    if caps.has_folders() && selected_count >= 2 {
+    if selected_count >= 2 {
         for (kind, glyph) in [
             (super::MergeKind::Hdr, egui_phosphor::regular::STACK),
             (
@@ -529,6 +528,7 @@ pub(super) fn selection_bar_actions(
     {
         action = Some(SelectionBarCommand::PasteAdjustments);
     }
+    // Copying and cutting work on photos in folders.
     if caps.has_folders()
         && selection_bar_action_button(
             ui,

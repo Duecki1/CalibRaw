@@ -186,9 +186,7 @@ impl CalibRawApp {
         }
         self.poll_foreground_operation(frame);
         self.poll_library_ai_mask_refresh(frame);
-        if caps.has_folders() {
-            self.poll_merge();
-        }
+        self.poll_merge();
         self.resume_pending_ai_denoise(frame);
         if caps.tasks_need_foreground {
             self.sync_android_export_notification();
