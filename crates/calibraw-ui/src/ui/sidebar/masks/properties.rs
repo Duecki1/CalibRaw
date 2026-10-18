@@ -279,6 +279,12 @@ impl Sidebar {
                 frame,
                 is_fullscreen_mask,
             ),
+            MaskEffect::Sharpen => mask_effects::sharpen::show(
+                ui,
+                &mut component.settings.sharpen,
+                &mut component.enabled,
+                remove,
+            ),
             MaskEffect::EdgeGlow => mask_effects::edge_glow::show(
                 ui,
                 &mut component.settings.edge_glow,

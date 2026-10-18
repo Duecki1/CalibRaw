@@ -102,6 +102,17 @@ pub mod adjustment {
     float_param!(DEHAZE, "Dehaze", -100.0, 100.0, 0.0, 1.0, 0, None);
 }
 
+/// Capture sharpening under a mask. Ranges and defaults match the Detail
+/// card's sharpening, which runs the same algorithm (`detail_capture.wgsl`).
+pub mod sharpen {
+    use super::*;
+
+    float_param!(AMOUNT, "Amount", 0.0, 150.0, 40.0, 1.0, 0, None);
+    float_param!(RADIUS, "Radius", 0.5, 3.0, 1.0, 0.05, 2, None);
+    float_param!(DETAIL, "Detail", 0.0, 100.0, 25.0, 1.0, 0, None);
+    float_param!(MASKING, "Masking", 0.0, 100.0, 0.0, 1.0, 0, None);
+}
+
 pub mod blur {
     use super::*;
 

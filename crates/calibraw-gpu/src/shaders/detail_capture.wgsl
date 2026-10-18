@@ -98,18 +98,51 @@ fn capture_noise_ev_sigma(rgb: vec3<f32>) -> f32 {
     return log2(1.0 + relative_sigma * residual);
 }
 
-fn apply_capture_sharpening(
+// Mirrors MaskEffect::Sharpen.shader_id(). A Sharpen slot's `adjust_0_field`
+// holds its controls in the units of the Detail card's `sharpen` uniform.
+const MASK_EFFECT_SHARPEN_ID: u32 = 17u;
+
+// Capture-sharpening controls, normalized.
+struct CaptureSharpening {
+    // Strength in 0..1 (Amount 0..150).
+    amount: f32,
+    // Blur radius in reference pixels, 0.5..3; `capture_detail_scale` maps it
+    // to working pixels.
+    radius: f32,
+    // Weight of the finest band and noise threshold in 0..1 (Detail 0..100).
+    detail: f32,
+    // Restriction to strong edges in 0..1 (Masking 0..100).
+    masking: f32,
+}
+
+// `controls` = (Amount 0..150, Radius 0.5..3, Detail 0..100, Masking 0..100),
+// as the Detail card and Sharpen effect slots store them.
+fn capture_sharpening(controls: vec4<f32>) -> CaptureSharpening {
+    return CaptureSharpening(
+        clamp(controls.x / 150.0, 0.0, 1.0),
+        clamp(controls.y, 0.5, 3.0),
+        clamp(controls.z / 100.0, 0.0, 1.0),
+        clamp(controls.w / 100.0, 0.0, 1.0),
+    );
+}
+
+fn global_capture_sharpening() -> CaptureSharpening {
+    return capture_sharpening(Common::effects_uniforms.sharpen);
+}
+
+// Log2 luminance gain that `settings` add at `pos`, in -0.28..0.32 EV, before
+// the local-range limit of `apply_capture_sharpening_ev`. `rgb` is the
+// unsharpened scene-linear pixel at `pos`; neighbours come from the adjustment
+// base, so contributions of several settings do not compound.
+fn capture_sharpening_ev(
     pos: vec2<i32>,
     rgb: vec3<f32>,
-) -> vec3<f32> {
-    let amount = clamp(Common::effects_uniforms.sharpen.x / 150.0, 0.0, 1.0);
-    if amount < 1e-6 {
-        return rgb;
-    }
-
-    let radius = clamp(Common::effects_uniforms.sharpen.y, 0.5, 3.0);
-    let detail = clamp(Common::effects_uniforms.sharpen.z / 100.0, 0.0, 1.0);
-    let masking = clamp(Common::effects_uniforms.sharpen.w / 100.0, 0.0, 1.0);
+    settings: CaptureSharpening,
+) -> f32 {
+    let amount = settings.amount;
+    let radius = settings.radius;
+    let detail = settings.detail;
+    let masking = settings.masking;
     let radius_pixels = radius * capture_detail_scale();
     let step = clamp(i32(round(max(radius_pixels * 0.48, 1.0))), 1, 3);
 
@@ -157,14 +190,24 @@ fn apply_capture_sharpening(
     let shadow_gate = smoothstep(-9.2, -4.3, center_ev);
     let highlight_gate = 1.0 - 0.62 * smoothstep(2.6, 6.0, center_ev);
     let strength = amount * mix(4.20, 6.00, detail);
-    var sharpen_ev = clamp(
+    return clamp(
         thresholded * strength * coherence * edge_mask * shadow_gate * highlight_gate,
         -0.28,
         0.32,
     );
+}
 
+// Applies a summed `capture_sharpening_ev` gain to the unsharpened `rgb` at
+// `pos`. The result stays within the 3x3 neighbourhood's luminance range plus
+// a small overshoot, so overlapping sharpening cannot ring past local extremes.
+// Negative channels are clipped to zero.
+fn apply_capture_sharpening_ev(
+    pos: vec2<i32>,
+    rgb: vec3<f32>,
+    sharpen_ev: f32,
+) -> vec3<f32> {
+    let center_ev = Common::log_luminance(rgb);
     let bounds = capture_local_ev_bounds(pos);
     let target_ev = clamp(center_ev + sharpen_ev, bounds.x - 0.018, bounds.y + 0.018);
-    sharpen_ev = target_ev - center_ev;
-    return max(rgb * exp2(sharpen_ev), vec3<f32>(0.0));
+    return max(rgb * exp2(target_ev - center_ev), vec3<f32>(0.0));
 }

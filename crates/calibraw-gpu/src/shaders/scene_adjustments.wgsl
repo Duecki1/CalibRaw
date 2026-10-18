@@ -327,6 +327,36 @@ fn apply_local_scene_tone_nodes(pos: vec2<i32>, input_rgb: vec3<f32>) -> vec3<f3
     return rgb;
 }
 
+// Capture sharpening of the Detail card plus every Sharpen effect slot, each
+// slot's gain weighted by its mask. The summed gain is limited once, so one
+// pass serves global and local sharpening. Without active sharpening `rgb` is
+// returned unchanged, negative channels included.
+fn apply_capture_sharpening_at(pos: vec2<i32>, rgb: vec3<f32>) -> vec3<f32> {
+    var sharpen_ev = 0.0;
+    var sharpened = false;
+    let global = DetailCapture::global_capture_sharpening();
+    if global.amount >= 1e-6 {
+        sharpen_ev = DetailCapture::capture_sharpening_ev(pos, rgb, global);
+        sharpened = true;
+    }
+    let count = min(Common::scene_tone_uniforms.mask_counts.x, Common::MAX_RENDER_MASK_SLOTS);
+    for (var index = 0u; index < count; index = index + 1u) {
+        let state = Common::mask_data[index].metadata;
+        if state.x == 0u || state.y == 0u
+            || Common::mask_effect_id(state) != DetailCapture::MASK_EFFECT_SHARPEN_ID {
+            continue;
+        }
+        let settings = DetailCapture::capture_sharpening(Common::mask_data[index].adjust_0_field);
+        if settings.amount < 1e-6 { continue; }
+        let weight = local_mask_weight(pos, index);
+        if weight <= 1e-5 { continue; }
+        sharpen_ev = sharpen_ev + weight * DetailCapture::capture_sharpening_ev(pos, rgb, settings);
+        sharpened = true;
+    }
+    if !sharpened { return rgb; }
+    return DetailCapture::apply_capture_sharpening_ev(pos, rgb, sharpen_ev);
+}
+
 @compute @workgroup_size(8, 8, 1)
 fn prepare_scene_node(@builtin(global_invocation_id) gid: vec3<u32>) {
     if gid.x >= Common::camera_uniforms.width || gid.y >= Common::camera_uniforms.height { return; }
@@ -346,7 +376,7 @@ fn apply_scene_tone_node(@builtin(global_invocation_id) gid: vec3<u32>) {
     let pos = vec2<i32>(i32(gid.x), i32(gid.y));
     var rgb = adjustment_base_at(pos);
 
-    rgb = DetailCapture::apply_capture_sharpening(pos, rgb);
+    rgb = apply_capture_sharpening_at(pos, rgb);
     rgb = Tonemap::apply_basic_tone(rgb, pos);
     textureStore(local_effects_out, pos, vec4<f32>(rgb, 1.0));
 }
