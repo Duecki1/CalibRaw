@@ -1,15 +1,13 @@
-//! The Android notification for a running export. The toolbar indicator is in
+//! The system notification for a running export, where tasks need the app in
+//! the foreground. The toolbar indicator is in
 //! `app/background_tasks.rs`.
 
 use super::*;
 
 impl CalibRawApp {
-    #[cfg(target_os = "android")]
     pub(crate) fn sync_android_export_notification(&self) {
         let Some(task) = self.export.task.as_ref() else {
-            if let Err(error) =
-                calibraw_ffi::clear_background_task_notification(&self.android.android_app)
-            {
+            if let Err(error) = self.platform.clear_task_notification() {
                 log::warn!("{error}");
             }
             return;
@@ -27,15 +25,17 @@ impl CalibRawApp {
             )
         });
         let percent = (task.progress.clamp(0.0, 1.0) * 100.0).round() as i32;
-        if let Err(error) = calibraw_ffi::update_background_task_notification(
-            &self.android.android_app,
-            title,
-            &task.phase,
-            detail.as_deref(),
-            percent,
-            task.total_tiles == 0 && task.progress <= 0.0,
-            0,
-        ) {
+        if let Err(error) =
+            self.platform
+                .update_task_notification(crate::platform::TaskNotification {
+                    title,
+                    phase: &task.phase,
+                    detail: detail.as_deref(),
+                    progress_percent: percent,
+                    indeterminate: task.total_tiles == 0 && task.progress <= 0.0,
+                    queued_count: 0,
+                })
+        {
             log::warn!("{error}");
         }
     }

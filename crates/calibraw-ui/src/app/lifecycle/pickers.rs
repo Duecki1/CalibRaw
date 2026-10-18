@@ -1,9 +1,18 @@
 use super::*;
 
 impl CalibRawApp {
-    #[cfg(not(target_os = "android"))]
+    /// Asks for a photo to open: a native file dialog, or the platform's
+    /// document picker where photos live in its media library.
     pub fn open_file_dialog(&mut self, _frame: &eframe::Frame) {
-        if crate::desktop_portal::is_flatpak() {
+        if self.caps().has_folders() {
+            self.open_desktop_file_dialog();
+        } else {
+            self.open_platform_document_picker();
+        }
+    }
+
+    fn open_desktop_file_dialog(&mut self) {
+        if crate::platform::is_flatpak() {
             // A single-file grant does not authorize persistent adjacent edit
             // sidecars. Authorize the folder, then choose the RAW in Library.
             self.open_library_folder_dialog();
@@ -21,25 +30,22 @@ impl CalibRawApp {
             .as_deref()
             .and_then(selected_picker_directory)
             .or_else(|| self.library.folder().map(std::path::Path::to_path_buf));
-        let mut dialog = rfd::AsyncFileDialog::new()
+        let mut dialog = crate::platform::FileDialog::new()
             .add_filter("RAW, TIFF, JPEG, PNG and HEIC images", &extensions);
         if let Some(directory) = initial_directory {
             dialog = dialog.set_directory(directory);
         }
         self.ui.desktop_picker_receiver = Some(spawn_ui_worker(&self.egui_ctx, move || {
-            let path =
-                pollster::block_on(dialog.pick_file()).map(|handle| handle.path().to_path_buf());
-            crate::app::DesktopPickerEvent::RawFile(path)
+            crate::app::DesktopPickerEvent::RawFile(dialog.pick_file_on_worker())
         }));
     }
 
-    #[cfg(not(target_os = "android"))]
     pub fn open_library_folder_dialog(&mut self) {
         if self.ui.desktop_picker_receiver.is_some() {
             return;
         }
-        let mut dialog = rfd::AsyncFileDialog::new();
-        if crate::desktop_portal::is_flatpak() {
+        let mut dialog = crate::platform::FileDialog::new();
+        if crate::platform::is_flatpak() {
             dialog =
                 dialog.set_title("Choose a photo folder to save edits; select a RAW in Library");
         }
@@ -47,14 +53,11 @@ impl CalibRawApp {
             dialog = dialog.set_directory(folder);
         }
         self.ui.desktop_picker_receiver = Some(spawn_ui_worker(&self.egui_ctx, move || {
-            let folder =
-                pollster::block_on(dialog.pick_folder()).map(|handle| handle.path().to_path_buf());
-            crate::app::DesktopPickerEvent::LibraryFolder(folder)
+            crate::app::DesktopPickerEvent::LibraryFolder(dialog.pick_folder_on_worker())
         }));
     }
 
-    #[cfg(target_os = "android")]
-    pub fn open_file_dialog(&mut self, _frame: &eframe::Frame) {
+    fn open_platform_document_picker(&mut self) {
         if self.android_foreground_task_active() {
             self.ui.notice = Some(
                 "Wait for the current foreground operation to finish before opening another photo."
@@ -67,7 +70,7 @@ impl CalibRawApp {
             return;
         }
         self.develop_ui.loading_thumbnail.clear();
-        match calibraw_ffi::open_raw_document(&self.android.android_app) {
+        match self.platform.open_raw_document() {
             Ok(()) => {
                 self.android.picker_pending = true;
                 self.ui.notice = None;
@@ -77,7 +80,6 @@ impl CalibRawApp {
         }
     }
 
-    #[cfg(not(target_os = "android"))]
     pub(crate) fn poll_desktop_picker(&mut self, frame: &eframe::Frame) {
         let result = self
             .ui
@@ -99,8 +101,8 @@ impl CalibRawApp {
                 self.apply_camera_profile_folder(folder);
             }
             crate::app::DesktopPickerEvent::OnnxRuntime(Ok(Some((path, sha256)))) => {
-                self.ai.runtime_path = Some(path);
-                self.ai.runtime_sha256 = Some(sha256);
+                self.ai.manual_runtime = Some((path, sha256));
+                self.sync_onnx_runtime_source();
                 self.ui.notice = Some(
                     "ONNX Runtime selection and SHA-256 pin saved. Restart CalibRaw before generating another subject mask."
                         .to_owned(),
@@ -119,20 +121,19 @@ impl CalibRawApp {
         }
     }
 
-    #[cfg(target_os = "android")]
     pub(in crate::app) fn poll_android_picker(&mut self, frame: &eframe::Frame) {
         // Before the results: a batch's progress always precedes its `BatchImported`.
-        if let Some(progress) = calibraw_ffi::take_import_progress() {
+        if let Some(progress) = self.platform.take_import_progress() {
             self.android.photo_import = Some(PhotoImportStatus::Copying(progress));
         }
-        while let Some(result) = calibraw_ffi::take_camera_profile_folder_result() {
+        while let Some(result) = self.platform.take_camera_profile_folder_result() {
             match result {
-                calibraw_ffi::CameraProfileFolderResult::ImportStarted { label } => {
+                crate::platform::CameraProfileFolderResult::ImportStarted { label } => {
                     self.android.camera_profile_folder_importing_label = Some(label.clone());
                     self.ui.status = format!("Importing DCP profiles from {label}…");
                     self.ui.notice = None;
                 }
-                calibraw_ffi::CameraProfileFolderResult::Picked {
+                crate::platform::CameraProfileFolderResult::Picked {
                     path,
                     label,
                     profiles,
@@ -150,10 +151,9 @@ impl CalibRawApp {
                             if self.preferences.camera_profile_folder.as_deref()
                                 != Some(previous_folder.as_path())
                             {
-                                if let Err(error) = calibraw_ffi::remove_camera_profile_mirror(
-                                    &self.android.android_app,
-                                    &previous_folder,
-                                ) {
+                                if let Err(error) =
+                                    self.platform.remove_camera_profile_mirror(&previous_folder)
+                                {
                                     log::warn!("{error}");
                                 }
                             }
@@ -164,12 +164,12 @@ impl CalibRawApp {
                         if profiles == 1 { "profile" } else { "profiles" }
                     ));
                 }
-                calibraw_ffi::CameraProfileFolderResult::Cancelled => {
+                crate::platform::CameraProfileFolderResult::Cancelled => {
                     self.android.picker_pending = false;
                     self.android.camera_profile_folder_importing_label = None;
                     self.ui.notice = Some("No camera profile folder selected.".to_owned());
                 }
-                calibraw_ffi::CameraProfileFolderResult::Failed(error) => {
+                crate::platform::CameraProfileFolderResult::Failed(error) => {
                     self.android.picker_pending = false;
                     self.android.camera_profile_folder_importing_label = None;
                     self.report_error(
@@ -180,7 +180,7 @@ impl CalibRawApp {
             }
         }
 
-        while let Some(result) = calibraw_ffi::take_picker_result() {
+        while let Some(result) = self.platform.take_picker_result() {
             self.android.picker_pending = false;
             self.handle_android_picker_result(result, frame);
         }
@@ -196,9 +196,8 @@ impl CalibRawApp {
     /// CalibRaw requested is in flight. The picker-result handling below
     /// attributes a result to whichever workflow is pending, so an external
     /// photo must never arrive while one is.
-    #[cfg(target_os = "android")]
     fn poll_android_external_open(&mut self, frame: &eframe::Frame) {
-        if !calibraw_ffi::has_external_open_result() {
+        if !self.platform.has_external_open_result() {
             return;
         }
         let requested_open_in_flight = self.android.picker_pending
@@ -212,22 +211,21 @@ impl CalibRawApp {
                 .request_repaint_after(std::time::Duration::from_millis(250));
             return;
         }
-        if let Some(result) = calibraw_ffi::take_external_open_result() {
+        if let Some(result) = self.platform.take_external_open_result() {
             self.handle_android_picker_result(result, frame);
         }
-        if calibraw_ffi::has_external_open_result() {
+        if self.platform.has_external_open_result() {
             self.egui_ctx.request_repaint();
         }
     }
 
-    #[cfg(target_os = "android")]
     fn handle_android_picker_result(
         &mut self,
-        result: calibraw_ffi::PickerResult,
+        result: crate::platform::PickerResult,
         frame: &eframe::Frame,
     ) {
         match result {
-            calibraw_ffi::PickerResult::Picked(document) => {
+            crate::platform::PickerResult::Picked(document) => {
                 self.library.refresh(&self.egui_ctx);
                 let batch_owned_open = self.export.android_batch_load_pending;
                 let profile_reload_owned_open =
@@ -281,7 +279,7 @@ impl CalibRawApp {
                     }
                 }
             }
-            calibraw_ffi::PickerResult::BatchImported {
+            crate::platform::PickerResult::BatchImported {
                 imported,
                 failed,
                 errors,
@@ -318,7 +316,7 @@ impl CalibRawApp {
                     self.ui.notice = None;
                 }
             }
-            calibraw_ffi::PickerResult::Cancelled => {
+            crate::platform::PickerResult::Cancelled => {
                 self.develop_ui.loading_thumbnail.clear();
                 self.android.pending_android_profile_reload = None;
                 let was_reset_reload =
@@ -340,7 +338,7 @@ impl CalibRawApp {
                     self.ui.notice = Some("No photos selected.".to_owned());
                 }
             }
-            calibraw_ffi::PickerResult::Failed(error) => {
+            crate::platform::PickerResult::Failed(error) => {
                 self.develop_ui.loading_thumbnail.clear();
                 let was_profile_reload =
                     self.android.pending_android_profile_reload.take().is_some();

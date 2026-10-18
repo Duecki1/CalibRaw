@@ -165,7 +165,6 @@ mod tests {
         }));
     }
 
-    #[cfg(not(target_os = "android"))]
     #[test]
     fn histogram_toggle_is_available_in_every_sidebar_header() {
         let ctx = egui::Context::default();

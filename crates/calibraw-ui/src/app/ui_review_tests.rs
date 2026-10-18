@@ -146,7 +146,8 @@ fn capture_review(root: &Path, output_dir: &Path) {
         output_dir.display()
     );
     let mut descriptor = wgpu::InstanceDescriptor::new_without_display_handle();
-    descriptor.memory_budget_thresholds = crate::memory_budget_thresholds();
+    descriptor.memory_budget_thresholds =
+        crate::memory_budget_thresholds(crate::platform::MemoryClass::Standard);
     let instance = wgpu::Instance::new(descriptor);
     let adapter =
         pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default()))
@@ -199,8 +200,6 @@ fn capture_review(root: &Path, output_dir: &Path) {
                 ui_design: design,
                 onboarding_completed: true,
                 subject_mask_quality_chosen: true,
-                #[cfg(not(target_os = "android"))]
-                onnx_runtime_kind_chosen: true,
                 tips_enabled: false,
                 auto_check_updates: false,
                 github_update_check_allowed: Some(false),
@@ -216,6 +215,7 @@ fn capture_review(root: &Path, output_dir: &Path) {
                 &context,
                 Some(settings_path.clone()),
                 settings,
+                crate::platform::fake::FakePlatform::new(crate::platform::PlatformCaps::DESKTOP),
             );
             app.develop.loaded_raw = Some(Arc::clone(&raw));
             app.develop.preview_raw = Some(Arc::clone(&raw));

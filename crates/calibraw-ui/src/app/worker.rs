@@ -1,8 +1,8 @@
-#[cfg(not(target_os = "android"))]
+use super::job_state::ForegroundProgress;
+use calibraw_ai::{AiJobEvent, ModelDownloadProgress};
 use eframe::egui;
 use std::sync::mpsc;
 
-#[cfg(not(target_os = "android"))]
 pub(crate) fn spawn_ui_worker<T, F>(context: &egui::Context, work: F) -> mpsc::Receiver<T>
 where
     T: Send + 'static,
@@ -44,6 +44,57 @@ pub(crate) fn drain_worker_events<T>(
         }
     }
     (events, disconnected)
+}
+
+/// An AI job's report other than its result.
+pub(crate) enum AiJobUpdate<P> {
+    Download(ModelDownloadProgress),
+    Progress(P),
+}
+
+/// Passes the AI job's reports since the last frame to `update`, in order,
+/// and returns its result once it finished. A job whose worker stopped
+/// without a result finishes with the error `stopped` makes.
+pub(crate) fn poll_ai_job<T, P>(
+    receiver: &mpsc::Receiver<AiJobEvent<T, P>>,
+    stopped: impl FnOnce() -> String,
+    mut update: impl FnMut(AiJobUpdate<P>),
+) -> Option<Result<T, String>> {
+    let (events, disconnected) = drain_worker_events(Some(receiver), |event| {
+        matches!(event, AiJobEvent::Finished(_))
+    });
+    let mut finished = None;
+    for event in events {
+        match event {
+            AiJobEvent::DownloadProgress(progress) => update(AiJobUpdate::Download(progress)),
+            AiJobEvent::Progress(progress) => update(AiJobUpdate::Progress(progress)),
+            AiJobEvent::Finished(result) => finished = Some(result),
+        }
+    }
+    if finished.is_none() && disconnected {
+        finished = Some(Err(stopped()));
+    }
+    finished
+}
+
+/// Progress of a model download, in megabytes.
+pub(crate) fn model_download_progress(progress: ModelDownloadProgress) -> ForegroundProgress {
+    ForegroundProgress::units(
+        progress.downloaded,
+        progress.total,
+        Some("bytes".to_owned()),
+        format!("Downloading {}", progress.label),
+    )
+    .with_detail(megabytes_detail(progress))
+}
+
+/// "downloaded / total MB".
+pub(crate) fn megabytes_detail(progress: ModelDownloadProgress) -> String {
+    format!(
+        "{:.1} / {:.1} MB",
+        progress.downloaded as f64 / 1_000_000.0,
+        progress.total as f64 / 1_000_000.0
+    )
 }
 
 #[cfg(test)]

@@ -3,7 +3,6 @@
 use super::*;
 
 impl LibraryState {
-    #[cfg(any(target_os = "android", test))]
     pub(crate) fn has_selection(&self) -> bool {
         !self.selected_assets.is_empty()
     }
@@ -43,7 +42,6 @@ impl LibraryState {
         }
     }
 
-    #[cfg(not(target_os = "android"))]
     pub(crate) fn select_search_matches(&mut self) -> usize {
         if !self.search_active() && !self.review_filter.active() {
             return 0;
@@ -70,14 +68,12 @@ impl LibraryState {
         self.selection_mode()
     }
 
-    #[cfg(not(target_os = "android"))]
     pub(in crate::ui::library) fn select_thumbnail(&mut self, asset_id: &LibraryAssetId) {
         self.begin_selection();
         self.selected_assets.insert(asset_id.clone());
         self.selection_anchor = Some(asset_id.clone());
     }
 
-    #[cfg(not(target_os = "android"))]
     pub(in crate::ui::library) fn select_thumbnail_range(
         &mut self,
         asset_id: &LibraryAssetId,
@@ -111,7 +107,6 @@ impl LibraryState {
         self.begin_selection();
     }
 
-    #[cfg(not(target_os = "android"))]
     pub(in crate::ui::library) fn select_all_thumbnails(&mut self) {
         let indices = self.filtered_entry_indices();
         self.selected_assets = indices

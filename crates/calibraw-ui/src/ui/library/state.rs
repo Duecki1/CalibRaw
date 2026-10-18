@@ -45,9 +45,11 @@ fn apply_rendered_thumbnail_limit(active_workers: usize) {
 }
 
 impl LibraryState {
-    #[cfg(all(not(target_os = "android"), test))]
+    /// A desktop library with default preferences, for tests.
+    #[cfg(test)]
     pub(crate) fn new() -> Self {
         Self::new_desktop(
+            crate::platform::fake::FakePlatform::new(PlatformCaps::DESKTOP),
             LibraryPreferences {
                 thumbnail_workers: default_thumbnail_worker_count(),
                 automatic_thumbnail_workers: true,
@@ -60,46 +62,51 @@ impl LibraryState {
         )
     }
 
-    #[cfg(not(target_os = "android"))]
-    pub(crate) fn new_desktop(preferences: LibraryPreferences, folder_sidebar_open: bool) -> Self {
+    /// A library of folders; none is open until the person picks one.
+    pub(crate) fn new_desktop(
+        platform: Arc<dyn Platform>,
+        preferences: LibraryPreferences,
+        folder_sidebar_open: bool,
+    ) -> Self {
         Self::with_preferences(
             preferences,
             None,
             folder_sidebar_open,
             "Open a folder to build your photo library.".to_owned(),
+            platform,
+            MediaLibraryState::default(),
         )
     }
 
-    #[cfg(target_os = "android")]
+    /// The platform's media library, scanned from `selected_folder`.
     pub(crate) fn new_android(
-        android_app: calibraw_ffi::AndroidApp,
+        platform: Arc<dyn Platform>,
         context: &egui::Context,
         preferences: LibraryPreferences,
         selected_folder: String,
     ) -> Self {
-        let root_location = calibraw_ffi::library_location(&android_app).unwrap_or_else(|error| {
+        let root_location = platform.library_location().unwrap_or_else(|error| {
             log::warn!("{error}");
             "Android/media/de.duecki.calibraw/.library".to_owned()
         });
-        let selected_folder =
-            match calibraw_ffi::select_library_folder(&android_app, &selected_folder) {
-                Ok(()) => selected_folder,
-                Err(error) => {
-                    log::warn!("{error}");
-                    if let Err(root_error) = calibraw_ffi::select_library_folder(&android_app, "") {
-                        log::warn!("{root_error}");
-                    }
-                    String::new()
+        let selected_folder = match platform.select_library_folder(&selected_folder) {
+            Ok(()) => selected_folder,
+            Err(error) => {
+                log::warn!("{error}");
+                if let Err(root_error) = platform.select_library_folder("") {
+                    log::warn!("{root_error}");
                 }
-            };
+                String::new()
+            }
+        };
         let location = android_library_location_label(&root_location, &selected_folder);
         let mut state = Self::with_preferences(
             preferences,
             Some(location),
             false,
             String::new(),
-            PlatformLibraryState {
-                app: android_app,
+            platform,
+            MediaLibraryState {
                 root_location,
                 folder: selected_folder.clone(),
                 folders: Vec::new(),
@@ -111,13 +118,14 @@ impl LibraryState {
         state
     }
 
-    /// A library with no folder scanned yet, shared by both platforms.
+    /// A library with nothing scanned yet, shared by both kinds of storage.
     fn with_preferences(
         preferences: LibraryPreferences,
         location: Option<String>,
         folder_sidebar_open: bool,
         status: String,
-        #[cfg(target_os = "android")] platform: PlatformLibraryState,
+        platform: Arc<dyn Platform>,
+        media: MediaLibraryState,
     ) -> Self {
         let LibraryPreferences {
             thumbnail_size,
@@ -130,17 +138,13 @@ impl LibraryState {
         let thumbnail_workers = preferences.thumbnail_workers();
         Self {
             location,
-            #[cfg(not(target_os = "android"))]
             folder: None,
-            #[cfg(not(target_os = "android"))]
             root_folder: None,
-            #[cfg(not(target_os = "android"))]
             folder_tree: None,
-            #[cfg(not(target_os = "android"))]
             expanded_folders: HashSet::new(),
             folder_sidebar_open,
-            #[cfg(target_os = "android")]
             platform,
+            media,
             entries: Vec::new(),
             entry_indices: HashMap::new(),
             event_receiver: None,
@@ -165,21 +169,14 @@ impl LibraryState {
             selected_assets: HashSet::new(),
             selection_mode: false,
             selection_anchor: None,
-            #[cfg(not(target_os = "android"))]
             image_clipboard: None,
             adjustment_clipboard: None,
             asset_transfer_receiver: None,
-            #[cfg(not(target_os = "android"))]
             merge: None,
-            #[cfg(not(target_os = "android"))]
             raw_import_receiver: None,
-            #[cfg(not(target_os = "android"))]
             folder_operation_receiver: None,
-            #[cfg(not(target_os = "android"))]
             folder_clipboard: None,
-            #[cfg(not(target_os = "android"))]
             folder_name_dialog: None,
-            #[cfg(not(target_os = "android"))]
             folder_delete_confirmation: None,
             delete_originals_confirmation: None,
             raw_name_dialog: None,
@@ -215,33 +212,21 @@ impl LibraryState {
             || self.export_dialog.is_some()
             || self.adjustment_paste_dialog.is_some()
             || self.ai_mask_refresh_prompt.is_some();
-        #[cfg(not(target_os = "android"))]
-        {
-            common || self.folder_name_dialog.is_some() || self.folder_delete_confirmation.is_some()
-        }
-        #[cfg(target_os = "android")]
-        {
-            common || self.platform.folder_name_dialog.is_some()
-        }
+        common
+            || self.folder_name_dialog.is_some()
+            || self.folder_delete_confirmation.is_some()
+            || self.media.folder_name_dialog.is_some()
     }
 
     pub(crate) fn local_mutation_in_progress(&self) -> bool {
         if self.asset_transfer_in_progress() {
             return true;
         }
-        #[cfg(not(target_os = "android"))]
-        {
-            self.raw_import_receiver.is_some()
-                || self.folder_operation_receiver.is_some()
-                || self.merge.is_some()
-        }
-        #[cfg(target_os = "android")]
-        {
-            false
-        }
+        self.raw_import_receiver.is_some()
+            || self.folder_operation_receiver.is_some()
+            || self.merge.is_some()
     }
 
-    #[cfg(not(target_os = "android"))]
     pub(crate) fn search_query_mut(&mut self) -> &mut String {
         &mut self.search_query
     }
@@ -302,7 +287,6 @@ impl LibraryState {
     }
 
     /// Rendered formats stacked under the RAW `asset`, for its hover details.
-    #[cfg(not(target_os = "android"))]
     pub(super) fn stacked_formats(
         &self,
         asset: &LibraryAssetId,
@@ -329,7 +313,6 @@ impl LibraryState {
     }
 
     /// Whether a folder scan is running; thumbnails load after it finishes.
-    #[cfg(target_os = "android")]
     pub(crate) fn is_scanning(&self) -> bool {
         self.scanning
     }
@@ -338,7 +321,6 @@ impl LibraryState {
         self.render_edited_thumbnails_during_indexing
     }
 
-    #[cfg(not(target_os = "android"))]
     pub(crate) fn set_render_edited_thumbnails_during_indexing(
         &mut self,
         enabled: bool,
@@ -399,7 +381,6 @@ impl LibraryState {
         self.raw_companions = RawCompanions::index(self.entries.iter().map(|entry| &entry.asset));
     }
 
-    #[cfg(not(target_os = "android"))]
     pub(crate) fn set_thumbnail_worker_count(&mut self, workers: usize, context: &egui::Context) {
         let workers = workers.clamp(1, maximum_thumbnail_worker_count());
         if self.thumbnail_workers == workers {
@@ -410,7 +391,6 @@ impl LibraryState {
         self.restart_if_active_workers_changed(previous_active, context);
     }
 
-    #[cfg(not(target_os = "android"))]
     pub(crate) fn set_automatic_thumbnail_workers(
         &mut self,
         automatic: bool,
@@ -424,7 +404,6 @@ impl LibraryState {
         self.restart_if_active_workers_changed(previous_active, context);
     }
 
-    #[cfg(not(target_os = "android"))]
     fn restart_if_active_workers_changed(
         &mut self,
         previous_active: usize,
@@ -442,8 +421,9 @@ impl LibraryState {
 
     pub(crate) fn prepare_for_develop(&mut self) {
         self.decoding_paused.store(true, Ordering::Release);
-        #[cfg(target_os = "android")]
-        self.evict_textures_to_limit(ANDROID_DEVELOP_TEXTURE_CACHE_LIMIT);
+        if self.platform.caps().constrained_memory() {
+            self.evict_textures_to_limit(ANDROID_DEVELOP_TEXTURE_CACHE_LIMIT);
+        }
     }
 
     pub(crate) fn decode_gate(&self) -> Arc<RwLock<()>> {

@@ -1,6 +1,4 @@
 //! Exercise the preview entry points with pointer frames and inspect their output.
-#![cfg(not(target_os = "android"))]
-
 use super::*;
 use crate::pipeline::LoadedRaw;
 use std::time::{Duration, Instant};

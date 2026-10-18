@@ -1,15 +1,5 @@
 use super::*;
 
-#[cfg(not(target_os = "android"))]
-pub(super) const fn system_trash_name() -> &'static str {
-    if cfg!(target_os = "windows") {
-        "Recycle Bin"
-    } else {
-        "Trash"
-    }
-}
-
-#[cfg(not(target_os = "android"))]
 pub(super) fn desktop_paths(assets: &[LibraryAsset]) -> Vec<PathBuf> {
     assets
         .iter()
@@ -17,7 +7,6 @@ pub(super) fn desktop_paths(assets: &[LibraryAsset]) -> Vec<PathBuf> {
         .collect()
 }
 
-#[cfg(target_os = "android")]
 pub(super) fn android_targets(assets: &[LibraryAsset]) -> Vec<(String, String)> {
     assets
         .iter()
@@ -33,27 +22,21 @@ pub(super) fn reset_asset_adjustments(
     app: &mut CalibRawApp,
     asset: &LibraryAsset,
 ) -> Result<bool, String> {
-    #[cfg(not(target_os = "android"))]
-    {
-        let path = asset
-            .desktop_path()
-            .ok_or_else(|| "Library asset is not available from desktop storage".to_owned())?;
-        if app.develop.current_path.as_deref() == Some(path) {
-            crate::sidecar::reset_desktop_adjustments_with_editing_time(
-                path,
-                app.raw_editing_time_ms(),
-            )
-        } else {
-            crate::sidecar::reset_desktop_adjustments(path)
+    match &asset.locator {
+        LibraryLocator::Desktop(path) => {
+            if app.develop.current_path.as_deref() == Some(path.as_path()) {
+                crate::sidecar::reset_desktop_adjustments_with_editing_time(
+                    path,
+                    app.raw_editing_time_ms(),
+                )
+            } else {
+                crate::sidecar::reset_desktop_adjustments(path)
+            }
         }
-    }
-    #[cfg(target_os = "android")]
-    {
-        let uri = asset
-            .android_uri()
-            .ok_or_else(|| "Library asset is not available from Android storage".to_owned())?;
-        app.reset_android_library_adjustments(uri, &asset.display_name)?;
-        Ok(true)
+        LibraryLocator::Android { uri } => {
+            app.reset_android_library_adjustments(uri, &asset.display_name)?;
+            Ok(true)
+        }
     }
 }
 
@@ -62,38 +45,29 @@ pub(super) fn rename_asset(
     asset: &LibraryAsset,
     requested_name: &str,
 ) -> Result<LibraryAsset, String> {
-    #[cfg(not(target_os = "android"))]
-    let _ = app;
-
-    #[cfg(not(target_os = "android"))]
-    {
-        let path = asset
-            .desktop_path()
-            .ok_or_else(|| "Library asset is not available from desktop storage".to_owned())?;
-        let destination = rename_raw_bundle(path, requested_name)?;
-        let mut renamed = asset.clone();
-        renamed.id = LibraryAssetId::Desktop(destination.clone());
-        renamed.display_name = requested_name.to_owned();
-        renamed.display_path = destination.display().to_string();
-        renamed.locator = LibraryLocator::Desktop(destination);
-        Ok(renamed)
-    }
-    #[cfg(target_os = "android")]
-    {
-        let uri = asset
-            .android_uri()
-            .ok_or_else(|| "Library asset is not available from Android storage".to_owned())?;
-        let renamed_uri =
-            app.rename_android_library_item(uri, &asset.display_name, requested_name)?;
-        let mut renamed = asset.clone();
-        renamed.id = LibraryAssetId::Android(renamed_uri.clone());
-        renamed.display_name = requested_name.to_owned();
-        renamed.display_path = Path::new(&asset.display_path)
-            .parent()
-            .map(|parent| parent.join(requested_name).display().to_string())
-            .unwrap_or_else(|| requested_name.to_owned());
-        renamed.locator = LibraryLocator::Android { uri: renamed_uri };
-        Ok(renamed)
+    match &asset.locator {
+        LibraryLocator::Desktop(path) => {
+            let destination = rename_raw_bundle(path, requested_name)?;
+            let mut renamed = asset.clone();
+            renamed.id = LibraryAssetId::Desktop(destination.clone());
+            renamed.display_name = requested_name.to_owned();
+            renamed.display_path = destination.display().to_string();
+            renamed.locator = LibraryLocator::Desktop(destination);
+            Ok(renamed)
+        }
+        LibraryLocator::Android { uri } => {
+            let renamed_uri =
+                app.rename_android_library_item(uri, &asset.display_name, requested_name)?;
+            let mut renamed = asset.clone();
+            renamed.id = LibraryAssetId::Android(renamed_uri.clone());
+            renamed.display_name = requested_name.to_owned();
+            renamed.display_path = Path::new(&asset.display_path)
+                .parent()
+                .map(|parent| parent.join(requested_name).display().to_string())
+                .unwrap_or_else(|| requested_name.to_owned());
+            renamed.locator = LibraryLocator::Android { uri: renamed_uri };
+            Ok(renamed)
+        }
     }
 }
 
@@ -101,46 +75,30 @@ pub(super) fn delete_library_asset(
     app: &mut CalibRawApp,
     asset: &LibraryAsset,
 ) -> Result<(), String> {
-    #[cfg(not(target_os = "android"))]
-    {
-        let path = asset
-            .desktop_path()
-            .ok_or_else(|| "Library asset is not available from desktop storage".to_owned())?;
-        let was_current = app.develop.current_path.as_deref() == Some(path);
-        if was_current {
-            app.detach_current_file_for_library_action(path);
+    match &asset.locator {
+        LibraryLocator::Desktop(path) => {
+            let was_current = app.develop.current_path.as_deref() == Some(path.as_path());
+            if was_current {
+                app.detach_current_file_for_library_action(path);
+            }
+            recycle_local_raw_bundle(path)?;
+            if was_current {
+                app.develop.current_path = None;
+            }
+            Ok(())
         }
-        recycle_local_raw_bundle(path)?;
-        if was_current {
-            app.develop.current_path = None;
+        LibraryLocator::Android { uri } => {
+            app.delete_android_library_item(uri, &asset.display_name)
         }
-        Ok(())
-    }
-    #[cfg(target_os = "android")]
-    {
-        let uri = asset
-            .android_uri()
-            .ok_or_else(|| "Library asset is not available from Android storage".to_owned())?;
-        app.delete_android_library_item(uri, &asset.display_name)
     }
 }
 
-#[cfg(not(target_os = "android"))]
-fn recycle_local_file(path: &Path) -> Result<(), String> {
-    #[cfg(target_os = "linux")]
-    if crate::desktop_portal::is_flatpak() {
-        return crate::desktop_portal::trash_file(path).map_err(|error| format!("{error:#}"));
-    }
-    trash::delete(path).map_err(|error| error.to_string())
-}
-
-#[cfg(not(target_os = "android"))]
 fn recycle_local_raw_bundle(raw_path: &Path) -> Result<(), String> {
-    recycle_local_file(raw_path).map_err(|error| {
+    crate::platform::trash(raw_path).map_err(|error| {
         format!(
             "Could not move {} to the system {}: {error}",
             raw_path.display(),
-            system_trash_name()
+            crate::platform::trash_name()
         )
     })?;
 
@@ -148,11 +106,11 @@ fn recycle_local_raw_bundle(raw_path: &Path) -> Result<(), String> {
         if !companion.is_file() {
             continue;
         }
-        if let Err(error) = recycle_local_file(&companion) {
+        if let Err(error) = crate::platform::trash(&companion) {
             log::warn!(
                 "moved RAW {} to the system {} but could not move {}: {error}",
                 raw_path.display(),
-                system_trash_name(),
+                crate::platform::trash_name(),
                 companion.display()
             );
         }
@@ -180,136 +138,114 @@ impl MaterializedLibraryAsset {
     }
 }
 
+/// A local file with the photo and its sidecar: the photo itself for a
+/// folder photo, a temporary copy for a media-library photo.
 pub(super) fn materialize_library_asset(
     asset: &LibraryAsset,
-    #[cfg(target_os = "android")] app: &calibraw_ffi::AndroidApp,
+    platform: &dyn Platform,
 ) -> Result<MaterializedLibraryAsset, String> {
-    #[cfg(not(target_os = "android"))]
-    {
-        let raw_path = asset
-            .desktop_path()
-            .ok_or_else(|| "Library asset is not available from desktop storage".to_owned())?
-            .to_owned();
-        Ok(MaterializedLibraryAsset {
-            raw_path,
+    match &asset.locator {
+        LibraryLocator::Desktop(path) => Ok(MaterializedLibraryAsset {
+            raw_path: path.clone(),
             display_name: asset.display_name.clone(),
             cleanup: false,
-        })
-    }
-    #[cfg(target_os = "android")]
-    {
-        let uri = asset
-            .android_uri()
-            .ok_or_else(|| "Library asset is not available from Android storage".to_owned())?;
-        let raw_path = calibraw_ffi::materialize_library_document(app, uri, &asset.display_name)?;
-        let sidecar = calibraw_ffi::materialize_raw_sidecar(app, uri, &asset.display_name)?;
-        if let Some(sidecar) = sidecar {
-            let destination = crate::sidecar::sidecar_path_for_raw(&raw_path);
-            let copy_result = fs::copy(&sidecar, &destination)
-                .map(|_| ())
-                .map_err(|error| {
-                    format!("could not stage {} sidecar: {error}", asset.display_name)
-                });
-            let _ = fs::remove_file(sidecar);
-            if let Err(error) = copy_result {
-                let _ = fs::remove_file(&raw_path);
-                return Err(error);
+        }),
+        LibraryLocator::Android { uri } => {
+            let raw_path = platform.materialize_library_document(uri, &asset.display_name)?;
+            let sidecar = platform.materialize_raw_sidecar(uri, &asset.display_name)?;
+            if let Some(sidecar) = sidecar {
+                let destination = crate::sidecar::sidecar_path_for_raw(&raw_path);
+                let copy_result = fs::copy(&sidecar, &destination)
+                    .map(|_| ())
+                    .map_err(|error| {
+                        format!("could not stage {} sidecar: {error}", asset.display_name)
+                    });
+                let _ = fs::remove_file(sidecar);
+                if let Err(error) = copy_result {
+                    let _ = fs::remove_file(&raw_path);
+                    return Err(error);
+                }
             }
+            Ok(MaterializedLibraryAsset {
+                raw_path,
+                display_name: asset.display_name.clone(),
+                cleanup: true,
+            })
         }
-        Ok(MaterializedLibraryAsset {
-            raw_path,
-            display_name: asset.display_name.clone(),
-            cleanup: true,
-        })
     }
 }
 
-#[cfg(not(target_os = "android"))]
 pub(super) fn asset_is_at_destination(
     asset: &LibraryAsset,
     destination: &LibraryTransferDestination,
 ) -> bool {
-    let LibraryTransferDestination::LocalFolder(folder) = destination;
-    asset
-        .desktop_path()
-        .and_then(Path::parent)
-        .is_some_and(|parent| parent == folder.as_path())
+    match destination {
+        LibraryTransferDestination::LocalFolder(folder) => asset
+            .desktop_path()
+            .and_then(Path::parent)
+            .is_some_and(|parent| parent == folder.as_path()),
+        LibraryTransferDestination::LocalLibrary => false,
+    }
 }
 
 pub(super) fn duplicate_destination(
     asset: &LibraryAsset,
 ) -> Result<LibraryTransferDestination, String> {
-    #[cfg(not(target_os = "android"))]
-    {
-        let parent = asset
-            .desktop_path()
-            .and_then(Path::parent)
-            .ok_or_else(|| "Library asset has no destination folder".to_owned())?;
-        Ok(LibraryTransferDestination::LocalFolder(parent.to_owned()))
-    }
-    #[cfg(target_os = "android")]
-    {
-        let _ = asset;
-        Ok(LibraryTransferDestination::LocalLibrary)
+    match &asset.locator {
+        LibraryLocator::Desktop(path) => {
+            let parent = path
+                .parent()
+                .ok_or_else(|| "Library asset has no destination folder".to_owned())?;
+            Ok(LibraryTransferDestination::LocalFolder(parent.to_owned()))
+        }
+        LibraryLocator::Android { .. } => Ok(LibraryTransferDestination::LocalLibrary),
     }
 }
 
 #[derive(Debug)]
 pub(super) enum ImportedLibraryAsset {
-    #[cfg(not(target_os = "android"))]
     Desktop(PathBuf),
-    #[cfg(target_os = "android")]
-    Android(calibraw_ffi::ImportedLibraryDocument),
+    Android(crate::platform::ImportedLibraryDocument),
 }
 
 pub(super) fn import_materialized_library_asset(
     materialized: &MaterializedLibraryAsset,
     destination: &LibraryTransferDestination,
-    #[cfg(target_os = "android")] app: &calibraw_ffi::AndroidApp,
+    platform: &dyn Platform,
 ) -> Result<ImportedLibraryAsset, String> {
-    #[cfg(not(target_os = "android"))]
-    {
-        let LibraryTransferDestination::LocalFolder(folder) = destination;
-        let destination = copy_raw_bundle_to_folder(
-            &materialized.raw_path,
-            std::ffi::OsStr::new(&materialized.display_name),
-            folder,
-        )?;
-        Ok(ImportedLibraryAsset::Desktop(destination))
-    }
-    #[cfg(target_os = "android")]
-    {
-        let LibraryTransferDestination::LocalLibrary = destination;
-        calibraw_ffi::import_local_library_document(
-            app,
-            &materialized.raw_path,
-            &materialized.display_name,
-        )
-        .map(ImportedLibraryAsset::Android)
+    match destination {
+        LibraryTransferDestination::LocalFolder(folder) => {
+            let destination = copy_raw_bundle_to_folder(
+                &materialized.raw_path,
+                std::ffi::OsStr::new(&materialized.display_name),
+                folder,
+            )?;
+            Ok(ImportedLibraryAsset::Desktop(destination))
+        }
+        LibraryTransferDestination::LocalLibrary => platform
+            .import_local_library_document(&materialized.raw_path, &materialized.display_name)
+            .map(ImportedLibraryAsset::Android),
     }
 }
 
+/// Carries a media-library photo's developed thumbnail over to its copy;
+/// folder copies take theirs along with the sidecar.
 pub(super) fn preserve_imported_thumbnail(
     asset: &LibraryAsset,
     imported: &ImportedLibraryAsset,
-    #[cfg(target_os = "android")] app: &calibraw_ffi::AndroidApp,
+    platform: &dyn Platform,
 ) -> Result<(), String> {
-    #[cfg(not(target_os = "android"))]
-    {
-        let _ = (asset, imported);
-        Ok(())
-    }
-    #[cfg(target_os = "android")]
-    {
-        let source_uri = asset
-            .android_uri()
-            .ok_or_else(|| "Library asset is not available from Android storage".to_owned())?;
-        let ImportedLibraryAsset::Android(imported) = imported;
-        calibraw_ffi::copy_library_developed_thumbnail_cache(app, source_uri, &imported.uri)
+    match imported {
+        ImportedLibraryAsset::Desktop(_) => Ok(()),
+        ImportedLibraryAsset::Android(imported) => {
+            let source_uri = asset
+                .android_uri()
+                .ok_or_else(|| "Library asset is not available from Android storage".to_owned())?;
+            platform.copy_library_developed_thumbnail_cache(source_uri, &imported.uri)
+        }
     }
 }
 
-#[cfg(not(target_os = "android"))]
 pub(super) fn remove_library_asset(asset: &LibraryAsset) -> Result<(), String> {
     let path = asset
         .desktop_path()
@@ -319,10 +255,9 @@ pub(super) fn remove_library_asset(asset: &LibraryAsset) -> Result<(), String> {
 
 pub(super) fn rollback_imported_library_asset(
     imported: ImportedLibraryAsset,
-    #[cfg(target_os = "android")] app: &calibraw_ffi::AndroidApp,
+    platform: &dyn Platform,
 ) {
     match imported {
-        #[cfg(not(target_os = "android"))]
         ImportedLibraryAsset::Desktop(path) => {
             if let Err(error) = remove_local_raw_bundle(&path) {
                 log::warn!(
@@ -331,13 +266,10 @@ pub(super) fn rollback_imported_library_asset(
                 );
             }
         }
-        #[cfg(target_os = "android")]
         ImportedLibraryAsset::Android(imported) => {
-            if let Err(error) = calibraw_ffi::delete_imported_library_document(
-                app,
-                &imported.uri,
-                &imported.display_name,
-            ) {
+            if let Err(error) =
+                platform.delete_imported_library_document(&imported.uri, &imported.display_name)
+            {
                 log::warn!("could not roll back imported Android Library bundle: {error}");
             }
         }

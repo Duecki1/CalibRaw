@@ -9,7 +9,7 @@ use eframe::egui;
 use std::collections::VecDeque;
 use std::sync::Arc;
 
-const EDIT_HISTORY_LIMIT: usize = if cfg!(target_os = "android") {
+const EDIT_HISTORY_LIMIT: usize = if crate::platform::PlatformCaps::CURRENT.constrained_memory() {
     128
 } else {
     256

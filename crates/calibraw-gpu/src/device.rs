@@ -19,12 +19,23 @@ pub fn base_device_limits(adapter: &wgpu::Adapter) -> wgpu::Limits {
     }
 }
 
+/// Which adapter a headless device runs on.
+#[derive(Clone, Copy, Debug)]
+pub enum HeadlessAdapter {
+    /// The adapter wgpu picks for this power preference.
+    Preferred(wgpu::PowerPreference),
+    /// The preferred adapter, or else wgpu's software fallback adapter.
+    PreferredOrSoftware(wgpu::PowerPreference),
+    /// Only wgpu's software fallback adapter, so results do not depend on the
+    /// machine's GPU.
+    Software,
+}
+
 /// What a headless device is for.
 #[derive(Clone, Copy, Debug)]
 pub struct HeadlessDeviceRequest<'a> {
     pub label: &'a str,
-    /// Preferred adapter; a low-power software fallback adapter is tried next.
-    pub power_preference: wgpu::PowerPreference,
+    pub adapter: HeadlessAdapter,
     /// The largest 2D texture edge the work allocates.
     pub texture_dimension: u32,
 }
@@ -72,19 +83,8 @@ pub fn request_headless_device(
     request: &HeadlessDeviceRequest<'_>,
 ) -> Result<HeadlessDevice, HeadlessDeviceError> {
     let instance = wgpu::Instance::default();
-    let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-        power_preference: request.power_preference,
-        compatible_surface: None,
-        force_fallback_adapter: false,
-    }))
-    .or_else(|_| {
-        pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::LowPower,
-            compatible_surface: None,
-            force_fallback_adapter: true,
-        }))
-    })
-    .map_err(HeadlessDeviceError::NoAdapter)?;
+    let adapter =
+        request_adapter(&instance, request.adapter).map_err(HeadlessDeviceError::NoAdapter)?;
     let adapter_info = adapter.get_info();
     let supported = adapter.limits().max_texture_dimension_2d;
     if request.texture_dimension > supported {
@@ -107,4 +107,25 @@ pub fn request_headless_device(
         queue,
         adapter_info,
     })
+}
+
+fn request_adapter(
+    instance: &wgpu::Instance,
+    choice: HeadlessAdapter,
+) -> Result<wgpu::Adapter, wgpu::RequestAdapterError> {
+    let request = |power_preference, force_fallback_adapter| {
+        pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+            power_preference,
+            compatible_surface: None,
+            force_fallback_adapter,
+        }))
+    };
+    let software = || request(wgpu::PowerPreference::LowPower, true);
+    match choice {
+        HeadlessAdapter::Preferred(power_preference) => request(power_preference, false),
+        HeadlessAdapter::PreferredOrSoftware(power_preference) => {
+            request(power_preference, false).or_else(|_| software())
+        }
+        HeadlessAdapter::Software => software(),
+    }
 }

@@ -1,7 +1,6 @@
 use crate::app::ToneCurveTab;
 use crate::pipeline::{PointCurve, MAX_POINT_CURVE_POINTS};
 use crate::ui::theme::{CHANNEL_BLUE, CHANNEL_GREEN, CHANNEL_RED};
-#[cfg(not(target_os = "android"))]
 use eframe::egui::Align;
 use eframe::egui::{self, Color32, Pos2, Sense, Stroke, StrokeKind, Ui};
 
@@ -131,16 +130,16 @@ pub(crate) fn tone_curve_editor(ui: &mut Ui, curve: &mut PointCurve, curve_color
         ui.data_mut(|data| data.remove::<GrabbedPoint>(drag_id));
     }
 
-    #[cfg(not(target_os = "android"))]
-    if response.clicked() {
+    // Touch adds points with a double tap, so a single tap can select one.
+    let touch = crate::platform::PlatformCaps::CURRENT.is_mobile();
+    if !touch && response.clicked() {
         if let Some(pointer) = response.interact_pointer_pos() {
             let point = screen_to_curve(rect, pointer);
             changed |= insert_point(curve, point);
         }
     }
 
-    #[cfg(target_os = "android")]
-    if response.double_clicked() {
+    if touch && response.double_clicked() {
         if let Some(pointer) = response.interact_pointer_pos() {
             let point = screen_to_curve(rect, pointer);
             changed |= insert_point(curve, point);
@@ -297,95 +296,95 @@ pub(crate) fn tone_curve_channel_editor(
     min_segment_width: f32,
 ) -> bool {
     let mut changed = false;
-    #[cfg(target_os = "android")]
-    let _ = min_segment_width;
+    // Touch puts the channel tabs in a rail beside the curve.
+    let touch = crate::platform::PlatformCaps::CURRENT.is_mobile();
 
-    #[cfg(not(target_os = "android"))]
-    ui.horizontal(|ui| {
-        let spacing = ui.spacing().item_spacing.x;
-        let segment_width =
-            ((ui.available_width() - moduwu_design::TOOLBAR_ICON_EDGE - spacing * 4.0)
-                .max(min_segment_width))
-                / 4.0;
-        for (tab, label, color) in TONE_CURVE_TABS {
-            let text = egui::RichText::new(label).color(color);
-            if moduwu_design::segmented_button(ui, text, *selected_tab == tab, segment_width)
-                .on_hover_text(tone_curve_description(tab))
-                .clicked()
-            {
-                *selected_tab = tab;
-            }
-        }
-        ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
-            if moduwu_design::ghost_icon_button(
-                ui,
-                egui_phosphor::regular::ARROW_COUNTER_CLOCKWISE,
-                moduwu_design::toolbar_icon_size(),
-                "Reset the selected tone curve",
-            )
-            .clicked()
-            {
-                reset_selected_tone_curve(&mut curves, *selected_tab);
-                changed = true;
-            }
-        });
-    });
-
-    #[cfg(not(target_os = "android"))]
-    {
-        let (curve, color) = selected_tone_curve(curves, *selected_tab);
-        changed |= tone_curve_editor(ui, curve, color);
-    }
-
-    #[cfg(target_os = "android")]
-    ui.horizontal(|ui| {
-        ui.vertical(|ui| {
-            let control_height = moduwu_design::CONTROL_HEIGHT;
-            ui.spacing_mut().item_spacing.y =
-                ((CURVE_HEIGHT - control_height * 5.0) / 4.0).max(0.0);
-
+    if !touch {
+        ui.horizontal(|ui| {
+            let spacing = ui.spacing().item_spacing.x;
+            let segment_width =
+                ((ui.available_width() - moduwu_design::TOOLBAR_ICON_EDGE - spacing * 4.0)
+                    .max(min_segment_width))
+                    / 4.0;
             for (tab, label, color) in TONE_CURVE_TABS {
                 let text = egui::RichText::new(label).color(color);
-                if moduwu_design::segmented_button(
-                    ui,
-                    text,
-                    *selected_tab == tab,
-                    moduwu_design::TOOLBAR_ICON_EDGE,
-                )
-                .on_hover_text(tone_curve_description(tab))
-                .clicked()
+                if moduwu_design::segmented_button(ui, text, *selected_tab == tab, segment_width)
+                    .on_hover_text(tone_curve_description(tab))
+                    .clicked()
                 {
                     *selected_tab = tab;
                 }
             }
-
-            if moduwu_design::ghost_icon_button(
-                ui,
-                egui_phosphor::regular::ARROW_COUNTER_CLOCKWISE,
-                moduwu_design::toolbar_icon_size(),
-                "Reset the selected tone curve",
-            )
-            .clicked()
-            {
-                reset_selected_tone_curve(&mut curves, *selected_tab);
-                changed = true;
-            }
+            ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
+                if moduwu_design::ghost_icon_button(
+                    ui,
+                    egui_phosphor::regular::ARROW_COUNTER_CLOCKWISE,
+                    moduwu_design::toolbar_icon_size(),
+                    "Reset the selected tone curve",
+                )
+                .clicked()
+                {
+                    reset_selected_tone_curve(&mut curves, *selected_tab);
+                    changed = true;
+                }
+            });
         });
 
-        let (curve, color) = selected_tone_curve(curves, *selected_tab);
-        changed |= tone_curve_editor(ui, curve, color);
-    });
+        {
+            let (curve, color) = selected_tone_curve(curves, *selected_tab);
+            changed |= tone_curve_editor(ui, curve, color);
+        }
+    } else {
+        ui.horizontal(|ui| {
+            ui.vertical(|ui| {
+                let control_height = moduwu_design::CONTROL_HEIGHT;
+                ui.spacing_mut().item_spacing.y =
+                    ((CURVE_HEIGHT - control_height * 5.0) / 4.0).max(0.0);
+
+                for (tab, label, color) in TONE_CURVE_TABS {
+                    let text = egui::RichText::new(label).color(color);
+                    if moduwu_design::segmented_button(
+                        ui,
+                        text,
+                        *selected_tab == tab,
+                        moduwu_design::TOOLBAR_ICON_EDGE,
+                    )
+                    .on_hover_text(tone_curve_description(tab))
+                    .clicked()
+                    {
+                        *selected_tab = tab;
+                    }
+                }
+
+                if moduwu_design::ghost_icon_button(
+                    ui,
+                    egui_phosphor::regular::ARROW_COUNTER_CLOCKWISE,
+                    moduwu_design::toolbar_icon_size(),
+                    "Reset the selected tone curve",
+                )
+                .clicked()
+                {
+                    reset_selected_tone_curve(&mut curves, *selected_tab);
+                    changed = true;
+                }
+            });
+
+            let (curve, color) = selected_tone_curve(curves, *selected_tab);
+            changed |= tone_curve_editor(ui, curve, color);
+        });
+    }
 
     // Touch has no hover, so the gestures are stated as visible text.
-    #[cfg(target_os = "android")]
-    ui.add(
-        egui::Label::new(
-            egui::RichText::new("Double-tap to add a point. Long-press a point to remove it.")
-                .small()
-                .color(ui.visuals().weak_text_color()),
-        )
-        .wrap(),
-    );
+    if touch {
+        ui.add(
+            egui::Label::new(
+                egui::RichText::new("Double-tap to add a point. Long-press a point to remove it.")
+                    .small()
+                    .color(ui.visuals().weak_text_color()),
+            )
+            .wrap(),
+        );
+    }
 
     changed
 }

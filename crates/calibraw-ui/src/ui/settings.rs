@@ -1,12 +1,8 @@
-#[cfg(not(target_os = "android"))]
 use crate::app::maximum_raw_cache_limit;
-#[cfg(not(target_os = "android"))]
 use crate::app::OnnxRuntimeMode;
 use crate::app::{CalibRawApp, PreviewQuality, GITHUB_UPDATE_CHECKS_AVAILABLE, UPDATE_STORE_NAME};
 use crate::pipeline::CameraProfileMode;
-#[cfg(not(target_os = "android"))]
 use crate::ui::components::adjustment_slider::AdjustmentSlider;
-#[cfg(not(target_os = "android"))]
 use crate::ui::library::maximum_thumbnail_worker_count;
 use eframe::egui::{self, Ui};
 use moduwu_design::ScreenLayout;
@@ -24,7 +20,6 @@ pub(crate) struct Settings;
 /// is applied once the pointer is released and the value field loses focus,
 /// because applying a change restarts work such as the thumbnail queue.
 /// Returns whether the value was applied.
-#[cfg(not(target_os = "android"))]
 fn count_setting(
     ui: &mut Ui,
     label: &str,
@@ -61,76 +56,29 @@ fn count_setting(
 
 fn diagnostics_snapshot_with_ai_backends() -> String {
     let mut diagnostic_log = calibraw_core::diagnostics::snapshot();
-    let providers = calibraw_ai::active_execution_providers();
-    if providers.is_empty() {
+    let statuses = calibraw_ai::ai_session_statuses();
+    if statuses.is_empty() {
         return diagnostic_log;
     }
 
     if !diagnostic_log.ends_with('\n') && !diagnostic_log.is_empty() {
         diagnostic_log.push('\n');
     }
-    diagnostic_log.push_str("AI execution providers (current):\n");
-    for provider in providers {
+    diagnostic_log.push_str("AI sessions (current):\n");
+    for status in statuses {
         diagnostic_log.push_str("- ");
-        diagnostic_log.push_str(&provider.model_name);
+        diagnostic_log.push_str(&status.model_name);
         diagnostic_log.push_str(": ");
-        diagnostic_log.push_str(&provider.active_provider);
-        if provider.degraded {
-            diagnostic_log.push_str(" [degraded/fallback]");
-        }
+        diagnostic_log.push_str(&status.label());
         diagnostic_log.push('\n');
     }
     diagnostic_log
 }
 
-/// Whether Automatic mode offers a choice of runtime, which only Linux x86_64
-/// without a bundled runtime does.
-#[cfg(not(target_os = "android"))]
-pub(crate) fn automatic_runtime_kind_offered(app: &CalibRawApp) -> bool {
-    app.ai.runtime_mode == OnnxRuntimeMode::Automatic
-        && calibraw_ai::automatic_onnx_runtime_kind_selectable()
-}
-
-/// Linux x86_64 choice between the CPU and CUDA automatic runtimes. Hidden
-/// where Automatic mode has no choice, including bundled runtimes.
-#[cfg(not(target_os = "android"))]
-pub(crate) fn automatic_runtime_kind_control(
-    ui: &mut Ui,
-    app: &mut CalibRawApp,
-    id_salt: &'static str,
-) {
-    if !automatic_runtime_kind_offered(app) {
-        return;
-    }
-    let mut kind = app.ai.runtime_kind;
-    moduwu_design::form_combo_with_help(
-        ui,
-        "AI runtime",
-        id_salt,
-        kind.label(),
-        180.0,
-        "NVIDIA CUDA needs an NVIDIA GPU with the matching CUDA runtime and cuDNN 9 installed; otherwise AI falls back to CPU. CUDA 13 needs a Turing (RTX 20) or newer GPU; use CUDA 12 for older GPUs.",
-        |ui| {
-            for option in calibraw_ai::AutomaticOnnxRuntimeKind::ALL {
-                let response = ui.selectable_value(&mut kind, option, option.label());
-                if let Some(bytes) = option.download_bytes() {
-                    response.on_hover_text(format!(
-                        "{:.0} MB download",
-                        bytes as f64 / 1_000_000.0
-                    ));
-                }
-            }
-        },
-    );
-    if kind != app.ai.runtime_kind {
-        app.set_onnx_runtime_kind(kind);
-    }
-}
-
 /// Who each subject-mask quality offered on this platform is for, one line
 /// each, so they can be compared at once in setup and in the tooltip.
 pub(crate) fn subject_mask_quality_descriptions() -> String {
-    use calibraw_ai::ai_masks::SubjectMaskQuality;
+    use calibraw_ai::models::subject::SubjectMaskQuality;
     SubjectMaskQuality::AVAILABLE
         .iter()
         .map(|&quality| {
@@ -154,7 +102,7 @@ pub(crate) fn subject_mask_quality_control(
     app: &mut CalibRawApp,
     id_salt: &'static str,
 ) {
-    use calibraw_ai::ai_masks::SubjectMaskQuality;
+    use calibraw_ai::models::subject::SubjectMaskQuality;
     let help = format!(
         "Applies to newly generated Subject and Background masks.\n{}",
         subject_mask_quality_descriptions()
@@ -219,14 +167,12 @@ pub(crate) fn export_name_template_controls(
         .and_then(std::ffi::OsStr::to_str)
         .filter(|name| !name.is_empty())
         .unwrap_or("IMG_1234");
-    #[cfg(not(target_os = "android"))]
     let edited_at = app
         .develop
         .current_path
         .as_deref()
+        .filter(|_| app.caps().has_folders())
         .and_then(crate::export_naming::edited_time_for_path);
-    #[cfg(target_os = "android")]
-    let edited_at = None;
     let context = if let Some(raw) = app.develop.loaded_raw.as_deref() {
         crate::export_naming::ExportNameContext::from_raw(original_name, raw, edited_at)
     } else {
@@ -279,14 +225,18 @@ impl Settings {
     }
 
     fn show_content(ui: &mut Ui, app: &mut CalibRawApp, layout: ScreenLayout) {
-        #[cfg(target_os = "android")]
-        moduwu_design::toolbar_row(ui, |ui| {
-            if crate::ui::top_bar::TopBar::back_icon_button(ui, moduwu_design::toolbar_icon_size())
+        if app.caps().is_mobile() {
+            moduwu_design::toolbar_row(ui, |ui| {
+                if crate::ui::top_bar::TopBar::back_icon_button(
+                    ui,
+                    moduwu_design::toolbar_icon_size(),
+                )
                 .clicked()
-            {
-                app.activate_tab(crate::app::AppTab::Library);
-            }
-        });
+                {
+                    app.activate_tab(crate::app::AppTab::Library);
+                }
+            });
+        }
         moduwu_design::card_gap(ui);
 
         moduwu_design::content_card(ui, |ui| Self::show_usage_card(ui, app));
@@ -311,8 +261,7 @@ impl Settings {
         moduwu_design::card_gap(ui);
         moduwu_design::content_card(ui, |ui| Self::show_raw_color_profiles_card(ui, app));
 
-        #[cfg(not(target_os = "android"))]
-        {
+        if app.caps().configurable_ai_runtime {
             moduwu_design::card_gap(ui);
             moduwu_design::content_card(ui, |ui| Self::show_ai_models_card(ui, app));
         }
@@ -435,7 +384,6 @@ impl Settings {
             app.reset_seen_tips();
         }
 
-        #[cfg(not(target_os = "android"))]
         if app.discord_rich_presence_supported() {
             moduwu_design::section_separator(ui);
             let mut enabled = app.preferences.discord_rich_presence;
@@ -476,8 +424,9 @@ impl Settings {
         if app.preview.quality != previous_quality {
             app.preview_quality_changed();
         }
-        #[cfg(target_os = "android")]
-        {
+        // Without a configurable AI runtime there is no AI models card to hold
+        // this control.
+        if !app.caps().configurable_ai_runtime {
             moduwu_design::section_separator(ui);
             subject_mask_quality_control(ui, app, "settings-subject-mask-quality");
         }
@@ -500,8 +449,7 @@ impl Settings {
             "Library performance",
             "Tune memory use and background preview generation. Conservative values are recommended on phones.",
         );
-        #[cfg(not(target_os = "android"))]
-        {
+        if app.caps().has_folders() {
             let mut render_edited_thumbnails =
                 app.library.renders_edited_thumbnails_during_indexing();
             if moduwu_design::toggle_with_help(
@@ -516,8 +464,7 @@ impl Settings {
             }
         }
 
-        #[cfg(not(target_os = "android"))]
-        {
+        if !app.caps().constrained_memory() {
             let mut raw_cache_files = app.develop.decoded_raws.limit();
             if count_setting(
                 ui,
@@ -750,38 +697,20 @@ impl Settings {
         }
 
         moduwu_design::section_separator(ui);
-        #[cfg(target_os = "android")]
-        let camera_folder_help = "Choose a top-level CameraProfiles folder with Android's system picker. CalibRaw recursively imports only .dcp files into private persistent storage, groups matches by camera, and exposes them in Develop.";
-        #[cfg(not(target_os = "android"))]
-        let camera_folder_help = "Choose a top-level DCP profile folder. CalibRaw searches subfolders recursively. Auto-detect checks common CameraProfiles locations on Windows and macOS.";
+        let has_folders = app.caps().has_folders();
+        let camera_folder_help = if has_folders {
+            "Choose a top-level DCP profile folder. CalibRaw searches subfolders recursively. Auto-detect checks common CameraProfiles locations on Windows and macOS."
+        } else {
+            "Choose a top-level CameraProfiles folder with Android's system picker. CalibRaw recursively imports only .dcp files into private persistent storage, groups matches by camera, and exposes them in Develop."
+        };
         moduwu_design::strong_with_help(ui, "Camera profile folder", camera_folder_help);
-        #[cfg(target_os = "android")]
         if let Some(label) = &app.android.camera_profile_folder_importing_label {
             ui.add(
                 egui::Label::new(egui::RichText::new(format!("Importing {label}…")).strong())
                     .wrap(),
             );
         } else if let Some(path) = &app.preferences.camera_profile_folder {
-            ui.add(
-                egui::Label::new(
-                    egui::RichText::new(
-                        app.preferences
-                            .camera_profile_folder_label
-                            .as_deref()
-                            .unwrap_or("CameraProfiles"),
-                    )
-                    .strong(),
-                )
-                .wrap(),
-            );
-            let _ = path;
-        } else {
-            ui.small("No external DCP folder selected.");
-        }
-        #[cfg(not(target_os = "android"))]
-        if let Some(path) = &app.preferences.camera_profile_folder {
-            #[cfg(not(target_os = "android"))]
-            {
+            if has_folders {
                 if let Some(label) = &app.preferences.camera_profile_folder_label {
                     ui.small(label);
                 }
@@ -789,24 +718,30 @@ impl Settings {
                     egui::Label::new(egui::RichText::new(path.display().to_string()).monospace())
                         .wrap(),
                 );
+            } else {
+                ui.add(
+                    egui::Label::new(
+                        egui::RichText::new(
+                            app.preferences
+                                .camera_profile_folder_label
+                                .as_deref()
+                                .unwrap_or("CameraProfiles"),
+                        )
+                        .strong(),
+                    )
+                    .wrap(),
+                );
             }
         } else {
             ui.small("No external DCP folder selected.");
         }
         moduwu_design::action_row(ui, |ui| {
-            #[cfg(target_os = "android")]
             let choose_label = if app.android.camera_profile_folder_importing_label.is_some() {
                 "Importing…"
             } else {
                 "Choose folder…"
             };
-            #[cfg(not(target_os = "android"))]
-            let choose_label = "Choose folder…";
-
-            #[cfg(target_os = "android")]
             let choose_enabled = !app.android.picker_pending;
-            #[cfg(not(target_os = "android"))]
-            let choose_enabled = true;
 
             if moduwu_design::secondary_button_enabled(ui, choose_enabled, choose_label)
                 .on_hover_text(camera_folder_help)
@@ -814,17 +749,16 @@ impl Settings {
             {
                 app.choose_camera_profile_folder();
             }
-            #[cfg(not(target_os = "android"))]
-            if moduwu_design::secondary_button(ui, "Auto-detect DCP profiles")
-                .on_hover_text("Check common CameraProfiles locations.")
-                .clicked()
+            if has_folders
+                && moduwu_design::secondary_button(ui, "Auto-detect DCP profiles")
+                    .on_hover_text("Check common CameraProfiles locations.")
+                    .clicked()
             {
                 app.auto_detect_camera_profile_folder();
             }
-            let can_clear = app.preferences.camera_profile_folder.is_some()
-                || app.preferences.camera_profile_auto_detect;
-            #[cfg(target_os = "android")]
-            let can_clear = can_clear && !app.android.picker_pending;
+            let can_clear = (app.preferences.camera_profile_folder.is_some()
+                || app.preferences.camera_profile_auto_detect)
+                && !app.android.picker_pending;
             if moduwu_design::secondary_button_enabled(ui, can_clear, "Clear")
                 .on_hover_text("Stop using the configured external DCP profile folder.")
                 .clicked()
@@ -834,7 +768,6 @@ impl Settings {
         });
     }
 
-    #[cfg(not(target_os = "android"))]
     fn show_ai_models_card(ui: &mut Ui, app: &mut CalibRawApp) {
         moduwu_design::heading_with_help(
             ui,
@@ -846,22 +779,19 @@ impl Settings {
             ui,
             &mut acceleration,
             "Use GPU acceleration when available",
-            "Allows AI masks and AI denoise to use a supported GPU execution provider. CPU fallback remains automatic. Turn this off if GPU inference causes driver errors, instability, or incorrect results.",
+            "Allows AI masks and AI denoise to use a supported GPU execution provider. A model that does not fit in free GPU memory runs on the CPU, and CPU fallback remains automatic. Turn this off if GPU inference causes driver errors, instability, or incorrect results.",
         )
             .changed()
         {
             app.set_ai_gpu_acceleration(acceleration);
         }
-        let statuses = calibraw_ai::active_execution_providers();
-        let mut in_use: Vec<&str> = statuses
-            .iter()
-            .map(|status| status.active_provider.as_str())
-            .collect();
+        let statuses = calibraw_ai::ai_session_statuses();
+        let mut in_use: Vec<String> = statuses.iter().map(|status| status.label()).collect();
         in_use.sort_unstable();
         in_use.dedup();
         if !in_use.is_empty() {
             let text = format!("In use: {}", in_use.join(", "));
-            if statuses.iter().any(|status| status.degraded) {
+            if statuses.iter().any(|status| status.gpu_failed()) {
                 ui.colored_label(ui.visuals().warn_fg_color, text).on_hover_text(
                     "A GPU execution provider failed to start or run. The Diagnostics log lists the reason.",
                 );
@@ -874,7 +804,7 @@ impl Settings {
         subject_mask_quality_control(ui, app, "settings-subject-mask-quality");
 
         moduwu_design::section_separator(ui);
-        let bundled_runtime = calibraw_ai::bundled_onnx_runtime_path();
+        let bundled_runtime = calibraw_ai::runtime::bundled_onnx_runtime_path();
         let automatic_help = if bundled_runtime.is_some() {
             "Recommended. Use the ONNX Runtime included with CalibRaw, with CPU AI fallback and no runtime download."
         } else {
@@ -909,14 +839,14 @@ impl Settings {
         match app.ai.runtime_mode {
             OnnxRuntimeMode::Automatic => {
                 if let Some(path) = bundled_runtime {
-                    if let Some(runtime) = calibraw_ai::automatic_onnx_runtime_info() {
+                    if let Some(runtime) = calibraw_ai::runtime::automatic_onnx_runtime_info() {
                         ui.label(format!(
                             "ONNX Runtime {} is included with CalibRaw. No runtime download is needed.",
                             runtime.version
                         ));
                     }
                     ui.small("AI tools can fall back to CPU inference. AI models are downloaded separately when needed.");
-                    if !calibraw_ai::automatic_onnx_runtime_is_installed() {
+                    if !calibraw_ai::runtime::automatic_onnx_runtime_is_installed() {
                         ui.colored_label(
                             ui.visuals().error_fg_color,
                             format!(
@@ -926,14 +856,13 @@ impl Settings {
                         );
                     }
                 } else {
-                    automatic_runtime_kind_control(ui, app, "settings-automatic-runtime-kind");
                     ui.label(format!(
                         "CalibRaw will select the {} / {} runtime and download it when an AI tool first needs it.",
                         std::env::consts::OS,
                         std::env::consts::ARCH
                     ));
                     ui.small("The archive and extracted runtime are cached locally and verified with pinned SHA-256 values.");
-                    if let Some(url) = calibraw_ai::automatic_onnx_runtime_info()
+                    if let Some(url) = calibraw_ai::runtime::automatic_onnx_runtime_info()
                         .and_then(|runtime| runtime.download_url)
                     {
                         ui.hyperlink_to("View runtime source", url);
@@ -941,12 +870,12 @@ impl Settings {
                 }
             }
             OnnxRuntimeMode::Manual => {
-                let manual_help = if cfg!(target_os = "windows") {
-                    "Choose a trusted ONNX Runtime 1.18 or newer onnxruntime.dll matching this CalibRaw build's CPU architecture. CalibRaw validates it in an isolated helper process. Provider libraries and dependencies must remain beside it."
+                let manual_help = if crate::platform::ONNX_RUNTIME_IS_DLL {
+                    "Choose a trusted ONNX Runtime 1.22 or newer onnxruntime.dll matching this CalibRaw build's CPU architecture. CalibRaw validates it in an isolated helper process. AI uses the GPU only if WebGPU is built into it. Dependencies must remain beside it."
                 } else {
-                    "Choose a trusted ONNX Runtime 1.18 or newer shared library built for this hardware. CalibRaw validates it in an isolated helper process. Provider libraries and dependencies must remain beside it."
+                    "Choose a trusted ONNX Runtime 1.22 or newer shared library built for this hardware. CalibRaw validates it in an isolated helper process. AI uses the GPU only if WebGPU is built into it. Dependencies must remain beside it."
                 };
-                if let Some(path) = &app.ai.runtime_path {
+                if let Some((path, sha256)) = &app.ai.manual_runtime {
                     ui.label("Selected manual runtime:");
                     ui.add(
                         egui::Label::new(
@@ -954,10 +883,10 @@ impl Settings {
                         )
                         .wrap(),
                     );
-                    if let Some(sha256) = &app.ai.runtime_sha256 {
-                        ui.small("Pinned SHA-256:");
-                        ui.add(egui::Label::new(egui::RichText::new(sha256).monospace()).wrap());
-                    }
+                    ui.small("Pinned SHA-256:");
+                    ui.add(
+                        egui::Label::new(egui::RichText::new(sha256.as_str()).monospace()).wrap(),
+                    );
                 } else {
                     ui.colored_label(
                         ui.visuals().warn_fg_color,
@@ -973,7 +902,7 @@ impl Settings {
                     }
                     if moduwu_design::secondary_button_enabled(
                         ui,
-                        app.ai.runtime_path.is_some(),
+                        app.ai.manual_runtime.is_some(),
                         "Clear",
                     )
                     .on_hover_text("Forget the selected manual runtime.")
@@ -1063,11 +992,7 @@ impl Settings {
         ui.small(status);
     }
 
-    fn show_legal_card(
-        ui: &mut Ui,
-        // Copying to the clipboard goes through the activity on Android.
-        #[cfg_attr(not(target_os = "android"), allow(unused_variables))] app: &mut CalibRawApp,
-    ) {
+    fn show_legal_card(ui: &mut Ui, app: &mut CalibRawApp) {
         moduwu_design::heading_with_help(
             ui,
             "Legal & attributions",
@@ -1086,17 +1011,15 @@ impl Settings {
                 let legal_text = format!(
                     "{PROJECT_LICENSE}\n\n{THIRD_PARTY_NOTICES}\n\n{RUST_DEPENDENCY_LICENSES}"
                 );
-                #[cfg(target_os = "android")]
                 match app.copy_text_to_clipboard("CalibRaw legal notices", &legal_text) {
-                    Ok(()) => calibraw_core::diagnostics::record(
+                    None => ui.ctx().copy_text(legal_text),
+                    Some(Ok(())) => calibraw_core::diagnostics::record(
                         "CalibRaw legal notices copied to Android clipboard",
                     ),
-                    Err(error) => calibraw_core::diagnostics::record(format!(
+                    Some(Err(error)) => calibraw_core::diagnostics::record(format!(
                         "Android legal-notice clipboard copy failed: {error}"
                     )),
                 }
-                #[cfg(not(target_os = "android"))]
-                ui.ctx().copy_text(legal_text);
             }
         });
 
@@ -1111,12 +1034,7 @@ impl Settings {
             .show(ui, |ui| Self::legal_text(ui, RUST_DEPENDENCY_LICENSES, 18));
     }
 
-    fn show_diagnostics_card(
-        ui: &mut Ui,
-        // Copying to the clipboard goes through the activity on Android.
-        #[cfg_attr(not(target_os = "android"), allow(unused_variables))] app: &mut CalibRawApp,
-        layout: ScreenLayout,
-    ) {
+    fn show_diagnostics_card(ui: &mut Ui, app: &mut CalibRawApp, layout: ScreenLayout) {
         moduwu_design::heading_with_help(
             ui,
             "Diagnostics",
@@ -1129,17 +1047,15 @@ impl Settings {
                 .on_hover_text("Copy the complete diagnostic report.")
                 .clicked()
             {
-                #[cfg(target_os = "android")]
                 match app.copy_text_to_clipboard("CalibRaw diagnostics", &diagnostic_log) {
-                    Ok(()) => calibraw_core::diagnostics::record(
+                    None => ui.ctx().copy_text(diagnostic_log.clone()),
+                    Some(Ok(())) => calibraw_core::diagnostics::record(
                         "Diagnostic log copied to Android clipboard",
                     ),
-                    Err(error) => calibraw_core::diagnostics::record(format!(
+                    Some(Err(error)) => calibraw_core::diagnostics::record(format!(
                         "Android clipboard copy failed: {error}"
                     )),
                 }
-                #[cfg(not(target_os = "android"))]
-                ui.ctx().copy_text(diagnostic_log.clone());
             }
             if moduwu_design::secondary_button(ui, "Clear events")
                 .on_hover_text("Clear recorded runtime events from the diagnostic report.")
@@ -1180,7 +1096,7 @@ impl Settings {
     }
 }
 
-#[cfg(all(test, not(target_os = "android")))]
+#[cfg(test)]
 mod tests {
     use super::count_setting;
     use eframe::egui;

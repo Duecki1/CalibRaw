@@ -10,7 +10,7 @@ pub(crate) struct SidecarSaveRequest {
     pub(super) explicit: bool,
     pub(super) edits: SidecarEditState,
     pub(super) editing_time_ms: u64,
-    #[cfg(target_os = "android")]
+    /// Media-library sidecars carry the review; folder sidecars keep theirs on disk.
     pub(super) review: crate::sidecar::PhotoReview,
 }
 

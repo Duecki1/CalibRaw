@@ -27,15 +27,8 @@ impl PreviewState {
     /// Whether a long press showed the original during the current touch.
     /// Canvas tools ignore that touch until it lifts.
     pub(crate) fn original_hold_owns_touch(&self) -> bool {
-        #[cfg(target_os = "android")]
-        {
-            self.original_hold
-                .is_some_and(|hold| hold.phase != crate::app::AndroidOriginalHoldPhase::Waiting)
-        }
-        #[cfg(not(target_os = "android"))]
-        {
-            false
-        }
+        self.original_hold
+            .is_some_and(|hold| hold.phase != crate::app::AndroidOriginalHoldPhase::Waiting)
     }
 }
 
@@ -144,7 +137,6 @@ impl CalibRawApp {
         self.egui_ctx.request_repaint();
     }
 
-    #[cfg(not(target_os = "android"))]
     pub(crate) fn toggle_original_preview(&mut self) {
         self.set_original_preview_requested(!self.preview.original_requested);
     }

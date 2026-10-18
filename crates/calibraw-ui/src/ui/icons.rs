@@ -1,14 +1,12 @@
 use eframe::egui::{self, Response, RichText, Ui, Vec2};
 use egui_phosphor::regular;
 
-#[cfg(not(target_os = "android"))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum UiIcon {
     Sidebar,
     Filmstrip,
 }
 
-#[cfg(not(target_os = "android"))]
 impl UiIcon {
     fn glyph(self) -> &'static str {
         match self {
@@ -18,7 +16,6 @@ impl UiIcon {
     }
 }
 
-#[cfg(not(target_os = "android"))]
 pub(crate) fn icon_toggle_button(
     ui: &mut Ui,
     icon: UiIcon,
@@ -31,7 +28,7 @@ pub(crate) fn icon_toggle_button(
 
 pub(crate) fn folder_disclosure_size() -> Vec2 {
     egui::vec2(
-        if cfg!(target_os = "android") {
+        if crate::platform::PlatformCaps::CURRENT.is_mobile() {
             30.0
         } else {
             26.0
@@ -46,7 +43,7 @@ pub(crate) fn folder_disclosure_button(ui: &mut Ui, expanded: bool) -> Response 
     } else {
         regular::CARET_RIGHT
     };
-    let font_size = if cfg!(target_os = "android") {
+    let font_size = if crate::platform::PlatformCaps::CURRENT.is_mobile() {
         13.0
     } else {
         12.0

@@ -436,8 +436,9 @@ impl Sidebar {
                         }
                     }
                     SidebarTab::Presets => {
-                        #[cfg(not(target_os = "android"))]
-                        crate::ui::presets::show_header_actions(ui, app);
+                        if app.caps().has_folders() {
+                            crate::ui::presets::show_header_actions(ui, app);
+                        }
                     }
                     SidebarTab::Export | SidebarTab::Info => {}
                 }
@@ -448,7 +449,6 @@ impl Sidebar {
         );
     }
 
-    #[cfg(target_os = "android")]
     pub(crate) fn show_android_landscape_primary_tabs(ui: &mut Ui, app: &mut CalibRawApp) {
         ui.set_width(Self::ANDROID_LANDSCAPE_TOOL_RAIL_WIDTH);
         ui.spacing_mut().item_spacing.y = 0.0;

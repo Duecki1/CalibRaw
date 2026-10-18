@@ -4,17 +4,12 @@ use image::codecs::jpeg::JpegEncoder;
 use image::ImageFormat;
 use std::fs;
 use std::path::Path;
-#[cfg(not(target_os = "android"))]
 use std::path::PathBuf;
 use std::sync::{Condvar, Mutex, OnceLock};
-#[cfg(not(target_os = "android"))]
 use std::time::UNIX_EPOCH;
 
-#[cfg(any(not(target_os = "android"), test))]
 const RAW_THUMBNAIL_SUFFIX: &str = ".calibraw-raw-thumb.jpg";
-#[cfg(any(not(target_os = "android"), test))]
 const RAW_THUMBNAIL_FINGERPRINT_SUFFIX: &str = ".calibraw-raw-thumb.fingerprint";
-#[cfg(any(not(target_os = "android"), test))]
 pub const DESKTOP_THUMBNAIL_CACHE_DIR: &str = "library-thumbnails";
 pub const THUMBNAIL_JPEG_QUALITY: u8 = 88;
 const MAX_CACHED_THUMBNAIL_EDGE: u32 = 8192;
@@ -282,7 +277,6 @@ pub fn fnv1a64(bytes: &[u8]) -> u64 {
     hash
 }
 
-#[cfg(not(target_os = "android"))]
 pub fn load_desktop_raw_thumbnail(
     raw_path: &Path,
     maximum_edge: u32,
@@ -307,7 +301,6 @@ pub fn load_desktop_raw_thumbnail(
     load_jpeg(&cache_path, maximum_edge)
 }
 
-#[cfg(not(target_os = "android"))]
 pub fn save_desktop_raw_thumbnail(raw_path: &Path, thumbnail: &RawThumbnail) -> Result<(), String> {
     let expected = desktop_raw_stamp(raw_path)?;
     let cache_path = desktop_raw_thumbnail_path(raw_path);
@@ -329,27 +322,22 @@ pub fn save_desktop_raw_thumbnail(raw_path: &Path, thumbnail: &RawThumbnail) -> 
     Ok(())
 }
 
-#[cfg(not(target_os = "android"))]
 fn desktop_raw_thumbnail_path(raw_path: &Path) -> PathBuf {
     desktop_cache_path_for_raw(raw_path, RAW_THUMBNAIL_SUFFIX)
 }
 
-#[cfg(not(target_os = "android"))]
 fn desktop_raw_thumbnail_fingerprint_path(raw_path: &Path) -> PathBuf {
     desktop_cache_path_for_raw(raw_path, RAW_THUMBNAIL_FINGERPRINT_SUFFIX)
 }
 
-#[cfg(not(target_os = "android"))]
 pub fn desktop_app_cache_root() -> PathBuf {
     desktop_platform_cache_root().join("calibraw")
 }
 
-#[cfg(not(target_os = "android"))]
 pub fn desktop_thumbnail_cache_root() -> PathBuf {
     desktop_app_cache_root().join(DESKTOP_THUMBNAIL_CACHE_DIR)
 }
 
-#[cfg(not(target_os = "android"))]
 pub fn clear_desktop_thumbnail_cache() -> Result<(), String> {
     let root = desktop_thumbnail_cache_root();
     match fs::remove_dir_all(&root) {
@@ -362,12 +350,10 @@ pub fn clear_desktop_thumbnail_cache() -> Result<(), String> {
     }
 }
 
-#[cfg(not(target_os = "android"))]
 pub fn desktop_thumbnail_cache_size_bytes() -> Result<u64, String> {
     directory_size_bytes(&desktop_thumbnail_cache_root())
 }
 
-#[cfg(not(target_os = "android"))]
 fn directory_size_bytes(root: &Path) -> Result<u64, String> {
     let mut directories = vec![root.to_path_buf()];
     let mut total = 0_u64;
@@ -414,7 +400,7 @@ fn directory_size_bytes(root: &Path) -> Result<u64, String> {
     Ok(total)
 }
 
-#[cfg(all(not(target_os = "android"), windows))]
+#[cfg(windows)]
 fn desktop_platform_cache_root() -> PathBuf {
     std::env::var_os("LOCALAPPDATA")
         .map(PathBuf::from)
@@ -426,7 +412,7 @@ fn desktop_platform_cache_root() -> PathBuf {
         .unwrap_or_else(std::env::temp_dir)
 }
 
-#[cfg(all(not(target_os = "android"), target_os = "macos"))]
+#[cfg(target_os = "macos")]
 fn desktop_platform_cache_root() -> PathBuf {
     std::env::var_os("HOME")
         .map(PathBuf::from)
@@ -434,7 +420,7 @@ fn desktop_platform_cache_root() -> PathBuf {
         .unwrap_or_else(std::env::temp_dir)
 }
 
-#[cfg(all(not(target_os = "android"), unix, not(target_os = "macos")))]
+#[cfg(all(unix, not(target_os = "macos")))]
 fn desktop_platform_cache_root() -> PathBuf {
     std::env::var_os("XDG_CACHE_HOME")
         .map(PathBuf::from)
@@ -442,12 +428,11 @@ fn desktop_platform_cache_root() -> PathBuf {
         .unwrap_or_else(std::env::temp_dir)
 }
 
-#[cfg(all(not(target_os = "android"), not(any(unix, windows))))]
+#[cfg(not(any(unix, windows)))]
 fn desktop_platform_cache_root() -> PathBuf {
     std::env::temp_dir()
 }
 
-#[cfg(not(target_os = "android"))]
 pub fn desktop_cache_path_for_raw(raw_path: &Path, suffix: &str) -> PathBuf {
     let identity = fs::canonicalize(raw_path).unwrap_or_else(|_| {
         if raw_path.is_absolute() {
@@ -464,13 +449,13 @@ pub fn desktop_cache_path_for_raw(raw_path: &Path, suffix: &str) -> PathBuf {
         .join(format!("{key:016x}{suffix}"))
 }
 
-#[cfg(all(not(target_os = "android"), unix))]
+#[cfg(unix)]
 fn desktop_path_fingerprint(path: &Path) -> u64 {
     use std::os::unix::ffi::OsStrExt;
     fnv1a64(path.as_os_str().as_bytes())
 }
 
-#[cfg(all(not(target_os = "android"), windows))]
+#[cfg(windows)]
 fn desktop_path_fingerprint(path: &Path) -> u64 {
     use std::os::windows::ffi::OsStrExt;
 
@@ -484,12 +469,11 @@ fn desktop_path_fingerprint(path: &Path) -> u64 {
     hash
 }
 
-#[cfg(all(not(target_os = "android"), not(any(unix, windows))))]
+#[cfg(not(any(unix, windows)))]
 fn desktop_path_fingerprint(path: &Path) -> u64 {
     fnv1a64(path.to_string_lossy().as_bytes())
 }
 
-#[cfg(not(target_os = "android"))]
 fn desktop_raw_stamp(raw_path: &Path) -> Result<String, String> {
     let metadata = fs::metadata(raw_path)
         .map_err(|error| format!("could not inspect RAW {}: {error}", raw_path.display()))?;
@@ -609,7 +593,6 @@ mod tests {
         let _ = fs::remove_file(path);
     }
 
-    #[cfg(not(target_os = "android"))]
     #[test]
     fn tiff_raw_thumbnail_stamp_uses_current_color_pipeline_generation() {
         let root = temporary_test_path("stamp-generation");
@@ -624,7 +607,6 @@ mod tests {
         fs::remove_dir_all(root).unwrap();
     }
 
-    #[cfg(not(target_os = "android"))]
     #[test]
     fn desktop_cache_path_is_private_and_not_sibling_scoped() {
         let raw = Path::new("photos/a.CR3");
@@ -635,7 +617,6 @@ mod tests {
         assert_ne!(cache.parent(), raw.parent());
     }
 
-    #[cfg(not(target_os = "android"))]
     #[test]
     fn thumbnail_cache_size_counts_nested_cache_files() {
         let root = temporary_test_path("size");

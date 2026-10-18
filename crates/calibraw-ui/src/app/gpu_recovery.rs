@@ -3,48 +3,68 @@
 
 use super::*;
 
-/// Set in a process started by `restart_command`, so a GPU that fails again
-/// right away does not restart CalibRaw in a loop.
-const RESTARTED_AFTER_GPU_LOSS: &str = "CALIBRAW_RESTARTED_AFTER_GPU_LOSS";
+/// When AI had `activity` on the GPU, for a message: "while … was running".
+fn during(activity: &calibraw_ai::GpuAiActivity) -> String {
+    match activity {
+        calibraw_ai::GpuAiActivity::Job(job) => format!("while {job} was running"),
+        calibraw_ai::GpuAiActivity::IdleModel(model) => format!("while {model} was loaded"),
+    }
+}
 
 impl CalibRawApp {
-    /// Turns GPU AI off when the previous run ended during `job` on the GPU,
-    /// as `calibraw_ai::set_gpu_job_record_path` reports it.
-    pub(in crate::app) fn handle_interrupted_gpu_ai_job(&mut self, job: &str) {
-        calibraw_core::diagnostics::record(format!("previous run ended during GPU AI job: {job}"));
+    /// Turns GPU AI off when the previous run ended during `activity` on the
+    /// GPU, as `calibraw_ai::configure` reports it.
+    pub(in crate::app) fn handle_interrupted_gpu_ai(
+        &mut self,
+        activity: &calibraw_ai::GpuAiActivity,
+    ) {
+        calibraw_core::diagnostics::record(match activity {
+            calibraw_ai::GpuAiActivity::Job(job) => {
+                format!("previous run ended during GPU AI job: {job}")
+            }
+            calibraw_ai::GpuAiActivity::IdleModel(model) => {
+                format!("previous run ended with an AI model loaded on the GPU: {model}")
+            }
+        });
         self.set_ai_gpu_acceleration(false);
         self.report_error(
             ErrorKind::GpuAi,
             format!(
-                "CalibRaw closed unexpectedly last time while {job} was running. AI tools now use the CPU; you can turn GPU acceleration back on in Settings."
+                "CalibRaw closed unexpectedly last time {}. AI tools now use the CPU; you can turn GPU acceleration back on in Settings.",
+                during(activity)
             ),
         );
     }
 
     /// Saves and restarts after the GPU device was lost, usually a driver
     /// reset. Nothing can be drawn on a lost device, so the notice is a native
-    /// dialog. A GPU AI job that was running switches AI to the CPU first.
+    /// dialog. A GPU AI job that was running, or a model loaded on the GPU,
+    /// switches AI to the CPU first: a loaded model's memory alone can drive
+    /// the GPU into paging and a reset.
     pub(in crate::app) fn handle_gpu_device_loss(&mut self, ctx: &egui::Context) {
         if calibraw_gpu::take_gpu_device_lost().is_none() {
             return;
         }
-        let ai_job = calibraw_ai::gpu_job_in_progress()
-            .or_else(|| calibraw_ai::take_ai_gpu_failure().map(|_| "an AI model".to_owned()));
-        if ai_job.is_some() {
+        let ai_activity = calibraw_ai::gpu_ai_activity().or_else(|| {
+            calibraw_ai::take_ai_gpu_device_loss()
+                .then(|| calibraw_ai::GpuAiActivity::Job("an AI model".to_owned()))
+        });
+        if ai_activity.is_some() {
             self.set_ai_gpu_acceleration(false);
         }
         let save_failure = self.save_edits_before_exit();
 
-        let restart = restart_command();
+        let restart = self.platform.restart_after_gpu_loss_command();
         let mut message =
             "The graphics driver reset the GPU, so CalibRaw cannot continue.".to_owned();
         match &save_failure {
             None => message.push_str(" Your edits were saved."),
             Some(error) => message.push_str(&format!(" {error}.")),
         }
-        if let Some(job) = &ai_job {
+        if let Some(activity) = &ai_activity {
             message.push_str(&format!(
-                " This happened while {job} was running, so AI tools now use the CPU. You can turn GPU acceleration back on in Settings."
+                " This happened {}, so AI tools now use the CPU. You can turn GPU acceleration back on in Settings.",
+                during(activity)
             ));
         }
         message.push_str(if restart.is_some() {
@@ -52,12 +72,7 @@ impl CalibRawApp {
         } else {
             " Please start CalibRaw again."
         });
-        rfd::MessageDialog::new()
-            .set_level(rfd::MessageLevel::Error)
-            .set_title("CalibRaw has to restart")
-            .set_description(message)
-            .set_buttons(rfd::MessageButtons::Ok)
-            .show();
+        crate::platform::show_fatal_message("CalibRaw has to restart", &message);
 
         // This loss has been reported; the next start must not find the record
         // of a job that is still running and report it again.
@@ -78,25 +93,4 @@ impl CalibRawApp {
         self.flush_sidecar_on_exit();
         self.persistence.sidecar_save_error_dialog.take()
     }
-}
-
-/// This program with its arguments, or `None` where a restart cannot work:
-/// after a restart that already followed a GPU loss, and inside Flatpak,
-/// whose sandbox ends with this process.
-fn restart_command() -> Option<std::process::Command> {
-    if std::env::var_os(RESTARTED_AFTER_GPU_LOSS).is_some()
-        || std::env::var_os("FLATPAK_ID").is_some()
-    {
-        return None;
-    }
-    // An AppImage runs from a temporary mount; restart the image itself.
-    let program = match std::env::var_os("APPIMAGE") {
-        Some(image) => PathBuf::from(image),
-        None => std::env::current_exe().ok()?,
-    };
-    let mut command = std::process::Command::new(program);
-    command
-        .args(std::env::args_os().skip(1))
-        .env(RESTARTED_AFTER_GPU_LOSS, "1");
-    Some(command)
 }

@@ -74,19 +74,21 @@ fn mask_crop_reuse_handles_navigation_image_edges_and_large_imported_widths() {
     );
 }
 
-#[cfg(not(target_os = "android"))]
 #[test]
 fn zoom_drag_mapping_refines_all_layers_and_release_keeps_the_last_edit() {
-    let instance = wgpu::Instance::default();
-    let Ok(adapter) = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-        force_fallback_adapter: true,
-        ..Default::default()
-    })) else {
-        eprintln!("zoom mask interaction test skipped: no headless GPU adapter");
-        return;
+    let gpu = calibraw_gpu::request_headless_device(&calibraw_gpu::HeadlessDeviceRequest {
+        label: "zoom mask interaction test",
+        adapter: calibraw_gpu::HeadlessAdapter::Software,
+        texture_dimension: wgpu::Limits::default().max_texture_dimension_2d,
+    });
+    let (device, queue) = match gpu {
+        Ok(gpu) => (gpu.device, gpu.queue),
+        Err(calibraw_gpu::HeadlessDeviceError::NoAdapter(_)) => {
+            eprintln!("zoom mask interaction test skipped: no headless GPU adapter");
+            return;
+        }
+        Err(error) => panic!("{error}"),
     };
-    let (device, queue) =
-        pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default())).unwrap();
     let raw =
         Arc::new(LoadedRaw::from_scene_linear_rec2020(256, 192, vec![0.2; 256 * 192 * 3]).unwrap());
     let full_raw = Arc::new(

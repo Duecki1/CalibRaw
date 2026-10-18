@@ -1,6 +1,5 @@
 use super::*;
 
-#[cfg(not(target_os = "android"))]
 fn set_develop_sidebar_panel_width(ctx: &egui::Context, panel_id: egui::Id, width: f32) {
     ctx.data_mut(|data| {
         data.insert_persisted(panel_id.with("user-width"), width);
@@ -19,7 +18,6 @@ fn set_develop_sidebar_panel_width(ctx: &egui::Context, panel_id: egui::Id, widt
     });
 }
 
-#[cfg(not(target_os = "android"))]
 fn dragged_develop_sidebar_width(
     ctx: &egui::Context,
     panel_id: egui::Id,
@@ -58,8 +56,7 @@ impl CalibRawApp {
         }
         self.masks.source_cache = None;
         self.ai.object_cache = None;
-        #[cfg(not(target_os = "android"))]
-        if self.ai.gpu_acceleration {
+        if self.caps().configurable_ai_runtime && self.ai.gpu_acceleration {
             self.set_ai_gpu_acceleration(false);
         }
         self.release_optional_gpu_memory();
@@ -70,34 +67,48 @@ impl CalibRawApp {
 impl CalibRawApp {
     /// Reports GPU failures of AI or processing work that CalibRaw survived.
     fn handle_gpu_failures(&mut self) {
-        match calibraw_ai::take_ai_gpu_failure() {
-            Some(calibraw_ai::AiGpuFailure::OutOfMemory) => {
+        // An AI model that runs out of GPU memory finishes its job on the CPU
+        // instead; Settings show where each model runs.
+        if calibraw_ai::take_ai_gpu_device_loss() {
+            self.stop_ai_after_gpu_failure();
+            self.report_error(
+                ErrorKind::GpuAi,
+                "The GPU stopped responding while an AI model ran on it. The job was stopped and AI tools now use the CPU; you can turn GPU acceleration back on in Settings.",
+            );
+        }
+        if calibraw_gpu::take_gpu_out_of_memory() {
+            self.handle_gpu_out_of_memory(calibraw_ai::gpu_job_in_progress());
+        }
+    }
+
+    /// The editor, an export or a thumbnail render ran out of GPU memory
+    /// while `ai_gpu_job` ran on the GPU, if one did. Only an AI job on the
+    /// GPU competed for that memory, so only then is the job stopped and GPU
+    /// AI switched off. Otherwise optional preview textures and an idle AI
+    /// session left on the GPU are released, and AI work goes on.
+    fn handle_gpu_out_of_memory(&mut self, ai_gpu_job: Option<String>) {
+        match ai_gpu_job {
+            Some(job) => {
                 self.stop_ai_after_gpu_failure();
                 self.report_error(
                     ErrorKind::GpuMemory,
-                    "An AI model ran out of GPU memory. Its job was stopped, GPU AI was disabled, and optional preview textures were released. You can re-enable GPU AI in Settings after reducing Subject mask quality.",
+                    format!(
+                        "GPU memory was exhausted while {job} was running. CalibRaw stopped the AI job, switched AI tools to the CPU and released optional preview textures. You can turn GPU acceleration back on in Settings."
+                    ),
                 );
             }
-            Some(calibraw_ai::AiGpuFailure::DeviceLost) => {
-                self.stop_ai_after_gpu_failure();
+            None => {
+                calibraw_ai::release_idle_gpu_session();
+                self.release_optional_gpu_memory();
                 self.report_error(
-                    ErrorKind::GpuAi,
-                    "The GPU stopped responding while an AI model ran on it. The job was stopped and AI tools now use the CPU; you can turn GPU acceleration back on in Settings.",
+                    ErrorKind::GpuMemory,
+                    "GPU memory was exhausted. CalibRaw released optional preview textures. Close other GPU-heavy apps or lower Preview Quality before retrying.",
                 );
             }
-            None => {}
-        }
-        if calibraw_gpu::take_gpu_out_of_memory() {
-            self.stop_ai_after_gpu_failure();
-            self.report_error(
-                ErrorKind::GpuMemory,
-                "GPU memory was exhausted. CalibRaw stopped AI work, disabled GPU AI, and released optional preview textures. Close other GPU-heavy apps or lower Preview Quality before retrying.",
-            );
         }
     }
 
     /// Imports RAW files dropped onto the window.
-    #[cfg(not(target_os = "android"))]
     fn import_dropped_files(&mut self, ctx: &egui::Context) {
         let dropped_paths = ctx.input(|input| {
             input
@@ -114,11 +125,10 @@ impl CalibRawApp {
     }
 
     /// Picker and publish results, the back button and system-bar safe areas.
-    #[cfg(target_os = "android")]
     fn handle_android_platform_events(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
         self.poll_android_picker(frame);
         self.poll_android_export_publish();
-        if calibraw_ffi::take_back_request() {
+        if self.platform.take_back_request() {
             if self.ui.error_dialogs.is_open() {
                 self.ui.error_dialogs.dismiss_current();
             } else if self.android_foreground_task_active() {
@@ -132,8 +142,9 @@ impl CalibRawApp {
             }
         }
 
-        let [left, top, right, bottom] =
-            calibraw_ffi::system_bar_insets_points(ui.ctx().pixels_per_point());
+        let [left, top, right, bottom] = self
+            .platform
+            .system_bar_insets_points(ui.ctx().pixels_per_point());
         if top > 0.0 {
             egui::Panel::top("android_status_bar_safe_area")
                 .resizable(false)
@@ -165,36 +176,34 @@ impl CalibRawApp {
         self.poll_load_worker(frame);
         self.poll_preview_rebuild_worker(frame);
         self.poll_preview_detail_rebuild_worker(frame);
-        #[cfg(not(target_os = "android"))]
-        self.poll_library_batch_export_worker();
+        let caps = self.caps();
+        if caps.has_folders() {
+            self.poll_library_batch_export_worker();
+        }
         self.poll_export_worker(frame);
-        #[cfg(target_os = "android")]
-        self.resume_android_library_batch_export_if_possible(frame);
+        if caps.has_media_library() {
+            self.resume_android_library_batch_export_if_possible(frame);
+        }
         self.poll_foreground_operation(frame);
         self.poll_library_ai_mask_refresh(frame);
-        #[cfg(not(target_os = "android"))]
-        self.poll_merge();
+        if caps.has_folders() {
+            self.poll_merge();
+        }
         self.resume_pending_ai_denoise(frame);
-        #[cfg(target_os = "android")]
-        self.sync_android_export_notification();
+        if caps.tasks_need_foreground {
+            self.sync_android_export_notification();
+        }
     }
 
     /// Edit-history, save and image-navigation shortcuts.
-    fn handle_keyboard_shortcuts(
-        &mut self,
-        ctx: &egui::Context,
-        #[cfg_attr(target_os = "android", allow(unused_variables))] frame: &mut eframe::Frame,
-    ) {
-        #[cfg(not(target_os = "android"))]
-        {
+    fn handle_keyboard_shortcuts(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+        if self.caps().is_desktop() {
             self.handle_edit_history_shortcuts(ctx);
             self.handle_sidecar_shortcut(ctx);
             if self.ui.active_tab == AppTab::Develop {
                 Develop::handle_image_navigation_shortcuts(ctx, self, frame);
             }
-        }
-        #[cfg(target_os = "android")]
-        if !self.android_foreground_task_active() {
+        } else if !self.android_foreground_task_active() {
             self.handle_edit_history_shortcuts(ctx);
             self.handle_sidecar_shortcut(ctx);
         }
@@ -230,12 +239,7 @@ impl CalibRawApp {
         {
             ctx.request_repaint_after(Duration::from_millis(80));
         }
-        #[cfg(not(target_os = "android"))]
-        if self.ui.desktop_picker_receiver.is_some() {
-            ctx.request_repaint_after(Duration::from_millis(120));
-        }
-        #[cfg(target_os = "android")]
-        if self.android.picker_pending {
+        if self.ui.desktop_picker_receiver.is_some() || self.android.picker_pending {
             ctx.request_repaint_after(Duration::from_millis(120));
         }
     }
@@ -249,15 +253,15 @@ impl CalibRawApp {
         self.show_ai_consent_dialog(ctx, frame);
         self.show_sidecar_save_error_dialog(ctx);
         self.show_missing_lens_profile_dialog(ctx);
-        #[cfg(not(target_os = "android"))]
         self.show_runtime_restart_dialog(ctx);
         crate::ui::manual_lens_dialog::show(ctx, self);
         crate::ui::presets::show_dialogs(ctx, self);
         self.show_error_dialog(ctx);
         self.show_foreground_operation_dialog(ctx);
         self.show_remove_progress_dialog(ctx);
-        #[cfg(not(target_os = "android"))]
-        crate::ui::shortcuts_dialog::show(ctx, self);
+        if self.caps().is_desktop() {
+            crate::ui::shortcuts_dialog::show(ctx, self);
+        }
         self.show_tip_dialog(ctx);
     }
 
@@ -273,25 +277,28 @@ impl CalibRawApp {
 
 impl eframe::App for CalibRawApp {
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
-        #[cfg(not(target_os = "android"))]
-        self.handle_gpu_device_loss(ui.ctx());
+        let caps = self.caps();
+        if caps.can_restart {
+            self.handle_gpu_device_loss(ui.ctx());
+        }
         self.handle_gpu_failures();
         self.release_retired_egui_textures(frame);
         self.poll_version_check();
-        #[cfg(not(target_os = "android"))]
-        let raw_drop_hovered = ui.ctx().input(|input| !input.raw.hovered_files.is_empty());
-        #[cfg(not(target_os = "android"))]
-        self.import_dropped_files(ui.ctx());
+        // Photos dropped onto the window are copied into the open folder.
+        let raw_drop_hovered =
+            caps.has_folders() && ui.ctx().input(|input| !input.raw.hovered_files.is_empty());
+        if caps.has_folders() {
+            self.import_dropped_files(ui.ctx());
+        }
 
-        #[cfg(not(target_os = "android"))]
         self.poll_desktop_picker(frame);
-        #[cfg(target_os = "android")]
-        self.handle_android_platform_events(ui, frame);
+        if caps.is_mobile() {
+            self.handle_android_platform_events(ui, frame);
+        }
 
         self.poll_workers(frame);
         self.handle_keyboard_shortcuts(ui.ctx(), frame);
 
-        #[cfg(target_os = "android")]
         if self.android_foreground_task_active() {
             show_android_foreground_task_blocker(ui.ctx());
         }
@@ -301,16 +308,10 @@ impl eframe::App for CalibRawApp {
         let sidebar_size = layout.sidebar_default_size(viewport_size);
 
         let overlay_develop = self.ui.active_tab == AppTab::Develop
-            && (layout == ScreenLayout::Vertical || cfg!(target_os = "android"));
+            && (layout == ScreenLayout::Vertical || caps.is_mobile());
         self.refresh_status();
-        #[cfg(not(target_os = "android"))]
-        if !overlay_develop {
-            egui::Panel::top("top_bar")
-                .frame(moduwu_design::toolbar_frame(ui))
-                .show(ui, |ui| TopBar::show(ui, self, frame));
-        }
-        #[cfg(target_os = "android")]
-        if self.ui.active_tab == AppTab::Develop && !overlay_develop {
+        // On mobile the library and settings draw their own headers.
+        if !overlay_develop && (caps.is_desktop() || self.ui.active_tab == AppTab::Develop) {
             egui::Panel::top("top_bar")
                 .frame(moduwu_design::toolbar_frame(ui))
                 .show(ui, |ui| TopBar::show(ui, self, frame));
@@ -318,8 +319,7 @@ impl eframe::App for CalibRawApp {
 
         if self.ui.active_tab == AppTab::Develop && !overlay_develop {
             match layout {
-                ScreenLayout::Horizontal => {
-                    #[cfg(not(target_os = "android"))]
+                ScreenLayout::Horizontal if caps.is_desktop() => {
                     {
                         egui::Panel::right(crate::ui::layout::DEVELOP_TOOL_RAIL_ID)
                             .resizable(false)
@@ -360,24 +360,6 @@ impl eframe::App for CalibRawApp {
                         }
                     }
 
-                    #[cfg(target_os = "android")]
-                    egui::Panel::right("develop_android_landscape_primary_tabs")
-                        .resizable(false)
-                        .exact_size(Sidebar::ANDROID_LANDSCAPE_TOOL_RAIL_WIDTH)
-                        .frame(moduwu_design::panel_frame(ui))
-                        .show(ui, |ui| {
-                            Sidebar::show_android_landscape_primary_tabs(ui, self)
-                        });
-
-                    #[cfg(target_os = "android")]
-                    egui::Panel::right(crate::ui::layout::DEVELOP_SIDEBAR_ID)
-                        .resizable(true)
-                        .min_size(ScreenLayout::MIN_HORIZONTAL_SIDEBAR_WIDTH)
-                        .default_size(sidebar_size)
-                        .frame(moduwu_design::panel_frame(ui))
-                        .show(ui, |ui| Sidebar::show(ui, self, layout, frame));
-
-                    #[cfg(not(target_os = "android"))]
                     if self.develop_ui.sidebar_open && self.ui.sidebar_tab == SidebarTab::Masks {
                         egui::Panel::right(crate::ui::layout::DEVELOP_MASK_STRIP_ID)
                             .resizable(false)
@@ -387,7 +369,23 @@ impl eframe::App for CalibRawApp {
                                 Sidebar::show_horizontal_mask_strip(ui, self, frame)
                             });
                     }
-                    #[cfg(target_os = "android")]
+                }
+                ScreenLayout::Horizontal => {
+                    egui::Panel::right("develop_android_landscape_primary_tabs")
+                        .resizable(false)
+                        .exact_size(Sidebar::ANDROID_LANDSCAPE_TOOL_RAIL_WIDTH)
+                        .frame(moduwu_design::panel_frame(ui))
+                        .show(ui, |ui| {
+                            Sidebar::show_android_landscape_primary_tabs(ui, self)
+                        });
+
+                    egui::Panel::right(crate::ui::layout::DEVELOP_SIDEBAR_ID)
+                        .resizable(true)
+                        .min_size(ScreenLayout::MIN_HORIZONTAL_SIDEBAR_WIDTH)
+                        .default_size(sidebar_size)
+                        .frame(moduwu_design::panel_frame(ui))
+                        .show(ui, |ui| Sidebar::show(ui, self, layout, frame));
+
                     if self.ui.sidebar_tab == SidebarTab::Masks {
                         egui::Panel::right(crate::ui::layout::DEVELOP_MASK_STRIP_ID)
                             .resizable(false)
@@ -402,8 +400,8 @@ impl eframe::App for CalibRawApp {
             }
         }
 
-        #[cfg(not(target_os = "android"))]
-        if self.ui.active_tab == AppTab::Develop
+        if caps.is_desktop()
+            && self.ui.active_tab == AppTab::Develop
             && !overlay_develop
             && self.develop_ui.filmstrip_open
         {
@@ -414,8 +412,7 @@ impl eframe::App for CalibRawApp {
         }
 
         if self.ui.active_tab == AppTab::Library && self.library.folder_sidebar_open() {
-            #[cfg(not(target_os = "android"))]
-            {
+            if caps.is_desktop() {
                 const LIBRARY_MIN_SIDEBAR_WIDTH: f32 = 300.0;
                 let aligned_width =
                     TopBar::library_sidebar_default_width(ui.ctx(), ui.max_rect().left())
@@ -432,17 +429,17 @@ impl eframe::App for CalibRawApp {
                     .default_size(default_width)
                     .frame(moduwu_design::panel_frame(ui))
                     .show(ui, |ui| Library::show_folder_sidebar(ui, self));
+            } else {
+                egui::Panel::left("library_folder_sidebar")
+                    .resizable(false)
+                    .exact_size(
+                        (viewport_size.x * 0.84)
+                            .clamp(220.0, 380.0)
+                            .min(viewport_size.x.max(1.0)),
+                    )
+                    .frame(moduwu_design::panel_frame(ui))
+                    .show(ui, |ui| Library::show_folder_sidebar(ui, self));
             }
-            #[cfg(target_os = "android")]
-            egui::Panel::left("library_folder_sidebar")
-                .resizable(false)
-                .exact_size(
-                    (viewport_size.x * 0.84)
-                        .clamp(220.0, 380.0)
-                        .min(viewport_size.x.max(1.0)),
-                )
-                .frame(moduwu_design::panel_frame(ui))
-                .show(ui, |ui| Library::show_folder_sidebar(ui, self));
         }
 
         self.flush_mask_geometry_interaction();
@@ -461,10 +458,11 @@ impl eframe::App for CalibRawApp {
                 crate::ui::develop_viewport::show(ui, self, frame)
             }
             AppTab::Develop => {
-                #[cfg(not(target_os = "android"))]
-                Develop::show_preview(ui, self, frame);
-                #[cfg(target_os = "android")]
-                self.show_preview(ui, frame, None);
+                if caps.is_desktop() {
+                    Develop::show_preview(ui, self, frame);
+                } else {
+                    self.show_preview(ui, frame, None);
+                }
             }
             AppTab::Settings => {
                 let settings_scroll_source = if slider_scroll_locked(ui.ctx()) {
@@ -479,47 +477,37 @@ impl eframe::App for CalibRawApp {
             }
         });
         self.sync_ai_runtime();
-        #[cfg(not(target_os = "android"))]
         self.sync_discord_presence();
 
-        #[cfg(not(target_os = "android"))]
-        if self.ui.active_tab == AppTab::Develop {
+        if caps.is_desktop() && self.ui.active_tab == AppTab::Develop {
             crate::ui::library::show_library_action_overlays(ui, self, frame);
         }
 
         self.advance_background_work(ui.ctx(), frame);
-        #[cfg(not(target_os = "android"))]
         if raw_drop_hovered {
             show_raw_drop_overlay(ui, self.library.folder());
         }
         self.show_dialogs(ui.ctx(), frame);
         self.sync_persistence(ui.ctx(), frame);
-        // The only place the Android back-press routing is published: after
+        // The only place the system back-press routing is published: after
         // every view and handler has run, so it reflects this frame's state.
-        #[cfg(target_os = "android")]
-        calibraw_ffi::set_back_navigation_active(self.handles_back_navigation());
+        self.platform
+            .set_back_navigation_active(self.handles_back_navigation());
     }
 
     fn on_exit(&mut self) {
         calibraw_ai::set_warm_ai_features(calibraw_ai::AiFeatureSet::EMPTY);
         calibraw_ai::end_gpu_job_records();
-        #[cfg(not(target_os = "android"))]
         self.discord_presence.shutdown();
-        #[cfg(target_os = "android")]
-        {
-            if let Err(error) =
-                calibraw_ffi::clear_background_task_notification(&self.android.android_app)
-            {
-                log::warn!("{error}");
-            }
-            calibraw_ffi::detach_ui();
+        if let Err(error) = self.platform.clear_task_notification() {
+            log::warn!("{error}");
         }
+        self.platform.detach_ui();
         self.persist_performance_settings();
         self.flush_sidecar_on_exit();
     }
 }
 
-#[cfg(target_os = "android")]
 pub(super) fn show_android_foreground_task_blocker(ctx: &egui::Context) {
     let content_rect = ctx.content_rect();
     egui::Area::new(egui::Id::new("android-foreground-task-input-blocker"))
@@ -542,7 +530,6 @@ pub(super) fn show_android_foreground_task_blocker(ctx: &egui::Context) {
         });
 }
 
-#[cfg(not(target_os = "android"))]
 pub(super) fn show_raw_drop_overlay(ui: &egui::Ui, folder: Option<&std::path::Path>) {
     let rect = ui.max_rect().shrink(18.0);
     let painter = ui.ctx().layer_painter(egui::LayerId::new(
@@ -572,4 +559,24 @@ pub(super) fn show_raw_drop_overlay(ui: &egui::Ui, folder: Option<&std::path::Pa
         egui::FontId::proportional(18.0),
         egui::Color32::WHITE,
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Running out of GPU memory with no AI job on the GPU is not an AI
+    /// failure: GPU AI stays on and only optional textures are released.
+    #[test]
+    fn running_out_of_gpu_memory_without_gpu_ai_keeps_gpu_ai_on() {
+        let mut app = CalibRawApp::empty(&egui::Context::default());
+        assert!(app.ai.gpu_acceleration);
+        app.preview.zoom = 4.0;
+
+        app.handle_gpu_out_of_memory(None);
+
+        assert!(app.ai.gpu_acceleration);
+        assert_eq!(app.preview.zoom, 1.0);
+        assert!(app.ui.error_dialogs.is_open());
+    }
 }

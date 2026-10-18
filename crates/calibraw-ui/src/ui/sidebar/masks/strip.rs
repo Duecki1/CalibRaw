@@ -208,16 +208,14 @@ impl Sidebar {
             ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
         }
         let can_add_group = input.can_add_group();
-        #[cfg(target_os = "android")]
-        let overflow_clicked = {
+        // Touch has no secondary click; an overflow button opens the menu.
+        let overflow_clicked = crate::platform::PlatformCaps::CURRENT.is_mobile() && {
             let menu_id = ui.make_persistent_id(("android-mask-group-overflow", index));
             crate::ui::android_overflow_menu(ui, response.rect, menu_id, 22.0, |ui| {
                 Self::mask_group_context_menu(ui, mask, can_add_group, index, requests);
             })
             .clicked()
         };
-        #[cfg(not(target_os = "android"))]
-        let overflow_clicked = false;
         if response.clicked() && !overflow_clicked {
             requests.select_mask = Some(index);
         }
@@ -366,8 +364,7 @@ impl Sidebar {
             can_delete: component_count > 1,
             can_add_component: component_count < MAX_MASK_COMPONENTS,
         };
-        #[cfg(target_os = "android")]
-        let overflow_clicked = {
+        let overflow_clicked = crate::platform::PlatformCaps::CURRENT.is_mobile() && {
             let menu_id =
                 ui.make_persistent_id(("android-submask-overflow", mask_index, component_index));
             crate::ui::android_overflow_menu(ui, response.rect, menu_id, 20.0, |ui| {
@@ -375,8 +372,6 @@ impl Sidebar {
             })
             .clicked()
         };
-        #[cfg(not(target_os = "android"))]
-        let overflow_clicked = false;
         if response.clicked() && !overflow_clicked {
             requests.select_component = Some(component_index);
         }
@@ -625,7 +620,7 @@ fn card_drag_started(ui: &Ui, response: &egui::Response) -> bool {
     /// Matches the hold that shows the original preview.
     const HOLD_SECONDS: f64 = 0.35;
 
-    if !cfg!(target_os = "android") {
+    if !crate::platform::PlatformCaps::CURRENT.is_mobile() {
         return response.drag_started();
     }
     if !response.is_pointer_button_down_on() {

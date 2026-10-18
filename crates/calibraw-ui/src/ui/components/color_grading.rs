@@ -6,7 +6,6 @@ use eframe::egui::{self, Color32, Mesh, Pos2, Sense, Shape, Stroke, Ui};
 const WHEEL_MAX_SIZE: f32 = 190.0;
 const ANGULAR_SEGMENTS: usize = 96;
 const RADIAL_SEGMENTS: usize = 12;
-#[cfg(target_os = "android")]
 const ANDROID_TAB_RAIL_WIDTH: f32 = 72.0;
 
 const COLOR_GRADE_TABS: [(ColorGradeTab, &str, &str); 4] = [
@@ -49,35 +48,32 @@ fn color_grading_editor_contents(
     ui.set_width(editor_width);
     ui.set_max_width(editor_width);
 
-    #[cfg(not(target_os = "android"))]
-    moduwu_design::toolbar_row(ui, |ui| {
-        ui.strong("Four-way color grading");
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if moduwu_design::ghost_icon_button(
-                ui,
-                egui_phosphor::regular::ARROW_COUNTER_CLOCKWISE,
-                moduwu_design::toolbar_icon_size(),
-                "Reset all color grading",
-            )
-            .clicked()
-            {
-                grading.reset();
-                changed = true;
-            }
+    // Touch puts the tabs in a rail beside the wheel and drops the title row.
+    let touch = crate::platform::PlatformCaps::CURRENT.is_mobile();
+    if !touch {
+        moduwu_design::toolbar_row(ui, |ui| {
+            ui.strong("Four-way color grading");
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if moduwu_design::ghost_icon_button(
+                    ui,
+                    egui_phosphor::regular::ARROW_COUNTER_CLOCKWISE,
+                    moduwu_design::toolbar_icon_size(),
+                    "Reset all color grading",
+                )
+                .clicked()
+                {
+                    grading.reset();
+                    changed = true;
+                }
+            });
         });
-    });
 
-    #[cfg(not(target_os = "android"))]
-    {
         color_grade_tab_row(ui, selected);
         ui.add_space(moduwu_design::SPACE_XS);
 
         let (wheel_id, wheel) = selected_color_wheel(grading, *selected);
         changed |= ui.push_id(wheel_id, |ui| color_wheel(ui, wheel)).inner;
-    }
-
-    #[cfg(target_os = "android")]
-    {
+    } else {
         ui.horizontal(|ui| {
             color_grade_tab_rail(ui, selected);
             let (wheel_id, wheel) = selected_color_wheel(grading, *selected);
@@ -114,7 +110,6 @@ fn color_grading_editor_contents(
     changed
 }
 
-#[cfg(not(target_os = "android"))]
 fn color_grade_tab_row(ui: &mut Ui, selected: &mut ColorGradeTab) {
     ui.horizontal(|ui| {
         let segment_width =
@@ -130,7 +125,6 @@ fn color_grade_tab_row(ui: &mut Ui, selected: &mut ColorGradeTab) {
     });
 }
 
-#[cfg(target_os = "android")]
 fn color_grade_tab_rail(ui: &mut Ui, selected: &mut ColorGradeTab) {
     ui.vertical(|ui| {
         ui.spacing_mut().item_spacing.y =
@@ -158,7 +152,6 @@ fn selected_color_wheel(
     }
 }
 
-#[cfg(not(target_os = "android"))]
 fn color_wheel(ui: &mut Ui, wheel: &mut ColorGradeWheel) -> bool {
     let mut changed = false;
     changed |= color_wheel_toolbar(ui, wheel);
@@ -167,7 +160,6 @@ fn color_wheel(ui: &mut Ui, wheel: &mut ColorGradeWheel) -> bool {
     changed
 }
 
-#[cfg(not(target_os = "android"))]
 fn color_wheel_toolbar(ui: &mut Ui, wheel: &mut ColorGradeWheel) -> bool {
     let mut changed = false;
     moduwu_design::toolbar_row(ui, |ui| {

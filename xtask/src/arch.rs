@@ -73,32 +73,63 @@ const DEPENDENCY_RULES: &[DependencyRule] = &[
     },
 ];
 
-/// Modules that must stay free of some crates even though their package
-/// depends on them (a crate-level rule cannot express this).
+/// Modules that must stay free of some identifiers: crates their package
+/// depends on (a crate-level rule cannot express this), or `target_os`.
 struct SourceRule {
-    directory: &'static str,
+    /// Directories (searched recursively) and single `.rs` files.
+    paths: &'static [&'static str],
+    /// Directories under `paths` the rule does not apply to.
+    excluded: &'static [&'static str],
     forbidden: &'static [&'static str],
     reason: &'static str,
 }
 
-const SOURCE_RULES: &[SourceRule] = &[SourceRule {
-    directory: "crates/calibraw-ui/src/services",
-    forbidden: &["egui", "eframe", "egui_wgpu"],
-    reason: "application services are presentation-independent",
-}];
+const SOURCE_RULES: &[SourceRule] = &[
+    SourceRule {
+        paths: &["crates/calibraw-ui/src/services"],
+        excluded: &[],
+        forbidden: &["egui", "eframe", "egui_wgpu"],
+        reason: "application services are presentation-independent",
+    },
+    SourceRule {
+        paths: &[
+            "crates/calibraw-ai/src/models",
+            "crates/calibraw-ai/src/registry",
+            "crates/calibraw-ai/src/jobs.rs",
+            "crates/calibraw-ai/src/slot.rs",
+        ],
+        excluded: &[],
+        forbidden: &["target_os"],
+        reason: "AI model code reads capabilities and quirks, not the OS",
+    },
+    SourceRule {
+        paths: &["crates/calibraw-ui/src"],
+        excluded: &["crates/calibraw-ui/src/platform"],
+        forbidden: &[
+            "target_os",
+            "calibraw_ffi",
+            "rfd",
+            "zbus",
+            "env_logger",
+            "android_logger",
+        ],
+        reason: "UI code reads PlatformCaps and calls Platform; OS code lives in src/platform",
+    },
+];
 
 pub(crate) fn run() -> Result<()> {
     let root = workspace_root();
     let mut failures = Vec::new();
     for rule in SOURCE_RULES {
         let uses = forbidden_uses(&root, rule)?;
+        let paths = rule.paths.join(", ");
         if uses.is_empty() {
-            println!("ok    {}: {}", rule.directory, rule.reason);
+            println!("ok    {paths}: {}", rule.reason);
         } else {
             for (file, line, name) in &uses {
                 println!("FAIL  {file}:{line} uses `{name}`: {}", rule.reason);
             }
-            failures.push(rule.directory);
+            failures.push(paths);
         }
     }
     for rule in DEPENDENCY_RULES {
@@ -141,7 +172,7 @@ pub(crate) fn run() -> Result<()> {
                 violations.join(", "),
                 rule.reason
             );
-            failures.push(rule.package);
+            failures.push(rule.package.to_owned());
         }
     }
     if failures.is_empty() {
@@ -155,17 +186,31 @@ pub(crate) fn run() -> Result<()> {
 }
 
 /// `(file, line, identifier)` of every forbidden identifier in code (not
-/// comments or strings) below the rule's directory.
+/// comments or strings) in the rule's files.
 fn forbidden_uses(root: &Path, rule: &SourceRule) -> Result<Vec<(String, usize, String)>> {
-    let directory = root.join(rule.directory);
-    if !directory.is_dir() {
-        return Err(XtaskError::new(format!(
-            "architecture rule directory {} does not exist",
-            rule.directory
-        )));
+    let mut files = Vec::new();
+    for path in rule.paths {
+        let full = root.join(path);
+        if full.is_dir() {
+            files.extend(source_files(&full, &["rs"])?);
+        } else if full.is_file() {
+            files.push(full);
+        } else {
+            return Err(XtaskError::new(format!(
+                "architecture rule path {path} does not exist"
+            )));
+        }
     }
+    let excluded = rule
+        .excluded
+        .iter()
+        .map(|path| root.join(path))
+        .collect::<Vec<_>>();
     let mut uses = Vec::new();
-    for file in source_files(&directory, &["rs"])? {
+    for file in files {
+        if excluded.iter().any(|directory| file.starts_with(directory)) {
+            continue;
+        }
         let source = RustSource::new(fs::read_to_string(&file)?);
         uses.extend(
             identifier_uses(&source, rule.forbidden)

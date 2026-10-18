@@ -41,15 +41,12 @@ impl CalibRawApp {
         let can_retry = self.can_save_edits()
             && !self.sidecar_save_in_progress()
             && self.persistence.sidecar_failed_revision == Some(self.edit_commit_revision());
-        #[cfg(not(target_os = "android"))]
-        let can_recover =
-            self.persistence.sidecar_recovery.is_some() && !self.sidecar_save_in_progress();
+        // Only folder sidecars can be backed up beside the photo and replaced.
+        let has_recovery = self.caps().has_folders() && self.persistence.sidecar_recovery.is_some();
+        let can_recover = has_recovery && !self.sidecar_save_in_progress();
         let mut retry = false;
         let mut close = false;
-        #[cfg(not(target_os = "android"))]
         let mut recover = false;
-        #[cfg(not(target_os = "android"))]
-        let has_recovery = self.persistence.sidecar_recovery.is_some();
         let mut action = moduwu_design::DialogAction::None;
         moduwu_design::Dialog::new("sidecar-save-error", "Could not save edits")
             .size(moduwu_design::DialogSize::Wide)
@@ -63,7 +60,6 @@ impl CalibRawApp {
                             .selectable(true),
                     );
                     ui.small("This error was added to the log in Settings → Diagnostics.");
-                    #[cfg(not(target_os = "android"))]
                     if has_recovery {
                         ui.label("This sidecar uses an unsupported format or version. You can back up its exact contents and create a new sidecar with the edits currently in memory. Its previous review rating will not be carried over.");
                     }
@@ -77,7 +73,6 @@ impl CalibRawApp {
                         false,
                         moduwu_design::DialogKeyboard::CLOSE_ONLY,
                     );
-                    #[cfg(not(target_os = "android"))]
                     if has_recovery
                         && moduwu_design::secondary_button_enabled(
                             ui,
@@ -95,16 +90,12 @@ impl CalibRawApp {
             moduwu_design::DialogAction::Confirm => retry = true,
             moduwu_design::DialogAction::None => {}
         }
-        #[cfg(not(target_os = "android"))]
         let should_recover = recover;
-        #[cfg(target_os = "android")]
-        let should_recover = false;
         if retry {
             self.persistence.sidecar_save_error_dialog = None;
             self.persistence.sidecar_recovery = None;
             self.save_edits_now();
         } else if should_recover {
-            #[cfg(not(target_os = "android"))]
             self.recover_unsupported_sidecar();
         } else if close {
             self.persistence.sidecar_save_error_dialog = None;
@@ -112,12 +103,13 @@ impl CalibRawApp {
         }
     }
 
-    #[cfg(not(target_os = "android"))]
     fn recover_unsupported_sidecar(&mut self) {
         let Some(request) = self.persistence.sidecar_recovery.clone() else {
             return;
         };
-        let crate::sidecar::SidecarTarget::Desktop { raw_path } = &request.target;
+        let crate::sidecar::SidecarTarget::Desktop { raw_path } = &request.target else {
+            return;
+        };
         let current = self.persistence.sidecar_target.as_ref() == Some(&request.target);
         let edits = if current {
             self.capture_sidecar_edit_state()

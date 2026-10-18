@@ -31,7 +31,7 @@ pub(super) fn overlay_raster_region(
     let scale_y = (preview_rect.height().max(1.0) * pixels_per_point / visible_height).min(1.0);
     let mut texture_width = (region_width as f32 * scale_x).ceil().max(1.0) as u32;
     let mut texture_height = (region_height as f32 * scale_y).ceil().max(1.0) as u32;
-    let edge_limit = if cfg!(target_os = "android") {
+    let edge_limit = if crate::platform::PlatformCaps::CURRENT.constrained_memory() {
         2048
     } else {
         4096
@@ -59,7 +59,7 @@ pub(super) fn mask_overlay_raster_region(
         return region;
     }
 
-    let edge_limit = if cfg!(target_os = "android") {
+    let edge_limit = if crate::platform::PlatformCaps::CURRENT.constrained_memory() {
         384
     } else {
         512

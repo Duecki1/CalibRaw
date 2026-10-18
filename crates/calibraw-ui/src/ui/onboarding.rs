@@ -33,10 +33,6 @@ pub(crate) fn show(ctx: &egui::Context, app: &mut CalibRawApp) {
         Some(OnboardingAction::Finish) => {
             app.preferences.onboarding_completed = true;
             app.preferences.subject_mask_quality_chosen = true;
-            #[cfg(not(target_os = "android"))]
-            {
-                app.preferences.onnx_runtime_kind_chosen = true;
-            }
             app.ui.onboarding_step = None;
             if !app.persist_performance_settings() {
                 app.report_error(
@@ -64,9 +60,7 @@ fn show_step_body(
         OnboardingStep::SubjectMasks => show_subject_masks(ui, app),
         OnboardingStep::CopyPaste => show_copy_paste(ui, app),
         OnboardingStep::ExportNames => show_export_names(ui, app),
-        #[cfg(not(target_os = "android"))]
         OnboardingStep::CameraProfiles => show_camera_profiles(ui, app),
-        #[cfg(not(target_os = "android"))]
         OnboardingStep::Discord => show_discord(ui, app),
     }
 }
@@ -172,15 +166,6 @@ fn show_subject_masks(ui: &mut egui::Ui, app: &mut CalibRawApp) {
     crate::ui::settings::subject_mask_quality_control(ui, app, "onboarding-subject-mask-quality");
     ui.add_space(moduwu_design::SPACE_SM);
     ui.small(crate::ui::settings::subject_mask_quality_descriptions());
-    #[cfg(not(target_os = "android"))]
-    if crate::ui::settings::automatic_runtime_kind_offered(app) {
-        ui.add_space(moduwu_design::SPACE_SM);
-        crate::ui::settings::automatic_runtime_kind_control(
-            ui,
-            app,
-            "onboarding-automatic-runtime-kind",
-        );
-    }
 }
 
 fn show_copy_paste(ui: &mut egui::Ui, app: &mut CalibRawApp) {
@@ -237,13 +222,11 @@ fn show_export_names(ui: &mut egui::Ui, app: &mut CalibRawApp) {
     crate::ui::settings::export_name_template_controls(ui, app, "onboarding-export-name-template");
 }
 
-#[cfg(not(target_os = "android"))]
 fn show_camera_profiles(ui: &mut egui::Ui, app: &mut CalibRawApp) {
-    let auto_detect_available =
-        !crate::performance_settings::CAMERA_PROFILE_SEARCH_LOCATIONS.is_empty();
+    let auto_detect_available = !crate::platform::camera_profile_search_locations().is_empty();
     if auto_detect_available {
         ui.small("Auto-detect looks for a CameraProfiles folder in:");
-        for location in crate::performance_settings::CAMERA_PROFILE_SEARCH_LOCATIONS {
+        for location in crate::platform::camera_profile_search_locations() {
             ui.add(egui::Label::new(egui::RichText::new(*location).monospace().small()).wrap());
         }
         ui.add_space(moduwu_design::SPACE_SM);
@@ -291,7 +274,6 @@ fn show_camera_profiles(ui: &mut egui::Ui, app: &mut CalibRawApp) {
     }
 }
 
-#[cfg(not(target_os = "android"))]
 fn show_discord(ui: &mut egui::Ui, app: &mut CalibRawApp) {
     let mut enabled = app.preferences.discord_rich_presence;
     if moduwu_design::toggle_with_help(
@@ -340,28 +322,32 @@ fn show_navigation(
 }
 
 impl OnboardingStep {
-    /// Setup order; navigation and step numbers derive from it. Discord stays
-    /// last so builds without Rich Presence can drop it from the end.
+    /// Setup order; navigation and step numbers derive from it. Camera
+    /// profiles and Discord stay last so platforms without a camera profile
+    /// folder or Rich Presence can drop them from the end.
     const ALL: &'static [Self] = &[
         Self::Appearance,
         Self::Preview,
         Self::SubjectMasks,
         Self::CopyPaste,
         Self::ExportNames,
-        #[cfg(not(target_os = "android"))]
         Self::CameraProfiles,
-        #[cfg(not(target_os = "android"))]
         Self::Discord,
     ];
 
     /// `ALL` for builds without Discord Rich Presence.
-    #[cfg(not(target_os = "android"))]
     const ALL_WITHOUT_DISCORD: &'static [Self] = match Self::ALL.split_last() {
         Some((Self::Discord, rest)) => rest,
         _ => panic!("the Discord step must be the last setup step"),
     };
-    #[cfg(target_os = "android")]
-    const ALL_WITHOUT_DISCORD: &'static [Self] = Self::ALL;
+
+    /// `ALL` where camera profiles are imported through the system picker in
+    /// Settings, which has no Rich Presence either.
+    const ALL_WITHOUT_CAMERA_PROFILES: &'static [Self] =
+        match Self::ALL_WITHOUT_DISCORD.split_last() {
+            Some((Self::CameraProfiles, rest)) => rest,
+            _ => panic!("the camera profile step must precede the Discord step"),
+        };
 
     /// Steps added after setup first shipped, shown alone to users who
     /// finished an earlier setup.
@@ -369,21 +355,11 @@ impl OnboardingStep {
 
     /// The steps a user still has to go through, empty when none.
     pub(crate) fn pending(app: &CalibRawApp) -> &'static [Self] {
-        // The runtime choice joined the subject-mask step later, so users who
-        // can make it see that step again even with a quality chosen.
-        #[cfg(not(target_os = "android"))]
-        let runtime_kind_unchosen = !app.preferences.onnx_runtime_kind_chosen
-            && crate::ui::settings::automatic_runtime_kind_offered(app);
-        #[cfg(target_os = "android")]
-        let runtime_kind_unchosen = false;
-        #[cfg(not(target_os = "android"))]
-        let discord_supported = crate::desktop_portal::discord_presence_supported();
-        #[cfg(target_os = "android")]
-        let discord_supported = false;
         Self::pending_with(
             app.preferences.onboarding_completed,
-            app.preferences.subject_mask_quality_chosen && !runtime_kind_unchosen,
-            discord_supported,
+            app.preferences.subject_mask_quality_chosen,
+            app.caps().has_folders(),
+            crate::platform::discord::presence_supported(),
         )
     }
 
@@ -392,9 +368,11 @@ impl OnboardingStep {
     fn pending_with(
         onboarding_completed: bool,
         subject_masks_chosen: bool,
+        camera_profile_folders: bool,
         discord_supported: bool,
     ) -> &'static [Self] {
         match (onboarding_completed, subject_masks_chosen) {
+            (false, _) if !camera_profile_folders => Self::ALL_WITHOUT_CAMERA_PROFILES,
             (false, _) if discord_supported => Self::ALL,
             (false, _) => Self::ALL_WITHOUT_DISCORD,
             (true, false) => Self::CATCH_UP,
@@ -427,9 +405,7 @@ impl OnboardingStep {
             Self::SubjectMasks => "Subject masks",
             Self::CopyPaste => "Copy & paste setup",
             Self::ExportNames => "Export file names",
-            #[cfg(not(target_os = "android"))]
             Self::CameraProfiles => "Camera profiles",
-            #[cfg(not(target_os = "android"))]
             Self::Discord => "Discord Rich Presence",
         }
     }
@@ -451,11 +427,9 @@ impl OnboardingStep {
             Self::ExportNames => {
                 "Choose how CalibRaw names exported files. You can combine source details with your own text."
             }
-            #[cfg(not(target_os = "android"))]
             Self::CameraProfiles => {
                 "Choose where CalibRaw finds DCP camera profiles for your RAW files."
             }
-            #[cfg(not(target_os = "android"))]
             Self::Discord => {
                 "Choose whether Discord may show that you are browsing or editing in CalibRaw."
             }
@@ -490,7 +464,8 @@ mod tests {
 
     #[test]
     fn finished_setup_shows_only_steps_added_since() {
-        let pending = |completed, chosen| OnboardingStep::pending_with(completed, chosen, true);
+        let pending =
+            |completed, chosen| OnboardingStep::pending_with(completed, chosen, true, true);
         assert_eq!(pending(false, false), OnboardingStep::ALL);
         assert_eq!(pending(false, true), OnboardingStep::ALL);
         assert_eq!(pending(true, false), [OnboardingStep::SubjectMasks]);
@@ -504,36 +479,28 @@ mod tests {
         assert_eq!(steps[0].next(steps), None);
     }
 
-    #[cfg(not(target_os = "android"))]
-    #[test]
-    fn finished_setup_asks_once_for_an_offered_runtime_choice() {
-        let ctx = egui::Context::default();
-        crate::ui::theme::install(&ctx);
-        let mut app = CalibRawApp::empty(&ctx);
-        app.preferences.onboarding_completed = true;
-        app.preferences.subject_mask_quality_chosen = true;
-        app.preferences.onnx_runtime_kind_chosen = false;
-        let expected: &[OnboardingStep] =
-            if crate::ui::settings::automatic_runtime_kind_offered(&app) {
-                &[OnboardingStep::SubjectMasks]
-            } else {
-                &[]
-            };
-        assert_eq!(OnboardingStep::pending(&app), expected);
-        app.preferences.onnx_runtime_kind_chosen = true;
-        assert!(OnboardingStep::pending(&app).is_empty());
-    }
-
-    #[cfg(not(target_os = "android"))]
     #[test]
     fn builds_without_discord_skip_only_its_step() {
-        let steps = OnboardingStep::pending_with(false, false, false);
+        let steps = OnboardingStep::pending_with(false, false, true, false);
         assert!(!steps.contains(&OnboardingStep::Discord));
         assert_eq!(steps.len(), OnboardingStep::ALL.len() - 1);
         assert_eq!(steps.last(), Some(&OnboardingStep::CameraProfiles));
         assert_eq!(steps[steps.len() - 1].next(steps), None);
         assert_eq!(
-            OnboardingStep::pending_with(true, false, false),
+            OnboardingStep::pending_with(true, false, true, false),
+            [OnboardingStep::SubjectMasks]
+        );
+    }
+
+    #[test]
+    fn media_library_platforms_skip_camera_profiles_and_discord() {
+        let steps = OnboardingStep::pending_with(false, false, false, false);
+        assert!(!steps.contains(&OnboardingStep::CameraProfiles));
+        assert!(!steps.contains(&OnboardingStep::Discord));
+        assert_eq!(steps.len(), OnboardingStep::ALL.len() - 2);
+        assert_eq!(steps.last(), Some(&OnboardingStep::ExportNames));
+        assert_eq!(
+            OnboardingStep::pending_with(true, false, false, false),
             [OnboardingStep::SubjectMasks]
         );
     }
