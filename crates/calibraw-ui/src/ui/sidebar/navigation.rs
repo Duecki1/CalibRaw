@@ -473,7 +473,6 @@ impl Sidebar {
                 true,
             );
             changed |= presence_changed;
-            Self::show_global_effects(ui, app, frame, layout, added);
             changed |= Self::show_hsl(
                 ui,
                 &mut app.develop.exposure,
@@ -483,6 +482,7 @@ impl Sidebar {
                 true,
             );
             lens_changed |= Self::show_optics(ui, app, true);
+            Self::show_global_effects(ui, app, frame, layout, added);
         }
 
         if !white_balance_was_active && app.develop_ui.white_balance_picker_active {
@@ -503,10 +503,11 @@ impl Sidebar {
         }
     }
 
-    /// The global effects, drawn right after the Effects card so an added
-    /// effect's card appears below the button that added it: adds `added`,
-    /// then shows the scene depth update card while an effect needs depth, and
-    /// the effect cards. A vertical layout shows only the selected effect's card.
+    /// The global effects: adds `added`, then shows the scene depth update card
+    /// while an effect needs depth, and the effect cards. A vertical layout
+    /// shows only the selected effect's card, in the Effects section; a wide
+    /// one draws them all below every other card, ending with an Add effect
+    /// button ([`Self::show_effect_components`]).
     fn show_global_effects(
         ui: &mut Ui,
         app: &mut CalibRawApp,
@@ -622,5 +623,55 @@ impl Sidebar {
         if selection != previous {
             app.select_camera_profile_for_current(selection, frame);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::pipeline::EffectComponent;
+    use crate::ui::sidebar::test_support::{
+        add_effect_label, text_rect, text_rects, SidebarHarness,
+    };
+    use std::{cell::RefCell, rc::Rc};
+
+    #[test]
+    fn effect_cards_and_the_last_add_effect_button_follow_every_adjustment_card() {
+        let app = Rc::new(RefCell::new(CalibRawApp::empty(&egui::Context::default())));
+        app.borrow_mut()
+            .masks
+            .stack
+            .global_effects
+            .push(EffectComponent::new(MaskEffect::Fog));
+        let shown = Rc::clone(&app);
+        let frame = eframe::Frame::_new_kittest();
+        // Wider than tall for the desktop cards, and tall enough for them all.
+        let mut sidebar = SidebarHarness::new(egui::vec2(3000.0, 2800.0), 300.0, move |ui| {
+            Sidebar::show_adjustments(
+                ui,
+                &mut shown.borrow_mut(),
+                ScreenLayout::Horizontal,
+                &frame,
+            )
+        });
+
+        let (shapes, ()) = sidebar.render(Vec::new());
+        let title = |text| text_rect(&shapes, text).unwrap_or_else(|| panic!("{text} card"));
+        let button = *text_rects(&shapes, &add_effect_label())
+            .last()
+            .expect("Add effect button");
+        assert!(title("Lens Corrections").bottom() < title("Fog").top());
+        assert!(title("Fog").bottom() < button.top());
+
+        sidebar.pick(MaskEffect::Blur);
+        let effects: Vec<_> = app
+            .borrow()
+            .masks
+            .stack
+            .global_effects
+            .iter()
+            .map(|component| component.effect)
+            .collect();
+        assert_eq!(effects, [MaskEffect::Fog, MaskEffect::Blur]);
     }
 }

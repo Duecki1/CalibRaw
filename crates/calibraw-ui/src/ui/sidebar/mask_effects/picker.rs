@@ -285,100 +285,15 @@ fn effect_icon(effect: MaskEffect) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ui::sidebar::test_support::{text_rect, SidebarHarness};
 
-    fn text_rect(shapes: &[egui::epaint::ClippedShape], text: &str) -> Option<egui::Rect> {
-        fn find(shape: &egui::Shape, text: &str) -> Option<egui::Rect> {
-            match shape {
-                egui::Shape::Text(shape) if shape.galley.text() == text => {
-                    Some(egui::Rect::from_min_size(shape.pos, shape.galley.size()))
-                }
-                egui::Shape::Vec(shapes) => shapes.iter().find_map(|shape| find(shape, text)),
-                _ => None,
-            }
-        }
-        shapes.iter().find_map(|shape| find(&shape.shape, text))
+    /// A 280 px column in a portrait window.
+    fn column<T: Default>(contents: impl FnMut(&mut Ui) -> T + 'static) -> SidebarHarness<T> {
+        SidebarHarness::new(egui::vec2(320.0, 900.0), 280.0, contents)
     }
 
-    /// A 280 px sidebar column drawing `contents`, which returns what it
-    /// changed.
-    struct Column<T> {
-        ctx: egui::Context,
-        time: f64,
-        contents: Box<dyn FnMut(&mut Ui) -> T>,
-    }
-
-    impl<T: Default> Column<T> {
-        fn new(contents: impl FnMut(&mut Ui) -> T + 'static) -> Self {
-            let ctx = egui::Context::default();
-            crate::ui::theme::install(&ctx);
-            Self {
-                ctx,
-                time: 0.0,
-                contents: Box::new(contents),
-            }
-        }
-
-        fn render(&mut self, events: Vec<egui::Event>) -> (Vec<egui::epaint::ClippedShape>, T) {
-            self.time += 0.25;
-            let mut result = T::default();
-            let output = self.ctx.run_ui(
-                egui::RawInput {
-                    time: Some(self.time),
-                    screen_rect: Some(egui::Rect::from_min_size(
-                        egui::Pos2::ZERO,
-                        egui::vec2(320.0, 900.0),
-                    )),
-                    events,
-                    ..Default::default()
-                },
-                |ui| {
-                    ui.set_width(280.0);
-                    result = (self.contents)(ui);
-                },
-            );
-            (output.shapes, result)
-        }
-
-        /// Clicks at `position` and returns what the release changed.
-        fn click(&mut self, position: egui::Pos2) -> T {
-            let events = |pressed| {
-                vec![
-                    egui::Event::PointerMoved(position),
-                    egui::Event::PointerButton {
-                        pos: position,
-                        button: egui::PointerButton::Primary,
-                        pressed,
-                        modifiers: egui::Modifiers::NONE,
-                    },
-                ]
-            };
-            self.render(events(true));
-            self.render(events(false)).1
-        }
-
-        /// Clicks the Add effect button and returns where the picker shows
-        /// `effect`'s name, with the button's label rect.
-        fn open_picker(&mut self, effect: MaskEffect) -> Option<(egui::Rect, egui::Rect)> {
-            let add_label = format!("{}  Add effect", egui_phosphor::regular::PLUS);
-            let (shapes, _) = self.render(Vec::new());
-            let button = text_rect(&shapes, &add_label).expect("Add effect button");
-            self.click(button.center());
-            // A new popup lays itself out once before it is drawn.
-            (0..3)
-                .find_map(|_| text_rect(&self.render(Vec::new()).0, effect.label()))
-                .map(|tile| (tile, button))
-        }
-
-        fn pick(&mut self, effect: MaskEffect) -> T {
-            let (tile, _) = self
-                .open_picker(effect)
-                .unwrap_or_else(|| panic!("the picker shows {}", effect.label()));
-            self.click(tile.center())
-        }
-    }
-
-    fn controls(components: Vec<EffectComponent>) -> Column<Option<MaskEffect>> {
-        Column::new(move |ui| add_effect_controls(ui, &[MaskEffect::Grain], &components))
+    fn controls(components: Vec<EffectComponent>) -> SidebarHarness<Option<MaskEffect>> {
+        column(move |ui| add_effect_controls(ui, &[MaskEffect::Grain], &components))
     }
 
     #[test]
@@ -410,7 +325,7 @@ mod tests {
 
     #[test]
     fn picker_opens_above_a_button_near_the_window_bottom() {
-        let mut column = Column::new(|ui| {
+        let mut column = column(|ui| {
             ui.add_space(760.0);
             add_effect_button(ui, &[])
         });
@@ -436,7 +351,7 @@ mod tests {
         let components = Rc::new(RefCell::new(vec![EffectComponent::new(MaskEffect::Fog)]));
         let shown = Rc::clone(&components);
         let frame = super::super::EffectFrame::uncropped(3000, 2000);
-        let mut column = Column::new(move |ui| {
+        let mut column = column(move |ui| {
             super::super::super::Sidebar::show_effect_components(
                 ui,
                 &mut shown.borrow_mut(),
