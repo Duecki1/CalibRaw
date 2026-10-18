@@ -69,7 +69,7 @@ fn no_deferred_metadata(folder: &Path) -> DeferredDisplayMetadata {
     )
 }
 
-fn android_test_asset(name: impl Into<PathBuf>) -> LibraryAsset {
+pub(super) fn android_test_asset(name: impl Into<PathBuf>) -> LibraryAsset {
     let name = name.into().display().to_string();
     let uri = format!("content://calibraw.test/{name}");
     LibraryAsset {

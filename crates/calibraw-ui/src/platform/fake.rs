@@ -1,9 +1,9 @@
 //! A platform for tests: chosen capabilities, scripted media-library
 //! contents, and a record of the services the code under test called.
 
-use super::service::{LibraryDocument, LibraryFolder, Platform};
+use super::service::{ImportedLibraryDocument, LibraryDocument, LibraryFolder, Platform};
 use super::PlatformCaps;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 pub(crate) struct FakePlatform {
@@ -66,5 +66,23 @@ impl Platform for FakePlatform {
     fn open_library_document(&self, uri: &str, display_name: &str) -> Result<(), String> {
         self.record(format!("open_library_document {uri} {display_name}"));
         Ok(())
+    }
+
+    /// Records the imported name and size; the file is left where it was.
+    fn import_local_library_document(
+        &self,
+        raw_path: &Path,
+        display_name: &str,
+    ) -> Result<ImportedLibraryDocument, String> {
+        let bytes = std::fs::metadata(raw_path)
+            .map_err(|error| error.to_string())?
+            .len();
+        self.record(format!(
+            "import_local_library_document {display_name} {bytes}"
+        ));
+        Ok(ImportedLibraryDocument {
+            uri: format!("content://calibraw.test/{display_name}"),
+            display_name: display_name.to_owned(),
+        })
     }
 }

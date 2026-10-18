@@ -1,5 +1,5 @@
-//! The system notification for a running export, where tasks need the app in
-//! the foreground. The toolbar indicator is in
+//! The system notification for a running export or merge, where tasks need the
+//! app in the foreground. The toolbar indicator is in
 //! `app/background_tasks.rs`.
 
 use super::*;
@@ -7,7 +7,21 @@ use super::*;
 impl CalibRawApp {
     pub(crate) fn sync_android_export_notification(&self) {
         let Some(task) = self.export.task.as_ref() else {
-            if let Err(error) = self.platform.clear_task_notification() {
+            let result = match self.library.merge_task() {
+                Some(merge) => {
+                    self.platform
+                        .update_task_notification(crate::platform::TaskNotification {
+                            title: &format!("CalibRaw {}", merge.title),
+                            phase: &merge.detail,
+                            detail: None,
+                            progress_percent: 0,
+                            indeterminate: true,
+                            queued_count: 0,
+                        })
+                }
+                None => self.platform.clear_task_notification(),
+            };
+            if let Err(error) = result {
                 log::warn!("{error}");
             }
             return;

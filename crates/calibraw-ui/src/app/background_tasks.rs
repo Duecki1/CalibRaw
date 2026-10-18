@@ -45,11 +45,7 @@ impl CalibRawApp {
             return;
         };
         match outcome {
-            MergeOutcome::Saved(path) => {
-                let name = path
-                    .file_name()
-                    .map(|name| name.to_string_lossy().into_owned())
-                    .unwrap_or_else(|| path.display().to_string());
+            MergeOutcome::Saved(name) => {
                 let message = format!("{} saved: {name}", kind.title());
                 self.library.set_status(message.clone());
                 self.ui.notice = Some(message);
