@@ -24,11 +24,12 @@
 //                              how much of the veil removal may take.
 //   haze_guide_coefficients,   a guided filter (He, Sun and Tang, "Guided
 //   smooth_haze_coefficients   Image Filtering", 2010) on the grid. Pixels
-//                              evaluate its coefficients against their own
-//                              guide value (He and Sun, "Fast Guided Filter",
-//                              2015), so the transmission follows edges inside
-//                              a cell without reading neighbouring pixels and
-//                              Dehaze needs no export-tile halo.
+//                              evaluate its coefficients against the guide
+//                              value of their guide scene (He and Sun, "Fast
+//                              Guided Filter", 2015), a blur of a few pixels,
+//                              so the transmission follows edges inside a
+//                              cell while Dehaze reads only HAZE_GUIDE_SUPPORT
+//                              pixels around each pixel.
 
 struct HazeCell {
     // Darkest box mean of each channel (xyz) and the pixels counted (w).
@@ -98,6 +99,13 @@ const HAZE_GUIDE_RADIUS: i32 = 1;
 // units. Where the guide varies by less than about its square root across a
 // window, the transmission is smoothed instead of following the guide.
 const HAZE_GUIDE_EPSILON: f32 = 1e-3;
+// Largest change of transmission per unit of guide the filter's slope may
+// make. Separating a dark building (guide about 0.2, t about 0.9) from the
+// sky beside it (guide 1, t about 0.05) takes about 1. The residual noise of
+// the guide scene moves the transmission by the slope times that noise, and a
+// steeper slope, from guides that barely differ across a window, would turn it
+// into blotches.
+const HAZE_GUIDE_MAX_SLOPE: f32 = 2.0;
 
 var<workgroup> haze_best_score_bits: atomic<u32>;
 var<workgroup> haze_region_sums: array<vec4<f32>, HAZE_AIRLIGHT_THREADS>;
@@ -421,7 +429,12 @@ fn haze_guide_coefficients(@builtin(global_invocation_id) gid: vec3<u32>) {
         let means = sums / count;
         let variance = max(means.z - means.y * means.y, 0.0);
         let covariance = means.w - means.y * means.x;
-        let slope = covariance / (variance + HAZE_GUIDE_EPSILON);
+        let slope = clamp(
+            covariance / (variance + HAZE_GUIDE_EPSILON),
+            -HAZE_GUIDE_MAX_SLOPE,
+            HAZE_GUIDE_MAX_SLOPE,
+        );
+        // The offset keeps the window's mean transmission at its mean guide.
         coefficients = vec2<f32>(slope, means.x - slope * means.y);
     }
     let removal_share = textureLoad(haze_transmission_tex, cell, 0).w;

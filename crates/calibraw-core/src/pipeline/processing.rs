@@ -684,11 +684,12 @@ mod tests {
     }
 
     #[test]
-    fn dehaze_adds_no_export_halo() {
+    fn dehaze_fits_in_the_minimum_export_halo() {
         use crate::pipeline::MaskKind;
 
-        // Dehaze reads its own pixel and the full-image haze map, which the
-        // export prepass builds from every tile's core.
+        // Dehaze reads the full-image haze map, which the export prepass
+        // builds from every tile's core, and a guide scene of a few pixels
+        // that the tone guide's halo covers.
         let exposure = ExposureParams {
             sharpen_amount: 0.0,
             dehaze: 80.0,

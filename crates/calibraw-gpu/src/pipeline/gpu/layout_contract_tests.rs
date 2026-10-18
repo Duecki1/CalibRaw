@@ -18,8 +18,8 @@ use super::{
 use super::{DETAIL_PYRAMID_LEVELS, DETAIL_PYRAMID_TEXTURE_LEVELS};
 use crate::pipeline::MaskEffect;
 use calibraw_core::pipeline::{
-    DETAIL_CLARITY_SUPPORT, DETAIL_TEXTURE_SUPPORT, HAZE_BOX_SUPPORT, MAX_RESOLUTION_SCALE,
-    TONE_GUIDE_RADIUS_CELLS,
+    DETAIL_CLARITY_SUPPORT, DETAIL_TEXTURE_SUPPORT, HAZE_BOX_SUPPORT, HAZE_GUIDE_SUPPORT,
+    MAX_RESOLUTION_SCALE, TONE_GUIDE_RADIUS_CELLS,
 };
 use naga::proc::Layouter;
 use std::collections::BTreeSet;
@@ -534,9 +534,10 @@ fn tone_statistics_buffers_match_their_wgsl_declarations() {
 }
 
 /// The haze buffers Rust allocates hold the WGSL structs, and the export
-/// halo reserves how far the haze grid's boxes reach past a tile core.
+/// halo reserves how far the haze grid's boxes and Dehaze's guide scene reach
+/// past a tile core.
 #[test]
-fn haze_buffers_and_box_support_match_their_wgsl_declarations() {
+fn haze_buffers_and_supports_match_their_wgsl_declarations() {
     let modules = production_modules();
     let (_, haze_analysis) = modules
         .iter()
@@ -556,6 +557,10 @@ fn haze_buffers_and_box_support_match_their_wgsl_declarations() {
     assert_eq!(size_of("HazeAirlight"), HAZE_AIRLIGHT_BYTES);
     let box_max = u32_constant(haze_analysis, "HAZE_BOX_MAX").expect("WGSL declares HAZE_BOX_MAX");
     assert_eq!(box_max - 1, HAZE_BOX_SUPPORT);
+    assert_eq!(
+        shared_u32_constant(&modules, "HAZE_GUIDE_MAX_RADIUS"),
+        HAZE_GUIDE_SUPPORT
+    );
 }
 
 #[test]
