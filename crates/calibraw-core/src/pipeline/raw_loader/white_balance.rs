@@ -61,6 +61,20 @@ impl LoadedRaw {
         ))
     }
 
+    /// Stored offsets for the camera reference white, D65.
+    pub fn reference_white_balance_offsets(&self) -> Option<(f32, f32)> {
+        #[cfg(libraw_available)]
+        {
+            let (temperature, tint) =
+                libraw_loader::xyz_temperature_tint(crate::color_math::D65_XYZ)?;
+            self.white_balance_offsets_from_temperature_tint(temperature, tint)
+        }
+        #[cfg(not(libraw_available))]
+        {
+            None
+        }
+    }
+
     pub fn camera_white_balance_presets(&self) -> Vec<WhiteBalancePreset> {
         crate::pipeline::white_balance_presets::for_camera(&self.camera_make, &self.camera_model)
     }
