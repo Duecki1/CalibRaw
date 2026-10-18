@@ -76,7 +76,8 @@ pub(super) enum ViewTransformMode {
     /// A developed raster at the reference tone curve keeps its rendered values.
     Passthrough,
     /// Scene radiance (RAWs, camera-linear and scene-referred rasters) takes
-    /// the sigmoid view transform.
+    /// the sigmoid view transform. `scene_working_at` in scene_source.wgsl
+    /// also compresses these sources into Rec.2020.
     SceneSigmoid,
     /// A developed raster whose tone curve differs from the reference is
     /// retoned relative to it: each value is mapped back through the reference

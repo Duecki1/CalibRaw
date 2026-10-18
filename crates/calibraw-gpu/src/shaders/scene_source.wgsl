@@ -40,8 +40,17 @@ fn source_scene_at(pos: vec2<i32>) -> vec3<f32> {
     return rgb;
 }
 
+// Scene radiance (RAWs, camera-linear and float rasters) rather than a
+// developed photo. Rust's ViewTransformMode::select makes this decision and
+// gives exactly these sources the scene view transform.
+fn source_is_scene_referred() -> bool {
+    return Common::camera_uniforms.view_transform_mode == Common::VIEW_TRANSFORM_SCENE_SIGMOID;
+}
+
 // The source in linear working RGB, before camera characterization. Rasters
-// that are not camera-linear take their white balance here.
+// that are not camera-linear take their white balance here. Scene-referred
+// sources leave inside Rec.2020, so no later stage sees the negative channels
+// a camera matrix gives narrow-band light; developed photos keep their colours.
 fn scene_working_at(pos: vec2<i32>) -> vec3<f32> {
     let camera_rgb = source_scene_at(pos);
     var working = Color::cam_to_working(camera_rgb);
@@ -53,6 +62,9 @@ fn scene_working_at(pos: vec2<i32>) -> vec3<f32> {
             Common::camera_uniforms.temperature,
             Common::camera_uniforms.tint,
         );
+    }
+    if source_is_scene_referred() {
+        working = Color::compress_scene_gamut(working);
     }
     return working;
 }

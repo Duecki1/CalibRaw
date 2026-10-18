@@ -66,6 +66,8 @@ mod point_color_tests;
 #[cfg(test)]
 mod relight_tests;
 #[cfg(test)]
+mod scene_gamut_tests;
+#[cfg(test)]
 mod scene_lights_tests;
 #[cfg(test)]
 mod tests;
