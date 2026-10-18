@@ -4,10 +4,10 @@ use super::{
     ProcessingQuality, RawGpuPipeline, ViewTransformMode, COLOR_DENOISE_ENTRY_POINTS,
 };
 use crate::pipeline::{
-    extract_padded_tile, CameraProfile, CfaKind, CompactPixelMap, EffectComponent, ExportTile,
-    ExposureParams, HighlightReconstructionMethod, LoadedRaw, LocalMask, MaskEffect, MaskKind,
-    MaskStack, NativeRect, PointCurve, ProcessingStage, SigmoidColorProcessing,
-    TONE_GUIDE_CELL_SIZE,
+    extract_padded_tile, CameraProfile, CfaKind, CompactPixelMap, DenoiseQuality, EffectComponent,
+    ExportTile, ExposureParams, HighlightReconstructionMethod, LoadedRaw, LocalMask, MaskEffect,
+    MaskKind, MaskStack, NativeRect, NoiseProfile, PointCurve, ProcessingStage,
+    SigmoidColorProcessing, TONE_GUIDE_CELL_SIZE,
 };
 
 #[test]
@@ -433,6 +433,72 @@ fn half_mask_exposure_matches_half_the_ev_for_both_signs() -> anyhow::Result<()>
             );
         }
     }
+    Ok(())
+}
+
+/// Rendered photos denoise in their RAW stage like sensor sources, and every
+/// RAW stage starts again from the untouched raster source.
+#[test]
+fn raster_denoise_reruns_from_the_untouched_source() -> anyhow::Result<()> {
+    let Some((device, queue)) = request_test_device() else {
+        return Ok(());
+    };
+    const EDGE: u32 = 64;
+    // Mid-grey with independent per-channel noise of about 3% of the signal.
+    let mut state = 0x9e37_79b9_u32;
+    let rgb = (0..EDGE * EDGE * 3)
+        .map(|_| {
+            state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            0.2 * (1.0 + 0.1 * ((state >> 8) as f32 / (1u32 << 24) as f32 - 0.5))
+        })
+        .collect::<Vec<_>>();
+    let mut source = LoadedRaw::from_scene_linear_rec2020(EDGE, EDGE, rgb)?;
+    source.noise_profile =
+        NoiseProfile::estimate_raster(EDGE, EDGE, source.scene_linear_raster().unwrap());
+    let untouched = ExposureParams {
+        sharpen_amount: 0.0,
+        ..Default::default()
+    };
+    let denoised = ExposureParams {
+        luminance_denoise: 100.0,
+        chroma_denoise: 1.0,
+        denoise_quality: DenoiseQuality::High,
+        ..untouched
+    };
+    let masks = MaskStack::default();
+    let pipeline = RawGpuPipeline::new(
+        &device,
+        &queue,
+        &source,
+        &GpuParams::new(&untouched, &masks, &source),
+        PipelineOptions::new(ProcessingQuality::High),
+    )?;
+    let render = |exposure: &ExposureParams| -> anyhow::Result<Vec<f32>> {
+        pipeline.recompute(&queue, &device, &GpuParams::new(exposure, &masks, &source));
+        pipeline.read_display_linear_region_blocking(&device, &queue, 0, 0, EDGE, EDGE)
+    };
+    let variance = |rgb: &[f32]| {
+        let luma = rgb
+            .chunks_exact(3)
+            .map(|pixel| pixel.iter().sum::<f32>())
+            .collect::<Vec<_>>();
+        let mean = luma.iter().sum::<f32>() / luma.len() as f32;
+        luma.iter().map(|value| (value - mean).powi(2)).sum::<f32>() / luma.len() as f32
+    };
+
+    let original = render(&untouched)?;
+    let first = render(&denoised)?;
+    assert!(
+        variance(&first) < 0.5 * variance(&original),
+        "denoise kept {} of the noise variance",
+        variance(&first) / variance(&original)
+    );
+    assert_eq!(
+        render(&denoised)?,
+        first,
+        "a second RAW stage denoised again"
+    );
+    assert_eq!(render(&untouched)?, original, "denoise altered the source");
     Ok(())
 }
 
@@ -921,6 +987,7 @@ fn assert_planned_programs(pipeline: &RawGpuPipeline) {
             indices.scene_depth_guide_pass_index,
             "build_scene_depth_guide",
         ),
+        (indices.raster_finish_pass_index, "raster_finish"),
     ] {
         assert_eq!(entry(index), expected, "pass {index}");
     }
@@ -956,7 +1023,8 @@ fn pipelines_build_and_render_for_every_sensor_layout_and_quality() -> anyhow::R
             .map(|index| XTRANS[((index / EDGE) % 6) as usize][((index % EDGE) % 6) as usize])
             .collect(),
     );
-    for raw in [&bayer, &xtrans] {
+    let raster = tone_consistency_scene(EDGE, EDGE);
+    for raw in [&bayer, &xtrans, &raster] {
         let params = GpuParams::new(&ExposureParams::default(), &MaskStack::default(), raw);
         for quality in [ProcessingQuality::Preview, ProcessingQuality::High] {
             let pipeline =

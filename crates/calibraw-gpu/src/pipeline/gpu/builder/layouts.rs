@@ -270,6 +270,7 @@ pub(in crate::pipeline::gpu) fn create_bind_group_layouts(
         )
     });
 
+    // Also the raster finish's: both read one texture and write another.
     let bgl_color_denoise = reused_layout(plan.color_denoise_start_index).unwrap_or_else(|| {
         create_bind_group_layout(
             device,

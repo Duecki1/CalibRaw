@@ -132,6 +132,7 @@ pub(super) const BAYER_RCD_P4: ShaderSource = wgsl!("pass4.wgsl");
 pub(super) const DUAL_DEMOSAIC: ShaderSource = wgsl!("dual_demosaic.wgsl");
 pub(super) const XTRANS_DEMOSAIC: ShaderSource = wgsl!("xtrans_demosaic.wgsl");
 pub(super) const XTRANS_FINISH: ShaderSource = wgsl!("xtrans_finish.wgsl");
+pub(super) const RASTER_FINISH: ShaderSource = wgsl!("raster_finish.wgsl");
 pub(super) const COLOR_DENOISE: ShaderSource = wgsl!("color_denoise.wgsl");
 pub(super) const TONE_ANALYSIS: ShaderSource = wgsl!("tone_analysis.wgsl");
 pub(super) const SCENE_ADJUSTMENTS: ShaderSource = wgsl!("scene_adjustments.wgsl");
@@ -266,6 +267,8 @@ pub(super) const XTRANS_FINISH_ENTRY: EntryShader = entry(
     true,
     Some(CfaKind::XTrans),
 );
+pub(super) const RASTER_FINISH_ENTRY: EntryShader =
+    entry("calibraw raster finish", RASTER_FINISH, true, None);
 pub(super) const COLOR_DENOISE_ENTRY: EntryShader = entry(
     "calibraw multiscale color denoise",
     COLOR_DENOISE,
@@ -290,7 +293,7 @@ pub(super) const REMOVE_COMPOSITE_ENTRY: EntryShader = entry(
 
 /// Every entry shader, for validation and layout tests.
 #[cfg(test)]
-pub(super) const ALL_ENTRY_SHADERS: [EntryShader; 14] = [
+pub(super) const ALL_ENTRY_SHADERS: [EntryShader; 15] = [
     HIGHLIGHTS_ENTRY,
     BAYER_RCD_P1_ENTRY,
     BAYER_RCD_P2_ENTRY,
@@ -299,6 +302,7 @@ pub(super) const ALL_ENTRY_SHADERS: [EntryShader; 14] = [
     DUAL_DEMOSAIC_ENTRY,
     XTRANS_DEMOSAIC_ENTRY,
     XTRANS_FINISH_ENTRY,
+    RASTER_FINISH_ENTRY,
     COLOR_DENOISE_ENTRY,
     TONE_ANALYSIS_ENTRY,
     SCENE_ADJUSTMENTS_ENTRY,

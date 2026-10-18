@@ -450,6 +450,7 @@ pub struct RawGpuPipeline {
     _highlight_work_b: wgpu::Texture,
     _tex1: wgpu::Texture,
     _tex2: wgpu::Texture,
+    raster_source_texture: wgpu::Texture,
     scene_texture: wgpu::Texture,
     scene_format: wgpu::TextureFormat,
     has_ai_scene: bool,
@@ -666,11 +667,12 @@ impl RawGpuPipeline {
                 raw.is_pre_demosaiced_raster(),
                 "reusable raster pipeline received a sensor RAW tile"
             );
-            anyhow::ensure!(
-                upload_ai_scene_texture(queue, &self.scene_texture, self.scene_format, raw)?,
-                "reusable raster pipeline received a tile without scene-linear RGB"
+            return upload_raster_source_texture(
+                queue,
+                &self.raster_source_texture,
+                self.scene_format,
+                raw,
             );
-            return Ok(());
         }
 
         let ai_image = raw.ai_denoised_image();
@@ -935,13 +937,8 @@ impl RawGpuPipeline {
 
     fn encode_raw_stage(&self, encoder: &mut wgpu::CommandEncoder, params: &GpuParams) {
         if self.has_raster_scene {
-            if params.camera.chroma_denoise > 1e-6 {
-                self.encode_pass_range(
-                    encoder,
-                    self.indices.color_denoise_start_index,
-                    self.indices.color_denoise_end_index,
-                );
-            }
+            self.encode_pass(encoder, self.indices.raster_finish_pass_index);
+            self.encode_color_denoise(encoder, params);
             return;
         }
         if self.has_ai_scene && params.uses_ai_denoise() {
@@ -972,6 +969,11 @@ impl RawGpuPipeline {
             ],
             finish.workgroups,
         );
+        self.encode_color_denoise(encoder, params);
+    }
+
+    /// Filters the scene's colour noise in place when Color denoise is on.
+    fn encode_color_denoise(&self, encoder: &mut wgpu::CommandEncoder, params: &GpuParams) {
         if params.camera.chroma_denoise > 1e-6 {
             self.encode_pass_range(
                 encoder,

@@ -128,13 +128,27 @@ fn build_raster_region_proxy(
                 row[destination + 2] = (sum[2] / divisor) as f32;
             }
         });
-    raster_with_metadata(
+    let mut proxy = raster_with_metadata(
         raw,
         output_width,
         output_height,
         rgb,
         x == 0 && y == 0 && region_width == raw.width && region_height == raw.height,
-    )
+    );
+    // Box-filtered pixels average their footprint, so noise variance scales
+    // with the area ratio, as for sensor proxies.
+    proxy.noise_profile = raw.noise_profile.scaled_variance(area_ratio(
+        [output_width, output_height],
+        [region_width, region_height],
+    ));
+    proxy
+}
+
+/// The fraction of `region`'s area that `output` covers, at most 1.
+fn area_ratio(output: [u32; 2], region: [u32; 2]) -> f32 {
+    ((u64::from(output[0]) * u64::from(output[1])) as f64
+        / (u64::from(region[0]) * u64::from(region[1])) as f64)
+        .clamp(0.0, 1.0) as f32
 }
 
 pub(super) fn fill_padded_raster_pixels(raw: &LoadedRaw, tile: ExportTile, rgb: &mut [f32]) {
@@ -328,11 +342,9 @@ pub fn build_region_proxy(
 
     LoadedRaw {
         // Proxy pixels average same-colour samples, so noise variance scales with the area ratio.
-        noise_profile: raw.noise_profile.scaled_variance(
-            ((u64::from(width) * u64::from(height)) as f64
-                / (u64::from(region_width) * u64::from(region_height)) as f64)
-                .clamp(0.0, 1.0) as f32,
-        ),
+        noise_profile: raw
+            .noise_profile
+            .scaled_variance(area_ratio([width, height], [region_width, region_height])),
         lens_geometry: (x == 0
             && y == 0
             && region_width == raw.width

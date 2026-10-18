@@ -16,6 +16,7 @@ pub(in crate::pipeline::gpu) struct BindGroups {
     pub(in crate::pipeline::gpu) bg_xtrans_homogeneity: wgpu::BindGroup,
     pub(in crate::pipeline::gpu) bg_xtrans_accumulate: wgpu::BindGroup,
     pub(in crate::pipeline::gpu) bg_xtrans_finish: wgpu::BindGroup,
+    pub(in crate::pipeline::gpu) bg_raster_finish: wgpu::BindGroup,
     pub(in crate::pipeline::gpu) bg_color_denoise: [wgpu::BindGroup; 6],
     pub(in crate::pipeline::gpu) bg_tone_prepare: wgpu::BindGroup,
     pub(in crate::pipeline::gpu) bg_tone_horizontal: wgpu::BindGroup,
@@ -60,6 +61,7 @@ pub(in crate::pipeline::gpu) fn create_bind_groups(
         reconstructed_raw_view,
         highlight_work_a_view,
         highlight_work_b_view,
+        raster_source_view,
         scene_view,
         tex1_view,
         tex2_view,
@@ -260,6 +262,8 @@ pub(in crate::pipeline::gpu) fn create_bind_groups(
         ],
     );
 
+    // The raster finish reads one texture into another like a colour-denoise
+    // scale, so the two share a layout.
     let make_color_denoise_bind_group =
         |label: &str, read_view: &wgpu::TextureView, write_view: &wgpu::TextureView| {
             create_bind_group(
@@ -273,6 +277,8 @@ pub(in crate::pipeline::gpu) fn create_bind_groups(
                 ],
             )
         };
+    let bg_raster_finish =
+        make_color_denoise_bind_group("bg raster finish", raster_source_view, scene_view);
     let bg_color_denoise = [
         make_color_denoise_bind_group("bg color denoise scale 1", scene_view, tex1_view),
         make_color_denoise_bind_group("bg color denoise scale 2", tex1_view, tex2_view),
@@ -534,6 +540,7 @@ pub(in crate::pipeline::gpu) fn create_bind_groups(
         bg_xtrans_homogeneity,
         bg_xtrans_accumulate,
         bg_xtrans_finish,
+        bg_raster_finish,
         bg_color_denoise,
         bg_tone_prepare,
         bg_tone_horizontal,

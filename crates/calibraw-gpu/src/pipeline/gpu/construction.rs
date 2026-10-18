@@ -211,6 +211,7 @@ impl RawGpuPipeline {
             .then(|| ai_image.as_ref().and_then(AiDenoisedImage::bayer_cfa))
             .flatten();
         let has_ai_cfa = ai_cfa.is_some();
+        let has_raster_scene = raw.is_pre_demosaiced_raster();
         let resource_plan = build_gpu_resource_plan(GpuResourcePlanInput {
             width: raw.width,
             height: raw.height,
@@ -223,6 +224,7 @@ impl RawGpuPipeline {
             stage_uniform_buffer_bytes: GPU_STAGE_UNIFORM_ALLOCATION_BYTES,
             mask_data_buffer_bytes: MASK_DATA_SIZE_BYTES,
             ai_cfa: has_ai_cfa,
+            raster_source: has_raster_scene,
         })?;
         let gpu_budget_reservation =
             GpuBudgetReservation::acquire(&resource_plan, gpu_working_set_limit_bytes())?;
@@ -231,7 +233,6 @@ impl RawGpuPipeline {
 
         let (surfaces, has_ai_scene) =
             create_pipeline_surfaces(device, queue, raw, ai_cfa, &geometry)?;
-        let has_raster_scene = raw.is_pre_demosaiced_raster();
 
         let camera = params.camera_for_raw_texture(has_ai_cfa);
         let buffers = create_pipeline_buffers(device, params, &camera, &profile_gpu_data.words);
@@ -328,6 +329,7 @@ impl RawGpuPipeline {
             _highlight_work_b: surfaces.highlight_work_b,
             _tex1: surfaces.tex1,
             _tex2: surfaces.tex2,
+            raster_source_texture: surfaces.raster_source_texture,
             scene_texture: surfaces.scene_texture,
             scene_format: geometry.demosaic_format,
             has_ai_scene,

@@ -323,6 +323,28 @@ mod tests {
     }
 
     #[test]
+    fn public_loaders_measure_rendered_noise() {
+        let file = temp_image(".png");
+        // Mid-grey with pseudo-random codes 126..=129.
+        let mut state = 0x9e37_79b9_u32;
+        let pixels: Vec<u8> = (0..64 * 64 * 3)
+            .map(|_| {
+                state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+                126 + (state >> 30) as u8
+            })
+            .collect();
+        ImageBuffer::<Rgb<u8>, _>::from_raw(64, 64, pixels)
+            .unwrap()
+            .save_with_format(file.path(), ImageFormat::Png)
+            .unwrap();
+
+        let raw = super::super::load_raw_file(file.path()).unwrap();
+        let unmeasured = super::super::NoiseProfile::default();
+        assert_eq!(raw.noise_profile.confidence, 1.0);
+        assert!(raw.noise_profile.shot[1] > unmeasured.shot[1]);
+    }
+
+    #[test]
     fn jpeg_orientation_is_applied_to_pixels_and_display_dimensions() {
         let file = temp_image(".jpg");
         let source = ImageBuffer::<Rgb<u8>, _>::from_fn(16, 8, |x, _| {

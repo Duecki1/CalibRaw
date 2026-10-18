@@ -564,10 +564,16 @@ impl RasterSource {
     }
 
     fn load(self, path: &Path) -> Result<LoadedRaw> {
-        match self {
+        let mut raw = match self {
             Self::Tiff => super::tiff_loader::load_raster_tiff(path),
             Self::Rendered(format) => super::rendered_loader::load_rendered_image(path, format),
+        }?;
+        // These sources carry no sensor data to profile, so the noise model
+        // that Detail's denoise and sharpening read is measured from pixels.
+        if let Some(rgb) = raw.scene_linear_raster() {
+            raw.noise_profile = NoiseProfile::estimate_raster(raw.width, raw.height, rgb);
         }
+        Ok(raw)
     }
 
     fn thumbnail(self, path: &Path, maximum_edge: u32) -> Result<RawThumbnail> {
