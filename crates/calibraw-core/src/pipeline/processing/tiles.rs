@@ -86,10 +86,12 @@ pub fn required_export_tile_halo(exposure: &ExposureParams, masks: &MaskStack) -
         };
     }
 
+    // Sharpen components run in the capture-sharpening pass of the Detail card.
     let local_spatial_active = exposure.sharpen_amount.abs() > 1e-6
         || exposure.texture.abs() > 1e-6
         || exposure.clarity.abs() > 1e-6
         || exposure.dehaze.abs() > 1e-6
+        || effect_active(MaskEffect::Sharpen)
         || masks.masks.iter().any(|mask| {
             mask.enabled
                 && mask.opacity > 0.0

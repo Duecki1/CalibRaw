@@ -374,6 +374,22 @@ pub(super) fn pack_effect_mask(
                 zero,
             )
         }
+        MaskEffect::Sharpen => {
+            let config = settings.sharpen;
+            use effect_params::sharpen as params;
+            effect_mask_data(
+                effect,
+                enabled && config.is_active(),
+                [
+                    params::AMOUNT.clamp(config.amount),
+                    params::RADIUS.clamp(config.radius),
+                    params::DETAIL.clamp(config.detail),
+                    params::MASKING.clamp(config.masking),
+                ],
+                zero,
+                zero,
+            )
+        }
         MaskEffect::Vignette => {
             let config = settings.vignette;
             use effect_params::vignette as params;

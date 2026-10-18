@@ -12,6 +12,7 @@ pub(super) mod neon;
 pub(super) mod pixelate;
 pub(super) mod radial_blur;
 pub(super) mod relight;
+pub(super) mod sharpen;
 pub(super) mod smoke;
 pub(super) mod tilt_shift;
 pub(super) mod vignette;
@@ -262,6 +263,9 @@ pub(super) fn effect_description(effect: MaskEffect) -> Option<&'static str> {
         ),
         MaskEffect::TiltShift => Some(
             "Keep a band in focus and soften its surroundings. Position is relative to the full image. Use a Fullscreen mask for an uninterrupted focus transition.",
+        ),
+        MaskEffect::Sharpen => Some(
+            "Sharpen fine detail inside the mask with its own radius, detail and masking. It adds to the Detail card's sharpening.",
         ),
         MaskEffect::EdgeGlow => Some(
             "Light up image contours with a soft halo. Both the outlines and their glow stay inside the mask.",

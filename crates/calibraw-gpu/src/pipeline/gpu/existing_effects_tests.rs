@@ -3,6 +3,7 @@ use super::{
 };
 use crate::pipeline::{
     EffectComponent, ExposureParams, LoadedRaw, LocalMask, MaskEffect, MaskKind, MaskStack,
+    SharpenEffectSettings,
 };
 
 const MASK_EDGE: u32 = 64;
@@ -315,6 +316,72 @@ fn existing_effects_honor_empty_masks_and_full_masks_match_global() -> anyhow::R
             "{effect:?} differs between global and full mask"
         );
     }
+    Ok(())
+}
+
+#[test]
+fn sharpen_component_matches_detail_sharpening_with_its_own_settings() -> anyhow::Result<()> {
+    let Some(mut scene) = Fixture::new(64, 64, |x, y| {
+        let wave = (x as f32 * 0.9).sin() * (y as f32 * 0.7).sin();
+        [0.18 + 0.08 * wave; 3]
+    })?
+    else {
+        return Ok(());
+    };
+    let baseline = scene.render(None)?;
+    let settings = SharpenEffectSettings {
+        amount: 150.0,
+        radius: 2.0,
+        detail: 60.0,
+        masking: 20.0,
+    };
+    scene.exposure.sharpen_amount = settings.amount;
+    scene.exposure.sharpen_radius = settings.radius;
+    scene.exposure.sharpen_detail = settings.detail;
+    scene.exposure.sharpen_masking = settings.masking;
+    let detail = scene.render(None)?;
+    scene.exposure.sharpen_amount = 0.0;
+    assert!(
+        difference(&detail, &baseline) > 1.0e-3,
+        "the test pattern is sharpened"
+    );
+
+    let mut component = EffectComponent::new(MaskEffect::Sharpen);
+    component.settings.sharpen = settings;
+    assert!(
+        difference(&scene.render(Some(component.clone()))?, &detail) < EPSILON,
+        "a global Sharpen differs from the Detail card's sharpening"
+    );
+    let mut mask = LocalMask::new(MaskKind::Fullscreen, 1);
+    mask.effect_components.push(component.clone());
+    let masks = MaskStack {
+        masks: vec![mask],
+        ..Default::default()
+    };
+    scene.pipeline.update_mask_layer(
+        &scene.queue,
+        0,
+        &vec![0; (MASK_EDGE * MASK_EDGE) as usize],
+    )?;
+    assert!(
+        difference(&scene.render_masks(&masks)?, &baseline) < EPSILON,
+        "Sharpen ignores an empty mask"
+    );
+    scene.pipeline.update_mask_layer(
+        &scene.queue,
+        0,
+        &vec![half::f16::ONE.to_bits(); (MASK_EDGE * MASK_EDGE) as usize],
+    )?;
+    assert!(
+        difference(&scene.render_masks(&masks)?, &detail) < EPSILON,
+        "Sharpen under a full mask differs from the Detail card's sharpening"
+    );
+
+    component.settings.sharpen.radius = 0.5;
+    assert!(
+        difference(&scene.render(Some(component))?, &detail) > 1.0e-4,
+        "Sharpen ignores its radius"
+    );
     Ok(())
 }
 

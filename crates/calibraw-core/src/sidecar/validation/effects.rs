@@ -10,6 +10,7 @@ pub(super) fn validate_effect_settings(
     validate_motion_blur_effect(&settings.motion_blur)?;
     validate_radial_blur_effect(&settings.radial_blur)?;
     validate_tilt_shift_effect(&settings.tilt_shift)?;
+    validate_sharpen_effect(&settings.sharpen)?;
     validate_edge_glow_effect(&settings.edge_glow)?;
     validate_glow_effect(&settings.glow)?;
     validate_light_rays_effect(&settings.light_rays)?;
@@ -50,6 +51,22 @@ fn validate_halation_effect(
             (halation::RADIUS, halation.radius),
             (halation::THRESHOLD, halation.threshold),
             (halation::WARMTH, halation.warmth),
+        ],
+        &[],
+    )
+}
+
+fn validate_sharpen_effect(
+    sharpen: &crate::pipeline::SharpenEffectSettings,
+) -> Result<(), SidecarError> {
+    use crate::pipeline::effect_params::sharpen;
+    validate_effect_params(
+        crate::pipeline::MaskEffect::Sharpen,
+        &[
+            (sharpen::AMOUNT, sharpen.amount),
+            (sharpen::RADIUS, sharpen.radius),
+            (sharpen::DETAIL, sharpen.detail),
+            (sharpen::MASKING, sharpen.masking),
         ],
         &[],
     )

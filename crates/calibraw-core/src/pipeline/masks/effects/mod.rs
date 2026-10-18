@@ -12,6 +12,7 @@ pub mod params;
 mod pixelate;
 mod radial_blur;
 mod relight;
+mod sharpen;
 mod smoke;
 mod tilt_shift;
 mod vignette;
@@ -32,6 +33,7 @@ pub use neon::NeonEffectSettings;
 pub use pixelate::PixelateEffectSettings;
 pub use radial_blur::{RadialBlurEffectSettings, RadialBlurMode};
 pub use relight::RelightEffectSettings;
+pub use sharpen::SharpenEffectSettings;
 pub use smoke::SmokeEffectSettings;
 pub use tilt_shift::TiltShiftEffectSettings;
 pub use vignette::VignetteEffectSettings;
@@ -48,6 +50,7 @@ pub enum MaskEffect {
     LensBlur,
     MotionBlur,
     RadialBlur,
+    Sharpen,
     TiltShift,
     Glow,
     LightRays,
@@ -63,12 +66,13 @@ pub enum MaskEffect {
 }
 
 impl MaskEffect {
-    pub const ALL: [Self; 17] = [
+    pub const ALL: [Self; 18] = [
         Self::Adjustment,
         Self::Blur,
         Self::LensBlur,
         Self::MotionBlur,
         Self::RadialBlur,
+        Self::Sharpen,
         Self::TiltShift,
         Self::Glow,
         Self::LightRays,
@@ -91,6 +95,7 @@ impl MaskEffect {
             Self::MotionBlur => "Motion Blur",
             Self::RadialBlur => "Radial Blur",
             Self::TiltShift => "Tilt-Shift",
+            Self::Sharpen => "Sharpen",
             Self::Glow => "Glow",
             Self::LightRays => "Light Rays",
             Self::Relight => "Relight",
@@ -113,9 +118,12 @@ impl MaskEffect {
     pub const fn category(self) -> Option<MaskEffectCategory> {
         match self {
             Self::Adjustment => None,
-            Self::Blur | Self::LensBlur | Self::MotionBlur | Self::RadialBlur | Self::TiltShift => {
-                Some(MaskEffectCategory::BlurAndFocus)
-            }
+            Self::Blur
+            | Self::LensBlur
+            | Self::MotionBlur
+            | Self::RadialBlur
+            | Self::TiltShift
+            | Self::Sharpen => Some(MaskEffectCategory::BlurAndFocus),
             Self::Glow | Self::LightRays | Self::Neon | Self::Relight => {
                 Some(MaskEffectCategory::GlowAndLight)
             }
@@ -150,6 +158,7 @@ impl MaskEffect {
             Self::Halation => 14,
             Self::Vignette => 15,
             Self::Relight => 16,
+            Self::Sharpen => 17,
         }
     }
 }
@@ -196,6 +205,8 @@ pub struct MaskEffectSettings {
     #[serde(default, skip_serializing_if = "is_default")]
     pub tilt_shift: TiltShiftEffectSettings,
     #[serde(default, skip_serializing_if = "is_default")]
+    pub sharpen: SharpenEffectSettings,
+    #[serde(default, skip_serializing_if = "is_default")]
     pub edge_glow: EdgeGlowEffectSettings,
     #[serde(default, skip_serializing_if = "is_default")]
     pub glow: GlowEffectSettings,
@@ -234,6 +245,7 @@ impl MaskEffectSettings {
             MaskEffect::MotionBlur => settings.motion_blur = InitialEffectSettings::initial(),
             MaskEffect::RadialBlur => settings.radial_blur = InitialEffectSettings::initial(),
             MaskEffect::TiltShift => settings.tilt_shift = InitialEffectSettings::initial(),
+            MaskEffect::Sharpen => settings.sharpen = InitialEffectSettings::initial(),
             MaskEffect::Glow => settings.glow = InitialEffectSettings::initial(),
             MaskEffect::LightRays => settings.light_rays = InitialEffectSettings::initial(),
             MaskEffect::Neon => settings.neon = InitialEffectSettings::initial(),
@@ -266,6 +278,7 @@ impl InitialEffectSettings for LensBlurEffectSettings {}
 impl InitialEffectSettings for MotionBlurEffectSettings {}
 impl InitialEffectSettings for RadialBlurEffectSettings {}
 impl InitialEffectSettings for TiltShiftEffectSettings {}
+impl InitialEffectSettings for SharpenEffectSettings {}
 impl InitialEffectSettings for LightRaysEffectSettings {}
 impl InitialEffectSettings for NeonEffectSettings {}
 impl InitialEffectSettings for RelightEffectSettings {}

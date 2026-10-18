@@ -16,6 +16,7 @@ const MASK_EFFECT_GRAIN_ID: u32 = 13u;
 const MASK_EFFECT_HALATION_ID: u32 = 14u;
 const MASK_EFFECT_VIGNETTE_ID: u32 = 15u;
 const MASK_EFFECT_RELIGHT_ID: u32 = 16u;
+// MASK_EFFECT_SHARPEN_ID (17) is in detail_capture.wgsl, its only reader.
 
 // An effect slot's packed parameters (effect_lanes.rs). Lane n is component
 // n % 4 of `primary`, `secondary` or `tertiary` for n / 4 = 0, 1, 2; effects

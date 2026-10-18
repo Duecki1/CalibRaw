@@ -496,16 +496,20 @@ mod tests {
                 MaskEffect::Relight | MaskEffect::Fog | MaskEffect::Smoke => {
                     super::SCENE_DEPTH_GUIDE_SUPPORT
                 }
+                MaskEffect::Sharpen => super::LOCAL_EFFECTS_SUPPORT,
                 MaskEffect::Adjustment
                 | MaskEffect::LightRays
                 | MaskEffect::Grain
                 | MaskEffect::Vignette => 0,
             };
-            assert_eq!(
-                legacy_halo,
-                MIN_EXPORT_TILE_HALO + effect_support,
-                "{effect:?}"
-            );
+            let expected = (super::HIGHLIGHT_RECONSTRUCTION_SUPPORT
+                + super::DEMOSAIC_CHAIN_SUPPORT
+                + super::TONE_GUIDE_SUPPORT
+                + super::COLOR_MIXER_SUPPORT
+                + effect_support)
+                .div_ceil(8)
+                * 8;
+            assert_eq!(legacy_halo, expected, "{effect:?}");
             stack.masks[0].enabled = false;
             assert_eq!(
                 required_export_tile_halo(&exposure, &stack),

@@ -18,8 +18,8 @@ pub use effects::{
     GlowEffectSettings, GrainEffectSettings, HalationEffectSettings, InitialEffectSettings,
     LensBlurEffectSettings, LightRaysEffectSettings, MaskEffect, MaskEffectCategory,
     MaskEffectSettings, MotionBlurEffectSettings, NeonEffectSettings, PixelateEffectSettings,
-    RadialBlurEffectSettings, RadialBlurMode, RelightEffectSettings, SmokeEffectSettings,
-    TiltShiftEffectSettings, VignetteEffectSettings,
+    RadialBlurEffectSettings, RadialBlurMode, RelightEffectSettings, SharpenEffectSettings,
+    SmokeEffectSettings, TiltShiftEffectSettings, VignetteEffectSettings,
 };
 
 mod brush;
@@ -333,6 +333,7 @@ impl EffectComponent {
             MaskEffect::MotionBlur => self.settings.motion_blur.is_active(),
             MaskEffect::RadialBlur => self.settings.radial_blur.is_active(),
             MaskEffect::TiltShift => self.settings.tilt_shift.is_active(),
+            MaskEffect::Sharpen => self.settings.sharpen.is_active(),
             MaskEffect::Glow => self.settings.glow.is_active(),
             MaskEffect::LightRays => self.settings.light_rays.is_active(),
             MaskEffect::Relight => self.settings.relight.is_active(),

@@ -56,9 +56,10 @@ pub use masks::{
     MaskComponent, MaskEffect, MaskEffectCategory, MaskEffectSettings, MaskGeometry, MaskImage,
     MaskKind, MaskRgbImage, MaskStack, MotionBlurEffectSettings, NeonEffectSettings, ObjectStroke,
     PathPoint, PixelateEffectSettings, RadialBlurEffectSettings, RadialBlurMode,
-    RelightEffectSettings, SmokeEffectSettings, SubjectRefinement, TiltShiftEffectSettings,
-    VignetteEffectSettings, LUMINANCE_FEATHER_MAX, LUMINANCE_FEATHER_WIDTH, MAX_EFFECT_COMPONENTS,
-    MAX_LOCAL_MASKS, MAX_MASK_COMPONENTS, MAX_PATH_POINTS,
+    RelightEffectSettings, SharpenEffectSettings, SmokeEffectSettings, SubjectRefinement,
+    TiltShiftEffectSettings, VignetteEffectSettings, LUMINANCE_FEATHER_MAX,
+    LUMINANCE_FEATHER_WIDTH, MAX_EFFECT_COMPONENTS, MAX_LOCAL_MASKS, MAX_MASK_COMPONENTS,
+    MAX_PATH_POINTS,
 };
 pub use noise::{AdaptiveDetailDefaults, DenoiseQuality, NoiseProfile};
 pub use point_color::{PointColor, PointColorRange, PointColors, MAX_POINT_COLORS};

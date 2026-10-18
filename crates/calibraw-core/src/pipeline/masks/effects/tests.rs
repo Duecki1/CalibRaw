@@ -1,6 +1,6 @@
 use crate::pipeline::{
     EffectComponent, GrainEffectSettings, HalationEffectSettings, MaskEffect, MaskEffectCategory,
-    MaskEffectSettings, MaskKind, MaskStack, VignetteEffectSettings,
+    MaskEffectSettings, MaskKind, MaskStack, SharpenEffectSettings, VignetteEffectSettings,
 };
 use serde_json::json;
 
@@ -24,6 +24,7 @@ fn effect_names_and_shader_ids_remain_compatible() {
         (MaskEffect::Halation, "Halation", 14),
         (MaskEffect::Vignette, "Vignette", 15),
         (MaskEffect::Relight, "Relight", 16),
+        (MaskEffect::Sharpen, "Sharpen", 17),
     ];
     assert_eq!(MaskEffect::ALL.len(), effects.len());
     for (effect, serialized, shader_id) in effects {
@@ -51,6 +52,10 @@ fn photographic_defaults_and_serialized_field_names_are_stable() {
         serde_json::to_value(VignetteEffectSettings::default()).unwrap(),
         json!({"amount":-25.0,"midpoint":50.0,"roundness":0.0,"feather":70.0,
             "highlights":30.0,"center":[50.0,50.0]}),
+    );
+    assert_eq!(
+        serde_json::to_value(SharpenEffectSettings::default()).unwrap(),
+        json!({"amount":40.0,"radius":1.0,"detail":25.0,"masking":0.0}),
     );
     assert_eq!(
         serde_json::to_value(MaskEffectSettings::default()).unwrap(),
