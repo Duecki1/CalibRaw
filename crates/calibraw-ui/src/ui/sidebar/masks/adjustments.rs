@@ -220,7 +220,7 @@ impl Sidebar {
         changed |= float_param_slider(ui, &mut adjustment.clarity, params::CLARITY);
         changed |= float_param_slider(ui, &mut adjustment.dehaze, params::DEHAZE);
         moduwu_design::section_separator(ui);
-        let added_effect = mask_effects::add_effect_buttons(
+        let added_effect = mask_effects::add_effect_controls(
             ui,
             &[MaskEffect::Sharpen, MaskEffect::Halation],
             effect_components,

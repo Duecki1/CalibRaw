@@ -361,6 +361,16 @@ impl Sidebar {
                         );
                         adjustments_changed |=
                             apply_local_adjustment_response(ui.ctx(), mask, response);
+                        if section == MaskSection::Effects {
+                            // Below the card that adds them.
+                            let fullscreen = Self::is_plain_fullscreen_mask(mask);
+                            adjustments_changed |= Self::show_effect_components(
+                                ui,
+                                &mut mask.effect_components,
+                                fullscreen,
+                                &effect_frame,
+                            );
+                        }
                     }
                 }
                 MaskStripOrientation::Vertical => {
@@ -423,15 +433,6 @@ impl Sidebar {
                         }
                     }
                 }
-            }
-            if orientation == MaskStripOrientation::Horizontal {
-                let fullscreen = Self::is_plain_fullscreen_mask(mask);
-                adjustments_changed |= Self::show_effect_components(
-                    ui,
-                    &mut mask.effect_components,
-                    fullscreen,
-                    &effect_frame,
-                );
             }
             light_rays_changed = light_rays_before != mask.has_light_rays_effect();
         }

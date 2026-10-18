@@ -9,6 +9,7 @@ pub(super) mod lens_blur;
 pub(super) mod light_rays;
 pub(super) mod motion_blur;
 pub(super) mod neon;
+mod picker;
 pub(super) mod pixelate;
 pub(super) mod radial_blur;
 pub(super) mod relight;
@@ -19,6 +20,7 @@ pub(super) mod vignette;
 
 pub(crate) use controls::EffectFrame;
 use controls::{effect_details, effect_position, image_lights_toggle, pattern_seed, PositionSpace};
+pub(super) use picker::{add_effect_button, add_effect_controls, effect_picker_popup};
 
 use super::{egui, MaskEffect, Ui};
 use crate::pipeline::effect_params::ColorParamSpec;
@@ -195,7 +197,7 @@ where
 }
 
 /// Effects that once were Effects-card sliders. The cards offer them as
-/// buttons that add the effect component.
+/// quick-add buttons ([`add_effect_controls`]).
 pub(super) const FINISH_EFFECTS: [MaskEffect; 4] = [
     MaskEffect::Glow,
     MaskEffect::Halation,
@@ -207,7 +209,7 @@ pub(super) const FINISH_EFFECTS: [MaskEffect; 4] = [
 /// adds the effect to `components`. Returns the effect whose button was
 /// clicked. An effect already in `components`, or any effect once
 /// `components` is full, has its button disabled.
-pub(super) fn add_effect_buttons(
+fn add_effect_buttons(
     ui: &mut Ui,
     effects: &[MaskEffect],
     components: &[EffectComponent],

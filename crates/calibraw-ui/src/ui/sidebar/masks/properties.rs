@@ -3,37 +3,6 @@ use crate::app::{MaskPropertiesControls, MaskPropertyAction};
 use crate::ui::components::luminance_range_slider::{luminance_range_slider, LuminanceRange};
 
 impl Sidebar {
-    pub(crate) fn effect_creation_menu(
-        ui: &mut Ui,
-        components: &[crate::pipeline::EffectComponent],
-    ) -> Option<MaskEffect> {
-        let mut selected = None;
-        for category in MaskEffectCategory::ALL {
-            if !MaskEffect::ALL.iter().any(|effect| {
-                effect.category() == Some(category)
-                    && !components
-                        .iter()
-                        .any(|component| component.effect == *effect)
-            }) {
-                continue;
-            }
-            ui.menu_button(category.label(), |ui| {
-                for effect in MaskEffect::ALL {
-                    if effect.category() == Some(category)
-                        && !components
-                            .iter()
-                            .any(|component| component.effect == effect)
-                        && moduwu_design::menu_item(ui, true, effect.label()).clicked()
-                    {
-                        selected = Some(effect);
-                        ui.close();
-                    }
-                }
-            });
-        }
-        selected
-    }
-
     pub(super) fn apply_mask_properties_action(
         mask: &mut LocalMask,
         component_index: usize,
@@ -164,6 +133,9 @@ impl Sidebar {
         true
     }
 
+    /// The cards of `components`, then an Add effect button. The Effects card
+    /// also adds to them ([`mask_effects::add_effect_controls`]), so draw them
+    /// right below it.
     pub(crate) fn show_effect_components(
         ui: &mut Ui,
         components: &mut Vec<crate::pipeline::EffectComponent>,
@@ -191,14 +163,16 @@ impl Sidebar {
             components.remove(index);
             changed = true;
         }
-        if components.len() < crate::pipeline::MAX_EFFECT_COMPONENTS {
-            ui.menu_button(format!("{}  Add", egui_phosphor::regular::PLUS), |ui| {
-                if let Some(effect) = Self::effect_creation_menu(ui, components) {
-                    components.push(crate::pipeline::EffectComponent::new(effect));
-                    changed = true;
-                }
-            });
+        if let Some(effect) = mask_effects::add_effect_button(ui, components) {
+            components.push(crate::pipeline::EffectComponent::new(effect));
+            moduwu_design::request_scroll_into_view(
+                ui.ctx(),
+                mask_effects::effect_card_scroll_target(effect),
+                None,
+            );
+            changed = true;
         }
+        moduwu_design::card_gap(ui);
         changed
     }
 
