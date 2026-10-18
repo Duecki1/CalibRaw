@@ -30,9 +30,7 @@ impl CalibRawApp {
         }
 
         if let Some(stage) = affected_stage(&self.develop.target_exposure, &next_exposure) {
-            if self.develop.target_exposure.temperature != next_exposure.temperature
-                || self.develop.target_exposure.tint != next_exposure.tint
-            {
+            if self.develop.target_exposure.white_balance != next_exposure.white_balance {
                 self.preview.white_balance_refresh_pending = true;
             }
             self.develop.target_exposure = next_exposure;
@@ -51,16 +49,16 @@ impl CalibRawApp {
         let preview_source = self.develop.loaded_raw.clone();
         let result = preview_source.as_ref().and_then(|raw| {
             raw.white_balance_offsets_from_area(area[0], area[1], self.develop.exposure.black_point)
+                .and_then(|offsets| raw.white_balance_from_offsets(offsets))
         });
         self.develop_ui.cancel_white_balance_picker();
-        let Some((temperature, tint)) = result else {
+        let Some(white_balance) = result else {
             self.report_error(ErrorKind::Sampling, "Could not estimate white balance there. Choose a brighter, unclipped neutral area."
                     .to_owned(),);
             self.egui_ctx.request_repaint();
             return false;
         };
-        self.develop.exposure.temperature = temperature;
-        self.develop.exposure.tint = tint;
+        self.develop.exposure.white_balance = white_balance;
         self.ui.notice = Some("White balance sampled from the selected image area.".to_owned());
         self.mark_pipeline_dirty();
         true

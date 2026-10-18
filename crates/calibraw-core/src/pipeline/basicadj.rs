@@ -215,6 +215,40 @@ pub fn white_balance_tint_offset(base_tint: f32, target_tint: f32) -> f32 {
         / WHITE_BALANCE_TINT_PER_OFFSET)
         .clamp(-GLOBAL_TINT_OFFSET_LIMIT, GLOBAL_TINT_OFFSET_LIMIT)
 }
+
+/// The global white balance of an edit.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub enum WhiteBalance {
+    /// Each photo's own as-shot white balance.
+    #[default]
+    AsShot,
+    /// An absolute white balance. Copies and presets give every photo this
+    /// white balance, limited to the slider ranges of its camera.
+    Custom {
+        /// Correlated colour temperature in kelvin.
+        kelvin: f32,
+        /// Tint in the units the slider shows, positive magenta (see
+        /// [`MIN_WHITE_BALANCE_TINT`]).
+        tint: f32,
+        /// Temperature and tint offsets of this white balance from the
+        /// as-shot white balance of the photo it was last set or opened on,
+        /// written for readers up to v1.3. On a photo it was pasted into they
+        /// lag behind until that photo is opened.
+        ///
+        /// migration: remove in v2.0.0 (`migrations::white_balance_offsets`).
+        older_reader_offsets: [f32; 2],
+    },
+    /// Offsets from the as-shot white balance, the only form v1.3 and older
+    /// saved: `temperature` in mired, `tint` in stored tint units (see
+    /// [`WHITE_BALANCE_TINT_PER_OFFSET`]). Turning them into [`Self::Custom`]
+    /// needs the photo, so they are converted when it is opened
+    /// (`LoadedRaw::resolve_white_balance`); until then copies and presets
+    /// move the shift as before.
+    ///
+    /// migration: remove in v2.0.0 (`migrations::white_balance_offsets`).
+    LegacyOffset { temperature: f32, tint: f32 },
+}
+
 pub const HSL_HUE_LIMIT: f32 = 200.0;
 pub const HUE_ROTATION_LIMIT_DEGREES: f32 = 180.0;
 
@@ -225,8 +259,8 @@ pub struct ExposureParams {
     #[serde(default)]
     pub contrast: f32,
     pub sigmoid: SigmoidParams,
-    pub temperature: f32,
-    pub tint: f32,
+    #[serde(flatten, with = "crate::migrations::white_balance_offsets")]
+    pub white_balance: WhiteBalance,
     #[serde(default)]
     pub hue: f32,
     pub saturation: f32,
@@ -308,15 +342,6 @@ impl ExposureParams {
         self.tone_curve_blue.sanitize();
     }
 
-    /// Returns temperature and tint to as shot, which is all a photo without
-    /// a camera white-balance model renders. Returns whether they changed.
-    pub fn reset_white_balance(&mut self) -> bool {
-        let changed = self.temperature != 0.0 || self.tint != 0.0;
-        self.temperature = 0.0;
-        self.tint = 0.0;
-        changed
-    }
-
     pub fn scene_referred_default() -> Self {
         Self::default()
     }
@@ -329,8 +354,7 @@ impl Default for ExposureParams {
             exposure: 0.0,
             contrast: 0.0,
             sigmoid: SigmoidParams::default(),
-            temperature: 0.0,
-            tint: 0.0,
+            white_balance: WhiteBalance::AsShot,
             hue: 0.0,
             saturation: 0.0,
             vibrance: 0.0,
@@ -398,7 +422,8 @@ mod tests {
     use super::{
         sigmoid_contrast_from_percent, temperature_kelvin_from_offset,
         temperature_offset_from_kelvin, DemosaicMode, ExposureParams,
-        HighlightReconstructionMethod, PointCurve, MAX_TEMPERATURE_KELVIN, MIN_TEMPERATURE_KELVIN,
+        HighlightReconstructionMethod, PointCurve, WhiteBalance, MAX_TEMPERATURE_KELVIN,
+        MIN_TEMPERATURE_KELVIN,
     };
     use crate::pipeline::SigmoidParams;
 
@@ -455,8 +480,7 @@ mod tests {
         assert_eq!(rendition.black_point, 0.0);
         assert_eq!(rendition.sigmoid, SigmoidParams::default());
         assert_eq!(rendition.contrast, 0.0);
-        assert_eq!(rendition.temperature, 0.0);
-        assert_eq!(rendition.tint, 0.0);
+        assert_eq!(rendition.white_balance, WhiteBalance::AsShot);
         assert_eq!(rendition.hue, 0.0);
         assert_eq!(rendition.saturation, 0.0);
         assert_eq!(rendition.vibrance, 0.0);

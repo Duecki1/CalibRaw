@@ -438,8 +438,6 @@ fn validate_exposure(exposure: &ExposureParams) -> Result<(), SidecarError> {
             exposure.black_point,
             exposure.exposure,
             exposure.contrast,
-            exposure.temperature,
-            exposure.tint,
             exposure.hue,
             exposure.saturation,
             exposure.vibrance,
@@ -469,6 +467,18 @@ fn validate_exposure(exposure: &ExposureParams) -> Result<(), SidecarError> {
             exposure.sigmoid.display_black_target,
             exposure.sigmoid.hue_preservation,
         ],
+    )?;
+    finite(
+        "white balance",
+        &match exposure.white_balance {
+            WhiteBalance::AsShot => [0.0; 4],
+            WhiteBalance::Custom {
+                kelvin,
+                tint,
+                older_reader_offsets: [temperature_offset, tint_offset],
+            } => [kelvin, tint, temperature_offset, tint_offset],
+            WhiteBalance::LegacyOffset { temperature, tint } => [temperature, tint, 0.0, 0.0],
+        },
     )?;
     finite("global HSL hue", &exposure.hsl_hue)?;
     finite("global HSL saturation", &exposure.hsl_saturation)?;

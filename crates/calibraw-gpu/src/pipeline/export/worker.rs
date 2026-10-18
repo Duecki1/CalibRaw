@@ -34,15 +34,14 @@ pub fn spawn_tiled_export(
 fn record_export_worker_started(format: ExportFormat, job: &TiledExportJob) {
     match format {
         ExportFormat::Png => calibraw_core::diagnostics::record(format!(
-            "PNG export worker started: source={}x{} cfa={:?} requested_tile_core={} halo={} exposure={:.3} temperature={:.3} tint={:.3} demosaic={:?} highlight={:?}",
+            "PNG export worker started: source={}x{} cfa={:?} requested_tile_core={} halo={} exposure={:.3} white_balance={:?} demosaic={:?} highlight={:?}",
             job.raw.width,
             job.raw.height,
             job.raw.cfa_kind,
             job.tile_spec.core_edge,
             job.tile_spec.halo,
             job.exposure.exposure,
-            job.exposure.temperature,
-            job.exposure.tint,
+            job.exposure.white_balance,
             job.exposure.demosaic_mode,
             job.exposure.highlight_method,
         )),

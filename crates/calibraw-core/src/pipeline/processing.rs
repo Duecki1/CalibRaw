@@ -30,10 +30,7 @@ pub fn affected_stage(before: &ExposureParams, after: &ExposureParams) -> Option
         return None;
     }
 
-    if raw_controls_changed(before, after)
-        || before.temperature != after.temperature
-        || before.tint != after.tint
-    {
+    if raw_controls_changed(before, after) || before.white_balance != after.white_balance {
         Some(ProcessingStage::Raw)
     } else {
         Some(ProcessingStage::Output)
@@ -67,7 +64,7 @@ mod tests {
     };
     use crate::pipeline::{
         AiDenoisedImage, CameraProfile, CfaKind, CompactPixelMap, DenoiseQuality, ExposureParams,
-        LoadedRaw, MaskEffect, MaskStack,
+        LoadedRaw, MaskEffect, MaskStack, WhiteBalance,
     };
 
     fn test_raster(width: u32, height: u32) -> LoadedRaw {
@@ -338,11 +335,18 @@ mod tests {
         let before = ExposureParams::default();
         for after in [
             ExposureParams {
-                temperature: 1.0,
+                white_balance: WhiteBalance::Custom {
+                    kelvin: 5000.0,
+                    tint: 0.0,
+                    older_reader_offsets: [0.0; 2],
+                },
                 ..before
             },
             ExposureParams {
-                tint: 1.0,
+                white_balance: WhiteBalance::LegacyOffset {
+                    temperature: 0.0,
+                    tint: 1.0,
+                },
                 ..before
             },
         ] {

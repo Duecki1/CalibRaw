@@ -306,18 +306,18 @@ impl Sidebar {
     ) -> bool {
         let mut changed = false;
         let action = Self::adjustment_card(ui, "Color", false, foldable, true, |ui| {
-            if let Some(raw) = raw.filter(|raw| {
-                raw.white_balance_temperature_tint(exposure.temperature, exposure.tint)
-                    .is_some()
+            if let Some((raw, (shown_kelvin, shown_tint))) = raw.and_then(|raw| {
+                raw.shown_white_balance(exposure.white_balance)
+                    .map(|shown| (raw, shown))
             }) {
                 let presets = raw.camera_white_balance_presets();
+                let current = raw.white_balance_offsets(exposure.white_balance);
                 let matches_current = |candidate: (f32, f32)| {
-                    (candidate.0 - exposure.temperature).abs() < 0.01
-                        && (candidate.1 - exposure.tint).abs() < 0.01
+                    (candidate.0 - current.0).abs() < 0.01 && (candidate.1 - current.1).abs() < 0.01
                 };
                 let selection = if *white_balance_picker_active {
                     "from image area".to_owned()
-                } else if exposure.temperature.abs() < 1e-5 && exposure.tint.abs() < 1e-5 {
+                } else if current.0.abs() < 1e-5 && current.1.abs() < 1e-5 {
                     "as shot".to_owned()
                 } else if raw
                     .reference_white_balance_offsets()
@@ -348,8 +348,7 @@ impl Sidebar {
                     moduwu_design::combo_box("global-white-balance-preset", selection, combo_width)
                         .show_ui(ui, |ui| {
                             if ui.selectable_label(false, "as shot").clicked() {
-                                exposure.temperature = 0.0;
-                                exposure.tint = 0.0;
+                                exposure.white_balance = WhiteBalance::AsShot;
                                 *white_balance_picker_active = false;
                                 changed = true;
                             }
@@ -365,11 +364,11 @@ impl Sidebar {
                                 .selectable_label(false, "camera reference (D65)")
                                 .clicked()
                             {
-                                if let Some((temperature, tint)) =
-                                    raw.reference_white_balance_offsets()
+                                if let Some(white_balance) = raw
+                                    .reference_white_balance_offsets()
+                                    .and_then(|offsets| raw.white_balance_from_offsets(offsets))
                                 {
-                                    exposure.temperature = temperature;
-                                    exposure.tint = tint;
+                                    exposure.white_balance = white_balance;
                                     *white_balance_picker_active = false;
                                     changed = true;
                                 }
@@ -385,13 +384,15 @@ impl Sidebar {
                                 );
                                 for preset in &presets {
                                     if ui.selectable_label(false, &preset.name).clicked() {
-                                        if let Some((temperature, tint)) = raw
+                                        if let Some(white_balance) = raw
                                             .white_balance_offsets_from_coefficients(
                                                 preset.coefficients,
                                             )
+                                            .and_then(|offsets| {
+                                                raw.white_balance_from_offsets(offsets)
+                                            })
                                         {
-                                            exposure.temperature = temperature;
-                                            exposure.tint = tint;
+                                            exposure.white_balance = white_balance;
                                             *white_balance_picker_active = false;
                                             changed = true;
                                         }
@@ -409,14 +410,10 @@ impl Sidebar {
                                     .selectable_label(false, format!("{temperature:.0}K"))
                                     .clicked()
                                 {
-                                    if let Some((temperature, tint)) = raw
-                                        .white_balance_offsets_from_temperature_tint(
-                                            temperature,
-                                            0.0,
-                                        )
+                                    if let Some(white_balance) =
+                                        raw.custom_white_balance(temperature, 0.0)
                                     {
-                                        exposure.temperature = temperature;
-                                        exposure.tint = tint;
+                                        exposure.white_balance = white_balance;
                                         *white_balance_picker_active = false;
                                         changed = true;
                                     }
@@ -442,9 +439,7 @@ impl Sidebar {
                     );
                 }
 
-                let (mut kelvin, mut tint) = raw
-                    .white_balance_temperature_tint(exposure.temperature, exposure.tint)
-                    .expect("white-balance model was checked above");
+                let (mut kelvin, mut tint) = (shown_kelvin, shown_tint);
                 let ranges = raw
                     .white_balance_ranges()
                     .expect("white-balance ranges were checked above");
@@ -482,17 +477,20 @@ impl Sidebar {
                     })
                     .inner;
                 if kelvin_changed || tint_changed {
-                    if let Some((temperature, tint)) =
-                        raw.white_balance_offsets_from_temperature_tint(kelvin, tint)
-                    {
-                        // Each slider writes only its own value, so moving one
-                        // never changes the other.
-                        if kelvin_changed {
-                            exposure.temperature = temperature;
-                        }
-                        if tint_changed {
-                            exposure.tint = tint;
-                        }
+                    // Both sliders back at the as-shot values, as their reset
+                    // leaves them, is as shot again.
+                    let as_shot = raw
+                        .white_balance_offsets_from_temperature_tint(kelvin, tint)
+                        .is_some_and(|(temperature, tint)| {
+                            temperature.abs() < 1e-5 && tint.abs() < 1e-5
+                        });
+                    let white_balance = if as_shot {
+                        Some(WhiteBalance::AsShot)
+                    } else {
+                        raw.custom_white_balance(kelvin, tint)
+                    };
+                    if let Some(white_balance) = white_balance {
+                        exposure.white_balance = white_balance;
                         *white_balance_picker_active = false;
                         changed = true;
                     }

@@ -11,14 +11,11 @@ pub(super) fn pack_camera_params(ctx: &GpuParamContext<'_>) -> CameraUniforms {
         full_width,
         full_height,
     } = ctx.tile;
+    let (temperature, tint) = raw.white_balance_offsets(exposure.white_balance);
     let (white_balance, camera_transform, profile_weight) = raw
         .adjusted_white_balance_and_camera_transform(
-            exposure
-                .temperature
-                .clamp(-GLOBAL_TEMPERATURE_LIMIT, GLOBAL_TEMPERATURE_LIMIT),
-            exposure
-                .tint
-                .clamp(-GLOBAL_TINT_OFFSET_LIMIT, GLOBAL_TINT_OFFSET_LIMIT),
+            temperature.clamp(-GLOBAL_TEMPERATURE_LIMIT, GLOBAL_TEMPERATURE_LIMIT),
+            tint.clamp(-GLOBAL_TINT_OFFSET_LIMIT, GLOBAL_TINT_OFFSET_LIMIT),
         );
     let camera_linear_raster = raw.is_camera_linear_raster();
     // LinearRaw DNGs arrive as a raster of camera-space RGB samples. The
