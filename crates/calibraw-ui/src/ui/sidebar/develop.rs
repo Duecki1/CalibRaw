@@ -585,7 +585,7 @@ impl Sidebar {
             moduwu_design::strong_with_help(
                 ui,
                 "Noise reduction",
-                "Sensor-profiled noise reduction uses the RAW's estimated a·signal+b sensor model. AI Denoise replaces these manual controls while enabled.",
+                "Profiled noise reduction follows the a·signal+b noise model estimated from the photo: its sensor data for RAWs, its pixels for rendered photos. AI Denoise replaces these manual controls while enabled.",
             );
             ui.add_enabled_ui(!exposure.ai_denoise_enabled, |ui| {
                 changed |= AdjustmentSlider::new(
@@ -647,7 +647,7 @@ impl Sidebar {
             moduwu_design::strong_with_help(
                 ui,
                 "Capture sharpening",
-                "Edge-aware capture sharpening restores fine RAW detail while its radius, detail, and masking controls limit halos and noisy texture.",
+                "Edge-aware capture sharpening restores fine detail while its radius, detail, and masking controls limit halos and noisy texture.",
             );
             changed |= AdjustmentSlider::new("Amount", &mut exposure.sharpen_amount, 0.0..=150.0)
                 .decimals(0)

@@ -65,6 +65,7 @@ pub(in crate::pipeline::gpu) struct PipelineSurfaces {
     pub(in crate::pipeline::gpu) reconstructed_raw_texture: wgpu::Texture,
     pub(in crate::pipeline::gpu) highlight_work_a: wgpu::Texture,
     pub(in crate::pipeline::gpu) highlight_work_b: wgpu::Texture,
+    pub(in crate::pipeline::gpu) raster_source_texture: wgpu::Texture,
     pub(in crate::pipeline::gpu) scene_texture: wgpu::Texture,
     pub(in crate::pipeline::gpu) display_linear_texture: wgpu::Texture,
     pub(in crate::pipeline::gpu) out_texture: wgpu::Texture,
@@ -80,6 +81,7 @@ pub(in crate::pipeline::gpu) struct PipelineSurfaces {
     pub(in crate::pipeline::gpu) reconstructed_raw_view: wgpu::TextureView,
     pub(in crate::pipeline::gpu) highlight_work_a_view: wgpu::TextureView,
     pub(in crate::pipeline::gpu) highlight_work_b_view: wgpu::TextureView,
+    pub(in crate::pipeline::gpu) raster_source_view: wgpu::TextureView,
     pub(in crate::pipeline::gpu) scene_view: wgpu::TextureView,
     pub(in crate::pipeline::gpu) tex1_view: wgpu::TextureView,
     pub(in crate::pipeline::gpu) tex2_view: wgpu::TextureView,
@@ -138,6 +140,7 @@ pub(in crate::pipeline::gpu) fn create_pipeline_surfaces(
         "calibraw highlight work B",
     );
 
+    let raster_source_texture = create_raster_source_texture(device, queue, raw, demosaic_format)?;
     let scene_texture = create_demosaic_texture(
         device,
         size,
@@ -212,6 +215,7 @@ pub(in crate::pipeline::gpu) fn create_pipeline_surfaces(
     let reconstructed_raw_view = default_texture_view(&reconstructed_raw_texture);
     let highlight_work_a_view = default_texture_view(&highlight_work_a);
     let highlight_work_b_view = default_texture_view(&highlight_work_b);
+    let raster_source_view = default_texture_view(&raster_source_texture);
     let scene_view = default_texture_view(&scene_texture);
     let tex1_view = default_texture_view(&tex1);
     let tex2_view = default_texture_view(&tex2);
@@ -251,6 +255,7 @@ pub(in crate::pipeline::gpu) fn create_pipeline_surfaces(
             reconstructed_raw_texture,
             highlight_work_a,
             highlight_work_b,
+            raster_source_texture,
             scene_texture,
             display_linear_texture,
             out_texture,
@@ -266,6 +271,7 @@ pub(in crate::pipeline::gpu) fn create_pipeline_surfaces(
             reconstructed_raw_view,
             highlight_work_a_view,
             highlight_work_b_view,
+            raster_source_view,
             scene_view,
             tex1_view,
             tex2_view,

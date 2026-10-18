@@ -99,6 +99,9 @@ pub(super) struct GpuResourcePlanInput {
     pub mask_data_buffer_bytes: u64,
     /// Whether the raw texture also carries the AI-denoised Bayer mosaic.
     pub ai_cfa: bool,
+    /// Whether the source is a pre-demosaiced raster, held in an RGB source
+    /// texture while the CFA textures shrink to placeholders.
+    pub raster_source: bool,
 }
 
 #[derive(Debug)]
@@ -238,24 +241,33 @@ pub(super) fn build_gpu_resource_plan(input: GpuResourcePlanInput) -> Result<Gpu
     let work_format = processing_work_format(input.quality);
     let full = |format| texture_allocation_bytes(input.width, input.height, 1, 1, format);
 
-    push_entry(
-        &mut entries,
-        "raw CFA texture",
-        GpuResourceResidency::Persistent,
-        full(raw_texture_format(input.ai_cfa))?,
-    );
-    push_entry(
-        &mut entries,
-        "CFA color-index texture",
-        GpuResourceResidency::Persistent,
-        full(wgpu::TextureFormat::R8Uint)?,
-    );
-    push_entry(
-        &mut entries,
-        "black-level texture",
-        GpuResourceResidency::Persistent,
-        full(wgpu::TextureFormat::R32Float)?,
-    );
+    if input.raster_source {
+        push_entry(
+            &mut entries,
+            "raster source texture",
+            GpuResourceResidency::Persistent,
+            full(work_format)?,
+        );
+    } else {
+        push_entry(
+            &mut entries,
+            "raw CFA texture",
+            GpuResourceResidency::Persistent,
+            full(raw_texture_format(input.ai_cfa))?,
+        );
+        push_entry(
+            &mut entries,
+            "CFA color-index texture",
+            GpuResourceResidency::Persistent,
+            full(wgpu::TextureFormat::R8Uint)?,
+        );
+        push_entry(
+            &mut entries,
+            "black-level texture",
+            GpuResourceResidency::Persistent,
+            full(wgpu::TextureFormat::R32Float)?,
+        );
+    }
     push_entry(
         &mut entries,
         "reconstructed raw texture",
@@ -580,6 +592,9 @@ fn mobile_preview_resource_plan(width: u32, height: u32, edge: u32) -> Result<Gp
         stage_uniform_buffer_bytes: GPU_STAGE_UNIFORM_ALLOCATION_BYTES,
         mask_data_buffer_bytes: MASK_DATA_SIZE_BYTES,
         ai_cfa: false,
+        // Sized for sensor sources: a raster's RGB source is within a byte
+        // per pixel of the CFA textures it replaces.
+        raster_source: false,
     })
 }
 
@@ -629,13 +644,45 @@ pub(super) fn create_demosaic_texture(
     )
 }
 
-fn upload_raster_scene_texture(
+/// The source of a pre-demosaiced raster, which the raster finish pass turns
+/// into the scene each RAW stage. It stays untouched so denoise and Remove
+/// re-run from the original pixels. Sensor sources get a 1x1 placeholder, as
+/// rasters do for the CFA textures.
+pub(super) fn create_raster_source_texture(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    raw: &LoadedRaw,
+    format: wgpu::TextureFormat,
+) -> Result<wgpu::Texture> {
+    let raster = raw.is_pre_demosaiced_raster();
+    let size = if raster {
+        texture_size(raw.width, raw.height)
+    } else {
+        texture_size(1, 1)
+    };
+    let texture = create_processing_texture(
+        device,
+        size,
+        format,
+        wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        "calibraw raster source",
+    );
+    if raster {
+        upload_raster_source_texture(queue, &texture, format, raw)?;
+    }
+    Ok(texture)
+}
+
+/// Uploads a raster's scene-linear RGB pixels into its source texture.
+pub(super) fn upload_raster_source_texture(
     queue: &wgpu::Queue,
     texture: &wgpu::Texture,
     format: wgpu::TextureFormat,
     raw: &LoadedRaw,
-    rgb: &[f32],
 ) -> Result<()> {
+    let rgb = raw
+        .scene_linear_raster()
+        .context("raster source is missing scene-linear RGB pixels")?;
     let expected = raw.width as usize * raw.height as usize * 3;
     anyhow::ensure!(
         rgb.len() == expected,
@@ -786,16 +833,14 @@ fn write_texture_chunk<T: bytemuck::Pod>(
     );
 }
 
+/// Uploads `raw`'s demosaiced AI-denoise result into the scene texture, if it
+/// has one, and returns whether it did.
 pub(super) fn upload_ai_scene_texture(
     queue: &wgpu::Queue,
     texture: &wgpu::Texture,
     format: wgpu::TextureFormat,
     raw: &LoadedRaw,
 ) -> Result<bool> {
-    if let Some(rgb) = raw.scene_linear_raster() {
-        upload_raster_scene_texture(queue, texture, format, raw, rgb)?;
-        return Ok(true);
-    }
     let Some(image) = raw.ai_denoised_image() else {
         return Ok(false);
     };
@@ -1497,6 +1542,7 @@ mod resource_plan_tests {
             stage_uniform_buffer_bytes: GPU_STAGE_UNIFORM_ALLOCATION_BYTES,
             mask_data_buffer_bytes: MASK_DATA_SIZE_BYTES,
             ai_cfa: false,
+            raster_source: false,
         }
     }
 

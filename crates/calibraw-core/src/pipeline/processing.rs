@@ -761,6 +761,38 @@ mod tests {
     }
 
     #[test]
+    fn raster_proxies_average_noise_but_crops_and_tiles_keep_it() {
+        let mut raw = test_raster(8, 8);
+        raw.noise_profile = crate::pipeline::NoiseProfile {
+            shot: [4e-4; 4],
+            read: [8e-6; 4],
+            confidence: 1.0,
+            green2_present: false,
+        };
+        // Each 2x2 proxy pixel averages four source pixels.
+        let proxy = build_proxy(&raw, ProxySpec { max_edge: 4 });
+        assert_eq!(proxy.noise_profile.shot, [1e-4; 4]);
+        assert_eq!(proxy.noise_profile.read, [2e-6; 4]);
+        assert_eq!(crop_raw(&raw, 2, 2, 4, 4).noise_profile, raw.noise_profile);
+        let tile = ExportTile {
+            core_x: 0,
+            core_y: 0,
+            core_width: 4,
+            core_height: 4,
+            local_core_x: 1,
+            local_core_y: 1,
+            padded_width: 6,
+            padded_height: 6,
+            global_origin_x: -1,
+            global_origin_y: -1,
+        };
+        assert_eq!(
+            extract_padded_tile(&raw, tile).noise_profile,
+            raw.noise_profile
+        );
+    }
+
+    #[test]
     fn raster_derivatives_stay_scene_referred() {
         let mut raw = test_raster(4, 4);
         raw.scene_referred_raster = true;

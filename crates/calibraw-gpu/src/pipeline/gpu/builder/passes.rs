@@ -54,6 +54,11 @@ pub(in crate::pipeline::gpu) struct StageIndices {
     /// The joint-upsampling guide of scene depth, built right before the
     /// creative pass that reads it.
     pub(in crate::pipeline::gpu) scene_depth_guide_pass_index: usize,
+    /// Pre-demosaiced rasters' replacement for highlight reconstruction and
+    /// demosaicing: copies the raster source into the scene with luminance
+    /// denoise. It runs with the RAW stage but comes last so that adding it
+    /// kept earlier positions.
+    pub(in crate::pipeline::gpu) raster_finish_pass_index: usize,
     pub(in crate::pipeline::gpu) pass_count: usize,
 }
 
@@ -93,6 +98,7 @@ impl StageIndices {
         let image_light_blur_pass_index = take(2);
         let relight_shadow_map_pass_index = take(1);
         let scene_depth_guide_pass_index = take(1);
+        let raster_finish_pass_index = take(1);
         let pass_count = next;
         Self {
             highlight_pass_index,
@@ -125,6 +131,7 @@ impl StageIndices {
             image_light_end_index: relight_shadow_map_pass_index,
             relight_shadow_map_pass_index,
             scene_depth_guide_pass_index,
+            raster_finish_pass_index,
             pass_count,
         }
     }
@@ -562,6 +569,15 @@ pub(in crate::pipeline::gpu) fn assemble_passes(
         &layouts.bgl_scene_depth_guide,
         InputBoundPass::SceneDepthGuide,
         scene_depth_workgroups,
+    ));
+
+    ensure_planned(&passes, indices.raster_finish_pass_index, "raster finish")?;
+    passes.push(assembler.make_pass(
+        shaders.raster_finish_module.as_ref(),
+        "raster_finish",
+        &layouts.bgl_color_denoise,
+        groups.bg_raster_finish.clone(),
+        image_workgroups,
     ));
 
     // The post-blur variants reuse the programs above with bind groups that

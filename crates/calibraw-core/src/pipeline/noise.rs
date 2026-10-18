@@ -1,7 +1,35 @@
 use super::raw_loader::CompactPixelMap;
+use crate::color_math::srgb_encode;
 use serde::{Deserialize, Serialize};
+use std::ops::{Range, RangeInclusive};
 
 const FLAT_MIN_SECOND_DIFFERENCE_MEDIAN_SQUARED: f32 = 0.163;
+/// Sampling positions per image; the stride between them follows from it.
+const TARGET_ANCHORS: u64 = 48_000;
+
+/// Lower-half mean of `min(|a - 2c + b|, |d - 2c + e|)` over independent
+/// unit Gaussian samples (Monte Carlo, 2·10⁷ draws). Averaging the lower half
+/// keeps the estimate continuous on 8-bit codes and leaves out most edges and
+/// texture.
+const UNIT_NOISE_LOWER_HALF_SECOND_DIFFERENCE: f32 = 0.447;
+/// Encoded noise of standard deviation `σ` appears in linear light as about
+/// `4.79 σ² · signal + (σ / 12.92)²`: the least-squares fit of the squared
+/// sRGB decoding slope over encoded [0.02, 0.98], with the intercept held at
+/// the linear toe's.
+const SRGB_SHOT_PER_ENCODED_VARIANCE: f32 = 4.79;
+const SRGB_TOE_SLOPE: f32 = 1.0 / 12.92;
+/// Encoded levels whose noise a raster estimate measures. Crushed blacks and
+/// clipped highlights are flat and would read as clean.
+const RASTER_MEASURED_LEVELS: Range<f32> = 0.02..0.985;
+/// Plausible encoded noise: from 8-bit quantization (1/√12 of a code) to
+/// twenty codes.
+const RASTER_ENCODED_SIGMA_RANGE: RangeInclusive<f32> = (0.288_675 / 255.0)..=(20.0 / 255.0);
+/// The encoded noise assumed for a raster too small to measure: one code.
+const RASTER_NOMINAL_ENCODED_SIGMA: f32 = 1.0 / 255.0;
+/// Samples a channel needs before its measurement replaces the nominal one,
+/// and the count at which it is fully trusted.
+const RASTER_MIN_SAMPLES: usize = 64;
+const RASTER_FULL_CONFIDENCE_SAMPLES: f32 = 2_000.0;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct AdaptiveDetailDefaults {
@@ -44,7 +72,6 @@ impl NoiseProfile {
         cfa_period: u32,
     ) -> Self {
         const BIN_COUNT: usize = 20;
-        const TARGET_ANCHORS: u64 = 48_000;
         const MIN_BIN_SAMPLES: usize = 24;
 
         let green2_present = cfa_plane_present(width, height, color_indices, cfa_period, 3);
@@ -59,10 +86,8 @@ impl NoiseProfile {
             return Self::iso_fallback(iso_speed, white_levels, green2_present);
         }
 
-        let pixels = u64::from(width) * u64::from(height);
-        let coarse = ((pixels / TARGET_ANCHORS).max(1) as f64).sqrt().ceil() as u32;
         let radius = cfa_period.max(1);
-        let stride = coprime_stride(coarse.max(1), radius);
+        let stride = coprime_stride(anchor_spacing(width, height), radius);
         let mut bins: [[Vec<f32>; BIN_COUNT]; 4] =
             std::array::from_fn(|_| std::array::from_fn(|_| Vec::new()));
 
@@ -174,6 +199,79 @@ impl NoiseProfile {
         }
     }
 
+    /// Estimates the noise of a photo decoded into a scene-linear RGB raster
+    /// (`width * height * 3` values, display white at 1.0), which carries no
+    /// sensor data to profile. The result describes the raster's own values,
+    /// which the GPU denoisers read unscaled.
+    ///
+    /// Rendered photos carry noise of roughly constant amplitude in their
+    /// encoded values, so each channel's standard deviation is measured in
+    /// sRGB-encoded space and converted to the linear model. Second
+    /// differences span two pixels, past the correlation that demosaicing,
+    /// in-camera noise reduction and 4:2:0 chroma subsampling leave between
+    /// neighbours, and the sampling stride is coprime with 8 so anchors visit
+    /// every JPEG block phase.
+    pub fn estimate_raster(width: u32, height: u32, rgb: &[f32]) -> Self {
+        const RADIUS: u32 = 2;
+        const JPEG_BLOCK_EDGE: u32 = 8;
+
+        let expected_len = (width as usize)
+            .saturating_mul(height as usize)
+            .saturating_mul(3);
+        if width < 2 * RADIUS + 1 || height < 2 * RADIUS + 1 || rgb.len() < expected_len {
+            return Self::from_encoded_sigma([RASTER_NOMINAL_ENCODED_SIGMA; 3], 0.0);
+        }
+
+        let stride = coprime_stride(anchor_spacing(width, height), JPEG_BLOCK_EDGE) as usize;
+        let encoded = |x: u32, y: u32, channel: usize| {
+            srgb_encode(rgb[(y as usize * width as usize + x as usize) * 3 + channel])
+        };
+        let mut differences: [Vec<f32>; 3] = std::array::from_fn(|_| Vec::new());
+        for y in (RADIUS..height - RADIUS).step_by(stride) {
+            for x in (RADIUS..width - RADIUS).step_by(stride) {
+                for (channel, samples) in differences.iter_mut().enumerate() {
+                    let center = encoded(x, y, channel);
+                    if !RASTER_MEASURED_LEVELS.contains(&center) {
+                        continue;
+                    }
+                    let horizontal = encoded(x - RADIUS, y, channel) - 2.0 * center
+                        + encoded(x + RADIUS, y, channel);
+                    let vertical = encoded(x, y - RADIUS, channel) - 2.0 * center
+                        + encoded(x, y + RADIUS, channel);
+                    samples.push(horizontal.abs().min(vertical.abs()));
+                }
+            }
+        }
+
+        let mut sigma = [RASTER_NOMINAL_ENCODED_SIGMA; 3];
+        let mut channel_confidence = [0.0f32; 3];
+        for (channel, samples) in differences.iter_mut().enumerate() {
+            if samples.len() < RASTER_MIN_SAMPLES {
+                continue;
+            }
+            sigma[channel] = (lower_half_mean(samples) / UNIT_NOISE_LOWER_HALF_SECOND_DIFFERENCE)
+                .clamp(
+                    *RASTER_ENCODED_SIGMA_RANGE.start(),
+                    *RASTER_ENCODED_SIGMA_RANGE.end(),
+                );
+            channel_confidence[channel] =
+                (samples.len() as f32 / RASTER_FULL_CONFIDENCE_SAMPLES).min(1.0);
+        }
+        Self::from_encoded_sigma(sigma, channel_confidence.iter().sum::<f32>() / 3.0)
+    }
+
+    /// The linear-light model of noise with standard deviation `sigma` per
+    /// RGB channel in sRGB-encoded values.
+    fn from_encoded_sigma(sigma: [f32; 3], confidence: f32) -> Self {
+        let rgbg = [sigma[0], sigma[1], sigma[2], sigma[1]];
+        Self {
+            shot: rgbg.map(|sigma| SRGB_SHOT_PER_ENCODED_VARIANCE * sigma * sigma),
+            read: rgbg.map(|sigma| (sigma * SRGB_TOE_SLOPE).powi(2)),
+            confidence,
+            green2_present: false,
+        }
+    }
+
     pub fn scaled_variance(self, factor: f32) -> Self {
         let factor = factor.clamp(1e-4, 1.0);
         Self {
@@ -253,6 +351,22 @@ impl NoiseProfile {
 fn smoothstep(low: f32, high: f32, value: f32) -> f32 {
     let t = ((value - low) / (high - low)).clamp(0.0, 1.0);
     t * t * (3.0 - 2.0 * t)
+}
+
+/// The anchor spacing that samples about [`TARGET_ANCHORS`] positions.
+fn anchor_spacing(width: u32, height: u32) -> u32 {
+    let pixels = u64::from(width) * u64::from(height);
+    (((pixels / TARGET_ANCHORS).max(1) as f64).sqrt().ceil() as u32).max(1)
+}
+
+/// The mean of the smaller half of `samples`, which it reorders.
+fn lower_half_mean(samples: &mut [f32]) -> f32 {
+    let half = samples.len() / 2;
+    if half == 0 {
+        return 0.0;
+    }
+    samples.select_nth_unstable_by(half, f32::total_cmp);
+    samples[..half].iter().sum::<f32>() / half as f32
 }
 
 fn cfa_plane_present(
@@ -335,6 +449,69 @@ mod tests {
         assert_eq!(scaled.read, [0.00025; 4]);
         assert_eq!(scaled.confidence, 1.0);
         assert!(scaled.green2_present);
+    }
+
+    /// Horizontal bands at eight encoded levels with Gaussian noise of
+    /// `sigma_codes`, quantized to 8 bits like a JPEG and decoded to linear.
+    fn noisy_raster(width: u32, height: u32, sigma_codes: f32) -> Vec<f32> {
+        let mut state = 0x2545_f491_4f6c_dd1d_u64;
+        let mut uniform = || {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            ((state >> 40) as f32 + 0.5) / (1u64 << 24) as f32
+        };
+        let mut rgb = Vec::with_capacity((width * height * 3) as usize);
+        for y in 0..height {
+            let level = 0.1 + 0.1 * (y * 8 / height) as f32;
+            for _ in 0..width * 3 {
+                let gaussian =
+                    (-2.0 * uniform().ln()).sqrt() * (std::f32::consts::TAU * uniform()).cos();
+                let code = (level * 255.0 + sigma_codes * gaussian)
+                    .round()
+                    .clamp(0.0, 255.0);
+                rgb.push(crate::color_math::srgb_decode(code / 255.0));
+            }
+        }
+        rgb
+    }
+
+    fn encoded_sigma_codes(profile: &NoiseProfile, channel: usize) -> f32 {
+        (profile.shot[channel] / SRGB_SHOT_PER_ENCODED_VARIANCE).sqrt() * 255.0
+    }
+
+    #[test]
+    fn raster_estimate_recovers_encoded_noise() {
+        for sigma_codes in [1.0, 2.0, 4.0] {
+            let profile =
+                NoiseProfile::estimate_raster(512, 512, &noisy_raster(512, 512, sigma_codes));
+            for channel in 0..3 {
+                let measured = encoded_sigma_codes(&profile, channel);
+                assert!(
+                    (measured / sigma_codes - 1.0).abs() < 0.1,
+                    "{sigma_codes} codes measured as {measured}"
+                );
+                let toe = (measured / 255.0 * SRGB_TOE_SLOPE).powi(2);
+                assert!((profile.read[channel] / toe - 1.0).abs() < 1e-3);
+            }
+            assert_eq!(profile.shot[3], profile.shot[1]);
+            assert_eq!(profile.confidence, 1.0);
+        }
+    }
+
+    #[test]
+    fn clean_rasters_bottom_out_at_8_bit_quantization_noise() {
+        let profile = NoiseProfile::estimate_raster(256, 256, &noisy_raster(256, 256, 0.0));
+        let floor = RASTER_ENCODED_SIGMA_RANGE.start() * 255.0;
+        assert!((encoded_sigma_codes(&profile, 1) - floor).abs() < 1e-4);
+        assert_eq!(profile.confidence, 1.0);
+    }
+
+    #[test]
+    fn rasters_too_small_to_measure_assume_one_code_of_noise() {
+        let profile = NoiseProfile::estimate_raster(4, 4, &[0.2; 4 * 4 * 3]);
+        assert!((encoded_sigma_codes(&profile, 0) - 1.0).abs() < 1e-4);
+        assert_eq!(profile.confidence, 0.0);
     }
 
     #[test]
