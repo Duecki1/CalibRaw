@@ -327,18 +327,20 @@ fn apply_local_scene_tone_nodes(pos: vec2<i32>, input_rgb: vec3<f32>) -> vec3<f3
     return rgb;
 }
 
-// Capture sharpening of the Detail card plus every Sharpen effect slot, each
-// slot's gain weighted by its mask. The summed gain is limited once, so one
-// pass serves global and local sharpening. Without active sharpening `rgb` is
-// returned unchanged, negative channels included.
-fn apply_capture_sharpening_at(pos: vec2<i32>, rgb: vec3<f32>) -> vec3<f32> {
-    var sharpen_ev = 0.0;
-    var sharpened = false;
+// Capture sharpening of the Detail card, then every Sharpen effect slot. The
+// slots' gains, each weighted by its mask, are summed and limited once, so
+// overlapping slots cannot compound their halos. Without active sharpening
+// `rgb` is returned unchanged, negative channels included.
+fn apply_capture_sharpening_at(pos: vec2<i32>, input_rgb: vec3<f32>) -> vec3<f32> {
+    var rgb = input_rgb;
     let global = DetailCapture::global_capture_sharpening();
     if global.amount >= 1e-6 {
-        sharpen_ev = DetailCapture::capture_sharpening_ev(pos, rgb, global);
-        sharpened = true;
+        let capture_ev = DetailCapture::capture_sharpening_ev(pos, input_rgb, global);
+        rgb = DetailCapture::apply_capture_sharpening_ev(pos, input_rgb, capture_ev);
     }
+    var effect_ev = 0.0;
+    var halo_ev = 0.0;
+    var sharpened = false;
     let count = min(Common::scene_tone_uniforms.mask_counts.x, Common::MAX_RENDER_MASK_SLOTS);
     for (var index = 0u; index < count; index = index + 1u) {
         let state = Common::mask_data[index].metadata;
@@ -350,11 +352,12 @@ fn apply_capture_sharpening_at(pos: vec2<i32>, rgb: vec3<f32>) -> vec3<f32> {
         if settings.amount < 1e-6 { continue; }
         let weight = local_mask_weight(pos, index);
         if weight <= 1e-5 { continue; }
-        sharpen_ev = sharpen_ev + weight * DetailCapture::capture_sharpening_ev(pos, rgb, settings);
+        effect_ev = effect_ev + weight * DetailCapture::sharpen_effect_ev(pos, input_rgb, settings);
+        halo_ev = max(halo_ev, weight * DetailCapture::sharpen_effect_halo_ev(settings));
         sharpened = true;
     }
     if !sharpened { return rgb; }
-    return DetailCapture::apply_capture_sharpening_ev(pos, rgb, sharpen_ev);
+    return DetailCapture::apply_sharpen_effect_ev(pos, rgb, effect_ev, halo_ev);
 }
 
 @compute @workgroup_size(8, 8, 1)
