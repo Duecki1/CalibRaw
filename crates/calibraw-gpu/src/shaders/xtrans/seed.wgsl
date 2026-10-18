@@ -129,7 +129,7 @@ fn xtrans_seed_channel(pos: vec2<i32>, channel: u32) -> vec2<f32> {
 
     if weight_sum > 0.0 {
         let confidence = clamp(weight_sum / (weight_sum + 4.0), 0.15, 0.95);
-        return vec2<f32>(max(weighted_sum / weight_sum, 0.0), confidence);
+        return vec2<f32>(weighted_sum / weight_sum, confidence);
     }
-    return vec2<f32>(max(xtrans_radial_fallback(pos, channel), 0.0), 0.1);
+    return vec2<f32>(xtrans_radial_fallback(pos, channel), 0.1);
 }

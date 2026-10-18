@@ -122,7 +122,7 @@ fn mark_border_rgb(pos: vec2<i32>) -> vec3<f32> {
             if !mark_in_bounds(q) { continue; }
             let channel = RawSampling::color_at(q);
             let weight = 1.0 / (1.0 + f32(dx * dx + dy * dy));
-            let value = max(RawSampling::raw_cfa_at(q), 0.0);
+            let value = RawSampling::raw_cfa_at(q);
             if channel == 0u { sum.r += value * weight; weight_sum.r += weight; }
             if channel == 1u { sum.g += value * weight; weight_sum.g += weight; }
             if channel == 2u { sum.b += value * weight; weight_sum.b += weight; }

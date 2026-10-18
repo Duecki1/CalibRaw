@@ -88,6 +88,7 @@ pub(in crate::pipeline::gpu) fn create_bind_group_layouts(
                     wgpu::TextureFormat::R32Float,
                     wgpu::StorageTextureAccess::WriteOnly,
                 ),
+                texture_entry(13, wgpu::TextureSampleType::Float { filterable: false }),
             ],
         )
     });

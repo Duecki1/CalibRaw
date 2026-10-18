@@ -46,7 +46,19 @@ fn raw_sensor_at(pos: vec2<i32>) -> f32 {
         0.0,
         white - 1.0,
     );
-    return clamp((raw - calibrated_black) / (white - calibrated_black), 0.0, 4.0);
+    // Read noise below black stays negative so demosaic, denoise and later
+    // filters average it to black; clamping each sample would lift and tint
+    // deep shadows. Scene stages take it (Color::compress_scene_gamut keeps
+    // pixels without a positive channel). -1 only bounds a bad black level.
+    return clamp((raw - calibrated_black) / (white - calibrated_black), -1.0, 4.0);
+}
+
+// Four read-noise sigmas of the noisiest channel, in the white-balanced units
+// of raw_camera_at: an offset that lifts samples below black for demosaic
+// steps that divide by local signal and so need positive values.
+fn read_noise_pedestal() -> f32 {
+    let read = Common::camera_uniforms.noise_read;
+    return 4.0 * sqrt(max(max(max(read.r, read.g), max(read.b, read.a)), 0.0));
 }
 
 fn raw_camera_at(pos: vec2<i32>) -> f32 {
@@ -55,18 +67,14 @@ fn raw_camera_at(pos: vec2<i32>) -> f32 {
 }
 
 // Keep normal clipping slightly below the calibrated white point. Make the
-// clipping decision in sensor space so it is independent of white balance;
-// callers that need a WB-domain clamp must scale the threshold for that sample's
-// physical CFA channel rather than by a shared min(wb).
+// clipping decision in sensor space so it is independent of white balance: a
+// shared WB-domain threshold would mark high-gain channels clipped while their
+// sensor samples are still below white.
 const SHARED_HIGHLIGHT_CLIP_SAFETY: f32 = 0.995;
 
 fn shared_highlight_sensor_clip() -> f32 {
     return SHARED_HIGHLIGHT_CLIP_SAFETY
         * max(Common::camera_uniforms.highlight_clip, 0.01);
-}
-
-fn shared_highlight_clip_for_cfa_channel(channel: u32) -> f32 {
-    return shared_highlight_sensor_clip() * max(wb_for_cfa_channel(channel), 1e-6);
 }
 
 fn is_raw_clipped(pos: vec2<i32>) -> bool {

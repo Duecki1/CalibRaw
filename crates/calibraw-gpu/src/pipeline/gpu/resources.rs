@@ -1,5 +1,5 @@
 use super::*;
-use crate::pipeline::TONE_GUIDE_CELL_SIZE;
+use crate::pipeline::{LensShadingMap, TONE_GUIDE_CELL_SIZE};
 use std::borrow::Cow;
 use std::cell::RefCell;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -1410,6 +1410,56 @@ pub(super) fn create_color_texture(
         upload_color_texture(queue, &texture, raw);
     }
     texture
+}
+
+/// The RGBA32F texture of `raw`'s lens shading gains, which highlight
+/// reconstruction applies to its output. It is always
+/// [`LensShadingMap::EDGE`] square, so a reused tile pipeline refills it.
+pub(super) fn create_lens_shading_texture(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    raw: &LoadedRaw,
+) -> wgpu::Texture {
+    let edge = LensShadingMap::EDGE;
+    let texture = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("calibraw lens shading gains"),
+        size: texture_size(edge, edge),
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Rgba32Float,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        view_formats: &[],
+    });
+    upload_lens_shading_texture(queue, &texture, raw);
+    texture
+}
+
+/// Uploads `raw`'s lens shading gains, or unit gains when it has none.
+pub(super) fn upload_lens_shading_texture(
+    queue: &wgpu::Queue,
+    texture: &wgpu::Texture,
+    raw: &LoadedRaw,
+) {
+    let edge = LensShadingMap::EDGE;
+    let texels: Vec<[f32; 4]> = match &raw.lens_shading {
+        Some(map) => map
+            .gains()
+            .iter()
+            .map(|&[red, green, blue]| [red, green, blue, 1.0])
+            .collect(),
+        None => vec![[1.0; 4]; (edge * edge) as usize],
+    };
+    queue.write_texture(
+        copy_texture(texture),
+        bytemuck::cast_slice(&texels),
+        wgpu::TexelCopyBufferLayout {
+            offset: 0,
+            bytes_per_row: Some(edge * 16),
+            rows_per_image: Some(edge),
+        },
+        texture_size(edge, edge),
+    );
 }
 
 fn create_per_pixel_texture(

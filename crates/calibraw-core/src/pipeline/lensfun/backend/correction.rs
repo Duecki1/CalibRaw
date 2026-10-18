@@ -111,6 +111,28 @@ pub(super) fn correct_mosaic(
     if raw.is_pre_demosaiced_raster() {
         return correct_raster(raw, modifier, flags, lens_geometry);
     }
+    let coordinate_enabled =
+        flags & (LF_MODIFY_DISTORTION | LF_MODIFY_GEOMETRY | LF_MODIFY_TCA | LF_MODIFY_SCALE) != 0;
+    let mut corrected = if coordinate_enabled {
+        resample_mosaic(raw, modifier)
+    } else {
+        raw.clone()
+    };
+    if flags & LF_MODIFY_VIGNETTING != 0 {
+        let vignette_started = std::time::Instant::now();
+        corrected.lens_shading = Some(build_lens_shading_map(raw, modifier)?);
+        crate::diagnostics::record(format!(
+            "Lensfun vignette gain map prepared in {:.3}s",
+            vignette_started.elapsed().as_secs_f64()
+        ));
+    }
+    corrected.lens_geometry = lens_geometry;
+    Ok(corrected)
+}
+
+/// Resamples each CFA colour of the mosaic at its Lensfun-corrected (TCA)
+/// source positions.
+fn resample_mosaic(raw: &LoadedRaw, modifier: &Modifier) -> LoadedRaw {
     let width = raw.width as usize;
     let height = raw.height as usize;
     let mut raw_pixels = vec![0u16; raw.raw_pixels.len()];
@@ -128,21 +150,6 @@ pub(super) fn correct_mosaic(
     let mut black_levels_per_pixel = uniform_black
         .is_none()
         .then(|| vec![0.0f32; raw.black_levels_per_pixel.len()]);
-    let coordinate_enabled =
-        flags & (LF_MODIFY_DISTORTION | LF_MODIFY_GEOMETRY | LF_MODIFY_TCA | LF_MODIFY_SCALE) != 0;
-    let vignette_enabled = flags & LF_MODIFY_VIGNETTING != 0;
-    let vignette_started = std::time::Instant::now();
-    let vignette_gains = if vignette_enabled {
-        build_vignette_gain_map(raw, modifier)?
-    } else {
-        Vec::new()
-    };
-    if vignette_enabled {
-        crate::diagnostics::record(format!(
-            "Lensfun vignette gain map prepared in {:.3}s",
-            vignette_started.elapsed().as_secs_f64()
-        ));
-    }
 
     let warp_started = std::time::Instant::now();
     // Returns the corrected sample (rounded and clamped to u16) and its black level.
@@ -157,11 +164,7 @@ pub(super) fn correct_mosaic(
         let source_x = coordinates[coordinate_index];
         let source_y = coordinates[coordinate_index + 1];
         let (corrected, black) = sample_corrected_cfa_subpixel(
-            CfaCorrectionContext {
-                raw,
-                vignette_enabled,
-                vignette_gains: &vignette_gains,
-            },
+            raw,
             CfaSample {
                 position: [source_x, source_y],
                 channel: cfa_index,
@@ -173,14 +176,13 @@ pub(super) fn correct_mosaic(
             black,
         )
     };
-    let coordinate_modifier = coordinate_enabled.then_some(modifier);
     let batch_len = ROW_BATCH * width.max(1);
     if let Some(output_black_map) = black_levels_per_pixel.as_mut() {
         for_each_coordinate_batch(
             raw_pixels
                 .par_chunks_mut(batch_len)
                 .zip(output_black_map.par_chunks_mut(batch_len)),
-            coordinate_modifier,
+            Some(modifier),
             [width, height],
             |(samples, blacks), batch, coordinates| {
                 for (local_index, (sample, black)) in
@@ -193,7 +195,7 @@ pub(super) fn correct_mosaic(
     } else {
         for_each_coordinate_batch(
             raw_pixels.par_chunks_mut(batch_len),
-            coordinate_modifier,
+            Some(modifier),
             [width, height],
             |samples, batch, coordinates| {
                 for (local_index, sample) in samples.iter_mut().enumerate() {
@@ -203,7 +205,7 @@ pub(super) fn correct_mosaic(
         );
     }
     crate::diagnostics::record(format!(
-        "Lensfun CFA TCA/shading correction finished in {:.3}s",
+        "Lensfun CFA TCA correction finished in {:.3}s",
         warp_started.elapsed().as_secs_f64()
     ));
 
@@ -219,8 +221,7 @@ pub(super) fn correct_mosaic(
     };
     // The corrected mosaic replaces the source as the full-sensor reference, so it starts its
     // own opposed-chroma cache and source identity instead of sharing the uncorrected ones.
-    Ok(LoadedRaw {
-        lens_geometry,
+    LoadedRaw {
         opposed_chroma_cache: Default::default(),
         opposed_chroma_source_identity: Default::default(),
         opposed_chroma_reference_source: true,
@@ -231,7 +232,7 @@ pub(super) fn correct_mosaic(
             raw.color_indices.clone(),
             black_levels_per_pixel,
         )
-    })
+    }
 }
 
 fn correct_raster(
@@ -357,23 +358,34 @@ fn sample_raster_channel_bilinear(
     top * (1.0 - ty) + bottom * ty
 }
 
-fn build_vignette_gain_map(raw: &LoadedRaw, modifier: &Modifier) -> Result<Vec<f32>> {
-    let width = raw.width as usize;
-    let mut gains = vec![1.0f32; raw.raw_pixels.len()];
-    for_each_vignette_batch(
-        gains.par_chunks_mut(ROW_BATCH * width.max(1)),
-        raw,
-        modifier,
-        "Lensfun vignette row stride overflow",
-        |gains, batch, rgba_gains| {
-            let pixel_start = batch.y * width;
-            for (local_index, (gain, rgba_gain)) in gains.iter_mut().zip(rgba_gains).enumerate() {
-                let channel = lensfun_rgb_channel(raw.color_indices[pixel_start + local_index]);
-                *gain = rgba_gain.0[channel];
-            }
-        },
-    )?;
-    Ok(gains)
+/// Lensfun's vignetting gains at the nodes of a [`LensShadingMap`] over `raw`.
+fn build_lens_shading_map(raw: &LoadedRaw, modifier: &Modifier) -> Result<LensShadingMap> {
+    let extent = [
+        raw.width.saturating_sub(1) as f32,
+        raw.height.saturating_sub(1) as f32,
+    ];
+    let row_stride = c_int::try_from(std::mem::size_of::<AlignedRgba>())
+        .context("Lensfun vignette node stride overflow")?;
+    LensShadingMap::from_fn(|[u, v]| {
+        let mut gain = AlignedRgba([1.0; 4]);
+        // SAFETY: `modifier` holds a live, initialized Lensfun modifier, which is safe to
+        // apply from several threads (see `Modifier`). `gain` is one RGBA f32 pixel and the
+        // call covers a 1x1 region, so Lensfun writes only inside it.
+        let _applied = unsafe {
+            lf_modifier_apply_color_modification(
+                modifier.0,
+                std::ptr::from_mut(&mut gain).cast(),
+                u * extent[0],
+                v * extent[1],
+                1,
+                1,
+                LF_CR_RGBA,
+                row_stride,
+            )
+        };
+        [gain.0[0], gain.0[1], gain.0[2]]
+    })
+    .ok_or_else(|| anyhow!("Lensfun produced invalid vignetting gains"))
 }
 
 /// Image rows per Lensfun call. Batches are independent, so they run in
