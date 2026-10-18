@@ -9,6 +9,7 @@ pub mod focus_stack;
 pub mod geometry;
 pub mod hdr;
 mod lens_correction;
+mod lens_shading;
 pub mod lensfun;
 mod mask_region;
 pub mod masks;
@@ -42,6 +43,7 @@ pub use geometry::{
 pub use lens_correction::{
     apply_lens_correction, LensCorrection, ManualLensCorrection, ManualLensModel,
 };
+pub use lens_shading::LensShadingMap;
 pub use lensfun::{
     apply_lensfun_correction, lensfun_catalog, LensfunCatalog, LensfunCorrections, LensfunLens,
 };

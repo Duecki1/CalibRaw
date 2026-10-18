@@ -348,6 +348,7 @@ mod tests {
             available_camera_profiles: Vec::new(),
             white_balance_model: None,
             lens_geometry: None,
+            lens_shading: None,
             ai_denoised: std::sync::Arc::new(std::sync::RwLock::new(None)),
             opposed_chroma_cache: Default::default(),
             opposed_chroma_source_identity: Default::default(),

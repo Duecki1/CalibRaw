@@ -20,8 +20,13 @@ fn rcd_axis_hpf(pos: vec2<i32>, axis: vec2<i32>) -> f32 {
         + 6.0 * c;
 }
 
+// The low-pass ratio needs positive values, so it runs on samples lifted by
+// the read-noise pedestal and lowers the estimate again: exact RCD on shifted
+// data, which keeps noise below black unbiased. The low-pass weights sum to 4.
+// Samples further below black are held at the pedestal.
 fn rcd_green_candidate(pos: vec2<i32>, axis: vec2<i32>, lpfi: f32) -> vec2<f32> {
     let eps = 1e-5;
+    let pedestal = RawSampling::read_noise_pedestal();
     let c = RawSampling::raw_cfa_at(pos);
     let m1 = RawSampling::raw_cfa_at(pos - axis);
     let p1 = RawSampling::raw_cfa_at(pos + axis);
@@ -36,8 +41,13 @@ fn rcd_green_candidate(pos: vec2<i32>, axis: vec2<i32>, lpfi: f32) -> vec2<f32> 
     let grad_p = eps + abs(m1 - p1) + abs(c - p2) + abs(p1 - p3) + abs(p2 - p4);
     let lpf_m = textureLoad(tex1_read, Common::clamp_pos(pos - 2 * axis), 0).y;
     let lpf_p = textureLoad(tex1_read, Common::clamp_pos(pos + 2 * axis), 0).y;
-    let est_m = m1 * (2.0 * lpfi) / (eps + lpfi + lpf_m);
-    let est_p = p1 * (2.0 * lpfi) / (eps + lpfi + lpf_p);
+    let lifted_lpfi = max(lpfi + 4.0 * pedestal, 0.0);
+    let lifted_lpf_m = max(lpf_m + 4.0 * pedestal, 0.0);
+    let lifted_lpf_p = max(lpf_p + 4.0 * pedestal, 0.0);
+    let est_m = max(m1 + pedestal, 0.0) * (2.0 * lifted_lpfi)
+        / (eps + lifted_lpfi + lifted_lpf_m) - pedestal;
+    let est_p = max(p1 + pedestal, 0.0) * (2.0 * lifted_lpfi)
+        / (eps + lifted_lpfi + lifted_lpf_p) - pedestal;
     let estimate = (grad_m * est_p + grad_p * est_m) / (grad_m + grad_p);
     return vec2<f32>(estimate, grad_m + grad_p);
 }

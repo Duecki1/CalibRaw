@@ -10,6 +10,7 @@ use super::basicadj::{
 };
 use super::color_profile::CameraProfile;
 use super::geometry::LensGeometryMap;
+use super::lens_shading::LensShadingMap;
 use super::noise::NoiseProfile;
 use super::source_format::RenderedImageFormat;
 use super::white_balance_presets::WhiteBalancePreset;
@@ -342,6 +343,10 @@ pub struct LoadedRaw {
     pub available_camera_profiles: Vec<CameraProfileCandidate>,
     pub white_balance_model: Option<CameraWhiteBalanceModel>,
     pub lens_geometry: Option<Arc<LensGeometryMap>>,
+    /// Vignetting gains the GPU applies after highlight reconstruction; only
+    /// sensor mosaics carry them. Placed over the whole photo, so crops,
+    /// proxies and tiles keep them.
+    pub lens_shading: Option<LensShadingMap>,
     pub ai_denoised: Arc<RwLock<Option<AiDenoisedImage>>>,
     pub opposed_chroma_cache: OpposedChromaCache,
     /// Runtime identity of the full sensor source used to estimate opposed-highlight chroma.
@@ -355,8 +360,8 @@ pub struct LoadedRaw {
 impl LoadedRaw {
     /// Builds a sensor-mosaic view of the same capture with new pixels (a crop, proxy, tile or
     /// corrected mosaic). Capture metadata, colour calibration and the noise profile are copied
-    /// from `self`. The view has no scene-linear raster, no lens geometry and a fresh, empty
-    /// AI-denoise slot. It shares `self`'s opposed-chroma cache and source identity as a
+    /// from `self`, and so is the lens shading, which is placed over the whole photo. The view
+    /// has no scene-linear raster, no lens geometry and a fresh, empty AI-denoise slot. It shares `self`'s opposed-chroma cache and source identity as a
     /// non-reference consumer. Callers override per-view fields with struct update syntax.
     pub fn derive_with(
         &self,
@@ -394,6 +399,7 @@ impl LoadedRaw {
             available_camera_profiles: self.available_camera_profiles.clone(),
             white_balance_model: self.white_balance_model.clone(),
             lens_geometry: None,
+            lens_shading: self.lens_shading.clone(),
             ai_denoised: Arc::new(RwLock::new(None)),
             opposed_chroma_cache: Arc::clone(&self.opposed_chroma_cache),
             opposed_chroma_source_identity: Arc::clone(&self.opposed_chroma_source_identity),
@@ -447,6 +453,7 @@ impl LoadedRaw {
             available_camera_profiles: Vec::new(),
             white_balance_model: None,
             lens_geometry: None,
+            lens_shading: None,
             ai_denoised: Arc::new(RwLock::new(None)),
             opposed_chroma_cache: Default::default(),
             opposed_chroma_source_identity: Default::default(),
@@ -1223,6 +1230,7 @@ mod tests {
                 },
             }),
             lens_geometry: None,
+            lens_shading: None,
             ai_denoised: std::sync::Arc::new(std::sync::RwLock::new(None)),
             opposed_chroma_cache: Default::default(),
             opposed_chroma_source_identity: Default::default(),

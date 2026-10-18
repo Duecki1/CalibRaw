@@ -456,6 +456,7 @@ pub struct RawGpuPipeline {
     raw_texture: wgpu::Texture,
     color_texture: wgpu::Texture,
     black_texture: wgpu::Texture,
+    lens_shading_texture: wgpu::Texture,
     _reconstructed_raw_texture: wgpu::Texture,
     _highlight_work_a: wgpu::Texture,
     _highlight_work_b: wgpu::Texture,
@@ -698,6 +699,7 @@ impl RawGpuPipeline {
         upload_raw_texture(queue, &self.raw_texture, raw, ai_cfa)?;
         upload_color_texture(queue, &self.color_texture, raw);
         upload_black_texture(queue, &self.black_texture, raw);
+        upload_lens_shading_texture(queue, &self.lens_shading_texture, raw);
         if self.has_ai_scene {
             anyhow::ensure!(
                 upload_ai_scene_texture(queue, &self.scene_texture, self.scene_format, raw)?,

@@ -68,6 +68,7 @@ pub(in crate::pipeline::gpu) fn create_bind_groups(
         raw_view,
         color_view,
         black_view,
+        lens_shading_view,
         mask_view,
         mask_sampler,
         ..
@@ -96,6 +97,7 @@ pub(in crate::pipeline::gpu) fn create_bind_groups(
             texture_binding(2, color_view),
             texture_binding(19, black_view),
             texture_binding(3, reconstructed_raw_view),
+            texture_binding(13, lens_shading_view),
         ],
     );
 

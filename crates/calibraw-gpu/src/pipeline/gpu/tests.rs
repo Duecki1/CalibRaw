@@ -167,27 +167,27 @@ fn adjacent_f32(value: f32, above: bool) -> f32 {
 }
 
 #[test]
-fn lch_and_rcd_share_sensor_space_highlight_clip_definition() {
+fn lch_detects_clipping_in_sensor_space_and_limits_chroma_at_a_common_level() {
     assert!(shaders::RAW_SAMPLING
         .text
         .contains("fn shared_highlight_sensor_clip() -> f32"));
     assert!(shaders::RAW_SAMPLING
         .text
         .contains("return raw_sensor_at(p) >= shared_highlight_sensor_clip();"));
-    assert!(shaders::RAW_SAMPLING
-        .text
-        .contains("fn shared_highlight_clip_for_cfa_channel(channel: u32) -> f32"));
-    assert!(!shaders::RAW_SAMPLING.text.contains("min_wb"));
+    assert!(!shaders::RAW_SAMPLING.text.contains("min(wb"));
     assert!(shaders::HIGHLIGHTS
         .text
         .contains("#import calibraw::raw_sampling as RawSampling"));
     assert!(shaders::HIGHLIGHTS
         .text
         .contains("clipped = clipped || RawSampling::is_raw_clipped(p);"));
+    // darktable's clip * processed_minimum: one WB-domain level for R, G and B.
     assert!(shaders::HIGHLIGHTS
         .text
-        .contains("RawSampling::shared_highlight_clip_for_cfa_channel(physical_channel)"));
-    assert!(!shaders::HIGHLIGHTS.text.contains("fn lch_common_clip()"));
+        .contains("return RawSampling::shared_highlight_sensor_clip() * max(lowest_wb, 1e-6);"));
+    for clamp in ["min(r, clip)", "min(g_min, clip)", "min(b, clip)"] {
+        assert!(shaders::HIGHLIGHTS.text.contains(clamp), "{clamp}");
+    }
 
     validate_shader(shaders::HIGHLIGHTS_ENTRY, ProcessingQuality::Preview);
     validate_shader(shaders::BAYER_RCD_P2_ENTRY, ProcessingQuality::Preview);
@@ -224,6 +224,373 @@ fn unequal_wb_does_not_move_raw_highlight_clipping_boundary() {
     assert!(raw_sensor * wb[2] >= old_min_wb_clip);
     assert!(raw_sensor * wb[0] < shared_highlight_channel_clip_for_test(highlight_clip, wb, 0));
     assert!(raw_sensor * wb[2] < shared_highlight_channel_clip_for_test(highlight_clip, wb, 2));
+}
+
+#[test]
+fn lch_turns_fully_clipped_areas_neutral_with_unequal_wb() -> anyhow::Result<()> {
+    const EDGE: u32 = 32;
+    let Some((device, queue, _)) = request_test_device_with_info() else {
+        eprintln!("LCh neutral clip check skipped: no headless wgpu adapter");
+        return Ok(());
+    };
+    // Every sample at white, with R and B gains on both sides of green.
+    let mut raw = opposed_highlight_consistency_raw(EDGE, EDGE);
+    raw.raw_pixels.fill(10_000);
+    raw.wb_coeffs = [2.1, 1.0, 1.6, 1.0];
+    let exposure = ExposureParams {
+        highlight_method: HighlightReconstructionMethod::Lch,
+        ..Default::default()
+    };
+    let params = GpuParams::new(&exposure, &MaskStack::default(), &raw);
+    let pipeline = RawGpuPipeline::new(
+        &device,
+        &queue,
+        &raw,
+        &params,
+        PipelineOptions::new(ProcessingQuality::High),
+    )?;
+    let scene = pipeline.render_camera_scene_blocking(&device, &queue, &params)?;
+    let center = ((EDGE / 2 * EDGE + EDGE / 2) * 3) as usize;
+    let rgb = &scene[center..center + 3];
+    let (lowest, highest) = rgb.iter().fold((f32::INFINITY, 0.0_f32), |(lo, hi), &v| {
+        (lo.min(v), hi.max(v))
+    });
+    assert!(lowest > 0.0, "{rgb:?}");
+    // Per-channel clip levels kept the 2.1 : 1 : 1.6 WB ratio here.
+    assert!(highest / lowest < 1.01, "clipped block is tinted: {rgb:?}");
+    Ok(())
+}
+
+/// A uniform 16-bit Bayer mosaic with R, G and B at 90%, 50% and 30% of
+/// white, neutral white balance, and `gain` as its lens shading.
+fn lens_shaded_raw(edge: u32, gain: impl Fn([f32; 2]) -> f32) -> LoadedRaw {
+    let mut raw = opposed_highlight_consistency_raw(edge, edge);
+    for (index, sample) in raw.raw_pixels.iter_mut().enumerate() {
+        let level = match raw.color_indices[index] {
+            0 => 0.9,
+            2 => 0.3,
+            _ => 0.5,
+        };
+        *sample = (level * 65_535.0_f32).round() as u16;
+    }
+    raw.white_levels = [65_535.0; 4];
+    raw.wb_coeffs = [1.0; 4];
+    raw.lens_shading = crate::pipeline::LensShadingMap::from_fn(|position| [gain(position); 3]);
+    raw
+}
+
+#[test]
+fn lens_shading_gain_follows_clip_detection_and_keeps_headroom() -> anyhow::Result<()> {
+    const EDGE: u32 = 48;
+    let Some((device, queue, _)) = request_test_device_with_info() else {
+        eprintln!("Lens shading check skipped: no headless wgpu adapter");
+        return Ok(());
+    };
+    let render = |raw: &LoadedRaw, method, origin: [i32; 2]| -> anyhow::Result<Vec<f32>> {
+        let exposure = ExposureParams {
+            highlight_method: method,
+            ..Default::default()
+        };
+        if raw.uses_opposed_chroma(&exposure) {
+            raw.inpaint_opposed_chroma_for_exposure(&exposure);
+        }
+        let params = GpuParams::new_for_tile(
+            &exposure,
+            &MaskStack::default(),
+            raw,
+            origin[0],
+            origin[1],
+            EDGE,
+            EDGE,
+        );
+        let pipeline = RawGpuPipeline::new(
+            &device,
+            &queue,
+            raw,
+            &params,
+            PipelineOptions::new(ProcessingQuality::High),
+        )?;
+        pipeline.render_camera_scene_blocking(&device, &queue, &params)
+    };
+    let near = |actual: &[f32], expected: [f32; 3], context: &str| {
+        for (actual, expected) in actual.iter().zip(expected) {
+            assert!(
+                (actual / expected - 1.0).abs() < 2e-3,
+                "{context}: {actual} instead of {expected}"
+            );
+        }
+    };
+
+    // 0.9 x 1.5 is above white, but the recorded 90% sample is not clipped:
+    // no method reconstructs it and nothing limits it to the 16-bit range.
+    let uniform = lens_shaded_raw(EDGE, |_| 1.5);
+    for method in [
+        HighlightReconstructionMethod::Off,
+        HighlightReconstructionMethod::Lch,
+        HighlightReconstructionMethod::InpaintOpposed,
+    ] {
+        let scene = render(&uniform, method, [0, 0])?;
+        let center = ((EDGE / 2 * EDGE + EDGE / 2) * 3) as usize;
+        near(
+            &scene[center..center + 3],
+            [1.35, 0.75, 0.45],
+            &format!("{method:?}"),
+        );
+    }
+
+    // The map spans the full image, so a tile reads the gain of its global
+    // position.
+    let ramp = lens_shaded_raw(EDGE, |[u, _]| 1.0 + u);
+    let full = render(&ramp, HighlightReconstructionMethod::Off, [0, 0])?;
+    let [x0, y0, size] = [16u32, 12, 20];
+    let tile = render(
+        &crate::pipeline::crop_raw(&ramp, x0, y0, size, size),
+        HighlightReconstructionMethod::Off,
+        [x0 as i32, y0 as i32],
+    );
+    let tile = tile?;
+    for [x, y] in [[4u32, 4], [10, 8], [15, 15]] {
+        let global = (((y0 + y) * EDGE + x0 + x) * 3) as usize;
+        let gain = 1.0 + (x0 + x) as f32 / (EDGE - 1) as f32;
+        near(
+            &full[global..global + 3],
+            [0.9 * gain, 0.5 * gain, 0.3 * gain],
+            "full",
+        );
+        let local = ((y * size + x) * 3) as usize;
+        near(
+            &tile[local..local + 3],
+            [full[global], full[global + 1], full[global + 2]],
+            "tile",
+        );
+    }
+    Ok(())
+}
+
+/// A Bayer dark frame: 512 DN black, 16383 DN white and Gaussian read noise
+/// of `sigma_dn` around black, from a fixed-seed generator.
+fn dark_frame_raw(edge: u32, sigma_dn: f32) -> LoadedRaw {
+    let mut raw = opposed_highlight_consistency_raw(edge, edge);
+    let mut state = 0x9E37_79B9_7F4A_7C15_u64;
+    let mut uniform = move || {
+        state = state
+            .wrapping_mul(6_364_136_223_846_793_005)
+            .wrapping_add(1_442_695_040_888_963_407);
+        ((state >> 40) as f32 + 0.5) / (1u64 << 24) as f32
+    };
+    for sample in &mut raw.raw_pixels {
+        let gaussian = (-2.0 * uniform().ln()).sqrt() * (std::f32::consts::TAU * uniform()).cos();
+        *sample = (512.0 + sigma_dn * gaussian).round().max(0.0) as u16;
+    }
+    raw.black_levels = [512.0; 4];
+    raw.black_levels_per_pixel = CompactPixelMap::repeating(edge, edge, 1, 1, vec![512.0]);
+    raw.white_levels = [16_383.0; 4];
+    raw.wb_coeffs = [2.0, 1.0, 1.6, 1.0];
+    // What NoiseProfile::estimate reports for this frame: read noise only.
+    raw.noise_profile.read = [(sigma_dn / (16_383.0 - 512.0)).powi(2); 4];
+    raw
+}
+
+#[test]
+fn dark_frame_shadow_mean_stays_at_black() -> anyhow::Result<()> {
+    const EDGE: u32 = 192;
+    const MARGIN: u32 = 16;
+    const SIGMA_DN: f32 = 24.0;
+    let Some((device, queue, _)) = request_test_device_with_info() else {
+        eprintln!("Dark frame check skipped: no headless wgpu adapter");
+        return Ok(());
+    };
+    let raw = dark_frame_raw(EDGE, SIGMA_DN);
+    let exposure = ExposureParams {
+        luminance_denoise: 0.0,
+        chroma_denoise: 0.0,
+        ..Default::default()
+    };
+    let params = GpuParams::new(&exposure, &MaskStack::default(), &raw);
+    let pipeline = RawGpuPipeline::new(
+        &device,
+        &queue,
+        &raw,
+        &params,
+        PipelineOptions::new(ProcessingQuality::High),
+    )?;
+    let scene = pipeline.render_camera_scene_blocking(&device, &queue, &params)?;
+    let mut sum = [0.0_f64; 3];
+    let mut count = 0.0_f64;
+    for y in MARGIN..EDGE - MARGIN {
+        for x in MARGIN..EDGE - MARGIN {
+            let index = ((y * EDGE + x) * 3) as usize;
+            for channel in 0..3 {
+                sum[channel] += f64::from(scene[index + channel]);
+            }
+            count += 1.0;
+        }
+    }
+    let sigma = f64::from(SIGMA_DN) / (16_383.0 - 512.0);
+    let mean_in_sigma: Vec<f64> = sum
+        .iter()
+        .zip([2.0, 1.0, 1.6])
+        .map(|(sum, wb)| sum / count / (sigma * wb))
+        .collect();
+    // Clamping each sample at black before demosaic lifted every channel by
+    // about 0.36 sigma, R and B more than G in camera RGB.
+    assert!(
+        mean_in_sigma.iter().all(|mean| mean.abs() < 0.06),
+        "dark frame mean in read-noise sigmas: {mean_in_sigma:?}"
+    );
+    Ok(())
+}
+
+/// Develop settings that each push one scene module hard, for checks that
+/// noise below black survives the whole pipeline.
+fn shadow_stress_settings() -> Vec<(&'static str, ExposureParams)> {
+    let base = ExposureParams::default();
+    let mut graded = base;
+    graded.color_grading.shadows.hue = 300.0;
+    graded.color_grading.shadows.saturation = 100.0;
+    graded.color_grading.shadows.luminance = 50.0;
+    let mut hsl = base;
+    hsl.hsl_saturation = [100.0; 8];
+    hsl.hsl_luminance = [100.0; 8];
+    let with = |name, edit: &dyn Fn(&mut ExposureParams)| {
+        let mut exposure = base;
+        edit(&mut exposure);
+        (name, exposure)
+    };
+    vec![
+        ("default", base),
+        with("exposure +4", &|e| e.exposure = 4.0),
+        with("shadows/blacks +100", &|e| {
+            e.exposure = 2.0;
+            e.shadows = 100.0;
+            e.blacks = 100.0;
+        }),
+        with("blacks -100", &|e| e.blacks = -100.0),
+        with("highlights/whites", &|e| {
+            e.highlights = -100.0;
+            e.whites = 100.0;
+        }),
+        with("contrast +100", &|e| e.contrast = 100.0),
+        with("contrast -100", &|e| e.contrast = -100.0),
+        with("texture/clarity +100", &|e| {
+            e.texture = 100.0;
+            e.clarity = 100.0;
+        }),
+        with("texture/clarity -100", &|e| {
+            e.texture = -100.0;
+            e.clarity = -100.0;
+        }),
+        with("dehaze +100", &|e| e.dehaze = 100.0),
+        with("dehaze -100", &|e| e.dehaze = -100.0),
+        with("sharpen", &|e| {
+            e.sharpen_amount = 100.0;
+            e.sharpen_masking = 0.0;
+        }),
+        with("saturation/vibrance", &|e| {
+            e.saturation = 100.0;
+            e.vibrance = 100.0;
+            e.hue = 40.0;
+        }),
+        with("temperature/tint", &|e| {
+            e.temperature = 2_000.0;
+            e.tint = 50.0;
+        }),
+        with("denoise", &|e| {
+            e.luminance_denoise = 100.0;
+            e.chroma_denoise = 100.0;
+        }),
+        with("dual demosaic", &|e| {
+            e.demosaic_mode = crate::pipeline::DemosaicMode::Dual
+        }),
+        with("frequency chroma", &|e| {
+            e.demosaic_mode = crate::pipeline::DemosaicMode::FrequencyDomainChroma;
+        }),
+        with("black point +", &|e| e.black_point = 0.02),
+        with("black point -", &|e| e.black_point = -0.02),
+        ("colour grading", graded),
+        ("hsl", hsl),
+    ]
+}
+
+#[test]
+fn noise_below_black_stays_finite_and_dark_through_the_pipeline() -> anyhow::Result<()> {
+    const EDGE: u32 = 128;
+    const XTRANS: [[u8; 6]; 6] = [
+        [1, 1, 0, 1, 1, 2],
+        [1, 1, 2, 1, 1, 0],
+        [2, 0, 1, 0, 2, 1],
+        [1, 1, 2, 1, 1, 0],
+        [1, 1, 0, 1, 1, 2],
+        [0, 2, 1, 2, 0, 1],
+    ];
+    let Some((device, queue, _)) = request_test_device_with_info() else {
+        eprintln!("Shadow stress check skipped: no headless wgpu adapter");
+        return Ok(());
+    };
+    // Read noise around black on the left half; a grey ramp from black to
+    // 40% of white on the right half, so tone analysis sees real content.
+    let mut bayer = dark_frame_raw(EDGE, 24.0);
+    for y in 0..EDGE {
+        for x in EDGE / 2..EDGE {
+            let index = (y * EDGE + x) as usize;
+            let level = 0.4 * (x - EDGE / 2) as f32 / (EDGE / 2) as f32;
+            let sample = f32::from(bayer.raw_pixels[index]) + level * (16_383.0 - 512.0);
+            bayer.raw_pixels[index] = sample.round().min(16_383.0) as u16;
+        }
+    }
+    let mut xtrans = bayer.clone();
+    xtrans.cfa_kind = CfaKind::XTrans;
+    xtrans.color_indices = CompactPixelMap::dense(
+        EDGE,
+        EDGE,
+        (0..EDGE * EDGE)
+            .map(|index| XTRANS[((index / EDGE) % 6) as usize][((index % EDGE) % 6) as usize])
+            .collect(),
+    );
+    let masks = MaskStack::default();
+    for raw in [&bayer, &xtrans] {
+        let mut pipeline: Option<RawGpuPipeline> = None;
+        for (name, exposure) in shadow_stress_settings() {
+            let params = GpuParams::new(&exposure, &masks, raw);
+            let pipeline = match &pipeline {
+                Some(pipeline) => pipeline,
+                None => pipeline.insert(RawGpuPipeline::new(
+                    &device,
+                    &queue,
+                    raw,
+                    &params,
+                    PipelineOptions::new(ProcessingQuality::High),
+                )?),
+            };
+            pipeline.recompute(&queue, &device, &params);
+            let display =
+                pipeline.read_display_linear_region_blocking(&device, &queue, 0, 0, EDGE, EDGE)?;
+            let context = format!("{:?} {name}", raw.cfa_kind);
+            assert!(
+                display.iter().all(|value| value.is_finite()),
+                "{context}: non-finite display values"
+            );
+            // A stage that divided by negative luminance would turn black
+            // bright; the hardest push here (black point -2%) stays near 0.023.
+            let mut dark = [0.0_f64; 3];
+            let mut count = 0.0;
+            for y in 8..EDGE - 8 {
+                for x in 8..EDGE / 2 - 8 {
+                    let index = ((y * EDGE + x) * 3) as usize;
+                    for channel in 0..3 {
+                        dark[channel] += f64::from(display[index + channel]);
+                    }
+                    count += 1.0;
+                }
+            }
+            let dark = dark.map(|sum| sum / count);
+            assert!(
+                dark.iter().all(|mean| (0.0..0.05).contains(mean)),
+                "{context}: dark display-linear mean {dark:?}"
+            );
+        }
+    }
+    Ok(())
 }
 
 #[test]
@@ -855,6 +1222,7 @@ fn opposed_highlight_consistency_raw(width: u32, height: u32) -> LoadedRaw {
         available_camera_profiles: Vec::new(),
         white_balance_model: None,
         lens_geometry: None,
+        lens_shading: None,
         ai_denoised: std::sync::Arc::new(std::sync::RwLock::new(None)),
         opposed_chroma_cache: Default::default(),
         opposed_chroma_source_identity: Default::default(),
