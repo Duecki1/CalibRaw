@@ -2,8 +2,9 @@ use anyhow::{anyhow, bail, Context, Result};
 use calibraw_cli::pipeline::{
     crop_raw, effect_params, export_mask_atlas_edge, load_raw_file, load_raw_file_with_dcp,
     spawn_tiled_export, DenoiseQuality, EffectComponent, ExportEvent, ExportFormat, ExportMetadata,
-    ExportSettings, ExportTarget, ExposureParams, GeometryTransform, MaskEffect, MaskStack,
-    TileSpec, TiledExportJob, GLOBAL_TINT_OFFSET_LIMIT, HUE_ROTATION_LIMIT_DEGREES,
+    ExportSettings, ExportTarget, ExposureParams, GeometryTransform, LoadedRaw, MaskEffect,
+    MaskStack, TileSpec, TiledExportJob, GLOBAL_TEMPERATURE_LIMIT, GLOBAL_TINT_OFFSET_LIMIT,
+    HUE_ROTATION_LIMIT_DEGREES,
 };
 use calibraw_gpu::{
     request_headless_device, wgpu, HeadlessAdapter, HeadlessDevice, HeadlessDeviceError,
@@ -122,7 +123,7 @@ fn run() -> Result<()> {
             let mut exposure = adaptive_exposure;
             let mut masks = MaskStack::default();
             if let Some((name, value)) = adjustment {
-                set_adjustment(&mut exposure, &mut masks, name, *value)?;
+                set_adjustment(&raw, &mut exposure, &mut masks, name, *value)?;
             }
             exporter.export_one(Arc::clone(&raw), exposure, masks, &output)?;
         }
@@ -132,7 +133,7 @@ fn run() -> Result<()> {
     let mut exposure = adaptive_exposure;
     let mut masks = MaskStack::default();
     for (name, value) in &args.adjustments {
-        set_adjustment(&mut exposure, &mut masks, name, *value)?;
+        set_adjustment(&raw, &mut exposure, &mut masks, name, *value)?;
     }
     exporter.export_one(
         raw,
@@ -240,6 +241,7 @@ const REFERENCE_CONTRAST_SUITE: &[(&str, Option<(&str, f32)>)] = &[
 ];
 
 fn set_adjustment(
+    raw: &LoadedRaw,
     exposure: &mut ExposureParams,
     masks: &mut MaskStack,
     name: &str,
@@ -264,8 +266,19 @@ fn set_adjustment(
         "hue" => {
             exposure.hue = value.clamp(-HUE_ROTATION_LIMIT_DEGREES, HUE_ROTATION_LIMIT_DEGREES)
         }
-        "temperature" => exposure.temperature = value.clamp(-500.0, 500.0),
-        "tint" => exposure.tint = value.clamp(-GLOBAL_TINT_OFFSET_LIMIT, GLOBAL_TINT_OFFSET_LIMIT),
+        // Offsets from the as-shot white balance, as the sidecars of v1.3
+        // stored them.
+        "temperature" | "tint" => {
+            let (mut temperature, mut tint) = raw.white_balance_offsets(exposure.white_balance);
+            if name == "temperature" {
+                temperature = value.clamp(-GLOBAL_TEMPERATURE_LIMIT, GLOBAL_TEMPERATURE_LIMIT);
+            } else {
+                tint = value.clamp(-GLOBAL_TINT_OFFSET_LIMIT, GLOBAL_TINT_OFFSET_LIMIT);
+            }
+            exposure.white_balance = raw
+                .white_balance_from_offsets((temperature, tint))
+                .unwrap_or_default();
+        }
         "luminance_denoise" => exposure.luminance_denoise = value.clamp(0.0, 100.0),
         "color_denoise" => exposure.chroma_denoise = value.clamp(0.0, 100.0) / 100.0,
         "denoise_detail" => exposure.denoise_detail = value.clamp(0.0, 100.0),

@@ -138,8 +138,7 @@ impl ExposureParams {
             exposure,
             contrast,
             sigmoid,
-            temperature,
-            tint,
+            white_balance,
             hue,
             saturation,
             vibrance,
@@ -197,8 +196,7 @@ impl ExposureParams {
                 self.tone_curve_blue = tone_curve_blue;
             }
             ExposureSection::Group(AdjustmentGroup::Color) => {
-                self.temperature = temperature;
-                self.tint = tint;
+                self.white_balance = white_balance;
                 self.hue = hue;
                 self.saturation = saturation;
                 self.vibrance = vibrance;
@@ -318,7 +316,7 @@ mod tests {
         let groups = [
             (AdjustmentGroup::Light, "exposure contrast highlights shadows whites blacks"),
             (AdjustmentGroup::ToneCurve, "tone_curve tone_curve_red tone_curve_green tone_curve_blue"),
-            (AdjustmentGroup::Color, "temperature tint hue saturation vibrance"),
+            (AdjustmentGroup::Color, "white_balance temperature tint hue saturation vibrance"),
             (AdjustmentGroup::ColorGrading, "color_grading"),
             (AdjustmentGroup::Detail, "luminance_denoise chroma_denoise denoise_detail denoise_quality ai_denoise_enabled ai_denoise_amount sharpen_amount sharpen_radius sharpen_detail sharpen_masking"),
             (AdjustmentGroup::Effects, "texture clarity dehaze"),

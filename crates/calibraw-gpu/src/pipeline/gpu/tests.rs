@@ -7,8 +7,8 @@ use super::{
 use crate::pipeline::{
     extract_padded_tile, CameraProfile, CfaKind, CompactPixelMap, EffectComponent, ExportTile,
     ExposureParams, HighlightReconstructionMethod, LoadedRaw, LocalMask, MaskEffect, MaskKind,
-    MaskStack, NativeRect, PointCurve, ProcessingStage, SigmoidColorProcessing,
-    TONE_GUIDE_CELL_SIZE,
+    MaskStack, NativeRect, PointCurve, ProcessingStage, SigmoidColorProcessing, WhiteBalance,
+    MAX_TEMPERATURE_KELVIN, MAX_WHITE_BALANCE_TINT, TONE_GUIDE_CELL_SIZE,
 };
 
 #[test]
@@ -492,8 +492,11 @@ fn shadow_stress_settings() -> Vec<(&'static str, ExposureParams)> {
             e.hue = 40.0;
         }),
         with("temperature/tint", &|e| {
-            e.temperature = 2_000.0;
-            e.tint = 50.0;
+            e.white_balance = WhiteBalance::Custom {
+                kelvin: MAX_TEMPERATURE_KELVIN,
+                tint: MAX_WHITE_BALANCE_TINT,
+                older_reader_offsets: [0.0; 2],
+            };
         }),
         with("denoise", &|e| {
             e.luminance_denoise = 100.0;
@@ -2092,9 +2095,8 @@ fn white_balance_has_no_effect_without_a_white_balance_model() -> anyhow::Result
         .collect();
     let source = LoadedRaw::from_scene_linear_rec2020(EDGE, EDGE, pixels)?;
     assert!(source.white_balance_model.is_none());
-    let exposure = |temperature, tint| ExposureParams {
-        temperature,
-        tint,
+    let exposure = |white_balance| ExposureParams {
+        white_balance,
         ..Default::default()
     };
     let masks = MaskStack::default();
@@ -2102,25 +2104,44 @@ fn white_balance_has_no_effect_without_a_white_balance_model() -> anyhow::Result
         &device,
         &queue,
         &source,
-        &GpuParams::new(&exposure(0.0, 0.0), &masks, &source),
+        &GpuParams::new(&exposure(WhiteBalance::AsShot), &masks, &source),
         PipelineOptions::new(ProcessingQuality::Preview),
     )?;
-    let render = |temperature, tint| -> anyhow::Result<Vec<u8>> {
+    let render = |white_balance| -> anyhow::Result<Vec<u8>> {
         pipeline.recompute(
             &queue,
             &device,
-            &GpuParams::new(&exposure(temperature, tint), &masks, &source),
+            &GpuParams::new(&exposure(white_balance), &masks, &source),
         );
         pipeline.read_output_region_blocking(&device, &queue, 0, 0, EDGE, EDGE)
     };
 
-    let as_shot = render(0.0, 0.0)?;
+    let as_shot = render(WhiteBalance::AsShot)?;
     let grey = &as_shot[..3];
-    for (temperature, tint) in [(80.0, 0.0), (-80.0, 0.0), (0.0, 60.0), (40.0, -60.0)] {
-        let shifted = render(temperature, tint)?;
+    for white_balance in [
+        WhiteBalance::Custom {
+            kelvin: 3000.0,
+            tint: 0.0,
+            older_reader_offsets: [-150.0, 0.0],
+        },
+        WhiteBalance::Custom {
+            kelvin: 9000.0,
+            tint: -40.0,
+            older_reader_offsets: [80.0, 8.0],
+        },
+        WhiteBalance::LegacyOffset {
+            temperature: 80.0,
+            tint: 0.0,
+        },
+        WhiteBalance::LegacyOffset {
+            temperature: 40.0,
+            tint: -60.0,
+        },
+    ] {
+        let shifted = render(white_balance)?;
         assert!(
             shifted == as_shot,
-            "temperature {temperature}, tint {tint}: grey {:?} became {:?}",
+            "{white_balance:?}: grey {:?} became {:?}",
             grey,
             &shifted[..3]
         );

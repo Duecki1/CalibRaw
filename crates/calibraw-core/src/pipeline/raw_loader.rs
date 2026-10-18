@@ -5,7 +5,7 @@
 
 use super::basicadj::{
     temperature_kelvin_from_offset, temperature_offset_from_kelvin, white_balance_tint_from_offset,
-    white_balance_tint_offset, ExposureParams, HighlightReconstructionMethod,
+    white_balance_tint_offset, ExposureParams, HighlightReconstructionMethod, WhiteBalance,
     GLOBAL_TEMPERATURE_LIMIT, GLOBAL_TINT_OFFSET_LIMIT,
 };
 use super::color_profile::CameraProfile;
@@ -1109,7 +1109,7 @@ mod tests {
     use super::{
         temperature_offset_from_kelvin, AiDenoisedImage, CameraColorModel, CameraProfile,
         CameraProfileMode, CameraWhiteBalanceModel, CfaKind, CompactPixelMap, ExposureParams,
-        LoadedRaw, GLOBAL_TEMPERATURE_LIMIT,
+        LoadedRaw, WhiteBalance, GLOBAL_TEMPERATURE_LIMIT,
     };
 
     #[test]
@@ -1252,6 +1252,87 @@ mod tests {
         }
     }
 
+    #[test]
+    fn legacy_offsets_become_the_white_balance_they_rendered() {
+        let raw = raw_with_white_balance_model();
+        let offsets = (-35.0, 2.0);
+        let legacy = WhiteBalance::LegacyOffset {
+            temperature: offsets.0,
+            tint: offsets.1,
+        };
+        let resolved = raw.resolve_white_balance(legacy);
+        let WhiteBalance::Custom {
+            kelvin,
+            tint,
+            older_reader_offsets,
+        } = resolved
+        else {
+            panic!("{resolved:?} is not custom");
+        };
+        assert_eq!(
+            Some((kelvin, tint)),
+            raw.white_balance_temperature_tint(offsets.0, offsets.1)
+        );
+        let rendered = raw.white_balance_offsets(resolved);
+        for (rendered, saved) in [rendered.0, rendered.1]
+            .into_iter()
+            .zip([offsets.0, offsets.1])
+        {
+            assert!((rendered - saved).abs() < 1e-3, "{rendered} != {saved}");
+        }
+        assert_eq!(older_reader_offsets, [rendered.0, rendered.1]);
+        assert_eq!(raw.resolve_white_balance(resolved), resolved);
+    }
+
+    #[test]
+    fn a_custom_white_balance_is_the_same_on_photos_shot_differently() {
+        let daylight = raw_with_white_balance_model();
+        let mut tungsten = raw_with_white_balance_model();
+        tungsten.white_balance_model.as_mut().unwrap().base_wb = [1.2, 1.0, 2.6, 1.0];
+        let custom = daylight.custom_white_balance(4300.0, 5.0).unwrap();
+        let pasted = tungsten.resolve_white_balance(custom);
+
+        let shown =
+            |raw: &LoadedRaw, white_balance| raw.shown_white_balance(white_balance).unwrap();
+        assert_eq!(shown(&daylight, custom), (4300.0, 5.0));
+        assert_eq!(shown(&tungsten, pasted), (4300.0, 5.0));
+        // The same white balance is a different shift from each as-shot.
+        assert_ne!(
+            daylight.white_balance_offsets(custom),
+            tungsten.white_balance_offsets(pasted)
+        );
+        let WhiteBalance::Custom {
+            older_reader_offsets,
+            ..
+        } = pasted
+        else {
+            panic!("{pasted:?} is not custom");
+        };
+        let offsets = tungsten.white_balance_offsets(pasted);
+        assert_eq!(older_reader_offsets, [offsets.0, offsets.1]);
+    }
+
+    #[test]
+    fn photos_without_a_white_balance_model_keep_the_white_balance_as_shot() {
+        let photo = LoadedRaw::from_scene_linear_rec2020(1, 1, vec![0.5; 3]).unwrap();
+        let custom = raw_with_white_balance_model()
+            .custom_white_balance(4300.0, 5.0)
+            .unwrap();
+        assert_eq!(photo.white_balance_offsets(custom), (0.0, 0.0));
+        for white_balance in [
+            custom,
+            WhiteBalance::LegacyOffset {
+                temperature: 20.0,
+                tint: 0.0,
+            },
+        ] {
+            assert_eq!(
+                photo.resolve_white_balance(white_balance),
+                WhiteBalance::AsShot
+            );
+        }
+    }
+
     fn colored_opposed_test_raw() -> LoadedRaw {
         const WIDTH: u32 = 96;
         const HEIGHT: u32 = 96;
@@ -1348,13 +1429,16 @@ mod tests {
         let mut raw = colored_opposed_test_raw();
         let base_temperature = raw.as_shot_temperature_kelvin().unwrap();
         let exposure = ExposureParams {
-            temperature: temperature_offset_from_kelvin(base_temperature, 8_000.0),
-            tint: 0.2,
+            white_balance: WhiteBalance::LegacyOffset {
+                temperature: temperature_offset_from_kelvin(base_temperature, 8_000.0),
+                tint: 0.2,
+            },
             ..Default::default()
         };
 
+        let (temperature, tint) = raw.white_balance_offsets(exposure.white_balance);
         let adjusted = raw
-            .adjusted_white_balance_and_camera_transform(exposure.temperature, exposure.tint)
+            .adjusted_white_balance_and_camera_transform(temperature, tint)
             .0;
         assert_ne!(adjusted, raw.wb_coeffs);
 

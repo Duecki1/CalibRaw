@@ -5,7 +5,7 @@ use crate::app::{
 use crate::pipeline::{
     AdjustmentGroup, BrushMode, DenoiseQuality, ExportBitDepth, ExportFormat, ExportResizeMode,
     ExposureParams, LoadedRaw, LocalMask, MaskCombineMode, MaskComponent, MaskEffect,
-    MaskEffectCategory, MaskGeometry, MaskKind, RetouchAlignment, MAX_LOCAL_MASKS,
+    MaskEffectCategory, MaskGeometry, MaskKind, RetouchAlignment, WhiteBalance, MAX_LOCAL_MASKS,
     MAX_MASK_COMPONENTS,
 };
 use crate::ui::components::adjustment_slider::{

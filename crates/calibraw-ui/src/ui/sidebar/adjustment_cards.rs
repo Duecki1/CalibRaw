@@ -817,7 +817,11 @@ mod tests {
                 crate::ui::theme::install(&ctx);
                 let mut edits = ExposureParams {
                     exposure: 2.0,
-                    temperature: 17.0,
+                    white_balance: crate::pipeline::WhiteBalance::Custom {
+                        kelvin: 4800.0,
+                        tint: 3.0,
+                        older_reader_offsets: [17.0, -0.6],
+                    },
                     ..Default::default()
                 };
                 let original = edits;
@@ -890,7 +894,7 @@ mod tests {
                 }
                 assert_eq!(edit_count, 1);
                 assert_eq!(edits.exposure, 0.0);
-                assert_eq!(edits.temperature, original.temperature);
+                assert_eq!(edits.white_balance, original.white_balance);
                 assert!(PreviewVisibility::visible(&ctx, "Light"));
             }
         }
