@@ -204,6 +204,12 @@ pub(super) fn run_document_load(job: DocumentLoadJob) -> Result<LoadedPreview, L
         if use_adaptive_detail_defaults {
             original_raw.apply_adaptive_detail_defaults(&mut exposure);
         }
+        // Older versions pasted temperature and tint into photos without a
+        // white-balance model, where they stayed hidden; drop them so Copy
+        // cannot carry them on.
+        if !original_raw.has_white_balance_model() && exposure.reset_white_balance() {
+            sidecar_needs_rewrite = true;
+        }
         record_edit_state(&exposure, &masks);
 
         let selected_camera_profile =

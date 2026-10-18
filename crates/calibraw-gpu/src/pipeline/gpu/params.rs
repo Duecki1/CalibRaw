@@ -6,7 +6,8 @@ use super::*;
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
 pub(super) struct CameraUniforms {
     pub(super) black_point: f32,
-    pub(super) temperature: f32,
+    /// Unused; keeps the WGSL field offsets.
+    pub(super) reserved_a: f32,
     pub(super) highlight_clip: f32,
     pub(super) chroma_denoise: f32,
     pub(super) ca_red: f32,
@@ -17,11 +18,13 @@ pub(super) struct CameraUniforms {
     pub(super) demosaic_mode: f32,
     pub(super) dual_threshold: f32,
     pub(super) frequency_chroma: f32,
-    pub(super) tint: f32,
+    /// Unused; keeps the WGSL field offsets.
+    pub(super) reserved_b: f32,
     pub(super) pre_demosaiced_raster: f32,
     /// [`ViewTransformMode::shader_value`].
     pub(super) view_transform_mode: u32,
-    pub(super) camera_linear_raster: f32,
+    /// Unused; keeps the WGSL field offsets.
+    pub(super) reserved_c: f32,
     pub(super) highlight_options: [f32; 4],
     pub(super) noise_shot: [f32; 4],
     pub(super) noise_read: [f32; 4],

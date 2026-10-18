@@ -2072,3 +2072,58 @@ fn developed_raster_contrast_starts_from_the_rendered_photo() -> anyhow::Result<
     assert!(flatter[1] + 2 < rendered[1], "{flatter:?} vs {rendered:?}");
     Ok(())
 }
+
+#[test]
+fn white_balance_has_no_effect_without_a_white_balance_model() -> anyhow::Result<()> {
+    let Some((device, queue)) = request_test_device() else {
+        return Ok(());
+    };
+    const EDGE: u32 = 16;
+    // A rendered photo: neutral grey with a warm patch, and no camera
+    // white-balance model, so the Color card shows no temperature or tint.
+    let pixels = (0..EDGE * EDGE)
+        .flat_map(|index| {
+            if index % EDGE < EDGE / 2 {
+                [0.18, 0.18, 0.18]
+            } else {
+                [0.4, 0.2, 0.1]
+            }
+        })
+        .collect();
+    let source = LoadedRaw::from_scene_linear_rec2020(EDGE, EDGE, pixels)?;
+    assert!(source.white_balance_model.is_none());
+    let exposure = |temperature, tint| ExposureParams {
+        temperature,
+        tint,
+        ..Default::default()
+    };
+    let masks = MaskStack::default();
+    let pipeline = RawGpuPipeline::new(
+        &device,
+        &queue,
+        &source,
+        &GpuParams::new(&exposure(0.0, 0.0), &masks, &source),
+        PipelineOptions::new(ProcessingQuality::Preview),
+    )?;
+    let render = |temperature, tint| -> anyhow::Result<Vec<u8>> {
+        pipeline.recompute(
+            &queue,
+            &device,
+            &GpuParams::new(&exposure(temperature, tint), &masks, &source),
+        );
+        pipeline.read_output_region_blocking(&device, &queue, 0, 0, EDGE, EDGE)
+    };
+
+    let as_shot = render(0.0, 0.0)?;
+    let grey = &as_shot[..3];
+    for (temperature, tint) in [(80.0, 0.0), (-80.0, 0.0), (0.0, 60.0), (40.0, -60.0)] {
+        let shifted = render(temperature, tint)?;
+        assert!(
+            shifted == as_shot,
+            "temperature {temperature}, tint {tint}: grey {:?} became {:?}",
+            grey,
+            &shifted[..3]
+        );
+    }
+    Ok(())
+}

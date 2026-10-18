@@ -185,8 +185,7 @@ pub const MAX_WHITE_BALANCE_TINT: f32 = 150.0;
 /// edits, therefore keep about the same tint.
 pub const WHITE_BALANCE_TINT_PER_OFFSET: f32 = -5.0;
 /// Limit of stored tint offsets: the full range of the darktable multiplier
-/// (0.135 to 2.326) they were defined on. Raster images apply offsets
-/// directly up to ±100.
+/// (0.135 to 2.326) they were defined on.
 pub const GLOBAL_TINT_OFFSET_LIMIT: f32 = 219.1;
 pub const GLOBAL_TEMPERATURE_LIMIT: f32 = 500.0;
 
@@ -307,6 +306,15 @@ impl ExposureParams {
         self.tone_curve_red.sanitize();
         self.tone_curve_green.sanitize();
         self.tone_curve_blue.sanitize();
+    }
+
+    /// Returns temperature and tint to as shot, which is all a photo without
+    /// a camera white-balance model renders. Returns whether they changed.
+    pub fn reset_white_balance(&mut self) -> bool {
+        let changed = self.temperature != 0.0 || self.tint != 0.0;
+        self.temperature = 0.0;
+        self.tint = 0.0;
+        changed
     }
 
     pub fn scene_referred_default() -> Self {
