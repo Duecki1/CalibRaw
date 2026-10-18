@@ -46,6 +46,8 @@ mod black_tone_tests;
 #[cfg(test)]
 mod blacks_pipeline_tests;
 #[cfg(test)]
+mod direct_shader;
+#[cfg(test)]
 mod effect_timing_tests;
 #[cfg(test)]
 mod existing_effects_tests;
@@ -53,6 +55,8 @@ mod existing_effects_tests;
 mod film_effects_tests;
 #[cfg(test)]
 mod fog_tests;
+#[cfg(test)]
+mod highlights_pipeline_tests;
 #[cfg(test)]
 mod layout_contract_tests;
 #[cfg(test)]
@@ -65,6 +69,8 @@ mod pixelate_tests;
 mod point_color_tests;
 #[cfg(test)]
 mod relight_tests;
+#[cfg(test)]
+mod saturation_vibrance_tests;
 #[cfg(test)]
 mod scene_gamut_tests;
 #[cfg(test)]

@@ -723,7 +723,7 @@ fn tone_percentile_masks_follow_full_user_exposure() {
         [
             p05 - 0.90,
             p50 + 1.35,
-            p50 - 0.35,
+            p50 - 0.60,
             p95 + 0.45,
             p05 - 0.10,
             p50 + 0.50,
@@ -743,7 +743,7 @@ fn tone_percentile_masks_follow_full_user_exposure() {
         let white_ev = -1.00 + exposure;
         [
             1.0 - test_tone_smoothstep(p05 - 0.90, p50 + 1.35, shadow_ev),
-            0.10 + 0.90 * test_tone_smoothstep(p50 - 0.35, p95 + 0.45, highlight_ev),
+            test_tone_smoothstep(p50 - 0.60, p95 + 0.45, highlight_ev),
             test_tone_smoothstep(p05 - 0.10, p50 + 0.50, white_ev),
         ]
     };

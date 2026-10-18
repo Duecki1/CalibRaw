@@ -39,9 +39,24 @@ fn perceptual_control(value: f32) -> f32 {
     return sign(normalized) * (0.78 * magnitude + 0.22 * magnitude * magnitude);
 }
 
+// Positive Saturation scales OKLab chroma by exp2(control * CHROMA_BOOST_EV).
+const CHROMA_BOOST_EV: f32 = 0.72;
+
 fn apply_saturation_vibrance(rgb: vec3<f32>) -> vec3<f32> {
-    let saturation = perceptual_control(Common::scene_tone_uniforms.saturation);
-    let vibrance = perceptual_control(Common::scene_tone_uniforms.vibrance);
+    return apply_saturation_vibrance_values(
+        rgb,
+        Common::scene_tone_uniforms.saturation,
+        Common::scene_tone_uniforms.vibrance,
+    );
+}
+
+fn apply_saturation_vibrance_values(
+    rgb: vec3<f32>,
+    saturation_value: f32,
+    vibrance_value: f32,
+) -> vec3<f32> {
+    let saturation = perceptual_control(saturation_value);
+    let vibrance = perceptual_control(vibrance_value);
     if abs(saturation) < 1e-6 && abs(vibrance) < 1e-6 {
         return rgb;
     }
@@ -60,29 +75,34 @@ fn apply_saturation_vibrance(rgb: vec3<f32>) -> vec3<f32> {
 
     var saturation_factor = max(1.0 + saturation, 0.0);
     if saturation > 0.0 {
-        saturation_factor = exp2(saturation * 0.72);
+        saturation_factor = exp2(saturation * CHROMA_BOOST_EV);
     }
 
     var vibrance_factor = 1.0;
     if vibrance >= 0.0 {
-        let muted_weight = pow(1.0 - content_saturation, 0.72);
+        // Positive Vibrance is Saturation weighted by how muted the colour is,
+        // so it never boosts more than Saturation at the same value. The weight
+        // reaches zero at a lightness-relative chroma of 0.5, where a colour
+        // already reads as saturated, and falls slowly enough that output
+        // chroma still increases with input chroma.
+        let muted_weight = 1.0 - smoothstep(0.08, 0.50, relative_chroma);
         let neutral_guard = smoothstep(0.0025, 0.014, chroma);
         let tonal_guard = smoothstep(0.018, 0.13, max(lab.x, 0.0))
             * (1.0 - 0.18 * smoothstep(0.92, 1.28, lab.x));
-        let boost = vibrance
-            * (0.34 + 1.02 * muted_weight)
+        let weight = muted_weight
             * neutral_guard
             * tonal_guard
             * (1.0 - 0.46 * skin_protection);
-        vibrance_factor = exp2(boost * 2.25);
+        vibrance_factor = exp2(vibrance * weight * CHROMA_BOOST_EV);
     } else {
         let reduction = (-vibrance)
             * mix(0.90, 0.97, pow(content_saturation, 0.68));
         vibrance_factor = max(1.0 - reduction, 0.0);
     }
 
-    let chroma_factor = clamp(saturation_factor * vibrance_factor, 0.0, 4.0);
-    let adjusted = vec3<f32>(lab.x, lab.yz * chroma_factor);
+    // Each factor lies in [0, exp2(CHROMA_BOOST_EV)], so the product stays
+    // below 2.72 and needs no clamp.
+    let adjusted = vec3<f32>(lab.x, lab.yz * (saturation_factor * vibrance_factor));
     return Color::perceptual_gamut_compress_nonnegative_rec2020(
         Common::SRGB_TO_REC2020 * Color::oklab_to_linear_srgb(adjusted),
     );
@@ -96,7 +116,7 @@ fn apply_saturation_value(rgb: vec3<f32>, value: f32) -> vec3<f32> {
     let lab = Color::linear_srgb_to_oklab(Common::REC2020_TO_SRGB * rgb);
     var factor = max(1.0 + saturation, 0.0);
     if saturation > 0.0 {
-        factor = exp2(saturation * 0.72);
+        factor = exp2(saturation * CHROMA_BOOST_EV);
     }
     let adjusted = vec3<f32>(lab.x, lab.yz * factor);
     return Color::perceptual_gamut_compress_nonnegative_rec2020(

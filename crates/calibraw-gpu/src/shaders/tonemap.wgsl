@@ -165,8 +165,11 @@ fn apply_local_basic_tone_values_with_low_strength(
     let masks = adaptive_tone_masks(low_ev, guide_ev, percentiles);
 
     let shadow_ev = basic_shadow_offset_ev(shadows, masks.y, percentiles);
-    let highlight_mask = 0.10 + 0.90 * ToneCommon::tone_smoothstep(
-        percentiles.p50_field - 0.35,
+    // Highlights fades out fully below the median, so it leaves the deepest
+    // shadows untouched. The fade starts low enough that its steepest slope
+    // stays gentle even when p50 and p95 are close together.
+    let highlight_mask = ToneCommon::tone_smoothstep(
+        percentiles.p50_field - 0.60,
         percentiles.p95_field + 0.45,
         guide_ev,
     );
@@ -531,13 +534,29 @@ fn apply_rgb_point_curves(rgb: vec3<f32>) -> vec3<f32> {
     return result;
 }
 
+const DISPLAY_BLACKS_LIFT_EV: f32 = 1.75;
 const DISPLAY_BLACKS_LIFT_DECAY: f32 = 0.035;
-const DISPLAY_BLACKS_CRUSH_HALF_LUMA: f32 = 0.035;
-const DISPLAY_BLACKS_CRUSH_EV: f32 = 4.0;
+const DISPLAY_BLACKS_ENCODING_GAMMA: f32 = 2.4;
+const DISPLAY_BLACKS_CRUSH_END_LUMA: f32 = 0.25;
+const DISPLAY_BLACKS_CRUSH_BLACK_FRACTION: f32 = 0.80;
+const DISPLAY_BLACKS_CRUSH_STRETCH: f32 = 0.20;
+const DISPLAY_BLACKS_CRUSH_JOIN: f32 = 0.05;
 
-// Negative Blacks uses a bounded rational toe: offset_ev = amount * 4 /
-// (1 + Y / 0.035) * hdr_guard. Bounding the shadow gain suppresses noise
-// amplification without spatial denoising while preserving RGB channel ratios.
+// Blacks scales display-linear RGB by a luminance gain, preserving channel
+// ratios, and moves display middle grey (Y = 0.1845) by less than 0.07 EV at
+// +/-100.
+//
+// Positive Blacks lifts by amount * 1.75 EV at black, decaying with
+// exp2(-Y / 0.035); the decay is slow enough to keep the remap monotonic.
+//
+// Negative Blacks works in a display-gamma encoding p = Y^(1/2.4), where noise
+// and banding visibility are close to uniform, and lowers p by
+// -amount * soft_min(0.80 * p, 0.20 * ramp(p_end - p)) below Y = 0.25, with
+// soft_min(a, b) = a * b / (a + b). The first term sets a finite gain at black
+// (0.2^2.4, about -5.6 EV at -100); the second is a line to the toe end. The
+// encoded slope stays within [1 + 0.80 * amount, 1 - 0.20 * amount], so the
+// toe neither clips nor expands shadow noise into speckles, without spatial
+// denoising.
 fn apply_display_blacks_toe_amount(rgb: vec3<f32>, amount: f32) -> vec3<f32> {
     if abs(amount) < 1e-7 {
         return rgb;
@@ -547,26 +566,32 @@ fn apply_display_blacks_toe_amount(rgb: vec3<f32>, amount: f32) -> vec3<f32> {
     if luminance <= 0.0 {
         return rgb;
     }
-    let hdr_guard = 1.0 - ToneCommon::tone_smoothstep(0.35, 1.0, luminance);
-    if hdr_guard <= 0.0 {
-        return rgb;
+
+    if amount >= 0.0 {
+        let hdr_guard = 1.0 - ToneCommon::tone_smoothstep(0.35, 1.0, luminance);
+        if hdr_guard <= 0.0 {
+            return rgb;
+        }
+        let weight = exp2(-luminance / DISPLAY_BLACKS_LIFT_DECAY);
+        return rgb * exp2(amount * DISPLAY_BLACKS_LIFT_EV * weight * hdr_guard);
     }
 
-    var offset_ev = 0.0;
-    if amount >= 0.0 {
-        let weight = 0.08 + 0.92 * exp2(-luminance / DISPLAY_BLACKS_LIFT_DECAY);
-        offset_ev = amount * 1.75 * weight * hdr_guard;
-    } else {
-        // A narrow deep-black cutoff expands tiny shadow differences into
-        // visible speckles. Use a broad rational toe instead: before the HDR
-        // fade, its logarithmic contrast is bounded by
-        // 1 + DISPLAY_BLACKS_CRUSH_EV * ln(2) / 4 (less than 1.7).
-        // The finite gain at zero avoids both a hard clip and a singular toe.
-        let weight = 1.0 / (1.0 + luminance / DISPLAY_BLACKS_CRUSH_HALF_LUMA);
-        offset_ev = amount * DISPLAY_BLACKS_CRUSH_EV * weight * hdr_guard;
+    let encoded = pow(luminance, 1.0 / DISPLAY_BLACKS_ENCODING_GAMMA);
+    let end = pow(DISPLAY_BLACKS_CRUSH_END_LUMA, 1.0 / DISPLAY_BLACKS_ENCODING_GAMMA);
+    if encoded >= end {
+        return rgb;
     }
-    let target_luminance = luminance * exp2(offset_ev);
-    return rgb * (target_luminance / luminance);
+    // Approaches below_end - join for deep values and has zero slope at the
+    // toe end, so the remap joins the identity smoothly.
+    let below_end = end - encoded;
+    let ramp = below_end * below_end / (below_end + DISPLAY_BLACKS_CRUSH_JOIN * end);
+    let toe = DISPLAY_BLACKS_CRUSH_BLACK_FRACTION * encoded;
+    let line = DISPLAY_BLACKS_CRUSH_STRETCH * ramp;
+    // soft_min(toe, line) / encoded, written without dividing by `encoded`;
+    // line > 0 here, so the denominator is positive.
+    let darkening_fraction = DISPLAY_BLACKS_CRUSH_BLACK_FRACTION * line / (toe + line);
+    let encoded_ratio = 1.0 + amount * darkening_fraction;
+    return rgb * pow(encoded_ratio, DISPLAY_BLACKS_ENCODING_GAMMA);
 }
 
 fn apply_display_blacks_toe_value(rgb: vec3<f32>, value: f32) -> vec3<f32> {
