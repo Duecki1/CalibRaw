@@ -27,12 +27,17 @@ pub(super) const TONE_GUIDE_SUPPORT: u32 =
 // in the scene tone pass before the scene effects.
 const CAPTURE_SHARPEN_SUPPORT: u32 = 6;
 /// Pixels past a tile core that the haze grid's box means read in the export
-/// tone prepass (`HAZE_BOX_MAX` - 1 in haze_analysis.wgsl). Dehaze itself
-/// reads only its own pixel and the full-image haze map, so it adds no halo.
+/// tone prepass (`HAZE_BOX_MAX` - 1 in haze_analysis.wgsl).
 pub const HAZE_BOX_SUPPORT: u32 = 1;
-// The prepass reads the box beside the tone guide over the same scene, so
-// the guide's halo covers it.
+/// Pixels around each pixel that Dehaze blurs into its guide scene
+/// (`HAZE_GUIDE_MAX_RADIUS` in haze.wgsl); it also reads the full-image haze
+/// map.
+pub const HAZE_GUIDE_SUPPORT: u32 = 2;
+// The prepass reads the box beside the tone guide over the same scene, and
+// Dehaze reads its guide scene from that scene in the stage that applies the
+// tone guide, so the guide's halo covers both.
 const _: () = assert!(HAZE_BOX_SUPPORT <= TONE_GUIDE_SUPPORT);
+const _: () = assert!(HAZE_GUIDE_SUPPORT <= TONE_GUIDE_SUPPORT);
 /// Footprint of the Texture and Clarity cascade (detail_scale_space.wgsl):
 /// 2 taps each side at steps 1, 2, 4, …, 2^(levels - 1), so 2 × (2^levels - 1).
 /// Texture alone builds 5 levels, Clarity all 7; `layout_contract_tests`

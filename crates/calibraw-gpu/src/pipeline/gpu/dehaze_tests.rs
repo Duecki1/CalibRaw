@@ -59,6 +59,47 @@ fn hazy_scene(x: u32, y: u32) -> [f32; 3] {
     std::array::from_fn(|c| clear[c] * t + AIRLIGHT[c] * (1.0 - t))
 }
 
+/// Rec.2020 luminance weights (`Common::LUMA`).
+const LUMA: [f32; 3] = [0.262_700_2, 0.677_998_1, 0.059_301_7];
+/// Brightnesses of `airlight_ground`'s blocks, relative to the airlight.
+const AIRLIGHT_GROUND: [f32; 2] = [0.4, 0.7];
+/// Relative amplitude of the pixel noise in `noisy`.
+const NOISE: f32 = 0.02;
+/// Columns of the colour fringes in `fringed`: one in every `FRINGE_PERIOD`,
+/// further apart than the guide scene reaches.
+const FRINGE_PERIOD: u32 = 8;
+const FRINGE_COLUMN: u32 = 3;
+/// Amplitude of the fringes in `fringed`.
+const FRINGE: f32 = 0.03;
+
+/// Hazy ground of the airlight's own colour, in 2-pixel blocks of two
+/// brightnesses. Every colour lies on the line through the airlight, so
+/// Dehaze can change nothing but the distance from it.
+fn airlight_ground(x: u32, y: u32) -> [f32; 3] {
+    let t = transmission(y);
+    let hash = (x / 2).wrapping_mul(73_856_093) ^ (y / 2).wrapping_mul(19_349_663);
+    let brightness = AIRLIGHT_GROUND[(hash >> 7) as usize % AIRLIGHT_GROUND.len()];
+    AIRLIGHT.map(|a| a * (brightness * t + 1.0 - t))
+}
+
+/// `airlight_ground` with luminance noise alternating from pixel to pixel,
+/// the finest a sensor makes.
+fn noisy(x: u32, y: u32) -> [f32; 3] {
+    let sign = if (x + y).is_multiple_of(2) { 1.0 } else { -1.0 };
+    airlight_ground(x, y).map(|c| c * (1.0 + sign * NOISE))
+}
+
+/// `airlight_ground` with one-pixel colour fringes of no luminance below the
+/// horizon, as demosaicing and chromatic aberration leave along fine detail.
+fn fringed(x: u32, y: u32) -> [f32; 3] {
+    let mut rgb = airlight_ground(x, y);
+    if y >= HORIZON && x % FRINGE_PERIOD == FRINGE_COLUMN {
+        rgb[0] += FRINGE * LUMA[1];
+        rgb[1] -= FRINGE * LUMA[0];
+    }
+    rgb
+}
+
 struct Fixture {
     device: wgpu::Device,
     queue: wgpu::Queue,
@@ -182,6 +223,69 @@ fn mean_difference_in_rows(a: &[f32], b: &[f32], rows: std::ops::Range<u32>) -> 
         / count
 }
 
+fn luminance(rgb: &[f32]) -> f32 {
+    rgb.iter().zip(LUMA).map(|(c, w)| c * w).sum()
+}
+
+fn difference(a: &[f32], b: &[f32]) -> [f32; 3] {
+    std::array::from_fn(|c| a[c] - b[c])
+}
+
+/// Renders `scene` and the same scene with `pixel` instead, without Dehaze
+/// and at full Dehaze.
+struct Pair {
+    before: Vec<f32>,
+    after: Vec<f32>,
+    altered_before: Vec<f32>,
+    altered_after: Vec<f32>,
+}
+
+impl Pair {
+    fn render(
+        scene: impl Fn(u32, u32) -> [f32; 3],
+        altered: impl Fn(u32, u32) -> [f32; 3],
+    ) -> anyhow::Result<Option<Self>> {
+        let (Some(mut scene), Some(mut altered)) = (Fixture::new(scene)?, Fixture::new(altered)?)
+        else {
+            return Ok(None);
+        };
+        Ok(Some(Self {
+            before: scene.render(0.0)?,
+            after: scene.render(100.0)?,
+            altered_before: altered.render(0.0)?,
+            altered_after: altered.render(100.0)?,
+        }))
+    }
+
+    /// The gain Dehaze applied to the unaltered scene at a pixel: how much
+    /// further from the airlight, the unchanged sky, it moved the luminance.
+    fn gain(&self, x: u32, y: u32) -> f32 {
+        let sky = luminance(pixel(&self.before, x, HORIZON / 2));
+        (luminance(pixel(&self.after, x, y)) - sky) / (luminance(pixel(&self.before, x, y)) - sky)
+    }
+
+    /// The alteration at a pixel without Dehaze and at full Dehaze.
+    fn alteration(&self, x: u32, y: u32) -> ([f32; 3], [f32; 3]) {
+        (
+            difference(pixel(&self.altered_before, x, y), pixel(&self.before, x, y)),
+            difference(pixel(&self.altered_after, x, y), pixel(&self.after, x, y)),
+        )
+    }
+
+    /// The pixels of `columns` in dense haze, where full removal at least
+    /// doubles the departure from the airlight, with that gain. Fails unless
+    /// there are many.
+    fn dense_haze(&self, columns: impl Iterator<Item = u32> + Clone) -> Vec<(u32, u32, f32)> {
+        let dense: Vec<_> = (HORIZON + 8..HORIZON + 72)
+            .flat_map(|y| columns.clone().map(move |x| (x, y)))
+            .map(|(x, y)| (x, y, self.gain(x, y)))
+            .filter(|&(_, _, gain)| gain >= 2.0)
+            .collect();
+        assert!(dense.len() > 500, "too little dense haze: {}", dense.len());
+        dense
+    }
+}
+
 fn full_mask(dehaze: f32) -> MaskStack {
     let mut mask = LocalMask::new(MaskKind::Fullscreen, 1);
     mask.adjustments.dehaze = dehaze;
@@ -230,7 +334,8 @@ fn dehaze_leaves_haze_free_detail_unchanged() -> anyhow::Result<()> {
     let airlight = scene.airlight()?;
     assert!(airlight[3] > 0.5, "no airlight found: {airlight:?}");
     // Every ground colour holds a channel far darker than the airlight, so
-    // none can hold haze, whatever the coarse map says near the horizon.
+    // the map finds no haze there, and the guide scene stops at the horizon
+    // rather than lending the ground the sky's veil.
     let ground_change = difference_in_rows(&dehazed, &untouched, HORIZON..HEIGHT);
     assert!(
         ground_change < EPSILON,
@@ -272,6 +377,64 @@ fn dehaze_recovers_a_synthetic_hazy_scene() -> anyhow::Result<()> {
     // The sky is the airlight and stays as it is.
     let sky_change = difference_in_rows(&after, &before, 0..HORIZON - 8);
     assert!(sky_change < 1e-3, "Dehaze changed the sky by {sky_change}");
+    Ok(())
+}
+
+#[test]
+fn dehaze_amplifies_pixel_noise_by_the_gain_of_the_haze_around_it() -> anyhow::Result<()> {
+    let Some(pair) = Pair::render(airlight_ground, noisy)? else {
+        return Ok(());
+    };
+    // The gain comes from the guide scene, which the alternating noise barely
+    // reaches, and the pixel enters the model linearly: noise is amplified as
+    // much as the haze it sits in, not by a gain of its own. Only across the
+    // ground's blocks does the pixel's noise shift the guide scene's range
+    // weights, by up to about a tenth. A gain that followed the pixel
+    // amplified this noise over twice as much as the haze.
+    let largest_mismatch = pair
+        .dense_haze(0..WIDTH)
+        .into_iter()
+        .map(|(x, y, gain)| {
+            let (before, after) = pair.alteration(x, y);
+            (luminance(&after) / luminance(&before) / gain - 1.0).abs()
+        })
+        .fold(0.0, f32::max);
+    assert!(
+        largest_mismatch < 0.15,
+        "noise gain departs from the haze's gain by {largest_mismatch}"
+    );
+    Ok(())
+}
+
+#[test]
+fn dehaze_amplifies_color_fringes_less_than_the_haze() -> anyhow::Result<()> {
+    let Some(pair) = Pair::render(airlight_ground, fringed)? else {
+        return Ok(());
+    };
+    // Colour detail finer than the guide scene takes a reduced gain, yet the
+    // veil over it is still thinned.
+    let norm = |rgb: [f32; 3]| rgb.iter().map(|c| c * c).sum::<f32>().sqrt();
+    let amplifications: Vec<_> = pair
+        .dense_haze((FRINGE_COLUMN..WIDTH).step_by(FRINGE_PERIOD as usize))
+        .into_iter()
+        .map(|(x, y, gain)| {
+            let (before, after) = pair.alteration(x, y);
+            (norm(after) / norm(before), gain)
+        })
+        .collect();
+    let largest_share = amplifications
+        .iter()
+        .map(|(amplification, gain)| amplification / gain)
+        .fold(0.0, f32::max);
+    assert!(
+        largest_share < 0.85,
+        "fringes grew by up to {largest_share} of the haze's gain"
+    );
+    let smallest = amplifications
+        .iter()
+        .map(|(amplification, _)| *amplification)
+        .fold(f32::INFINITY, f32::min);
+    assert!(smallest > 1.0, "fringes faded under Dehaze: {smallest}");
     Ok(())
 }
 

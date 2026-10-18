@@ -48,12 +48,12 @@ fn source_is_scene_referred() -> bool {
     return Common::camera_uniforms.view_transform_mode == Common::VIEW_TRANSFORM_SCENE_SIGMOID;
 }
 
-// The source in linear working RGB, before camera characterization. Rasters
-// that are not camera-linear take their white balance here. Scene-referred
-// sources leave inside Rec.2020, so no later stage sees the negative channels
-// a camera matrix gives narrow-band light; developed photos keep their colours.
-fn scene_working_at(pos: vec2<i32>) -> vec3<f32> {
-    let camera_rgb = source_scene_at(pos);
+// Camera RGB `camera_rgb` in linear working RGB, before camera
+// characterization. Rasters that are not camera-linear take their white
+// balance here. Scene-referred sources leave inside Rec.2020, so no later
+// stage sees the negative channels a camera matrix gives narrow-band light;
+// developed photos keep their colours.
+fn working_from_camera(camera_rgb: vec3<f32>) -> vec3<f32> {
     var working = Color::cam_to_working(camera_rgb);
 
     if Common::camera_uniforms.pre_demosaiced_raster > 0.5
@@ -70,11 +70,22 @@ fn scene_working_at(pos: vec2<i32>) -> vec3<f32> {
     return working;
 }
 
-// The scene after camera characterization at the profile's exposure, before
-// the edit's own exposure. The scene preparation starts from it; tone analysis
-// and Dehaze measure it, so their statistics do not follow the exposure slider.
-fn profiled_scene_at(pos: vec2<i32>) -> vec3<f32> {
-    let characterized = Profile::apply_camera_characterization(scene_working_at(pos));
+// The source at a tile-local pixel in linear working RGB (working_from_camera).
+fn scene_working_at(pos: vec2<i32>) -> vec3<f32> {
+    return working_from_camera(source_scene_at(pos));
+}
+
+// Camera RGB `camera_rgb` after camera characterization at the profile's
+// exposure, before the edit's own exposure.
+fn profiled_from_camera(camera_rgb: vec3<f32>) -> vec3<f32> {
+    let characterized = Profile::apply_camera_characterization(working_from_camera(camera_rgb));
     let profile_exposure_ev = bitcast<f32>(Common::camera_uniforms.profile_flags.z);
     return characterized * exp2(profile_exposure_ev);
+}
+
+// The profiled scene at a tile-local pixel (profiled_from_camera). The scene
+// preparation starts from it; tone analysis and Dehaze measure it, so their
+// statistics do not follow the exposure slider.
+fn profiled_scene_at(pos: vec2<i32>) -> vec3<f32> {
+    return profiled_from_camera(source_scene_at(pos));
 }
