@@ -130,16 +130,17 @@ fn global_capture_sharpening() -> CaptureSharpening {
     return capture_sharpening(Common::effects_uniforms.sharpen);
 }
 
-// Log2 luminance gain that `settings` add at `pos`, in -0.28..0.32 EV, before
-// the local-range limit of `apply_capture_sharpening_ev`. `rgb` is the
-// unsharpened scene-linear pixel at `pos`; neighbours come from the adjustment
-// base, so contributions of several settings do not compound.
-fn capture_sharpening_ev(
+// Unlimited log2 luminance gain of `settings` at `pos` for a detail-band gain
+// of `strength`: the selected band minus its noise threshold, gated by
+// impulse coherence, edge masking and the shadow and highlight ranges. `rgb` is
+// the unsharpened scene-linear pixel at `pos`; neighbours come from the
+// adjustment base, so contributions of several settings do not compound.
+fn capture_sharpening_response(
     pos: vec2<i32>,
     rgb: vec3<f32>,
     settings: CaptureSharpening,
+    strength: f32,
 ) -> f32 {
-    let amount = settings.amount;
     let radius = settings.radius;
     let detail = settings.detail;
     let masking = settings.masking;
@@ -189,12 +190,81 @@ fn capture_sharpening_ev(
 
     let shadow_gate = smoothstep(-9.2, -4.3, center_ev);
     let highlight_gate = 1.0 - 0.62 * smoothstep(2.6, 6.0, center_ev);
-    let strength = amount * mix(4.20, 6.00, detail);
+    return thresholded * strength * coherence * edge_mask * shadow_gate * highlight_gate;
+}
+
+fn capture_band_gain(settings: CaptureSharpening) -> f32 {
+    return settings.amount * mix(4.20, 6.00, settings.detail);
+}
+
+// Log2 luminance gain of the Detail card's capture sharpening, in
+// -0.28..0.32 EV, before the local-range limit of `apply_capture_sharpening_ev`.
+fn capture_sharpening_ev(
+    pos: vec2<i32>,
+    rgb: vec3<f32>,
+    settings: CaptureSharpening,
+) -> f32 {
     return clamp(
-        thresholded * strength * coherence * edge_mask * shadow_gate * highlight_gate,
+        capture_sharpening_response(pos, rgb, settings, capture_band_gain(settings)),
         -0.28,
         0.32,
     );
+}
+
+// The Sharpen effect detects detail like capture sharpening but boosts it
+// SHARPEN_EFFECT_GAIN times as much and lets edges overshoot their
+// neighbourhood by up to SHARPEN_EFFECT_HALO_EV at full Amount: the visible
+// acutance halo that capture sharpening deliberately suppresses. Tuned on
+// photographs so Amount 40 roughly matches the Detail card's Amount 150 and
+// Amount 150 is about 2.5 times as strong.
+const SHARPEN_EFFECT_GAIN: f32 = 4.0;
+const SHARPEN_EFFECT_HALO_EV: f32 = 0.5;
+// Soft limit of one slot's gain, in EV.
+const SHARPEN_EFFECT_MAX_EV: f32 = 1.0;
+
+// Log2 luminance gain of a Sharpen effect slot, softly limited to
+// ±SHARPEN_EFFECT_MAX_EV, before `apply_sharpen_effect_ev`.
+fn sharpen_effect_ev(pos: vec2<i32>, rgb: vec3<f32>, settings: CaptureSharpening) -> f32 {
+    let response = capture_sharpening_response(
+        pos,
+        rgb,
+        settings,
+        capture_band_gain(settings) * SHARPEN_EFFECT_GAIN,
+    );
+    return SHARPEN_EFFECT_MAX_EV * tanh(response / SHARPEN_EFFECT_MAX_EV);
+}
+
+// How far a Sharpen effect slot at `settings` may overshoot the local range.
+fn sharpen_effect_halo_ev(settings: CaptureSharpening) -> f32 {
+    return settings.amount * SHARPEN_EFFECT_HALO_EV;
+}
+
+// Applies a summed `sharpen_effect_ev` gain to `rgb` at `pos`. Overshoot past
+// the 3x3 neighbourhood's luminance range of the adjustment base is
+// compressed smoothly towards `halo_ev`. Negative channels are clipped to zero.
+fn apply_sharpen_effect_ev(
+    pos: vec2<i32>,
+    rgb: vec3<f32>,
+    sharpen_ev: f32,
+    halo_ev: f32,
+) -> vec3<f32> {
+    let center_ev = Common::log_luminance(rgb);
+    let bounds = capture_local_ev_bounds(pos);
+    let halo = max(halo_ev, 1e-4);
+    var target_ev = center_ev + sharpen_ev;
+    if target_ev > bounds.y {
+        target_ev = bounds.y + halo * tanh((target_ev - bounds.y) / halo);
+    } else if target_ev < bounds.x {
+        target_ev = bounds.x - halo * tanh((bounds.x - target_ev) / halo);
+    }
+    // Never undo the existing contrast: a pixel already outside the range
+    // keeps at least its own value in the direction of the gain.
+    if sharpen_ev > 0.0 {
+        target_ev = max(target_ev, center_ev);
+    } else {
+        target_ev = min(target_ev, center_ev);
+    }
+    return max(rgb * exp2(target_ev - center_ev), vec3<f32>(0.0));
 }
 
 // Applies a summed `capture_sharpening_ev` gain to the unsharpened `rgb` at

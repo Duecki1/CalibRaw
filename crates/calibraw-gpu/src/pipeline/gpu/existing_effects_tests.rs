@@ -320,13 +320,16 @@ fn existing_effects_honor_empty_masks_and_full_masks_match_global() -> anyhow::R
 }
 
 #[test]
-fn sharpen_component_matches_detail_sharpening_with_its_own_settings() -> anyhow::Result<()> {
+fn sharpen_component_outsharpens_detail_and_honors_its_mask() -> anyhow::Result<()> {
     let Some(mut scene) = Fixture::new(64, 64, |x, y| {
         let wave = (x as f32 * 0.9).sin() * (y as f32 * 0.7).sin();
         [0.18 + 0.08 * wave; 3]
     })?
     else {
         return Ok(());
+    };
+    let mean_difference = |a: &[f32], b: &[f32]| {
+        a.iter().zip(b).map(|(a, b)| (a - b).abs()).sum::<f32>() / a.len() as f32
     };
     let baseline = scene.render(None)?;
     let settings = SharpenEffectSettings {
@@ -348,10 +351,14 @@ fn sharpen_component_matches_detail_sharpening_with_its_own_settings() -> anyhow
 
     let mut component = EffectComponent::new(MaskEffect::Sharpen);
     component.settings.sharpen = settings;
+    let global = scene.render(Some(component.clone()))?;
+    // Sharpen boosts detail beyond the Detail card's capture sharpening and
+    // lets edges overshoot their neighbourhood.
     assert!(
-        difference(&scene.render(Some(component.clone()))?, &detail) < EPSILON,
-        "a global Sharpen differs from the Detail card's sharpening"
+        mean_difference(&global, &baseline) > 2.0 * mean_difference(&detail, &baseline),
+        "Sharpen is not stronger than the Detail card's sharpening at the same settings"
     );
+
     let mut mask = LocalMask::new(MaskKind::Fullscreen, 1);
     mask.effect_components.push(component.clone());
     let masks = MaskStack {
@@ -373,13 +380,13 @@ fn sharpen_component_matches_detail_sharpening_with_its_own_settings() -> anyhow
         &vec![half::f16::ONE.to_bits(); (MASK_EDGE * MASK_EDGE) as usize],
     )?;
     assert!(
-        difference(&scene.render_masks(&masks)?, &detail) < EPSILON,
-        "Sharpen under a full mask differs from the Detail card's sharpening"
+        difference(&scene.render_masks(&masks)?, &global) < EPSILON,
+        "Sharpen differs between global and full mask"
     );
 
     component.settings.sharpen.radius = 0.5;
     assert!(
-        difference(&scene.render(Some(component))?, &detail) > 1.0e-4,
+        difference(&scene.render(Some(component))?, &global) > 1.0e-4,
         "Sharpen ignores its radius"
     );
     Ok(())
