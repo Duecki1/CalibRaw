@@ -3,7 +3,7 @@
 
 use crate::pipeline::effect_params::FloatParamSpec;
 use eframe::egui::{self, Ui};
-use moduwu_design::Slider;
+use moduwu_design::{Slider, SliderScale};
 use std::ops::RangeInclusive;
 
 /// Colours painted along a slider track.
@@ -21,6 +21,8 @@ pub(crate) enum SliderGradient {
     Brightness,
     Temperature,
     Tint,
+    /// The white-balance tint: green to magenta like [`Self::Tint`], with
+    /// neutral at `neutral_fraction` of an asymmetric range.
     CameraTint {
         neutral_fraction: f32,
     },
@@ -74,6 +76,13 @@ where
             slider: self
                 .slider
                 .gradient(move |fraction| gradient_color_at(gradient, fraction)),
+        }
+    }
+
+    /// Where values sit along the track; linear by default.
+    pub(crate) fn scale(self, scale: SliderScale) -> Self {
+        Self {
+            slider: self.slider.scale(scale),
         }
     }
 
@@ -211,7 +220,7 @@ fn gradient_color_at(gradient: SliderGradient, fraction: f32) -> egui::Color32 {
                     t / neutral
                 };
                 lerp_color(
-                    crate::ui::theme::TINT_MAGENTA,
+                    crate::ui::theme::TINT_GREEN,
                     crate::ui::theme::TINT_NEUTRAL,
                     u,
                 )
@@ -224,7 +233,7 @@ fn gradient_color_at(gradient: SliderGradient, fraction: f32) -> egui::Color32 {
                 };
                 lerp_color(
                     crate::ui::theme::TINT_NEUTRAL,
-                    crate::ui::theme::TINT_GREEN,
+                    crate::ui::theme::TINT_MAGENTA,
                     u,
                 )
             }
@@ -423,7 +432,7 @@ mod tests {
     }
 
     #[test]
-    fn camera_tint_gradient_reverses_local_tint_and_uses_requested_neutral() {
+    fn camera_tint_gradient_matches_local_tint_and_uses_requested_neutral() {
         let neutral_fraction = 0.4;
         let camera = SliderGradient::CameraTint { neutral_fraction };
         let local = SliderGradient::Tint;
@@ -434,8 +443,8 @@ mod tests {
         let local_low = gradient_color_at(local, 0.0);
         let local_high = gradient_color_at(local, 1.0);
 
-        assert_eq!(camera_low, local_high);
-        assert_eq!(camera_high, local_low);
+        assert_eq!(camera_low, local_low);
+        assert_eq!(camera_high, local_high);
         assert_eq!(camera_neutral, eframe::egui::Color32::from_gray(202));
     }
 }

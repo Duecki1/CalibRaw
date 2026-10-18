@@ -1,4 +1,10 @@
 //! White balance models: daylight, temperature/tint ranges and conversions.
+//!
+//! Temperature and tint locate the white being balanced as the DNG SDK and
+//! Lightroom do: the correlated colour temperature on the Planckian locus and
+//! the distance from the locus along its isotherm (see `cct.rs`). Tints are
+//! in Lightroom units, positive for whites greener than the locus, which
+//! balancing turns magenta.
 
 use super::*;
 use std::cell::RefCell;
@@ -136,7 +142,7 @@ pub(super) fn estimate_cct_from_model(color: &CameraColorModel, wb: [f32; 4]) ->
 pub(in crate::pipeline::raw_loader) fn as_shot_temperature_tint(
     model: &CameraWhiteBalanceModel,
 ) -> (f32, f32) {
-    temperature_tint_from_coefficients(model, model.base_wb).unwrap_or((model.base_cct, 1.0))
+    temperature_tint_from_coefficients(model, model.base_wb).unwrap_or((model.base_cct, 0.0))
 }
 
 pub(in crate::pipeline::raw_loader) fn adjusted_white_balance_coefficients(
@@ -173,59 +179,29 @@ fn white_balance_xyz_to_camera(model: &CameraWhiteBalanceModel) -> [[f32; 3]; 4]
     }
 }
 
-fn darktable_temperature_xyz(temperature: f32) -> Option<[f32; 3]> {
-    let t = temperature.clamp(MIN_TEMPERATURE_KELVIN, MAX_TEMPERATURE_KELVIN);
-    let [x, y] = if t < 4_000.0 {
-        planckian_xy(t)?
-    } else {
-        let x = if t <= 7_000.0 {
-            -4.607e9 / t.powi(3) + 2.9678e6 / t.powi(2) + 0.09911e3 / t + 0.244_063
-        } else {
-            -2.0064e9 / t.powi(3) + 1.9018e6 / t.powi(2) + 0.24748e3 / t + 0.237_04
-        };
-        let y = -3.0 * x * x + 2.87 * x - 0.275;
-        [x, y]
-    };
-    (x.is_finite() && y.is_finite() && y > 1e-10).then_some([x / y, 1.0, (1.0 - x - y) / y])
-}
-
-fn darktable_temperature_tint_xyz(temperature: f32, tint: f32) -> Option<[f32; 3]> {
-    let mut xyz = darktable_temperature_xyz(temperature)?;
-    xyz[1] /= tint.clamp(MIN_WHITE_BALANCE_TINT, MAX_WHITE_BALANCE_TINT);
-    Some(xyz)
-}
-
-// Temperature slider limits are evaluated at whole-Kelvin ticks.  Their
-// daylight/blackbody coordinates depend only on that tick, not on the camera
-// or current edit, so avoid repeating the comparatively expensive polynomial
-// evaluation for every tick of every UI frame.
-static WHITE_BALANCE_TEMPERATURE_XYZ: OnceLock<Box<[[f32; 3]]>> = OnceLock::new();
-
-fn white_balance_temperature_xyz_ticks() -> &'static [[f32; 3]] {
-    WHITE_BALANCE_TEMPERATURE_XYZ.get_or_init(|| {
-        ((MIN_TEMPERATURE_KELVIN as u32)..=(MAX_TEMPERATURE_KELVIN as u32))
-            .map(|kelvin| {
-                darktable_temperature_xyz(kelvin as f32)
-                    .expect("the supported whole-Kelvin range must have valid coordinates")
-            })
-            .collect::<Vec<_>>()
-            .into_boxed_slice()
-    })
+/// XYZ with Y = 1 of the white at `temperature` (K) and `tint`, each first
+/// limited to its supported range.
+fn white_xyz(temperature: f32, tint: f32) -> Option<[f32; 3]> {
+    uv_to_xyz(temperature_tint_uv(
+        f64::from(temperature.clamp(MIN_TEMPERATURE_KELVIN, MAX_TEMPERATURE_KELVIN)),
+        f64::from(tint.clamp(MIN_WHITE_BALANCE_TINT, MAX_WHITE_BALANCE_TINT)),
+    ))
 }
 
 // Keep slider endpoints strictly inside the positive camera-response domain.
 // Rounding inward to the displayed precision also prevents a drag/typed value
 // from rounding onto a white beyond the usable limits.
 const MIN_WB_CAMERA_RESPONSE: f32 = 1e-8;
-const TINT_PRECISION: f64 = 1_000.0;
+/// Tint ticks per unit; the slider shows whole tints, as Lightroom does.
+const TINT_PRECISION: f64 = 1.0;
 
 /// Largest ratio between the strongest and the weakest channel gain that the
 /// temperature/tint controls produce. Gains are reciprocal camera responses,
 /// so where a channel's response approaches zero (the magenta end on most
 /// sensors) its gain grows without bound long before the response turns
 /// negative. Measured across ten cameras, as-shot whites stay below 3 and
-/// 1901-25000 K at neutral tint below 7, while the unlimited magenta end
-/// reached several thousand.
+/// 1901-25000 K on the daylight/blackbody curve below 7, while the unlimited
+/// magenta end reached several thousand.
 pub(super) const MAX_WB_GAIN_RATIO: f64 = 8.0;
 
 /// Margin kept above an as-shot white that already exceeds `MAX_WB_GAIN_RATIO`
@@ -302,8 +278,7 @@ impl UsableWhiteBalance {
             max_gain_ratio: MAX_WB_GAIN_RATIO,
             as_shot,
         };
-        if let Some(ratio) = darktable_temperature_tint_xyz(as_shot.0, as_shot.1)
-            .and_then(|xyz| usable.gain_ratio(xyz))
+        if let Some(ratio) = white_xyz(as_shot.0, as_shot.1).and_then(|xyz| usable.gain_ratio(xyz))
         {
             usable.max_gain_ratio = usable
                 .max_gain_ratio
@@ -339,20 +314,22 @@ impl UsableWhiteBalance {
     }
 
     fn is_usable_at(&self, temperature: f32, tint: f32) -> bool {
-        darktable_temperature_tint_xyz(temperature, tint).is_some_and(|xyz| self.is_usable(xyz))
+        white_xyz(temperature, tint).is_some_and(|xyz| self.is_usable(xyz))
     }
 
     fn slider_ranges(&self) -> Option<WhiteBalanceRanges> {
         let (temperature, tint) = self.as_shot;
         let (low, high) = self.tint_bounds(temperature)?;
-        // The tolerance avoids losing a tick to the f32 representation of 0.135.
+        // The tolerance avoids losing a tick to the f32 representation of a
+        // hard limit.
+        let tick = (1.0 / TINT_PRECISION) as f32;
         let mut low = ((low * TINT_PRECISION - 1e-4).ceil() / TINT_PRECISION) as f32;
         let mut high = ((high * TINT_PRECISION + 1e-4).floor() / TINT_PRECISION) as f32;
         if !self.is_usable_at(temperature, low) {
-            low += 0.001;
+            low += tick;
         }
         if !self.is_usable_at(temperature, high) {
-            high -= 0.001;
+            high -= tick;
         }
         if low > high
             || !self.is_usable_at(temperature, low)
@@ -368,30 +345,52 @@ impl UsableWhiteBalance {
 
     /// Exact bounds of the usable tints at `temperature`.
     fn tint_bounds(&self, temperature: f32) -> Option<(f64, f64)> {
-        let xyz = darktable_temperature_xyz(temperature)?;
-        // With Y divided by the tint t, row i responds P_i + Q_i / t.
-        // Multiplied by the positive t, each requirement on the responses
-        // becomes a linear inequality a*t + b > 0.
-        let responses = self.xyz_to_camera.map(|row| {
-            (
-                f64::from(row[0]) * f64::from(xyz[0]) + f64::from(row[2]) * f64::from(xyz[2]),
-                f64::from(row[1]),
-            )
-        });
+        let temperature =
+            f64::from(temperature.clamp(MIN_TEMPERATURE_KELVIN, MAX_TEMPERATURE_KELVIN));
+        // The uv of the white is affine in the tint, and so is XYZ scaled by
+        // 2v: (3u, 2v, 4 - u - 10v). Row i then responds (P_i + Q_i t) / S(t)
+        // with S(t) = 2v > 0, so every requirement on the responses becomes
+        // a linear inequality a*t + b > 0.
+        let neutral = temperature_tint_uv(temperature, 0.0);
+        let unit = temperature_tint_uv(temperature, 1.0);
+        let scaled_xyz = |[u, v]: [f64; 2]| [3.0 * u, 2.0 * v, 4.0 - u - 10.0 * v];
+        let at_neutral = scaled_xyz(neutral);
+        let per_tint: [f64; 3] =
+            std::array::from_fn(|axis| scaled_xyz(unit)[axis] - at_neutral[axis]);
+        let affine = |xyz: [f64; 3]| {
+            self.xyz_to_camera.map(|row| {
+                row.iter()
+                    .zip(xyz)
+                    .map(|(&weight, value)| f64::from(weight) * value)
+                    .sum::<f64>()
+            })
+        };
+        let responses = affine(at_neutral);
+        let response_slopes = affine(per_tint);
+        let (scale, scale_slope) = (at_neutral[1], per_tint[1]);
         let mut bounds = (
             f64::from(MIN_WHITE_BALANCE_TINT),
             f64::from(MAX_WHITE_BALANCE_TINT),
         );
+        if !limit_tint(&mut bounds, scale_slope, scale) {
+            return None;
+        }
+        let min_response = f64::from(MIN_WB_CAMERA_RESPONSE);
         for row in self.balanced_rows() {
-            let (p, q) = responses[row];
-            if !limit_tint(&mut bounds, p - f64::from(MIN_WB_CAMERA_RESPONSE), q) {
+            let (p, q) = (responses[row], response_slopes[row]);
+            // Response above the minimum: P + Q t > min * S(t).
+            if !limit_tint(
+                &mut bounds,
+                q - min_response * scale_slope,
+                p - min_response * scale,
+            ) {
                 return None;
             }
             // Gain ratio limit: max_gain_ratio * response(row) > response(other).
             for other in self.balanced_rows().filter(|&other| other != row) {
-                let (other_p, other_q) = responses[other];
+                let (other_p, other_q) = (responses[other], response_slopes[other]);
                 let ratio = self.max_gain_ratio;
-                if !limit_tint(&mut bounds, ratio * p - other_p, ratio * q - other_q) {
+                if !limit_tint(&mut bounds, ratio * q - other_q, ratio * p - other_p) {
                     return None;
                 }
             }
@@ -405,18 +404,12 @@ impl UsableWhiteBalance {
         if !self.is_usable_at(temperature, tint) {
             return None;
         }
-        let tint = tint.clamp(MIN_WHITE_BALANCE_TINT, MAX_WHITE_BALANCE_TINT);
-        let xyz_ticks = white_balance_temperature_xyz_ticks();
         let usable = |kelvin: f32| {
             debug_assert_eq!(kelvin, kelvin.round());
-            let index = (kelvin as u32).saturating_sub(MIN_TEMPERATURE_KELVIN as u32) as usize;
-            xyz_ticks
-                .get(index)
-                .is_some_and(|&[x, y, z]| self.is_usable([x, y / tint, z]))
+            self.is_usable_at(kelvin, tint)
         };
-        // Check the connected interval at the slider's one-Kelvin precision.
-        // Checking only the two extremes misses holes at the blackbody/daylight
-        // transition near 4000 K and would let the slider cross an invalid region.
+        // Check the connected interval at the slider's one-Kelvin precision,
+        // so the slider never crosses a hole in the usable whites.
         let mut low = temperature;
         let mut next = temperature.ceil() - 1.0;
         while next >= MIN_TEMPERATURE_KELVIN && usable(next) {
@@ -433,8 +426,8 @@ impl UsableWhiteBalance {
     }
 }
 
-/// Narrows `bounds` to the positive tints t with a*t + b > 0. Returns `false`
-/// when no tint satisfies it.
+/// Narrows `bounds` to the tints t with a*t + b > 0. Returns `false` when no
+/// tint satisfies it.
 fn limit_tint(bounds: &mut (f64, f64), a: f64, b: f64) -> bool {
     if !a.is_finite() || !b.is_finite() {
         return false;
@@ -455,7 +448,7 @@ pub(in crate::pipeline::raw_loader) fn temperature_tint_to_coefficients(
     tint: f32,
 ) -> Option<[f32; 4]> {
     let matrix = white_balance_xyz_to_camera(model);
-    let camera = matrix::transform(matrix, darktable_temperature_tint_xyz(temperature, tint)?);
+    let camera = matrix::transform(matrix, white_xyz(temperature, tint)?);
     let mut coefficients = [1.0; 4];
     for index in 0..4 {
         if logical_rgb_channel(model.cdesc, index).is_none() {
@@ -485,30 +478,18 @@ pub(in crate::pipeline::raw_loader) fn temperature_tint_from_coefficients(
         };
     }
     let camera_to_xyz = pseudoinverse(white_balance_xyz_to_camera(model));
-    let xyz = matrix::transform(camera_to_xyz, camera_neutral);
-    if xyz[0].abs() <= 1e-10 || !xyz.iter().all(|value| value.is_finite()) {
-        return None;
-    }
+    xyz_temperature_tint(matrix::transform(camera_to_xyz, camera_neutral))
+}
 
-    let target_ratio = xyz[2] / xyz[0];
-    let mut low = MIN_TEMPERATURE_KELVIN;
-    let mut high = MAX_TEMPERATURE_KELVIN;
-    while high - low > 0.25 {
-        let midpoint = 0.5 * (low + high);
-        let reference = darktable_temperature_xyz(midpoint)?;
-        if reference[2] / reference[0] > target_ratio {
-            high = midpoint;
-        } else {
-            low = midpoint;
-        }
-    }
-    let temperature = 0.5 * (low + high);
-    let reference = darktable_temperature_xyz(temperature)?;
-    let xyz_y_over_x = xyz[1] / xyz[0];
-    if xyz_y_over_x.abs() <= 1e-10 {
+/// Temperature (K) and tint of an XYZ white, each limited to its supported
+/// range.
+pub(in crate::pipeline::raw_loader) fn xyz_temperature_tint(xyz: [f32; 3]) -> Option<(f32, f32)> {
+    if !xyz.iter().all(|value| value.is_finite()) {
         return None;
     }
-    let tint = ((reference[1] / reference[0]) / xyz_y_over_x)
-        .clamp(MIN_WHITE_BALANCE_TINT, MAX_WHITE_BALANCE_TINT);
-    Some((temperature, tint))
+    let (temperature, tint) = uv_temperature_tint(xyz_to_uv(xyz)?)?;
+    Some((
+        (temperature as f32).clamp(MIN_TEMPERATURE_KELVIN, MAX_TEMPERATURE_KELVIN),
+        (tint as f32).clamp(MIN_WHITE_BALANCE_TINT, MAX_WHITE_BALANCE_TINT),
+    ))
 }

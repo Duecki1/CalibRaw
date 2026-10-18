@@ -320,7 +320,7 @@ impl Sidebar {
                 } else if exposure.temperature.abs() < 1e-5 && exposure.tint.abs() < 1e-5 {
                     "as shot".to_owned()
                 } else if raw
-                    .white_balance_offsets_from_temperature_tint(6504.0, 1.0)
+                    .reference_white_balance_offsets()
                     .is_some_and(&matches_current)
                 {
                     "camera reference (D65)".to_owned()
@@ -332,7 +332,7 @@ impl Sidebar {
                 } else if let Some(temperature) = [2500.0, 3200.0, 4500.0, 6000.0, 8500.0]
                     .into_iter()
                     .find(|temperature| {
-                        raw.white_balance_offsets_from_temperature_tint(*temperature, 1.0)
+                        raw.white_balance_offsets_from_temperature_tint(*temperature, 0.0)
                             .is_some_and(&matches_current)
                     })
                 {
@@ -366,7 +366,7 @@ impl Sidebar {
                                 .clicked()
                             {
                                 if let Some((temperature, tint)) =
-                                    raw.white_balance_offsets_from_temperature_tint(6504.0, 1.0)
+                                    raw.reference_white_balance_offsets()
                                 {
                                     exposure.temperature = temperature;
                                     exposure.tint = tint;
@@ -412,7 +412,7 @@ impl Sidebar {
                                     if let Some((temperature, tint)) = raw
                                         .white_balance_offsets_from_temperature_tint(
                                             temperature,
-                                            1.0,
+                                            0.0,
                                         )
                                     {
                                         exposure.temperature = temperature;
@@ -458,6 +458,7 @@ impl Sidebar {
                         )
                         .decimals(0)
                         .step(10.0)
+                        .scale(moduwu_design::SliderScale::Reciprocal)
                         .gradient(SliderGradient::Temperature)
                         .reset_to(base_kelvin)
                         .show(ui)
@@ -465,14 +466,14 @@ impl Sidebar {
                     .inner;
                 let base_tint = raw.as_shot_white_balance().map_or(tint, |value| value.1);
                 let tint_range = ranges.tint;
-                let tint_neutral_fraction = ((1.0 - tint_range.start())
+                let tint_neutral_fraction = ((0.0 - tint_range.start())
                     / (tint_range.end() - tint_range.start()).max(f32::EPSILON))
                 .clamp(0.0, 1.0);
                 let tint_changed = ui
                     .push_id(base_tint.to_bits(), |ui| {
                         AdjustmentSlider::new("Tint", &mut tint, tint_range)
-                            .decimals(3)
-                            .step(0.005)
+                            .decimals(0)
+                            .step(1.0)
                             .gradient(SliderGradient::CameraTint {
                                 neutral_fraction: tint_neutral_fraction,
                             })

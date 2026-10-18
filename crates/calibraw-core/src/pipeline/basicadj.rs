@@ -170,11 +170,24 @@ const DARKTABLE_SIGMOID_CONTRAST_SOFT_MIN: f32 = 0.7;
 const DARKTABLE_SIGMOID_CONTRAST_SOFT_MAX: f32 = 3.0;
 pub const MIN_TEMPERATURE_KELVIN: f32 = 1_901.0;
 pub const MAX_TEMPERATURE_KELVIN: f32 = 25_000.0;
-pub const MIN_WHITE_BALANCE_TINT: f32 = 0.135;
-pub const MAX_WHITE_BALANCE_TINT: f32 = 2.326;
-pub const WHITE_BALANCE_TINT_OFFSET_SCALE: f32 = 100.0;
-pub const GLOBAL_TINT_OFFSET_LIMIT: f32 =
-    (MAX_WHITE_BALANCE_TINT - MIN_WHITE_BALANCE_TINT) * WHITE_BALANCE_TINT_OFFSET_SCALE;
+/// Limits of the white-balance tint the sliders show, in Lightroom units:
+/// 3000 × the CIE 1960 uv distance from the Planckian locus along the
+/// isotherm, positive for whites greener than the locus, which balancing
+/// turns magenta.
+pub const MIN_WHITE_BALANCE_TINT: f32 = -150.0;
+pub const MAX_WHITE_BALANCE_TINT: f32 = 150.0;
+/// Change of the shown tint per unit of the stored tint offset.
+///
+/// Stored offsets keep the scale and sign they had when the tint was
+/// darktable's Y multiplier (100 per unit of multiplier, positive greener):
+/// near neutral daylight one such unit moved the white about 5 tints towards
+/// green. Edits saved by older versions, and older versions reading newer
+/// edits, therefore keep about the same tint.
+pub const WHITE_BALANCE_TINT_PER_OFFSET: f32 = -5.0;
+/// Limit of stored tint offsets: the full range of the darktable multiplier
+/// (0.135 to 2.326) they were defined on. Raster images apply offsets
+/// directly up to ±100.
+pub const GLOBAL_TINT_OFFSET_LIMIT: f32 = 219.1;
 pub const GLOBAL_TEMPERATURE_LIMIT: f32 = 500.0;
 
 pub fn temperature_kelvin_from_offset(base_kelvin: f32, offset_mired: f32) -> f32 {
@@ -191,14 +204,16 @@ pub fn temperature_offset_from_kelvin(base_kelvin: f32, target_kelvin: f32) -> f
         .clamp(-GLOBAL_TEMPERATURE_LIMIT, GLOBAL_TEMPERATURE_LIMIT)
 }
 
+/// Shown tint for a stored offset from the as-shot tint `base_tint`.
 pub fn white_balance_tint_from_offset(base_tint: f32, offset: f32) -> f32 {
-    (base_tint + offset / WHITE_BALANCE_TINT_OFFSET_SCALE)
+    (base_tint + offset * WHITE_BALANCE_TINT_PER_OFFSET)
         .clamp(MIN_WHITE_BALANCE_TINT, MAX_WHITE_BALANCE_TINT)
 }
 
+/// Stored offset from the as-shot tint `base_tint` for a shown tint.
 pub fn white_balance_tint_offset(base_tint: f32, target_tint: f32) -> f32 {
     ((target_tint.clamp(MIN_WHITE_BALANCE_TINT, MAX_WHITE_BALANCE_TINT) - base_tint)
-        * WHITE_BALANCE_TINT_OFFSET_SCALE)
+        / WHITE_BALANCE_TINT_PER_OFFSET)
         .clamp(-GLOBAL_TINT_OFFSET_LIMIT, GLOBAL_TINT_OFFSET_LIMIT)
 }
 pub const HSL_HUE_LIMIT: f32 = 200.0;

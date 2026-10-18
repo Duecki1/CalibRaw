@@ -1350,7 +1350,12 @@ mod tests {
 
     #[test]
     fn extended_temperature_range_reaches_beyond_the_old_hundred_mired_clamp() {
-        let raw = raw_with_white_balance_model();
+        let mut raw = raw_with_white_balance_model();
+        // A neutral as-shot white, so the gain limit leaves the full range.
+        let model = raw.white_balance_model.as_mut().unwrap();
+        model.base_wb =
+            super::libraw_loader::temperature_tint_to_coefficients(model, 5_000.0, 0.0).unwrap();
+        raw.wb_coeffs = model.base_wb;
         let base = raw.as_shot_temperature_kelvin().unwrap();
         let at_8000 = temperature_offset_from_kelvin(base, 8_000.0);
         let at_25000 = temperature_offset_from_kelvin(base, 25_000.0);
@@ -1390,17 +1395,23 @@ mod tests {
             ],
         };
         model.base_wb =
-            super::libraw_loader::temperature_tint_to_coefficients(model, 5_000.0, 1.0).unwrap();
+            super::libraw_loader::temperature_tint_to_coefficients(model, 5_000.0, 0.0).unwrap();
         raw.wb_coeffs = model.base_wb;
         let (base_temperature, base_tint) = raw.as_shot_white_balance().unwrap();
         let temperature_offset = temperature_offset_from_kelvin(base_temperature, 5_000.0);
-        let legacy_tint_offset = crate::pipeline::white_balance_tint_offset(base_tint, 0.135);
+        let legacy_tint_offset = crate::pipeline::white_balance_tint_offset(
+            base_tint,
+            crate::pipeline::MAX_WHITE_BALANCE_TINT,
+        );
         let displayed = raw
             .white_balance_temperature_tint(temperature_offset, legacy_tint_offset)
             .unwrap();
-        assert!(displayed.1 > 0.135);
+        assert!(displayed.1 < crate::pipeline::MAX_WHITE_BALANCE_TINT);
         let saved = raw
-            .white_balance_offsets_from_temperature_tint(5_000.0, 0.135)
+            .white_balance_offsets_from_temperature_tint(
+                5_000.0,
+                crate::pipeline::MAX_WHITE_BALANCE_TINT,
+            )
             .unwrap();
         let from_legacy =
             raw.adjusted_white_balance_and_camera_transform(temperature_offset, legacy_tint_offset);
@@ -1428,7 +1439,7 @@ mod tests {
         const WHITE: f32 = 10_000.0;
         let mut raw = raw_with_white_balance_model();
         let desired_offsets = raw
-            .white_balance_offsets_from_temperature_tint(6_000.0, 1.0)
+            .white_balance_offsets_from_temperature_tint(6_000.0, 0.0)
             .unwrap();
         let desired = raw
             .adjusted_white_balance_and_camera_transform(desired_offsets.0, desired_offsets.1)
