@@ -111,7 +111,9 @@ const ROBERTSON_ISOTHERMS: [[f64; 4]; 31] = [
     [600.0, 0.33724, 0.36051, -116.45],
 ];
 
-/// Correlated colour temperature of an XYZ white by Robertson's method.
+/// Correlated colour temperature of an XYZ white by Robertson's method, an
+/// independent check of [`temperature_tint_uv`]'s locus in tests.
+#[cfg(test)]
 pub(super) fn xyz_to_cct(xyz: [f32; 3]) -> Option<f32> {
     let [x, y, z] = xyz.map(f64::from);
     let denominator = x + 15.0 * y + 3.0 * z;

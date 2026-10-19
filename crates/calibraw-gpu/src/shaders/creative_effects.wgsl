@@ -187,7 +187,7 @@ fn apply_local_scene_effect_nodes(pos: vec2<i32>, input_rgb: vec3<f32>) -> vec3<
     let count = min(Common::scene_tone_uniforms.mask_counts.x, Common::MAX_RENDER_MASK_SLOTS);
     for (var index = 0u; index < count; index = index + 1u) {
         let state = Common::mask_data[index].metadata;
-        if state.x == 0u || state.y == 0u || Common::mask_effect_id(state) != 0u { continue; }
+        if !Common::mask_slot_applies(state, 0u) { continue; }
         let local = Common::mask_data[index].adjust_2_field;
         if max(abs(local.x), max(abs(local.y), abs(local.z))) <= 1e-7 {
             continue;
@@ -207,7 +207,7 @@ fn apply_local_mask_effect_nodes(pos: vec2<i32>, input_rgb: vec3<f32>) -> vec3<f
     let count = min(Common::scene_tone_uniforms.mask_counts.x, Common::MAX_RENDER_MASK_SLOTS);
     for (var index = 0u; index < count; index = index + 1u) {
         let state = Common::mask_data[index].metadata;
-        if state.x == 0u || state.y == 0u || Common::mask_effect_id(state) != MASK_EFFECT_NEON_ID { continue; }
+        if !Common::mask_slot_applies(state, MASK_EFFECT_NEON_ID) { continue; }
         let weight = SceneAdjustments::local_mask_weight(pos, index);
         if weight <= 1e-5 { continue; }
         let adjusted = apply_neon(
@@ -226,7 +226,7 @@ fn apply_local_creative_mask_effect_nodes(pos: vec2<i32>, input_rgb: vec3<f32>) 
     let count = min(Common::scene_tone_uniforms.mask_counts.x, Common::MAX_RENDER_MASK_SLOTS);
     for (var index = 0u; index < count; index = index + 1u) {
         let state = Common::mask_data[index].metadata;
-        if state.x == 0u || state.y == 0u { continue; }
+        if !Common::mask_slot_active(state) { continue; }
         let effect_id = Common::mask_effect_id(state);
         if effect_id != MASK_EFFECT_EDGE_GLOW_ID
             && effect_id != MASK_EFFECT_PIXELATE_ID

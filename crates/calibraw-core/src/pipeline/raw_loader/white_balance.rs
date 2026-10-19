@@ -175,7 +175,7 @@ impl LoadedRaw {
             let model = self.white_balance_model.as_ref()?;
             let physical = self.physical_white_balance_coefficients(logical_coefficients)?;
             let (temperature, tint) =
-                libraw_loader::temperature_tint_from_coefficients(model, physical)?;
+                libraw_loader::temperature_tint_from_coefficients(&model.color, physical)?;
             self.white_balance_offsets_from_temperature_tint(temperature, tint)
         }
         #[cfg(not(libraw_available))]

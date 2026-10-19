@@ -43,8 +43,8 @@ fn memoized<K: PartialEq, V: Clone>(
 /// `FindXYZtoCamera`: AnalogBalance * CameraCalibration * ColorMatrix with
 /// both interpolated in mired at that temperature. Single-matrix models have
 /// one matrix for every white.
-fn xyz_to_camera_at(model: &CameraWhiteBalanceModel, temperature: f32) -> [[f32; 3]; 4] {
-    match &model.color {
+fn xyz_to_camera_at(color: &CameraColorModel, temperature: f32) -> [[f32; 3]; 4] {
+    match color {
         CameraColorModel::Dng {
             endpoints,
             analog_balance,
@@ -62,7 +62,7 @@ fn xyz_to_camera_at(model: &CameraWhiteBalanceModel, temperature: f32) -> [[f32;
 pub(in crate::pipeline::raw_loader) fn daylight_white_balance(
     model: &CameraWhiteBalanceModel,
 ) -> Option<[f32; 3]> {
-    let xyz_to_camera = xyz_to_camera_at(model, 6504.0);
+    let xyz_to_camera = xyz_to_camera_at(&model.color, 6504.0);
     let physical = matrix::transform(xyz_to_camera, D65_XYZ);
     let mut sums = [0.0f32; 3];
     let mut counts = [0u32; 3];
@@ -87,13 +87,15 @@ pub(in crate::pipeline::raw_loader) fn daylight_white_balance(
         .then_some(wb)
 }
 
-pub(super) fn parsed_camera_color_model(
+/// The endpoints of a parsed DNG/DCP profile, each `None` when its colour
+/// matrix is unusable. `fallback_calibration` stands in for missing
+/// CameraCalibration matrices.
+pub(super) fn parsed_dng_endpoints(
     profile: &DcpProfile,
-    color: &ffi::libraw_colordata_t,
-    analog_balance: [[f32; 4]; 4],
+    fallback_calibration: [[[f32; 4]; 4]; 2],
     calibration_compatible: bool,
-) -> Option<CameraColorModel> {
-    let endpoint = |index: usize| {
+) -> [Option<DngColorEndpoint>; 2] {
+    std::array::from_fn(|index| {
         let set = &profile.matrices[index];
         Some(DngColorEndpoint {
             cct: set.illuminant.and_then(calibration_illuminant_cct),
@@ -102,26 +104,23 @@ pub(super) fn parsed_camera_color_model(
                 .filter(|matrix| matrix4x3_is_valid(*matrix))?,
             calibration: parsed_calibration(
                 set,
-                color.dng_color[index].calibration,
+                fallback_calibration[index],
                 calibration_compatible,
             ),
             forward_matrix: set
                 .forward_matrix
                 .filter(|matrix| matrix3x4_is_valid(*matrix)),
         })
-    };
-    paired_endpoints(endpoint(0), endpoint(1)).map(|endpoints| CameraColorModel::Dng {
-        endpoints: Box::new(endpoints),
-        analog_balance,
     })
 }
 
-pub(super) fn libraw_camera_color_model(
+/// The endpoints of LibRaw's DNG colour data, each `None` when its colour
+/// matrix is unusable.
+pub(super) fn libraw_dng_endpoints(
     color: &ffi::libraw_colordata_t,
-    analog_balance: [[f32; 4]; 4],
     calibration_compatible: bool,
-) -> Option<CameraColorModel> {
-    let endpoint = |index: usize| {
+) -> [Option<DngColorEndpoint>; 2] {
+    std::array::from_fn(|index| {
         let set = &color.dng_color[index];
         matrix4x3_is_valid(set.colormatrix).then(|| DngColorEndpoint {
             cct: calibration_illuminant_cct(set.illuminant),
@@ -133,23 +132,25 @@ pub(super) fn libraw_camera_color_model(
             },
             forward_matrix: matrix3x4_is_valid(set.forwardmatrix).then_some(set.forwardmatrix),
         })
-    };
-    paired_endpoints(endpoint(0), endpoint(1)).map(|endpoints| CameraColorModel::Dng {
-        endpoints: Box::new(endpoints),
-        analog_balance,
     })
 }
 
-fn paired_endpoints(
-    first: Option<DngColorEndpoint>,
-    second: Option<DngColorEndpoint>,
-) -> Option<[DngColorEndpoint; 2]> {
-    match (first, second) {
-        (Some(a), Some(b)) => Some([a, b]),
-        (Some(a), None) => Some([a, a]),
-        (None, Some(b)) => Some([b, b]),
-        (None, None) => None,
-    }
+/// The colour model of DNG `endpoints`; a single usable matrix serves both
+/// ends. `None` without a usable matrix.
+pub(super) fn dng_color_model(
+    endpoints: [Option<DngColorEndpoint>; 2],
+    analog_balance: [[f32; 4]; 4],
+) -> Option<CameraColorModel> {
+    let endpoints = match endpoints {
+        [Some(a), Some(b)] => [a, b],
+        [Some(a), None] => [a, a],
+        [None, Some(b)] => [b, b],
+        [None, None] => return None,
+    };
+    Some(CameraColorModel::Dng {
+        endpoints: Box::new(endpoints),
+        analog_balance,
+    })
 }
 
 pub(super) fn cct_from_profile_weight(color: &CameraColorModel, weight: f32) -> Option<f32> {
@@ -161,19 +162,49 @@ pub(super) fn cct_from_profile_weight(color: &CameraColorModel, weight: f32) -> 
     Some(1_000_000.0 / (first + (second - first) * weight.clamp(0.0, 1.0)))
 }
 
-pub(super) fn estimate_cct_from_model(color: &CameraColorModel, wb: [f32; 4]) -> Option<f32> {
-    let neutral = camera_neutral(wb);
-    let xyz_to_camera = match color {
-        CameraColorModel::Dng {
-            endpoints,
-            analog_balance,
-        } => matrix::multiply(
-            matrix::multiply(*analog_balance, endpoints[0].calibration),
-            endpoints[0].color_matrix,
-        ),
-        CameraColorModel::Matrix { xyz_to_camera } => *xyz_to_camera,
+/// The profile a photo loads with for its as-shot white `wb_coeffs`, from
+/// DNG `endpoints` (each `None` when unusable). Two matrices are
+/// interpolated at the temperature of the white the camera records as
+/// neutral, found by the same search (`neutral_white_xyz`) that gives the
+/// white-balance controls their as-shot white, so `profile_at_white`
+/// continues from the loaded colours. One usable matrix keeps the weight of
+/// its own endpoint. `None` without a usable matrix, or for two whose
+/// illuminants are unknown.
+pub(super) fn as_shot_dng_profile(
+    endpoints: [Option<DngColorEndpoint>; 2],
+    analog_balance: [[f32; 4]; 4],
+    wb_coeffs: [f32; 4],
+) -> Option<InterpolatedDngProfile> {
+    let single = |only: DngColorEndpoint, weight| InterpolatedDngProfile {
+        color_matrix: only.color_matrix,
+        calibration: only.calibration,
+        forward_matrix: only.forward_matrix,
+        weight,
     };
-    xyz_to_cct(matrix::transform(pseudoinverse(xyz_to_camera), neutral))
+    let endpoints = match endpoints {
+        [Some(first), Some(second)] => [first, second],
+        [Some(only), None] => return Some(single(only, 0.0)),
+        [None, Some(only)] => return Some(single(only, 1.0)),
+        [None, None] => return None,
+    };
+    let (Some(first_cct), Some(second_cct)) = (endpoints[0].cct, endpoints[1].cct) else {
+        return None;
+    };
+    let color = CameraColorModel::Dng {
+        endpoints: Box::new(endpoints),
+        analog_balance,
+    };
+    // A camera neutral that gives no white takes the illuminants' geometric
+    // mean. `as_shot_temperature_tint` then falls back to the same white
+    // through `base_cct`, which follows from this weight.
+    let temperature = temperature_tint_from_coefficients(&color, wb_coeffs).map_or_else(
+        || (first_cct * second_cct).sqrt(),
+        |(temperature, _)| temperature,
+    );
+    Some(interpolate_endpoints(
+        &endpoints,
+        endpoint_weight(&endpoints, temperature),
+    ))
 }
 
 /// Temperature and tint of the camera's as-shot white.
@@ -186,7 +217,8 @@ pub(in crate::pipeline::raw_loader) fn as_shot_temperature_tint(
         static LAST: ModelMemo<(), (f32, f32)> = const { RefCell::new(None) };
     }
     memoized(&LAST, model, (), || {
-        temperature_tint_from_coefficients(model, model.base_wb).unwrap_or((model.base_cct, 0.0))
+        temperature_tint_from_coefficients(&model.color, model.base_wb)
+            .unwrap_or((model.base_cct, 0.0))
     })
 }
 
@@ -351,7 +383,7 @@ struct UsableWhiteBalance<'a> {
 impl<'a> UsableWhiteBalance<'a> {
     fn new(model: &'a CameraWhiteBalanceModel) -> Self {
         let as_shot = as_shot_temperature_tint(model);
-        let xyz_to_camera = xyz_to_camera_at(model, as_shot.0);
+        let xyz_to_camera = xyz_to_camera_at(&model.color, as_shot.0);
         let balanced = std::array::from_fn(|index| {
             logical_rgb_channel(model.cdesc, index).is_some()
                 && !missing_second_green(model, index, xyz_to_camera[index])
@@ -379,7 +411,7 @@ impl<'a> UsableWhiteBalance<'a> {
     /// respond positively.
     fn gain_ratio(&self, temperature: f32, tint: f32) -> Option<f64> {
         let xyz = white_xyz(temperature, tint)?;
-        let camera = matrix::transform(xyz_to_camera_at(self.model, temperature), xyz);
+        let camera = matrix::transform(xyz_to_camera_at(&self.model.color, temperature), xyz);
         let mut weakest = f64::INFINITY;
         let mut strongest = 0.0f64;
         for index in self.balanced_rows() {
@@ -428,7 +460,7 @@ impl<'a> UsableWhiteBalance<'a> {
     fn tint_bounds(&self, temperature: f32) -> Option<(f64, f64)> {
         let temperature = temperature.clamp(MIN_TEMPERATURE_KELVIN, MAX_TEMPERATURE_KELVIN);
         // Every white at one temperature shares its matrix.
-        let xyz_to_camera = xyz_to_camera_at(self.model, temperature);
+        let xyz_to_camera = xyz_to_camera_at(&self.model.color, temperature);
         let temperature = f64::from(temperature);
         // The uv of the white is affine in the tint, and so is XYZ scaled by
         // 2v: (3u, 2v, 4 - u - 10v). Row i then responds (P_i + Q_i t) / S(t)
@@ -531,7 +563,7 @@ pub(in crate::pipeline::raw_loader) fn temperature_tint_to_coefficients(
     tint: f32,
 ) -> Option<[f32; 4]> {
     let temperature = temperature.clamp(MIN_TEMPERATURE_KELVIN, MAX_TEMPERATURE_KELVIN);
-    let matrix = xyz_to_camera_at(model, temperature);
+    let matrix = xyz_to_camera_at(&model.color, temperature);
     let camera = matrix::transform(matrix, white_xyz(temperature, tint)?);
     let mut coefficients = [1.0; 4];
     for index in 0..4 {
@@ -548,8 +580,9 @@ pub(in crate::pipeline::raw_loader) fn temperature_tint_to_coefficients(
     Some(white_balance(coefficients, model.cdesc))
 }
 
+/// Temperature and tint of the white that `coefficients` balance.
 pub(in crate::pipeline::raw_loader) fn temperature_tint_from_coefficients(
-    model: &CameraWhiteBalanceModel,
+    color: &CameraColorModel,
     coefficients: [f32; 4],
 ) -> Option<(f32, f32)> {
     let mut camera_neutral = [0.0; 4];
@@ -561,7 +594,7 @@ pub(in crate::pipeline::raw_loader) fn temperature_tint_from_coefficients(
             0.0
         };
     }
-    xyz_temperature_tint(neutral_white_xyz(model, camera_neutral)?)
+    xyz_temperature_tint(neutral_white_xyz(color, camera_neutral)?)
 }
 
 /// Passes of the white search in `neutral_white_xyz`, the DNG SDK's limit.
@@ -572,15 +605,12 @@ const MAX_NEUTRAL_PASSES: usize = 30;
 /// so the search starts at D50 and moves to the white that the matrices at
 /// the last white's temperature give, until it stops moving. A white that
 /// still alternates between two values after the last pass is their mean.
-fn neutral_white_xyz(
-    model: &CameraWhiteBalanceModel,
-    camera_neutral: [f32; 4],
-) -> Option<[f32; 3]> {
+fn neutral_white_xyz(color: &CameraColorModel, camera_neutral: [f32; 4]) -> Option<[f32; 3]> {
     // The SDK's tolerance on |dx| + |dy|, applied to CIE 1960 uv.
     const TOLERANCE: f64 = 1e-7;
     let white_for = |uv: [f64; 2]| {
         let (temperature, _) = uv_temperature_tint(uv)?;
-        let camera_to_xyz = pseudoinverse(xyz_to_camera_at(model, temperature as f32));
+        let camera_to_xyz = pseudoinverse(xyz_to_camera_at(color, temperature as f32));
         xyz_to_uv(matrix::transform(camera_to_xyz, camera_neutral))
     };
     let mut last = xyz_to_uv(DNG_PCS_D50_XYZ)?;

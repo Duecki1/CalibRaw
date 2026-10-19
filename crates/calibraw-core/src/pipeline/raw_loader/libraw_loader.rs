@@ -1356,7 +1356,7 @@ mod tests {
         ] {
             let wb = super::temperature_tint_to_coefficients(&model, kelvin, tint).unwrap();
             let (found_kelvin, found_tint) =
-                super::temperature_tint_from_coefficients(&model, wb).unwrap();
+                super::temperature_tint_from_coefficients(&model.color, wb).unwrap();
             assert!(
                 (found_kelvin - kelvin).abs() < 0.5,
                 "{found_kelvin} K for {kelvin} K"
@@ -1592,25 +1592,40 @@ mod tests {
     #[test]
     fn decoder_neutral_interpolation_responds_to_white_balance() {
         let profile = dcp_with_matrix(1.2, 0.8);
-        let cold = super::interpolated_parsed_dng_profile_with_fallbacks(
-            &profile,
-            [3.0, 1.0, 0.8, 1.0],
-            identity_4x4(),
-            true,
-            [identity_4x4(); 2],
-            None,
+        let endpoints = super::parsed_dng_endpoints(&profile, [identity_4x4(); 2], true);
+        let as_shot = |wb| super::as_shot_dng_profile(endpoints, identity_4x4(), wb).unwrap();
+        assert_ne!(
+            as_shot([3.0, 1.0, 0.8, 1.0]).weight,
+            as_shot([0.8, 1.0, 3.0, 1.0]).weight
+        );
+    }
+
+    #[test]
+    fn as_shot_profile_is_interpolated_at_the_as_shot_white() {
+        // White-balance edits start from the as-shot white of
+        // `as_shot_temperature_tint`, so the photo must load with the
+        // matrices interpolated there.
+        let model = dual_illuminant_test_model();
+        let CameraColorModel::Dng {
+            endpoints,
+            analog_balance,
+        } = &model.color
+        else {
+            unreachable!();
+        };
+        let profile = super::as_shot_dng_profile(
+            [Some(endpoints[0]), Some(endpoints[1])],
+            *analog_balance,
+            model.base_wb,
         )
         .unwrap();
-        let warm = super::interpolated_parsed_dng_profile_with_fallbacks(
-            &profile,
-            [0.8, 1.0, 3.0, 1.0],
-            identity_4x4(),
-            true,
-            [identity_4x4(); 2],
-            None,
-        )
-        .unwrap();
-        assert_ne!(cold.weight, warm.weight);
+        let (temperature, _) = super::as_shot_temperature_tint(&model);
+        assert!((temperature - 5_000.0).abs() < 0.5);
+        assert_eq!(
+            profile.weight,
+            mired_interpolation_weight(temperature, 2856.0, 6504.0)
+        );
+        assert!(profile.weight > 0.0 && profile.weight < 1.0);
     }
 
     #[test]

@@ -43,25 +43,33 @@ fn mask_effect_id(metadata: vec4<u32>) -> u32 {
     return metadata.w >> MASK_EFFECT_ID_SHIFT;
 }
 
+// Whether the slot is enabled and changes the image: an adjustment that is not
+// neutral, or an active effect. Rust: `MaskData::is_active`.
+fn mask_slot_active(metadata: vec4<u32>) -> bool {
+    return metadata.x != 0u && metadata.y != 0u;
+}
+
+// Whether the slot is active and holds `effect_id` (0 for adjustment masks).
+// Rust: `MaskData::applies`.
+fn mask_slot_applies(metadata: vec4<u32>, effect_id: u32) -> bool {
+    return mask_slot_active(metadata) && mask_effect_id(metadata) == effect_id;
+}
+
 struct CameraUniforms {
     // Scalar fields keep the following vec4 on the Rust/WGSL 16-byte boundary.
     black_point: f32,
-    reserved_a: f32,
     highlight_clip: f32,
     chroma_denoise: f32,
-    reserved_d: f32,
-    reserved_e: f32,
     highlight_reconstruction: f32,
     tone_analysis_scale: f32,
     tone_guide_radius: f32,
     demosaic_mode: f32,
     dual_threshold: f32,
     frequency_chroma: f32,
-    reserved_b: f32,
-    reserved_f: f32,
     // One of the VIEW_TRANSFORM_* modes.
     view_transform_mode: u32,
-    reserved_c: f32,
+    padding_0_field: u32,
+    padding_1_field: u32,
     highlight_options: vec4<f32>,
     noise_shot: vec4<f32>,
     noise_read: vec4<f32>,
