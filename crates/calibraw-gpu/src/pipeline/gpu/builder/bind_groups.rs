@@ -13,7 +13,8 @@ pub(in crate::pipeline::gpu) struct BindGroups {
     pub(in crate::pipeline::gpu) bg_dual_detail: wgpu::BindGroup,
     pub(in crate::pipeline::gpu) bg4: wgpu::BindGroup,
     /// X-Trans pipelines only, in `XTRANS_MARKESTEIJN_ENTRIES` order.
-    pub(in crate::pipeline::gpu) bg_xtrans_markesteijn: Option<[wgpu::BindGroup; 8]>,
+    pub(in crate::pipeline::gpu) bg_xtrans_markesteijn:
+        Option<[wgpu::BindGroup; XTRANS_MARKESTEIJN_ENTRIES.len()]>,
     pub(in crate::pipeline::gpu) bg_xtrans_finish: wgpu::BindGroup,
     pub(in crate::pipeline::gpu) bg_color_denoise: [wgpu::BindGroup; 6],
     pub(in crate::pipeline::gpu) bg_tone_prepare: wgpu::BindGroup,
@@ -205,9 +206,10 @@ pub(in crate::pipeline::gpu) fn create_bind_groups(
 
     // Markesteijn passes in `XTRANS_MARKESTEIJN_ENTRIES` order. The states
     // move through the free scratch textures: buffers 0-3 stay in tex1 and
-    // tex2, buffers 4-7 end in scene and highlight work A, and the result
-    // lands in highlight work B. Passes that read one state bind it as lo and
-    // hi; the green pass reads none and binds tex2 throughout.
+    // tex2, buffers 4-7 end in scene and highlight work B, the accumulated
+    // result goes to highlight work A and the smoothed one lands in highlight
+    // work B. Passes that read one state bind it as lo and hi; the green and
+    // smoothing passes read none and bind tex2 and tex1 throughout.
     let bg_xtrans_markesteijn = xtrans_homogeneity_view.as_ref().map(|homogeneity_view| {
         let pass = |label: &str,
                     layout: &wgpu::BindGroupLayout,
@@ -270,20 +272,29 @@ pub(in crate::pipeline::gpu) fn create_bind_groups(
                 "bg X-Trans other colours 4-7, pass 3",
                 state,
                 [scene_view; 4],
-                &[texture_binding(24, highlight_work_a_view)],
+                &[texture_binding(24, highlight_work_b_view)],
             ),
             pass(
                 "bg X-Trans homogeneity",
                 &layouts.bgl_xtrans_homogeneity,
-                [tex1_view, tex2_view, scene_view, highlight_work_a_view],
+                [tex1_view, tex2_view, scene_view, highlight_work_b_view],
                 &[texture_binding(25, homogeneity_view)],
             ),
             pass(
                 "bg X-Trans accumulate",
                 &layouts.bgl_xtrans_accumulate,
-                [tex1_view, tex2_view, scene_view, highlight_work_a_view],
+                [tex1_view, tex2_view, scene_view, highlight_work_b_view],
                 &[
                     texture_binding(31, homogeneity_view),
+                    texture_binding(24, highlight_work_a_view),
+                ],
+            ),
+            pass(
+                "bg X-Trans smoothing",
+                &layouts.bgl_xtrans_smoothing,
+                [tex1_view; 4],
+                &[
+                    texture_binding(26, highlight_work_a_view),
                     texture_binding(24, highlight_work_b_view),
                 ],
             ),

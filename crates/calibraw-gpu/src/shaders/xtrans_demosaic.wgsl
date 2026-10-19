@@ -6,19 +6,23 @@
 //
 // The dispatches of Markesteijn 3-pass (xtrans/markesteijn.wgsl), in order:
 // green; other; recalculate, other; recalculate, other; homogeneity;
-// accumulate. Each writes every pixel of its output.
+// accumulate; smoothing. Each writes every pixel of its output.
 
 #import calibraw::common as Common
 #import calibraw::cfa_linear as CfaLinear
+#import calibraw::dual_demosaic as Dual
 #import calibraw::xtrans::markesteijn as Mark
 
 // The state texture a pass builds: greens (green and recalculate passes) or
-// other colours (other passes) of red and blue photosites, or the result.
+// other colours (other passes) of red and blue photosites, the accumulated
+// result or the smoothed one.
 @group(0) @binding(24) var mark_state_write: texture_storage_2d<rgba16float /* CALIBRAW_WORK_FORMAT */, write>;
 // Homogeneity counts, 4 bits per candidate: buffers 0-3 in bits 0-15, 4-7 in
 // bits 16-31.
 @group(0) @binding(25) var mark_homogeneity_write: texture_storage_2d<r32uint, write>;
 @group(0) @binding(31) var mark_homogeneity_read: texture_2d<u32>;
+// The accumulated result, read by the smoothing pass.
+@group(0) @binding(26) var mark_result_read: texture_2d<f32>;
 
 // darktable fills this many pixels at the image border with the linear
 // interpolation instead (`pad_tile` of the 3-pass variant).
@@ -142,4 +146,27 @@ fn xtrans_markesteijn_accumulate(@builtin(global_invocation_id) gid: vec3<u32>) 
     );
     let count = dot(use_lo, vec4<f32>(1.0)) + dot(use_hi, vec4<f32>(1.0));
     textureStore(mark_state_write, pos, vec4<f32>(max(sum / count, vec3<f32>(0.0)), 1.0));
+}
+
+// One pass of darktable's colour smoothing (`color_smoothing`, the "color
+// smoothing: once" option of its demosaic module) over the result: red and
+// blue become green plus the 3x3 median of their difference to green, the
+// image border keeps its value. Markesteijn gives a bright point one or two
+// photosites wide the colour of the photosites it covers, which leaves
+// rainbow specks around small highlights; the median removes them. darktable
+// smooths after dual demosaicing; here every finish mode reads the smoothed
+// result.
+@compute @workgroup_size(8, 8, 1)
+fn xtrans_markesteijn_smooth(@builtin(global_invocation_id) gid: vec3<u32>) {
+    if !mark_in_tile(gid) { return; }
+    let pos = vec2<i32>(gid.xy);
+    if CfaLinear::cfa_on_border(pos) {
+        textureStore(mark_state_write, pos, textureLoad(mark_result_read, pos, 0));
+        return;
+    }
+    var window: array<vec3<f32>, 9>;
+    for (var i = 0; i < 9; i = i + 1) {
+        window[i] = textureLoad(mark_result_read, pos + Dual::dual_window_offset(i), 0).rgb;
+    }
+    textureStore(mark_state_write, pos, vec4<f32>(Dual::dual_smoothing_step(window), 1.0));
 }
