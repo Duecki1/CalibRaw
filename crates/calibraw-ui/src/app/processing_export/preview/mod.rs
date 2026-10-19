@@ -161,7 +161,7 @@ impl PreviewDetailPlan {
         let size = axes.map(|(start, end)| end - start);
         let edge =
             requested_detail_edge(quality, viewport, visible, size, full_size, processing_halo);
-        let edge = PreviewQuality::bounded_source_edge(size[0], size[1], edge);
+        let edge = PreviewQuality::bounded_source_edge(size[0], size[1], edge, cfa_kind);
         Self { origin, size, edge }
     }
 

@@ -463,6 +463,7 @@ impl PreviewDetail {
             requested.size[0],
             requested.size[1],
             requested.edge,
+            self.raw.cfa_kind,
         )
     }
 }
@@ -528,6 +529,7 @@ fn prepare_preview_detail(request: PreviewDetailRequest) -> anyhow::Result<Prepa
             source_size[0],
             source_size[1],
             requested_edge,
+            source_raw.cfa_kind,
         ) {
             // The detail texture is sampled down to the viewport only after the
             // complete GPU graph has run.  Keeping the mosaic native here is what
@@ -568,6 +570,7 @@ fn settled_detail_uses_native_source(
     region_width: u32,
     region_height: u32,
     requested_edge: u32,
+    cfa_kind: crate::pipeline::CfaKind,
 ) -> bool {
     if !is_sensor_raw {
         return false;
@@ -588,6 +591,7 @@ fn settled_detail_uses_native_source(
             region_width,
             region_height,
             region_width.max(region_height),
+            cfa_kind,
         ) == region_width.max(region_height)
 }
 
@@ -623,18 +627,34 @@ mod tests {
 
     #[test]
     fn settled_sensor_detail_uses_native_samples_before_the_resource_limit() {
-        assert!(settled_detail_uses_native_source(true, 3_800, 2_500, 2_000));
+        assert!(settled_detail_uses_native_source(
+            true,
+            3_800,
+            2_500,
+            2_000,
+            crate::pipeline::CfaKind::Bayer
+        ));
     }
 
     #[test]
     fn wide_detail_remains_an_explicit_bounded_approximation() {
         assert!(!settled_detail_uses_native_source(
-            true, 6_000, 4_000, 2_000
+            true,
+            6_000,
+            4_000,
+            2_000,
+            crate::pipeline::CfaKind::Bayer
         ));
     }
 
     #[test]
     fn developed_rasters_keep_their_existing_resize_path() {
-        assert!(!settled_detail_uses_native_source(false, 1_000, 700, 2_000));
+        assert!(!settled_detail_uses_native_source(
+            false,
+            1_000,
+            700,
+            2_000,
+            crate::pipeline::CfaKind::Bayer
+        ));
     }
 }

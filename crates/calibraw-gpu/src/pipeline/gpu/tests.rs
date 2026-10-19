@@ -2023,6 +2023,99 @@ fn dual_demosaic_smooths_flat_colour_noise_without_a_checkerboard() -> anyhow::R
     Ok(())
 }
 
+/// X-Trans demosaicing matches darktable 5.6.1's Markesteijn 3-pass. The
+/// expected values come from a float64 transcription of
+/// `xtrans_markesteijn_interpolate` on the same mosaic, at two pixels of every
+/// photosite class whose interpolation decisions are far from ties (float32
+/// and float64 agree to 1e-6). Dual demosaicing with a zero threshold keeps the
+/// Markesteijn result unchanged.
+#[test]
+fn xtrans_demosaic_matches_darktable_markesteijn() -> anyhow::Result<()> {
+    use crate::pipeline::DemosaicMode;
+    const EDGE: u32 = 64;
+    const XTRANS: [[u8; 6]; 6] = [
+        [1, 1, 0, 1, 1, 2],
+        [1, 1, 2, 1, 1, 0],
+        [2, 0, 1, 0, 2, 1],
+        [1, 1, 2, 1, 1, 0],
+        [1, 1, 0, 1, 1, 2],
+        [0, 2, 1, 2, 0, 1],
+    ];
+    // Camera RGB at [x, y] for a pattern shifted by one row and two columns.
+    const EXPECTED: [([u32; 2], [f32; 3]); 12] = [
+        // Greens in 2x2 blocks.
+        ([25, 24], [0.427643, 0.503000, 0.563206]),
+        ([26, 24], [0.476437, 0.568800, 0.596379]),
+        // Blue in horizontal and vertical pairs.
+        ([26, 25], [0.639675, 0.720059, 0.717200]),
+        ([28, 25], [0.395757, 0.438279, 0.458000]),
+        ([24, 24], [0.388474, 0.423748, 0.479600]),
+        ([30, 24], [0.478411, 0.543242, 0.532200]),
+        // Red in horizontal and vertical pairs.
+        ([25, 25], [0.571000, 0.665245, 0.685151]),
+        ([29, 25], [0.486400, 0.564743, 0.574197]),
+        ([27, 24], [0.597000, 0.686140, 0.722935]),
+        ([33, 24], [0.692800, 0.707821, 0.727531]),
+        // Solitary greens.
+        ([24, 25], [0.456051, 0.547200, 0.573974]),
+        ([27, 25], [0.280478, 0.347000, 0.385338]),
+    ];
+    let Some((device, queue)) = request_test_device() else {
+        eprintln!("X-Trans Markesteijn check skipped: no headless wgpu adapter");
+        return Ok(());
+    };
+    let color = |x: u32, y: u32| XTRANS[(y as usize + 1) % 6][(x as usize + 2) % 6];
+    let mut raw = opposed_highlight_consistency_raw(EDGE, EDGE);
+    raw.cfa_kind = CfaKind::XTrans;
+    raw.wb_coeffs = [1.0; 4];
+    raw.color_indices = CompactPixelMap::dense(
+        EDGE,
+        EDGE,
+        (0..EDGE * EDGE)
+            .map(|index| color(index % EDGE, index / EDGE))
+            .collect(),
+    );
+    // Integer texture that the reference reproduces exactly; white is 10000.
+    for y in 0..EDGE {
+        for x in 0..EDGE {
+            let value = 3000
+                + ((x * x * 3 + y * y * 5 + x * y) % 997) * 4
+                + (x * 13 % 7) * 50
+                + 400 * u32::from(color(x, y));
+            raw.raw_pixels[(y * EDGE + x) as usize] = value as u16;
+        }
+    }
+    let exposure = ExposureParams {
+        demosaic_mode: DemosaicMode::Dual,
+        dual_threshold: 0.0,
+        luminance_denoise: 0.0,
+        chroma_denoise: 0.0,
+        ..Default::default()
+    };
+    let params = GpuParams::new(&exposure, &MaskStack::default(), &raw);
+    let pipeline = RawGpuPipeline::new(
+        &device,
+        &queue,
+        &raw,
+        &params,
+        PipelineOptions::new(ProcessingQuality::High),
+    )?;
+    let scene = pipeline.render_camera_scene_blocking(&device, &queue, &params)?;
+    for ([x, y], expected) in EXPECTED {
+        let index = ((y * EDGE + x) * 3) as usize;
+        let actual = &scene[index..index + 3];
+        assert!(
+            actual
+                .iter()
+                .zip(expected)
+                .all(|(actual, expected)| (actual - expected).abs() < 1e-5),
+            "pixel ({x}, {y}) of colour {}: {actual:?}, darktable {expected:?}",
+            color(x, y)
+        );
+    }
+    Ok(())
+}
+
 /// A Bayer pipeline with AI denoise holds both mosaics, so its strength renders
 /// like a RAW whose mosaic is their linear blend, without rebuilding. 0% and
 /// 100% must match the original and the AI mosaic exactly.

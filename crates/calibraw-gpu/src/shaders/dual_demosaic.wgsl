@@ -25,7 +25,7 @@
 // two smoothing passes).
 
 #import calibraw::common as Common
-#import calibraw::raw_sampling as RawSampling
+#import calibraw::cfa_linear as CfaLinear
 
 // Pass 1 output, read by pass 2: the linear interpolation (rgb) and the
 // detail luminance of `high` (a).
@@ -41,71 +41,6 @@ const DUAL_GAUSSIAN_NORM: f32 = 1.0 / 23.565945986579553;
 // Largest squared offset of that Gaussian: r^2 <= 4.5^2 in whole pixels.
 const DUAL_GAUSSIAN_MAX_R2: i32 = 20;
 
-fn dual_in_bounds(pos: vec2<i32>) -> bool {
-    return all(pos >= vec2<i32>(0)) && all(pos <= Common::image_max());
-}
-
-fn dual_on_border(pos: vec2<i32>) -> bool {
-    return any(pos <= vec2<i32>(0)) || any(pos >= Common::image_max());
-}
-
-// The interpolation class of the photosite at `pos`: R 0, G 1, B 2, and with
-// `split_greens` (Bayer) the greens of odd rows 3. darktable's four-colour VNG
-// interpolates each green class from the other so that green imbalance
-// between the rows cancels; which rows count as odd does not matter because
-// the two classes are averaged.
-fn dual_cfa_class(pos: vec2<i32>, split_greens: bool) -> u32 {
-    let color = RawSampling::color_at(pos);
-    if split_greens && color == 1u && (pos.y & 1) == 1 {
-        return 3u;
-    }
-    return color;
-}
-
-fn dual_class_mask(cfa_class: u32) -> vec4<f32> {
-    return select(
-        vec4<f32>(0.0),
-        vec4<f32>(1.0),
-        vec4<u32>(0u, 1u, 2u, 3u) == vec4<u32>(cfa_class),
-    );
-}
-
-// darktable's VNG linear interpolation (`_vng_lininterpolate`), the low-detail
-// image of dual demosaicing. Each missing class is the weighted mean of its
-// samples among the 8 neighbours, edge neighbours weighing 2 and corners 1;
-// on the image border it is the plain mean of the neighbours inside the
-// image. The photosite keeps its own sample, and samples below black count
-// as 0.
-fn dual_linear_rgb(pos: vec2<i32>, split_greens: bool) -> vec3<f32> {
-    let own = dual_cfa_class(pos, split_greens);
-    let center = max(RawSampling::raw_cfa_at(pos), 0.0);
-    let border = dual_on_border(pos);
-    var sum = vec4<f32>(0.0);
-    var weight = vec4<f32>(0.0);
-    for (var dy = -1; dy <= 1; dy = dy + 1) {
-        for (var dx = -1; dx <= 1; dx = dx + 1) {
-            let q = pos + vec2<i32>(dx, dy);
-            if !dual_in_bounds(q) { continue; }
-            let neighbour = dual_cfa_class(q, split_greens);
-            if neighbour == own { continue; }
-            let w = select(select(1.0, 2.0, dx == 0 || dy == 0), 1.0, border);
-            let mask = dual_class_mask(neighbour);
-            sum += mask * (w * max(RawSampling::raw_cfa_at(q), 0.0));
-            weight += mask * w;
-        }
-    }
-    // A class without a neighbour keeps the photosite's own sample, as
-    // darktable's border interpolation does.
-    let interpolated = select(
-        vec4<f32>(center),
-        sum / max(weight, vec4<f32>(1e-30)),
-        weight > vec4<f32>(0.0),
-    );
-    let classes = mix(interpolated, vec4<f32>(center), dual_class_mask(own));
-    let green = select(classes.y, 0.5 * (classes.y + classes.w), split_greens);
-    return max(vec3<f32>(classes.x, green, classes.z), vec3<f32>(0.0));
-}
-
 // darktable's detail-mask luminance (`dt_masks_calc_scharr_mask`): the square
 // root of the mean channel before white balance, which makes noise about
 // equally strong at every level.
@@ -116,12 +51,12 @@ fn dual_detail_luma(rgb: vec3<f32>) -> f32 {
 }
 
 // Pass 1 for a CFA prepare entry point: `high` is the reference demosaic at
-// `pos`; `split_greens` selects Bayer's four-colour interpolation.
+// `pos`; `split_greens` selects Bayer's four-colour interpolation (cfa_linear.wgsl).
 fn dual_store_prepared(pos: vec2<i32>, high: vec3<f32>, split_greens: bool) {
     textureStore(
         dual_prepared_write,
         pos,
-        vec4<f32>(dual_linear_rgb(pos, split_greens), dual_detail_luma(high)),
+        vec4<f32>(CfaLinear::cfa_linear_rgb(pos, split_greens), dual_detail_luma(high)),
     );
 }
 
@@ -172,7 +107,7 @@ fn dual_window_offset(index: i32) -> vec2<i32> {
 
 // Pass 2: the first smoothing pass over the prepared interpolation.
 fn dual_smoothed_prepared(pos: vec2<i32>) -> vec3<f32> {
-    if dual_on_border(pos) {
+    if CfaLinear::cfa_on_border(pos) {
         return textureLoad(dual_prepared_read, pos, 0).rgb;
     }
     var window: array<vec3<f32>, 9>;
@@ -225,7 +160,7 @@ fn dual_blurred_mask(pos: vec2<i32>) -> f32 {
         for (var dx = -4; dx <= 4; dx = dx + 1) {
             let r2 = dx * dx + dy * dy;
             let q = pos + vec2<i32>(dx, dy);
-            if r2 > DUAL_GAUSSIAN_MAX_R2 || !dual_in_bounds(q) { continue; }
+            if r2 > DUAL_GAUSSIAN_MAX_R2 || !CfaLinear::cfa_in_bounds(q) { continue; }
             sum += exp(-f32(r2) / 8.0) * textureLoad(dual_low_read, q, 0).a;
         }
     }
@@ -234,7 +169,7 @@ fn dual_blurred_mask(pos: vec2<i32>) -> f32 {
 
 // The second smoothing pass, over pass 2's output.
 fn dual_smoothed_low(pos: vec2<i32>) -> vec3<f32> {
-    if dual_on_border(pos) {
+    if CfaLinear::cfa_on_border(pos) {
         return textureLoad(dual_low_read, pos, 0).rgb;
     }
     var window: array<vec3<f32>, 9>;

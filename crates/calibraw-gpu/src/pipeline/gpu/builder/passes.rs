@@ -14,6 +14,21 @@ pub(in crate::pipeline::gpu) const DETAIL_PYRAMID_LEVELS: usize = 7;
 /// Both counts are odd, so the last level always lands in the texture the
 /// scene effects pass reads.
 pub(in crate::pipeline::gpu) const DETAIL_PYRAMID_TEXTURE_LEVELS: usize = 5;
+/// The X-Trans demosaic passes (xtrans_demosaic.wgsl) in order. The bind
+/// group at the same position of `BindGroups::bg_xtrans_markesteijn` chooses
+/// the states each one reads and writes.
+pub(in crate::pipeline::gpu) const XTRANS_MARKESTEIJN_ENTRIES: [&str; 8] = [
+    "xtrans_markesteijn_green",
+    "xtrans_markesteijn_other",
+    "xtrans_markesteijn_recalculate",
+    "xtrans_markesteijn_other",
+    "xtrans_markesteijn_recalculate",
+    "xtrans_markesteijn_other",
+    "xtrans_markesteijn_homogeneity",
+    "xtrans_markesteijn_accumulate",
+];
+pub(in crate::pipeline::gpu) const XTRANS_HOMOGENEITY_PASS: usize = 6;
+pub(in crate::pipeline::gpu) const XTRANS_ACCUMULATE_PASS: usize = 7;
 
 /// Where every program sits in the pass list. Program templates share
 /// compiled programs by position, so bind group layouts, pass assembly and
@@ -92,7 +107,7 @@ impl StageIndices {
         let highlight_pass_index = take(1);
         let demosaic_start_index = take(match cfa_kind {
             CfaKind::Bayer => 3,
-            CfaKind::XTrans => 7,
+            CfaKind::XTrans => XTRANS_MARKESTEIJN_ENTRIES.len(),
         });
         let demosaic_dual_start_index = take(2);
         let demosaic_finish_index = take(1);
@@ -300,57 +315,30 @@ pub(in crate::pipeline::gpu) fn assemble_passes(
                 image_workgroups,
             ),
         ]),
-        CfaKind::XTrans => passes.extend([
-            assembler.make_pass(
-                shaders.xtrans_demosaic_module.as_ref(),
-                "xtrans_seed",
-                &layouts.bgl1,
-                groups.bg1.clone(),
-                image_workgroups,
-            ),
-            assembler.make_pass(
-                shaders.xtrans_demosaic_module.as_ref(),
-                "xtrans_markesteijn_pass1",
-                &layouts.bgl2,
-                groups.bg2.clone(),
-                image_workgroups,
-            ),
-            assembler.make_pass(
-                shaders.xtrans_demosaic_module.as_ref(),
-                "xtrans_markesteijn_pass2",
-                &layouts.bgl3,
-                groups.bg3.clone(),
-                image_workgroups,
-            ),
-            assembler.make_pass(
-                shaders.xtrans_demosaic_module.as_ref(),
-                "xtrans_markesteijn_pass3",
-                &layouts.bgl2,
-                groups.bg2.clone(),
-                image_workgroups,
-            ),
-            assembler.make_pass(
-                shaders.xtrans_demosaic_module.as_ref(),
-                "xtrans_markesteijn_derivatives",
-                &layouts.bgl_xtrans_derivatives,
-                groups.bg_xtrans_derivatives.clone(),
-                image_workgroups,
-            ),
-            assembler.make_pass(
-                shaders.xtrans_demosaic_module.as_ref(),
-                "xtrans_markesteijn_homogeneity",
-                &layouts.bgl_xtrans_homogeneity,
-                groups.bg_xtrans_homogeneity.clone(),
-                image_workgroups,
-            ),
-            assembler.make_pass(
-                shaders.xtrans_demosaic_module.as_ref(),
-                "xtrans_markesteijn_accumulate",
-                &layouts.bgl_xtrans_accumulate,
-                groups.bg_xtrans_accumulate.clone(),
-                image_workgroups,
-            ),
-        ]),
+        CfaKind::XTrans => {
+            let bind_groups = groups
+                .bg_xtrans_markesteijn
+                .as_ref()
+                .ok_or_else(|| anyhow!("X-Trans pipeline has no Markesteijn bind groups"))?;
+            for (pass, (entry, bind_group)) in XTRANS_MARKESTEIJN_ENTRIES
+                .iter()
+                .zip(bind_groups)
+                .enumerate()
+            {
+                let layout = match pass {
+                    XTRANS_HOMOGENEITY_PASS => &layouts.bgl_xtrans_homogeneity,
+                    XTRANS_ACCUMULATE_PASS => &layouts.bgl_xtrans_accumulate,
+                    _ => &layouts.bgl_xtrans_state,
+                };
+                passes.push(assembler.make_pass(
+                    shaders.xtrans_demosaic_module.as_ref(),
+                    entry,
+                    layout,
+                    bind_group.clone(),
+                    image_workgroups,
+                ));
+            }
+        }
     }
 
     ensure_planned(
