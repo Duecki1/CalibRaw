@@ -101,6 +101,7 @@ impl CalibRawApp {
                 lens_correction_dirty: false,
                 load_receiver: None,
                 loading_label: None,
+                loading_view: None,
                 image_status: "Open a RAW, TIFF, JPEG, PNG or HEIC photo to get started."
                     .to_owned(),
                 current_label: None,
@@ -122,6 +123,7 @@ impl CalibRawApp {
                 touch_navigation_active: false,
                 space_pan_active: false,
                 native_zoom: None,
+                pending_view: None,
                 revision: 0,
                 detail: None,
                 navigation: None,

@@ -83,6 +83,17 @@ impl CalibRawApp {
     }
 
     pub fn open_path(&mut self, path: PathBuf, frame: &eframe::Frame) {
+        self.open_path_at_view(path, None, frame);
+    }
+
+    /// Opens another photo from Develop's filmstrip or its previous/next
+    /// shortcuts at the current zoom and position.
+    pub(crate) fn switch_to_path(&mut self, path: PathBuf, frame: &eframe::Frame) {
+        let view = self.preview.kept_view();
+        self.open_path_at_view(path, view, frame);
+    }
+
+    fn open_path_at_view(&mut self, path: PathBuf, view: Option<KeptView>, frame: &eframe::Frame) {
         if self.ai.library_mask_refresh.is_some() {
             // Background refresh temporarily opens each document in Develop.
             // Preserve that loading context without interactive AI cancellation.
@@ -91,7 +102,7 @@ impl CalibRawApp {
             self.activate_tab(AppTab::Develop);
         }
         let label = path.display().to_string();
-        self.open_document(DocumentSource::desktop(path, label), frame);
+        self.start_document_load(DocumentSource::desktop(path, label), None, view, frame);
     }
 
     pub(crate) fn reload_desktop_library_document_after_reset(
@@ -104,7 +115,7 @@ impl CalibRawApp {
     }
 
     pub(crate) fn open_document(&mut self, source: DocumentSource, frame: &eframe::Frame) {
-        self.start_document_load(source, None, frame);
+        self.start_document_load(source, None, None, frame);
     }
 
     /// Reopens a document with another camera profile, keeping the edits in
@@ -115,7 +126,8 @@ impl CalibRawApp {
         reload: ProfileReload,
         frame: &eframe::Frame,
     ) {
-        self.start_document_load(source, Some(reload), frame);
+        let view = reload.view;
+        self.start_document_load(source, Some(reload), view, frame);
     }
 
     /// Reopens the current desktop document with the label it is shown under.
@@ -133,10 +145,12 @@ impl CalibRawApp {
         self.reopen_with_camera_profile(DocumentSource::desktop(raw_path, label), reload, frame);
     }
 
+    /// `view` is the view to show the document at once loaded; `None` fits it.
     fn start_document_load(
         &mut self,
         source: DocumentSource,
         profile_reload: Option<ProfileReload>,
+        view: Option<KeptView>,
         frame: &eframe::Frame,
     ) {
         if self.develop.load_receiver.is_some() {
@@ -209,6 +223,7 @@ impl CalibRawApp {
         let (sender, receiver) = mpsc::channel();
         self.develop.load_receiver = Some(receiver);
         self.develop.loading_label = Some(label);
+        self.develop.loading_view = view;
         self.ui.notice = None;
         self.ui.unsupported_file_dialog = None;
         self.refresh_status();
@@ -226,6 +241,7 @@ impl CalibRawApp {
             }
             self.develop.load_receiver = None;
             self.develop.loading_label = None;
+            self.develop.loading_view = None;
             self.develop_ui.loading_thumbnail.clear();
             self.report_error(
                 ErrorKind::OpenPhoto,
@@ -312,6 +328,7 @@ impl CalibRawApp {
             Some(Err(mpsc::TryRecvError::Disconnected)) => {
                 self.develop.load_receiver = None;
                 self.develop.loading_label = None;
+                self.develop.loading_view = None;
                 self.develop_ui.loading_thumbnail.clear();
                 self.report_error(
                     ErrorKind::OpenPhoto,
@@ -331,6 +348,7 @@ impl CalibRawApp {
 
         self.develop.load_receiver = None;
         self.develop.loading_label = None;
+        let kept_view = self.develop.loading_view.take();
         self.develop_ui.loading_thumbnail.clear();
         let batch_owned_load = self.take_batch_owned_load();
 
@@ -397,7 +415,7 @@ impl CalibRawApp {
                 if loaded.mask_source.is_some() {
                     self.masks.source_cache = loaded.mask_source;
                 }
-                self.preview.reset_view();
+                self.preview.reset_view_keeping(kept_view);
                 self.preview.original_rendered_state = None;
                 self.preview.detail = None;
                 self.preview.navigation = None;

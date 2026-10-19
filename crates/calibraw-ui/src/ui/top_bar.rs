@@ -40,7 +40,7 @@ const DEVELOP_ZOOM_PRESETS: [(&str, Option<f32>); 4] = [
 /// The readout for a fit-relative `zoom`: "Fit", or the photo-pixel scale,
 /// where 100% shows one photo pixel per screen pixel.
 fn develop_zoom_readout(zoom: f32, native_zoom: Option<f32>) -> String {
-    if (zoom - 1.0).abs() <= 0.0005 {
+    if crate::ui::preview::zoom_is_fit(zoom) {
         return "Fit".to_owned();
     }
     match native_zoom.filter(|native| native.is_finite() && *native > 0.0) {

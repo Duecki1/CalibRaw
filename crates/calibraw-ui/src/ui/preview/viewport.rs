@@ -4,7 +4,7 @@
 //! the phases, so the app state each phase reads matches the frame order.
 
 use super::*;
-use crate::app::{PreviewUvRect, PreviewViewportAction};
+use crate::app::{KeptView, PreviewUvRect, PreviewViewportAction};
 
 /// The preview area after the backdrop is painted.
 #[derive(Clone, Copy)]
@@ -65,6 +65,8 @@ pub(crate) struct PreviewViewportInput {
     point_color_picker_active: bool,
     zoom: f32,
     center: [f32; 2],
+    /// Replaces `zoom` and `center` once this layout knows the 100% zoom.
+    pending_view: Option<KeptView>,
     touch_navigation_active: bool,
     space_pan_active: bool,
 }
@@ -89,6 +91,7 @@ impl PreviewViewportInput {
             },
             zoom: app.preview.zoom,
             center: app.preview.center,
+            pending_view: app.preview.pending_view,
             touch_navigation_active: app.preview.touch_navigation_active,
             space_pan_active: app.preview.space_pan_active,
         }
@@ -158,7 +161,7 @@ impl PreviewViewport {
     /// The zoom at which one displayed photo pixel covers one physical screen
     /// pixel. Unclamped; callers clamp to the zoom range.
     fn native_zoom(&self, ctx: &egui::Context) -> f32 {
-        self.geometry_width as f32 / (self.base_size.x * physical_pixels_per_point(ctx)).max(1.0)
+        native_zoom_for(self.geometry_width, self.base_size, ctx)
     }
 
     fn update_image_rect(&mut self) {
@@ -179,6 +182,12 @@ impl PreviewViewport {
             zoom_delta,
         )
     }
+}
+
+/// The zoom at which one of `geometry_width` photo pixels, shown `base_size`
+/// at zoom 1, covers one physical screen pixel.
+fn native_zoom_for(geometry_width: u32, base_size: egui::Vec2, ctx: &egui::Context) -> f32 {
+    geometry_width as f32 / (base_size.x * physical_pixels_per_point(ctx)).max(1.0)
 }
 
 /// The detail render covering part of the image at higher resolution.
@@ -307,8 +316,11 @@ impl Preview {
         actions.push(PreviewViewportAction::SetSourceAxesSwapped(
             input.geometry.quarter_turns % 2 == 1,
         ));
-        let zoom = input.zoom.clamp(MIN_PREVIEW_ZOOM, MAX_PREVIEW_ZOOM);
-        let mut center = input.center;
+        let (zoom, mut center) = match input.pending_view {
+            Some(view) => view.navigation(native_zoom_for(geometry_width, base_size, ui.ctx())),
+            None => (input.zoom, input.center),
+        };
+        let zoom = zoom.clamp(MIN_PREVIEW_ZOOM, MAX_PREVIEW_ZOOM);
         clamp_preview_center(&mut center, outer_rect.size(), base_size * zoom);
 
         let white_balance_canvas =

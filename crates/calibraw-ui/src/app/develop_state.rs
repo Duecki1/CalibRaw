@@ -419,6 +419,8 @@ pub(crate) struct DevelopState {
     pub(crate) selected_camera_profile: Option<PathBuf>,
     pub(crate) load_receiver: Option<mpsc::Receiver<LoadEvent>>,
     pub(crate) loading_label: Option<String>,
+    /// The view the loading document opens at; `None` fits it.
+    pub(crate) loading_view: Option<crate::app::KeptView>,
     pub(crate) image_status: String,
     pub(crate) current_label: Option<String>,
     pub(crate) decoded_raws: DecodedRawCache,

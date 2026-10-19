@@ -472,3 +472,42 @@ fn space_pans_only_when_held_before_the_press_and_lasts_until_release() {
     assert!(frame(vec![button(false)]));
     assert!(!frame(Vec::new()));
 }
+
+#[test]
+fn a_kept_view_keeps_the_magnification_on_a_photo_of_another_size() {
+    use crate::app::PreviewViewportAction;
+
+    let ctx = egui::Context::default();
+    let mut app = CalibRawApp::empty(&ctx);
+    app.preview.zoom = 2.0;
+    app.preview.center = [0.3, 0.6];
+    app.preview.native_zoom = Some(4.0);
+    let kept = app.preview.kept_view();
+    app.preview.reset_view_keeping(kept);
+
+    let input = egui::RawInput {
+        screen_rect: Some(Rect::from_min_size(Pos2::ZERO, egui::vec2(800.0, 600.0))),
+        ..Default::default()
+    };
+    let mut navigation = None;
+    let _ = ctx.run_ui(input, |ui| {
+        let canvas = Preview::begin_canvas(ui, Color32::BLACK, None);
+        let input = PreviewViewportInput::of(&app, (6000, 4000));
+        let (_, actions) =
+            Preview::begin_viewport(ui, canvas, &input, None).expect("the canvas has area");
+        let mut native_zoom = None;
+        for action in actions {
+            match action {
+                PreviewViewportAction::SetNativeZoom(native) => native_zoom = Some(native),
+                PreviewViewportAction::SetNavigation { zoom, center } => {
+                    navigation = native_zoom.map(|native| (zoom / native, center));
+                }
+                _ => {}
+            }
+        }
+    });
+
+    let (magnification, center) = navigation.expect("the layout reports its navigation");
+    assert!((magnification - 0.5).abs() < 1e-4, "{magnification}");
+    assert_eq!(center, [0.3, 0.6]);
+}

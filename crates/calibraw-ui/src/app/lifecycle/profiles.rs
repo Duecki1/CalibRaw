@@ -188,6 +188,7 @@ impl CalibRawApp {
         let reload = ProfileReload {
             camera_profile: selection,
             edits: edit_override,
+            view: self.preview.kept_view(),
         };
         if self.caps().has_folders() {
             if let crate::sidecar::SidecarTarget::Desktop { raw_path } = sidecar_target {

@@ -186,6 +186,7 @@ impl CalibRawApp {
         let reload = ProfileReload {
             camera_profile: profile_selection,
             edits: edit_override,
+            view: None,
         };
 
         match sidecar_target {
