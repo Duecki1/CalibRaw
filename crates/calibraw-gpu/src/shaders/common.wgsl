@@ -49,8 +49,8 @@ struct CameraUniforms {
     reserved_a: f32,
     highlight_clip: f32,
     chroma_denoise: f32,
-    ca_red: f32,
-    ca_blue: f32,
+    reserved_d: f32,
+    reserved_e: f32,
     highlight_reconstruction: f32,
     tone_analysis_scale: f32,
     tone_guide_radius: f32,
@@ -58,7 +58,7 @@ struct CameraUniforms {
     dual_threshold: f32,
     frequency_chroma: f32,
     reserved_b: f32,
-    pre_demosaiced_raster: f32,
+    reserved_f: f32,
     // One of the VIEW_TRANSFORM_* modes.
     view_transform_mode: u32,
     reserved_c: f32,
@@ -259,33 +259,6 @@ fn image_light_grid() -> vec2<u32> {
 
 fn clamp_pos(pos: vec2<i32>) -> vec2<i32> {
     return clamp(pos, vec2<i32>(0, 0), image_max());
-}
-
-/// Lateral chromatic-aberration warp for one colour channel. Returns the
-/// tile-local pixel position to sample for tile-local `pos`: the full-image
-/// position is scaled about the full-image centre by
-/// `1 + amount * 0.001 * r^2` (r normalised to the half extent), clamped to the
-/// full image and then to the tile.
-fn ca_warped_pos(pos: vec2<i32>, amount: f32) -> vec2<f32> {
-    let local_extent = vec2<f32>(
-        f32(camera_uniforms.width - 1u),
-        f32(camera_uniforms.height - 1u),
-    );
-    let origin = vec2<f32>(
-        f32(camera_uniforms.tile_origin_x),
-        f32(camera_uniforms.tile_origin_y),
-    );
-    let full_extent = vec2<f32>(
-        f32(camera_uniforms.full_width - 1u),
-        f32(camera_uniforms.full_height - 1u),
-    );
-    let center = 0.5 * full_extent;
-    let global_pos = vec2<f32>(pos) + origin;
-    let rel = global_pos - center;
-    let norm = rel / max(center, vec2<f32>(1.0));
-    let scale = 1.0 + amount * 0.001 * dot(norm, norm);
-    let warped_global = clamp(center + rel * scale, vec2<f32>(0.0), full_extent);
-    return clamp(warped_global - origin, vec2<f32>(0.0), local_extent);
 }
 
 /// Unnormalised 1-4-6-4-1 binomial weight for a tap at `offset` in [-2, 2].

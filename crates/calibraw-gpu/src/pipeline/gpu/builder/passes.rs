@@ -358,19 +358,25 @@ pub(in crate::pipeline::gpu) fn assemble_passes(
         indices.demosaic_dual_start_index,
         "dual demosaicing",
     )?;
+    // The prepare pass reads the reference demosaic, so it lives in the
+    // sensor's finish module.
+    let (prepare_module, prepare_entry) = match cfa_kind {
+        CfaKind::Bayer => (shaders.bayer_rcd_p4_module.as_ref(), "bayer_dual_prepare"),
+        CfaKind::XTrans => (shaders.xtrans_finish_module.as_ref(), "xtrans_dual_prepare"),
+    };
     passes.extend([
         assembler.make_pass(
-            shaders.dual_demosaic_module.as_ref(),
-            "dual_green_reconstruct",
-            &layouts.bgl_dual_green,
-            groups.bg_dual_green.clone(),
+            prepare_module,
+            prepare_entry,
+            &layouts.bgl_dual_prepare,
+            groups.bg_dual_prepare.clone(),
             image_workgroups,
         ),
         assembler.make_pass(
-            shaders.dual_demosaic_module.as_ref(),
-            "dual_rgb_reconstruct",
-            &layouts.bgl_dual_rgb,
-            groups.bg_dual_rgb.clone(),
+            shaders.dual_demosaic_detail_module.as_ref(),
+            "dual_smooth_detail",
+            &layouts.bgl_dual_detail,
+            groups.bg_dual_detail.clone(),
             image_workgroups,
         ),
     ]);

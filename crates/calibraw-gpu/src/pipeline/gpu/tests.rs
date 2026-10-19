@@ -1241,7 +1241,7 @@ fn assert_planned_programs(pipeline: &RawGpuPipeline) {
     let entry = |index: usize| pipeline.passes[index].pipeline.entry.as_str();
     for (index, expected) in [
         (indices.highlight_pass_index, "highlight_reconstruct"),
-        (indices.demosaic_dual_start_index, "dual_green_reconstruct"),
+        (indices.demosaic_dual_start_index + 1, "dual_smooth_detail"),
         (
             indices.color_denoise_start_index,
             COLOR_DENOISE_ENTRY_POINTS[0],
@@ -1846,7 +1846,6 @@ fn specialized_bayer_modes_match_the_dynamic_shader_when_switching_modes() -> an
     let masks = MaskStack::default();
     let mut exposure = ExposureParams::scene_referred_default();
     exposure.luminance_denoise = 15.0;
-    exposure.ca_red = 0.5;
     let params = GpuParams::new(&exposure, &masks, &raw);
     let mut pipeline = RawGpuPipeline::new(
         &device,
@@ -1867,9 +1866,8 @@ fn specialized_bayer_modes_match_the_dynamic_shader_when_switching_modes() -> an
         compiled: OnceLock::from(dynamic.clone()),
         demosaic_variants: std::array::from_fn(|_| OnceLock::from(dynamic.clone())),
     });
-    for (denoise, ca) in [(0.0, 0.0), (15.0, 0.0), (0.0, 0.5), (15.0, 0.5)] {
+    for denoise in [0.0, 15.0] {
         exposure.luminance_denoise = denoise;
-        exposure.ca_red = ca;
         for mode in [
             DemosaicMode::Reference,
             DemosaicMode::FrequencyDomainChroma,
@@ -1896,6 +1894,132 @@ fn specialized_bayer_modes_match_the_dynamic_shader_when_switching_modes() -> an
             assert!(max_error <= 1e-5, "mode={mode:?} error={max_error}");
         }
     }
+    Ok(())
+}
+
+/// A neutral Bayer scene: camera RGB `level(x, y)` in every channel after the
+/// test RAW's white balance, plus Gaussian noise of `sigma` in sensor units.
+fn neutral_bayer_raw(edge: u32, sigma: f32, level: impl Fn(u32, u32) -> f32) -> LoadedRaw {
+    let mut raw = opposed_highlight_consistency_raw(edge, edge);
+    let mut state = 0x2545_F491_4F6C_DD1D_u64;
+    let mut uniform = move || {
+        state = state
+            .wrapping_mul(6_364_136_223_846_793_005)
+            .wrapping_add(1_442_695_040_888_963_407);
+        ((state >> 40) as f32 + 0.5) / (1u64 << 24) as f32
+    };
+    for y in 0..edge {
+        for x in 0..edge {
+            let index = (y * edge + x) as usize;
+            let channel = usize::from(raw.color_indices[index].min(3));
+            let gaussian =
+                (-2.0 * uniform().ln()).sqrt() * (std::f32::consts::TAU * uniform()).cos();
+            let sensor = level(x, y) / raw.wb_coeffs[channel] + sigma * gaussian;
+            raw.raw_pixels[index] = (sensor * 10_000.0).round().clamp(0.0, 10_000.0) as u16;
+        }
+    }
+    raw
+}
+
+/// RMS of `|R - G|` and `|B - G|` in camera RGB `scene` inside `margin`,
+/// relative to green.
+fn neutral_chroma_rms(scene: &[f32], edge: u32, margin: u32) -> f32 {
+    let mut squares = 0.0_f64;
+    let mut count = 0.0_f64;
+    for y in margin..edge - margin {
+        for x in margin..edge - margin {
+            let index = ((y * edge + x) * 3) as usize;
+            let [r, g, b] = [scene[index], scene[index + 1], scene[index + 2]];
+            for chroma in [r - g, b - g] {
+                squares += f64::from((chroma / g.max(1e-6)).powi(2));
+                count += 1.0;
+            }
+        }
+    }
+    (squares / count).sqrt() as f32
+}
+
+/// RMS of green's 2x2 checkerboard component inside `margin`, relative to the
+/// mean green: the pattern a demosaic leaves when green at red and blue
+/// photosites disagrees with green at green photosites.
+fn green_checkerboard(scene: &[f32], edge: u32, margin: u32) -> f32 {
+    let green = |x: u32, y: u32| f64::from(scene[((y * edge + x) * 3 + 1) as usize]);
+    let mut squares = 0.0_f64;
+    let mut sum = 0.0_f64;
+    let mut count = 0.0_f64;
+    for y in margin..edge - margin {
+        for x in margin..edge - margin {
+            let checker =
+                (green(x, y) + green(x + 1, y + 1) - green(x + 1, y) - green(x, y + 1)) / 4.0;
+            squares += checker * checker;
+            sum += green(x, y);
+            count += 1.0;
+        }
+    }
+    ((squares / count).sqrt() / (sum / count)) as f32
+}
+
+/// Dual demosaicing (darktable's) keeps RCD on detail and a smoothed linear
+/// interpolation in flat areas, so it carries less colour noise than RCD and
+/// adds no pattern of its own. The estimator it replaced painted a green
+/// checkerboard along dark detail: more checkerboard than RCD, here 1.13 to
+/// 1.21 times as much.
+#[test]
+fn dual_demosaic_smooths_flat_colour_noise_without_a_checkerboard() -> anyhow::Result<()> {
+    use crate::pipeline::DemosaicMode;
+    const EDGE: u32 = 96;
+    const MARGIN: u32 = 12;
+    let Some((device, queue)) = request_test_device() else {
+        eprintln!("Dual demosaic check skipped: no headless wgpu adapter");
+        return Ok(());
+    };
+    let render = |raw: &LoadedRaw, mode: DemosaicMode| -> anyhow::Result<Vec<f32>> {
+        let exposure = ExposureParams {
+            demosaic_mode: mode,
+            luminance_denoise: 0.0,
+            chroma_denoise: 0.0,
+            ..Default::default()
+        };
+        let params = GpuParams::new(&exposure, &MaskStack::default(), raw);
+        let pipeline = RawGpuPipeline::new(
+            &device,
+            &queue,
+            raw,
+            &params,
+            PipelineOptions::new(ProcessingQuality::High),
+        )?;
+        pipeline.render_camera_scene_blocking(&device, &queue, &params)
+    };
+
+    // Noisy thin dark diagonal lines on a bright field, like fence slats.
+    let lines = neutral_bayer_raw(
+        EDGE,
+        0.004,
+        |x, y| {
+            if (x + y) % 10 < 2 {
+                0.02
+            } else {
+                0.25
+            }
+        },
+    );
+    let reference = green_checkerboard(&render(&lines, DemosaicMode::Reference)?, EDGE, MARGIN);
+    let dual = green_checkerboard(&render(&lines, DemosaicMode::Dual)?, EDGE, MARGIN);
+    assert!(
+        dual < 0.95 * reference,
+        "green checkerboard: dual {dual}, reference {reference}"
+    );
+
+    // Noise well below darktable's default threshold: the mask keeps the
+    // smoothed interpolation, whose colour noise is about 0.72 of RCD's (the
+    // replaced estimator's was 0.83).
+    let flat = neutral_bayer_raw(EDGE, 0.004, |_, _| 0.18);
+    let reference = neutral_chroma_rms(&render(&flat, DemosaicMode::Reference)?, EDGE, MARGIN);
+    let dual = neutral_chroma_rms(&render(&flat, DemosaicMode::Dual)?, EDGE, MARGIN);
+    assert!(
+        dual < 0.8 * reference,
+        "flat colour noise: dual {dual}, reference {reference}"
+    );
     Ok(())
 }
 

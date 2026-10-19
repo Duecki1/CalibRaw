@@ -161,20 +161,16 @@ struct RemoveCompositeParams {
 }
 
 /// Specializations of `bayer_rcd_output`: demosaic mode (3) × sensor denoise
-/// (2) × chromatic aberration (2), indexed by [`demosaic_variant`].
-const DEMOSAIC_VARIANT_COUNT: usize = 12;
+/// (2), indexed by [`demosaic_variant`].
+const DEMOSAIC_VARIANT_COUNT: usize = 6;
 
-const fn demosaic_variant(mode: usize, denoise: bool, ca: bool) -> usize {
-    mode * 4 + denoise as usize * 2 + ca as usize
+const fn demosaic_variant(mode: usize, denoise: bool) -> usize {
+    mode * 2 + denoise as usize
 }
 
-/// Sensor denoise, chromatic aberration, and both, with the reference demosaic
-/// (mode 0): the variants ordinary edits switch to, most common first.
-const COMMON_DEMOSAIC_VARIANTS: [usize; 3] = [
-    demosaic_variant(0, true, false),
-    demosaic_variant(0, false, true),
-    demosaic_variant(0, true, true),
-];
+/// Sensor denoise with the reference demosaic (mode 0): the variant ordinary
+/// edits switch to.
+const COMMON_DEMOSAIC_VARIANTS: [usize; 1] = [demosaic_variant(0, true)];
 
 fn demosaic_variant_for(camera: &CameraUniforms) -> usize {
     let mode = if camera.demosaic_mode >= 1.5 {
@@ -182,18 +178,13 @@ fn demosaic_variant_for(camera: &CameraUniforms) -> usize {
     } else {
         usize::from(camera.demosaic_mode >= 0.5)
     };
-    demosaic_variant(
-        mode,
-        camera.noise_options[0] > 0.0,
-        camera.ca_red.abs() > 1e-6 || camera.ca_blue.abs() > 1e-6,
-    )
+    demosaic_variant(mode, camera.noise_options[0] > 0.0)
 }
 
-fn demosaic_variant_constants(variant: usize) -> [(&'static str, f64); 3] {
+fn demosaic_variant_constants(variant: usize) -> [(&'static str, f64); 2] {
     [
-        ("BAYER_DEMOSAIC_MODE", (variant / 4) as f64),
-        ("BAYER_SENSOR_DENOISE", (variant / 2 % 2) as f64),
-        ("BAYER_CA", (variant % 2) as f64),
+        ("BAYER_DEMOSAIC_MODE", (variant / 2) as f64),
+        ("BAYER_SENSOR_DENOISE", (variant % 2) as f64),
     ]
 }
 
@@ -350,8 +341,7 @@ pub struct RawGpuProgramTemplate {
 /// them off the UI thread; pipelines built from the template share the results.
 impl RawGpuProgramTemplate {
     /// Compiles the programs ordinary edits switch on: every effect pass, and
-    /// the sensor-denoise and chromatic-aberration variants of the reference
-    /// demosaic. The other demosaic variants take seconds each and are left to
+    /// the sensor-denoise variant of the reference demosaic. The other demosaic variants take seconds each and are left to
     /// [`Self::compile_for_params`].
     pub fn compile_common_programs(&self) {
         for program in &self.pipelines {

@@ -9,8 +9,8 @@ pub(in crate::pipeline::gpu) struct BindGroupLayouts {
     pub(in crate::pipeline::gpu) bgl1: wgpu::BindGroupLayout,
     pub(in crate::pipeline::gpu) bgl2: wgpu::BindGroupLayout,
     pub(in crate::pipeline::gpu) bgl3: wgpu::BindGroupLayout,
-    pub(in crate::pipeline::gpu) bgl_dual_green: wgpu::BindGroupLayout,
-    pub(in crate::pipeline::gpu) bgl_dual_rgb: wgpu::BindGroupLayout,
+    pub(in crate::pipeline::gpu) bgl_dual_prepare: wgpu::BindGroupLayout,
+    pub(in crate::pipeline::gpu) bgl_dual_detail: wgpu::BindGroupLayout,
     pub(in crate::pipeline::gpu) bgl4: wgpu::BindGroupLayout,
     pub(in crate::pipeline::gpu) bgl_xtrans_derivatives: wgpu::BindGroupLayout,
     pub(in crate::pipeline::gpu) bgl_xtrans_homogeneity: wgpu::BindGroupLayout,
@@ -140,31 +140,44 @@ pub(in crate::pipeline::gpu) fn create_bind_group_layouts(
         )
     });
 
-    let bgl_dual_green = reused_layout(plan.demosaic_dual_start_index).unwrap_or_else(|| {
-        create_bind_group_layout(
-            device,
-            "bgl dual demosaic green",
-            &[
-                common_entries[0],
-                common_entries[1],
-                common_entries[2],
-                common_entries[3],
-                texture_entry(3, wgpu::TextureSampleType::Float { filterable: false }),
-                storage_texture_entry(20, demosaic_format, wgpu::StorageTextureAccess::WriteOnly),
+    // The prepare pass reads the CFA and the sensor's reference demosaic:
+    // RCD's planes for Bayer, the Markesteijn result for X-Trans.
+    let bgl_dual_prepare = reused_layout(plan.demosaic_dual_start_index).unwrap_or_else(|| {
+        let reference_entries = match cfa_kind {
+            CfaKind::Bayer => vec![
+                texture_entry(7, wgpu::TextureSampleType::Float { filterable: false }),
+                texture_entry(9, wgpu::TextureSampleType::Float { filterable: false }),
             ],
-        )
+            CfaKind::XTrans => vec![texture_entry(
+                26,
+                wgpu::TextureSampleType::Float { filterable: false },
+            )],
+        };
+        let entries: Vec<_> = common_entries
+            .into_iter()
+            .chain([texture_entry(
+                3,
+                wgpu::TextureSampleType::Float { filterable: false },
+            )])
+            .chain(reference_entries)
+            .chain([storage_texture_entry(
+                20,
+                demosaic_format,
+                wgpu::StorageTextureAccess::WriteOnly,
+            )])
+            .collect();
+        create_bind_group_layout(device, "bgl dual demosaic prepare", &entries)
     });
 
-    let bgl_dual_rgb = reused_layout(plan.demosaic_dual_start_index + 1).unwrap_or_else(|| {
+    let bgl_dual_detail = reused_layout(plan.demosaic_dual_start_index + 1).unwrap_or_else(|| {
         create_bind_group_layout(
             device,
-            "bgl dual demosaic rgb",
+            "bgl dual demosaic detail",
             &[
                 common_entries[0],
                 common_entries[1],
                 common_entries[2],
                 common_entries[3],
-                texture_entry(3, wgpu::TextureSampleType::Float { filterable: false }),
                 texture_entry(21, wgpu::TextureSampleType::Float { filterable: false }),
                 storage_texture_entry(22, demosaic_format, wgpu::StorageTextureAccess::WriteOnly),
             ],
@@ -653,8 +666,8 @@ pub(in crate::pipeline::gpu) fn create_bind_group_layouts(
         bgl1,
         bgl2,
         bgl3,
-        bgl_dual_green,
-        bgl_dual_rgb,
+        bgl_dual_prepare,
+        bgl_dual_detail,
         bgl4,
         bgl_xtrans_derivatives,
         bgl_xtrans_homogeneity,

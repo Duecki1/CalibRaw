@@ -60,8 +60,8 @@ pub(super) fn pack_camera_params(ctx: &GpuParamContext<'_>) -> CameraUniforms {
         reserved_a: 0.0,
         highlight_clip: exposure.highlight_clip,
         chroma_denoise: exposure.chroma_denoise,
-        ca_red: exposure.ca_red,
-        ca_blue: exposure.ca_blue,
+        reserved_d: 0.0,
+        reserved_e: 0.0,
         highlight_reconstruction: exposure.highlight_reconstruction,
         tone_analysis_scale: tone_analysis_scale() as f32,
         tone_guide_radius: crate::pipeline::TONE_GUIDE_RADIUS_CELLS as f32,
@@ -69,11 +69,7 @@ pub(super) fn pack_camera_params(ctx: &GpuParamContext<'_>) -> CameraUniforms {
         dual_threshold: exposure.dual_threshold.clamp(0.0, 100.0),
         frequency_chroma: exposure.frequency_chroma.clamp(0.0, 1.0),
         reserved_b: 0.0,
-        pre_demosaiced_raster: if raw.is_pre_demosaiced_raster() {
-            1.0
-        } else {
-            0.0
-        },
+        reserved_f: 0.0,
         view_transform_mode: ViewTransformMode::select(raw, exposure, camera_linear_raster)
             .shader_value(),
         reserved_c: 0.0,

@@ -1,10 +1,10 @@
 use anyhow::{anyhow, bail, Context, Result};
 use calibraw_cli::pipeline::{
     crop_raw, effect_params, export_mask_atlas_edge, load_raw_file, load_raw_file_with_dcp,
-    spawn_tiled_export, DenoiseQuality, EffectComponent, ExportEvent, ExportFormat, ExportMetadata,
-    ExportSettings, ExportTarget, ExposureParams, GeometryTransform, LoadedRaw, MaskEffect,
-    MaskStack, TileSpec, TiledExportJob, GLOBAL_TEMPERATURE_LIMIT, GLOBAL_TINT_OFFSET_LIMIT,
-    HUE_ROTATION_LIMIT_DEGREES,
+    spawn_tiled_export, DemosaicMode, DenoiseQuality, EffectComponent, ExportEvent, ExportFormat,
+    ExportMetadata, ExportSettings, ExportTarget, ExposureParams, GeometryTransform, LoadedRaw,
+    MaskEffect, MaskStack, TileSpec, TiledExportJob, GLOBAL_TEMPERATURE_LIMIT,
+    GLOBAL_TINT_OFFSET_LIMIT, HUE_ROTATION_LIMIT_DEGREES,
 };
 use calibraw_gpu::{
     request_headless_device, wgpu, HeadlessAdapter, HeadlessDevice, HeadlessDeviceError,
@@ -295,6 +295,17 @@ fn set_adjustment(
         "sharpen_radius" => exposure.sharpen_radius = value.clamp(0.5, 3.0),
         "sharpen_detail" => exposure.sharpen_detail = value.clamp(0.0, 100.0),
         "sharpen_masking" => exposure.sharpen_masking = value.clamp(0.0, 100.0),
+        "demosaic_mode" => {
+            exposure.demosaic_mode = if value < 0.5 {
+                DemosaicMode::Reference
+            } else if value < 1.5 {
+                DemosaicMode::FrequencyDomainChroma
+            } else {
+                DemosaicMode::Dual
+            }
+        }
+        "dual_threshold" => exposure.dual_threshold = value.clamp(0.0, 100.0),
+        "frequency_chroma" => exposure.frequency_chroma = value.clamp(0.0, 1.0),
         other => bail!("unsupported adjustment {other:?}"),
     }
     Ok(())
@@ -458,7 +469,9 @@ fn print_help() {
         "Supported adjustment names: exposure, contrast, highlights, shadows, whites,\n",
         "blacks, texture, clarity, dehaze, vignette, hue, vibrance, saturation, temperature, tint,\n",
         "luminance_denoise, color_denoise, denoise_detail, denoise_quality (0/1/2),\n",
-        "sharpen_amount, sharpen_radius, sharpen_detail, and sharpen_masking. The suite\n",
+        "sharpen_amount, sharpen_radius, sharpen_detail, sharpen_masking, demosaic_mode\n",
+        "(0 Reference, 1 frequency-domain chroma, 2 dual), dual_threshold, and\n",
+        "frequency_chroma. The suite\n",
         "exports isolated endpoints matching the standard\n",
         "Reference comparison set. Lens correction is not applied by this tool."
     ));
