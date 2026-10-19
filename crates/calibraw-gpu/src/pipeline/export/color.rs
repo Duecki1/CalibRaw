@@ -24,9 +24,43 @@ pub(super) fn built_in_srgb_icc() -> Vec<u8> {
     )
 }
 
-fn build_matrix_shaper_icc(_name: &str, matrix: [[f32; 3]; 3], transfer: IccTransfer) -> Vec<u8> {
+/// Builds an ICC v2.1 display profile with the tags a v2 matrix/TRC profile
+/// requires: `desc`, `cprt`, `wtpt`, the colorant XYZ tags and the TRC curves.
+/// `name` must be ASCII; it becomes the profile description.
+fn build_matrix_shaper_icc(name: &str, matrix: [[f32; 3]; 3], transfer: IccTransfer) -> Vec<u8> {
     fn fixed(value: f32) -> [u8; 4] {
         ((value as f64 * 65_536.0).round() as i32).to_be_bytes()
+    }
+    fn pad(data: &mut Vec<u8>) {
+        while !data.len().is_multiple_of(4) {
+            data.push(0);
+        }
+    }
+    /// textDescriptionType (ICC.1:2001-04 6.5.17): ASCII text with empty
+    /// Unicode and ScriptCode records.
+    fn description_tag(text: &str) -> Vec<u8> {
+        let mut data = Vec::new();
+        data.extend_from_slice(b"desc");
+        data.extend_from_slice(&[0; 4]);
+        data.extend_from_slice(&(text.len() as u32 + 1).to_be_bytes());
+        data.extend_from_slice(text.as_bytes());
+        data.push(0);
+        // Unicode language code and count.
+        data.extend_from_slice(&[0; 8]);
+        // ScriptCode code, count and the fixed 67-byte Macintosh description.
+        data.extend_from_slice(&[0; 2 + 1 + 67]);
+        pad(&mut data);
+        data
+    }
+    /// textType (ICC.1:2001-04 6.5.18): null-terminated ASCII.
+    fn text_tag(text: &str) -> Vec<u8> {
+        let mut data = Vec::new();
+        data.extend_from_slice(b"text");
+        data.extend_from_slice(&[0; 4]);
+        data.extend_from_slice(text.as_bytes());
+        data.push(0);
+        pad(&mut data);
+        data
     }
     fn xyz_tag(xyz: [f32; 3]) -> Vec<u8> {
         let mut data = Vec::with_capacity(20);
@@ -56,13 +90,14 @@ fn build_matrix_shaper_icc(_name: &str, matrix: [[f32; 3]; 3], transfer: IccTran
                 }
             }
         }
-        while data.len() % 4 != 0 {
-            data.push(0);
-        }
+        pad(&mut data);
         data
     }
 
+    debug_assert!(name.is_ascii(), "ICC v2 descriptions are ASCII");
     let tags = [
+        (*b"desc", description_tag(name)),
+        (*b"cprt", text_tag("No copyright, use freely")),
         (*b"wtpt", xyz_tag([0.9642, 1.0, 0.8249])),
         (
             *b"rXYZ",
