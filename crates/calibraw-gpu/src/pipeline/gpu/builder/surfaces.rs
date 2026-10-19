@@ -62,6 +62,7 @@ pub(in crate::pipeline::gpu) struct PipelineSurfaces {
     pub(in crate::pipeline::gpu) raw_texture: wgpu::Texture,
     pub(in crate::pipeline::gpu) color_texture: wgpu::Texture,
     pub(in crate::pipeline::gpu) black_texture: wgpu::Texture,
+    pub(in crate::pipeline::gpu) lens_shading_texture: wgpu::Texture,
     pub(in crate::pipeline::gpu) reconstructed_raw_texture: wgpu::Texture,
     pub(in crate::pipeline::gpu) highlight_work_a: wgpu::Texture,
     pub(in crate::pipeline::gpu) highlight_work_b: wgpu::Texture,
@@ -90,10 +91,14 @@ pub(in crate::pipeline::gpu) struct PipelineSurfaces {
     pub(in crate::pipeline::gpu) raw_view: wgpu::TextureView,
     pub(in crate::pipeline::gpu) color_view: wgpu::TextureView,
     pub(in crate::pipeline::gpu) black_view: wgpu::TextureView,
+    pub(in crate::pipeline::gpu) lens_shading_view: wgpu::TextureView,
     pub(in crate::pipeline::gpu) mask_view: wgpu::TextureView,
     pub(in crate::pipeline::gpu) light_rays_mask_view: wgpu::TextureView,
     pub(in crate::pipeline::gpu) scene_depth_view: wgpu::TextureView,
     pub(in crate::pipeline::gpu) mask_sampler: wgpu::Sampler,
+    /// Markesteijn's homogeneity map, allocated for X-Trans only.
+    pub(in crate::pipeline::gpu) xtrans_homogeneity: Option<wgpu::Texture>,
+    pub(in crate::pipeline::gpu) xtrans_homogeneity_view: Option<wgpu::TextureView>,
 }
 
 pub(in crate::pipeline::gpu) fn create_pipeline_surfaces(
@@ -118,6 +123,7 @@ pub(in crate::pipeline::gpu) fn create_pipeline_surfaces(
     let raw_texture = create_raw_texture(device, queue, raw, ai_cfa)?;
     let color_texture = create_color_texture(device, queue, raw);
     let black_texture = create_black_texture(device, queue, raw);
+    let lens_shading_texture = create_lens_shading_texture(device, queue, raw);
 
     let reconstructed_raw_texture = create_processing_texture(
         device,
@@ -209,6 +215,16 @@ pub(in crate::pipeline::gpu) fn create_pipeline_surfaces(
         "calibraw full-image scene depth",
     );
     let scene_depth_view = default_texture_view(&scene_depth_texture);
+    let xtrans_homogeneity = matches!(raw.cfa_kind, CfaKind::XTrans).then(|| {
+        create_processing_texture(
+            device,
+            size,
+            XTRANS_HOMOGENEITY_FORMAT,
+            wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING,
+            "calibraw X-Trans Markesteijn homogeneity",
+        )
+    });
+    let xtrans_homogeneity_view = xtrans_homogeneity.as_ref().map(default_texture_view);
 
     let out_view = default_texture_view(&out_texture);
     let display_linear_view = default_texture_view(&display_linear_texture);
@@ -224,6 +240,7 @@ pub(in crate::pipeline::gpu) fn create_pipeline_surfaces(
     let raw_view = default_texture_view(&raw_texture);
     let color_view = default_texture_view(&color_texture);
     let black_view = default_texture_view(&black_texture);
+    let lens_shading_view = default_texture_view(&lens_shading_texture);
     let mask_view = mask_texture.create_view(&wgpu::TextureViewDescriptor {
         label: Some("calibraw local-mask array view"),
         dimension: Some(wgpu::TextureViewDimension::D2Array),
@@ -252,6 +269,7 @@ pub(in crate::pipeline::gpu) fn create_pipeline_surfaces(
             raw_texture,
             color_texture,
             black_texture,
+            lens_shading_texture,
             reconstructed_raw_texture,
             highlight_work_a,
             highlight_work_b,
@@ -280,10 +298,13 @@ pub(in crate::pipeline::gpu) fn create_pipeline_surfaces(
             raw_view,
             color_view,
             black_view,
+            lens_shading_view,
             mask_view,
             light_rays_mask_view,
             scene_depth_view,
             mask_sampler,
+            xtrans_homogeneity,
+            xtrans_homogeneity_view,
         },
         has_ai_scene,
     ))

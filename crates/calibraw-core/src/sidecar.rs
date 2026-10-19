@@ -3,8 +3,8 @@ use crate::pipeline::remove::RemovePatchSidecarCache;
 use crate::pipeline::{
     lensfun_catalog, ExposureParams, GeometryTransform, LensCorrection, LensfunCorrections,
     LensfunLens, LoadedRaw, ManualLensCorrection, MaskGeometry, MaskImage, MaskKind, MaskStack,
-    RemoveEditState, SubjectRefinement, MAX_LOCAL_MASKS, MAX_MASK_COMPONENTS, MAX_PATH_POINTS,
-    REMOVE_MAX_PATCHES_PER_STROKE, REMOVE_MAX_STROKES,
+    RemoveEditState, SubjectRefinement, WhiteBalance, MAX_LOCAL_MASKS, MAX_MASK_COMPONENTS,
+    MAX_PATH_POINTS, REMOVE_MAX_PATCHES_PER_STROKE, REMOVE_MAX_STROKES,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};

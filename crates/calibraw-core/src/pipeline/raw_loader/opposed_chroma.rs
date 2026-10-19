@@ -437,8 +437,9 @@ impl LoadedRaw {
     }
 
     pub fn inpaint_opposed_chroma_for_exposure(&self, exposure: &ExposureParams) -> [f32; 3] {
+        let (temperature, tint) = self.white_balance_offsets(exposure.white_balance);
         let wb = self
-            .adjusted_white_balance_and_camera_transform(exposure.temperature, exposure.tint)
+            .adjusted_white_balance_and_camera_transform(temperature, tint)
             .0;
         self.inpaint_opposed_chroma(
             exposure.black_point,

@@ -43,25 +43,33 @@ fn mask_effect_id(metadata: vec4<u32>) -> u32 {
     return metadata.w >> MASK_EFFECT_ID_SHIFT;
 }
 
+// Whether the slot is enabled and changes the image: an adjustment that is not
+// neutral, or an active effect. Rust: `MaskData::is_active`.
+fn mask_slot_active(metadata: vec4<u32>) -> bool {
+    return metadata.x != 0u && metadata.y != 0u;
+}
+
+// Whether the slot is active and holds `effect_id` (0 for adjustment masks).
+// Rust: `MaskData::applies`.
+fn mask_slot_applies(metadata: vec4<u32>, effect_id: u32) -> bool {
+    return mask_slot_active(metadata) && mask_effect_id(metadata) == effect_id;
+}
+
 struct CameraUniforms {
     // Scalar fields keep the following vec4 on the Rust/WGSL 16-byte boundary.
     black_point: f32,
-    temperature: f32,
     highlight_clip: f32,
     chroma_denoise: f32,
-    ca_red: f32,
-    ca_blue: f32,
     highlight_reconstruction: f32,
     tone_analysis_scale: f32,
     tone_guide_radius: f32,
     demosaic_mode: f32,
     dual_threshold: f32,
     frequency_chroma: f32,
-    tint: f32,
-    pre_demosaiced_raster: f32,
     // One of the VIEW_TRANSFORM_* modes.
     view_transform_mode: u32,
-    camera_linear_raster: f32,
+    padding_0_field: u32,
+    padding_1_field: u32,
     highlight_options: vec4<f32>,
     noise_shot: vec4<f32>,
     noise_read: vec4<f32>,
@@ -88,7 +96,9 @@ struct CameraUniforms {
     ai_denoise_enabled: u32,
     user_exposure_bits: u32,
     ai_cfa_weight: f32,
-    _pad_camera_1_field: u32,
+    // Shorter edge in pixels of the whole photo at its native resolution;
+    // full_width and full_height give the processing resolution.
+    source_short_edge: u32,
 }
 
 struct SceneToneUniforms {
@@ -194,6 +204,57 @@ fn full_image_max() -> vec2<i32> {
     return vec2<i32>(i32(camera_uniforms.full_width) - 1, i32(camera_uniforms.full_height) - 1);
 }
 
+fn processing_short_edge() -> f32 {
+    return f32(max(min(camera_uniforms.full_width, camera_uniforms.full_height), 1u));
+}
+
+fn source_short_edge() -> f32 {
+    return select(
+        processing_short_edge(),
+        f32(camera_uniforms.source_short_edge),
+        camera_uniforms.source_short_edge > 0u,
+    );
+}
+
+// Processing pixels per pixel of the photo at its native resolution: 1 in an
+// export, less in a reduced preview. A limit in native pixels times this is
+// the same limit at the processing resolution.
+fn processing_per_source_pixel() -> f32 {
+    return processing_short_edge() / source_short_edge();
+}
+
+// Pixels per reference pixel for effects sized against a 1080-pixel short edge.
+// The scale is set by the photo at its native resolution, limited to
+// [minimum, maximum] there so export tiles keep bounded halos, and then
+// carried to the processing resolution. A reduced preview therefore uses the
+// export's radii in proportion instead of limits of its own.
+fn resolution_scale(minimum: f32, maximum: f32) -> f32 {
+    return clamp(source_short_edge() / 1080.0, minimum, maximum)
+        * processing_per_source_pixel();
+}
+
+// Cells across and down a coarse grid over the full image with `long_cells`
+// cells along its longer edge. Cells cover the same share of the photo at
+// every processing resolution and tile origin.
+fn full_image_grid(long_cells: u32) -> vec2<u32> {
+    let full = vec2<f32>(
+        f32(max(camera_uniforms.full_width, 1u)),
+        f32(max(camera_uniforms.full_height, 1u)),
+    );
+    let cells = round(f32(long_cells) * full / max(full.x, full.y));
+    return clamp(vec2<u32>(cells), vec2<u32>(1u), vec2<u32>(long_cells));
+}
+
+// Global pixels whose centres fall in grid cells [cell, cell + 1) along one
+// axis of `cells` cells over `full` pixels.
+fn full_image_grid_pixel_span(cell: u32, cells: u32, full: u32) -> vec2<i32> {
+    let scale = f32(full) / f32(cells);
+    return vec2<i32>(
+        i32(ceil(f32(cell) * scale - 0.5)),
+        i32(ceil(f32(cell + 1u) * scale - 0.5)),
+    );
+}
+
 // Image lights (tone_analysis.wgsl): a coarse grid over the full image with
 // IMAGE_LIGHT_GRID_LONG cells along its longer edge, stored in textures and
 // a buffer sized for a square grid. Matches IMAGE_LIGHT_GRID_LONG in Rust.
@@ -201,43 +262,11 @@ const IMAGE_LIGHT_GRID_LONG: u32 = 160u;
 
 // Cells of the image-light grid across and down the full image.
 fn image_light_grid() -> vec2<u32> {
-    let full = vec2<f32>(
-        f32(max(camera_uniforms.full_width, 1u)),
-        f32(max(camera_uniforms.full_height, 1u)),
-    );
-    let cells = round(f32(IMAGE_LIGHT_GRID_LONG) * full / max(full.x, full.y));
-    return clamp(vec2<u32>(cells), vec2<u32>(1u), vec2<u32>(IMAGE_LIGHT_GRID_LONG));
+    return full_image_grid(IMAGE_LIGHT_GRID_LONG);
 }
 
 fn clamp_pos(pos: vec2<i32>) -> vec2<i32> {
     return clamp(pos, vec2<i32>(0, 0), image_max());
-}
-
-/// Lateral chromatic-aberration warp for one colour channel. Returns the
-/// tile-local pixel position to sample for tile-local `pos`: the full-image
-/// position is scaled about the full-image centre by
-/// `1 + amount * 0.001 * r^2` (r normalised to the half extent), clamped to the
-/// full image and then to the tile.
-fn ca_warped_pos(pos: vec2<i32>, amount: f32) -> vec2<f32> {
-    let local_extent = vec2<f32>(
-        f32(camera_uniforms.width - 1u),
-        f32(camera_uniforms.height - 1u),
-    );
-    let origin = vec2<f32>(
-        f32(camera_uniforms.tile_origin_x),
-        f32(camera_uniforms.tile_origin_y),
-    );
-    let full_extent = vec2<f32>(
-        f32(camera_uniforms.full_width - 1u),
-        f32(camera_uniforms.full_height - 1u),
-    );
-    let center = 0.5 * full_extent;
-    let global_pos = vec2<f32>(pos) + origin;
-    let rel = global_pos - center;
-    let norm = rel / max(center, vec2<f32>(1.0));
-    let scale = 1.0 + amount * 0.001 * dot(norm, norm);
-    let warped_global = clamp(center + rel * scale, vec2<f32>(0.0), full_extent);
-    return clamp(warped_global - origin, vec2<f32>(0.0), local_extent);
 }
 
 /// Unnormalised 1-4-6-4-1 binomial weight for a tap at `offset` in [-2, 2].

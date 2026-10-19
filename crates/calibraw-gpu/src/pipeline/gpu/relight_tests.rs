@@ -1,7 +1,7 @@
 use super::fog_tests::{
     assert_close, mean_difference, neutral_exposure, FogScene, MASK_EDGE, RGB_TOLERANCE,
 };
-use super::{GpuParams, PipelineOptions, ProcessingQuality, RawGpuPipeline};
+use super::{FullImageMap, GpuParams, PipelineOptions, ProcessingQuality, RawGpuPipeline};
 use crate::pipeline::{
     extract_padded_tile, EffectComponent, ExportTile, LoadedRaw, LocalMask, MaskEffect, MaskImage,
     MaskKind, MaskStack, ProcessingStage, RelightEffectSettings,
@@ -505,7 +505,7 @@ fn effect_inputs_are_allocated_on_first_use() -> anyhow::Result<()> {
     };
     let inputs = &scene.pipeline.effect_inputs;
     assert!(inputs.relight_surface().is_none());
-    assert!(inputs.image_lights().is_none());
+    assert!(inputs.full_image_map(FullImageMap::ImageLights).is_none());
     assert!(!inputs.scene_depth_guide_allocated());
 
     let mut fog = EffectComponent::new(MaskEffect::Fog);
@@ -528,7 +528,7 @@ fn effect_inputs_are_allocated_on_first_use() -> anyhow::Result<()> {
         Some(ridge()),
     ))?;
     assert!(inputs.relight_surface().is_some());
-    assert!(inputs.image_lights().is_none());
+    assert!(inputs.full_image_map(FullImageMap::ImageLights).is_none());
     // The surface holds the same stored depth, so fog renders as before.
     let after = scene.render(&depth_fog)?;
     assert_close(&after, &before, 0.0, "depth fog after the Relight surface");
@@ -536,6 +536,6 @@ fn effect_inputs_are_allocated_on_first_use() -> anyhow::Result<()> {
     let mut lit_fog = depth_fog;
     lit_fog.global_effects[0].settings.fog.image_lights = true;
     scene.render(&lit_fog)?;
-    assert!(inputs.image_lights().is_some());
+    assert!(inputs.full_image_map(FullImageMap::ImageLights).is_some());
     Ok(())
 }

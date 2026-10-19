@@ -2,12 +2,14 @@ use super::{
     pack_effect_mask, pack_local_point_curve, pack_point_curve, processing_work_format,
     shader_manager::ShaderManager, shaders, work_shader_source, GpuParams, PipelineOptions,
     ProcessingQuality, RawGpuPipeline, ViewTransformMode, COLOR_DENOISE_ENTRY_POINTS,
+    DETAIL_PYRAMID_LEVELS,
 };
 use crate::pipeline::{
     extract_padded_tile, CameraProfile, CfaKind, CompactPixelMap, DenoiseQuality, EffectComponent,
-    ExportTile, ExposureParams, HighlightReconstructionMethod, LoadedRaw, LocalMask, MaskEffect,
-    MaskKind, MaskStack, NativeRect, NoiseProfile, PointCurve, ProcessingStage,
-    SigmoidColorProcessing, TONE_GUIDE_CELL_SIZE,
+    ExportTile, ExposureParams, HighlightReconstructionMethod, HsvMap, LoadedRaw, LocalMask,
+    MaskEffect, MaskKind, MaskStack, NativeRect, NoiseProfile, PointCurve, ProcessingStage,
+    ProfileEncoding, SigmoidColorProcessing, WhiteBalance, MAX_TEMPERATURE_KELVIN,
+    MAX_WHITE_BALANCE_TINT, TONE_GUIDE_CELL_SIZE,
 };
 
 #[test]
@@ -166,27 +168,27 @@ fn adjacent_f32(value: f32, above: bool) -> f32 {
 }
 
 #[test]
-fn lch_and_rcd_share_sensor_space_highlight_clip_definition() {
+fn lch_detects_clipping_in_sensor_space_and_limits_chroma_at_a_common_level() {
     assert!(shaders::RAW_SAMPLING
         .text
         .contains("fn shared_highlight_sensor_clip() -> f32"));
     assert!(shaders::RAW_SAMPLING
         .text
         .contains("return raw_sensor_at(p) >= shared_highlight_sensor_clip();"));
-    assert!(shaders::RAW_SAMPLING
-        .text
-        .contains("fn shared_highlight_clip_for_cfa_channel(channel: u32) -> f32"));
-    assert!(!shaders::RAW_SAMPLING.text.contains("min_wb"));
+    assert!(!shaders::RAW_SAMPLING.text.contains("min(wb"));
     assert!(shaders::HIGHLIGHTS
         .text
         .contains("#import calibraw::raw_sampling as RawSampling"));
     assert!(shaders::HIGHLIGHTS
         .text
         .contains("clipped = clipped || RawSampling::is_raw_clipped(p);"));
+    // darktable's clip * processed_minimum: one WB-domain level for R, G and B.
     assert!(shaders::HIGHLIGHTS
         .text
-        .contains("RawSampling::shared_highlight_clip_for_cfa_channel(physical_channel)"));
-    assert!(!shaders::HIGHLIGHTS.text.contains("fn lch_common_clip()"));
+        .contains("return RawSampling::shared_highlight_sensor_clip() * max(lowest_wb, 1e-6);"));
+    for clamp in ["min(r, clip)", "min(g_min, clip)", "min(b, clip)"] {
+        assert!(shaders::HIGHLIGHTS.text.contains(clamp), "{clamp}");
+    }
 
     validate_shader(shaders::HIGHLIGHTS_ENTRY, ProcessingQuality::Preview);
     validate_shader(shaders::BAYER_RCD_P2_ENTRY, ProcessingQuality::Preview);
@@ -223,6 +225,376 @@ fn unequal_wb_does_not_move_raw_highlight_clipping_boundary() {
     assert!(raw_sensor * wb[2] >= old_min_wb_clip);
     assert!(raw_sensor * wb[0] < shared_highlight_channel_clip_for_test(highlight_clip, wb, 0));
     assert!(raw_sensor * wb[2] < shared_highlight_channel_clip_for_test(highlight_clip, wb, 2));
+}
+
+#[test]
+fn lch_turns_fully_clipped_areas_neutral_with_unequal_wb() -> anyhow::Result<()> {
+    const EDGE: u32 = 32;
+    let Some((device, queue, _)) = request_test_device_with_info() else {
+        eprintln!("LCh neutral clip check skipped: no headless wgpu adapter");
+        return Ok(());
+    };
+    // Every sample at white, with R and B gains on both sides of green.
+    let mut raw = opposed_highlight_consistency_raw(EDGE, EDGE);
+    raw.raw_pixels.fill(10_000);
+    raw.wb_coeffs = [2.1, 1.0, 1.6, 1.0];
+    let exposure = ExposureParams {
+        highlight_method: HighlightReconstructionMethod::Lch,
+        ..Default::default()
+    };
+    let params = GpuParams::new(&exposure, &MaskStack::default(), &raw);
+    let pipeline = RawGpuPipeline::new(
+        &device,
+        &queue,
+        &raw,
+        &params,
+        PipelineOptions::new(ProcessingQuality::High),
+    )?;
+    let scene = pipeline.render_camera_scene_blocking(&device, &queue, &params)?;
+    let center = ((EDGE / 2 * EDGE + EDGE / 2) * 3) as usize;
+    let rgb = &scene[center..center + 3];
+    let (lowest, highest) = rgb.iter().fold((f32::INFINITY, 0.0_f32), |(lo, hi), &v| {
+        (lo.min(v), hi.max(v))
+    });
+    assert!(lowest > 0.0, "{rgb:?}");
+    // Per-channel clip levels kept the 2.1 : 1 : 1.6 WB ratio here.
+    assert!(highest / lowest < 1.01, "clipped block is tinted: {rgb:?}");
+    Ok(())
+}
+
+/// A uniform 16-bit Bayer mosaic with R, G and B at 90%, 50% and 30% of
+/// white, neutral white balance, and `gain` as its lens shading.
+fn lens_shaded_raw(edge: u32, gain: impl Fn([f32; 2]) -> f32) -> LoadedRaw {
+    let mut raw = opposed_highlight_consistency_raw(edge, edge);
+    for (index, sample) in raw.raw_pixels.iter_mut().enumerate() {
+        let level = match raw.color_indices[index] {
+            0 => 0.9,
+            2 => 0.3,
+            _ => 0.5,
+        };
+        *sample = (level * 65_535.0_f32).round() as u16;
+    }
+    raw.white_levels = [65_535.0; 4];
+    raw.wb_coeffs = [1.0; 4];
+    raw.lens_shading = crate::pipeline::LensShadingMap::from_fn(|position| [gain(position); 3]);
+    raw
+}
+
+#[test]
+fn lens_shading_gain_follows_clip_detection_and_keeps_headroom() -> anyhow::Result<()> {
+    const EDGE: u32 = 48;
+    let Some((device, queue, _)) = request_test_device_with_info() else {
+        eprintln!("Lens shading check skipped: no headless wgpu adapter");
+        return Ok(());
+    };
+    let render = |raw: &LoadedRaw, method, origin: [i32; 2]| -> anyhow::Result<Vec<f32>> {
+        let exposure = ExposureParams {
+            highlight_method: method,
+            ..Default::default()
+        };
+        if raw.uses_opposed_chroma(&exposure) {
+            raw.inpaint_opposed_chroma_for_exposure(&exposure);
+        }
+        let params = GpuParams::new_for_tile(
+            &exposure,
+            &MaskStack::default(),
+            raw,
+            origin[0],
+            origin[1],
+            EDGE,
+            EDGE,
+        );
+        let pipeline = RawGpuPipeline::new(
+            &device,
+            &queue,
+            raw,
+            &params,
+            PipelineOptions::new(ProcessingQuality::High),
+        )?;
+        pipeline.render_camera_scene_blocking(&device, &queue, &params)
+    };
+    let near = |actual: &[f32], expected: [f32; 3], context: &str| {
+        for (actual, expected) in actual.iter().zip(expected) {
+            assert!(
+                (actual / expected - 1.0).abs() < 2e-3,
+                "{context}: {actual} instead of {expected}"
+            );
+        }
+    };
+
+    // 0.9 x 1.5 is above white, but the recorded 90% sample is not clipped:
+    // no method reconstructs it and nothing limits it to the 16-bit range.
+    let uniform = lens_shaded_raw(EDGE, |_| 1.5);
+    for method in [
+        HighlightReconstructionMethod::Off,
+        HighlightReconstructionMethod::Lch,
+        HighlightReconstructionMethod::InpaintOpposed,
+    ] {
+        let scene = render(&uniform, method, [0, 0])?;
+        let center = ((EDGE / 2 * EDGE + EDGE / 2) * 3) as usize;
+        near(
+            &scene[center..center + 3],
+            [1.35, 0.75, 0.45],
+            &format!("{method:?}"),
+        );
+    }
+
+    // The map spans the full image, so a tile reads the gain of its global
+    // position.
+    let ramp = lens_shaded_raw(EDGE, |[u, _]| 1.0 + u);
+    let full = render(&ramp, HighlightReconstructionMethod::Off, [0, 0])?;
+    let [x0, y0, size] = [16u32, 12, 20];
+    let tile = render(
+        &crate::pipeline::crop_raw(&ramp, x0, y0, size, size),
+        HighlightReconstructionMethod::Off,
+        [x0 as i32, y0 as i32],
+    );
+    let tile = tile?;
+    for [x, y] in [[4u32, 4], [10, 8], [15, 15]] {
+        let global = (((y0 + y) * EDGE + x0 + x) * 3) as usize;
+        let gain = 1.0 + (x0 + x) as f32 / (EDGE - 1) as f32;
+        near(
+            &full[global..global + 3],
+            [0.9 * gain, 0.5 * gain, 0.3 * gain],
+            "full",
+        );
+        let local = ((y * size + x) * 3) as usize;
+        near(
+            &tile[local..local + 3],
+            [full[global], full[global + 1], full[global + 2]],
+            "tile",
+        );
+    }
+    Ok(())
+}
+
+/// A Bayer dark frame: 512 DN black, 16383 DN white and Gaussian read noise
+/// of `sigma_dn` around black, from a fixed-seed generator.
+fn dark_frame_raw(edge: u32, sigma_dn: f32) -> LoadedRaw {
+    let mut raw = opposed_highlight_consistency_raw(edge, edge);
+    let mut state = 0x9E37_79B9_7F4A_7C15_u64;
+    let mut uniform = move || {
+        state = state
+            .wrapping_mul(6_364_136_223_846_793_005)
+            .wrapping_add(1_442_695_040_888_963_407);
+        ((state >> 40) as f32 + 0.5) / (1u64 << 24) as f32
+    };
+    for sample in &mut raw.raw_pixels {
+        let gaussian = (-2.0 * uniform().ln()).sqrt() * (std::f32::consts::TAU * uniform()).cos();
+        *sample = (512.0 + sigma_dn * gaussian).round().max(0.0) as u16;
+    }
+    raw.black_levels = [512.0; 4];
+    raw.black_levels_per_pixel = CompactPixelMap::repeating(edge, edge, 1, 1, vec![512.0]);
+    raw.white_levels = [16_383.0; 4];
+    raw.wb_coeffs = [2.0, 1.0, 1.6, 1.0];
+    // What NoiseProfile::estimate reports for this frame: read noise only.
+    raw.noise_profile.read = [(sigma_dn / (16_383.0 - 512.0)).powi(2); 4];
+    raw
+}
+
+#[test]
+fn dark_frame_shadow_mean_stays_at_black() -> anyhow::Result<()> {
+    const EDGE: u32 = 192;
+    const MARGIN: u32 = 16;
+    const SIGMA_DN: f32 = 24.0;
+    let Some((device, queue, _)) = request_test_device_with_info() else {
+        eprintln!("Dark frame check skipped: no headless wgpu adapter");
+        return Ok(());
+    };
+    let raw = dark_frame_raw(EDGE, SIGMA_DN);
+    let exposure = ExposureParams {
+        luminance_denoise: 0.0,
+        chroma_denoise: 0.0,
+        ..Default::default()
+    };
+    let params = GpuParams::new(&exposure, &MaskStack::default(), &raw);
+    let pipeline = RawGpuPipeline::new(
+        &device,
+        &queue,
+        &raw,
+        &params,
+        PipelineOptions::new(ProcessingQuality::High),
+    )?;
+    let scene = pipeline.render_camera_scene_blocking(&device, &queue, &params)?;
+    let mut sum = [0.0_f64; 3];
+    let mut count = 0.0_f64;
+    for y in MARGIN..EDGE - MARGIN {
+        for x in MARGIN..EDGE - MARGIN {
+            let index = ((y * EDGE + x) * 3) as usize;
+            for channel in 0..3 {
+                sum[channel] += f64::from(scene[index + channel]);
+            }
+            count += 1.0;
+        }
+    }
+    let sigma = f64::from(SIGMA_DN) / (16_383.0 - 512.0);
+    let mean_in_sigma: Vec<f64> = sum
+        .iter()
+        .zip([2.0, 1.0, 1.6])
+        .map(|(sum, wb)| sum / count / (sigma * wb))
+        .collect();
+    // Clamping each sample at black before demosaic lifted every channel by
+    // about 0.36 sigma, R and B more than G in camera RGB.
+    assert!(
+        mean_in_sigma.iter().all(|mean| mean.abs() < 0.06),
+        "dark frame mean in read-noise sigmas: {mean_in_sigma:?}"
+    );
+    Ok(())
+}
+
+/// Develop settings that each push one scene module hard, for checks that
+/// noise below black survives the whole pipeline.
+fn shadow_stress_settings() -> Vec<(&'static str, ExposureParams)> {
+    let base = ExposureParams::default();
+    let mut graded = base;
+    graded.color_grading.shadows.hue = 300.0;
+    graded.color_grading.shadows.saturation = 100.0;
+    graded.color_grading.shadows.luminance = 50.0;
+    let mut hsl = base;
+    hsl.hsl_saturation = [100.0; 8];
+    hsl.hsl_luminance = [100.0; 8];
+    let with = |name, edit: &dyn Fn(&mut ExposureParams)| {
+        let mut exposure = base;
+        edit(&mut exposure);
+        (name, exposure)
+    };
+    vec![
+        ("default", base),
+        with("exposure +4", &|e| e.exposure = 4.0),
+        with("shadows/blacks +100", &|e| {
+            e.exposure = 2.0;
+            e.shadows = 100.0;
+            e.blacks = 100.0;
+        }),
+        with("blacks -100", &|e| e.blacks = -100.0),
+        with("highlights/whites", &|e| {
+            e.highlights = -100.0;
+            e.whites = 100.0;
+        }),
+        with("contrast +100", &|e| e.contrast = 100.0),
+        with("contrast -100", &|e| e.contrast = -100.0),
+        with("texture/clarity +100", &|e| {
+            e.texture = 100.0;
+            e.clarity = 100.0;
+        }),
+        with("texture/clarity -100", &|e| {
+            e.texture = -100.0;
+            e.clarity = -100.0;
+        }),
+        with("dehaze +100", &|e| e.dehaze = 100.0),
+        with("dehaze -100", &|e| e.dehaze = -100.0),
+        with("sharpen", &|e| {
+            e.sharpen_amount = 100.0;
+            e.sharpen_masking = 0.0;
+        }),
+        with("saturation/vibrance", &|e| {
+            e.saturation = 100.0;
+            e.vibrance = 100.0;
+            e.hue = 40.0;
+        }),
+        with("temperature/tint", &|e| {
+            e.white_balance = WhiteBalance::Custom {
+                kelvin: MAX_TEMPERATURE_KELVIN,
+                tint: MAX_WHITE_BALANCE_TINT,
+                older_reader_offsets: [0.0; 2],
+            };
+        }),
+        with("denoise", &|e| {
+            e.luminance_denoise = 100.0;
+            e.chroma_denoise = 100.0;
+        }),
+        with("dual demosaic", &|e| {
+            e.demosaic_mode = crate::pipeline::DemosaicMode::Dual
+        }),
+        with("frequency chroma", &|e| {
+            e.demosaic_mode = crate::pipeline::DemosaicMode::FrequencyDomainChroma;
+        }),
+        with("black point +", &|e| e.black_point = 0.02),
+        with("black point -", &|e| e.black_point = -0.02),
+        ("colour grading", graded),
+        ("hsl", hsl),
+    ]
+}
+
+#[test]
+fn noise_below_black_stays_finite_and_dark_through_the_pipeline() -> anyhow::Result<()> {
+    const EDGE: u32 = 128;
+    const XTRANS: [[u8; 6]; 6] = [
+        [1, 1, 0, 1, 1, 2],
+        [1, 1, 2, 1, 1, 0],
+        [2, 0, 1, 0, 2, 1],
+        [1, 1, 2, 1, 1, 0],
+        [1, 1, 0, 1, 1, 2],
+        [0, 2, 1, 2, 0, 1],
+    ];
+    let Some((device, queue, _)) = request_test_device_with_info() else {
+        eprintln!("Shadow stress check skipped: no headless wgpu adapter");
+        return Ok(());
+    };
+    // Read noise around black on the left half; a grey ramp from black to
+    // 40% of white on the right half, so tone analysis sees real content.
+    let mut bayer = dark_frame_raw(EDGE, 24.0);
+    for y in 0..EDGE {
+        for x in EDGE / 2..EDGE {
+            let index = (y * EDGE + x) as usize;
+            let level = 0.4 * (x - EDGE / 2) as f32 / (EDGE / 2) as f32;
+            let sample = f32::from(bayer.raw_pixels[index]) + level * (16_383.0 - 512.0);
+            bayer.raw_pixels[index] = sample.round().min(16_383.0) as u16;
+        }
+    }
+    let mut xtrans = bayer.clone();
+    xtrans.cfa_kind = CfaKind::XTrans;
+    xtrans.color_indices = CompactPixelMap::dense(
+        EDGE,
+        EDGE,
+        (0..EDGE * EDGE)
+            .map(|index| XTRANS[((index / EDGE) % 6) as usize][((index % EDGE) % 6) as usize])
+            .collect(),
+    );
+    let masks = MaskStack::default();
+    for raw in [&bayer, &xtrans] {
+        let mut pipeline: Option<RawGpuPipeline> = None;
+        for (name, exposure) in shadow_stress_settings() {
+            let params = GpuParams::new(&exposure, &masks, raw);
+            let pipeline = match &pipeline {
+                Some(pipeline) => pipeline,
+                None => pipeline.insert(RawGpuPipeline::new(
+                    &device,
+                    &queue,
+                    raw,
+                    &params,
+                    PipelineOptions::new(ProcessingQuality::High),
+                )?),
+            };
+            pipeline.recompute(&queue, &device, &params);
+            let display =
+                pipeline.read_display_linear_region_blocking(&device, &queue, 0, 0, EDGE, EDGE)?;
+            let context = format!("{:?} {name}", raw.cfa_kind);
+            assert!(
+                display.iter().all(|value| value.is_finite()),
+                "{context}: non-finite display values"
+            );
+            // A stage that divided by negative luminance would turn black
+            // bright; the hardest push here (black point -2%) stays near 0.023.
+            let mut dark = [0.0_f64; 3];
+            let mut count = 0.0;
+            for y in 8..EDGE - 8 {
+                for x in 8..EDGE / 2 - 8 {
+                    let index = ((y * EDGE + x) * 3) as usize;
+                    for channel in 0..3 {
+                        dark[channel] += f64::from(display[index + channel]);
+                    }
+                    count += 1.0;
+                }
+            }
+            let dark = dark.map(|sum| sum / count);
+            assert!(
+                dark.iter().all(|mean| (0.0..0.05).contains(mean)),
+                "{context}: dark display-linear mean {dark:?}"
+            );
+        }
+    }
+    Ok(())
 }
 
 #[test]
@@ -788,7 +1160,7 @@ fn tone_percentile_masks_follow_full_user_exposure() {
         [
             p05 - 0.90,
             p50 + 1.35,
-            p50 - 0.35,
+            p50 - 0.60,
             p95 + 0.45,
             p05 - 0.10,
             p50 + 0.50,
@@ -808,7 +1180,7 @@ fn tone_percentile_masks_follow_full_user_exposure() {
         let white_ev = -1.00 + exposure;
         [
             1.0 - test_tone_smoothstep(p05 - 0.90, p50 + 1.35, shadow_ev),
-            0.10 + 0.90 * test_tone_smoothstep(p50 - 0.35, p95 + 0.45, highlight_ev),
+            test_tone_smoothstep(p50 - 0.60, p95 + 0.45, highlight_ev),
             test_tone_smoothstep(p05 - 0.10, p50 + 0.50, white_ev),
         ]
     };
@@ -891,6 +1263,7 @@ fn opposed_highlight_consistency_raw(width: u32, height: u32) -> LoadedRaw {
     LoadedRaw {
         width,
         height,
+        source_extent: [width, height],
         camera_make: "Test".to_owned(),
         camera_model: "Opposed highlights".to_owned(),
         lens_make: String::new(),
@@ -919,6 +1292,7 @@ fn opposed_highlight_consistency_raw(width: u32, height: u32) -> LoadedRaw {
         available_camera_profiles: Vec::new(),
         white_balance_model: None,
         lens_geometry: None,
+        lens_shading: None,
         ai_denoised: std::sync::Arc::new(std::sync::RwLock::new(None)),
         opposed_chroma_cache: Default::default(),
         opposed_chroma_source_identity: Default::default(),
@@ -933,7 +1307,7 @@ fn assert_planned_programs(pipeline: &RawGpuPipeline) {
     let entry = |index: usize| pipeline.passes[index].pipeline.entry.as_str();
     for (index, expected) in [
         (indices.highlight_pass_index, "highlight_reconstruct"),
-        (indices.demosaic_dual_start_index, "dual_green_reconstruct"),
+        (indices.demosaic_dual_start_index + 1, "dual_smooth_detail"),
         (
             indices.color_denoise_start_index,
             COLOR_DENOISE_ENTRY_POINTS[0],
@@ -946,6 +1320,11 @@ fn assert_planned_programs(pipeline: &RawGpuPipeline) {
         (
             indices.adjustment_local_tone_pass_index,
             "apply_local_scene_tone_node",
+        ),
+        (indices.detail_pyramid_start_index, "build_detail_level_0"),
+        (
+            indices.detail_pyramid_start_index + DETAIL_PYRAMID_LEVELS - 1,
+            "build_detail_level_6",
         ),
         (
             indices.adjustment_effects_pass_index,
@@ -988,6 +1367,9 @@ fn assert_planned_programs(pipeline: &RawGpuPipeline) {
             "build_scene_depth_guide",
         ),
         (indices.raster_finish_pass_index, "raster_finish"),
+        (indices.haze_accumulate_pass_index, "accumulate_haze"),
+        (indices.haze_resolve_pass_index, "resolve_haze_airlight"),
+        (indices.haze_end_index - 1, "smooth_haze_coefficients"),
     ] {
         assert_eq!(entry(index), expected, "pass {index}");
     }
@@ -1532,7 +1914,6 @@ fn specialized_bayer_modes_match_the_dynamic_shader_when_switching_modes() -> an
     let masks = MaskStack::default();
     let mut exposure = ExposureParams::scene_referred_default();
     exposure.luminance_denoise = 15.0;
-    exposure.ca_red = 0.5;
     let params = GpuParams::new(&exposure, &masks, &raw);
     let mut pipeline = RawGpuPipeline::new(
         &device,
@@ -1553,9 +1934,8 @@ fn specialized_bayer_modes_match_the_dynamic_shader_when_switching_modes() -> an
         compiled: OnceLock::from(dynamic.clone()),
         demosaic_variants: std::array::from_fn(|_| OnceLock::from(dynamic.clone())),
     });
-    for (denoise, ca) in [(0.0, 0.0), (15.0, 0.0), (0.0, 0.5), (15.0, 0.5)] {
+    for denoise in [0.0, 15.0] {
         exposure.luminance_denoise = denoise;
-        exposure.ca_red = ca;
         for mode in [
             DemosaicMode::Reference,
             DemosaicMode::FrequencyDomainChroma,
@@ -1581,6 +1961,226 @@ fn specialized_bayer_modes_match_the_dynamic_shader_when_switching_modes() -> an
                 .fold(0.0f32, f32::max);
             assert!(max_error <= 1e-5, "mode={mode:?} error={max_error}");
         }
+    }
+    Ok(())
+}
+
+/// A neutral Bayer scene: camera RGB `level(x, y)` in every channel after the
+/// test RAW's white balance, plus Gaussian noise of `sigma` in sensor units.
+fn neutral_bayer_raw(edge: u32, sigma: f32, level: impl Fn(u32, u32) -> f32) -> LoadedRaw {
+    let mut raw = opposed_highlight_consistency_raw(edge, edge);
+    let mut state = 0x2545_F491_4F6C_DD1D_u64;
+    let mut uniform = move || {
+        state = state
+            .wrapping_mul(6_364_136_223_846_793_005)
+            .wrapping_add(1_442_695_040_888_963_407);
+        ((state >> 40) as f32 + 0.5) / (1u64 << 24) as f32
+    };
+    for y in 0..edge {
+        for x in 0..edge {
+            let index = (y * edge + x) as usize;
+            let channel = usize::from(raw.color_indices[index].min(3));
+            let gaussian =
+                (-2.0 * uniform().ln()).sqrt() * (std::f32::consts::TAU * uniform()).cos();
+            let sensor = level(x, y) / raw.wb_coeffs[channel] + sigma * gaussian;
+            raw.raw_pixels[index] = (sensor * 10_000.0).round().clamp(0.0, 10_000.0) as u16;
+        }
+    }
+    raw
+}
+
+/// RMS of `|R - G|` and `|B - G|` in camera RGB `scene` inside `margin`,
+/// relative to green.
+fn neutral_chroma_rms(scene: &[f32], edge: u32, margin: u32) -> f32 {
+    let mut squares = 0.0_f64;
+    let mut count = 0.0_f64;
+    for y in margin..edge - margin {
+        for x in margin..edge - margin {
+            let index = ((y * edge + x) * 3) as usize;
+            let [r, g, b] = [scene[index], scene[index + 1], scene[index + 2]];
+            for chroma in [r - g, b - g] {
+                squares += f64::from((chroma / g.max(1e-6)).powi(2));
+                count += 1.0;
+            }
+        }
+    }
+    (squares / count).sqrt() as f32
+}
+
+/// RMS of green's 2x2 checkerboard component inside `margin`, relative to the
+/// mean green: the pattern a demosaic leaves when green at red and blue
+/// photosites disagrees with green at green photosites.
+fn green_checkerboard(scene: &[f32], edge: u32, margin: u32) -> f32 {
+    let green = |x: u32, y: u32| f64::from(scene[((y * edge + x) * 3 + 1) as usize]);
+    let mut squares = 0.0_f64;
+    let mut sum = 0.0_f64;
+    let mut count = 0.0_f64;
+    for y in margin..edge - margin {
+        for x in margin..edge - margin {
+            let checker =
+                (green(x, y) + green(x + 1, y + 1) - green(x + 1, y) - green(x, y + 1)) / 4.0;
+            squares += checker * checker;
+            sum += green(x, y);
+            count += 1.0;
+        }
+    }
+    ((squares / count).sqrt() / (sum / count)) as f32
+}
+
+/// Dual demosaicing (darktable's) keeps RCD on detail and a smoothed linear
+/// interpolation in flat areas, so it carries less colour noise than RCD and
+/// adds no pattern of its own. The estimator it replaced painted a green
+/// checkerboard along dark detail: more checkerboard than RCD, here 1.13 to
+/// 1.21 times as much.
+#[test]
+fn dual_demosaic_smooths_flat_colour_noise_without_a_checkerboard() -> anyhow::Result<()> {
+    use crate::pipeline::DemosaicMode;
+    const EDGE: u32 = 96;
+    const MARGIN: u32 = 12;
+    let Some((device, queue)) = request_test_device() else {
+        eprintln!("Dual demosaic check skipped: no headless wgpu adapter");
+        return Ok(());
+    };
+    let render = |raw: &LoadedRaw, mode: DemosaicMode| -> anyhow::Result<Vec<f32>> {
+        let exposure = ExposureParams {
+            demosaic_mode: mode,
+            luminance_denoise: 0.0,
+            chroma_denoise: 0.0,
+            ..Default::default()
+        };
+        let params = GpuParams::new(&exposure, &MaskStack::default(), raw);
+        let pipeline = RawGpuPipeline::new(
+            &device,
+            &queue,
+            raw,
+            &params,
+            PipelineOptions::new(ProcessingQuality::High),
+        )?;
+        pipeline.render_camera_scene_blocking(&device, &queue, &params)
+    };
+
+    // Noisy thin dark diagonal lines on a bright field, like fence slats.
+    let lines = neutral_bayer_raw(
+        EDGE,
+        0.004,
+        |x, y| {
+            if (x + y) % 10 < 2 {
+                0.02
+            } else {
+                0.25
+            }
+        },
+    );
+    let reference = green_checkerboard(&render(&lines, DemosaicMode::Reference)?, EDGE, MARGIN);
+    let dual = green_checkerboard(&render(&lines, DemosaicMode::Dual)?, EDGE, MARGIN);
+    assert!(
+        dual < 0.95 * reference,
+        "green checkerboard: dual {dual}, reference {reference}"
+    );
+
+    // Noise well below darktable's default threshold: the mask keeps the
+    // smoothed interpolation, whose colour noise is about 0.72 of RCD's (the
+    // replaced estimator's was 0.83).
+    let flat = neutral_bayer_raw(EDGE, 0.004, |_, _| 0.18);
+    let reference = neutral_chroma_rms(&render(&flat, DemosaicMode::Reference)?, EDGE, MARGIN);
+    let dual = neutral_chroma_rms(&render(&flat, DemosaicMode::Dual)?, EDGE, MARGIN);
+    assert!(
+        dual < 0.8 * reference,
+        "flat colour noise: dual {dual}, reference {reference}"
+    );
+    Ok(())
+}
+
+/// X-Trans demosaicing matches darktable 5.6.1's Markesteijn 3-pass followed
+/// by one colour-smoothing pass. The expected values come from a float64
+/// transcription of `xtrans_markesteijn_interpolate` and `color_smoothing` on
+/// the same mosaic, at two pixels of every photosite class whose interpolation
+/// and median decisions are far from ties (float32 and float64 agree to 1e-6
+/// over each pixel's 3x3 window). Dual demosaicing with a zero threshold keeps
+/// the smoothed Markesteijn result unchanged.
+#[test]
+fn xtrans_demosaic_matches_darktable_markesteijn() -> anyhow::Result<()> {
+    use crate::pipeline::DemosaicMode;
+    const EDGE: u32 = 64;
+    const XTRANS: [[u8; 6]; 6] = [
+        [1, 1, 0, 1, 1, 2],
+        [1, 1, 2, 1, 1, 0],
+        [2, 0, 1, 0, 2, 1],
+        [1, 1, 2, 1, 1, 0],
+        [1, 1, 0, 1, 1, 2],
+        [0, 2, 1, 2, 0, 1],
+    ];
+    // Camera RGB at [x, y] for a pattern shifted by one row and two columns.
+    const EXPECTED: [([u32; 2], [f32; 3]); 12] = [
+        // Greens in 2x2 blocks.
+        ([25, 24], [0.422616, 0.503000, 0.558852]),
+        ([26, 24], [0.485211, 0.568800, 0.606648]),
+        // Blue in horizontal and vertical pairs.
+        ([26, 25], [0.630919, 0.720059, 0.747638]),
+        ([28, 25], [0.371757, 0.438279, 0.458000]),
+        ([24, 24], [0.362937, 0.423748, 0.479600]),
+        ([30, 24], [0.478411, 0.543242, 0.540026]),
+        // Red in horizontal and vertical pairs.
+        ([25, 25], [0.572883, 0.665245, 0.688345]),
+        ([29, 25], [0.499989, 0.564743, 0.570395]),
+        ([27, 24], [0.602551, 0.686140, 0.722831]),
+        ([33, 24], [0.690196, 0.707821, 0.727531]),
+        // Solitary greens.
+        ([24, 25], [0.456051, 0.547200, 0.573974]),
+        ([27, 25], [0.280478, 0.347000, 0.370100]),
+    ];
+    let Some((device, queue)) = request_test_device() else {
+        eprintln!("X-Trans Markesteijn check skipped: no headless wgpu adapter");
+        return Ok(());
+    };
+    let color = |x: u32, y: u32| XTRANS[(y as usize + 1) % 6][(x as usize + 2) % 6];
+    let mut raw = opposed_highlight_consistency_raw(EDGE, EDGE);
+    raw.cfa_kind = CfaKind::XTrans;
+    raw.wb_coeffs = [1.0; 4];
+    raw.color_indices = CompactPixelMap::dense(
+        EDGE,
+        EDGE,
+        (0..EDGE * EDGE)
+            .map(|index| color(index % EDGE, index / EDGE))
+            .collect(),
+    );
+    // Integer texture that the reference reproduces exactly; white is 10000.
+    for y in 0..EDGE {
+        for x in 0..EDGE {
+            let value = 3000
+                + ((x * x * 3 + y * y * 5 + x * y) % 997) * 4
+                + (x * 13 % 7) * 50
+                + 400 * u32::from(color(x, y));
+            raw.raw_pixels[(y * EDGE + x) as usize] = value as u16;
+        }
+    }
+    let exposure = ExposureParams {
+        demosaic_mode: DemosaicMode::Dual,
+        dual_threshold: 0.0,
+        luminance_denoise: 0.0,
+        chroma_denoise: 0.0,
+        ..Default::default()
+    };
+    let params = GpuParams::new(&exposure, &MaskStack::default(), &raw);
+    let pipeline = RawGpuPipeline::new(
+        &device,
+        &queue,
+        &raw,
+        &params,
+        PipelineOptions::new(ProcessingQuality::High),
+    )?;
+    let scene = pipeline.render_camera_scene_blocking(&device, &queue, &params)?;
+    for ([x, y], expected) in EXPECTED {
+        let index = ((y * EDGE + x) * 3) as usize;
+        let actual = &scene[index..index + 3];
+        assert!(
+            actual
+                .iter()
+                .zip(expected)
+                .all(|(actual, expected)| (actual - expected).abs() < 1e-5),
+            "pixel ({x}, {y}) of colour {}: {actual:?}, darktable {expected:?}",
+            color(x, y)
+        );
     }
     Ok(())
 }
@@ -1760,5 +2360,124 @@ fn developed_raster_contrast_starts_from_the_rendered_photo() -> anyhow::Result<
     );
     let flatter = render(-100.0)?;
     assert!(flatter[1] + 2 < rendered[1], "{flatter:?} vs {rendered:?}");
+    Ok(())
+}
+
+#[test]
+fn white_balance_has_no_effect_without_a_white_balance_model() -> anyhow::Result<()> {
+    let Some((device, queue)) = request_test_device() else {
+        return Ok(());
+    };
+    const EDGE: u32 = 16;
+    // A rendered photo: neutral grey with a warm patch, and no camera
+    // white-balance model, so the Color card shows no temperature or tint.
+    let pixels = (0..EDGE * EDGE)
+        .flat_map(|index| {
+            if index % EDGE < EDGE / 2 {
+                [0.18, 0.18, 0.18]
+            } else {
+                [0.4, 0.2, 0.1]
+            }
+        })
+        .collect();
+    let source = LoadedRaw::from_scene_linear_rec2020(EDGE, EDGE, pixels)?;
+    assert!(source.white_balance_model.is_none());
+    let exposure = |white_balance| ExposureParams {
+        white_balance,
+        ..Default::default()
+    };
+    let masks = MaskStack::default();
+    let pipeline = RawGpuPipeline::new(
+        &device,
+        &queue,
+        &source,
+        &GpuParams::new(&exposure(WhiteBalance::AsShot), &masks, &source),
+        PipelineOptions::new(ProcessingQuality::Preview),
+    )?;
+    let render = |white_balance| -> anyhow::Result<Vec<u8>> {
+        pipeline.recompute(
+            &queue,
+            &device,
+            &GpuParams::new(&exposure(white_balance), &masks, &source),
+        );
+        pipeline.read_output_region_blocking(&device, &queue, 0, 0, EDGE, EDGE)
+    };
+
+    let as_shot = render(WhiteBalance::AsShot)?;
+    let grey = &as_shot[..3];
+    for white_balance in [
+        WhiteBalance::Custom {
+            kelvin: 3000.0,
+            tint: 0.0,
+            older_reader_offsets: [-150.0, 0.0],
+        },
+        WhiteBalance::Custom {
+            kelvin: 9000.0,
+            tint: -40.0,
+            older_reader_offsets: [80.0, 8.0],
+        },
+        WhiteBalance::LegacyOffset {
+            temperature: 80.0,
+            tint: 0.0,
+        },
+        WhiteBalance::LegacyOffset {
+            temperature: 40.0,
+            tint: -60.0,
+        },
+    ] {
+        let shifted = render(white_balance)?;
+        assert!(
+            shifted == as_shot,
+            "{white_balance:?}: grey {:?} became {:?}",
+            grey,
+            &shifted[..3]
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn the_profile_look_precedes_the_user_colour_edits() -> anyhow::Result<()> {
+    let Some((device, queue)) = request_test_device() else {
+        return Ok(());
+    };
+    const EDGE: u32 = 16;
+    // A saturated red, which the look turns green.
+    let pixels = (0..EDGE * EDGE).flat_map(|_| [0.30, 0.03, 0.03]).collect();
+    let mut source = LoadedRaw::from_scene_linear_rec2020(EDGE, EDGE, pixels)?;
+    source.camera_profile.look_table = Some(HsvMap::new(
+        [6, 2, 1],
+        vec![[120.0, 1.0, 1.0]; 12],
+        ProfileEncoding::Linear,
+    )?);
+    let masks = MaskStack::default();
+    let plain = ExposureParams::default();
+    let mut reds_removed = plain;
+    reds_removed.hsl_saturation[0] = -100.0;
+    let pipeline = RawGpuPipeline::new(
+        &device,
+        &queue,
+        &source,
+        &GpuParams::new(&plain, &masks, &source),
+        PipelineOptions::new(ProcessingQuality::Preview),
+    )?;
+    let render = |exposure: &ExposureParams| -> anyhow::Result<Vec<u8>> {
+        pipeline.recompute(&queue, &device, &GpuParams::new(exposure, &masks, &source));
+        pipeline.read_output_region_blocking(&device, &queue, 0, 0, 1, 1)
+    };
+
+    let looked = render(&plain)?;
+    assert!(
+        looked[1] > looked[0].saturating_add(40),
+        "the look should turn red green: {looked:?}"
+    );
+    // The mixer's red band sees the green the look made, not the red source.
+    let edited = render(&reds_removed)?;
+    for channel in 0..3 {
+        assert!(
+            looked[channel].abs_diff(edited[channel]) <= 2,
+            "{looked:?} became {edited:?}"
+        );
+    }
     Ok(())
 }

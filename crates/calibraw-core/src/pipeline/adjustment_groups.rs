@@ -125,7 +125,7 @@ impl ExposureParams {
     }
 
     /// Copies the RAW decoding settings that no sidebar card owns: black point,
-    /// tone mapper, demosaic, chromatic aberration and highlight reconstruction.
+    /// tone mapper, demosaic and highlight reconstruction.
     pub fn copy_raw_processing_from(&mut self, source: &Self) {
         self.copy_section_from(source, ExposureSection::RawProcessing);
     }
@@ -138,8 +138,7 @@ impl ExposureParams {
             exposure,
             contrast,
             sigmoid,
-            temperature,
-            tint,
+            white_balance,
             hue,
             saturation,
             vibrance,
@@ -156,8 +155,6 @@ impl ExposureParams {
             demosaic_mode,
             dual_threshold,
             frequency_chroma,
-            ca_red,
-            ca_blue,
             highlight_method,
             highlight_clip,
             highlight_reconstruction,
@@ -197,8 +194,7 @@ impl ExposureParams {
                 self.tone_curve_blue = tone_curve_blue;
             }
             ExposureSection::Group(AdjustmentGroup::Color) => {
-                self.temperature = temperature;
-                self.tint = tint;
+                self.white_balance = white_balance;
                 self.hue = hue;
                 self.saturation = saturation;
                 self.vibrance = vibrance;
@@ -235,8 +231,6 @@ impl ExposureParams {
                 self.demosaic_mode = demosaic_mode;
                 self.dual_threshold = dual_threshold;
                 self.frequency_chroma = frequency_chroma;
-                self.ca_red = ca_red;
-                self.ca_blue = ca_blue;
                 self.highlight_method = highlight_method;
                 self.highlight_clip = highlight_clip;
                 self.highlight_reconstruction = highlight_reconstruction;
@@ -318,7 +312,7 @@ mod tests {
         let groups = [
             (AdjustmentGroup::Light, "exposure contrast highlights shadows whites blacks"),
             (AdjustmentGroup::ToneCurve, "tone_curve tone_curve_red tone_curve_green tone_curve_blue"),
-            (AdjustmentGroup::Color, "temperature tint hue saturation vibrance"),
+            (AdjustmentGroup::Color, "white_balance temperature tint hue saturation vibrance"),
             (AdjustmentGroup::ColorGrading, "color_grading"),
             (AdjustmentGroup::Detail, "luminance_denoise chroma_denoise denoise_detail denoise_quality ai_denoise_enabled ai_denoise_amount sharpen_amount sharpen_radius sharpen_detail sharpen_masking"),
             (AdjustmentGroup::Effects, "texture clarity dehaze"),

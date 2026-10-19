@@ -297,7 +297,11 @@ mod tests {
     fn edits() -> crate::sidecar::EditState {
         let mut edits = crate::sidecar::default_edit_state();
         edits.exposure.exposure = 1.75;
-        edits.exposure.temperature = 23.0;
+        edits.exposure.white_balance = crate::pipeline::WhiteBalance::Custom {
+            kelvin: 4100.0,
+            tint: -6.0,
+            older_reader_offsets: [23.0, 1.2],
+        };
         edits.exposure.ai_denoise_enabled = true;
         let mut masks = MaskStack::default();
         for index in 0..2 {

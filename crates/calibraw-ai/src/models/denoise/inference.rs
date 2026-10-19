@@ -294,8 +294,6 @@ pub(super) fn infer_linear(
     neutral.ai_denoise_enabled = false;
     neutral.luminance_denoise = 0.0;
     neutral.chroma_denoise = 0.0;
-    neutral.ca_red = 0.0;
-    neutral.ca_blue = 0.0;
     let masks = MaskStack::default();
     if raw.uses_opposed_chroma(&neutral) {
         raw.inpaint_opposed_chroma_for_exposure(&neutral);
@@ -334,12 +332,15 @@ pub(super) fn infer_linear(
                 .render_camera_scene_blocking(device, queue, &params)?;
             let mut input = vec![0.0f32; 3 * TILE_EDGE * TILE_EDGE];
             for pixel_index in 0..TILE_EDGE * TILE_EDGE {
+                // The demosaiced scene keeps read noise below black; the model,
+                // and the mean-matched gain of a near-black tile, take camera
+                // RGB from black up.
                 let rgb = matrix::transform(
                     cam_to_rec2020,
                     [
-                        camera[pixel_index * 3],
-                        camera[pixel_index * 3 + 1],
-                        camera[pixel_index * 3 + 2],
+                        camera[pixel_index * 3].max(0.0),
+                        camera[pixel_index * 3 + 1].max(0.0),
+                        camera[pixel_index * 3 + 2].max(0.0),
                     ],
                 );
                 for channel in 0..3 {

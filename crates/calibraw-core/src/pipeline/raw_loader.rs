@@ -5,11 +5,12 @@
 
 use super::basicadj::{
     temperature_kelvin_from_offset, temperature_offset_from_kelvin, white_balance_tint_from_offset,
-    white_balance_tint_offset, ExposureParams, HighlightReconstructionMethod,
+    white_balance_tint_offset, ExposureParams, HighlightReconstructionMethod, WhiteBalance,
     GLOBAL_TEMPERATURE_LIMIT, GLOBAL_TINT_OFFSET_LIMIT,
 };
 use super::color_profile::CameraProfile;
 use super::geometry::LensGeometryMap;
+use super::lens_shading::LensShadingMap;
 use super::noise::NoiseProfile;
 use super::source_format::RenderedImageFormat;
 use super::white_balance_presets::WhiteBalancePreset;
@@ -310,6 +311,11 @@ impl AiDenoisedImage {
 pub struct LoadedRaw {
     pub width: u32,
     pub height: u32,
+    /// Width and height of the whole photo at its native resolution. Crops,
+    /// proxies and tiles keep their source's value, so effects whose radius
+    /// follows the photo's size (`resolution_scale` in common.wgsl) cover the
+    /// same part of the photo in a reduced preview as in a full-size export.
+    pub source_extent: [u32; 2],
     pub camera_make: String,
     pub camera_model: String,
     pub lens_make: String,
@@ -337,6 +343,10 @@ pub struct LoadedRaw {
     pub available_camera_profiles: Vec<CameraProfileCandidate>,
     pub white_balance_model: Option<CameraWhiteBalanceModel>,
     pub lens_geometry: Option<Arc<LensGeometryMap>>,
+    /// Vignetting gains the GPU applies after highlight reconstruction; only
+    /// sensor mosaics carry them. Placed over the whole photo, so crops,
+    /// proxies and tiles keep them.
+    pub lens_shading: Option<LensShadingMap>,
     pub ai_denoised: Arc<RwLock<Option<AiDenoisedImage>>>,
     pub opposed_chroma_cache: OpposedChromaCache,
     /// Runtime identity of the full sensor source used to estimate opposed-highlight chroma.
@@ -350,8 +360,8 @@ pub struct LoadedRaw {
 impl LoadedRaw {
     /// Builds a sensor-mosaic view of the same capture with new pixels (a crop, proxy, tile or
     /// corrected mosaic). Capture metadata, colour calibration and the noise profile are copied
-    /// from `self`. The view has no scene-linear raster, no lens geometry and a fresh, empty
-    /// AI-denoise slot. It shares `self`'s opposed-chroma cache and source identity as a
+    /// from `self`, and so is the lens shading, which is placed over the whole photo. The view
+    /// has no scene-linear raster, no lens geometry and a fresh, empty AI-denoise slot. It shares `self`'s opposed-chroma cache and source identity as a
     /// non-reference consumer. Callers override per-view fields with struct update syntax.
     pub fn derive_with(
         &self,
@@ -364,6 +374,7 @@ impl LoadedRaw {
         Self {
             width,
             height,
+            source_extent: self.source_extent,
             camera_make: self.camera_make.clone(),
             camera_model: self.camera_model.clone(),
             lens_make: self.lens_make.clone(),
@@ -388,6 +399,7 @@ impl LoadedRaw {
             available_camera_profiles: self.available_camera_profiles.clone(),
             white_balance_model: self.white_balance_model.clone(),
             lens_geometry: None,
+            lens_shading: self.lens_shading.clone(),
             ai_denoised: Arc::new(RwLock::new(None)),
             opposed_chroma_cache: Arc::clone(&self.opposed_chroma_cache),
             opposed_chroma_source_identity: Arc::clone(&self.opposed_chroma_source_identity),
@@ -412,6 +424,7 @@ impl LoadedRaw {
         Ok(Self {
             width,
             height,
+            source_extent: [width, height],
             camera_make: String::new(),
             camera_model: String::new(),
             lens_make: String::new(),
@@ -440,6 +453,7 @@ impl LoadedRaw {
             available_camera_profiles: Vec::new(),
             white_balance_model: None,
             lens_geometry: None,
+            lens_shading: None,
             ai_denoised: Arc::new(RwLock::new(None)),
             opposed_chroma_cache: Default::default(),
             opposed_chroma_source_identity: Default::default(),
@@ -455,6 +469,13 @@ impl LoadedRaw {
                         .saturating_mul(self.height as usize)
                         .saturating_mul(3)
             })
+    }
+
+    /// Whether temperature and tint apply to this photo. Rendered photos and
+    /// raster TIFFs have no camera white-balance model, nor do RAWs without
+    /// usable colour metadata.
+    pub fn has_white_balance_model(&self) -> bool {
+        self.white_balance_model.is_some()
     }
 
     /// A raster decoded from camera-space LinearRaw samples. Unlike normal
@@ -596,6 +617,13 @@ impl RasterSource {
             }
         }
     }
+}
+
+/// Whether `path` decodes as a display-referred raster (a rendered photo or a
+/// raster TIFF), which never has a camera white-balance model. Reads the
+/// file header.
+pub fn decodes_as_raster(path: &Path) -> Result<bool> {
+    Ok(RasterSource::detect(path)?.is_some())
 }
 
 /// Decodes any supported photo: camera RAW, TIFF, JPEG, PNG or HEIF.
@@ -1084,7 +1112,7 @@ mod tests {
     use super::{
         temperature_offset_from_kelvin, AiDenoisedImage, CameraColorModel, CameraProfile,
         CameraProfileMode, CameraWhiteBalanceModel, CfaKind, CompactPixelMap, ExposureParams,
-        LoadedRaw, GLOBAL_TEMPERATURE_LIMIT,
+        LoadedRaw, WhiteBalance, GLOBAL_TEMPERATURE_LIMIT,
     };
 
     #[test]
@@ -1178,6 +1206,7 @@ mod tests {
         LoadedRaw {
             width: 1,
             height: 1,
+            source_extent: [1, 1],
             camera_make: "Test".to_owned(),
             camera_model: "Matrix".to_owned(),
             lens_make: String::new(),
@@ -1218,10 +1247,92 @@ mod tests {
                 },
             }),
             lens_geometry: None,
+            lens_shading: None,
             ai_denoised: std::sync::Arc::new(std::sync::RwLock::new(None)),
             opposed_chroma_cache: Default::default(),
             opposed_chroma_source_identity: Default::default(),
             opposed_chroma_reference_source: true,
+        }
+    }
+
+    #[test]
+    fn legacy_offsets_become_the_white_balance_they_rendered() {
+        let raw = raw_with_white_balance_model();
+        let offsets = (-35.0, 2.0);
+        let legacy = WhiteBalance::LegacyOffset {
+            temperature: offsets.0,
+            tint: offsets.1,
+        };
+        let resolved = raw.resolve_white_balance(legacy);
+        let WhiteBalance::Custom {
+            kelvin,
+            tint,
+            older_reader_offsets,
+        } = resolved
+        else {
+            panic!("{resolved:?} is not custom");
+        };
+        assert_eq!(
+            Some((kelvin, tint)),
+            raw.white_balance_temperature_tint(offsets.0, offsets.1)
+        );
+        let rendered = raw.white_balance_offsets(resolved);
+        for (rendered, saved) in [rendered.0, rendered.1]
+            .into_iter()
+            .zip([offsets.0, offsets.1])
+        {
+            assert!((rendered - saved).abs() < 1e-3, "{rendered} != {saved}");
+        }
+        assert_eq!(older_reader_offsets, [rendered.0, rendered.1]);
+        assert_eq!(raw.resolve_white_balance(resolved), resolved);
+    }
+
+    #[test]
+    fn a_custom_white_balance_is_the_same_on_photos_shot_differently() {
+        let daylight = raw_with_white_balance_model();
+        let mut tungsten = raw_with_white_balance_model();
+        tungsten.white_balance_model.as_mut().unwrap().base_wb = [1.2, 1.0, 2.6, 1.0];
+        let custom = daylight.custom_white_balance(4300.0, 5.0).unwrap();
+        let pasted = tungsten.resolve_white_balance(custom);
+
+        let shown =
+            |raw: &LoadedRaw, white_balance| raw.shown_white_balance(white_balance).unwrap();
+        assert_eq!(shown(&daylight, custom), (4300.0, 5.0));
+        assert_eq!(shown(&tungsten, pasted), (4300.0, 5.0));
+        // The same white balance is a different shift from each as-shot.
+        assert_ne!(
+            daylight.white_balance_offsets(custom),
+            tungsten.white_balance_offsets(pasted)
+        );
+        let WhiteBalance::Custom {
+            older_reader_offsets,
+            ..
+        } = pasted
+        else {
+            panic!("{pasted:?} is not custom");
+        };
+        let offsets = tungsten.white_balance_offsets(pasted);
+        assert_eq!(older_reader_offsets, [offsets.0, offsets.1]);
+    }
+
+    #[test]
+    fn photos_without_a_white_balance_model_keep_the_white_balance_as_shot() {
+        let photo = LoadedRaw::from_scene_linear_rec2020(1, 1, vec![0.5; 3]).unwrap();
+        let custom = raw_with_white_balance_model()
+            .custom_white_balance(4300.0, 5.0)
+            .unwrap();
+        assert_eq!(photo.white_balance_offsets(custom), (0.0, 0.0));
+        for white_balance in [
+            custom,
+            WhiteBalance::LegacyOffset {
+                temperature: 20.0,
+                tint: 0.0,
+            },
+        ] {
+            assert_eq!(
+                photo.resolve_white_balance(white_balance),
+                WhiteBalance::AsShot
+            );
         }
     }
 
@@ -1321,13 +1432,16 @@ mod tests {
         let mut raw = colored_opposed_test_raw();
         let base_temperature = raw.as_shot_temperature_kelvin().unwrap();
         let exposure = ExposureParams {
-            temperature: temperature_offset_from_kelvin(base_temperature, 8_000.0),
-            tint: 0.2,
+            white_balance: WhiteBalance::LegacyOffset {
+                temperature: temperature_offset_from_kelvin(base_temperature, 8_000.0),
+                tint: 0.2,
+            },
             ..Default::default()
         };
 
+        let (temperature, tint) = raw.white_balance_offsets(exposure.white_balance);
         let adjusted = raw
-            .adjusted_white_balance_and_camera_transform(exposure.temperature, exposure.tint)
+            .adjusted_white_balance_and_camera_transform(temperature, tint)
             .0;
         assert_ne!(adjusted, raw.wb_coeffs);
 
@@ -1345,7 +1459,12 @@ mod tests {
 
     #[test]
     fn extended_temperature_range_reaches_beyond_the_old_hundred_mired_clamp() {
-        let raw = raw_with_white_balance_model();
+        let mut raw = raw_with_white_balance_model();
+        // A neutral as-shot white, so the gain limit leaves the full range.
+        let model = raw.white_balance_model.as_mut().unwrap();
+        model.base_wb =
+            super::libraw_loader::temperature_tint_to_coefficients(model, 5_000.0, 0.0).unwrap();
+        raw.wb_coeffs = model.base_wb;
         let base = raw.as_shot_temperature_kelvin().unwrap();
         let at_8000 = temperature_offset_from_kelvin(base, 8_000.0);
         let at_25000 = temperature_offset_from_kelvin(base, 25_000.0);
@@ -1385,17 +1504,23 @@ mod tests {
             ],
         };
         model.base_wb =
-            super::libraw_loader::temperature_tint_to_coefficients(model, 5_000.0, 1.0).unwrap();
+            super::libraw_loader::temperature_tint_to_coefficients(model, 5_000.0, 0.0).unwrap();
         raw.wb_coeffs = model.base_wb;
         let (base_temperature, base_tint) = raw.as_shot_white_balance().unwrap();
         let temperature_offset = temperature_offset_from_kelvin(base_temperature, 5_000.0);
-        let legacy_tint_offset = crate::pipeline::white_balance_tint_offset(base_tint, 0.135);
+        let legacy_tint_offset = crate::pipeline::white_balance_tint_offset(
+            base_tint,
+            crate::pipeline::MAX_WHITE_BALANCE_TINT,
+        );
         let displayed = raw
             .white_balance_temperature_tint(temperature_offset, legacy_tint_offset)
             .unwrap();
-        assert!(displayed.1 > 0.135);
+        assert!(displayed.1 < crate::pipeline::MAX_WHITE_BALANCE_TINT);
         let saved = raw
-            .white_balance_offsets_from_temperature_tint(5_000.0, 0.135)
+            .white_balance_offsets_from_temperature_tint(
+                5_000.0,
+                crate::pipeline::MAX_WHITE_BALANCE_TINT,
+            )
             .unwrap();
         let from_legacy =
             raw.adjusted_white_balance_and_camera_transform(temperature_offset, legacy_tint_offset);
@@ -1423,7 +1548,7 @@ mod tests {
         const WHITE: f32 = 10_000.0;
         let mut raw = raw_with_white_balance_model();
         let desired_offsets = raw
-            .white_balance_offsets_from_temperature_tint(6_000.0, 1.0)
+            .white_balance_offsets_from_temperature_tint(6_000.0, 0.0)
             .unwrap();
         let desired = raw
             .adjusted_white_balance_and_camera_transform(desired_offsets.0, desired_offsets.1)

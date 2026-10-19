@@ -6,116 +6,6 @@
 #import calibraw::tone_common as ToneCommon
 #import calibraw::tonemap as Tonemap
 
-struct HazeNeighborhood {
-    dark_ratio: f32,
-    airlight: vec3<f32>,
-    airlight_luma: f32,
-}
-
-fn normalized_dark_ratio(rgb: vec3<f32>, airlight_luma: f32) -> f32 {
-    let positive = Color::gamut_project_nonnegative_rec2020(rgb);
-    let normalized = positive / max(airlight_luma, 1e-6);
-    return clamp(min(normalized.r, min(normalized.g, normalized.b)), 0.0, 1.0);
-}
-
-fn haze_neighborhood(pos: vec2<i32>, step: i32, airlight_luma: f32) -> HazeNeighborhood {
-    var dark_ratio = 1.0;
-    var brightest = SceneAdjustments::adjustment_base_at(pos);
-    var brightest_luma = Common::safe_luma(brightest);
-    var haziest_ratio = normalized_dark_ratio(brightest, airlight_luma);
-    for (var ky = -3; ky <= 3; ky = ky + 1) {
-        for (var kx = -3; kx <= 3; kx = kx + 1) {
-            let sample = SceneAdjustments::adjustment_base_at(pos + vec2<i32>(kx * step, ky * step));
-            let sample_dark_ratio = normalized_dark_ratio(sample, airlight_luma);
-            dark_ratio = min(dark_ratio, sample_dark_ratio);
-            let luminance = Common::safe_luma(sample);
-            if sample_dark_ratio > haziest_ratio
-                || (abs(sample_dark_ratio - haziest_ratio) < 1e-5
-                    && luminance > brightest_luma) {
-                brightest = sample;
-                brightest_luma = luminance;
-                haziest_ratio = sample_dark_ratio;
-            }
-        }
-    }
-    return HazeNeighborhood(dark_ratio, brightest, brightest_luma);
-}
-
-fn apply_dehaze_value(pos: vec2<i32>, rgb: vec3<f32>, value: f32) -> vec3<f32> {
-    let amount = BasicAdjustments::perceptual_control(value);
-    if abs(amount) < 1e-6 {
-        return rgb;
-    }
-
-    let center_lum = Common::safe_luma(rgb);
-    let center_ev = log2(center_lum);
-    let broad_ev = SceneAdjustments::bilateral_log_luminance(
-        pos,
-        2,
-        SceneAdjustments::presence_step(1.0, 3),
-        0.95,
-    );
-    let ambient_ev = clamp(Tonemap::tone_stats.percentiles_1_field.x + Common::scene_tone_uniforms.exposure, -16.0, 16.0);
-    let airlight_luma = max(ToneCommon::SCENE_MIDDLE_GREY * exp2(ambient_ev), 1e-5);
-    let haze_step = SceneAdjustments::presence_step(2.0, 6);
-    let neighborhood = haze_neighborhood(pos, haze_step, airlight_luma);
-
-    let airlight_colour = neighborhood.airlight
-        / max(neighborhood.airlight_luma, 1e-6) * airlight_luma;
-    let airlight = max(
-        mix(vec3<f32>(airlight_luma), airlight_colour, 0.14),
-        vec3<f32>(airlight_luma * 0.28),
-    );
-    let dark_ratio = neighborhood.dark_ratio;
-    let veil = smoothstep(0.025, 0.78, dark_ratio);
-    let low_contrast = 1.0 - smoothstep(0.10, 0.72, abs(center_ev - broad_ev));
-    let haze_likelihood = clamp(veil * (0.52 + 0.48 * low_contrast), 0.0, 1.0);
-
-    if amount > 0.0 {
-        let ambient_position = clamp(center_lum / max(airlight_luma, 1e-6), 0.0, 1.0);
-        let shaped_position = pow(ambient_position, 0.33);
-        let mid_position_hump = 0.30 * shaped_position * (1.0 - shaped_position);
-        let tone_mask = min(
-            1.0,
-            1.0 - ToneCommon::tone_smoothstep(0.0, 1.0, shaped_position) + mid_position_hump,
-        );
-        let transmission = 1.0 - amount * mix(0.008, 0.012, haze_likelihood);
-        let physical = (rgb - airlight * (1.0 - transmission)) / transmission;
-        let physical_lum = Common::safe_luma(physical);
-        let luminance_gain = clamp(physical_lum / max(center_lum, 1e-6), 0.0, 2.0);
-        let hue_safe = rgb * luminance_gain;
-        var restored = mix(hue_safe, physical, 0.30 + 0.16 * haze_likelihood);
-        restored = restored * exp2(-amount * 0.90 * tone_mask);
-
-        let local_detail = clamp(center_ev - broad_ev, -1.2, 1.2);
-        restored = restored * exp2(amount * local_detail * 0.12);
-        let lab = Color::linear_srgb_to_oklab(Common::REC2020_TO_SRGB * restored);
-        let chroma = length(lab.yz);
-        let content_saturation = clamp(chroma / max(0.045 + 0.38 * lab.x, 0.06), 0.0, 1.0);
-        let chroma_boost = 1.0
-            + amount * (0.30 + 0.22 * tone_mask)
-                * (1.0 - 0.10 * content_saturation);
-        return Color::perceptual_gamut_compress_nonnegative_rec2020(
-            Common::SRGB_TO_REC2020 * Color::oklab_to_linear_srgb(
-                vec3<f32>(lab.x, lab.yz * chroma_boost),
-            ),
-        );
-    }
-
-    let haze = -amount;
-    let ambient_position = clamp(center_lum / max(airlight_luma, 1e-6), 0.0, 1.0);
-    let position_weight = pow(ambient_position, 0.35);
-    let haze_mix = clamp(haze * mix(0.045, 0.23, position_weight), 0.0, 0.30);
-    let hazed = mix(rgb, airlight, haze_mix);
-    let lab = Color::linear_srgb_to_oklab(Common::REC2020_TO_SRGB * hazed);
-    let desaturation = 1.0 - haze * mix(0.32, 0.27, haze_likelihood);
-    return Color::perceptual_gamut_compress_nonnegative_rec2020(
-        Common::SRGB_TO_REC2020 * Color::oklab_to_linear_srgb(
-            vec3<f32>(lab.x, lab.yz * desaturation),
-        ),
-    );
-}
-
 fn glow_work_at(pos: vec2<i32>) -> vec3<f32> {
     return textureLoad(SceneAdjustments::glow_work_tex, Common::clamp_pos(pos), 0).xyz;
 }
@@ -129,11 +19,7 @@ fn glow_stage_step(stage: u32) -> i32 {
         case 4u: { reference_step = 8.0; }
         default: {}
     }
-    let scale = clamp(
-        f32(min(Common::camera_uniforms.full_width, Common::camera_uniforms.full_height)) / 1080.0,
-        0.45,
-        3.0,
-    );
+    let scale = Common::resolution_scale(0.45, 3.0);
     return max(i32(round(reference_step * scale)), 1);
 }
 
@@ -294,21 +180,22 @@ fn calibrated_vignette_opacity(
     return pow(clamp(opacity, 0.0, 1.0), feather_power);
 }
 
+// Mask Saturation, Texture and Clarity. Mask Dehaze runs with the global one
+// in the scene preparation (SceneAdjustments::dehaze_amount_at).
 fn apply_local_scene_effect_nodes(pos: vec2<i32>, input_rgb: vec3<f32>) -> vec3<f32> {
     var rgb = input_rgb;
     let count = min(Common::scene_tone_uniforms.mask_counts.x, Common::MAX_RENDER_MASK_SLOTS);
     for (var index = 0u; index < count; index = index + 1u) {
         let state = Common::mask_data[index].metadata;
-        if state.x == 0u || state.y == 0u || Common::mask_effect_id(state) != 0u { continue; }
+        if !Common::mask_slot_applies(state, 0u) { continue; }
         let local = Common::mask_data[index].adjust_2_field;
-        if max(max(abs(local.x), abs(local.y)), max(abs(local.z), abs(local.w))) <= 1e-7 {
+        if max(abs(local.x), max(abs(local.y), abs(local.z))) <= 1e-7 {
             continue;
         }
         let weight = SceneAdjustments::local_mask_weight(pos, index);
         if weight <= 1e-5 { continue; }
         var adjusted = rgb;
         adjusted = DetailScaleSpace::apply_texture_and_clarity_values(pos, adjusted, local.y, local.z);
-        adjusted = apply_dehaze_value(pos, adjusted, local.w);
         adjusted = BasicAdjustments::apply_saturation_value(adjusted, local.x);
         rgb = mix(rgb, adjusted, weight);
     }
@@ -320,7 +207,7 @@ fn apply_local_mask_effect_nodes(pos: vec2<i32>, input_rgb: vec3<f32>) -> vec3<f
     let count = min(Common::scene_tone_uniforms.mask_counts.x, Common::MAX_RENDER_MASK_SLOTS);
     for (var index = 0u; index < count; index = index + 1u) {
         let state = Common::mask_data[index].metadata;
-        if state.x == 0u || state.y == 0u || Common::mask_effect_id(state) != MASK_EFFECT_NEON_ID { continue; }
+        if !Common::mask_slot_applies(state, MASK_EFFECT_NEON_ID) { continue; }
         let weight = SceneAdjustments::local_mask_weight(pos, index);
         if weight <= 1e-5 { continue; }
         let adjusted = apply_neon(
@@ -339,7 +226,7 @@ fn apply_local_creative_mask_effect_nodes(pos: vec2<i32>, input_rgb: vec3<f32>) 
     let count = min(Common::scene_tone_uniforms.mask_counts.x, Common::MAX_RENDER_MASK_SLOTS);
     for (var index = 0u; index < count; index = index + 1u) {
         let state = Common::mask_data[index].metadata;
-        if state.x == 0u || state.y == 0u { continue; }
+        if !Common::mask_slot_active(state) { continue; }
         let effect_id = Common::mask_effect_id(state);
         if effect_id != MASK_EFFECT_EDGE_GLOW_ID
             && effect_id != MASK_EFFECT_PIXELATE_ID
@@ -374,12 +261,46 @@ fn apply_local_creative_mask_effect_nodes(pos: vec2<i32>, input_rgb: vec3<f32>) 
 }
 
 @compute @workgroup_size(8, 8, 1)
+fn build_detail_level_0(@builtin(global_invocation_id) gid: vec3<u32>) {
+    DetailScaleSpace::store_detail_pyramid_level(gid, 0u);
+}
+
+@compute @workgroup_size(8, 8, 1)
+fn build_detail_level_1(@builtin(global_invocation_id) gid: vec3<u32>) {
+    DetailScaleSpace::store_detail_pyramid_level(gid, 1u);
+}
+
+@compute @workgroup_size(8, 8, 1)
+fn build_detail_level_2(@builtin(global_invocation_id) gid: vec3<u32>) {
+    DetailScaleSpace::store_detail_pyramid_level(gid, 2u);
+}
+
+@compute @workgroup_size(8, 8, 1)
+fn build_detail_level_3(@builtin(global_invocation_id) gid: vec3<u32>) {
+    DetailScaleSpace::store_detail_pyramid_level(gid, 3u);
+}
+
+@compute @workgroup_size(8, 8, 1)
+fn build_detail_level_4(@builtin(global_invocation_id) gid: vec3<u32>) {
+    DetailScaleSpace::store_detail_pyramid_level(gid, 4u);
+}
+
+@compute @workgroup_size(8, 8, 1)
+fn build_detail_level_5(@builtin(global_invocation_id) gid: vec3<u32>) {
+    DetailScaleSpace::store_detail_pyramid_level(gid, 5u);
+}
+
+@compute @workgroup_size(8, 8, 1)
+fn build_detail_level_6(@builtin(global_invocation_id) gid: vec3<u32>) {
+    DetailScaleSpace::store_detail_pyramid_level(gid, 6u);
+}
+
+@compute @workgroup_size(8, 8, 1)
 fn apply_scene_effects_node(@builtin(global_invocation_id) gid: vec3<u32>) {
     if gid.x >= Common::camera_uniforms.width || gid.y >= Common::camera_uniforms.height { return; }
     let pos = vec2<i32>(i32(gid.x), i32(gid.y));
     var rgb = SceneAdjustments::adjustment_base_at(pos);
     rgb = DetailScaleSpace::apply_texture_and_clarity_values(pos, rgb, Common::effects_uniforms.presence.x, Common::effects_uniforms.presence.y);
-    rgb = apply_dehaze_value(pos, rgb, Common::effects_uniforms.presence.z);
     rgb = BasicAdjustments::apply_saturation_vibrance(rgb);
     rgb = apply_local_scene_effect_nodes(pos, rgb);
     rgb = apply_local_mask_effect_nodes(pos, rgb);

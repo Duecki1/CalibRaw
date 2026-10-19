@@ -30,71 +30,43 @@ pub(in crate::pipeline::raw_loader) fn camera_to_working_matrix_from_profiles(
     selected_profile: Option<&DcpProfile>,
     analog_balance: [[f32; 4]; 4],
 ) -> Result<([[f32; 4]; 3], f32, Option<CameraWhiteBalanceModel>)> {
-    let profile = selected_profile.or(embedded_profile);
-    let (matrix, weight, color_model) = if let Some(profile) = profile {
-        let endpoints = profile.matrices.iter().filter_map(|set| {
-            Some(DngColorEndpoint {
-                cct: set.illuminant.and_then(calibration_illuminant_cct),
-                color_matrix: set
-                    .color_matrix
-                    .filter(|matrix| matrix4x3_is_valid(*matrix))?,
-                calibration: parsed_calibration(
-                    set,
-                    identity_4x4(),
-                    profile.calibration_is_compatible(),
-                ),
-                forward_matrix: set
-                    .forward_matrix
-                    .filter(|matrix| matrix3x4_is_valid(*matrix)),
-            })
-        });
-        let endpoints = endpoints.collect::<Vec<_>>();
-        if let Some(first) = endpoints.first().copied() {
-            let second = endpoints.get(1).copied().unwrap_or(first);
+    let endpoints = selected_profile
+        .or(embedded_profile)
+        .map_or([None, None], |profile| {
             let fallback_calibration = std::array::from_fn(|index| {
                 embedded_profile
                     .and_then(|embedded| embedded.matrices[index].camera_calibration)
                     .unwrap_or_else(identity_4x4)
             });
-            let initial_model = CameraColorModel::Dng {
-                endpoints: Box::new([first, second]),
-                analog_balance,
-            };
-            let interpolated = interpolated_parsed_dng_profile_with_fallbacks(
+            parsed_dng_endpoints(
                 profile,
-                wb_coeffs,
-                analog_balance,
-                profile.calibration_is_compatible(),
                 fallback_calibration,
-                estimate_cct_from_model(&initial_model, wb_coeffs),
+                profile.calibration_is_compatible(),
             )
+        });
+    let (matrix, weight, color) = if let Some(color) = dng_color_model(endpoints, analog_balance) {
+        let profile = as_shot_dng_profile(endpoints, analog_balance, wb_coeffs)
             .ok_or_else(|| anyhow!("DCP profile has no usable color matrix"))?;
-            let weight = interpolated.weight;
-            let matrix =
-                dng_camera_to_working(interpolated, analog_balance, wb_coeffs, wb_coeffs, cdesc)?;
-            let color_model = Some(CameraColorModel::Dng {
-                endpoints: Box::new([first, second]),
-                analog_balance,
-            });
-            (matrix, weight, color_model)
-        } else {
-            (cam_to_working(xyz_to_cam, cdesc), 0.0, None)
-        }
+        let matrix = dng_camera_to_working(profile, analog_balance, wb_coeffs, wb_coeffs, cdesc)?;
+        (matrix, profile.weight, color)
     } else {
-        (cam_to_working(xyz_to_cam, cdesc), 0.0, None)
+        (
+            cam_to_working(xyz_to_cam, cdesc),
+            0.0,
+            CameraColorModel::Matrix {
+                xyz_to_camera: xyz_to_cam,
+            },
+        )
     };
     if matrix.iter().flatten().any(|value| !value.is_finite())
         || matrix.iter().flatten().all(|value| value.abs() <= 1e-12)
     {
         return Err(anyhow!("camera colour matrix is invalid or singular"));
     }
-    let color_model = color_model.or(Some(CameraColorModel::Matrix {
-        xyz_to_camera: xyz_to_cam,
-    }));
     Ok((
         matrix,
         weight,
-        color_model.map(|color| CameraWhiteBalanceModel {
+        Some(CameraWhiteBalanceModel {
             base_wb: wb_coeffs,
             cdesc,
             base_cct: cct_from_profile_weight(&color, weight).unwrap_or(6504.0),
@@ -119,26 +91,19 @@ pub(super) fn camera_to_working_matrix(
     calibration_compatible: bool,
 ) -> Result<([[f32; 4]; 3], f32, Option<CameraWhiteBalanceModel>)> {
     let analog_balance = analog_balance_matrix(color.dng_levels.analogbalance);
-    let dng_profile = parsed_profile
-        .and_then(|profile| {
-            interpolated_parsed_dng_profile(
-                profile,
-                color,
-                wb_coeffs,
-                cdesc,
-                analog_balance,
-                calibration_compatible,
-            )
-        })
-        .or_else(|| {
-            interpolated_dng_profile(
-                color,
-                wb_coeffs,
-                cdesc,
-                analog_balance,
-                calibration_compatible,
-            )
-        });
+    let parsed_endpoints = parsed_profile.map_or([None, None], |profile| {
+        parsed_dng_endpoints(
+            profile,
+            [
+                color.dng_color[0].calibration,
+                color.dng_color[1].calibration,
+            ],
+            calibration_compatible,
+        )
+    });
+    let libraw_endpoints = libraw_dng_endpoints(color, calibration_compatible);
+    let dng_profile = as_shot_dng_profile(parsed_endpoints, analog_balance, wb_coeffs)
+        .or_else(|| as_shot_dng_profile(libraw_endpoints, analog_balance, wb_coeffs));
     let (matrix, weight) = if let Some(profile) = dng_profile {
         (
             dng_camera_to_working(profile, analog_balance, wb_coeffs, wb_coeffs, cdesc)?,
@@ -155,17 +120,13 @@ pub(super) fn camera_to_working_matrix(
                 "LibRaw did not provide an invertible camera colour matrix; refusing to treat camera RGB as the working colour space"
             ));
     }
-    let color_model = parsed_profile
-        .and_then(|profile| {
-            parsed_camera_color_model(profile, color, analog_balance, calibration_compatible)
-        })
-        .or_else(|| libraw_camera_color_model(color, analog_balance, calibration_compatible))
+    let color_model = dng_color_model(parsed_endpoints, analog_balance)
+        .or_else(|| dng_color_model(libraw_endpoints, analog_balance))
         .unwrap_or(CameraColorModel::Matrix {
             xyz_to_camera: color.cam_xyz,
         });
     let base_cct = cct_from_profile_weight(&color_model, weight)
         .or_else(|| estimate_scene_cct(color, wb_coeffs, cdesc))
-        .or_else(|| estimate_cct_from_model(&color_model, wb_coeffs))
         .unwrap_or(6504.0)
         .clamp(1500.0, 50_000.0);
     let model = CameraWhiteBalanceModel {
@@ -200,115 +161,6 @@ pub(super) fn interpolate_endpoints(
     }
 }
 
-fn interpolated_parsed_dng_profile(
-    profile: &DcpProfile,
-    color: &ffi::libraw_colordata_t,
-    wb_coeffs: [f32; 4],
-    cdesc: [u8; 4],
-    analog_balance: [[f32; 4]; 4],
-    calibration_compatible: bool,
-) -> Option<InterpolatedDngProfile> {
-    interpolated_parsed_dng_profile_with_fallbacks(
-        profile,
-        wb_coeffs,
-        analog_balance,
-        calibration_compatible,
-        [
-            color.dng_color[0].calibration,
-            color.dng_color[1].calibration,
-        ],
-        estimate_scene_cct(color, wb_coeffs, cdesc),
-    )
-}
-
-pub(super) fn interpolated_parsed_dng_profile_with_fallbacks(
-    profile: &DcpProfile,
-    wb_coeffs: [f32; 4],
-    analog_balance: [[f32; 4]; 4],
-    calibration_compatible: bool,
-    fallback_calibration: [[[f32; 4]; 4]; 2],
-    initial_scene_cct: Option<f32>,
-) -> Option<InterpolatedDngProfile> {
-    let first = &profile.matrices[0];
-    let second = &profile.matrices[1];
-    let valid = [
-        first.color_matrix.is_some_and(matrix4x3_is_valid),
-        second.color_matrix.is_some_and(matrix4x3_is_valid),
-    ];
-    match valid {
-        [false, false] => return None,
-        [true, false] => {
-            return parsed_single_dng_profile(
-                first,
-                fallback_calibration[0],
-                0.0,
-                calibration_compatible,
-            )
-        }
-        [false, true] => {
-            return parsed_single_dng_profile(
-                second,
-                fallback_calibration[1],
-                1.0,
-                calibration_compatible,
-            )
-        }
-        [true, true] => {}
-    }
-
-    let cct0 = calibration_illuminant_cct(first.illuminant?)?;
-    let cct1 = calibration_illuminant_cct(second.illuminant?)?;
-    let mut scene_cct = initial_scene_cct.unwrap_or_else(|| (cct0 * cct1).sqrt());
-    let neutral = camera_neutral(wb_coeffs);
-    let first_color = first.color_matrix?;
-    let second_color = second.color_matrix?;
-    let first_calibration =
-        parsed_calibration(first, fallback_calibration[0], calibration_compatible);
-    let second_calibration =
-        parsed_calibration(second, fallback_calibration[1], calibration_compatible);
-
-    let mut weight = mired_interpolation_weight(scene_cct, cct0, cct1);
-    for _ in 0..6 {
-        let color_matrix = matrix::lerp(first_color, second_color, weight);
-        let calibration = matrix::lerp(first_calibration, second_calibration, weight);
-        let abcc = matrix::multiply(analog_balance, calibration);
-        let xyz_to_camera = matrix::multiply(abcc, color_matrix);
-        let camera_to_xyz = pseudoinverse(xyz_to_camera);
-        let white_xyz = matrix::transform(camera_to_xyz, neutral);
-        if let Some(refined) = xyz_to_cct(white_xyz) {
-            scene_cct = refined.clamp(1500.0, 50_000.0);
-            weight = mired_interpolation_weight(scene_cct, cct0, cct1);
-        }
-    }
-
-    Some(InterpolatedDngProfile {
-        color_matrix: matrix::lerp(first_color, second_color, weight),
-        calibration: matrix::lerp(first_calibration, second_calibration, weight),
-        forward_matrix: interpolate_optional_forward_matrix(
-            first.forward_matrix,
-            second.forward_matrix,
-            weight,
-        ),
-        weight,
-    })
-}
-
-fn parsed_single_dng_profile(
-    set: &DcpMatrixSet,
-    fallback_calibration: [[f32; 4]; 4],
-    weight: f32,
-    calibration_compatible: bool,
-) -> Option<InterpolatedDngProfile> {
-    Some(InterpolatedDngProfile {
-        color_matrix: set.color_matrix?,
-        calibration: parsed_calibration(set, fallback_calibration, calibration_compatible),
-        forward_matrix: set
-            .forward_matrix
-            .filter(|matrix| matrix3x4_is_valid(*matrix)),
-        weight,
-    })
-}
-
 pub(super) fn parsed_calibration(
     set: &DcpMatrixSet,
     fallback: [[f32; 4]; 4],
@@ -320,112 +172,6 @@ pub(super) fn parsed_calibration(
             .unwrap_or_else(|| identity_fallback_4x4(fallback))
     } else {
         identity_4x4()
-    }
-}
-
-fn interpolated_dng_profile(
-    color: &ffi::libraw_colordata_t,
-    wb_coeffs: [f32; 4],
-    cdesc: [u8; 4],
-    analog_balance: [[f32; 4]; 4],
-    calibration_compatible: bool,
-) -> Option<InterpolatedDngProfile> {
-    let valid = [
-        matrix4x3_is_valid(color.dng_color[0].colormatrix),
-        matrix4x3_is_valid(color.dng_color[1].colormatrix),
-    ];
-    match valid {
-        [false, false] => return None,
-        [true, false] => {
-            return Some(single_dng_profile(
-                &color.dng_color[0],
-                0.0,
-                calibration_compatible,
-            ));
-        }
-        [false, true] => {
-            return Some(single_dng_profile(
-                &color.dng_color[1],
-                1.0,
-                calibration_compatible,
-            ));
-        }
-        [true, true] => {}
-    }
-
-    let cct0 = calibration_illuminant_cct(color.dng_color[0].illuminant)?;
-    let cct1 = calibration_illuminant_cct(color.dng_color[1].illuminant)?;
-    let mut scene_cct =
-        estimate_scene_cct(color, wb_coeffs, cdesc).unwrap_or_else(|| (cct0 * cct1).sqrt());
-    let neutral = camera_neutral(wb_coeffs);
-
-    let mut weight = mired_interpolation_weight(scene_cct, cct0, cct1);
-    for _ in 0..6 {
-        let color_matrix = matrix::lerp(
-            color.dng_color[0].colormatrix,
-            color.dng_color[1].colormatrix,
-            weight,
-        );
-        let calibration = if calibration_compatible {
-            matrix::lerp(
-                identity_fallback_4x4(color.dng_color[0].calibration),
-                identity_fallback_4x4(color.dng_color[1].calibration),
-                weight,
-            )
-        } else {
-            identity_4x4()
-        };
-        let abcc = matrix::multiply(analog_balance, calibration);
-        let xyz_to_camera = matrix::multiply(abcc, color_matrix);
-        let camera_to_xyz = pseudoinverse(xyz_to_camera);
-        let white_xyz = matrix::transform(camera_to_xyz, neutral);
-        if let Some(refined) = xyz_to_cct(white_xyz) {
-            scene_cct = refined.clamp(1500.0, 50_000.0);
-            weight = mired_interpolation_weight(scene_cct, cct0, cct1);
-        }
-    }
-
-    let color_matrix = matrix::lerp(
-        color.dng_color[0].colormatrix,
-        color.dng_color[1].colormatrix,
-        weight,
-    );
-    let calibration = if calibration_compatible {
-        matrix::lerp(
-            identity_fallback_4x4(color.dng_color[0].calibration),
-            identity_fallback_4x4(color.dng_color[1].calibration),
-            weight,
-        )
-    } else {
-        identity_4x4()
-    };
-    let forward_matrix = interpolate_forward_matrix(
-        color.dng_color[0].forwardmatrix,
-        color.dng_color[1].forwardmatrix,
-        weight,
-    );
-    Some(InterpolatedDngProfile {
-        color_matrix,
-        calibration,
-        forward_matrix,
-        weight,
-    })
-}
-
-fn single_dng_profile(
-    dng: &ffi::libraw_dng_color_t,
-    weight: f32,
-    calibration_compatible: bool,
-) -> InterpolatedDngProfile {
-    InterpolatedDngProfile {
-        color_matrix: dng.colormatrix,
-        calibration: if calibration_compatible {
-            identity_fallback_4x4(dng.calibration)
-        } else {
-            identity_4x4()
-        },
-        forward_matrix: matrix3x4_is_valid(dng.forwardmatrix).then_some(dng.forwardmatrix),
-        weight,
     }
 }
 
@@ -537,19 +283,6 @@ fn analog_balance_matrix(values: [f32; 4]) -> [[f32; 4]; 4] {
 
 pub(super) fn camera_neutral(wb_coeffs: [f32; 4]) -> [f32; 4] {
     wb_coeffs.map(|gain| 1.0 / gain.max(1e-8))
-}
-
-fn interpolate_forward_matrix(
-    first: [[f32; 4]; 3],
-    second: [[f32; 4]; 3],
-    weight: f32,
-) -> Option<[[f32; 4]; 3]> {
-    match (matrix3x4_is_valid(first), matrix3x4_is_valid(second)) {
-        (true, true) => Some(matrix::lerp(first, second, weight)),
-        (true, false) => Some(first),
-        (false, true) => Some(second),
-        (false, false) => None,
-    }
 }
 
 fn interpolate_optional_forward_matrix(

@@ -1,6 +1,5 @@
 #import calibraw::common as Common
 #import calibraw::color as Color
-#import calibraw::profile as Profile
 #import calibraw::tone_common as ToneCommon
 #import calibraw::scene_source as SceneSource
 
@@ -15,11 +14,7 @@ struct ToneHistogram {
 @group(0) @binding(18) var tone_guide_write: texture_storage_2d<r32float, write>;
 
 fn tone_unexposed_working_at(pos: vec2<i32>) -> vec3<f32> {
-    let working = SceneSource::scene_working_at(pos);
-    let characterized = Profile::apply_camera_characterization(working);
-    let profile_exposure_ev = bitcast<f32>(Common::camera_uniforms.profile_flags.z);
-    let exposed = characterized * exp2(profile_exposure_ev);
-    return Color::map_negative_gamut(exposed);
+    return Color::map_negative_gamut(SceneSource::profiled_scene_at(pos));
 }
 
 fn tone_guide_cell_size() -> i32 {
@@ -99,21 +94,35 @@ fn tone_guide_prepare(@builtin(global_invocation_id) gid: vec3<u32>) {
     textureStore(tone_guide_write, vec2<i32>(gid.xy), vec4<f32>(guide_ev, 0.0, 0.0, 1.0));
 }
 
+// Widest guide blur in cells on each side: TONE_GUIDE_RADIUS_CELLS (Rust) at
+// the largest resolution scale, 3. TONE_GUIDE_SUPPORT in tiles.rs reserves it.
+const TONE_GUIDE_MAX_RADIUS_CELLS: i32 = 16;
+
 fn tone_bilateral_guide(pos: vec2<i32>, axis: vec2<i32>) -> f32 {
     let guide_max = vec2<i32>(textureDimensions(tone_guide_read)) - vec2<i32>(1);
     let center_pos = clamp(pos, vec2<i32>(0), guide_max);
     let center = textureLoad(tone_guide_read, center_pos, 0).x;
-    let radius = clamp(i32(round(Common::camera_uniforms.tone_guide_radius)), 1, 6);
-    let sigma = max(f32(radius) * 0.65, 1.0);
+    // The radius covers the same share of the photo at every processing
+    // resolution, so Highlights and Shadows adapt over the same neighbourhood
+    // in a reduced preview as in a full-size export. Cells are a fixed number
+    // of pixels, so the radius is fractional; the outermost tap fades in.
+    let radius = clamp(
+        Common::camera_uniforms.tone_guide_radius * Common::resolution_scale(0.55, 3.0),
+        1.0,
+        f32(TONE_GUIDE_MAX_RADIUS_CELLS),
+    );
+    let sigma = radius * 0.65;
+    let taps = i32(ceil(radius));
 
     var weighted_sum = 0.0;
     var weight_sum = 0.0;
-    for (var offset = -6; offset <= 6; offset = offset + 1) {
-        if abs(offset) > radius { continue; }
+    for (var offset = -TONE_GUIDE_MAX_RADIUS_CELLS; offset <= TONE_GUIDE_MAX_RADIUS_CELLS; offset = offset + 1) {
+        if abs(offset) > taps { continue; }
         let sample_pos = clamp(center_pos + axis * offset, vec2<i32>(0), guide_max);
         let sample_ev = textureLoad(tone_guide_read, sample_pos, 0).x;
         let distance = f32(offset);
-        let spatial_weight = exp(-0.5 * distance * distance / (sigma * sigma));
+        let edge = clamp(radius + 1.0 - abs(distance), 0.0, 1.0);
+        let spatial_weight = edge * exp(-0.5 * distance * distance / (sigma * sigma));
         let range_weight = exp(-1.35 * abs(sample_ev - center));
         let weight = spatial_weight * range_weight;
         weighted_sum = weighted_sum + sample_ev * weight;
@@ -239,21 +248,20 @@ fn image_light_cell_index(cell: vec2<u32>) -> u32 {
     return cell.y * Common::IMAGE_LIGHT_GRID_LONG + cell.x;
 }
 
-// Global pixels whose centres fall in grid cells [cell, cell + 1) along one axis.
-fn image_light_pixel_span(cell: u32, cells: u32, full: u32) -> vec2<i32> {
-    let scale = f32(full) / f32(cells);
-    return vec2<i32>(
-        i32(ceil(f32(cell) * scale - 0.5)),
-        i32(ceil(f32(cell + 1u) * scale - 0.5)),
-    );
-}
-
 @compute @workgroup_size(8, 8, 1)
 fn accumulate_image_lights(@builtin(global_invocation_id) gid: vec3<u32>) {
     let grid = Common::image_light_grid();
     if gid.x >= grid.x || gid.y >= grid.y { return; }
-    let span_x = image_light_pixel_span(gid.x, grid.x, Common::camera_uniforms.full_width);
-    let span_y = image_light_pixel_span(gid.y, grid.y, Common::camera_uniforms.full_height);
+    let span_x = Common::full_image_grid_pixel_span(
+        gid.x,
+        grid.x,
+        Common::camera_uniforms.full_width,
+    );
+    let span_y = Common::full_image_grid_pixel_span(
+        gid.y,
+        grid.y,
+        Common::camera_uniforms.full_height,
+    );
     // Only this tile's core counts, so overlapping tile halos add nothing twice.
     let bounds = vec4<i32>(Common::camera_uniforms.tone_histogram_bounds);
     let origin = Common::tile_origin();

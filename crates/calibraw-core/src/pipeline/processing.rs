@@ -30,10 +30,7 @@ pub fn affected_stage(before: &ExposureParams, after: &ExposureParams) -> Option
         return None;
     }
 
-    if raw_controls_changed(before, after)
-        || before.temperature != after.temperature
-        || before.tint != after.tint
-    {
+    if raw_controls_changed(before, after) || before.white_balance != after.white_balance {
         Some(ProcessingStage::Raw)
     } else {
         Some(ProcessingStage::Output)
@@ -51,8 +48,6 @@ fn raw_controls_changed(before: &ExposureParams, after: &ExposureParams) -> bool
         || before.demosaic_mode != after.demosaic_mode
         || before.dual_threshold != after.dual_threshold
         || before.frequency_chroma != after.frequency_chroma
-        || before.ca_red != after.ca_red
-        || before.ca_blue != after.ca_blue
         || before.highlight_method != after.highlight_method
         || before.highlight_clip != after.highlight_clip
         || before.highlight_reconstruction != after.highlight_reconstruction
@@ -67,7 +62,7 @@ mod tests {
     };
     use crate::pipeline::{
         AiDenoisedImage, CameraProfile, CfaKind, CompactPixelMap, DenoiseQuality, ExposureParams,
-        LoadedRaw, MaskEffect, MaskStack,
+        LoadedRaw, MaskEffect, MaskStack, WhiteBalance,
     };
 
     fn test_raster(width: u32, height: u32) -> LoadedRaw {
@@ -87,6 +82,7 @@ mod tests {
         LoadedRaw {
             width,
             height,
+            source_extent: [width, height],
             camera_make: "Test".to_owned(),
             camera_model: String::new(),
             lens_make: String::new(),
@@ -119,6 +115,7 @@ mod tests {
             available_camera_profiles: Vec::new(),
             white_balance_model: None,
             lens_geometry: None,
+            lens_shading: None,
             ai_denoised: std::sync::Arc::new(std::sync::RwLock::new(None)),
             opposed_chroma_cache: Default::default(),
             opposed_chroma_source_identity: Default::default(),
@@ -336,11 +333,18 @@ mod tests {
         let before = ExposureParams::default();
         for after in [
             ExposureParams {
-                temperature: 1.0,
+                white_balance: WhiteBalance::Custom {
+                    kelvin: 5000.0,
+                    tint: 0.0,
+                    older_reader_offsets: [0.0; 2],
+                },
                 ..before
             },
             ExposureParams {
-                tint: 1.0,
+                white_balance: WhiteBalance::LegacyOffset {
+                    temperature: 0.0,
+                    tint: 1.0,
+                },
                 ..before
             },
         ] {
@@ -496,7 +500,7 @@ mod tests {
                 MaskEffect::Relight | MaskEffect::Fog | MaskEffect::Smoke => {
                     super::SCENE_DEPTH_GUIDE_SUPPORT
                 }
-                MaskEffect::Sharpen => super::LOCAL_EFFECTS_SUPPORT,
+                MaskEffect::Sharpen => super::CAPTURE_SHARPEN_SUPPORT,
                 MaskEffect::Adjustment
                 | MaskEffect::LightRays
                 | MaskEffect::Grain
@@ -649,10 +653,9 @@ mod tests {
             ..Default::default()
         };
         type AdjustmentCase = (fn(&mut LocalAdjustments) -> &mut f32, u32);
-        let cases: [AdjustmentCase; 3] = [
-            (|a| &mut a.texture, super::LOCAL_EFFECTS_SUPPORT),
-            (|a| &mut a.clarity, super::LOCAL_EFFECTS_SUPPORT),
-            (|a| &mut a.dehaze, super::LOCAL_EFFECTS_SUPPORT),
+        let cases: [AdjustmentCase; 2] = [
+            (|a| &mut a.texture, super::DETAIL_TEXTURE_SUPPORT),
+            (|a| &mut a.clarity, super::DETAIL_CLARITY_SUPPORT),
         ];
         for (field, support) in cases {
             let mut stack = MaskStack::default();
@@ -685,6 +688,53 @@ mod tests {
                 MIN_EXPORT_TILE_HALO
             );
         }
+    }
+
+    #[test]
+    fn dehaze_fits_in_the_minimum_export_halo() {
+        use crate::pipeline::MaskKind;
+
+        // Dehaze reads the full-image haze map, which the export prepass
+        // builds from every tile's core, and a guide scene of a few pixels
+        // that the tone guide's halo covers.
+        let exposure = ExposureParams {
+            sharpen_amount: 0.0,
+            dehaze: 80.0,
+            ..Default::default()
+        };
+        let mut stack = MaskStack::default();
+        stack.add_mask(MaskKind::Fullscreen).unwrap();
+        stack.masks[0].adjustments.dehaze = -60.0;
+        assert_eq!(
+            required_export_tile_halo(&exposure, &stack),
+            MIN_EXPORT_TILE_HALO
+        );
+    }
+
+    #[test]
+    fn export_halo_adds_sharpening_to_the_widest_scene_effect() {
+        let base = super::HIGHLIGHT_RECONSTRUCTION_SUPPORT
+            + super::DEMOSAIC_CHAIN_SUPPORT
+            + super::TONE_GUIDE_SUPPORT
+            + super::COLOR_MIXER_SUPPORT;
+        let masks = MaskStack::default();
+        let mut exposure = ExposureParams {
+            sharpen_amount: 40.0,
+            dehaze: 30.0,
+            texture: 30.0,
+            ..Default::default()
+        };
+        // Sharpening runs in the pass before the scene effects, so its
+        // footprint adds to theirs; Dehaze adds none.
+        assert_eq!(
+            required_export_tile_halo(&exposure, &masks),
+            (base + 6 + super::DETAIL_TEXTURE_SUPPORT).div_ceil(8) * 8
+        );
+        exposure.clarity = 30.0;
+        assert_eq!(
+            required_export_tile_halo(&exposure, &masks),
+            (base + super::LOCAL_EFFECTS_SUPPORT).div_ceil(8) * 8
+        );
     }
 
     #[test]
@@ -840,6 +890,7 @@ mod tests {
         let raw = LoadedRaw {
             width,
             height,
+            source_extent: [width, height],
             camera_make: "Test".to_owned(),
             camera_model: String::new(),
             lens_make: String::new(),
@@ -872,6 +923,7 @@ mod tests {
             available_camera_profiles: Vec::new(),
             white_balance_model: None,
             lens_geometry: None,
+            lens_shading: None,
             ai_denoised: std::sync::Arc::new(std::sync::RwLock::new(None)),
             opposed_chroma_cache: Default::default(),
             opposed_chroma_source_identity: Default::default(),
@@ -914,6 +966,7 @@ mod tests {
         let raw = LoadedRaw {
             width,
             height,
+            source_extent: [width, height],
             camera_make: String::new(),
             camera_model: String::new(),
             lens_make: String::new(),
@@ -942,6 +995,7 @@ mod tests {
             available_camera_profiles: Vec::new(),
             white_balance_model: None,
             lens_geometry: None,
+            lens_shading: None,
             ai_denoised: std::sync::Arc::new(std::sync::RwLock::new(None)),
             opposed_chroma_cache: Default::default(),
             opposed_chroma_source_identity: Default::default(),
@@ -1018,6 +1072,30 @@ mod tests {
         assert_eq!(portrait.width.max(portrait.height), 26);
         assert_eq!(larger.width % 2, 0);
         assert_eq!(larger.height % 2, 0);
+    }
+
+    #[test]
+    fn bayer_proxy_noise_follows_same_colour_sample_counts() {
+        let mut raw = test_raw(96, 96);
+        raw.color_indices = CompactPixelMap::repeating(96, 96, 2, 2, vec![0, 1, 3, 2]);
+        raw.noise_profile = crate::pipeline::NoiseProfile {
+            shot: [0.01; 4],
+            read: [0.001; 4],
+            confidence: 1.0,
+            green2_present: true,
+        };
+
+        let proxy = build_proxy(&raw, ProxySpec { max_edge: 32 });
+        assert_eq!((proxy.width, proxy.height), (32, 32));
+        // Each proxy pixel averages the four samples of its own colour in its
+        // 3x3 footprint, not all nine.
+        for channel in 0..4 {
+            assert!((proxy.noise_profile.shot[channel] - 0.0025).abs() < 1e-7);
+            assert!((proxy.noise_profile.read[channel] - 0.000_25).abs() < 1e-8);
+        }
+        // Proxies and crops keep the source's native size.
+        assert_eq!(proxy.source_extent, [96, 96]);
+        assert_eq!(crop_raw(&raw, 4, 4, 20, 20).source_extent, [96, 96]);
     }
 
     #[test]

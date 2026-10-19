@@ -2,8 +2,8 @@ use super::{
     tests::request_test_device, GpuParams, PipelineOptions, ProcessingQuality, RawGpuPipeline,
 };
 use crate::pipeline::{
-    EffectComponent, ExposureParams, LoadedRaw, LocalMask, MaskEffect, MaskKind, MaskStack,
-    SharpenEffectSettings,
+    extract_padded_tile, required_export_tile_halo, EffectComponent, ExportTile, ExposureParams,
+    LoadedRaw, LocalMask, MaskEffect, MaskKind, MaskStack, ProcessingStage, SharpenEffectSettings,
 };
 
 const MASK_EDGE: u32 = 64;
@@ -606,5 +606,432 @@ fn self_illuminating_glow_lights_dark_surfaces_in_its_color() -> anyhow::Result<
         gain(8)[0] < halo[0],
         "the halo does not fall off with distance"
     );
+    Ok(())
+}
+
+#[test]
+fn masked_texture_leaves_flat_areas_unchanged_after_global_presence() -> anyhow::Result<()> {
+    const WIDTH: u32 = 192;
+    // A flat, hazy left half beside fine low-contrast texture (for Texture to
+    // act on) and a hard checkerboard (for tonal range), whose white is the
+    // airlight. Global Dehaze thins the flat half's haze in the adjustment
+    // base that masked Texture reads its detail against. The flat samples lie
+    // farther from the texture than any presence neighbourhood reaches.
+    let Some(mut scene) = Fixture::new(WIDTH, 96, |x, y| {
+        if x < 96 {
+            [0.55, 0.6, 0.7]
+        } else if y < 48 {
+            [if (x / 2 + y / 2) % 2 == 0 { 0.16 } else { 0.20 }; 3]
+        } else {
+            [if (x / 8 + y / 8) % 2 == 0 { 0.03 } else { 0.8 }; 3]
+        }
+    })?
+    else {
+        return Ok(());
+    };
+    let flat_luma = |rgb: &[f32]| {
+        let samples = (32..64)
+            .flat_map(|y| (16..48).map(move |x| (y * WIDTH + x) as usize * 3))
+            .map(|i| 0.2627 * rgb[i] + 0.6780 * rgb[i + 1] + 0.0593 * rgb[i + 2]);
+        samples.sum::<f32>() / 1024.0
+    };
+
+    let untouched = flat_luma(&scene.render(None)?);
+    scene.exposure.dehaze = 60.0;
+    scene.exposure.clarity = 50.0;
+    let global = scene.render(None)?;
+    assert!(
+        (flat_luma(&global) - untouched).abs() > 1e-3,
+        "global Dehaze/Clarity must shift the flat area for this test to apply"
+    );
+
+    scene.pipeline.update_mask_layer(
+        &scene.queue,
+        0,
+        &vec![half::f16::ONE.to_bits(); (MASK_EDGE * MASK_EDGE) as usize],
+    )?;
+    for texture in [80.0, -80.0] {
+        let mut mask = LocalMask::new(MaskKind::Fullscreen, 1);
+        mask.adjustments.texture = texture;
+        let textured = scene.render_masks(&MaskStack {
+            masks: vec![mask],
+            ..Default::default()
+        })?;
+        let (before, after) = (flat_luma(&global), flat_luma(&textured));
+        assert!(
+            (after - before).abs() < EPSILON,
+            "masked Texture {texture} changed flat brightness: {before} -> {after}"
+        );
+        assert!(
+            difference(&textured, &global) > 1e-3,
+            "masked Texture {texture} had no effect on the fine texture"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn clarity_leaves_flat_tones_unchanged() -> anyhow::Result<()> {
+    // A flat shadow and a flat midtone beside a hard checkerboard, which gives
+    // the image a wide tonal range. Clarity used to darken the deepest shadows
+    // by up to 1.25 EV and lift the upper midtones regardless of local detail.
+    const WIDTH: u32 = 288;
+    let Some(mut scene) = Fixture::new(WIDTH, 96, |x, y| {
+        if x < 96 {
+            [0.01; 3]
+        } else if x < 192 {
+            [0.5; 3]
+        } else {
+            [if (x / 4 + y / 4) % 2 == 0 { 0.02 } else { 0.9 }; 3]
+        }
+    })?
+    else {
+        return Ok(());
+    };
+    let block_luma = |rgb: &[f32], x0: u32| {
+        let samples = (32..64)
+            .flat_map(|y| (x0..x0 + 32).map(move |x| (y * WIDTH + x) as usize * 3))
+            .map(|i| 0.2627 * rgb[i] + 0.6780 * rgb[i + 1] + 0.0593 * rgb[i + 2]);
+        samples.sum::<f32>() / 1024.0
+    };
+    let before = scene.render(None)?;
+    scene.exposure.clarity = 100.0;
+    let after = scene.render(None)?;
+    for x0 in [32, 128] {
+        let (flat_before, flat_after) = (block_luma(&before, x0), block_luma(&after, x0));
+        assert!(
+            (flat_after / flat_before).log2().abs() < 0.01,
+            "Clarity moved the flat block at x={x0}: {flat_before} -> {flat_after}"
+        );
+    }
+    assert!(
+        (block_luma(&after, 224) - block_luma(&before, 224)).abs() > 1e-3
+            || difference(&after, &before) > 1e-3,
+        "Clarity had no effect on the checkerboard"
+    );
+    Ok(())
+}
+
+/// Mean log2 luminance of each column over rows 16..32.
+fn column_ev(rgb: &[f32], width: u32) -> Vec<f32> {
+    (0..width)
+        .map(|x| {
+            (16..32)
+                .map(|y| {
+                    let i = (y * width + x) as usize * 3;
+                    (0.2627 * rgb[i] + 0.6780 * rgb[i + 1] + 0.0593 * rgb[i + 2])
+                        .max(1e-6)
+                        .log2()
+                })
+                .sum::<f32>()
+                / 16.0
+        })
+        .collect()
+}
+
+#[test]
+fn clarity_boosts_fine_stripes_evenly() -> anyhow::Result<()> {
+    // The old Clarity base sampled the image 3 px apart at this size, so
+    // stripes near that spacing passed into the base and lost most of the
+    // boost (a 4 px period gained a third of what 2 px did). Every period finer
+    // than the Clarity radius belongs to its band and gains alike.
+    const WIDTH: u32 = 168;
+    let mut gains = Vec::new();
+    for period in [2.0f32, 3.0, 4.0, 5.0] {
+        let Some(mut scene) = Fixture::new(WIDTH, 48, |x, _| {
+            let ev = 0.2 * (std::f32::consts::TAU * x as f32 / period).cos();
+            [0.18 * ev.exp2(); 3]
+        })?
+        else {
+            return Ok(());
+        };
+        let swing = |rgb: &[f32]| {
+            let columns = column_ev(rgb, WIDTH);
+            let interior = &columns[40..128];
+            interior.iter().copied().fold(f32::MIN, f32::max)
+                - interior.iter().copied().fold(f32::MAX, f32::min)
+        };
+        let before = swing(&scene.render(None)?);
+        scene.exposure.clarity = 100.0;
+        let after = swing(&scene.render(None)?);
+        gains.push((period, after / before));
+    }
+    let largest = gains.iter().map(|(_, gain)| *gain).fold(0.0, f32::max);
+    assert!(
+        largest > 1.5,
+        "Clarity hardly boosts fine stripes: {gains:?}"
+    );
+    for (period, gain) in &gains {
+        assert!(
+            *gain > 0.5 * largest,
+            "Clarity boosts {period} px stripes {gain}x, against {largest}x at most: {gains:?}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn texture_and_clarity_tiles_match_the_full_frame() -> anyhow::Result<()> {
+    const WIDTH: u32 = 160;
+    const HEIGHT: u32 = 120;
+    let Some(mut scene) = Fixture::new(WIDTH, HEIGHT, |x, y| {
+        let u = x as f32 / WIDTH as f32;
+        let v = y as f32 / HEIGHT as f32;
+        let dots = if (x * 7 + y * 13) % 11 == 0 { 0.4 } else { 0.0 };
+        let stripes = if (x / 3 + y / 5) % 2 == 0 { 0.05 } else { 0.0 };
+        [
+            0.05 + 0.6 * u + dots + stripes,
+            0.1 + 0.5 * v,
+            0.3 + 0.2 * u * v,
+        ]
+    })?
+    else {
+        return Ok(());
+    };
+    let masks = MaskStack::default();
+    // Negative Texture builds the second chain; positive Texture without
+    // Clarity stops after the Texture levels.
+    for (texture, clarity) in [(-60.0, 80.0), (60.0, 0.0)] {
+        scene.exposure.texture = texture;
+        scene.exposure.clarity = clarity;
+        let full = scene.render_masks(&masks)?;
+        let halo = required_export_tile_halo(&scene.exposure, &masks);
+        // Every halo reaches past the image, where the cascade must clamp to the
+        // image edge as the full frame does.
+        for (x, y) in [(41, 29), (10, 7), (100, 70)] {
+            let core_width = (WIDTH - x).min(50);
+            let core_height = (HEIGHT - y).min(40);
+            let tile = ExportTile {
+                core_x: x,
+                core_y: y,
+                core_width,
+                core_height,
+                local_core_x: halo,
+                local_core_y: halo,
+                padded_width: core_width + 2 * halo,
+                padded_height: core_height + 2 * halo,
+                global_origin_x: x as i32 - halo as i32,
+                global_origin_y: y as i32 - halo as i32,
+            };
+            let raw = extract_padded_tile(&scene.source, tile);
+            let params = GpuParams::new_for_tile(
+                &scene.exposure,
+                &masks,
+                &raw,
+                tile.global_origin_x,
+                tile.global_origin_y,
+                WIDTH,
+                HEIGHT,
+            );
+            let pipeline = RawGpuPipeline::new(
+                &scene.device,
+                &scene.queue,
+                &raw,
+                &params,
+                PipelineOptions::new(ProcessingQuality::High)
+                    .mask_atlas_edge(MASK_EDGE)
+                    .programs(&scene.pipeline.program_template()),
+            )?;
+            pipeline.dispatch_stage(&scene.queue, &scene.device, &params, ProcessingStage::Raw);
+            pipeline.dispatch_tone_guide_with_inherited_statistics(
+                &scene.queue,
+                &scene.device,
+                &params,
+                &scene.pipeline,
+            );
+            pipeline.dispatch_stage(
+                &scene.queue,
+                &scene.device,
+                &params,
+                ProcessingStage::Output,
+            );
+            let actual = pipeline.read_display_linear_region_blocking(
+                &scene.device,
+                &scene.queue,
+                tile.local_core_x,
+                tile.local_core_y,
+                core_width,
+                core_height,
+            )?;
+            for row in 0..core_height {
+                for column in 0..core_width {
+                    let i = ((row * core_width + column) * 3) as usize;
+                    let j = (((y + row) * WIDTH + x + column) * 3) as usize;
+                    assert!(
+                        difference(&actual[i..i + 3], &full[j..j + 3]) < EPSILON,
+                        "Texture {texture}, Clarity {clarity}, tile at {x},{y}: pixel {},{} \
+                         {:?} != {:?}",
+                        x + column,
+                        y + row,
+                        &actual[i..i + 3],
+                        &full[j..j + 3],
+                    );
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Renders `raw` with `exposure` through a pipeline of its own size.
+fn render_raw(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    raw: &LoadedRaw,
+    exposure: &ExposureParams,
+) -> anyhow::Result<Vec<f32>> {
+    let masks = MaskStack::default();
+    let params = GpuParams::new(exposure, &masks, raw);
+    let pipeline = RawGpuPipeline::new(
+        device,
+        queue,
+        raw,
+        &params,
+        PipelineOptions::new(ProcessingQuality::High).mask_atlas_edge(MASK_EDGE),
+    )?;
+    pipeline.recompute(queue, device, &params);
+    pipeline.read_display_linear_region_blocking(device, queue, 0, 0, raw.width, raw.height)
+}
+
+/// Log2 luminance of `rgb` averaged in linear light over `factor`×`factor` blocks.
+fn block_ev(rgb: &[f32], width: u32, height: u32, factor: u32) -> Vec<f32> {
+    let (out_width, out_height) = (width / factor, height / factor);
+    let mut out = Vec::with_capacity((out_width * out_height) as usize);
+    for y in 0..out_height {
+        for x in 0..out_width {
+            let mut sum = 0.0f32;
+            for sy in y * factor..(y + 1) * factor {
+                for sx in x * factor..(x + 1) * factor {
+                    let i = ((sy * width + sx) * 3) as usize;
+                    sum += 0.2627 * rgb[i] + 0.6780 * rgb[i + 1] + 0.0593 * rgb[i + 2];
+                }
+            }
+            out.push((sum / (factor * factor) as f32).max(1e-6).log2());
+        }
+    }
+    out
+}
+
+#[test]
+fn reduced_previews_match_the_exports_texture_clarity_and_tone() -> anyhow::Result<()> {
+    // A 1080 px photo previewed at a quarter of its size. The preview used to
+    // apply its own radius limits, so Clarity reached about twice as far across
+    // the photo and the Highlights/Shadows neighbourhood four times as far.
+    const EDGE: u32 = 1080;
+    const FACTOR: u32 = 4;
+    let Some((device, queue)) = request_test_device() else {
+        eprintln!("preview consistency GPU regression skipped: no headless wgpu adapter");
+        return Ok(());
+    };
+    let pixels = (0..EDGE * EDGE)
+        .flat_map(|i| {
+            let (x, y) = ((i % EDGE) as f32, (i / EDGE) as f32);
+            let wave = |period: f32, phase: f32| {
+                (std::f32::consts::TAU * (x + 0.6 * y) / period + phase).sin()
+                    * (std::f32::consts::TAU * (y - 0.3 * x) / (1.3 * period)).cos()
+            };
+            let block = if ((x / 150.0) as u32 + (y / 210.0) as u32).is_multiple_of(3) {
+                -2.5
+            } else {
+                0.0
+            };
+            let ev =
+                0.6 * wave(48.0, 0.0) + 0.9 * wave(160.0, 1.0) + 1.2 * wave(420.0, 2.0) + block;
+            [0.18 * ev.exp2(), 0.17 * ev.exp2(), 0.16 * ev.exp2()]
+        })
+        .collect();
+    let full = LoadedRaw::from_scene_linear_rec2020(EDGE, EDGE, pixels)?;
+    let preview = crate::pipeline::build_proxy(
+        &full,
+        crate::pipeline::ProxySpec {
+            max_edge: EDGE / FACTOR,
+        },
+    );
+    assert_eq!(preview.width, EDGE / FACTOR);
+    let neutral = ExposureParams {
+        sharpen_amount: 0.0,
+        ..Default::default()
+    };
+    let small = EDGE / FACTOR;
+    let full_base = block_ev(
+        &render_raw(&device, &queue, &full, &neutral)?,
+        EDGE,
+        EDGE,
+        FACTOR,
+    );
+    let preview_base = block_ev(
+        &render_raw(&device, &queue, &preview, &neutral)?,
+        small,
+        small,
+        1,
+    );
+    // Relative errors this test measured before previews took the export's
+    // radii: Clarity 0.62, Highlights 0.24, Shadows 0.054, Texture 1.9 or more.
+    // A quarter-size preview cannot hold all of the export's fine detail, so
+    // some error remains, most for Texture.
+    for (name, edit, limit) in [
+        (
+            "Clarity",
+            ExposureParams {
+                clarity: 80.0,
+                ..neutral
+            },
+            0.30,
+        ),
+        (
+            "Highlights",
+            ExposureParams {
+                highlights: -80.0,
+                ..neutral
+            },
+            0.18,
+        ),
+        (
+            "Shadows",
+            ExposureParams {
+                shadows: 80.0,
+                ..neutral
+            },
+            0.05,
+        ),
+        (
+            "Texture",
+            ExposureParams {
+                texture: 80.0,
+                ..neutral
+            },
+            1.0,
+        ),
+    ] {
+        let full_edit = block_ev(
+            &render_raw(&device, &queue, &full, &edit)?,
+            EDGE,
+            EDGE,
+            FACTOR,
+        );
+        let preview_edit = block_ev(
+            &render_raw(&device, &queue, &preview, &edit)?,
+            small,
+            small,
+            1,
+        );
+        // Compare what the edit changes, away from the image border.
+        let (mut error, mut signal) = (0.0f64, 0.0f64);
+        for y in 16..small - 16 {
+            for x in 16..small - 16 {
+                let i = (y * small + x) as usize;
+                let export_change = f64::from(full_edit[i] - full_base[i]);
+                let preview_change = f64::from(preview_edit[i] - preview_base[i]);
+                error += (preview_change - export_change).powi(2);
+                signal += export_change.powi(2);
+            }
+        }
+        let relative = (error / signal.max(1e-12)).sqrt();
+        assert!(signal > 1e-3, "{name} changed nothing");
+        assert!(
+            relative < limit,
+            "{name} in the preview differs from the export by {relative:.3} (relative RMS)"
+        );
+    }
     Ok(())
 }

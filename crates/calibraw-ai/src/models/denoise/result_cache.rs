@@ -222,6 +222,19 @@ fn source_fingerprint(raw: &LoadedRaw, cancellation: Option<&AtomicBool>) -> Res
     digest.update(bytemuck::bytes_of(&raw.cam_to_srgb));
     digest.update(bytemuck::bytes_of(&raw.black_levels));
     digest.update(bytemuck::bytes_of(&raw.white_levels));
+    // The X-Trans model denoises the demosaiced scene, which the GPU renders
+    // with the lens shading gains; the Bayer model denoises the mosaic before
+    // them. Photos without lens shading keep their fingerprint.
+    if raw.cfa_kind == CfaKind::XTrans {
+        if let Some(shading) = &raw.lens_shading {
+            digest.update(b"lens shading\0");
+            update_digest_cancelable(
+                &mut digest,
+                bytemuck::cast_slice(shading.gains()),
+                cancellation,
+            )?;
+        }
+    }
     Ok(digest
         .finish()
         .as_ref()

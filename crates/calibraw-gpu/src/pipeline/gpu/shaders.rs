@@ -64,24 +64,16 @@ pub(super) const RAW_SAMPLING: ShaderSource = wgsl!("raw_sampling.wgsl");
 pub(super) const PROFILE: ShaderSource = wgsl!("profile.wgsl");
 pub(super) const BASIC_ADJUSTMENTS: ShaderSource = wgsl!("basic_adjustments.wgsl");
 pub(super) const SCENE_SOURCE: ShaderSource = wgsl!("scene_source.wgsl");
+pub(super) const HAZE: ShaderSource = wgsl!("haze.wgsl");
 pub(super) const TONE_COMMON: ShaderSource = wgsl!("tone_common.wgsl");
 pub(super) const TONEMAP: ShaderSource = wgsl!("tonemap.wgsl");
 pub(super) const NOISE_CA_FINISH: ShaderSource = wgsl!("noise_ca_finish.wgsl");
+pub(super) const DUAL_DEMOSAIC: ShaderSource = wgsl!("dual_demosaic.wgsl");
 pub(super) const DETAIL_UTILS: ShaderSource = wgsl!("detail_utils.wgsl");
 pub(super) const DETAIL_CAPTURE: ShaderSource = wgsl!("detail_capture.wgsl");
 pub(super) const DETAIL_SCALE_SPACE: ShaderSource = wgsl!("detail_scale_space.wgsl");
-pub(super) const XTRANS_SEED: ShaderSource = wgsl!("xtrans/seed.wgsl");
-pub(super) const XTRANS_MARKESTEIJN_INTERPOLATE: ShaderSource =
-    wgsl!("xtrans/markesteijn_interpolate.wgsl");
-pub(super) const XTRANS_MARKESTEIJN_REFINE: ShaderSource = wgsl!("xtrans/markesteijn_refine.wgsl");
-pub(super) const XTRANS_MARKESTEIJN_CANDIDATES: ShaderSource =
-    wgsl!("xtrans/markesteijn_candidates.wgsl");
-pub(super) const XTRANS_MARKESTEIJN_DERIVATIVES: ShaderSource =
-    wgsl!("xtrans/markesteijn_derivatives.wgsl");
-pub(super) const XTRANS_MARKESTEIJN_HOMOGENEITY: ShaderSource =
-    wgsl!("xtrans/markesteijn_homogeneity.wgsl");
-pub(super) const XTRANS_MARKESTEIJN_ACCUMULATE: ShaderSource =
-    wgsl!("xtrans/markesteijn_accumulate.wgsl");
+pub(super) const CFA_LINEAR: ShaderSource = wgsl!("cfa_linear.wgsl");
+pub(super) const XTRANS_MARKESTEIJN: ShaderSource = wgsl!("xtrans/markesteijn.wgsl");
 
 pub(super) const MASK_EFFECTS_SHARED: ShaderSource = wgsl!("mask_effects/shared.wgsl");
 pub(super) const MASK_LENS_BLUR: ShaderSource = wgsl!("mask_effects/lens_blur.wgsl");
@@ -129,12 +121,13 @@ pub(super) const BAYER_RCD_P1: ShaderSource = wgsl!("pass1.wgsl");
 pub(super) const BAYER_RCD_P2: ShaderSource = wgsl!("pass2.wgsl");
 pub(super) const BAYER_RCD_P3: ShaderSource = wgsl!("pass3.wgsl");
 pub(super) const BAYER_RCD_P4: ShaderSource = wgsl!("pass4.wgsl");
-pub(super) const DUAL_DEMOSAIC: ShaderSource = wgsl!("dual_demosaic.wgsl");
+pub(super) const DUAL_DEMOSAIC_DETAIL: ShaderSource = wgsl!("dual_demosaic_detail.wgsl");
 pub(super) const XTRANS_DEMOSAIC: ShaderSource = wgsl!("xtrans_demosaic.wgsl");
 pub(super) const XTRANS_FINISH: ShaderSource = wgsl!("xtrans_finish.wgsl");
 pub(super) const RASTER_FINISH: ShaderSource = wgsl!("raster_finish.wgsl");
 pub(super) const COLOR_DENOISE: ShaderSource = wgsl!("color_denoise.wgsl");
 pub(super) const TONE_ANALYSIS: ShaderSource = wgsl!("tone_analysis.wgsl");
+pub(super) const HAZE_ANALYSIS: ShaderSource = wgsl!("haze_analysis.wgsl");
 pub(super) const SCENE_ADJUSTMENTS: ShaderSource = wgsl!("scene_adjustments.wgsl");
 pub(super) const VIEW_TRANSFORM: ShaderSource = wgsl!("view_transform.wgsl");
 pub(super) const REMOVE_COMPOSITE: ShaderSource = wgsl!("remove_composite.wgsl");
@@ -166,24 +159,25 @@ const fn xtrans_module(source: ShaderSource) -> ComposableModule {
 
 /// Composable modules in registration order: a module may only import
 /// modules listed before it.
-pub(super) const COMPOSABLE_MODULES: [ComposableModule; 22] = [
+pub(super) const COMPOSABLE_MODULES: [ComposableModule; 19] = [
     module(COMMON),
     module(COLOR),
     module(NOISE),
     module(RAW_SAMPLING),
-    xtrans_module(XTRANS_SEED),
-    xtrans_module(XTRANS_MARKESTEIJN_INTERPOLATE),
-    xtrans_module(XTRANS_MARKESTEIJN_REFINE),
-    xtrans_module(XTRANS_MARKESTEIJN_CANDIDATES),
-    xtrans_module(XTRANS_MARKESTEIJN_DERIVATIVES),
-    xtrans_module(XTRANS_MARKESTEIJN_HOMOGENEITY),
-    xtrans_module(XTRANS_MARKESTEIJN_ACCUMULATE),
+    module(CFA_LINEAR),
+    xtrans_module(XTRANS_MARKESTEIJN),
     module(PROFILE),
     module(BASIC_ADJUSTMENTS),
     module(SCENE_SOURCE),
+    module(HAZE),
     module(TONE_COMMON),
     module(TONEMAP),
     module(NOISE_CA_FINISH),
+    ComposableModule {
+        source: DUAL_DEMOSAIC,
+        sensor: None,
+        work_format: true,
+    },
     module(DETAIL_UTILS),
     module(DETAIL_CAPTURE),
     ComposableModule {
@@ -191,7 +185,11 @@ pub(super) const COMPOSABLE_MODULES: [ComposableModule; 22] = [
         sensor: None,
         work_format: true,
     },
-    module(DETAIL_SCALE_SPACE),
+    ComposableModule {
+        source: DETAIL_SCALE_SPACE,
+        sensor: None,
+        work_format: true,
+    },
     module(CREATIVE_EFFECTS),
 ];
 
@@ -253,8 +251,12 @@ pub(super) const BAYER_RCD_P4_ENTRY: EntryShader = entry(
     true,
     Some(CfaKind::Bayer),
 );
-pub(super) const DUAL_DEMOSAIC_ENTRY: EntryShader =
-    entry("calibraw robust dual demosaic", DUAL_DEMOSAIC, true, None);
+pub(super) const DUAL_DEMOSAIC_DETAIL_ENTRY: EntryShader = entry(
+    "calibraw dual demosaic detail",
+    DUAL_DEMOSAIC_DETAIL,
+    true,
+    None,
+);
 pub(super) const XTRANS_DEMOSAIC_ENTRY: EntryShader = entry(
     "calibraw grouped X-Trans demosaic",
     XTRANS_DEMOSAIC,
@@ -277,6 +279,8 @@ pub(super) const COLOR_DENOISE_ENTRY: EntryShader = entry(
 );
 pub(super) const TONE_ANALYSIS_ENTRY: EntryShader =
     entry("calibraw tone analysis", TONE_ANALYSIS, false, None);
+pub(super) const HAZE_ANALYSIS_ENTRY: EntryShader =
+    entry("calibraw haze analysis", HAZE_ANALYSIS, false, None);
 pub(super) const SCENE_ADJUSTMENTS_ENTRY: EntryShader =
     entry("calibraw scene adjustments", SCENE_ADJUSTMENTS, true, None);
 pub(super) const CREATIVE_EFFECTS_ENTRY: EntryShader =
@@ -293,18 +297,19 @@ pub(super) const REMOVE_COMPOSITE_ENTRY: EntryShader = entry(
 
 /// Every entry shader, for validation and layout tests.
 #[cfg(test)]
-pub(super) const ALL_ENTRY_SHADERS: [EntryShader; 15] = [
+pub(super) const ALL_ENTRY_SHADERS: [EntryShader; 16] = [
     HIGHLIGHTS_ENTRY,
     BAYER_RCD_P1_ENTRY,
     BAYER_RCD_P2_ENTRY,
     BAYER_RCD_P3_ENTRY,
     BAYER_RCD_P4_ENTRY,
-    DUAL_DEMOSAIC_ENTRY,
+    DUAL_DEMOSAIC_DETAIL_ENTRY,
     XTRANS_DEMOSAIC_ENTRY,
     XTRANS_FINISH_ENTRY,
     RASTER_FINISH_ENTRY,
     COLOR_DENOISE_ENTRY,
     TONE_ANALYSIS_ENTRY,
+    HAZE_ANALYSIS_ENTRY,
     SCENE_ADJUSTMENTS_ENTRY,
     CREATIVE_EFFECTS_ENTRY,
     VIEW_TRANSFORM_ENTRY,
@@ -319,8 +324,8 @@ mod tests {
     fn import_paths_follow_file_names() {
         assert_eq!(COMMON.import_path(), "calibraw::common");
         assert_eq!(
-            XTRANS_MARKESTEIJN_REFINE.import_path(),
-            "calibraw::xtrans::markesteijn_refine"
+            XTRANS_MARKESTEIJN.import_path(),
+            "calibraw::xtrans::markesteijn"
         );
     }
 

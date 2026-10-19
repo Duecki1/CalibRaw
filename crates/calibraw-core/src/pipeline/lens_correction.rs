@@ -6,7 +6,7 @@
 //! positions, so preview, masks and export treat them alike.
 
 use super::lensfun::{apply_lensfun_correction, LensfunLens};
-use super::{LensGeometryMap, LoadedRaw};
+use super::{LensGeometryMap, LensShadingMap, LoadedRaw};
 use anyhow::{anyhow, Result};
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
@@ -216,12 +216,14 @@ fn distortion_map(model: &ManualLensModel, raw: &LoadedRaw) -> Result<LensGeomet
         .ok_or_else(|| anyhow!("manual distortion produced an invalid map"))
 }
 
-/// Multiplies the signal above black by the model's vignetting gain.
+/// Applies the model's vignetting gain: as a [`LensShadingMap`] the GPU
+/// applies after highlight reconstruction for sensor mosaics, or to the
+/// scene-linear raster of rendered photos.
 fn apply_vignetting(raw: &LoadedRaw, model: &ManualLensModel) -> Result<LoadedRaw> {
-    let width = (raw.width as usize).max(1);
-    let gain = |x: usize, y: usize| model.vignetting_stops([x as f32, y as f32]).exp2();
+    let gain = |[x, y]: [f32; 2]| model.vignetting_stops([x, y]).exp2();
 
     if raw.is_pre_demosaiced_raster() {
+        let width = (raw.width as usize).max(1);
         let source = raw
             .scene_linear_raster()
             .ok_or_else(|| anyhow!("rendered photo is missing its scene-linear raster"))?;
@@ -231,7 +233,7 @@ fn apply_vignetting(raw: &LoadedRaw, model: &ManualLensModel) -> Result<LoadedRa
             .enumerate()
             .for_each(|(y, row)| {
                 for (x, pixel) in row.chunks_exact_mut(3).enumerate() {
-                    let gain = gain(x, y);
+                    let gain = gain([x as f32, y as f32]);
                     pixel.iter_mut().for_each(|value| *value *= gain);
                 }
             });
@@ -242,32 +244,15 @@ fn apply_vignetting(raw: &LoadedRaw, model: &ManualLensModel) -> Result<LoadedRa
         return Ok(corrected);
     }
 
-    let mut raw_pixels = vec![0u16; raw.raw_pixels.len()];
-    raw_pixels
-        .par_chunks_mut(width)
-        .zip(raw.raw_pixels.par_chunks(width))
-        .enumerate()
-        .for_each(|(y, (output, input))| {
-            for (x, (output, &sample)) in output.iter_mut().zip(input).enumerate() {
-                let black = raw.black_levels_per_pixel[y * width + x];
-                let sample = f32::from(sample);
-                let corrected = black + (sample - black).max(0.0) * gain(x, y);
-                *output = corrected.round().clamp(0.0, f32::from(u16::MAX)) as u16;
-            }
-        });
-    // The corrected mosaic replaces the source as the full-sensor reference,
-    // so it starts its own opposed-chroma cache and source identity.
+    let extent = [
+        raw.width.saturating_sub(1) as f32,
+        raw.height.saturating_sub(1) as f32,
+    ];
+    let shading = LensShadingMap::from_fn(|[u, v]| [gain([u * extent[0], v * extent[1]]); 3])
+        .ok_or_else(|| anyhow!("manual vignetting produced invalid gains"))?;
     Ok(LoadedRaw {
-        opposed_chroma_cache: Default::default(),
-        opposed_chroma_source_identity: Default::default(),
-        opposed_chroma_reference_source: true,
-        ..raw.derive_with(
-            raw.width,
-            raw.height,
-            raw_pixels,
-            raw.color_indices.clone(),
-            raw.black_levels_per_pixel.clone(),
-        )
+        lens_shading: Some(shading),
+        ..raw.clone()
     })
 }
 
@@ -303,18 +288,27 @@ mod tests {
     }
 
     #[test]
-    fn vignetting_brightens_corners_above_black_and_keeps_the_centre() {
+    fn mosaic_vignetting_leaves_the_samples_and_maps_the_gain() {
         let raw = mosaic(65, 33, 1100);
         let corrected = apply_lens_correction(&raw, &manual(0.0, 50.0)).unwrap();
         assert!(corrected.lens_geometry.is_none());
-        let at = |x: usize, y: usize| corrected.raw_pixels[y * 65 + x];
-        assert_eq!(at(32, 16), 1100);
-        // One stop at the corner doubles the 1000 above black.
-        assert_eq!(at(0, 0), 2100);
-        assert!(at(0, 16) > 1100 && at(0, 16) < 2100);
+        // Clip detection must see the recorded samples, so the GPU applies the gain.
+        assert_eq!(corrected.raw_pixels, raw.raw_pixels);
+        let gains = corrected.lens_shading.as_ref().unwrap().gains();
+        let edge = LensShadingMap::EDGE as usize;
+        let at = |column: usize, row: usize| gains[row * edge + column];
+        let near = |gain: [f32; 3], expected: f32| gain.iter().all(|g| (g - expected).abs() < 1e-5);
+        // One stop at the corners, none at the centre, all channels alike.
+        assert!(near(at(0, 0), 2.0) && near(at(edge - 1, edge - 1), 2.0));
+        assert!(near(at(edge / 2, edge / 2), 1.0));
+        assert!((1.0..2.0).contains(&at(0, edge / 2)[0]));
 
         let darkened = apply_lens_correction(&raw, &manual(0.0, -50.0)).unwrap();
-        assert_eq!(darkened.raw_pixels[0], 600);
+        assert!(near(darkened.lens_shading.unwrap().gains()[0], 0.5));
+        assert!(apply_lens_correction(&raw, &manual(30.0, 0.0))
+            .unwrap()
+            .lens_shading
+            .is_none());
     }
 
     #[test]

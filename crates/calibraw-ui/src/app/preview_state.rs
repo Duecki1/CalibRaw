@@ -31,9 +31,14 @@ pub(crate) enum PreviewQuality {
 }
 
 impl PreviewQuality {
-    pub(crate) fn bounded_source_edge(width: u32, height: u32, requested: u32) -> u32 {
+    pub(crate) fn bounded_source_edge(
+        width: u32,
+        height: u32,
+        requested: u32,
+        cfa_kind: crate::pipeline::CfaKind,
+    ) -> u32 {
         if PlatformCaps::CURRENT.constrained_memory() {
-            RawGpuPipeline::bounded_mobile_preview_edge(width, height, requested)
+            RawGpuPipeline::bounded_mobile_preview_edge(width, height, requested, cfa_kind)
         } else {
             requested.min(width.max(height))
         }
@@ -84,6 +89,7 @@ impl PreviewQuality {
         source_width: u32,
         source_height: u32,
         geometry: GeometryTransform,
+        cfa_kind: crate::pipeline::CfaKind,
     ) -> u32 {
         const CFA_PHASE_GUARD: u32 = 6;
         let source_width = source_width.max(1);
@@ -101,6 +107,7 @@ impl PreviewQuality {
             source_width,
             source_height,
             self.proxy_edge().max(requested),
+            cfa_kind,
         )
     }
 

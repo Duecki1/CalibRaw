@@ -7,6 +7,45 @@ fn cam_to_working(rgb: vec3<f32>) -> vec3<f32> {
     return vec3<f32>(r, g, b);
 }
 
+// Scene gamut compression, after ACES Reference Gamut Compression. Camera
+// matrices put narrow-band light (LEDs, neon, lasers) outside Rec.2020, with
+// negative channels and sometimes negative luminance. The OKLab compression
+// used by later stages keeps lightness, so such pixels would turn black, and
+// noise around zero lightness would flip their hue.
+//
+// Each channel's distance from the largest channel, d = (max - c) / max, is 0
+// on the neutral axis, 1 on the Rec.2020 boundary and above 1 outside it.
+// Distances up to SCENE_GAMUT_THRESHOLD are kept bit-exact. Larger ones follow
+// t + s·x / (1 + x³)^(1/3) with s = 1 - t and x = (d - t) / s: the slope is 1
+// at the threshold and the curve approaches the boundary without reaching it,
+// so any pixel with a positive channel leaves with no negative channel. The
+// largest channel is kept, which preserves brightness and dominant hue, and
+// the mapping is scale invariant, so HDR values above 1 compress the same way.
+const SCENE_GAMUT_THRESHOLD: f32 = 0.8;
+// Distances this far past the threshold already map to the boundary in f32;
+// the cap keeps x³ finite for pixels whose largest channel is nearly zero.
+const SCENE_GAMUT_MAX_EXCESS: f32 = 1.0e4;
+
+fn compress_scene_gamut(rgb: vec3<f32>) -> vec3<f32> {
+    let achromatic = max(rgb.r, max(rgb.g, rgb.b));
+    // Without a positive channel there is no light to keep; leave sensor
+    // noise below black as it was.
+    if achromatic <= 0.0 {
+        return rgb;
+    }
+    let distance_from_neutral = (achromatic - rgb) / achromatic;
+    let span = 1.0 - SCENE_GAMUT_THRESHOLD;
+    let excess = clamp(
+        (distance_from_neutral - SCENE_GAMUT_THRESHOLD) / span,
+        vec3<f32>(0.0),
+        vec3<f32>(SCENE_GAMUT_MAX_EXCESS),
+    );
+    let compressed = SCENE_GAMUT_THRESHOLD
+        + span * excess / pow(1.0 + excess * excess * excess, vec3<f32>(1.0 / 3.0));
+    let mapped = achromatic - compressed * achromatic;
+    return select(rgb, mapped, distance_from_neutral > vec3<f32>(SCENE_GAMUT_THRESHOLD));
+}
+
 /// Distance between two hues in turns ([0, 1)), wrapping around 1.
 fn circular_hue_distance(a: f32, b: f32) -> f32 {
     let d = abs(a - b);

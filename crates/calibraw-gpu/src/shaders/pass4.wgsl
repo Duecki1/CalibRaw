@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Adapted from darktable 5.6.0 RCD and dual demosaicing.
+// Adapted from darktable 5.6.0 RCD and 5.6.1 dual demosaicing.
 // Copyright (C) 2010-2026 darktable developers.
 // RCD credits: Luis Sanz Rodriguez, Ingo Weyrich, and Hanno Schwalm.
 // Copyright (C) 2026 CalibRaw contributors (WGSL adaptation).
@@ -7,18 +7,17 @@
 #import calibraw::common as Common
 #import calibraw::raw_sampling as RawSampling
 #import calibraw::noise_ca_finish as NoiseCaFinish
+#import calibraw::dual_demosaic as Dual
 
 @group(0) @binding(7) var tex2_read: texture_2d<f32>;
 @group(0) @binding(9) var tex3_read: texture_2d<f32>;
 @group(0) @binding(10) var scene_write: texture_storage_2d<rgba16float /* CALIBRAW_WORK_FORMAT */, write>;
-@group(0) @binding(23) var dual_low_read: texture_2d<f32>;
 
 const RCD_MARGIN: i32 = 9;
 // Specialize the selected algorithm before driver compilation. The dynamic
 // fallback keeps every algorithm in one shader for validation.
 override BAYER_DEMOSAIC_MODE: u32 = 3u;
 override BAYER_SENSOR_DENOISE: bool = true;
-override BAYER_CA: bool = true;
 
 fn rcd_has_reference_margin(pos: vec2<i32>) -> bool {
     return pos.x >= RCD_MARGIN && pos.y >= RCD_MARGIN
@@ -215,7 +214,7 @@ fn bayer_reference_false_color_guard(pos: vec2<i32>, rgb: vec3<f32>) -> vec3<f32
         bayer_median5(uv0.y, uvn.y, uvs.y, uvw.y, uve.y),
     );
     let disagreement = length(uv0 - median);
-    let strength = 0.55 * smoothstep(0.006, 0.055, disagreement);
+    let strength = NoiseCaFinish::finish_false_color_strength(rgb, disagreement, 0.55);
     if strength <= 1e-6 { return rgb; }
     let y = dot(rgb, vec3<f32>(0.2627, 0.6780, 0.0593));
     return NoiseCaFinish::finish_from_yuv(y, mix(uv0, median, strength));
@@ -262,12 +261,16 @@ fn frequency_chroma_at(pos: vec2<i32>, center: vec3<f32>) -> vec3<f32> {
     return NoiseCaFinish::finish_from_yuv(center_signal, center_opponents - reject * carrier_alias);
 }
 
-fn dual_low_at(pos: vec2<i32>) -> vec4<f32> {
-    return textureLoad(dual_low_read, Common::clamp_pos(pos), 0);
-}
-
 override fn NoiseCaFinish::finish_reference_at(pos: vec2<i32>) -> vec3<f32> {
     return rcd_reference_at(Common::clamp_pos(pos));
+}
+
+// Pass 1 of dual demosaicing (dual_demosaic.wgsl), with RCD as the reference.
+@compute @workgroup_size(8, 8, 1)
+fn bayer_dual_prepare(@builtin(global_invocation_id) gid: vec3<u32>) {
+    if gid.x >= Common::camera_uniforms.width || gid.y >= Common::camera_uniforms.height { return; }
+    let pos = vec2<i32>(i32(gid.x), i32(gid.y));
+    Dual::dual_store_prepared(pos, rcd_reference_at(pos), true);
 }
 
 @compute @workgroup_size(8, 8, 1)
@@ -278,13 +281,7 @@ fn bayer_rcd_output(@builtin(global_invocation_id) gid: vec3<u32>) {
     var camera_rgb = reference;
     let demosaic_mode = select(f32(BAYER_DEMOSAIC_MODE), Common::camera_uniforms.demosaic_mode, BAYER_DEMOSAIC_MODE == 3u);
     if demosaic_mode >= 1.5 {
-        let low = dual_low_at(pos);
-        let opponent_delta = length(bayer_uv(reference) - bayer_uv(low.rgb));
-        camera_rgb = mix(
-            low.rgb,
-            reference,
-            NoiseCaFinish::finish_dual_high_weight(pos, reference, low, opponent_delta),
-        );
+        camera_rgb = Dual::dual_blend(pos, reference);
     } else if demosaic_mode >= 0.5 {
         camera_rgb = frequency_chroma_at(pos, reference);
     } else {
@@ -292,9 +289,6 @@ fn bayer_rcd_output(@builtin(global_invocation_id) gid: vec3<u32>) {
     }
     if BAYER_SENSOR_DENOISE {
         camera_rgb = NoiseCaFinish::finish_apply_sensor_denoise(pos, camera_rgb);
-    }
-    if BAYER_CA {
-        camera_rgb = NoiseCaFinish::finish_apply_ca(pos, camera_rgb);
     }
     textureStore(scene_write, pos, vec4<f32>(camera_rgb, 1.0));
 }

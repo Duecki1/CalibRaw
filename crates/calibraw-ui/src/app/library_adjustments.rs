@@ -1,4 +1,5 @@
 use super::*;
+use crate::pipeline::WhiteBalance;
 use crate::ui::library::LibraryLocator;
 
 /// Settings to apply to one or more photos.
@@ -31,7 +32,12 @@ impl EditTransfer<'_> {
         )
     }
 
-    fn apply(self, destination: &mut SidecarEditState) {
+    /// Applies the transfer to the edits of `photo`, whose white balance then
+    /// takes the form that photo keeps (`LoadedRaw::resolve_white_balance`).
+    /// A photo without a white-balance model shows no white-balance controls
+    /// and renders none, so it stays as shot instead of carrying a hidden
+    /// white balance into later copies.
+    fn apply(self, destination: &mut SidecarEditState, photo: TransferDestination<'_>) {
         match self {
             Self::Paste { clipboard, mode } => crate::sidecar::transfer_edits(
                 destination,
@@ -41,7 +47,29 @@ impl EditTransfer<'_> {
             ),
             Self::Preset(preset) => preset.apply_to(destination),
         }
+        let exposure = &mut destination.exposure;
+        match photo {
+            TransferDestination::Open(raw) => {
+                exposure.white_balance = raw.resolve_white_balance(exposure.white_balance);
+            }
+            TransferDestination::Closed { raster: true } => {
+                exposure.white_balance = WhiteBalance::AsShot;
+            }
+            // Resolved when the photo is opened.
+            TransferDestination::Closed { raster: false } => {}
+        }
     }
+}
+
+/// The photo an [`EditTransfer`] is applied to.
+#[derive(Clone, Copy)]
+enum TransferDestination<'a> {
+    Open(&'a LoadedRaw),
+    /// A photo that is not open. `raster` when it is certainly a rendered
+    /// photo or raster TIFF, which has no white-balance model.
+    Closed {
+        raster: bool,
+    },
 }
 
 /// Where an edit transfer started. Changing the camera profile reopens the
@@ -70,14 +98,19 @@ impl CalibRawApp {
         origin: EditTransferOrigin,
         frame: &eframe::Frame,
     ) -> Result<bool, String> {
-        if self.develop.loaded_raw.is_none() || self.persistence.sidecar_target.is_none() {
+        let Some(raw) = self
+            .develop
+            .loaded_raw
+            .clone()
+            .filter(|_| self.persistence.sidecar_target.is_some())
+        else {
             return Err("The destination image is not loaded.".to_owned());
-        }
+        };
 
         self.finish_mask_geometry_interaction();
         self.commit_edit_history_now();
         let mut merged = self.capture_sidecar_edit_state();
-        transfer.apply(&mut merged);
+        transfer.apply(&mut merged, TransferDestination::Open(&raw));
 
         let previous_camera_profile = self.develop.selected_camera_profile.clone();
         let pasted_camera_profile = merged.camera_profile.as_ref().and_then(|relative| {
@@ -345,7 +378,8 @@ impl CalibRawApp {
             } else {
                 (|| {
                     let mut destination = self.library_asset_edit_state(asset)?;
-                    transfer.apply(&mut destination);
+                    let raster = library_asset_is_raster(asset);
+                    transfer.apply(&mut destination, TransferDestination::Closed { raster });
                     let needs_ai_refresh = destination.ai_masks_need_update;
                     self.save_library_asset_edit_state(asset, destination)?;
                     Ok(needs_ai_refresh)
@@ -387,6 +421,25 @@ impl CalibRawApp {
             },
             frame,
         )
+    }
+}
+
+/// Whether a photo that is not open is a rendered photo or raster TIFF, and
+/// so has no camera white-balance model. Android documents are judged by
+/// name, so a raster TIFF there, like a RAW without colour metadata, has
+/// its white balance reset when it is opened.
+fn library_asset_is_raster(asset: &crate::ui::library::LibraryAsset) -> bool {
+    match &asset.locator {
+        LibraryLocator::Desktop(path) => {
+            crate::pipeline::decodes_as_raster(path).unwrap_or_else(|error| {
+                log::warn!("Could not identify {}: {error:#}", path.display());
+                false
+            })
+        }
+        LibraryLocator::Android { .. } => crate::pipeline::RenderedImageFormat::from_path(
+            std::path::Path::new(&asset.display_name),
+        )
+        .is_some(),
     }
 }
 
@@ -796,5 +849,55 @@ impl CalibRawApp {
             self.report_error(ErrorKind::AiMaskRefresh, summary);
         }
         self.egui_ctx.request_repaint();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::pipeline::{AdjustmentGroup, AdjustmentGroupSet};
+
+    #[test]
+    fn white_balance_is_pasted_only_into_photos_with_a_white_balance_model() {
+        let warm = WhiteBalance::Custom {
+            kelvin: 7200.0,
+            tint: 4.0,
+            older_reader_offsets: [-40.0, -0.8],
+        };
+        let mut copied = crate::sidecar::default_edit_state();
+        copied.exposure.white_balance = warm;
+        copied.exposure.saturation = 25.0;
+        let clipboard = AdjustmentClipboard {
+            edits: copied,
+            selection: EditSelection {
+                adjustment_groups: AdjustmentGroupSet::from_iter([AdjustmentGroup::Color]),
+                ..EditSelection::default()
+            },
+        };
+        let paste = EditTransfer::Paste {
+            clipboard: &clipboard,
+            mode: AdjustmentPasteMode::Merge,
+        };
+
+        let mut closed_raw = crate::sidecar::default_edit_state();
+        paste.apply(
+            &mut closed_raw,
+            TransferDestination::Closed { raster: false },
+        );
+        assert_eq!(closed_raw.exposure.white_balance, warm);
+
+        let mut closed_jpeg = crate::sidecar::default_edit_state();
+        paste.apply(
+            &mut closed_jpeg,
+            TransferDestination::Closed { raster: true },
+        );
+        assert_eq!(closed_jpeg.exposure.white_balance, WhiteBalance::AsShot);
+        assert_eq!(closed_jpeg.exposure.saturation, 25.0);
+
+        let photo = LoadedRaw::from_scene_linear_rec2020(2, 2, vec![0.5; 12]).unwrap();
+        let mut open_jpeg = crate::sidecar::default_edit_state();
+        paste.apply(&mut open_jpeg, TransferDestination::Open(&photo));
+        assert_eq!(open_jpeg.exposure.white_balance, WhiteBalance::AsShot);
+        assert_eq!(open_jpeg.exposure.saturation, 25.0);
     }
 }

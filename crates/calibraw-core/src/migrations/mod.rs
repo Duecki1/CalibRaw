@@ -16,6 +16,11 @@
 //!   asset table on the next save (`sidecar/mask_assets.rs`).
 //! - Presets that carry global effects in the masks category
 //!   (`presets.rs`).
+//! - White balance stored as offsets (`WhiteBalance::LegacyOffset` and
+//!   `older_reader_offsets`, `pipeline/basicadj.rs`), converted when the
+//!   photo is opened (`LoadedRaw::resolve_white_balance`,
+//!   `pipeline/raw_loader/white_balance.rs`). Their file layout is read and
+//!   written by `white_balance_offsets`.
 //! - Performance settings versions 1 to 3: the old desktop decoded-RAW
 //!   cache default, automatic vignetting correction and Develop navigation
 //!   labels, updated when the settings are loaded (`calibraw-ui`,
@@ -46,6 +51,7 @@ mod effect_sliders;
 pub(crate) mod older_readers;
 pub mod onnx_runtime_selection;
 pub(crate) mod point_curve_slots;
+pub(crate) mod white_balance_offsets;
 
 pub(crate) use effect_sliders::LegacyEffectSliders;
 

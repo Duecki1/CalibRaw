@@ -6,22 +6,19 @@ use super::*;
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
 pub(super) struct CameraUniforms {
     pub(super) black_point: f32,
-    pub(super) temperature: f32,
     pub(super) highlight_clip: f32,
     pub(super) chroma_denoise: f32,
-    pub(super) ca_red: f32,
-    pub(super) ca_blue: f32,
     pub(super) highlight_reconstruction: f32,
     pub(super) tone_analysis_scale: f32,
     pub(super) tone_guide_radius: f32,
     pub(super) demosaic_mode: f32,
     pub(super) dual_threshold: f32,
     pub(super) frequency_chroma: f32,
-    pub(super) tint: f32,
-    pub(super) pre_demosaiced_raster: f32,
     /// [`ViewTransformMode::shader_value`].
     pub(super) view_transform_mode: u32,
-    pub(super) camera_linear_raster: f32,
+    /// Pads the scalars to the 16-byte alignment of `highlight_options`.
+    pub(super) padding_0: u32,
+    pub(super) padding_1: u32,
     pub(super) highlight_options: [f32; 4],
     pub(super) noise_shot: [f32; 4],
     pub(super) noise_read: [f32; 4],
@@ -51,7 +48,10 @@ pub(super) struct CameraUniforms {
     /// texture against the original mosaic (R). The pipeline uploads 0 when its
     /// raw texture has no AI plane.
     pub(super) ai_cfa_weight: f32,
-    pub(super) _pad_camera_1: u32,
+    /// Shorter edge in pixels of the whole photo at its native resolution
+    /// ([`LoadedRaw::source_extent`]); `full_width` and `full_height` give the
+    /// processing resolution. `resolution_scale` in common.wgsl reads both.
+    pub(super) source_short_edge: u32,
 }
 
 #[repr(C)]
@@ -73,7 +73,8 @@ pub(super) enum ViewTransformMode {
     /// A developed raster at the reference tone curve keeps its rendered values.
     Passthrough,
     /// Scene radiance (RAWs, camera-linear and scene-referred rasters) takes
-    /// the sigmoid view transform.
+    /// the sigmoid view transform. `scene_working_at` in scene_source.wgsl
+    /// also compresses these sources into Rec.2020.
     SceneSigmoid,
     /// A developed raster whose tone curve differs from the reference is
     /// retoned relative to it: each value is mapped back through the reference
@@ -204,7 +205,7 @@ pub(super) struct EffectsUniforms {
 
 const _: () =
     assert!(std::mem::size_of::<EffectsUniforms>() == EFFECTS_UNIFORMS_SIZE_BYTES as usize);
-const _: () = assert!(GPU_STAGE_UNIFORM_SIZE_BYTES == 2_256);
+const _: () = assert!(GPU_STAGE_UNIFORM_SIZE_BYTES == 2_240);
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
@@ -235,6 +236,25 @@ pub(super) struct MaskData {
 }
 
 const _: () = assert!(std::mem::size_of::<MaskData>() == 1_488);
+
+impl MaskData {
+    /// The slot's [`MaskEffect::shader_id`] (`Common::mask_effect_id`).
+    pub(super) fn effect_id(&self) -> u32 {
+        self.metadata[3] >> MASK_EFFECT_ID_SHIFT
+    }
+
+    /// Whether the slot is enabled and changes the image: an adjustment that
+    /// is not neutral, or an active effect (`Common::mask_slot_active`).
+    pub(super) fn is_active(&self) -> bool {
+        self.metadata[0] != 0 && self.metadata[1] != 0
+    }
+
+    /// Whether the slot is active and applies `effect`
+    /// (`Common::mask_slot_applies`).
+    pub(super) fn applies(&self, effect: MaskEffect) -> bool {
+        self.is_active() && self.effect_id() == effect.shader_id()
+    }
+}
 
 /// Inputs of the relight shadow map besides scene depth
 /// (`GpuParams::relight_shadow_map_key`).
@@ -276,15 +296,18 @@ impl GpuParams {
     pub(super) fn mask_data_bytes(&self) -> &[u8] {
         bytemuck::cast_slice(&self.mask_data[..])
     }
+
+    /// The mask slots the shaders read: the first `mask_counts[0]`.
+    fn mask_slots(&self) -> &[MaskData] {
+        let count = (self.scene_tone.mask_counts[0] as usize).min(MAX_RENDER_MASK_SLOTS);
+        &self.mask_data[..count]
+    }
 }
 
 /// An enabled Glow slot that emits into the shared Glow diffusion. Mirrors
 /// `mask_glow_self_illuminating` in `mask_effects/glow.wgsl`.
 pub(super) fn is_self_illuminating_glow(mask: &MaskData) -> bool {
-    mask.metadata[0] != 0
-        && mask.metadata[1] != 0
-        && mask.metadata[3] >> MASK_EFFECT_ID_SHIFT == MaskEffect::Glow.shader_id()
-        && mask.adjust_0[3] > 0.5
+    mask.applies(MaskEffect::Glow) && mask.adjust_0[3] > 0.5
 }
 
 pub(super) fn split_eight(values: [f32; 8]) -> ([f32; 4], [f32; 4]) {
@@ -570,24 +593,50 @@ impl GpuParams {
         self.camera.ai_denoise_enabled != 0
     }
 
+    /// Dual demosaicing with a zero threshold keeps the reference demosaic
+    /// (`dual_blend` in dual_demosaic.wgsl), as darktable's does.
     pub(super) fn needs_dual_demosaic_passes(&self) -> bool {
-        self.camera.demosaic_mode >= 1.5
+        self.camera.demosaic_mode >= 1.5 && self.camera.dual_threshold > 0.0
     }
 
+    /// How many Texture and Clarity cascade levels the scene effects pass
+    /// reads: every level for Clarity, fewer for Texture alone, none without
+    /// either. Covers every call of `apply_texture_and_clarity_values`
+    /// (creative_effects.wgsl): the global values and adjustment masks.
+    pub(super) fn detail_pyramid_levels(&self) -> Option<usize> {
+        let [global_texture, global_clarity, ..] = self.effects.presence;
+        let local_values = self
+            .mask_slots()
+            .iter()
+            .filter(|mask| mask.applies(MaskEffect::Adjustment))
+            .map(|mask| (mask.adjust_2[1], mask.adjust_2[2]));
+        let (mut texture, mut clarity) = (global_texture.abs() > 1e-6, global_clarity.abs() > 1e-6);
+        for (local_texture, local_clarity) in local_values {
+            texture |= local_texture.abs() > 1e-6;
+            clarity |= local_clarity.abs() > 1e-6;
+        }
+        if clarity {
+            Some(DETAIL_PYRAMID_LEVELS)
+        } else if texture {
+            Some(DETAIL_PYRAMID_TEXTURE_LEVELS)
+        } else {
+            None
+        }
+    }
+
+    /// Whether anything after the scene tone pass runs. Dehaze is applied
+    /// in the scene preparation and needs none of these passes.
     pub(super) fn needs_intermediate_adjustment_passes(&self) -> bool {
+        let [global_texture, global_clarity, ..] = self.effects.presence;
         let global_effects = self.scene_tone.saturation.abs() > 1e-6
             || self.scene_tone.vibrance.abs() > 1e-6
-            || self.effects.presence[..3]
-                .iter()
-                .any(|value| value.abs() > 1e-6);
-        let local_count = (self.scene_tone.mask_counts[0] as usize).min(MAX_RENDER_MASK_SLOTS);
-        let local_effects = (0..local_count).any(|index| {
-            let local = self.mask_data[index];
-            let state = local.metadata;
-            if state[0] == 0 || state[1] == 0 {
+            || global_texture.abs() > 1e-6
+            || global_clarity.abs() > 1e-6;
+        let local_effects = self.mask_slots().iter().any(|local| {
+            if !local.is_active() {
                 return false;
             }
-            let effect_id = state[3] >> MASK_EFFECT_ID_SHIFT;
+            let effect_id = local.effect_id();
             if effect_id == MaskEffect::Neon.shader_id()
                 || effect_id == MaskEffect::Glow.shader_id()
                 || effect_id == MaskEffect::LightRays.shader_id()
@@ -615,30 +664,27 @@ impl GpuParams {
             let white_balance = local.adjust_1[0].abs() > 1e-6
                 || local.adjust_1[2].abs() > 1e-6
                 || local.adjust_1[3].abs() > 1e-6;
-            let curves = state[2] != 0;
-            let presence_or_saturation = local.adjust_2.iter().any(|value| value.abs() > 1e-6);
+            let curves = local.metadata[2] != 0;
+            let [saturation, texture, clarity, _dehaze] = local.adjust_2;
+            let presence_or_saturation = [saturation, texture, clarity]
+                .iter()
+                .any(|value| value.abs() > 1e-6);
             tone || white_balance || curves || presence_or_saturation
         });
         global_effects || local_effects
     }
 
     pub(super) fn needs_glow_passes(&self) -> bool {
-        let local_count = (self.scene_tone.mask_counts[0] as usize).min(MAX_RENDER_MASK_SLOTS);
-        self.mask_data[..local_count]
-            .iter()
-            .any(is_self_illuminating_glow)
+        self.mask_slots().iter().any(is_self_illuminating_glow)
     }
 
     /// Whether an active Pixelate effect reads the block cache. Mirrors
     /// `pixelate_is_active` in `pixelate.wgsl`; block sizes too small to be
     /// cached still run the pass, which then writes nothing.
     pub(super) fn needs_pixelate_block_pass(&self) -> bool {
-        let local_count = (self.scene_tone.mask_counts[0] as usize).min(MAX_RENDER_MASK_SLOTS);
-        self.mask_data[..local_count].iter().any(|mask| {
+        self.mask_slots().iter().any(|mask| {
             let [amount, block_size, ..] = mask.adjust_0;
-            mask.metadata[0] != 0
-                && mask.metadata[1] != 0
-                && mask.metadata[3] >> MASK_EFFECT_ID_SHIFT == MaskEffect::Pixelate.shader_id()
+            mask.applies(MaskEffect::Pixelate)
                 && (amount / 100.0).clamp(0.0, 1.0) > 1e-6
                 && block_size > 1.0
         })
@@ -647,10 +693,26 @@ impl GpuParams {
     /// Whether an effect samples the image-light map (Image lights on Fog or
     /// Smoke), so the export tone prepass must build it.
     pub(super) fn needs_image_lights(&self) -> bool {
-        let local_count = (self.scene_tone.mask_counts[0] as usize).min(MAX_RENDER_MASK_SLOTS);
-        self.mask_data[..local_count]
-            .iter()
-            .any(medium_uses_image_lights)
+        self.mask_slots().iter().any(medium_uses_image_lights)
+    }
+
+    /// Whether global or mask Dehaze applies (`dehaze_amount_at` in
+    /// scene_adjustments.wgsl), so the haze map must be built.
+    pub(super) fn needs_haze(&self) -> bool {
+        self.effects.presence[2].abs() > 1e-6
+            || self
+                .mask_slots()
+                .iter()
+                .any(|mask| mask.applies(MaskEffect::Adjustment) && mask.adjust_2[3].abs() > 1e-7)
+    }
+
+    /// Whether an effect reads `map`, which the tone stage, or the export tone
+    /// prepass, must then build.
+    pub(super) fn needs_full_image_map(&self, map: FullImageMap) -> bool {
+        match map {
+            FullImageMap::ImageLights => self.needs_image_lights(),
+            FullImageMap::Haze => self.needs_haze(),
+        }
     }
 
     /// Whether an effect upsamples scene depth with the image as its guide:
@@ -661,14 +723,10 @@ impl GpuParams {
         if self.scene_tone.scene_depth_present == 0 {
             return false;
         }
-        let local_count = (self.scene_tone.mask_counts[0] as usize).min(MAX_RENDER_MASK_SLOTS);
-        self.mask_data[..local_count].iter().any(|mask| {
-            let id = mask.metadata[3] >> MASK_EFFECT_ID_SHIFT;
-            mask.metadata[0] != 0
-                && mask.metadata[1] != 0
-                && [MaskEffect::Fog, MaskEffect::Smoke, MaskEffect::Relight]
-                    .iter()
-                    .any(|effect| effect.shader_id() == id)
+        self.mask_slots().iter().any(|mask| {
+            [MaskEffect::Fog, MaskEffect::Smoke, MaskEffect::Relight]
+                .into_iter()
+                .any(|effect| mask.applies(effect))
         })
     }
 
@@ -676,12 +734,9 @@ impl GpuParams {
     /// relighting surface derived from scene depth. Mirrors the slot checks
     /// of `scene_light_at` in scene_lights.wgsl.
     pub(super) fn needs_relight_surface(&self) -> bool {
-        let local_count = (self.scene_tone.mask_counts[0] as usize).min(MAX_RENDER_MASK_SLOTS);
-        self.mask_data[..local_count].iter().any(|mask| {
-            mask.metadata[0] != 0
-                && mask.metadata[1] != 0
-                && mask.metadata[3] >> MASK_EFFECT_ID_SHIFT == MaskEffect::Relight.shader_id()
-        })
+        self.mask_slots()
+            .iter()
+            .any(|mask| mask.applies(MaskEffect::Relight))
     }
 
     /// What the relight shadow map depends on besides scene depth: the frame
@@ -692,9 +747,8 @@ impl GpuParams {
         if self.scene_tone.scene_depth_present == 0 {
             return None;
         }
-        let local_count = (self.scene_tone.mask_counts[0] as usize).min(MAX_RENDER_MASK_SLOTS);
         let mut lights = [None; RELIGHT_SHADOW_MAP_CHANNELS];
-        for mask in &self.mask_data[..local_count] {
+        for mask in self.mask_slots() {
             if let Some(channel) = relight_shadow_channel(mask) {
                 use super::effect_lanes::relight;
                 lights[channel] = Some(
@@ -726,27 +780,22 @@ impl GpuParams {
     }
 
     pub(super) fn needs_blur_passes(&self) -> bool {
-        let local_count = (self.scene_tone.mask_counts[0] as usize).min(MAX_RENDER_MASK_SLOTS);
-        self.mask_data[..local_count].iter().any(|mask| {
-            if mask.metadata[0] == 0 {
-                return false;
-            }
-            matches!(
-                mask.metadata[3] >> MASK_EFFECT_ID_SHIFT,
-                id if id == MaskEffect::Blur.shader_id()
-                    || id == MaskEffect::LensBlur.shader_id()
-                    || id == MaskEffect::MotionBlur.shader_id()
-                    || id == MaskEffect::RadialBlur.shader_id()
-                    || id == MaskEffect::TiltShift.shader_id()
-            )
+        self.mask_slots().iter().any(|mask| {
+            [
+                MaskEffect::Blur,
+                MaskEffect::LensBlur,
+                MaskEffect::MotionBlur,
+                MaskEffect::RadialBlur,
+                MaskEffect::TiltShift,
+            ]
+            .into_iter()
+            .any(|effect| mask.applies(effect))
         })
     }
 
     pub(super) fn needs_progressive_blur_passes(&self) -> bool {
-        let local_count = (self.scene_tone.mask_counts[0] as usize).min(MAX_RENDER_MASK_SLOTS);
-        self.mask_data[..local_count].iter().any(|mask| {
-            mask.metadata[0] != 0
-                && mask.metadata[3] >> MASK_EFFECT_ID_SHIFT == MaskEffect::Blur.shader_id()
-        })
+        self.mask_slots()
+            .iter()
+            .any(|mask| mask.applies(MaskEffect::Blur))
     }
 }

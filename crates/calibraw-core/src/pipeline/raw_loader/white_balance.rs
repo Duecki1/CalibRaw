@@ -61,6 +61,93 @@ impl LoadedRaw {
         ))
     }
 
+    /// Temperature and tint offsets from the as-shot white balance that
+    /// render `white_balance` on this photo, as the sensor multipliers take
+    /// them. Zero, so as shot, when the photo has no white-balance model.
+    pub fn white_balance_offsets(&self, white_balance: WhiteBalance) -> (f32, f32) {
+        match white_balance {
+            WhiteBalance::AsShot => (0.0, 0.0),
+            WhiteBalance::Custom { kelvin, tint, .. } => self
+                .white_balance_offsets_from_temperature_tint(kelvin, tint)
+                .unwrap_or((0.0, 0.0)),
+            // migration: remove in v2.0.0
+            WhiteBalance::LegacyOffset { temperature, tint } => (temperature, tint),
+        }
+    }
+
+    /// Temperature and tint the sliders show for `white_balance`, each limited
+    /// to its own slider range.
+    pub fn shown_white_balance(&self, white_balance: WhiteBalance) -> Option<(f32, f32)> {
+        match white_balance {
+            WhiteBalance::AsShot => self.white_balance_temperature_tint(0.0, 0.0),
+            WhiteBalance::Custom { kelvin, tint, .. } => {
+                Some(self.white_balance_ranges()?.clamp(kelvin, tint))
+            }
+            // migration: remove in v2.0.0
+            WhiteBalance::LegacyOffset { temperature, tint } => {
+                self.white_balance_temperature_tint(temperature, tint)
+            }
+        }
+    }
+
+    /// A custom white balance of `kelvin` and `tint`, each first limited to
+    /// its own slider range.
+    pub fn custom_white_balance(&self, kelvin: f32, tint: f32) -> Option<WhiteBalance> {
+        let (kelvin, tint) = self.white_balance_ranges()?.clamp(kelvin, tint);
+        let (temperature_offset, tint_offset) =
+            self.white_balance_offsets_from_temperature_tint(kelvin, tint)?;
+        Some(WhiteBalance::Custom {
+            kelvin,
+            tint,
+            older_reader_offsets: [temperature_offset, tint_offset],
+        })
+    }
+
+    /// The custom white balance that stored offsets give this photo.
+    pub fn white_balance_from_offsets(
+        &self,
+        (temperature_offset, tint_offset): (f32, f32),
+    ) -> Option<WhiteBalance> {
+        let (kelvin, tint) =
+            self.white_balance_temperature_tint(temperature_offset, tint_offset)?;
+        self.custom_white_balance(kelvin, tint)
+    }
+
+    /// `white_balance` as this photo keeps it: as shot without a
+    /// white-balance model, whose photos render none, and a custom white
+    /// balance limited to this camera's slider ranges, with offsets for older
+    /// readers from this photo. Unchanged when the ranges are unknown.
+    pub fn resolve_white_balance(&self, white_balance: WhiteBalance) -> WhiteBalance {
+        if !self.has_white_balance_model() {
+            return WhiteBalance::AsShot;
+        }
+        match white_balance {
+            WhiteBalance::AsShot => WhiteBalance::AsShot,
+            WhiteBalance::Custom { kelvin, tint, .. } => self
+                .custom_white_balance(kelvin, tint)
+                .unwrap_or(white_balance),
+            // migration: remove in v2.0.0. Offsets saved up to v1.3 become
+            // the white balance they rendered on this photo.
+            WhiteBalance::LegacyOffset { temperature, tint } => self
+                .white_balance_from_offsets((temperature, tint))
+                .unwrap_or(white_balance),
+        }
+    }
+
+    /// Stored offsets for the camera reference white, D65.
+    pub fn reference_white_balance_offsets(&self) -> Option<(f32, f32)> {
+        #[cfg(libraw_available)]
+        {
+            let (temperature, tint) =
+                libraw_loader::xyz_temperature_tint(crate::color_math::D65_XYZ)?;
+            self.white_balance_offsets_from_temperature_tint(temperature, tint)
+        }
+        #[cfg(not(libraw_available))]
+        {
+            None
+        }
+    }
+
     pub fn camera_white_balance_presets(&self) -> Vec<WhiteBalancePreset> {
         crate::pipeline::white_balance_presets::for_camera(&self.camera_make, &self.camera_model)
     }
@@ -88,7 +175,7 @@ impl LoadedRaw {
             let model = self.white_balance_model.as_ref()?;
             let physical = self.physical_white_balance_coefficients(logical_coefficients)?;
             let (temperature, tint) =
-                libraw_loader::temperature_tint_from_coefficients(model, physical)?;
+                libraw_loader::temperature_tint_from_coefficients(&model.color, physical)?;
             self.white_balance_offsets_from_temperature_tint(temperature, tint)
         }
         #[cfg(not(libraw_available))]
@@ -210,36 +297,37 @@ impl LoadedRaw {
         ]
     }
 
+    /// White-balance multipliers, camera-to-working transform and
+    /// hue/saturation table weight for temperature and tint offsets from the
+    /// as-shot white. As the DNG SDK renders a white, a dual-illuminant
+    /// profile's matrices and table weight are interpolated at the white's
+    /// own temperature; single-matrix models keep the as-shot transform and
+    /// weight. The as-shot white returns the values the photo loaded with.
     pub fn adjusted_white_balance_and_camera_transform(
         &self,
         temperature: f32,
         tint: f32,
     ) -> ([f32; 4], [[f32; 4]; 3], f32) {
-        if temperature.abs() < 1e-6 && tint.abs() < 1e-6 {
-            return (
-                self.wb_coeffs,
-                self.cam_to_srgb,
-                self.camera_profile.interpolation_weight,
-            );
-        }
-        #[cfg(libraw_available)]
-        if let Some(model) = &self.white_balance_model {
-            if let Some(white_balance) = libraw_loader::adjusted_white_balance_coefficients(
-                model,
-                temperature.clamp(-GLOBAL_TEMPERATURE_LIMIT, GLOBAL_TEMPERATURE_LIMIT),
-                tint.clamp(-GLOBAL_TINT_OFFSET_LIMIT, GLOBAL_TINT_OFFSET_LIMIT),
-            ) {
-                return (
-                    white_balance,
-                    self.cam_to_srgb,
-                    self.camera_profile.interpolation_weight,
-                );
-            }
-        }
-        (
+        let as_shot = (
             self.wb_coeffs,
             self.cam_to_srgb,
             self.camera_profile.interpolation_weight,
-        )
+        );
+        if temperature.abs() < 1e-6 && tint.abs() < 1e-6 {
+            return as_shot;
+        }
+        #[cfg(libraw_available)]
+        if let Some(model) = &self.white_balance_model {
+            if let Some(adjusted) = libraw_loader::adjusted_white_balance(
+                model,
+                temperature.clamp(-GLOBAL_TEMPERATURE_LIMIT, GLOBAL_TEMPERATURE_LIMIT),
+                tint.clamp(-GLOBAL_TINT_OFFSET_LIMIT, GLOBAL_TINT_OFFSET_LIMIT),
+                self.camera_profile.interpolation_weight,
+            ) {
+                let (transform, weight) = adjusted.profile.unwrap_or((as_shot.1, as_shot.2));
+                return (adjusted.coefficients, transform, weight);
+            }
+        }
+        as_shot
     }
 }

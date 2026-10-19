@@ -82,6 +82,7 @@ impl RawGpuPipeline {
         let raw = LoadedRaw {
             width: EDGE,
             height: EDGE,
+            source_extent: [EDGE, EDGE],
             camera_make: "CalibRaw".to_owned(),
             camera_model: "GPU prewarm".to_owned(),
             lens_make: String::new(),
@@ -122,6 +123,7 @@ impl RawGpuPipeline {
             available_camera_profiles: Vec::new(),
             white_balance_model: None,
             lens_geometry: None,
+            lens_shading: None,
             ai_denoised: Arc::new(std::sync::RwLock::new(None)),
             opposed_chroma_cache: Default::default(),
             opposed_chroma_source_identity: Default::default(),
@@ -225,6 +227,7 @@ impl RawGpuPipeline {
             mask_data_buffer_bytes: MASK_DATA_SIZE_BYTES,
             ai_cfa: has_ai_cfa,
             raster_source: has_raster_scene,
+            cfa_kind: raw.cfa_kind,
         })?;
         let gpu_budget_reservation =
             GpuBudgetReservation::acquire(&resource_plan, gpu_working_set_limit_bytes())?;
@@ -324,12 +327,14 @@ impl RawGpuPipeline {
             raw_texture: surfaces.raw_texture,
             color_texture: surfaces.color_texture,
             black_texture: surfaces.black_texture,
+            lens_shading_texture: surfaces.lens_shading_texture,
             _reconstructed_raw_texture: surfaces.reconstructed_raw_texture,
             _highlight_work_a: surfaces.highlight_work_a,
             _highlight_work_b: surfaces.highlight_work_b,
             _tex1: surfaces.tex1,
             _tex2: surfaces.tex2,
             raster_source_texture: surfaces.raster_source_texture,
+            _xtrans_homogeneity: surfaces.xtrans_homogeneity,
             scene_texture: surfaces.scene_texture,
             scene_format: geometry.demosaic_format,
             has_ai_scene,
@@ -343,7 +348,7 @@ impl RawGpuPipeline {
             scene_depth_texture: surfaces.scene_depth_texture,
             uploaded_scene_depth: Mutex::new(None),
             relight_shadow_map_key: Mutex::new(None),
-            image_lights_current: AtomicBool::new(false),
+            full_image_maps_current: Default::default(),
             mask_layer_capacity: geometry.mask_layer_capacity,
             mask_atlas_edge: geometry.mask_atlas_edge,
             out_texture: surfaces.out_texture,
@@ -365,13 +370,13 @@ impl RawGpuPipeline {
             pipeline.indices.tone_prepare_pass_index,
             pipeline.indices.tone_stage_end,
         );
-        pipeline.encode_tone_image_lights(&mut warmup, params);
+        pipeline.encode_tone_full_image_maps(&mut warmup, params);
         pipeline.encode_output_stage(&mut warmup, params);
         drop(warmup);
         // Nothing ran: the maps the warmup encoded are not built.
-        pipeline
-            .image_lights_current
-            .store(false, Ordering::Release);
+        for current in &pipeline.full_image_maps_current {
+            current.store(false, Ordering::Release);
+        }
         *pipeline
             .relight_shadow_map_key
             .lock()

@@ -1,5 +1,5 @@
 use super::*;
-use crate::pipeline::TONE_GUIDE_CELL_SIZE;
+use crate::pipeline::{LensShadingMap, TONE_GUIDE_CELL_SIZE};
 use std::borrow::Cow;
 use std::cell::RefCell;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -21,6 +21,20 @@ pub(super) const IMAGE_LIGHT_BANDS: u32 = 16;
 pub(super) const IMAGE_LIGHT_CELL_BYTES: u64 = IMAGE_LIGHT_BANDS as u64 * 16;
 pub(super) const IMAGE_LIGHT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 
+/// Dehaze (haze.wgsl): grid cells along the full image's longer edge. The
+/// cell buffer and textures are sized for a square grid.
+pub(super) const HAZE_GRID_LONG: u32 = 160;
+/// Bytes of one haze grid cell (`HazeCell` in haze_analysis.wgsl): two RGBA
+/// f32 vectors.
+pub(super) const HAZE_CELL_BYTES: u64 = 2 * 16;
+/// Bytes of the resolved airlight and added veil (`HazeAirlight` in
+/// haze.wgsl): two RGBA f32 vectors.
+pub(super) const HAZE_AIRLIGHT_BYTES: u64 = 2 * 16;
+/// Per haze grid cell, the transmission and then the guided filter's
+/// coefficients. They stay f32: a slope of several units times the guide
+/// nearly cancels its offset.
+pub(super) const HAZE_MAP_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba32Float;
+
 /// Per scene-depth texel, the joint-upsampling guide colour and the stored
 /// depth (scene_depth.wgsl).
 pub(super) const SCENE_DEPTH_GUIDE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
@@ -31,6 +45,11 @@ pub(super) const RELIGHT_SHADOW_MAP_FORMAT: wgpu::TextureFormat = wgpu::TextureF
 /// Bytes of an image-light grid of `edge` × `edge` cells.
 pub(super) const fn image_light_cells_bytes(edge: u32) -> u64 {
     edge as u64 * edge as u64 * IMAGE_LIGHT_CELL_BYTES
+}
+
+/// Bytes of a haze grid of `edge` × `edge` cells.
+pub(super) const fn haze_cells_bytes(edge: u32) -> u64 {
+    edge as u64 * edge as u64 * HAZE_CELL_BYTES
 }
 
 const MAX_UPLOAD_SCRATCH_BYTES: usize = 8 * 1024 * 1024;
@@ -102,6 +121,8 @@ pub(super) struct GpuResourcePlanInput {
     /// Whether the source is a pre-demosaiced raster, held in an RGB source
     /// texture while the CFA textures shrink to placeholders.
     pub raster_source: bool,
+    /// X-Trans pipelines also hold Markesteijn's homogeneity map.
+    pub cfa_kind: CfaKind,
 }
 
 #[derive(Debug)]
@@ -163,6 +184,7 @@ fn texture_format_bytes_per_texel(format: wgpu::TextureFormat) -> Result<u64> {
         wgpu::TextureFormat::R8Uint => Ok(1),
         wgpu::TextureFormat::R16Uint | wgpu::TextureFormat::R16Float => Ok(2),
         wgpu::TextureFormat::R32Float
+        | wgpu::TextureFormat::R32Uint
         | wgpu::TextureFormat::Rg16Uint
         | wgpu::TextureFormat::Rgba8Unorm => Ok(4),
         wgpu::TextureFormat::Rgba16Float => Ok(8),
@@ -295,6 +317,14 @@ pub(super) fn build_gpu_resource_plan(input: GpuResourcePlanInput) -> Result<Gpu
         GpuResourceResidency::Persistent,
         full(wgpu::TextureFormat::Rgba8Unorm)?,
     );
+    if input.cfa_kind == CfaKind::XTrans {
+        push_entry(
+            &mut entries,
+            "X-Trans homogeneity map",
+            GpuResourceResidency::Persistent,
+            full(XTRANS_HOMOGENEITY_FORMAT)?,
+        );
+    }
 
     let tone_width = input.width.div_ceil(input.tone_scale);
     let tone_height = input.height.div_ceil(input.tone_scale);
@@ -431,6 +461,20 @@ pub(super) fn build_gpu_resource_plan(input: GpuResourcePlanInput) -> Result<Gpu
             IMAGE_LIGHT_FORMAT,
         )?,
     );
+    push_entry(
+        &mut entries,
+        "haze grid and airlight buffers",
+        GpuResourceResidency::OnDemand,
+        aligned_buffer_bytes(haze_cells_bytes(HAZE_GRID_LONG))?
+            .checked_add(aligned_buffer_bytes(HAZE_AIRLIGHT_BYTES)?)
+            .ok_or_else(|| anyhow!("haze buffer size overflows"))?,
+    );
+    push_entry(
+        &mut entries,
+        "haze textures",
+        GpuResourceResidency::OnDemand,
+        2 * texture_allocation_bytes(HAZE_GRID_LONG, HAZE_GRID_LONG, 1, 1, HAZE_MAP_FORMAT)?,
+    );
 
     let rgba32_readback = aligned_copy_buffer_bytes(input.width, input.height, 16)?
         .min(MAX_RGBA32_READBACK_CHUNK_BYTES);
@@ -560,14 +604,20 @@ impl RawGpuPipeline {
     /// Bound mobile previews using the same resource accounting as allocation.
     /// Leave room for the fitted image and a detail crop to coexist. This uses
     /// the full mask capacity so adding a mask cannot invalidate the budget.
-    pub fn bounded_mobile_preview_edge(width: u32, height: u32, requested: u32) -> u32 {
+    pub fn bounded_mobile_preview_edge(
+        width: u32,
+        height: u32,
+        requested: u32,
+        cfa_kind: CfaKind,
+    ) -> u32 {
         let mut low = 1;
         let mut high = requested.min(width.max(height)).max(1);
         while low < high {
             let edge = low + (high - low).div_ceil(2);
-            let fits = mobile_preview_resource_plan(width, height, edge).is_ok_and(|plan| {
-                plan.admitted_gpu_bytes <= ANDROID_GPU_WORKING_SET_LIMIT_BYTES / 2
-            });
+            let fits =
+                mobile_preview_resource_plan(width, height, edge, cfa_kind).is_ok_and(|plan| {
+                    plan.admitted_gpu_bytes <= ANDROID_GPU_WORKING_SET_LIMIT_BYTES / 2
+                });
             if fits {
                 low = edge;
             } else {
@@ -578,7 +628,12 @@ impl RawGpuPipeline {
     }
 }
 
-fn mobile_preview_resource_plan(width: u32, height: u32, edge: u32) -> Result<GpuResourcePlan> {
+fn mobile_preview_resource_plan(
+    width: u32,
+    height: u32,
+    edge: u32,
+    cfa_kind: CfaKind,
+) -> Result<GpuResourcePlan> {
     let scale = (f64::from(edge) / f64::from(width.max(height).max(1))).min(1.0);
     build_gpu_resource_plan(GpuResourcePlanInput {
         width: (f64::from(width) * scale).ceil().max(1.0) as u32,
@@ -595,6 +650,7 @@ fn mobile_preview_resource_plan(width: u32, height: u32, edge: u32) -> Result<Gp
         // Sized for sensor sources: a raster's RGB source is within a byte
         // per pixel of the CFA textures it replaces.
         raster_source: false,
+        cfa_kind,
     })
 }
 
@@ -1256,6 +1312,10 @@ pub(super) fn texture_entry(
     }
 }
 
+/// Markesteijn's homogeneity counts, 4 bits for each of 8 candidates
+/// (xtrans_demosaic.wgsl).
+pub(super) const XTRANS_HOMOGENEITY_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R32Uint;
+
 /// The sensor mosaic format: `R16Uint` with the original mosaic, or
 /// `Rg16Uint` with the original in R and the AI-denoised mosaic in G, which
 /// `raw_sampling.wgsl` blends by `CameraUniforms::ai_cfa_weight`.
@@ -1424,6 +1484,56 @@ pub(super) fn create_color_texture(
     texture
 }
 
+/// The RGBA32F texture of `raw`'s lens shading gains, which highlight
+/// reconstruction applies to its output. It is always
+/// [`LensShadingMap::EDGE`] square, so a reused tile pipeline refills it.
+pub(super) fn create_lens_shading_texture(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    raw: &LoadedRaw,
+) -> wgpu::Texture {
+    let edge = LensShadingMap::EDGE;
+    let texture = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("calibraw lens shading gains"),
+        size: texture_size(edge, edge),
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Rgba32Float,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        view_formats: &[],
+    });
+    upload_lens_shading_texture(queue, &texture, raw);
+    texture
+}
+
+/// Uploads `raw`'s lens shading gains, or unit gains when it has none.
+pub(super) fn upload_lens_shading_texture(
+    queue: &wgpu::Queue,
+    texture: &wgpu::Texture,
+    raw: &LoadedRaw,
+) {
+    let edge = LensShadingMap::EDGE;
+    let texels: Vec<[f32; 4]> = match &raw.lens_shading {
+        Some(map) => map
+            .gains()
+            .iter()
+            .map(|&[red, green, blue]| [red, green, blue, 1.0])
+            .collect(),
+        None => vec![[1.0; 4]; (edge * edge) as usize],
+    };
+    queue.write_texture(
+        copy_texture(texture),
+        bytemuck::cast_slice(&texels),
+        wgpu::TexelCopyBufferLayout {
+            offset: 0,
+            bytes_per_row: Some(edge * 16),
+            rows_per_image: Some(edge),
+        },
+        texture_size(edge, edge),
+    );
+}
+
 fn create_per_pixel_texture(
     device: &wgpu::Device,
     raw: &LoadedRaw,
@@ -1543,38 +1653,42 @@ mod resource_plan_tests {
             mask_data_buffer_bytes: MASK_DATA_SIZE_BYTES,
             ai_cfa: false,
             raster_source: false,
+            cfa_kind: CfaKind::Bayer,
         }
     }
 
     #[test]
     fn mobile_max_preview_respects_the_budget_before_allocating() {
         // Regression: the reported 2330x1554 Max proxy exceeded 384 MiB.
-        let unbounded = mobile_preview_resource_plan(2330, 1554, 2330).unwrap();
+        let unbounded = mobile_preview_resource_plan(2330, 1554, 2330, CfaKind::Bayer).unwrap();
         assert!(unbounded.admitted_gpu_bytes > ANDROID_GPU_WORKING_SET_LIMIT_BYTES);
-        for (width, height) in [(4688, 7028), (7028, 4688), (2048, 2048), (8000, 1000)] {
-            let edge = RawGpuPipeline::bounded_mobile_preview_edge(width, height, 3600);
-            let plan = mobile_preview_resource_plan(width, height, edge).unwrap();
-            assert!(plan.admitted_gpu_bytes <= ANDROID_GPU_WORKING_SET_LIMIT_BYTES / 2);
-            assert!(
-                mobile_preview_resource_plan(width, height, edge + 1)
-                    .unwrap()
-                    .admitted_gpu_bytes
-                    > ANDROID_GPU_WORKING_SET_LIMIT_BYTES / 2
+        for cfa_kind in [CfaKind::Bayer, CfaKind::XTrans] {
+            for (width, height) in [(4688, 7028), (7028, 4688), (2048, 2048), (8000, 1000)] {
+                let edge =
+                    RawGpuPipeline::bounded_mobile_preview_edge(width, height, 3600, cfa_kind);
+                let plan = mobile_preview_resource_plan(width, height, edge, cfa_kind).unwrap();
+                assert!(plan.admitted_gpu_bytes <= ANDROID_GPU_WORKING_SET_LIMIT_BYTES / 2);
+                assert!(
+                    mobile_preview_resource_plan(width, height, edge + 1, cfa_kind)
+                        .unwrap()
+                        .admitted_gpu_bytes
+                        > ANDROID_GPU_WORKING_SET_LIMIT_BYTES / 2
+                );
+                // Two admitted graphs leave room for the small navigation graph.
+                assert!(
+                    plan.persistent_gpu_bytes * 2 + 32 * 1024 * 1024
+                        < ANDROID_GPU_WORKING_SET_LIMIT_BYTES
+                );
+            }
+            assert_eq!(
+                RawGpuPipeline::bounded_mobile_preview_edge(800, 600, 800, cfa_kind),
+                800
             );
-            // Two admitted graphs leave room for the small navigation graph.
-            assert!(
-                plan.persistent_gpu_bytes * 2 + 32 * 1024 * 1024
-                    < ANDROID_GPU_WORKING_SET_LIMIT_BYTES
+            assert_eq!(
+                RawGpuPipeline::bounded_mobile_preview_edge(800, 600, 1600, cfa_kind),
+                800
             );
         }
-        assert_eq!(
-            RawGpuPipeline::bounded_mobile_preview_edge(800, 600, 800),
-            800
-        );
-        assert_eq!(
-            RawGpuPipeline::bounded_mobile_preview_edge(800, 600, 1600),
-            800
-        );
     }
 
     #[test]
