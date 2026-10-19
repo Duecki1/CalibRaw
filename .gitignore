@@ -44,3 +44,7 @@ CLAUDE.md
 # Local Flatpak source snapshots, SDK tooling, build cache, and OSTree repository
 /.flatpak/
 /.flatpak-builder/
+
+# Local Flatpak helper scripts
+/scripts/flatpak-run.sh
+/scripts/flathub-sync.sh

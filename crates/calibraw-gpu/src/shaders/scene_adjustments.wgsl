@@ -1,6 +1,7 @@
 #import calibraw::common as Common
 #import calibraw::color as Color
 #import calibraw::basic_adjustments as BasicAdjustments
+#import calibraw::profile as Profile
 #import calibraw::tonemap as Tonemap
 #import calibraw::detail_capture as DetailCapture
 #import calibraw::detail_utils as DetailUtils
@@ -340,6 +341,10 @@ fn prepare_scene_node(@builtin(global_invocation_id) gid: vec3<u32>) {
     rgb = Haze::apply_dehaze(pos, rgb, dehaze_amount_at(pos));
     rgb = BasicAdjustments::apply_exposure(rgb);
     rgb = apply_local_exposure_nodes(pos, rgb);
+    // The profile's look table follows exposure and precedes every user tone
+    // and colour edit, in the DNG SDK's order. Tone analysis and the haze grid
+    // measure the profiled scene before it.
+    rgb = Profile::apply_optional_profile_look(rgb);
     textureStore(adjustment_base_out, pos, vec4<f32>(rgb, 1.0));
 }
 
