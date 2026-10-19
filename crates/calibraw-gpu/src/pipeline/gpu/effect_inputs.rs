@@ -242,11 +242,13 @@ struct HazeInputs {
     /// views copy them from the full frame.
     airlight: wgpu::Buffer,
     /// The transmission per cell, then the guided filter's averaged
-    /// coefficients Dehaze reads; cropped and zoomed views copy them.
+    /// coefficients and the depth base Dehaze reads; cropped and zoomed views
+    /// copy them.
     map: wgpu::Texture,
     map_view: wgpu::TextureView,
     _work: wgpu::Texture,
-    /// The guided filter's coefficients of one window, before averaging.
+    /// The guided filter's coefficients of one window, before averaging, and
+    /// the depth base.
     work_view: wgpu::TextureView,
 }
 
@@ -452,6 +454,7 @@ impl InputBindingSources {
                 coefficients,
                 &[
                     buffer_binding(0, &self.camera_uniforms),
+                    buffer_binding(52, &haze.cells),
                     texture_binding(56, &haze.map_view),
                     texture_binding(57, &haze.work_view),
                 ],

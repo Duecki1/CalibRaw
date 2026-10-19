@@ -1,10 +1,10 @@
 //! Dehaze (haze.wgsl, haze_analysis.wgsl) on synthetic scenes built from the
 //! scattering model I = J t + A (1 - t) with a known airlight A and
-//! transmission t.
+//! transmission t, and the depth positive amounts add on direct inputs.
 
 use super::{
-    tests::request_test_device, FullImageMap, GpuParams, PipelineOptions, ProcessingQuality,
-    RawGpuPipeline, RemoveSceneContext,
+    direct_shader::run_direct_shader, tests::request_test_device, FullImageMap, GpuParams,
+    PipelineOptions, ProcessingQuality, RawGpuPipeline, RemoveSceneContext,
 };
 use crate::pipeline::{
     extract_padded_tile, required_export_tile_halo, ExportTile, ExposureParams, LoadedRaw,
@@ -323,24 +323,316 @@ fn haze_map_is_allocated_only_for_dehaze() -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Standard deviation of log2 luminance over the pixels of rows `rows` that
+/// are not black.
+fn log_luminance_spread(rgb: &[f32], rows: std::ops::Range<u32>) -> f32 {
+    let values: Vec<f32> = rows
+        .flat_map(|y| (0..WIDTH).map(move |x| (x, y)))
+        .map(|(x, y)| luminance(pixel(rgb, x, y)))
+        .filter(|&y| y > 1e-4)
+        .map(f32::log2)
+        .collect();
+    let mean = values.iter().sum::<f32>() / values.len() as f32;
+    (values.iter().map(|v| (v - mean) * (v - mean)).sum::<f32>() / values.len() as f32).sqrt()
+}
+
+/// Brightnesses of `grey_detail`'s blocks.
+const GREYS: [f32; 3] = [0.0, 0.1, 0.35];
+
+/// A frame of grey detail without sky: 2-pixel blocks of `GREYS` in a
+/// scrambled order. Every neighbourhood of cells holds black, so no region
+/// passes for the airlight, Dehaze finds no haze and only adds depth.
+fn grey_detail(x: u32, y: u32) -> [f32; 3] {
+    let hash = (x / 2).wrapping_mul(73_856_093) ^ (y / 2).wrapping_mul(19_349_663);
+    [GREYS[(hash >> 7) as usize % GREYS.len()]; 3]
+}
+
+/// `grey_detail` with luminance noise alternating from pixel to pixel.
+fn noisy_grey_detail(x: u32, y: u32) -> [f32; 3] {
+    let sign = if (x + y).is_multiple_of(2) { 1.0 } else { -1.0 };
+    grey_detail(x, y).map(|c| c * (1.0 + sign * NOISE))
+}
+
 #[test]
-fn dehaze_leaves_haze_free_detail_unchanged() -> anyhow::Result<()> {
+fn dehaze_deepens_haze_free_detail_without_crushing_it() -> anyhow::Result<()> {
     let Some(mut scene) = Fixture::new(clear_scene)? else {
         return Ok(());
     };
     let untouched = scene.render(0.0)?;
     let dehazed = scene.render(100.0)?;
-    // The sky is found as the airlight, so the comparison is not vacuous.
+    // The sky is found as the airlight, so removal is possible but finds no
+    // veil: every ground colour holds a channel far darker than the airlight.
     let airlight = scene.airlight()?;
     assert!(airlight[3] > 0.5, "no airlight found: {airlight:?}");
-    // Every ground colour holds a channel far darker than the airlight, so
-    // the map finds no haze there, and the guide scene stops at the horizon
-    // rather than lending the ground the sky's veil.
-    let ground_change = difference_in_rows(&dehazed, &untouched, HORIZON..HEIGHT);
-    assert!(
-        ground_change < EPSILON,
-        "Dehaze changed haze-free ground by {ground_change}"
+    // Dehaze still adds depth: the ground's blocks spread apart in log
+    // luminance around their common base...
+    let ground = HORIZON + 16..HEIGHT;
+    let (before, after) = (
+        log_luminance_spread(&untouched, ground.clone()),
+        log_luminance_spread(&dehazed, ground.clone()),
     );
+    assert!(
+        after > 1.1 * before,
+        "Dehaze added no depth: log luminance spread {before} -> {after}"
+    );
+    // ...yet the darkest blocks, about four stops below it, lose at most
+    // HAZE_DEPTH_CONTRAST * HAZE_DEPTH_DARKEN_STOPS = 0.375 EV of scene
+    // light, a little more after the view transform's toe.
+    let largest_loss = ground
+        .flat_map(|y| (0..WIDTH).map(move |x| (x, y)))
+        .map(|(x, y)| {
+            (luminance(pixel(&untouched, x, y)) / luminance(pixel(&dehazed, x, y))).log2()
+        })
+        .fold(0.0, f32::max);
+    eprintln!("haze-free ground: spread {before} -> {after}, largest loss {largest_loss} EV");
+    assert!(
+        largest_loss < 0.5,
+        "Dehaze darkened haze-free ground by {largest_loss} EV"
+    );
+    // The uniform sky departs from nothing and has the airlight's tint.
+    let sky_change = difference_in_rows(&dehazed, &untouched, 0..HORIZON - 8);
+    assert!(sky_change < 1e-3, "Dehaze changed the sky by {sky_change}");
+    Ok(())
+}
+
+#[test]
+fn dehaze_depth_amplifies_pixel_noise_only_by_its_own_gain() -> anyhow::Result<()> {
+    let (Some(mut scene), Some(mut noisy)) =
+        (Fixture::new(grey_detail)?, Fixture::new(noisy_grey_detail)?)
+    else {
+        return Ok(());
+    };
+    let (before, after) = (scene.render(0.0)?, scene.render(100.0)?);
+    let (noisy_before, noisy_after) = (noisy.render(0.0)?, noisy.render(100.0)?);
+    let airlight = scene.airlight()?;
+    assert_eq!(airlight[3], 0.0, "haze found in grey detail: {airlight:?}");
+    // Without haze Dehaze still adds depth...
+    let (spread_before, spread_after) = (
+        log_luminance_spread(&before, 0..HEIGHT),
+        log_luminance_spread(&after, 0..HEIGHT),
+    );
+    assert!(
+        spread_after > 1.1 * spread_before,
+        "no depth without haze: log luminance spread {spread_before} -> {spread_after}"
+    );
+    // ...and its gain comes from the guide scene, which the alternating noise
+    // barely reaches, while the pixel enters linearly: the noise grows by the
+    // gain of the block it sits on, not by a gain of its own.
+    let largest_mismatch = (0..HEIGHT)
+        .flat_map(|y| (0..WIDTH).map(move |x| (x, y)))
+        .filter(|&(x, y)| grey_detail(x, y)[0] > 0.0)
+        .map(|(x, y)| {
+            let noise_before = luminance(&difference(
+                pixel(&noisy_before, x, y),
+                pixel(&before, x, y),
+            ));
+            let noise_after =
+                luminance(&difference(pixel(&noisy_after, x, y), pixel(&after, x, y)));
+            let gain = luminance(pixel(&after, x, y)) / luminance(pixel(&before, x, y));
+            (noise_after / noise_before / gain - 1.0).abs()
+        })
+        .fold(0.0, f32::max);
+    eprintln!(
+        "grey detail: spread {spread_before} -> {spread_after}, noise mismatch {largest_mismatch}"
+    );
+    assert!(
+        largest_mismatch < 0.15,
+        "noise gain departs from the depth gain by {largest_mismatch}"
+    );
+    Ok(())
+}
+
+// Runs Haze::haze_deepened on cases of two entries each: the pixel with its
+// depth base in log2 luminance (w), then its guide scene with the amount (w).
+const DEPTH_SHADER: &str = r#"
+#import calibraw::haze as Haze
+struct Params { airlight_tint: vec3<f32>, count: u32 }
+@group(0) @binding(40) var<uniform> params: Params;
+@group(0) @binding(41) var<storage, read> input: array<vec4<f32>>;
+@group(0) @binding(42) var<storage, read_write> output: array<vec4<f32>>;
+@compute @workgroup_size(64)
+fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
+    if gid.x >= params.count { return; }
+    let pixel = input[2u * gid.x];
+    let guide = input[2u * gid.x + 1u];
+    let base = vec4<f32>(0.0, 0.0, 0.0, pixel.w);
+    let cells = Haze::HazeMapCells(base, base, base, base, vec2<f32>(0.5));
+    let deepened = Haze::haze_deepened(pixel.xyz, guide.xyz, params.airlight_tint, cells, guide.w);
+    output[2u * gid.x] = vec4<f32>(deepened, 1.0);
+    output[2u * gid.x + 1u] = vec4<f32>(0.0);
+}
+"#;
+
+/// A flat region of colour `rgb` (its own guide scene) `departure` stops
+/// from its depth base, deepened by `amount`.
+struct DepthCase {
+    rgb: [f32; 3],
+    departure: f32,
+    amount: f32,
+}
+
+fn run_depth(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    airlight_tint: [f32; 3],
+    cases: &[DepthCase],
+) -> anyhow::Result<Vec<[f32; 3]>> {
+    let input: Vec<[f32; 4]> = cases
+        .iter()
+        .flat_map(|case| {
+            let base = luminance(&case.rgb).log2() - case.departure;
+            let [r, g, b] = case.rgb;
+            [[r, g, b, base], [r, g, b, case.amount]]
+        })
+        .collect();
+    let [r, g, b] = airlight_tint.map(f32::to_bits);
+    let output = run_direct_shader(
+        device,
+        queue,
+        "Dehaze depth direct regression shader",
+        "dehaze_depth_tests.wgsl",
+        DEPTH_SHADER,
+        [r, g, b, cases.len() as u32],
+        &input,
+    )?;
+    Ok(output
+        .iter()
+        .step_by(2)
+        .map(|rgba| [rgba[0], rgba[1], rgba[2]])
+        .collect())
+}
+
+/// 1 - darkest / brightest channel.
+fn saturation(rgb: [f32; 3]) -> f32 {
+    let brightest = rgb.iter().copied().fold(f32::MIN, f32::max);
+    1.0 - rgb.iter().copied().fold(f32::MAX, f32::min) / brightest
+}
+
+/// The colour at luminance 1.
+fn tint(rgb: [f32; 3]) -> [f32; 3] {
+    let y = luminance(&rgb);
+    rgb.map(|c| c / y)
+}
+
+#[test]
+fn dehaze_depth_gain_is_monotonic_bounded_and_ignores_tiny_departures() -> anyhow::Result<()> {
+    let Some((device, queue)) = request_test_device() else {
+        eprintln!("Dehaze depth regression skipped: no headless wgpu adapter");
+        return Ok(());
+    };
+    // A grey ramp over a fixed base: each step is a pixel 1/64 stop brighter.
+    let departures: Vec<f32> = (-512..=512).map(|i| i as f32 / 64.0).collect();
+    let cases: Vec<DepthCase> = departures
+        .iter()
+        .map(|&departure| DepthCase {
+            rgb: [0.18 * departure.exp2(); 3],
+            departure,
+            amount: 1.0,
+        })
+        .collect();
+    let output = run_depth(&device, &queue, [1.0; 3], &cases)?;
+    let gains: Vec<f32> = output
+        .iter()
+        .zip(&cases)
+        .map(|(out, case)| (luminance(out) / luminance(&case.rgb)).log2())
+        .collect();
+    for (pair, case) in output.windows(2).zip(&cases) {
+        assert!(
+            luminance(&pair[1]) > luminance(&pair[0]),
+            "depth reverses tones at {} stops",
+            case.departure
+        );
+    }
+    for (gain, &departure) in gains.iter().zip(&departures) {
+        // At most HAZE_DEPTH_CONTRAST times the darken and brighten limits.
+        assert!(
+            (-0.375..=1.0).contains(gain),
+            "gain {gain} EV at {departure} stops"
+        );
+        if departure.abs() <= 1.0 / 32.0 {
+            assert!(gain.abs() < 1e-3, "gain {gain} EV at {departure} stops");
+        }
+    }
+    assert!(gains[0] < -0.3, "deep shadow gain {}", gains[0]);
+    assert!(
+        gains[gains.len() - 1] > 0.8,
+        "highlight gain {}",
+        gains[gains.len() - 1]
+    );
+
+    let unchanged = run_depth(
+        &device,
+        &queue,
+        [1.0; 3],
+        &[DepthCase {
+            rgb: [0.3, 0.2, 0.1],
+            departure: 2.0,
+            amount: 0.0,
+        }],
+    )?;
+    assert_eq!(unchanged[0], [0.3, 0.2, 0.1]);
+    Ok(())
+}
+
+#[test]
+fn dehaze_depth_lifts_moderate_colours_but_not_casts_neutrals_or_vivid_colours(
+) -> anyhow::Result<()> {
+    let Some((device, queue)) = request_test_device() else {
+        eprintln!("Dehaze depth regression skipped: no headless wgpu adapter");
+        return Ok(());
+    };
+    let moderate = [0.18, 0.20, 0.11];
+    let vivid = [0.6, 0.05, 0.02];
+    let grey = [0.3; 3];
+    let warm_fog = [0.82, 0.80, 0.62];
+    let case = |rgb| DepthCase {
+        rgb,
+        departure: 0.0,
+        amount: 1.0,
+    };
+    let neutral_air = run_depth(
+        &device,
+        &queue,
+        [1.0; 3],
+        &[case(moderate), case(vivid), case(grey)],
+    )?;
+    assert!(
+        saturation(neutral_air[0]) > saturation(moderate) + 0.05,
+        "moderate colour not lifted: {:?}",
+        neutral_air[0]
+    );
+    for (out, rgb) in neutral_air[1..].iter().zip([vivid, grey]) {
+        let (got, want) = (tint(*out), tint(rgb));
+        assert!(
+            got.iter().zip(want).all(|(a, b)| (a - b).abs() < 1e-4),
+            "{rgb:?} changed colour: {out:?}"
+        );
+    }
+    // In fog of a warm tint, the fog and the moderate colour of that tint are
+    // the cast and keep their colour.
+    let fog_tint = tint(warm_fog);
+    let tinted = run_depth(
+        &device,
+        &queue,
+        fog_tint,
+        &[
+            case(warm_fog),
+            case(warm_fog.map(|c| c * 0.3)),
+            case(moderate),
+        ],
+    )?;
+    for (out, rgb) in tinted[..2]
+        .iter()
+        .zip([warm_fog, warm_fog.map(|c| c * 0.3)])
+    {
+        let (got, want) = (tint(*out), tint(rgb));
+        assert!(
+            got.iter().zip(want).all(|(a, b)| (a - b).abs() < 1e-4),
+            "fog of the airlight's tint changed colour: {out:?}"
+        );
+    }
+    // A colour that departs from the airlight's tint is still lifted.
+    assert!(saturation(tinted[2]) > saturation(moderate) + 0.05);
     Ok(())
 }
 
@@ -374,9 +666,16 @@ fn dehaze_recovers_a_synthetic_hazy_scene() -> anyhow::Result<()> {
         dehazed_error < 0.45 * hazy_error,
         "Dehaze left {dehazed_error} of the haze's {hazy_error} mean error"
     );
-    // The sky is the airlight and stays as it is.
-    let sky_change = difference_in_rows(&after, &before, 0..HORIZON - 8);
-    assert!(sky_change < 1e-3, "Dehaze changed the sky by {sky_change}");
+    // The sky is the airlight, which removal leaves as it is. Depth
+    // steepens it faintly against the hazy ground below, as far as the depth
+    // base reaches (HAZE_DEPTH_RADIUS cells of 4 pixels), and not beyond.
+    let far_sky = difference_in_rows(&after, &before, 0..HORIZON - 40);
+    assert!(far_sky < 1e-3, "Dehaze changed the sky by {far_sky}");
+    let near_sky = difference_in_rows(&after, &before, HORIZON - 40..HORIZON - 8);
+    assert!(
+        near_sky < 0.01,
+        "Dehaze changed the sky near the horizon by {near_sky}"
+    );
     Ok(())
 }
 

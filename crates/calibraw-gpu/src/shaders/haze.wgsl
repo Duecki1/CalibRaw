@@ -22,7 +22,9 @@
 // a = 1 recovers J, a = 0 leaves I, and a < 0 thickens the veil, which then
 // tends to a dimmed airlight (`added_veil`). Global and mask amounts therefore
 // add up in the exponent. Removal is bounded where the model's estimate is
-// unreliable: see haze_removal_transmission.
+// unreliable: see haze_removal_transmission. Positive amounts also add depth
+// (haze_deepened), which a clear photo shows most and dense haze, already
+// steepened by removal, not at all.
 //
 // Every decision about t reads the guide scene, the profiled scene blurred
 // over a few pixels short of edges (haze_guide_scene_at), never the pixel
@@ -34,7 +36,8 @@
 
 struct HazeAirlight {
     // Airlight colour (xyz) and luminance (w). A luminance of zero means no
-    // haze was found; Dehaze then leaves the photo unchanged.
+    // haze was found; Dehaze then neither removes nor adds haze, and positive
+    // amounts only add depth.
     color: vec4<f32>,
     // The veil negative amounts thicken towards (xyz) and its luminance (w):
     // the airlight, dimmed to at most a few stops above the scene's median
@@ -63,9 +66,9 @@ const HAZE_GUIDE_MAX_RADIUS: i32 = 2;
 // beside a dark roofline would lend the roofline its veil. Noise and fine
 // texture differ by far less.
 const HAZE_GUIDE_RANGE_STOPS: f32 = 0.35;
-// Luminances are compared with this share of the airlight's luminance added,
-// so that noise in the darkest shadows, large in stops, does not read as
-// edges.
+// Luminances are compared with this share of a reference luminance added, so
+// that noise in the darkest shadows, large in stops, does not read as edges:
+// the airlight's, or in a photo without haze the depth base's.
 const HAZE_GUIDE_RANGE_FLOOR: f32 = 0.01;
 
 // Full removal divides the scene's departure from the airlight by at most
@@ -114,10 +117,45 @@ const HAZE_TINT_FLOOR: f32 = 1e-3;
 // HAZE_MIN_TRANSMISSION.
 const HAZE_ADDED_TRANSMISSION: f32 = 0.7;
 
+// Positive amounts also steepen log luminance around the depth base, a wide
+// edge-preserving average of the scene (haze_analysis.wgsl), and lift the
+// chroma of moderately coloured regions: what a clear photo, which holds
+// little veil to remove, gains from Dehaze as contrast and depth. Full Dehaze
+// steepens by HAZE_DEPTH_CONTRAST. The guide scene's departure from the base
+// is soft-limited to HAZE_DEPTH_DARKEN_STOPS below it and
+// HAZE_DEPTH_BRIGHTEN_STOPS above, so deep shadows lose at most
+// HAZE_DEPTH_CONTRAST * HAZE_DEPTH_DARKEN_STOPS and are not crushed.
+const HAZE_DEPTH_CONTRAST: f32 = 0.5;
+const HAZE_DEPTH_DARKEN_STOPS: f32 = 0.75;
+const HAZE_DEPTH_BRIGHTEN_STOPS: f32 = 2.0;
+// Departures within about this many stops of the base barely steepen: the
+// noise left in the guide scene departs by less, and following it would
+// spread the gain into grain over flat skies and fog. Beyond it the slope is
+// HAZE_DEPTH_CONTRAST.
+const HAZE_DEPTH_THRESHOLD_STOPS: f32 = 0.15;
+// Standard deviation, in stops, of the range weights that pick the depth base
+// among the four cells around a pixel, so a pixel takes the base of its side
+// of an edge (joint bilateral upsampling).
+const HAZE_DEPTH_UPSAMPLE_RANGE_STOPS: f32 = 0.7;
+// Full Dehaze adds this share of the guide scene's chroma to regions whose
+// saturation, 1 - darkest / brightest channel, measured both from neutral and
+// from the airlight's tint (haze_relative_saturation), passes the rising
+// ramp. Near-neutral colours keep their chroma, and so do colours near the
+// airlight's tint, which is the cast of a hazy photo: tinted fog and clouds.
+// The lift fades out as OKLab chroma relative to lightness crosses the
+// falling ramp, like Vibrance, so colours that already look vivid, such as
+// sunlit leaves, do not turn garish.
+const HAZE_DEPTH_CHROMA: f32 = 0.3;
+const HAZE_DEPTH_CHROMA_RISE: vec2<f32> = vec2<f32>(0.12, 0.4);
+const HAZE_DEPTH_CHROMA_FALL: vec2<f32> = vec2<f32>(0.08, 0.18);
+// The chroma lift keeps at least this share of each positive channel.
+const HAZE_DEPTH_CHANNEL_KEEP: f32 = 0.5;
+
 @group(0) @binding(54) var<storage, read> haze_airlight: HazeAirlight;
 // Per grid cell, the guided filter's slope (x) and offset (y), giving the
-// transmission as slope * guide + offset, and the share of the veil removal
-// may take (z) (haze_analysis.wgsl). Only the cells of `haze_grid` are valid.
+// transmission as slope * guide + offset, the share of the veil removal may
+// take (z) and the depth base in log2 luminance (w) (haze_analysis.wgsl). Only
+// the cells of `haze_grid` are valid.
 @group(0) @binding(60) var haze_map_tex: texture_2d<f32>;
 
 struct HazeEstimate {
@@ -126,6 +164,16 @@ struct HazeEstimate {
     // The share of the veil removal may take: less where the haze hides no
     // detail.
     removal_share: f32,
+}
+
+// The four haze map cells around a tile pixel and the pixel's position
+// between their centres.
+struct HazeMapCells {
+    top_left: vec4<f32>,
+    top_right: vec4<f32>,
+    bottom_left: vec4<f32>,
+    bottom_right: vec4<f32>,
+    fraction: vec2<f32>,
 }
 
 // Cells of the haze grid across and down the full image, at least one pixel
@@ -187,9 +235,9 @@ fn haze_guide_log_luminance(camera_rgb: vec3<f32>, floor: f32) -> f32 {
 // and the profile's hue and saturation map, which barely bend across the
 // colours of a few neighbouring pixels. Taps beyond the tile repeat its edge,
 // which HAZE_GUIDE_SUPPORT keeps out of export tile cores.
-fn haze_guide_scene_at(pos: vec2<i32>, airlight_luminance: f32) -> vec3<f32> {
+fn haze_guide_scene_at(pos: vec2<i32>, reference_luminance: f32) -> vec3<f32> {
     let radius = haze_guide_radius();
-    let floor = HAZE_GUIDE_RANGE_FLOOR * airlight_luminance;
+    let floor = HAZE_GUIDE_RANGE_FLOOR * reference_luminance;
     let centre = haze_guide_log_luminance(SceneSource::source_scene_at(pos), floor);
     var sum = vec3<f32>(0.0);
     var total = 0.0;
@@ -216,27 +264,57 @@ fn haze_grid_position(pos: vec2<i32>) -> vec2<f32> {
     return global_center * vec2<f32>(haze_grid()) / full - vec2<f32>(0.5);
 }
 
-// The haze at a tile pixel whose guide scene has guide value `guide`: the map
-// interpolated between the four nearest cell centres, its guided filter
-// evaluated against that guide.
-fn haze_estimate_at(pos: vec2<i32>, guide: f32) -> HazeEstimate {
+// The four haze map cells whose centres surround a tile pixel.
+fn haze_map_cells_at(pos: vec2<i32>) -> HazeMapCells {
     let last = vec2<i32>(haze_grid()) - vec2<i32>(1);
     let position = clamp(haze_grid_position(pos), vec2<f32>(0.0), vec2<f32>(last));
     let base = vec2<i32>(floor(position));
     let next = min(base + vec2<i32>(1), last);
-    let f = position - vec2<f32>(base);
-    let top = mix(
-        textureLoad(haze_map_tex, base, 0).xyz,
-        textureLoad(haze_map_tex, vec2<i32>(next.x, base.y), 0).xyz,
-        f.x,
+    return HazeMapCells(
+        textureLoad(haze_map_tex, base, 0),
+        textureLoad(haze_map_tex, vec2<i32>(next.x, base.y), 0),
+        textureLoad(haze_map_tex, vec2<i32>(base.x, next.y), 0),
+        textureLoad(haze_map_tex, next, 0),
+        position - vec2<f32>(base),
     );
-    let bottom = mix(
-        textureLoad(haze_map_tex, vec2<i32>(base.x, next.y), 0).xyz,
-        textureLoad(haze_map_tex, next, 0).xyz,
-        f.x,
-    );
+}
+
+// Bilinear weights of the cells in HazeMapCells order.
+fn haze_bilinear_weights(cells: HazeMapCells) -> vec4<f32> {
+    let f = cells.fraction;
+    return vec4<f32>((1.0 - f.x) * (1.0 - f.y), f.x * (1.0 - f.y), (1.0 - f.x) * f.y, f.x * f.y);
+}
+
+// The haze at a pixel whose guide scene has guide value `guide`: the map
+// interpolated between the four nearest cell centres, its guided filter
+// evaluated against that guide.
+fn haze_estimate(cells: HazeMapCells, guide: f32) -> HazeEstimate {
+    let f = cells.fraction;
+    let top = mix(cells.top_left.xyz, cells.top_right.xyz, f.x);
+    let bottom = mix(cells.bottom_left.xyz, cells.bottom_right.xyz, f.x);
     let map = mix(top, bottom, f.y);
     return HazeEstimate(clamp(map.x * guide + map.y, 0.0, 1.0), map.z);
+}
+
+// The cells' depth bases in HazeMapCells order.
+fn haze_depth_bases(cells: HazeMapCells) -> vec4<f32> {
+    return vec4<f32>(cells.top_left.w, cells.top_right.w, cells.bottom_left.w, cells.bottom_right.w);
+}
+
+// The depth base at a pixel, interpolated without regard to edges.
+fn haze_plain_depth_base(cells: HazeMapCells) -> f32 {
+    return dot(haze_bilinear_weights(cells), haze_depth_bases(cells));
+}
+
+// The depth base at a pixel whose guide scene has log2 luminance
+// `log_luminance`: the four cells' bases weighted by their distance and by how
+// close they lie to that luminance. Where none lies close, the small constant
+// leaves the bilinear weights.
+fn haze_depth_base(cells: HazeMapCells, log_luminance: f32) -> f32 {
+    let bases = haze_depth_bases(cells);
+    let stops = (bases - vec4<f32>(log_luminance)) / HAZE_DEPTH_UPSAMPLE_RANGE_STOPS;
+    let weights = haze_bilinear_weights(cells) * (exp(-0.5 * stops * stops) + vec4<f32>(1e-3));
+    return dot(weights, bases) / dot(weights, vec4<f32>(1.0));
 }
 
 // The transmission that removal divides by, from the guide scene `measured`
@@ -307,22 +385,102 @@ fn haze_removed(
     return haze_keep_dark_share(dehazed, rgb);
 }
 
+// 1 - darkest / brightest channel of `rgb` relative to `reference`, both
+// without negative channels.
+fn haze_relative_saturation(rgb: vec3<f32>, reference: vec3<f32>) -> f32 {
+    let relative = rgb / max(reference, vec3<f32>(1e-6));
+    let brightest = max(relative.r, max(relative.g, relative.b));
+    return 1.0 - min(relative.r, min(relative.g, relative.b)) / max(brightest, 1e-20);
+}
+
+// `rgb` steepened around the depth base and its chroma lifted, for an
+// `amount` in [0, 1], given its guide scene without negative channels
+// (`measured`) and the airlight's tint at luminance 1 (`airlight_tint`),
+// neutral without haze. Both follow the guide scene, as removal does: the
+// luminance gain is smooth across the image and the pixel enters linearly,
+// and the lift adds the guide scene's chroma at the pixel's luminance, so
+// neither amplifies the pixel's noise or colour fringes. Positive channels
+// keep at least HAZE_DEPTH_CHANNEL_KEEP of themselves.
+fn haze_deepened(
+    rgb: vec3<f32>,
+    measured: vec3<f32>,
+    airlight_tint: vec3<f32>,
+    cells: HazeMapCells,
+    amount: f32,
+) -> vec3<f32> {
+    let luminance = dot(measured, Common::LUMA);
+    if amount <= 1e-6 || luminance <= 0.0 {
+        return rgb;
+    }
+    let log_luminance = log2(luminance);
+    let measured_departure = log_luminance - haze_depth_base(cells, log_luminance);
+    // Shrunk smoothly towards zero by the threshold: no slope at zero, full
+    // slope well beyond it.
+    let departure = measured_departure
+        - HAZE_DEPTH_THRESHOLD_STOPS * tanh(measured_departure / HAZE_DEPTH_THRESHOLD_STOPS);
+    let limit = select(HAZE_DEPTH_DARKEN_STOPS, HAZE_DEPTH_BRIGHTEN_STOPS, departure > 0.0);
+    let limited = departure * inverseSqrt(1.0 + departure * departure / (limit * limit));
+    let gain = exp2(amount * HAZE_DEPTH_CONTRAST * limited);
+
+    let saturation = haze_relative_saturation(measured, vec3<f32>(1.0));
+    let departure_from_airlight = haze_relative_saturation(measured, airlight_tint);
+    let lab = Color::rec2020_to_oklab(measured);
+    let colourfulness = length(lab.yz) / max(lab.x, 1e-4);
+    var lift = amount * HAZE_DEPTH_CHROMA
+        * smoothstep(HAZE_DEPTH_CHROMA_RISE.x, HAZE_DEPTH_CHROMA_RISE.y, saturation)
+        * smoothstep(HAZE_DEPTH_CHROMA_RISE.x, HAZE_DEPTH_CHROMA_RISE.y, departure_from_airlight)
+        * (1.0 - smoothstep(HAZE_DEPTH_CHROMA_FALL.x, HAZE_DEPTH_CHROMA_FALL.y, colourfulness));
+    // The guide scene's chroma at the pixel's luminance, as Common::LUMA sums
+    // to 1.
+    let chroma = max(dot(rgb, Common::LUMA), 0.0) * (measured / luminance - vec3<f32>(1.0));
+    for (var channel = 0; channel < 3; channel = channel + 1) {
+        if rgb[channel] > 0.0 && chroma[channel] < 0.0 {
+            lift = min(lift, (1.0 - HAZE_DEPTH_CHANNEL_KEEP) * rgb[channel] / -chroma[channel]);
+        }
+    }
+    return (rgb + lift * chroma) * gain;
+}
+
+// The share of depth (haze_deepened) a pixel takes where removal divides by
+// `removal`: none at the strongest removal, which already steepens the scene
+// and lifts its chroma, so that the two do not compound in dense haze.
+fn haze_depth_share(removal: f32) -> f32 {
+    return smoothstep(HAZE_MIN_TRANSMISSION, 1.0, removal);
+}
+
 // Removes haze for `amount` > 0 and adds it for `amount` < 0. `amount` is the
 // combined perceptual amount of global and mask Dehaze, in [-1, 1].
 fn apply_dehaze(pos: vec2<i32>, rgb: vec3<f32>, amount: f32) -> vec3<f32> {
     let airlight = haze_airlight.color;
-    if abs(amount) < 1e-6 || airlight.w <= 0.0 {
+    let hazy = airlight.w > 0.0;
+    if abs(amount) < 1e-6 || (amount < 0.0 && !hazy) {
         return rgb;
     }
-    let guide_scene = haze_guide_scene_at(pos, airlight.w);
+    let cells = haze_map_cells_at(pos);
+    // Without haze the guide scene's range floor scales with the depth base.
+    let reference = select(exp2(haze_plain_depth_base(cells)), airlight.w, hazy);
+    let guide_scene = haze_guide_scene_at(pos, reference);
     let measured = Color::map_negative_gamut(guide_scene);
-    let guide = haze_guide(measured, airlight);
-    let estimate = haze_estimate_at(pos, guide);
-    if amount > 0.0 {
-        let removal = haze_removal_transmission(measured, airlight, guide, estimate);
-        return haze_removed(rgb, guide_scene, measured, airlight, pow(removal, -amount));
+    if amount < 0.0 {
+        let estimate = haze_estimate(cells, haze_guide(measured, airlight));
+        let veil = haze_airlight.added_veil.xyz;
+        let added = clamp(estimate.transmission, HAZE_MIN_TRANSMISSION, HAZE_ADDED_TRANSMISSION);
+        return veil + (rgb - veil) * pow(added, -amount);
     }
-    let veil = haze_airlight.added_veil.xyz;
-    let added = clamp(estimate.transmission, HAZE_MIN_TRANSMISSION, HAZE_ADDED_TRANSMISSION);
-    return veil + (rgb - veil) * pow(added, -amount);
+    var dehazed = rgb;
+    var removal = 1.0;
+    var airlight_tint = vec3<f32>(1.0);
+    if hazy {
+        let guide = haze_guide(measured, airlight);
+        removal = haze_removal_transmission(measured, airlight, guide, haze_estimate(cells, guide));
+        dehazed = haze_removed(rgb, guide_scene, measured, airlight, pow(removal, -amount));
+        airlight_tint = airlight.xyz / airlight.w;
+    }
+    return haze_deepened(
+        dehazed,
+        measured,
+        airlight_tint,
+        cells,
+        amount * haze_depth_share(removal),
+    );
 }
