@@ -1,0 +1,5 @@
+Sharpening and noise reduction as effect components.
+HDR merge and focus stack alignment fixes.
+HDR merge and TIFF support on Android.
+Remember the zoom level.
+Fixes for GPU out-of-memory crashes.
