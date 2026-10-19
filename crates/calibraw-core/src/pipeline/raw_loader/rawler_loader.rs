@@ -686,6 +686,7 @@ fn adapt(
     let mut loaded = LoadedRaw {
         width,
         height,
+        source_extent: [width, height],
         camera_make: image.make.clone(),
         camera_model: image.model.clone(),
         lens_make: md.exif.lens_make.clone().unwrap_or_default(),
@@ -710,6 +711,7 @@ fn adapt(
         available_camera_profiles: Vec::new(),
         white_balance_model,
         lens_geometry: None,
+        lens_shading: None,
         ai_denoised: Default::default(),
         opposed_chroma_cache: Default::default(),
         opposed_chroma_source_identity: Default::default(),

@@ -170,11 +170,23 @@ const DARKTABLE_SIGMOID_CONTRAST_SOFT_MIN: f32 = 0.7;
 const DARKTABLE_SIGMOID_CONTRAST_SOFT_MAX: f32 = 3.0;
 pub const MIN_TEMPERATURE_KELVIN: f32 = 1_901.0;
 pub const MAX_TEMPERATURE_KELVIN: f32 = 25_000.0;
-pub const MIN_WHITE_BALANCE_TINT: f32 = 0.135;
-pub const MAX_WHITE_BALANCE_TINT: f32 = 2.326;
-pub const WHITE_BALANCE_TINT_OFFSET_SCALE: f32 = 100.0;
-pub const GLOBAL_TINT_OFFSET_LIMIT: f32 =
-    (MAX_WHITE_BALANCE_TINT - MIN_WHITE_BALANCE_TINT) * WHITE_BALANCE_TINT_OFFSET_SCALE;
+/// Limits of the white-balance tint the sliders show, in Lightroom units:
+/// 3000 × the CIE 1960 uv distance from the Planckian locus along the
+/// isotherm, positive for whites greener than the locus, which balancing
+/// turns magenta.
+pub const MIN_WHITE_BALANCE_TINT: f32 = -150.0;
+pub const MAX_WHITE_BALANCE_TINT: f32 = 150.0;
+/// Change of the shown tint per unit of the stored tint offset.
+///
+/// Stored offsets keep the scale and sign they had when the tint was
+/// darktable's Y multiplier (100 per unit of multiplier, positive greener):
+/// near neutral daylight one such unit moved the white about 5 tints towards
+/// green. Edits saved by older versions, and older versions reading newer
+/// edits, therefore keep about the same tint.
+pub const WHITE_BALANCE_TINT_PER_OFFSET: f32 = -5.0;
+/// Limit of stored tint offsets: the full range of the darktable multiplier
+/// (0.135 to 2.326) they were defined on.
+pub const GLOBAL_TINT_OFFSET_LIMIT: f32 = 219.1;
 pub const GLOBAL_TEMPERATURE_LIMIT: f32 = 500.0;
 
 pub fn temperature_kelvin_from_offset(base_kelvin: f32, offset_mired: f32) -> f32 {
@@ -191,16 +203,52 @@ pub fn temperature_offset_from_kelvin(base_kelvin: f32, target_kelvin: f32) -> f
         .clamp(-GLOBAL_TEMPERATURE_LIMIT, GLOBAL_TEMPERATURE_LIMIT)
 }
 
+/// Shown tint for a stored offset from the as-shot tint `base_tint`.
 pub fn white_balance_tint_from_offset(base_tint: f32, offset: f32) -> f32 {
-    (base_tint + offset / WHITE_BALANCE_TINT_OFFSET_SCALE)
+    (base_tint + offset * WHITE_BALANCE_TINT_PER_OFFSET)
         .clamp(MIN_WHITE_BALANCE_TINT, MAX_WHITE_BALANCE_TINT)
 }
 
+/// Stored offset from the as-shot tint `base_tint` for a shown tint.
 pub fn white_balance_tint_offset(base_tint: f32, target_tint: f32) -> f32 {
     ((target_tint.clamp(MIN_WHITE_BALANCE_TINT, MAX_WHITE_BALANCE_TINT) - base_tint)
-        * WHITE_BALANCE_TINT_OFFSET_SCALE)
+        / WHITE_BALANCE_TINT_PER_OFFSET)
         .clamp(-GLOBAL_TINT_OFFSET_LIMIT, GLOBAL_TINT_OFFSET_LIMIT)
 }
+
+/// The global white balance of an edit.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub enum WhiteBalance {
+    /// Each photo's own as-shot white balance.
+    #[default]
+    AsShot,
+    /// An absolute white balance. Copies and presets give every photo this
+    /// white balance, limited to the slider ranges of its camera.
+    Custom {
+        /// Correlated colour temperature in kelvin.
+        kelvin: f32,
+        /// Tint in the units the slider shows, positive magenta (see
+        /// [`MIN_WHITE_BALANCE_TINT`]).
+        tint: f32,
+        /// Temperature and tint offsets of this white balance from the
+        /// as-shot white balance of the photo it was last set or opened on,
+        /// written for readers up to v1.3. On a photo it was pasted into they
+        /// lag behind until that photo is opened.
+        ///
+        /// migration: remove in v2.0.0 (`migrations::white_balance_offsets`).
+        older_reader_offsets: [f32; 2],
+    },
+    /// Offsets from the as-shot white balance, the only form v1.3 and older
+    /// saved: `temperature` in mired, `tint` in stored tint units (see
+    /// [`WHITE_BALANCE_TINT_PER_OFFSET`]). Turning them into [`Self::Custom`]
+    /// needs the photo, so they are converted when it is opened
+    /// (`LoadedRaw::resolve_white_balance`); until then copies and presets
+    /// move the shift as before.
+    ///
+    /// migration: remove in v2.0.0 (`migrations::white_balance_offsets`).
+    LegacyOffset { temperature: f32, tint: f32 },
+}
+
 pub const HSL_HUE_LIMIT: f32 = 200.0;
 pub const HUE_ROTATION_LIMIT_DEGREES: f32 = 180.0;
 
@@ -211,8 +259,8 @@ pub struct ExposureParams {
     #[serde(default)]
     pub contrast: f32,
     pub sigmoid: SigmoidParams,
-    pub temperature: f32,
-    pub tint: f32,
+    #[serde(flatten, with = "crate::migrations::white_balance_offsets")]
+    pub white_balance: WhiteBalance,
     #[serde(default)]
     pub hue: f32,
     pub saturation: f32,
@@ -237,8 +285,6 @@ pub struct ExposureParams {
     pub demosaic_mode: DemosaicMode,
     pub dual_threshold: f32,
     pub frequency_chroma: f32,
-    pub ca_red: f32,
-    pub ca_blue: f32,
     pub highlight_method: HighlightReconstructionMethod,
     pub highlight_clip: f32,
     pub highlight_reconstruction: f32,
@@ -306,8 +352,7 @@ impl Default for ExposureParams {
             exposure: 0.0,
             contrast: 0.0,
             sigmoid: SigmoidParams::default(),
-            temperature: 0.0,
-            tint: 0.0,
+            white_balance: WhiteBalance::AsShot,
             hue: 0.0,
             saturation: 0.0,
             vibrance: 0.0,
@@ -324,8 +369,6 @@ impl Default for ExposureParams {
             demosaic_mode: DemosaicMode::Reference,
             dual_threshold: 20.0,
             frequency_chroma: 1.0,
-            ca_red: 0.0,
-            ca_blue: 0.0,
             highlight_method: HighlightReconstructionMethod::InpaintOpposed,
             highlight_clip: 1.0,
             highlight_reconstruction: 1.0,
@@ -375,7 +418,8 @@ mod tests {
     use super::{
         sigmoid_contrast_from_percent, temperature_kelvin_from_offset,
         temperature_offset_from_kelvin, DemosaicMode, ExposureParams,
-        HighlightReconstructionMethod, PointCurve, MAX_TEMPERATURE_KELVIN, MIN_TEMPERATURE_KELVIN,
+        HighlightReconstructionMethod, PointCurve, WhiteBalance, MAX_TEMPERATURE_KELVIN,
+        MIN_TEMPERATURE_KELVIN,
     };
     use crate::pipeline::SigmoidParams;
 
@@ -432,8 +476,7 @@ mod tests {
         assert_eq!(rendition.black_point, 0.0);
         assert_eq!(rendition.sigmoid, SigmoidParams::default());
         assert_eq!(rendition.contrast, 0.0);
-        assert_eq!(rendition.temperature, 0.0);
-        assert_eq!(rendition.tint, 0.0);
+        assert_eq!(rendition.white_balance, WhiteBalance::AsShot);
         assert_eq!(rendition.hue, 0.0);
         assert_eq!(rendition.saturation, 0.0);
         assert_eq!(rendition.vibrance, 0.0);

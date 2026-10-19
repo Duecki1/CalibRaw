@@ -11,14 +11,11 @@ pub(super) fn pack_camera_params(ctx: &GpuParamContext<'_>) -> CameraUniforms {
         full_width,
         full_height,
     } = ctx.tile;
+    let (temperature, tint) = raw.white_balance_offsets(exposure.white_balance);
     let (white_balance, camera_transform, profile_weight) = raw
         .adjusted_white_balance_and_camera_transform(
-            exposure
-                .temperature
-                .clamp(-GLOBAL_TEMPERATURE_LIMIT, GLOBAL_TEMPERATURE_LIMIT),
-            exposure
-                .tint
-                .clamp(-GLOBAL_TINT_OFFSET_LIMIT, GLOBAL_TINT_OFFSET_LIMIT),
+            temperature.clamp(-GLOBAL_TEMPERATURE_LIMIT, GLOBAL_TEMPERATURE_LIMIT),
+            tint.clamp(-GLOBAL_TINT_OFFSET_LIMIT, GLOBAL_TINT_OFFSET_LIMIT),
         );
     let camera_linear_raster = raw.is_camera_linear_raster();
     // LinearRaw DNGs arrive as a raster of camera-space RGB samples. The
@@ -60,37 +57,18 @@ pub(super) fn pack_camera_params(ctx: &GpuParamContext<'_>) -> CameraUniforms {
 
     CameraUniforms {
         black_point: exposure.black_point,
-        temperature: exposure
-            .temperature
-            .clamp(-GLOBAL_TEMPERATURE_LIMIT, GLOBAL_TEMPERATURE_LIMIT),
         highlight_clip: exposure.highlight_clip,
         chroma_denoise: exposure.chroma_denoise,
-        ca_red: exposure.ca_red,
-        ca_blue: exposure.ca_blue,
         highlight_reconstruction: exposure.highlight_reconstruction,
         tone_analysis_scale: tone_analysis_scale() as f32,
-        tone_guide_radius: if cfg!(target_os = "android") {
-            3.0
-        } else {
-            5.0
-        },
+        tone_guide_radius: crate::pipeline::TONE_GUIDE_RADIUS_CELLS as f32,
         demosaic_mode: exposure.demosaic_mode.shader_value(),
         dual_threshold: exposure.dual_threshold.clamp(0.0, 100.0),
         frequency_chroma: exposure.frequency_chroma.clamp(0.0, 1.0),
-        tint: exposure
-            .tint
-            .clamp(-GLOBAL_TINT_OFFSET_LIMIT, GLOBAL_TINT_OFFSET_LIMIT),
-        pre_demosaiced_raster: if raw.is_pre_demosaiced_raster() {
-            1.0
-        } else {
-            0.0
-        },
         view_transform_mode: ViewTransformMode::select(raw, exposure, camera_linear_raster)
             .shader_value(),
-        // Camera-space rasters already receive WB through cam_to_srgb above;
-        // suppress the generic raster temperature adaptation to avoid applying
-        // a second colour adjustment.
-        camera_linear_raster: if camera_linear_raster { 1.0 } else { 0.0 },
+        padding_0: 0,
+        padding_1: 0,
         highlight_options: [
             highlight_method,
             opposed_chroma[0],
@@ -142,7 +120,7 @@ pub(super) fn pack_camera_params(ctx: &GpuParamContext<'_>) -> CameraUniforms {
         } else {
             0.0
         },
-        _pad_camera_1: 0,
+        source_short_edge: raw.source_extent[0].min(raw.source_extent[1]),
     }
 }
 

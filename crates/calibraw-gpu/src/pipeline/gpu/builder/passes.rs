@@ -6,6 +6,31 @@ use super::*;
 pub(in crate::pipeline::gpu) const MASK_BLUR_STEPS: usize = 5;
 /// Diffusion steps of Glow, one program each (`diffuse_glow_*`).
 pub(in crate::pipeline::gpu) const GLOW_BLUR_STEPS: usize = 5;
+/// Levels of the Texture and Clarity cascade, one program each
+/// (`build_detail_level_*`); `DETAIL_PYRAMID_LEVEL_COUNT` in
+/// detail_scale_space.wgsl.
+pub(in crate::pipeline::gpu) const DETAIL_PYRAMID_LEVELS: usize = 7;
+/// The cascade levels Texture alone needs (`DETAIL_PYRAMID_TEXTURE_LEVEL_COUNT`).
+/// Both counts are odd, so the last level always lands in the texture the
+/// scene effects pass reads.
+pub(in crate::pipeline::gpu) const DETAIL_PYRAMID_TEXTURE_LEVELS: usize = 5;
+/// The X-Trans demosaic passes (xtrans_demosaic.wgsl) in order. The bind
+/// group at the same position of `BindGroups::bg_xtrans_markesteijn` chooses
+/// the states each one reads and writes.
+pub(in crate::pipeline::gpu) const XTRANS_MARKESTEIJN_ENTRIES: [&str; 9] = [
+    "xtrans_markesteijn_green",
+    "xtrans_markesteijn_other",
+    "xtrans_markesteijn_recalculate",
+    "xtrans_markesteijn_other",
+    "xtrans_markesteijn_recalculate",
+    "xtrans_markesteijn_other",
+    "xtrans_markesteijn_homogeneity",
+    "xtrans_markesteijn_accumulate",
+    "xtrans_markesteijn_smooth",
+];
+pub(in crate::pipeline::gpu) const XTRANS_HOMOGENEITY_PASS: usize = 6;
+pub(in crate::pipeline::gpu) const XTRANS_ACCUMULATE_PASS: usize = 7;
+pub(in crate::pipeline::gpu) const XTRANS_SMOOTHING_PASS: usize = 8;
 
 /// Where every program sits in the pass list. Program templates share
 /// compiled programs by position, so bind group layouts, pass assembly and
@@ -30,6 +55,8 @@ pub(in crate::pipeline::gpu) struct StageIndices {
     pub(in crate::pipeline::gpu) adjustment_prepare_pass_index: usize,
     pub(in crate::pipeline::gpu) adjustment_tone_pass_index: usize,
     pub(in crate::pipeline::gpu) adjustment_local_tone_pass_index: usize,
+    /// The first Texture and Clarity cascade level; the others follow.
+    pub(in crate::pipeline::gpu) detail_pyramid_start_index: usize,
     pub(in crate::pipeline::gpu) adjustment_effects_pass_index: usize,
     /// Copies the scene unchanged when no scene effect applies.
     pub(in crate::pipeline::gpu) adjustment_effects_copy_pass_index: usize,
@@ -56,10 +83,23 @@ pub(in crate::pipeline::gpu) struct StageIndices {
     pub(in crate::pipeline::gpu) scene_depth_guide_pass_index: usize,
     /// Pre-demosaiced rasters' replacement for highlight reconstruction and
     /// demosaicing: copies the raster source into the scene with luminance
-    /// denoise. It runs with the RAW stage but comes last so that adding it
-    /// kept earlier positions.
+    /// denoise. It runs with the RAW stage but comes after the output passes
+    /// so that adding it kept earlier positions.
     pub(in crate::pipeline::gpu) raster_finish_pass_index: usize,
+    /// Accumulation into the haze grid; the airlight, transmission and
+    /// guided-filter passes follow. Like the image lights they run with the
+    /// tone stage and come last so that adding them kept earlier positions.
+    pub(in crate::pipeline::gpu) haze_accumulate_pass_index: usize,
+    pub(in crate::pipeline::gpu) haze_resolve_pass_index: usize,
+    pub(in crate::pipeline::gpu) haze_end_index: usize,
     pub(in crate::pipeline::gpu) pass_count: usize,
+}
+
+/// Where a full-image map's passes sit: its accumulation, then the passes
+/// that resolve it once every tile has been added.
+pub(in crate::pipeline::gpu) struct FullImageMapPasses {
+    pub(in crate::pipeline::gpu) accumulate: usize,
+    pub(in crate::pipeline::gpu) resolve: std::ops::Range<usize>,
 }
 
 impl StageIndices {
@@ -74,7 +114,7 @@ impl StageIndices {
         let highlight_pass_index = take(1);
         let demosaic_start_index = take(match cfa_kind {
             CfaKind::Bayer => 3,
-            CfaKind::XTrans => 7,
+            CfaKind::XTrans => XTRANS_MARKESTEIJN_ENTRIES.len(),
         });
         let demosaic_dual_start_index = take(2);
         let demosaic_finish_index = take(1);
@@ -85,6 +125,7 @@ impl StageIndices {
         let adjustment_prepare_pass_index = take(1);
         let adjustment_tone_pass_index = take(1);
         let adjustment_local_tone_pass_index = take(1);
+        let detail_pyramid_start_index = take(DETAIL_PYRAMID_LEVELS);
         let adjustment_effects_pass_index = take(1);
         let adjustment_effects_copy_pass_index = take(1);
         let mask_blur_start_index = take(MASK_BLUR_STEPS);
@@ -99,6 +140,8 @@ impl StageIndices {
         let relight_shadow_map_pass_index = take(1);
         let scene_depth_guide_pass_index = take(1);
         let raster_finish_pass_index = take(1);
+        let haze_accumulate_pass_index = take(1);
+        let haze_resolve_pass_index = take(HAZE_PASSES - 1);
         let pass_count = next;
         Self {
             highlight_pass_index,
@@ -115,6 +158,7 @@ impl StageIndices {
             adjustment_prepare_pass_index,
             adjustment_tone_pass_index,
             adjustment_local_tone_pass_index,
+            detail_pyramid_start_index,
             adjustment_effects_pass_index,
             adjustment_effects_copy_pass_index,
             mask_blur_start_index,
@@ -132,7 +176,26 @@ impl StageIndices {
             relight_shadow_map_pass_index,
             scene_depth_guide_pass_index,
             raster_finish_pass_index,
+            haze_accumulate_pass_index,
+            haze_resolve_pass_index,
+            haze_end_index: pass_count,
             pass_count,
+        }
+    }
+
+    pub(in crate::pipeline::gpu) fn full_image_map_passes(
+        &self,
+        map: FullImageMap,
+    ) -> FullImageMapPasses {
+        match map {
+            FullImageMap::ImageLights => FullImageMapPasses {
+                accumulate: self.image_light_accumulate_pass_index,
+                resolve: self.image_light_resolve_pass_index..self.image_light_end_index,
+            },
+            FullImageMap::Haze => FullImageMapPasses {
+                accumulate: self.haze_accumulate_pass_index,
+                resolve: self.haze_resolve_pass_index..self.haze_end_index,
+            },
         }
     }
 }
@@ -261,57 +324,31 @@ pub(in crate::pipeline::gpu) fn assemble_passes(
                 image_workgroups,
             ),
         ]),
-        CfaKind::XTrans => passes.extend([
-            assembler.make_pass(
-                shaders.xtrans_demosaic_module.as_ref(),
-                "xtrans_seed",
-                &layouts.bgl1,
-                groups.bg1.clone(),
-                image_workgroups,
-            ),
-            assembler.make_pass(
-                shaders.xtrans_demosaic_module.as_ref(),
-                "xtrans_markesteijn_pass1",
-                &layouts.bgl2,
-                groups.bg2.clone(),
-                image_workgroups,
-            ),
-            assembler.make_pass(
-                shaders.xtrans_demosaic_module.as_ref(),
-                "xtrans_markesteijn_pass2",
-                &layouts.bgl3,
-                groups.bg3.clone(),
-                image_workgroups,
-            ),
-            assembler.make_pass(
-                shaders.xtrans_demosaic_module.as_ref(),
-                "xtrans_markesteijn_pass3",
-                &layouts.bgl2,
-                groups.bg2.clone(),
-                image_workgroups,
-            ),
-            assembler.make_pass(
-                shaders.xtrans_demosaic_module.as_ref(),
-                "xtrans_markesteijn_derivatives",
-                &layouts.bgl_xtrans_derivatives,
-                groups.bg_xtrans_derivatives.clone(),
-                image_workgroups,
-            ),
-            assembler.make_pass(
-                shaders.xtrans_demosaic_module.as_ref(),
-                "xtrans_markesteijn_homogeneity",
-                &layouts.bgl_xtrans_homogeneity,
-                groups.bg_xtrans_homogeneity.clone(),
-                image_workgroups,
-            ),
-            assembler.make_pass(
-                shaders.xtrans_demosaic_module.as_ref(),
-                "xtrans_markesteijn_accumulate",
-                &layouts.bgl_xtrans_accumulate,
-                groups.bg_xtrans_accumulate.clone(),
-                image_workgroups,
-            ),
-        ]),
+        CfaKind::XTrans => {
+            let bind_groups = groups
+                .bg_xtrans_markesteijn
+                .as_ref()
+                .ok_or_else(|| anyhow!("X-Trans pipeline has no Markesteijn bind groups"))?;
+            for (pass, (entry, bind_group)) in XTRANS_MARKESTEIJN_ENTRIES
+                .iter()
+                .zip(bind_groups)
+                .enumerate()
+            {
+                let layout = match pass {
+                    XTRANS_HOMOGENEITY_PASS => &layouts.bgl_xtrans_homogeneity,
+                    XTRANS_ACCUMULATE_PASS => &layouts.bgl_xtrans_accumulate,
+                    XTRANS_SMOOTHING_PASS => &layouts.bgl_xtrans_smoothing,
+                    _ => &layouts.bgl_xtrans_state,
+                };
+                passes.push(assembler.make_pass(
+                    shaders.xtrans_demosaic_module.as_ref(),
+                    entry,
+                    layout,
+                    bind_group.clone(),
+                    image_workgroups,
+                ));
+            }
+        }
     }
 
     ensure_planned(
@@ -319,19 +356,25 @@ pub(in crate::pipeline::gpu) fn assemble_passes(
         indices.demosaic_dual_start_index,
         "dual demosaicing",
     )?;
+    // The prepare pass reads the reference demosaic, so it lives in the
+    // sensor's finish module.
+    let (prepare_module, prepare_entry) = match cfa_kind {
+        CfaKind::Bayer => (shaders.bayer_rcd_p4_module.as_ref(), "bayer_dual_prepare"),
+        CfaKind::XTrans => (shaders.xtrans_finish_module.as_ref(), "xtrans_dual_prepare"),
+    };
     passes.extend([
         assembler.make_pass(
-            shaders.dual_demosaic_module.as_ref(),
-            "dual_green_reconstruct",
-            &layouts.bgl_dual_green,
-            groups.bg_dual_green.clone(),
+            prepare_module,
+            prepare_entry,
+            &layouts.bgl_dual_prepare,
+            groups.bg_dual_prepare.clone(),
             image_workgroups,
         ),
         assembler.make_pass(
-            shaders.dual_demosaic_module.as_ref(),
-            "dual_rgb_reconstruct",
-            &layouts.bgl_dual_rgb,
-            groups.bg_dual_rgb.clone(),
+            shaders.dual_demosaic_detail_module.as_ref(),
+            "dual_smooth_detail",
+            &layouts.bgl_dual_detail,
+            groups.bg_dual_detail.clone(),
             image_workgroups,
         ),
     ]);
@@ -408,7 +451,7 @@ pub(in crate::pipeline::gpu) fn assemble_passes(
             shaders.scene_adjustments_module.as_ref(),
             "prepare_scene_node",
             &layouts.bgl_adjust_prepare,
-            groups.bg_adjust_prepare.clone(),
+            InputBoundPass::ScenePreparation,
             image_workgroups,
         ),
         assembler.make_pass(
@@ -425,6 +468,27 @@ pub(in crate::pipeline::gpu) fn assemble_passes(
             groups.bg_adjust_local_tone.clone(),
             image_workgroups,
         ),
+    ]);
+    ensure_planned(
+        &passes,
+        indices.detail_pyramid_start_index,
+        "detail pyramid",
+    )?;
+    for (level, bind_group) in groups.bg_detail_pyramid.iter().enumerate() {
+        passes.push(assembler.make_pass(
+            shaders.creative_effects_module.as_ref(),
+            &format!("build_detail_level_{level}"),
+            &layouts.bgl_detail_pyramid,
+            bind_group.clone(),
+            image_workgroups,
+        ));
+    }
+    ensure_planned(
+        &passes,
+        indices.adjustment_effects_pass_index,
+        "scene effects",
+    )?;
+    passes.extend([
         assembler.make_pass(
             shaders.creative_effects_module.as_ref(),
             "apply_scene_effects_node",
@@ -579,6 +643,29 @@ pub(in crate::pipeline::gpu) fn assemble_passes(
         groups.bg_raster_finish.clone(),
         image_workgroups,
     ));
+
+    let haze_workgroups = [
+        HAZE_GRID_LONG.div_ceil(WORKGROUP_EDGE),
+        HAZE_GRID_LONG.div_ceil(WORKGROUP_EDGE),
+        1,
+    ];
+    ensure_planned(&passes, indices.haze_accumulate_pass_index, "haze")?;
+    let haze_programs: [(&str, [u32; 3]); HAZE_PASSES] = [
+        ("accumulate_haze", haze_workgroups),
+        ("resolve_haze_airlight", single_workgroup),
+        ("resolve_haze_transmission", haze_workgroups),
+        ("haze_guide_coefficients", haze_workgroups),
+        ("smooth_haze_coefficients", haze_workgroups),
+    ];
+    for (index, (entry, workgroups)) in haze_programs.into_iter().enumerate() {
+        passes.push(assembler.make_pass(
+            shaders.haze_analysis_module.as_ref(),
+            entry,
+            &layouts.bgl_haze[index],
+            InputBoundPass::Haze(index),
+            workgroups,
+        ));
+    }
 
     // The post-blur variants reuse the programs above with bind groups that
     // read the mask-blurred scene.

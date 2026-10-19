@@ -1,6 +1,6 @@
 use super::LoadedRaw;
 #[cfg(lensfun_available)]
-use super::{CompactPixelMap, LensGeometryMap};
+use super::{CompactPixelMap, LensGeometryMap, LensShadingMap};
 use anyhow::{anyhow, Result};
 
 /// Which parts of a Lensfun profile an application request uses.

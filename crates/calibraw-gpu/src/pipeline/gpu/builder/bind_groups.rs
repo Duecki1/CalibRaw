@@ -9,12 +9,12 @@ pub(in crate::pipeline::gpu) struct BindGroups {
     pub(in crate::pipeline::gpu) bg1: wgpu::BindGroup,
     pub(in crate::pipeline::gpu) bg2: wgpu::BindGroup,
     pub(in crate::pipeline::gpu) bg3: wgpu::BindGroup,
-    pub(in crate::pipeline::gpu) bg_dual_green: wgpu::BindGroup,
-    pub(in crate::pipeline::gpu) bg_dual_rgb: wgpu::BindGroup,
+    pub(in crate::pipeline::gpu) bg_dual_prepare: wgpu::BindGroup,
+    pub(in crate::pipeline::gpu) bg_dual_detail: wgpu::BindGroup,
     pub(in crate::pipeline::gpu) bg4: wgpu::BindGroup,
-    pub(in crate::pipeline::gpu) bg_xtrans_derivatives: wgpu::BindGroup,
-    pub(in crate::pipeline::gpu) bg_xtrans_homogeneity: wgpu::BindGroup,
-    pub(in crate::pipeline::gpu) bg_xtrans_accumulate: wgpu::BindGroup,
+    /// X-Trans pipelines only, in `XTRANS_MARKESTEIJN_ENTRIES` order.
+    pub(in crate::pipeline::gpu) bg_xtrans_markesteijn:
+        Option<[wgpu::BindGroup; XTRANS_MARKESTEIJN_ENTRIES.len()]>,
     pub(in crate::pipeline::gpu) bg_xtrans_finish: wgpu::BindGroup,
     pub(in crate::pipeline::gpu) bg_raster_finish: wgpu::BindGroup,
     pub(in crate::pipeline::gpu) bg_color_denoise: [wgpu::BindGroup; 6],
@@ -22,9 +22,9 @@ pub(in crate::pipeline::gpu) struct BindGroups {
     pub(in crate::pipeline::gpu) bg_tone_horizontal: wgpu::BindGroup,
     pub(in crate::pipeline::gpu) bg_tone_vertical: wgpu::BindGroup,
     pub(in crate::pipeline::gpu) bg_tone_reduce: wgpu::BindGroup,
-    pub(in crate::pipeline::gpu) bg_adjust_prepare: wgpu::BindGroup,
     pub(in crate::pipeline::gpu) bg_adjust_tone: wgpu::BindGroup,
     pub(in crate::pipeline::gpu) bg_adjust_local_tone: wgpu::BindGroup,
+    pub(in crate::pipeline::gpu) bg_detail_pyramid: [wgpu::BindGroup; DETAIL_PYRAMID_LEVELS],
     pub(in crate::pipeline::gpu) bg_adjust_effects: wgpu::BindGroup,
     pub(in crate::pipeline::gpu) bg_adjust_effects_copy: wgpu::BindGroup,
     pub(in crate::pipeline::gpu) bg_mask_blur: [wgpu::BindGroup; MASK_BLUR_STEPS],
@@ -70,8 +70,10 @@ pub(in crate::pipeline::gpu) fn create_bind_groups(
         raw_view,
         color_view,
         black_view,
+        lens_shading_view,
         mask_view,
         mask_sampler,
+        xtrans_homogeneity_view,
         ..
     } = surfaces;
 
@@ -98,6 +100,7 @@ pub(in crate::pipeline::gpu) fn create_bind_groups(
             texture_binding(2, color_view),
             texture_binding(19, black_view),
             texture_binding(3, reconstructed_raw_view),
+            texture_binding(13, lens_shading_view),
         ],
     );
 
@@ -145,36 +148,43 @@ pub(in crate::pipeline::gpu) fn create_bind_groups(
         ],
     );
 
-    let (dual_green_view, dual_low_view) = match cfa_kind {
+    // Scratch textures the reference demosaic no longer needs by the dual
+    // passes: the prepared interpolation, then the smoothed one with its mask.
+    let (dual_prepared_view, dual_low_view) = match cfa_kind {
         CfaKind::Bayer => (highlight_work_a_view, highlight_work_b_view),
         CfaKind::XTrans => (tex1_view, tex2_view),
     };
 
-    let bg_dual_green = create_bind_group(
+    let mut dual_prepare_entries = vec![
+        buffer_binding(0, camera_uniforms_buffer),
+        texture_binding(1, raw_view),
+        texture_binding(2, color_view),
+        texture_binding(19, black_view),
+        texture_binding(3, reconstructed_raw_view),
+        texture_binding(20, dual_prepared_view),
+    ];
+    match cfa_kind {
+        CfaKind::Bayer => dual_prepare_entries
+            .extend([texture_binding(7, tex2_view), texture_binding(9, tex1_view)]),
+        CfaKind::XTrans => dual_prepare_entries.push(texture_binding(26, highlight_work_b_view)),
+    }
+    let bg_dual_prepare = create_bind_group(
         device,
-        "bg dual demosaic green",
-        &layouts.bgl_dual_green,
-        &[
-            buffer_binding(0, camera_uniforms_buffer),
-            texture_binding(1, raw_view),
-            texture_binding(2, color_view),
-            texture_binding(19, black_view),
-            texture_binding(3, reconstructed_raw_view),
-            texture_binding(20, dual_green_view),
-        ],
+        "bg dual demosaic prepare",
+        &layouts.bgl_dual_prepare,
+        &dual_prepare_entries,
     );
 
-    let bg_dual_rgb = create_bind_group(
+    let bg_dual_detail = create_bind_group(
         device,
-        "bg dual demosaic rgb",
-        &layouts.bgl_dual_rgb,
+        "bg dual demosaic detail",
+        &layouts.bgl_dual_detail,
         &[
             buffer_binding(0, camera_uniforms_buffer),
             texture_binding(1, raw_view),
             texture_binding(2, color_view),
             texture_binding(19, black_view),
-            texture_binding(3, reconstructed_raw_view),
-            texture_binding(21, dual_green_view),
+            texture_binding(21, dual_prepared_view),
             texture_binding(22, dual_low_view),
         ],
     );
@@ -196,55 +206,102 @@ pub(in crate::pipeline::gpu) fn create_bind_groups(
         ],
     );
 
-    let bg_xtrans_derivatives = create_bind_group(
-        device,
-        "bg X-Trans derivatives",
-        &layouts.bgl_xtrans_derivatives,
-        &[
-            buffer_binding(0, camera_uniforms_buffer),
-            texture_binding(1, raw_view),
-            texture_binding(2, color_view),
-            texture_binding(19, black_view),
-            texture_binding(3, reconstructed_raw_view),
-            texture_binding(9, tex2_view),
-            texture_binding(20, highlight_work_a_view),
-            texture_binding(21, highlight_work_b_view),
-        ],
-    );
-
-    let bg_xtrans_homogeneity = create_bind_group(
-        device,
-        "bg X-Trans homogeneity",
-        &layouts.bgl_xtrans_homogeneity,
-        &[
-            buffer_binding(0, camera_uniforms_buffer),
-            texture_binding(1, raw_view),
-            texture_binding(2, color_view),
-            texture_binding(19, black_view),
-            texture_binding(3, reconstructed_raw_view),
-            texture_binding(27, highlight_work_a_view),
-            texture_binding(28, highlight_work_b_view),
-            texture_binding(24, tex1_view),
-            texture_binding(25, scene_view),
-        ],
-    );
-
-    let bg_xtrans_accumulate = create_bind_group(
-        device,
-        "bg X-Trans accumulate",
-        &layouts.bgl_xtrans_accumulate,
-        &[
-            buffer_binding(0, camera_uniforms_buffer),
-            texture_binding(1, raw_view),
-            texture_binding(2, color_view),
-            texture_binding(19, black_view),
-            texture_binding(3, reconstructed_raw_view),
-            texture_binding(9, tex2_view),
-            texture_binding(29, tex1_view),
-            texture_binding(30, scene_view),
-            texture_binding(26, highlight_work_a_view),
-        ],
-    );
+    // Markesteijn passes in `XTRANS_MARKESTEIJN_ENTRIES` order. The states
+    // move through the free scratch textures: buffers 0-3 stay in tex1 and
+    // tex2, buffers 4-7 end in scene and highlight work B, the accumulated
+    // result goes to highlight work A and the smoothed one lands in highlight
+    // work B. Passes that read one state bind it as lo and hi; the green and
+    // smoothing passes read none and bind tex2 and tex1 throughout.
+    let bg_xtrans_markesteijn = xtrans_homogeneity_view.as_ref().map(|homogeneity_view| {
+        let pass = |label: &str,
+                    layout: &wgpu::BindGroupLayout,
+                    states: [&wgpu::TextureView; 4],
+                    outputs: &[wgpu::BindGroupEntry]| {
+            let mut entries = vec![
+                buffer_binding(0, camera_uniforms_buffer),
+                texture_binding(1, raw_view),
+                texture_binding(2, color_view),
+                texture_binding(19, black_view),
+                texture_binding(3, reconstructed_raw_view),
+            ];
+            entries.extend(
+                [27, 28, 29, 30]
+                    .into_iter()
+                    .zip(states)
+                    .map(|(binding, view)| texture_binding(binding, view)),
+            );
+            entries.extend_from_slice(outputs);
+            create_bind_group(device, label, layout, &entries)
+        };
+        let state = &layouts.bgl_xtrans_state;
+        [
+            pass(
+                "bg X-Trans greens 0-3",
+                state,
+                [tex2_view; 4],
+                &[texture_binding(24, tex1_view)],
+            ),
+            pass(
+                "bg X-Trans other colours 0-3",
+                state,
+                [tex1_view; 4],
+                &[texture_binding(24, tex2_view)],
+            ),
+            pass(
+                "bg X-Trans greens 4-7, pass 2",
+                state,
+                [tex1_view, tex2_view, tex1_view, tex2_view],
+                &[texture_binding(24, highlight_work_a_view)],
+            ),
+            pass(
+                "bg X-Trans other colours 4-7, pass 2",
+                state,
+                [highlight_work_a_view; 4],
+                &[texture_binding(24, highlight_work_b_view)],
+            ),
+            pass(
+                "bg X-Trans greens 4-7, pass 3",
+                state,
+                [
+                    highlight_work_a_view,
+                    highlight_work_b_view,
+                    highlight_work_a_view,
+                    highlight_work_b_view,
+                ],
+                &[texture_binding(24, scene_view)],
+            ),
+            pass(
+                "bg X-Trans other colours 4-7, pass 3",
+                state,
+                [scene_view; 4],
+                &[texture_binding(24, highlight_work_b_view)],
+            ),
+            pass(
+                "bg X-Trans homogeneity",
+                &layouts.bgl_xtrans_homogeneity,
+                [tex1_view, tex2_view, scene_view, highlight_work_b_view],
+                &[texture_binding(25, homogeneity_view)],
+            ),
+            pass(
+                "bg X-Trans accumulate",
+                &layouts.bgl_xtrans_accumulate,
+                [tex1_view, tex2_view, scene_view, highlight_work_b_view],
+                &[
+                    texture_binding(31, homogeneity_view),
+                    texture_binding(24, highlight_work_a_view),
+                ],
+            ),
+            pass(
+                "bg X-Trans smoothing",
+                &layouts.bgl_xtrans_smoothing,
+                [tex1_view; 4],
+                &[
+                    texture_binding(26, highlight_work_a_view),
+                    texture_binding(24, highlight_work_b_view),
+                ],
+            ),
+        ]
+    });
 
     let bg_xtrans_finish = create_bind_group(
         device,
@@ -256,7 +313,7 @@ pub(in crate::pipeline::gpu) fn create_bind_groups(
             texture_binding(2, color_view),
             texture_binding(19, black_view),
             texture_binding(3, reconstructed_raw_view),
-            texture_binding(26, highlight_work_a_view),
+            texture_binding(26, highlight_work_b_view),
             texture_binding(23, dual_low_view),
             texture_binding(10, scene_view),
         ],
@@ -335,26 +392,6 @@ pub(in crate::pipeline::gpu) fn create_bind_groups(
         ],
     );
 
-    let bg_adjust_prepare = create_bind_group(
-        device,
-        "bg adjustment preparation",
-        &layouts.bgl_adjust_prepare,
-        &[
-            buffer_binding(0, camera_uniforms_buffer),
-            texture_binding(1, raw_view),
-            texture_binding(2, color_view),
-            texture_binding(19, black_view),
-            texture_binding(11, scene_view),
-            texture_binding(21, tex1_view),
-            buffer_binding(16, tone_stats_buffer),
-            texture_binding(17, tone_guide_a_view),
-            buffer_binding(20, profile_buffer),
-            texture_binding(27, mask_view),
-            sampler_binding(28, mask_sampler),
-            buffer_binding(33, mask_data_buffer),
-        ],
-    );
-
     let make_adjust_tone_bind_group =
         |label: &str, input: &wgpu::TextureView, output: &wgpu::TextureView| {
             create_bind_group(
@@ -378,6 +415,27 @@ pub(in crate::pipeline::gpu) fn create_bind_groups(
     let bg_adjust_local_tone =
         make_adjust_tone_bind_group("bg local scene tone edits", tex2_view, tex1_view);
 
+    // The Texture and Clarity cascade ping-pongs between the highlight work
+    // textures, which, as for the Pixelate block cache, are free once the scene
+    // texture exists. Level 0 reads the adjustment base and writes A; both level
+    // counts are odd, so the last level is always in A.
+    let detail_pyramid_view = highlight_work_a_view;
+    let bg_detail_pyramid = std::array::from_fn(|level| {
+        let (read_view, write_view) =
+            ping_pong(level, highlight_work_b_view, highlight_work_a_view);
+        create_bind_group(
+            device,
+            &format!("bg detail pyramid level {level}"),
+            &layouts.bgl_detail_pyramid,
+            &[
+                buffer_binding(0, camera_uniforms_buffer),
+                texture_binding(22, tex1_view),
+                texture_binding(50, read_view),
+                texture_binding(51, write_view),
+            ],
+        )
+    });
+
     let make_adjust_effects_bind_group =
         |label: &str, input: &wgpu::TextureView, output: &wgpu::TextureView| {
             create_bind_group(
@@ -388,7 +446,7 @@ pub(in crate::pipeline::gpu) fn create_bind_groups(
                     buffer_binding(0, camera_uniforms_buffer),
                     texture_binding(22, input),
                     texture_binding(23, output),
-                    buffer_binding(16, tone_stats_buffer),
+                    texture_binding(50, detail_pyramid_view),
                     texture_binding(27, mask_view),
                     sampler_binding(28, mask_sampler),
                     buffer_binding(33, mask_data_buffer),
@@ -533,12 +591,10 @@ pub(in crate::pipeline::gpu) fn create_bind_groups(
         bg1,
         bg2,
         bg3,
-        bg_dual_green,
-        bg_dual_rgb,
+        bg_dual_prepare,
+        bg_dual_detail,
         bg4,
-        bg_xtrans_derivatives,
-        bg_xtrans_homogeneity,
-        bg_xtrans_accumulate,
+        bg_xtrans_markesteijn,
         bg_xtrans_finish,
         bg_raster_finish,
         bg_color_denoise,
@@ -546,9 +602,9 @@ pub(in crate::pipeline::gpu) fn create_bind_groups(
         bg_tone_horizontal,
         bg_tone_vertical,
         bg_tone_reduce,
-        bg_adjust_prepare,
         bg_adjust_tone,
         bg_adjust_local_tone,
+        bg_detail_pyramid,
         bg_adjust_effects,
         bg_adjust_effects_copy,
         bg_mask_blur,
@@ -585,6 +641,7 @@ pub(in crate::pipeline::gpu) fn input_binding_sources(
     surfaces: &PipelineSurfaces,
 ) -> InputBindingSources {
     InputBindingSources {
+        scene_preparation_layout: layouts.bgl_adjust_prepare.clone(),
         creative_layout: layouts.bgl_adjust_creative.clone(),
         scene_depth_guide_layout: layouts.bgl_scene_depth_guide.clone(),
         relight_shadow_map_layout: layouts.bgl_relight_shadow_map.clone(),
@@ -594,10 +651,15 @@ pub(in crate::pipeline::gpu) fn input_binding_sources(
             layouts.bgl_image_light_blur_horizontal.clone(),
             layouts.bgl_image_light_blur_vertical.clone(),
         ],
+        haze_layouts: layouts.bgl_haze.clone(),
         camera_uniforms: buffers.camera_uniforms_buffer.clone(),
         mask_data: buffers.mask_data_buffer.clone(),
         tone_stats: buffers.tone_stats_buffer.clone(),
         profile: buffers.profile_buffer.clone(),
+        raw: surfaces.raw_view.clone(),
+        color: surfaces.color_view.clone(),
+        black: surfaces.black_view.clone(),
+        tone_guide: surfaces.tone_guide_a_view.clone(),
         scene: surfaces.scene_view.clone(),
         tex1: surfaces.tex1_view.clone(),
         tex2: surfaces.tex2_view.clone(),

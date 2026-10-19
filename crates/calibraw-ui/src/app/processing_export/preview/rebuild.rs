@@ -62,6 +62,7 @@ impl CalibRawApp {
             full_raw.width,
             full_raw.height,
             fallback.max(requested.saturating_add(6)),
+            full_raw.cfa_kind,
         )
     }
 

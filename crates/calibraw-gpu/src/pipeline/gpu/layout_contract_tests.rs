@@ -11,10 +11,16 @@ use super::{
     effect_lanes, processing_work_format, shader_manager::ShaderManager, shaders,
     work_shader_source, CameraUniforms, CfaKind, EffectsUniforms, MaskData, PackedPointColor,
     ProcessingQuality, RemoveCompositeParams, SceneToneUniforms, ViewTransformMode,
-    IMAGE_LIGHT_BANDS, IMAGE_LIGHT_GRID_LONG, MASK_EFFECT_ID_SHIFT, MAX_RENDER_MASK_SLOTS,
-    RELIGHT_SHADOW_MAP_CHANNELS, TONE_HISTOGRAM_BIN_COUNT, TONE_STATS_SIZE_BYTES,
+    HAZE_AIRLIGHT_BYTES, HAZE_CELL_BYTES, HAZE_GRID_LONG, IMAGE_LIGHT_BANDS, IMAGE_LIGHT_GRID_LONG,
+    MASK_EFFECT_ID_SHIFT, MAX_RENDER_MASK_SLOTS, RELIGHT_SHADOW_MAP_CHANNELS,
+    TONE_HISTOGRAM_BIN_COUNT, TONE_STATS_SIZE_BYTES,
 };
+use super::{DETAIL_PYRAMID_LEVELS, DETAIL_PYRAMID_TEXTURE_LEVELS};
 use crate::pipeline::MaskEffect;
+use calibraw_core::pipeline::{
+    DETAIL_CLARITY_SUPPORT, DETAIL_TEXTURE_SUPPORT, HAZE_BOX_SUPPORT, HAZE_GUIDE_SUPPORT,
+    MAX_RESOLUTION_SCALE, TONE_GUIDE_RADIUS_CELLS,
+};
 use naga::proc::Layouter;
 use std::collections::BTreeSet;
 
@@ -106,6 +112,9 @@ pub(super) fn u32_constant(module: &naga::Module, name: &str) -> Option<u32> {
                 naga::Expression::Literal(naga::Literal::AbstractInt(value)) => {
                     u32::try_from(value).expect("constant fits in u32")
                 }
+                naga::Expression::Literal(naga::Literal::I32(value)) => {
+                    u32::try_from(value).expect("constant is not negative")
+                }
                 ref other => panic!("{name} is not a u32 literal: {other:?}"),
             }
         })
@@ -177,21 +186,17 @@ fn shared_uniform_and_mask_structs_match_rust_layouts() {
             "CameraUniforms",
             rust_layout!(CameraUniforms {
                 black_point,
-                temperature,
                 highlight_clip,
                 chroma_denoise,
-                ca_red,
-                ca_blue,
                 highlight_reconstruction,
                 tone_analysis_scale,
                 tone_guide_radius,
                 demosaic_mode,
                 dual_threshold,
                 frequency_chroma,
-                tint,
-                pre_demosaiced_raster,
                 view_transform_mode,
-                camera_linear_raster,
+                padding_0,
+                padding_1,
                 highlight_options,
                 noise_shot,
                 noise_read,
@@ -218,7 +223,7 @@ fn shared_uniform_and_mask_structs_match_rust_layouts() {
                 ai_denoise_enabled,
                 user_exposure_bits,
                 ai_cfa_weight,
-                _pad_camera_1,
+                source_short_edge,
             }),
         ),
         (
@@ -366,21 +371,24 @@ fn shared_buffer_bindings_match_the_rust_bind_group_layouts() {
     assert_eq!(seen.len(), expected.len(), "every shared buffer is used");
 }
 
+/// The value of a u32 constant, which every module that keeps it must agree on.
+fn shared_u32_constant(modules: &[(String, naga::Module)], name: &str) -> u32 {
+    let values = modules
+        .iter()
+        .filter_map(|(_, module)| u32_constant(module, name))
+        .collect::<BTreeSet<_>>();
+    assert_eq!(
+        values.len(),
+        1,
+        "{name} has one value across modules: {values:?}"
+    );
+    values.into_iter().next().unwrap()
+}
+
 #[test]
 fn shared_constants_and_effect_ids_match_rust() {
     let modules = production_modules();
-    let constant = |name: &str| {
-        let values = modules
-            .iter()
-            .filter_map(|(_, module)| u32_constant(module, name))
-            .collect::<BTreeSet<_>>();
-        assert_eq!(
-            values.len(),
-            1,
-            "{name} has one value across modules: {values:?}"
-        );
-        values.into_iter().next().unwrap()
-    };
+    let constant = |name: &str| shared_u32_constant(&modules, name);
 
     assert_eq!(
         constant("MAX_RENDER_MASK_SLOTS") as usize,
@@ -407,6 +415,8 @@ fn shared_constants_and_effect_ids_match_rust() {
     // The image-light grid buffer and textures are sized from these.
     assert_eq!(constant("IMAGE_LIGHT_GRID_LONG"), IMAGE_LIGHT_GRID_LONG);
     assert_eq!(constant("IMAGE_LIGHT_BANDS"), IMAGE_LIGHT_BANDS);
+    // So are the haze grid's.
+    assert_eq!(constant("HAZE_GRID_LONG"), HAZE_GRID_LONG);
     for effect in MaskEffect::ALL {
         if effect == MaskEffect::Adjustment {
             assert_eq!(effect.shader_id(), 0, "adjustment masks use shader ID 0");
@@ -418,6 +428,35 @@ fn shared_constants_and_effect_ids_match_rust() {
         );
         assert_eq!(constant(&name), effect.shader_id(), "{name}");
     }
+}
+
+/// The pass counts of the Texture and Clarity cascade and the export-tile
+/// support reserved for it follow from detail_scale_space.wgsl: level k filters
+/// at a step of 2^k pixels with `DETAIL_PYRAMID_KERNEL_RADIUS` taps a side.
+#[test]
+fn detail_pyramid_levels_and_tile_support_match_the_shader() {
+    let modules = production_modules();
+    let constant = |name: &str| shared_u32_constant(&modules, name);
+    let levels = constant("DETAIL_PYRAMID_LEVEL_COUNT");
+    let texture_levels = constant("DETAIL_PYRAMID_TEXTURE_LEVEL_COUNT");
+    let radius = constant("DETAIL_PYRAMID_KERNEL_RADIUS");
+    assert_eq!(levels as usize, DETAIL_PYRAMID_LEVELS);
+    assert_eq!(texture_levels as usize, DETAIL_PYRAMID_TEXTURE_LEVELS);
+    // Level 0 writes the texture the scene effects read and the levels
+    // alternate, so both counts must be odd.
+    assert!(levels % 2 == 1 && texture_levels % 2 == 1);
+    let footprint = |levels: u32| radius * ((1 << levels) - 1);
+    assert_eq!(footprint(levels), DETAIL_CLARITY_SUPPORT);
+    assert_eq!(footprint(texture_levels), DETAIL_TEXTURE_SUPPORT);
+}
+
+/// The tone-guide blur in tone_analysis.wgsl takes enough taps for its radius
+/// at the largest resolution scale, which TONE_GUIDE_SUPPORT in tiles.rs reserves.
+#[test]
+fn tone_guide_taps_cover_the_largest_scaled_radius() {
+    let modules = production_modules();
+    let taps = shared_u32_constant(&modules, "TONE_GUIDE_MAX_RADIUS_CELLS");
+    assert!(TONE_GUIDE_RADIUS_CELLS * MAX_RESOLUTION_SCALE <= taps);
 }
 
 #[test]
@@ -487,6 +526,36 @@ fn tone_statistics_buffers_match_their_wgsl_declarations() {
     assert_eq!(
         size_of("ToneHistogram"),
         u64::from(TONE_HISTOGRAM_BIN_COUNT) * std::mem::size_of::<u32>() as u64
+    );
+}
+
+/// The haze buffers Rust allocates hold the WGSL structs, and the export
+/// halo reserves how far the haze grid's boxes and Dehaze's guide scene reach
+/// past a tile core.
+#[test]
+fn haze_buffers_and_supports_match_their_wgsl_declarations() {
+    let modules = production_modules();
+    let (_, haze_analysis) = modules
+        .iter()
+        .find(|(name, _)| name.starts_with(shaders::HAZE_ANALYSIS_ENTRY.label))
+        .expect("haze analysis module");
+    let mut layouter = Layouter::default();
+    layouter.update(haze_analysis.to_ctx()).unwrap();
+    let size_of = |wgsl_name: &str| {
+        let (handle, _) = haze_analysis
+            .types
+            .iter()
+            .find(|(_, ty)| ty.name.as_deref().map(undecorated) == Some(wgsl_name))
+            .unwrap_or_else(|| panic!("{wgsl_name} is declared"));
+        u64::from(layouter[handle].size)
+    };
+    assert_eq!(size_of("HazeCell"), HAZE_CELL_BYTES);
+    assert_eq!(size_of("HazeAirlight"), HAZE_AIRLIGHT_BYTES);
+    let box_max = u32_constant(haze_analysis, "HAZE_BOX_MAX").expect("WGSL declares HAZE_BOX_MAX");
+    assert_eq!(box_max - 1, HAZE_BOX_SUPPORT);
+    assert_eq!(
+        shared_u32_constant(&modules, "HAZE_GUIDE_MAX_RADIUS"),
+        HAZE_GUIDE_SUPPORT
     );
 }
 

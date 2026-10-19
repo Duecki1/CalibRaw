@@ -6,8 +6,8 @@ pub fn remove_scene_white_balance(raw: &LoadedRaw, exposure: &ExposureParams) ->
     if raw.is_pre_demosaiced_raster() {
         return [1.0; 3];
     }
-    let (wb, _, _) =
-        raw.adjusted_white_balance_and_camera_transform(exposure.temperature, exposure.tint);
+    let (temperature, tint) = raw.white_balance_offsets(exposure.white_balance);
+    let (wb, _, _) = raw.adjusted_white_balance_and_camera_transform(temperature, tint);
     let green = 0.5 * (wb[1] + wb[3]);
     [wb[0].max(1e-8), green.max(1e-8), wb[2].max(1e-8)]
 }

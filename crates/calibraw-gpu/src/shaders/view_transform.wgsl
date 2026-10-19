@@ -112,10 +112,9 @@ fn stabilized_mixer_sample(pos: vec2<i32>, center_rgb: vec3<f32>) -> MixerSample
 
     var vector_sum = center.hue_vector * center.confidence * 4.0;
     var weight_sum = center.confidence * 4.0;
-    let selector_radius = select(1, 2, Common::camera_uniforms.tone_guide_radius > 3.5);
     for (var dy = -2; dy <= 2; dy = dy + 1) {
         for (var dx = -2; dx <= 2; dx = dx + 1) {
-            if (dx == 0 && dy == 0) || abs(dx) > selector_radius || abs(dy) > selector_radius {
+            if dx == 0 && dy == 0 {
                 continue;
             }
             let neighbour_rgb = textureLoad(SceneAdjustments::final_adjustment_tex, Common::clamp_pos(pos + vec2<i32>(dx, dy)), 0).xyz;
@@ -585,8 +584,7 @@ fn apply_local_color_mixer(pos: vec2<i32>, input_rgb: vec3<f32>) -> vec3<f32> {
 }
 
 fn apply_view_transform(scene_rgb: vec3<f32>) -> vec3<f32> {
-    let looked = Profile::apply_optional_profile_look(scene_rgb);
-    let view_input = Color::gamut_project_nonnegative_rec2020(looked);
+    let view_input = Color::gamut_project_nonnegative_rec2020(scene_rgb);
 
     switch Common::camera_uniforms.view_transform_mode {
         case Common::VIEW_TRANSFORM_SCENE_SIGMOID: {
@@ -606,7 +604,7 @@ fn apply_local_display_blacks(pos: vec2<i32>, input_rgb: vec3<f32>) -> vec3<f32>
     let count = min(Common::scene_tone_uniforms.mask_counts.x, Common::MAX_RENDER_MASK_SLOTS);
     for (var index = 0u; index < count; index = index + 1u) {
         let state = Common::mask_data[index].metadata;
-        if state.x == 0u || state.y == 0u || Common::mask_effect_id(state) != 0u { continue; }
+        if !Common::mask_slot_applies(state, 0u) { continue; }
         let value = Common::mask_data[index].adjust_1_field.y;
         if abs(value) < 1e-7 { continue; }
         let weight = SceneAdjustments::local_mask_weight(pos, index);

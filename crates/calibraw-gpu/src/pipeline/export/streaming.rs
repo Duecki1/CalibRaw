@@ -387,29 +387,43 @@ fn report_completed_export_tile(
     });
 }
 
+/// Largest edge of an export tile with its halo, which bounds the GPU memory
+/// of one tile: the largest core with a 768 px halo.
+const MAX_PADDED_TILE_EDGE: u32 = 1024 + 2 * 768;
+
 fn validate_tile_spec(spec: TileSpec) -> Result<()> {
     let maximum_core = 1024;
-    let maximum_halo = 768;
     let scale = TONE_GUIDE_CELL_SIZE;
     anyhow::ensure!(
         (64..=maximum_core).contains(&spec.core_edge),
         "export tile core must be between 64 and {maximum_core} pixels"
     );
     anyhow::ensure!(
-        (MIN_EXPORT_TILE_HALO..=maximum_halo).contains(&spec.halo),
-        "export halo must be between {MIN_EXPORT_TILE_HALO} and {maximum_halo} pixels"
+        (MIN_EXPORT_TILE_HALO..=EXPORT_TILE_HALO).contains(&spec.halo),
+        "export halo must be between {MIN_EXPORT_TILE_HALO} and {EXPORT_TILE_HALO} pixels"
     );
     anyhow::ensure!(
         spec.core_edge.is_multiple_of(scale) && spec.halo.is_multiple_of(scale),
         "export tile core and halo must align to the global tone-guide grid"
     );
-    spec.core_edge
+    let padded_edge = spec
+        .core_edge
         .checked_add(spec.halo.checked_mul(2).context("export halo overflow")?)
         .context("padded export tile overflow")?;
+    anyhow::ensure!(
+        padded_edge <= MAX_PADDED_TILE_EDGE,
+        "export tile must be at most {MAX_PADDED_TILE_EDGE} pixels across with its halo"
+    );
     Ok(())
 }
 
 pub(super) fn bounded_tile_spec(mut spec: TileSpec, source_width: u32) -> Result<TileSpec> {
+    // A wide halo takes its room from the core, so one tile never needs more
+    // GPU memory than MAX_PADDED_TILE_EDGE allows.
+    let core_room = MAX_PADDED_TILE_EDGE.saturating_sub(spec.halo.saturating_mul(2));
+    spec.core_edge = spec
+        .core_edge
+        .min(core_room - core_room % TONE_GUIDE_CELL_SIZE);
     validate_tile_spec(spec)?;
     let bytes_per_source_row = u64::from(source_width)
         .checked_mul(3)

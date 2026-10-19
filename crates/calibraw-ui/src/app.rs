@@ -399,15 +399,25 @@ mod tests {
     #[test]
     fn fitted_preview_density_excludes_phone_letterbox_space() {
         let geometry = GeometryTransform::default();
-        let edge =
-            PreviewQuality::Max.proxy_edge_for_fitted_source([720, 1_500], 7_028, 4_688, geometry);
+        let edge = PreviewQuality::Max.proxy_edge_for_fitted_source(
+            [720, 1_500],
+            7_028,
+            4_688,
+            geometry,
+            crate::pipeline::CfaKind::Bayer,
+        );
         assert_eq!(edge, 1_280);
 
         let mut cropped = geometry;
         cropped.crop = [0.375, 0.0, 0.625, 1.0];
         assert!(
-            PreviewQuality::Max.proxy_edge_for_fitted_source([720, 1_500], 7_028, 4_688, cropped,)
-                > edge
+            PreviewQuality::Max.proxy_edge_for_fitted_source(
+                [720, 1_500],
+                7_028,
+                4_688,
+                cropped,
+                crate::pipeline::CfaKind::Bayer,
+            ) > edge
         );
     }
 

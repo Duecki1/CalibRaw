@@ -1,11 +1,12 @@
 #import calibraw::common as Common
 #import calibraw::color as Color
-#import calibraw::profile as Profile
 #import calibraw::basic_adjustments as BasicAdjustments
+#import calibraw::profile as Profile
 #import calibraw::tonemap as Tonemap
 #import calibraw::detail_capture as DetailCapture
 #import calibraw::detail_utils as DetailUtils
 #import calibraw::scene_source as SceneSource
+#import calibraw::haze as Haze
 
 @group(0) @binding(12) var out_tex: texture_storage_2d<rgba8unorm, write>;
 @group(0) @binding(21) var adjustment_base_out: texture_storage_2d<rgba16float /* CALIBRAW_WORK_FORMAT */, write>;
@@ -94,7 +95,7 @@ fn apply_local_exposure_nodes(pos: vec2<i32>, input_rgb: vec3<f32>) -> vec3<f32>
     let count = min(Common::scene_tone_uniforms.mask_counts.x, Common::MAX_RENDER_MASK_SLOTS);
     for (var index = 0u; index < count; index = index + 1u) {
         let state = Common::mask_data[index].metadata;
-        if state.x == 0u || state.y == 0u || Common::mask_effect_id(state) != 0u { continue; }
+        if !Common::mask_slot_applies(state, 0u) { continue; }
         let value = clamp(Common::mask_data[index].adjust_0_field.x, -5.0, 5.0);
         if abs(value) <= 1e-7 { continue; }
         let weight = local_mask_weight(pos, index);
@@ -102,6 +103,24 @@ fn apply_local_exposure_nodes(pos: vec2<i32>, input_rgb: vec3<f32>) -> vec3<f32>
         rgb = rgb * exp2(value * weight);
     }
     return rgb;
+}
+
+// The perceptual amount of global and mask Dehaze at a pixel. Amounts add up
+// in the exponent of the haze model (haze.wgsl), so one transmission serves
+// every mask.
+fn dehaze_amount_at(pos: vec2<i32>) -> f32 {
+    var amount = BasicAdjustments::perceptual_control(Common::effects_uniforms.presence.z);
+    let count = min(Common::scene_tone_uniforms.mask_counts.x, Common::MAX_RENDER_MASK_SLOTS);
+    for (var index = 0u; index < count; index = index + 1u) {
+        let state = Common::mask_data[index].metadata;
+        if !Common::mask_slot_applies(state, 0u) { continue; }
+        let value = Common::mask_data[index].adjust_2_field.w;
+        if abs(value) <= 1e-7 { continue; }
+        let weight = local_mask_weight(pos, index);
+        if weight <= 1e-5 { continue; }
+        amount = amount + weight * BasicAdjustments::perceptual_control(value);
+    }
+    return clamp(amount, -1.0, 1.0);
 }
 
 fn adjustment_base_at(pos: vec2<i32>) -> vec3<f32> {
@@ -119,9 +138,13 @@ fn local_effects_rgba_at(pos: vec2<i32>) -> vec4<f32> {
     return textureLoad(local_effects_tex, Common::clamp_pos(pos), 0);
 }
 
+// A step of `reference_pixels` at the reference scale. `maximum` is the
+// largest step in native pixels (the export tile halos reserve it), so a
+// reduced preview limits the step at the same share of the photo.
 fn presence_step(reference_pixels: f32, maximum: i32) -> i32 {
+    let limit = f32(maximum) * Common::processing_per_source_pixel();
     return clamp(
-        i32(round(reference_pixels * DetailUtils::presence_reference_scale())),
+        i32(round(min(reference_pixels * DetailUtils::presence_reference_scale(), limit))),
         1,
         maximum,
     );
@@ -147,25 +170,6 @@ fn bilateral_log_luminance(
             let distance_squared = f32(dx * dx + dy * dy);
             let spatial = exp(-0.5 * distance_squared / (sigma * sigma));
             let delta = sample_ev - center;
-            let range = exp(-range_strength * delta * delta);
-            let weight = spatial * range;
-            sum = sum + sample_ev * weight;
-            sum_w = sum_w + weight;
-        }
-    }
-    return sum / max(sum_w, 1e-6);
-}
-
-fn atrous_log_luminance(pos: vec2<i32>, step: i32, range_strength: f32) -> f32 {
-    let center = Common::log_luminance(adjustment_base_at(pos));
-    var sum = 0.0;
-    var sum_w = 0.0;
-    for (var ky = -2; ky <= 2; ky = ky + 1) {
-        for (var kx = -2; kx <= 2; kx = kx + 1) {
-            let sample_pos = pos + vec2<i32>(kx * step, ky * step);
-            let sample_ev = Common::log_luminance(adjustment_base_at(sample_pos));
-            let delta = sample_ev - center;
-            let spatial = Common::binomial5_weight(kx) * Common::binomial5_weight(ky);
             let range = exp(-range_strength * delta * delta);
             let weight = spatial * range;
             sum = sum + sample_ev * weight;
@@ -293,7 +297,7 @@ fn apply_local_scene_tone_nodes(pos: vec2<i32>, input_rgb: vec3<f32>) -> vec3<f3
     let count = min(Common::scene_tone_uniforms.mask_counts.x, Common::MAX_RENDER_MASK_SLOTS);
     for (var index = 0u; index < count; index = index + 1u) {
         let state = Common::mask_data[index].metadata;
-        if state.x == 0u || state.y == 0u || Common::mask_effect_id(state) != 0u { continue; }
+        if !Common::mask_slot_applies(state, 0u) { continue; }
         let weight = local_mask_weight(pos, index);
         if weight <= 1e-5 { continue; }
 
@@ -365,11 +369,15 @@ fn prepare_scene_node(@builtin(global_invocation_id) gid: vec3<u32>) {
     if gid.x >= Common::camera_uniforms.width || gid.y >= Common::camera_uniforms.height { return; }
     let pos = vec2<i32>(i32(gid.x), i32(gid.y));
 
-    var rgb = Profile::apply_camera_characterization(SceneSource::scene_working_at(pos));
-    let profile_exposure_ev = bitcast<f32>(Common::camera_uniforms.profile_flags.z);
-    rgb = rgb * exp2(profile_exposure_ev);
+    var rgb = SceneSource::profiled_scene_at(pos);
+    // Dehaze precedes exposure: the haze grid measures this same signal.
+    rgb = Haze::apply_dehaze(pos, rgb, dehaze_amount_at(pos));
     rgb = BasicAdjustments::apply_exposure(rgb);
     rgb = apply_local_exposure_nodes(pos, rgb);
+    // The profile's look table follows exposure and precedes every user tone
+    // and colour edit, in the DNG SDK's order. Tone analysis and the haze grid
+    // measure the profiled scene before it.
+    rgb = Profile::apply_optional_profile_look(rgb);
     textureStore(adjustment_base_out, pos, vec4<f32>(rgb, 1.0));
 }
 

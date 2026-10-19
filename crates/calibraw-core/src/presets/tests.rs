@@ -1,13 +1,19 @@
 use super::*;
-use crate::pipeline::{AdjustmentGroup, AdjustmentGroupSet, MaskImage};
+use crate::pipeline::{AdjustmentGroup, AdjustmentGroupSet, MaskImage, WhiteBalance};
 use crate::sidecar::LensEditState;
 use std::time::{SystemTime, UNIX_EPOCH};
+
+const WARM: WhiteBalance = WhiteBalance::Custom {
+    kelvin: 7200.0,
+    tint: 4.0,
+    older_reader_offsets: [-40.0, -0.8],
+};
 
 fn edited_photo() -> EditState {
     let mut edits = default_edit_state();
     edits.exposure.exposure = 0.7;
     edits.exposure.clarity = 25.0;
-    edits.exposure.temperature = 12.0;
+    edits.exposure.white_balance = WARM;
     edits.exposure.demosaic_mode = crate::pipeline::DemosaicMode::Dual;
     edits.camera_profile = Some(PathBuf::from("Canon/EOS R5 Standard.dcp"));
     edits.lens = LensEditState {
@@ -136,9 +142,45 @@ fn applying_adjustment_groups_does_not_request_ai_updates() {
     .unwrap();
     let mut destination = default_edit_state();
     preset.apply_to(&mut destination);
-    assert_eq!(destination.exposure.temperature, 12.0);
+    assert_eq!(destination.exposure.white_balance, WARM);
     assert!(destination.masks.masks.is_empty());
     assert!(!destination.ai_masks_need_update);
+}
+
+#[test]
+fn presets_saved_with_white_balance_offsets_keep_moving_the_shift() {
+    let preset = Preset::new(
+        "Warm",
+        "",
+        selection(&[AdjustmentGroup::Color]),
+        &edited_photo(),
+    )
+    .unwrap();
+    let mut document: serde_json::Value =
+        serde_json::from_slice(&preset.encode().unwrap()).unwrap();
+    // As v1.3 saved it: offsets only.
+    let exposure = document["edits"]["exposure"].as_object_mut().unwrap();
+    exposure.remove("white_balance");
+    exposure.insert("temperature".to_owned(), (-40.0).into());
+    let legacy = WhiteBalance::LegacyOffset {
+        temperature: -40.0,
+        tint: -0.8,
+    };
+    let preset = Preset::decode(&serde_json::to_vec(&document).unwrap()).unwrap();
+    assert_eq!(preset.edits().exposure.white_balance, legacy);
+
+    let mut destination = default_edit_state();
+    preset.apply_to(&mut destination);
+    assert_eq!(destination.exposure.white_balance, legacy);
+    // Saved again as it was read.
+    assert_eq!(
+        Preset::decode(&preset.encode().unwrap())
+            .unwrap()
+            .edits()
+            .exposure
+            .white_balance,
+        legacy
+    );
 }
 
 #[test]

@@ -89,6 +89,7 @@ impl CalibRawApp {
             original_raw.width,
             original_raw.height,
             self.develop.geometry,
+            original_raw.cfa_kind,
         );
         self.develop.lens_correction_dirty = false;
         self.start_lens_correction_task(LensCorrectionTaskRequest {

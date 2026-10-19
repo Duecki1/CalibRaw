@@ -10,12 +10,44 @@ const COLOR_DENOISE_SUPPORT_HIGH: u32 = COLOR_DENOISE_SUPPORT_BALANCED + 16 + 32
 /// Native processing pixels represented by one adaptive tone-guide cell.
 ///
 /// Cropped and tiled processing must use this same global grid so the guide
-/// does not move when a crop origin changes.
-pub const TONE_GUIDE_CELL_SIZE: u32 = if cfg!(target_os = "android") { 8 } else { 4 };
+/// does not move when a crop origin changes. Every platform uses the same
+/// grid and radius, so an edit renders alike on all of them.
+pub const TONE_GUIDE_CELL_SIZE: u32 = 4;
 
-const TONE_GUIDE_RADIUS_CELLS: u32 = if cfg!(target_os = "android") { 3 } else { 5 };
-pub(super) const TONE_GUIDE_SUPPORT: u32 = (TONE_GUIDE_RADIUS_CELLS + 1) * TONE_GUIDE_CELL_SIZE;
-pub(super) const LOCAL_EFFECTS_SUPPORT: u32 = 28;
+/// Radius in cells of the tone-guide blur at a resolution scale of 1: a
+/// 1080-pixel short edge (`resolution_scale` in common.wgsl). The shader
+/// scales it with the photo, by at most `MAX_RESOLUTION_SCALE`.
+pub const TONE_GUIDE_RADIUS_CELLS: u32 = 5;
+/// Largest scale `resolution_scale` (common.wgsl) applies to reference radii;
+/// every caller there passes it as `maximum`.
+pub const MAX_RESOLUTION_SCALE: u32 = 3;
+pub(super) const TONE_GUIDE_SUPPORT: u32 =
+    (TONE_GUIDE_RADIUS_CELLS * MAX_RESOLUTION_SCALE + 1) * TONE_GUIDE_CELL_SIZE;
+// Capture sharpening (detail_capture.wgsl): a 5×5 blur at a step of at most 3,
+// in the scene tone pass before the scene effects.
+pub(super) const CAPTURE_SHARPEN_SUPPORT: u32 = 6;
+/// Pixels past a tile core that the haze grid's box means read in the export
+/// tone prepass (`HAZE_BOX_MAX` - 1 in haze_analysis.wgsl).
+pub const HAZE_BOX_SUPPORT: u32 = 1;
+/// Pixels around each pixel that Dehaze blurs into its guide scene
+/// (`HAZE_GUIDE_MAX_RADIUS` in haze.wgsl); it also reads the full-image haze
+/// map.
+pub const HAZE_GUIDE_SUPPORT: u32 = 2;
+// The prepass reads the box beside the tone guide over the same scene, and
+// Dehaze reads its guide scene from that scene in the stage that applies the
+// tone guide, so the guide's halo covers both.
+const _: () = assert!(HAZE_BOX_SUPPORT <= TONE_GUIDE_SUPPORT);
+const _: () = assert!(HAZE_GUIDE_SUPPORT <= TONE_GUIDE_SUPPORT);
+/// Footprint of the Texture and Clarity cascade (detail_scale_space.wgsl):
+/// 2 taps each side at steps 1, 2, 4, …, 2^(levels - 1), so 2 × (2^levels - 1).
+/// Texture alone builds 5 levels, Clarity all 7; `layout_contract_tests`
+/// derives both from the shader constants.
+pub const DETAIL_TEXTURE_SUPPORT: u32 = 62;
+pub const DETAIL_CLARITY_SUPPORT: u32 = 254;
+// Texture and Clarity run in one pass over the same input, so their
+// footprints overlap rather than add up; sharpening's adds to them.
+const _: () = assert!(DETAIL_TEXTURE_SUPPORT <= DETAIL_CLARITY_SUPPORT);
+pub(super) const LOCAL_EFFECTS_SUPPORT: u32 = CAPTURE_SHARPEN_SUPPORT + DETAIL_CLARITY_SUPPORT;
 pub(super) const NEON_SUPPORT: u32 = 48;
 pub(super) const MASK_BLUR_SUPPORT: u32 = 72;
 pub(super) const FOCUS_BLUR_SUPPORT: u32 = 144;
@@ -87,23 +119,34 @@ pub fn required_export_tile_halo(exposure: &ExposureParams, masks: &MaskStack) -
     }
 
     // Sharpen components run in the capture-sharpening pass of the Detail card.
-    let local_spatial_active = exposure.sharpen_amount.abs() > 1e-6
-        || exposure.texture.abs() > 1e-6
-        || exposure.clarity.abs() > 1e-6
-        || exposure.dehaze.abs() > 1e-6
-        || effect_active(MaskEffect::Sharpen)
-        || masks.masks.iter().any(|mask| {
+    if exposure.sharpen_amount.abs() > 1e-6 || effect_active(MaskEffect::Sharpen) {
+        support += CAPTURE_SHARPEN_SUPPORT;
+    }
+    let local_adjustment_active = |value: fn(&crate::pipeline::LocalAdjustments) -> f32| {
+        masks.masks.iter().any(|mask| {
             mask.enabled
                 && mask.opacity > 0.0
                 && mask.adjustments_enabled
                 && mask.effect.uses_adjustments()
-                && (mask.adjustments.texture.abs() > 1e-6
-                    || mask.adjustments.clarity.abs() > 1e-6
-                    || mask.adjustments.dehaze.abs() > 1e-6)
-        });
-    if local_spatial_active {
-        support += LOCAL_EFFECTS_SUPPORT;
-    }
+                && value(&mask.adjustments).abs() > 1e-6
+        })
+    };
+    let scene_effects_support = [
+        (
+            exposure.texture.abs() > 1e-6 || local_adjustment_active(|a| a.texture),
+            DETAIL_TEXTURE_SUPPORT,
+        ),
+        (
+            exposure.clarity.abs() > 1e-6 || local_adjustment_active(|a| a.clarity),
+            DETAIL_CLARITY_SUPPORT,
+        ),
+    ]
+    .into_iter()
+    .filter(|(active, _)| *active)
+    .map(|(_, support)| support)
+    .max()
+    .unwrap_or(0);
+    support += scene_effects_support;
 
     if effect_active(MaskEffect::Neon) {
         support += NEON_SUPPORT;

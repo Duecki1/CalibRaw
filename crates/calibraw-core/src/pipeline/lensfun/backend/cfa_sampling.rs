@@ -3,49 +3,34 @@
 use super::*;
 
 #[derive(Clone, Copy)]
-pub(super) struct CfaCorrectionContext<'a> {
-    pub(super) raw: &'a LoadedRaw,
-    pub(super) vignette_enabled: bool,
-    pub(super) vignette_gains: &'a [f32],
-}
-
-#[derive(Clone, Copy)]
 pub(super) struct CfaSample {
     pub(super) position: [f32; 2],
     pub(super) channel: u8,
     pub(super) output: [usize; 2],
 }
 
-pub(super) fn sample_corrected_cfa_subpixel(
-    context: CfaCorrectionContext<'_>,
-    sample: CfaSample,
-) -> (f32, f32) {
-    let CfaCorrectionContext {
-        raw,
-        vignette_enabled,
-        vignette_gains,
-    } = context;
+/// The sample of CFA colour `sample.channel` at source position
+/// `sample.position`, and its black level, interpolated from samples of that
+/// colour only.
+pub(super) fn sample_corrected_cfa_subpixel(raw: &LoadedRaw, sample: CfaSample) -> (f32, f32) {
     let CfaSample {
         position: [x, y],
         channel,
         ..
     } = sample;
     if raw.cfa_kind == crate::pipeline::CfaKind::Bayer && x.is_finite() && y.is_finite() {
-        if let Some(sample) = sample_bayer_phase_bilinear(context, sample) {
+        if let Some(sample) = sample_bayer_phase_bilinear(raw, sample) {
             return sample;
         }
     }
 
     if raw.cfa_kind == crate::pipeline::CfaKind::XTrans && x.is_finite() && y.is_finite() {
-        if let Some(sample) =
-            sample_xtrans_same_color_weighted(raw, x, y, channel, vignette_enabled, vignette_gains)
-        {
+        if let Some(sample) = sample_xtrans_same_color_weighted(raw, x, y, channel) {
             return sample;
         }
     }
 
-    let source_index = nearest_matching_sample(raw, x, y, channel);
-    corrected_sample_at(raw, source_index, vignette_enabled, vignette_gains)
+    sample_at(raw, nearest_matching_sample(raw, x, y, channel))
 }
 
 fn sample_xtrans_same_color_weighted(
@@ -53,8 +38,6 @@ fn sample_xtrans_same_color_weighted(
     x: f32,
     y: f32,
     channel: u8,
-    vignette_enabled: bool,
-    vignette_gains: &[f32],
 ) -> Option<(f32, f32)> {
     let max_x = raw.width.saturating_sub(1) as i32;
     let max_y = raw.height.saturating_sub(1) as i32;
@@ -82,12 +65,7 @@ fn sample_xtrans_same_color_weighted(
                 continue;
             }
             if distance_squared < 1e-8 {
-                return Some(corrected_sample_at(
-                    raw,
-                    index,
-                    vignette_enabled,
-                    vignette_gains,
-                ));
+                return Some(sample_at(raw, index));
             }
 
             if distance_squared < nearest[NEIGHBORS - 1].0 {
@@ -109,7 +87,7 @@ fn sample_xtrans_same_color_weighted(
             continue;
         }
         let weight = 1.0 / distance_squared.max(1e-4).powi(2);
-        let sample = corrected_sample_at(raw, index, vignette_enabled, vignette_gains);
+        let sample = sample_at(raw, index);
         value_sum += sample.0 * weight;
         black_sum += sample.1 * weight;
         weight_sum += weight;
@@ -117,15 +95,7 @@ fn sample_xtrans_same_color_weighted(
     (weight_sum > 1e-6).then(|| (value_sum / weight_sum, black_sum / weight_sum))
 }
 
-fn sample_bayer_phase_bilinear(
-    context: CfaCorrectionContext<'_>,
-    sample: CfaSample,
-) -> Option<(f32, f32)> {
-    let CfaCorrectionContext {
-        raw,
-        vignette_enabled,
-        vignette_gains,
-    } = context;
+fn sample_bayer_phase_bilinear(raw: &LoadedRaw, sample: CfaSample) -> Option<(f32, f32)> {
     let CfaSample {
         position: [x, y],
         channel,
@@ -146,10 +116,7 @@ fn sample_bayer_phase_bilinear(
         return None;
     }
 
-    let a = corrected_sample_at(raw, indices[0], vignette_enabled, vignette_gains);
-    let b = corrected_sample_at(raw, indices[1], vignette_enabled, vignette_gains);
-    let c = corrected_sample_at(raw, indices[2], vignette_enabled, vignette_gains);
-    let d = corrected_sample_at(raw, indices[3], vignette_enabled, vignette_gains);
+    let [a, b, c, d] = indices.map(|index| sample_at(raw, index));
     let top = (lerp(a.0, b.0, tx), lerp(a.1, b.1, tx));
     let bottom = (lerp(c.0, d.0, tx), lerp(c.1, d.1, tx));
     Some((lerp(top.0, bottom.0, ty), lerp(top.1, bottom.1, ty)))
@@ -182,20 +149,13 @@ fn bayer_axis_samples(coordinate: f32, extent: u32, phase: u32) -> Option<(u32, 
     Some((lower, upper, mix))
 }
 
-fn corrected_sample_at(
-    raw: &LoadedRaw,
-    index: usize,
-    vignette_enabled: bool,
-    vignette_gains: &[f32],
-) -> (f32, f32) {
-    let black = raw.black_levels_per_pixel[index];
-    let sample = f32::from(raw.raw_pixels[index]);
-    let gain = if vignette_enabled {
-        vignette_gains.get(index).copied().unwrap_or(1.0).max(0.0)
-    } else {
-        1.0
-    };
-    (black + (sample - black).max(0.0) * gain, black)
+/// The sample at mosaic `index` and its black level. Read noise below black
+/// stays there, so it averages out downstream instead of lifting shadows.
+fn sample_at(raw: &LoadedRaw, index: usize) -> (f32, f32) {
+    (
+        f32::from(raw.raw_pixels[index]),
+        raw.black_levels_per_pixel[index],
+    )
 }
 
 fn lerp(left: f32, right: f32, amount: f32) -> f32 {

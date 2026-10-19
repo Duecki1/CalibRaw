@@ -272,11 +272,14 @@ impl NoiseProfile {
         }
     }
 
-    pub fn scaled_variance(self, factor: f32) -> Self {
-        let factor = factor.clamp(1e-4, 1.0);
+    /// The profile with each CFA channel's variance multiplied by its factor in
+    /// `factors`, for example by the mean of 1/n over samples that each
+    /// average n independent sensor samples.
+    pub fn scaled_variance(self, factors: [f32; 4]) -> Self {
+        let factors = factors.map(|factor| factor.clamp(1e-4, 1.0));
         Self {
-            shot: self.shot.map(|v| v * factor),
-            read: self.read.map(|v| v * factor),
+            shot: std::array::from_fn(|channel| self.shot[channel] * factors[channel]),
+            read: std::array::from_fn(|channel| self.read[channel] * factors[channel]),
             confidence: self.confidence,
             green2_present: self.green2_present,
         }
@@ -444,9 +447,9 @@ mod tests {
             confidence: 1.0,
             green2_present: true,
         };
-        let scaled = profile.scaled_variance(0.25);
-        assert_eq!(scaled.shot, [0.0025; 4]);
-        assert_eq!(scaled.read, [0.00025; 4]);
+        let scaled = profile.scaled_variance([0.25, 0.5, 0.25, 0.5]);
+        assert_eq!(scaled.shot, [0.0025, 0.005, 0.0025, 0.005]);
+        assert_eq!(scaled.read, [0.00025, 0.0005, 0.00025, 0.0005]);
         assert_eq!(scaled.confidence, 1.0);
         assert!(scaled.green2_present);
     }

@@ -9,6 +9,7 @@ pub mod focus_stack;
 pub mod geometry;
 pub mod hdr;
 mod lens_correction;
+mod lens_shading;
 pub mod lensfun;
 mod mask_region;
 pub mod masks;
@@ -26,9 +27,9 @@ pub mod white_balance_presets;
 pub use basicadj::{
     temperature_kelvin_from_offset, temperature_offset_from_kelvin, white_balance_tint_from_offset,
     white_balance_tint_offset, ColorGradeWheel, ColorGrading, DemosaicMode, ExposureParams,
-    HighlightReconstructionMethod, PointCurve, GLOBAL_TEMPERATURE_LIMIT, GLOBAL_TINT_OFFSET_LIMIT,
-    HSL_HUE_LIMIT, HUE_ROTATION_LIMIT_DEGREES, MAX_POINT_CURVE_POINTS, MAX_TEMPERATURE_KELVIN,
-    MAX_WHITE_BALANCE_TINT, MIN_TEMPERATURE_KELVIN, MIN_WHITE_BALANCE_TINT,
+    HighlightReconstructionMethod, PointCurve, WhiteBalance, GLOBAL_TEMPERATURE_LIMIT,
+    GLOBAL_TINT_OFFSET_LIMIT, HSL_HUE_LIMIT, HUE_ROTATION_LIMIT_DEGREES, MAX_POINT_CURVE_POINTS,
+    MAX_TEMPERATURE_KELVIN, MAX_WHITE_BALANCE_TINT, MIN_TEMPERATURE_KELVIN, MIN_WHITE_BALANCE_TINT,
 };
 pub use color_profile::{
     CameraProfile, DcpMatrixSet, DcpProfile, HsvMap, ProfileEncoding, SrgbOutputTransform,
@@ -42,6 +43,7 @@ pub use geometry::{
 pub use lens_correction::{
     apply_lens_correction, LensCorrection, ManualLensCorrection, ManualLensModel,
 };
+pub use lens_shading::LensShadingMap;
 pub use lensfun::{
     apply_lensfun_correction, lensfun_catalog, LensfunCatalog, LensfunCorrections, LensfunLens,
 };
@@ -66,17 +68,20 @@ pub use point_color::{PointColor, PointColorRange, PointColors, MAX_POINT_COLORS
 pub use processing::{
     affected_stage, build_proxy, build_region_proxy, crop_raw, extract_padded_tile,
     extract_padded_tile_into, required_export_tile_halo, ExportTile, ProcessingStage, ProxySpec,
-    TilePlan, TileSpec, EXPORT_TILE_HALO, MIN_EXPORT_TILE_HALO, TONE_GUIDE_CELL_SIZE,
+    TilePlan, TileSpec, DETAIL_CLARITY_SUPPORT, DETAIL_TEXTURE_SUPPORT, EXPORT_TILE_HALO,
+    HAZE_BOX_SUPPORT, HAZE_GUIDE_SUPPORT, MAX_RESOLUTION_SCALE, MIN_EXPORT_TILE_HALO,
+    TONE_GUIDE_CELL_SIZE, TONE_GUIDE_RADIUS_CELLS,
 };
-pub use raw_loader::{invalidate_dcp_profile_index, prewarm_dcp_profile_index};
 pub use raw_loader::{
-    is_supported_raw_path, is_unsupported_raw_error, load_raw_display_dimensions,
-    load_raw_display_metadata, load_raw_embedded_thumbnail, load_raw_file, load_raw_file_with_dcp,
-    load_raw_file_with_profile_config, load_raw_file_with_profile_selection, load_raw_thumbnail,
+    decodes_as_raster, is_supported_raw_path, is_unsupported_raw_error,
+    load_raw_display_dimensions, load_raw_display_metadata, load_raw_embedded_thumbnail,
+    load_raw_file, load_raw_file_with_dcp, load_raw_file_with_profile_config,
+    load_raw_file_with_profile_selection, load_raw_thumbnail,
     load_raw_thumbnail_with_display_metadata, AiDenoisedImage, CameraProfileCandidate,
     CameraProfileMode, CfaKind, CompactPixelMap, LoadedRaw, RawDisplayMetadata, RawThumbnail,
     WhiteBalanceRanges, SUPPORTED_RAW_EXTENSIONS,
 };
+pub use raw_loader::{invalidate_dcp_profile_index, prewarm_dcp_profile_index};
 pub use remove::{
     adaptive_remove_dilation, canonical_remove_scene_to_pipeline_scene,
     composite_patch_into_linear_region, composite_remove_edits_into_linear_region,

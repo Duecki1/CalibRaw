@@ -207,6 +207,17 @@ pub(super) fn run_document_load(job: DocumentLoadJob) -> Result<LoadedPreview, L
         if use_adaptive_detail_defaults {
             original_raw.apply_adaptive_detail_defaults(&mut exposure);
         }
+        // The form this photo keeps (`LoadedRaw::resolve_white_balance`): as
+        // shot without a white-balance model, where older versions left pasted
+        // shifts hidden, and a custom white balance limited to this camera.
+        // Saved again when it changes.
+        // migration: remove in v2.0.0 the conversion of offsets saved up to
+        // v1.3 that also happens here (`WhiteBalance::LegacyOffset`).
+        let white_balance = original_raw.resolve_white_balance(exposure.white_balance);
+        if white_balance != exposure.white_balance {
+            exposure.white_balance = white_balance;
+            sidecar_needs_rewrite = true;
+        }
         record_edit_state(&exposure, &masks);
 
         let selected_camera_profile =
@@ -632,11 +643,10 @@ impl InitialEdits {
 
 fn record_edit_state(exposure: &ExposureParams, masks: &MaskStack) {
     calibraw_core::diagnostics::record(format!(
-        "Edit state: exposure={:.3} temperature={:.3} tint={:.3} saturation={:.3} \
+        "Edit state: exposure={:.3} white_balance={:?} saturation={:.3} \
          vibrance={:.3} luminance_nr={:.1} color_nr={:.1} demosaic={:?} highlight={:?} masks={}",
         exposure.exposure,
-        exposure.temperature,
-        exposure.tint,
+        exposure.white_balance,
         exposure.saturation,
         exposure.vibrance,
         exposure.luminance_denoise,
@@ -790,6 +800,7 @@ fn build_preview_proxy(
             full_raw.width,
             full_raw.height,
             geometry,
+            full_raw.cfa_kind,
         ),
     };
     let proxy_started = Instant::now();
