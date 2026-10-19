@@ -29,7 +29,10 @@
 //                              Guided Filter", 2015), a blur of a few pixels,
 //                              so the transmission follows edges inside a
 //                              cell while Dehaze reads only HAZE_GUIDE_SUPPORT
-//                              pixels around each pixel.
+//                              pixels around each pixel. The first also
+//                              stores each cell's depth base, the wide
+//                              edge-preserving log luminance that positive
+//                              amounts steepen the scene around.
 
 struct HazeCell {
     // Darkest box mean of each channel (xyz) and the pixels counted (w).
@@ -46,12 +49,12 @@ struct HazeCell {
 // (z) and the share of the veil removal may take (w).
 @group(0) @binding(55) var haze_transmission_out: texture_storage_2d<rgba32float, write>;
 @group(0) @binding(56) var haze_transmission_tex: texture_2d<f32>;
-// Per cell: the guided filter's slope (x) and offset (y) in one window, and
-// the cell's removal share (z).
+// Per cell: the guided filter's slope (x) and offset (y) in one window, the
+// cell's removal share (z) and its depth base (w, haze_depth_base).
 @group(0) @binding(57) var haze_coefficients_out: texture_storage_2d<rgba32float, write>;
 @group(0) @binding(58) var haze_coefficients_tex: texture_2d<f32>;
-// The window-averaged coefficients and removal share haze.wgsl reads as
-// `haze_map_tex`.
+// The window-averaged coefficients and removal share, and the depth base,
+// that haze.wgsl reads as `haze_map_tex`.
 @group(0) @binding(59) var haze_map_out: texture_storage_2d<rgba32float, write>;
 
 // Box means over this many native pixels a side set a cell's darkest
@@ -84,12 +87,16 @@ const HAZE_VEIL_SHARE: f32 = 0.95;
 // featureless fog, which the dark channel cannot tell from dense haze in front
 // of a dark object. Removal there could only darken it and amplify its tint,
 // so it takes HAZE_FEATURELESS_REMOVAL of the veil, rising to all of it at
-// HAZE_DETAIL_SPREAD. Box means keep sensor noise out of the spread, and the
-// share is averaged over 3 x 3 cells so that it changes gradually. Added haze
-// ignores it.
+// HAZE_DETAIL_SPREAD. Box means keep sensor noise out of the spread, the part
+// of it that a ramp through the neighbouring cells explains is left out
+// (haze_cell_detail_spread), and the share is averaged over the cells within
+// HAZE_SHARE_RADIUS so that it changes gradually: wisps beside a featureless
+// cloud would otherwise take several times its removal and show as dark
+// blotches. Added haze ignores it.
 const HAZE_FEATURELESS_SPREAD: f32 = 0.02;
 const HAZE_DETAIL_SPREAD: f32 = 0.08;
 const HAZE_FEATURELESS_REMOVAL: f32 = 0.3;
+const HAZE_SHARE_RADIUS: i32 = 2;
 
 // Radius in cells of the guided filter's windows, 3 x 3 cells or about 2% of
 // the longer edge. Wider windows smear the transmission of buildings and
@@ -106,6 +113,15 @@ const HAZE_GUIDE_EPSILON: f32 = 1e-3;
 // steeper slope, from guides that barely differ across a window, would turn it
 // into blotches.
 const HAZE_GUIDE_MAX_SLOPE: f32 = 2.0;
+
+// The depth base (Haze::haze_deepened) of a cell: the log2 luminance of the
+// cells within HAZE_DEPTH_RADIUS, Gaussian-weighted with a standard deviation
+// of half the radius (about 2.5% of the longer edge), counting cells whose
+// luminance differs from the cell's by much more than HAZE_DEPTH_RANGE_STOPS
+// stops (the standard deviation of the range weights) barely, so that the
+// base stays on its side of strong edges such as a skyline.
+const HAZE_DEPTH_RADIUS: i32 = 8;
+const HAZE_DEPTH_RANGE_STOPS: f32 = 0.7;
 
 var<workgroup> haze_best_score_bits: atomic<u32>;
 var<workgroup> haze_region_sums: array<vec4<f32>, HAZE_AIRLIGHT_THREADS>;
@@ -285,24 +301,92 @@ fn haze_opened_dark(cell: vec2<i32>, grid: vec2<i32>, airlight: vec4<f32>) -> f3
     return opened;
 }
 
-// The share of the veil removal takes at `cell`, from the detail of the 3 x 3
-// cells around it.
+// Mean luminance of the cell at `cell` (x) and whether it lies inside the
+// grid and holds pixels (y, 1 or 0).
+fn haze_cell_luminance(cell: vec2<i32>, grid: vec2<i32>) -> vec2<f32> {
+    if any(cell < vec2<i32>(0)) || any(cell >= grid) { return vec2<f32>(0.0); }
+    let data = haze_cell(cell);
+    if haze_cell_pixels(data) <= 0.0 { return vec2<f32>(0.0); }
+    return vec2<f32>(dot(haze_cell_mean(data), Common::LUMA), 1.0);
+}
+
+// The change of luminance per cell along `axis` at a cell of luminance
+// `centre`: a central difference, one-sided beside the grid's edge or an
+// empty cell, zero without either neighbour.
+fn haze_cell_slope(cell: vec2<i32>, grid: vec2<i32>, axis: vec2<i32>, centre: f32) -> f32 {
+    let before = haze_cell_luminance(cell - axis, grid);
+    let after = haze_cell_luminance(cell + axis, grid);
+    let low = mix(centre, before.x, before.y);
+    let high = mix(centre, after.x, after.y);
+    return (high - low) / max(before.y + after.y, 1.0);
+}
+
+// The luminance spread of a counted cell less the part a ramp through its
+// neighbours' means explains. A soft cloud edge or a ray of light changes
+// gradually from cell to cell and hides nothing; counting it as detail gave
+// the cells along it full removal and the featureless cloud beside them a
+// third of it, which showed as dark rims. A ramp rising by g across a cell
+// has a standard deviation of g / sqrt(12) there.
+fn haze_cell_detail_spread(cell: vec2<i32>, grid: vec2<i32>) -> f32 {
+    let data = haze_cell(cell);
+    let centre = dot(haze_cell_mean(data), Common::LUMA);
+    let across = haze_cell_slope(cell, grid, vec2<i32>(1, 0), centre);
+    let along = haze_cell_slope(cell, grid, vec2<i32>(0, 1), centre);
+    let spread = haze_cell_spread(data);
+    return sqrt(max(spread * spread - (across * across + along * along) / 12.0, 0.0));
+}
+
+// The share of the veil removal takes at `cell`, from the detail of the cells
+// around it.
 fn haze_removal_share(cell: vec2<i32>, grid: vec2<i32>) -> f32 {
     var detail = 0.0;
     var count = 0.0;
-    for (var dy = -1; dy <= 1; dy = dy + 1) {
-        for (var dx = -1; dx <= 1; dx = dx + 1) {
+    for (var dy = -HAZE_SHARE_RADIUS; dy <= HAZE_SHARE_RADIUS; dy = dy + 1) {
+        for (var dx = -HAZE_SHARE_RADIUS; dx <= HAZE_SHARE_RADIUS; dx = dx + 1) {
             let neighbour = cell + vec2<i32>(dx, dy);
             if any(neighbour < vec2<i32>(0)) || any(neighbour >= grid) { continue; }
             let data = haze_cell(neighbour);
             if haze_cell_pixels(data) <= 0.0 { continue; }
             let luma = dot(haze_cell_mean(data), Common::LUMA);
-            let spread = haze_cell_spread(data) / max(luma, 1e-6);
+            let spread = haze_cell_detail_spread(neighbour, grid) / max(luma, 1e-6);
             detail = detail + smoothstep(HAZE_FEATURELESS_SPREAD, HAZE_DETAIL_SPREAD, spread);
             count = count + 1.0;
         }
     }
     return mix(HAZE_FEATURELESS_REMOVAL, 1.0, detail / max(count, 1.0));
+}
+
+// Log2 luminance of a counted cell's mean colour.
+fn haze_cell_log_luminance(data: HazeCell) -> f32 {
+    return log2(max(dot(haze_cell_mean(data), Common::LUMA), 1e-10));
+}
+
+// The depth base of `cell` (HAZE_DEPTH_RADIUS), or zero when no cell around
+// it holds pixels.
+fn haze_depth_base(cell: vec2<i32>, grid: vec2<i32>) -> f32 {
+    let own = haze_cell(cell);
+    let counted = haze_cell_pixels(own) > 0.0;
+    let centre = haze_cell_log_luminance(own);
+    let sigma = 0.5 * f32(HAZE_DEPTH_RADIUS);
+    var sum = 0.0;
+    var total = 0.0;
+    for (var dy = -HAZE_DEPTH_RADIUS; dy <= HAZE_DEPTH_RADIUS; dy = dy + 1) {
+        for (var dx = -HAZE_DEPTH_RADIUS; dx <= HAZE_DEPTH_RADIUS; dx = dx + 1) {
+            let neighbour = cell + vec2<i32>(dx, dy);
+            if any(neighbour < vec2<i32>(0)) || any(neighbour >= grid) { continue; }
+            let data = haze_cell(neighbour);
+            if haze_cell_pixels(data) <= 0.0 { continue; }
+            let value = haze_cell_log_luminance(data);
+            let distance = f32(dx * dx + dy * dy) / (sigma * sigma);
+            // An empty cell has no luminance of its own and weighs by
+            // distance alone.
+            let stops = select(0.0, (value - centre) / HAZE_DEPTH_RANGE_STOPS, counted);
+            let weight = exp(-0.5 * (distance + stops * stops));
+            sum = sum + weight * value;
+            total = total + weight;
+        }
+    }
+    return select(0.0, sum / total, total > 0.0);
 }
 
 fn haze_grid_cell(index: u32, grid: vec2<i32>) -> vec2<i32> {
@@ -438,7 +522,11 @@ fn haze_guide_coefficients(@builtin(global_invocation_id) gid: vec3<u32>) {
         coefficients = vec2<f32>(slope, means.x - slope * means.y);
     }
     let removal_share = textureLoad(haze_transmission_tex, cell, 0).w;
-    textureStore(haze_coefficients_out, cell, vec4<f32>(coefficients, removal_share, 1.0));
+    textureStore(
+        haze_coefficients_out,
+        cell,
+        vec4<f32>(coefficients, removal_share, haze_depth_base(cell, grid)),
+    );
 }
 
 @compute @workgroup_size(8, 8, 1)
@@ -456,5 +544,7 @@ fn smooth_haze_coefficients(@builtin(global_invocation_id) gid: vec3<u32>) {
             count = count + 1.0;
         }
     }
-    textureStore(haze_map_out, cell, vec4<f32>(sum / count, 1.0));
+    // The depth base is smooth already and keeps its edges.
+    let depth_base = textureLoad(haze_coefficients_tex, cell, 0).w;
+    textureStore(haze_map_out, cell, vec4<f32>(sum / count, depth_base));
 }

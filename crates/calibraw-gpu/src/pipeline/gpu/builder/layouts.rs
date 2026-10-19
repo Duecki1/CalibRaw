@@ -650,7 +650,13 @@ pub(in crate::pipeline::gpu) fn create_bind_group_layouts(
             storage_buffer_entry(54, true),
             haze_write(55),
         ],
-        &[buffer_entry(0), haze_read(56), haze_write(57)],
+        // The coefficient pass also reads the grid for the depth base.
+        &[
+            buffer_entry(0),
+            storage_buffer_entry(52, false),
+            haze_read(56),
+            haze_write(57),
+        ],
         &[buffer_entry(0), haze_read(58), haze_write(59)],
     ];
     let haze_labels: [&str; HAZE_PASSES] = [

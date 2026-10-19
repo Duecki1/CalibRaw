@@ -93,8 +93,9 @@ fn negative_black_tone_encoded_slope_is_bounded() -> anyhow::Result<()> {
             }
         }
         eprintln!("slider={slider}: max={maximum:.4}, shadow_max={shadow_max:.4}");
+        // The rational toe that matched this strength reached 1.245.
         assert!(
-            maximum <= 1.3,
+            maximum <= 1.25,
             "slider={slider} relative encoded slope={maximum}"
         );
         assert!(shadow_max <= 1.2, "shadow relative slope={shadow_max}");
@@ -142,15 +143,16 @@ fn black_tone_direct_invariants_hold() -> anyhow::Result<()> {
 }
 
 #[test]
-fn black_tone_shapes_shadows_and_leaves_middle_grey() -> anyhow::Result<()> {
+fn black_tone_shapes_shadows_and_fades_before_the_highlights() -> anyhow::Result<()> {
     let Some((device, queue)) = request_test_device() else {
         eprintln!("black tone regression skipped: no headless wgpu adapter");
         return Ok(());
     };
-    // Display-linear luminance: deep shadow, shadow and display middle grey.
-    let levels = [0.01_f32, 0.05, 0.1845];
+    // Display-linear luminance: deep shadow, shadow, display middle grey and a
+    // bright tone.
+    let levels = [0.01_f32, 0.05, 0.1845, 0.7];
     let input = levels.map(|y| [y, y, y, 1.0]);
-    let change_ev = |slider: f32| -> anyhow::Result<[f32; 3]> {
+    let change_ev = |slider: f32| -> anyhow::Result<[f32; 4]> {
         let output = run_direct(&device, &queue, &input, slider)?;
         Ok(std::array::from_fn(|index| {
             (output[index][1] / input[index][1]).log2()
@@ -162,20 +164,35 @@ fn black_tone_shapes_shadows_and_leaves_middle_grey() -> anyhow::Result<()> {
     eprintln!("Blacks -100: {crush:?} EV, +100: {lift:?} EV");
     for (name, change) in [("-100", crush), ("+100", lift)] {
         assert!(
-            change[2].abs() <= 0.1,
-            "Blacks {name} moved middle grey by {} EV",
-            change[2]
-        );
-        assert!(
-            change[0].abs() > change[1].abs() && change[1].abs() > change[2].abs(),
+            change[0].abs() > change[1].abs()
+                && change[1].abs() > change[2].abs()
+                && change[2].abs() > change[3].abs(),
             "Blacks {name} does not fade from the deepest shadows: {change:?}"
         );
+        assert!(
+            change[3].abs() <= 0.1,
+            "Blacks {name} moved Y=0.7 by {} EV",
+            change[3]
+        );
     }
-    assert!(crush[0] <= -1.2, "Blacks -100 at Y=0.01: {} EV", crush[0]);
+    // Negative Blacks darkens as strongly as the rational toe it replaced
+    // (-3.1, -1.65 and -0.64 EV at these levels), deepest in the shadows.
+    assert!(crush[0] <= -3.0, "Blacks -100 at Y=0.01: {} EV", crush[0]);
     assert!(
-        (-1.0..=-0.3).contains(&crush[1]),
+        (-2.0..=-1.3).contains(&crush[1]),
         "Blacks -100 at Y=0.05: {} EV",
         crush[1]
+    );
+    assert!(
+        (-0.8..=-0.45).contains(&crush[2]),
+        "Blacks -100 at middle grey: {} EV",
+        crush[2]
+    );
+    // Positive Blacks leaves middle grey.
+    assert!(
+        lift[2].abs() <= 0.1,
+        "Blacks +100 moved middle grey by {} EV",
+        lift[2]
     );
     assert!(lift[0] >= 1.0, "Blacks +100 at Y=0.01: {} EV", lift[0]);
     assert!(

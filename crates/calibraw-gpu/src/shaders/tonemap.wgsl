@@ -537,26 +537,28 @@ fn apply_rgb_point_curves(rgb: vec3<f32>) -> vec3<f32> {
 const DISPLAY_BLACKS_LIFT_EV: f32 = 1.75;
 const DISPLAY_BLACKS_LIFT_DECAY: f32 = 0.035;
 const DISPLAY_BLACKS_ENCODING_GAMMA: f32 = 2.4;
-const DISPLAY_BLACKS_CRUSH_END_LUMA: f32 = 0.25;
+const DISPLAY_BLACKS_CRUSH_END_LUMA: f32 = 0.9;
 const DISPLAY_BLACKS_CRUSH_BLACK_FRACTION: f32 = 0.80;
 const DISPLAY_BLACKS_CRUSH_STRETCH: f32 = 0.20;
 const DISPLAY_BLACKS_CRUSH_JOIN: f32 = 0.05;
 
 // Blacks scales display-linear RGB by a luminance gain, preserving channel
-// ratios, and moves display middle grey (Y = 0.1845) by less than 0.07 EV at
-// +/-100.
+// ratios.
 //
 // Positive Blacks lifts by amount * 1.75 EV at black, decaying with
-// exp2(-Y / 0.035); the decay is slow enough to keep the remap monotonic.
+// exp2(-Y / 0.035); the decay is slow enough to keep the remap monotonic. It
+// moves display middle grey (Y = 0.1845) by less than 0.07 EV at +100.
 //
 // Negative Blacks works in a display-gamma encoding p = Y^(1/2.4), where noise
 // and banding visibility are close to uniform, and lowers p by
-// -amount * soft_min(0.80 * p, 0.20 * ramp(p_end - p)) below Y = 0.25, with
-// soft_min(a, b) = a * b / (a + b). The first term sets a finite gain at black
-// (0.2^2.4, about -5.6 EV at -100); the second is a line to the toe end. The
-// encoded slope stays within [1 + 0.80 * amount, 1 - 0.20 * amount], so the
-// toe neither clips nor expands shadow noise into speckles, without spatial
-// denoising.
+// -amount * soft_min(0.80 * p, 0.20 * ramp(p_end - p)) below Y = 0.9, with
+// the quadratic soft minimum soft_min(a, b) = a * b / sqrt(a^2 + b^2). The
+// first term sets a finite gain at black (0.2^2.4, about -5.6 EV at -100);
+// the second is a line to the toe end. At -100 the toe darkens middle grey by
+// about 0.63 EV and Y = 0.01 by about 3.5 EV, matching the overall strength of
+// the earlier rational toe. The encoded slope stays within
+// [1 + 0.80 * amount, 1 - 0.20 * amount], so the toe neither clips nor expands
+// shadow noise into speckles, without spatial denoising.
 fn apply_display_blacks_toe_amount(rgb: vec3<f32>, amount: f32) -> vec3<f32> {
     if abs(amount) < 1e-7 {
         return rgb;
@@ -589,7 +591,7 @@ fn apply_display_blacks_toe_amount(rgb: vec3<f32>, amount: f32) -> vec3<f32> {
     let line = DISPLAY_BLACKS_CRUSH_STRETCH * ramp;
     // soft_min(toe, line) / encoded, written without dividing by `encoded`;
     // line > 0 here, so the denominator is positive.
-    let darkening_fraction = DISPLAY_BLACKS_CRUSH_BLACK_FRACTION * line / (toe + line);
+    let darkening_fraction = DISPLAY_BLACKS_CRUSH_BLACK_FRACTION * line / length(vec2<f32>(toe, line));
     let encoded_ratio = 1.0 + amount * darkening_fraction;
     return rgb * pow(encoded_ratio, DISPLAY_BLACKS_ENCODING_GAMMA);
 }
