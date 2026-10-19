@@ -66,6 +66,19 @@
     <control>keyboard</control>
   </supports>
   <releases>
+    <release version="1.3.1" date="2026-10-19" type="stable">
+      <url>https://github.com/Duecki1/CalibRaw/releases/tag/v1.3.1</url>
+      <description>
+        <p>This release adds sharpening and noise reduction components and improves HDR merging.</p>
+        <ul>
+          <li>Add sharpening and noise reduction as effect components</li>
+          <li>Fix HDR merge and focus stack alignment</li>
+          <li>Merge HDR and edit TIFF files on Android</li>
+          <li>Remember the zoom level</li>
+          <li>Fix GPU out-of-memory crashes</li>
+        </ul>
+      </description>
+    </release>
     <release version="1.3.0" date="2026-10-16" type="stable">
       <url>https://github.com/Duecki1/CalibRaw/releases/tag/v1.3.0</url>
       <description>
