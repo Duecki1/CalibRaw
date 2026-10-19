@@ -17,7 +17,7 @@ pub(in crate::pipeline::gpu) const DETAIL_PYRAMID_TEXTURE_LEVELS: usize = 5;
 /// The X-Trans demosaic passes (xtrans_demosaic.wgsl) in order. The bind
 /// group at the same position of `BindGroups::bg_xtrans_markesteijn` chooses
 /// the states each one reads and writes.
-pub(in crate::pipeline::gpu) const XTRANS_MARKESTEIJN_ENTRIES: [&str; 8] = [
+pub(in crate::pipeline::gpu) const XTRANS_MARKESTEIJN_ENTRIES: [&str; 9] = [
     "xtrans_markesteijn_green",
     "xtrans_markesteijn_other",
     "xtrans_markesteijn_recalculate",
@@ -26,9 +26,11 @@ pub(in crate::pipeline::gpu) const XTRANS_MARKESTEIJN_ENTRIES: [&str; 8] = [
     "xtrans_markesteijn_other",
     "xtrans_markesteijn_homogeneity",
     "xtrans_markesteijn_accumulate",
+    "xtrans_markesteijn_smooth",
 ];
 pub(in crate::pipeline::gpu) const XTRANS_HOMOGENEITY_PASS: usize = 6;
 pub(in crate::pipeline::gpu) const XTRANS_ACCUMULATE_PASS: usize = 7;
+pub(in crate::pipeline::gpu) const XTRANS_SMOOTHING_PASS: usize = 8;
 
 /// Where every program sits in the pass list. Program templates share
 /// compiled programs by position, so bind group layouts, pass assembly and
@@ -328,6 +330,7 @@ pub(in crate::pipeline::gpu) fn assemble_passes(
                 let layout = match pass {
                     XTRANS_HOMOGENEITY_PASS => &layouts.bgl_xtrans_homogeneity,
                     XTRANS_ACCUMULATE_PASS => &layouts.bgl_xtrans_accumulate,
+                    XTRANS_SMOOTHING_PASS => &layouts.bgl_xtrans_smoothing,
                     _ => &layouts.bgl_xtrans_state,
                 };
                 passes.push(assembler.make_pass(

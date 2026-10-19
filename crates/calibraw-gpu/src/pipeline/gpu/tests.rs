@@ -2023,12 +2023,13 @@ fn dual_demosaic_smooths_flat_colour_noise_without_a_checkerboard() -> anyhow::R
     Ok(())
 }
 
-/// X-Trans demosaicing matches darktable 5.6.1's Markesteijn 3-pass. The
-/// expected values come from a float64 transcription of
-/// `xtrans_markesteijn_interpolate` on the same mosaic, at two pixels of every
-/// photosite class whose interpolation decisions are far from ties (float32
-/// and float64 agree to 1e-6). Dual demosaicing with a zero threshold keeps the
-/// Markesteijn result unchanged.
+/// X-Trans demosaicing matches darktable 5.6.1's Markesteijn 3-pass followed
+/// by one colour-smoothing pass. The expected values come from a float64
+/// transcription of `xtrans_markesteijn_interpolate` and `color_smoothing` on
+/// the same mosaic, at two pixels of every photosite class whose interpolation
+/// and median decisions are far from ties (float32 and float64 agree to 1e-6
+/// over each pixel's 3x3 window). Dual demosaicing with a zero threshold keeps
+/// the smoothed Markesteijn result unchanged.
 #[test]
 fn xtrans_demosaic_matches_darktable_markesteijn() -> anyhow::Result<()> {
     use crate::pipeline::DemosaicMode;
@@ -2044,21 +2045,21 @@ fn xtrans_demosaic_matches_darktable_markesteijn() -> anyhow::Result<()> {
     // Camera RGB at [x, y] for a pattern shifted by one row and two columns.
     const EXPECTED: [([u32; 2], [f32; 3]); 12] = [
         // Greens in 2x2 blocks.
-        ([25, 24], [0.427643, 0.503000, 0.563206]),
-        ([26, 24], [0.476437, 0.568800, 0.596379]),
+        ([25, 24], [0.422616, 0.503000, 0.558852]),
+        ([26, 24], [0.485211, 0.568800, 0.606648]),
         // Blue in horizontal and vertical pairs.
-        ([26, 25], [0.639675, 0.720059, 0.717200]),
-        ([28, 25], [0.395757, 0.438279, 0.458000]),
-        ([24, 24], [0.388474, 0.423748, 0.479600]),
-        ([30, 24], [0.478411, 0.543242, 0.532200]),
+        ([26, 25], [0.630919, 0.720059, 0.747638]),
+        ([28, 25], [0.371757, 0.438279, 0.458000]),
+        ([24, 24], [0.362937, 0.423748, 0.479600]),
+        ([30, 24], [0.478411, 0.543242, 0.540026]),
         // Red in horizontal and vertical pairs.
-        ([25, 25], [0.571000, 0.665245, 0.685151]),
-        ([29, 25], [0.486400, 0.564743, 0.574197]),
-        ([27, 24], [0.597000, 0.686140, 0.722935]),
-        ([33, 24], [0.692800, 0.707821, 0.727531]),
+        ([25, 25], [0.572883, 0.665245, 0.688345]),
+        ([29, 25], [0.499989, 0.564743, 0.570395]),
+        ([27, 24], [0.602551, 0.686140, 0.722831]),
+        ([33, 24], [0.690196, 0.707821, 0.727531]),
         // Solitary greens.
         ([24, 25], [0.456051, 0.547200, 0.573974]),
-        ([27, 25], [0.280478, 0.347000, 0.385338]),
+        ([27, 25], [0.280478, 0.347000, 0.370100]),
     ];
     let Some((device, queue)) = request_test_device() else {
         eprintln!("X-Trans Markesteijn check skipped: no headless wgpu adapter");

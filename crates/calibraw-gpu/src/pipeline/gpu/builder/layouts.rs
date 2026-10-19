@@ -15,6 +15,7 @@ pub(in crate::pipeline::gpu) struct BindGroupLayouts {
     pub(in crate::pipeline::gpu) bgl_xtrans_state: wgpu::BindGroupLayout,
     pub(in crate::pipeline::gpu) bgl_xtrans_homogeneity: wgpu::BindGroupLayout,
     pub(in crate::pipeline::gpu) bgl_xtrans_accumulate: wgpu::BindGroupLayout,
+    pub(in crate::pipeline::gpu) bgl_xtrans_smoothing: wgpu::BindGroupLayout,
     pub(in crate::pipeline::gpu) bgl_xtrans_finish: wgpu::BindGroupLayout,
     pub(in crate::pipeline::gpu) bgl_color_denoise: wgpu::BindGroupLayout,
     pub(in crate::pipeline::gpu) bgl_tone_prepare: wgpu::BindGroupLayout,
@@ -215,7 +216,8 @@ pub(in crate::pipeline::gpu) fn create_bind_group_layouts(
     });
 
     // Markesteijn (xtrans_demosaic.wgsl): every pass sees both states, lo
-    // and hi, and writes a state, the homogeneity map or the result.
+    // and hi, and writes a state, the homogeneity map or the result. The
+    // smoothing pass reads the accumulated result instead.
     let xtrans_layout = |index: usize, label: &str, outputs: &[wgpu::BindGroupLayoutEntry]| {
         (matches!(cfa_kind, CfaKind::XTrans)
             .then(|| reused_layout(index))
@@ -260,6 +262,14 @@ pub(in crate::pipeline::gpu) fn create_bind_group_layouts(
         "bgl X-Trans Markesteijn accumulate",
         &[
             texture_entry(31, wgpu::TextureSampleType::Uint),
+            state_output,
+        ],
+    );
+    let bgl_xtrans_smoothing = xtrans_layout(
+        plan.demosaic_start_index + XTRANS_SMOOTHING_PASS,
+        "bgl X-Trans Markesteijn smoothing",
+        &[
+            texture_entry(26, wgpu::TextureSampleType::Float { filterable: false }),
             state_output,
         ],
     );
@@ -669,6 +679,7 @@ pub(in crate::pipeline::gpu) fn create_bind_group_layouts(
         bgl_xtrans_state,
         bgl_xtrans_homogeneity,
         bgl_xtrans_accumulate,
+        bgl_xtrans_smoothing,
         bgl_xtrans_finish,
         bgl_color_denoise,
         bgl_tone_prepare,
