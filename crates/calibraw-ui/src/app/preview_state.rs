@@ -259,6 +259,9 @@ pub(crate) struct PreviewState {
     /// screen pixel (100%, 1:1). `zoom` itself is relative to the fitted view.
     /// `None` until the preview has been laid out.
     pub(crate) native_zoom: Option<f32>,
+    /// A view kept from the previous document, shown by the first layout of
+    /// the new one, once its 100% zoom is known. See `reset_view_keeping`.
+    pub(crate) pending_view: Option<KeptView>,
     pub(crate) revision: u64,
     pub(crate) detail: Option<PreviewDetail>,
     pub(crate) navigation: Option<PreviewNavigation>,
@@ -286,6 +289,27 @@ pub(crate) struct PreviewState {
     )>,
 }
 
+/// A zoomed-in view carried from one document to the next, so a photo switched
+/// to from the filmstrip or reopened with another camera profile shows the
+/// same magnification and position.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct KeptView {
+    /// Photo pixels per physical screen pixel (`zoom / native_zoom`), the
+    /// scale the zoom readout shows: 1.0 is 100%. Unlike the fit-relative
+    /// `zoom`, it means the same for photos of another size or crop.
+    magnification: f32,
+    /// The view centre, as `PreviewState::center`.
+    center: [f32; 2],
+}
+
+impl KeptView {
+    /// The fit-relative zoom and centre for a document whose 100% view is
+    /// at `native_zoom`. The viewport clamps both, as for any navigation.
+    pub(crate) fn navigation(self, native_zoom: f32) -> (f32, [f32; 2]) {
+        (self.magnification * native_zoom, self.center)
+    }
+}
+
 impl PreviewState {
     /// Fits the whole image in the view again and stops view motion. Bumping
     /// the revision rejects detail renders made for the previous view.
@@ -295,6 +319,69 @@ impl PreviewState {
         self.visible_uv = PreviewUvRect::FULL;
         self.motion_at = None;
         self.touch_navigation_active = false;
+        self.pending_view = None;
         self.revision = self.revision.wrapping_add(1);
+    }
+
+    /// Like `reset_view`, but the next layout shows `kept` instead of the
+    /// fitted view when it is set.
+    pub(crate) fn reset_view_keeping(&mut self, kept: Option<KeptView>) {
+        self.reset_view();
+        self.pending_view = kept;
+    }
+
+    /// The current view to carry to the next document, or `None` while the
+    /// photo is fitted, so the next one is fitted too.
+    pub(crate) fn kept_view(&self) -> Option<KeptView> {
+        if self.pending_view.is_some() {
+            // Not laid out yet: pass on the view the last switch kept.
+            return self.pending_view;
+        }
+        if crate::ui::preview::zoom_is_fit(self.zoom) {
+            return None;
+        }
+        let native_zoom = self
+            .native_zoom
+            .filter(|native| native.is_finite() && *native > 0.0)?;
+        Some(KeptView {
+            magnification: self.zoom / native_zoom,
+            center: self.center,
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn zoomed_app(zoom: f32, native_zoom: f32) -> CalibRawApp {
+        let mut app = CalibRawApp::empty(&egui::Context::default());
+        app.preview.zoom = zoom;
+        app.preview.center = [0.3, 0.6];
+        app.preview.native_zoom = Some(native_zoom);
+        app
+    }
+
+    #[test]
+    fn a_fitted_view_is_not_kept() {
+        let app = zoomed_app(1.0, 4.0);
+        assert_eq!(app.preview.kept_view(), None);
+    }
+
+    #[test]
+    fn a_kept_view_carries_the_magnification_until_it_is_laid_out() {
+        let mut app = zoomed_app(2.0, 4.0);
+        let kept = app.preview.kept_view().expect("a zoomed view is kept");
+        assert_eq!(kept.navigation(8.0), (4.0, [0.3, 0.6]));
+
+        let revision = app.preview.revision;
+        app.preview.reset_view_keeping(Some(kept));
+        assert_eq!(app.preview.zoom, 1.0);
+        assert_ne!(app.preview.revision, revision);
+        // Switching again before the layout passes the same view on.
+        assert_eq!(app.preview.kept_view(), Some(kept));
+
+        app.preview.reset_view();
+        assert_eq!(app.preview.pending_view, None);
     }
 }

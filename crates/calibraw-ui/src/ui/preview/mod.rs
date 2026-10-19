@@ -16,6 +16,11 @@ pub(crate) const MIN_PREVIEW_ZOOM: f32 = if crate::platform::PlatformCaps::CURRE
     0.70
 };
 pub(crate) const MAX_PREVIEW_ZOOM: f32 = 32.0;
+
+/// Whether a fit-relative `zoom` shows the fitted photo.
+pub(crate) fn zoom_is_fit(zoom: f32) -> bool {
+    (zoom - 1.0).abs() <= 0.0005
+}
 /// Fits the photo to the preview.
 pub(crate) const ZOOM_FIT_SHORTCUT: egui::KeyboardShortcut =
     egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, egui::Key::Num0);

@@ -52,7 +52,7 @@ impl Develop {
             return;
         };
 
-        app.open_path(item.path, frame);
+        app.switch_to_path(item.path, frame);
     }
 
     pub(crate) fn show_filmstrip(ui: &mut Ui, app: &mut CalibRawApp, frame: &eframe::Frame) {
@@ -316,7 +316,7 @@ fn show_filmstrip_contents(ui: &mut Ui, app: &mut CalibRawApp, frame: &eframe::F
         apply_library_action(ui, app, frame, action);
     }
     if let Some(path) = open_path {
-        app.open_path(path, frame);
+        app.switch_to_path(path, frame);
     }
 }
 

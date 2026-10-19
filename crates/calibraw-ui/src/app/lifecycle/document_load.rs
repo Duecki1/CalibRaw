@@ -51,6 +51,9 @@ pub(crate) struct ProfileReload {
     /// `None` requests automatic profile selection.
     pub(crate) camera_profile: Option<PathBuf>,
     pub(crate) edits: SidecarEditState,
+    /// The view the reopened document is shown at; the UI thread keeps it
+    /// and the decode worker ignores it.
+    pub(crate) view: Option<KeptView>,
 }
 
 pub(super) struct CameraProfileSettings {
