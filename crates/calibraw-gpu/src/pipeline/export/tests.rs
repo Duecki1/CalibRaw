@@ -1,11 +1,11 @@
 use super::{
     bounded_tile_spec, build_exif_payload, build_lanczos_contributions, built_in_srgb_icc,
     encode_jpeg_rgb, encode_srgb_row, encode_srgb_row_with_format, export_to_destination,
-    publish_completed_export, resolved_export_tile_spec, stitch_linear_tile_into_band,
-    tiff_strip_layout, tile_mask_source_region, tone_grid_aligned_crop_tile,
-    validate_export_dimensions, with_staging_file, ExportFormat, ExportMetadata, ExportOutput,
-    ExportResizeMode, ExportRowFormat, ExportSettings, ExportTarget, GeometryResampler,
-    JpegEncodeRequest, LinearLightResizer, EXPORT_TILE_HALO, MAX_EXPORT_EDGE,
+    linear_rec2020_icc, publish_completed_export, resolved_export_tile_spec,
+    stitch_linear_tile_into_band, tiff_strip_layout, tile_mask_source_region,
+    tone_grid_aligned_crop_tile, validate_export_dimensions, with_staging_file, ExportFormat,
+    ExportMetadata, ExportOutput, ExportResizeMode, ExportRowFormat, ExportSettings, ExportTarget,
+    GeometryResampler, JpegEncodeRequest, LinearLightResizer, EXPORT_TILE_HALO, MAX_EXPORT_EDGE,
     TIFF_TARGET_STRIP_BYTES,
 };
 use crate::pipeline::{
@@ -397,6 +397,70 @@ fn identity_resize_uses_one_exact_sample_per_pixel() {
         assert_eq!(kernel.len(), 1);
         assert_eq!(kernel[0].index, index as u32);
         assert_eq!(kernel[0].weight, 1.0);
+    }
+}
+
+fn icc_text(tags: &[([u8; 4], &[u8])], signature: &[u8; 4]) -> String {
+    let (_, data) = tags
+        .iter()
+        .find(|(tag, _)| tag == signature)
+        .unwrap_or_else(|| panic!("missing {} tag", String::from_utf8_lossy(signature)));
+    let text = match &data[0..4] {
+        b"desc" => {
+            let count = u32::from_be_bytes(data[8..12].try_into().unwrap()) as usize;
+            // ASCII record, Unicode code + count, ScriptCode code + count + 67 bytes.
+            assert!(12 + count + 8 + 3 + 67 <= data.len());
+            &data[12..12 + count]
+        }
+        b"text" => &data[8..],
+        other => panic!("unexpected text tag type {other:?}"),
+    };
+    let (body, terminator) = text.split_at(text.iter().position(|byte| *byte == 0).unwrap());
+    assert_eq!(terminator[0], 0);
+    assert!(body.is_ascii());
+    String::from_utf8(body.to_vec()).unwrap()
+}
+
+fn parse_icc_tags(profile: &[u8]) -> Vec<([u8; 4], &[u8])> {
+    let be32 = |at: usize| u32::from_be_bytes(profile[at..at + 4].try_into().unwrap()) as usize;
+    assert_eq!(be32(0), profile.len());
+    assert_eq!(&profile[8..12], &0x0210_0000u32.to_be_bytes());
+    assert_eq!(&profile[36..40], b"acsp");
+    let count = be32(128);
+    (0..count)
+        .map(|index| {
+            let base = 132 + index * 12;
+            let offset = be32(base + 4);
+            let size = be32(base + 8);
+            assert_eq!(offset % 4, 0);
+            assert!(offset >= 132 + count * 12 && offset + size <= profile.len());
+            let signature = profile[base..base + 4].try_into().unwrap();
+            (signature, &profile[offset..offset + size])
+        })
+        .collect()
+}
+
+#[test]
+fn built_in_icc_profiles_carry_required_v2_tags() {
+    for (profile, description, curve_points) in [
+        (built_in_srgb_icc(), "sRGB", 1024),
+        (linear_rec2020_icc(), "Linear Rec.2020", 0),
+    ] {
+        let tags = parse_icc_tags(&profile);
+        for required in [
+            b"desc", b"cprt", b"wtpt", b"rXYZ", b"gXYZ", b"bXYZ", b"rTRC", b"gTRC", b"bTRC",
+        ] {
+            assert!(tags.iter().any(|(tag, _)| tag == required));
+        }
+        assert_eq!(icc_text(&tags, b"desc"), description);
+        assert!(!icc_text(&tags, b"cprt").is_empty());
+        for (tag, data) in &tags {
+            if tag.ends_with(b"TRC") {
+                assert_eq!(&data[0..4], b"curv");
+                let points = u32::from_be_bytes(data[8..12].try_into().unwrap());
+                assert_eq!(points, curve_points);
+            }
+        }
     }
 }
 
