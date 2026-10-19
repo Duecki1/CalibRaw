@@ -94,6 +94,9 @@ pub(in crate::pipeline::gpu) struct PipelineSurfaces {
     pub(in crate::pipeline::gpu) light_rays_mask_view: wgpu::TextureView,
     pub(in crate::pipeline::gpu) scene_depth_view: wgpu::TextureView,
     pub(in crate::pipeline::gpu) mask_sampler: wgpu::Sampler,
+    /// Markesteijn's homogeneity map, allocated for X-Trans only.
+    pub(in crate::pipeline::gpu) xtrans_homogeneity: Option<wgpu::Texture>,
+    pub(in crate::pipeline::gpu) xtrans_homogeneity_view: Option<wgpu::TextureView>,
 }
 
 pub(in crate::pipeline::gpu) fn create_pipeline_surfaces(
@@ -209,6 +212,16 @@ pub(in crate::pipeline::gpu) fn create_pipeline_surfaces(
         "calibraw full-image scene depth",
     );
     let scene_depth_view = default_texture_view(&scene_depth_texture);
+    let xtrans_homogeneity = matches!(raw.cfa_kind, CfaKind::XTrans).then(|| {
+        create_processing_texture(
+            device,
+            size,
+            XTRANS_HOMOGENEITY_FORMAT,
+            wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING,
+            "calibraw X-Trans Markesteijn homogeneity",
+        )
+    });
+    let xtrans_homogeneity_view = xtrans_homogeneity.as_ref().map(default_texture_view);
 
     let out_view = default_texture_view(&out_texture);
     let display_linear_view = default_texture_view(&display_linear_texture);
@@ -284,6 +297,8 @@ pub(in crate::pipeline::gpu) fn create_pipeline_surfaces(
             light_rays_mask_view,
             scene_depth_view,
             mask_sampler,
+            xtrans_homogeneity,
+            xtrans_homogeneity_view,
         },
         has_ai_scene,
     ))

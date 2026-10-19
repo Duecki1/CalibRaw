@@ -452,6 +452,7 @@ pub struct RawGpuPipeline {
     _highlight_work_b: wgpu::Texture,
     _tex1: wgpu::Texture,
     _tex2: wgpu::Texture,
+    _xtrans_homogeneity: Option<wgpu::Texture>,
     scene_texture: wgpu::Texture,
     scene_format: wgpu::TextureFormat,
     has_ai_scene: bool,

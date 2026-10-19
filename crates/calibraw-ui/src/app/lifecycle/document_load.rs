@@ -797,6 +797,7 @@ fn build_preview_proxy(
             full_raw.width,
             full_raw.height,
             geometry,
+            full_raw.cfa_kind,
         ),
     };
     let proxy_started = Instant::now();

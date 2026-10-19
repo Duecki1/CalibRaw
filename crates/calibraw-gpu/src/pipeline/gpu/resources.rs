@@ -118,6 +118,8 @@ pub(super) struct GpuResourcePlanInput {
     pub mask_data_buffer_bytes: u64,
     /// Whether the raw texture also carries the AI-denoised Bayer mosaic.
     pub ai_cfa: bool,
+    /// X-Trans pipelines also hold Markesteijn's homogeneity map.
+    pub cfa_kind: CfaKind,
 }
 
 #[derive(Debug)]
@@ -179,6 +181,7 @@ fn texture_format_bytes_per_texel(format: wgpu::TextureFormat) -> Result<u64> {
         wgpu::TextureFormat::R8Uint => Ok(1),
         wgpu::TextureFormat::R16Uint | wgpu::TextureFormat::R16Float => Ok(2),
         wgpu::TextureFormat::R32Float
+        | wgpu::TextureFormat::R32Uint
         | wgpu::TextureFormat::Rg16Uint
         | wgpu::TextureFormat::Rgba8Unorm => Ok(4),
         wgpu::TextureFormat::Rgba16Float => Ok(8),
@@ -302,6 +305,14 @@ pub(super) fn build_gpu_resource_plan(input: GpuResourcePlanInput) -> Result<Gpu
         GpuResourceResidency::Persistent,
         full(wgpu::TextureFormat::Rgba8Unorm)?,
     );
+    if input.cfa_kind == CfaKind::XTrans {
+        push_entry(
+            &mut entries,
+            "X-Trans homogeneity map",
+            GpuResourceResidency::Persistent,
+            full(XTRANS_HOMOGENEITY_FORMAT)?,
+        );
+    }
 
     let tone_width = input.width.div_ceil(input.tone_scale);
     let tone_height = input.height.div_ceil(input.tone_scale);
@@ -581,14 +592,20 @@ impl RawGpuPipeline {
     /// Bound mobile previews using the same resource accounting as allocation.
     /// Leave room for the fitted image and a detail crop to coexist. This uses
     /// the full mask capacity so adding a mask cannot invalidate the budget.
-    pub fn bounded_mobile_preview_edge(width: u32, height: u32, requested: u32) -> u32 {
+    pub fn bounded_mobile_preview_edge(
+        width: u32,
+        height: u32,
+        requested: u32,
+        cfa_kind: CfaKind,
+    ) -> u32 {
         let mut low = 1;
         let mut high = requested.min(width.max(height)).max(1);
         while low < high {
             let edge = low + (high - low).div_ceil(2);
-            let fits = mobile_preview_resource_plan(width, height, edge).is_ok_and(|plan| {
-                plan.admitted_gpu_bytes <= ANDROID_GPU_WORKING_SET_LIMIT_BYTES / 2
-            });
+            let fits =
+                mobile_preview_resource_plan(width, height, edge, cfa_kind).is_ok_and(|plan| {
+                    plan.admitted_gpu_bytes <= ANDROID_GPU_WORKING_SET_LIMIT_BYTES / 2
+                });
             if fits {
                 low = edge;
             } else {
@@ -599,7 +616,12 @@ impl RawGpuPipeline {
     }
 }
 
-fn mobile_preview_resource_plan(width: u32, height: u32, edge: u32) -> Result<GpuResourcePlan> {
+fn mobile_preview_resource_plan(
+    width: u32,
+    height: u32,
+    edge: u32,
+    cfa_kind: CfaKind,
+) -> Result<GpuResourcePlan> {
     let scale = (f64::from(edge) / f64::from(width.max(height).max(1))).min(1.0);
     build_gpu_resource_plan(GpuResourcePlanInput {
         width: (f64::from(width) * scale).ceil().max(1.0) as u32,
@@ -613,6 +635,7 @@ fn mobile_preview_resource_plan(width: u32, height: u32, edge: u32) -> Result<Gp
         stage_uniform_buffer_bytes: GPU_STAGE_UNIFORM_ALLOCATION_BYTES,
         mask_data_buffer_bytes: MASK_DATA_SIZE_BYTES,
         ai_cfa: false,
+        cfa_kind,
     })
 }
 
@@ -1247,6 +1270,10 @@ pub(super) fn texture_entry(
 /// The sensor mosaic format: `R16Uint` with the original mosaic, or
 /// `Rg16Uint` with the original in R and the AI-denoised mosaic in G, which
 /// `raw_sampling.wgsl` blends by `CameraUniforms::ai_cfa_weight`.
+/// Markesteijn's homogeneity counts, 4 bits for each of 8 candidates
+/// (xtrans_demosaic.wgsl).
+pub(super) const XTRANS_HOMOGENEITY_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R32Uint;
+
 pub(super) const fn raw_texture_format(has_ai_cfa: bool) -> wgpu::TextureFormat {
     if has_ai_cfa {
         wgpu::TextureFormat::Rg16Uint
@@ -1580,38 +1607,42 @@ mod resource_plan_tests {
             stage_uniform_buffer_bytes: GPU_STAGE_UNIFORM_ALLOCATION_BYTES,
             mask_data_buffer_bytes: MASK_DATA_SIZE_BYTES,
             ai_cfa: false,
+            cfa_kind: CfaKind::Bayer,
         }
     }
 
     #[test]
     fn mobile_max_preview_respects_the_budget_before_allocating() {
         // Regression: the reported 2330x1554 Max proxy exceeded 384 MiB.
-        let unbounded = mobile_preview_resource_plan(2330, 1554, 2330).unwrap();
+        let unbounded = mobile_preview_resource_plan(2330, 1554, 2330, CfaKind::Bayer).unwrap();
         assert!(unbounded.admitted_gpu_bytes > ANDROID_GPU_WORKING_SET_LIMIT_BYTES);
-        for (width, height) in [(4688, 7028), (7028, 4688), (2048, 2048), (8000, 1000)] {
-            let edge = RawGpuPipeline::bounded_mobile_preview_edge(width, height, 3600);
-            let plan = mobile_preview_resource_plan(width, height, edge).unwrap();
-            assert!(plan.admitted_gpu_bytes <= ANDROID_GPU_WORKING_SET_LIMIT_BYTES / 2);
-            assert!(
-                mobile_preview_resource_plan(width, height, edge + 1)
-                    .unwrap()
-                    .admitted_gpu_bytes
-                    > ANDROID_GPU_WORKING_SET_LIMIT_BYTES / 2
+        for cfa_kind in [CfaKind::Bayer, CfaKind::XTrans] {
+            for (width, height) in [(4688, 7028), (7028, 4688), (2048, 2048), (8000, 1000)] {
+                let edge =
+                    RawGpuPipeline::bounded_mobile_preview_edge(width, height, 3600, cfa_kind);
+                let plan = mobile_preview_resource_plan(width, height, edge, cfa_kind).unwrap();
+                assert!(plan.admitted_gpu_bytes <= ANDROID_GPU_WORKING_SET_LIMIT_BYTES / 2);
+                assert!(
+                    mobile_preview_resource_plan(width, height, edge + 1, cfa_kind)
+                        .unwrap()
+                        .admitted_gpu_bytes
+                        > ANDROID_GPU_WORKING_SET_LIMIT_BYTES / 2
+                );
+                // Two admitted graphs leave room for the small navigation graph.
+                assert!(
+                    plan.persistent_gpu_bytes * 2 + 32 * 1024 * 1024
+                        < ANDROID_GPU_WORKING_SET_LIMIT_BYTES
+                );
+            }
+            assert_eq!(
+                RawGpuPipeline::bounded_mobile_preview_edge(800, 600, 800, cfa_kind),
+                800
             );
-            // Two admitted graphs leave room for the small navigation graph.
-            assert!(
-                plan.persistent_gpu_bytes * 2 + 32 * 1024 * 1024
-                    < ANDROID_GPU_WORKING_SET_LIMIT_BYTES
+            assert_eq!(
+                RawGpuPipeline::bounded_mobile_preview_edge(800, 600, 1600, cfa_kind),
+                800
             );
         }
-        assert_eq!(
-            RawGpuPipeline::bounded_mobile_preview_edge(800, 600, 800),
-            800
-        );
-        assert_eq!(
-            RawGpuPipeline::bounded_mobile_preview_edge(800, 600, 1600),
-            800
-        );
     }
 
     #[test]

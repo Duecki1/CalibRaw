@@ -72,18 +72,8 @@ pub(super) const DUAL_DEMOSAIC: ShaderSource = wgsl!("dual_demosaic.wgsl");
 pub(super) const DETAIL_UTILS: ShaderSource = wgsl!("detail_utils.wgsl");
 pub(super) const DETAIL_CAPTURE: ShaderSource = wgsl!("detail_capture.wgsl");
 pub(super) const DETAIL_SCALE_SPACE: ShaderSource = wgsl!("detail_scale_space.wgsl");
-pub(super) const XTRANS_SEED: ShaderSource = wgsl!("xtrans/seed.wgsl");
-pub(super) const XTRANS_MARKESTEIJN_INTERPOLATE: ShaderSource =
-    wgsl!("xtrans/markesteijn_interpolate.wgsl");
-pub(super) const XTRANS_MARKESTEIJN_REFINE: ShaderSource = wgsl!("xtrans/markesteijn_refine.wgsl");
-pub(super) const XTRANS_MARKESTEIJN_CANDIDATES: ShaderSource =
-    wgsl!("xtrans/markesteijn_candidates.wgsl");
-pub(super) const XTRANS_MARKESTEIJN_DERIVATIVES: ShaderSource =
-    wgsl!("xtrans/markesteijn_derivatives.wgsl");
-pub(super) const XTRANS_MARKESTEIJN_HOMOGENEITY: ShaderSource =
-    wgsl!("xtrans/markesteijn_homogeneity.wgsl");
-pub(super) const XTRANS_MARKESTEIJN_ACCUMULATE: ShaderSource =
-    wgsl!("xtrans/markesteijn_accumulate.wgsl");
+pub(super) const CFA_LINEAR: ShaderSource = wgsl!("cfa_linear.wgsl");
+pub(super) const XTRANS_MARKESTEIJN: ShaderSource = wgsl!("xtrans/markesteijn.wgsl");
 
 pub(super) const MASK_EFFECTS_SHARED: ShaderSource = wgsl!("mask_effects/shared.wgsl");
 pub(super) const MASK_LENS_BLUR: ShaderSource = wgsl!("mask_effects/lens_blur.wgsl");
@@ -168,18 +158,13 @@ const fn xtrans_module(source: ShaderSource) -> ComposableModule {
 
 /// Composable modules in registration order: a module may only import
 /// modules listed before it.
-pub(super) const COMPOSABLE_MODULES: [ComposableModule; 24] = [
+pub(super) const COMPOSABLE_MODULES: [ComposableModule; 19] = [
     module(COMMON),
     module(COLOR),
     module(NOISE),
     module(RAW_SAMPLING),
-    xtrans_module(XTRANS_SEED),
-    xtrans_module(XTRANS_MARKESTEIJN_INTERPOLATE),
-    xtrans_module(XTRANS_MARKESTEIJN_REFINE),
-    xtrans_module(XTRANS_MARKESTEIJN_CANDIDATES),
-    xtrans_module(XTRANS_MARKESTEIJN_DERIVATIVES),
-    xtrans_module(XTRANS_MARKESTEIJN_HOMOGENEITY),
-    xtrans_module(XTRANS_MARKESTEIJN_ACCUMULATE),
+    module(CFA_LINEAR),
+    xtrans_module(XTRANS_MARKESTEIJN),
     module(PROFILE),
     module(BASIC_ADJUSTMENTS),
     module(SCENE_SOURCE),
@@ -335,8 +320,8 @@ mod tests {
     fn import_paths_follow_file_names() {
         assert_eq!(COMMON.import_path(), "calibraw::common");
         assert_eq!(
-            XTRANS_MARKESTEIJN_REFINE.import_path(),
-            "calibraw::xtrans::markesteijn_refine"
+            XTRANS_MARKESTEIJN.import_path(),
+            "calibraw::xtrans::markesteijn"
         );
     }
 

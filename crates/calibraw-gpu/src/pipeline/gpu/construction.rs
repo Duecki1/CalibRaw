@@ -225,6 +225,7 @@ impl RawGpuPipeline {
             stage_uniform_buffer_bytes: GPU_STAGE_UNIFORM_ALLOCATION_BYTES,
             mask_data_buffer_bytes: MASK_DATA_SIZE_BYTES,
             ai_cfa: has_ai_cfa,
+            cfa_kind: raw.cfa_kind,
         })?;
         let gpu_budget_reservation =
             GpuBudgetReservation::acquire(&resource_plan, gpu_working_set_limit_bytes())?;
@@ -331,6 +332,7 @@ impl RawGpuPipeline {
             _highlight_work_b: surfaces.highlight_work_b,
             _tex1: surfaces.tex1,
             _tex2: surfaces.tex2,
+            _xtrans_homogeneity: surfaces.xtrans_homogeneity,
             scene_texture: surfaces.scene_texture,
             scene_format: geometry.demosaic_format,
             has_ai_scene,

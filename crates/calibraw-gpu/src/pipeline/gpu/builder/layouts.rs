@@ -12,7 +12,7 @@ pub(in crate::pipeline::gpu) struct BindGroupLayouts {
     pub(in crate::pipeline::gpu) bgl_dual_prepare: wgpu::BindGroupLayout,
     pub(in crate::pipeline::gpu) bgl_dual_detail: wgpu::BindGroupLayout,
     pub(in crate::pipeline::gpu) bgl4: wgpu::BindGroupLayout,
-    pub(in crate::pipeline::gpu) bgl_xtrans_derivatives: wgpu::BindGroupLayout,
+    pub(in crate::pipeline::gpu) bgl_xtrans_state: wgpu::BindGroupLayout,
     pub(in crate::pipeline::gpu) bgl_xtrans_homogeneity: wgpu::BindGroupLayout,
     pub(in crate::pipeline::gpu) bgl_xtrans_accumulate: wgpu::BindGroupLayout,
     pub(in crate::pipeline::gpu) bgl_xtrans_finish: wgpu::BindGroupLayout,
@@ -93,7 +93,10 @@ pub(in crate::pipeline::gpu) fn create_bind_group_layouts(
         )
     });
 
-    let bgl1 = reused_layout(plan.demosaic_start_index).unwrap_or_else(|| {
+    let bgl1 = (matches!(cfa_kind, CfaKind::Bayer)
+        .then(|| reused_layout(plan.demosaic_start_index))
+        .flatten())
+    .unwrap_or_else(|| {
         create_bind_group_layout(
             device,
             "bgl1",
@@ -108,7 +111,10 @@ pub(in crate::pipeline::gpu) fn create_bind_group_layouts(
         )
     });
 
-    let bgl2 = reused_layout(plan.demosaic_start_index + 1).unwrap_or_else(|| {
+    let bgl2 = (matches!(cfa_kind, CfaKind::Bayer)
+        .then(|| reused_layout(plan.demosaic_start_index + 1))
+        .flatten())
+    .unwrap_or_else(|| {
         create_bind_group_layout(
             device,
             "bgl2",
@@ -124,7 +130,10 @@ pub(in crate::pipeline::gpu) fn create_bind_group_layouts(
         )
     });
 
-    let bgl3 = reused_layout(plan.demosaic_start_index + 2).unwrap_or_else(|| {
+    let bgl3 = (matches!(cfa_kind, CfaKind::Bayer)
+        .then(|| reused_layout(plan.demosaic_start_index + 2))
+        .flatten())
+    .unwrap_or_else(|| {
         create_bind_group_layout(
             device,
             "bgl3",
@@ -205,67 +214,55 @@ pub(in crate::pipeline::gpu) fn create_bind_group_layouts(
         )
     });
 
-    let bgl_xtrans_derivatives = (matches!(cfa_kind, CfaKind::XTrans)
-        .then(|| reused_layout(plan.demosaic_start_index + 4))
-        .flatten())
-    .unwrap_or_else(|| {
-        create_bind_group_layout(
-            device,
-            "bgl X-Trans derivatives",
-            &[
-                common_entries[0],
-                common_entries[1],
-                common_entries[2],
-                common_entries[3],
-                texture_entry(3, wgpu::TextureSampleType::Float { filterable: false }),
-                texture_entry(9, wgpu::TextureSampleType::Float { filterable: false }),
-                storage_texture_entry(20, demosaic_format, wgpu::StorageTextureAccess::WriteOnly),
-                storage_texture_entry(21, demosaic_format, wgpu::StorageTextureAccess::WriteOnly),
-            ],
-        )
-    });
-
-    let bgl_xtrans_homogeneity = (matches!(cfa_kind, CfaKind::XTrans)
-        .then(|| reused_layout(plan.demosaic_start_index + 5))
-        .flatten())
-    .unwrap_or_else(|| {
-        create_bind_group_layout(
-            device,
-            "bgl X-Trans homogeneity",
-            &[
-                common_entries[0],
-                common_entries[1],
-                common_entries[2],
-                common_entries[3],
-                texture_entry(3, wgpu::TextureSampleType::Float { filterable: false }),
-                texture_entry(27, wgpu::TextureSampleType::Float { filterable: false }),
-                texture_entry(28, wgpu::TextureSampleType::Float { filterable: false }),
-                storage_texture_entry(24, demosaic_format, wgpu::StorageTextureAccess::WriteOnly),
-                storage_texture_entry(25, demosaic_format, wgpu::StorageTextureAccess::WriteOnly),
-            ],
-        )
-    });
-
-    let bgl_xtrans_accumulate = (matches!(cfa_kind, CfaKind::XTrans)
-        .then(|| reused_layout(plan.demosaic_start_index + 6))
-        .flatten())
-    .unwrap_or_else(|| {
-        create_bind_group_layout(
-            device,
-            "bgl X-Trans accumulate",
-            &[
-                common_entries[0],
-                common_entries[1],
-                common_entries[2],
-                common_entries[3],
-                texture_entry(3, wgpu::TextureSampleType::Float { filterable: false }),
-                texture_entry(9, wgpu::TextureSampleType::Float { filterable: false }),
-                texture_entry(29, wgpu::TextureSampleType::Float { filterable: false }),
-                texture_entry(30, wgpu::TextureSampleType::Float { filterable: false }),
-                storage_texture_entry(26, demosaic_format, wgpu::StorageTextureAccess::WriteOnly),
-            ],
-        )
-    });
+    // Markesteijn (xtrans_demosaic.wgsl): every pass sees both states, lo
+    // and hi, and writes a state, the homogeneity map or the result.
+    let xtrans_layout = |index: usize, label: &str, outputs: &[wgpu::BindGroupLayoutEntry]| {
+        (matches!(cfa_kind, CfaKind::XTrans)
+            .then(|| reused_layout(index))
+            .flatten())
+        .unwrap_or_else(|| {
+            let states = [27, 28, 29, 30].map(|binding| {
+                texture_entry(
+                    binding,
+                    wgpu::TextureSampleType::Float { filterable: false },
+                )
+            });
+            let entries: Vec<_> = common_entries
+                .into_iter()
+                .chain([texture_entry(
+                    3,
+                    wgpu::TextureSampleType::Float { filterable: false },
+                )])
+                .chain(states)
+                .chain(outputs.iter().copied())
+                .collect();
+            create_bind_group_layout(device, label, &entries)
+        })
+    };
+    let state_output =
+        storage_texture_entry(24, demosaic_format, wgpu::StorageTextureAccess::WriteOnly);
+    let bgl_xtrans_state = xtrans_layout(
+        plan.demosaic_start_index,
+        "bgl X-Trans Markesteijn state",
+        &[state_output],
+    );
+    let bgl_xtrans_homogeneity = xtrans_layout(
+        plan.demosaic_start_index + XTRANS_HOMOGENEITY_PASS,
+        "bgl X-Trans Markesteijn homogeneity",
+        &[storage_texture_entry(
+            25,
+            wgpu::TextureFormat::R32Uint,
+            wgpu::StorageTextureAccess::WriteOnly,
+        )],
+    );
+    let bgl_xtrans_accumulate = xtrans_layout(
+        plan.demosaic_start_index + XTRANS_ACCUMULATE_PASS,
+        "bgl X-Trans Markesteijn accumulate",
+        &[
+            texture_entry(31, wgpu::TextureSampleType::Uint),
+            state_output,
+        ],
+    );
 
     let bgl_xtrans_finish = (matches!(cfa_kind, CfaKind::XTrans)
         .then(|| reused_layout(plan.demosaic_finish_index))
@@ -669,7 +666,7 @@ pub(in crate::pipeline::gpu) fn create_bind_group_layouts(
         bgl_dual_prepare,
         bgl_dual_detail,
         bgl4,
-        bgl_xtrans_derivatives,
+        bgl_xtrans_state,
         bgl_xtrans_homogeneity,
         bgl_xtrans_accumulate,
         bgl_xtrans_finish,
