@@ -75,8 +75,7 @@ fn mask_blur_stage_amount(pos: vec2<i32>, stage: u32) -> f32 {
     let count = min(Common::scene_tone_uniforms.mask_counts.x, Common::MAX_RENDER_MASK_SLOTS);
     for (var index = 0u; index < count; index = index + 1u) {
         let state = Common::mask_data[index].metadata;
-        if state.x == 0u || state.y == 0u
-            || Common::mask_effect_id(state) != MASK_EFFECT_BLUR_ID {
+        if !Common::mask_slot_applies(state, MASK_EFFECT_BLUR_ID) {
             continue;
         }
 
@@ -126,7 +125,7 @@ fn apply_mask_blur_stage(
     let count = min(Common::scene_tone_uniforms.mask_counts.x, Common::MAX_RENDER_MASK_SLOTS);
     for (var index = 0u; index < count; index = index + 1u) {
         let state = Common::mask_data[index].metadata;
-        if state.x == 0u || state.y == 0u { continue; }
+        if !Common::mask_slot_active(state) { continue; }
         let effect_id = Common::mask_effect_id(state);
         if effect_id != MASK_EFFECT_LENS_BLUR_ID
             && effect_id != MASK_EFFECT_MOTION_BLUR_ID

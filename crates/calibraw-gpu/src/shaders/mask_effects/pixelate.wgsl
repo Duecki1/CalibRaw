@@ -83,7 +83,7 @@ fn pixelate_block_size_in_use(block_size: i32) -> bool {
     let count = min(Common::scene_tone_uniforms.mask_counts.x, Common::MAX_RENDER_MASK_SLOTS);
     for (var index = 0u; index < count; index = index + 1u) {
         let state = Common::mask_data[index].metadata;
-        if state.x == 0u || state.y == 0u || Common::mask_effect_id(state) != MASK_EFFECT_PIXELATE_ID {
+        if !Common::mask_slot_applies(state, MASK_EFFECT_PIXELATE_ID) {
             continue;
         }
         let primary = Common::mask_data[index].adjust_0_field;

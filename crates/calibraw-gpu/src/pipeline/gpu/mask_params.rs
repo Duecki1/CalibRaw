@@ -35,10 +35,7 @@ fn set_medium_options(data: &mut MaskData, image_lights: bool) {
 
 /// Whether an active Fog or Smoke slot scatters the photograph's own lights.
 pub(super) fn medium_uses_image_lights(data: &MaskData) -> bool {
-    let id = data.metadata[3] >> MASK_EFFECT_ID_SHIFT;
-    data.metadata[0] != 0
-        && data.metadata[1] != 0
-        && (id == MaskEffect::Fog.shader_id() || id == MaskEffect::Smoke.shader_id())
+    (data.applies(MaskEffect::Fog) || data.applies(MaskEffect::Smoke))
         && data.effect_options[options::MEDIUM_IMAGE_LIGHTS] > 0.5
 }
 
@@ -48,9 +45,7 @@ pub(super) const RELIGHT_SHADOW_MAP_CHANNELS: usize = 4;
 /// Whether an active Relight slot casts shadows. Mirrors the amount and
 /// shadow-strength checks of `apply_relight`.
 pub(super) fn relight_casts_shadows(data: &MaskData) -> bool {
-    data.metadata[0] != 0
-        && data.metadata[1] != 0
-        && data.metadata[3] >> MASK_EFFECT_ID_SHIFT == MaskEffect::Relight.shader_id()
+    data.applies(MaskEffect::Relight)
         && (data.lane(relight::AMOUNT) / 100.0).clamp(0.0, 1.0) > 1e-6
         && (data.lane(relight::SHADOWS) / 100.0).clamp(0.0, 1.0) > 1e-6
 }

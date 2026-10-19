@@ -57,22 +57,18 @@ pub(super) fn pack_camera_params(ctx: &GpuParamContext<'_>) -> CameraUniforms {
 
     CameraUniforms {
         black_point: exposure.black_point,
-        reserved_a: 0.0,
         highlight_clip: exposure.highlight_clip,
         chroma_denoise: exposure.chroma_denoise,
-        reserved_d: 0.0,
-        reserved_e: 0.0,
         highlight_reconstruction: exposure.highlight_reconstruction,
         tone_analysis_scale: tone_analysis_scale() as f32,
         tone_guide_radius: crate::pipeline::TONE_GUIDE_RADIUS_CELLS as f32,
         demosaic_mode: exposure.demosaic_mode.shader_value(),
         dual_threshold: exposure.dual_threshold.clamp(0.0, 100.0),
         frequency_chroma: exposure.frequency_chroma.clamp(0.0, 1.0),
-        reserved_b: 0.0,
-        reserved_f: 0.0,
         view_transform_mode: ViewTransformMode::select(raw, exposure, camera_linear_raster)
             .shader_value(),
-        reserved_c: 0.0,
+        padding_0: 0,
+        padding_1: 0,
         highlight_options: [
             highlight_method,
             opposed_chroma[0],

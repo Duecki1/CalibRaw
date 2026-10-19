@@ -14,7 +14,7 @@ fn mask_glow_self_illuminating_active() -> bool {
     let count = min(Common::scene_tone_uniforms.mask_counts.x, Common::MAX_RENDER_MASK_SLOTS);
     for (var index = 0u; index < count; index = index + 1u) {
         let state = Common::mask_data[index].metadata;
-        if state.x != 0u && state.y != 0u && Common::mask_effect_id(state) == MASK_EFFECT_GLOW_ID
+        if Common::mask_slot_applies(state, MASK_EFFECT_GLOW_ID)
             && mask_glow_self_illuminating(Common::mask_data[index].adjust_0_field) {
             return true;
         }
@@ -29,7 +29,7 @@ fn mask_glow_source_at(pos: vec2<i32>) -> vec3<f32> {
     let count = min(Common::scene_tone_uniforms.mask_counts.x, Common::MAX_RENDER_MASK_SLOTS);
     for (var index = 0u; index < count; index = index + 1u) {
         let state = Common::mask_data[index].metadata;
-        if state.x == 0u || state.y == 0u || Common::mask_effect_id(state) != MASK_EFFECT_GLOW_ID { continue; }
+        if !Common::mask_slot_applies(state, MASK_EFFECT_GLOW_ID) { continue; }
         let primary = Common::mask_data[index].adjust_0_field;
         if !mask_glow_self_illuminating(primary) { continue; }
         let weight = SceneAdjustments::local_mask_weight(pos, index);
@@ -65,7 +65,7 @@ fn apply_mask_glow_cores(pos: vec2<i32>, input_rgb: vec3<f32>) -> vec3<f32> {
     let count = min(Common::scene_tone_uniforms.mask_counts.x, Common::MAX_RENDER_MASK_SLOTS);
     for (var index = 0u; index < count; index += 1u) {
         let state = Common::mask_data[index].metadata;
-        if state.x == 0u || state.y == 0u || Common::mask_effect_id(state) != MASK_EFFECT_GLOW_ID { continue; }
+        if !Common::mask_slot_applies(state, MASK_EFFECT_GLOW_ID) { continue; }
         let primary = Common::mask_data[index].adjust_0_field;
         let amount = clamp(primary.x / 100.0, 0.0, 1.0);
         let core = clamp(primary.z / 100.0, 0.0, 1.0);

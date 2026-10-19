@@ -152,7 +152,7 @@ fn scene_light_slots() -> u32 {
 // The light the effect in slot `index` emits; inactive when it emits none.
 fn scene_light_at(index: u32) -> SceneLight {
     let state = Common::mask_data[index].metadata;
-    if state.x == 0u || state.y == 0u { return scene_light_inactive(); }
+    if !Common::mask_slot_active(state) { return scene_light_inactive(); }
     let params = mask_effect_params(index);
     let effect_id = Common::mask_effect_id(state);
     if effect_id == MASK_EFFECT_RELIGHT_ID {

@@ -604,7 +604,7 @@ fn apply_local_display_blacks(pos: vec2<i32>, input_rgb: vec3<f32>) -> vec3<f32>
     let count = min(Common::scene_tone_uniforms.mask_counts.x, Common::MAX_RENDER_MASK_SLOTS);
     for (var index = 0u; index < count; index = index + 1u) {
         let state = Common::mask_data[index].metadata;
-        if state.x == 0u || state.y == 0u || Common::mask_effect_id(state) != 0u { continue; }
+        if !Common::mask_slot_applies(state, 0u) { continue; }
         let value = Common::mask_data[index].adjust_1_field.y;
         if abs(value) < 1e-7 { continue; }
         let weight = SceneAdjustments::local_mask_weight(pos, index);

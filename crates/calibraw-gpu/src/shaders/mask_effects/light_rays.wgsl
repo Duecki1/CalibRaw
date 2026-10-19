@@ -152,8 +152,7 @@ fn apply_light_rays(pos: vec2<i32>, input_rgb: vec3<f32>) -> vec3<f32> {
     let count = min(Common::scene_tone_uniforms.mask_counts.x, Common::MAX_RENDER_MASK_SLOTS);
     for (var index = 0u; index < count; index = index + 1u) {
         let state = Common::mask_data[index].metadata;
-        if state.x == 0u || state.y == 0u
-            || Common::mask_effect_id(state) != MASK_EFFECT_LIGHT_RAYS_ID { continue; }
+        if !Common::mask_slot_applies(state, MASK_EFFECT_LIGHT_RAYS_ID) { continue; }
         let params = mask_effect_params(index);
         let amount = clamp(mask_effect_lane(params, LIGHT_RAYS_AMOUNT_LANE) / 100.0, 0.0, 1.0);
         let reach = clamp(mask_effect_lane(params, LIGHT_RAYS_LENGTH_LANE) / 100.0, 0.0, 2.0);

@@ -1267,13 +1267,13 @@ pub(super) fn texture_entry(
     }
 }
 
-/// The sensor mosaic format: `R16Uint` with the original mosaic, or
-/// `Rg16Uint` with the original in R and the AI-denoised mosaic in G, which
-/// `raw_sampling.wgsl` blends by `CameraUniforms::ai_cfa_weight`.
 /// Markesteijn's homogeneity counts, 4 bits for each of 8 candidates
 /// (xtrans_demosaic.wgsl).
 pub(super) const XTRANS_HOMOGENEITY_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R32Uint;
 
+/// The sensor mosaic format: `R16Uint` with the original mosaic, or
+/// `Rg16Uint` with the original in R and the AI-denoised mosaic in G, which
+/// `raw_sampling.wgsl` blends by `CameraUniforms::ai_cfa_weight`.
 pub(super) const fn raw_texture_format(has_ai_cfa: bool) -> wgpu::TextureFormat {
     if has_ai_cfa {
         wgpu::TextureFormat::Rg16Uint
