@@ -557,10 +557,7 @@ impl RasterSource {
         if let Some(format) = RenderedImageFormat::detect(path)? {
             return Ok(Some(Self::Rendered(format)));
         }
-        let raster_tiff = super::tiff_loader::is_tiff_path(path)
-            && super::tiff_loader::inspect_tiff_container(path)?
-                == super::tiff_loader::TiffContainerKind::Raster;
-        Ok(raster_tiff.then_some(Self::Tiff))
+        Ok(super::tiff_loader::is_raster_tiff(path)?.then_some(Self::Tiff))
     }
 
     fn load(self, path: &Path) -> Result<LoadedRaw> {

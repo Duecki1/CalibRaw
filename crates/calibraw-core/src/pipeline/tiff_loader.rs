@@ -25,7 +25,7 @@ const MIN_TIFF_ICC_BYTES: u64 = 132;
 const MAX_TIFF_ICC_BYTES: u64 = 16 * 1024 * 1024;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum TiffContainerKind {
+enum TiffContainerKind {
     Sensor,
     Raster,
 }
@@ -105,6 +105,49 @@ fn open_tiff(path: &Path) -> Result<(File, TiffHeader)> {
     ))
 }
 
+/// Compressions only camera RAW containers use: old-style JPEG (Canon CR2, Kodak),
+/// Sony ARW, Samsung and Epson packing, Nikon NEF, Kodak and Pentax.
+const SENSOR_COMPRESSIONS: &[u64] = &[6, 32767, 32769, 32770, 34713, 65000, 65535];
+
+/// Whether `path` is decoded as a raster TIFF rather than by the sensor decoders.
+///
+/// A `.tif` or `.tiff` path is one unless it carries sensor data. Android opens
+/// documents as `/proc/self/fd/<n>`, which loses the name, so an extensionless path is
+/// judged by its content. Many camera RAW formats are TIFF containers as well, so such
+/// a file must also lack every mark of one: CFA data, Canon's CR2 signature, a
+/// compression only cameras use or a sensor bit depth such as 12 or 14 bits.
+pub(super) fn is_raster_tiff(path: &Path) -> Result<bool> {
+    if is_tiff_path(path) {
+        return Ok(inspect_tiff_container(path)? == TiffContainerKind::Raster);
+    }
+    if path.extension().is_some() {
+        return Ok(false);
+    }
+    // Anything that does not read as a raster TIFF stays with the sensor decoders.
+    Ok(!has_camera_raw_marks(path).unwrap_or(true)
+        && matches!(inspect_tiff_container(path), Ok(TiffContainerKind::Raster)))
+}
+
+fn has_camera_raw_marks(path: &Path) -> Result<bool> {
+    let mut header = [0u8; 10];
+    File::open(path)?.read_exact(&mut header)?;
+    if &header[8..10] == b"CR" {
+        return Ok(true);
+    }
+    let marked = walk_tiff_fields(path, |file, tag, field| {
+        let sensor = match tag {
+            258 => integer_values(file, field, 4)?
+                .into_iter()
+                .any(|bits| !matches!(bits, 1 | 8 | 16 | 32 | 64)),
+            259 => scalar_u64(file, field)?
+                .is_some_and(|compression| SENSOR_COMPRESSIONS.contains(&compression)),
+            _ => false,
+        };
+        Ok(sensor.then_some(()))
+    })?;
+    Ok(marked.is_some())
+}
+
 pub(super) fn is_tiff_path(path: &Path) -> bool {
     path.extension()
         .and_then(|extension| extension.to_str())
@@ -122,7 +165,7 @@ pub(super) fn has_dng_version(path: &Path) -> Result<bool> {
     .unwrap_or(false))
 }
 
-pub(super) fn inspect_tiff_container(path: &Path) -> Result<TiffContainerKind> {
+fn inspect_tiff_container(path: &Path) -> Result<TiffContainerKind> {
     Ok(walk_tiff_fields(path, |file, tag, field| {
         if matches!(tag, 33421 | 33422) {
             return Ok(Some(TiffContainerKind::Sensor));
@@ -712,5 +755,69 @@ mod tests {
         std::fs::write(path, bytes).unwrap();
 
         assert_eq!(read_embedded_icc_profile(path).unwrap(), Some(icc));
+    }
+
+    /// A classic TIFF with `extra` bytes after its 8-byte header and one IFD entry
+    /// setting `tag` to the short `value`.
+    fn single_tag_tiff(extra: &[u8], tag: u16, value: u16) -> Vec<u8> {
+        let ifd = 8 + extra.len() as u32;
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(b"II");
+        bytes.extend_from_slice(&42u16.to_le_bytes());
+        bytes.extend_from_slice(&ifd.to_le_bytes());
+        bytes.extend_from_slice(extra);
+        bytes.extend_from_slice(&1u16.to_le_bytes());
+        bytes.extend_from_slice(&tag.to_le_bytes());
+        bytes.extend_from_slice(&3u16.to_le_bytes());
+        bytes.extend_from_slice(&1u32.to_le_bytes());
+        bytes.extend_from_slice(&value.to_le_bytes());
+        bytes.extend_from_slice(&0u16.to_le_bytes());
+        bytes.extend_from_slice(&0u32.to_le_bytes());
+        bytes
+    }
+
+    #[test]
+    fn unnamed_descriptor_paths_recognize_raster_tiffs_by_content() {
+        // Android opens library documents as extensionless /proc/self/fd paths.
+        let unnamed = temp_tiff_file("unnamed", "");
+        assert_eq!(unnamed.path().extension(), None);
+        image::Rgb32FImage::from_raw(2, 1, vec![4.0, 2.0, 0.5, 0.1, 0.2, 0.3])
+            .unwrap()
+            .save_with_format(unnamed.path(), ImageFormat::Tiff)
+            .unwrap();
+        assert!(is_raster_tiff(unnamed.path()).unwrap());
+        assert_eq!(
+            load_raster_tiff(unnamed.path())
+                .unwrap()
+                .scene_linear_raster()
+                .unwrap()[..3],
+            [4.0, 2.0, 0.5]
+        );
+    }
+
+    #[test]
+    fn unnamed_camera_raw_containers_stay_with_the_sensor_decoders() {
+        let cases = [
+            ("cfa", single_tag_tiff(&[], 262, 32803)),
+            ("bit-depth", single_tag_tiff(&[], 258, 14)),
+            ("compression", single_tag_tiff(&[], 259, 34713)),
+            (
+                "cr2",
+                single_tag_tiff(b"CR\x02\x00\x00\x00\x00\x00", 256, 1),
+            ),
+            (
+                "not-tiff",
+                vec![0xFF, 0xD8, 0xFF, 0xE0, 0, 0, 0, 0, 0, 0, 0, 0],
+            ),
+        ];
+        for (label, bytes) in cases {
+            let unnamed = temp_tiff_file(label, "");
+            std::fs::write(unnamed.path(), bytes).unwrap();
+            assert!(!is_raster_tiff(unnamed.path()).unwrap(), "{label}");
+        }
+        // The same bit depth in a named TIFF keeps the extension rule.
+        let named = temp_tiff_file("named", ".tif");
+        std::fs::write(named.path(), single_tag_tiff(&[], 258, 14)).unwrap();
+        assert!(is_raster_tiff(named.path()).unwrap());
     }
 }
