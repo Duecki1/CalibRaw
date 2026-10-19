@@ -584,8 +584,7 @@ fn apply_local_color_mixer(pos: vec2<i32>, input_rgb: vec3<f32>) -> vec3<f32> {
 }
 
 fn apply_view_transform(scene_rgb: vec3<f32>) -> vec3<f32> {
-    let looked = Profile::apply_optional_profile_look(scene_rgb);
-    let view_input = Color::gamut_project_nonnegative_rec2020(looked);
+    let view_input = Color::gamut_project_nonnegative_rec2020(scene_rgb);
 
     switch Common::camera_uniforms.view_transform_mode {
         case Common::VIEW_TRANSFORM_SCENE_SIGMOID: {

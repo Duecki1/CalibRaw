@@ -32,30 +32,36 @@ pub(in crate::pipeline::raw_loader) fn camera_to_working_matrix_from_profiles(
 ) -> Result<([[f32; 4]; 3], f32, Option<CameraWhiteBalanceModel>)> {
     let profile = selected_profile.or(embedded_profile);
     let (matrix, weight, color_model) = if let Some(profile) = profile {
-        let endpoints = profile.matrices.iter().filter_map(|set| {
-            Some(DngColorEndpoint {
-                cct: set.illuminant.and_then(calibration_illuminant_cct),
-                color_matrix: set
-                    .color_matrix
-                    .filter(|matrix| matrix4x3_is_valid(*matrix))?,
-                calibration: parsed_calibration(
-                    set,
-                    identity_4x4(),
-                    profile.calibration_is_compatible(),
-                ),
-                forward_matrix: set
-                    .forward_matrix
-                    .filter(|matrix| matrix3x4_is_valid(*matrix)),
-            })
+        let fallback_calibration: [[[f32; 4]; 4]; 2] = std::array::from_fn(|index| {
+            embedded_profile
+                .and_then(|embedded| embedded.matrices[index].camera_calibration)
+                .unwrap_or_else(identity_4x4)
         });
+        // The same calibration as the interpolation below, so the model
+        // rebuilds this matrix when the white balance changes.
+        let endpoints = profile
+            .matrices
+            .iter()
+            .zip(fallback_calibration)
+            .filter_map(|(set, fallback)| {
+                Some(DngColorEndpoint {
+                    cct: set.illuminant.and_then(calibration_illuminant_cct),
+                    color_matrix: set
+                        .color_matrix
+                        .filter(|matrix| matrix4x3_is_valid(*matrix))?,
+                    calibration: parsed_calibration(
+                        set,
+                        fallback,
+                        profile.calibration_is_compatible(),
+                    ),
+                    forward_matrix: set
+                        .forward_matrix
+                        .filter(|matrix| matrix3x4_is_valid(*matrix)),
+                })
+            });
         let endpoints = endpoints.collect::<Vec<_>>();
         if let Some(first) = endpoints.first().copied() {
             let second = endpoints.get(1).copied().unwrap_or(first);
-            let fallback_calibration = std::array::from_fn(|index| {
-                embedded_profile
-                    .and_then(|embedded| embedded.matrices[index].camera_calibration)
-                    .unwrap_or_else(identity_4x4)
-            });
             let initial_model = CameraColorModel::Dng {
                 endpoints: Box::new([first, second]),
                 analog_balance,

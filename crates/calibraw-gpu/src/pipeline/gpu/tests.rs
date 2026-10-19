@@ -6,9 +6,10 @@ use super::{
 };
 use crate::pipeline::{
     extract_padded_tile, CameraProfile, CfaKind, CompactPixelMap, EffectComponent, ExportTile,
-    ExposureParams, HighlightReconstructionMethod, LoadedRaw, LocalMask, MaskEffect, MaskKind,
-    MaskStack, NativeRect, PointCurve, ProcessingStage, SigmoidColorProcessing, WhiteBalance,
-    MAX_TEMPERATURE_KELVIN, MAX_WHITE_BALANCE_TINT, TONE_GUIDE_CELL_SIZE,
+    ExposureParams, HighlightReconstructionMethod, HsvMap, LoadedRaw, LocalMask, MaskEffect,
+    MaskKind, MaskStack, NativeRect, PointCurve, ProcessingStage, ProfileEncoding,
+    SigmoidColorProcessing, WhiteBalance, MAX_TEMPERATURE_KELVIN, MAX_WHITE_BALANCE_TINT,
+    TONE_GUIDE_CELL_SIZE,
 };
 
 #[test]
@@ -2144,6 +2145,52 @@ fn white_balance_has_no_effect_without_a_white_balance_model() -> anyhow::Result
             "{white_balance:?}: grey {:?} became {:?}",
             grey,
             &shifted[..3]
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn the_profile_look_precedes_the_user_colour_edits() -> anyhow::Result<()> {
+    let Some((device, queue)) = request_test_device() else {
+        return Ok(());
+    };
+    const EDGE: u32 = 16;
+    // A saturated red, which the look turns green.
+    let pixels = (0..EDGE * EDGE).flat_map(|_| [0.30, 0.03, 0.03]).collect();
+    let mut source = LoadedRaw::from_scene_linear_rec2020(EDGE, EDGE, pixels)?;
+    source.camera_profile.look_table = Some(HsvMap::new(
+        [6, 2, 1],
+        vec![[120.0, 1.0, 1.0]; 12],
+        ProfileEncoding::Linear,
+    )?);
+    let masks = MaskStack::default();
+    let plain = ExposureParams::default();
+    let mut reds_removed = plain;
+    reds_removed.hsl_saturation[0] = -100.0;
+    let pipeline = RawGpuPipeline::new(
+        &device,
+        &queue,
+        &source,
+        &GpuParams::new(&plain, &masks, &source),
+        PipelineOptions::new(ProcessingQuality::Preview),
+    )?;
+    let render = |exposure: &ExposureParams| -> anyhow::Result<Vec<u8>> {
+        pipeline.recompute(&queue, &device, &GpuParams::new(exposure, &masks, &source));
+        pipeline.read_output_region_blocking(&device, &queue, 0, 0, 1, 1)
+    };
+
+    let looked = render(&plain)?;
+    assert!(
+        looked[1] > looked[0].saturating_add(40),
+        "the look should turn red green: {looked:?}"
+    );
+    // The mixer's red band sees the green the look made, not the red source.
+    let edited = render(&reds_removed)?;
+    for channel in 0..3 {
+        assert!(
+            looked[channel].abs_diff(edited[channel]) <= 2,
+            "{looked:?} became {edited:?}"
         );
     }
     Ok(())

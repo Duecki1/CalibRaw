@@ -820,17 +820,19 @@ fn capture_dates_from_timestamp(timestamp: i64) -> Vec<(u16, String)> {
 #[cfg(test)]
 mod tests {
     use super::{
-        adjusted_white_balance_coefficients, apply_resolved_default_exposure, black_levels,
-        cam_to_working, canonical_cfa_map, canonicalize_f32x4, cfa_kind_from_filters,
-        daylight_white_balance, effective_black_level, identity_4x4, identity_fallback_4x4,
-        matching_thumbnail_orientation, oriented_source_pos, resolve_default_exposure_ev,
-        saturation_adjusted_white_levels, smaller_covering_preview_index, valid_baseline_exposure,
+        adjusted_white_balance, apply_resolved_default_exposure, black_levels, cam_to_working,
+        canonical_cfa_map, canonicalize_f32x4, cfa_kind_from_filters, daylight_white_balance,
+        dng_camera_to_working, effective_black_level, identity_4x4, identity_fallback_4x4,
+        interpolate_endpoints, matching_thumbnail_orientation, mired_interpolation_weight,
+        oriented_source_pos, resolve_default_exposure_ev, saturation_adjusted_white_levels,
+        smaller_covering_preview_index, valid_baseline_exposure,
         validate_embedded_thumbnail_metadata, white_balance, white_levels, CameraColorModel,
         CameraProfile, CameraWhiteBalanceModel, CfaKind, DcpMatrixSet, DcpProfile,
         DngColorEndpoint, EmbeddedPreview, MAX_EMBEDDED_THUMBNAIL_BYTES,
         MISSING_BASELINE_EXPOSURE_FALLBACK_EV,
     };
     use crate::matrix;
+    use crate::pipeline::basicadj::{temperature_offset_from_kelvin, white_balance_tint_offset};
 
     #[test]
     fn capture_timestamp_preserves_camera_calendar_time() {
@@ -981,12 +983,14 @@ mod tests {
         let model = white_balance_test_model();
         let (base_temperature, base_tint) = super::as_shot_temperature_tint(&model);
         let ranges = super::white_balance_ranges(&model).unwrap();
-        let actual = adjusted_white_balance_coefficients(
+        let actual = adjusted_white_balance(
             &model,
             0.0,
-            crate::pipeline::white_balance_tint_offset(base_tint, super::MAX_WHITE_BALANCE_TINT),
+            white_balance_tint_offset(base_tint, super::MAX_WHITE_BALANCE_TINT),
+            0.0,
         )
-        .expect("old out-of-range edits must clamp instead of losing WB");
+        .expect("old out-of-range edits must clamp instead of losing WB")
+        .coefficients;
         let expected =
             super::temperature_tint_to_coefficients(&model, base_temperature, *ranges.tint.end())
                 .unwrap();
@@ -1258,21 +1262,20 @@ mod tests {
         );
     }
 
-    #[test]
-    fn global_wb_changes_coefficients_without_reinterpolating_camera_data() {
+    fn dual_illuminant_test_model() -> CameraWhiteBalanceModel {
         let endpoint = |cct, red_scale, blue_scale| DngColorEndpoint {
             cct: Some(cct),
             color_matrix: [
-                [red_scale, 0.0, 0.0],
-                [0.0, 0.5, 0.0],
-                [0.0, 0.0, blue_scale],
-                [0.0, 0.5, 0.0],
+                [red_scale, 0.1, -0.05],
+                [-0.1, 0.5, 0.05],
+                [0.02, -0.08, blue_scale],
+                [-0.1, 0.5, 0.05],
             ],
             calibration: identity_4x4(),
             forward_matrix: None,
         };
-        let model = CameraWhiteBalanceModel {
-            base_wb: [2.0, 1.0, 1.5, 1.0],
+        let mut model = CameraWhiteBalanceModel {
+            base_wb: [1.0; 4],
             cdesc: RGBG,
             base_cct: 5000.0,
             color: CameraColorModel::Dng {
@@ -1280,14 +1283,107 @@ mod tests {
                 analog_balance: identity_4x4(),
             },
         };
+        model.base_wb = super::temperature_tint_to_coefficients(&model, 5_000.0, 0.0).unwrap();
+        model
+    }
 
-        let cooler = adjusted_white_balance_coefficients(&model, -20.0, 0.0).unwrap();
-        let warmer = adjusted_white_balance_coefficients(&model, 20.0, 0.0).unwrap();
-        assert!(warmer.iter().all(|value| value.is_finite()));
-        assert_ne!(cooler, warmer);
+    #[test]
+    fn global_wb_reinterpolates_dual_illuminant_matrices_at_the_new_white() {
+        let model = dual_illuminant_test_model();
+        let CameraColorModel::Dng {
+            endpoints,
+            analog_balance,
+        } = &model.color
+        else {
+            unreachable!();
+        };
+        let (base_temperature, base_tint) = super::as_shot_temperature_tint(&model);
+        let at = |kelvin: f32, tint: f32| {
+            adjusted_white_balance(
+                &model,
+                temperature_offset_from_kelvin(base_temperature, kelvin),
+                white_balance_tint_offset(base_tint, tint),
+                0.5,
+            )
+            .unwrap()
+        };
 
-        let tinted = adjusted_white_balance_coefficients(&model, 20.0, 20.0).unwrap();
-        assert_ne!(warmer, tinted);
+        let cooler = at(3_200.0, 0.0);
+        let warmer = at(6_000.0, 0.0);
+        assert_ne!(cooler.coefficients, warmer.coefficients);
+        assert_ne!(warmer.coefficients, at(6_000.0, 20.0).coefficients);
+        for (adjusted, kelvin) in [(cooler, 3_200.0), (warmer, 6_000.0)] {
+            let (transform, weight) = adjusted.profile.unwrap();
+            assert!((weight - mired_interpolation_weight(kelvin, 2856.0, 6504.0)).abs() < 1e-4);
+            // The physical and canonical layouts of RGBG agree.
+            let expected = dng_camera_to_working(
+                interpolate_endpoints(endpoints, weight),
+                *analog_balance,
+                adjusted.coefficients,
+                adjusted.coefficients,
+                RGBG,
+            )
+            .unwrap();
+            assert_eq!(transform, expected);
+            // The balanced white renders neutral.
+            for row in transform {
+                let value = row[0] + row[1] + row[2];
+                assert!((value - 1.0).abs() < 1e-4, "{transform:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn kelvin_conversions_use_the_matrices_at_the_white() {
+        let model = dual_illuminant_test_model();
+        let CameraColorModel::Dng { endpoints, .. } = &model.color else {
+            unreachable!();
+        };
+        // At an illuminant's temperature only its own matrix counts.
+        let mut single = model.clone();
+        single.color = CameraColorModel::Matrix {
+            xyz_to_camera: endpoints[0].color_matrix,
+        };
+        assert_eq!(
+            super::temperature_tint_to_coefficients(&model, 2856.0, 5.0),
+            super::temperature_tint_to_coefficients(&single, 2856.0, 5.0),
+        );
+        for (kelvin, tint) in [
+            (2_400.0, 0.0),
+            (3_500.0, -12.0),
+            (5_000.0, 8.0),
+            (9_000.0, 0.0),
+        ] {
+            let wb = super::temperature_tint_to_coefficients(&model, kelvin, tint).unwrap();
+            let (found_kelvin, found_tint) =
+                super::temperature_tint_from_coefficients(&model, wb).unwrap();
+            assert!(
+                (found_kelvin - kelvin).abs() < 0.5,
+                "{found_kelvin} K for {kelvin} K"
+            );
+            assert!((found_tint - tint).abs() < 0.01, "{found_tint} for {tint}");
+        }
+    }
+
+    #[test]
+    fn white_balance_memos_follow_the_model() {
+        let first = dual_illuminant_test_model();
+        let mut second = first.clone();
+        second.base_wb = super::temperature_tint_to_coefficients(&second, 3_000.0, 0.0).unwrap();
+        let first_white = super::as_shot_temperature_tint(&first);
+        let second_white = super::as_shot_temperature_tint(&second);
+        assert!((first_white.0 - 5_000.0).abs() < 0.5);
+        assert!((second_white.0 - 3_000.0).abs() < 0.5);
+        assert_eq!(super::as_shot_temperature_tint(&first), first_white);
+        let first_adjusted = adjusted_white_balance(&first, 10.0, 0.0, 0.5);
+        assert_ne!(
+            adjusted_white_balance(&second, 10.0, 0.0, 0.5),
+            first_adjusted
+        );
+        assert_eq!(
+            adjusted_white_balance(&first, 10.0, 0.0, 0.5),
+            first_adjusted
+        );
     }
 
     #[test]

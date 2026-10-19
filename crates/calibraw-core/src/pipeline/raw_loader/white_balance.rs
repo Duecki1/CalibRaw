@@ -297,36 +297,37 @@ impl LoadedRaw {
         ]
     }
 
+    /// White-balance multipliers, camera-to-working transform and
+    /// hue/saturation table weight for temperature and tint offsets from the
+    /// as-shot white. As the DNG SDK renders a white, a dual-illuminant
+    /// profile's matrices and table weight are interpolated at the white's
+    /// own temperature; single-matrix models keep the as-shot transform and
+    /// weight. The as-shot white returns the values the photo loaded with.
     pub fn adjusted_white_balance_and_camera_transform(
         &self,
         temperature: f32,
         tint: f32,
     ) -> ([f32; 4], [[f32; 4]; 3], f32) {
-        if temperature.abs() < 1e-6 && tint.abs() < 1e-6 {
-            return (
-                self.wb_coeffs,
-                self.cam_to_srgb,
-                self.camera_profile.interpolation_weight,
-            );
-        }
-        #[cfg(libraw_available)]
-        if let Some(model) = &self.white_balance_model {
-            if let Some(white_balance) = libraw_loader::adjusted_white_balance_coefficients(
-                model,
-                temperature.clamp(-GLOBAL_TEMPERATURE_LIMIT, GLOBAL_TEMPERATURE_LIMIT),
-                tint.clamp(-GLOBAL_TINT_OFFSET_LIMIT, GLOBAL_TINT_OFFSET_LIMIT),
-            ) {
-                return (
-                    white_balance,
-                    self.cam_to_srgb,
-                    self.camera_profile.interpolation_weight,
-                );
-            }
-        }
-        (
+        let as_shot = (
             self.wb_coeffs,
             self.cam_to_srgb,
             self.camera_profile.interpolation_weight,
-        )
+        );
+        if temperature.abs() < 1e-6 && tint.abs() < 1e-6 {
+            return as_shot;
+        }
+        #[cfg(libraw_available)]
+        if let Some(model) = &self.white_balance_model {
+            if let Some(adjusted) = libraw_loader::adjusted_white_balance(
+                model,
+                temperature.clamp(-GLOBAL_TEMPERATURE_LIMIT, GLOBAL_TEMPERATURE_LIMIT),
+                tint.clamp(-GLOBAL_TINT_OFFSET_LIMIT, GLOBAL_TINT_OFFSET_LIMIT),
+                self.camera_profile.interpolation_weight,
+            ) {
+                let (transform, weight) = adjusted.profile.unwrap_or((as_shot.1, as_shot.2));
+                return (adjusted.coefficients, transform, weight);
+            }
+        }
+        as_shot
     }
 }
