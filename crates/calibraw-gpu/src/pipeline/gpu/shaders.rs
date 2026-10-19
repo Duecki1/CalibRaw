@@ -68,6 +68,7 @@ pub(super) const HAZE: ShaderSource = wgsl!("haze.wgsl");
 pub(super) const TONE_COMMON: ShaderSource = wgsl!("tone_common.wgsl");
 pub(super) const TONEMAP: ShaderSource = wgsl!("tonemap.wgsl");
 pub(super) const NOISE_CA_FINISH: ShaderSource = wgsl!("noise_ca_finish.wgsl");
+pub(super) const DUAL_DEMOSAIC: ShaderSource = wgsl!("dual_demosaic.wgsl");
 pub(super) const DETAIL_UTILS: ShaderSource = wgsl!("detail_utils.wgsl");
 pub(super) const DETAIL_CAPTURE: ShaderSource = wgsl!("detail_capture.wgsl");
 pub(super) const DETAIL_SCALE_SPACE: ShaderSource = wgsl!("detail_scale_space.wgsl");
@@ -130,7 +131,7 @@ pub(super) const BAYER_RCD_P1: ShaderSource = wgsl!("pass1.wgsl");
 pub(super) const BAYER_RCD_P2: ShaderSource = wgsl!("pass2.wgsl");
 pub(super) const BAYER_RCD_P3: ShaderSource = wgsl!("pass3.wgsl");
 pub(super) const BAYER_RCD_P4: ShaderSource = wgsl!("pass4.wgsl");
-pub(super) const DUAL_DEMOSAIC: ShaderSource = wgsl!("dual_demosaic.wgsl");
+pub(super) const DUAL_DEMOSAIC_DETAIL: ShaderSource = wgsl!("dual_demosaic_detail.wgsl");
 pub(super) const XTRANS_DEMOSAIC: ShaderSource = wgsl!("xtrans_demosaic.wgsl");
 pub(super) const XTRANS_FINISH: ShaderSource = wgsl!("xtrans_finish.wgsl");
 pub(super) const COLOR_DENOISE: ShaderSource = wgsl!("color_denoise.wgsl");
@@ -167,7 +168,7 @@ const fn xtrans_module(source: ShaderSource) -> ComposableModule {
 
 /// Composable modules in registration order: a module may only import
 /// modules listed before it.
-pub(super) const COMPOSABLE_MODULES: [ComposableModule; 23] = [
+pub(super) const COMPOSABLE_MODULES: [ComposableModule; 24] = [
     module(COMMON),
     module(COLOR),
     module(NOISE),
@@ -186,6 +187,11 @@ pub(super) const COMPOSABLE_MODULES: [ComposableModule; 23] = [
     module(TONE_COMMON),
     module(TONEMAP),
     module(NOISE_CA_FINISH),
+    ComposableModule {
+        source: DUAL_DEMOSAIC,
+        sensor: None,
+        work_format: true,
+    },
     module(DETAIL_UTILS),
     module(DETAIL_CAPTURE),
     ComposableModule {
@@ -259,8 +265,12 @@ pub(super) const BAYER_RCD_P4_ENTRY: EntryShader = entry(
     true,
     Some(CfaKind::Bayer),
 );
-pub(super) const DUAL_DEMOSAIC_ENTRY: EntryShader =
-    entry("calibraw robust dual demosaic", DUAL_DEMOSAIC, true, None);
+pub(super) const DUAL_DEMOSAIC_DETAIL_ENTRY: EntryShader = entry(
+    "calibraw dual demosaic detail",
+    DUAL_DEMOSAIC_DETAIL,
+    true,
+    None,
+);
 pub(super) const XTRANS_DEMOSAIC_ENTRY: EntryShader = entry(
     "calibraw grouped X-Trans demosaic",
     XTRANS_DEMOSAIC,
@@ -305,7 +315,7 @@ pub(super) const ALL_ENTRY_SHADERS: [EntryShader; 15] = [
     BAYER_RCD_P2_ENTRY,
     BAYER_RCD_P3_ENTRY,
     BAYER_RCD_P4_ENTRY,
-    DUAL_DEMOSAIC_ENTRY,
+    DUAL_DEMOSAIC_DETAIL_ENTRY,
     XTRANS_DEMOSAIC_ENTRY,
     XTRANS_FINISH_ENTRY,
     COLOR_DENOISE_ENTRY,

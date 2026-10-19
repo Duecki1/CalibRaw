@@ -10,8 +10,10 @@ pub(super) struct CameraUniforms {
     pub(super) reserved_a: f32,
     pub(super) highlight_clip: f32,
     pub(super) chroma_denoise: f32,
-    pub(super) ca_red: f32,
-    pub(super) ca_blue: f32,
+    /// Unused; keeps the WGSL field offsets.
+    pub(super) reserved_d: f32,
+    /// Unused; keeps the WGSL field offsets.
+    pub(super) reserved_e: f32,
     pub(super) highlight_reconstruction: f32,
     pub(super) tone_analysis_scale: f32,
     pub(super) tone_guide_radius: f32,
@@ -20,7 +22,8 @@ pub(super) struct CameraUniforms {
     pub(super) frequency_chroma: f32,
     /// Unused; keeps the WGSL field offsets.
     pub(super) reserved_b: f32,
-    pub(super) pre_demosaiced_raster: f32,
+    /// Unused; keeps the WGSL field offsets.
+    pub(super) reserved_f: f32,
     /// [`ViewTransformMode::shader_value`].
     pub(super) view_transform_mode: u32,
     /// Unused; keeps the WGSL field offsets.
@@ -577,8 +580,10 @@ impl GpuParams {
         self.camera.ai_denoise_enabled != 0
     }
 
+    /// Dual demosaicing with a zero threshold keeps the reference demosaic
+    /// (`dual_blend` in dual_demosaic.wgsl), as darktable's does.
     pub(super) fn needs_dual_demosaic_passes(&self) -> bool {
-        self.camera.demosaic_mode >= 1.5
+        self.camera.demosaic_mode >= 1.5 && self.camera.dual_threshold > 0.0
     }
 
     /// How many Texture and Clarity cascade levels the scene effects pass

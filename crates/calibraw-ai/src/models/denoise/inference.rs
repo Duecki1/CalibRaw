@@ -294,8 +294,6 @@ pub(super) fn infer_linear(
     neutral.ai_denoise_enabled = false;
     neutral.luminance_denoise = 0.0;
     neutral.chroma_denoise = 0.0;
-    neutral.ca_red = 0.0;
-    neutral.ca_blue = 0.0;
     let masks = MaskStack::default();
     if raw.uses_opposed_chroma(&neutral) {
         raw.inpaint_opposed_chroma_for_exposure(&neutral);

@@ -1,15 +1,15 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Adapted from darktable 5.6.0 Markesteijn and dual demosaicing.
+// Adapted from darktable 5.6.0 Markesteijn and 5.6.1 dual demosaicing.
 // Copyright (C) 2010-2026 darktable developers.
 // Credits include Frank Markesteijn, Ingo Weyrich, and Hanno Schwalm.
 // Copyright (C) 2026 CalibRaw contributors (WGSL adaptation).
 
 #import calibraw::common as Common
 #import calibraw::noise_ca_finish as NoiseCaFinish
+#import calibraw::dual_demosaic as Dual
 
 @group(0) @binding(26) var mark_high_read: texture_2d<f32>;
 @group(0) @binding(10) var xtrans_scene_write: texture_storage_2d<rgba16float /* CALIBRAW_WORK_FORMAT */, write>;
-@group(0) @binding(23) var xtrans_dual_low_read: texture_2d<f32>;
 
 fn xt_high(pos: vec2<i32>) -> vec3<f32> {
     return textureLoad(mark_high_read, Common::clamp_pos(pos), 0).rgb;
@@ -124,7 +124,7 @@ fn xt_reference_false_color_guard(pos: vec2<i32>, rgb: vec3<f32>) -> vec3<f32> {
         xt_median5(uv0.y, uvn.y, uvs.y, uvw.y, uve.y),
     );
     let disagreement = length(uv0 - median);
-    let strength = 0.50 * smoothstep(0.006, 0.055, disagreement);
+    let strength = NoiseCaFinish::finish_false_color_strength(rgb, disagreement, 0.50);
     if strength <= 1e-6 { return rgb; }
     let y = dot(rgb, vec3<f32>(0.2627, 0.6780, 0.0593));
     return NoiseCaFinish::finish_from_yuv(y, mix(uv0, median, strength));
@@ -146,12 +146,17 @@ fn xt_frequency_chroma(pos: vec2<i32>, rgb: vec3<f32>) -> vec3<f32> {
     return NoiseCaFinish::finish_from_yuv(y, uv);
 }
 
-fn xt_dual_low(pos: vec2<i32>) -> vec4<f32> {
-    return textureLoad(xtrans_dual_low_read, Common::clamp_pos(pos), 0);
-}
-
 override fn NoiseCaFinish::finish_reference_at(pos: vec2<i32>) -> vec3<f32> {
     return xt_high(pos);
+}
+
+// Pass 1 of dual demosaicing (dual_demosaic.wgsl), with Markesteijn as the
+// reference.
+@compute @workgroup_size(8, 8, 1)
+fn xtrans_dual_prepare(@builtin(global_invocation_id) gid: vec3<u32>) {
+    if gid.x >= Common::camera_uniforms.width || gid.y >= Common::camera_uniforms.height { return; }
+    let pos = vec2<i32>(i32(gid.x), i32(gid.y));
+    Dual::dual_store_prepared(pos, xt_high(pos), false);
 }
 
 @compute @workgroup_size(8, 8, 1)
@@ -161,19 +166,12 @@ fn xtrans_demosaic_finish(@builtin(global_invocation_id) gid: vec3<u32>) {
     let reference = xt_high(pos);
     var camera_rgb = reference;
     if Common::camera_uniforms.demosaic_mode >= 1.5 {
-        let low = xt_dual_low(pos);
-        let opponent_delta = length(xt_uv(reference) - xt_uv(low.rgb));
-        camera_rgb = mix(
-            low.rgb,
-            reference,
-            NoiseCaFinish::finish_dual_high_weight(pos, reference, low, opponent_delta),
-        );
+        camera_rgb = Dual::dual_blend(pos, reference);
     } else if Common::camera_uniforms.demosaic_mode >= 0.5 {
         camera_rgb = xt_frequency_chroma(pos, reference);
     } else {
         camera_rgb = xt_reference_false_color_guard(pos, reference);
     }
     camera_rgb = NoiseCaFinish::finish_apply_sensor_denoise(pos, camera_rgb);
-    camera_rgb = NoiseCaFinish::finish_apply_ca(pos, camera_rgb);
     textureStore(xtrans_scene_write, pos, vec4<f32>(camera_rgb, 1.0));
 }

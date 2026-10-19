@@ -48,8 +48,6 @@ fn raw_controls_changed(before: &ExposureParams, after: &ExposureParams) -> bool
         || before.demosaic_mode != after.demosaic_mode
         || before.dual_threshold != after.dual_threshold
         || before.frequency_chroma != after.frequency_chroma
-        || before.ca_red != after.ca_red
-        || before.ca_blue != after.ca_blue
         || before.highlight_method != after.highlight_method
         || before.highlight_clip != after.highlight_clip
         || before.highlight_reconstruction != after.highlight_reconstruction

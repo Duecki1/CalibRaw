@@ -1,9 +1,12 @@
-//! Writing sidecars and presets that v1.2 and older can still open.
+//! Writing sidecars and presets that v1.3 and older can still open.
 //!
 //! migration: remove in v2.0.0
 //!
 //! Devices share sidecars and may run different versions, so a file saved
 //! here stays readable by those versions where it can:
+//! - Up to v1.3, readers require the `ca_red` and `ca_blue` fields of the
+//!   retired demosaic chromatic-aberration shift. No release could set them,
+//!   so they are written as 0 and ignored when read.
 //! - Up to v1.2, readers require the Effects-card slider fields that edits no
 //!   longer hold. They are written at rest, so those readers decode the edit
 //!   and show the effects that replaced the sliders as effect components,
@@ -23,20 +26,25 @@ use serde::{Serialize, Serializer};
 /// The sidecar and preset schema that v1.2 and older read.
 pub(crate) const V1_SCHEMA_VERSION: u32 = 1;
 
-/// Serializes `exposure` with the Effects-card sliders at rest.
+/// Serializes `exposure` with the chromatic-aberration shift and the
+/// Effects-card sliders at rest.
 pub(crate) fn serialize_exposure<S: Serializer>(
     exposure: &ExposureParams,
     serializer: S,
 ) -> Result<S::Ok, S::Error> {
     #[derive(Serialize)]
-    struct WithRestingSliders<'a> {
+    struct WithRestingFields<'a> {
         #[serde(flatten)]
         exposure: &'a ExposureParams,
+        ca_red: f32,
+        ca_blue: f32,
         #[serde(flatten)]
         sliders: GlobalSliders,
     }
-    WithRestingSliders {
+    WithRestingFields {
         exposure,
+        ca_red: 0.0,
+        ca_blue: 0.0,
         sliders: GlobalSliders::default(),
     }
     .serialize(serializer)
@@ -104,9 +112,11 @@ mod tests {
         let bytes = encode(edits.clone()).unwrap();
         let document = document(&bytes);
         assert_eq!(document["schema_version"], V1_SCHEMA_VERSION);
-        // The fields v1.2 requires, at the defaults it gave them.
+        // The fields v1.3 and v1.2 require, at the defaults they gave them.
         let exposure = &document["edits"]["exposure"];
         for (field, value) in [
+            ("ca_red", 0.0),
+            ("ca_blue", 0.0),
             ("glow_amount", 0.0),
             ("glow_radius", 50.0),
             ("glow_threshold", 60.0),

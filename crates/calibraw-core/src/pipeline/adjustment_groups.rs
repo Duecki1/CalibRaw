@@ -125,7 +125,7 @@ impl ExposureParams {
     }
 
     /// Copies the RAW decoding settings that no sidebar card owns: black point,
-    /// tone mapper, demosaic, chromatic aberration and highlight reconstruction.
+    /// tone mapper, demosaic and highlight reconstruction.
     pub fn copy_raw_processing_from(&mut self, source: &Self) {
         self.copy_section_from(source, ExposureSection::RawProcessing);
     }
@@ -155,8 +155,6 @@ impl ExposureParams {
             demosaic_mode,
             dual_threshold,
             frequency_chroma,
-            ca_red,
-            ca_blue,
             highlight_method,
             highlight_clip,
             highlight_reconstruction,
@@ -233,8 +231,6 @@ impl ExposureParams {
                 self.demosaic_mode = demosaic_mode;
                 self.dual_threshold = dual_threshold;
                 self.frequency_chroma = frequency_chroma;
-                self.ca_red = ca_red;
-                self.ca_blue = ca_blue;
                 self.highlight_method = highlight_method;
                 self.highlight_clip = highlight_clip;
                 self.highlight_reconstruction = highlight_reconstruction;

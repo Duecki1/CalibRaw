@@ -446,8 +446,6 @@ fn validate_exposure(exposure: &ExposureParams) -> Result<(), SidecarError> {
             exposure.denoise_detail,
             exposure.dual_threshold,
             exposure.frequency_chroma,
-            exposure.ca_red,
-            exposure.ca_blue,
             exposure.highlight_clip,
             exposure.highlight_reconstruction,
             exposure.highlights,

@@ -9,8 +9,8 @@ pub(in crate::pipeline::gpu) struct BindGroups {
     pub(in crate::pipeline::gpu) bg1: wgpu::BindGroup,
     pub(in crate::pipeline::gpu) bg2: wgpu::BindGroup,
     pub(in crate::pipeline::gpu) bg3: wgpu::BindGroup,
-    pub(in crate::pipeline::gpu) bg_dual_green: wgpu::BindGroup,
-    pub(in crate::pipeline::gpu) bg_dual_rgb: wgpu::BindGroup,
+    pub(in crate::pipeline::gpu) bg_dual_prepare: wgpu::BindGroup,
+    pub(in crate::pipeline::gpu) bg_dual_detail: wgpu::BindGroup,
     pub(in crate::pipeline::gpu) bg4: wgpu::BindGroup,
     pub(in crate::pipeline::gpu) bg_xtrans_derivatives: wgpu::BindGroup,
     pub(in crate::pipeline::gpu) bg_xtrans_homogeneity: wgpu::BindGroup,
@@ -145,36 +145,43 @@ pub(in crate::pipeline::gpu) fn create_bind_groups(
         ],
     );
 
-    let (dual_green_view, dual_low_view) = match cfa_kind {
+    // Scratch textures the reference demosaic no longer needs by the dual
+    // passes: the prepared interpolation, then the smoothed one with its mask.
+    let (dual_prepared_view, dual_low_view) = match cfa_kind {
         CfaKind::Bayer => (highlight_work_a_view, highlight_work_b_view),
         CfaKind::XTrans => (tex1_view, tex2_view),
     };
 
-    let bg_dual_green = create_bind_group(
+    let mut dual_prepare_entries = vec![
+        buffer_binding(0, camera_uniforms_buffer),
+        texture_binding(1, raw_view),
+        texture_binding(2, color_view),
+        texture_binding(19, black_view),
+        texture_binding(3, reconstructed_raw_view),
+        texture_binding(20, dual_prepared_view),
+    ];
+    match cfa_kind {
+        CfaKind::Bayer => dual_prepare_entries
+            .extend([texture_binding(7, tex2_view), texture_binding(9, tex1_view)]),
+        CfaKind::XTrans => dual_prepare_entries.push(texture_binding(26, highlight_work_a_view)),
+    }
+    let bg_dual_prepare = create_bind_group(
         device,
-        "bg dual demosaic green",
-        &layouts.bgl_dual_green,
-        &[
-            buffer_binding(0, camera_uniforms_buffer),
-            texture_binding(1, raw_view),
-            texture_binding(2, color_view),
-            texture_binding(19, black_view),
-            texture_binding(3, reconstructed_raw_view),
-            texture_binding(20, dual_green_view),
-        ],
+        "bg dual demosaic prepare",
+        &layouts.bgl_dual_prepare,
+        &dual_prepare_entries,
     );
 
-    let bg_dual_rgb = create_bind_group(
+    let bg_dual_detail = create_bind_group(
         device,
-        "bg dual demosaic rgb",
-        &layouts.bgl_dual_rgb,
+        "bg dual demosaic detail",
+        &layouts.bgl_dual_detail,
         &[
             buffer_binding(0, camera_uniforms_buffer),
             texture_binding(1, raw_view),
             texture_binding(2, color_view),
             texture_binding(19, black_view),
-            texture_binding(3, reconstructed_raw_view),
-            texture_binding(21, dual_green_view),
+            texture_binding(21, dual_prepared_view),
             texture_binding(22, dual_low_view),
         ],
     );
@@ -530,8 +537,8 @@ pub(in crate::pipeline::gpu) fn create_bind_groups(
         bg1,
         bg2,
         bg3,
-        bg_dual_green,
-        bg_dual_rgb,
+        bg_dual_prepare,
+        bg_dual_detail,
         bg4,
         bg_xtrans_derivatives,
         bg_xtrans_homogeneity,
