@@ -34,7 +34,7 @@ pub fn android_main(android_app: AndroidApp) {
     let result = eframe::run_native(
         "CalibRaw",
         options,
-        Box::new(move |cc| Ok(Box::new(crate::CalibRawApp::new(cc, platform)))),
+        Box::new(move |cc| Ok(crate::app::create_app(cc, platform))),
     );
     if let Err(error) = result {
         log::error!("CalibRaw terminated: {error:#}");

@@ -68,6 +68,50 @@ fn memory_budget_thresholds(memory: platform::MemoryClass) -> eframe::wgpu::Memo
     }
 }
 
+/// Index of the adapter the editor window runs on, from the `(backend, device
+/// type)` of each adapter that can draw to it, in enumeration order.
+///
+/// Picks as wgpu's `request_adapter` would, among `processing` backends only, so
+/// a software Vulkan adapter wins over a GL hardware one. When no processing
+/// adapter exists it picks among the rest, so the window can still open and say
+/// the driver is unsupported (`app::create_app`).
+fn editor_adapter_index(
+    adapters: &[(eframe::wgpu::Backend, eframe::wgpu::DeviceType)],
+    processing: eframe::wgpu::Backends,
+    power_preference: eframe::wgpu::PowerPreference,
+) -> Option<usize> {
+    let best = |for_processing: bool| {
+        adapters
+            .iter()
+            .enumerate()
+            .filter(|(_, (backend, _))| {
+                processing.contains(eframe::wgpu::Backends::from(*backend)) == for_processing
+            })
+            // `min_by_key` keeps the first of equal ranks, like wgpu's stable sort.
+            .min_by_key(|(_, (_, device_type))| adapter_rank(*device_type, power_preference))
+            .map(|(index, _)| index)
+    };
+    best(true).or_else(|| best(false))
+}
+
+/// The order wgpu-core 29's `Instance::request_adapter` prefers device types
+/// in; lower ranks first.
+fn adapter_rank(
+    device_type: eframe::wgpu::DeviceType,
+    power_preference: eframe::wgpu::PowerPreference,
+) -> u8 {
+    use eframe::wgpu::{DeviceType, PowerPreference};
+    match (power_preference, device_type) {
+        (PowerPreference::None, _) => 0,
+        (PowerPreference::LowPower, DeviceType::IntegratedGpu)
+        | (PowerPreference::HighPerformance, DeviceType::DiscreteGpu) => 1,
+        (_, DeviceType::IntegratedGpu | DeviceType::DiscreteGpu) => 2,
+        (_, DeviceType::Other) => 3,
+        (_, DeviceType::VirtualGpu) => 4,
+        (_, DeviceType::Cpu) => 5,
+    }
+}
+
 /// Options for the editor window; each platform's entry point adds its own.
 fn native_options(caps: platform::PlatformCaps) -> eframe::NativeOptions {
     let mut options = eframe::NativeOptions {
@@ -77,6 +121,29 @@ fn native_options(caps: platform::PlatformCaps) -> eframe::NativeOptions {
 
     if let eframe::egui_wgpu::WgpuSetup::CreateNew(setup) = &mut options.wgpu_options.wgpu_setup {
         setup.instance_descriptor.memory_budget_thresholds = memory_budget_thresholds(caps.memory);
+        let power_preference = setup.power_preference;
+        setup.native_adapter_selector = Some(std::sync::Arc::new(move |adapters, surface| {
+            let drawable: Vec<&eframe::wgpu::Adapter> = adapters
+                .iter()
+                .filter(|adapter| {
+                    surface.is_none_or(|surface| adapter.is_surface_supported(surface))
+                })
+                .collect();
+            let kinds: Vec<_> = drawable
+                .iter()
+                .map(|adapter| {
+                    let info = adapter.get_info();
+                    (info.backend, info.device_type)
+                })
+                .collect();
+            editor_adapter_index(
+                &kinds,
+                calibraw_gpu::processing_backends(),
+                power_preference,
+            )
+            .map(|index| drawable[index].clone())
+            .ok_or_else(|| "no graphics adapter can draw to this window".to_owned())
+        }));
         setup.device_descriptor = std::sync::Arc::new(|adapter| {
             let info = adapter.get_info();
             let adapter_limits = adapter.limits();
@@ -112,4 +179,56 @@ fn native_options(caps: platform::PlatformCaps) -> eframe::NativeOptions {
 /// through `android_main`.
 pub fn main() -> eframe::Result {
     platform::main()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::editor_adapter_index;
+    use eframe::wgpu::{Backend, Backends, DeviceType, PowerPreference};
+
+    #[test]
+    fn a_software_processing_adapter_wins_over_a_gl_gpu() {
+        let adapters = [
+            (Backend::Gl, DeviceType::IntegratedGpu),
+            (Backend::Vulkan, DeviceType::Cpu),
+        ];
+        assert_eq!(
+            editor_adapter_index(
+                &adapters,
+                Backends::PRIMARY,
+                PowerPreference::HighPerformance
+            ),
+            Some(1)
+        );
+    }
+
+    #[test]
+    fn gl_is_picked_only_when_nothing_else_can_draw() {
+        let adapters = [(Backend::Gl, DeviceType::IntegratedGpu)];
+        assert_eq!(
+            editor_adapter_index(
+                &adapters,
+                Backends::PRIMARY,
+                PowerPreference::HighPerformance
+            ),
+            Some(0)
+        );
+        assert_eq!(
+            editor_adapter_index(&[], Backends::PRIMARY, PowerPreference::HighPerformance),
+            None
+        );
+    }
+
+    #[test]
+    fn processing_adapters_follow_the_power_preference() {
+        let adapters = [
+            (Backend::Vulkan, DeviceType::Cpu),
+            (Backend::Vulkan, DeviceType::IntegratedGpu),
+            (Backend::Vulkan, DeviceType::DiscreteGpu),
+        ];
+        let pick = |preference| editor_adapter_index(&adapters, Backends::PRIMARY, preference);
+        assert_eq!(pick(PowerPreference::HighPerformance), Some(2));
+        assert_eq!(pick(PowerPreference::LowPower), Some(1));
+        assert_eq!(pick(PowerPreference::None), Some(0));
+    }
 }
