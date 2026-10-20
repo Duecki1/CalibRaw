@@ -126,6 +126,7 @@ pub(super) const XTRANS_DEMOSAIC: ShaderSource = wgsl!("xtrans_demosaic.wgsl");
 pub(super) const XTRANS_FINISH: ShaderSource = wgsl!("xtrans_finish.wgsl");
 pub(super) const RASTER_FINISH: ShaderSource = wgsl!("raster_finish.wgsl");
 pub(super) const COLOR_DENOISE: ShaderSource = wgsl!("color_denoise.wgsl");
+pub(super) const CHROMATIC_ABERRATION: ShaderSource = wgsl!("chromatic_aberration.wgsl");
 pub(super) const TONE_ANALYSIS: ShaderSource = wgsl!("tone_analysis.wgsl");
 pub(super) const HAZE_ANALYSIS: ShaderSource = wgsl!("haze_analysis.wgsl");
 pub(super) const SCENE_ADJUSTMENTS: ShaderSource = wgsl!("scene_adjustments.wgsl");
@@ -277,6 +278,12 @@ pub(super) const COLOR_DENOISE_ENTRY: EntryShader = entry(
     true,
     None,
 );
+pub(super) const CHROMATIC_ABERRATION_ENTRY: EntryShader = entry(
+    "calibraw chromatic aberration",
+    CHROMATIC_ABERRATION,
+    true,
+    None,
+);
 pub(super) const TONE_ANALYSIS_ENTRY: EntryShader =
     entry("calibraw tone analysis", TONE_ANALYSIS, false, None);
 pub(super) const HAZE_ANALYSIS_ENTRY: EntryShader =
@@ -297,7 +304,7 @@ pub(super) const REMOVE_COMPOSITE_ENTRY: EntryShader = entry(
 
 /// Every entry shader, for validation and layout tests.
 #[cfg(test)]
-pub(super) const ALL_ENTRY_SHADERS: [EntryShader; 16] = [
+pub(super) const ALL_ENTRY_SHADERS: [EntryShader; 17] = [
     HIGHLIGHTS_ENTRY,
     BAYER_RCD_P1_ENTRY,
     BAYER_RCD_P2_ENTRY,
@@ -308,6 +315,7 @@ pub(super) const ALL_ENTRY_SHADERS: [EntryShader; 16] = [
     XTRANS_FINISH_ENTRY,
     RASTER_FINISH_ENTRY,
     COLOR_DENOISE_ENTRY,
+    CHROMATIC_ABERRATION_ENTRY,
     TONE_ANALYSIS_ENTRY,
     HAZE_ANALYSIS_ENTRY,
     SCENE_ADJUSTMENTS_ENTRY,

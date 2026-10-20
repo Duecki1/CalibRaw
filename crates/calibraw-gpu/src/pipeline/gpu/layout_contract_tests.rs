@@ -18,8 +18,8 @@ use super::{
 use super::{DETAIL_PYRAMID_LEVELS, DETAIL_PYRAMID_TEXTURE_LEVELS};
 use crate::pipeline::MaskEffect;
 use calibraw_core::pipeline::{
-    DETAIL_CLARITY_SUPPORT, DETAIL_TEXTURE_SUPPORT, HAZE_BOX_SUPPORT, HAZE_GUIDE_SUPPORT,
-    MAX_RESOLUTION_SCALE, TONE_GUIDE_RADIUS_CELLS,
+    CA_WINDOW_RADIUS, DETAIL_CLARITY_SUPPORT, DETAIL_TEXTURE_SUPPORT, HAZE_BOX_SUPPORT,
+    HAZE_GUIDE_SUPPORT, MAX_LATERAL_SHIFT, MAX_RESOLUTION_SCALE, TONE_GUIDE_RADIUS_CELLS,
 };
 use naga::proc::Layouter;
 use std::collections::BTreeSet;
@@ -224,6 +224,9 @@ fn shared_uniform_and_mask_structs_match_rust_layouts() {
                 user_exposure_bits,
                 ai_cfa_weight,
                 source_short_edge,
+                chromatic_aberration,
+                lateral_ca_red,
+                lateral_ca_blue,
             }),
         ),
         (
@@ -448,6 +451,17 @@ fn detail_pyramid_levels_and_tile_support_match_the_shader() {
     let footprint = |levels: u32| radius * ((1 << levels) - 1);
     assert_eq!(footprint(levels), DETAIL_CLARITY_SUPPORT);
     assert_eq!(footprint(texture_levels), DETAIL_TEXTURE_SUPPORT);
+}
+
+/// Chromatic aberration reads no farther past a tile core than the export halo
+/// reserves (`CHROMATIC_ABERRATION_SUPPORT`), and clamps lateral shifts to the
+/// largest the estimate allows.
+#[test]
+fn chromatic_aberration_reach_matches_the_tile_support() {
+    let modules = production_modules();
+    let constant = |name: &str| shared_u32_constant(&modules, name);
+    assert_eq!(constant("CA_MAX_LATERAL_SHIFT") as f32, MAX_LATERAL_SHIFT);
+    assert_eq!(constant("CA_WINDOW_RADIUS"), CA_WINDOW_RADIUS);
 }
 
 /// The tone-guide blur in tone_analysis.wgsl takes enough taps for its radius

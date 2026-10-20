@@ -2,6 +2,7 @@ pub mod adjustment_groups;
 pub use adjustment_groups::{AdjustmentGroup, AdjustmentGroupSet};
 pub mod alignment;
 pub mod basicadj;
+mod chromatic_aberration;
 pub mod color_profile;
 mod display_raster;
 mod exif_metadata;
@@ -31,6 +32,7 @@ pub use basicadj::{
     GLOBAL_TINT_OFFSET_LIMIT, HSL_HUE_LIMIT, HUE_ROTATION_LIMIT_DEGREES, MAX_POINT_CURVE_POINTS,
     MAX_TEMPERATURE_KELVIN, MAX_WHITE_BALANCE_TINT, MIN_TEMPERATURE_KELVIN, MIN_WHITE_BALANCE_TINT,
 };
+pub use chromatic_aberration::{LateralChannel, LateralChromaticAberration, MAX_LATERAL_SHIFT};
 pub use color_profile::{
     CameraProfile, DcpMatrixSet, DcpProfile, HsvMap, ProfileEncoding, SrgbOutputTransform,
     ToneCurve,
@@ -68,9 +70,9 @@ pub use point_color::{PointColor, PointColorRange, PointColors, MAX_POINT_COLORS
 pub use processing::{
     affected_stage, build_proxy, build_region_proxy, crop_raw, extract_padded_tile,
     extract_padded_tile_into, required_export_tile_halo, ExportTile, ProcessingStage, ProxySpec,
-    TilePlan, TileSpec, DETAIL_CLARITY_SUPPORT, DETAIL_TEXTURE_SUPPORT, EXPORT_TILE_HALO,
-    HAZE_BOX_SUPPORT, HAZE_GUIDE_SUPPORT, MAX_RESOLUTION_SCALE, MIN_EXPORT_TILE_HALO,
-    TONE_GUIDE_CELL_SIZE, TONE_GUIDE_RADIUS_CELLS,
+    TilePlan, TileSpec, CA_WINDOW_RADIUS, CHROMATIC_ABERRATION_SUPPORT, DETAIL_CLARITY_SUPPORT,
+    DETAIL_TEXTURE_SUPPORT, EXPORT_TILE_HALO, HAZE_BOX_SUPPORT, HAZE_GUIDE_SUPPORT,
+    MAX_RESOLUTION_SCALE, MIN_EXPORT_TILE_HALO, TONE_GUIDE_CELL_SIZE, TONE_GUIDE_RADIUS_CELLS,
 };
 pub use raw_loader::{
     decodes_as_raster, is_supported_raw_path, is_unsupported_raw_error,

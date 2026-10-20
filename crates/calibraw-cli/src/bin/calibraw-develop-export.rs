@@ -306,6 +306,7 @@ fn set_adjustment(
         }
         "dual_threshold" => exposure.dual_threshold = value.clamp(0.0, 100.0),
         "frequency_chroma" => exposure.frequency_chroma = value.clamp(0.0, 1.0),
+        "chromatic_aberration" => exposure.chromatic_aberration = value.clamp(0.0, 100.0),
         other => bail!("unsupported adjustment {other:?}"),
     }
     Ok(())
@@ -470,9 +471,9 @@ fn print_help() {
         "blacks, texture, clarity, dehaze, vignette, hue, vibrance, saturation, temperature, tint,\n",
         "luminance_denoise, color_denoise, denoise_detail, denoise_quality (0/1/2),\n",
         "sharpen_amount, sharpen_radius, sharpen_detail, sharpen_masking, demosaic_mode\n",
-        "(0 Reference, 1 frequency-domain chroma, 2 dual), dual_threshold, and\n",
-        "frequency_chroma. The suite\n",
+        "(0 Reference, 1 frequency-domain chroma, 2 dual), dual_threshold,\n",
+        "frequency_chroma and chromatic_aberration (0 to 100). The suite\n",
         "exports isolated endpoints matching the standard\n",
-        "Reference comparison set. Lens correction is not applied by this tool."
+        "Reference comparison set. Lens profile correction is not applied by this tool."
     ));
 }

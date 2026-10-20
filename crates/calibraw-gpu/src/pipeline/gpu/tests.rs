@@ -1293,6 +1293,7 @@ fn opposed_highlight_consistency_raw(width: u32, height: u32) -> LoadedRaw {
         white_balance_model: None,
         lens_geometry: None,
         lens_shading: None,
+        lateral_chromatic_aberration: crate::pipeline::LateralChromaticAberration::NONE,
         ai_denoised: std::sync::Arc::new(std::sync::RwLock::new(None)),
         opposed_chroma_cache: Default::default(),
         opposed_chroma_source_identity: Default::default(),

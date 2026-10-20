@@ -19,7 +19,8 @@ Checked items are done. Order within a section is not a priority.
 - [X]  Camera profile highlight fixes
 - [X]  Export: JPEG XL, single export button, remembered settings
 - [X]  Grain module
-- [ ]  Chromatic aberration and color fringing
+- [X]  Chromatic aberration and color fringing
+- [ ]  Dead and hot pixel correction
 - [ ]  Auto tone, auto geometry, auto perspective
 - [ ]  Depth lens blur
 - [ ]  LUT support

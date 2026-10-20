@@ -99,6 +99,13 @@ struct CameraUniforms {
     // Shorter edge in pixels of the whole photo at its native resolution;
     // full_width and full_height give the processing resolution.
     source_short_edge: u32,
+    // Chromatic aberration (chromatic_aberration.wgsl): (amount in [0, 1],
+    // then the gains that white-balance the scene's red, green and blue), then
+    // the photo's lateral model of red and of blue, [k1, k2, tx, ty] scaled by
+    // the amount.
+    chromatic_aberration: vec4<f32>,
+    lateral_ca_red: vec4<f32>,
+    lateral_ca_blue: vec4<f32>,
 }
 
 struct SceneToneUniforms {

@@ -8,6 +8,7 @@ use super::basicadj::{
     white_balance_tint_offset, ExposureParams, HighlightReconstructionMethod, WhiteBalance,
     GLOBAL_TEMPERATURE_LIMIT, GLOBAL_TINT_OFFSET_LIMIT,
 };
+use super::chromatic_aberration::LateralChromaticAberration;
 use super::color_profile::CameraProfile;
 use super::geometry::LensGeometryMap;
 use super::lens_shading::LensShadingMap;
@@ -347,6 +348,10 @@ pub struct LoadedRaw {
     /// sensor mosaics carry them. Placed over the whole photo, so crops,
     /// proxies and tiles keep them.
     pub lens_shading: Option<LensShadingMap>,
+    /// Where red and blue sit relative to green, measured over the whole
+    /// photo when it is decoded. Normalized to the photo, so crops, proxies
+    /// and tiles keep their source's.
+    pub lateral_chromatic_aberration: LateralChromaticAberration,
     pub ai_denoised: Arc<RwLock<Option<AiDenoisedImage>>>,
     pub opposed_chroma_cache: OpposedChromaCache,
     /// Runtime identity of the full sensor source used to estimate opposed-highlight chroma.
@@ -400,6 +405,7 @@ impl LoadedRaw {
             white_balance_model: self.white_balance_model.clone(),
             lens_geometry: None,
             lens_shading: self.lens_shading.clone(),
+            lateral_chromatic_aberration: self.lateral_chromatic_aberration,
             ai_denoised: Arc::new(RwLock::new(None)),
             opposed_chroma_cache: Arc::clone(&self.opposed_chroma_cache),
             opposed_chroma_source_identity: Arc::clone(&self.opposed_chroma_source_identity),
@@ -454,6 +460,7 @@ impl LoadedRaw {
             white_balance_model: None,
             lens_geometry: None,
             lens_shading: None,
+            lateral_chromatic_aberration: LateralChromaticAberration::NONE,
             ai_denoised: Arc::new(RwLock::new(None)),
             opposed_chroma_cache: Default::default(),
             opposed_chroma_source_identity: Default::default(),
@@ -591,6 +598,7 @@ impl RasterSource {
         if let Some(rgb) = raw.scene_linear_raster() {
             raw.noise_profile = NoiseProfile::estimate_raster(raw.width, raw.height, rgb);
         }
+        raw.lateral_chromatic_aberration = LateralChromaticAberration::estimate(&raw);
         Ok(raw)
     }
 
@@ -1248,6 +1256,7 @@ mod tests {
             }),
             lens_geometry: None,
             lens_shading: None,
+            lateral_chromatic_aberration: crate::pipeline::LateralChromaticAberration::NONE,
             ai_denoised: std::sync::Arc::new(std::sync::RwLock::new(None)),
             opposed_chroma_cache: Default::default(),
             opposed_chroma_source_identity: Default::default(),

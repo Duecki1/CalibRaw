@@ -106,11 +106,13 @@ impl<'de> Deserialize<'de> for AdjustmentGroupSet {
     }
 }
 
-/// Which part of [`ExposureParams`] a copy covers: one sidebar card, or the
-/// RAW decoding settings that no card owns.
+/// Which part of [`ExposureParams`] a copy covers: one sidebar card, the
+/// Lens Corrections card's settings, which move with lens correction rather
+/// than as an adjustment group, or the RAW decoding settings that no card owns.
 #[derive(Clone, Copy)]
 enum ExposureSection {
     Group(AdjustmentGroup),
+    LensCorrection,
     RawProcessing,
 }
 
@@ -128,6 +130,13 @@ impl ExposureParams {
     /// tone mapper, demosaic and highlight reconstruction.
     pub fn copy_raw_processing_from(&mut self, source: &Self) {
         self.copy_section_from(source, ExposureSection::RawProcessing);
+    }
+
+    /// Copies the develop settings of the Lens Corrections card: chromatic
+    /// aberration removal. The lens profile and manual corrections are not
+    /// develop settings (`LensEditState`).
+    pub fn copy_lens_correction_from(&mut self, source: &Self) {
+        self.copy_section_from(source, ExposureSection::LensCorrection);
     }
 
     fn copy_section_from(&mut self, source: &Self, section: ExposureSection) {
@@ -158,6 +167,7 @@ impl ExposureParams {
             highlight_method,
             highlight_clip,
             highlight_reconstruction,
+            chromatic_aberration,
             highlights,
             shadows,
             whites,
@@ -224,6 +234,9 @@ impl ExposureParams {
                 self.hsl_saturation = hsl_saturation;
                 self.hsl_luminance = hsl_luminance;
                 self.point_colors = point_colors;
+            }
+            ExposureSection::LensCorrection => {
+                self.chromatic_aberration = chromatic_aberration;
             }
             ExposureSection::RawProcessing => {
                 self.black_point = black_point;
@@ -367,13 +380,14 @@ mod tests {
     }
 
     #[test]
-    fn groups_and_raw_processing_cover_every_exposure_setting() {
+    fn groups_lens_correction_and_raw_processing_cover_every_exposure_setting() {
         let source = edited_exposure();
         let mut copied = ExposureParams::default();
         for group in AdjustmentGroup::ALL {
             copied.copy_group_from(&source, group);
         }
         copied.copy_raw_processing_from(&source);
+        copied.copy_lens_correction_from(&source);
         assert_eq!(
             serde_json::to_value(copied).unwrap(),
             serde_json::to_value(source).unwrap()

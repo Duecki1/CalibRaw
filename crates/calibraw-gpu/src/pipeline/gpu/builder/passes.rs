@@ -92,6 +92,12 @@ pub(in crate::pipeline::gpu) struct StageIndices {
     pub(in crate::pipeline::gpu) haze_accumulate_pass_index: usize,
     pub(in crate::pipeline::gpu) haze_resolve_pass_index: usize,
     pub(in crate::pipeline::gpu) haze_end_index: usize,
+    /// Chromatic aberration's lateral shift, then its fringe removal
+    /// (chromatic_aberration.wgsl). They run with the RAW stage, between the
+    /// demosaic or raster finish and colour denoise, but come last so that
+    /// adding them kept earlier positions.
+    pub(in crate::pipeline::gpu) chromatic_aberration_prepare_pass_index: usize,
+    pub(in crate::pipeline::gpu) chromatic_aberration_fringe_pass_index: usize,
     pub(in crate::pipeline::gpu) pass_count: usize,
 }
 
@@ -142,6 +148,9 @@ impl StageIndices {
         let raster_finish_pass_index = take(1);
         let haze_accumulate_pass_index = take(1);
         let haze_resolve_pass_index = take(HAZE_PASSES - 1);
+        let haze_end_index = take(0);
+        let chromatic_aberration_prepare_pass_index = take(1);
+        let chromatic_aberration_fringe_pass_index = take(1);
         let pass_count = next;
         Self {
             highlight_pass_index,
@@ -178,7 +187,9 @@ impl StageIndices {
             raster_finish_pass_index,
             haze_accumulate_pass_index,
             haze_resolve_pass_index,
-            haze_end_index: pass_count,
+            haze_end_index,
+            chromatic_aberration_prepare_pass_index,
+            chromatic_aberration_fringe_pass_index,
             pass_count,
         }
     }
@@ -666,6 +677,28 @@ pub(in crate::pipeline::gpu) fn assemble_passes(
             workgroups,
         ));
     }
+
+    ensure_planned(
+        &passes,
+        indices.chromatic_aberration_prepare_pass_index,
+        "chromatic aberration",
+    )?;
+    passes.extend([
+        assembler.make_pass(
+            shaders.chromatic_aberration_module.as_ref(),
+            "chromatic_aberration_prepare",
+            &layouts.bgl_color_denoise,
+            groups.bg_chromatic_aberration_prepare.clone(),
+            image_workgroups,
+        ),
+        assembler.make_pass(
+            shaders.chromatic_aberration_module.as_ref(),
+            "chromatic_aberration_fringes",
+            &layouts.bgl_color_denoise,
+            groups.bg_chromatic_aberration_fringes.clone(),
+            image_workgroups,
+        ),
+    ]);
 
     // The post-blur variants reuse the programs above with bind groups that
     // read the mask-blurred scene.

@@ -564,6 +564,32 @@ fn copied_adjustments_respect_category_settings_and_mark_ai_masks_stale() {
 }
 
 #[test]
+fn chromatic_aberration_is_pasted_with_lens_correction_not_adjustments() {
+    let mut source = sample_edits();
+    source.exposure.chromatic_aberration = 80.0;
+    let settings = |adjustments, lens_correction| AdjustmentCopySettings {
+        adjustments,
+        geometry: false,
+        camera_profile: false,
+        masks: false,
+        ai_masks: false,
+        lens_correction,
+    };
+
+    let mut destination = default_edit_state();
+    paste(&mut destination, &source, settings(true, false));
+    assert_eq!(destination.exposure.dehaze, 27.0);
+    assert_eq!(destination.exposure.chromatic_aberration, 0.0);
+
+    let mut destination = default_edit_state();
+    paste(&mut destination, &source, settings(false, true));
+    assert_eq!(destination.exposure.chromatic_aberration, 80.0);
+    assert_eq!(destination.exposure.dehaze, 0.0);
+    assert_eq!(destination.lens, source.lens);
+    assert!(EditSelection::from(settings(false, true)).includes_exposure());
+}
+
+#[test]
 fn copied_uncached_ai_masks_are_still_marked_stale() {
     let mut source = default_edit_state();
     let mut source_masks = MaskStack::default();

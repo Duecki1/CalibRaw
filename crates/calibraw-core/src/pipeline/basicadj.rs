@@ -288,6 +288,14 @@ pub struct ExposureParams {
     pub highlight_method: HighlightReconstructionMethod,
     pub highlight_clip: f32,
     pub highlight_reconstruction: f32,
+    /// Chromatic aberration removal in `[0, 100]`, owned by the Lens
+    /// Corrections card: moves red and blue back onto green by the photo's
+    /// measured lateral aberration ([`LoadedRaw::lateral_chromatic_aberration`])
+    /// and removes the axial colour fringes that remain.
+    ///
+    /// [`LoadedRaw::lateral_chromatic_aberration`]: super::LoadedRaw::lateral_chromatic_aberration
+    #[serde(default)]
+    pub chromatic_aberration: f32,
 
     pub highlights: f32,
     pub shadows: f32,
@@ -372,6 +380,7 @@ impl Default for ExposureParams {
             highlight_method: HighlightReconstructionMethod::InpaintOpposed,
             highlight_clip: 1.0,
             highlight_reconstruction: 1.0,
+            chromatic_aberration: 0.0,
             highlights: 0.0,
             shadows: 0.0,
             whites: 0.0,

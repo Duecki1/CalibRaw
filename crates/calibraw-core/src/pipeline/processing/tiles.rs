@@ -6,6 +6,14 @@ pub(super) const DEMOSAIC_CHAIN_SUPPORT: u32 = 32;
 const COLOR_DENOISE_SUPPORT_FAST: u32 = 2;
 const COLOR_DENOISE_SUPPORT_BALANCED: u32 = 2 * (1 + 2 + 4 + 8);
 const COLOR_DENOISE_SUPPORT_HIGH: u32 = COLOR_DENOISE_SUPPORT_BALANCED + 16 + 32;
+/// Native pixels around a pixel that Chromatic Aberration's fringe window
+/// reads (`CA_WINDOW_RADIUS` in chromatic_aberration.wgsl).
+pub const CA_WINDOW_RADIUS: u32 = 7;
+/// Pixels Chromatic Aberration reads past a tile core: its fringe window
+/// around the farthest red or blue sample a lateral shift and its cubic
+/// interpolation take. The window's Laplacian of green reaches less far.
+pub const CHROMATIC_ABERRATION_SUPPORT: u32 =
+    CA_WINDOW_RADIUS + crate::pipeline::MAX_LATERAL_SHIFT as u32 + 2;
 
 /// Native processing pixels represented by one adaptive tone-guide cell.
 ///
@@ -67,6 +75,7 @@ pub(super) const GLOW_SUPPORT: u32 = 96;
 pub(super) const COLOR_MIXER_SUPPORT: u32 = 4;
 const EXPORT_CUMULATIVE_SUPPORT: u32 = HIGHLIGHT_RECONSTRUCTION_SUPPORT
     + DEMOSAIC_CHAIN_SUPPORT
+    + CHROMATIC_ABERRATION_SUPPORT
     + COLOR_DENOISE_SUPPORT_HIGH
     + TONE_GUIDE_SUPPORT
     + LOCAL_EFFECTS_SUPPORT
@@ -109,6 +118,10 @@ pub fn required_export_tile_halo(exposure: &ExposureParams, masks: &MaskStack) -
         + DEMOSAIC_CHAIN_SUPPORT
         + TONE_GUIDE_SUPPORT
         + COLOR_MIXER_SUPPORT;
+
+    if exposure.chromatic_aberration > 0.0 {
+        support += CHROMATIC_ABERRATION_SUPPORT;
+    }
 
     if exposure.chroma_denoise > 1e-6 {
         support += match exposure.denoise_quality {

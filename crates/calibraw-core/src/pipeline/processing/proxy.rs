@@ -51,6 +51,7 @@ fn raster_with_metadata(
     output.lens_geometry = preserve_lens_geometry
         .then(|| raw.lens_geometry.clone())
         .flatten();
+    output.lateral_chromatic_aberration = raw.lateral_chromatic_aberration;
     output.opposed_chroma_cache = std::sync::Arc::clone(&raw.opposed_chroma_cache);
     output
 }

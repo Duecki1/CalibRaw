@@ -18,6 +18,8 @@ pub(in crate::pipeline::gpu) struct BindGroups {
     pub(in crate::pipeline::gpu) bg_xtrans_finish: wgpu::BindGroup,
     pub(in crate::pipeline::gpu) bg_raster_finish: wgpu::BindGroup,
     pub(in crate::pipeline::gpu) bg_color_denoise: [wgpu::BindGroup; 6],
+    pub(in crate::pipeline::gpu) bg_chromatic_aberration_prepare: wgpu::BindGroup,
+    pub(in crate::pipeline::gpu) bg_chromatic_aberration_fringes: wgpu::BindGroup,
     pub(in crate::pipeline::gpu) bg_tone_prepare: wgpu::BindGroup,
     pub(in crate::pipeline::gpu) bg_tone_horizontal: wgpu::BindGroup,
     pub(in crate::pipeline::gpu) bg_tone_vertical: wgpu::BindGroup,
@@ -344,6 +346,12 @@ pub(in crate::pipeline::gpu) fn create_bind_groups(
         make_color_denoise_bind_group("bg color denoise scale 16", tex2_view, tex1_view),
         make_color_denoise_bind_group("bg color denoise scale 32", tex1_view, scene_view),
     ];
+    // Chromatic aberration also reads one texture into another: the scene
+    // into tex1, and back.
+    let bg_chromatic_aberration_prepare =
+        make_color_denoise_bind_group("bg chromatic aberration prepare", scene_view, tex1_view);
+    let bg_chromatic_aberration_fringes =
+        make_color_denoise_bind_group("bg chromatic aberration fringes", tex1_view, scene_view);
 
     let bg_tone_prepare = create_bind_group(
         device,
@@ -598,6 +606,8 @@ pub(in crate::pipeline::gpu) fn create_bind_groups(
         bg_xtrans_finish,
         bg_raster_finish,
         bg_color_denoise,
+        bg_chromatic_aberration_prepare,
+        bg_chromatic_aberration_fringes,
         bg_tone_prepare,
         bg_tone_horizontal,
         bg_tone_vertical,
