@@ -48,3 +48,6 @@ CLAUDE.md
 # Local Flatpak helper scripts
 /scripts/flatpak-run.sh
 /scripts/flathub-sync.sh
+
+# Local-only marketing/promotion drafts (emails, posts, research notes)
+docs/promotion/

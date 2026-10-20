@@ -252,7 +252,9 @@ impl Sidebar {
         });
     }
 
-    pub(crate) fn show_desktop_tool_rail(ui: &mut Ui, app: &mut CalibRawApp) {
+    /// The tool rail of the docked Develop layout, on desktop and tablets.
+    /// The filmstrip is desktop-only, and so is its toggle.
+    pub(crate) fn show_docked_tool_rail(ui: &mut Ui, app: &mut CalibRawApp) {
         use crate::ui::icons::{icon_toggle_button, UiIcon};
 
         ui.set_min_width(ui.available_width());
@@ -303,21 +305,23 @@ impl Sidebar {
         ui.with_layout(egui::Layout::bottom_up(egui::Align::Center), |ui| {
             ui.add_space(5.0);
 
-            let filmstrip_tooltip = if app.develop_ui.filmstrip_open {
-                "Hide filmstrip"
-            } else {
-                "Show filmstrip"
-            };
-            if icon_toggle_button(
-                ui,
-                UiIcon::Filmstrip,
-                app.develop_ui.filmstrip_open,
-                moduwu_design::tool_rail_icon_size(),
-                filmstrip_tooltip,
-            )
-            .clicked()
-            {
-                app.set_develop_filmstrip_open(!app.develop_ui.filmstrip_open);
+            if app.caps().is_desktop() {
+                let filmstrip_tooltip = if app.develop_ui.filmstrip_open {
+                    "Hide filmstrip"
+                } else {
+                    "Show filmstrip"
+                };
+                if icon_toggle_button(
+                    ui,
+                    UiIcon::Filmstrip,
+                    app.develop_ui.filmstrip_open,
+                    moduwu_design::tool_rail_icon_size(),
+                    filmstrip_tooltip,
+                )
+                .clicked()
+                {
+                    app.set_develop_filmstrip_open(!app.develop_ui.filmstrip_open);
+                }
             }
 
             let sidebar_tooltip = if app.develop_ui.sidebar_open {

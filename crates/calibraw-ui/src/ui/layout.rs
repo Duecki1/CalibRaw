@@ -3,9 +3,44 @@ use eframe::egui::Vec2;
 
 use moduwu_design::ScreenLayout;
 
+use crate::platform::PlatformCaps;
+
 pub(crate) const DEVELOP_TOOL_RAIL_ID: &str = "develop_tool_rail";
 pub(crate) const DEVELOP_SIDEBAR_ID: &str = "develop_sidebar_right";
 pub(crate) const DEVELOP_MASK_STRIP_ID: &str = "develop_horizontal_mask_strip";
+
+/// How the Develop tab places the photo and its tools.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum DevelopArrangement {
+    /// The toolbar above, the tool rail, sidebar and mask strip docked on the
+    /// right, and the photo fitted into the rest: landscape desktop windows
+    /// and tablets held sideways.
+    Docked,
+    /// The photo fills the screen and the tools are drawn over it
+    /// ([`crate::ui::develop_viewport`]): portrait screens and phones held
+    /// sideways.
+    Overlay,
+}
+
+impl DevelopArrangement {
+    /// Shortest side, in points, from which a touch screen counts as a
+    /// tablet: Android's `sw600dp` breakpoint, since a point is a
+    /// density-independent pixel there.
+    pub(crate) const TABLET_MIN_SHORT_SIDE: f32 = 600.0;
+
+    /// The arrangement for the app's `screen` area in points
+    /// (`Context::content_rect`). It includes the system bars, which
+    /// Android's smallest width does not subtract either.
+    pub(crate) fn of(caps: PlatformCaps, screen: Vec2) -> Self {
+        let landscape = ScreenLayout::from_size(screen) == ScreenLayout::Horizontal;
+        let roomy = caps.is_desktop() || screen.min_elem() >= Self::TABLET_MIN_SHORT_SIDE;
+        if landscape && roomy {
+            Self::Docked
+        } else {
+            Self::Overlay
+        }
+    }
+}
 
 /// Returns the width explicitly selected with the Develop sidebar resize handle.
 ///
@@ -26,4 +61,44 @@ pub(crate) fn develop_sidebar_max_width(viewport: Vec2) -> f32 {
         ScreenLayout::MIN_HORIZONTAL_SIDEBAR_WIDTH,
         ScreenLayout::MAX_HORIZONTAL_SIDEBAR_WIDTH,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tablets_dock_the_develop_tools_and_phones_overlay_them() {
+        let arrangement =
+            |caps, width, height| DevelopArrangement::of(caps, egui::vec2(width, height));
+        let android = PlatformCaps::ANDROID;
+        // Tablets held sideways: 10-inch, the smallest (`sw600dp`), unfolded.
+        for (width, height) in [(1280.0, 800.0), (960.0, 600.0), (1104.0, 884.0)] {
+            assert_eq!(
+                arrangement(android, width, height),
+                DevelopArrangement::Docked
+            );
+            assert_eq!(
+                arrangement(android, height, width),
+                DevelopArrangement::Overlay
+            );
+        }
+        // Phones either way, and a tablet split into a short landscape window.
+        for (width, height) in [(915.0, 412.0), (412.0, 915.0), (1280.0, 400.0)] {
+            assert_eq!(
+                arrangement(android, width, height),
+                DevelopArrangement::Overlay
+            );
+        }
+        // Desktop windows dock whenever they are landscape.
+        let desktop = PlatformCaps::DESKTOP;
+        assert_eq!(
+            arrangement(desktop, 915.0, 412.0),
+            DevelopArrangement::Docked
+        );
+        assert_eq!(
+            arrangement(desktop, 480.0, 800.0),
+            DevelopArrangement::Overlay
+        );
+    }
 }
