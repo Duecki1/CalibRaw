@@ -4,9 +4,9 @@ use super::sigmoid::{coefficients as sigmoid_coefficients, SigmoidCoefficients};
 use crate::pipeline::{
     canonical_remove_scene_to_pipeline_scene, effect_params, export_mask_atlas_edge_limit,
     mask_atlas_edge, pipeline_scene_to_working_rec2020, AiDenoisedImage, CfaKind, ExposureParams,
-    GeometryTransform, HighlightReconstructionMethod, LensGeometryMap, LoadedRaw, LocalMask,
-    MaskEffect, MaskImage, MaskStack, PointColor, PointCurve, ProcessingStage, RawThumbnail,
-    RemoveEditState, RemovePatch, SigmoidParams, GLOBAL_TEMPERATURE_LIMIT,
+    GeometryTransform, HighlightReconstructionMethod, LateralChannel, LensGeometryMap, LoadedRaw,
+    LocalMask, MaskEffect, MaskImage, MaskStack, PointColor, PointCurve, ProcessingStage,
+    RawThumbnail, RemoveEditState, RemovePatch, SigmoidParams, GLOBAL_TEMPERATURE_LIMIT,
     GLOBAL_TINT_OFFSET_LIMIT, MAX_EFFECT_COMPONENTS, MAX_LOCAL_MASKS, MAX_POINT_COLORS,
     MAX_POINT_CURVE_POINTS,
 };
@@ -45,6 +45,8 @@ use shader_manager::ShaderManager;
 mod black_tone_tests;
 #[cfg(test)]
 mod blacks_pipeline_tests;
+#[cfg(test)]
+mod chromatic_aberration_tests;
 #[cfg(test)]
 mod dehaze_tests;
 #[cfg(test)]
@@ -90,15 +92,15 @@ pub use params::*;
 pub use remove_scene::*;
 use stage_params::*;
 
-const GPU_PARAMS_ABI_VERSION: u32 = 13;
+const GPU_PARAMS_ABI_VERSION: u32 = 14;
 const MASK_EFFECT_ID_SHIFT: u32 = 8;
 pub(super) const LIGHT_RAYS_MASK_ATLAS_EDGE: u32 = if cfg!(target_os = "android") {
     256
 } else {
     512
 };
-const GPU_PARAMS_ABI_SIZE_BYTES: u32 = 1_072;
-const CAMERA_UNIFORMS_SIZE_BYTES: u32 = 336;
+const GPU_PARAMS_ABI_SIZE_BYTES: u32 = 1_120;
+const CAMERA_UNIFORMS_SIZE_BYTES: u32 = 384;
 const SCENE_TONE_UNIFORMS_SIZE_BYTES: u32 = 1_712;
 const EFFECTS_UNIFORMS_SIZE_BYTES: u32 = 192;
 const GPU_STAGE_UNIFORM_SIZE_BYTES: u32 =
@@ -448,7 +450,13 @@ pub struct RawGpuPipeline {
     black_texture: wgpu::Texture,
     lens_shading_texture: wgpu::Texture,
     _reconstructed_raw_texture: wgpu::Texture,
-    _highlight_work_a: wgpu::Texture,
+    /// Highlight reconstruction scratch. Pipelines with an AI-denoised scene
+    /// (X-Trans), which skips reconstruction and demosaicing, keep that scene
+    /// here for every RAW stage to start from.
+    highlight_work_a: wgpu::Texture,
+    /// Whether `highlight_work_a` still holds the AI-denoised scene: a RAW
+    /// stage that demosaics, with AI denoise off, overwrites it.
+    ai_scene_intact: AtomicBool,
     _highlight_work_b: wgpu::Texture,
     _tex1: wgpu::Texture,
     _tex2: wgpu::Texture,
@@ -593,10 +601,12 @@ impl RawGpuPipeline {
         self.mask_layer_capacity
     }
 
-    pub const fn immutable_ai_source_matches(&self, cfa_kind: CfaKind, enabled: bool) -> bool {
+    pub fn immutable_ai_source_matches(&self, cfa_kind: CfaKind, enabled: bool) -> bool {
         match cfa_kind {
             CfaKind::Bayer => self.has_ai_cfa == enabled,
-            CfaKind::XTrans => !enabled || self.has_ai_scene,
+            CfaKind::XTrans => {
+                !enabled || (self.has_ai_scene && self.ai_scene_intact.load(Ordering::Acquire))
+            }
         }
     }
 
@@ -695,9 +705,10 @@ impl RawGpuPipeline {
         upload_lens_shading_texture(queue, &self.lens_shading_texture, raw);
         if self.has_ai_scene {
             anyhow::ensure!(
-                upload_ai_scene_texture(queue, &self.scene_texture, self.scene_format, raw)?,
+                upload_ai_scene_texture(queue, &self.highlight_work_a, self.scene_format, raw)?,
                 "reusable AI-denoise pipeline received a tile without derived model output"
             );
+            self.ai_scene_intact.store(true, Ordering::Release);
         }
         Ok(())
     }
@@ -971,12 +982,25 @@ impl RawGpuPipeline {
     fn encode_raw_stage(&self, encoder: &mut wgpu::CommandEncoder, params: &GpuParams) {
         if self.has_raster_scene {
             self.encode_pass(encoder, self.indices.raster_finish_pass_index);
+            self.encode_chromatic_aberration(encoder, params);
             self.encode_color_denoise(encoder, params);
             return;
         }
         if self.has_ai_scene && params.uses_ai_denoise() {
+            // A source overwritten by demosaicing leaves the scene as it is;
+            // `immutable_ai_source_matches` asks for a new pipeline then.
+            if self.ai_scene_intact.load(Ordering::Acquire) {
+                encoder.copy_texture_to_texture(
+                    self.highlight_work_a.as_image_copy(),
+                    self.scene_texture.as_image_copy(),
+                    self.scene_texture.size(),
+                );
+                self.encode_chromatic_aberration(encoder, params);
+            }
             return;
         }
+        // Highlight reconstruction and demosaicing write highlight work A.
+        self.ai_scene_intact.store(false, Ordering::Release);
         self.encode_pass(encoder, self.indices.highlight_pass_index);
         self.encode_pass_range(
             encoder,
@@ -1002,7 +1026,20 @@ impl RawGpuPipeline {
             ],
             finish.workgroups,
         );
+        self.encode_chromatic_aberration(encoder, params);
         self.encode_color_denoise(encoder, params);
+    }
+
+    /// Moves red and blue onto green and removes colour fringes in the scene
+    /// when Chromatic Aberration is on.
+    fn encode_chromatic_aberration(&self, encoder: &mut wgpu::CommandEncoder, params: &GpuParams) {
+        if params.needs_chromatic_aberration_passes() {
+            self.encode_pass(
+                encoder,
+                self.indices.chromatic_aberration_prepare_pass_index,
+            );
+            self.encode_pass(encoder, self.indices.chromatic_aberration_fringe_pass_index);
+        }
     }
 
     /// Filters the scene's colour noise in place when Color denoise is on.

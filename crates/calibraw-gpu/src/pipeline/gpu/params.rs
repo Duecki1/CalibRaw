@@ -52,6 +52,15 @@ pub(super) struct CameraUniforms {
     /// ([`LoadedRaw::source_extent`]); `full_width` and `full_height` give the
     /// processing resolution. `resolution_scale` in common.wgsl reads both.
     pub(super) source_short_edge: u32,
+    /// Chromatic aberration amount in `[0, 1]`, then the gains that white-
+    /// balance the scene's red, green and blue (1 unless the scene is a
+    /// camera-linear raster's unbalanced camera RGB).
+    pub(super) chromatic_aberration: [f32; 4],
+    /// The photo's lateral chromatic aberration of red and of blue
+    /// ([`crate::pipeline::LateralChromaticAberration::coefficients`]),
+    /// scaled by the amount.
+    pub(super) lateral_ca_red: [f32; 4],
+    pub(super) lateral_ca_blue: [f32; 4],
 }
 
 #[repr(C)]
@@ -205,7 +214,7 @@ pub(super) struct EffectsUniforms {
 
 const _: () =
     assert!(std::mem::size_of::<EffectsUniforms>() == EFFECTS_UNIFORMS_SIZE_BYTES as usize);
-const _: () = assert!(GPU_STAGE_UNIFORM_SIZE_BYTES == 2_240);
+const _: () = assert!(GPU_STAGE_UNIFORM_SIZE_BYTES == 2_288);
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
@@ -591,6 +600,13 @@ impl GpuParams {
 
     pub(super) fn uses_ai_denoise(&self) -> bool {
         self.camera.ai_denoise_enabled != 0
+    }
+
+    /// Chromatic aberration runs between the demosaic finish and colour
+    /// denoise whenever its amount is above zero, even for a photo without
+    /// lateral aberration: its fringe removal still applies.
+    pub(super) fn needs_chromatic_aberration_passes(&self) -> bool {
+        self.camera.chromatic_aberration[0] > 0.0
     }
 
     /// Dual demosaicing with a zero threshold keeps the reference demosaic

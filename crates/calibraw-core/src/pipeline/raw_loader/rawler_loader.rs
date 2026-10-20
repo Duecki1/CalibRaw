@@ -10,7 +10,7 @@ use super::{
     CaptureMetadata, CfaKind, CompactPixelMap, LoadedRaw, RawDisplayMetadata, RawThumbnail,
     MAX_RAW_FILE_BYTES, MAX_SENSOR_EDGE, MAX_SENSOR_PIXELS,
 };
-use crate::pipeline::{color_profile::DcpProfile, noise::NoiseProfile};
+use crate::pipeline::{color_profile::DcpProfile, noise::NoiseProfile, LateralChromaticAberration};
 use anyhow::{anyhow, bail, ensure, Context, Result};
 use rawler::decoders::{
     Decoder, FormatHint, Orientation, RawDecodeParams, RawMetadata, WellKnownIFD,
@@ -712,6 +712,7 @@ fn adapt(
         white_balance_model,
         lens_geometry: None,
         lens_shading: None,
+        lateral_chromatic_aberration: LateralChromaticAberration::NONE,
         ai_denoised: Default::default(),
         opposed_chroma_cache: Default::default(),
         opposed_chroma_source_identity: Default::default(),
@@ -852,6 +853,7 @@ fn adapt(
         }
         _ => bail!("unsupported Rawler photometric interpretation"),
     }
+    loaded.lateral_chromatic_aberration = LateralChromaticAberration::estimate(&loaded);
     Ok(loaded)
 }
 

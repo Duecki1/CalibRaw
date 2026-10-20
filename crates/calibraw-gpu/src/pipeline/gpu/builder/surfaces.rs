@@ -133,10 +133,16 @@ pub(in crate::pipeline::gpu) fn create_pipeline_surfaces(
         "calibraw reconstructed raw CFA",
     );
 
-    let highlight_work_a = create_float_work_texture(
+    // Also holds an AI-denoised scene, which skips highlight reconstruction
+    // and demosaicing, for every RAW stage to start from.
+    let highlight_work_a = create_processing_texture(
         device,
         size,
         highlight_work_format,
+        wgpu::TextureUsages::TEXTURE_BINDING
+            | wgpu::TextureUsages::STORAGE_BINDING
+            | wgpu::TextureUsages::COPY_SRC
+            | wgpu::TextureUsages::COPY_DST,
         "calibraw highlight work A",
     );
     let highlight_work_b = create_float_work_texture(
@@ -153,7 +159,8 @@ pub(in crate::pipeline::gpu) fn create_pipeline_surfaces(
         demosaic_format,
         "calibraw scene-linear camera RGB",
     );
-    let has_ai_scene = upload_ai_scene_texture(queue, &scene_texture, demosaic_format, raw)?;
+    let has_ai_scene =
+        upload_ai_scene_texture(queue, &highlight_work_a, highlight_work_format, raw)?;
 
     let display_linear_texture = create_demosaic_texture(
         device,

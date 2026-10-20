@@ -13,10 +13,11 @@
 //!   while [`super::LegacyEffectSliders`] reads them back as nothing to
 //!   migrate.
 //! - Those readers cannot decode a Relight effect or a custom crop aspect
-//!   ratio and would drop a manual lens correction. Edits with any of them are
-//!   written with schema 2, which they report as newer instead of as corrupt,
-//!   so they never replace the file with an unedited one. Every other edit is
-//!   written with schema 1, whose layout schema 2 shares.
+//!   ratio and would drop a manual lens correction or chromatic aberration
+//!   removal. Edits with any of them are written with schema 2, which they
+//!   report as newer instead of as corrupt, so they never replace the file
+//!   with an unedited one. Every other edit is written with schema 1, whose
+//!   layout schema 2 shares.
 
 use super::effect_sliders::GlobalSliders;
 use crate::pipeline::{CropAspectRatio, ExposureParams, MaskEffect};
@@ -64,7 +65,9 @@ pub(crate) fn schema_version(edits: &EditState, current: u32) -> u32 {
             .iter()
             .any(|mask| mask.effect == MaskEffect::Relight);
     let custom_aspect = matches!(edits.geometry.aspect_ratio, CropAspectRatio::Custom { .. });
-    if uses_relight || edits.lens.manual.is_some() || custom_aspect {
+    let removes_chromatic_aberration = edits.exposure.chromatic_aberration != 0.0;
+    if uses_relight || edits.lens.manual.is_some() || custom_aspect || removes_chromatic_aberration
+    {
         current
     } else {
         V1_SCHEMA_VERSION
@@ -153,6 +156,15 @@ mod tests {
             distortion: 12.0,
             vignetting: -4.0,
         });
+        let bytes = encode(edits.clone()).unwrap();
+        assert_eq!(document(&bytes)["schema_version"], SIDECAR_SCHEMA_VERSION);
+        assert_eq!(decode(&bytes).unwrap().edits, edits);
+    }
+
+    #[test]
+    fn chromatic_aberration_removal_is_written_as_the_newer_schema() {
+        let mut edits = edits(None);
+        edits.exposure.chromatic_aberration = 60.0;
         let bytes = encode(edits.clone()).unwrap();
         assert_eq!(document(&bytes)["schema_version"], SIDECAR_SCHEMA_VERSION);
         assert_eq!(decode(&bytes).unwrap().edits, edits);

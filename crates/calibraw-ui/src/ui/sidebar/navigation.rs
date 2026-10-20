@@ -437,7 +437,9 @@ impl Sidebar {
                     );
                 }
                 AdjustmentSection::Optics => {
-                    lens_changed |= Self::show_optics(ui, app, false);
+                    let optics = Self::show_optics(ui, app, false);
+                    lens_changed |= optics.lens;
+                    changed |= optics.exposure;
                 }
             }
         } else {
@@ -485,7 +487,9 @@ impl Sidebar {
                 &mut app.develop_ui.point_color_tab,
                 true,
             );
-            lens_changed |= Self::show_optics(ui, app, true);
+            let optics = Self::show_optics(ui, app, true);
+            lens_changed |= optics.lens;
+            changed |= optics.exposure;
             Self::show_global_effects(ui, app, frame, layout, added);
         }
 

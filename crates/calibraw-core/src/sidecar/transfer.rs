@@ -74,9 +74,10 @@ impl EditSelection {
         *self == Self::default()
     }
 
-    /// Whether the transfer changes any global develop setting.
+    /// Whether the transfer changes any global develop setting. Lens
+    /// correction carries the Lens Corrections card's chromatic aberration.
     pub fn includes_exposure(&self) -> bool {
-        !self.adjustment_groups.is_empty() || self.raw_processing
+        !self.adjustment_groups.is_empty() || self.raw_processing || self.lens_correction
     }
 
     pub fn includes_masks(&self) -> bool {
@@ -257,6 +258,9 @@ pub fn transfer_edits(
         destination.ai_masks_need_update |= destination.masks.scene_depth_missing();
     }
     if selection.lens_correction {
+        destination
+            .exposure
+            .copy_lens_correction_from(&source.exposure);
         let lens_changed = destination.lens != source.lens;
         destination.lens = source.lens.clone();
         if lens_changed && !destination.masks.content_dependencies().is_empty() {

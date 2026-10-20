@@ -4,6 +4,7 @@
 // Copyright (C) 2010-2026 darktable developers and the Ansel/dcraw authors.
 // Copyright (C) 2026 CalibRaw contributors (Rust adaptation).
 
+use super::super::chromatic_aberration::LateralChromaticAberration;
 use super::super::noise::NoiseProfile;
 use super::{
     validate_raw_dimensions, CameraColorModel, CameraProfile, CameraProfileCandidate,
@@ -692,7 +693,7 @@ fn loaded_raw_from_context(
         }
     }
 
-    Ok(LoadedRaw {
+    let mut loaded = LoadedRaw {
         width,
         height,
         source_extent: [width, height],
@@ -732,11 +733,14 @@ fn loaded_raw_from_context(
         white_balance_model,
         lens_geometry: None,
         lens_shading: None,
+        lateral_chromatic_aberration: LateralChromaticAberration::NONE,
         ai_denoised: Arc::new(std::sync::RwLock::new(None)),
         opposed_chroma_cache: Default::default(),
         opposed_chroma_source_identity: Default::default(),
         opposed_chroma_reference_source: true,
-    })
+    };
+    loaded.lateral_chromatic_aberration = LateralChromaticAberration::estimate(&loaded);
+    Ok(loaded)
 }
 
 fn c_array_to_string(value: &[c_char]) -> String {

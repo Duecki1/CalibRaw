@@ -1,6 +1,7 @@
 //! Applying distortion, TCA and vignetting corrections to mosaic and raster data.
 
 use super::*;
+use crate::pipeline::LateralChromaticAberration;
 
 #[derive(Clone, Copy)]
 pub(super) struct ModifierConfig {
@@ -114,7 +115,10 @@ pub(super) fn correct_mosaic(
     let coordinate_enabled =
         flags & (LF_MODIFY_DISTORTION | LF_MODIFY_GEOMETRY | LF_MODIFY_TCA | LF_MODIFY_SCALE) != 0;
     let mut corrected = if coordinate_enabled {
-        resample_mosaic(raw, modifier)
+        let mut resampled = resample_mosaic(raw, modifier);
+        // The profile moved red and blue toward green; measure what is left.
+        resampled.lateral_chromatic_aberration = LateralChromaticAberration::estimate(&resampled);
+        resampled
     } else {
         raw.clone()
     };
@@ -303,6 +307,9 @@ fn correct_raster(
     corrected.lens_geometry = lens_geometry;
     corrected.ai_denoised = Arc::new(std::sync::RwLock::new(None));
     corrected.opposed_chroma_cache = Default::default();
+    if coordinate_enabled {
+        corrected.lateral_chromatic_aberration = LateralChromaticAberration::estimate(&corrected);
+    }
     Ok(corrected)
 }
 

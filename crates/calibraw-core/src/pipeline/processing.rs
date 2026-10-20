@@ -51,6 +51,7 @@ fn raw_controls_changed(before: &ExposureParams, after: &ExposureParams) -> bool
         || before.highlight_method != after.highlight_method
         || before.highlight_clip != after.highlight_clip
         || before.highlight_reconstruction != after.highlight_reconstruction
+        || before.chromatic_aberration != after.chromatic_aberration
 }
 
 #[cfg(test)]
@@ -116,6 +117,7 @@ mod tests {
             white_balance_model: None,
             lens_geometry: None,
             lens_shading: None,
+            lateral_chromatic_aberration: crate::pipeline::LateralChromaticAberration::NONE,
             ai_denoised: std::sync::Arc::new(std::sync::RwLock::new(None)),
             opposed_chroma_cache: Default::default(),
             opposed_chroma_source_identity: Default::default(),
@@ -452,6 +454,15 @@ mod tests {
             MIN_EXPORT_TILE_HALO
         );
 
+        // Both halos are rounded up to whole multiples of 8.
+        let without_chromatic_aberration = required_export_tile_halo(&exposure, &film_masks);
+        exposure.chromatic_aberration = 40.0;
+        let with_chromatic_aberration = required_export_tile_halo(&exposure, &film_masks);
+        assert!(
+            with_chromatic_aberration + 8
+                > without_chromatic_aberration + super::CHROMATIC_ABERRATION_SUPPORT
+        );
+
         exposure.clarity = 1.0;
         exposure.chroma_denoise = 1.0;
         exposure.denoise_quality = DenoiseQuality::High;
@@ -753,6 +764,41 @@ mod tests {
     }
 
     #[test]
+    fn crops_proxies_and_tiles_keep_the_lateral_chromatic_aberration() {
+        let model = crate::pipeline::LateralChromaticAberration::from_coefficients(
+            [0.001, -0.0005, 0.0, 0.0],
+            [-0.0008, 0.0, 0.0001, 0.0],
+        );
+        let tile = ExportTile {
+            core_x: 8,
+            core_y: 8,
+            core_width: 16,
+            core_height: 16,
+            local_core_x: 4,
+            local_core_y: 4,
+            padded_width: 24,
+            padded_height: 24,
+            global_origin_x: 4,
+            global_origin_y: 4,
+        };
+        for mut raw in [test_raster(64, 48), test_raw(64, 48)] {
+            raw.lateral_chromatic_aberration = model;
+            let raster = raw.is_pre_demosaiced_raster();
+            for derived in [
+                crop_raw(&raw, 8, 6, 20, 16),
+                build_proxy(&raw, ProxySpec { max_edge: 32 }),
+                build_region_proxy(&raw, 8, 8, 32, 32, ProxySpec { max_edge: 16 }),
+                extract_padded_tile(&raw, tile),
+            ] {
+                assert_eq!(
+                    derived.lateral_chromatic_aberration, model,
+                    "raster={raster}"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn raster_crop_proxy_and_export_tile_stay_in_scene_linear_rgb() {
         let raw = test_raster(4, 4);
         let cropped = crop_raw(&raw, 1, 1, 2, 2);
@@ -924,6 +970,7 @@ mod tests {
             white_balance_model: None,
             lens_geometry: None,
             lens_shading: None,
+            lateral_chromatic_aberration: crate::pipeline::LateralChromaticAberration::NONE,
             ai_denoised: std::sync::Arc::new(std::sync::RwLock::new(None)),
             opposed_chroma_cache: Default::default(),
             opposed_chroma_source_identity: Default::default(),
@@ -996,6 +1043,7 @@ mod tests {
             white_balance_model: None,
             lens_geometry: None,
             lens_shading: None,
+            lateral_chromatic_aberration: crate::pipeline::LateralChromaticAberration::NONE,
             ai_denoised: std::sync::Arc::new(std::sync::RwLock::new(None)),
             opposed_chroma_cache: Default::default(),
             opposed_chroma_source_identity: Default::default(),

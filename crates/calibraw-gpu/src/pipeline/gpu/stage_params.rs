@@ -55,6 +55,26 @@ pub(super) fn pack_camera_params(ctx: &GpuParamContext<'_>) -> CameraUniforms {
         [0.0; 3]
     };
 
+    let chromatic_aberration = if exposure.chromatic_aberration.is_finite() {
+        (exposure.chromatic_aberration / 100.0).clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
+    // The fringe pass takes colour relative to neutral. A camera-linear
+    // raster's scene is camera RGB before white balance, which the camera
+    // transform above applies instead; every other scene is balanced already.
+    let neutral_gains = if camera_linear_raster {
+        [white_balance[0], white_balance[1], white_balance[2]]
+    } else {
+        [1.0; 3]
+    };
+    // The lateral shift grows linearly with the amount.
+    let lateral_chromatic_aberration = |channel| {
+        raw.lateral_chromatic_aberration
+            .coefficients(channel)
+            .map(|coefficient| coefficient * chromatic_aberration)
+    };
+
     CameraUniforms {
         black_point: exposure.black_point,
         highlight_clip: exposure.highlight_clip,
@@ -121,6 +141,14 @@ pub(super) fn pack_camera_params(ctx: &GpuParamContext<'_>) -> CameraUniforms {
             0.0
         },
         source_short_edge: raw.source_extent[0].min(raw.source_extent[1]),
+        chromatic_aberration: [
+            chromatic_aberration,
+            neutral_gains[0],
+            neutral_gains[1],
+            neutral_gains[2],
+        ],
+        lateral_ca_red: lateral_chromatic_aberration(LateralChannel::Red),
+        lateral_ca_blue: lateral_chromatic_aberration(LateralChannel::Blue),
     }
 }
 

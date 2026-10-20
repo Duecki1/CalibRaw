@@ -102,6 +102,7 @@ AI models are downloaded once, on first use and only after you agree; they are v
 - **Fujifilm X-Trans:** Directional derivative and homogeneity demarcation pipeline for Fuji sensors.
 - **Dual Demosaicing:** Blends edge-preserving and smoothed passes to suppress chroma noise at high ISOs.
 - **Automatic Lens Correction:** Matches available camera and lens profiles through Lensfun and can automatically correct distortion, chromatic aberration and vignetting.
+- **Chromatic Aberration Removal:** Works with any lens, profiled or not. Measures how far red and blue sit from green across the frame and moves them back into place, then removes the purple, blue and green fringes that remain along high-contrast edges.
 - **HDR Merge:** Combine multiple bracketed RAW exposures into one extended-range image.
 - **Focus Stacking:** Combine RAW frames focused at different distances into one image that is sharp throughout.
 
