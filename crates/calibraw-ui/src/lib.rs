@@ -161,7 +161,8 @@ fn native_options(caps: platform::PlatformCaps) -> eframe::NativeOptions {
             ));
             let mut required_limits = calibraw_gpu::base_device_limits(adapter);
             required_limits.max_texture_dimension_2d = adapter_limits.max_texture_dimension_2d;
-            let required_features = adapter.features() & eframe::wgpu::Features::PIPELINE_CACHE;
+            let required_features = (adapter.features() & eframe::wgpu::Features::PIPELINE_CACHE)
+                | calibraw_gpu::stage_timing::device_features(adapter);
             eframe::wgpu::DeviceDescriptor {
                 label: Some("CalibRaw wgpu device"),
                 required_features,

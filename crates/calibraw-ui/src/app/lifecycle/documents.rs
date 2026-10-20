@@ -507,6 +507,8 @@ impl CalibRawApp {
                 }
             }
         }
+        // The decode's intermediate buffers and the previous document are freed.
+        self.platform.release_free_memory();
     }
 
     /// Whether a finished load belongs to the library batch export. Folder

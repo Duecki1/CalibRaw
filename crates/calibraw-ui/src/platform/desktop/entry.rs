@@ -48,6 +48,9 @@ fn desktop_icon() -> std::sync::Arc<eframe::egui::IconData> {
 fn run_desktop() -> eframe::Result {
     env_logger::init();
 
+    if std::env::var_os("CALIBRAW_GPU_STAGE_TIMING").is_some_and(|value| value == "1") {
+        calibraw_gpu::stage_timing::request();
+    }
     let mut options = crate::native_options(PlatformCaps::DESKTOP);
     options.viewport = eframe::egui::ViewportBuilder::default()
         .with_app_id(if super::portal::is_flatpak() {

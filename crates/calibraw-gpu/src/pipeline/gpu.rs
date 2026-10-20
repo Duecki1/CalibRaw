@@ -17,6 +17,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex, OnceLock};
 
 use crate::gpu_errors::GpuErrorScopes;
+use crate::stage_timing;
 
 mod builder;
 mod clipping;
@@ -626,6 +627,7 @@ impl RawGpuPipeline {
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("calibraw complete recompute encoder"),
         });
+        let timing = stage_timing::begin(device, || self.timed_stage_name("Recompute"));
         encoder.clear_buffer(&self.tone_histogram_buffer, 0, None);
         self.encode_raw_stage(&mut encoder, params);
         self.encode_pass_range(
@@ -635,7 +637,7 @@ impl RawGpuPipeline {
         );
         self.encode_tone_full_image_maps(&mut encoder, params);
         self.encode_output_stage(&mut encoder, params);
-        queue.submit(Some(encoder.finish()));
+        stage_timing::submit(queue, encoder, timing);
     }
 
     pub fn dispatch_stage(
@@ -649,6 +651,7 @@ impl RawGpuPipeline {
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some(stage.label()),
         });
+        let timing = stage_timing::begin(device, || self.timed_stage_name(&format!("{stage:?}")));
 
         match stage {
             ProcessingStage::Raw => self.encode_raw_stage(&mut encoder, params),
@@ -664,7 +667,12 @@ impl RawGpuPipeline {
             ProcessingStage::Output => self.encode_output_stage(&mut encoder, params),
         }
 
-        queue.submit(Some(encoder.finish()));
+        stage_timing::submit(queue, encoder, timing);
+    }
+
+    /// How `stage_timing` names a stage of this pipeline: "Output 652x978".
+    fn timed_stage_name(&self, stage: &str) -> String {
+        format!("{stage} {}x{}", self.width, self.height)
     }
 
     pub fn upload_raw_tile(&self, queue: &wgpu::Queue, raw: &LoadedRaw) -> Result<()> {
@@ -1168,11 +1176,8 @@ impl RawGpuPipeline {
     }
 
     fn encode_pass(&self, encoder: &mut wgpu::CommandEncoder, index: usize) {
-        self.encode_bound_pass(
-            encoder,
-            &self.passes[index],
-            &format!("calibraw pass {}", index + 1),
-        );
+        let pass = &self.passes[index];
+        self.encode_bound_pass(encoder, pass, &pass.pipeline.entry);
     }
 
     fn encode_bound_pass(

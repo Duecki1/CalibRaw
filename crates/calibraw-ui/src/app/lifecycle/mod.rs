@@ -82,6 +82,7 @@ pub(super) fn spawn_gpu_preview_prewarm(
     cc: &eframe::CreationContext<'_>,
     cache_root: Option<std::path::PathBuf>,
     export_prewarm: Arc<crate::pipeline::GpuProgramPrewarm>,
+    platform: Arc<dyn Platform>,
 ) -> Option<mpsc::Receiver<Result<RawGpuPipeline, String>>> {
     let Some(render_state) = cc.wgpu_render_state.as_ref() else {
         export_prewarm.publish(Err("eframe is not running with the wgpu backend".to_owned()));
@@ -213,6 +214,9 @@ pub(super) fn spawn_gpu_preview_prewarm(
                     )),
                 }
             }
+            // Preparing the programs freed the shader modules it parsed and the
+            // code it generated.
+            platform.release_free_memory();
         });
     match spawn_result {
         Ok(_) => Some(receiver),
