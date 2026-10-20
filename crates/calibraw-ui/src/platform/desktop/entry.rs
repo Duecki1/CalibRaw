@@ -1,7 +1,6 @@
 //! Starting the desktop program.
 
 use crate::platform::PlatformCaps;
-use crate::CalibRawApp;
 
 pub(crate) fn main() -> eframe::Result {
     let args = std::env::args().collect::<Vec<_>>();
@@ -63,11 +62,6 @@ fn run_desktop() -> eframe::Result {
     eframe::run_native(
         "CalibRaw",
         options,
-        Box::new(|cc| {
-            Ok(Box::new(CalibRawApp::new(
-                cc,
-                super::DesktopPlatform::new(),
-            )))
-        }),
+        Box::new(|cc| Ok(crate::app::create_app(cc, super::DesktopPlatform::new()))),
     )
 }

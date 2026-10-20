@@ -311,6 +311,8 @@ mod straighten;
 use straighten::AutoStraightenResult;
 mod tips;
 pub(crate) use tips::{ShownTip, TipPreferences};
+mod unsupported_gpu;
+pub(crate) use unsupported_gpu::create_app;
 mod sidecar_persistence;
 #[cfg(test)]
 mod ui_review_tests;

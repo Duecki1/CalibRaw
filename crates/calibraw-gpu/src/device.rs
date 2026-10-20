@@ -19,6 +19,20 @@ pub fn base_device_limits(adapter: &wgpu::Adapter) -> wgpu::Limits {
     }
 }
 
+/// Backends CalibRaw processes photos on: `WGPU_BACKEND`, or else Vulkan, Metal
+/// and DX12, never GL.
+///
+/// wgpu's GL backend runs every call under one context lock that panics when a
+/// caller waits longer than 6 s (1 s with WGL), and it compiles shaders while
+/// holding that lock. Compiling CalibRaw's pipelines on a slow GPU takes longer, so
+/// a background compile on a GL device brings down any thread that touches the
+/// device meanwhile. Machines whose only hardware driver is GL (Intel Haswell on
+/// Linux, where wgpu hides the non-conformant hasvk Vulkan driver) process on a
+/// software adapter such as lavapipe or WARP instead.
+pub fn processing_backends() -> wgpu::Backends {
+    wgpu::Backends::from_env().unwrap_or(wgpu::Backends::PRIMARY) - wgpu::Backends::GL
+}
+
 /// Which adapter a headless device runs on.
 #[derive(Clone, Copy, Debug)]
 pub enum HeadlessAdapter {
@@ -82,7 +96,10 @@ impl std::error::Error for HeadlessDeviceError {}
 pub fn request_headless_device(
     request: &HeadlessDeviceRequest<'_>,
 ) -> Result<HeadlessDevice, HeadlessDeviceError> {
-    let instance = wgpu::Instance::default();
+    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+        backends: processing_backends(),
+        ..wgpu::InstanceDescriptor::new_without_display_handle()
+    });
     let adapter =
         request_adapter(&instance, request.adapter).map_err(HeadlessDeviceError::NoAdapter)?;
     let adapter_info = adapter.get_info();

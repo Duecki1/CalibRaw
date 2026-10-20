@@ -2,8 +2,8 @@ pub use wgpu;
 
 mod device;
 pub use device::{
-    base_device_limits, request_headless_device, HeadlessAdapter, HeadlessDevice,
-    HeadlessDeviceError, HeadlessDeviceRequest,
+    base_device_limits, processing_backends, request_headless_device, HeadlessAdapter,
+    HeadlessDevice, HeadlessDeviceError, HeadlessDeviceRequest,
 };
 
 mod gpu_errors;
