@@ -194,6 +194,7 @@ fn render_still(
                 completed_tiles,
                 total_tiles,
             }) => tile_progress(completed_tiles, total_tiles),
+            Ok(ExportEvent::WaitingForGpu { .. }) => {}
             Ok(ExportEvent::Finished(Ok(_))) => break,
             // A cancelled export reports an error; the flag decides which it was.
             Ok(ExportEvent::Finished(Err(error))) => {

@@ -2,11 +2,11 @@ use super::geometry::GeometryInverseMap;
 use super::{
     build_region_proxy, export_mask_atlas_edge, extract_padded_tile, extract_padded_tile_into,
     mask_atlas_edge, mask_region_texture_extent, mask_source_region_uv, required_export_tile_halo,
-    CfaKind, ExposureParams, GeometryTransform, GpuParams, GpuProgramPrewarm, LensGeometryMap,
-    LoadedRaw, MaskStack, NativeRect, PipelineOptions, ProcessingQuality, ProcessingStage,
-    ProxySpec, RawGpuPipeline, RawGpuProgramTemplate, RemoveEditState, RemoveSceneContext,
-    SrgbOutputTransform, TilePlan, TileSpec, EXPORT_TILE_HALO, MAX_LOCAL_MASKS,
-    MIN_EXPORT_TILE_HALO, TONE_GUIDE_CELL_SIZE,
+    CfaKind, ExposureParams, GeometryTransform, GpuParams, GpuProgramPrewarm, GpuWait,
+    LensGeometryMap, LoadedRaw, MaskStack, NativeRect, PipelineOptions, ProcessingQuality,
+    ProcessingStage, ProxySpec, RawGpuPipeline, RawGpuProgramTemplate, RemoveEditState,
+    RemoveSceneContext, SrgbOutputTransform, TilePlan, TileSpec, EXPORT_TILE_HALO, MAX_LOCAL_MASKS,
+    MIN_EXPORT_TILE_HALO, SLOW_GPU_WAIT, TONE_GUIDE_CELL_SIZE,
 };
 use anyhow::{Context, Result};
 use calibraw_core::file_ops::{move_file_to_free_name, replace_file, sync_parent_directory};

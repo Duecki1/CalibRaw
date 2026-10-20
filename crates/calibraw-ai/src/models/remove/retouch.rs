@@ -16,17 +16,20 @@ pub(super) fn run_retouch(request: RetouchRequest) -> Result<RemoveStroke> {
     );
 
     let render = |crop: NativeRect, remove: RemoveEditState| {
-        render_remove_scene_crop(DevelopedCropJob {
-            device: request.device.clone(),
-            queue: request.queue.clone(),
-            raw: Arc::clone(&request.raw),
-            geometry: request.geometry,
-            exposure: request.exposure,
-            masks: request.masks.clone(),
-            remove,
-            crop,
-            program_prewarm: request.program_prewarm.clone(),
-        })
+        render_remove_scene_crop(
+            DevelopedCropJob {
+                device: request.device.clone(),
+                queue: request.queue.clone(),
+                raw: Arc::clone(&request.raw),
+                geometry: request.geometry,
+                exposure: request.exposure,
+                masks: request.masks.clone(),
+                remove,
+                crop,
+                program_prewarm: request.program_prewarm.clone(),
+            },
+            GpuWait::Limited,
+        )
     };
     let chunks = split_retouch_brush(&request.brush);
     anyhow::ensure!(

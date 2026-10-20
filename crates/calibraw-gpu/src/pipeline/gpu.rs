@@ -30,6 +30,7 @@ mod scene_depth;
 mod scene_surface;
 mod shader_manager;
 mod shaders;
+mod wait;
 
 use builder::*;
 pub use clipping::PreviewClippingGpu;
@@ -40,6 +41,9 @@ use resources::*;
 use scene_depth::valid_scene_depth;
 use scene_surface::SCENE_DEPTH_MIP_LEVELS;
 use shader_manager::ShaderManager;
+pub use wait::GpuWait;
+pub(crate) use wait::SLOW_GPU_WAIT;
+use wait::{wait_for_submission, GpuWaitError};
 
 #[cfg(test)]
 mod black_tone_tests;

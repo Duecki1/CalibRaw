@@ -16,8 +16,9 @@ pub use export::{
     ExportMetadata, ExportResizeMode, ExportSettings, ExportTarget, ResizedRemoveSceneCrop,
     TiledExportJob, MAX_EXPORT_EDGE, MAX_EXPORT_PIXELS,
 };
+pub(crate) use gpu::SLOW_GPU_WAIT;
 pub use gpu::{
-    GpuOutputSnapshot, GpuParams, GpuProgramPrewarm, PipelineOptions, PreviewClippingGpu,
+    GpuOutputSnapshot, GpuParams, GpuProgramPrewarm, GpuWait, PipelineOptions, PreviewClippingGpu,
     PreviewHistogram, PreviewHistogramGpu, ProcessingQuality, RawGpuPipeline,
     RawGpuProgramTemplate, RemoveSceneContext,
 };

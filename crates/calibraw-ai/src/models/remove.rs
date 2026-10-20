@@ -10,9 +10,9 @@ use crate::pipeline::{
     remove_model_srgb_to_canonical_scene, remove_model_view_gain, remove_scene_to_model_srgb,
     render_remove_scene_crop, render_remove_scene_crop_resized,
     working_rec2020_to_canonical_remove_scene, DevelopedCropJob, ExposureParams, GeometryTransform,
-    GpuProgramPrewarm, LoadedRaw, MaskStack, NativeRect, RemoveBrushStroke, RemoveEditState,
-    RemoveMask, RemovePass, RemovePatch, RemoveStroke, ResizedRemoveSceneCrop, RetouchAlignment,
-    RetouchStroke, RetouchTool, BIG_LAMA_INPUT_EDGE,
+    GpuProgramPrewarm, GpuWait, LoadedRaw, MaskStack, NativeRect, RemoveBrushStroke,
+    RemoveEditState, RemoveMask, RemovePass, RemovePatch, RemoveStroke, ResizedRemoveSceneCrop,
+    RetouchAlignment, RetouchStroke, RetouchTool, BIG_LAMA_INPUT_EDGE,
 };
 use crate::registry::{AiModel, ModelInfo};
 use crate::runtime::initialize_runtime;
@@ -164,17 +164,20 @@ fn run_remove(
         let crop = pass.crop;
         let surroundings_bounds =
             lama::surroundings_region(pass, request.raw.width, request.raw.height);
-        let surroundings = render_remove_scene_crop(DevelopedCropJob {
-            device: request.device.clone(),
-            queue: request.queue.clone(),
-            raw: Arc::clone(&request.raw),
-            geometry: request.geometry,
-            exposure: request.exposure,
-            masks: request.masks.clone(),
-            remove: context.clone(),
-            crop: surroundings_bounds,
-            program_prewarm: request.program_prewarm.clone(),
-        })
+        let surroundings = render_remove_scene_crop(
+            DevelopedCropJob {
+                device: request.device.clone(),
+                queue: request.queue.clone(),
+                raw: Arc::clone(&request.raw),
+                geometry: request.geometry,
+                exposure: request.exposure,
+                masks: request.masks.clone(),
+                remove: context.clone(),
+                crop: surroundings_bounds,
+                program_prewarm: request.program_prewarm.clone(),
+            },
+            GpuWait::Limited,
+        )
         .context("render native surroundings for Remove grain")?;
         let scene = render_remove_scene_crop_resized(
             DevelopedCropJob {

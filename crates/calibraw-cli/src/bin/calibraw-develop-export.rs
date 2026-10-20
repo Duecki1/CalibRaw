@@ -187,6 +187,9 @@ impl ExportHarness<'_> {
                     completed_tiles,
                     total_tiles,
                 } => eprintln!("rendered {completed_tiles}/{total_tiles} tiles"),
+                ExportEvent::WaitingForGpu { waited } => {
+                    eprintln!("waiting for the GPU ({} s)", waited.as_secs())
+                }
                 ExportEvent::Finished(result) => {
                     finished = Some(result.map_err(|error| anyhow!(error))?);
                     break;
