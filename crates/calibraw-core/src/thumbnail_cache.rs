@@ -2,6 +2,8 @@ use crate::file_ops::write_bytes_atomically;
 use crate::pipeline::RawThumbnail;
 use image::codecs::jpeg::JpegEncoder;
 use image::ImageFormat;
+use rayon::iter::{IndexedParallelIterator, ParallelIterator};
+use rayon::slice::ParallelSliceMut;
 use std::fs;
 use std::path::Path;
 use std::path::PathBuf;
@@ -82,11 +84,82 @@ impl Drop for RenderedThumbnailPermit {
 }
 
 pub fn downscale_to_fit(image: image::DynamicImage, maximum_edge: u32) -> image::DynamicImage {
-    if image.width() > maximum_edge || image.height() > maximum_edge {
-        image.thumbnail(maximum_edge, maximum_edge)
-    } else {
-        image
+    if image.width() <= maximum_edge && image.height() <= maximum_edge {
+        return image;
     }
+    // `imageops::thumbnail` rounds each block sum by adding half the block's
+    // pixel count, which lifts every float sample by 0.5, and `resize` clamps
+    // floats to [0, 1]. Float rasters are scene-linear and may exceed 1, so
+    // they take a plain area average instead.
+    match image {
+        image::DynamicImage::ImageRgb32F(buffer) => {
+            image::DynamicImage::ImageRgb32F(area_average_f32(&buffer, maximum_edge))
+        }
+        image::DynamicImage::ImageRgba32F(buffer) => {
+            image::DynamicImage::ImageRgba32F(area_average_f32(&buffer, maximum_edge))
+        }
+        image => image.thumbnail(maximum_edge, maximum_edge),
+    }
+}
+
+/// Box-filters `source` down to the size `DynamicImage::thumbnail` picks for
+/// a `maximum_edge` square. Each output pixel averages the source pixels whose
+/// index range maps onto it, so every source pixel contributes exactly once.
+/// Callers only downscale, which keeps every span at least one pixel wide.
+fn area_average_f32<P>(
+    source: &image::ImageBuffer<P, Vec<f32>>,
+    maximum_edge: u32,
+) -> image::ImageBuffer<P, Vec<f32>>
+where
+    P: image::Pixel<Subpixel = f32>,
+{
+    let (width, height) = source.dimensions();
+    let ratio = (f64::from(maximum_edge) / f64::from(width))
+        .min(f64::from(maximum_edge) / f64::from(height));
+    let output_width = ((f64::from(width) * ratio).round() as u32).clamp(1, width);
+    let output_height = ((f64::from(height) * ratio).round() as u32).clamp(1, height);
+    let spans = |source_len: u32, output_len: u32| -> Vec<(usize, usize)> {
+        (0..u64::from(output_len))
+            .map(|index| {
+                let start = index * u64::from(source_len) / u64::from(output_len);
+                let end = (index + 1) * u64::from(source_len) / u64::from(output_len);
+                (start as usize, end as usize)
+            })
+            .collect()
+    };
+    let column_spans = spans(width, output_width);
+    let row_spans = spans(height, output_height);
+    let channels = usize::from(P::CHANNEL_COUNT);
+    let source_stride = width as usize * channels;
+    let samples = source.as_raw();
+
+    let mut output = vec![0.0f32; output_width as usize * output_height as usize * channels];
+    output
+        .par_chunks_exact_mut(output_width as usize * channels)
+        .zip(&row_spans)
+        .for_each(|(output_row, &(top, bottom))| {
+            let mut column_sums = vec![0.0f64; source_stride];
+            for row in
+                samples[top * source_stride..bottom * source_stride].chunks_exact(source_stride)
+            {
+                for (sum, &value) in column_sums.iter_mut().zip(row) {
+                    *sum += f64::from(value);
+                }
+            }
+            for (output_pixel, &(left, right)) in
+                output_row.chunks_exact_mut(channels).zip(&column_spans)
+            {
+                let count = ((bottom - top) * (right - left)) as f64;
+                for (channel, value) in output_pixel.iter_mut().enumerate() {
+                    let sum: f64 = (left..right)
+                        .map(|column| column_sums[column * channels + channel])
+                        .sum();
+                    *value = (sum / count) as f32;
+                }
+            }
+        });
+    image::ImageBuffer::from_raw(output_width, output_height, output)
+        .expect("area average output length matches its dimensions")
 }
 
 fn discard_invalid_cache_file(path: &Path) {
@@ -492,7 +565,8 @@ fn desktop_raw_stamp(raw_path: &Path) -> Result<String, String> {
         .is_some_and(|extension| {
             extension.eq_ignore_ascii_case("tif") || extension.eq_ignore_ascii_case("tiff")
         }) {
-        2
+        // Generation 3 drops thumbnails whose float downscale lifted black.
+        3
     } else {
         1
     };
@@ -594,6 +668,23 @@ mod tests {
     }
 
     #[test]
+    fn float_downscale_averages_without_lifting_black() {
+        let mut pixels = vec![0.0f32; 4 * 2 * 3];
+        // The right half averages 1.0 and 3.0 to an above-white 2.0.
+        for (index, value) in [(2, 1.0), (3, 3.0), (6, 1.0), (7, 3.0)] {
+            pixels[index * 3..index * 3 + 3].fill(value);
+        }
+        let image =
+            image::DynamicImage::ImageRgb32F(image::Rgb32FImage::from_raw(4, 2, pixels).unwrap());
+        let downscaled = downscale_to_fit(image, 2);
+        assert_eq!([downscaled.width(), downscaled.height()], [2, 1]);
+        assert_eq!(
+            downscaled.into_rgb32f().into_raw(),
+            vec![0.0, 0.0, 0.0, 2.0, 2.0, 2.0]
+        );
+    }
+
+    #[test]
     fn tiff_raw_thumbnail_stamp_uses_current_color_pipeline_generation() {
         let root = temporary_test_path("stamp-generation");
         fs::create_dir_all(&root).unwrap();
@@ -602,7 +693,7 @@ mod tests {
         fs::write(&tiff, b"same").unwrap();
         fs::write(&raw, b"same").unwrap();
 
-        assert!(desktop_raw_stamp(&tiff).unwrap().starts_with("v2:"));
+        assert!(desktop_raw_stamp(&tiff).unwrap().starts_with("v3:"));
         assert!(desktop_raw_stamp(&raw).unwrap().starts_with("v1:"));
         fs::remove_dir_all(root).unwrap();
     }
