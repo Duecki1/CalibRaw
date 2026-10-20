@@ -8,8 +8,8 @@ use crate::pipeline::{
     extract_padded_tile, CameraProfile, CfaKind, CompactPixelMap, DenoiseQuality, EffectComponent,
     ExportTile, ExposureParams, HighlightReconstructionMethod, HsvMap, LoadedRaw, LocalMask,
     MaskEffect, MaskKind, MaskStack, NativeRect, NoiseProfile, PointCurve, ProcessingStage,
-    ProfileEncoding, SigmoidColorProcessing, WhiteBalance, MAX_TEMPERATURE_KELVIN,
-    MAX_WHITE_BALANCE_TINT, TONE_GUIDE_CELL_SIZE,
+    ProfileEncoding, SensorSaturation, SigmoidColorProcessing, WhiteBalance,
+    MAX_TEMPERATURE_KELVIN, MAX_WHITE_BALANCE_TINT, TONE_GUIDE_CELL_SIZE,
 };
 
 #[test]
@@ -1286,6 +1286,7 @@ fn opposed_highlight_consistency_raw(width: u32, height: u32) -> LoadedRaw {
         black_levels: [0.0; 4],
         black_levels_per_pixel: CompactPixelMap::repeating(width, height, 1, 1, vec![0.0]),
         white_levels: [10_000.0; 4],
+        sensor_saturation: SensorSaturation::AT_WHITE,
         noise_profile: crate::pipeline::NoiseProfile::default(),
         camera_profile: CameraProfile::default(),
         camera_profile_source: None,
@@ -1489,6 +1490,47 @@ fn gpu_params_pack_the_same_full_source_opposed_reference_for_moved_tiles() {
     assert!(first_params.camera.highlight_options[1..]
         .iter()
         .any(|value| value.abs() > 1e-5));
+}
+
+#[test]
+fn gpu_params_clip_highlights_at_sensor_saturation() {
+    let mut source = opposed_highlight_consistency_raw(160, 128);
+    source.sensor_saturation = SensorSaturation::new(1.2);
+    let masks = MaskStack::default();
+    let exposure = ExposureParams {
+        highlight_method: HighlightReconstructionMethod::InpaintOpposed,
+        highlight_clip: 0.9,
+        ..Default::default()
+    };
+    let params = GpuParams::new(&exposure, &masks, &source);
+    assert!((params.camera.highlight_clip - 1.08).abs() < 1e-6);
+    // Tiles keep their source's saturation.
+    let tile = tone_consistency_test_tile(
+        NativeRect {
+            x: 32,
+            y: 24,
+            width: 80,
+            height: 72,
+        },
+        16,
+    );
+    let tile_params = GpuParams::new_for_tile(
+        &exposure,
+        &masks,
+        &extract_padded_tile(&source, tile),
+        tile.global_origin_x,
+        tile.global_origin_y,
+        source.width,
+        source.height,
+    );
+    assert_eq!(
+        tile_params.camera.highlight_clip,
+        params.camera.highlight_clip
+    );
+    // The patch at the white level lies below saturation, so nothing is clipped.
+    assert!(params.camera.highlight_options[1..]
+        .iter()
+        .all(|value| *value == 0.0));
 }
 
 pub(super) fn request_test_device_with_info(

@@ -843,6 +843,38 @@ fn preserve_hue_and_energy(
     return result;
 }
 
+// The share of the white target where the per-channel curve's shoulder begins
+// for sigmoid_path_to_white.
+const SIGMOID_PATH_TO_WHITE_START: f32 = 0.8;
+
+// Per-channel compression caps a colour's brightest channel at the white target
+// and leaves the others, so a bright saturated colour, such as the reflection of
+// a blue neon tube, stops brightening once that channel reaches the shoulder: it
+// renders darker than a grey of the same scene luminance, and as one flat patch
+// however bright it was. Where the brightest display channel lies in the
+// shoulder, white is added until the display luminance reaches the curve's
+// response to the scene luminance, so such colours roll off towards white, the
+// path a camera rendering takes. Adding white keeps the RGB hue. The weight rises
+// smoothly from the start of the shoulder, and colours below it keep darktable's
+// per-channel rendering exactly. `scene` is the curve's non-negative input and
+// `display` its per-channel output, both linear Rec.2020.
+fn sigmoid_path_to_white(scene: vec3<f32>, display: vec3<f32>) -> vec3<f32> {
+    let white_target = Common::scene_tone_uniforms.sigmoid_curve.x;
+    let brightest = max(display.r, max(display.g, display.b));
+    let weight = smoothstep(SIGMOID_PATH_TO_WHITE_START * white_target, white_target, brightest);
+    if weight <= 0.0 {
+        return display;
+    }
+    let target_luminance = generalized_loglogistic_sigmoid(dot(scene, Common::LUMA));
+    let luminance = dot(display, Common::LUMA);
+    let headroom = white_target - luminance;
+    if target_luminance <= luminance || headroom <= 0.0 {
+        return display;
+    }
+    let amount = clamp(weight * (target_luminance - luminance) / headroom, 0.0, 1.0);
+    return display + amount * (vec3<f32>(white_target) - display);
+}
+
 fn sigmoid_per_channel(rgb: vec3<f32>) -> vec3<f32> {
     let positive = desaturate_negative_values(rgb);
     let per_channel = vec3<f32>(
@@ -851,12 +883,13 @@ fn sigmoid_per_channel(rgb: vec3<f32>) -> vec3<f32> {
         generalized_loglogistic_sigmoid(positive.b),
     );
     let order = pixel_channel_order(positive);
-    return preserve_hue_and_energy(
+    let hue_preserved = preserve_hue_and_energy(
         positive,
         per_channel,
         order,
         clamp(Common::scene_tone_uniforms.sigmoid_power.z, 0.0, 1.0),
     );
+    return sigmoid_path_to_white(positive, hue_preserved);
 }
 
 fn sigmoid_rgb_ratio(rgb: vec3<f32>) -> vec3<f32> {

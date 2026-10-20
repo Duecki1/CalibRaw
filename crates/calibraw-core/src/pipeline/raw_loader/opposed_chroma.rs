@@ -366,13 +366,16 @@ impl LoadedRaw {
         self.calculate_opposed_chroma_from_candidates(black_point, pixels, wb_coeffs, &candidates)
     }
 
+    /// The chroma opposed-highlight reconstruction adds to clipped photosites. `highlight_clip`
+    /// is the Develop setting, a fraction of [`LoadedRaw::sensor_saturation`].
     pub fn inpaint_opposed_chroma(
         &self,
         black_point: f32,
-        clip_threshold: f32,
+        highlight_clip: f32,
         use_ai_cfa: bool,
         wb_coeffs: [f32; 4],
     ) -> [f32; 3] {
+        let clip_threshold = self.sensor_saturation.clip_level(highlight_clip);
         let key = OpposedChromaCacheKey {
             source_identity: Arc::as_ptr(&self.opposed_chroma_source_identity) as usize,
             wb_bits: wb_coeffs.map(f32::to_bits),

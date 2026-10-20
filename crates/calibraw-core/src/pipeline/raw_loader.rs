@@ -28,9 +28,11 @@ use std::sync::{Arc, RwLock};
 
 mod compact_pixel_map;
 mod opposed_chroma;
+mod sensor_saturation;
 mod white_balance;
 pub use compact_pixel_map::*;
 pub use opposed_chroma::*;
+pub use sensor_saturation::SensorSaturation;
 
 #[derive(Debug)]
 struct UnsupportedRawFormat {
@@ -338,6 +340,9 @@ pub struct LoadedRaw {
     pub black_levels: [f32; 4],
     pub black_levels_per_pixel: CompactPixelMap<f32>,
     pub white_levels: [f32; 4],
+    /// Where photosites saturate relative to `white_levels`; highlight reconstruction clips
+    /// against it. Crops, proxies and tiles keep their source's.
+    pub sensor_saturation: SensorSaturation,
     pub noise_profile: NoiseProfile,
     pub camera_profile: CameraProfile,
     pub camera_profile_source: Option<PathBuf>,
@@ -398,6 +403,7 @@ impl LoadedRaw {
             black_levels: self.black_levels,
             black_levels_per_pixel,
             white_levels: self.white_levels,
+            sensor_saturation: self.sensor_saturation,
             noise_profile: self.noise_profile,
             camera_profile: self.camera_profile.clone(),
             camera_profile_source: self.camera_profile_source.clone(),
@@ -453,6 +459,7 @@ impl LoadedRaw {
             black_levels: [0.0; 4],
             black_levels_per_pixel: CompactPixelMap::repeating(width, height, 1, 1, vec![0.0]),
             white_levels: [1.0; 4],
+            sensor_saturation: SensorSaturation::AT_WHITE,
             noise_profile: NoiseProfile::default(),
             camera_profile: CameraProfile::default(),
             camera_profile_source: None,
@@ -857,7 +864,12 @@ pub fn load_raw_file_with_dcp(path: &Path, profile_path: &Path) -> Result<Loaded
             || libraw_loader::load_raw_file_with_dcp(path, profile_path),
         )
     } else {
-        libraw_loader::load_raw_file_with_dcp(path, profile_path)
+        try_libraw_then_rawler(
+            path,
+            "DCP-backed RAW decode",
+            || libraw_loader::load_raw_file_with_dcp(path, profile_path),
+            || rawler_loader::load_proprietary_raw_file_with_dcp(path, profile_path),
+        )
     }
 }
 
@@ -1120,7 +1132,7 @@ mod tests {
     use super::{
         temperature_offset_from_kelvin, AiDenoisedImage, CameraColorModel, CameraProfile,
         CameraProfileMode, CameraWhiteBalanceModel, CfaKind, CompactPixelMap, ExposureParams,
-        LoadedRaw, WhiteBalance, GLOBAL_TEMPERATURE_LIMIT,
+        LoadedRaw, SensorSaturation, WhiteBalance, GLOBAL_TEMPERATURE_LIMIT,
     };
 
     #[test]
@@ -1237,6 +1249,7 @@ mod tests {
             black_levels: [0.0; 4],
             black_levels_per_pixel: CompactPixelMap::dense(1, 1, vec![0.0]),
             white_levels: [1.0; 4],
+            sensor_saturation: SensorSaturation::AT_WHITE,
             noise_profile: crate::pipeline::NoiseProfile::default(),
             camera_profile: CameraProfile::default(),
             camera_profile_source: None,
@@ -1639,6 +1652,15 @@ mod tests {
         let expected_red = 0.8 - opposed_root * opposed_root * opposed_root;
         assert!((chroma[0] - expected_red).abs() < 0.005, "{chroma:?}");
         assert!(chroma.iter().all(|value| value.is_finite()));
+
+        // Where photosites saturate above the white level, the patch at it is measured, not
+        // clipped, and contributes no chroma.
+        raw.sensor_saturation = SensorSaturation::new(1.1);
+        raw.opposed_chroma_cache = Default::default();
+        assert_eq!(
+            raw.inpaint_opposed_chroma(0.0, 1.0, false, raw.wb_coeffs),
+            [0.0; 3]
+        );
     }
 
     #[test]

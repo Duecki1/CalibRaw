@@ -77,7 +77,9 @@ pub(super) fn pack_camera_params(ctx: &GpuParamContext<'_>) -> CameraUniforms {
 
     CameraUniforms {
         black_point: exposure.black_point,
-        highlight_clip: exposure.highlight_clip,
+        // The shaders compare normalized sensor values against it, so it is scaled by where
+        // the photo's photosites saturate. `inpaint_opposed_chroma` scales its own threshold.
+        highlight_clip: raw.sensor_saturation.clip_level(exposure.highlight_clip),
         chroma_denoise: exposure.chroma_denoise,
         highlight_reconstruction: exposure.highlight_reconstruction,
         tone_analysis_scale: tone_analysis_scale() as f32,

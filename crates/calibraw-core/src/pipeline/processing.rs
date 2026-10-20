@@ -63,7 +63,7 @@ mod tests {
     };
     use crate::pipeline::{
         AiDenoisedImage, CameraProfile, CfaKind, CompactPixelMap, DenoiseQuality, ExposureParams,
-        LoadedRaw, MaskEffect, MaskStack, WhiteBalance,
+        LoadedRaw, MaskEffect, MaskStack, SensorSaturation, WhiteBalance,
     };
 
     fn test_raster(width: u32, height: u32) -> LoadedRaw {
@@ -110,6 +110,7 @@ mod tests {
                 vec![0.0; (width * height) as usize],
             ),
             white_levels: [1023.0; 4],
+            sensor_saturation: SensorSaturation::AT_WHITE,
             noise_profile: crate::pipeline::NoiseProfile::default(),
             camera_profile: CameraProfile::default(),
             camera_profile_source: None,
@@ -963,6 +964,7 @@ mod tests {
                 (0..width * height).map(|value| value as f32).collect(),
             ),
             white_levels: [1023.0; 4],
+            sensor_saturation: SensorSaturation::AT_WHITE,
             noise_profile: crate::pipeline::NoiseProfile::default(),
             camera_profile: CameraProfile::default(),
             camera_profile_source: None,
@@ -1036,6 +1038,7 @@ mod tests {
                 vec![0.0; (width * height) as usize],
             ),
             white_levels: [1023.0; 4],
+            sensor_saturation: SensorSaturation::AT_WHITE,
             noise_profile: crate::pipeline::NoiseProfile::default(),
             camera_profile: CameraProfile::default(),
             camera_profile_source: None,
