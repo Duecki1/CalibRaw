@@ -10,6 +10,7 @@ use rayon::prelude::*;
 use std::io::{Seek, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::Duration;
 
 /// A merged master: scene-linear working Rec.2020, row-major RGB.
 pub struct MergedImage {
@@ -143,9 +144,21 @@ pub(super) fn merge_sources(
         // One white balance for every source, so per-shot auto WB cannot create seams.
         raw.wb_coeffs = camera.wb_coeffs;
         let raw = Arc::new(raw);
-        let rgb = render_camera_rgb(device, queue, &raw, program_prewarm.clone(), |percent| {
-            progress(format!("Developing {step} ({percent:.0}%)"))
-        })?;
+        let rgb = render_camera_rgb(
+            device,
+            queue,
+            &raw,
+            program_prewarm.clone(),
+            |development| match development {
+                Development::Developed(percent) => {
+                    progress(format!("Developing {step} ({percent:.0}%)"))
+                }
+                Development::WaitingForGpu(waited) => progress(format!(
+                    "Developing {step}: waiting for the GPU ({} s)",
+                    waited.as_secs()
+                )),
+            },
+        )?;
         let peak = sensor_footprint_peak(&raw);
         drop(raw);
         ensure!(progress(format!("Aligning {step}")), "Merge cancelled");
@@ -193,6 +206,15 @@ pub(super) fn camera_to_working_rec2020(rgb: &mut [f32], color_transform: [[f32;
     });
 }
 
+/// How far [`render_camera_rgb`] has got.
+#[derive(Clone, Copy, Debug)]
+pub(super) enum Development {
+    /// Percent of the image developed.
+    Developed(f32),
+    /// A tile has been waiting this long for the GPU, at least [`SLOW_GPU_WAIT`].
+    WaitingForGpu(Duration),
+}
+
 /// Develops `raw` to camera RGB without white balance. Clipped highlights get the
 /// default reconstruction, which only replaces saturated photosites: a merge weighs
 /// those pixels out wherever another frame measured them, and keeps the reconstruction
@@ -202,7 +224,7 @@ pub(super) fn render_camera_rgb(
     queue: &wgpu::Queue,
     raw: &Arc<LoadedRaw>,
     program_prewarm: Option<Arc<GpuProgramPrewarm>>,
-    mut progress: impl FnMut(f32) -> bool,
+    mut progress: impl FnMut(Development) -> bool,
 ) -> Result<Vec<f32>> {
     let exposure = ExposureParams {
         frequency_chroma: 0.0,
@@ -215,32 +237,39 @@ pub(super) fn render_camera_rgb(
     const TILE: u32 = 1024;
     for y in (0..raw.height).step_by(TILE as usize) {
         for x in (0..raw.width).step_by(TILE as usize) {
-            ensure!(
-                progress(
-                    100.0
-                        * (y as f32 * raw.width as f32
-                            + x as f32 * TILE.min(raw.height - y) as f32)
-                        / (raw.width as f32 * raw.height as f32)
-                ),
-                "Merge cancelled"
-            );
+            let percent = 100.0
+                * (y as f32 * raw.width as f32 + x as f32 * TILE.min(raw.height - y) as f32)
+                / (raw.width as f32 * raw.height as f32);
+            ensure!(progress(Development::Developed(percent)), "Merge cancelled");
+            // The tile waits for the GPU until the merge is cancelled; the
+            // callback answers that whenever it is called.
+            let mut watch_gpu = |waited: Duration| {
+                progress(if waited >= SLOW_GPU_WAIT {
+                    Development::WaitingForGpu(waited)
+                } else {
+                    Development::Developed(percent)
+                })
+            };
             let crop = NativeRect {
                 x,
                 y,
                 width: TILE.min(raw.width - x),
                 height: TILE.min(raw.height - y),
             };
-            let tile = render_remove_scene_crop(DevelopedCropJob {
-                device: device.clone(),
-                queue: queue.clone(),
-                raw: Arc::clone(raw),
-                geometry: GeometryTransform::default(),
-                exposure,
-                masks: MaskStack::default(),
-                remove: RemoveEditState::default(),
-                crop,
-                program_prewarm: program_prewarm.clone(),
-            })?;
+            let tile = render_remove_scene_crop(
+                DevelopedCropJob {
+                    device: device.clone(),
+                    queue: queue.clone(),
+                    raw: Arc::clone(raw),
+                    geometry: GeometryTransform::default(),
+                    exposure,
+                    masks: MaskStack::default(),
+                    remove: RemoveEditState::default(),
+                    crop,
+                    program_prewarm: program_prewarm.clone(),
+                },
+                GpuWait::Watched(&mut watch_gpu),
+            )?;
             for row in 0..crop.height as usize {
                 let dest = ((y as usize + row) * raw.width as usize + x as usize) * 3;
                 let start = row * crop.width as usize * 3;

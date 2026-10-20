@@ -70,7 +70,7 @@ pub fn render_remove_scene_crop_resized(
             [job.crop.width as f32, job.crop.height as f32],
         ),
     )?;
-    let pixels = pipeline.read_scene_texture_blocking(&job.device, &job.queue)?;
+    let pixels = pipeline.read_scene_texture_blocking(&job.device, &job.queue, GpuWait::Limited)?;
     Ok(ResizedRemoveSceneCrop {
         width: working_raw.width,
         height: working_raw.height,
@@ -78,7 +78,9 @@ pub fn render_remove_scene_crop_resized(
     })
 }
 
-pub fn render_remove_scene_crop(job: DevelopedCropJob) -> Result<Vec<f32>> {
+/// Renders a native Remove crop; `wait` decides how long its readback waits
+/// for the GPU.
+pub fn render_remove_scene_crop(job: DevelopedCropJob, wait: GpuWait<'_>) -> Result<Vec<f32>> {
     prepare_crop_source(&job)?;
     let empty_masks = MaskStack::default();
     let halo = required_export_tile_halo(&job.exposure, &empty_masks);
@@ -119,7 +121,7 @@ pub fn render_remove_scene_crop(job: DevelopedCropJob) -> Result<Vec<f32>> {
             [tile.padded_width as f32, tile.padded_height as f32],
         ),
     )?;
-    let scene = pipeline.read_scene_texture_blocking(&job.device, &job.queue)?;
+    let scene = pipeline.read_scene_texture_blocking(&job.device, &job.queue, wait)?;
     let mut crop = vec![0.0f32; job.crop.width as usize * job.crop.height as usize * 3];
     for y in 0..job.crop.height as usize {
         let source_y = tile.local_core_y as usize + y;

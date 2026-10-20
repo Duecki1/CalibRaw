@@ -58,7 +58,14 @@ pub(super) fn read_rgba8_texture_region_blocking(
         label,
     );
     let receiver = map_read_async(&readback);
-    wait_for_mapping(device, submission, receiver, "thumbnail", "thumbnail")?;
+    wait_for_mapping(
+        device,
+        submission,
+        receiver,
+        "thumbnail",
+        "thumbnail",
+        GpuWait::Limited,
+    )?;
 
     let mapped = readback.get_mapped_range(..);
     let rgba_len = usize::try_from(
@@ -111,12 +118,13 @@ pub struct PendingRgba32Readback {
 }
 
 impl PendingRgba32Readback {
-    pub fn finish(self, device: &wgpu::Device) -> Result<Vec<f32>> {
+    pub fn finish(self, device: &wgpu::Device, wait: GpuWait<'_>) -> Result<Vec<f32>> {
         self.finish_with_context(
             device,
             "pipelined export",
             "export",
             "display-linear export readback",
+            wait,
         )
     }
 
@@ -126,8 +134,16 @@ impl PendingRgba32Readback {
         operation: &str,
         label: &str,
         output_label: &str,
+        wait: GpuWait<'_>,
     ) -> Result<Vec<f32>> {
-        wait_for_mapping(device, self.submission, self.receiver, operation, label)?;
+        wait_for_mapping(
+            device,
+            self.submission,
+            self.receiver,
+            operation,
+            label,
+            wait,
+        )?;
 
         let mapped = self.readback.get_mapped_range(..);
         let capacity = usize::try_from(
@@ -228,6 +244,7 @@ pub(super) fn read_rgba32_texture_region_rgb_blocking(
     queue: &wgpu::Queue,
     texture: &wgpu::Texture,
     region: TextureReadbackRegion,
+    mut wait: GpuWait<'_>,
 ) -> Result<Vec<f32>> {
     region.validate("RGBA32F")?;
     let [width, height] = region.extent;
@@ -258,6 +275,7 @@ pub(super) fn read_rgba32_texture_region_rgb_blocking(
             "scene",
             "scene",
             "scene texture readback",
+            wait.reborrow(),
         )?);
         row_offset += chunk_height;
     }
@@ -272,12 +290,14 @@ pub(super) fn read_rgba32_texture_rgb_blocking(
     width: u32,
     height: u32,
     label: &'static str,
+    wait: GpuWait<'_>,
 ) -> Result<Vec<f32>> {
     read_rgba32_texture_region_rgb_blocking(
         device,
         queue,
         texture,
         TextureReadbackRegion::full(width, height, label),
+        wait,
     )
 }
 
@@ -319,7 +339,14 @@ pub(super) fn read_float_texture_pixel_blocking(
         "calibraw float pixel readback",
     );
     let receiver = map_read_async(&readback);
-    wait_for_mapping(device, submission, receiver, "float pixel", "float pixel")?;
+    wait_for_mapping(
+        device,
+        submission,
+        receiver,
+        "float pixel",
+        "float pixel",
+        GpuWait::Limited,
+    )?;
 
     let mapped = readback.get_mapped_range(..);
     let pixel = match mapped.get(..bytes_per_pixel as usize) {
@@ -449,13 +476,21 @@ fn wait_for_mapping(
     receiver: std::sync::mpsc::Receiver<Result<(), wgpu::BufferAsyncError>>,
     operation: &str,
     label: &str,
+    wait: GpuWait<'_>,
 ) -> Result<()> {
-    device
-        .poll(wgpu::PollType::Wait {
-            submission_index: Some(submission),
-            timeout: None,
-        })
-        .map_err(|error| anyhow!("GPU poll failed during {operation} readback: {error}"))?;
+    wait_for_submission(device, &submission, operation, wait).map_err(|error| match error {
+        GpuWaitError::Poll(error) => {
+            anyhow!("GPU poll failed during {operation} readback: {error}")
+        }
+        GpuWaitError::Stopped { waited } => anyhow!(
+            "GPU {operation} readback stopped after waiting {} s",
+            waited.as_secs()
+        ),
+        GpuWaitError::LimitReached { waited } => anyhow!(
+            "the GPU did not finish the {operation} readback within {} minutes",
+            waited.as_secs() / 60
+        ),
+    })?;
     receiver
         .recv()
         .map_err(|_| anyhow!("GPU {label} readback callback was dropped"))?
@@ -626,6 +661,7 @@ impl RawGpuPipeline {
                 texture_extent: [self.width, self.height],
                 label: "calibraw display-linear export readback",
             },
+            GpuWait::Limited,
         )
     }
 
@@ -633,6 +669,7 @@ impl RawGpuPipeline {
         &self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
+        wait: GpuWait<'_>,
     ) -> Result<Vec<f32>> {
         if self.scene_format != wgpu::TextureFormat::Rgba32Float {
             return Err(anyhow!(
@@ -647,6 +684,7 @@ impl RawGpuPipeline {
             self.width,
             self.height,
             "calibraw scene texture readback",
+            wait,
         )
     }
 
@@ -667,7 +705,7 @@ impl RawGpuPipeline {
         });
         self.encode_raw_stage(&mut encoder, params);
         queue.submit(Some(encoder.finish()));
-        self.read_scene_texture_blocking(device, queue)
+        self.read_scene_texture_blocking(device, queue, GpuWait::Limited)
     }
 }
 

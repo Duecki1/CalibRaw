@@ -231,6 +231,11 @@ pub enum ExportEvent {
         completed_tiles: usize,
         total_tiles: usize,
     },
+    /// The next tile has been waiting for the GPU for `waited`, at least
+    /// `SLOW_GPU_WAIT`. Sent once a second until the tile arrives.
+    WaitingForGpu {
+        waited: Duration,
+    },
     Finished(Result<PathBuf, String>),
 }
 

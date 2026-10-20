@@ -228,6 +228,15 @@ where
         plan.tile_count()
     ));
 
+    // Tile readbacks wait for the GPU as long as the export is not cancelled.
+    let mut reported_wait_seconds = 0;
+    let mut watch_gpu = |waited: Duration| {
+        if waited >= SLOW_GPU_WAIT && waited.as_secs() != reported_wait_seconds {
+            reported_wait_seconds = waited.as_secs();
+            let _ = events.send(ExportEvent::WaitingForGpu { waited });
+        }
+        !cancellation.load(Ordering::Acquire)
+    };
     let total_tiles = plan.tile_count();
     let mut completed_tiles = 0usize;
     let mut first_progress_logged = false;
@@ -322,7 +331,7 @@ where
             let previous = pending_readback.replace((tile, global_index, readback));
             if let Some((previous_tile, previous_index, previous_readback)) = previous {
                 let rgb = previous_readback
-                    .finish(device)
+                    .finish(device, GpuWait::Watched(&mut watch_gpu))
                     .with_context(|| format!("read export tile {}", previous_index + 1))?;
                 stitch_linear_tile_into_band(&mut band, raw.width, band_y, previous_tile, &rgb)?;
                 report_completed_export_tile(
@@ -337,7 +346,7 @@ where
 
         if let Some((last_tile, last_index, last_readback)) = pending_readback.take() {
             let rgb = last_readback
-                .finish(device)
+                .finish(device, GpuWait::Watched(&mut watch_gpu))
                 .with_context(|| format!("read export tile {}", last_index + 1))?;
             stitch_linear_tile_into_band(&mut band, raw.width, band_y, last_tile, &rgb)?;
             report_completed_export_tile(

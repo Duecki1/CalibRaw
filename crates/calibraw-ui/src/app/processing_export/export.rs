@@ -128,6 +128,7 @@ pub(in crate::app) fn run_export_item(
                 completed_tiles,
                 total_tiles,
             } => progress(completed_tiles, total_tiles),
+            ExportEvent::WaitingForGpu { .. } => {}
             ExportEvent::Finished(result) => return result.map(|_| ()),
         }
     }
@@ -533,6 +534,19 @@ impl CalibRawApp {
                             "Finalizing export…".to_owned()
                         } else {
                             format!("Rendering tile {completed_tiles}/{total_tiles}")
+                        };
+                    }
+                }
+                ExportEvent::WaitingForGpu { waited } => {
+                    if let Some(task) = self.export.task.as_mut() {
+                        let waiting = format!("waiting for the GPU ({} s)", waited.as_secs());
+                        task.phase = if task.total_tiles == 0 {
+                            format!("Preparing tiled export: {waiting}")
+                        } else {
+                            format!(
+                                "Rendering tile {}/{}: {waiting}",
+                                task.completed_tiles, task.total_tiles
+                            )
                         };
                     }
                 }
