@@ -306,7 +306,8 @@ impl eframe::App for CalibRawApp {
         let sidebar_size = layout.sidebar_default_size(viewport_size);
 
         let overlay_develop = self.ui.active_tab == AppTab::Develop
-            && (layout == ScreenLayout::Vertical || caps.is_mobile());
+            && crate::ui::layout::DevelopArrangement::of(caps, ui.ctx().content_rect().size())
+                == crate::ui::layout::DevelopArrangement::Overlay;
         self.refresh_status();
         // On mobile the library and settings draw their own headers.
         if !overlay_develop && (caps.is_desktop() || self.ui.active_tab == AppTab::Develop) {
@@ -315,86 +316,53 @@ impl eframe::App for CalibRawApp {
                 .show(ui, |ui| TopBar::show(ui, self, frame));
         }
 
+        // Docked Develop: the tool rail, sidebar and mask strip sit right of the photo.
         if self.ui.active_tab == AppTab::Develop && !overlay_develop {
-            match layout {
-                ScreenLayout::Horizontal if caps.is_desktop() => {
-                    {
-                        egui::Panel::right(crate::ui::layout::DEVELOP_TOOL_RAIL_ID)
-                            .resizable(false)
-                            .exact_size(Sidebar::DESKTOP_TOOL_RAIL_WIDTH)
-                            .frame(moduwu_design::panel_frame(ui))
-                            .show(ui, |ui| Sidebar::show_desktop_tool_rail(ui, self));
+            egui::Panel::right(crate::ui::layout::DEVELOP_TOOL_RAIL_ID)
+                .resizable(false)
+                .exact_size(Sidebar::DOCKED_TOOL_RAIL_WIDTH)
+                .frame(moduwu_design::panel_frame(ui))
+                .show(ui, |ui| Sidebar::show_docked_tool_rail(ui, self));
 
-                        if self.develop_ui.sidebar_open {
-                            let panel_id = egui::Id::new(crate::ui::layout::DEVELOP_SIDEBAR_ID);
-                            let panel_max =
-                                crate::ui::layout::develop_sidebar_max_width(viewport_size);
-                            let panel_width = crate::ui::layout::develop_sidebar_user_width(
-                                ui.ctx(),
-                                panel_id,
-                                sidebar_size.min(panel_max),
-                                ScreenLayout::MIN_HORIZONTAL_SIDEBAR_WIDTH,
-                                panel_max,
-                            );
-                            let panel_width = dragged_develop_sidebar_width(
-                                ui.ctx(),
-                                panel_id,
-                                ScreenLayout::MIN_HORIZONTAL_SIDEBAR_WIDTH,
-                                panel_max,
-                            )
-                            .unwrap_or(panel_width);
-                            set_develop_sidebar_panel_width(ui.ctx(), panel_id, panel_width);
-                            egui::Panel::right(panel_id)
-                                .resizable(true)
-                                .min_size(ScreenLayout::MIN_HORIZONTAL_SIDEBAR_WIDTH)
-                                // Keep the sidebar at the user's chosen width
-                                // even while it is being resized. This prevents
-                                // newly shown mask controls from widening the
-                                // panel through their layout.
-                                .max_size(panel_width)
-                                .default_size(panel_width)
-                                .frame(moduwu_design::panel_frame(ui))
-                                .show(ui, |ui| Sidebar::show(ui, self, layout, frame));
-                        }
-                    }
+            if self.develop_ui.sidebar_open {
+                let panel_id = egui::Id::new(crate::ui::layout::DEVELOP_SIDEBAR_ID);
+                let panel_max = crate::ui::layout::develop_sidebar_max_width(viewport_size);
+                let panel_width = crate::ui::layout::develop_sidebar_user_width(
+                    ui.ctx(),
+                    panel_id,
+                    sidebar_size.min(panel_max),
+                    ScreenLayout::MIN_HORIZONTAL_SIDEBAR_WIDTH,
+                    panel_max,
+                );
+                let panel_width = dragged_develop_sidebar_width(
+                    ui.ctx(),
+                    panel_id,
+                    ScreenLayout::MIN_HORIZONTAL_SIDEBAR_WIDTH,
+                    panel_max,
+                )
+                .unwrap_or(panel_width);
+                set_develop_sidebar_panel_width(ui.ctx(), panel_id, panel_width);
+                egui::Panel::right(panel_id)
+                    .resizable(true)
+                    .min_size(ScreenLayout::MIN_HORIZONTAL_SIDEBAR_WIDTH)
+                    // Keep the sidebar at the user's chosen width
+                    // even while it is being resized. This prevents
+                    // newly shown mask controls from widening the
+                    // panel through their layout.
+                    .max_size(panel_width)
+                    .default_size(panel_width)
+                    .frame(moduwu_design::panel_frame(ui))
+                    .show(ui, |ui| Sidebar::show(ui, self, layout, frame));
 
-                    if self.develop_ui.sidebar_open && self.ui.sidebar_tab == SidebarTab::Masks {
-                        egui::Panel::right(crate::ui::layout::DEVELOP_MASK_STRIP_ID)
-                            .resizable(false)
-                            .exact_size(Sidebar::HORIZONTAL_MASK_STRIP_WIDTH)
-                            .frame(moduwu_design::panel_frame(ui))
-                            .show(ui, |ui| {
-                                Sidebar::show_horizontal_mask_strip(ui, self, frame)
-                            });
-                    }
-                }
-                ScreenLayout::Horizontal => {
-                    egui::Panel::right("develop_android_landscape_primary_tabs")
+                if self.ui.sidebar_tab == SidebarTab::Masks {
+                    egui::Panel::right(crate::ui::layout::DEVELOP_MASK_STRIP_ID)
                         .resizable(false)
-                        .exact_size(Sidebar::ANDROID_LANDSCAPE_TOOL_RAIL_WIDTH)
+                        .exact_size(Sidebar::HORIZONTAL_MASK_STRIP_WIDTH)
                         .frame(moduwu_design::panel_frame(ui))
                         .show(ui, |ui| {
-                            Sidebar::show_android_landscape_primary_tabs(ui, self)
+                            Sidebar::show_horizontal_mask_strip(ui, self, frame)
                         });
-
-                    egui::Panel::right(crate::ui::layout::DEVELOP_SIDEBAR_ID)
-                        .resizable(true)
-                        .min_size(ScreenLayout::MIN_HORIZONTAL_SIDEBAR_WIDTH)
-                        .default_size(sidebar_size)
-                        .frame(moduwu_design::panel_frame(ui))
-                        .show(ui, |ui| Sidebar::show(ui, self, layout, frame));
-
-                    if self.ui.sidebar_tab == SidebarTab::Masks {
-                        egui::Panel::right(crate::ui::layout::DEVELOP_MASK_STRIP_ID)
-                            .resizable(false)
-                            .exact_size(Sidebar::HORIZONTAL_MASK_STRIP_WIDTH)
-                            .frame(moduwu_design::panel_frame(ui))
-                            .show(ui, |ui| {
-                                Sidebar::show_horizontal_mask_strip(ui, self, frame)
-                            });
-                    }
                 }
-                ScreenLayout::Vertical => {} // Controls are drawn over the portrait canvas.
             }
         }
 
@@ -576,5 +544,70 @@ mod tests {
         assert!(app.ai.gpu_acceleration);
         assert_eq!(app.preview.zoom, 1.0);
         assert!(app.ui.error_dialogs.is_open());
+    }
+
+    /// The outer rects of the docked Develop panels (top bar, tool rail,
+    /// sidebar, mask strip) and of the phone-landscape overlay rail after a
+    /// few frames of the Masks tab on an Android screen of `size` points.
+    fn android_develop_rects(size: egui::Vec2) -> ([Option<egui::Rect>; 4], Option<egui::Rect>) {
+        let ctx = egui::Context::default();
+        crate::ui::theme::install(&ctx);
+        let mut app = CalibRawApp::empty_on(
+            &ctx,
+            crate::platform::fake::FakePlatform::new(PlatformCaps::ANDROID),
+        );
+        app.ui.active_tab = AppTab::Develop;
+        app.ui.sidebar_tab = SidebarTab::Masks;
+        let mut frame = eframe::Frame::_new_kittest();
+        for _ in 0..3 {
+            let _ = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, size)),
+                    ..Default::default()
+                },
+                |ui| eframe::App::ui(&mut app, ui, &mut frame),
+            );
+        }
+        let panel = |id: &str| {
+            egui::PanelState::load(&ctx, egui::Id::new(id)).map(|state| state.outer_rect)
+        };
+        let docked = [
+            panel("top_bar"),
+            panel(crate::ui::layout::DEVELOP_TOOL_RAIL_ID),
+            panel(crate::ui::layout::DEVELOP_SIDEBAR_ID),
+            panel(crate::ui::layout::DEVELOP_MASK_STRIP_ID),
+        ];
+        let overlay_rail =
+            ctx.memory(|memory| memory.area_rect(egui::Id::new("landscape-overlay-tool-rail")));
+        (docked, overlay_rail)
+    }
+
+    #[test]
+    fn android_tablets_dock_develop_like_the_desktop_and_phones_overlay_it() {
+        let size = egui::vec2(1280.0, 752.0);
+        let ([top_bar, rail, sidebar, masks], overlay_rail) = android_develop_rects(size);
+        let [top_bar, rail, sidebar, masks] =
+            [top_bar, rail, sidebar, masks].map(|rect| rect.expect("docked Develop panel"));
+        assert_eq!(overlay_rail, None);
+        // The desktop order from the right edge: tool rail, sidebar, mask strip,
+        // all below the toolbar, leaving the photo the space on the left. A
+        // panel's outer rect reaches past the screen by its frame stroke.
+        let near = |a: f32, b: f32| (a - b).abs() <= 2.0;
+        assert!(near(rail.right(), size.x), "{rail:?}");
+        assert_eq!(
+            rail.width(),
+            crate::ui::sidebar::Sidebar::DOCKED_TOOL_RAIL_WIDTH
+        );
+        assert!(near(sidebar.right(), rail.left()), "{sidebar:?}");
+        assert!(sidebar.width() >= ScreenLayout::MIN_HORIZONTAL_SIDEBAR_WIDTH);
+        assert!(near(masks.right(), sidebar.left()), "{masks:?}");
+        assert!(masks.left() > size.x * 0.4, "{masks:?}");
+        for panel in [rail, sidebar, masks] {
+            assert!(near(panel.top(), top_bar.bottom()), "{panel:?}");
+        }
+
+        let phone = android_develop_rects(egui::vec2(891.0, 411.0));
+        assert_eq!(phone.0, [None; 4]);
+        assert!(phone.1.is_some());
     }
 }

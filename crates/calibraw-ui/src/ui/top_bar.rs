@@ -94,7 +94,7 @@ fn develop_toolbar_dock_geometry(
         // Panel state is available after the first layout pass. Until then use
         // the same sizing rules as the Develop dock as a one-frame fallback.
         let viewport_size = ctx.content_rect().size();
-        let mut dock_width = crate::ui::sidebar::Sidebar::DESKTOP_TOOL_RAIL_WIDTH;
+        let mut dock_width = crate::ui::sidebar::Sidebar::DOCKED_TOOL_RAIL_WIDTH;
         if app.develop_ui.sidebar_open {
             let panel_max = crate::ui::layout::develop_sidebar_max_width(viewport_size);
             let default_width = moduwu_design::ScreenLayout::Horizontal
@@ -158,9 +158,12 @@ impl TopBar {
         })
     }
 
+    /// The toolbar panel above docked Develop and, on desktop, the other tabs.
+    /// Touch screens show it only for docked Develop; elsewhere the overlay
+    /// controls ([`Self::show_portrait`]) and the tabs' own headers stand in.
     pub(crate) fn show(ui: &mut Ui, app: &mut CalibRawApp, frame: &eframe::Frame) {
         if app.caps().is_mobile() {
-            Self::show_portrait(ui, app, frame);
+            Self::show_tablet(ui, app);
         } else {
             Self::show_desktop(ui, app, frame);
         }
@@ -337,6 +340,7 @@ impl TopBar {
         let native_zoom = app.preview.native_zoom;
         let mut requested_zoom = None;
         let mut reset_requested = false;
+        let touch = app.caps().is_mobile();
 
         ui.add_enabled_ui(enabled, |ui| {
             ui.spacing_mut().item_spacing.x = item_spacing;
@@ -350,7 +354,11 @@ impl TopBar {
                     )
                     .sense(egui::Sense::click()),
                 ),
-                "Preview zoom\nDouble-click to reset.",
+                if touch {
+                    "Preview zoom\nDouble-tap to reset."
+                } else {
+                    "Preview zoom\nDouble-click to reset."
+                },
             );
             if icon_response.double_clicked() {
                 reset_requested = true;
@@ -391,13 +399,21 @@ impl TopBar {
                 }
             });
 
-            let ctx = ui.ctx().clone();
-            icon_response.union(readout_response).on_hover_text(format!(
-                "Preview zoom. 100% shows one photo pixel per screen pixel. Click the value for \
-                 Fit and 100%, or press {} and {}. Double-click the photo to switch between them.",
-                ctx.format_shortcut(&crate::ui::preview::ZOOM_FIT_SHORTCUT),
-                ctx.format_shortcut(&crate::ui::preview::ZOOM_NATIVE_SHORTCUT),
-            ));
+            let help = if touch {
+                "Preview zoom. 100% shows one photo pixel per screen pixel. Tap the value for \
+                 Fit and 100%, or double-tap the photo to switch between them."
+                    .to_owned()
+            } else {
+                let ctx = ui.ctx();
+                format!(
+                    "Preview zoom. 100% shows one photo pixel per screen pixel. Click the value \
+                     for Fit and 100%, or press {} and {}. Double-click the photo to switch \
+                     between them.",
+                    ctx.format_shortcut(&crate::ui::preview::ZOOM_FIT_SHORTCUT),
+                    ctx.format_shortcut(&crate::ui::preview::ZOOM_NATIVE_SHORTCUT),
+                )
+            };
+            icon_response.union(readout_response).on_hover_text(help);
         });
 
         if reset_requested {
@@ -427,12 +443,73 @@ impl TopBar {
         if crate::ui::library::show_current_photo_review(ui, app, compact_review) {
             ui.separator();
         }
-        if app.develop.current_path.is_some() {
+        // A media-library photo opens without a path, so ask for the document.
+        if app.develop.loaded_raw.is_some() {
             Self::show_develop_zoom_control(ui, app);
             if separator_after_zoom {
                 ui.separator();
             }
         }
+    }
+
+    /// The review and zoom group at the right end of a right-to-left toolbar.
+    fn show_develop_dock_controls(ui: &mut Ui, app: &mut CalibRawApp, compact_review: bool) {
+        // Keep the toolbar break aligned with the visible Develop dock on
+        // the right so the top separator stays in the same vertical line as
+        // the sidebar/tool-rail edge below it.
+        let dock_geometry = develop_toolbar_dock_geometry(ui.ctx(), app, ui.max_rect().right())
+            .filter(|(_, width)| *width >= DEVELOP_DOCK_MIN_WIDTH);
+        if let Some((dock_separator_x, reserved_width)) = dock_geometry {
+            let dock_response = ui.allocate_ui_with_layout(
+                egui::vec2(reserved_width, moduwu_design::TOOLBAR_HEIGHT),
+                egui::Layout::right_to_left(egui::Align::Center),
+                |ui| {
+                    Self::show_develop_review_and_zoom(ui, app, compact_review, false);
+                },
+            );
+            let stroke = ui.visuals().widgets.noninteractive.bg_stroke;
+            // Do not infer this line from the toolbar child's rect: the
+            // toolbar frame has its own inset. Paint at the actual Panel
+            // edge loaded above so the line is pixel-identical below.
+            ui.painter().vline(
+                dock_separator_x,
+                dock_response.response.rect.y_range(),
+                stroke,
+            );
+        } else {
+            // Without a dock (closed sidebar or a narrow window) nothing
+            // bounds the zoom track, so give the group a capped width.
+            let width = ui
+                .available_width()
+                .min(DEVELOP_UNDOCKED_CONTROLS_MAX_WIDTH);
+            ui.allocate_ui_with_layout(
+                egui::vec2(width, moduwu_design::TOOLBAR_HEIGHT),
+                egui::Layout::right_to_left(egui::Align::Center),
+                |ui| {
+                    Self::show_develop_review_and_zoom(ui, app, compact_review, true);
+                },
+            );
+        }
+    }
+
+    /// The docked Develop toolbar of a tablet: the desktop one with Back in
+    /// place of the tab switcher. It has no original toggle, since a finger
+    /// resting on the photo shows the original, and no keyboard shortcuts.
+    fn show_tablet(ui: &mut Ui, app: &mut CalibRawApp) {
+        moduwu_design::prepare_toolbar(ui);
+        let compact_review = ui.available_width() < TOOLBAR_COMPACT_REVIEW_WIDTH;
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            Self::show_develop_dock_controls(ui, app, compact_review);
+            app.show_background_tasks(ui);
+            ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                if Self::back_icon_button(ui, moduwu_design::toolbar_icon_size()).clicked() {
+                    app.activate_tab(AppTab::Library);
+                }
+                ui.separator();
+                Self::show_history_controls(ui, app, false);
+                Self::show_save_control(ui, app, false);
+            });
+        });
     }
 
     fn show_desktop(ui: &mut Ui, app: &mut CalibRawApp, _frame: &eframe::Frame) {
@@ -446,43 +523,7 @@ impl TopBar {
         let tab_width = if compact { 88.0 } else { 98.0 };
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             if app.ui.active_tab == AppTab::Develop {
-                // Keep the toolbar break aligned with the visible Develop dock on
-                // the right so the top separator stays in the same vertical line as
-                // the sidebar/tool-rail edge below it.
-                let dock_geometry =
-                    develop_toolbar_dock_geometry(ui.ctx(), app, ui.max_rect().right())
-                        .filter(|(_, width)| *width >= DEVELOP_DOCK_MIN_WIDTH);
-                if let Some((dock_separator_x, reserved_width)) = dock_geometry {
-                    let dock_response = ui.allocate_ui_with_layout(
-                        egui::vec2(reserved_width, moduwu_design::TOOLBAR_HEIGHT),
-                        egui::Layout::right_to_left(egui::Align::Center),
-                        |ui| {
-                            Self::show_develop_review_and_zoom(ui, app, compact_review, false);
-                        },
-                    );
-                    let stroke = ui.visuals().widgets.noninteractive.bg_stroke;
-                    // Do not infer this line from the toolbar child's rect: the
-                    // toolbar frame has its own inset. Paint at the actual Panel
-                    // edge loaded above so the line is pixel-identical below.
-                    ui.painter().vline(
-                        dock_separator_x,
-                        dock_response.response.rect.y_range(),
-                        stroke,
-                    );
-                } else {
-                    // Without a dock (closed sidebar or a narrow window) nothing
-                    // bounds the zoom track, so give the group a capped width.
-                    let width = ui
-                        .available_width()
-                        .min(DEVELOP_UNDOCKED_CONTROLS_MAX_WIDTH);
-                    ui.allocate_ui_with_layout(
-                        egui::vec2(width, moduwu_design::TOOLBAR_HEIGHT),
-                        egui::Layout::right_to_left(egui::Align::Center),
-                        |ui| {
-                            Self::show_develop_review_and_zoom(ui, app, compact_review, true);
-                        },
-                    );
-                }
+                Self::show_develop_dock_controls(ui, app, compact_review);
                 if !center_brand {
                     Self::show_toolbar_brand(ui, app);
                     ui.separator();
