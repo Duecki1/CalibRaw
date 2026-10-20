@@ -424,6 +424,38 @@ pub(super) fn white_levels(maximum: u32, linear_max: [u32; 4], black_levels: [f3
     out
 }
 
+/// Rejects black/white levels that cannot describe `raw_pixels`.
+///
+/// LibRaw reads Canon CR3 levels from a ColorData block whose layout it identifies by length. For
+/// a camera newer than its tables (the EOS R6 Mark III), it reads unrelated fields and reports a
+/// white level of about 150 for 14-bit data, so the whole image clips to white. A valid white level
+/// lies above every black level, and saturated photosites read at it, not above it, so more than
+/// half of the mosaic above the white level means the metadata, not the image, is wrong. The
+/// error lets the caller decode the file through another backend.
+pub(super) fn validate_sensor_levels(
+    white_levels: [f32; 4],
+    black_levels: [f32; 4],
+    raw_pixels: &[u16],
+) -> Result<()> {
+    let white = white_levels.iter().copied().fold(0.0f32, f32::max);
+    let black = black_levels.iter().copied().fold(0.0f32, f32::max);
+    anyhow::ensure!(
+        white > black + 1.0,
+        "LibRaw white level {white_levels:?} is not above black level {black_levels:?}"
+    );
+    let above_white = raw_pixels
+        .par_iter()
+        .filter(|&&value| f32::from(value) > white)
+        .count();
+    anyhow::ensure!(
+        above_white <= raw_pixels.len() / 2,
+        "{above_white} of {} RAW samples lie above LibRaw's white level {white_levels:?} \
+         (black {black_levels:?}); the camera is likely newer than LibRaw's metadata tables",
+        raw_pixels.len()
+    );
+    Ok(())
+}
+
 /// Lowers nominal white levels to the sensor saturation observed in the mosaic.
 ///
 /// LibRaw's `maximum` is often the container bit-depth ceiling (for example 4095 for 12-bit

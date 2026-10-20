@@ -656,6 +656,7 @@ fn loaded_raw_from_context(
         black_levels,
         &raw_pixels,
     );
+    validate_sensor_levels(white_levels, black_levels, &raw_pixels)?;
     let noise_profile = NoiseProfile::estimate(
         width,
         height,
@@ -830,9 +831,9 @@ mod tests {
         interpolate_endpoints, matching_thumbnail_orientation, mired_interpolation_weight,
         oriented_source_pos, resolve_default_exposure_ev, saturation_adjusted_white_levels,
         smaller_covering_preview_index, valid_baseline_exposure,
-        validate_embedded_thumbnail_metadata, white_balance, white_levels, CameraColorModel,
-        CameraProfile, CameraWhiteBalanceModel, CfaKind, DcpMatrixSet, DcpProfile,
-        DngColorEndpoint, EmbeddedPreview, MAX_EMBEDDED_THUMBNAIL_BYTES,
+        validate_embedded_thumbnail_metadata, validate_sensor_levels, white_balance, white_levels,
+        CameraColorModel, CameraProfile, CameraWhiteBalanceModel, CfaKind, DcpMatrixSet,
+        DcpProfile, DngColorEndpoint, EmbeddedPreview, MAX_EMBEDDED_THUMBNAIL_BYTES,
         MISSING_BASELINE_EXPOSURE_FALLBACK_EV,
     };
     use crate::matrix;
@@ -1768,6 +1769,28 @@ mod tests {
             saturation_adjusted_white_levels([4095.0; 4], [67.0; 4], &mid),
             [4095.0; 4]
         );
+    }
+
+    #[test]
+    fn sensor_levels_accept_valid_mosaics_with_clipping_and_hot_pixels() {
+        let mut pixels = ramp_with_pile_up(3_867, 4_095, 50_000);
+        pixels.extend([4_095, 4_095, 4_095]);
+        assert!(validate_sensor_levels([4095.0; 4], [67.0; 4], &pixels).is_ok());
+        // LibRaw's white can sit below the container ceiling the data clips at.
+        let clipped_above_white = ramp_with_pile_up(3_867, 4_095, 50_000);
+        assert!(validate_sensor_levels([3972.0; 4], [67.0; 4], &clipped_above_white).is_ok());
+        assert!(validate_sensor_levels([4095.0; 4], [67.0; 4], &[]).is_ok());
+    }
+
+    #[test]
+    fn sensor_levels_reject_unknown_canon_colordata() {
+        // Canon EOS R6 Mark III through LibRaw without its ColorData layout: 14-bit data
+        // starting near a black level of 512 against a reported white of 146.
+        let pixels: Vec<u16> = (0..100_000).map(|i| 512 + (i % 15_000) as u16).collect();
+        let error = validate_sensor_levels([146.0; 4], [0.0, 33.0, 100.0, 67.0], &pixels)
+            .expect_err("levels below the data must be rejected");
+        assert!(error.to_string().contains("100000 of 100000"));
+        assert!(validate_sensor_levels([64.0; 4], [64.0; 4], &pixels).is_err());
     }
 
     #[test]
