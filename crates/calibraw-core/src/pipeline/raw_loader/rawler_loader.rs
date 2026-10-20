@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Rawler backend. DNGs decode here first; proprietary RAWs reach it only as
 //! a fallback when LibRaw cannot load them (for example a camera LibRaw has no
-//! colour matrix for). Rawler owns container and pixel decoding; CalibRaw owns
+//! colour matrix or level metadata for). Rawler owns container and pixel decoding; CalibRaw owns
 //! validation and adapts the result to its existing colour pipeline.
 
 use super::libraw_loader as shared;
 use super::{
     validate_raw_dimensions, CameraProfile, CameraProfileCandidate, CameraProfileMode,
     CaptureMetadata, CfaKind, CompactPixelMap, LoadedRaw, RawDisplayMetadata, RawThumbnail,
-    MAX_RAW_FILE_BYTES, MAX_SENSOR_EDGE, MAX_SENSOR_PIXELS,
+    SensorSaturation, MAX_RAW_FILE_BYTES, MAX_SENSOR_EDGE, MAX_SENSOR_PIXELS,
 };
 use crate::pipeline::{color_profile::DcpProfile, noise::NoiseProfile, LateralChromaticAberration};
 use anyhow::{anyhow, bail, ensure, Context, Result};
@@ -705,6 +705,7 @@ fn adapt(
         black_levels: [0.0; 4],
         black_levels_per_pixel: CompactPixelMap::repeating(width, height, 1, 1, vec![0.0]),
         white_levels: [1.0; 4],
+        sensor_saturation: SensorSaturation::AT_WHITE,
         noise_profile: NoiseProfile::default(),
         camera_profile,
         camera_profile_source: None,
@@ -894,31 +895,7 @@ pub(super) fn load_proprietary_raw_file_with_profile_selection(
     selected: Option<&Path>,
 ) -> Result<LoadedRaw> {
     guarded(|| {
-        shared::validate_input_file(path, MAX_RAW_FILE_BYTES, "Rawler input")?;
-        let source = RawSource::new(path).context("open Rawler source")?;
-        let decoder = rawler::get_decoder(&source).context("identify Rawler input")?;
-        ensure!(
-            decoder.format_hint() != FormatHint::DNG,
-            "DNG containers use the Rawler DNG backend"
-        );
-        let params = RawDecodeParams::default();
-        // Proprietary decoders expose no sensor bounds through IFDs. A dummy
-        // decode parses the headers without allocating pixels, so the sensor
-        // limits are enforced before the real decode.
-        let header = decoder
-            .raw_image(&source, &params, true)
-            .context("read RAW header with Rawler")?;
-        let md = metadata(&*decoder, &source);
-        let crop = header
-            .crop_area
-            .or(header.active_area)
-            .map(|area| (area.x(), area.y(), area.width(), area.height()));
-        let geometry =
-            Geometry::from_sensor_crop(header.width, header.height, crop, md.exif.orientation)?;
-        let image = decoder
-            .raw_image(&source, &params, false)
-            .context("decode RAW with Rawler")?;
-        let color = CameraColor::from_camera_database(&image.color_matrix)?;
+        let (image, geometry, color, md) = decode_proprietary(path)?;
         let (profile, profile_source, candidates) = shared::resolve_camera_profiles(
             path,
             mode,
@@ -933,6 +910,56 @@ pub(super) fn load_proprietary_raw_file_with_profile_selection(
         crate::diagnostics::record("RAW decode completed through Rawler fallback backend");
         Ok(loaded)
     })
+}
+
+/// Decodes a proprietary RAW through Rawler with an explicitly chosen DCP.
+/// The router calls this only after LibRaw has failed.
+pub(super) fn load_proprietary_raw_file_with_dcp(
+    path: &Path,
+    profile_path: &Path,
+) -> Result<LoadedRaw> {
+    guarded(|| {
+        let (profile, candidate) = shared::read_selected_dcp_profile(path, profile_path)?;
+        let (image, geometry, color, md) = decode_proprietary(path)?;
+        let mut loaded = adapt(image, geometry, color, md, path, Some(profile))?;
+        loaded.camera_profile_source = Some(candidate.path.clone());
+        loaded.available_camera_profiles = vec![candidate];
+        crate::diagnostics::record(
+            "DCP-backed RAW decode completed through Rawler fallback backend",
+        );
+        Ok(loaded)
+    })
+}
+
+/// Decodes a proprietary (non-DNG) RAW with the colour of Rawler's camera
+/// database, enforcing the sensor limits before any pixels are allocated.
+fn decode_proprietary(path: &Path) -> Result<(RawImage, Geometry, CameraColor, RawMetadata)> {
+    shared::validate_input_file(path, MAX_RAW_FILE_BYTES, "Rawler input")?;
+    let source = RawSource::new(path).context("open Rawler source")?;
+    let decoder = rawler::get_decoder(&source).context("identify Rawler input")?;
+    ensure!(
+        decoder.format_hint() != FormatHint::DNG,
+        "DNG containers use the Rawler DNG backend"
+    );
+    let params = RawDecodeParams::default();
+    // Proprietary decoders expose no sensor bounds through IFDs. A dummy
+    // decode parses the headers without allocating pixels, so the sensor
+    // limits are enforced before the real decode.
+    let header = decoder
+        .raw_image(&source, &params, true)
+        .context("read RAW header with Rawler")?;
+    let md = metadata(&*decoder, &source);
+    let crop = header
+        .crop_area
+        .or(header.active_area)
+        .map(|area| (area.x(), area.y(), area.width(), area.height()));
+    let geometry =
+        Geometry::from_sensor_crop(header.width, header.height, crop, md.exif.orientation)?;
+    let image = decoder
+        .raw_image(&source, &params, false)
+        .context("decode RAW with Rawler")?;
+    let color = CameraColor::from_camera_database(&image.color_matrix)?;
+    Ok((image, geometry, color, md))
 }
 
 pub(super) fn load_raw_file_with_dcp(path: &Path, profile_path: &Path) -> Result<LoadedRaw> {

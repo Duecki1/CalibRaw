@@ -6,9 +6,9 @@ use crate::pipeline::{
     mask_atlas_edge, pipeline_scene_to_working_rec2020, AiDenoisedImage, CfaKind, ExposureParams,
     GeometryTransform, HighlightReconstructionMethod, LateralChannel, LensGeometryMap, LoadedRaw,
     LocalMask, MaskEffect, MaskImage, MaskStack, PointColor, PointCurve, ProcessingStage,
-    RawThumbnail, RemoveEditState, RemovePatch, SigmoidParams, GLOBAL_TEMPERATURE_LIMIT,
-    GLOBAL_TINT_OFFSET_LIMIT, MAX_EFFECT_COMPONENTS, MAX_LOCAL_MASKS, MAX_POINT_COLORS,
-    MAX_POINT_CURVE_POINTS,
+    RawThumbnail, RemoveEditState, RemovePatch, SensorSaturation, SigmoidParams,
+    GLOBAL_TEMPERATURE_LIMIT, GLOBAL_TINT_OFFSET_LIMIT, MAX_EFFECT_COMPONENTS, MAX_LOCAL_MASKS,
+    MAX_POINT_COLORS, MAX_POINT_CURVE_POINTS,
 };
 use anyhow::{anyhow, Context, Result};
 use bytemuck::{Pod, Zeroable};

@@ -456,6 +456,11 @@ pub(super) fn validate_sensor_levels(
     Ok(())
 }
 
+/// Width of the band below a saturation candidate, in multiples of the top window.
+const PILE_UP_BELOW_WINDOWS: usize = 16;
+/// Minimum per-code density ratio between the top window and the band below it.
+const PILE_UP_RATIO: u64 = 8;
+
 /// Lowers nominal white levels to the sensor saturation observed in the mosaic.
 ///
 /// LibRaw's `maximum` is often the container bit-depth ceiling (for example 4095 for 12-bit
@@ -463,8 +468,7 @@ pub(super) fn validate_sensor_levels(
 /// photosites then normalise below the highlight-reconstruction threshold, so clipped greens are
 /// never repaired and the WB multipliers push red and blue above them, which renders as magenta.
 ///
-/// Saturation is recognised as a pile-up: the top `window` codes hold far more pixels per code
-/// than the band directly below, which a natural highlight tail never does. Like LibRaw's
+/// Saturation is recognised as a pile-up ([`is_saturation_pile_up`]). Like LibRaw's
 /// `adjust_maximum` (threshold 0.75), the detected level must still lie in the top quarter of the
 /// nominal range. Each channel's level is only ever lowered, to at most the detected code, so
 /// channels sharing the nominal white keep equal levels and white balance is unchanged.
@@ -474,10 +478,6 @@ pub(super) fn saturation_adjusted_white_levels(
     raw_pixels: &[u16],
 ) -> [f32; 4] {
     const MIN_RANGE_FRACTION: f32 = 0.75;
-    /// Width of the band below the candidate, in multiples of the top window.
-    const BELOW_WINDOWS: usize = 16;
-    /// Minimum per-code density ratio between the top window and the band below it.
-    const PILE_UP_RATIO: u64 = 8;
 
     let nominal_white = white_levels.iter().copied().fold(0.0f32, f32::max);
     let black = black_levels.iter().copied().fold(0.0f32, f32::max);
@@ -489,7 +489,86 @@ pub(super) fn saturation_adjusted_white_levels(
     let window = ((range / 1024.0) as usize).max(2);
 
     // Values above the nominal white are counted in the top bin; they never become candidates.
-    let histogram = raw_pixels
+    let histogram = code_histogram(raw_pixels, top_code);
+
+    // Skip isolated hot pixels: the candidate is the highest code holding a meaningful count.
+    // Data that reaches the nominal white already agrees with the metadata.
+    let total = raw_pixels.len() as u64;
+    let min_bin = min_saturation_bin(total);
+    if histogram[top_code] >= min_bin {
+        return white_levels;
+    }
+    let Some(candidate) = (0..top_code).rev().find(|&code| histogram[code] >= min_bin) else {
+        return white_levels;
+    };
+    if (candidate as f32) < black + MIN_RANGE_FRACTION * range
+        || !is_saturation_pile_up(&histogram, candidate, window, total)
+    {
+        return white_levels;
+    }
+
+    let saturation = candidate as f32;
+    white_levels.map(|white| white.min(saturation))
+}
+
+/// Finds where the mosaic saturates above its white level.
+///
+/// [`white_levels`] prefers LibRaw's `linear_max` to its `maximum`, and `linear_max` can be a
+/// conservative limit the sensor responds linearly beyond: an EOS RP CR3 at ISO 500 has a white
+/// level of 14558, yet its histogram runs smoothly past it to a pile-up at 16383. Highlight
+/// reconstruction would treat the 0.2 EV in between as clipped and inpaint coloured specular
+/// highlights, such as neon reflections, with chroma from elsewhere in the photo.
+///
+/// Saturation above the white level is the same pile-up that [`saturation_adjusted_white_levels`]
+/// looks for below it, searched up to LibRaw's `maximum`, the highest code its metadata allows.
+/// The level is the lowest over the channels, so no channel's saturated samples escape
+/// reconstruction.
+pub(super) fn sensor_saturation(
+    white_levels: [f32; 4],
+    black_levels: [f32; 4],
+    maximum: u32,
+    raw_pixels: &[u16],
+) -> SensorSaturation {
+    let nominal_white = white_levels.iter().copied().fold(0.0f32, f32::max);
+    let black = black_levels.iter().copied().fold(0.0f32, f32::max);
+    if raw_pixels.is_empty() || !nominal_white.is_finite() || nominal_white <= black + 1.0 {
+        return SensorSaturation::AT_WHITE;
+    }
+    let first_code = nominal_white as usize + 1;
+    let ceiling = usize::try_from(maximum)
+        .unwrap_or(usize::MAX)
+        .min(usize::from(u16::MAX));
+    if ceiling < first_code {
+        return SensorSaturation::AT_WHITE;
+    }
+    let window = (((nominal_white - black) / 1024.0) as usize).max(2);
+
+    // Values above `maximum` are counted in the extra top bin; they never become candidates.
+    let histogram = code_histogram(raw_pixels, ceiling + 1);
+    let total = raw_pixels.len() as u64;
+    let min_bin = min_saturation_bin(total);
+    let Some(candidate) = (first_code..=ceiling)
+        .rev()
+        .find(|&code| histogram[code] >= min_bin)
+    else {
+        return SensorSaturation::AT_WHITE;
+    };
+    if !is_saturation_pile_up(&histogram, candidate, window, total) {
+        return SensorSaturation::AT_WHITE;
+    }
+
+    let level = (0..4)
+        .map(|channel| {
+            let channel_black = black_levels[channel];
+            (candidate as f32 - channel_black) / (white_levels[channel] - channel_black).max(1.0)
+        })
+        .fold(f32::INFINITY, f32::min);
+    SensorSaturation::new(level)
+}
+
+/// Sample counts per code of `raw_pixels`; values above `top_code` are counted in its bin.
+fn code_histogram(raw_pixels: &[u16], top_code: usize) -> Vec<u64> {
+    raw_pixels
         .par_chunks(1 << 20)
         .map(|chunk| {
             let mut bins = vec![0u64; top_code + 1];
@@ -502,35 +581,26 @@ pub(super) fn saturation_adjusted_white_levels(
             sum.iter_mut().zip(part).for_each(|(a, b)| *a += b);
             sum
         })
-        .unwrap_or_default();
+        .unwrap_or_else(|| vec![0; top_code + 1])
+}
 
-    // Skip isolated hot pixels: the candidate is the highest code holding a meaningful count.
-    // Data that reaches the nominal white already agrees with the metadata.
-    let total = raw_pixels.len() as u64;
-    let min_bin = (total / 1_000_000).max(16);
-    if histogram[top_code] >= min_bin {
-        return white_levels;
-    }
-    let Some(candidate) = (0..top_code).rev().find(|&code| histogram[code] >= min_bin) else {
-        return white_levels;
-    };
-    if (candidate as f32) < black + MIN_RANGE_FRACTION * range
-        || candidate < window * (BELOW_WINDOWS + 1)
-    {
-        return white_levels;
-    }
+/// The count a code needs to be a saturation candidate rather than isolated hot pixels.
+fn min_saturation_bin(total: u64) -> u64 {
+    (total / 1_000_000).max(16)
+}
 
+/// Whether the `window` codes ending at `candidate` are a saturation pile-up: they hold far more
+/// samples per code than the band directly below, which a natural highlight tail never does.
+fn is_saturation_pile_up(histogram: &[u64], candidate: usize, window: usize, total: u64) -> bool {
+    if candidate < window * (PILE_UP_BELOW_WINDOWS + 1) || candidate >= histogram.len() {
+        return false;
+    }
     let top_start = candidate + 1 - window;
     let top: u64 = histogram[top_start..=candidate].iter().sum();
-    let below: u64 = histogram[top_start - window * BELOW_WINDOWS..top_start]
+    let below: u64 = histogram[top_start - window * PILE_UP_BELOW_WINDOWS..top_start]
         .iter()
         .sum();
-    let below_per_window = below.div_ceil(BELOW_WINDOWS as u64).max(1);
+    let below_per_window = below.div_ceil(PILE_UP_BELOW_WINDOWS as u64).max(1);
     let min_pile_up = (total / 100_000).max(64);
-    if top < min_pile_up || top < PILE_UP_RATIO * below_per_window {
-        return white_levels;
-    }
-
-    let saturation = candidate as f32;
-    white_levels.map(|white| white.min(saturation))
+    top >= min_pile_up && top >= PILE_UP_RATIO * below_per_window
 }

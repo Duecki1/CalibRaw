@@ -9,8 +9,8 @@ use super::super::noise::NoiseProfile;
 use super::{
     validate_raw_dimensions, CameraColorModel, CameraProfile, CameraProfileCandidate,
     CameraProfileMode, CameraWhiteBalanceModel, CfaKind, CompactPixelMap, DngColorEndpoint,
-    LoadedRaw, RawThumbnail, WhiteBalanceRanges, MAX_RAW_FILE_BYTES, MAX_SENSOR_EDGE,
-    MAX_SENSOR_PIXELS,
+    LoadedRaw, RawThumbnail, SensorSaturation, WhiteBalanceRanges, MAX_RAW_FILE_BYTES,
+    MAX_SENSOR_EDGE, MAX_SENSOR_PIXELS,
 };
 use crate::matrix;
 use crate::pipeline::basicadj::{
@@ -221,22 +221,33 @@ pub(super) fn load_raw_file_with_profile_selection(
 
 pub(super) fn load_raw_file_with_dcp(path: &Path, profile_path: &Path) -> Result<LoadedRaw> {
     validate_input_file(path, MAX_RAW_FILE_BYTES, "RAW input")?;
+    let (selected, candidate) = read_selected_dcp_profile(path, profile_path)?;
+    let mut loaded = load_raw_file_with_selected_profile(path, Some(selected))?;
+    loaded.camera_profile_source = Some(candidate.path.clone());
+    loaded.available_camera_profiles = vec![candidate];
+    Ok(loaded)
+}
+
+/// Reads the DCP explicitly chosen for the proprietary RAW at `raw_path`, for
+/// either backend. A profile embedded in the RAW supplies the camera
+/// calibration signature that the DCP's calibration matrices are matched to.
+pub(super) fn read_selected_dcp_profile(
+    raw_path: &Path,
+    profile_path: &Path,
+) -> Result<(DcpProfile, CameraProfileCandidate)> {
     validate_input_file(profile_path, MAX_DCP_FILE_BYTES, "DCP profile")?;
     let mut selected = DcpProfile::from_path(profile_path)
         .with_context(|| format!("read DCP profile {}", profile_path.display()))?
         .ok_or_else(|| anyhow!("{} is not a DNG camera profile", profile_path.display()))?;
 
-    if let Some(raw_profile) = read_optional_profile(path)? {
+    if let Some(raw_profile) = read_optional_profile(raw_path)? {
         selected.camera_calibration_signature = raw_profile.camera_calibration_signature;
     }
-    let display_name = dcp_profile_display_name(selected.name.as_deref(), profile_path);
-    let mut loaded = load_raw_file_with_selected_profile(path, Some(selected))?;
-    loaded.camera_profile_source = Some(profile_path.to_path_buf());
-    loaded.available_camera_profiles = vec![CameraProfileCandidate {
+    let candidate = CameraProfileCandidate {
         path: profile_path.to_path_buf(),
-        name: display_name,
-    }];
-    Ok(loaded)
+        name: dcp_profile_display_name(selected.name.as_deref(), profile_path),
+    };
+    Ok((selected, candidate))
 }
 
 pub(super) fn load_raw_display_metadata(path: &Path) -> Result<super::RawDisplayMetadata> {
@@ -657,6 +668,8 @@ fn loaded_raw_from_context(
         &raw_pixels,
     );
     validate_sensor_levels(white_levels, black_levels, &raw_pixels)?;
+    let sensor_saturation =
+        sensor_saturation(white_levels, black_levels, color.maximum, &raw_pixels);
     let noise_profile = NoiseProfile::estimate(
         width,
         height,
@@ -727,6 +740,7 @@ fn loaded_raw_from_context(
         black_levels,
         black_levels_per_pixel,
         white_levels,
+        sensor_saturation,
         noise_profile,
         camera_profile,
         camera_profile_source: None,
@@ -830,11 +844,11 @@ mod tests {
         dng_camera_to_working, effective_black_level, identity_4x4, identity_fallback_4x4,
         interpolate_endpoints, matching_thumbnail_orientation, mired_interpolation_weight,
         oriented_source_pos, resolve_default_exposure_ev, saturation_adjusted_white_levels,
-        smaller_covering_preview_index, valid_baseline_exposure,
+        sensor_saturation, smaller_covering_preview_index, valid_baseline_exposure,
         validate_embedded_thumbnail_metadata, validate_sensor_levels, white_balance, white_levels,
         CameraColorModel, CameraProfile, CameraWhiteBalanceModel, CfaKind, DcpMatrixSet,
-        DcpProfile, DngColorEndpoint, EmbeddedPreview, MAX_EMBEDDED_THUMBNAIL_BYTES,
-        MISSING_BASELINE_EXPOSURE_FALLBACK_EV,
+        DcpProfile, DngColorEndpoint, EmbeddedPreview, SensorSaturation,
+        MAX_EMBEDDED_THUMBNAIL_BYTES, MISSING_BASELINE_EXPOSURE_FALLBACK_EV,
     };
     use crate::matrix;
     use crate::pipeline::basicadj::{temperature_offset_from_kelvin, white_balance_tint_offset};
@@ -1768,6 +1782,70 @@ mod tests {
         assert_eq!(
             saturation_adjusted_white_levels([4095.0; 4], [67.0; 4], &mid),
             [4095.0; 4]
+        );
+    }
+
+    /// A 14-bit mosaic whose highlight tail runs smoothly from black 2048 to `tail_top`, then
+    /// `piled` samples at `pile_code`.
+    fn canon_tail_with_pile_up(tail_top: u16, pile_code: u16, piled: usize) -> Vec<u16> {
+        let mut pixels: Vec<u16> = (0..400_000).map(|i| 2_048 + (i % 14_300) as u16).collect();
+        pixels.retain(|&value| value <= tail_top);
+        pixels.extend(std::iter::repeat_n(pile_code, piled));
+        pixels
+    }
+
+    #[test]
+    fn saturation_pile_up_above_linear_white_raises_sensor_saturation() {
+        // Canon EOS RP at ISO 500: LibRaw's linear_max is 14558, the sensor saturates at 16383.
+        let pixels = canon_tail_with_pile_up(16_340, 16_383, 50_000);
+        let white = [14_558.0; 4];
+        let black = [2_048.0, 2_048.0, 2_049.0, 2_048.0];
+        let saturation = sensor_saturation(white, black, 16_383, &pixels);
+        // The lowest channel level, so no channel's saturated samples escape reconstruction.
+        let expected = (16_383.0 - 2_048.0) / (14_558.0 - 2_048.0);
+        assert!(
+            (saturation.level() - expected).abs() < 1e-6,
+            "{saturation:?}"
+        );
+        // The white level itself, and so the photo's exposure, is unchanged.
+        assert_eq!(
+            saturation_adjusted_white_levels(white, black, &pixels),
+            white
+        );
+    }
+
+    #[test]
+    fn sensor_saturation_stays_at_white_without_a_pile_up_above_it() {
+        let white = [14_558.0; 4];
+        let black = [2_048.0; 4];
+        // Clipping at the white level.
+        let at_white = canon_tail_with_pile_up(14_500, 14_558, 50_000);
+        assert_eq!(
+            sensor_saturation(white, black, 16_383, &at_white),
+            SensorSaturation::AT_WHITE
+        );
+        // A highlight tail past the white level that never piles up.
+        let tail = canon_tail_with_pile_up(16_340, 16_340, 0);
+        assert_eq!(
+            sensor_saturation(white, black, 16_383, &tail),
+            SensorSaturation::AT_WHITE
+        );
+        // Hot pixels above the white level.
+        let mut hot = canon_tail_with_pile_up(14_500, 14_558, 50_000);
+        hot.extend([16_383; 8]);
+        assert_eq!(
+            sensor_saturation(white, black, 16_383, &hot),
+            SensorSaturation::AT_WHITE
+        );
+        // A pile-up above LibRaw's maximum is not one its metadata allows.
+        let above_maximum = canon_tail_with_pile_up(16_340, 16_383, 50_000);
+        assert_eq!(
+            sensor_saturation(white, black, 14_558, &above_maximum),
+            SensorSaturation::AT_WHITE
+        );
+        assert_eq!(
+            sensor_saturation(white, black, 16_383, &[]),
+            SensorSaturation::AT_WHITE
         );
     }
 

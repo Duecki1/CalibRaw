@@ -81,7 +81,7 @@ pub use raw_loader::{
     load_raw_file_with_profile_selection, load_raw_thumbnail,
     load_raw_thumbnail_with_display_metadata, AiDenoisedImage, CameraProfileCandidate,
     CameraProfileMode, CfaKind, CompactPixelMap, LoadedRaw, RawDisplayMetadata, RawThumbnail,
-    WhiteBalanceRanges, SUPPORTED_RAW_EXTENSIONS,
+    SensorSaturation, WhiteBalanceRanges, SUPPORTED_RAW_EXTENSIONS,
 };
 pub use raw_loader::{invalidate_dcp_profile_index, prewarm_dcp_profile_index};
 pub use remove::{

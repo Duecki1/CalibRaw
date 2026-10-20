@@ -309,7 +309,7 @@ mod tests {
     use crate::pipeline::{
         build_proxy, AiDenoisedImage, CameraProfile, CfaKind, CompactPixelMap, ExposureParams,
         GpuParams, LoadedRaw, MaskStack, NoiseProfile, PipelineOptions, ProcessingQuality,
-        ProxySpec, RawGpuPipeline,
+        ProxySpec, RawGpuPipeline, SensorSaturation,
     };
     use crate::registry::AiModel;
     use crate::slot::acquire_model_session;
@@ -342,6 +342,7 @@ mod tests {
             black_levels: [64.0; 4],
             black_levels_per_pixel: CompactPixelMap::repeating(width, height, 1, 1, vec![64.0]),
             white_levels: [16_383.0; 4],
+            sensor_saturation: SensorSaturation::AT_WHITE,
             noise_profile: NoiseProfile::default(),
             camera_profile: CameraProfile::default(),
             camera_profile_source: None,

@@ -117,6 +117,7 @@ impl RawGpuPipeline {
                 vec![0.0f32],
             ),
             white_levels: [65535.0; 4],
+            sensor_saturation: SensorSaturation::AT_WHITE,
             noise_profile: crate::pipeline::NoiseProfile::default(),
             camera_profile: crate::pipeline::CameraProfile::default(),
             camera_profile_source: None,
