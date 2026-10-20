@@ -395,6 +395,7 @@ impl CalibRawApp {
         let mut editor_gpu = None;
         if let Some(render_state) = cc.wgpu_render_state.as_ref() {
             calibraw_gpu::install_uncaptured_gpu_error_handler(&render_state.device);
+            calibraw_gpu::stage_timing::install(&render_state.device, &render_state.queue);
             // A lost device is recovered by restarting (`handle_gpu_device_loss`).
             if caps.can_restart {
                 calibraw_gpu::install_gpu_device_lost_handler(&render_state.device);
@@ -464,8 +465,12 @@ impl CalibRawApp {
             prewarm_dcp_profile_folder(performance.camera_profile_folder.clone());
         }
         let gpu_export_prewarm = Arc::new(crate::pipeline::GpuProgramPrewarm::new());
-        let gpu_preview_prewarm_receiver =
-            spawn_gpu_preview_prewarm(cc, gpu_pipeline_cache_root, Arc::clone(&gpu_export_prewarm));
+        let gpu_preview_prewarm_receiver = spawn_gpu_preview_prewarm(
+            cc,
+            gpu_pipeline_cache_root,
+            Arc::clone(&gpu_export_prewarm),
+            Arc::clone(&platform),
+        );
         let mut app = Self::from_performance_settings(
             &cc.egui_ctx,
             performance_settings_path,

@@ -201,6 +201,7 @@ impl CalibRawApp {
             return;
         };
         let finished = poll_ai_job(
+            self.platform.as_ref(),
             receiver,
             || format!("The {}-mask worker stopped unexpectedly.", model.noun()),
             |update| {

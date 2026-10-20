@@ -252,6 +252,7 @@ impl CalibRawApp {
         let mut updated = false;
         let mut progress = None;
         let finished = poll_ai_job(
+            self.platform.as_ref(),
             receiver,
             || "The Remove worker stopped unexpectedly.".to_owned(),
             |update| {

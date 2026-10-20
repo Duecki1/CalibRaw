@@ -22,12 +22,14 @@ use std::{
 
 mod callbacks;
 mod export;
+mod heap;
 mod library;
 mod notifications;
 mod sidecars;
 mod thumbnail_cache;
 pub use callbacks::*;
 pub use export::*;
+pub use heap::*;
 pub use library::*;
 pub use notifications::*;
 pub use sidecars::*;
@@ -328,6 +330,21 @@ pub fn device_diagnostics(app: &AndroidApp) -> Result<String, String> {
         java_string(env, value)
     })
     .map_err(|error| format!("could not read Android device diagnostics: {error:#}"))
+}
+
+/// Whether the activity was launched with the extra that turns GPU stage
+/// timing on (`calibraw_gpu::stage_timing`).
+pub fn gpu_stage_timing_requested(app: &AndroidApp) -> Result<bool, String> {
+    with_activity(app, |env, activity| {
+        env.call_method(
+            activity,
+            jni::jni_str!("gpuStageTimingRequested"),
+            jni::jni_sig!(() -> bool),
+            &[],
+        )?
+        .z()
+    })
+    .map_err(|error| format!("could not read the GPU stage timing switch: {error:#}"))
 }
 
 pub fn copy_text_to_clipboard(app: &AndroidApp, label: &str, text: &str) -> Result<(), String> {

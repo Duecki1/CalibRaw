@@ -176,6 +176,7 @@ impl CalibRawApp {
             self.pause_raw_edit_timer();
             self.set_original_preview_requested(false);
             self.clear_android_original_hold();
+            self.platform.release_free_memory();
         }
         if self.ui.active_tab == AppTab::Library && tab != AppTab::Library {
             self.library.prepare_for_develop();
@@ -366,6 +367,27 @@ mod tests {
         assert!(app.handles_back_navigation());
         app.library.set_folder_sidebar_open(false);
         assert!(!app.handles_back_navigation());
+    }
+
+    #[test]
+    fn leaving_develop_returns_freed_memory() {
+        let context = eframe::egui::Context::default();
+        let platform =
+            crate::platform::fake::FakePlatform::new(crate::platform::PlatformCaps::ANDROID);
+        let mut app = super::CalibRawApp::empty_on(&context, platform.clone());
+        let releases = || {
+            platform
+                .calls()
+                .iter()
+                .filter(|call| *call == "release_free_memory")
+                .count()
+        };
+        app.activate_tab(super::AppTab::Develop);
+        assert_eq!(releases(), 0);
+        app.activate_tab(super::AppTab::Settings);
+        assert_eq!(releases(), 1);
+        app.activate_tab(super::AppTab::Library);
+        assert_eq!(releases(), 1);
     }
 
     #[test]

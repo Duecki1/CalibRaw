@@ -25,6 +25,11 @@ pub fn android_main(android_app: AndroidApp) {
             .with_tag("CalibRaw"),
     );
 
+    match calibraw_ffi::gpu_stage_timing_requested(&android_app) {
+        Ok(true) => calibraw_gpu::stage_timing::request(),
+        Ok(false) => {}
+        Err(error) => log::warn!("{error}"),
+    }
     let mut options = crate::native_options(PlatformCaps::ANDROID);
     options.wgpu_options.surface = eframe::egui_wgpu::SurfaceConfig::LOW_LATENCY;
     options.android_app = Some(android_app.clone());
@@ -108,6 +113,10 @@ impl Platform for AndroidPlatform {
 
     fn clear_task_notification(&self) -> Result<(), String> {
         calibraw_ffi::clear_background_task_notification(&self.app)
+    }
+
+    fn release_free_memory(&self) {
+        calibraw_ffi::release_free_heap();
     }
 
     fn performance_settings_path(&self) -> Result<Option<PathBuf>, String> {

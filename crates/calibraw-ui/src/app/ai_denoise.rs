@@ -265,6 +265,7 @@ impl CalibRawApp {
         let mut saved_result_unusable = false;
         let mut save_error = None;
         let finished = poll_ai_job(
+            self.platform.as_ref(),
             receiver,
             || "RawNIND worker stopped unexpectedly.".to_owned(),
             |update| match update {
