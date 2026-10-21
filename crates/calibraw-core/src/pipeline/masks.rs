@@ -26,12 +26,17 @@ mod brush;
 mod editing;
 mod layers;
 mod probability;
+mod range_filters;
 mod raster;
 mod shapes;
 pub use brush::*;
 use probability::*;
+use range_filters::*;
 use raster::*;
-pub use raster::{luminance_range_weight, LUMINANCE_FEATHER_MAX, LUMINANCE_FEATHER_WIDTH};
+pub use raster::{
+    lightness_to_luminance, luminance_range_weight, luminance_to_lightness, LUMINANCE_FEATHER_MAX,
+    LUMINANCE_FEATHER_WIDTH,
+};
 pub use shapes::*;
 
 mod adjustments;
