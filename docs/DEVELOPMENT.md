@@ -416,6 +416,63 @@ The app supports 16 KB pages. Verify a built APK with:
 cargo xtask verify-android-16kb android/app/build/outputs/apk/debug/app-debug.apk
 ```
 
+### Profiling on a device
+
+`./gradlew assembleProfiling` builds
+`android/app/build/outputs/apk/profiling/app-profiling.apk`: release Rust and
+native libraries from the working tree (`cargo xtask build-android ABI
+profiling`), signed with the debug key and `profileable` by the shell, so
+simpleperf, heapprofd and `dumpsys` can attach. It installs as
+`de.duecki.calibraw.profiling` ("CalibRaw Profiling") beside the release app
+and keeps its own data.
+
+GPU stage timing writes a timestamp around every compute pass of the editor's
+preview stages and logs one diagnostics line per stage once the GPU ran it:
+`GPU stage Output 652x978: 54.21 ms in 3 passes (...)`. Stage totals are
+reliable; the split between passes is not, because GPUs overlap dispatches.
+It needs the adapter's `TIMESTAMP_QUERY` and costs one atomic load per pass
+when off. Turn it on with `CALIBRAW_GPU_STAGE_TIMING=1` on the desktop, or by
+launching Android with the extra
+`--ez de.duecki.calibraw.GPU_STAGE_TIMING true`.
+
+`cargo xtask android-bench LABEL` measures the connected device. It installs
+the profiling APK (`--apk PATH`, or `--no-install`), copies the scenario's
+photo from `CALIBRAW_BENCH_PHOTOS` (checked against its SHA-256) and its
+sidecar into the app's library, launches it with stage timing on and plays
+the scenario's steps through `adb shell input`. For each step it records
+SurfaceFlinger timestats (frames, present-to-present and post-to-acquire
+percentiles), the GPU stage times and how often each stage ran, RSS and
+`MemAvailable` sampled every second, memory after the step (`/proc`,
+`dumpsys meminfo`, `dumpsys gpu --gpumem`), the app's heap purges and every
+low-memory-killer kill. The report, `android-bench.json`, and the device log
+of the run go to a new `$CALIBRAW_BASELINE_DIR/<date>-<revision>-LABEL`
+folder; the app is stopped afterwards.
+
+```sh
+./gradlew assembleProfiling
+CALIBRAW_BENCH_PHOTOS=/path/to/Demo cargo xtask android-bench before
+cargo xtask android-bench-compare "$CALIBRAW_BASELINE_DIR"/<before> "$CALIBRAW_BASELINE_DIR"/<after>
+```
+
+The default scenario, `xtask/android-bench/tab-m11.json`, holds the Lenovo Tab
+M11's coordinates in landscape (`--scenario` picks another; `--package`
+another installed build). Its taps open the first library tile, so the
+profiling app's library must hold only the scenario's photo, and the app
+must have been opened once, with onboarding finished and update checks
+declined. The bench refuses a display whose current size differs from the
+scenario's.
+
+Scenario steps list measured `actions` and unmeasured `then` actions (undo,
+opening a panel section): `launch`, `tap`, `double_tap`, `swipe`, `sleep_ms`,
+`wait_log` (a line the app logs) and `screenshot`, which saves
+`screens/<step>-<name>.png` in the run folder for checking coordinates.
+Coordinates must not depend on a scroll position: `adb shell input` swipes
+scroll a different distance from run to run, so the scenario reaches lower
+controls by collapsing the sections above them, from the top of the panel.
+Each launch starts with only Light expanded.
+`android-bench-compare BEFORE AFTER` prints every figure of both runs side by
+side, matched by step and figure name.
+
 ### GitHub release signing
 
 Direct pushes to `main` and `v*` tags published through the **Release** workflow
