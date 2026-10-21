@@ -7,6 +7,9 @@
 //! - Up to v1.3, readers require the `ca_red` and `ca_blue` fields of the
 //!   retired demosaic chromatic-aberration shift. No release could set them,
 //!   so they are written as 0 and ignored when read.
+//! - Up to v1.3, readers require a `feather` in colour-range masks, which
+//!   now soften their edge as part of Tolerance. It is written as those
+//!   versions' default and ignored when read.
 //! - Up to v1.2, readers require the Effects-card slider fields that edits no
 //!   longer hold. They are written at rest, so those readers decode the edit
 //!   and show the effects that replaced the sliders as effect components,
@@ -20,7 +23,7 @@
 //!   layout schema 2 shares.
 
 use super::effect_sliders::GlobalSliders;
-use crate::pipeline::{CropAspectRatio, ExposureParams, MaskEffect};
+use crate::pipeline::{CropAspectRatio, ExposureParams, MaskEffect, MaskRgbImage};
 use crate::sidecar::EditState;
 use serde::{Serialize, Serializer};
 
@@ -47,6 +50,37 @@ pub(crate) fn serialize_exposure<S: Serializer>(
         ca_red: 0.0,
         ca_blue: 0.0,
         sliders: GlobalSliders::default(),
+    }
+    .serialize(serializer)
+}
+
+/// Colour-range feather written for readers up to v1.3: their default.
+const RESTING_COLOR_FEATHER: f32 = 0.12;
+
+/// Serializes the fields of a colour-range mask with the retired `feather`
+/// at rest. The mask source is never stored.
+pub(crate) fn serialize_color_range<S: Serializer>(
+    _source: &Option<MaskRgbImage>,
+    sample: &[f32; 3],
+    tolerance: &f32,
+    grow: &f32,
+    sampled: &bool,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    #[derive(Serialize)]
+    struct ColorRange<'a> {
+        sample: &'a [f32; 3],
+        tolerance: f32,
+        grow: f32,
+        feather: f32,
+        sampled: bool,
+    }
+    ColorRange {
+        sample,
+        tolerance: *tolerance,
+        grow: *grow,
+        feather: RESTING_COLOR_FEATHER,
+        sampled: *sampled,
     }
     .serialize(serializer)
 }

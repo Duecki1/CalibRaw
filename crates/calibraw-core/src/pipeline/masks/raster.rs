@@ -291,11 +291,9 @@ fn rasterize_component_internal(
             sample,
             tolerance,
             grow,
-            feather,
             sampled: true,
         } => {
-            let mut coverage =
-                rasterize_color_range(width, height, source, *sample, *tolerance, *feather);
+            let mut coverage = rasterize_color_range(width, height, source, *sample, *tolerance);
             if grow.abs() > 1e-5 {
                 shape_probability_mask(&mut coverage, width, height, *grow, 0.0);
             }
@@ -452,11 +450,10 @@ pub(super) fn rasterize_color_range(
     source: &MaskRgbImage,
     sample: [f32; 3],
     tolerance: f32,
-    feather: f32,
 ) -> Vec<f32> {
     let target = RangeColor::from_oklab(srgb_to_oklab(sample));
-    let reach = tolerance.clamp(0.005, 1.0) / COLOR_RANGE_DEFAULT_TOLERANCE;
-    let softness = feather.clamp(0.0, 1.0) * reach;
+    let reach = tolerance.clamp(0.005, 1.0) / COLOR_RANGE_UNIT_TOLERANCE;
+    let [full, none] = [1.0 - COLOR_RANGE_SOFTNESS, 1.0 + COLOR_RANGE_SOFTNESS].map(|f| f * reach);
     let edge = raster_edge(width, source);
     let mut lab = sample_rgb(width, height, source, srgb_to_oklab);
     let lightness: Vec<f32> = lab.iter().map(|color| color[0]).collect();
@@ -465,7 +462,7 @@ pub(super) fn rasterize_color_range(
         .par_iter()
         .map(|&color| {
             let distance = target.distance(&RangeColor::from_oklab(color));
-            1.0 - smoothstep(reach, reach + softness, distance)
+            1.0 - smoothstep(full, none, distance)
         })
         .collect();
     drop(lab);
@@ -491,8 +488,17 @@ fn raster_edge(width: u32, source: &MaskRgbImage) -> f32 {
     width as f32 / span.max(f32::EPSILON) * source.width.min(source.height) as f32
 }
 
-/// Colour-range tolerance whose selection edge lies at distance 1.
-const COLOR_RANGE_DEFAULT_TOLERANCE: f32 = 0.18;
+/// Tolerance of a new colour-range mask: a sampled colour across light and
+/// shade, without neighbouring hues or nearby neutrals.
+pub const DEFAULT_COLOR_TOLERANCE: f32 = 0.35;
+/// Colour-range tolerance whose selection is half strength at distance 1.
+/// The full tolerance of 1 reaches about 2.2, where most of a photo's
+/// related colours are selected.
+const COLOR_RANGE_UNIT_TOLERANCE: f32 = 0.45;
+/// Half-width of the colour-range fade, relative to the tolerance's reach:
+/// colours are fully selected below `1 − this` of the reach and not at all
+/// beyond `1 + this`.
+const COLOR_RANGE_SOFTNESS: f32 = 0.4;
 /// Hue difference (radians, 26°) that counts as distance 1.
 const COLOR_RANGE_HUE_UNIT: f32 = 0.454;
 /// Saturation log-ratio that counts as distance 1: a factor of 2.2.
@@ -533,9 +539,10 @@ impl RangeColor {
         }
     }
 
-    /// Distance of `other` from this sampled colour, in units of the default
-    /// tolerance. Hue counts only where both colours have one: a nearly
-    /// neutral colour is told apart by its saturation instead.
+    /// Distance of `other` from this sampled colour; distance 1 is half
+    /// selected at [`COLOR_RANGE_UNIT_TOLERANCE`]. Hue counts only where both
+    /// colours have one: a nearly neutral colour is told apart by its
+    /// saturation instead.
     fn distance(&self, other: &Self) -> f32 {
         let hue_angle = (self.hue[0] * other.hue[1] - self.hue[1] * other.hue[0])
             .atan2(self.hue[0] * other.hue[0] + self.hue[1] * other.hue[1])

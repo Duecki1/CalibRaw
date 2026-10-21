@@ -34,8 +34,8 @@ use probability::*;
 use range_filters::*;
 use raster::*;
 pub use raster::{
-    lightness_to_luminance, luminance_range_weight, luminance_to_lightness, LUMINANCE_FEATHER_MAX,
-    LUMINANCE_FEATHER_WIDTH,
+    lightness_to_luminance, luminance_range_weight, luminance_to_lightness,
+    DEFAULT_COLOR_TOLERANCE, LUMINANCE_FEATHER_MAX, LUMINANCE_FEATHER_WIDTH,
 };
 pub use shapes::*;
 

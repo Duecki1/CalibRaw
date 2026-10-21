@@ -365,19 +365,17 @@ pub(super) fn validate_edit_state(edits: &EditState) -> Result<(), SidecarError>
                     sample,
                     tolerance,
                     grow,
-                    feather,
                     ..
                 } => {
                     finite(
                         "color range mask",
-                        &[sample[0], sample[1], sample[2], *tolerance, *grow, *feather],
+                        &[sample[0], sample[1], sample[2], *tolerance, *grow],
                     )?;
                     for value in sample {
                         bounded("color sample", *value, -16.0, 16.0)?;
                     }
                     bounded("color tolerance", *tolerance, 0.0, 16.0)?;
                     bounded("color grow", *grow, -1.0, 1.0)?;
-                    bounded("color feather", *feather, 0.0, 16.0)?;
                     if let Some(image) = source {
                         validate_image(image.width, image.height, image.rgba.len(), 4)?;
                     }

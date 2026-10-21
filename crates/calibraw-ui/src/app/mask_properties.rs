@@ -165,8 +165,7 @@ fn shape_feather(geometry: &mut MaskGeometry) -> Option<&mut f32> {
         | MaskGeometry::Path { feather, .. }
         | MaskGeometry::Ai { feather, .. }
         | MaskGeometry::Object { feather, .. }
-        | MaskGeometry::LuminanceRange { feather, .. }
-        | MaskGeometry::ColorRange { feather, .. } => Some(feather),
+        | MaskGeometry::LuminanceRange { feather, .. } => Some(feather),
         _ => None,
     }
 }

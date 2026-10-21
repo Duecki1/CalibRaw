@@ -188,7 +188,6 @@ fn common_mask_properties_mutate_through_shared_model_api() {
         MaskKind::Sky,
         MaskKind::Object,
         MaskKind::LuminanceRange,
-        MaskKind::ColorRange,
     ] {
         stack.clear();
         stack.add_mask(kind);
@@ -209,8 +208,7 @@ fn common_mask_properties_mutate_through_shared_model_api() {
             | MaskGeometry::Path { feather, .. }
             | MaskGeometry::Ai { feather, .. }
             | MaskGeometry::Object { feather, .. }
-            | MaskGeometry::LuminanceRange { feather, .. }
-            | MaskGeometry::ColorRange { feather, .. } => *feather,
+            | MaskGeometry::LuminanceRange { feather, .. } => *feather,
             _ => unreachable!("tested mask kind must expose feather"),
         };
         assert_eq!(feather, 0.37);
@@ -325,12 +323,26 @@ fn linear_gradient_has_centered_falloff_and_smooth_outer_lines() {
 }
 
 #[test]
-fn color_range_feather_preserves_selected_colors() {
+fn color_range_fully_selects_colours_near_the_sample() {
     let source = MaskRgbImage::new(2, 1, vec![255, 0, 0, 255, 250, 4, 4, 255]).unwrap();
-    let hard = rasterize_color_range(2, 1, &source, [1.0, 0.0, 0.0], 0.15, 0.0);
-    let soft = rasterize_color_range(2, 1, &source, [1.0, 0.0, 0.0], 0.15, 1.0);
-    assert_eq!(hard[1], 1.0);
-    assert_eq!(soft[1], 1.0);
+    let coverage = rasterize_color_range(2, 1, &source, [1.0, 0.0, 0.0], 0.15);
+    assert_eq!(coverage, vec![1.0, 1.0]);
+}
+
+#[test]
+fn color_range_has_no_feather_but_older_readers_still_find_one() {
+    let mut stack = MaskStack::default();
+    stack.add_mask(MaskKind::ColorRange);
+    let component = &mut stack.masks[0].components[0];
+    assert!(!component.set_feather(0.5));
+    let json = serde_json::to_value(&component.geometry).unwrap();
+    assert_eq!(
+        json["ColorRange"]["feather"].as_f64(),
+        Some(f64::from(0.12f32))
+    );
+    assert!(json["ColorRange"].get("source").is_none());
+    let read: MaskGeometry = serde_json::from_value(json).unwrap();
+    assert_eq!(read, component.geometry);
 }
 
 #[test]
@@ -351,18 +363,19 @@ fn color_range_follows_a_colour_into_shade_before_black_or_grey() {
         .collect();
     let source = MaskRgbImage::new(6, 1, rgba).unwrap();
     let sample = pixels[0].map(|value| value as f32 / 255.0);
-    let coverage = |tolerance| rasterize_color_range(6, 1, &source, sample, tolerance, 0.0);
-    let default = coverage(0.18);
+    let coverage = |tolerance| rasterize_color_range(6, 1, &source, sample, tolerance);
+    let default = coverage(DEFAULT_COLOR_TOLERANCE);
     assert_eq!(default[0], 1.0);
-    assert_eq!(default[1], 1.0, "navy is the sampled blue in shade");
+    assert!(default[1] > 0.5, "navy is the sampled blue in shade");
     assert!(
         default[3..].iter().all(|&value| value == 0.0),
         "{default:?}"
     );
     // Widening the tolerance reaches the lighter blue long before black,
     // near-black or grey.
-    let wide = coverage(0.25);
-    assert_eq!(wide[2], 1.0, "{wide:?}");
+    let wide = coverage(0.6);
+    assert_eq!(wide[1], 1.0, "{wide:?}");
+    assert!(wide[2] > 0.5, "{wide:?}");
     assert!(wide[3..].iter().all(|&value| value == 0.0), "{wide:?}");
 }
 
@@ -395,7 +408,7 @@ fn color_range_ignores_chroma_noise_in_dark_backgrounds() {
     }
     let source = MaskRgbImage::new(width as u32, height as u32, rgba).unwrap();
     let sample = [80.0 / 255.0, 20.0 / 255.0, 16.0 / 255.0];
-    let coverage = rasterize_color_range(1200, 1200, &source, sample, 0.126, 1.0);
+    let coverage = rasterize_color_range(1200, 1200, &source, sample, DEFAULT_COLOR_TOLERANCE);
     let coverage = &coverage;
     let column = |x: usize| (0..1200).map(move |y| coverage[y * 1200 + x]);
     assert!(column(600).all(|value| value > 0.9), "the tube is selected");
@@ -419,8 +432,11 @@ fn color_range_neutral_sample_selects_neutrals_not_colours() {
         .flat_map(|&[r, g, b]| [r, g, b, 255])
         .collect();
     let source = MaskRgbImage::new(4, 1, rgba).unwrap();
-    let coverage = rasterize_color_range(4, 1, &source, [0.5; 3], 0.18, 0.0);
-    assert_eq!(&coverage[..3], &[1.0; 3]);
+    let coverage = rasterize_color_range(4, 1, &source, [0.5; 3], DEFAULT_COLOR_TOLERANCE);
+    assert!(
+        coverage[..3].iter().all(|&value| value > 0.99),
+        "{coverage:?}"
+    );
     assert_eq!(coverage[3], 0.0);
 }
 
@@ -1598,7 +1614,6 @@ fn grow_expands_luminance_and_color_range_masks() {
         sample,
         tolerance,
         grow,
-        feather,
         sampled,
     } = &mut stack.selected_component_mut().unwrap().geometry
     {
@@ -1606,7 +1621,6 @@ fn grow_expands_luminance_and_color_range_masks() {
         *sample = [1.0, 0.0, 0.0];
         *tolerance = 0.05;
         *grow = 0.0;
-        *feather = 0.0;
         *sampled = true;
     }
     let original_color = covered(stack.rasterize_layer(1, 64, 64, 64, 64));
