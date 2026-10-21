@@ -177,6 +177,13 @@ Presenting its output is a UI concern: `PreviewPipeline` pairs a pipeline with
 its egui registration, so a displayed pipeline cannot outlive or leak its
 texture. On Android a replaced detail preview frees its texture immediately
 (`free_now`) to return memory before the replacement is allocated.
+The editor's previews (fitted, zoomed crop, navigation proxy) render in
+batches: each frame submits every pending stage of each preview, at most one
+batch is in flight (`PreviewDispatchGate`, opened by `on_submitted_work_done`),
+and edits made meanwhile only update the target parameters, so the next batch
+renders the newest ones. While a control is dragged zoomed in and only the
+Output stage changes, the fitted preview and the navigation proxy wait until
+the pointer lifts (`defer_background_preview_processing`).
 Compiled programs are shared through `RawGpuProgramTemplate` and the persistent
 pipeline cache. Rust/WGSL layout contracts are tested in
 `calibraw-gpu/src/pipeline/gpu/layout_contract_tests.rs` against the modules the
