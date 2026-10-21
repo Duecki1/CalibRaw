@@ -184,8 +184,8 @@ Develop and on memory callbacks (4.2). Measured: −1.3 GB in 0.36 s.
 `calibraw-ai`'s `jobs.rs` and `slot.rs` may not name an OS, so the call
 lives in `platform/` (or behind an `AiCapabilities` hook) and the
 application handlers trigger it.
-Done: `Platform::release_free_memory` (`calibraw_ffi::android::heap`, on its
-own thread) runs after every AI job (`poll_ai_job`), every document load,
+Done: `Platform::release_free_memory` (`calibraw_core::system_memory`, on
+its own thread; `malloc_trim` on desktop Linux with glibc) runs after every AI job (`poll_ai_job`), every document load,
 startup program preparation and leaving Develop, and logs resident memory
 before and after; memory callbacks follow with 4.2. Measured (`14004424`,
 profiling build): after open the native heap holds 218 MiB mapped for

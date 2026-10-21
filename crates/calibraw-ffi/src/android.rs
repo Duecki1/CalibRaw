@@ -22,14 +22,12 @@ use std::{
 
 mod callbacks;
 mod export;
-mod heap;
 mod library;
 mod notifications;
 mod sidecars;
 mod thumbnail_cache;
 pub use callbacks::*;
 pub use export::*;
-pub use heap::*;
 pub use library::*;
 pub use notifications::*;
 pub use sidecars::*;

@@ -241,20 +241,21 @@ impl CalibRawApp {
     /// Submits the pending work of every preview as one batch, once the
     /// previous batch has finished on the GPU (`PreviewDispatchGate`).
     pub(in crate::app) fn advance_preview_dispatch(&mut self, frame: &eframe::Frame) {
-        if let Some(render_state) = frame.wgpu_render_state() {
-            if !self.preview.dispatch_gate.poll_open(&render_state.device) {
-                // Edits keep updating target_exposure; the gate requests the
-                // frame that renders the newest value.
-                return;
-            }
+        let render_state = frame.wgpu_render_state();
+        if render_state
+            .is_some_and(|render_state| !self.preview.dispatch_gate.poll_open(&render_state.device))
+        {
+            // Edits keep updating target_exposure; the gate requests the
+            // frame that renders the newest value.
+            return;
         }
         let before = self.preview.dispatch_progress();
         self.advance_navigation_preview(frame);
         self.advance_processing(frame);
         // Every dispatch advances or clears a pending stage, so an unchanged
         // state means nothing was submitted and the gate can stay open.
-        if self.preview.dispatch_progress() != before {
-            if let Some(render_state) = frame.wgpu_render_state() {
+        if let Some(render_state) = render_state {
+            if self.preview.dispatch_progress() != before {
                 self.preview
                     .dispatch_gate
                     .close_until_idle(&render_state.queue, &self.egui_ctx);
@@ -266,27 +267,22 @@ impl CalibRawApp {
     /// preview, so each batch ends in a displayed update.
     fn advance_processing(&mut self, frame: &eframe::Frame) {
         let zoomed = self.preview.zoom > DETAIL_ZOOM_START;
-        if self.defer_background_preview_processing() {
-            self.drain_zoomed_processing(frame);
-            return;
-        }
+        // Decided before the crop renders, which can make it current.
+        let defer_fitted = self.defer_background_preview_processing();
         if zoomed {
             self.drain_zoomed_processing(frame);
+        }
+        if defer_fitted {
+            return;
         }
         // The fitted preview follows while zoomed too: panning can expose any
         // part of it.
         let preview_masks = self.preview_mask_stack();
         let preview_source = self.develop.loaded_raw.clone();
-        for _ in 0..3 {
-            let before = self.preview.pending_stage;
-            if before.is_none() {
-                break;
-            }
-            self.advance_main_processing_stage(frame, &preview_masks, &preview_source);
-            if self.preview.pending_stage == before {
-                break;
-            }
-        }
+        self.drain_pending_stages(
+            |preview| preview.pending_stage,
+            |app| app.advance_main_processing_stage(frame, &preview_masks, &preview_source),
+        );
         // Full-frame tone statistics supersede the temporary statistics
         // used by a zoomed crop, so finish that small downstream refresh too.
         if zoomed {
@@ -295,13 +291,27 @@ impl CalibRawApp {
     }
 
     fn drain_zoomed_processing(&mut self, frame: &eframe::Frame) {
-        for _ in 0..3 {
-            let before = self.preview.detail_pending_stage;
+        self.drain_pending_stages(
+            |preview| preview.detail_pending_stage,
+            |app| app.advance_zoomed_processing(frame),
+        );
+    }
+
+    /// Runs `advance` until the stage `pending` reads is done or stops
+    /// changing, at most once per stage (Raw, Tone, Output).
+    fn drain_pending_stages(
+        &mut self,
+        pending: impl Fn(&PreviewState) -> Option<ProcessingStage>,
+        mut advance: impl FnMut(&mut Self),
+    ) {
+        const STAGES: usize = 3;
+        for _ in 0..STAGES {
+            let before = pending(&self.preview);
             if before.is_none() {
                 break;
             }
-            self.advance_zoomed_processing(frame);
-            if self.preview.detail_pending_stage == before {
+            advance(self);
+            if pending(&self.preview) == before {
                 break;
             }
         }
