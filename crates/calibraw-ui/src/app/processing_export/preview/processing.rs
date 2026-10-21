@@ -7,9 +7,16 @@ impl CalibRawApp {
             && self.egui_ctx.input(|input| input.pointer.primary_down())
     }
 
-    pub(in crate::app) fn defer_background_mask_processing(&self) -> bool {
-        self.interactive_detail_mask_edit()
-            && !self.preview.white_balance_refresh_pending
+    /// Whether only the zoomed crop follows the current drag: a control or a
+    /// mask is dragged while zoomed in, the sharp crop covers the view and
+    /// the drag changes only the Output stage. The fitted preview and the
+    /// navigation proxy keep their pending work until the pointer lifts.
+    ///
+    /// Raw and Tone changes still update every preview, because the crop
+    /// takes its tone statistics from a full-frame one.
+    pub(in crate::app) fn defer_background_preview_processing(&self) -> bool {
+        self.preview.zoom > DETAIL_ZOOM_START
+            && self.egui_ctx.input(|input| input.pointer.primary_down())
             && [
                 self.preview.pending_stage,
                 self.preview.navigation_pending_stage,
@@ -30,9 +37,6 @@ impl CalibRawApp {
         }
 
         if let Some(stage) = affected_stage(&self.develop.target_exposure, &next_exposure) {
-            if self.develop.target_exposure.white_balance != next_exposure.white_balance {
-                self.preview.white_balance_refresh_pending = true;
-            }
             self.develop.target_exposure = next_exposure;
             if matches!(stage, ProcessingStage::Raw) {
                 if let Some(full_raw) = preview_source.as_ref() {
@@ -234,97 +238,72 @@ impl CalibRawApp {
         self.egui_ctx.request_repaint();
     }
 
-    pub(in crate::app) fn advance_processing(&mut self, frame: &eframe::Frame) {
-        let exact_white_balance_refresh = self.preview.white_balance_refresh_pending;
-        if !self
-            .preview
-            .interactive_render_ready
-            .load(std::sync::atomic::Ordering::Acquire)
-        {
-            // Edits continue to update target_exposure while the GPU is busy.
-            // The completion callback requests another frame for the newest
-            // value, avoiding an unbounded queue of obsolete scrub renders.
-            return;
+    /// Submits the pending work of every preview as one batch, once the
+    /// previous batch has finished on the GPU (`PreviewDispatchGate`).
+    pub(in crate::app) fn advance_preview_dispatch(&mut self, frame: &eframe::Frame) {
+        if let Some(render_state) = frame.wgpu_render_state() {
+            if !self.preview.dispatch_gate.poll_open(&render_state.device) {
+                // Edits keep updating target_exposure; the gate requests the
+                // frame that renders the newest value.
+                return;
+            }
         }
-        if self.defer_background_mask_processing() {
-            // The sharp crop covers this view. Coalesce GPU work and postpone
-            // the fitted/navigation fallbacks until the slider is released.
-            if self.preview.detail_pending_stage.is_some() {
+        let before = self.preview.dispatch_progress();
+        self.advance_navigation_preview(frame);
+        self.advance_processing(frame);
+        // Every dispatch advances or clears a pending stage, so an unchanged
+        // state means nothing was submitted and the gate can stay open.
+        if self.preview.dispatch_progress() != before {
+            if let Some(render_state) = frame.wgpu_render_state() {
                 self.preview
-                    .interactive_render_ready
-                    .store(false, std::sync::atomic::Ordering::Release);
-                self.advance_zoomed_processing(frame);
-                self.finish_interactive_preview_render(frame);
+                    .dispatch_gate
+                    .close_until_idle(&render_state.queue, &self.egui_ctx);
             }
-            return;
         }
-        if exact_white_balance_refresh {
-            self.preview
-                .interactive_render_ready
-                .store(false, std::sync::atomic::Ordering::Release);
-        }
-
-        let drain_detail = |app: &mut Self| {
-            for _ in 0..3 {
-                let before = app.preview.detail_pending_stage;
-                if before.is_none() {
-                    break;
-                }
-                app.advance_zoomed_processing(frame);
-                if app.preview.detail_pending_stage == before {
-                    break;
-                }
-            }
-        };
-
-        let preview_masks = self.preview_mask_stack();
-        let preview_source = self.develop.loaded_raw.clone();
-        if self.preview.zoom > DETAIL_ZOOM_START {
-            if exact_white_balance_refresh {
-                drain_detail(self);
-            } else {
-                self.advance_zoomed_processing(frame);
-            }
-            // Refresh the fitted fallback too: panning can expose any part of it.
-        }
-
-        if exact_white_balance_refresh {
-            for _ in 0..3 {
-                let before = self.preview.pending_stage;
-                if before.is_none() {
-                    break;
-                }
-                self.advance_main_processing_stage(frame, &preview_masks, &preview_source);
-                if self.preview.pending_stage == before {
-                    break;
-                }
-            }
-            // Full-frame tone statistics supersede the temporary statistics
-            // used by a zoomed crop, so finish that small downstream refresh too.
-            if self.preview.zoom > DETAIL_ZOOM_START {
-                drain_detail(self);
-            }
-            self.preview.white_balance_refresh_pending = false;
-
-            self.finish_interactive_preview_render(frame);
-            return;
-        }
-
-        self.advance_main_processing_stage(frame, &preview_masks, &preview_source);
     }
 
-    fn finish_interactive_preview_render(&self, frame: &eframe::Frame) {
-        if let Some(render_state) = frame.wgpu_render_state() {
-            let ready = Arc::clone(&self.preview.interactive_render_ready);
-            let repaint = self.egui_ctx.clone();
-            render_state.queue.on_submitted_work_done(move || {
-                ready.store(true, std::sync::atomic::Ordering::Release);
-                repaint.request_repaint();
-            });
-        } else {
-            self.preview
-                .interactive_render_ready
-                .store(true, std::sync::atomic::Ordering::Release);
+    /// Renders every pending stage of the zoomed crop and the fitted
+    /// preview, so each batch ends in a displayed update.
+    fn advance_processing(&mut self, frame: &eframe::Frame) {
+        let zoomed = self.preview.zoom > DETAIL_ZOOM_START;
+        if self.defer_background_preview_processing() {
+            self.drain_zoomed_processing(frame);
+            return;
+        }
+        if zoomed {
+            self.drain_zoomed_processing(frame);
+        }
+        // The fitted preview follows while zoomed too: panning can expose any
+        // part of it.
+        let preview_masks = self.preview_mask_stack();
+        let preview_source = self.develop.loaded_raw.clone();
+        for _ in 0..3 {
+            let before = self.preview.pending_stage;
+            if before.is_none() {
+                break;
+            }
+            self.advance_main_processing_stage(frame, &preview_masks, &preview_source);
+            if self.preview.pending_stage == before {
+                break;
+            }
+        }
+        // Full-frame tone statistics supersede the temporary statistics
+        // used by a zoomed crop, so finish that small downstream refresh too.
+        if zoomed {
+            self.drain_zoomed_processing(frame);
+        }
+    }
+
+    fn drain_zoomed_processing(&mut self, frame: &eframe::Frame) {
+        for _ in 0..3 {
+            let before = self.preview.detail_pending_stage;
+            if before.is_none() {
+                break;
+            }
+            self.advance_zoomed_processing(frame);
+            if self.preview.detail_pending_stage == before {
+                break;
+            }
         }
     }
 

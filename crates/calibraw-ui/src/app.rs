@@ -300,11 +300,13 @@ pub(crate) use library_adjustments::{
 pub(crate) use presets::{GroupDialogMode, PresetEditor, PresetEditorMode, PresetState};
 mod lifecycle;
 mod preview_clipping;
+mod preview_dispatch_gate;
 mod preview_histogram;
 #[cfg(test)]
 mod preview_tests;
 mod preview_texture;
 mod preview_viewport;
+pub(crate) use preview_dispatch_gate::PreviewDispatchGate;
 pub(crate) use preview_texture::{PreviewPipeline, TextureRetirement};
 pub(crate) use preview_viewport::PreviewViewportAction;
 mod processing_export;

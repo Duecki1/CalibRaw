@@ -217,15 +217,14 @@ impl CalibRawApp {
         self.advance_preview_detail(frame);
         self.sync_original_preview(frame);
         if !self.preview.original_requested {
-            self.advance_navigation_preview(frame);
-            self.advance_processing(frame);
+            self.advance_preview_dispatch(frame);
         }
         self.refresh_status();
 
         self.update_preview_histogram(frame);
         self.refresh_preview_clipping(frame);
 
-        if self.preview.processing_pending() && !self.defer_background_mask_processing() {
+        if self.preview.processing_pending() && !self.defer_background_preview_processing() {
             ctx.request_repaint();
         }
         if self.foreground_operation_active()

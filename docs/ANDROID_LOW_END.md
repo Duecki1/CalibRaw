@@ -1,8 +1,8 @@
 # Low-end Android
 
 Plan for making CalibRaw smooth on the minimum supported Android device and
-stopping the AI jobs that get it killed. Status: measured; step 1 of the
-order (P1.1, P0.1–0.3) is done and measured with `android-bench`.
+stopping the AI jobs that get it killed. Status: steps 1 and 2 of the order
+(P1.1, P0.1–0.3, P2.1, P2.2) are done and measured with `android-bench`.
 
 ## Test device and method
 
@@ -251,12 +251,25 @@ the mechanism white balance already uses, and coalesce to the newest
 parameters. The UI and the slider thumb keep their own frame rate; the
 preview updates as fast as the GPU allows, with one frame of latency
 instead of two.
+Done: `PreviewDispatchGate`. Each batch renders every pending stage of each
+preview, so every batch ends in a displayed update; the white-balance path
+already worked this way and no longer needs its own flag. Measured against
+`step1` (two runs, `2026-10-21-884f37b1d-p2.1-p2.2*`): exposure drag 15.3 →
+22.2–22.6 fps, post-to-acquire p50 110 → 58 ms; luminance NR drag 1 → 6
+displayed updates in 2 s (a new Raw dispatch used to restart the chain
+before Output). Raw-stage drags stay at 7.5–8.1 fps (7.3–8.7 before) with
+the longest frame 500 instead of 450 ms: UI frames now wait for a whole
+Raw → Output batch, which 2.3 and 2.4 shrink.
 
 ### 2.2 Zoomed drags update only the visible crop (behaviour-preserving)
 
 Extend `defer_background_mask_processing` from mask edits to all controls:
 the fitted preview and the navigation proxy catch up when the drag ends.
 Saves ~55 % of GPU time per zoomed update.
+Done: `defer_background_preview_processing`, for any drag whose change is
+Output-stage only. Zoomed exposure drag 9.6 → 21.2–21.3 fps; the crop
+updates 27 instead of 16 times, the fitted and navigation previews once, on
+release.
 
 ### 2.3 Interactive resolution
 
