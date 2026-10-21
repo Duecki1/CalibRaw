@@ -10,6 +10,7 @@ use super::place::{CpuReason, GpuProvider, Placement, ProviderOffer};
 use super::providers::{cpu_provider, offered_providers, with_gpu_provider};
 use super::quirks::{self, WebGpuCpuNodes};
 use super::status::publish_status;
+use crate::config::{MemoryClass, CAPABILITIES};
 use anyhow::{Context, Result};
 use ort::session::{
     builder::{GraphOptimizationLevel, SessionBuilder},
@@ -18,6 +19,11 @@ use ort::session::{
 use std::path::{Path, PathBuf};
 
 const MIB: u64 = 1 << 20;
+/// Intra-op threads of a CPU session on `MemoryClass::Constrained`. Phones
+/// and tablets pair a few fast cores with slow ones (the Tab M11's Helio G88
+/// has two Cortex-A75s and six A55s), and every thread holds its own scratch
+/// buffers.
+const CONSTRAINED_CPU_THREADS: usize = 2;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) enum CpuFallbackProfile {
@@ -26,9 +32,6 @@ pub(crate) enum CpuFallbackProfile {
     /// Where `quirks::sam_encoder_cpu_needs_unfused_graph`: no graph
     /// optimizations and no arena allocator.
     SamEncoder,
-    /// Two sequential threads, no weight prepacking and no arena allocator,
-    /// for a model beside the RAW preview on `MemoryClass::Constrained`.
-    LowMemory,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -114,18 +117,20 @@ fn configure_cpu_builder(
     mut builder: SessionBuilder,
     options: &SessionOptions,
 ) -> Result<SessionBuilder> {
-    if options.cpu_fallback_profile == CpuFallbackProfile::LowMemory {
-        // The model runs alongside the RAW preview. Bound the thread pool and
-        // avoid retaining a second, packed copy of the model's weights.
+    if CAPABILITIES.memory == MemoryClass::Constrained {
+        // Every model runs beside the RAW preview here, where the system
+        // ends apps that grow too large. Bound the thread pool, keep idle
+        // threads from spinning, and keep no second, packed copy of the
+        // model's weights. `cpu_provider` turns the arena allocator off.
         builder = builder
             .with_parallel_execution(false)
-            .map_err(|error| anyhow::anyhow!("force sequential mobile depth execution: {error}"))?
-            .with_intra_threads(2)
-            .map_err(|error| anyhow::anyhow!("limit mobile depth inference threads: {error}"))?
+            .map_err(|error| anyhow::anyhow!("force sequential CPU execution: {error}"))?
+            .with_intra_threads(CONSTRAINED_CPU_THREADS)
+            .map_err(|error| anyhow::anyhow!("limit CPU inference threads: {error}"))?
             .with_intra_op_spinning(false)
-            .map_err(|error| anyhow::anyhow!("disable mobile depth thread spinning: {error}"))?
+            .map_err(|error| anyhow::anyhow!("disable CPU thread spinning: {error}"))?
             .with_prepacking(false)
-            .map_err(|error| anyhow::anyhow!("disable mobile depth weight prepacking: {error}"))?;
+            .map_err(|error| anyhow::anyhow!("disable CPU weight prepacking: {error}"))?;
     }
     if options.cpu_fallback_profile == CpuFallbackProfile::SamEncoder
         && quirks::sam_encoder_cpu_needs_unfused_graph()

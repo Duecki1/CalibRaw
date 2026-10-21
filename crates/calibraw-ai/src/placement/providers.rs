@@ -151,7 +151,6 @@ pub(super) fn with_gpu_provider(
 
 pub(super) fn cpu_provider(options: &SessionOptions) -> ExecutionProviderDispatch {
     let disable_arena = CAPABILITIES.memory == MemoryClass::Constrained
-        || options.cpu_fallback_profile == CpuFallbackProfile::LowMemory
         || (options.cpu_fallback_profile == CpuFallbackProfile::SamEncoder
             && quirks::sam_encoder_cpu_needs_unfused_graph());
     ort::ep::CPU::default()

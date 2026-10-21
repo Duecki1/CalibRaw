@@ -2,7 +2,8 @@
 
 Plan for making CalibRaw smooth on the minimum supported Android device and
 stopping the AI jobs that get it killed. Status: steps 1 and 2 of the order
-(P1.1, P0.1–0.3, P2.1, P2.2) are done and measured with `android-bench`.
+(P1.1, P0.1–0.3, P2.1, P2.2) and P1.4 are done and measured with
+`android-bench`.
 
 ## Test device and method
 
@@ -154,7 +155,9 @@ side. First run: `~/calibraw-baselines/2026-10-21-140044248-step1`. Its
 GPU figures repeat the tables above (Output 54 ms; Raw 400 ms and 5–6
 updates per 2 s temperature or NR drag; zoomed drags update the 256 × 384,
 652 × 978 and 914 × 722 pipelines alike); back in the library the app still
-holds 712 MiB RSS and 419 MiB GPU (P4.1).
+holds 712 MiB RSS and 419 MiB GPU (P4.1). The scenario ends with every AI job
+(Sky, Depth, Object, Remove, Subject at the default Medium), each timed by
+the `AI job … finished` diagnostics line every job now records.
 
 ### 0.4 Static shader analysis
 
@@ -217,6 +220,23 @@ devices is a settings migration.
 Use the low-memory profile for every model on Android: no prepacking,
 sequential execution, 2–4 intra-op threads (the A75s first), no spinning.
 Measure time and peak per model; Depth already runs this way.
+Done: every CPU session on `MemoryClass::Constrained` runs sequentially on
+two threads without spinning or prepacking (`placement::session`); the
+per-model `LowMemory` profile is gone. Each setting measured separately on
+an AI-only scenario (`~/calibraw-baselines/*-ai-v0` … `ai-v3-b`; peak RSS in
+MiB, two runs where given):
+
+| Sessions | Object | Remove | Subject | Subject job |
+|---|---:|---:|---:|---|
+| before | 1646, 1485 | 1412, 1183 | 1991, 1978 | killed both runs |
+| two threads, sequential, no spinning | 1435 | 1226 | 1778 | killed |
+| no prepacking | 1493 | 1265 | 1973 | survived |
+| both (shipped) | 1470, 1317 | 1277, 1244 | 1887, 1899 | survived both runs |
+
+Two threads cost time: Object 18–19 → 24 s, Remove 59 → 66 s, Sky and Depth
+about a second. The Subject job still takes MemAvailable down to
+110–288 MiB and the low-memory killer ends 12–16 other processes, so
+admission (1.2) and the tiers (1.3) remain necessary.
 
 ### 1.5 Faster, file-backed sessions
 
