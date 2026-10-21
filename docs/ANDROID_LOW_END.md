@@ -1,7 +1,8 @@
 # Low-end Android
 
 Plan for making CalibRaw smooth on the minimum supported Android device and
-stopping the AI jobs that get it killed. Status: measured, nothing implemented.
+stopping the AI jobs that get it killed. Status: measured; step 1 of the
+order (P1.1, P0.1–0.3) is done and measured with `android-bench`.
 
 ## Test device and method
 
@@ -127,9 +128,11 @@ stopping the AI jobs that get it killed. Status: measured, nothing implemented.
 
 `calibraw-gpu` writes a timestamp around each compute pass and logs stage
 totals through `diagnostics`, only when a diagnostics switch is on; the
-device then requests `TIMESTAMP_QUERY` and `TIMESTAMP_QUERY_INSIDE_ENCODERS`
-where the adapter offers them. All passes go through `dispatch_compute`, so
+device then requests `TIMESTAMP_QUERY` where the adapter offers it (pass
+timestamps need nothing more). All passes go through `dispatch_compute`, so
 the hook is one function plus the stage entry points. Zero cost when off.
+Done: `calibraw_gpu::stage_timing`, switched on by `CALIBRAW_GPU_STAGE_TIMING=1`
+or the Android launch extra `de.duecki.calibraw.GPU_STAGE_TIMING`.
 
 ### 0.2 Profiling build
 
@@ -137,6 +140,7 @@ A Gradle build type with release Rust and native libraries, `profileable`,
 and an `applicationIdSuffix` so it installs beside the release app and keeps
 its data. Today the debug variant builds Rust at opt-level 1 and shares the
 release application ID, so profiling means uninstalling the release app.
+Done: `./gradlew assembleProfiling` (`de.duecki.calibraw.profiling`).
 
 ### 0.3 Device benchmark
 
@@ -144,6 +148,13 @@ release application ID, so profiling means uninstalling the release app.
 above through `adb shell input`, and collect timestats, stage times,
 `meminfo`, `gpumem` and kill lines into JSON, compared like
 `baseline-compare`. This document's numbers are the first baseline.
+Done: the gestures are data (`xtask/android-bench/tab-m11.json`, with the
+photo's original sidecar), `android-bench-compare` sets two runs side by
+side. First run: `~/calibraw-baselines/2026-10-21-140044248-step1`. Its
+GPU figures repeat the tables above (Output 54 ms; Raw 400 ms and 5–6
+updates per 2 s temperature or NR drag; zoomed drags update the 256 × 384,
+652 × 978 and 914 × 722 pipelines alike); back in the library the app still
+holds 712 MiB RSS and 419 MiB GPU (P4.1).
 
 ### 0.4 Static shader analysis
 
@@ -170,6 +181,13 @@ Develop and on memory callbacks (4.2). Measured: −1.3 GB in 0.36 s.
 `calibraw-ai`'s `jobs.rs` and `slot.rs` may not name an OS, so the call
 lives in `platform/` (or behind an `AiCapabilities` hook) and the
 application handlers trigger it.
+Done: `Platform::release_free_memory` (`calibraw_ffi::android::heap`, on its
+own thread) runs after every AI job (`poll_ai_job`), every document load,
+startup program preparation and leaving Develop, and logs resident memory
+before and after; memory callbacks follow with 4.2. Measured (`14004424`,
+profiling build): after open the native heap holds 218 MiB mapped for
+211 MiB allocated (before: 586 for 215) and RSS is 687 MiB (1.03 GB); after
+startup preparation RSS drops from 409 to 254 MiB.
 
 ### 1.2 Admission before a job
 

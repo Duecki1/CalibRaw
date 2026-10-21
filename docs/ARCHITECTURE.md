@@ -115,6 +115,7 @@ job records the value it started with.
 | Remove / retouch | one receiver in `InpaintState` | `AtomicBool` | `reset_for_document` sets the flag and drops the receiver, so late results are discarded | notice; the pending stroke is kept only when the user must re-consent to a download |
 | Export / batch export / replay | one `ExportTask`; batch items run sequentially | `AtomicBool`; partial files are removed and never reported as success | export works on an immutable snapshot of the edit | notice; temporary output removed |
 | Sidecar save | `VecDeque` of requests, one write in flight | none; writes are short | requests carry `generation` and `revision`; stale completions are ignored | failure keeps a recovery request and shows a dialog |
+| Heap purge (Android) | one `calibraw-heap-purge` thread in `calibraw_ffi::android::heap`; requests made while a purge is queued or running are served by one more | none; a purge takes up to a few hundred milliseconds | none; it only returns pages the allocator already freed | a thread that cannot start leaves memory with the allocator; an Android without `M_PURGE` changes nothing |
 | Library thumbnails | shared work queue for a worker pool | `AtomicU64` generation; workers exit when it changes | generation bump on folder change | each item's result, success or error, is sent with its generation; older generations are ignored |
 
 Job channels are unbounded `std::sync::mpsc` channels: each job sends a
@@ -197,7 +198,8 @@ production `ShaderManager` composes.
   - `Platform` (`Arc<dyn Platform>`, in `CalibRawApp::platform` and
     `LibraryState`) is the service behind actions: the Android bridge's
     pickers, media library, sidecars, thumbnails, publishing, clipboard,
-    notifications, system bars and replay encoder, and the desktop's settings
+    notifications, system bars, replay encoder and returning freed heap
+    memory (`release_free_memory`), and the desktop's settings
     and cache folders and GPU-loss restart. Its default methods answer
     "unavailable" or do nothing, so a backend implements only what it has.
     `platform/android.rs` wraps `calibraw-ffi`; `platform/desktop/` holds the
