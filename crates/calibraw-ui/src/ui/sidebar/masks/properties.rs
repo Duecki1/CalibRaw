@@ -1,5 +1,6 @@
 use super::*;
 use crate::app::{MaskPropertiesControls, MaskPropertyAction};
+use crate::pipeline::DEFAULT_COLOR_TOLERANCE;
 use crate::ui::components::luminance_range_slider::{luminance_range_slider, LuminanceRange};
 
 impl Sidebar {
@@ -483,12 +484,9 @@ impl Sidebar {
                 MaskGeometry::ColorRange {
                     tolerance,
                     grow,
-                    feather,
                     sampled,
                     ..
-                } => Self::color_range_properties(
-                    ui, *sampled, *tolerance, *grow, *feather, &mut edits,
-                ),
+                } => Self::color_range_properties(ui, *sampled, *tolerance, *grow, &mut edits),
                 MaskGeometry::DepthRange { depth, range } => {
                     Self::depth_range_properties(ui, depth.is_some(), *range, &mut edits);
                 }
@@ -775,7 +773,6 @@ impl Sidebar {
         sampled: bool,
         tolerance: f32,
         grow: f32,
-        feather: f32,
         edits: &mut PropertyEdits,
     ) {
         ui.label(if sampled {
@@ -787,19 +784,12 @@ impl Sidebar {
         if AdjustmentSlider::new("Tolerance", &mut tolerance, 0.005..=1.0)
             .decimals(3)
             .step(0.005)
-            .reset_to(0.18)
+            .reset_to(DEFAULT_COLOR_TOLERANCE)
             .show(ui)
         {
             edits.push(MaskPropertyAction::SetColorTolerance(tolerance));
         }
         edits.grow(Self::mask_grow_edit(ui, grow));
-        edits.feather(Self::mask_feather_edit(
-            ui,
-            "Color feather",
-            feather,
-            0.0..=1.0,
-            0.12,
-        ));
     }
 
     fn depth_range_properties(
