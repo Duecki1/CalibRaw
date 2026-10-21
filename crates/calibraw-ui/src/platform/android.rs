@@ -115,10 +115,6 @@ impl Platform for AndroidPlatform {
         calibraw_ffi::clear_background_task_notification(&self.app)
     }
 
-    fn release_free_memory(&self) {
-        calibraw_ffi::release_free_heap();
-    }
-
     fn performance_settings_path(&self) -> Result<Option<PathBuf>, String> {
         calibraw_ffi::performance_settings_path(&self.app).map(Some)
     }

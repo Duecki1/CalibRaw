@@ -313,9 +313,10 @@ the maintainer.
   on and the automatic runtime has a GPU provider is still asked per job
   through `runtime::ai_sessions_may_use_gpu`, which Android now also has
   (always `true`, as `ai_acceleration_enabled` is there).
-- The CPU profiles are `CpuFallbackProfile::{SamEncoder, LowMemory}` (was
-  `WindowsSamEncoder`, `MobileDepth`). The arena stays off on every
-  `Constrained` session, not only `LowMemory` ones.
+- The CPU profiles were `CpuFallbackProfile::{SamEncoder, LowMemory}` (was
+  `WindowsSamEncoder`, `MobileDepth`). `LowMemory` later became the
+  configuration of every `Constrained` CPU session (ANDROID_LOW_END.md, 1.4),
+  which also keeps the arena off.
 - `quirks.rs` also owns the SAM encoder's unfused CPU graph and disabled
   arena, which are the same Windows bug as its non-finite tolerance.
 - The provider generation counter moved from `slot.rs` to `placement`, which
