@@ -1,5 +1,5 @@
 {
-  "device": "Lenovo Tab M11 (TB330FU), landscape, CalibRaw Profiling after onboarding with its defaults and update checks declined",
+  "device": "Lenovo Tab M11 (TB330FU), landscape, CalibRaw Profiling after onboarding with its defaults, update checks declined, the Mask tip dismissed and every AI model downloaded",
   "screen": [1920, 1200],
   "photo": "Demo2.5/DSC03335.ARW",
   "photo_sha256": "0d8c435e32200c6ecf37104fd188e4f173b70f35ba6a882cc1176df67d111ef9",
@@ -109,6 +109,63 @@
     {
       "name": "library",
       "actions": [{ "tap": [49, 99] }, { "sleep_ms": 5000 }]
+    },
+    {
+      "name": "reopen",
+      "actions": [{ "tap": [108, 320] }, { "sleep_ms": 5000 }],
+      "then": [{ "tap": [1875, 460] }, { "sleep_ms": 2000 }]
+    },
+    {
+      "name": "sky-mask",
+      "actions": [
+        { "tap": [1227, 187] },
+        { "sleep_ms": 1500 },
+        { "tap": [1248, 765] },
+        { "wait_log": { "text": "AI job calibraw-onnx-mask", "timeout_s": 120 } },
+        { "sleep_ms": 3000 }
+      ]
+    },
+    {
+      "name": "depth-mask",
+      "actions": [
+        { "tap": [1227, 187] },
+        { "sleep_ms": 1500 },
+        { "tap": [1296, 1053] },
+        { "wait_log": { "text": "AI job calibraw-onnx-mask", "timeout_s": 120 } },
+        { "sleep_ms": 3000 }
+      ]
+    },
+    {
+      "name": "object-mask",
+      "actions": [
+        { "tap": [1227, 187] },
+        { "sleep_ms": 1500 },
+        { "tap": [1262, 837] },
+        { "sleep_ms": 2000 },
+        { "swipe": { "from": [700, 620], "to": [770, 820], "ms": 1200 } },
+        { "wait_log": { "text": "AI job calibraw-onnx-object", "timeout_s": 180 } },
+        { "sleep_ms": 3000 }
+      ],
+      "then": [{ "tap": [1875, 545] }, { "sleep_ms": 2000 }]
+    },
+    {
+      "name": "remove",
+      "actions": [
+        { "swipe": { "from": [595, 770], "to": [640, 800], "ms": 800 } },
+        { "wait_log": { "text": "AI job calibraw-big-lama-remove", "timeout_s": 300 } },
+        { "sleep_ms": 3000 }
+      ],
+      "then": [{ "tap": [1875, 460] }, { "sleep_ms": 2000 }]
+    },
+    {
+      "name": "subject-mask",
+      "actions": [
+        { "tap": [1227, 187] },
+        { "sleep_ms": 1500 },
+        { "tap": [1265, 621] },
+        { "wait_log": { "text": "AI job calibraw-onnx-mask", "timeout_s": 300 } },
+        { "sleep_ms": 3000 }
+      ]
     }
   ]
 }

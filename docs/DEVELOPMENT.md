@@ -459,8 +459,13 @@ M11's coordinates in landscape (`--scenario` picks another; `--package`
 another installed build). Its taps open the first library tile, so the
 profiling app's library must hold only the scenario's photo, and the app
 must have been opened once, with onboarding finished and update checks
-declined. The bench refuses a display whose current size differs from the
-scenario's.
+declined. Its last steps run every AI job (Sky, Depth, Object, Remove,
+Subject; each waits for the `AI job … finished` diagnostics line), so the
+profiling app must also have downloaded every model, which it keeps in its
+private storage, and dismissed the Mask tip; run each job by hand once. The
+Subject job runs last because the system may kill the app during it, which
+ends the run. The bench refuses a display whose current size differs from
+the scenario's.
 
 Scenario steps list measured `actions` and unmeasured `then` actions (undo,
 opening a panel section): `launch`, `tap`, `double_tap`, `swipe`, `sleep_ms`,
